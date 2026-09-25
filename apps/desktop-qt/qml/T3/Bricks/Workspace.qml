@@ -336,6 +336,7 @@ Rectangle {
             iconSize: 16
             iconTint: strip.ready && strip.model.terminalOpen ? strip.foreground : strip.iconMuted
             Layout.leftMargin: 4
+            objectName: "terminalToggle"
             Accessible.name: strip.ready && strip.model.terminalOpen ? qsTr("Hide terminal") : qsTr("Show terminal")
             onClicked: Shell.dispatch("terminal.toggle")
         }

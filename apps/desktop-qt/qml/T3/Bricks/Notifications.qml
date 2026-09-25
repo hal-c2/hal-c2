@@ -127,6 +127,7 @@ Item {
                             text: "✕"
                             tint: Theme.palette.color("textMuted", "#8b8b93")
                             font.pixelSize: 11
+                            objectName: "notificationDismiss-" + card.modelData.id
                             Accessible.name: qsTr("Dismiss")
                             onClicked: Shell.dispatch("notification.dismiss", {
                                 id: card.modelData.id
@@ -161,6 +162,7 @@ Item {
                             delegate: ShellButton {
                                 required property var modelData
 
+                                objectName: "notificationAction-" + card.modelData.id + "-" + modelData.id
                                 primary: modelData.primary
                                 text: modelData.label
                                 onClicked: Shell.dispatch("notification.action", {

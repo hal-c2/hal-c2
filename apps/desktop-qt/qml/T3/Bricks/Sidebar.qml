@@ -250,6 +250,7 @@ Rectangle {
                     iconName: "square-pen"
                     iconSize: 16
                     iconTint: sidebar.iconColor
+                    objectName: "newThread"
                     Accessible.name: qsTr("New thread")
                     onClicked: Shell.dispatch("thread.new", sidebar.model && sidebar.model.scopeProjectKey !== null ? {
                         projectKey: sidebar.model.scopeProjectKey

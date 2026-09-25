@@ -4,5 +4,5 @@
     "types": ["node"],
     "lib": ["ESNext"]
   },
-  "include": ["host", "scripts"]
+  "include": ["host", "parity", "scripts"]
 }

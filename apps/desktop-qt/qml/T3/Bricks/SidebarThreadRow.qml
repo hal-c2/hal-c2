@@ -227,6 +227,7 @@ Item {
 
             visible: row.showActions && row.canSnooze
             iconName: "clock"
+            objectName: "snoozeAction"
             Accessible.name: qsTr("Snooze")
             onClicked: row.requestSnooze(snoozeButton)
         }
@@ -234,6 +235,7 @@ Item {
         RowAction {
             visible: row.showActions && row.canSettle
             iconName: "check"
+            objectName: "settleAction"
             Accessible.name: qsTr("Settle")
             onClicked: row.settleRequested()
         }
@@ -241,6 +243,7 @@ Item {
         RowAction {
             visible: row.showActions && row.section === "snoozed"
             iconName: "alarm-clock-off"
+            objectName: "wakeAction"
             Accessible.name: qsTr("Wake")
             onClicked: row.unsnoozeRequested()
         }
@@ -248,6 +251,7 @@ Item {
         RowAction {
             visible: row.showActions && row.section === "settled"
             iconName: "undo-2"
+            objectName: "unsettleAction"
             Accessible.name: qsTr("Un-settle")
             onClicked: row.unsettleRequested()
         }
@@ -265,6 +269,7 @@ Item {
             text: qsTr("Woke")
             tint: row.statusColor
             iconTint: row.statusColor
+            objectName: "wokeDismiss"
             Accessible.name: qsTr("Dismiss woke")
             onClicked: row.wokeDismissed()
         }

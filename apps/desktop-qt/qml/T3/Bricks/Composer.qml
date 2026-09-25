@@ -484,6 +484,7 @@ Rectangle {
 
                     ShellComboBox {
                         id: modelPicker
+                        objectName: "modelPicker"
 
                         Layout.fillWidth: true
                         Layout.minimumWidth: 72
@@ -540,6 +541,7 @@ Rectangle {
 
                     ShellButton {
                         id: planToggle
+                        objectName: "planToggle"
 
                         subtle: true
                         visible: composer.ready && composer.model.showInteractionModeToggle
@@ -580,6 +582,7 @@ Rectangle {
                     // Round send / stop.
                     AbstractButton {
                         id: primaryAction
+                        objectName: "primaryAction"
 
                         readonly property bool stopMode: composer.ready && composer.model.isRunning && input.text.trim().length === 0
 
