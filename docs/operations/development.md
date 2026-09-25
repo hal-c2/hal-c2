@@ -35,6 +35,16 @@ Read ports from the `[dev-runner]` output. Worktrees derive stable preferences f
 but occupied ports can shift them. `T3CODE_PORT_OFFSET` or `T3CODE_DEV_INSTANCE` can select a
 different preference when needed.
 
+### Moving a thread between state directories
+
+`vp run thread:export --source <dir> --thread-id <id> --output <archive.json>` exports one thread
+with its image attachments, and `vp run thread:import --archive <archive.json> --destination <dir>`
+remaps it onto the destination project after backing up its database. `vp run thread:list --source
+<dir>` finds thread ids. A source or destination can be a workspace containing `.t3`, a T3 home, or
+a state directory containing `state.sqlite`; `--state dev` selects a main-checkout dev database.
+Stop the destination server before importing. Terminal history can hold credentials, so export
+skips it unless you pass `--include-terminal-logs`.
+
 ### Sharing and remote debugging
 
 `vp run dev --share` publishes the web port over the machine's tailnet and prints a pairing URL

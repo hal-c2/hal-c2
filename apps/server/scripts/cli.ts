@@ -18,7 +18,9 @@ import {
   ServerCliDevelopmentIconSourceMissingError,
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliExecutableImportError,
+  ServerCliTuiBundleImportError,
 } from "./cliErrors.ts";
+import { findUnresolvedTuiBundleImport } from "./tuiBundle.ts";
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../../..", import.meta.url))),
@@ -88,6 +90,23 @@ const buildCmd = Command.make(
           shell: false,
         }),
       );
+
+      const tuiEntry = path.join(repoRoot, "apps/tui/dist/index.js");
+      const tuiTarget = path.join(serverDir, "dist/tui/index.js");
+      if (!(yield* fs.exists(tuiEntry))) {
+        return yield* new ServerCliBuildAssetMissingError({ assetPath: tuiEntry });
+      }
+      yield* fs.makeDirectory(path.dirname(tuiTarget), { recursive: true });
+      yield* fs.copyFile(tuiEntry, tuiTarget);
+      const tuiBundle = yield* fs.readFileString(tuiTarget);
+      const unresolvedImport = findUnresolvedTuiBundleImport(tuiBundle);
+      if (unresolvedImport !== null) {
+        return yield* new ServerCliTuiBundleImportError({
+          assetPath: tuiTarget,
+          specifier: unresolvedImport,
+        });
+      }
+      yield* Effect.log("[cli] Bundled TUI entry into dist/tui");
 
       const webDist = path.join(repoRoot, "apps/web/dist");
       const clientTarget = path.join(serverDir, "dist/client");
