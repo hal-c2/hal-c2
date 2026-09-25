@@ -426,6 +426,33 @@ type ToastPosition =
 
 interface ToastProviderProps extends Toast.Provider.Props {
   position?: ToastPosition;
+  /**
+   * Hosted by a native shell: rendered inside the provider so it can read the
+   * live toast list; plain toasts then render natively and only rich ones
+   * (React-element bodies) stay in this viewport.
+   */
+  shellMirror?: ReactNode;
+}
+
+/** A toast the shell can render from strings alone. */
+export function isShellMirrorableToast(toast: {
+  title?: ReactNode;
+  description?: ReactNode;
+  positionerProps?: { anchor?: unknown } | undefined;
+  data?: ThreadToastData | undefined;
+}): boolean {
+  if (toast.positionerProps?.anchor) return false;
+  if (toast.data?.expandableContent) return false;
+  if (typeof toast.title !== "string") return false;
+  return (
+    toast.description === undefined ||
+    toast.description === null ||
+    typeof toast.description === "string"
+  );
+}
+
+export function dismissToast(toastId: ToastId, onClose: (() => void) | undefined): void {
+  handleToastDismissClick(toastManager, toastId, onClose);
 }
 
 function useActiveThreadRefFromRoute(): ScopedThreadRef | null {
@@ -454,9 +481,12 @@ function useActiveThreadRefFromRoute(): ScopedThreadRef | null {
 function ThreadToastVisibleAutoDismiss({
   toastId,
   dismissAfterVisibleMs,
+  ignoreFocus = false,
 }: {
   toastId: ToastId;
   dismissAfterVisibleMs: number | undefined;
+  /** Shell-mirrored toasts show in native chrome, so page focus is irrelevant. */
+  ignoreFocus?: boolean;
 }) {
   useEffect(() => {
     if (!dismissAfterVisibleMs || dismissAfterVisibleMs <= 0) return;
@@ -504,7 +534,8 @@ function ThreadToastVisibleAutoDismiss({
     };
 
     const syncTimer = () => {
-      const shouldRun = document.visibilityState === "visible" && document.hasFocus();
+      const shouldRun =
+        document.visibilityState === "visible" && (ignoreFocus || document.hasFocus());
       if (shouldRun) {
         start();
         return;
@@ -524,27 +555,39 @@ function ThreadToastVisibleAutoDismiss({
       pause();
       clearTimer();
     };
-  }, [dismissAfterVisibleMs, toastId]);
+  }, [dismissAfterVisibleMs, ignoreFocus, toastId]);
 
   return null;
 }
 
-function ToastProvider({ children, position = "top-right", ...props }: ToastProviderProps) {
+function ToastProvider({
+  children,
+  position = "top-right",
+  shellMirror,
+  ...props
+}: ToastProviderProps) {
   return (
     <Toast.Provider toastManager={toastManager} {...props}>
       {children}
-      <Toasts position={position} />
+      {shellMirror}
+      <Toasts position={position} onlyRich={shellMirror !== undefined} />
     </Toast.Provider>
   );
 }
 
-function Toasts({ position }: { position: ToastPosition }) {
+function Toasts({ position, onlyRich = false }: { position: ToastPosition; onlyRich?: boolean }) {
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
   const isTop = position.startsWith("top");
-  const visibleToasts = toasts.filter((toast) =>
+  const scopedToasts = toasts.filter((toast) =>
     shouldRenderThreadScopedToast(toast.data, activeThreadRef),
   );
+  const visibleToasts = onlyRich
+    ? scopedToasts.filter((toast) => !isShellMirrorableToast(toast))
+    : scopedToasts;
+  // Base UI only drops a closed toast once its root finishes leaving, so the
+  // ones the shell renders still need a (hidden) root here or they never go.
+  const mirroredToasts = onlyRich ? scopedToasts.filter(isShellMirrorableToast) : [];
   const visibleToastLayout = buildVisibleToastLayout(visibleToasts);
 
   useEffect(() => {
@@ -577,6 +620,15 @@ function Toasts({ position }: { position: ToastPosition }) {
           } as CSSProperties
         }
       >
+        {mirroredToasts.map((toast) => (
+          <Toast.Root key={toast.id} toast={toast} className="hidden" data-shell-mirrored="">
+            <ThreadToastVisibleAutoDismiss
+              dismissAfterVisibleMs={toast.data?.dismissAfterVisibleMs}
+              ignoreFocus
+              toastId={toast.id}
+            />
+          </Toast.Root>
+        ))}
         {visibleToastLayout.items.map(({ toast, visibleIndex, offsetY }) => {
           const hideCollapsedContent = shouldHideCollapsedToastContent(
             visibleIndex,
@@ -809,4 +861,5 @@ export {
   toastManager,
   AnchoredToastProvider,
   anchoredToastManager,
+  useActiveThreadRefFromRoute,
 };

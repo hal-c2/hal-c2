@@ -23,6 +23,12 @@ import {
   type SettledThreadTimestampInput,
   type ThreadSortInput,
 } from "../lib/threadSort";
+import {
+  sortActiveThreadsByOrderKey,
+  sortPinnedThreadsByOrderKey,
+} from "@t3tools/client-runtime/state/thread-sort";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
@@ -1364,4 +1370,91 @@ export function sortScopedProjectsForSidebar<
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
   );
+}
+
+export interface SidebarThreadCapabilities {
+  readonly threadSettlement?: boolean | undefined;
+  readonly threadSnooze?: boolean | undefined;
+  readonly threadPinReorder?: boolean | undefined;
+}
+
+export interface SidebarThreadPartitionInput {
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  /** `<environmentId>:<projectId>` keys to keep, or null for every project. */
+  readonly scopedProjectKeys: ReadonlySet<string> | null;
+  readonly capabilitiesFor: (environmentId: EnvironmentId) => SidebarThreadCapabilities | undefined;
+  /**
+   * Real clock for snooze wake times, which are second-precise: a woken
+   * thread must not linger on the shelf for the rest of a quantized minute.
+   */
+  readonly preciseNow: string;
+}
+
+export interface SidebarThreadPartition {
+  readonly pinnedThreads: EnvironmentThreadShell[];
+  readonly reorderablePinnedKeys: Set<string>;
+  readonly activeThreads: EnvironmentThreadShell[];
+  readonly snoozedThreads: EnvironmentThreadShell[];
+  readonly settledThreads: EnvironmentThreadShell[];
+  readonly snoozeNow: string;
+}
+
+/**
+ * Buckets live thread shells into the sidebar's four sections. Settled threads
+ * stay in the live shell stream (settled ≠ archived), so this works directly
+ * off shells; archived threads are hidden. Shared by the HTML sidebar and the
+ * shell projection so both render the same rows.
+ */
+export function partitionSidebarThreads(
+  input: SidebarThreadPartitionInput,
+): SidebarThreadPartition {
+  // Subagent child threads live in the parent's Agents surface, not the roster.
+  const visible = filterSidebarV2VisibleThreads(input.threads, input.scopedProjectKeys);
+  const pinned: EnvironmentThreadShell[] = [];
+  const active: EnvironmentThreadShell[] = [];
+  const snoozed: EnvironmentThreadShell[] = [];
+  const settled: EnvironmentThreadShell[] = [];
+  for (const thread of visible) {
+    // Threads on servers without the settlement capability (old server, or
+    // descriptor not loaded yet) never classify as settled: the user could
+    // neither un-settle nor pin them, so auto-settling them would strand rows
+    // in a tail with no working affordances.
+    const capabilities = input.capabilitiesFor(thread.environmentId);
+    const supportsSettlement = capabilities?.threadSettlement === true;
+    const supportsSnooze = capabilities?.threadSnooze === true;
+    const section = resolveSidebarThreadSection({
+      snoozed: supportsSnooze && effectiveSnoozed(thread, { now: input.preciseNow }),
+      settled: supportsSettlement && thread.settledOverride === "settled",
+      pinned: thread.pinnedAt != null,
+    });
+    (section === "snoozed"
+      ? snoozed
+      : section === "settled"
+        ? settled
+        : section === "pinned"
+          ? pinned
+          : active
+    ).push(thread);
+  }
+  // One shared rule on every platform (see sortPinnedThreadsByOrderKey):
+  // user-arranged keys first, keyless threads in creation order below. Server
+  // capability only gates DRAGGING — it must not influence the sort, or
+  // mixed-version fleets would render different pinned orders from the same data.
+  return {
+    pinnedThreads: sortPinnedThreadsByOrderKey(pinned),
+    reorderablePinnedKeys: new Set(
+      pinned
+        .filter((thread) => input.capabilitiesFor(thread.environmentId)?.threadPinReorder === true)
+        .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+    ),
+    activeThreads: sortActiveThreadsByOrderKey(active),
+    // Soonest wake first: "what comes back next" is the shelf's question.
+    snoozedThreads: snoozed.toSorted(
+      (left, right) =>
+        firstValidTimestampMs(left.snoozedUntil ?? null) -
+        firstValidTimestampMs(right.snoozedUntil ?? null),
+    ),
+    settledThreads: sortSettledThreadsForSidebar(settled),
+    snoozeNow: input.preciseNow,
+  };
 }

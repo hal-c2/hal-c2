@@ -34,7 +34,7 @@ export interface ContextMenuItem<T extends string = string> {
   label: string;
   destructive?: boolean;
   disabled?: boolean;
-  /** Renders as a non-interactive section header label. Web fallback only — stripped on desktop native menus. */
+  /** Non-interactive section label in web and Qt menus; stripped by Electron native menus. */
   header?: boolean;
   /** Icon keyword resolved by the web fallback. Stripped on desktop native menus. */
   icon?: string;
@@ -1370,9 +1370,13 @@ export interface LocalApi {
     openSystemSettings: (pane: SystemSettingsPane) => Promise<void>;
   };
   contextMenu: {
+    /**
+     * `surface: "shell"` marks window coordinates from a native shell's own
+     * chrome rather than a point in this document; browsers ignore it.
+     */
     show: <T extends string>(
       items: readonly ContextMenuItem<T>[],
-      position?: { x: number; y: number },
+      position?: { x: number; y: number; surface?: "shell" },
     ) => Promise<T | null>;
     close: () => Promise<void>;
   };

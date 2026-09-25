@@ -22,6 +22,10 @@
     "./legacy-orchestration": {
       "types": "./src/orchestration.ts",
       "import": "./src/orchestration.ts"
+    },
+    "./shell": {
+      "types": "./src/shell.ts",
+      "import": "./src/shell.ts"
     }
   },
   "scripts": {

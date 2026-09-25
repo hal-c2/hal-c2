@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { resolveRenameCommit } from "./ChatHeader";
+import { resolveRenameCommit } from "./ChatHeader.logic";
 
 describe("resolveRenameCommit", () => {
   it("commits a trimmed changed title", () => {

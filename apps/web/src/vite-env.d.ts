@@ -1,6 +1,8 @@
 /// <reference types="vite-plus/client" />
 
 import type { DesktopBridge } from "@t3tools/contracts";
+import type { T3Shell } from "@t3tools/contracts/shell";
+import type { ShellThemeBootstrap } from "./shell/shellThemeOverride";
 
 interface ImportMetaEnv {
   readonly VITE_HTTP_URL: string;
@@ -23,5 +25,8 @@ interface ImportMeta {
 declare global {
   interface Window {
     desktopBridge?: DesktopBridge;
+    t3Shell?: T3Shell;
+    __t3ShellTheme?: ShellThemeBootstrap;
+    __t3AppViewStorageId?: string;
   }
 }

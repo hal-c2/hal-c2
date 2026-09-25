@@ -186,7 +186,10 @@ import {
   type TerminalContextSelection,
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
-import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import {
+  collectComposerContextReferences,
+  replaceComposerContextReferences,
+} from "@t3tools/shared/composerContextReferences";
 import {
   getRestingComposerImagePreviewCounts,
   resolveRestingComposerControlsLayout,
@@ -1078,6 +1081,8 @@ import {
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
 import { hasProviderSetup } from "./ProviderStatusBanner";
+import { isT3Shell } from "../../env";
+import { ShellComposerBridge } from "../../shell/lazy";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -1127,6 +1132,11 @@ import type { ReviewCommentContext } from "../../reviewCommentContext";
 
 const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
 
+const shellRuntimeModes = runtimeModes.map((mode) => ({
+  value: mode,
+  label: runtimeModeConfig[mode].label,
+  description: runtimeModeConfig[mode].description,
+}));
 const extendReplacementRangeForTrailingSpace = (
   text: string,
   rangeEnd: number,
@@ -6447,6 +6457,57 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   // Render
   // ------------------------------------------------------------------
+  const composerPlaceholder = isComposerApprovalState
+    ? "Resolve this approval request to continue"
+    : activePendingProgress
+      ? isChoiceOnlyPendingQuestion
+        ? "Choose an option above"
+        : "Type your own answer, or leave this blank to use the selected option"
+      : showPlanFollowUpPrompt && activeProposedPlan
+        ? "Add feedback to refine the plan, or leave this blank to implement it"
+        : projectSelectionRequired
+          ? "Choose a project above to start a thread"
+          : showProviderUnavailable
+            ? "Enable a provider in Settings to send a message"
+            : phase === "disconnected"
+              ? DISCONNECTED_COMPOSER_PLACEHOLDER
+              : "Ask anything, @tag files/folders, $use skills, or / for commands";
+  // Hosted by the Qt shell, the prompt editor and footer are native bricks
+  // (ShellComposerBridge feeds them). The editor stays for approval and
+  // user-input flows, which type their answers through it.
+  const shellHosted = isT3Shell;
+  const hideEditorForShell =
+    shellHosted && !isComposerApprovalState && pendingUserInputs.length === 0;
+  // The shell's editor works on the raw prompt (mentions written out), so its
+  // caret is an expanded cursor; ChatComposer tracks the collapsed one.
+  const onShellCursorChange = useCallback(
+    (expandedCursor: number) => {
+      const text = promptRef.current;
+      setComposerCursor(collapseExpandedComposerCursor(text, expandedCursor));
+      setComposerTrigger(detectComposerTrigger(text, expandedCursor));
+    },
+    [promptRef, setComposerTrigger],
+  );
+  const dismissShellComposerTrigger = useCallback(() => {
+    dismissComposerTrigger(composerTrigger);
+  }, [composerTrigger, dismissComposerTrigger]);
+  // With the editor and footer native, the frame only earns its space when a
+  // banner, attachment, context or validation message is visible.
+  const hasShoulderTab = showTasksTab || (!isComposerApprovalState && stashQueue.length > 0);
+  const shellFrameEmpty =
+    hideEditorForShell &&
+    !hasShoulderTab &&
+    composerImages.length === 0 &&
+    composerFiles.length === 0 &&
+    composerTerminalContexts.length === 0 &&
+    composerPreviewAnnotations.length === 0 &&
+    composerReviewComments.length === 0 &&
+    pendingApprovals.length === 0 &&
+    !showPlanFollowUpPrompt &&
+    activeTasksProgress === null &&
+    providerInputSubmissionError === null &&
+    composerSubmissionError === null;
+
   return (
     <form
       ref={composerFormRef}
@@ -6513,6 +6574,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       className="mx-auto w-full min-w-0 max-w-(--chat-content-max-width)"
       data-chat-composer-form="true"
       {...threadContextDropTargetProps()}
+      data-chat-composer-shell-empty={shellFrameEmpty ? "true" : undefined}
     >
       {composerControlsCollapsed && restingControlsHost
         ? createPortal(
@@ -7187,155 +7249,224 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   </div>
                 )}
 
-              <div
-                className={cn(
-                  "relative",
-                  isComposerResting && "flex min-w-0 items-center gap-1",
-                  isComposerResting &&
-                    ((settings.contextWindowMeterEnabled && activeContextWindow) ||
-                    reserveContextWindowMeter
-                      ? "pr-28"
-                      : showComposerAttachAction
-                        ? "pr-20"
-                        : "pr-12"),
-                )}
-              >
-                {previewFile ? (
-                  <Dialog
-                    open
-                    onOpenChange={(open) => {
-                      if (!open) setPreviewFileId(null);
-                    }}
-                  >
-                    <DialogPopup
-                      {...composerFloatingLayerProps}
-                      className="h-[min(85vh,52rem)] max-w-4xl overflow-hidden"
-                      showCloseButton={false}
+              {hideEditorForShell ? null : (
+                <div
+                  className={cn(
+                    "relative",
+                    isComposerResting && "flex min-w-0 items-center gap-1",
+                    isComposerResting &&
+                      ((settings.contextWindowMeterEnabled && activeContextWindow) ||
+                      reserveContextWindowMeter
+                        ? "pr-28"
+                        : showComposerAttachAction
+                          ? "pr-20"
+                          : "pr-12"),
+                  )}
+                >
+                  {previewFile ? (
+                    <Dialog
+                      open
+                      onOpenChange={(open) => {
+                        if (!open) setPreviewFileId(null);
+                      }}
                     >
-                      <DialogTitle className="sr-only">{previewFile.name}</DialogTitle>
-                      <AttachmentFilePreview
-                        key={previewFile.id}
-                        name={previewFile.name}
-                        mimeType={previewFile.mimeType}
-                        sizeBytes={previewFile.sizeBytes}
-                        file={previewFile.file}
-                        origin="Draft"
-                        {...(previewFile.uploadedAttachmentId && previewFile.uploadEnvironmentId
-                          ? {
-                              asset: {
-                                environmentId: previewFile.uploadEnvironmentId,
-                                attachmentId: previewFile.uploadedAttachmentId,
-                              },
-                            }
-                          : {})}
-                        onRemove={() => {
-                          removeComposerFileFromDraft(previewFile.id);
-                          setPreviewFileId(null);
-                        }}
-                        onClose={() => setPreviewFileId(null)}
-                      />
-                    </DialogPopup>
-                  </Dialog>
-                ) : null}
-                <ComposerContextActionsContext value={composerContextActions}>
-                  <ComposerPromptEditor
-                    editorRef={composerEditorRef}
-                    richTextEnabled={settings.composerRichTextEnabled}
-                    value={
-                      isComposerApprovalState
-                        ? ""
-                        : activePendingProgress
-                          ? activePendingProgress.customAnswer
-                          : prompt
-                    }
-                    cursor={composerCursor}
-                    contextRecords={composerContextRecords}
-                    buildContextClipboardFragment={buildContextClipboardFragment}
-                    importContextFragment={importContextFragment}
-                    skills={selectedProviderSkills}
-                    containerClassName={cn(isComposerResting && "min-w-0 flex-1")}
-                    className={cn(
-                      showMobilePendingAnswerActions && "max-sm:pb-11",
-                      isComposerResting &&
-                        "max-h-8 min-h-8 overflow-hidden whitespace-pre! leading-8",
-                      isComposerApprovalState && "min-h-8",
-                    )}
-                    placeholderClassName={cn(
-                      isComposerResting &&
-                        "flex items-center overflow-hidden whitespace-nowrap leading-8",
-                    )}
-                    onChange={onPromptChange}
-                    onVisibleSelectionChange={expandComposerForEditorChange}
-                    onCommandKeyDown={onComposerCommandKey}
-                    onPageScrollKeyDown={onPageScrollKeyDown}
-                    onPageScrollKeyUp={onPageScrollKeyUp}
-                    onPageScrollRelease={onPageScrollRelease}
-                    onCitationSubmitAndSend={submitCitationAndSend}
-                    onPaste={onComposerPaste}
-                    placeholder={
-                      isComposerApprovalState
-                        ? "Resolve this approval request to continue"
-                        : activePendingProgress
-                          ? isChoiceOnlyPendingQuestion
-                            ? "Choose an option above"
-                            : "Type your own answer, or leave this blank to use the selected option"
-                          : showPlanFollowUpPrompt && activeProposedPlan
-                            ? "Add feedback to refine the plan, or leave this blank to implement it"
-                            : projectSelectionRequired
-                              ? "Choose a project above to start a thread"
-                              : showProviderUnavailable
-                                ? "Enable a provider in Settings to send a message"
-                                : phase === "disconnected"
-                                  ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
-                    }
-                    disabled={
-                      isConnecting ||
-                      isComposerApprovalState ||
-                      projectSelectionRequired ||
-                      isChoiceOnlyPendingQuestion ||
-                      activePendingIsResponding
-                    }
-                  />
-                </ComposerContextActionsContext>
-                {isComposerResting ? collapsedComposerImagePreviews : null}
-                {showMobilePendingAnswerActions ? (
-                  <div
-                    data-chat-composer-mobile-pending-actions="true"
-                    className="absolute bottom-0 right-0 flex items-center justify-end gap-1"
-                  >
-                    <ComposerPrimaryActions
-                      compact
-                      pendingAction={pendingPrimaryAction}
-                      isRunning={false}
-                      showPlanFollowUpPrompt={false}
-                      promptHasText={false}
-                      isSendBusy={isSendBusy}
-                      sendDisabledReason={sendDisabledReason}
-                      isConnecting={isConnecting}
-                      isEnvironmentUnavailable={
-                        environmentUnavailable !== null ||
-                        noProviderAvailable ||
-                        projectSelectionRequired
+                      <DialogPopup
+                        {...composerFloatingLayerProps}
+                        className="h-[min(85vh,52rem)] max-w-4xl overflow-hidden"
+                        showCloseButton={false}
+                      >
+                        <DialogTitle className="sr-only">{previewFile.name}</DialogTitle>
+                        <AttachmentFilePreview
+                          key={previewFile.id}
+                          name={previewFile.name}
+                          mimeType={previewFile.mimeType}
+                          sizeBytes={previewFile.sizeBytes}
+                          file={previewFile.file}
+                          origin="Draft"
+                          {...(previewFile.uploadedAttachmentId && previewFile.uploadEnvironmentId
+                            ? {
+                                asset: {
+                                  environmentId: previewFile.uploadEnvironmentId,
+                                  attachmentId: previewFile.uploadedAttachmentId,
+                                },
+                              }
+                            : {})}
+                          onRemove={() => {
+                            removeComposerFileFromDraft(previewFile.id);
+                            setPreviewFileId(null);
+                          }}
+                          onClose={() => setPreviewFileId(null)}
+                        />
+                      </DialogPopup>
+                    </Dialog>
+                  ) : null}
+                  <ComposerContextActionsContext value={composerContextActions}>
+                    <ComposerPromptEditor
+                      editorRef={composerEditorRef}
+                      richTextEnabled={settings.composerRichTextEnabled}
+                      value={
+                        isComposerApprovalState
+                          ? ""
+                          : activePendingProgress
+                            ? activePendingProgress.customAnswer
+                            : prompt
                       }
-                      isPreparingWorktree={false}
-                      hasSendableContent={false}
-                      preserveComposerFocusOnPointerDown
-                      onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                      onInterrupt={handleInterruptPrimaryAction}
-                      onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                      cursor={composerCursor}
+                      contextRecords={composerContextRecords}
+                      buildContextClipboardFragment={buildContextClipboardFragment}
+                      importContextFragment={importContextFragment}
+                      skills={selectedProviderSkills}
+                      containerClassName={cn(isComposerResting && "min-w-0 flex-1")}
+                      className={cn(
+                        showMobilePendingAnswerActions && "max-sm:pb-11",
+                        isComposerResting &&
+                          "max-h-8 min-h-8 overflow-hidden whitespace-pre! leading-8",
+                        isComposerApprovalState && "min-h-8",
+                      )}
+                      placeholderClassName={cn(
+                        isComposerResting &&
+                          "flex items-center overflow-hidden whitespace-nowrap leading-8",
+                      )}
+                      onChange={onPromptChange}
+                      onVisibleSelectionChange={expandComposerForEditorChange}
+                      onCommandKeyDown={onComposerCommandKey}
+                      onPageScrollKeyDown={onPageScrollKeyDown}
+                      onPageScrollKeyUp={onPageScrollKeyUp}
+                      onPageScrollRelease={onPageScrollRelease}
+                      onCitationSubmitAndSend={submitCitationAndSend}
+                      onPaste={onComposerPaste}
+                      placeholder={composerPlaceholder}
+                      disabled={
+                        isConnecting ||
+                        isComposerApprovalState ||
+                        projectSelectionRequired ||
+                        isChoiceOnlyPendingQuestion ||
+                        activePendingIsResponding
+                      }
                     />
-                  </div>
-                ) : null}
-              </div>
+                  </ComposerContextActionsContext>
+                  {isComposerResting ? collapsedComposerImagePreviews : null}
+                  {showMobilePendingAnswerActions ? (
+                    <div
+                      data-chat-composer-mobile-pending-actions="true"
+                      className="absolute bottom-0 right-0 flex items-center justify-end gap-1"
+                    >
+                      <ComposerPrimaryActions
+                        compact
+                        pendingAction={pendingPrimaryAction}
+                        isRunning={false}
+                        showPlanFollowUpPrompt={false}
+                        promptHasText={false}
+                        isSendBusy={isSendBusy}
+                        sendDisabledReason={sendDisabledReason}
+                        isConnecting={isConnecting}
+                        isEnvironmentUnavailable={
+                          environmentUnavailable !== null ||
+                          noProviderAvailable ||
+                          projectSelectionRequired
+                        }
+                        isPreparingWorktree={false}
+                        hasSendableContent={false}
+                        preserveComposerFocusOnPointerDown
+                        onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                        onInterrupt={handleInterruptPrimaryAction}
+                        onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              )}
             </div>
 
             <ComposerPromptLengthValidation
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
 
+            {shellHosted ? (
+              <ShellComposerBridge
+                target={composerDraftTarget}
+                routeKind={routeKind}
+                prompt={prompt}
+                promptRef={promptRef}
+                setPrompt={setPrompt}
+                composerCursor={composerCursor}
+                triggerKind={composerTrigger?.kind ?? null}
+                suggestions={composerMenuItems}
+                suggestionsEmptyText={composerTrigger ? composerMenuEmptyState : null}
+                onCursorChange={onShellCursorChange}
+                onSelectSuggestion={onSelectComposerItem}
+                onDismissSuggestions={dismissShellComposerTrigger}
+                onAttachFiles={(files) => {
+                  void addComposerAttachments(files);
+                }}
+                onAddTerminalContext={(selection) => {
+                  composerRef.current?.addTerminalContext(selection);
+                }}
+                attachments={standaloneComposerImages}
+                terminalContexts={composerTerminalContexts}
+                onRemoveAttachment={removeComposerImage}
+                onRemoveTerminalContext={(id) => {
+                  // A terminal context lives as an inline reference in the prompt;
+                  // dropping the reference is what removes the context, through the
+                  // same path an editor deletion takes.
+                  const context = composerTerminalContexts.find((candidate) => candidate.id === id);
+                  if (!context) return;
+                  const { contextId } = terminalContextReference(context);
+                  const nextPrompt = replaceComposerContextReferences(
+                    promptRef.current,
+                    (occurrence) => (occurrence.contextId === contextId ? "" : occurrence.source),
+                  );
+                  const nextCursor = clampCollapsedComposerCursor(nextPrompt, composerCursor);
+                  onPromptChange(
+                    nextPrompt,
+                    nextCursor,
+                    expandCollapsedComposerCursor(nextPrompt, nextCursor),
+                    false,
+                    collectComposerContextReferences(nextPrompt).map((entry) => entry.contextId),
+                  );
+                }}
+                placeholder={composerPlaceholder}
+                editorDisabled={
+                  isConnecting ||
+                  isComposerApprovalState ||
+                  projectSelectionRequired ||
+                  isChoiceOnlyPendingQuestion ||
+                  activePendingIsResponding
+                }
+                hasSendableContent={composerSendState.hasSendableContent}
+                sendDisabledReason={sendDisabledReason}
+                phase={phase}
+                isSendBusy={isSendBusy}
+                isConnecting={isConnecting}
+                environmentUnavailable={environmentUnavailable !== null}
+                noProviderAvailable={noProviderAvailable}
+                projectSelectionRequired={projectSelectionRequired}
+                pendingApprovalCount={pendingApprovals.length}
+                pendingUserInputCount={pendingUserInputs.length}
+                showPlanFollowUpPrompt={showPlanFollowUpPrompt}
+                selectedInstanceId={selectedInstanceId}
+                selectedProvider={selectedProvider}
+                selectedModel={selectedModel}
+                selectedProviderModels={selectedProviderModels}
+                instanceEntries={providerInstanceEntries}
+                modelOptionsByInstance={modelOptionsByInstance}
+                modelOptions={composerModelOptions?.[selectedInstanceId]}
+                planModeEnabled={settings.planModeEnabled}
+                getModelDisabledReason={getModelDisabledReason}
+                onProviderModelSelect={onProviderModelSelect}
+                runtimeMode={runtimeMode}
+                runtimeModes={shellRuntimeModes}
+                interactionMode={interactionMode}
+                showInteractionModeToggle={planModeUiEnabled}
+                onRuntimeModeChange={handleRuntimeModeChange}
+                onInteractionModeChange={handleInteractionModeChange}
+                onSend={(event, intent) => submitComposer(event, undefined, intent)}
+                onInterrupt={onInterrupt}
+              />
+            ) : null}
+
             {/* Bottom toolbar */}
-            {isComposerCollapsedMobile || isComposerApprovalState ? null : (
+            {isComposerCollapsedMobile || isComposerApprovalState || shellHosted ? null : (
               <div
                 data-chat-composer-footer="true"
                 data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}

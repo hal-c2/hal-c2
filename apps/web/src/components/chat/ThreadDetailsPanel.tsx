@@ -32,6 +32,8 @@ interface VersionMismatchIssue {
 }
 
 export interface ThreadDetailsPanelProps {
+  /** Hosted by the Qt shell: git, scripts and editors live in native chrome. */
+  shellHosted?: boolean;
   forceNewWorktree?: boolean;
   mode: "inline" | "popover";
   onClose?: () => void;
@@ -161,7 +163,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
 
             <BranchToolbar layout="panel" panelSection="workspace" {...branchToolbarProps} />
 
-            {props.showOpenInPicker ? (
+            {props.showOpenInPicker && !props.shellHosted ? (
               <OpenInPicker
                 environmentId={props.environmentId}
                 keybindings={props.keybindings}
@@ -171,7 +173,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               />
             ) : null}
 
-            {props.activeProjectScripts ? (
+            {props.activeProjectScripts && !props.shellHosted ? (
               <ProjectScriptsControl
                 displayMode="panel"
                 scripts={props.activeProjectScripts}
@@ -196,7 +198,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               {props.isGitRepo ? (
                 <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
               ) : null}
-              {props.activeProjectName ? (
+              {props.activeProjectName && !props.shellHosted ? (
                 <GitActionsControl
                   displayMode="panel"
                   gitCwd={props.gitCwd}

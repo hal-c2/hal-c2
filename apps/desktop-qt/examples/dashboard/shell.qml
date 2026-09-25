@@ -1,0 +1,1147 @@
+import QtQuick
+import QtQuick.Controls.Basic
+import QtQuick.Layouts
+import T3.Shell
+import T3.Bricks
+
+// Rosé dashboard: an icon rail owns project scope, the app's places and
+// settings, and the sidebar is just threads. The rail's Dashboard button
+// pulls a widget drawer over the page: today and the calendar, the open
+// workspace and its git state, thread meters, and the agent behind the
+// composer.
+ShellWindow {
+    id: root
+
+    readonly property var sidebarState: Shell.state.sidebar ?? null
+    readonly property var projects: sidebarState ? sidebarState.projects : []
+    readonly property var scopeKey: sidebarState ? sidebarState.scopeProjectKey : null
+    readonly property var workspace: Shell.state.workspace ?? null
+    readonly property var git: workspace ? workspace.git : null
+    readonly property var composerState: Shell.state.composer ?? null
+    readonly property bool composerReady: composerState !== null && composerState.target !== null
+    readonly property var instance: composerReady ? (composerState.instances.find(entry => entry.instanceId === composerState.selectedInstanceId) ?? null) : null
+    readonly property int attentionCount: composerReady ? composerState.pendingApprovalCount + composerState.pendingUserInputCount : 0
+    readonly property int threadCount: sidebarState ? sidebarState.active.length + sidebarState.pinned.length : 0
+    readonly property int meterPeak: sidebarState ? Math.max(1, threadCount, sidebarState.snoozed.length, sidebarState.settledTotal) : 1
+
+    // The sidebar's width is the one animated layout value; the title pill
+    // above it follows so the two collapse as one piece.
+    property real sidebarSlot: sidebarCollapsed ? 0 : 272
+    property bool drawerOpen: false
+    property date now: new Date()
+    readonly property string dayKey: Qt.formatDate(now, "yyyy-MM-dd")
+    readonly property var calendarCells: buildCalendar(dayKey)
+
+    // The floor under the cards is the theme's chrome; its canvas is the
+    // page's own background and matches the cards, so the page sits flush in
+    // its card.
+    readonly property color canvas: Theme.palette.color("chrome", "#ecd6cc")
+    readonly property color card: Theme.palette.color("surface", "#fbf1ed")
+    readonly property color raised: Theme.palette.color("surfaceRaised", "#f2dcd5")
+    readonly property color line: Theme.palette.color("border", "#dfc2b7")
+    readonly property color ink: Theme.palette.color("text", "#4a3733")
+    readonly property color muted: Theme.palette.color("textMuted", "#86655d")
+    readonly property color accent: Theme.palette.color("accent", "#9a3e33")
+    readonly property color accentInk: Theme.palette.color("accentForeground", "#fff4f0")
+    readonly property color accentSoft: Theme.palette.color("accentSurface", "#ecc9c1")
+    readonly property color accentDeep: Theme.palette.color("accentSurfaceForeground", "#7c2f27")
+    readonly property color warm: Theme.palette.color("warning", "#c48a3f")
+    readonly property color leaf: Theme.palette.color("update", "#6f9a6a")
+
+    // Sheet-style deceleration for surfaces that slide into place.
+    readonly property var sheetCurve: [0.32, 0.72, 0, 1, 1, 1]
+
+    width: 1400
+    height: 880
+    color: canvas
+
+    function isoWeek(date) {
+        const utc = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+        utc.setUTCDate(utc.getUTCDate() + 4 - (utc.getUTCDay() || 7));
+        const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+        return Math.ceil(((utc - yearStart) / 86400000 + 1) / 7);
+    }
+
+    // Six Monday-first weeks around the month of `key` (yyyy-MM-dd).
+    function buildCalendar(key) {
+        const [year, month, day] = key.split("-").map(Number);
+        const first = new Date(year, month - 1, 1);
+        const start = new Date(year, month - 1, 1 - ((first.getDay() + 6) % 7));
+        const cells = [];
+        for (let index = 0; index < 42; index += 1) {
+            const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + index);
+            cells.push({
+                day: date.getDate(),
+                inMonth: date.getMonth() === month - 1,
+                today: date.getMonth() === month - 1 && date.getDate() === day
+            });
+        }
+        return cells;
+    }
+
+    function initialOf(name) {
+        const trimmed = name.trim();
+        return trimmed.length > 0 ? trimmed[0].toUpperCase() : "?";
+    }
+
+    onDrawerOpenChanged: if (drawerOpen)
+        now = new Date()
+
+    Behavior on sidebarSlot {
+        NumberAnimation {
+            duration: 240
+            easing.type: Easing.BezierSpline
+            easing.bezierCurve: root.sheetCurve
+        }
+    }
+
+    Timer {
+        interval: 1000
+        running: root.drawerOpen
+        repeat: true
+        onTriggered: root.now = new Date()
+    }
+
+    Shortcut {
+        sequence: "Escape"
+        enabled: root.drawerOpen
+        onActivated: root.drawerOpen = false
+    }
+
+    // A round rail button: press sinks it, hover tints it, active fills it.
+    component RailButton: AbstractButton {
+        id: button
+
+        property string kind
+        property bool active: false
+        property bool round: false
+
+        implicitWidth: 36
+        implicitHeight: 36
+        hoverEnabled: true
+        activeFocusOnTab: true
+        Accessible.role: Accessible.Button
+        Accessible.name: text
+
+        background: Rectangle {
+            radius: button.round ? 18 : 12
+            color: button.active ? root.accent : button.hovered || button.visualFocus ? root.accentSoft : button.round ? root.raised : Qt.alpha(root.accentSoft, 0)
+            scale: button.down ? 0.97 : 1
+
+            Behavior on color {
+                ColorAnimation {
+                    duration: 120
+                }
+            }
+
+            Behavior on scale {
+                NumberAnimation {
+                    duration: button.down ? 60 : 140
+                    easing.type: Easing.OutQuint
+                }
+            }
+        }
+
+        contentItem: Item {
+            ShellIcon {
+                anchors.centerIn: parent
+                name: button.kind
+                visible: button.kind.length > 0
+                color: button.active ? root.accentInk : root.accentDeep
+            }
+
+            Text {
+                anchors.centerIn: parent
+                visible: button.kind.length === 0
+                text: root.initialOf(button.text)
+                color: button.active ? root.accentInk : root.accentDeep
+                font.family: Theme.fontUi
+                font.pixelSize: 13
+                font.weight: Font.DemiBold
+            }
+        }
+
+        ToolTip.visible: hovered && text.length > 0
+        ToolTip.delay: 500
+        ToolTip.text: text
+    }
+
+    // A drawer widget. Cards arrive a beat apart when the drawer opens and
+    // leave together with it.
+    component DashCard: ShellCard {
+        id: dash
+
+        property int order: 0
+        default property alias content: dashInner.data
+
+        radius: 18
+
+        transform: Translate {
+            y: root.drawerOpen ? 0 : 18
+
+            Behavior on y {
+                SequentialAnimation {
+                    PauseAnimation {
+                        duration: root.drawerOpen ? dash.order * 35 : 0
+                    }
+
+                    NumberAnimation {
+                        duration: root.drawerOpen ? 300 : 160
+                        easing.type: Easing.OutQuint
+                    }
+                }
+            }
+        }
+
+        Item {
+            id: dashInner
+
+            anchors.fill: parent
+            anchors.margins: 13
+        }
+    }
+
+    component Chip: Rectangle {
+        id: chip
+
+        property alias text: chipText.text
+        property alias kind: chipGlyph.name
+        property color tint: root.accentDeep
+
+        implicitWidth: Math.min(Math.ceil(chipRow.implicitWidth) + 16, parent.width)
+        implicitHeight: 22
+        radius: 11
+        color: root.raised
+
+        RowLayout {
+            id: chipRow
+
+            anchors.centerIn: parent
+            width: chip.width - 16
+            spacing: 5
+
+            ShellIcon {
+                id: chipGlyph
+
+                Layout.alignment: Qt.AlignVCenter
+                size: 12
+                visible: name.length > 0
+                color: chip.tint
+            }
+
+            Text {
+                id: chipText
+
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                elide: Text.ElideMiddle
+                color: chip.tint
+                font.family: Theme.fontUi
+                font.pixelSize: 11
+                font.weight: Font.DemiBold
+            }
+        }
+    }
+
+    component Meter: ColumnLayout {
+        id: meter
+
+        property int value: 0
+        property int peak: 1
+        property int order: 0
+        property color tint: root.accent
+        property string label
+
+        // Bars rise once their card has landed, one after another, and drop
+        // back with the drawer so the next opening rises again.
+        readonly property real fill: root.drawerOpen ? value / Math.max(1, peak) : 0
+
+        spacing: 6
+
+        Item {
+            Layout.fillHeight: true
+            Layout.preferredWidth: 12
+            Layout.alignment: Qt.AlignHCenter
+
+            Rectangle {
+                anchors.fill: parent
+                radius: 6
+                color: root.raised
+            }
+
+            Rectangle {
+                anchors.bottom: parent.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                height: Math.max(12, parent.height * meter.fill)
+                radius: 6
+                color: meter.value > 0 ? meter.tint : root.line
+
+                Behavior on height {
+                    SequentialAnimation {
+                        PauseAnimation {
+                            duration: root.drawerOpen ? 160 + meter.order * 50 : 0
+                        }
+
+                        NumberAnimation {
+                            duration: root.drawerOpen ? 460 : 160
+                            easing.type: Easing.OutQuint
+                        }
+                    }
+                }
+
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 160
+                    }
+                }
+            }
+        }
+
+        Text {
+            Layout.alignment: Qt.AlignHCenter
+            text: meter.value
+            color: root.ink
+            font.family: Theme.fontUi
+            font.pixelSize: 12
+            font.weight: Font.DemiBold
+        }
+
+        Text {
+            Layout.fillWidth: true
+            text: meter.label
+            color: root.muted
+            elide: Text.ElideRight
+            horizontalAlignment: Text.AlignHCenter
+            font.family: Theme.fontUi
+            font.pixelSize: 9
+            font.letterSpacing: 0.4
+            font.capitalization: Font.AllUppercase
+        }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+
+        gradient: Gradient {
+            GradientStop {
+                position: 0
+                color: Qt.lighter(root.canvas, 1.02)
+            }
+
+            GradientStop {
+                position: 1
+                color: Qt.darker(root.canvas, 1.04)
+            }
+        }
+    }
+
+    ColumnLayout {
+        anchors.fill: parent
+        anchors.margins: 14
+        spacing: 12
+
+        // Top strip: the title pill spans the rail and sidebar columns and
+        // shrinks with the sidebar; the workspace strip takes the rest.
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: false
+            Layout.preferredHeight: 44
+            spacing: 12
+
+            ShellCard {
+                Layout.preferredWidth: Math.max(208, 64 + root.sidebarSlot)
+                Layout.fillHeight: true
+
+                TitleBar {
+                    anchors.fill: parent
+                    window: root
+                    color: "transparent"
+                }
+            }
+
+            ShellCard {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+
+                Workspace {
+                    anchors.fill: parent
+                    visible: ready
+                    clip: true
+                    sidebarToggle: root.sidebarCollapsed
+                    color: "transparent"
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 12
+
+            // The rail: dashboard toggle, project scope, and the app's places.
+            ShellCard {
+                Layout.preferredWidth: 52
+                Layout.fillHeight: true
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.topMargin: 10
+                    anchors.bottomMargin: 10
+                    spacing: 6
+
+                    RailButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        kind: "layout-grid"
+                        text: qsTr("Dashboard")
+                        active: root.drawerOpen
+                        onClicked: root.drawerOpen = !root.drawerOpen
+                    }
+
+                    Rectangle {
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.topMargin: 4
+                        Layout.bottomMargin: 4
+                        width: 18
+                        height: 1
+                        color: root.line
+                    }
+
+                    RailButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        round: true
+                        kind: "star"
+                        text: qsTr("All projects")
+                        active: root.sidebarState !== null && root.scopeKey === null
+                        onClicked: Shell.dispatch("sidebar.scope", {
+                            "projectKey": null
+                        })
+                    }
+
+                    Repeater {
+                        model: root.projects
+
+                        RailButton {
+                            required property var modelData
+
+                            Layout.alignment: Qt.AlignHCenter
+                            round: true
+                            text: modelData.displayName
+                            active: root.scopeKey === modelData.key
+                            onClicked: Shell.dispatch("sidebar.scope", {
+                                "projectKey": modelData.key
+                            })
+                        }
+                    }
+
+                    RailButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        kind: "plus"
+                        text: qsTr("New thread")
+                        enabled: root.projects.length > 0
+                        opacity: enabled ? 1 : 0.4
+                        onClicked: Shell.dispatch("thread.new", root.scopeKey !== null ? {
+                            "projectKey": root.scopeKey
+                        } : {})
+                    }
+
+                    Item {
+                        Layout.fillHeight: true
+                    }
+
+                    RailButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        kind: "git-pull-request"
+                        text: qsTr("Pull requests")
+                        onClicked: Shell.dispatch("pullRequests.open")
+                    }
+
+                    RailButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        kind: "chart-no-axes-column"
+                        text: qsTr("Usage")
+                        onClicked: Shell.dispatch("usage.open")
+                    }
+
+                    RailButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        kind: "command"
+                        text: qsTr("Command palette")
+                        onClicked: Shell.dispatch("palette.open")
+                    }
+
+                    RailButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        kind: "folder-plus"
+                        text: qsTr("Add project")
+                        onClicked: Shell.dispatch("project.add")
+                    }
+
+                    RailButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        kind: "settings"
+                        text: qsTr("Settings")
+                        active: root.settingsActive
+                        onClicked: {
+                            root.drawerOpen = false;
+                            Shell.dispatch(root.settingsActive ? "settings.back" : "settings.open");
+                        }
+                    }
+                }
+            }
+
+            ShellCard {
+                Layout.preferredWidth: root.sidebarSlot
+                Layout.minimumWidth: 0
+                Layout.fillHeight: true
+                visible: root.sidebarSlot > 0
+                clip: true
+
+                Sidebar {
+                    anchors.fill: parent
+                    visible: !root.settingsActive
+                    showScope: false
+                    showFooter: false
+                    color: "transparent"
+                }
+
+                SettingsNav {
+                    anchors.fill: parent
+                    visible: root.settingsActive
+                    color: "transparent"
+                }
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 12
+
+                // The page.
+                ShellCard {
+                    id: surfaceCard
+
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+
+                    WebSurface {
+                        anchors.fill: parent
+                        url: Shell.pageUrl
+                        radius: surfaceCard.radius - surfaceCard.border.width
+                    }
+
+                    // The page dims under the drawer; clicking it closes the drawer.
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: surfaceCard.radius - surfaceCard.border.width
+                        visible: opacity > 0
+                        opacity: root.drawerOpen ? 1 : 0
+                        color: Qt.rgba(root.canvas.r, root.canvas.g, root.canvas.b, 0.5)
+
+                        Behavior on opacity {
+                            OpacityAnimator {
+                                duration: root.drawerOpen ? 200 : 140
+                            }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: root.drawerOpen = false
+                        }
+                    }
+
+                    // The drawer settles in from just above its resting spot
+                    // and leaves faster than it came.
+                    Item {
+                        id: drawer
+                        objectName: "drawer"
+
+                        anchors.top: parent.top
+                        anchors.topMargin: 12
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: Math.min(parent.width - 24, 1040)
+                        readonly property int gridColumns: width - 24 >= 920 ? 4 : width - 24 >= 460 ? 2 : 1
+                        height: Math.min(gridColumns === 4 ? 336 : 660, parent.height - 24)
+                        visible: opacity > 0
+                        opacity: root.drawerOpen ? 1 : 0
+
+                        Behavior on opacity {
+                            OpacityAnimator {
+                                duration: root.drawerOpen ? 200 : 140
+                            }
+                        }
+
+                        transform: [
+                            Scale {
+                                origin.x: drawer.width / 2
+                                origin.y: 0
+                                xScale: root.drawerOpen ? 1 : 0.97
+                                yScale: xScale
+
+                                Behavior on xScale {
+                                    NumberAnimation {
+                                        duration: root.drawerOpen ? 320 : 200
+                                        easing.type: Easing.BezierSpline
+                                        easing.bezierCurve: root.sheetCurve
+                                    }
+                                }
+                            },
+                            Translate {
+                                y: root.drawerOpen ? 0 : -20
+
+                                Behavior on y {
+                                    NumberAnimation {
+                                        duration: root.drawerOpen ? 320 : 200
+                                        easing.type: Easing.BezierSpline
+                                        easing.bezierCurve: root.sheetCurve
+                                    }
+                                }
+                            }
+                        ]
+
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.topMargin: 6
+                            radius: 24
+                            color: Qt.rgba(root.accentDeep.r, root.accentDeep.g, root.accentDeep.b, 0.12)
+                        }
+
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: 22
+                            color: root.canvas
+                            border.color: root.line
+                            border.width: 1
+
+                            MouseArea {
+                                anchors.fill: parent
+                            }
+                        }
+
+                        ScrollView {
+                            id: drawerScroll
+                            objectName: "drawerScroll"
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            clip: true
+                            // Bound vector-icon painting to the scroll viewport
+                            // as well; some Shape renderers ignore ancestor clips.
+                            layer.enabled: drawerGrid.implicitHeight > height
+                            contentWidth: availableWidth
+                            contentHeight: drawerGrid.implicitHeight
+                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                            GridLayout {
+                                id: drawerGrid
+                                objectName: "drawerGrid"
+                                width: drawerScroll.availableWidth
+                                columns: drawer.gridColumns
+                                rowSpacing: 10
+                                columnSpacing: 10
+
+                                ColumnLayout {
+                                    Layout.preferredWidth: 196
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 312
+                                    Layout.fillHeight: true
+                                    spacing: 10
+
+                                    // Where you are: project, thread, branch, git.
+                                    DashCard {
+                                        objectName: "workspaceCard"
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: whereColumn.implicitHeight + 26
+                                        order: 0
+
+                                        ColumnLayout {
+                                            id: whereColumn
+
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            anchors.top: parent.top
+                                            spacing: 4
+
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: root.workspace && root.workspace.projectTitle ? root.workspace.projectTitle : qsTr("No thread open")
+                                                color: root.ink
+                                                elide: Text.ElideRight
+                                                font.family: Theme.fontUi
+                                                font.pixelSize: 14
+                                                font.weight: Font.Bold
+                                            }
+
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: root.workspace ? root.workspace.threadTitle : qsTr("Pick one in the sidebar")
+                                                color: root.muted
+                                                elide: Text.ElideRight
+                                                font.family: Theme.fontUi
+                                                font.pixelSize: 11
+                                            }
+
+                                            Flow {
+                                                Layout.fillWidth: true
+                                                Layout.topMargin: 4
+                                                spacing: 6
+
+                                                Chip {
+                                                    objectName: "branchChip"
+                                                    visible: root.workspace !== null && root.workspace.branch !== null
+                                                    kind: "git-branch"
+                                                    text: root.workspace && root.workspace.branch ? root.workspace.branch : ""
+                                                }
+
+                                                Chip {
+                                                    visible: root.git !== null && root.git.hasUpstream && (root.git.aheadCount > 0 || root.git.behindCount > 0)
+                                                    text: root.git ? "↑%1 ↓%2".arg(root.git.aheadCount).arg(root.git.behindCount) : ""
+                                                    tint: root.warm
+                                                }
+
+                                                Chip {
+                                                    visible: root.git !== null && root.git.hasWorkingTreeChanges
+                                                    kind: "file-diff"
+                                                    text: qsTr("Edits")
+                                                    tint: root.leaf
+                                                }
+
+                                                Chip {
+                                                    visible: root.git !== null && root.git.pullRequest !== null
+                                                    kind: "git-pull-request"
+                                                    text: root.git && root.git.pullRequest ? "#" + root.git.pullRequest.number : ""
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Today, in the big numerals the rail deserves.
+                                    DashCard {
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        order: 1
+
+                                        ColumnLayout {
+                                            anchors.centerIn: parent
+                                            spacing: 0
+
+                                            Text {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                text: Qt.formatDate(root.now, "dd")
+                                                color: root.accentDeep
+                                                font.family: Theme.fontUi
+                                                font.pixelSize: 44
+                                                font.weight: Font.Bold
+                                                font.letterSpacing: -1
+                                                lineHeight: 0.9
+                                            }
+
+                                            Row {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                spacing: 4
+
+                                                Repeater {
+                                                    model: 3
+
+                                                    Rectangle {
+                                                        width: 4
+                                                        height: 4
+                                                        radius: 2
+                                                        color: root.accent
+                                                    }
+                                                }
+                                            }
+
+                                            Text {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                text: Qt.formatDate(root.now, "MM")
+                                                color: root.accentDeep
+                                                font.family: Theme.fontUi
+                                                font.pixelSize: 44
+                                                font.weight: Font.Bold
+                                                font.letterSpacing: -1
+                                                lineHeight: 0.9
+                                            }
+
+                                            Text {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                Layout.topMargin: 6
+                                                text: qsTr("%1, wk %2").arg(Qt.formatDate(root.now, "ddd")).arg(root.isoWeek(root.now))
+                                                color: root.muted
+                                                font.family: Theme.fontUi
+                                                font.pixelSize: 11
+                                                font.weight: Font.Medium
+                                            }
+
+                                            Text {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                Layout.topMargin: 2
+                                                text: Qt.formatTime(root.now, "HH:mm")
+                                                color: root.ink
+                                                font.family: Theme.fontMono
+                                                font.pixelSize: 12
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // The month, today circled.
+                                DashCard {
+                                    objectName: "calendarCard"
+                                    Layout.preferredWidth: 280
+                                    Layout.preferredHeight: 312
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    order: 2
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        spacing: 6
+
+                                        Text {
+                                            Layout.alignment: Qt.AlignHCenter
+                                            text: Qt.formatDate(root.now, "MMMM yyyy")
+                                            color: root.accentDeep
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 12
+                                            font.weight: Font.Bold
+                                            font.letterSpacing: 0.4
+                                        }
+
+                                        GridLayout {
+                                            Layout.fillWidth: true
+                                            Layout.fillHeight: true
+                                            columns: 7
+                                            rowSpacing: 0
+                                            columnSpacing: 0
+
+                                            Repeater {
+                                                model: 7
+
+                                                Text {
+                                                    required property int index
+
+                                                    Layout.fillWidth: true
+                                                    text: Qt.locale().dayName(index === 6 ? 7 : index + 1, Locale.ShortFormat)
+                                                    color: root.accentDeep
+                                                    horizontalAlignment: Text.AlignHCenter
+                                                    font.family: Theme.fontUi
+                                                    font.pixelSize: 10
+                                                    font.weight: Font.DemiBold
+                                                }
+                                            }
+
+                                            Repeater {
+                                                model: root.calendarCells
+
+                                                Item {
+                                                    required property var modelData
+
+                                                    Layout.fillWidth: true
+                                                    Layout.fillHeight: true
+
+                                                    Rectangle {
+                                                        anchors.centerIn: parent
+                                                        width: 24
+                                                        height: 24
+                                                        radius: 12
+                                                        color: root.accent
+                                                        visible: parent.modelData.today
+                                                    }
+
+                                                    Text {
+                                                        anchors.centerIn: parent
+                                                        text: parent.modelData.day
+                                                        color: parent.modelData.today ? root.accentInk : parent.modelData.inMonth ? root.ink : root.line
+                                                        font.family: Theme.fontUi
+                                                        font.pixelSize: 11
+                                                        font.weight: parent.modelData.today ? Font.Bold : Font.Medium
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Thread meters: what is moving, what is waiting on you.
+                                DashCard {
+                                    objectName: "metersCard"
+                                    Layout.preferredWidth: 208
+                                    Layout.preferredHeight: 312
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    order: 3
+
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.topMargin: 4
+                                        spacing: 4
+
+                                        Meter {
+                                            Layout.fillWidth: true
+                                            Layout.fillHeight: true
+                                            label: qsTr("Active")
+                                            order: 0
+                                            value: root.threadCount
+                                            peak: root.meterPeak
+                                            tint: root.accent
+                                        }
+
+                                        Meter {
+                                            Layout.fillWidth: true
+                                            Layout.fillHeight: true
+                                            label: qsTr("Waiting")
+                                            order: 1
+                                            value: root.attentionCount
+                                            peak: Math.max(1, root.attentionCount)
+                                            tint: root.warm
+                                        }
+
+                                        Meter {
+                                            Layout.fillWidth: true
+                                            Layout.fillHeight: true
+                                            label: qsTr("Snoozed")
+                                            order: 2
+                                            value: root.sidebarState ? root.sidebarState.snoozed.length : 0
+                                            peak: root.meterPeak
+                                            tint: root.muted
+                                        }
+
+                                        Meter {
+                                            Layout.fillWidth: true
+                                            Layout.fillHeight: true
+                                            label: qsTr("Settled")
+                                            order: 3
+                                            value: root.sidebarState ? root.sidebarState.settledTotal : 0
+                                            peak: root.meterPeak
+                                            tint: root.leaf
+                                        }
+                                    }
+                                }
+
+                                // The agent behind the composer, and its transport controls.
+                                DashCard {
+                                    objectName: "agentCard"
+                                    Layout.preferredWidth: 200
+                                    Layout.preferredHeight: 312
+                                    Layout.minimumWidth: 160
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    order: 4
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        spacing: 6
+
+                                        // The cat at play while the drawer is up; the agent's
+                                        // initial when Qt Lottie is not installed.
+                                        Item {
+                                            id: mascot
+
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: cat.status === Loader.Ready && cat.item ? cat.item.implicitHeight : 84
+
+                                            Loader {
+                                                id: cat
+
+                                                anchors.fill: parent
+                                                active: drawer.visible
+                                                source: "CatPlaying.qml"
+                                            }
+
+                                            Item {
+                                                anchors.centerIn: parent
+                                                width: 84
+                                                height: 84
+                                                visible: cat.status !== Loader.Ready
+
+                                                Rectangle {
+                                                    anchors.fill: parent
+                                                    radius: 42
+                                                    color: root.accentSoft
+                                                }
+
+                                                Rectangle {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 5
+                                                    radius: 37
+                                                    color: root.raised
+
+                                                    Text {
+                                                        anchors.centerIn: parent
+                                                        text: root.instance ? root.initialOf(root.instance.displayName) : "T3"
+                                                        color: root.accentDeep
+                                                        font.family: Theme.fontUi
+                                                        font.pixelSize: 30
+                                                        font.weight: Font.Bold
+                                                    }
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                anchors.right: parent.right
+                                                anchors.bottom: parent.bottom
+                                                width: 18
+                                                height: 18
+                                                radius: 9
+                                                color: root.card
+                                                border.color: root.line
+                                                border.width: 1
+
+                                                Rectangle {
+                                                    anchors.centerIn: parent
+                                                    width: 10
+                                                    height: 10
+                                                    radius: 5
+                                                    color: root.attentionCount > 0 ? root.warm : root.composerReady && root.composerState.isRunning ? root.accent : root.leaf
+
+                                                    Behavior on color {
+                                                        ColorAnimation {
+                                                            duration: 160
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            Layout.topMargin: 4
+                                            text: root.composerReady && root.composerState.selectedModel ? root.composerState.selectedModel : qsTr("No model picked")
+                                            color: root.accent
+                                            horizontalAlignment: Text.AlignHCenter
+                                            elide: Text.ElideMiddle
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 13
+                                            font.weight: Font.Bold
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: root.instance ? root.instance.displayName : qsTr("Open a thread to pick an agent")
+                                            color: root.ink
+                                            horizontalAlignment: Text.AlignHCenter
+                                            elide: Text.ElideRight
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 11
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: {
+                                                if (!root.composerReady) {
+                                                    return "";
+                                                }
+                                                if (root.attentionCount > 0) {
+                                                    return qsTr("%n request(s) waiting on you", "", root.attentionCount);
+                                                }
+                                                if (root.composerState.isRunning) {
+                                                    return qsTr("Working");
+                                                }
+                                                return root.composerState.runtimeMode.length > 0 ? root.composerState.runtimeMode : qsTr("Ready");
+                                            }
+                                            color: root.attentionCount > 0 ? root.warm : root.muted
+                                            horizontalAlignment: Text.AlignHCenter
+                                            elide: Text.ElideRight
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 11
+                                            font.weight: Font.Medium
+                                        }
+
+                                        Item {
+                                            Layout.fillHeight: true
+                                        }
+
+                                        RowLayout {
+                                            objectName: "agentActions"
+                                            Layout.alignment: Qt.AlignHCenter
+                                            spacing: 10
+
+                                            RailButton {
+                                                round: true
+                                                kind: "plus"
+                                                text: qsTr("New thread")
+                                                enabled: root.workspace !== null
+                                                opacity: enabled ? 1 : 0.4
+                                                onClicked: {
+                                                    Shell.dispatch("workspace.newThread");
+                                                    root.drawerOpen = false;
+                                                }
+                                            }
+
+                                            RailButton {
+                                                round: true
+                                                kind: "square"
+                                                text: qsTr("Stop the agent")
+                                                active: true
+                                                enabled: root.composerReady && root.composerState.isRunning
+                                                opacity: enabled ? 1 : 0.4
+                                                onClicked: Shell.dispatch("composer.interrupt")
+                                            }
+
+                                            RailButton {
+                                                round: true
+                                                kind: "code"
+                                                text: qsTr("Open in editor")
+                                                enabled: root.workspace !== null && root.workspace.editors.length > 0
+                                                opacity: enabled ? 1 : 0.4
+                                                onClicked: Shell.dispatch("workspace.openInEditor", {})
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // The composer draws its own card, so it floats on the floor
+                // between the page and the terminal like the page's does.
+                Composer {
+                    id: composer
+
+                    Layout.fillWidth: true
+                    visible: ready
+                    color: "transparent"
+                }
+
+                ShellCard {
+                    id: terminalCard
+
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: terminal.implicitHeight
+                    visible: terminal.open
+
+                    TerminalDrawer {
+                        id: terminal
+
+                        anchors.fill: parent
+                        radius: terminalCard.radius - terminalCard.border.width
+                    }
+                }
+            }
+
+            ShellCard {
+                id: panelCard
+
+                Layout.preferredWidth: panel.implicitWidth
+                Layout.fillHeight: true
+                visible: panel.available && panel.open
+
+                RightPanel {
+                    id: panel
+
+                    anchors.fill: parent
+                    color: "transparent"
+                    radius: panelCard.radius - panelCard.border.width
+                }
+            }
+        }
+    }
+
+    Notifications {
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        anchors.margins: 24
+    }
+}

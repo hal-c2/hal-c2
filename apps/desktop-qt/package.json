@@ -1,0 +1,18 @@
+{
+  "name": "@t3tools/desktop-qt",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:qt": "node scripts/dev-qt.mjs --configure-only",
+    "build:qt:release": "node scripts/dev-qt.mjs --configure-only --release",
+    "dev": "node scripts/dev-qt.mjs",
+    "test": "vp test run --passWithNoTests",
+    "test:qml": "node scripts/test-qml.mjs",
+    "theme:terminal": "node scripts/theme-from-terminal.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

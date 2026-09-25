@@ -1,0 +1,270 @@
+#include <QCommandLineParser>
+#include <QDir>
+#include <QJsonDocument>
+#include <QGuiApplication>
+#include <QProcessEnvironment>
+#include <QQmlEngine>
+#include <QQuickWebEngineProfile>
+#include <QStandardPaths>
+#include <QTimer>
+#include <QtLogging>
+#include <QtWebEngineQuick/qtwebenginequickglobal.h>
+
+#include "BackendProcess.h"
+#include "LocalFolderModel.h"
+#include "LocalTranscriber.h"
+#include "NativeNotifications.h"
+#include "ShellBridge.h"
+#include "ShellRuntime.h"
+#include "ThemeStore.h"
+#include "WebProfile.h"
+
+namespace {
+
+// T3 home, resolved the way the dev runner resolves it: `--home-dir`, then
+// T3CODE_HOME, then ~/.t3. The rice and browser profile live beside the
+// server's state, so a sandboxed home carries the whole app.
+QString resolveHomeDir(const QString& override) {
+  if (!override.trimmed().isEmpty()) {
+    return QDir(override).absolutePath();
+  }
+  const QString fromEnv =
+      QProcessEnvironment::systemEnvironment().value(QStringLiteral("T3CODE_HOME"));
+  return fromEnv.isEmpty() ? QDir::home().filePath(QStringLiteral(".t3"))
+                           : QDir(fromEnv).absolutePath();
+}
+
+QString resolveConfigDir(const QString& override, const QString& homeDir) {
+  if (!override.isEmpty()) {
+    return QDir(override).absolutePath();
+  }
+  return QDir(homeDir).absoluteFilePath(QStringLiteral("shell"));
+}
+
+QString resolveQmlSourceDir(const QString& override) {
+  if (!override.isNull()) {
+    return override;
+  }
+  const QString fromEnv =
+      QProcessEnvironment::systemEnvironment().value(QStringLiteral("T3CODE_QML_DIR"));
+  if (!fromEnv.isEmpty()) {
+    return fromEnv;
+  }
+  return QStringLiteral(T3_QML_SOURCE_DIR);
+}
+
+QString resolveDefaultHostEntry() {
+  const QString configured = QStringLiteral(T3_HOST_ENTRY);
+  return QDir::isAbsolutePath(configured)
+             ? configured
+             : QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(configured);
+}
+
+QString resolveDefaultNodeExecutable() {
+  const QString fromEnv =
+      QProcessEnvironment::systemEnvironment().value(QStringLiteral("T3CODE_NODE"));
+  if (!fromEnv.isEmpty()) {
+    return fromEnv;
+  }
+  const QString configured = QStringLiteral(T3_NODE_ENTRY);
+  if (QDir::isAbsolutePath(configured)) {
+    return configured;
+  }
+  if (configured.contains(QLatin1Char('/')) || configured.contains(QLatin1Char('\\'))) {
+    return QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(configured);
+  }
+  return configured;
+}
+
+}  // namespace
+
+int main(int argc, char* argv[]) {
+  QCoreApplication::setOrganizationName(QStringLiteral("T3 Tools"));
+  QCoreApplication::setOrganizationDomain(QStringLiteral("t3.codes"));
+  QCoreApplication::setApplicationName(QStringLiteral("t3code"));
+  QCoreApplication::setApplicationVersion(QStringLiteral(T3_APP_VERSION));
+  // Stable app id so compositor rules (blur, opacity, workspace) can target it.
+  QGuiApplication::setDesktopFileName(QStringLiteral("t3code"));
+
+  // Chromium's classic scrollbars paint a thumb in the page's scrollbar
+  // gutters; overlay scrollbars match what the app expects from browsers.
+  if (!qEnvironmentVariableIsSet("QTWEBENGINE_CHROMIUM_FLAGS")) {
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--enable-features=OverlayScrollbar");
+  }
+  QtWebEngineQuick::initialize();
+  QGuiApplication app(argc, argv);
+
+  QCommandLineParser parser;
+  parser.setApplicationDescription(QStringLiteral("T3 Code Qt shell"));
+  parser.addHelpOption();
+  parser.addVersionOption();
+  const QCommandLineOption urlOption(
+      QStringLiteral("url"),
+      QStringLiteral("Load this URL instead of spawning the desktop host (dev attach mode)."),
+      QStringLiteral("url"));
+  const QCommandLineOption configDirOption(
+      QStringLiteral("config-dir"),
+      QStringLiteral("Directory holding shell.qml, theme.json and qml/ (default $T3CODE_HOME/shell, i.e. ~/.t3/shell)."),
+      QStringLiteral("dir"));
+  const QCommandLineOption appIdOption(
+      QStringLiteral("app-id"),
+      QStringLiteral("Desktop application identity for this launch profile (default: t3code)."),
+      QStringLiteral("id"));
+  const QCommandLineOption localFolderImportOption(
+      QStringLiteral("allow-local-folder-import"),
+      QStringLiteral("Allow local folder import for an attached URL known to use this machine's filesystem."));
+  const QCommandLineOption homeDirOption(
+      QStringLiteral("home-dir"),
+      QStringLiteral("T3 Code data directory for the shell profile, rice and server."),
+      QStringLiteral("dir"));
+  const QCommandLineOption qmlDirOption(
+      QStringLiteral("qml-dir"),
+      QStringLiteral("Load the built-in bricks from this directory instead of the binary."),
+      QStringLiteral("dir"));
+  const QCommandLineOption hostEntryOption(
+      QStringLiteral("host-entry"), QStringLiteral("Path to the Node desktop host entry."),
+      QStringLiteral("file"), resolveDefaultHostEntry());
+  const QCommandLineOption nodeOption(
+      QStringLiteral("node"), QStringLiteral("Node executable used to run the desktop host."),
+      QStringLiteral("path"), resolveDefaultNodeExecutable());
+  const QCommandLineOption screenshotOption(
+      QStringLiteral("screenshot"),
+      QStringLiteral("Write a PNG of the window once the page has loaded, then quit."),
+      QStringLiteral("file"));
+  const QCommandLineOption actionOption(
+      QStringLiteral("action"),
+      QStringLiteral("Dispatch a shell action after the page loads, e.g. rightPanel.toggle. "
+                     "Repeatable; runs in order."),
+      QStringLiteral("name[=json]"));
+  const QCommandLineOption keyOption(
+      QStringLiteral("key"),
+      QStringLiteral("Press a key chord after the page loads, e.g. Ctrl+1 (portable QKeySequence "
+                     "names). Repeatable; runs in command-line order together with --action."),
+      QStringLiteral("chord"));
+  parser.addOptions({urlOption, configDirOption, homeDirOption, qmlDirOption, hostEntryOption,
+                     nodeOption, screenshotOption, actionOption, keyOption, localFolderImportOption,
+                     appIdOption});
+  parser.process(app);
+  if (parser.isSet(appIdOption) && !parser.value(appIdOption).trimmed().isEmpty()) {
+    QGuiApplication::setDesktopFileName(parser.value(appIdOption).trimmed());
+  }
+
+  const QString homeDir = resolveHomeDir(parser.value(homeDirOption));
+  const QString configDir = resolveConfigDir(parser.value(configDirOption), homeDir);
+  const QString qmlSourceDir =
+      resolveQmlSourceDir(parser.isSet(qmlDirOption) ? parser.value(qmlDirOption) : QString());
+  qInfo().noquote() << "[shell] config dir:" << configDir;
+  if (!qmlSourceDir.isEmpty()) {
+    qInfo().noquote() << "[shell] bricks from disk:" << qmlSourceDir;
+  }
+
+  // Configured before any engine exists so the first page already lands on it.
+  WebProfile webProfile(QDir(homeDir).filePath(QStringLiteral("userdata/shell-web")));
+  qmlRegisterSingletonInstance("T3.Shell", 1, 0, "WebProfile", webProfile.profile());
+
+  ShellBridge bridge;
+  bridge.setLocalFolderImportEnabled(!parser.isSet(urlOption) || parser.isSet(localFolderImportOption));
+  qmlRegisterType<NativeNotifications>("T3.Shell", 1, 0, "NativeNotifications");
+  qmlRegisterType<LocalTranscriber>("T3.Shell", 1, 0, "LocalTranscriber");
+  qmlRegisterType<LocalFolderModel>("T3.Shell", 1, 0, "LocalFolderModel");
+  ThemeStore theme(configDir);
+  ShellRuntime runtime({configDir, qmlSourceDir}, &bridge, &theme);
+  // The page publishes its resolved theme; without a theme.json it is the
+  // shell's palette.
+  QObject::connect(&bridge, &ShellBridge::stateEntryChanged, &theme,
+                   [&theme](const QString& key, const QVariant& value) {
+                     if (key == QStringLiteral("theme")) {
+                       theme.applyPageTheme(value);
+                     }
+                   });
+
+  BackendProcess::Options backendOptions;
+  backendOptions.nodeExecutable = parser.value(nodeOption);
+  backendOptions.hostEntry = parser.value(hostEntryOption);
+  backendOptions.hostArguments = parser.positionalArguments();
+  if (parser.isSet(homeDirOption)) {
+    backendOptions.hostArguments.prepend(QStringLiteral("--base-dir=%1").arg(homeDir));
+  }
+  BackendProcess backend(backendOptions);
+  QObject::connect(&backend, &BackendProcess::ready, &bridge, &ShellBridge::setPageUrl);
+  QObject::connect(&backend, &BackendProcess::failed, &bridge, [&bridge](const QString& message) {
+    qCritical().noquote() << "[shell]" << message;
+    bridge.publish(QStringLiteral("backendError"), message);
+  });
+  QObject::connect(&app, &QCoreApplication::aboutToQuit, &backend, &BackendProcess::stop);
+
+  if (parser.isSet(urlOption)) {
+    bridge.setPageUrl(QUrl::fromUserInput(parser.value(urlOption)));
+  } else {
+    backend.start();
+  }
+
+  // Scripted runs: replay --action and --key steps in command-line order once
+  // the page is up, then optionally grab the window and quit. Only the first
+  // load triggers this.
+  struct ScriptedStep {
+    bool isKey;
+    QString spec;
+  };
+  QList<ScriptedStep> scriptedSteps;
+  {
+    QStringList actions = parser.values(actionOption);
+    QStringList keys = parser.values(keyOption);
+    for (const QString& name : parser.optionNames()) {
+      if (name == QStringLiteral("action")) {
+        scriptedSteps.append({false, actions.takeFirst()});
+      } else if (name == QStringLiteral("key")) {
+        scriptedSteps.append({true, keys.takeFirst()});
+      }
+    }
+  }
+  const bool screenshotRequested = parser.isSet(screenshotOption);
+  if (!scriptedSteps.isEmpty() || screenshotRequested) {
+    const QString target = parser.value(screenshotOption);
+    QObject::connect(&bridge, &ShellBridge::pageLoaded, &runtime,
+                     [&runtime, &bridge, &app, target, scriptedSteps,
+                      screenshotRequested](bool ok) {
+                       if (!ok) {
+                         qWarning().noquote() << "[shell] page failed to load; scripted run aborted";
+                         if (screenshotRequested) {
+                           app.exit(2);
+                         }
+                         return;
+                       }
+                       int delay = 1500;
+                       for (const ScriptedStep& step : scriptedSteps) {
+                         if (step.isKey) {
+                           QTimer::singleShot(delay, &runtime, [&runtime, step] {
+                             qInfo().noquote() << "[shell] scripted key" << step.spec;
+                             runtime.pressKey(step.spec);
+                           });
+                           delay += 1500;
+                           continue;
+                         }
+                         const QString spec = step.spec;
+                         QTimer::singleShot(delay, &bridge, [&bridge, spec] {
+                           const int eq = spec.indexOf(QLatin1Char('='));
+                           const QString name = eq < 0 ? spec : spec.left(eq);
+                           QVariant payload;
+                           if (eq >= 0) {
+                             payload = QJsonDocument::fromJson(spec.mid(eq + 1).toUtf8())
+                                           .toVariant();
+                           }
+                           qInfo().noquote() << "[shell] scripted action" << name;
+                           bridge.dispatch(name, payload);
+                         });
+                         delay += 1500;
+                       }
+                       if (screenshotRequested) {
+                         QTimer::singleShot(delay + 1500, &runtime, [&runtime, &app, target] {
+                           const bool ok = runtime.captureWindow(target);
+                           app.exit(ok ? 0 : 2);
+                         });
+                       }
+                     },
+                     Qt::SingleShotConnection);
+  }
+
+  runtime.start();
+  return app.exec();
+}

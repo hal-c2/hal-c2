@@ -856,6 +856,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     inset-inline-end: var(--thread-details-panel-inset);
   }
 
+  /* Hosted by the Qt shell with nothing left to show, the composer frame
+     collapses so only the branch strip below it remains. */
+  [data-chat-composer-shell-empty="true"] {
+    display: none;
+  }
+
   .settings-slider {
     --settings-slider-progress: 0%;
     --settings-slider-fill-offset: 0.5rem;
@@ -1626,6 +1632,34 @@ body {
   background-image: var(--surface-grain);
   background-repeat: repeat;
   background-size: var(--surface-grain-size);
+}
+
+/* Hosted by the Qt shell inside a rounded card (WebSurface.radius): the shell
+   paints the card and passes its inner radius, the document stays transparent
+   (index.html), and the app clips itself to the curve. Backdrop and grain move
+   to #root, the box the clip covers. */
+html[data-shell-surface-radius] #root {
+  contain: paint;
+  overflow: hidden;
+  border-radius: var(--app-shell-surface-radius);
+  background-color: var(--app-chrome-background);
+  background-image: var(--surface-grain);
+  background-repeat: repeat;
+  background-size: var(--surface-grain-size);
+}
+
+/* The native host can put wallpaper behind this document. Clear only the
+   chat's backdrop layers; message, code, menu and settings surfaces keep
+   their theme colors. */
+html[data-shell-surface-transparent],
+html[data-shell-surface-transparent] body {
+  background: transparent !important;
+}
+
+html[data-shell-surface-transparent] #root,
+html[data-shell-surface-transparent] [data-slot="sidebar-inset"]:has([data-shell-chat-canvas]),
+html[data-shell-surface-transparent] [data-shell-chat-canvas] {
+  background-color: transparent;
 }
 
 pre,

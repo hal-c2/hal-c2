@@ -1,10 +1,6 @@
 import { type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
 import { ChevronDownIcon } from "lucide-react";
 import {
   memo,
@@ -18,11 +14,9 @@ import {
 } from "react";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { toastManager } from "../ui/toast";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
+import { useRenameThread } from "../../hooks/useRenameThread";
 import { readLocalApi } from "~/localApi";
-import { threadEnvironment } from "../../state/threads";
-import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
   WorkspaceBreadcrumb,
@@ -33,6 +27,11 @@ import {
 import { cn } from "~/lib/utils";
 
 interface ChatHeaderProps {
+  /** Hosted by the Qt shell: the breadcrumb lives in native chrome. */
+  shellHosted?: boolean;
+  /** Window-coordinate request from the shell to open the thread's action menu. */
+  shellMenuRequest?: { x: number; y: number; seq: number } | null;
+  onShellRenameRequested?: () => void;
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   activeThreadTitle: string;
@@ -44,20 +43,6 @@ interface ChatHeaderProps {
   onOpenProjectSettings?: (() => void) | undefined;
 }
 
-/**
- * Rename commit rule shared with the sidebar's inline rename: trim, reject
- * empty (the caller toasts), and skip the mutation when nothing changed.
- */
-export function resolveRenameCommit(input: {
-  readonly title: string;
-  readonly originalTitle: string;
-}): { action: "commit"; title: string } | { action: "reject-empty" } | { action: "noop" } {
-  const trimmed = input.title.trim();
-  if (trimmed.length === 0) return { action: "reject-empty" };
-  if (trimmed === input.originalTitle) return { action: "noop" };
-  return { action: "commit", title: trimmed };
-}
-
 // How long a click on the thread title waits before opening the action menu,
 // so a double-click-to-rename can cancel it first. Only the native desktop
 // menu needs this: it swallows input while open, so the wait must cover the
@@ -66,6 +51,9 @@ export function resolveRenameCommit(input: {
 // opens immediately.
 const TITLE_MENU_OPEN_DELAY_MS = 500;
 export const ChatHeader = memo(function ChatHeader({
+  shellHosted = false,
+  shellMenuRequest = null,
+  onShellRenameRequested,
   activeThreadEnvironmentId,
   activeThreadId,
   activeThreadTitle,
@@ -81,9 +69,6 @@ export const ChatHeader = memo(function ChatHeader({
     () => scopeThreadRef(activeThreadEnvironmentId, activeThreadId),
     [activeThreadEnvironmentId, activeThreadId],
   );
-  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
-    reportFailure: false,
-  });
   // Inline rename, keyed by thread: navigating away drops an in-progress
   // rename instead of committing stale text. Cleared on thread change (not
   // just hidden) so returning to the thread doesn't revive the old draft.
@@ -101,37 +86,34 @@ export const ChatHeader = memo(function ChatHeader({
   const renamingTitle = renaming?.threadId === activeThreadId ? renaming.title : null;
   const renameCommittedRef = useRef(false);
   const startRename = useCallback(() => {
+    if (shellHosted) {
+      onShellRenameRequested?.();
+      return;
+    }
     renameCommittedRef.current = false;
     setRenaming({
       threadId: activeThreadId,
       environmentId: activeThreadEnvironmentId,
       title: activeThreadTitle,
     });
-  }, [activeThreadEnvironmentId, activeThreadId, activeThreadTitle]);
+  }, [
+    activeThreadEnvironmentId,
+    activeThreadId,
+    activeThreadTitle,
+    onShellRenameRequested,
+    shellHosted,
+  ]);
+  const renameThread = useRenameThread({
+    environmentId: activeThreadEnvironmentId,
+    threadId: activeThreadId,
+    currentTitle: activeThreadTitle,
+  });
   const commitRename = useCallback(
     (title: string) => {
       setRenaming(null);
-      const resolution = resolveRenameCommit({ title, originalTitle: activeThreadTitle });
-      if (resolution.action === "reject-empty") {
-        toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
-        return;
-      }
-      if (resolution.action === "noop") return;
-      void updateThreadMetadata({
-        environmentId: activeThreadEnvironmentId,
-        input: { threadId: activeThreadId, title: resolution.title },
-      }).then((result) => {
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add({
-            type: "error",
-            title: "Failed to rename thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          });
-        }
-      });
+      renameThread(title);
     },
-    [activeThreadEnvironmentId, activeThreadId, activeThreadTitle, updateThreadMetadata],
+    [renameThread],
   );
   const { openMenu, closeMenu } = useThreadActionMenu({
     threadRef: isServerThread ? activeThreadRef : null,
@@ -192,6 +174,17 @@ export const ChatHeader = memo(function ChatHeader({
     },
     [cancelPendingTitleMenu, closeMenu, startRename],
   );
+  // Native title clicks arrive as window coordinates; the shell renders the
+  // menu at the window level for the "shell" surface. Keyed on the request
+  // alone: openMenu changes identity on rename and PR polling, which must
+  // not re-open the menu.
+  const openMenuRef = useRef(openMenu);
+  openMenuRef.current = openMenu;
+  useEffect(() => {
+    if (!shellHosted || shellMenuRequest === null) return;
+    openMenuRef.current({ x: shellMenuRequest.x, y: shellMenuRequest.y, surface: "shell" });
+  }, [shellHosted, shellMenuRequest]);
+
   const handleHeaderContextMenu = useCallback(
     (event: ReactMouseEvent) => {
       if (renamingTitle !== null) return;
@@ -238,7 +231,10 @@ export const ChatHeader = memo(function ChatHeader({
     >
       <WorkspaceBreadcrumb
         ariaLabel="Thread breadcrumb"
-        className="flex-1 overflow-clip [overflow-clip-margin:2px]"
+        className={cn(
+          "flex-1 overflow-clip [overflow-clip-margin:2px]",
+          shellHosted && "invisible",
+        )}
       >
         {/* The project always leads the header: knowing which project a
             thread lives in is priority zero, and the thread title alone

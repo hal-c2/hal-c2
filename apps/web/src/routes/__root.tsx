@@ -44,10 +44,17 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
+import { isT3Shell, isT3ShellEmbed } from "../env";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
+import {
+  ShellSettingsBridge,
+  ShellThemeBridge,
+  ShellToastBridge,
+  T3ShellBridge,
+} from "../shell/lazy";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,
@@ -194,6 +201,25 @@ function RootRouteView() {
     );
   }
 
+  // The shell's embed documents skip the app chrome but keep the providers
+  // the panel content relies on (toasts, confirms, appearance sync, events).
+  if (isT3ShellEmbed && pathname.startsWith("/embed/")) {
+    return (
+      <ToastProvider>
+        <AnchoredToastProvider>
+          <DocumentTitleSync />
+          <ContrastAppearanceSync />
+          <GlassAppearanceSync />
+          <FontAppearanceSync />
+          <ShellThemeBridge publishToShell={false} />
+          <ConfirmDialogHost />
+          {primaryEnvironmentAuthenticated ? <EventRouter skipInitialBootstrapNavigation /> : null}
+          <Outlet />
+        </AnchoredToastProvider>
+      </ToastProvider>
+    );
+  }
+
   const appShell = (
     <CommandPalette>
       <AppSidebarLayout>
@@ -207,7 +233,7 @@ function RootRouteView() {
   // decision is known, so a fresh install renders nothing (not the shell,
   // not a flash of threads) before landing on the welcome wizard.
   return (
-    <ToastProvider>
+    <ToastProvider shellMirror={isT3Shell ? <ShellToastBridge /> : undefined}>
       <AnchoredToastProvider>
         <DocumentTitleSync />
         <ContrastAppearanceSync />
@@ -235,6 +261,9 @@ function RootRouteView() {
             <EventRouter skipInitialBootstrapNavigation={returningFromWelcomeRef.current} />
           ) : null}
           {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
+          {isT3Shell ? <T3ShellBridge /> : null}
+          {isT3Shell ? <ShellSettingsBridge /> : null}
+          {isT3Shell ? <ShellThemeBridge /> : null}
           {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
           {appShell}
           {/* Above the router: a theme draft is judged by walking the app, so the
