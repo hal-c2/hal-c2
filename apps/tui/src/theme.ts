@@ -1,5 +1,5 @@
 import { RGBA, SyntaxStyle } from "@opentui/core";
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import type { TuiThreadShell as OrchestrationThreadShell } from "./orchestrationV2Adapter.ts";
 
 /**
  * Shared visual vocabulary for the TUI, mirroring the web sidebar's status pills

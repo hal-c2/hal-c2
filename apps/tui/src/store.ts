@@ -1,12 +1,6 @@
-import type {
-  GitStackedAction,
-  OrchestrationShellSnapshot,
-  OrchestrationThread,
-  VcsStatusResult,
-} from "@t3tools/contracts";
+import type { GitStackedAction, OrchestrationThread, VcsStatusResult } from "@t3tools/contracts";
 
-import type { TuiClient } from "./connection.ts";
-import type { EnvironmentThreadPageState } from "@t3tools/client-runtime/state/threads";
+import type { OrchestrationShellSnapshot, TuiClient, TuiThreadPage } from "./connection.ts";
 import { gitActionNeedsCommitMessage } from "./gitActions.logic.ts";
 import {
   buildRows,
@@ -35,7 +29,7 @@ export interface StoreState {
   readonly selection: Selection | null;
   readonly detail: OrchestrationThread | null;
   /** Pagination state for the selected thread's bounded server snapshot. */
-  readonly threadPage: EnvironmentThreadPageState | null;
+  readonly threadPage: TuiThreadPage | null;
   readonly status: string;
   readonly statusKind: StatusKind;
   /** Sidebar filter text; empty = unfiltered. */

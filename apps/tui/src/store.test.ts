@@ -1,17 +1,17 @@
 import { describe, expect, it } from "bun:test";
 
-import type { OrchestrationShellSnapshot, OrchestrationThread } from "@t3tools/contracts";
-import type { EnvironmentThreadPageState } from "@t3tools/client-runtime/state/threads";
-
-import type { TuiClient } from "./connection.ts";
+import type {
+  OrchestrationShellSnapshot,
+  OrchestrationThread,
+  TuiClient,
+  TuiThreadPage,
+} from "./connection.ts";
 import { createStore } from "./store.ts";
 
 /** A fake TuiClient that captures the shell/thread callbacks so the test can drive them. */
 function fakeClient() {
   let onShell: ((s: OrchestrationShellSnapshot) => void) | null = null;
-  let onThread:
-    | ((thread: OrchestrationThread, page: EnvironmentThreadPageState | null) => void)
-    | null = null;
+  let onThread: ((thread: OrchestrationThread, page: TuiThreadPage | null) => void) | null = null;
   const threadSubs: string[] = [];
   const client = {
     subscribeShell: (cb: (s: OrchestrationShellSnapshot) => void) => {
@@ -33,7 +33,7 @@ function fakeClient() {
   return {
     client,
     pushShell: (s: OrchestrationShellSnapshot) => onShell?.(s),
-    pushThread: (thread: OrchestrationThread, page: EnvironmentThreadPageState | null) =>
+    pushThread: (thread: OrchestrationThread, page: TuiThreadPage | null) =>
       onThread?.(thread, page),
     threadSubs,
   };
@@ -77,13 +77,11 @@ describe("createStore", () => {
     store.start();
     f.pushShell(oneProjectTwoThreads);
     f.pushThread({ id: "t1" } as unknown as OrchestrationThread, {
-      beforeCursor: "older",
       hasMore: true,
       loadingOlder: false,
     });
 
     expect(store.getState().threadPage).toEqual({
-      beforeCursor: "older",
       hasMore: true,
       loadingOlder: false,
     });

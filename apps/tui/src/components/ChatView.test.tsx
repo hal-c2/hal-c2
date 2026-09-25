@@ -10,13 +10,12 @@ import * as React from "react";
 
 import {
   DEFAULT_SERVER_SETTINGS,
-  type OrchestrationShellSnapshot,
   type OrchestrationThread,
   type TerminalMetadataStreamEvent,
   type VcsStatusResult,
 } from "@t3tools/contracts";
 
-import type { TuiClient } from "../connection.ts";
+import type { OrchestrationShellSnapshot, TuiClient } from "../connection.ts";
 import { ChatView } from "./ChatView.tsx";
 
 const PNG_BASE64 =
@@ -2106,22 +2105,14 @@ describe("ChatView thread settlement", () => {
     setup.renderer.destroy();
   });
 
-  it("Given a running session, when Settle runs, then it is blocked client-side with an explanation", async () => {
+  it("Given the server rejects a settle, when Settle runs, then the rejection reaches the status line", async () => {
     const settleCalls: string[] = [];
     const fake = fakeClient({
       detail: thread(),
-      shellSnapshot: shell([
-        {
-          id: "t1",
-          projectId: "p1",
-          title: "Thread one",
-          updatedAt: "2026-07-13T00:00:00.000Z",
-          session: { status: "running" },
-        },
-      ] as unknown as OrchestrationShellSnapshot["threads"]),
       getServerConfig: settlementConfig,
       settleThread: async (threadId) => {
         settleCalls.push(String(threadId));
+        throw new Error("thread still needs attention");
       },
     });
     const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
@@ -2130,9 +2121,9 @@ describe("ChatView thread settlement", () => {
     });
     await selectThread(setup, fake.connect);
     await runPaletteCommand(setup, "settle", "Settle thread");
+    await setup.waitFor(() => settleCalls.length === 1);
     // The status line clips to the sidebar width, so match a stable prefix.
-    await setup.waitForFrame((frame) => frame.includes("still needs"));
-    expect(settleCalls).toHaveLength(0);
+    await setup.waitForFrame((frame) => frame.includes("settle failed"));
     setup.renderer.destroy();
   });
 

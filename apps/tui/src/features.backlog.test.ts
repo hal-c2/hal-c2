@@ -74,7 +74,7 @@ const CLIENT_UI_GAPS = [
     serverSources: ["apps/server/src/orchestration/decider.ts"],
     clientSources: [
       { client: "web", path: "apps/web/src/components/Sidebar.tsx" },
-      { client: "mobile", path: "apps/mobile/src/features/threads/use-project-actions.ts" },
+      { client: "mobile", path: "apps/mobile/src/features/threads/NewTaskDraftScreen.tsx" },
     ],
     scenarios: [
       "Given a project is registered, when project actions are opened, then the TUI can rename it or change its default model without altering its workspace identity.",
@@ -166,7 +166,7 @@ const CLIENT_UI_GAPS = [
     clientSources: [
       {
         client: "web",
-        path: "apps/web/src/components/chat/ComposerPendingElementContexts.tsx",
+        path: "apps/web/src/components/contextChipParts.tsx",
       },
       {
         client: "mobile",

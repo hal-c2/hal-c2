@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { getBaseAttributes, MarkdownRenderable, TextAttributes } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import type { TuiThreadShell as OrchestrationThreadShell } from "./orchestrationV2Adapter.ts";
 import {
   ansi,
   createTuiSyntaxStyle,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import type { OrchestrationShellSnapshot, OrchestrationThreadShell } from "@t3tools/contracts";
+import type { TuiThreadShell as OrchestrationThreadShell } from "../orchestrationV2Adapter.ts";
+import type { OrchestrationShellSnapshot } from "../connection.ts";
 import {
   buildRows,
   nextSidebarRefreshAt,

@@ -1,19 +1,14 @@
+import type { TuiThreadShell as OrchestrationThreadShell } from "../orchestrationV2Adapter.ts";
 import {
-  DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
-  type OrchestrationShellSnapshot,
-  type OrchestrationThreadShell,
-} from "@t3tools/contracts";
-import {
-  effectiveSettled,
   effectiveSnoozed,
   QUEUED_TURN_START_GRACE_MS,
-  threadLastActivityAt,
 } from "@t3tools/client-runtime/state/thread-settled";
+
+import type { OrchestrationShellSnapshot } from "../connection.ts";
 
 export const SIDEBAR_SNOOZED_SECTION_ID = "sidebar-v2:snoozed";
 export const SIDEBAR_SETTLED_SECTION_ID = "sidebar-v2:settled";
 export const SIDEBAR_SETTLED_INITIAL_COUNT = 10;
-const DAY_MS = 24 * 60 * 60 * 1_000;
 const MINUTE_MS = 60 * 1_000;
 
 export type SidebarSection = "active" | "snoozed" | "settled";
@@ -92,11 +87,9 @@ export function nextSidebarRefreshAt(
   };
 
   for (const thread of shell.threads) {
+    // Auto-settle is projected by the server, so only snooze wakes and the
+    // queued-turn grace period are clock boundaries here.
     consider(timestampMs(thread.snoozedUntil));
-    const lastActivityAt = threadLastActivityAt(thread);
-    if (lastActivityAt !== null) {
-      consider(timestampMs(lastActivityAt) + DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS * DAY_MS + 1);
-    }
     consider(timestampMs(thread.latestUserMessageAt) + QUEUED_TURN_START_GRACE_MS + 1);
   }
   return next;
@@ -157,16 +150,12 @@ export function buildRows(
   const snoozed: OrchestrationThreadShell[] = [];
   const settled: OrchestrationThreadShell[] = [];
   for (const thread of visibleThreads) {
-    // Snooze is the stronger lifecycle statement and therefore wins when a
-    // thread could otherwise also auto-settle, matching the web UI.
+    // Snooze is the stronger lifecycle statement and therefore wins over a
+    // settled thread, matching the web UI. The server projects settlement,
+    // including auto-settle, into settledOverride.
     if (effectiveSnoozed(thread, { now })) {
       snoozed.push(thread);
-    } else if (
-      effectiveSettled(thread, {
-        now,
-        autoSettleAfterDays: DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
-      })
-    ) {
+    } else if (thread.settledOverride === "settled") {
       settled.push(thread);
     } else {
       active.push(thread);

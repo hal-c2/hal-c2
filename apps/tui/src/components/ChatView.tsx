@@ -2,7 +2,6 @@ import { CliRenderEvents, type ScrollBoxRenderable, type SelectOption } from "@o
 import {
   type ContextMenuItem,
   DEFAULT_SERVER_SETTINGS,
-  DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type GitStackedAction,
   type ModelSelection,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -34,7 +33,6 @@ import {
   findProjectByPath,
   hasTrailingPathSeparator,
 } from "@t3tools/client-runtime/state/projects";
-import { canSettle, effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -197,11 +195,8 @@ export function buildThreadContextMenuItems(input: {
       ? [
           settled
             ? { id: "unsettle" as const, label: "Un-settle thread" }
-            : {
-                id: "settle" as const,
-                label: "Settle thread",
-                disabled: !canSettle(row.thread, { now: new Date().toISOString() }),
-              },
+            : // The server owns the settle rules; a rejection reaches the status line.
+              { id: "settle" as const, label: "Settle thread" },
         ]
       : []),
     {
@@ -1210,7 +1205,8 @@ export function ChatView({
         selectedProjectId ??
         (state.selection?.kind === "thread" ? (detail?.projectId ?? null) : null),
       thread: detail,
-      defaultEnvironmentMode: newThreadSettings.defaultThreadEnvMode,
+      // Null means inherit; without a repository t3.json that resolves to local.
+      defaultEnvironmentMode: newThreadSettings.defaultThreadEnvMode ?? "local",
     });
     setProjectIndex(context.projectIndex);
     const project = projects[context.projectIndex];
@@ -2575,14 +2571,9 @@ export function ChatView({
       });
       if (settlementSupported) {
         // The label mirrors the web context menu: one mutually-exclusive item
-        // driven by the thread's current classification in the sidebar.
+        // driven by the server-projected settlement the sidebar also reads.
         const shellThread = state.shell?.threads.find((row) => row.id === detail.id) ?? null;
-        const settled =
-          shellThread !== null &&
-          effectiveSettled(shellThread, {
-            now: new Date().toISOString(),
-            autoSettleAfterDays: DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
-          });
+        const settled = shellThread?.settledOverride === "settled";
         list.push({
           id: "settle",
           title: settled ? "Un-settle thread" : "Settle thread",
@@ -2596,17 +2587,12 @@ export function ChatView({
                 store.setStatus("Un-settled.", "success");
                 return;
               }
-              // Same pre-flight the web uses: the server would reject these
-              // anyway, but failing fast keeps the feedback in the status line.
-              if (shellThread && !canSettle(shellThread, { now: new Date().toISOString() })) {
-                store.setStatus(
-                  "This thread still needs attention. Resolve or interrupt it first.",
-                  "error",
-                );
-                return;
-              }
-              void client.settleThread(detail.id).catch(() => {});
-              store.setStatus("Settled.", "success");
+              // The server owns the settle rules and rejects a thread that
+              // still needs attention, so report its answer in the status line.
+              void client.settleThread(detail.id).then(
+                () => store.setStatus("Settled.", "success"),
+                (error) => store.setStatus(`settle failed: ${String(error)}`, "error"),
+              );
             }),
         });
       }

@@ -5,17 +5,16 @@
 import * as NodeFS from "node:fs";
 
 import {
-  ApprovalRequestId,
   EnvironmentId,
   type MessageId,
   MessageId as MessageIdSchema,
   type ModelSelection,
   NonNegativeInt,
-  ORCHESTRATION_WS_METHODS,
-  type OrchestrationShellSnapshot,
+  ORCHESTRATION_V2_WS_METHODS,
   type OrchestrationThread,
-  type OrchestrationThreadDetailSnapshot,
-  OrchestrationProposedPlanId,
+  type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ThreadDetailSnapshot,
+  PlanId,
   type ProjectId,
   ProjectId as ProjectIdSchema,
   type ProjectEntry,
@@ -24,6 +23,7 @@ import {
   PositiveInt,
   type ProviderInteractionMode,
   type RuntimeMode,
+  RuntimeRequestId,
   type GitStackedAction,
   type FilesystemBrowseResult,
   type SourceControlCloneRepositoryResult,
@@ -33,7 +33,6 @@ import {
   type TerminalAttachStreamEvent,
   type TerminalMetadataStreamEvent,
   type TerminalRestartInput,
-  type ThreadTurnStartBootstrap,
   type ThreadId,
   ThreadId as ThreadIdSchema,
   TrimmedNonEmptyString,
@@ -73,7 +72,7 @@ import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/project
 import {
   remoteHttpClientLayer,
   request,
-  rpcSessionFactoryLayer,
+  layerWithOptions,
   RpcSessionFactory,
   runStream,
   subscribe,
@@ -81,7 +80,6 @@ import {
 import { ShellSnapshotLoader } from "@t3tools/client-runtime/state/shell";
 import type { RpcSession } from "@t3tools/client-runtime/rpc";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { mergeVcsStatus } from "./gitActions.logic.ts";
 
@@ -92,13 +90,14 @@ import {
   makeEnvironmentShellState,
 } from "@t3tools/client-runtime/state/shell";
 import {
-  type EnvironmentThreadPageState,
+  boundedThreadSnapshotLoaderLayer,
   type EnvironmentThreadState,
   makeEnvironmentThreadState,
-  requestOlderThreadTurns,
+  ThreadHistoryController,
+  threadHistoryControllerLayer,
   ThreadSnapshotLoader,
-  threadSnapshotLoaderLayer,
 } from "@t3tools/client-runtime/state/threads";
+import type { ThreadHistoryMeta } from "@t3tools/client-runtime/state/threads";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -113,10 +112,26 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { HttpClient } from "effect/unstable/http";
 import * as Socket from "effect/unstable/socket/Socket";
 
 import { createAttachmentImageCache } from "./attachmentImages.ts";
 import type { ImagePreview } from "@t3tools/opentui-image";
+import {
+  presentTuiShell,
+  presentTuiThread,
+  type TuiShellSnapshot as OrchestrationShellSnapshot,
+} from "./orchestrationV2Adapter.ts";
+
+/** Paging state for a live thread's older history, as the chat view renders it. */
+export interface TuiThreadPage {
+  readonly hasMore: boolean;
+  readonly loadingOlder: boolean;
+}
+
+function historyToPage(history: ThreadHistoryMeta): TuiThreadPage {
+  return { hasMore: history.hasMoreHistory, loadingOlder: history.loading };
+}
 
 /**
  * Connection inputs the host (the server CLI) provides. The TUI never talks to
@@ -187,7 +202,7 @@ export function buildThreadCreationBootstrap(
   input: TuiCreateThreadInput,
   createdAt: string,
   worktreeBranch: string | null,
-): ThreadTurnStartBootstrap {
+) {
   if (input.createWorktree && (!input.branch?.trim() || !worktreeBranch?.trim())) {
     throw new Error("A base branch is required to create a worktree");
   }
@@ -321,7 +336,9 @@ export type TuiRuntime = ManagedRuntime.ManagedRuntime<
   | Crypto.Crypto
   | EnvironmentCacheStore
   | ThreadSnapshotLoader
-  | ShellSnapshotLoader,
+  | ShellSnapshotLoader
+  | ThreadHistoryController
+  | HttpClient.HttpClient,
   never
 >;
 
@@ -334,8 +351,8 @@ export type TuiRuntime = ManagedRuntime.ManagedRuntime<
 const inMemoryCacheStoreLayer = Layer.sync(EnvironmentCacheStore, () => {
   // Threads are cached as detail SNAPSHOTS ({ snapshotSequence, thread }) so a
   // cache hit can resume live sync from the right projection sequence.
-  const threads = new Map<string, OrchestrationThreadDetailSnapshot>();
-  const shells = new Map<string, OrchestrationShellSnapshot>();
+  const threads = new Map<string, OrchestrationV2ThreadDetailSnapshot>();
+  const shells = new Map<string, OrchestrationV2ShellSnapshot>();
   const serverConfigs = new Map<string, ServerConfig>();
   const vcsRefs = new Map<string, VcsListRefsResult>();
   const threadKey = (environmentId: string, threadId: string) =>
@@ -350,7 +367,7 @@ const inMemoryCacheStoreLayer = Layer.sync(EnvironmentCacheStore, () => {
       Effect.succeed(Option.fromUndefinedOr(threads.get(threadKey(environmentId, threadId)))),
     saveThread: (environmentId, snapshot) =>
       Effect.sync(() => {
-        threads.set(threadKey(environmentId, snapshot.thread.id), snapshot);
+        threads.set(threadKey(environmentId, snapshot.projection.thread.id), snapshot);
       }),
     removeThread: (environmentId, threadId) =>
       Effect.sync(() => {
@@ -404,9 +421,7 @@ export function buildTuiRuntime(options: TuiOptions): TuiRuntime {
     fileLoggerLayer(options.logPath),
   );
 
-  const rpcLayer = rpcSessionFactoryLayer.pipe(
-    Layer.provide(Socket.layerWebSocketConstructorGlobal),
-  );
+  const rpcLayer = layerWithOptions({}).pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal));
 
   const supervisorLayer = Layer.effect(EnvironmentSupervisor, makeTuiSupervisor(options)).pipe(
     Layer.provideMerge(rpcLayer),
@@ -414,15 +429,14 @@ export function buildTuiRuntime(options: TuiOptions): TuiRuntime {
   );
 
   // The first snapshot can fall back to the socket, but older thread pages are
-  // HTTP-only. Keep the real thread loader so long conversations can reach
-  // history outside the bounded initial window.
+  // HTTP-only. Keep the bounded thread loader plus the history controller so
+  // long conversations can page past the initial window. The shell has no
+  // paging, so it keeps using the socket-embedded snapshot.
   const snapshotLoaders = Layer.mergeAll(
-    threadSnapshotLoaderLayer.pipe(Layer.provide(remoteHttpClientLayer(globalThis.fetch))),
-    Layer.succeed(
-      ShellSnapshotLoader,
-      ShellSnapshotLoader.of({ load: () => Effect.succeed(Option.none()) }),
-    ),
-  );
+    boundedThreadSnapshotLoaderLayer,
+    threadHistoryControllerLayer,
+    Layer.succeed(ShellSnapshotLoader, ShellSnapshotLoader.of({ load: () => Effect.succeedNone })),
+  ).pipe(Layer.provideMerge(remoteHttpClientLayer(globalThis.fetch)));
 
   const runtimeLayer = Layer.mergeAll(supervisorLayer, inMemoryCacheStoreLayer, snapshotLoaders);
 
@@ -450,7 +464,7 @@ export interface TuiClient {
   /** Live detail (messages, session, activities) for one thread. */
   readonly subscribeThread: (
     threadId: ThreadId,
-    onThread: (thread: OrchestrationThread, page: EnvironmentThreadPageState | null) => void,
+    onThread: (thread: OrchestrationThread, page: TuiThreadPage) => void,
   ) => () => void;
   /** Request the next bounded page of older turns for a live thread. */
   readonly loadOlderThreadTurns: (threadId: ThreadId) => boolean;
@@ -589,7 +603,8 @@ const THREAD_WARM_LIMIT = 8;
 
 export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
   const attachmentImages = createAttachmentImageCache();
-  const hostPlatform = runtime.runSync(HostProcessPlatform);
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- @t3tools/shared/hostProcess imports node:sea, which the Bun-run TUI lacks.
+  const hostPlatform = process.platform;
   const drainStreamUntilUnsubscribe = <A>(
     stream: Stream.Stream<A, unknown, EnvironmentSupervisor>,
   ): (() => void) => {
@@ -702,7 +717,9 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
           yield* SubscriptionRef.changes(subscriptionRef).pipe(
             Stream.runForEach((state) =>
               Effect.sync(() => {
-                if (Option.isSome(state.data)) latestThreads.set(key, state.data.value);
+                if (Option.isSome(state.data)) {
+                  latestThreads.set(key, presentTuiThread(state.data.value));
+                }
                 if (state.status === "deleted") evictThread(key);
               }),
             ),
@@ -769,18 +786,28 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
     subscribeShell: (onSnapshot) => {
       shellWarm ??= startWarmSubscriptionRef(makeEnvironmentShellState());
       return subscribeToWarmRef(shellWarm, (state) => {
-        if (Option.isSome(state.snapshot)) onSnapshot(state.snapshot.value);
+        if (Option.isSome(state.snapshot)) onSnapshot(presentTuiShell(state.snapshot.value));
       });
     },
 
     subscribeThread: (threadId, onThread) => {
       const entry = acquireThread(threadId);
       return subscribeToWarmRef(entry, (state) => {
-        if (Option.isSome(state.data)) onThread(state.data.value, Option.getOrNull(state.page));
+        if (Option.isSome(state.data)) {
+          onThread(presentTuiThread(state.data.value), historyToPage(state.history));
+        }
       });
     },
 
-    loadOlderThreadTurns: (threadId) => requestOlderThreadTurns(TUI_ENVIRONMENT_ID, threadId),
+    loadOlderThreadTurns: (threadId) => {
+      runtime.runFork(
+        Effect.gen(function* () {
+          const controller = yield* ThreadHistoryController;
+          return yield* controller.loadEarlier(TUI_ENVIRONMENT_ID, threadId);
+        }),
+      );
+      return true;
+    },
 
     peekThread: (threadId) => latestThreads.get(threadId as string) ?? null,
 
@@ -886,7 +913,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
             interactionMode: "default",
             sourceProposedPlan: {
               threadId: thread.id,
-              planId: OrchestrationProposedPlanId.make(planId),
+              planId: PlanId.make(planId),
             },
           });
         }),
@@ -899,7 +926,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
       runtime.runPromise(
         respondToThreadApproval({
           threadId,
-          requestId: ApprovalRequestId.make(requestId),
+          requestId: RuntimeRequestId.make(requestId),
           decision,
         }).pipe(Effect.asVoid),
       ),
@@ -908,7 +935,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
       runtime.runPromise(
         respondToThreadUserInput({
           threadId,
-          requestId: ApprovalRequestId.make(requestId),
+          requestId: RuntimeRequestId.make(requestId),
           answers,
         }).pipe(Effect.asVoid),
       ),
@@ -1011,7 +1038,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
 
     getTurnDiff: (threadId, toTurnCount) =>
       runtime.runPromise(
-        request(ORCHESTRATION_WS_METHODS.getTurnDiff, {
+        request(ORCHESTRATION_V2_WS_METHODS.getTurnDiff, {
           threadId,
           fromTurnCount: NonNegativeInt.make(Math.max(0, toTurnCount - 1)),
           toTurnCount: NonNegativeInt.make(toTurnCount),
@@ -1020,7 +1047,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
 
     getFullThreadDiff: (threadId, toTurnCount) =>
       runtime.runPromise(
-        request(ORCHESTRATION_WS_METHODS.getFullThreadDiff, {
+        request(ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff, {
           threadId,
           toTurnCount: NonNegativeInt.make(toTurnCount),
         }).pipe(Effect.map((result) => result.diff)),
