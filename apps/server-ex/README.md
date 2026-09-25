@@ -78,3 +78,9 @@ cluster's CA.
 `mix test` runs the suite. `--include codex` / `--include claude` drive the real
 CLIs; `--include parity` compares sidebar rows with the Node server's
 (see `test/t3/projection/shell_parity_test.exs`).
+
+`test/t3/node_parity_test.exs` holds a row for every RPC method and orchestration
+command in the contracts, parsed on each run, with how this node serves it or why
+it does not. What it cannot serve yet is in `test/t3/features_backlog_test.exs` as
+skipped Given/when/then scenarios; `test/t3/scenarios_test.exs` drives the
+behavior a client sees over the socket.
