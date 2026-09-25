@@ -26,6 +26,7 @@ import {
   type TerminalClearInput,
   type TerminalCloseInput,
   type TerminalEvent,
+  type TerminalListResult,
   type TerminalMetadataStreamEvent,
   type TerminalOpenInput,
   type TerminalResizeInput,
@@ -34,6 +35,7 @@ import {
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
   type TerminalSummary,
+  type TerminalThreadInput,
   type TerminalWriteInput,
   ClaudeSettings,
   CodexSettings,
@@ -56,6 +58,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -200,6 +203,14 @@ export class TerminalManager extends Context.Service<
      * When `terminalId` is omitted, closes all sessions for the thread.
      */
     readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
+
+    /**
+     * List live and persisted terminal identities for one thread.
+     *
+     * Persisted history remains a terminal instance across server restarts even
+     * before a client attaches it back into the in-memory session manager.
+     */
+    readonly list: (input: TerminalThreadInput) => Effect.Effect<TerminalListResult>;
 
     /**
      * Subscribe to terminal runtime events with a direct callback.
@@ -1569,6 +1580,28 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const legacyHistoryPath = (threadId: string) =>
     path.join(logsDir, `${legacySafeThreadId(threadId)}.log`);
 
+  const listPersistedTerminalIds = Effect.fn("terminal.listPersistedTerminalIds")(function* (
+    threadId: string,
+  ) {
+    const threadPart = toSafeThreadId(threadId);
+    const terminalPrefix = `${threadPart}_`;
+    const entries = yield* fileSystem
+      .readDirectory(logsDir, { recursive: false })
+      .pipe(Effect.orElseSucceed(() => [] as Array<string>));
+    const ids = new Set<string>();
+    for (const name of entries) {
+      if (name === `${threadPart}.log` || name === `${legacySafeThreadId(threadId)}.log`) {
+        ids.add(DEFAULT_TERMINAL_ID);
+        continue;
+      }
+      if (!name.startsWith(terminalPrefix) || !name.endsWith(".log")) continue;
+      const encoded = name.slice(terminalPrefix.length, -".log".length);
+      const terminalId = Result.getOrUndefined(Encoding.decodeBase64UrlString(encoded));
+      if (terminalId) ids.add(terminalId);
+    }
+    return ids;
+  });
+
   const readManagerState = SynchronizedRef.get(managerStateRef);
 
   const modifyManagerState = <A>(
@@ -2374,6 +2407,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   ) {
     const key = toSessionKey(threadId, terminalId);
     const session = yield* getSession(threadId, terminalId);
+    const persisted = (yield* listPersistedTerminalIds(threadId)).has(terminalId);
     const closedEventSequence = Option.isSome(session) ? session.value.eventSequence + 1 : 0;
 
     if (Option.isSome(session)) {
@@ -2393,7 +2427,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       return [true, { ...state, sessions }] as const;
     });
 
-    if (removed) {
+    // An evicted/inactive terminal can still exist as persisted history and be
+    // visible in clients returned by terminal.list. Its explicit close must
+    // publish the same removal event as an in-memory session so every client
+    // drops the tab immediately.
+    if (removed || persisted) {
       yield* publishEvent({
         type: "closed",
         threadId,
@@ -2772,6 +2810,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       ),
     );
 
+  const list: TerminalManager["Service"]["list"] = Effect.fn("terminal.list")(function* (input) {
+    const ids = yield* listPersistedTerminalIds(input.threadId);
+    const sessions = yield* sessionsForThread(input.threadId);
+    for (const session of sessions) ids.add(session.terminalId);
+    return {
+      terminalIds: [...ids].sort((left, right) => {
+        const leftNumber = /^term-(\d+)$/.exec(left);
+        const rightNumber = /^term-(\d+)$/.exec(right);
+        if (leftNumber && rightNumber) return Number(leftNumber[1]) - Number(rightNumber[1]);
+        return left.localeCompare(right);
+      }),
+    };
+  });
+
   const readTerminalMetadata = (input: {
     readonly threadId: string;
     readonly terminalId: string;
@@ -3097,6 +3149,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           { discard: true },
         );
 
+        // Close persisted-only terminals too (advertised by terminal.list but
+        // not live in memory) so every client that hydrated its tab strip from
+        // the list receives their `closed` events before any history deletion.
+        const liveTerminalIds = new Set(threadSessions.map((session) => session.terminalId));
+        const persistedTerminalIds = yield* listPersistedTerminalIds(input.threadId);
+        yield* Effect.forEach(
+          [...persistedTerminalIds].filter((terminalId) => !liveTerminalIds.has(terminalId)),
+          (terminalId) => closeSession(input.threadId, terminalId, false),
+          { discard: true },
+        );
+
         if (input.deleteHistory) {
           yield* deleteAllHistoryForThread(input.threadId);
         }
@@ -3111,6 +3174,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     clear,
     restart,
     close,
+    list,
     subscribe,
     subscribeMetadata,
   });

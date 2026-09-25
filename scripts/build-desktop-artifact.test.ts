@@ -68,6 +68,7 @@ import {
   stageWslRuntimeArchive,
   bundlesWslRuntime,
   STAGE_INSTALL_ARGS,
+  TUI_ASAR_UNPACK,
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
   LinuxBrowserSecretHostError,
@@ -624,11 +625,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
 
       // Windows unpacks native files explicitly so their JavaScript and metadata
-      // stay archived. Other platforms retain electron-builder's defaults.
+      // stay archived. Other platforms unpack the staged TUI for Bun.
       assert.notProperty(mac, "asar");
       assert.notProperty(linux, "asar");
-      assert.notProperty(mac, "asarUnpack");
-      assert.notProperty(linux, "asarUnpack");
+      assert.deepStrictEqual(mac.asarUnpack, TUI_ASAR_UNPACK);
+      assert.deepStrictEqual(linux.asarUnpack, TUI_ASAR_UNPACK);
       assert.deepStrictEqual(win.asar, { smartUnpack: false });
       assert.deepStrictEqual(win.asarUnpack, [WINDOWS_NATIVE_ASAR_UNPACK_GLOB]);
       assert.deepStrictEqual(winWithoutWslRuntime.asar, win.asar);

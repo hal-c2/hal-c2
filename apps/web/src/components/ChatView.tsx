@@ -250,6 +250,7 @@ import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
 import { WizardPopup } from "./ui/wizard";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
+import { TerminalEventSync } from "./TerminalEventSync";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
@@ -9205,6 +9206,12 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurface}
         />
       ) : null}
+      {environments.map((environment) => (
+        <TerminalEventSync
+          key={environment.environmentId}
+          environmentId={environment.environmentId}
+        />
+      ))}
       {rightPanelControlsAtRoot && !shellHostsChrome ? panelLayoutControls : null}
       <div
         className={cn(

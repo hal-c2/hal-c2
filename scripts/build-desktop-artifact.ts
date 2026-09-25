@@ -1088,6 +1088,11 @@ export const WSL_RUNTIME_EXTRA_RESOURCES = [
   WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
 ] as const;
+// Bun cannot read Electron's virtual asar filesystem. Keep the staged TUI and
+// its runtime dependencies on disk while the rest of app.asar stays packed.
+// Windows runs the server from the server.asar sidecar and keeps its own
+// native-only unpack list, so the TUI is not shipped unpacked there.
+export const TUI_ASAR_UNPACK = ["apps/server/dist/tui/**", "**/node_modules/**"] as const;
 export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/cursor-sdk",
@@ -2709,10 +2714,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     },
     // Smart unpack extracts entire native packages, including JavaScript and
     // metadata. Windows keeps those files archived so native dependencies do
-    // not inflate the loose-file count and slow NSIS installation.
+    // not inflate the loose-file count and slow NSIS installation. Elsewhere
+    // Bun launches the TUI from app.asar.unpacked.
     ...(platform === "win"
       ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
-      : {}),
+      : { asarUnpack: [...TUI_ASAR_UNPACK] }),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
