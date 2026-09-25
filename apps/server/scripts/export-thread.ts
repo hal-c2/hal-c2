@@ -11,16 +11,16 @@ import { exportThread, ThreadTransferState } from "./thread-transfer.ts";
 export const exportThreadCommand = Command.make(
   "export-thread",
   {
-    source: Flag.string("source").pipe(
+    source: Flag.String("source").pipe(
       Flag.withDescription("Workspace root, T3 base directory, or direct state directory."),
     ),
-    state: Flag.choice("state", ThreadTransferState.literals).pipe(
+    state: Flag.Literals("state", ThreadTransferState.literals).pipe(
       Flag.withDefault("userdata"),
       Flag.withDescription("State directory below the T3 base directory; defaults to userdata."),
     ),
-    threadId: Flag.string("thread-id"),
-    output: Flag.string("output").pipe(Flag.withDescription("Archive JSON file to create.")),
-    includeTerminalLogs: Flag.boolean("include-terminal-logs").pipe(
+    threadId: Flag.String("thread-id"),
+    output: Flag.String("output").pipe(Flag.withDescription("Archive JSON file to create.")),
+    includeTerminalLogs: Flag.Boolean("include-terminal-logs").pipe(
       Flag.withDefault(false),
       Flag.withDescription("Include persisted terminal history, which may contain secrets."),
     ),

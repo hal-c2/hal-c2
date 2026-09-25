@@ -16,14 +16,14 @@ const encodeThreads = Schema.encodeEffect(fromJsonStringPretty(Schema.Array(List
 export const listThreadsCommand = Command.make(
   "list-threads",
   {
-    source: Flag.string("source").pipe(
+    source: Flag.String("source").pipe(
       Flag.withDescription("Workspace root, T3 base directory, or direct state directory."),
     ),
-    state: Flag.choice("state", ThreadTransferState.literals).pipe(
+    state: Flag.Literals("state", ThreadTransferState.literals).pipe(
       Flag.withDefault("userdata"),
       Flag.withDescription("State directory below the T3 base directory; defaults to userdata."),
     ),
-    json: Flag.boolean("json").pipe(
+    json: Flag.Boolean("json").pipe(
       Flag.withDefault(false),
       Flag.withDescription("Print the complete thread list as JSON."),
     ),

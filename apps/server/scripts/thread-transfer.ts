@@ -17,7 +17,7 @@ import {
   parseThreadSegmentFromAttachmentId,
   toSafeThreadAttachmentSegment,
 } from "../src/attachmentStore.ts";
-import * as NodeSqliteClient from "../src/persistence/NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { ensureDevDbNotInUse } from "./migrate-dev-db.ts";
 
 const THREAD_PROJECTION_TABLES = [
@@ -92,7 +92,7 @@ const encodeThreadArchive = Schema.encodeEffect(fromJsonStringPretty(ThreadArchi
 const decodeUnknownJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-export class ThreadTransferError extends Schema.TaggedErrorClass<ThreadTransferError>()(
+export class ThreadTransferError extends Schema.TaggedError<ThreadTransferError>()(
   "ThreadTransferError",
   {
     operation: Schema.String,
@@ -209,7 +209,7 @@ const resolveT3Location = Effect.fn("resolveThreadTransferT3Location")(function*
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = path.resolve(input);
-  const directDatabase = path.join(root, "state.sqlite");
+  const directDatabase = path.join(root, "statev2.sqlite");
   if (yield* fs.exists(directDatabase)) {
     return {
       stateDir: root,
@@ -218,7 +218,7 @@ const resolveT3Location = Effect.fn("resolveThreadTransferT3Location")(function*
     } satisfies T3Location;
   }
   const stateDir = path.join(root, state);
-  const stateDatabase = path.join(stateDir, "state.sqlite");
+  const stateDatabase = path.join(stateDir, "statev2.sqlite");
   if (yield* fs.exists(stateDatabase)) {
     return {
       stateDir,
@@ -228,7 +228,7 @@ const resolveT3Location = Effect.fn("resolveThreadTransferT3Location")(function*
   }
   const nestedBaseDir = path.join(root, ".t3");
   const nestedStateDir = path.join(nestedBaseDir, state);
-  const nestedDatabase = path.join(nestedStateDir, "state.sqlite");
+  const nestedDatabase = path.join(nestedStateDir, "statev2.sqlite");
   if (yield* fs.exists(nestedDatabase)) {
     return {
       stateDir: nestedStateDir,
@@ -734,7 +734,7 @@ export const importThread = Effect.fn("importThread")(function* (
   const path = yield* Path.Path;
   const location = yield* resolveT3Location(input.destination, input.state);
   const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
-  const sharedDatabase = path.join(sharedHome, "userdata", "state.sqlite");
+  const sharedDatabase = path.join(sharedHome, "userdata", "statev2.sqlite");
   const [canonicalDatabase, canonicalSharedDatabase] = yield* Effect.all([
     fs.realPath(location.databasePath).pipe(Effect.orElseSucceed(() => location.databasePath)),
     fs.realPath(sharedDatabase).pipe(Effect.orElseSucceed(() => sharedDatabase)),

@@ -41,7 +41,7 @@ different preference when needed.
 with its image attachments, and `vp run thread:import --archive <archive.json> --destination <dir>`
 remaps it onto the destination project after backing up its database. `vp run thread:list --source
 <dir>` finds thread ids. A source or destination can be a workspace containing `.t3`, a T3 home, or
-a state directory containing `state.sqlite`; `--state dev` selects a main-checkout dev database.
+a state directory containing `statev2.sqlite`; `--state dev` selects a main-checkout dev database.
 Stop the destination server before importing. Terminal history can hold credentials, so export
 skips it unless you pass `--include-terminal-logs`.
 

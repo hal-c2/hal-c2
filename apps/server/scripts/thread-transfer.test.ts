@@ -7,7 +7,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import * as NodeSqliteClient from "../src/persistence/NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { exportThread, importThread, listThreads } from "./thread-transfer.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -30,7 +30,7 @@ const createFixtureDatabase = Effect.fn("createThreadTransferFixtureDatabase")(f
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const stateDir = path.join(input.workspace, ".t3", input.state ?? "userdata");
-  const databasePath = path.join(stateDir, "state.sqlite");
+  const databasePath = path.join(stateDir, "statev2.sqlite");
   yield* fs.makeDirectory(stateDir, { recursive: true });
   yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
