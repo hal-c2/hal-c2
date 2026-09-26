@@ -19,7 +19,9 @@ Feature: Reconnecting and stale requests in the terminal client
     Then the client asks its launcher for a new socket ticket
     And it reconnects without the user doing anything
 
-  @tui
+  # The timeline is T2's host state (`timeline`, merged in tui-qml 344a3363ca), not
+  # in this branch yet; the selection half runs in the drop scenario above.
+  @backlog @tui
   Scenario: The thread the user was on comes back after a reconnect
     Given the connection dropped and came back
     Then the same thread is selected
@@ -37,33 +39,43 @@ Feature: Reconnecting and stale requests in the terminal client
     When the launcher process goes away
     Then every waiting ticket request fails at once
 
-  @tui
+  # The warm cache lives in makeTuiClient over a live RPC session; the host's
+  # instant paint from `peekThread` is T2's thread view, not in this branch yet.
+  @backlog @tui
   Scenario: Recently opened threads re-open instantly
     Given the user opened the thread "Fix login" a moment ago
     When the user switches away and back to "Fix login"
     Then "Fix login" shows immediately from the warm cache
     And it refreshes from the server in the background
 
-  @tui
+  # Eviction on "deleted" happens inside makeTuiClient's warm thread state, which
+  # needs a fake RPC session serving thread streams; the host side is T2's.
+  @backlog @tui
   Scenario: A thread deleted elsewhere leaves the warm cache
     Given the thread "Old spike" is in the warm cache
     When another client deletes "Old spike"
     Then switching threads never shows "Old spike" again
 
-  @tui
+  # The "loading earlier turns" row and older pages are T2's timeline state
+  # (`loadOlderThreadTurns` is wired in the client, not in this branch's host).
+  @backlog @tui
   Scenario: Older history loads over HTTP when the user asks for earlier turns
     Given the thread has more history than the latest page
     When the user asks to load earlier turns
     Then the timeline says it is loading earlier turns
     And the next older page appears above the current one
 
-  @tui
+  # Approval prompts are T2's host state (approvals.ts closes on
+  # isStalePendingRequestFailureDetail); not in this branch yet.
+  @backlog @tui
   Scenario: A request the provider reports as stale closes its prompt
     Given an approval prompt is open
     When the user answers it and the provider reports the request as stale or unknown
     Then the approval prompt closes
 
-  @tui
+  # Approval prompts are T2's host state (approvals.ts keeps the prompt open on
+  # other failures); not in this branch yet.
+  @backlog @tui
   Scenario: Any other answer failure keeps the prompt open for retry
     Given an approval prompt is open
     When the user answers it and the provider reports a failure that is not about a stale request
