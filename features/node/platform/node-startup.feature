@@ -126,13 +126,13 @@ Feature: Starting the node
     Then it writes an access token file readable only by its owner
     And local tools connect with that token
 
-  @backlog @node
+  @node
   Scenario: A running node records where local tools can find it
     When the node is serving clients
     Then its state directory holds a runtime record naming its process, port, origin and start time
     And that origin serves the node's environment descriptor
 
-  @backlog @node
+  @node
   Scenario: A node that stops removes its runtime record
     Given the node is serving clients
     When the node stops

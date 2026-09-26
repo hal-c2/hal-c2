@@ -61,6 +61,8 @@ defmodule HalC2.Application do
           HalC2.Acp.Antigravity.Installation,
           Supervisor.child_spec({Task, &HalC2.Acp.load/0}, id: :acp_models),
           HalC2.Web,
+          # server-runtime.json, once the listener is bound; removed first on the way down.
+          HalC2.RuntimeRecord,
           # HAL-C2 Connect: the managed tunnel, the startup link, activity publishing.
           HalC2.Connect.Supervisor,
           # Turns the restart cut off go on, where the user asked for that.

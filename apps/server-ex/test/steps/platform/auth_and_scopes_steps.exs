@@ -366,6 +366,68 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     World.put_client(context, "ticketed", client)
   end
 
+  # --- the node's access token on HTTP ---------------------------------------------
+
+  step "a local tool that read the node's access token", context do
+    Map.put(context, :access, File.read!(Path.join(HalC2.Paths.data_dir(), "access-token")))
+  end
+
+  step "it asks the node about its session with that token as a bearer", context do
+    Map.put(
+      context,
+      :response,
+      Node.request(context.node, :get, "/api/auth/session", bearer: context.access)
+    )
+  end
+
+  step "the node says it is authenticated with the administrative scopes", context do
+    assert {200, _, %{"authenticated" => true, "scopes" => @admin} = body} = context.response
+    assert body["sessionMethod"] == "bearer-access-token"
+    context
+  end
+
+  step "the tool can buy a socket ticket with that token", context do
+    assert {200, _, %{"ticket" => ticket}} =
+             Node.request(context.node, :post, "/api/auth/websocket-ticket",
+               bearer: context.access
+             )
+
+    Map.put(context, :ticket, ticket)
+  end
+
+  step "a socket opened with that ticket may do anything the node's own token may", context do
+    assert {:ok, @admin} = HalC2.Auth.ticket_scopes(context.ticket)
+    client = Node.connect(context.node, "wsTicket=#{context.ticket}")
+    # The node's own token may watch the access list, which needs access:read.
+    client = Node.sub(client, 1, %{"type" => "authAccess"})
+    assert {%{"t" => "authAccess", "id" => 1}, client} = Node.await(client, &(&1["id"] == 1))
+    World.put_client(context, "local", client)
+  end
+
+  step "a local tool bought a socket ticket with the node's access token", context do
+    access = File.read!(Path.join(HalC2.Paths.data_dir(), "access-token"))
+
+    assert {200, _, %{"ticket" => ticket}} =
+             Node.request(context.node, :post, "/api/auth/websocket-ticket", bearer: access)
+
+    World.put_client(context, "local", Node.connect(context.node, "wsTicket=#{ticket}"))
+  end
+
+  step "an administrator lists the authorized clients", context do
+    Map.put(
+      context,
+      :response,
+      access_request(context, "list authorized clients", admin!(context))
+    )
+  end
+
+  step "the node's access token is not among them", context do
+    # Only the administrator who asked is listed.
+    assert {200, _, [%{"current" => true} = admin]} = context.response
+    assert admin["sessionId"] != nil
+    context
+  end
+
   step "a client asks for a socket ticket with an unknown bearer token", context do
     response =
       Node.request(context.node, :post, "/api/auth/websocket-ticket", bearer: "not-a-session")

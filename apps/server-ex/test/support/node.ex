@@ -43,6 +43,7 @@ defmodule HalC2.Test.Node do
     start_supervised!(HalC2.Streams)
     start_supervised!(HalC2.Shell)
     web = start_supervised!(Supervisor.child_spec(HalC2.Web, id: HalC2.Web))
+    start_supervised!(HalC2.RuntimeRecord)
     # A named node finds its peers as it would at boot (HAL_C2_PEERS, the tailnet).
     for spec <- HalC2.Application.discovery(HalC2.Paths.data_dir()),
         do: start_supervised!(Supervisor.child_spec(spec, id: :discovery))
@@ -71,7 +72,15 @@ defmodule HalC2.Test.Node do
     for child <- Enum.reverse(Process.get({__MODULE__, :ensured}, [])),
         do: ExUnit.Callbacks.stop_supervised(Supervisor.child_spec(child, []).id)
 
-    for child <- [:discovery, HalC2.Web, HalC2.Shell, HalC2.Streams, HalC2.Auth, HalC2.Store],
+    for child <- [
+          :discovery,
+          HalC2.RuntimeRecord,
+          HalC2.Web,
+          HalC2.Shell,
+          HalC2.Streams,
+          HalC2.Auth,
+          HalC2.Store
+        ],
         do: ExUnit.Callbacks.stop_supervised(child)
 
     node

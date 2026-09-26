@@ -77,7 +77,7 @@ Feature: Node authentication and scopes
 
   # The node's access token (<data>/access-token) is readable only by the user the node
   # runs as, so on HTTP it carries the same trust `?token=` has on the socket.
-  @backlog @node
+  @node
   Scenario: Local tools authenticate over HTTP with the node's access token
     Given a local tool that read the node's access token
     When it asks the node about its session with that token as a bearer
@@ -85,7 +85,7 @@ Feature: Node authentication and scopes
     And the tool can buy a socket ticket with that token
     And a socket opened with that ticket may do anything the node's own token may
 
-  @backlog @node
+  @node
   Scenario: The node's access token is not a paired client
     Given a local tool bought a socket ticket with the node's access token
     When an administrator lists the authorized clients

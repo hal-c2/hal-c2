@@ -586,6 +586,7 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
   step "an operator signed in without starting the node", context do
     :ok = ExUnit.Callbacks.stop_supervised(HalC2.Connect.Supervisor)
+    :ok = ExUnit.Callbacks.stop_supervised(HalC2.RuntimeRecord)
     :ok = ExUnit.Callbacks.stop_supervised(HalC2.Web)
     cli_link(context)
   end

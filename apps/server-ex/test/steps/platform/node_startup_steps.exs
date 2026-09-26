@@ -194,6 +194,40 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     context
   end
 
+  # --- the runtime record -----------------------------------------------------------------
+
+  # The scenario's node is up once its listener is bound (`HalC2.Test.Node.start/3`).
+  step "the node is serving clients", context do
+    assert {200, _, _} = Node.request(context.node, :get, "/.well-known/hal-c2/environment")
+    context
+  end
+
+  step "its state directory holds a runtime record naming its process, port, origin and start time",
+       context do
+    path = Path.join(Paths.state_dir(), "server-runtime.json")
+    assert path == HalC2.RuntimeRecord.path()
+    record = path |> File.read!() |> JSON.decode!()
+    assert record["version"] == 1
+    assert record["pid"] == String.to_integer(System.pid())
+    assert record["port"] == context.node.port
+    assert record["origin"] == "http://127.0.0.1:#{context.node.port}"
+    assert {:ok, _, _} = DateTime.from_iso8601(record["startedAt"])
+    Map.put(context, :runtime_record, record)
+  end
+
+  step "that origin serves the node's environment descriptor", context do
+    assert {200, %{"environmentId" => id, "orchestrationProtocolVersion" => 3}} =
+             Node.http(context.runtime_record["origin"], :get, "/.well-known/hal-c2/environment")
+
+    assert id == context.node.environment
+    context
+  end
+
+  step "its state directory holds no runtime record", context do
+    refute File.exists?(HalC2.RuntimeRecord.path())
+    context
+  end
+
   # --- identity ---------------------------------------------------------------------------
 
   step "the node starts for the first time", context do
@@ -541,7 +575,14 @@ defmodule HalC2.Steps.Platform.NodeStartup do
 
     # The node's services come up under what the bootstrap configured, as they do
     # after `HalC2.Desktop.configure/0` in `HalC2.Application`.
-    for child <- [HalC2.Web, HalC2.Shell, HalC2.Streams, HalC2.Auth, HalC2.Store],
+    for child <- [
+          HalC2.RuntimeRecord,
+          HalC2.Web,
+          HalC2.Shell,
+          HalC2.Streams,
+          HalC2.Auth,
+          HalC2.Store
+        ],
         do: ExUnit.Callbacks.stop_supervised(child)
 
     :persistent_term.erase({HalC2.Web, :token})
@@ -606,7 +647,14 @@ defmodule HalC2.Steps.Platform.NodeStartup do
 
   step "an operator imports it into the node's home", context do
     # The import runs offline, against a stopped node's store.
-    for child <- [HalC2.Web, HalC2.Shell, HalC2.Streams, HalC2.Auth, HalC2.Store],
+    for child <- [
+          HalC2.RuntimeRecord,
+          HalC2.Web,
+          HalC2.Shell,
+          HalC2.Streams,
+          HalC2.Auth,
+          HalC2.Store
+        ],
         do: ExUnit.Callbacks.stop_supervised(child)
 
     lines = World.mix_output(Mix.Tasks.HalC2.Import, :run, [[context.ts_source]])

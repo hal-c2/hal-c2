@@ -134,9 +134,13 @@ defmodule HalC2.Auth do
         {:error, "missing_credential", nil}
 
       ["Bearer " <> token] ->
-        case session(token) do
-          {:ok, %{proof_jkt: nil} = session} -> {:ok, session}
-          _ -> {:error, "invalid_credential", nil}
+        if HalC2.Web.access_token?(token) do
+          {:ok, local_session()}
+        else
+          case session(token) do
+            {:ok, %{proof_jkt: nil} = session} -> {:ok, session}
+            _ -> {:error, "invalid_credential", nil}
+          end
         end
 
       ["DPoP " <> token] ->
@@ -157,6 +161,15 @@ defmodule HalC2.Auth do
         {:error, "invalid_credential", nil}
     end
   end
+
+  @doc """
+  The session the node's own access token stands for on HTTP: local tools (the TUI) that
+  can read `<data>/access-token` get the trust `?token=` has on the socket. It has no
+  stored row (`id` nil), so it is not a paired client, cannot be revoked, and its
+  tickets open sockets with the node's own token's scopes.
+  """
+  def local_session,
+    do: %{id: nil, scopes: @admin_scopes, expires_at: @dev_expires_at, proof_jkt: nil}
 
   @doc "`authenticate/1` without the reason: `{:ok, session}` or `:error`."
   @spec request_session(Plug.Conn.t()) :: {:ok, map} | :error
@@ -198,7 +211,7 @@ defmodule HalC2.Auth do
   def revoke_session(path, id), do: revoke(path, "id = ?1", [id]) != []
 
   @doc "Consumes a WebSocket ticket; each ticket opens one socket, for its session."
-  @spec take_ticket(String.t()) :: {:ok, String.t()} | :error
+  @spec take_ticket(String.t()) :: {:ok, String.t() | nil} | :error
   def take_ticket(ticket) do
     case :ets.take(@tickets, ticket) do
       [{_, expires_at, session_id}] -> if expires_at > now(), do: {:ok, session_id}, else: :error
@@ -213,9 +226,18 @@ defmodule HalC2.Auth do
   """
   @spec ticket_scopes(String.t()) :: {:ok, [String.t()]} | :error
   def ticket_scopes(ticket) do
+    now = now()
+
     case :ets.lookup(@tickets, ticket) do
-      [{_, expires_at, session_id}] ->
-        if expires_at > now(), do: GenServer.call(__MODULE__, {:scopes, session_id}), else: :error
+      [{_, expires_at, _}] when expires_at <= now ->
+        :error
+
+      # A ticket bought with the node's access token (`local_session/0`).
+      [{_, _, nil}] ->
+        {:ok, @admin_scopes}
+
+      [{_, _, session_id}] ->
+        GenServer.call(__MODULE__, {:scopes, session_id})
 
       [] ->
         :error
