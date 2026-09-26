@@ -33,7 +33,10 @@ defmodule HalC2.ProviderUsageLimits.Acp do
 
   @doc "The enabled ACP instances whose quota can be read."
   def instances do
-    for id <- HalC2.Acp.instances(), HalC2.Acp.driver(id) in @drivers, HalC2.Acp.enabled?(id), do: id
+    for id <- HalC2.Acp.instances(),
+        HalC2.Acp.driver(id) in @drivers,
+        HalC2.Acp.enabled?(id),
+        do: id
   end
 
   @doc "Whether `instance` is one of `instances/0`."
@@ -132,7 +135,10 @@ defmodule HalC2.ProviderUsageLimits.Acp do
       "label" => %{"weekly" => "Weekly", "monthly" => "Monthly"}[kind] || "Subscription",
       "usedPercent" => clamp(used)
     }
-    |> HalC2.ProviderUsageLimits.put_present("resetsAt", HalC2.ProviderUsageLimits.iso(period["end"]))
+    |> HalC2.ProviderUsageLimits.put_present(
+      "resetsAt",
+      HalC2.ProviderUsageLimits.iso(period["end"])
+    )
   end
 
   defp grok_url,
@@ -312,7 +318,8 @@ defmodule HalC2.ProviderUsageLimits.Acp do
   end
 
   defp opencode_url,
-    do: Application.get_env(:hal_c2, :opencode_go_usage_url, "https://opencode.ai/zen/go/v1/usage")
+    do:
+      Application.get_env(:hal_c2, :opencode_go_usage_url, "https://opencode.ai/zen/go/v1/usage")
 
   # --- helpers ---------------------------------------------------------------------
 

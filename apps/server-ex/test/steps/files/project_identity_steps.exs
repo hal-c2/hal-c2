@@ -53,7 +53,8 @@ defmodule HalC2.Steps.Files.ProjectIdentity do
 
   # --- themes ------------------------------------------------------------------------
 
-  step "the HAL-C2 home of {string} has the theme file {string}", %{args: [_env, file]} = context do
+  step "the HAL-C2 home of {string} has the theme file {string}",
+       %{args: [_env, file]} = context do
     theme(context, file)
     context
   end

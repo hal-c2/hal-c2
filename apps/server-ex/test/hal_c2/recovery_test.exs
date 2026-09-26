@@ -34,7 +34,8 @@ defmodule HalC2.Orchestration.RecoveryTest do
         {"provider-thread", "p1", %{"s" => %{"id" => "p1", "status" => "active"}}}
       ])
 
-    assert_receive {:halc2_shell, {:rows, _, [{"t1", {"thread", %{"activeRunId" => "r1"}}}]}}, 1_000
+    assert_receive {:halc2_shell, {:rows, _, [{"t1", {"thread", %{"activeRunId" => "r1"}}}]}},
+                   1_000
 
     assert Recovery.run() == ["t1"]
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure("t1"))

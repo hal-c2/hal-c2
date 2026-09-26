@@ -148,7 +148,8 @@ defmodule HalC2.Upgrade.Source do
 
   defp from_url(version, platform, archive) do
     url =
-      (System.get_env("HALC2_UPGRADE_URL") || Application.get_env(:hal_c2, :upgrade_url, @default_url))
+      (System.get_env("HALC2_UPGRADE_URL") ||
+         Application.get_env(:hal_c2, :upgrade_url, @default_url))
       |> String.replace("{version}", version)
       |> String.replace("{platform}", platform)
 

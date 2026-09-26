@@ -265,7 +265,11 @@ defmodule HalC2.Steps.Providers.Opencode do
     context = FakeAcp.send_message(context, "please run a command")
     state = FakeAcp.await_runs(context, 2)
     assert Enum.all?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "completed"))
-    refute Enum.any?(HalC2.StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
+
+    refute Enum.any?(
+             HalC2.StreamState.list(state, "runtime-request"),
+             &(&1["status"] == "pending")
+           )
 
     assert [_, %{"result" => %{"outcome" => %{"outcome" => "selected"}}}] =
              FakeAcp.answers(context)

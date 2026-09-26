@@ -160,7 +160,12 @@ defmodule HalC2.Pi do
   @doc "HAL-C2's Pi extension, written under the HAL-C2 home where Pi can load it."
   def extension_path do
     path =
-      Path.join([Application.fetch_env!(:hal_c2, :home), "caches", "pi", "pi-hal-c2-mcp-extension.ts"])
+      Path.join([
+        Application.fetch_env!(:hal_c2, :home),
+        "caches",
+        "pi",
+        "pi-hal-c2-mcp-extension.ts"
+      ])
 
     source = File.read!(Application.app_dir(:hal_c2, "priv/pi/hal-c2-mcp-extension.ts"))
 

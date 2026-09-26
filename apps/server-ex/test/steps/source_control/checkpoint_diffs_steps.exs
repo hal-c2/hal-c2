@@ -261,7 +261,9 @@ defmodule HalC2.Steps.SourceControl.CheckpointDiffs do
 
   # Commits the whole checkout to `ref` through a scratch index, as a checkpoint does.
   defp snapshot!(cwd, ref) do
-    index = Path.join(System.tmp_dir!(), "hal-c2-import-index-#{System.unique_integer([:positive])}")
+    index =
+      Path.join(System.tmp_dir!(), "hal-c2-import-index-#{System.unique_integer([:positive])}")
+
     env = [{"GIT_INDEX_FILE", index}]
 
     try do

@@ -651,11 +651,14 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
 
   defp watch(cwd) do
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Vcs.Registry}, id: HalC2.Vcs.Registry)
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Vcs.Registry},
+        id: HalC2.Vcs.Registry
+      )
     )
 
     Node.ensure(
-      Supervisor.child_spec({DynamicSupervisor, name: HalC2.Vcs.Supervisor, strategy: :one_for_one},
+      Supervisor.child_spec(
+        {DynamicSupervisor, name: HalC2.Vcs.Supervisor, strategy: :one_for_one},
         id: HalC2.Vcs.Supervisor
       )
     )
@@ -683,7 +686,9 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
   # Sets fields of an entity in a thread's stream, creating it if need be.
   defp put(context, thread, kind, id, fields) do
     {:ok, _} =
-      HalC2.Streams.commit(World.thread_id(context, thread), :thread, [{kind, id, %{"s" => fields}}])
+      HalC2.Streams.commit(World.thread_id(context, thread), :thread, [
+        {kind, id, %{"s" => fields}}
+      ])
 
     context
   end

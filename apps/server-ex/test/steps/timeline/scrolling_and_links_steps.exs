@@ -38,7 +38,9 @@ defmodule HalC2.Steps.Timeline.ScrollingAndLinks do
     {:ok, _} = HalC2.Streams.commit(id, :thread, history)
 
     {:ok, _} =
-      HalC2.Streams.commit(id, :thread, [{"message", @reply, %{"s" => message(id, @reply, "", at)}}])
+      HalC2.Streams.commit(id, :thread, [
+        {"message", @reply, %{"s" => message(id, @reply, "", at)}}
+      ])
 
     context
   end

@@ -134,7 +134,9 @@ defmodule HalC2.Acp.CatalogTest do
     assert %{"version" => "9.9", "models" => [%{"slug" => "fake/one"}, _]} =
              HalC2.Acp.entry("acpRegistry_fake")
 
-    assert {:ok, %{"removed" => false}} = HalC2.Acp.Catalog.uninstall(%{"agentId" => "fake-agent"})
+    assert {:ok, %{"removed" => false}} =
+             HalC2.Acp.Catalog.uninstall(%{"agentId" => "fake-agent"})
+
     {:ok, 2} = HalC2.Settings.put(%{"providerInstances" => %{}}, 1)
     assert {:ok, %{"removed" => true}} = HalC2.Acp.Catalog.uninstall(%{"agentId" => "fake-agent"})
     refute File.exists?(Path.dirname(Path.dirname(Path.dirname(exe))))

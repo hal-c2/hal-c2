@@ -62,7 +62,8 @@ defmodule HalC2.Web.Router do
     params = conn.body_params
 
     with "urn:ietf:params:oauth:grant-type:token-exchange" <- params["grant_type"],
-         "urn:hal-c2:params:oauth:token-type:environment-bootstrap" <- params["subject_token_type"],
+         "urn:hal-c2:params:oauth:token-type:environment-bootstrap" <-
+           params["subject_token_type"],
          {:ok, requested} <- requested_scopes(params["scope"]),
          {:ok, proof_jkt} <- exchange_proof(conn),
          {:ok, access, expires_in, scopes} <-

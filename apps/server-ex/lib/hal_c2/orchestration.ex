@@ -672,7 +672,12 @@ defmodule HalC2.Orchestration do
 
   # A runtime runs under its provider plugin's sessions supervisor (`HalC2.Plugins`).
   defp stop_runtimes(thread_id) do
-    for registry <- [HalC2.Codex.Registry, HalC2.Claude.Registry, HalC2.Acp.Registry, HalC2.Pi.Registry],
+    for registry <- [
+          HalC2.Codex.Registry,
+          HalC2.Claude.Registry,
+          HalC2.Acp.Registry,
+          HalC2.Pi.Registry
+        ],
         Process.whereis(registry) != nil,
         {pid, _} <- Registry.lookup(registry, thread_id) do
       try do
@@ -2297,7 +2302,8 @@ defmodule HalC2.Orchestration do
         |> Enum.reject(&is_nil/1)
       )
 
-    handoff = HalC2.Orchestration.Handoff.plan(state, provider_thread, driver, ids.run, ordinal, at)
+    handoff =
+      HalC2.Orchestration.Handoff.plan(state, provider_thread, driver, ids.run, ordinal, at)
 
     turn = %{
       ids: ids,

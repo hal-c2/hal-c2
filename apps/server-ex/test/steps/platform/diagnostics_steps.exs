@@ -74,7 +74,9 @@ defmodule HalC2.Steps.Platform.Diagnostics do
       "resourceSpans" => [
         %{
           "resource" => %{
-            "attributes" => [%{"key" => "service.name", "value" => %{"stringValue" => "hal-c2-web"}}]
+            "attributes" => [
+              %{"key" => "service.name", "value" => %{"stringValue" => "hal-c2-web"}}
+            ]
           },
           "scopeSpans" => [
             %{

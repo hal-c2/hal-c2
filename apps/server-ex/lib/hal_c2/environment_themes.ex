@@ -183,7 +183,9 @@ defmodule HalC2.EnvironmentThemes do
       true ->
         set_at = DateTime.to_iso8601(DateTime.utc_now())
 
-        HalC2.Settings.update(&Map.merge(&1, %{"defaultTheme" => id, "defaultThemeSetAt" => set_at}))
+        HalC2.Settings.update(
+          &Map.merge(&1, %{"defaultTheme" => id, "defaultThemeSetAt" => set_at})
+        )
         |> saved()
     end
   end

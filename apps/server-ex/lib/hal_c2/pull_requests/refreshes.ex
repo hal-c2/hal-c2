@@ -36,7 +36,10 @@ defmodule HalC2.PullRequests.Refreshes do
 
   def handle_cast(:bump, state) do
     revision = state.revision + 1
-    for {pid, _} <- state.watchers, do: send(pid, {:halc2_pull_request_refreshes, node(), revision})
+
+    for {pid, _} <- state.watchers,
+        do: send(pid, {:halc2_pull_request_refreshes, node(), revision})
+
     {:noreply, %{state | revision: revision}}
   end
 

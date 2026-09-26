@@ -143,7 +143,13 @@ defmodule HalC2.Steps.Connections.AgentActivityPublishing do
     env = HalC2.Environment.id()
 
     assert {:ok, claims} =
-             Jwt.verify(proof, "hal-c2-env-activity+jwt", public, "hal-c2-env:" <> env, context.relay.url)
+             Jwt.verify(
+               proof,
+               "hal-c2-env-activity+jwt",
+               public,
+               "hal-c2-env:" <> env,
+               context.relay.url
+             )
 
     assert claims["threadId"] == World.thread_id(context, @thread)
     assert claims["environmentId"] == env

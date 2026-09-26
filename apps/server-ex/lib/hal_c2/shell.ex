@@ -129,7 +129,10 @@ defmodule HalC2.Shell do
   defp push_rows(peer, rows), do: GenServer.cast({__MODULE__, peer}, {:peer_rows, node(), rows})
 
   defp push_all(peer) do
-    GenServer.cast({__MODULE__, peer}, {:peer_environment, node(), HalC2.Environment.descriptor()})
+    GenServer.cast(
+      {__MODULE__, peer},
+      {:peer_environment, node(), HalC2.Environment.descriptor()}
+    )
 
     push_rows(
       peer,
@@ -143,7 +146,8 @@ defmodule HalC2.Shell do
   # Streams without a stored row (a store from before rows were kept) get one in the
   # background; boot does not wait for it.
   defp backfill(path, have) do
-    missing = for %{id: id} <- HalC2.Store.list_streams(path), not MapSet.member?(have, id), do: id
+    missing =
+      for %{id: id} <- HalC2.Store.list_streams(path), not MapSet.member?(have, id), do: id
 
     if missing != [] do
       Task.start(fn ->

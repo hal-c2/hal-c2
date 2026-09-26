@@ -85,7 +85,10 @@ defmodule HalC2.ScenariosTest do
       await(writer, reply?(2))
 
     doc = %{"enableAssistantStreaming" => false}
-    writer = rpc(writer, env, 3, "halc2.writeSettings", %{"settings" => doc, "version" => version})
+
+    writer =
+      rpc(writer, env, 3, "halc2.writeSettings", %{"settings" => doc, "version" => version})
+
     {%{"t" => "rpc.result", "result" => %{"version" => next}}, writer} = await(writer, reply?(3))
     assert next == version + 1
 
@@ -93,7 +96,8 @@ defmodule HalC2.ScenariosTest do
              await(reader, &(&1["t"] == "config.settings"))
 
     # The same starting point a second time is a lost update.
-    writer = rpc(writer, env, 4, "halc2.writeSettings", %{"settings" => %{}, "version" => version})
+    writer =
+      rpc(writer, env, 4, "halc2.writeSettings", %{"settings" => %{}, "version" => version})
 
     assert {%{
               "t" => "rpc.error",

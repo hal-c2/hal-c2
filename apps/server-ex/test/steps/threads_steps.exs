@@ -675,7 +675,11 @@ defmodule HalC2.Steps.Threads do
   step "the agent session is stopped", context do
     id = World.thread_id(context, "Old spike")
     state = World.stream(context, "Old spike")
-    assert Enum.all?(HalC2.StreamState.list(state, "provider-session"), &(&1["status"] == "stopped"))
+
+    assert Enum.all?(
+             HalC2.StreamState.list(state, "provider-session"),
+             &(&1["status"] == "stopped")
+           )
 
     refute Enum.any?(
              HalC2.StreamState.list(state, "run"),
@@ -1243,7 +1247,9 @@ defmodule HalC2.Steps.Threads do
 
   step "the user links {string} to pull request {int} again",
        %{args: [thread, number]} = context do
-    before = HalC2.Streams.Server.state(HalC2.Streams.ensure(World.thread_id(context, thread))).seq
+    before =
+      HalC2.Streams.Server.state(HalC2.Streams.ensure(World.thread_id(context, thread))).seq
+
     context = manual_link(context, thread, number)
     Map.put(context, :seq_before, before)
   end

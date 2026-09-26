@@ -184,7 +184,9 @@ defmodule HalC2.Steps.Connections.Cluster do
       :gen_tcp.close(socket)
     end
 
-    assert {:error, :econnrefused} = :gen_tcp.connect(~c"127.0.0.1", HalC2.Cluster.dist_port(), [])
+    assert {:error, :econnrefused} =
+             :gen_tcp.connect(~c"127.0.0.1", HalC2.Cluster.dist_port(), [])
+
     context
   end
 
@@ -524,7 +526,9 @@ defmodule HalC2.Steps.Connections.Cluster do
         {~c"FAKE_HUB_SIMULATORS", to_charlist(JSON.encode!([@simulator]))}
       ])
 
-    {:ok, state} = :erpc.call(context.second.node, HalC2.Devices, :configure, [%{"enabled" => true}])
+    {:ok, state} =
+      :erpc.call(context.second.node, HalC2.Devices, :configure, [%{"enabled" => true}])
+
     assert state["hostStatus"] == "ready"
     Map.put(context, :hub, state["hubBasePath"])
   end
@@ -570,8 +574,11 @@ defmodule HalC2.Steps.Connections.Cluster do
     address = "127.#{rem(div(n, 250), 250) + 1}.#{rem(div(n, 62_500), 250)}.#{rem(n, 250) + 2}"
 
     case {members[:a], opts[:cluster]} do
-      {%{home: first}, nil} -> :ok = HalC2.Cluster.join(home, HalC2.Cluster.invite(first, address))
-      _ -> :ok = HalC2.Cluster.init(home, address)
+      {%{home: first}, nil} ->
+        :ok = HalC2.Cluster.join(home, HalC2.Cluster.invite(first, address))
+
+      _ ->
+        :ok = HalC2.Cluster.init(home, address)
     end
 
     Map.put(context, :members, Map.put(members, name, %{home: home, address: address}))
@@ -686,7 +693,9 @@ defmodule HalC2.Steps.Connections.Cluster do
         do: :ok = :erpc.call(node, Application, :put_env, [:hal_c2, key, value])
 
     {:ok, _} = :erpc.call(node, Application, :ensure_all_started, [:hal_c2], 30_000)
-    assert_receive {:halc2_shell, {:environment, ^node, %{"environmentId" => environment}}}, 10_000
+
+    assert_receive {:halc2_shell, {:environment, ^node, %{"environmentId" => environment}}},
+                   10_000
 
     Map.put(context, :second, %{
       name: name,

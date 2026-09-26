@@ -160,7 +160,9 @@ defmodule HalC2.Steps.Plugins.Turns do
     )
 
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Acp.Registry}, id: HalC2.Acp.Registry)
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Acp.Registry},
+        id: HalC2.Acp.Registry
+      )
     )
 
     Node.ensure(
@@ -281,7 +283,8 @@ defmodule HalC2.Steps.Plugins.Fixtures do
   def kind("text-generation backend"), do: "textGeneration"
 
   @doc "The fixture's plugin module."
-  def module(id), do: Module.concat(HalC2PluginFixture, Macro.camelize(String.replace(id, "-", "_")))
+  def module(id),
+    do: Module.concat(HalC2PluginFixture, Macro.camelize(String.replace(id, "-", "_")))
 
   @doc "Starts settings and plugins; the plugins directory is scanned as they start."
   def ensure(context) do
@@ -354,7 +357,9 @@ defmodule HalC2.Steps.Plugins.Fixtures do
 
   @doc "Makes the test process `:halc2_plugin_probe`, which fixtures tell when they start."
   def probe do
-    if Process.whereis(:halc2_plugin_probe) != self(), do: Process.register(self(), :halc2_plugin_probe)
+    if Process.whereis(:halc2_plugin_probe) != self(),
+      do: Process.register(self(), :halc2_plugin_probe)
+
     :ok
   end
 

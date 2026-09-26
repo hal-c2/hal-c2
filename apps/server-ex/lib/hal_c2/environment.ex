@@ -91,7 +91,8 @@ defmodule HalC2.Environment do
     case input do
       # Antigravity's skills come from the workspace's folders (`HalC2.Acp.Antigravity.skills/2`).
       %{"cwd" => cwd, "instanceId" => id} when is_binary(cwd) and is_binary(id) ->
-        if HalC2.Acp.driver(id) == "antigravity", do: HalC2.Acp.Antigravity.refresh_workspace(id, cwd)
+        if HalC2.Acp.driver(id) == "antigravity",
+          do: HalC2.Acp.Antigravity.refresh_workspace(id, cwd)
 
       %{"cwd" => cwd} when is_binary(cwd) ->
         :ok
@@ -154,7 +155,9 @@ defmodule HalC2.Environment do
           "otlpMetricsEnabled" => false,
           "otlpLogsEnabled" => false
         }
-        |> then(&if(url = HalC2.Traces.otlp_url(), do: Map.put(&1, "otlpTracesUrl", url), else: &1)),
+        |> then(
+          &if(url = HalC2.Traces.otlp_url(), do: Map.put(&1, "otlpTracesUrl", url), else: &1)
+        ),
       "settings" => HalC2.Settings.settings()
     }
   end

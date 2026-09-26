@@ -5,7 +5,9 @@ config :hal_c2, start_node: false
 config :logger, level: :warning
 
 # Text generation never reaches a real model; tests that need it set a fake.
-config :hal_c2, text_claude_command: "hal-c2-test-no-claude", text_codex_command: "hal-c2-test-no-codex"
+config :hal_c2,
+  text_claude_command: "hal-c2-test-no-claude",
+  text_codex_command: "hal-c2-test-no-codex"
 
 # Provider update checks never reach the npm registry.
 config :hal_c2, provider_update_checks: false

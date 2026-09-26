@@ -61,7 +61,11 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
   end
 
   defp messages(thread_id),
-    do: HalC2.StreamState.list(HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id)), "message")
+    do:
+      HalC2.StreamState.list(
+        HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id)),
+        "message"
+      )
 
   defp message(context),
     do: Enum.find(messages(thread(context)), &(&1["id"] == context.message_id))
@@ -612,7 +616,10 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     # This node's own key does not verify the peer's signature; the peer's does.
     token = token(context.peer_url)
     assert {:error, 403, _} = HalC2.Attachments.serve(token)
-    assert {:ok, 200, _, _} = :erpc.call(context.peer.name, HalC2.Attachments, :serve, [token, %{}])
+
+    assert {:ok, 200, _, _} =
+             :erpc.call(context.peer.name, HalC2.Attachments, :serve, [token, %{}])
+
     context
   end
 

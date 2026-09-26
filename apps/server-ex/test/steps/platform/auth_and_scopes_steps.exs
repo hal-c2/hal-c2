@@ -794,7 +794,9 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   step "a device paired without terminal:operate", context do
     {:ok, link} =
-      HalC2.Auth.create_pairing_link(%{"scopes" => ["orchestration:read", "orchestration:operate"]})
+      HalC2.Auth.create_pairing_link(%{
+        "scopes" => ["orchestration:read", "orchestration:operate"]
+      })
 
     access = pair!(context, link["credential"])
     World.put_client(context, "device", socket!(context, access))

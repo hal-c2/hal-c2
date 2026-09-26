@@ -32,7 +32,11 @@ defmodule HalC2.OrchestrationTest do
     start_supervised!(HalC2.Streams)
     start_supervised!(HalC2.Shell)
     start_supervised!({Registry, keys: :unique, name: HalC2.Codex.Registry})
-    start_supervised!({Registry, keys: :unique, name: HalC2.Claude.Registry}, id: :claude_registry)
+
+    start_supervised!({Registry, keys: :unique, name: HalC2.Claude.Registry},
+      id: :claude_registry
+    )
+
     start_supervised!({Registry, keys: :unique, name: HalC2.Acp.Registry}, id: :acp_registry)
     start_supervised!({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
     %{work: work}

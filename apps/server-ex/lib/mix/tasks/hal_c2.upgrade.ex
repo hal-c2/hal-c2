@@ -101,7 +101,9 @@ defmodule Mix.Tasks.HalC2.Upgrade do
     end)
 
     sum = (path <> ".sha256") |> File.read!() |> String.split() |> List.first()
-    :ok = :erpc.call(node, HalC2.Upgrade.Source, :receive_part, [version, platform, {:finish, sum}])
+
+    :ok =
+      :erpc.call(node, HalC2.Upgrade.Source, :receive_part, [version, platform, {:finish, sum}])
   end
 
   defp manifest(path) do

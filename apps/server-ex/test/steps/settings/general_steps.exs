@@ -106,7 +106,8 @@ defmodule HalC2.Steps.Settings.General do
     state = %{
       thread_id: id,
       turn: %{
-        streaming_mode: HalC2.Settings.for_project(project)["responseStreamingMode"] || "paragraph"
+        streaming_mode:
+          HalC2.Settings.for_project(project)["responseStreamingMode"] || "paragraph"
       },
       items: %{"a" => %{id: "reply", message: nil, kind: :assistant}},
       buffer: %{},
@@ -317,7 +318,9 @@ defmodule HalC2.Steps.Settings.General do
 
   defp reply_text(thread_id),
     do:
-      StreamState.get(HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id)), "turn-item")["reply"][
+      StreamState.get(HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id)), "turn-item")[
+        "reply"
+      ][
         "text"
       ]
 

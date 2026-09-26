@@ -144,7 +144,10 @@ defmodule HalC2.Steps.Terminal.Errors do
        %{args: [path]} = context do
     context = Terminal.ensure(context)
     input = Terminal.input(context, %{"cwd" => Terminal.mkdir(context, path)})
-    assert Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], input["terminalId"]}) == []
+
+    assert Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], input["terminalId"]}) ==
+             []
+
     {{:ok, snapshot}, context} = World.call(context, "terminal.restart", input)
     context |> Terminal.put_input(input) |> Map.put(:snapshot, snapshot)
   end

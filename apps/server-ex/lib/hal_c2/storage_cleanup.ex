@@ -262,7 +262,10 @@ defmodule HalC2.StorageCleanup do
              {:ok, %{status: 0}} <- Git.run(path, ["merge-base", "--is-ancestor", head, base]) do
           merged =
             rules["worktreeUnchanged"] or
-              match?(%{"state" => "merged"}, HalC2.Vcs.branch_pull_request(path, thread["branch"]))
+              match?(
+                %{"state" => "merged"},
+                HalC2.Vcs.branch_pull_request(path, thread["branch"])
+              )
 
           {merged, fetched}
         else

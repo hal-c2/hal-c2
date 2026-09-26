@@ -222,7 +222,9 @@ defmodule HalC2.GitActions do
   # and finish (`hook_started`, `hook_finished`) around the output lines they print
   # (`hook_output`), the way the Node server does. Returns `{exit status, stderr}`.
   defp traced_commit(cwd, args, emit) do
-    trace = Path.join(System.tmp_dir!(), "hal-c2-git-trace2-#{System.unique_integer([:positive])}")
+    trace =
+      Path.join(System.tmp_dir!(), "hal-c2-git-trace2-#{System.unique_integer([:positive])}")
+
     File.write!(trace, "")
     Process.put(:git_trace, %{path: trace, offset: 0, hook: nil})
 

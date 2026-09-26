@@ -134,7 +134,12 @@ defmodule HalC2.Acp.Antigravity do
   @doc "Where the managed runtime lives on this node."
   def managed_dir,
     do:
-      Path.join([Application.fetch_env!(:hal_c2, :home), "tools", "antigravity-acp", platform_name()])
+      Path.join([
+        Application.fetch_env!(:hal_c2, :home),
+        "tools",
+        "antigravity-acp",
+        platform_name()
+      ])
 
   def versions_dir, do: Path.join(managed_dir(), "versions")
   def active_path, do: Path.join(managed_dir(), "active.json")

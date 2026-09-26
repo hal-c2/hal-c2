@@ -259,7 +259,10 @@ defmodule HalC2.BackgroundPolicy do
 
       if drop.(snapshot) != drop.(current(before)),
         do:
-          for({pid, _} <- next.watchers, do: send(pid, {:halc2_background_policy, node(), snapshot}))
+          for(
+            {pid, _} <- next.watchers,
+            do: send(pid, {:halc2_background_policy, node(), snapshot})
+          )
     end
 
     next

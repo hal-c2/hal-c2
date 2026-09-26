@@ -23,7 +23,8 @@ defmodule HalC2.Codex.Provider do
         "driver" => "codex",
         # Turned off in settings (`providers.codex.enabled`), it stays listed so it can be
         # turned back on; clients leave it out of the model picker.
-        "enabled" => get_in(HalC2.Settings.settings(), ["providers", "codex", "enabled"]) != false,
+        "enabled" =>
+          get_in(HalC2.Settings.settings(), ["providers", "codex", "enabled"]) != false,
         "installed" => true,
         "version" => version(path),
         "versionAdvisory" => HalC2.ProviderUpdates.advisory("codex", path, version(path)),

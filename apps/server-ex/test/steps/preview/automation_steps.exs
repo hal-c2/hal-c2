@@ -637,7 +637,9 @@ defmodule HalC2.Steps.Preview.Automation do
   end
 
   step "the agent closes that tab", context do
-    result = HalC2.Mcp.Tools.call("halc2_preview_close", %{"tabId" => context.tab}, caller(context))
+    result =
+      HalC2.Mcp.Tools.call("halc2_preview_close", %{"tabId" => context.tab}, caller(context))
+
     Map.put(context, :result, result)
   end
 

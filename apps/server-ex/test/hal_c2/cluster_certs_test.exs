@@ -48,7 +48,9 @@ defmodule HalC2.ClusterCertsTest do
   end
 
   defp dist_opts(home, side) do
-    {:ok, [conf]} = :file.consult(to_charlist(Path.join(HalC2.Cluster.dir(home), "ssl_dist.conf")))
+    {:ok, [conf]} =
+      :file.consult(to_charlist(Path.join(HalC2.Cluster.dir(home), "ssl_dist.conf")))
+
     Keyword.fetch!(conf, side)
   end
 end

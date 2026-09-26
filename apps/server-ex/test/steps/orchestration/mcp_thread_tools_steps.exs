@@ -329,7 +329,9 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     id = World.thread_id(context, thread)
 
     task =
-      Task.async(fn -> World.mcp_tool(context, caller, "halc2_thread_wait", %{"threadId" => id}) end)
+      Task.async(fn ->
+        World.mcp_tool(context, caller, "halc2_thread_wait", %{"threadId" => id})
+      end)
 
     Map.put(context, :wait, task)
   end
@@ -815,7 +817,9 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     World.await_row(id, & &1)
 
     fork =
-      HalC2.Streams.Server.state(HalC2.Streams.ensure(id)) |> StreamState.get("thread") |> Map.get(id)
+      HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
+      |> StreamState.get("thread")
+      |> Map.get(id)
 
     assert fork["createdBy"] == "agent"
     assert fork["creationSource"] == "mcp"

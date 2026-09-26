@@ -82,7 +82,9 @@ defmodule HalC2.CheckpointTest do
 
   test "outside a repository the checkpoint is missing" do
     # tmp_dir sits inside this repository's checkout, so use the system temp dir.
-    outside = System.tmp_dir!() |> Path.join("hal-c2-no-repo-#{System.unique_integer([:positive])}")
+    outside =
+      System.tmp_dir!() |> Path.join("hal-c2-no-repo-#{System.unique_integer([:positive])}")
+
     File.mkdir_p!(outside)
     on_exit(fn -> File.rm_rf!(outside) end)
 

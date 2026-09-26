@@ -210,7 +210,9 @@ defmodule HalC2.Steps.SourceControl.PushPullAndDefaultBranch do
       "deletedAt" => nil
     }
 
-    {:ok, _} = HalC2.Streams.commit(id, :project, [{"project", id, HalC2.Patch.diff(nil, project)}])
+    {:ok, _} =
+      HalC2.Streams.commit(id, :project, [{"project", id, HalC2.Patch.diff(nil, project)}])
+
     World.await_row(id, & &1)
     put_in(context, [:projects, title], %{id: id, root: root})
   end

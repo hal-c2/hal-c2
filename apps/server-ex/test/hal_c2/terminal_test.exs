@@ -51,7 +51,11 @@ defmodule HalC2.TerminalTest do
       end)
 
       start_supervised!({Registry, keys: :unique, name: HalC2.Terminal.Registry})
-      start_supervised!({DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one})
+
+      start_supervised!(
+        {DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one}
+      )
+
       start_supervised!(HalC2.Terminal.Hub)
       %{input: %{"threadId" => "thread-1", "terminalId" => "term-1", "cwd" => dir}}
     end

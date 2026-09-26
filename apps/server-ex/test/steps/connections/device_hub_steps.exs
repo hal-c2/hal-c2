@@ -472,7 +472,10 @@ defmodule HalC2.Steps.Connections.DeviceHub do
 
   step "a client posts to a read-only device route", context do
     devices()
-    response = http(context, "POST", base() <> "/api/devices?token=#{HalC2.Web.token()}", body: "{}")
+
+    response =
+      http(context, "POST", base() <> "/api/devices?token=#{HalC2.Web.token()}", body: "{}")
+
     Map.put(context, :response, response)
   end
 
@@ -501,7 +504,11 @@ defmodule HalC2.Steps.Connections.DeviceHub do
 
     # Once its five minutes are up, the same address is refused.
     true =
-      :ets.update_element(HalC2.Auth.Tickets, context.ticket, {2, System.os_time(:millisecond) - 1})
+      :ets.update_element(
+        HalC2.Auth.Tickets,
+        context.ticket,
+        {2, System.os_time(:millisecond) - 1}
+      )
 
     assert %{status: 401} = http(context, "GET", context.stream_path)
     context
@@ -675,7 +682,16 @@ defmodule HalC2.Steps.Connections.DeviceHub do
            } =
              context.agent_result["structuredContent"]
 
-    assert ["--platform", "ios", "--udid", "SIM-1", "--config", config, "--session", "hal-c2-" <> _] =
+    assert [
+             "--platform",
+             "ios",
+             "--udid",
+             "SIM-1",
+             "--config",
+             config,
+             "--session",
+             "hal-c2-" <> _
+           ] =
              args
 
     assert File.exists?(command)

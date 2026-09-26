@@ -26,7 +26,8 @@ defmodule HalC2.WorktreeSetupTest do
     start_supervised!({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
     start_supervised!({Registry, keys: :unique, name: HalC2.Terminal.Registry}, id: :terminals)
 
-    start_supervised!({DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one},
+    start_supervised!(
+      {DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one},
       id: :terminal_sup
     )
 

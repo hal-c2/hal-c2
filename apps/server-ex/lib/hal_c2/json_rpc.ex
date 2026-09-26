@@ -19,7 +19,8 @@ defmodule HalC2.JsonRpc do
 
   @spec request(dialect, id, String.t(), term) :: iodata
   def request(:pi, id, type, params),
-    do: JSON.encode_to_iodata!(Map.merge(params || %{}, %{"type" => type, "id" => "hal-c2-#{id}"}))
+    do:
+      JSON.encode_to_iodata!(Map.merge(params || %{}, %{"type" => type, "id" => "hal-c2-#{id}"}))
 
   def request(dialect, id, method, params),
     do: encode(dialect, %{"id" => id, "method" => method, "params" => params})

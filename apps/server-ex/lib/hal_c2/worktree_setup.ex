@@ -466,7 +466,10 @@ defmodule HalC2.WorktreeSetup do
 
   defp available(path, name) do
     Enum.find([name | Enum.map(2..20, &"#{name}-#{&1}")], fn candidate ->
-      match?({:error, _}, HalC2.Git.ok(path, ["rev-parse", "--verify", "refs/heads/#{candidate}"]))
+      match?(
+        {:error, _},
+        HalC2.Git.ok(path, ["rev-parse", "--verify", "refs/heads/#{candidate}"])
+      )
     end) || ""
   end
 

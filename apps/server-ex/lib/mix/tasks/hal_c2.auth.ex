@@ -41,7 +41,9 @@ defmodule Mix.Tasks.HalC2.Auth do
           else: Mix.raise("No session #{id}.")
 
       _ ->
-        Mix.raise("Usage: mix hal_c2.auth session list | mix hal_c2.auth session revoke SESSION_ID")
+        Mix.raise(
+          "Usage: mix hal_c2.auth session list | mix hal_c2.auth session revoke SESSION_ID"
+        )
     end
   end
 end

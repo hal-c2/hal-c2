@@ -59,7 +59,9 @@ defmodule HalC2.Steps.Preview.Remote do
     # This node's own tabs have their own run.
     Node.ensure(HalC2.Preview)
 
-    assert HalC2.Preview.list(%{"threadId" => @remote_thread}) |> elem(1) |> Map.get("serverEpoch") !=
+    assert HalC2.Preview.list(%{"threadId" => @remote_thread})
+           |> elem(1)
+           |> Map.get("serverEpoch") !=
              epoch
 
     context
@@ -80,7 +82,9 @@ defmodule HalC2.Steps.Preview.Remote do
   end
 
   step "the tab is kept by the second node", context do
-    {:ok, remote} = :erpc.call(context.peer, HalC2.Preview, :list, [%{"threadId" => @remote_thread}])
+    {:ok, remote} =
+      :erpc.call(context.peer, HalC2.Preview, :list, [%{"threadId" => @remote_thread}])
+
     assert [%{"tabId" => tab}] = remote["sessions"]
     assert tab == context.tab
     {:ok, local} = HalC2.Preview.list(%{"threadId" => @remote_thread})

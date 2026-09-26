@@ -17,7 +17,10 @@ defmodule HalC2.Steps.Timeline.Streaming do
     {settings, version} = HalC2.Settings.get()
     project = World.project(context).id
     overrides = %{project => %{"responseStreamingMode" => mode}}
-    {:ok, _} = HalC2.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
+
+    {:ok, _} =
+      HalC2.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
+
     context
   end
 
@@ -101,7 +104,8 @@ defmodule HalC2.Steps.Timeline.Streaming do
       if Map.keys(acc) == [:seen], do: acc.seen, else: acc
     else
       receive do
-        {:halc2_stream, ^id, _} -> loop(id, HalC2.Streams.Server.state(HalC2.Streams.ensure(id)), fun, acc)
+        {:halc2_stream, ^id, _} ->
+          loop(id, HalC2.Streams.Server.state(HalC2.Streams.ensure(id)), fun, acc)
       after
         5_000 -> flunk("the reply stopped at #{inspect(acc)}")
       end

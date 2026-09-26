@@ -212,7 +212,9 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
 
   # The relay serves `bytes` as the release for this host, which has no relay client yet.
   defp serve_download(context, bytes) do
-    unless Application.get_env(:hal_c2, :relay_client_env), do: relay_host(context, %{"PATH" => ""})
+    unless Application.get_env(:hal_c2, :relay_client_env),
+      do: relay_host(context, %{"PATH" => ""})
+
     FakeRelay.set(context.relay, downloads: %{"/download/cloudflared" => bytes})
     context = assets(context, "/download/cloudflared", sha256(bytes))
     Map.put(context, :relay_download, true)
@@ -754,7 +756,9 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     refute edge == base(context)
 
     {:ok, {{_, 200, _}, _, reply}} =
-      :httpc.request(:get, {~c"#{edge}/.well-known/hal-c2/environment", []}, [], body_format: :binary)
+      :httpc.request(:get, {~c"#{edge}/.well-known/hal-c2/environment", []}, [],
+        body_format: :binary
+      )
 
     assert %{"environmentId" => ^env} = JSON.decode!(reply)
     assert_receive {:fake_relay_edge, ^env}, 1_000
@@ -922,7 +926,8 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
   end
 
   step "it asks the operator to sign in", context do
-    assert_receive {:mix_shell, :info, ["Open this URL to authorize HAL-C2 Connect:\n  " <> rest]},
+    assert_receive {:mix_shell, :info,
+                    ["Open this URL to authorize HAL-C2 Connect:\n  " <> rest]},
                    5_000
 
     [url | _] = String.split(rest, "\n")

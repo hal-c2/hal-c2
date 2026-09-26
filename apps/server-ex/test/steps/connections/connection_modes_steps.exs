@@ -153,7 +153,13 @@ defmodule HalC2.Steps.Connections.ConnectionModes do
     )
 
     script = Path.expand("test/support/fake_tailscale.py")
-    Application.put_env(:hal_c2, :tailscale_command, ["env", "FAKE_TAILSCALE_STATE=#{state}", script])
+
+    Application.put_env(:hal_c2, :tailscale_command, [
+      "env",
+      "FAKE_TAILSCALE_STATE=#{state}",
+      script
+    ])
+
     ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :tailscale_command) end)
     Map.put(context, :tailscale_state, state)
   end

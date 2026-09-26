@@ -454,7 +454,10 @@ defmodule HalC2.Steps.Orchestration.Projects do
 
   defp thread_deleted(context, title) do
     id = World.thread_id(context, title)
-    HalC2.StreamState.get(HalC2.StreamState.load(HalC2.Store.path(), id), "thread")[id]["deletedAt"]
+
+    HalC2.StreamState.get(HalC2.StreamState.load(HalC2.Store.path(), id), "thread")[id][
+      "deletedAt"
+    ]
   end
 
   # The project's row as a client subscribed to the shell first sees it.

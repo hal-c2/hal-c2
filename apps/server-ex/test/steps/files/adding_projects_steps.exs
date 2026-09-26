@@ -108,7 +108,11 @@ defmodule HalC2.Steps.Files.AddingProjects do
   end
 
   step "git reports {string}", %{args: [line]} = context do
-    send(HalC2.ProjectClones, {:clone_progress, context.clone.id, HalC2.ProjectClones.progress(line)})
+    send(
+      HalC2.ProjectClones,
+      {:clone_progress, context.clone.id, HalC2.ProjectClones.progress(line)}
+    )
+
     context
   end
 

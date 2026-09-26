@@ -187,7 +187,10 @@ defmodule HalC2.Steps.Settings.Storage do
   step "nothing is removed", context do
     rules = HalC2.StorageCleanup.rules(HalC2.Settings.settings(), World.project(context).id)
     assert Enum.all?(rules, fn {_rule, on} -> on in [nil, false] end)
-    assert get_in(HalC2.Settings.settings(), ["storageCleanup", "browserArtifactsAfterDays"]) == nil
+
+    assert get_in(HalC2.Settings.settings(), ["storageCleanup", "browserArtifactsAfterDays"]) ==
+             nil
+
     assert get_in(HalC2.Settings.settings(), ["storageCleanup", "logsAfterDays"]) == nil
 
     for path <- context.removables, do: assert(File.exists?(path), "#{path} was removed")

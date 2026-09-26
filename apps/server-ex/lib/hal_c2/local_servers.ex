@@ -56,7 +56,10 @@ defmodule HalC2.LocalServers do
 
       if state.list["servers"] != previous,
         do:
-          for({pid, _} <- state.watchers, do: send(pid, {:halc2_local_servers, node(), state.list}))
+          for(
+            {pid, _} <- state.watchers,
+            do: send(pid, {:halc2_local_servers, node(), state.list})
+          )
 
       {:noreply, schedule(state)}
     end

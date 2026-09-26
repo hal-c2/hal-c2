@@ -79,7 +79,9 @@ defmodule HalC2.Steps.Common do
 
   step "a paired client", context do
     {:ok, access, _expires, _scopes} =
-      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.node.store), %{"label" => "Phone"})
+      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.node.store), %{
+        "label" => "Phone"
+      })
 
     {:ok, ticket, _} = HalC2.Auth.issue_ticket(access)
     client = Node.connect(context.node, "wsTicket=#{ticket}")
@@ -369,7 +371,12 @@ defmodule HalC2.Steps.Common do
   # agent played by `HalC2.Test.FakeAcp` ran it without asking the user.
   step "it is allowed without asking", context do
     state = HalC2.Test.FakeAcp.await_run(context, "completed")
-    refute Enum.any?(HalC2.StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
+
+    refute Enum.any?(
+             HalC2.StreamState.list(state, "runtime-request"),
+             &(&1["status"] == "pending")
+           )
+
     if context[:fakes], do: HalC2.Test.FakeAcp.assert_allowed(context)
     context
   end
@@ -411,7 +418,9 @@ defmodule HalC2.Steps.Common do
       refute "auto" in context.permission_modes
       context
     else
-      modes = HalC2.Test.FakeAcp.find(context.providers, context.provider)["supportedRuntimeModes"]
+      modes =
+        HalC2.Test.FakeAcp.find(context.providers, context.provider)["supportedRuntimeModes"]
+
       assert [_ | _] = modes
       refute "auto" in modes
       context
@@ -1168,7 +1177,9 @@ defmodule HalC2.Steps.Common do
     ctx = Acp.serve_registry(context)
 
     other =
-      if HalC2.Acp.Catalog.platform() == "linux-x86_64", do: "darwin-aarch64", else: "linux-x86_64"
+      if HalC2.Acp.Catalog.platform() == "linux-x86_64",
+        do: "darwin-aarch64",
+        else: "linux-x86_64"
 
     agent = fn id, name, fields ->
       Map.merge(
@@ -1280,7 +1291,9 @@ defmodule HalC2.Steps.Common do
           ctx =
             context
             |> Map.delete(:pending_launch)
-            |> HalC2.Test.AcpFixtures.launch("Work", instance, "hello", mode: fields["runtimeMode"])
+            |> HalC2.Test.AcpFixtures.launch("Work", instance, "hello",
+              mode: fields["runtimeMode"]
+            )
 
           HalC2.Test.AcpFixtures.await_runs(ctx.threads["Work"], 1)
           Map.put(ctx, :thread, "Work")
@@ -1909,7 +1922,9 @@ defmodule HalC2.Steps.Common do
     assert root == run["rootNodeId"] and task["parentNodeId"] == root
 
     assert [%{"nodeId" => node_id, "childThreadId" => child_id}] =
-             state |> HalC2.StreamState.list("turn-item") |> Enum.filter(&(&1["type"] == "subagent"))
+             state
+             |> HalC2.StreamState.list("turn-item")
+             |> Enum.filter(&(&1["type"] == "subagent"))
 
     assert node_id == task["id"] and child_id == task["childThreadId"]
 

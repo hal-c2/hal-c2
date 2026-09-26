@@ -101,8 +101,11 @@ defmodule HalC2.StreamsTest do
 
   defp collect_snapshot(id, acc) do
     receive do
-      {:halc2_stream, ^id, {:snapshot, _seq, _at, rows, :more}} -> collect_snapshot(id, [rows | acc])
-      {:halc2_stream, ^id, {:snapshot, _seq, _at, rows, :done}} -> Enum.reverse([rows | acc])
+      {:halc2_stream, ^id, {:snapshot, _seq, _at, rows, :more}} ->
+        collect_snapshot(id, [rows | acc])
+
+      {:halc2_stream, ^id, {:snapshot, _seq, _at, rows, :done}} ->
+        Enum.reverse([rows | acc])
     after
       1_000 -> flunk("snapshot incomplete")
     end
@@ -120,7 +123,8 @@ defmodule HalC2.StreamsTest do
     {:ok, _} =
       Streams.commit("th-4", :thread, [{"thread", "th-4", %{"s" => %{"title" => "Renamed"}}}])
 
-    assert_receive {:halc2_shell, {:rows, _, [{"th-4", {"thread", %{"title" => "Renamed"}}}]}}, 1_000
+    assert_receive {:halc2_shell, {:rows, _, [{"th-4", {"thread", %{"title" => "Renamed"}}}]}},
+                   1_000
 
     assert [{"thread", %{"title" => "Renamed"}}] =
              for({{_, "th-4"}, kind_row} <- HalC2.Shell.rows(), do: kind_row)

@@ -192,7 +192,8 @@ defmodule HalC2.UsageLimitSourcesTest do
     # A labelled source keeps its label; removing a source removes its row.
     put_sources(%{"hub" => source(url, @marker, %{"label" => "Team hub"})})
 
-    assert_receive {:halc2_usage_limit_sources, _, [%{"label" => "Team hub", "accounts" => [_, _]}]},
+    assert_receive {:halc2_usage_limit_sources, _,
+                    [%{"label" => "Team hub", "accounts" => [_, _]}]},
                    5_000
 
     put_sources(%{})
@@ -261,7 +262,10 @@ defmodule HalC2.UsageLimitSourcesTest do
     )
 
     start_supervised!(HalC2.Settings)
-    assert %{"hub" => %{"managementKey" => @marker}} = HalC2.Settings.settings()["usageLimitSources"]
+
+    assert %{"hub" => %{"managementKey" => @marker}} =
+             HalC2.Settings.settings()["usageLimitSources"]
+
     refute File.read!(Path.join(dir, "settings.json")) =~ "hub-key"
     assert UsageLimitSources.key("hub") == "hub-key"
   end

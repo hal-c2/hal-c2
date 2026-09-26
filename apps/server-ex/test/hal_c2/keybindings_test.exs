@@ -31,6 +31,9 @@ defmodule HalC2.KeybindingsTest do
 
   test "entries that are not rules are skipped", %{path: path} do
     File.write!(path, ~s([{"key": "mod+k", "command": "commandPalette.toggle"}, 3, {"key": 1}]))
-    assert HalC2.Keybindings.rules() == [%{"key" => "mod+k", "command" => "commandPalette.toggle"}]
+
+    assert HalC2.Keybindings.rules() == [
+             %{"key" => "mod+k", "command" => "commandPalette.toggle"}
+           ]
   end
 end

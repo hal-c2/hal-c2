@@ -268,7 +268,9 @@ defmodule HalC2.Steps.Providers.SessionImport do
     assert {:ok, %{"imported" => false, "threadId" => ^id}} = context.reply
 
     threads =
-      for {{_node, _id}, {"thread", row}} <- HalC2.Shell.rows(), row["projectId"] == "shop", do: row
+      for {{_node, _id}, {"thread", row}} <- HalC2.Shell.rows(),
+          row["projectId"] == "shop",
+          do: row
 
     assert length(threads) == 1
     context

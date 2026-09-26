@@ -145,7 +145,9 @@ defmodule HalC2.Steps.Files.ProjectFile do
     overrides =
       Map.put(settings["projectSettingsOverrides"] || %{}, id, %{"worktreeSubmodules" => mode})
 
-    {:ok, _} = HalC2.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
+    {:ok, _} =
+      HalC2.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
+
     context
   end
 

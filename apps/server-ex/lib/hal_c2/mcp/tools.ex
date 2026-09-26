@@ -50,7 +50,9 @@ defmodule HalC2.Mcp.Tools do
   defp definitions do
     case :persistent_term.get({__MODULE__, :definitions}, nil) do
       nil ->
-        tools = Application.app_dir(:hal_c2, "priv/mcp_tools.json") |> File.read!() |> JSON.decode!()
+        tools =
+          Application.app_dir(:hal_c2, "priv/mcp_tools.json") |> File.read!() |> JSON.decode!()
+
         :persistent_term.put({__MODULE__, :definitions}, tools)
         tools
 
@@ -72,8 +74,11 @@ defmodule HalC2.Mcp.Tools do
   def call("task_cancel", %{"taskId" => id}, caller),
     do: HalC2.Orchestration.Delegation.cancel(caller.thread_id, id)
 
-  def call(name, args, caller) when name in @preview, do: HalC2.Mcp.Preview.call(name, args, caller)
-  def call(name, args, caller) when name in @devices, do: HalC2.Mcp.Devices.call(name, args, caller)
+  def call(name, args, caller) when name in @preview,
+    do: HalC2.Mcp.Preview.call(name, args, caller)
+
+  def call(name, args, caller) when name in @devices,
+    do: HalC2.Mcp.Devices.call(name, args, caller)
 
   def call(name, args, caller) do
     area = if name in @implemented, do: __MODULE__, else: Enum.find(@areas, &(name in &1.tools()))

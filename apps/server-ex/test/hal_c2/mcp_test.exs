@@ -25,7 +25,11 @@ defmodule HalC2.McpTest do
     start_supervised!(HalC2.Streams)
     start_supervised!(HalC2.Shell)
     start_supervised!({Registry, keys: :unique, name: HalC2.Codex.Registry})
-    start_supervised!({Registry, keys: :unique, name: HalC2.Claude.Registry}, id: :claude_registry)
+
+    start_supervised!({Registry, keys: :unique, name: HalC2.Claude.Registry},
+      id: :claude_registry
+    )
+
     start_supervised!({Registry, keys: :unique, name: HalC2.Acp.Registry}, id: :acp_registry)
     start_supervised!({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
     start_supervised!(HalC2.Mcp)
@@ -46,7 +50,9 @@ defmodule HalC2.McpTest do
   test "an agent launches a thread and works its own queue" do
     {caller, tool} = caller("wait for it")
 
-    {:ok, launched} = tool.("halc2_thread_launch", %{"title" => "Side quest", "message" => "hello"})
+    {:ok, launched} =
+      tool.("halc2_thread_launch", %{"title" => "Side quest", "message" => "hello"})
+
     assert %{"projectId" => @project, "runId" => run_id} = launched
     assert is_binary(run_id)
     launched_id = launched["threadId"]

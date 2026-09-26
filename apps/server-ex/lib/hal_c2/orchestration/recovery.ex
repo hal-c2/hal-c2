@@ -93,7 +93,8 @@ defmodule HalC2.Orchestration.Recovery do
     for {thread_id, run} <- runs,
         {"thread", thread} <- [HalC2.Shell.row(node(), thread_id)],
         thread["archivedAt"] == nil and thread["deletedAt"] == nil,
-        HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] == true,
+        HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] ==
+          true,
         latest?(thread_id, run) do
       HalC2.Orchestration.dispatch(%{
         "type" => "message.dispatch",

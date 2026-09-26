@@ -351,9 +351,14 @@ defmodule HalC2.Steps.Parity.Protocol do
 
     late =
       case type do
-        "gitAction" -> {:halc2_git_action, "parity-action", %{"kind" => "phase_started"}}
-        "serverUpdate" -> {:halc2_server_update, node(), %{"type" => "progress"}}
-        "previewAutomation" -> {:halc2_preview_automation, node(), "parity-host", %{"type" => "x"}}
+        "gitAction" ->
+          {:halc2_git_action, "parity-action", %{"kind" => "phase_started"}}
+
+        "serverUpdate" ->
+          {:halc2_server_update, node(), %{"type" => "progress"}}
+
+        "previewAutomation" ->
+          {:halc2_preview_automation, node(), "parity-host", %{"type" => "x"}}
       end
 
     send(socket, late)
@@ -434,7 +439,10 @@ defmodule HalC2.Steps.Parity.Protocol do
 
   defp ticket do
     {:ok, %{"credential" => credential}} =
-      HalC2.Auth.create_pairing_link(%{"label" => "Adapter", "scopes" => HalC2.Auth.standard_scopes()})
+      HalC2.Auth.create_pairing_link(%{
+        "label" => "Adapter",
+        "scopes" => HalC2.Auth.standard_scopes()
+      })
 
     {:ok, access, _expires, _scopes} = HalC2.Auth.exchange(credential, %{"label" => "Adapter"})
     HalC2.Auth.issue_ticket(access)
@@ -1019,7 +1027,9 @@ defmodule HalC2.Steps.Parity.Shapes do
   end
 
   defp bundle do
-    path = Path.join(System.tmp_dir!(), "hal-c2-parity-#{System.unique_integer([:positive])}.tar.gz")
+    path =
+      Path.join(System.tmp_dir!(), "hal-c2-parity-#{System.unique_integer([:positive])}.tar.gz")
+
     manifest = JSON.encode!(%{"version" => @target})
 
     :ok =
@@ -1066,7 +1076,10 @@ defmodule HalC2.Steps.Parity.Shapes do
   @doc "A socket paired under `label` with standard scopes; returns `{client, session_id}`."
   def paired_client(context, label) do
     {:ok, %{"credential" => credential}} =
-      HalC2.Auth.create_pairing_link(%{"label" => label, "scopes" => HalC2.Auth.standard_scopes()})
+      HalC2.Auth.create_pairing_link(%{
+        "label" => label,
+        "scopes" => HalC2.Auth.standard_scopes()
+      })
 
     sessions = fn -> Enum.map(HalC2.Auth.clients(), & &1["sessionId"]) end
     before = sessions.()

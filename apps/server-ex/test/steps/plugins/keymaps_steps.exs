@@ -24,7 +24,12 @@ defmodule HalC2.Steps.Plugins.Keymaps do
     context = watch(context, "second")
 
     {_, context} =
-      World.call!(context, "halc2.upsertKeybinding", %{"key" => key, "command" => command}, "first")
+      World.call!(
+        context,
+        "halc2.upsertKeybinding",
+        %{"key" => key, "command" => command},
+        "first"
+      )
 
     Map.put(context, :rule, %{"key" => key, "command" => command})
   end

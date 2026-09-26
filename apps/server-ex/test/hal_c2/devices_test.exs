@@ -71,7 +71,11 @@ defmodule HalC2.DevicesTest do
              })
 
     assert {:error, %{"_tag" => "DeviceNotFoundError"}} =
-             HalC2.Devices.open(%{"threadId" => "t1", "deviceId" => "nope", "platform" => "android"})
+             HalC2.Devices.open(%{
+               "threadId" => "t1",
+               "deviceId" => "nope",
+               "platform" => "android"
+             })
   end
 
   test "SSH hosts are unavailable, with the reason" do
@@ -88,7 +92,11 @@ defmodule HalC2.DevicesTest do
     assert %{"mini" => %{"status" => "failed"}} = state["hostStatuses"]
 
     assert {:error, %{"_tag" => "DeviceHostUnavailableError", "hostId" => "mini"}} =
-             HalC2.Devices.test_host(%{"id" => "mini", "label" => "Mac mini", "target" => "me@mini"})
+             HalC2.Devices.test_host(%{
+               "id" => "mini",
+               "label" => "Mac mini",
+               "target" => "me@mini"
+             })
 
     assert {:error, %{"_tag" => "DeviceHostUnavailableError", "reason" => ^reason}} =
              HalC2.Devices.open(%{

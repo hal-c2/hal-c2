@@ -46,7 +46,9 @@ defmodule HalC2.VcsTest do
            ]
 
     # The tmp dir sits inside this checkout, so use the system temp dir.
-    plain = Path.join(System.tmp_dir!(), "hal-c2-not-a-repo-#{System.unique_integer([:positive])}")
+    plain =
+      Path.join(System.tmp_dir!(), "hal-c2-not-a-repo-#{System.unique_integer([:positive])}")
+
     File.mkdir_p!(plain)
     on_exit(fn -> File.rm_rf!(plain) end)
     assert %{"isRepo" => false} = Vcs.local_status(plain)
@@ -112,7 +114,10 @@ defmodule HalC2.VcsTest do
     assert File.exists?(Path.join(repo, "b.txt"))
   end
 
-  test "worktrees are created under the HAL-C2 home and removed again", %{repo: repo, tmp_dir: dir} do
+  test "worktrees are created under the HAL-C2 home and removed again", %{
+    repo: repo,
+    tmp_dir: dir
+  } do
     assert {:ok, %{"worktree" => %{"path" => path, "refName" => "wt/branch"}}} =
              Vcs.create_worktree(%{
                "cwd" => repo,

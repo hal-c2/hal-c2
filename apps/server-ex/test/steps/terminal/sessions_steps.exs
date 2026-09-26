@@ -283,7 +283,12 @@ defmodule HalC2.Steps.Terminal.Sessions do
     context = Terminal.ensure(context)
     Node.ensure(HalC2.Settings)
 
-    for registry <- [HalC2.Codex.Registry, HalC2.Claude.Registry, HalC2.Acp.Registry, HalC2.Vcs.Registry],
+    for registry <- [
+          HalC2.Codex.Registry,
+          HalC2.Claude.Registry,
+          HalC2.Acp.Registry,
+          HalC2.Vcs.Registry
+        ],
         do: Node.ensure({Registry, keys: :unique, name: registry})
 
     Application.put_env(:hal_c2, :storage_cleanup_first_ms, nil)
@@ -298,7 +303,11 @@ defmodule HalC2.Steps.Terminal.Sessions do
     repo = World.project(context, "app").root
 
     {:ok, %{"worktree" => %{"path" => path}}} =
-      HalC2.Vcs.create_worktree(%{"cwd" => repo, "refName" => "main", "newRefName" => "hal-c2/done"})
+      HalC2.Vcs.create_worktree(%{
+        "cwd" => repo,
+        "refName" => "main",
+        "newRefName" => "hal-c2/done"
+      })
 
     context =
       World.create_thread(context, "Done", "app", %{

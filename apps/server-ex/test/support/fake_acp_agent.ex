@@ -198,7 +198,9 @@ defmodule HalC2.Test.FakeAcp do
     Node.ensure(HalC2.Settings)
 
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Acp.Registry}, id: :acp_registry)
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Acp.Registry},
+        id: :acp_registry
+      )
     )
 
     Node.ensure(
@@ -321,7 +323,8 @@ defmodule HalC2.Test.FakeAcp do
   @doc "Waits until the thread's latest run has `status`; returns the stream state."
   def await_run(context, status, title \\ nil) do
     World.await_stream(World.thread_id(context, title || context.thread), fn state ->
-      case HalC2.StreamState.list(state, "run") |> Enum.max_by(& &1["requestedAt"], fn -> nil end) do
+      case HalC2.StreamState.list(state, "run")
+           |> Enum.max_by(& &1["requestedAt"], fn -> nil end) do
         %{"status" => ^status} -> state
         _ -> nil
       end
@@ -369,7 +372,8 @@ defmodule HalC2.Test.FakeAcp do
   end
 
   @doc "The provider entry of `instance` in the node's provider list, or nil."
-  def entry(instance), do: Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == instance))
+  def entry(instance),
+    do: Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == instance))
 
   @doc "Reads the instance's agent again now (the probe `server.refreshProviders` runs)."
   def probe(instance) do
