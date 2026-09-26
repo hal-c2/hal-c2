@@ -11,6 +11,9 @@ Item {
     property real size: 16
     property color color: "#e4e4e7"
     property real strokeWidth: 2
+    // Fills the outline too, for the filled variants the page draws with
+    // `fill-current` (the favourites star).
+    property bool filled: false
 
     implicitWidth: size
     implicitHeight: size
@@ -28,7 +31,7 @@ Item {
         ShapePath {
             strokeColor: icon.color
             strokeWidth: icon.strokeWidth
-            fillColor: "transparent"
+            fillColor: icon.filled ? icon.color : "transparent"
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin
 

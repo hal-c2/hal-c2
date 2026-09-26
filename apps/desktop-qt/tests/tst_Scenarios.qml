@@ -250,30 +250,237 @@ Item {
             verify(!Shell.dispatchedActions.some(entry => entry.action === "composer.submit"));
         }
 
-        function test_given_the_page_owns_the_model_shortcut_when_it_requests_the_picker_then_the_native_picker_toggles() {
-            const composer = createComposer({
-                instances: [
-                    {
-                        instanceId: "codex",
-                        displayName: qsTr("Codex"),
-                        models: [
-                            {
-                                name: qsTr("GPT"),
-                                slug: "gpt",
-                                disabledReason: null
-                            }
-                        ]
-                    }
-                ],
-                selectedInstanceId: "codex",
-                selectedModel: "gpt"
-            });
+        function pickerModel(slug, name, overrides) {
+            return Object.assign({
+                slug: slug,
+                name: name,
+                shortName: null,
+                subProvider: null,
+                isFavorite: false,
+                isCustom: false,
+                isNew: false,
+                isLegacy: false,
+                isUnavailable: false,
+                disabledReason: null
+            }, overrides ?? {});
+        }
+
+        function pickerInstance(instanceId, driverKind, displayName, models, overrides) {
+            return Object.assign({
+                instanceId: instanceId,
+                driverKind: driverKind,
+                displayName: displayName,
+                accentColor: null,
+                iconUrl: null,
+                initials: displayName.slice(0, 2).toUpperCase(),
+                showBadge: false,
+                status: "ready",
+                isAvailable: true,
+                unavailableReason: null,
+                models: models
+            }, overrides ?? {});
+        }
+
+        function chord(key, shift) {
+            return {
+                key: key,
+                ctrlKey: true,
+                metaKey: false,
+                shiftKey: shift,
+                altKey: false,
+                label: (shift ? "Ctrl+Shift+" : "Ctrl+") + key
+            };
+        }
+
+        // "the page lists models from Codex and Claude": the catalogue
+        // Shell.state.modelPicker carries, with the default chords.
+        function codexAndClaude(overrides) {
+            return {
+                instances: [pickerInstance("codex", "codex", "Codex", [pickerModel("gpt-5.5", "GPT-5.5", overrides?.gpt55), pickerModel("gpt-5.4", "GPT-5.4")]), pickerInstance("claudeAgent", "claudeAgent", "Claude", [pickerModel("opus", "Claude Opus", overrides?.opus), pickerModel("sonnet", "Claude Sonnet"), pickerModel("haiku", "Claude Haiku")])].concat(overrides?.extra ?? []),
+                locked: false,
+                shortcut: "Ctrl+Shift+M",
+                previousProvider: chord("arrowup", true),
+                nextProvider: chord("arrowdown", true),
+                jump: [1, 2, 3, 4, 5, 6, 7, 8, 9].map(index => chord(String(index), false))
+            };
+        }
+
+        function createPicker(catalogue, selectedInstanceId = "codex", selectedModel = "gpt-5.5") {
+            Shell.state = {
+                composer: Object.assign(Shell.defaultComposer(), {
+                    selectedInstanceId: selectedInstanceId,
+                    selectedModel: selectedModel
+                }),
+                modelPicker: catalogue,
+                workspace: null
+            };
+            const composer = createTemporaryObject(composerComponent, root);
+            verify(!!composer, "Component exists");
             const picker = findChild(composer, "modelPicker");
             verify(!!picker, "Object exists");
             tryCompare(picker, "enabled", true);
+            return picker;
+        }
+
+        function togglePicker(picker, open) {
             Shell.actionRequested("composer.modelPicker.toggle", {});
-            tryCompare(picker.popup, "visible", true);
-            Shell.actionRequested("composer.modelPicker.toggle", {});
+            tryCompare(picker.popup, "visible", open);
+            if (open) {
+                tryCompare(picker.popup, "opened", true);
+            }
+        }
+
+        function inPicker(picker, name) {
+            tryVerify(() => findChild(picker.popup.contentItem, name) !== null, 2000, name);
+            return findChild(picker.popup.contentItem, name);
+        }
+
+        function listed(picker) {
+            return picker.rows.filter(row => row.kind === "model").map(row => row.instance.instanceId + ":" + row.model.slug);
+        }
+
+        function modelSelections() {
+            return Shell.dispatchedActions.filter(entry => entry.action === "composer.model.select");
+        }
+
+        function test_given_the_page_owns_the_model_shortcut_when_it_requests_the_picker_then_the_native_picker_toggles() {
+            const picker = createPicker(codexAndClaude());
+            togglePicker(picker, true);
+            togglePicker(picker, false);
+        }
+
+        function test_given_codex_and_claude_when_the_picker_opens_then_it_has_a_section_for_each_provider() {
+            const picker = createPicker(codexAndClaude());
+            togglePicker(picker, true);
+            verify(inPicker(picker, "modelPickerRail").visible);
+            const codex = inPicker(picker, "modelPickerProvider:codex");
+            verify(inPicker(picker, "modelPickerProvider:claudeAgent").visible);
+            mouseClick(codex);
+            tryCompare(picker, "view", "codex");
+            compare(listed(picker), ["codex:gpt-5.5", "codex:gpt-5.4"]);
+        }
+
+        function test_given_claude_opus_is_chosen_then_the_picker_names_it_and_its_provider() {
+            const picker = createPicker(codexAndClaude(), "claudeAgent", "opus");
+            compare(picker.triggerTitle, "Claude Opus");
+            compare(picker.activeInstance.displayName, "Claude");
+            const icon = findChild(picker, "modelPickerIcon");
+            verify(!!icon, "Object exists");
+            verify(icon.visible);
+            compare(icon.driverKind, "claudeAgent");
+        }
+
+        function test_given_codex_and_claude_when_claude_opus_is_chosen_then_the_page_switches_and_the_picker_closes() {
+            const picker = createPicker(codexAndClaude());
+            togglePicker(picker, true);
+            mouseClick(inPicker(picker, "modelPickerProvider:claudeAgent"));
+            tryCompare(picker, "view", "claudeAgent");
+            mouseClick(inPicker(picker, "modelPickerRow:claudeAgent:opus"));
+            tryCompare(Shell, "dispatchCount", 1);
+            compare(lastDispatch().action, "composer.model.select");
+            compare(lastDispatch().payload.instanceId, "claudeAgent");
+            compare(lastDispatch().payload.model, "opus");
+            tryCompare(picker.popup, "visible", false);
+        }
+
+        function test_given_codex_and_claude_when_searching_claude_then_only_claudes_models_are_listed() {
+            const picker = createPicker(codexAndClaude());
+            togglePicker(picker, true);
+            const search = inPicker(picker, "modelPickerSearch");
+            tryCompare(search, "activeFocus", true);
+            for (const key of "claude") {
+                keyClick(key);
+            }
+            tryCompare(picker, "query", "claude");
+            compare(inPicker(picker, "modelPickerRail").visible, false);
+            compare(listed(picker).sort(), ["claudeAgent:haiku", "claudeAgent:opus", "claudeAgent:sonnet"]);
+        }
+
+        function test_given_a_favourite_when_the_picker_opens_then_it_is_listed_first_and_can_be_unfavourited() {
+            const picker = createPicker(codexAndClaude({
+                opus: {
+                    isFavorite: true
+                }
+            }));
+            togglePicker(picker, true);
+            compare(picker.view, "favorites");
+            compare(listed(picker)[0], "claudeAgent:opus");
+            const star = inPicker(picker, "modelPickerFavorite:claudeAgent:opus");
+            compare(star.favorite, true);
+            mouseClick(star);
+            tryCompare(Shell, "dispatchCount", 1);
+            compare(lastDispatch().action, "composer.model.favorite.toggle");
+            compare(lastDispatch().payload.instanceId, "claudeAgent");
+            compare(lastDispatch().payload.model, "opus");
+        }
+
+        function test_given_a_disabled_model_then_it_shows_its_reason_and_cannot_be_chosen() {
+            const reason = "Start a new thread to use this model.";
+            const picker = createPicker(codexAndClaude({
+                gpt55: {
+                    disabledReason: reason
+                }
+            }), "codex", "gpt-5.4");
+            togglePicker(picker, true);
+            const row = inPicker(picker, "modelPickerRow:codex:gpt-5.5");
+            compare(row.disabledReason, reason);
+            verify(row.opacity < 1);
+            mouseClick(row);
+            wait(50);
+            compare(modelSelections().length, 0);
+            verify(picker.popup.visible);
+        }
+
+        function test_given_cursor_is_unavailable_then_it_is_listed_with_the_reason_and_cannot_be_chosen() {
+            const reason = "Cursor — Unavailable. Not installed.";
+            const picker = createPicker(codexAndClaude({
+                extra: [pickerInstance("cursor", "cursor", "Cursor", [], {
+                        status: "error",
+                        isAvailable: false,
+                        unavailableReason: reason
+                    })]
+            }));
+            togglePicker(picker, true);
+            const cursor = inPicker(picker, "modelPickerProvider:cursor");
+            verify(cursor.visible);
+            compare(cursor.tooltip, reason);
+            compare(cursor.available, false);
+            mouseClick(cursor);
+            wait(50);
+            compare(picker.view, "codex");
+        }
+
+        function test_given_codex_and_claude_when_down_and_enter_are_pressed_then_the_second_model_is_chosen() {
+            const picker = createPicker(codexAndClaude());
+            togglePicker(picker, true);
+            tryCompare(inPicker(picker, "modelPickerSearch"), "activeFocus", true);
+            const second = listed(picker)[1];
+            keyClick(Qt.Key_Down);
+            keyClick(Qt.Key_Return);
+            tryCompare(Shell, "dispatchCount", 1);
+            compare(lastDispatch().action, "composer.model.select");
+            compare(lastDispatch().payload.instanceId + ":" + lastDispatch().payload.model, second);
+        }
+
+        function test_given_codex_and_claude_when_the_next_provider_shortcut_is_pressed_then_only_claudes_models_are_listed() {
+            const picker = createPicker(codexAndClaude());
+            togglePicker(picker, true);
+            compare(picker.view, "codex");
+            tryCompare(inPicker(picker, "modelPickerSearch"), "activeFocus", true);
+            keyClick(Qt.Key_Down, Qt.ControlModifier | Qt.ShiftModifier);
+            tryCompare(picker, "view", "claudeAgent");
+            compare(listed(picker), ["claudeAgent:opus", "claudeAgent:sonnet", "claudeAgent:haiku"]);
+        }
+
+        function test_given_codex_and_claude_when_the_second_jump_shortcut_is_pressed_then_the_second_model_is_chosen() {
+            const picker = createPicker(codexAndClaude());
+            togglePicker(picker, true);
+            tryCompare(inPicker(picker, "modelPickerSearch"), "activeFocus", true);
+            const second = listed(picker)[1];
+            keyClick(Qt.Key_2, Qt.ControlModifier);
+            tryCompare(Shell, "dispatchCount", 1);
+            compare(lastDispatch().action, "composer.model.select");
+            compare(lastDispatch().payload.instanceId + ":" + lastDispatch().payload.model, second);
             tryCompare(picker.popup, "visible", false);
         }
 

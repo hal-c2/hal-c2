@@ -19,7 +19,7 @@ ShellWindow {
     readonly property var git: workspace ? workspace.git : null
     readonly property var composerState: Shell.state.composer ?? null
     readonly property bool composerReady: composerState !== null && composerState.target !== null
-    readonly property var instance: composerReady ? (composerState.instances.find(entry => entry.instanceId === composerState.selectedInstanceId) ?? null) : null
+    readonly property var instance: composerReady ? ((Shell.state.modelPicker?.instances ?? []).find(entry => entry.instanceId === composerState.selectedInstanceId) ?? null) : null
     readonly property int attentionCount: composerReady ? composerState.pendingApprovalCount + composerState.pendingUserInputCount : 0
     readonly property int threadCount: sidebarState ? sidebarState.active.length + sidebarState.pinned.length : 0
     readonly property int meterPeak: sidebarState ? Math.max(1, threadCount, sidebarState.snoozed.length, sidebarState.settledTotal) : 1

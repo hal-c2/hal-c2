@@ -91,7 +91,7 @@ export interface ShellComposerBridgeProps {
   readonly onFavoritesChange: (favorites: UnifiedSettings["favorites"]) => void;
   readonly lockedProvider: ProviderDriverKind | null;
   readonly lockedContinuationGroupKey: string | null;
-  /** Label of the `modelPicker.toggle` shortcut, or null when unbound. */
+  /** The user's keybindings, for the picker's toggle label and its in-popup chords. */
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly runtimeMode: RuntimeMode;
   readonly runtimeModes: ReadonlyArray<{ value: RuntimeMode; label: string; description: string }>;

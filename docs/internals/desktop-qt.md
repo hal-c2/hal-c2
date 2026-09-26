@@ -478,17 +478,28 @@ buttons are not Tab stops; the thread menu carries the same actions.
 `ChatComposer` when hosted, so approvals, user-input questions, plan
 follow-ups, attachments and mentions keep their one implementation. It
 publishes `ShellComposerState` — draft text, placeholder, whether sending is
-possible and why not, running/connecting flags, enabled provider instances
-with their models (and per-model disabled reasons), the selected model, the
+possible and why not, running/connecting flags, the selected model, the
 provider option descriptors (reasoning effort etc.), runtime modes and the
 plan/build toggle. `ChatComposer` hides its editor and footer when hosted;
 the editor comes back for approval and user-input flows, which type answers
 through it.
 
+The model catalogue is its own key, `modelPicker`, because `composer`
+republishes on every keystroke and an OpenCode catalogue runs to dozens of
+models. It holds the enabled instances in rail order, their models already
+filtered, ordered and marked (favourite, legacy, disabled reason), plus the
+picker's chords resolved from the user's keybindings. The `ModelPicker`
+brick copies the web picker's rail, ranking, rows and keys from that
+(`js/modelPicker.js` names the web files it mirrors), so search stays in QML
+and only a choice or a star crosses back. Its popup does not close on
+Escape by `closePolicy`: a popup that does blocks every window shortcut,
+including the `modelPicker.toggle` binding that must close it again.
+
 Actions: `composer.text.set {target, text, cursor?, edit?}` (debounced from the QML
 editor), `composer.submit {text?, intent?, edit?}` (text rides along so the send is
 atomic with the last edit), `composer.interrupt`, `composer.model.select
 {instanceId, model}`, `composer.option.set {id, value}`,
+`composer.model.favorite.toggle {instanceId, model}`,
 `composer.runtimeMode.set {mode}`, `composer.interactionMode.set {mode}`,
 `composer.suggest.select {id}`, `composer.suggest.dismiss`. The page's
 `modelPicker.toggle` command dispatches `composer.modelPicker.toggle` the

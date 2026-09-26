@@ -98,6 +98,9 @@ export default defineConfig({
       "apps/mobile/ios/**",
       // Generated QML-dialect JS (`.pragma library`), see scripts/gen-icons.mjs.
       "apps/desktop-qt/qml/HalC2/Bricks/js/lucide.js",
+      // QML-dialect JS (`.pragma library`) the formatter cannot parse.
+      "apps/desktop-qt/qml/HalC2/Bricks/js/modelPicker.js",
+      "apps/desktop-qt/qml/HalC2/Bricks/js/providerIcons.js",
       // Exported Lottie animation, kept as the tool wrote it.
       "apps/desktop-qt/examples/dashboard/cat-playing.json",
       "apps/mobile/uniwind-types.d.ts",

@@ -27,7 +27,6 @@ Rectangle {
     readonly property color secondary: Theme.palette.color("secondaryLabel", "#a1a1aa")
     readonly property color iconMuted: Theme.palette.color("iconMuted", "#8b8b93")
     readonly property color branchColor: Theme.palette.color("branchForeground", Qt.alpha(muted, 0.7))
-    readonly property var modelChoices: buildModelChoices(ready ? model.instances : [])
     readonly property var effortOption: ready ? (model.options.find(option => option.type === "select") ?? null) : null
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20
@@ -87,21 +86,6 @@ Rectangle {
                 modelPicker.popup.open();
             }
         }
-    }
-
-    function buildModelChoices(instances) {
-        const choices = [];
-        for (const instance of instances) {
-            for (const entry of instance.models) {
-                choices.push({
-                    label: instances.length > 1 ? instance.displayName + " · " + entry.name : entry.name,
-                    instanceId: instance.instanceId,
-                    slug: entry.slug,
-                    disabledReason: entry.disabledReason
-                });
-            }
-        }
-        return choices;
     }
 
     function runtimeIcon(mode) {
@@ -482,28 +466,16 @@ Rectangle {
                         }
                     }
 
-                    ShellComboBox {
+                    ModelPicker {
                         id: modelPicker
                         objectName: "modelPicker"
 
                         Layout.fillWidth: true
                         Layout.minimumWidth: 72
                         Layout.maximumWidth: Math.min(implicitWidth, 224)
-                        iconName: "sparkles"
-                        enabled: composer.ready && composer.modelChoices.length > 0
-                        model: composer.modelChoices.map(choice => choice.label)
-                        currentIndex: composer.ready ? composer.modelChoices.findIndex(choice => choice.instanceId === composer.model.selectedInstanceId && choice.slug === composer.model.selectedModel) : -1
-                        displayText: currentIndex < 0 ? qsTr("Model") : currentText
-                        Accessible.name: qsTr("Model")
-                        onActivated: index => {
-                            const choice = composer.modelChoices[index];
-                            if (choice && choice.disabledReason === null) {
-                                Shell.dispatch("composer.model.select", {
-                                    instanceId: choice.instanceId,
-                                    model: choice.slug
-                                });
-                            }
-                        }
+                        enabled: composer.ready && instances.length > 0
+                        selectedInstanceId: composer.ready ? composer.model.selectedInstanceId : null
+                        selectedModel: composer.ready ? composer.model.selectedModel : null
                     }
 
                     Separator {

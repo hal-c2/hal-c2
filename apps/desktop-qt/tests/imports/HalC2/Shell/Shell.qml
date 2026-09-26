@@ -6,6 +6,7 @@ QtObject {
 
     property var state: ({
             composer: defaultComposer(),
+            modelPicker: defaultModelPicker(),
             workspace: null
         })
     property var dispatchedActions: []
@@ -23,7 +24,6 @@ QtObject {
             suggestions: [],
             triggerKind: null,
             suggestionsEmptyText: null,
-            instances: [],
             options: [],
             attachments: [],
             terminalContexts: [],
@@ -42,37 +42,47 @@ QtObject {
         };
     }
 
+    function defaultModelPicker() {
+        return {
+            instances: [],
+            locked: false,
+            shortcut: null,
+            previousProvider: null,
+            nextProvider: null,
+            jump: []
+        };
+    }
+
     function reset() {
         echoTextEdits = true;
         dispatchedActions = [];
         dispatchCount = 0;
         state = {
             composer: defaultComposer(),
+            modelPicker: defaultModelPicker(),
             workspace: null
         };
     }
 
     function publishComposerText(text, cursor, edit = state.composer.edit) {
-        state = {
+        state = Object.assign({}, state, {
             composer: Object.assign({}, state.composer, {
                 text: text,
                 edit: edit,
                 cursor: cursor
-            }),
-            workspace: state.workspace
-        };
+            })
+        });
     }
 
     function publishComposerTarget(target, text, cursor) {
-        state = {
+        state = Object.assign({}, state, {
             composer: Object.assign({}, state.composer, {
                 target: target,
                 edit: null,
                 text: text,
                 cursor: cursor
-            }),
-            workspace: state.workspace
-        };
+            })
+        });
     }
 
     function dispatch(action, payload) {

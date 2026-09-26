@@ -11,6 +11,8 @@ qt_add_qml_module(hal_c2_bricks
     AppView.qml
     AppWindow.qml
     Composer.qml
+    ModelPicker.qml
+    ProviderIcon.qml
     ComposerVimKeys.qml
     ProjectFolderDrop.qml
     FolderExplorer.qml
@@ -41,7 +43,10 @@ qt_add_qml_module(hal_c2_bricks
     WindowControls.qml
     Workspace.qml
     js/lucide.js
+    js/modelPicker.js
+    js/providerIcons.js
   RESOURCES
     qmldir
     js/shell-connect.js
+    icons/antigravity.png
 )

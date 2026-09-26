@@ -4,6 +4,8 @@ FolderOperationDialog 1.0 FolderOperationDialog.qml
 AppView 1.0 AppView.qml
 AppWindow 1.0 AppWindow.qml
 Composer 1.0 Composer.qml
+ModelPicker 1.0 ModelPicker.qml
+ProviderIcon 1.0 ProviderIcon.qml
 ComposerVimKeys 1.0 ComposerVimKeys.qml
 ProjectFolderDrop 1.0 ProjectFolderDrop.qml
 ContextMenuHost 1.0 ContextMenuHost.qml
