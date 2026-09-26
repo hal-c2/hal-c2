@@ -85,15 +85,7 @@ defmodule T3.Acp do
              do: {:ok, command, env ++ instance_env(entry)}
 
       {"cursor", entry} ->
-        # Each instance keeps its own Cursor sign-in, owner-only, under the T3 home.
-        credentials =
-          Path.join([
-            Application.fetch_env!(:t3, :home),
-            "provider-auth",
-            instance,
-            "cursor.json"
-          ])
-
+        credentials = cursor_credentials(instance)
         {node, node_env} = node_command()
 
         {:ok, [node, cursor_script(), "--mode", runtime_mode || "approval-required"],
@@ -179,7 +171,12 @@ defmodule T3.Acp do
           "enabled" => enabled,
           "installed" => true,
           "version" => :persistent_term.get({__MODULE__, id, :version}, "unknown"),
-          "status" => if(failure, do: "error", else: "ready"),
+          "status" =>
+            cond do
+              failure -> "error"
+              empty_catalog?(driver, models) -> "warning"
+              true -> "ready"
+            end,
           "availability" => "available",
           # `T3.TextGeneration` runs these; registry agents and Pi write no commits or titles.
           "supportsTextGeneration" => driver in ~w(grok opencode cursor),
@@ -187,19 +184,74 @@ defmodule T3.Acp do
           "showInteractionModeToggle" => false,
           "auth" => %{"status" => "authenticated"},
           "checkedAt" => T3.Orchestration.Entities.now(),
-          "models" => models || [],
+          "models" => custom_models(models || [], instance),
           "slashCommands" => [],
           "skills" => []
         },
         base
       )
       |> then(&if(failure, do: Map.put(&1, "message", failure), else: &1))
+      |> then(
+        &if(empty_catalog?(driver, models) and !failure,
+          do: Map.put(&1, "message", "Cursor SDK model discovery returned no built-in models."),
+          else: &1
+        )
+      )
       |> Map.merge(capability_fields(capabilities(id)))
       |> Map.merge(access(id, base["setup"]))
     else
       _ -> nil
     end
   end
+
+  # Cursor always offers "default" (Auto); a catalog with nothing else found no models.
+  defp empty_catalog?("cursor", [_ | _] = models),
+    do: Enum.all?(models, &(&1["slug"] == "default"))
+
+  defp empty_catalog?(_driver, _models), do: false
+
+  # Cursor tells a refused sign-in from a missing one, as the Node server does.
+  defp signed_out_message(id) do
+    case instance(id) do
+      {"cursor", entry} ->
+        cond do
+          api_key?(entry) ->
+            "Cursor SDK authentication failed. Check CURSOR_API_KEY."
+
+          File.exists?(cursor_credentials(id)) ->
+            "Cursor sign-in expired or was rejected. Sign in again in provider settings."
+
+          true ->
+            "Sign in with Cursor or add CURSOR_API_KEY in provider settings."
+        end
+
+      _ ->
+        "Sign in to use this agent."
+    end
+  end
+
+  @doc "Why an instance cannot start a browser sign-in, or nil."
+  def sign_in_refusal(id) do
+    case instance(id) do
+      {"cursor", entry} ->
+        if api_key?(entry),
+          do:
+            "Remove CURSOR_API_KEY from this provider's environment before using browser sign-in."
+
+      _ ->
+        nil
+    end
+  end
+
+  defp api_key?(entry),
+    do:
+      Enum.any?(instance_env(entry), fn {k, v} ->
+        k == "CURSOR_API_KEY" and String.trim(v) != ""
+      end)
+
+  # Each instance keeps its own Cursor sign-in, owner-only, under the T3 home.
+  defp cursor_credentials(id),
+    do: Path.join([Application.fetch_env!(:t3, :home), "provider-auth", id, "cursor.json"])
 
   # A registry agent is installed when first used, so it counts as available.
   defp base_entry(id, @registry, instance) do
@@ -338,7 +390,7 @@ defmodule T3.Acp do
           :persistent_term.erase({__MODULE__, id, :error})
 
         {:error, :unauthenticated} ->
-          :persistent_term.put({__MODULE__, id, :error}, "Sign in to use this agent.")
+          :persistent_term.put({__MODULE__, id, :error}, signed_out_message(id))
           :persistent_term.put({__MODULE__, id, :unauthenticated}, true)
 
         {:error, reason} ->
@@ -405,11 +457,12 @@ defmodule T3.Acp do
   end
 
   @doc """
-  Starts an instance's agent in `cwd`, initializes it, and calls `fun.(conn,
-  initialize_result)`; the agent stops when `fun` returns.
+  Starts an instance's agent in `cwd` (for `runtime_mode`, see `command/2`),
+  initializes it, and calls `fun.(conn, initialize_result)`; the agent stops when
+  `fun` returns.
   """
-  def with_agent(id, cwd, fun) do
-    with {:ok, command, env} <- command(id),
+  def with_agent(id, cwd, fun, runtime_mode \\ nil) do
+    with {:ok, command, env} <- command(id, runtime_mode),
          {:ok, conn} <-
            Connection.start_link(cmd: command, handler: self(), cd: cwd, env: env, dialect: :v2) do
       try do
@@ -463,6 +516,51 @@ defmodule T3.Acp do
 
     :ok
   end
+
+  @doc """
+  Replaces an instance's models with those of a session's `configOptions`, as an
+  agent reports them mid-session, and tells subscribed clients.
+  """
+  def put_models(id, config_options) do
+    if Enum.any?(config_options, &(&1["id"] == "model")) do
+      :persistent_term.put(
+        {__MODULE__, id, :models},
+        models(%{"configOptions" => config_options})
+      )
+
+      T3.Settings.notify_providers()
+    end
+
+    :ok
+  end
+
+  # Model ids the user added (`config.customModels`, slugs or `%{"slug", "name"}`) follow
+  # the agent's own, skipping any the agent already offers.
+  defp custom_models(models, instance) do
+    known = MapSet.new(models, & &1["slug"])
+
+    custom =
+      for entry <- get_in(instance, ["config", "customModels"]) || [],
+          {slug, name} = custom_model(entry),
+          is_binary(slug) and slug != "" and not MapSet.member?(known, slug),
+          uniq: true,
+          do: %{
+            "slug" => slug,
+            "name" => name,
+            "isCustom" => true,
+            "isDefault" => false,
+            "capabilities" => nil
+          }
+
+    models ++ custom
+  end
+
+  defp custom_model(slug) when is_binary(slug), do: {String.trim(slug), String.trim(slug)}
+
+  defp custom_model(%{"slug" => slug} = model) when is_binary(slug),
+    do: {String.trim(slug), model["name"] || String.trim(slug)}
+
+  defp custom_model(_), do: {nil, nil}
 
   # "Hugging Face/DeepSeek V3" is the model "DeepSeek V3" of the provider "Hugging Face".
   defp models(session) do

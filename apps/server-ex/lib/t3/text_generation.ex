@@ -357,9 +357,15 @@ defmodule T3.TextGeneration do
               {:error,
                "Cursor text generation cannot enforce workspace isolation with a custom ~/.cursor/sandbox.json. Use another text-generation provider."}
             else
-              T3.Acp.with_agent(id, dir, fn conn, _init ->
-                acp_prompt(conn, dir, selection["model"], prompt)
-              end)
+              # Cursor plans read-only there, without the user's Cursor settings or tools.
+              mode = if driver(id) == "cursor", do: "text-generation"
+
+              T3.Acp.with_agent(
+                id,
+                dir,
+                fn conn, _init -> acp_prompt(conn, dir, selection["model"], prompt) end,
+                mode
+              )
             end
           end)
         catch

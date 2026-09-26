@@ -175,12 +175,29 @@ defmodule T3.Acp.Sessions do
   def set_provider(%{"instanceId" => instance, "projectId" => project_id} = input) do
     params = Map.take(input, ["providerId", "apiType", "baseUrl", "headers"])
 
-    with {:ok, root} <- project_root(project_id),
+    with :ok <- headers(params["headers"]),
+         {:ok, root} <- project_root(project_id),
          {:ok, _} <- call(instance, root, "providers/set", params, :providers) do
       T3.Acp.forget(instance)
       {:ok, %{"configured" => true}}
     end
   end
+
+  # Headers are a JSON object of strings (the contract's `Record<string, string>`).
+  defp headers(nil), do: :ok
+
+  defp headers(headers) when is_map(headers) do
+    if Enum.all?(headers, fn {key, value} -> is_binary(key) and is_binary(value) end),
+      do: :ok,
+      else: headers(false)
+  end
+
+  defp headers(_),
+    do:
+      error(
+        "provider_configuration_failed",
+        "Headers must be a JSON object with string values."
+      )
 
   @doc "`server.disableAcpRegistryProvider`."
   def disable_provider(%{"instanceId" => instance, "projectId" => project_id} = input) do

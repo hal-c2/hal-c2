@@ -8,6 +8,11 @@ defmodule T3.ProviderUpdates do
   the CLI, told apart by where its executable really lives: Homebrew, a global npm
   prefix, or Claude Code's own `claude update`. Anything else is reported without
   an update command.
+
+  Updates through one installer run one at a time; a provider waiting its turn,
+  running or finished shows it in its `updateState`. An update checks that the
+  installer is still the one the providers were last reported with, and afterwards
+  that the provider is no longer behind.
   """
 
   @packages %{"codex" => "@openai/codex", "claudeAgent" => "@anthropic-ai/claude-code"}
@@ -17,6 +22,9 @@ defmodule T3.ProviderUpdates do
   def advisory(driver, path, current) do
     latest = latest(driver)
     update = update_command(driver, path)
+    # What the user was shown; an update checks the installation still matches it.
+    if :persistent_term.get({__MODULE__, driver, :offered}, nil) != update,
+      do: :persistent_term.put({__MODULE__, driver, :offered}, update)
 
     %{
       "status" =>
@@ -36,22 +44,110 @@ defmodule T3.ProviderUpdates do
 
   @doc "`server.updateProvider`: runs the provider's updater, then reports providers again."
   def update(%{"provider" => driver}) do
-    entry = Enum.find(T3.Environment.providers(), &(&1["driver"] == driver))
-    path = entry && executable(driver)
-
-    with {:path, path} when is_binary(path) <- {:path, path},
-         {:command, [command | args]} <- {:command, update_command(driver, path)},
-         {_out, 0} <- System.cmd(command, args, stderr_to_stdout: true) do
-      forget_version(driver)
-      T3.Settings.notify_providers()
-      {:ok, %{"providers" => T3.Environment.providers()}}
+    with {:path, path} when is_binary(path) <- {:path, executable(driver)},
+         {:command, [_ | _] = command} <- {:command, update_command(driver, path)} do
+      locked(lock_key(command), driver, fn -> run(driver) end)
     else
       {:path, _} -> error(driver, "#{driver} is not installed on this machine.")
       {:command, _} -> error(driver, "This installation cannot be updated from here.")
-      {out, _status} -> error(driver, out |> String.trim() |> String.slice(-500, 500))
     end
   rescue
-    exception -> error(driver, Exception.message(exception))
+    exception -> failed(driver, nil, Exception.message(exception))
+  end
+
+  @doc "Adds the provider's `updateState` to its entry, once it has been updated."
+  def put_state(%{"driver" => driver} = entry) do
+    case :persistent_term.get({__MODULE__, driver, :state}, nil) do
+      nil -> entry
+      state -> Map.put(entry, "updateState", state)
+    end
+  end
+
+  # One installer runs one update at a time; the others wait their turn, queued.
+  defp locked(key, driver, fun) do
+    lock = {{__MODULE__, key}, self()}
+
+    unless :global.set_lock(lock, [node()], 0) do
+      put_state(driver, "queued", nil, "Waiting for another provider update to finish.")
+      true = :global.set_lock(lock, [node()])
+    end
+
+    try do
+      fun.()
+    after
+      :global.del_lock(lock, [node()])
+    end
+  end
+
+  defp lock_key(["brew" | _]), do: "homebrew"
+  defp lock_key([_npm, "install", "-g", "--prefix", prefix | _]), do: "npm-global:" <> prefix
+  defp lock_key([path | _]), do: "self:" <> path
+
+  defp run(driver) do
+    started = T3.Orchestration.Entities.now()
+    put_state(driver, "running", started, "Updating provider.")
+    offered = :persistent_term.get({__MODULE__, driver, :offered}, nil)
+    path = executable(driver)
+    command = path && update_command(driver, path)
+
+    cond do
+      command == nil or (offered != nil and offered != command) ->
+        failed(driver, started, "Provider installation changed. Refresh and try again.")
+
+      true ->
+        [program | args] = command
+
+        case System.cmd(program, args, stderr_to_stdout: true) do
+          {output, 0} ->
+            verify(driver, started, output)
+
+          {output, _} ->
+            failed(driver, started, output |> String.trim() |> String.slice(-500, 500))
+        end
+    end
+  end
+
+  # "Succeeded" needs the provider to be installed and no longer behind.
+  defp verify(driver, started, output) do
+    forget_version(driver)
+    entry = Enum.find(T3.Environment.providers(), &(&1["driver"] == driver))
+
+    {status, message} =
+      cond do
+        entry == nil or entry["version"] in [nil, "unknown"] ->
+          {"unchanged",
+           "Update command completed, but T3 Code could not verify the provider version."}
+
+        entry["versionAdvisory"]["status"] == "behind_latest" ->
+          {"unchanged",
+           "Update command completed, but T3 Code still detects an outdated provider version."}
+
+        true ->
+          {"succeeded", "Provider updated."}
+      end
+
+    put_state(driver, status, started, message, output)
+    {:ok, %{"providers" => T3.Environment.providers()}}
+  end
+
+  defp failed(driver, started, reason) do
+    put_state(driver, "failed", started, if(reason == "", do: "The update failed.", else: reason))
+    error(driver, reason)
+  end
+
+  defp put_state(driver, status, started, message, output \\ nil) do
+    finished =
+      if status in ["succeeded", "failed", "unchanged"], do: T3.Orchestration.Entities.now()
+
+    :persistent_term.put({__MODULE__, driver, :state}, %{
+      "status" => status,
+      "startedAt" => started,
+      "finishedAt" => finished,
+      "message" => message,
+      "output" => output && String.slice(output, -10_000, 10_000)
+    })
+
+    T3.Settings.notify_providers()
   end
 
   defp error(driver, reason),

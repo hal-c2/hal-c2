@@ -34,9 +34,10 @@ Feature: Cursor
     Then every client of the node is offered the Cursor sign-in page
     And Cursor is signed in once the user finishes on the website
 
+  # Both servers end a sign-in after five minutes (ProviderAuth, CursorAuth AUTH_TIMEOUT_MS).
   Scenario: The Cursor sign-in request expires if nobody answers it
     Given Cursor is waiting for the user to open its sign-in page
-    When ten minutes pass without an answer
+    When five minutes pass without an answer
     Then the sign-in request is declined
     And the user can start sign-in again
 
@@ -71,7 +72,6 @@ Feature: Cursor
     When a new thread needs a title
     Then Cursor writes the title without using any tools
 
-  @backlog
   Scenario Outline: Cursor's access modes map to Cursor's own safety settings
     Given the thread runs Cursor in <mode>
     Then Cursor's review is <review> and its sandbox is <sandbox>
@@ -83,19 +83,16 @@ Feature: Cursor
       | auto              | off    | on      |
       | full access       | off    | off     |
 
-  @backlog
   Scenario: A Cursor sign-in that takes too long expires
     Given Cursor sign-in has been waiting for five minutes
     When the time runs out
     Then the user is told Cursor sign-in expired and to start again
 
-  @backlog
   Scenario: Browser sign-in is refused while an API key is set
     Given the Cursor instance has a Cursor API key in its environment
     When the user tries to sign in with the browser
     Then the user is told to remove the API key first
 
-  @backlog
   Scenario: An expired Cursor sign-in is explained
     Given the Cursor sign-in was revoked
     When the user opens the provider list
@@ -106,7 +103,6 @@ Feature: Cursor
     When the user opens the options for a Cursor model
     Then the reasoning, context size, fast mode and thinking choices Cursor offers for that model are shown
 
-  @backlog
   Scenario: An empty Cursor catalog is a warning
     Given Cursor returns no models
     When the user opens the provider list

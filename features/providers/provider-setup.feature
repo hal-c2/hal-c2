@@ -62,18 +62,15 @@ Feature: Provider setup, updates and sign-in
     When a sign-in fails
     Then the error shown to the user contains no sign-in code or return address
 
-  @backlog
   Scenario: A provider update waits for another update to finish
     Given a Claude update is running
     When the user updates Codex
     Then Codex's update waits for the Claude update to finish
 
-  @backlog
   Scenario: An update that leaves the provider outdated is reported as unchanged
     When an update finishes but the provider still reports the old version
     Then the user is told the provider is still outdated
 
-  @backlog
   Scenario: An update fails if the provider moved since it was checked
     Given Codex was reinstalled somewhere else after the last check
     When the user updates Codex

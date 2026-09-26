@@ -45,7 +45,8 @@ Feature: ACP registry agents
     Given the registry agent "acme" runs through npx
     And npm is not installed on the node
     When the user adds "acme"
-    Then the user is told to install npm or uv to use this agent
+    # Only npx agents need a runner here, and the node (like TS) names npm alone.
+    Then the user is told to install npm to use this agent
 
   Scenario: A download that does not match the registry checksum is rejected
     Given the registry lists a checksum for "acme"
@@ -186,7 +187,6 @@ Feature: ACP registry agents
     When the user disables "openrouter"
     Then "openrouter" is shown as disabled
 
-  @backlog
   Scenario: Headers that are not a JSON object of strings are rejected
     When the user saves model provider headers that are not a JSON object of strings
     Then the save is refused with a message about the header format
@@ -198,7 +198,6 @@ Feature: ACP registry agents
     Then "/review" is offered under the provider's commands
     And "$deploy" is offered in the skill menu
 
-  @backlog
   Scenario: Agent plans and context usage are shown
     When "acme" reports a plan and its context usage during a turn
     Then the task list and the context meter follow the agent's reports
@@ -209,13 +208,11 @@ Feature: ACP registry agents
     Then the command, its output and exit status are shown
     And the user cannot type into that terminal
 
-  @backlog
   Scenario: Custom model ids can be added for a registry agent
     Given "acme" reports no models
     When the user adds the custom model "acme-large"
     Then "acme-large" is offered in the model picker
 
-  @backlog
   Scenario: Models and options that change during a session update the picker
     When "acme" reports a new model while a session runs
     Then the model picker offers it without a provider refresh
@@ -226,7 +223,6 @@ Feature: ACP registry agents
     When the user switches the thread to plan mode
     Then "acme" runs in its plan mode
 
-  @backlog
   Scenario: Images and audio the client cannot render show as placeholders
     When "acme" returns an image resource in its answer
     Then the answer shows a placeholder for the image instead of dropping it

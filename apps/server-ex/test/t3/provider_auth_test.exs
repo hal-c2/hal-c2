@@ -110,7 +110,7 @@ defmodule T3.ProviderAuthTest do
         "response" => %{"type" => "browser", "action" => "decline"}
       })
 
-    assert await_phase("failed")["message"] =~ "declined"
+    assert await_phase("failed")["message"] == "The ACP agent could not complete sign-in."
 
     {:ok, %{"flowId" => flow}} =
       T3.ProviderAuth.start(%{"instanceId" => "opencode", "methodId" => "cli"})

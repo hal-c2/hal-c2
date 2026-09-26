@@ -81,8 +81,9 @@ defmodule T3.Environment do
   `server.refreshProviders`: reads models again when the user asks
   (`refreshModels`), for one instance or all, then returns the provider list.
   Subscription quota is read again too (`T3.ProviderUsageLimits`), and an untargeted
-  refresh re-reads the usage-limit sources, as the Node server's status probe does;
-  a workspace refresh (with a `cwd`) leaves quota alone.
+  refresh re-reads the usage-limit sources, as the Node server's status probe does,
+  and a refresh of one ACP instance reads its agent again; a workspace refresh
+  (with a `cwd`) leaves quota alone.
   """
   def refresh_providers(input) do
     case input do
@@ -91,6 +92,8 @@ defmodule T3.Environment do
 
       %{"instanceId" => id} when is_binary(id) ->
         T3.ProviderUsageLimits.refresh([id])
+        # An ACP agent's status (sign-in, version, models) is read by starting it.
+        if input["refreshModels"] != true and T3.Acp.agent?(id), do: T3.Acp.reload(id)
 
       _ ->
         T3.ProviderUsageLimits.refresh()
@@ -157,7 +160,7 @@ defmodule T3.Environment do
     for(
       entry <- [T3.Codex.Provider.entry(), T3.Claude.Provider.entry()],
       entry != nil,
-      do: T3.ProviderUsageLimits.put(entry)
+      do: entry |> T3.ProviderUpdates.put_state() |> T3.ProviderUsageLimits.put()
     ) ++ T3.Acp.entries()
   end
 

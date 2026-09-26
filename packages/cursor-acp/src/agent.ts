@@ -49,8 +49,17 @@ export interface CursorRun {
   readonly cancel: () => Promise<void>;
 }
 
-/** The runtime mode the node started this process for (`--mode`). */
-export type RuntimeMode = "full-access" | "approval-required" | "auto-accept-edits" | "auto";
+/**
+ * The runtime mode the node started this process for (`--mode`). "text-generation"
+ * writes titles and commit messages: read-only planning, without the user's Cursor
+ * settings, rules or tools.
+ */
+export type RuntimeMode =
+  | "full-access"
+  | "approval-required"
+  | "auto-accept-edits"
+  | "auto"
+  | "text-generation";
 
 type JsonRpcId = string | number;
 type Message = {
@@ -103,16 +112,18 @@ export function makeCursorAcp(input: {
     return key;
   };
 
+  const text = input.mode === "text-generation";
   const agentOptions = (cwd: string, key: string, model: ModelSelection): AgentOptions => ({
     model,
     name: "T3 Code",
-    mode: "agent",
+    mode: text ? "plan" : "agent",
     apiKey: key,
     local: {
       cwd,
       autoReview: input.mode === "approval-required",
       sandboxOptions: { enabled: input.mode !== "full-access" },
       enableAgentRetries: true,
+      ...(text ? { settingSources: [] } : {}),
     },
   });
 
