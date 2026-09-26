@@ -162,8 +162,8 @@ export function sessionStatusColor(status: string | null | undefined): string {
 }
 
 /** Compact relative time (≤3 chars): now / 2m / 3h / 5d — same thresholds as web. */
-export function relativeTime(iso: string): string {
-  const diffMs = Date.now() - new Date(iso).getTime();
+export function relativeTime(iso: string, nowMs = Date.now()): string {
+  const diffMs = nowMs - new Date(iso).getTime();
   if (!Number.isFinite(diffMs) || diffMs < 0) return "now";
   const seconds = Math.floor(diffMs / 1000);
   if (seconds < 60) return "now";
