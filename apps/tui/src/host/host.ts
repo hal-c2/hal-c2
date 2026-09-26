@@ -6,6 +6,7 @@ import { createStore, type StatusKind, type StoreState } from "../store.ts";
 import { buildTuiLayoutState, type TuiMode, type TuiSize } from "./layoutState.ts";
 import { buildTuiSidebarState, idFromKey, threadKey } from "./sidebarState.ts";
 import { createTuiTheme, TUI_THEME_STATE, type TuiTheme } from "./theme.ts";
+import { createThreadView } from "./threadView.ts";
 
 /** Published under `status`: the one-line status message and its tone. */
 export interface TuiStatusState {
@@ -81,11 +82,19 @@ export function createHost(options: HostOptions): Host {
   // Republish a key only when what it is derived from changed, so bindings
   // on other keys are not re-evaluated by every store emit.
   let last: StoreState | null = null;
-  const publishLayout = () =>
-    state.set(
-      "layout",
-      buildTuiLayoutState({ size, sidebarCollapsed, rightPanelVisible: false, mode }),
-    );
+  const threadView = createThreadView({
+    store,
+    client,
+    state,
+    mode: () => mode,
+    setMode: (next) => setMode(next),
+    nowMs: () => Date.parse(now()),
+  });
+  const publishLayout = () => {
+    const layout = buildTuiLayoutState({ size, sidebarCollapsed, rightPanelVisible: false, mode });
+    state.set("layout", layout);
+    threadView.setPaneWidth(layout.chatWidth);
+  };
   const publish = () => {
     const next = store.getState();
     const prev = last;
@@ -132,9 +141,12 @@ export function createHost(options: HostOptions): Host {
     ) {
       state.set("page", pageFor(next, selectedThreadId));
     }
+    threadView.sync(next, prev);
   };
 
-  const setMode = (next: TuiMode) => {
+  /** "compose" means the prompt has the keys, or an open question when one waits. */
+  const setMode = (requested: TuiMode) => {
+    const next = requested === "compose" ? threadView.composeMode() : requested;
     if (next === mode) return;
     mode = next;
     state.set("mode", mode);
@@ -147,8 +159,8 @@ export function createHost(options: HostOptions): Host {
       case "thread.open": {
         const key = payloadField(payload, "key");
         if (typeof key !== "string") return;
-        store.select({ kind: "thread", id: idFromKey(key) });
         setMode("compose");
+        store.select({ kind: "thread", id: idFromKey(key) });
         return;
       }
       case "thread.next":
@@ -185,6 +197,7 @@ export function createHost(options: HostOptions): Host {
         options.onQuit?.();
         return;
       default:
+        if (threadView.dispatch(action, payload)) return;
         if (unknownActions.has(action)) return;
         unknownActions.add(action);
         log(`t3 tui: unknown shell action "${action}"`);

@@ -1,0 +1,762 @@
+import type { OrchestrationThread } from "@t3tools/contracts";
+import type { PropertyMap } from "opentui-qml";
+
+import { derivePendingApprovals, type PendingApproval } from "../approvals.ts";
+import type { TuiClient } from "../connection.ts";
+import { splitUnifiedDiff } from "../diffSplit.ts";
+import { latestActionableProposedPlan } from "../proposedPlan.ts";
+import type { Store, StoreState } from "../store.ts";
+import { relativeTime, THEME, type Palette } from "../theme.ts";
+import { revertableCheckpoints } from "../timeline.ts";
+import {
+  buildUserInputAnswers,
+  derivePendingUserInputs,
+  type PendingUserInput,
+} from "../userInput.ts";
+import type { TuiMode } from "./layoutState.ts";
+import {
+  nextThreadAlerts,
+  OPEN_THREAD_ACTION,
+  threadTransitions,
+  type ThreadAlert,
+} from "./notificationsState.ts";
+import {
+  buildTimelineState,
+  checkpointDirPaths,
+  EMPTY_TIMELINE_VIEW,
+  TIMELINE_WINDOW_SIZE,
+  type TimelineState,
+  type TimelineView,
+} from "./timelineState.ts";
+
+// The open thread's view state (port of the timeline, approval, question,
+// plan, revert and diff parts of ChatView). Publishes `timeline`,
+// `timelineScroll`, `approvals`, `userInput`, `threadHints`, `revert`, `diff`
+// and `notifications`, and handles their actions.
+
+/** Options a question panel shows at once, scrolled around the highlight. */
+export const USER_INPUT_OPTION_WINDOW = 8;
+
+export interface ThreadViewOptions {
+  readonly store: Store;
+  readonly client: TuiClient;
+  readonly state: PropertyMap;
+  readonly mode: () => TuiMode;
+  /** The host's mode switch; "compose" resolves through `composeMode`. */
+  readonly setMode: (mode: TuiMode) => void;
+  readonly nowMs: () => number;
+  readonly palette?: Palette;
+}
+
+export interface ThreadView {
+  /** Republish what changed between two store states. */
+  readonly sync: (next: StoreState, prev: StoreState | null) => void;
+  /** The conversation pane's width changed (layout). */
+  readonly setPaneWidth: (width: number) => void;
+  /** Handle a thread action; false when the action is not ours. */
+  readonly dispatch: (action: string, payload: unknown) => boolean;
+  /** "userInput" while a question waits for an answer, otherwise "compose". */
+  readonly composeMode: () => TuiMode;
+}
+
+interface QuestionState {
+  readonly requestId: string | null;
+  readonly deferred: boolean;
+  readonly questionIndex: number;
+  readonly optionIndex: number;
+  readonly selections: Readonly<Record<string, ReadonlyArray<string>>>;
+  readonly customAnswer: string;
+}
+
+const NO_QUESTION: QuestionState = {
+  requestId: null,
+  deferred: false,
+  questionIndex: 0,
+  optionIndex: 0,
+  selections: {},
+  customAnswer: "",
+};
+
+type DiffStatus = "loading" | "ready" | "empty" | "error";
+
+interface DiffState {
+  readonly open: boolean;
+  /** 0 = all changes, 1..N = the revertable checkpoints (newest first). */
+  readonly index: number;
+  readonly focusPath: string | null;
+  readonly view: "unified" | "split";
+  readonly status: DiffStatus;
+  readonly text: string;
+  /** Why the last load failed. */
+  readonly error: string;
+}
+
+const CLOSED_DIFF: DiffState = {
+  open: false,
+  index: 0,
+  focusPath: null,
+  view: "unified",
+  status: "loading",
+  text: "",
+  error: "",
+};
+
+const field = (payload: unknown, name: string): unknown =>
+  typeof payload === "object" && payload !== null
+    ? (payload as Record<string, unknown>)[name]
+    : undefined;
+
+const errorText = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+const toggled = (set: ReadonlySet<string>, id: string): Set<string> => {
+  const next = new Set(set);
+  if (!next.delete(id)) next.add(id);
+  return next;
+};
+
+export function createThreadView(options: ThreadViewOptions): ThreadView {
+  const { store, client, state } = options;
+  const palette = options.palette ?? THEME;
+
+  let detail: OrchestrationThread | null = null;
+  let page: StoreState["threadPage"] = null;
+  let paneWidth = 1;
+  let view: TimelineView = EMPTY_TIMELINE_VIEW;
+  let timeline: TimelineState | null = null;
+  let pendingOlder: { readonly detailId: string; readonly rowCount: number } | null = null;
+  let scrollSeq = 0;
+
+  let approvals: PendingApproval[] = [];
+  let approvalIndex = 0;
+  let questions: PendingUserInput[] = [];
+  let question: QuestionState = NO_QUESTION;
+  /** The request an answer is on its way for (blocks a second submit). */
+  let answering: string | null = null;
+  let revertIndex = 0;
+  let diff: DiffState = CLOSED_DIFF;
+  let diffRequest = 0;
+  let alerts: ReadonlyArray<ThreadAlert> = [];
+  let alertSeq = 0;
+  let viewedThreadId: string | null = null;
+
+  const activeQuestion = (): PendingUserInput | null => questions[0] ?? null;
+  const questionOpen = () => activeQuestion() !== null && !question.deferred;
+  const composeMode = (): TuiMode => (questionOpen() ? "userInput" : "compose");
+  /** Enter or leave the question panel when the prompt has the keys. */
+  const reconcileMode = () => {
+    const mode = options.mode();
+    if (mode === "compose" || mode === "userInput") options.setMode("compose");
+  };
+  const checkpoints = () => (detail ? revertableCheckpoints(detail.checkpoints) : []);
+
+  // --- timeline -----------------------------------------------------------
+
+  const publishTimeline = () => {
+    timeline = buildTimelineState({
+      detail,
+      hasOlderTurns: page?.hasMore ?? false,
+      loadingOlderTurns: page?.loadingOlder ?? false,
+      approvalCount: approvals.length,
+      view,
+      paneWidth,
+      nowMs: options.nowMs(),
+      palette,
+      emptyHint: "Select a thread with Alt+↑/↓ or click",
+    });
+    state.set("timeline", timeline);
+  };
+
+  const requestScroll = (to: "top" | "bottom" | null, by = 0) => {
+    scrollSeq += 1;
+    state.set("timelineScroll", { seq: scrollSeq, to, by });
+  };
+
+  const setView = (next: Partial<TimelineView>) => {
+    view = { ...view, ...next };
+    publishTimeline();
+  };
+
+  const showOlder = () => {
+    if (!detail || !timeline) return;
+    if (timeline.windowStart > 0) {
+      setView({ windowEnd: timeline.windowStart });
+    } else if (page?.hasMore && !page.loadingOlder) {
+      pendingOlder = { detailId: detail.id, rowCount: timeline.rowCount };
+      client.loadOlderThreadTurns(detail.id as never);
+    }
+    requestScroll("top");
+  };
+
+  const showNewer = () => {
+    if (!timeline) return;
+    const end = Math.min(timeline.rowCount, timeline.windowEnd + TIMELINE_WINDOW_SIZE);
+    setView({ windowEnd: end === timeline.rowCount ? null : end });
+    requestScroll("top");
+  };
+
+  /** Once an older page lands, keep the window on the rows that arrived. */
+  const settleOlderPage = () => {
+    if (!pendingOlder || !timeline) return;
+    if (pendingOlder.detailId !== detail?.id) {
+      pendingOlder = null;
+    } else if (timeline.rowCount > pendingOlder.rowCount) {
+      const end = timeline.rowCount - pendingOlder.rowCount;
+      pendingOlder = null;
+      setView({ windowEnd: end });
+      requestScroll("top");
+    } else if (!page?.loadingOlder) {
+      pendingOlder = null;
+    }
+  };
+
+  const toggleDir = (turnCount: number, path: string) => {
+    const collapsedDirs = new Map(view.collapsedDirs);
+    collapsedDirs.set(turnCount, toggled(collapsedDirs.get(turnCount) ?? new Set(), path));
+    setView({ collapsedDirs });
+  };
+
+  const toggleAllDirs = (turnCount: number) => {
+    const all = checkpointDirPaths(detail, turnCount);
+    const collapsed = view.collapsedDirs.get(turnCount) ?? new Set<string>();
+    const allCollapsed = all.length > 0 && all.every((path) => collapsed.has(path));
+    const collapsedDirs = new Map(view.collapsedDirs);
+    collapsedDirs.set(turnCount, allCollapsed ? new Set() : new Set(all));
+    setView({ collapsedDirs });
+  };
+
+  // --- approvals, questions, plan -----------------------------------------
+
+  const publishApprovals = () => {
+    const count = approvals.length;
+    const index = Math.min(approvalIndex, Math.max(0, count - 1));
+    state.set("approvals", {
+      count,
+      index,
+      countText: count > 1 ? `(${index + 1} of ${count})` : "",
+      items: approvals.map((approval, i) => ({
+        requestId: approval.requestId,
+        label: `${approval.requestKind}${approval.detail ? `: ${approval.detail}` : ""}`,
+        active: i === index,
+      })),
+      hint: count > 1 ? "↑/↓ select · ^A approve · ^R deny" : "^A approve   ^R deny",
+    });
+  };
+
+  const publishUserInput = () => {
+    const pending = activeQuestion();
+    const current = pending?.questions[question.questionIndex] ?? null;
+    if (!pending || !current) {
+      state.set("userInput", { pending: false, active: false, deferred: false, options: [] });
+      return;
+    }
+    const selected = question.selections[current.id] ?? [];
+    const count = current.options.length;
+    const start = Math.min(
+      Math.max(0, question.optionIndex - USER_INPUT_OPTION_WINDOW + 1),
+      Math.max(0, count - USER_INPUT_OPTION_WINDOW),
+    );
+    const total = pending.questions.length;
+    state.set("userInput", {
+      pending: true,
+      active: !question.deferred,
+      deferred: question.deferred,
+      requestId: pending.requestId,
+      header: current.header,
+      question: current.question,
+      questionIndex: question.questionIndex,
+      count: total,
+      countText: total > 1 ? `(${question.questionIndex + 1} of ${total})` : "",
+      multiSelect: current.multiSelect,
+      windowStart: start,
+      options: current.options
+        .slice(start, start + USER_INPUT_OPTION_WINDOW)
+        .map((option, offset) => {
+          const index = start + offset;
+          const isSelected = selected.includes(option.label);
+          const highlighted = index === question.optionIndex;
+          const box = current.multiSelect ? (isSelected ? "[x]" : "[ ]") : isSelected ? "(•)" : "( )";
+          return {
+            index,
+            label: option.label,
+            description: option.description,
+            highlighted,
+            selected: isSelected,
+            text: `${highlighted ? "▸" : " "} ${box} ${option.label}`,
+          };
+        }),
+      customAnswer: question.customAnswer,
+      hint: current.multiSelect
+        ? "↑/↓ move · Space toggle · Enter submit · Esc defer"
+        : "↑/↓ select · type an answer · Enter submit · Esc defer",
+      primaryActionLabel: "Submit answer",
+    });
+  };
+
+  /** Key hints the thread adds to the prompt's own (^Y, ^A/^R, a set-aside question). */
+  const publishHints = () => {
+    const plan = detail ? latestActionableProposedPlan(detail) : null;
+    const items = [
+      ...(plan ? ["^Y implement"] : []),
+      ...(approvals.length > 0
+        ? [approvals.length > 1 ? "^A/^R approve (↑/↓)" : "^A/^R approve"]
+        : []),
+    ];
+    const banner =
+      activeQuestion() && question.deferred ? "⚠ question pending — ^U to answer" : null;
+    state.set("threadHints", { items, text: items.join(" · "), banner });
+  };
+
+  const publishInteraction = () => {
+    publishApprovals();
+    publishUserInput();
+    publishHints();
+  };
+
+  const setQuestion = (next: Partial<QuestionState>) => {
+    question = { ...question, ...next };
+    publishUserInput();
+    publishHints();
+    reconcileMode();
+  };
+
+  const answerApproval = (decision: "accept" | "decline") => {
+    const approval = approvals[Math.min(approvalIndex, approvals.length - 1)];
+    if (!detail || !approval) return;
+    const [busy, done, failed] =
+      decision === "accept"
+        ? ["Approving…", "Approved.", "Approval failed"]
+        : ["Declining…", "Declined.", "Decline failed"];
+    store.setStatus(busy, "busy");
+    client.approve(detail.id as never, approval.requestId as never, decision).then(
+      () => store.setStatus(done, "success"),
+      (error) => store.setStatus(`${failed}: ${errorText(error)}`, "error"),
+    );
+  };
+
+  const moveOption = (delta: number) => {
+    const current = activeQuestion()?.questions[question.questionIndex];
+    const count = current?.options.length ?? 0;
+    if (count === 0) return;
+    setQuestion({ optionIndex: (question.optionIndex + delta + count) % count });
+  };
+
+  const toggleOption = () => {
+    const current = activeQuestion()?.questions[question.questionIndex];
+    const option = current?.options[question.optionIndex];
+    if (!current || !option) return;
+    const selected = question.selections[current.id] ?? [];
+    const next = current.multiSelect
+      ? selected.includes(option.label)
+        ? selected.filter((label) => label !== option.label)
+        : [...selected, option.label]
+      : [option.label];
+    setQuestion({ selections: { ...question.selections, [current.id]: next } });
+  };
+
+  const submitAnswer = () => {
+    const pending = activeQuestion();
+    const current = pending?.questions[question.questionIndex];
+    if (!detail || !pending || !current) return;
+    // A typed answer wins; otherwise single choice takes the highlighted option.
+    const custom = question.customAnswer.trim();
+    let selections = question.selections;
+    if (!current.multiSelect) {
+      const answer = custom.length > 0 ? custom : current.options[question.optionIndex]?.label;
+      if (answer !== undefined) selections = { ...selections, [current.id]: [answer] };
+    }
+    if ((selections[current.id]?.length ?? 0) === 0) {
+      store.setStatus("Pick an option or type an answer first.", "info");
+      return;
+    }
+    if (question.questionIndex < pending.questions.length - 1) {
+      setQuestion({
+        selections,
+        questionIndex: question.questionIndex + 1,
+        optionIndex: 0,
+        customAnswer: "",
+      });
+      return;
+    }
+    if (answering === pending.requestId) return;
+    const requestId = pending.requestId;
+    answering = requestId;
+    question = { ...question, selections };
+    store.setStatus("Sending answer…", "busy");
+    client
+      .respondUserInput(
+        detail.id as never,
+        requestId as never,
+        buildUserInputAnswers(pending.questions, selections),
+      )
+      .then(
+        () => {
+          if (question.requestId !== requestId) return;
+          // Keep the answer until the stream resolves the request; set the
+          // panel aside so it cannot be sent twice meanwhile.
+          setQuestion({ deferred: true });
+          store.setStatus("Answer sent.", "success");
+        },
+        (error) => {
+          if (answering === requestId) answering = null;
+          if (question.requestId === requestId) {
+            store.setStatus(`answer failed: ${errorText(error)}`, "error");
+          }
+        },
+      );
+  };
+
+  const implementPlan = () => {
+    const plan = detail ? latestActionableProposedPlan(detail) : null;
+    if (!detail || !plan) return;
+    store.setStatus("Implementing plan…", "busy");
+    client.implementPlan(detail, plan.id).catch((error: unknown) => {
+      store.setStatus(`implement failed: ${errorText(error)}`, "error");
+    });
+  };
+
+  // --- revert picker -------------------------------------------------------
+
+  const publishRevert = () => {
+    const list = checkpoints();
+    const open = options.mode() === "revert";
+    const index = Math.min(revertIndex, Math.max(0, list.length - 1));
+    state.set("revert", {
+      open,
+      index,
+      title: "revert ▸ pick a checkpoint — discards changes made after it",
+      hint: "↑/↓ select · Enter revert · Esc cancel",
+      emptyText: "No checkpoints to revert to yet.",
+      rows: list.map((checkpoint, i) => ({
+        turnCount: checkpoint.checkpointTurnCount,
+        active: i === index,
+        text: `${i === index ? "▸" : " "} turn ${checkpoint.checkpointTurnCount} · ${checkpoint.files.length} file${
+          checkpoint.files.length === 1 ? "" : "s"
+        } · ${relativeTime(checkpoint.completedAt)}`,
+      })),
+    });
+  };
+
+  const openRevert = () => {
+    if (!detail) return;
+    revertIndex = 0;
+    options.setMode("revert");
+    publishRevert();
+  };
+
+  const closeRevert = () => {
+    options.setMode("compose");
+    publishRevert();
+  };
+
+  const confirmRevert = () => {
+    const checkpoint = checkpoints()[revertIndex];
+    closeRevert();
+    if (!detail || !checkpoint) return;
+    const turnCount = checkpoint.checkpointTurnCount;
+    store.setStatus(`Reverting to turn ${turnCount}…`, "busy");
+    client.revertCheckpoint(detail.id as never, turnCount).then(
+      () => store.setStatus(`Reverted to turn ${turnCount}.`, "success"),
+      (error) => store.setStatus(`revert failed: ${errorText(error)}`, "error"),
+    );
+  };
+
+  // --- diff viewer -------------------------------------------------------
+
+  const publishDiff = () => {
+    const list = checkpoints();
+    const checkpoint = diff.index > 0 ? list[Math.min(diff.index - 1, list.length - 1)] : null;
+    const scopeLabel =
+      diff.index === 0 ? "all changes" : `turn ${checkpoint?.checkpointTurnCount ?? "?"}`;
+    const allFiles = diff.status === "ready" ? splitUnifiedDiff(diff.text) : [];
+    const focused = diff.focusPath ? allFiles.filter((file) => file.path === diff.focusPath) : [];
+    const files = focused.length > 0 ? focused : allFiles;
+    const status: DiffStatus = diff.status === "ready" && files.length === 0 ? "empty" : diff.status;
+    state.set("diff", {
+      open: diff.open,
+      scopeLabel,
+      status,
+      view: diff.view,
+      focusPath: focused.length > 0 ? diff.focusPath : null,
+      title: `diff · ${scopeLabel}`,
+      header: `  ${files.length} file${files.length === 1 ? "" : "s"} · ${diff.view} · ↑/↓ view · s ${
+        diff.view === "unified" ? "split" : "stacked"
+      } · PgUp/PgDn scroll · Esc close`,
+      message:
+        status === "loading"
+          ? "loading…"
+          : status === "error"
+            ? `failed to load diff: ${diff.error}`
+            : status === "empty"
+              ? "no changes in this turn"
+              : "",
+      files: files.map((file) => ({
+        path: file.path,
+        filetype: file.filetype ?? "",
+        label: file.filetype ? `  · ${file.filetype}` : "",
+        body: file.body,
+      })),
+    });
+  };
+
+  const loadDiff = () => {
+    if (!detail || !diff.open) return;
+    const list = checkpoints();
+    const latestTurnCount = list.reduce((max, c) => Math.max(max, c.checkpointTurnCount), 0);
+    const checkpoint = diff.index > 0 ? list[Math.min(diff.index - 1, list.length - 1)] : null;
+    const request =
+      diff.index === 0
+        ? client.getFullThreadDiff(detail.id as never, latestTurnCount)
+        : checkpoint
+          ? client.getTurnDiff(detail.id as never, checkpoint.checkpointTurnCount)
+          : null;
+    diff = { ...diff, status: request ? "loading" : "empty", text: "", error: "" };
+    publishDiff();
+    if (!request) return;
+    const id = ++diffRequest;
+    request.then(
+      (text) => {
+        if (id !== diffRequest || !diff.open) return;
+        diff = { ...diff, text, status: text.trim().length > 0 ? "ready" : "empty" };
+        publishDiff();
+      },
+      (error) => {
+        if (id !== diffRequest || !diff.open) return;
+        diff = { ...diff, status: "error", error: errorText(error) };
+        publishDiff();
+      },
+    );
+  };
+
+  const openDiff = (turnCount: number | null, path: string | null) => {
+    if (!detail) return;
+    const index =
+      turnCount === null
+        ? -1
+        : checkpoints().findIndex((checkpoint) => checkpoint.checkpointTurnCount === turnCount);
+    diff = { ...diff, open: true, index: index >= 0 ? index + 1 : 0, focusPath: path };
+    options.setMode("diff");
+    loadDiff();
+  };
+
+  const moveDiff = (delta: number) => {
+    const count = checkpoints().length + 1;
+    diff = { ...diff, index: (diff.index + delta + count) % count, focusPath: null };
+    loadDiff();
+  };
+
+  const closeDiff = () => {
+    diffRequest += 1;
+    diff = { ...CLOSED_DIFF, view: diff.view };
+    options.setMode("compose");
+    publishDiff();
+  };
+
+  // --- notifications -------------------------------------------------------
+
+  const publishNotifications = () => {
+    state.set("notifications", {
+      items: alerts.map(({ threadId: _threadId, ...notification }) => notification),
+    });
+  };
+
+  const dismissAlert = (id: unknown) => {
+    const next = alerts.filter((alert) => alert.id !== id);
+    if (next.length === alerts.length) return;
+    alerts = next;
+    publishNotifications();
+  };
+
+  // --- sync ------------------------------------------------------------------
+
+  const sync = (next: StoreState, prev: StoreState | null) => {
+    const selectedThreadId = next.selection?.kind === "thread" ? next.selection.id : null;
+    if (next.shell && prev?.shell !== next.shell) {
+      alerts = nextThreadAlerts(
+        alerts,
+        threadTransitions(prev?.shell?.threads ?? null, next.shell.threads),
+        selectedThreadId,
+        () => `thread-alert:${++alertSeq}`,
+      );
+    }
+    if (selectedThreadId !== viewedThreadId) {
+      viewedThreadId = selectedThreadId;
+      alerts = alerts.filter((alert) => alert.threadId !== selectedThreadId);
+    }
+    if (!prev || prev.shell !== next.shell || prev.selection !== next.selection) {
+      publishNotifications();
+    }
+
+    if (prev && prev.detail === next.detail && prev.threadPage === next.threadPage) return;
+    const threadChanged = (detail?.id ?? null) !== (next.detail?.id ?? null);
+    detail = next.detail;
+    page = next.threadPage;
+    if (threadChanged) {
+      view = EMPTY_TIMELINE_VIEW;
+      pendingOlder = null;
+      approvalIndex = 0;
+      if (diff.open) closeDiff();
+      if (options.mode() === "revert") closeRevert();
+    }
+    approvals = detail ? derivePendingApprovals(detail.activities) : [];
+    approvalIndex = Math.min(approvalIndex, Math.max(0, approvals.length - 1));
+    questions = detail ? derivePendingUserInputs(detail.activities) : [];
+    const requestId = activeQuestion()?.requestId ?? null;
+    if (requestId !== question.requestId) {
+      question = { ...NO_QUESTION, requestId };
+      answering = null;
+    }
+    publishTimeline();
+    settleOlderPage();
+    publishInteraction();
+    if (options.mode() === "revert") publishRevert();
+    reconcileMode();
+  };
+
+  const dispatch = (action: string, payload: unknown): boolean => {
+    switch (action) {
+      case "approval.approve":
+        answerApproval("accept");
+        return true;
+      case "approval.decline":
+        answerApproval("decline");
+        return true;
+      case "approval.next":
+      case "approval.previous": {
+        if (approvals.length === 0) return true;
+        const delta = action === "approval.next" ? 1 : -1;
+        approvalIndex = (approvalIndex + delta + approvals.length) % approvals.length;
+        publishApprovals();
+        return true;
+      }
+      case "userInput.move": {
+        const delta = Number(field(payload, "delta") ?? 1);
+        moveOption(delta < 0 ? -1 : 1);
+        return true;
+      }
+      case "userInput.toggle":
+        toggleOption();
+        return true;
+      case "userInput.answer.set": {
+        const text = field(payload, "text");
+        question = { ...question, customAnswer: typeof text === "string" ? text : "" };
+        publishUserInput();
+        return true;
+      }
+      case "userInput.submit":
+        submitAnswer();
+        return true;
+      case "userInput.defer":
+        if (activeQuestion()) setQuestion({ deferred: true });
+        return true;
+      case "userInput.reopen":
+        if (activeQuestion() && answering !== question.requestId) setQuestion({ deferred: false });
+        return true;
+      case "plan.implement":
+        implementPlan();
+        return true;
+      case "timeline.showOlder":
+        showOlder();
+        return true;
+      case "timeline.showNewer":
+        showNewer();
+        return true;
+      case "timeline.scroll": {
+        const to = field(payload, "to");
+        requestScroll(to === "top" || to === "bottom" ? to : null, Number(field(payload, "by") ?? 0));
+        return true;
+      }
+      case "timeline.workGroup.toggle":
+        setView({ expandedGroups: toggled(view.expandedGroups, String(field(payload, "id"))) });
+        return true;
+      case "timeline.fold.toggle":
+        setView({ expandedFolds: toggled(view.expandedFolds, String(field(payload, "id"))) });
+        return true;
+      case "timeline.message.toggle":
+        setView({ expandedMessages: toggled(view.expandedMessages, String(field(payload, "id"))) });
+        return true;
+      case "timeline.files.toggleDir":
+        toggleDir(Number(field(payload, "turnCount")), String(field(payload, "path")));
+        return true;
+      case "timeline.files.toggleAll":
+        toggleAllDirs(Number(field(payload, "turnCount")));
+        return true;
+      case "link.open": {
+        const url = field(payload, "url");
+        if (typeof url === "string") store.setStatus(url, "info");
+        return true;
+      }
+      case "diff.open": {
+        const turnCount = field(payload, "turnCount");
+        const path = field(payload, "path");
+        openDiff(
+          typeof turnCount === "number" ? turnCount : null,
+          typeof path === "string" ? path : null,
+        );
+        return true;
+      }
+      case "diff.all":
+        openDiff(null, null);
+        return true;
+      case "diff.toggleView":
+        diff = { ...diff, view: diff.view === "unified" ? "split" : "unified" };
+        publishDiff();
+        return true;
+      case "diff.next":
+        moveDiff(1);
+        return true;
+      case "diff.previous":
+        moveDiff(-1);
+        return true;
+      case "diff.close":
+        closeDiff();
+        return true;
+      case "checkpoint.revert.open":
+        openRevert();
+        return true;
+      case "checkpoint.revert.move": {
+        const count = checkpoints().length;
+        if (count > 0) {
+          const delta = Number(field(payload, "delta") ?? 1) < 0 ? -1 : 1;
+          revertIndex = (revertIndex + delta + count) % count;
+        }
+        publishRevert();
+        return true;
+      }
+      case "checkpoint.revert.confirm":
+        confirmRevert();
+        return true;
+      case "checkpoint.revert.cancel":
+        closeRevert();
+        return true;
+      case "notification.dismiss":
+        dismissAlert(field(payload, "id"));
+        return true;
+      case "notification.action": {
+        const alert = alerts.find((entry) => entry.id === field(payload, "id"));
+        if (!alert) return true;
+        dismissAlert(alert.id);
+        if (field(payload, "actionId") === OPEN_THREAD_ACTION) {
+          store.select({ kind: "thread", id: alert.threadId });
+        }
+        return true;
+      }
+      default:
+        return false;
+    }
+  };
+
+  publishDiff();
+  publishRevert();
+
+  return {
+    sync,
+    setPaneWidth: (width) => {
+      if (width === paneWidth) return;
+      paneWidth = width;
+      publishTimeline();
+    },
+    dispatch,
+    composeMode,
+  };
+}
