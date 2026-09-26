@@ -92,6 +92,17 @@ defmodule T3.BackgroundPolicy do
     :exit, {:noproc, _} -> true
   end
 
+  @doc """
+  Whether a client has thread `thread_id` in the foreground: visible, focused or
+  just used, and reporting the thread's scope. The node notifies about a thread
+  nobody is watching (`T3.Plugins.turn_finished/2`).
+  """
+  def watched?(thread_id) do
+    GenServer.call(__MODULE__, {:watched, %{"type" => "thread", "threadId" => thread_id}})
+  catch
+    :exit, {:noproc, _} -> false
+  end
+
   # --- server ------------------------------------------------------------------------
 
   @impl true
@@ -100,6 +111,14 @@ defmodule T3.BackgroundPolicy do
   @impl true
   def handle_call(:snapshot, _from, state),
     do: {:reply, compute(state.leases, state.power, settings(), now_ms()), state}
+
+  def handle_call({:watched, scope}, _from, state) do
+    now = now_ms()
+
+    {:reply,
+     Enum.any?(Map.values(state.leases), &(foreground?(&1, now) and has_scope?(&1, scope))),
+     state}
+  end
 
   def handle_call({:scope, scope}, _from, state) do
     settings = settings()

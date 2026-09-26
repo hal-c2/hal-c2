@@ -98,7 +98,11 @@ defmodule T3.Claude.ThreadRuntime do
       )
 
   defp ensure(thread_id) do
-    case DynamicSupervisor.start_child(T3.Codex.Supervisor, {__MODULE__, thread_id}) do
+    # Under its provider plugin, so a crash there stays with this provider.
+    case DynamicSupervisor.start_child(
+           T3.Plugins.sessions("claudeAgent"),
+           {__MODULE__, thread_id}
+         ) do
       {:ok, pid} -> pid
       {:error, {:already_started, pid}} -> pid
     end

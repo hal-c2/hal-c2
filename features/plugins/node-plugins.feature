@@ -53,7 +53,7 @@ Feature: Node plugins
     When the node rescans its plugins
     Then "gitea" is listed as disabled
 
-  @node @backlog
+  @node
   Scenario: Enabling a plugin starts it for that environment only
     Given two environments each have the plugin "ntfy" installed
     When the user enables "ntfy" on the first environment
@@ -171,7 +171,7 @@ Feature: Node plugins
     When the user opens the pull requests for the project
     Then the pull requests come from "gitea"
 
-  @node @backlog
+  @node
   Scenario: A notification channel plugin receives the node's notifications
     Given the notification channel "ntfy" is enabled
     When a turn finishes while no client is focused on the thread
@@ -197,7 +197,7 @@ Feature: Node plugins
     When an agent starts a turn in that project
     Then no "jira-tools" tools are offered
 
-  @node @backlog
+  @node
   Scenario: Every node in a cluster reports its own plugins
     Given two nodes are connected in a cluster
     And only the second node has the plugin "gitea"

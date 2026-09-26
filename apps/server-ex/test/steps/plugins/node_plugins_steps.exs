@@ -794,6 +794,77 @@ defmodule T3.Steps.Plugins.NodePlugins do
     result
   end
 
+  # --- environments --------------------------------------------------------------------
+
+  step "two environments each have the plugin {string} installed", %{args: [id]} = context do
+    context |> Fixtures.install(id) |> Fixtures.install_on_peer(id)
+  end
+
+  step "the user enables {string} on the first environment", %{args: [id]} = context do
+    {_, context} = World.call!(context, "plugins.enable", %{"id" => id})
+    context
+  end
+
+  step "{string} runs on the first environment", %{args: [id]} = context do
+    assert %{"status" => "running", "enabled" => true} = Fixtures.entry(id)
+    assert is_pid(Process.whereis(Fixtures.module(id)))
+    context
+  end
+
+  step "{string} stays disabled on the second environment", %{args: [id]} = context do
+    {plugins, context} = Fixtures.list(context, context.peer_environment)
+    assert %{"status" => "disabled", "enabled" => false} = Enum.find(plugins, &(&1["id"] == id))
+    assert :erpc.call(context.peer, Process, :whereis, [Fixtures.module(id)]) == nil
+    context
+  end
+
+  step "two nodes are connected in a cluster", context do
+    context = Fixtures.peer(context)
+    assert context.peer in :erlang.nodes()
+    context
+  end
+
+  step "only the second node has the plugin {string}", %{args: [id]} = context do
+    context |> Fixtures.install_on_peer(id) |> Map.put(:plugin, id)
+  end
+
+  step "the user lists plugins for each environment", context do
+    {local, context} = Fixtures.list(context, context.node.environment)
+    {remote, context} = Fixtures.list(context, context.peer_environment)
+    Map.put(context, :listings, %{first: local, second: remote})
+  end
+
+  step "{string} is listed for the second environment only", %{args: [id]} = context do
+    refute Enum.any?(context.listings.first, &(&1["id"] == id))
+    assert %{"status" => "disabled"} = Enum.find(context.listings.second, &(&1["id"] == id))
+    context
+  end
+
+  # --- notifications ---------------------------------------------------------------------
+
+  step "a turn finishes while no client is focused on the thread", context do
+    Fixtures.probe()
+    context = context |> World.create_project("shop") |> Turns.providers()
+    {thread_id, context} = Turns.send_first(context, "codex", "hello")
+    Turns.await_runs(thread_id, ["completed"])
+    refute T3.BackgroundPolicy.watched?(thread_id)
+    Map.put(context, :thread_id, thread_id)
+  end
+
+  step "{string} delivers the notification", %{args: [id]} = context do
+    thread_id = context.thread_id
+
+    assert_receive {:notified, ^id,
+                    %{
+                      "type" => "turn.finished",
+                      "threadId" => ^thread_id,
+                      "status" => "completed"
+                    }, _settings},
+                   2_000
+
+    context
+  end
+
   # --- helpers ---------------------------------------------------------------------------
 
   defp configure(context, id, settings \\ nil) do

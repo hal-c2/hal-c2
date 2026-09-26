@@ -154,6 +154,10 @@ defmodule T3.Environment do
 
   @doc "`ServerConfig.providers`: the agents this node can run."
   def providers do
+    T3.Plugins.providers() || builtin_providers()
+  end
+
+  defp builtin_providers do
     for(
       entry <- [T3.Codex.Provider.entry(), T3.Claude.Provider.entry()],
       entry != nil,

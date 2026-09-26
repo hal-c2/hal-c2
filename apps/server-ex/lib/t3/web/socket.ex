@@ -425,7 +425,13 @@ defmodule T3.Web.Socket do
     state
   end
 
+  # This node's own environment is always served here, even if the node became
+  # distributed (and so changed its name) after the shell recorded it.
   defp node_for(environment_id) do
+    if environment_id == T3.Environment.id(), do: node(), else: remote_node_for(environment_id)
+  end
+
+  defp remote_node_for(environment_id) do
     Enum.find_value(T3.Shell.environments(), fn {node, descriptor} ->
       if descriptor["environmentId"] == environment_id, do: node
     end)

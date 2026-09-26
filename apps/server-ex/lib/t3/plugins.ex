@@ -17,6 +17,16 @@ defmodule T3.Plugins do
   its process, and crashing more than `@max_restarts` times in `@max_seconds`
   stops it as failed with its last error until the user restarts it.
 
+  Provider adapters (`T3.Plugins.ProviderAdapter`) are where turns run: the running
+  ones are kept in the `T3.Plugins.Providers` table, which `provider/1` reads for
+  every turn, and each has a sessions supervisor its thread processes run under
+  (`sessions/1`), so a crash in one provider leaves the others' threads alone.
+  Codex, Claude and the ACP agents are bundled (`T3.Plugins.Bundled`): on unless
+  the user turns them off, and replaced by a plugin file with the same id.
+
+  A plugin's manifest may ask for `permissions` (`[%{id, label}]`); enabling it
+  grants them, recorded under `plugins.<id>.granted` and shown in the listing.
+
   Watchers (`subscribe/1`) get `{:t3_plugins, node, list}` whenever the list changes.
   """
 
@@ -28,6 +38,8 @@ defmodule T3.Plugins do
   @marker "••••••"
   @max_restarts 3
   @max_seconds 5
+
+  @providers __MODULE__.Providers
 
   @kinds %{
     T3.Plugins.ProviderAdapter => "providerAdapter",
@@ -116,9 +128,196 @@ defmodule T3.Plugins do
     end
   end
 
+  # --- providers ----------------------------------------------------------------------
+
+  @doc """
+  The provider adapter behind a provider instance: `{:ok, driver, module}`,
+  `{:missing, driver}` when no running plugin serves its driver, `:none` when no
+  provider plugin runs at all, or nil when plugins are not running (the node's
+  built-in routing applies). ACP agents share the bundled "acp" adapter, and their
+  driver is the instance's own id.
+  """
+  def provider(instance) do
+    case rows() do
+      nil ->
+        nil
+
+      [] ->
+        :none
+
+      rows ->
+        acp = T3.Acp.agent?(instance)
+
+        key =
+          cond do
+            acp ->
+              "acp"
+
+            driver = get_in(T3.Settings.settings(), ["providerInstances", instance, "driver"]) ->
+              driver
+
+            true ->
+              instance
+          end
+
+        driver = if acp, do: instance, else: key
+
+        case List.keyfind(rows, key, 0) do
+          {_, adapter} -> {:ok, driver, adapter.module}
+          nil -> {:missing, driver}
+        end
+    end
+  end
+
+  @doc """
+  What the provider plugin serving `driver` declares (its manifest's `provider:`
+  map), or nil for the bundled adapters, whose runtimes the core knows.
+  """
+  def declared(driver) do
+    case rows() && List.keyfind(rows(), driver, 0) do
+      {_, %{bundled: false, provider: provider}} -> provider
+      _ -> nil
+    end
+  end
+
+  @doc """
+  The `ServerProvider` snapshots of the running provider plugins, and an
+  unavailable one for each configured instance whose plugin is gone (its settings
+  stay in the settings document); nil when plugins are not running.
+  """
+  def providers do
+    case rows() do
+      nil ->
+        nil
+
+      rows ->
+        instances = T3.Settings.settings()["providerInstances"] || %{}
+
+        running =
+          rows
+          |> Enum.sort_by(fn {key, adapter} -> {adapter.rank, key} end)
+          |> Enum.flat_map(fn {key, adapter} -> adapter_providers(key, adapter, instances) end)
+
+        missing =
+          for {id, %{"driver" => _} = config} <- Enum.sort(instances),
+              {:missing, driver} <- [provider(id)],
+              do: unavailable(id, driver, config)
+
+        running ++ missing
+    end
+  end
+
+  @doc "The modules of the running provider plugins other than the bundled ones."
+  def adapters, do: for({_, %{bundled: false, module: module}} <- rows() || [], do: module)
+
+  @doc """
+  The supervisor a provider's thread processes run under: the sessions supervisor
+  of the plugin serving `driver`, or `T3.Codex.Supervisor` when there is none.
+  """
+  def sessions(driver) do
+    with [_ | _] = rows <- rows(),
+         {_, %{sup: sup}} <- List.keyfind(rows, driver, 0),
+         {_, pid, _, _} when is_pid(pid) <- List.keyfind(children(sup), :sessions, 0) do
+      pid
+    else
+      _ -> T3.Codex.Supervisor
+    end
+  end
+
+  defp children(sup) do
+    Supervisor.which_children(sup)
+  catch
+    :exit, _ -> []
+  end
+
+  defp rows do
+    if :ets.whereis(@providers) != :undefined, do: :ets.tab2list(@providers)
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp adapter_providers(key, adapter, instances) do
+    if function_exported?(adapter.module, :providers, 1) do
+      case safely(fn -> adapter.module.providers(adapter.settings) end) do
+        list when is_list(list) -> Enum.map(list, &json/1)
+        _ -> []
+      end
+    else
+      configured =
+        for {id, %{"driver" => ^key} = config} <- Enum.sort(instances), id != key do
+          entry = T3.Plugins.ProviderAdapter.provider(adapter.provider, id, key)
+          if name = config["displayName"], do: Map.put(entry, "displayName", name), else: entry
+        end
+
+      [T3.Plugins.ProviderAdapter.provider(adapter.provider, key, key) | configured]
+    end
+  end
+
+  # As the TS server shows an instance whose driver this build lacks.
+  defp unavailable(id, driver, config) do
+    reason = "The provider plugin for \"#{driver}\" is not installed or not enabled on this node."
+
+    %{
+      "instanceId" => id,
+      "driver" => driver,
+      "displayName" => config["displayName"] || driver,
+      "enabled" => false,
+      "installed" => false,
+      "version" => nil,
+      "status" => "error",
+      "availability" => "unavailable",
+      "unavailableReason" => reason,
+      "message" => reason,
+      "auth" => %{"status" => "unknown"},
+      "checkedAt" => T3.Orchestration.Entities.now(),
+      "models" => [],
+      "slashCommands" => [],
+      "skills" => []
+    }
+  end
+
+  # --- notifications ------------------------------------------------------------------
+
+  @doc """
+  Tells the running notification channels that a turn in `thread_id` ended with
+  `status`, unless a client has the thread in the foreground
+  (`T3.BackgroundPolicy.watched?/1`).
+  """
+  def turn_finished(thread_id, status) do
+    channels = running("notificationChannel")
+
+    if channels != [] and not T3.BackgroundPolicy.watched?(thread_id) do
+      state = T3.Streams.Server.state(T3.Streams.ensure(thread_id))
+      title = get_in(T3.StreamState.get(state, "thread"), [thread_id, "title"])
+
+      notify(channels, %{
+        "type" => "turn.finished",
+        "threadId" => thread_id,
+        "title" => title,
+        "status" => status
+      })
+    end
+
+    :ok
+  end
+
+  defp notify(channels, notification) do
+    for {id, module, settings} <- channels do
+      case safely(fn -> module.notify(notification, settings) end) do
+        {:error, message} ->
+          Logger.warning("plugin #{id} did not deliver a notification: #{message}")
+
+        _ ->
+          :ok
+      end
+    end
+  end
+
   # `{id, module, settings}` of the running plugins of a kind, secrets included.
   defp running(kind) do
-    if Process.whereis(__MODULE__), do: GenServer.call(__MODULE__, {:running, kind}), else: []
+    GenServer.call(__MODULE__, {:running, kind})
+  catch
+    :exit, _ -> []
   end
 
   defp pack_tools(module, settings) do
@@ -153,6 +352,7 @@ defmodule T3.Plugins do
   @impl true
   def init(nil) do
     {:ok, supervisor} = DynamicSupervisor.start_link(strategy: :one_for_one)
+    :ets.new(@providers, [:named_table, :protected, :set, read_concurrency: true])
     :ok = T3.Settings.watch(self())
     dir = Path.join(Application.fetch_env!(:t3, :home), "plugins")
 
@@ -189,7 +389,15 @@ defmodule T3.Plugins do
         {:reply, {:error, %{"_tag" => "PluginUnavailable", "message" => message}}, state}
 
       plugin ->
-        update_config(id, &Map.put(&1, "enabled", enabled))
+        update_config(id, fn config ->
+          config = Map.put(config, "enabled", enabled)
+
+          # Enabling a plugin grants what it asks for.
+          if enabled,
+            do: Map.put(config, "granted", Enum.map(permissions(plugin), & &1["id"])),
+            else: config
+        end)
+
         state = put_in(state.plugins[id], %{plugin | failed: false}) |> reconcile() |> push()
         {:reply, {:ok, entry(state.plugins[id])}, state}
     end
@@ -283,7 +491,7 @@ defmodule T3.Plugins do
         plugin = state.plugins[id]
         Logger.warning("plugin #{id} stopped after crashing repeatedly: #{plugin.last_error}")
         state = put_in(state.plugins[id], %{plugin | sup: nil, failed: true})
-        {:noreply, push(state)}
+        {:noreply, state |> sync() |> push()}
 
       nil ->
         {:noreply, %{state | watchers: Map.delete(state.watchers, pid)}}
@@ -307,6 +515,13 @@ defmodule T3.Plugins do
       |> Path.join("*.ex")
       |> Path.wildcard()
       |> Enum.flat_map(&load(&1, previous[&1] || []))
+
+    # A bundled plugin stands in unless a file replaces it (an update), which then
+    # counts as that bundled plugin: on by default, and run as the core knows it.
+    bundled = Enum.map(T3.Plugins.Bundled.modules(), &bundled/1)
+    ids = MapSet.new(bundled, & &1.id)
+    loaded = Enum.map(loaded, &%{&1 | bundled: MapSet.member?(ids, &1.id)})
+    loaded = loaded ++ Enum.reject(bundled, fn b -> Enum.any?(loaded, &(&1.id == b.id)) end)
 
     kept = MapSet.new(loaded, &{&1.id, &1.hash})
 
@@ -437,6 +652,18 @@ defmodule T3.Plugins do
     end
   end
 
+  defp bundled(module) do
+    %{id: id} = manifest = module.manifest()
+
+    %{
+      blank(id, nil, :bundled)
+      | module: module,
+        kind: "providerAdapter",
+        manifest: manifest,
+        bundled: true
+    }
+  end
+
   defp blank(id, file, hash) do
     %{
       id: id,
@@ -452,24 +679,57 @@ defmodule T3.Plugins do
       sup: nil,
       failed: false,
       restarts: 0,
-      last_error: nil
+      last_error: nil,
+      bundled: false
     }
   end
 
   # --- running ------------------------------------------------------------------------
 
   defp runnable?(plugin),
-    do: plugin.module != nil and plugin.problem == nil and config(plugin.id)["enabled"] == true
+    do: plugin.module != nil and plugin.problem == nil and enabled?(plugin)
+
+  # Bundled plugins are on until the user turns them off; others the other way round.
+  defp enabled?(%{bundled: true, id: id}), do: config(id)["enabled"] != false
+  defp enabled?(plugin), do: config(plugin.id)["enabled"] == true
 
   # Starts what is enabled and stopped (unless it failed), stops what is not enabled.
   defp reconcile(state) do
-    Enum.reduce(state.plugins, state, fn {id, plugin}, state ->
+    state.plugins
+    |> Enum.reduce(state, fn {id, plugin}, state ->
       cond do
         plugin.sup != nil and not runnable?(plugin) -> stop(state, id)
         plugin.sup == nil and not plugin.failed and runnable?(plugin) -> start(state, plugin)
         true -> state
       end
     end)
+    |> sync()
+  end
+
+  # The running provider adapters, by the driver they serve, for `provider/1`.
+  defp sync(state) do
+    bundled = T3.Plugins.Bundled.modules()
+
+    rows =
+      for {id, %{kind: "providerAdapter", sup: sup} = plugin} <- state.plugins, sup != nil do
+        provider = plugin.manifest[:provider] || %{}
+
+        {to_string(provider[:driver] || id),
+         %{
+           id: id,
+           module: plugin.module,
+           sup: sup,
+           provider: provider,
+           bundled: plugin.bundled,
+           settings: settings(plugin),
+           rank: Enum.find_index(bundled, &(&1.manifest().id == id)) || length(bundled)
+         }}
+      end
+
+    keys = MapSet.new(rows, &elem(&1, 0))
+    for {key, _} <- :ets.tab2list(@providers), key not in keys, do: :ets.delete(@providers, key)
+    :ets.insert(@providers, rows)
+    state
   end
 
   defp start(state, plugin) do
@@ -479,6 +739,19 @@ defmodule T3.Plugins do
       if function_exported?(module, :start_link, 1),
         do: [%{id: module, start: {__MODULE__, :start_worker, [id, module, settings(plugin)]}}],
         else: []
+
+    # A provider's thread processes (`sessions/1`).
+    children =
+      if plugin.kind == "providerAdapter",
+        do: [
+          %{
+            id: :sessions,
+            start: {DynamicSupervisor, :start_link, [[strategy: :one_for_one]]},
+            type: :supervisor
+          }
+          | children
+        ],
+        else: children
 
     spec = %{
       id: id,
@@ -627,17 +900,55 @@ defmodule T3.Plugins do
       "version" => plugin.manifest[:version],
       "kind" => plugin.kind,
       "apiVersion" => plugin.manifest[:api_version],
-      "file" => Path.basename(plugin.file),
-      "enabled" => config["enabled"] == true,
+      "file" => plugin.file && Path.basename(plugin.file),
+      "source" => if(plugin.file, do: "file", else: "bundled"),
+      "enabled" => enabled?(plugin),
       "status" => status,
       "error" => with({_, message} <- plugin.problem, do: message),
       "reloadError" => plugin.reload_error,
       "lastError" => plugin.last_error,
       "restarts" => plugin.restarts,
       "settingsSchema" => fields(plugin),
-      "settings" => config["settings"] || %{}
+      "settings" => config["settings"] || %{},
+      "permissions" =>
+        for(
+          permission <- permissions(plugin),
+          do: Map.put(permission, "granted", permission["id"] in (config["granted"] || []))
+        )
+    }
+    |> Map.merge(provider_entry(plugin))
+  end
+
+  defp permissions(plugin) do
+    for permission <- plugin.manifest[:permissions] || [] do
+      %{
+        "id" => to_string(permission[:id]),
+        "label" => permission[:label] || to_string(permission[:id])
+      }
+    end
+  end
+
+  # What a provider plugin declares for clients that have never heard of it.
+  defp provider_entry(%{kind: "providerAdapter", manifest: manifest} = plugin) do
+    provider = manifest[:provider] || %{}
+
+    %{
+      "provider" => %{
+        "driver" => to_string(provider[:driver] || plugin.id),
+        "capabilities" => Enum.map(provider[:capabilities] || [], &to_string/1),
+        "instanceSettings" =>
+          for field <- provider[:instance_settings] || [] do
+            %{
+              "key" => to_string(field[:key]),
+              "label" => field[:label] || to_string(field[:key]),
+              "secret" => field[:secret] == true
+            }
+          end
+      }
     }
   end
+
+  defp provider_entry(_plugin), do: %{}
 
   defp name(plugin), do: plugin.manifest[:name] || plugin.id
 

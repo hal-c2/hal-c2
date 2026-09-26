@@ -115,10 +115,17 @@ defmodule T3.Orchestration.Entities do
   defp capabilities(driver) do
     native = driver in ["codex", "claudeAgent"]
 
-    @codex_capabilities
-    |> put_in(["turns", "supportsActiveSteering"], native)
-    |> put_in(["threads", "canForkThread"], native)
-    |> put_in(["threads", "canForkFromTurn"], native)
+    base =
+      @codex_capabilities
+      |> put_in(["turns", "supportsActiveSteering"], native)
+      |> put_in(["threads", "canForkThread"], native)
+      |> put_in(["threads", "canForkFromTurn"], native)
+
+    # A provider plugin offers what it declares.
+    case T3.Plugins.declared(driver) do
+      nil -> base
+      provider -> T3.Plugins.ProviderAdapter.session_capabilities(base, provider)
+    end
   end
 
   def provider_session(id, cwd, model, at, driver \\ "codex", instance \\ "codex") do

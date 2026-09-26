@@ -309,6 +309,36 @@ defmodule T3.Steps.Plugins.Fixtures do
 
   def path(context, id), do: Path.join([context.node.home, "plugins", "#{id}.ex"])
 
+  @doc """
+  A second node in the cluster, as `:peer` and its environment id `:peer_environment`;
+  started once per scenario.
+  """
+  def peer(%{peer: _, peer_environment: _} = context), do: context
+
+  def peer(context) do
+    context = ensure(context)
+    peer = T3.Test.Node.start_peer(context.node)
+    Map.merge(context, %{peer: peer, peer_environment: T3.Test.Node.peer_environment(peer)})
+  end
+
+  @doc "Writes fixture `id` into the peer node's plugins directory and has it rescan."
+  def install_on_peer(context, id) do
+    context = peer(context)
+    dir = Path.join([context.node.home, "peer", "plugins"])
+    File.mkdir_p!(dir)
+    File.write!(Path.join(dir, "#{id}.ex"), source(id))
+    {:ok, _} = :erpc.call(context.peer, T3.Plugins, :handle, ["rescan", %{}])
+    context
+  end
+
+  @doc "The plugin listing of the environment `environment`, fetched over the client's socket."
+  def list(context, environment) do
+    {%{"plugins" => plugins}, client} =
+      T3.Test.Node.call!(T3.Test.Node.World.client(context), environment, "plugins.list")
+
+    {plugins, T3.Test.Node.World.put_client(context, client)}
+  end
+
   @doc "The node's listing of plugin `id`, or nil."
   def entry(id) do
     {:ok, %{"plugins" => plugins}} = T3.Plugins.handle("list", %{})
@@ -329,7 +359,11 @@ defmodule T3.Steps.Plugins.Fixtures do
   end
 
   @doc "The source of fixture `id`: `version` sets its manifest and `:version` answer."
-  def source(id, version \\ "1.0.0") do
+  def source(id, version \\ "1.0.0")
+
+  def source(id, version) when id in ["acme", "acme-agent"], do: provider(id, version: version)
+
+  def source(id, version) do
     module = inspect(module(id))
 
     """
@@ -343,7 +377,8 @@ defmodule T3.Steps.Plugins.Fixtures do
           name: #{inspect(String.capitalize(id))},
           version: #{inspect(version)},
           api_version: #{Map.get(@api, id, 1)},
-          settings: #{inspect(settings(id))}
+          settings: #{inspect(settings(id))},
+          permissions: #{inspect(permissions(id))}
         }
       end
 
@@ -369,6 +404,9 @@ defmodule T3.Steps.Plugins.Fixtures do
 
   defp settings("ntfy"), do: [%{key: "topic", label: "Topic"}]
   defp settings(_id), do: []
+
+  defp permissions("gitea"), do: [%{id: "project-remotes", label: "Read project remotes"}]
+  defp permissions(_id), do: []
 
   defp callbacks(id) when id in ["jira-tools", "future-tools"] do
     ~S"""
@@ -416,7 +454,14 @@ defmodule T3.Steps.Plugins.Fixtures do
     """
   end
 
-  defp callbacks("ntfy"), do: "  def notify(_notification, _settings), do: :ok"
+  defp callbacks("ntfy") do
+    ~S"""
+      def notify(notification, settings) do
+        if probe = Process.whereis(:t3_plugin_probe), do: send(probe, {:notified, "ntfy", notification, settings})
+        :ok
+      end
+    """
+  end
 
   defp callbacks("local-llama") do
     ~S"""
@@ -430,7 +475,146 @@ defmodule T3.Steps.Plugins.Fixtures do
     """
   end
 
-  defp callbacks(_provider_adapter), do: ""
+  defp callbacks(_other), do: ""
+
+  @doc """
+  The source of a provider adapter plugin `id` written against the adapter contract
+  alone. Its turns answer "Hello from <id>" (with " and the history" when the turn
+  carries the thread's earlier conversation, and the instance's `greeting` setting
+  when it has one); a turn saying "wait" runs until it is interrupted, and
+  "write <file>" writes that file in the workspace first. It does only what
+  `opts[:capabilities]` declares (default: everything); `rollback_fails: true`
+  declares rollback and fails every one.
+  """
+  def provider(id, opts \\ []) do
+    version = opts[:version] || "1.0.0"
+    driver = opts[:driver] || id
+    capabilities = Keyword.get(opts, :capabilities, T3.Plugins.ProviderAdapter.capabilities())
+
+    provider =
+      %{
+        driver: driver,
+        name: opts[:name] || String.capitalize(id),
+        capabilities: capabilities,
+        documentation_url: "https://#{id}.example.com/docs/sign-in",
+        models: [%{slug: "#{id}-1", name: "#{String.capitalize(id)} One"}]
+      }
+      |> Map.merge(
+        Map.new(Keyword.take(opts, [:icon, :accent_color, :runtime_modes, :instance_settings]))
+      )
+
+    optional =
+      [
+        :interrupt in capabilities &&
+          ~S"""
+            def interrupt(thread_id, _run_id) do
+              case GenServer.call(__MODULE__, {:turn, thread_id}) do
+                pid when is_pid(pid) -> send(pid, :interrupt) && :ok
+                nil -> {:error, "no running turn"}
+              end
+            end
+          """,
+        :active_steering in capabilities &&
+          ~S"""
+            def steer(_thread_id, _run_id, _text), do: {:error, "this fixture does not steer"}
+          """,
+        (opts[:rollback_fails] || :rollback in capabilities) &&
+          """
+            def rollback(_thread_id, _plan),
+              do: #{if opts[:rollback_fails], do: inspect({:error, "#{id} could not rewind its conversation"}), else: ~s({:ok, %{"nativeThreadRef" => nil}})}
+          """
+      ]
+      |> Enum.filter(& &1)
+      |> Enum.join("\n")
+
+    """
+    defmodule #{inspect(module(id))} do
+      @behaviour T3.Plugins.ProviderAdapter
+      use GenServer
+      alias T3.Orchestration.TurnWriter
+
+      @provider #{inspect(provider)}
+
+      def manifest do
+        %{
+          id: #{inspect(id)},
+          name: #{inspect(provider.name)},
+          version: #{inspect(version)},
+          api_version: 1,
+          settings: [],
+          provider: @provider
+        }
+      end
+
+      def start_link(settings), do: GenServer.start_link(__MODULE__, settings, name: __MODULE__)
+
+      def init(_settings) do
+        if probe = Process.whereis(:t3_plugin_probe), do: send(probe, {:plugin_started, #{inspect(id)}, self()})
+        {:ok, %{}}
+      end
+
+      def handle_call(:version, _from, turns), do: {:reply, #{inspect(version)}, turns}
+      def handle_call({:track, thread_id, pid}, _from, turns), do: {:reply, :ok, Map.put(turns, thread_id, pid)}
+
+      def handle_call({:turn, thread_id}, _from, turns) do
+        pid = turns[thread_id]
+        {:reply, if(pid && Process.alive?(pid), do: pid), turns}
+      end
+
+      def handle_cast(:crash, _turns), do: raise(#{inspect("#{id} lost its connection")})
+
+      def start_turn(thread_id, turn) do
+        {:ok, pid} =
+          DynamicSupervisor.start_child(T3.Plugins.sessions(#{inspect(driver)}), %{
+            id: :turn,
+            start: {Task, :start_link, [fn -> run(thread_id, turn) end]},
+            restart: :temporary
+          })
+
+        GenServer.call(__MODULE__, {:track, thread_id, pid})
+      end
+
+    #{optional}
+
+      defp run(thread_id, turn) do
+        ids = Map.put(turn.ids, :provider_turn, "provider-turn:\#{turn.ids.driver}:\#{turn.ids.run}")
+        state = %{thread_id: thread_id, turn: %{turn | ids: ids}, items: %{}, buffer: %{}, flush_timer: nil}
+        TurnWriter.started(state)
+
+        # Its own session, which later turns continue (a fresh one gets the history).
+        if turn.native_thread_id == nil do
+          TurnWriter.commit(state, fn stream ->
+            [
+              T3.Orchestration.upsert(stream, "provider-thread", ids.provider_thread, fn thread ->
+                Map.put(thread, "nativeThreadRef", T3.Orchestration.Entities.provider_ref("session-\#{thread_id}", ids.driver))
+              end)
+            ]
+          end)
+        end
+
+        if turn.text =~ "wait" do
+          receive do
+            :interrupt -> TurnWriter.finish(state, "interrupted", nil)
+          end
+        else
+          with [_, name] <- turn.text |> String.split("</conversation_history>") |> List.last() |> then(&Regex.run(~r/write (\\S+)/, &1)),
+               do: File.write!(Path.join(turn.cwd, name), "written by #{id}\\n")
+
+          state = TurnWriter.ensure_item(state, "answer", :assistant)
+          TurnWriter.finish_item(state, "answer", "completed", &Map.merge(&1, %{"text" => answer(turn), "streaming" => false}))
+          TurnWriter.finish(state, "completed", nil)
+        end
+      end
+
+      defp answer(turn) do
+        config = get_in(T3.Settings.settings(), ["providerInstances", turn.ids.instance, "config"]) || %{}
+        history = if turn.text =~ "<conversation_history>", do: " and the history", else: ""
+        greeting = if config["greeting"], do: " (\#{config["greeting"]})", else: ""
+        "Hello from #{id}\#{history}\#{greeting}"
+      end
+    end
+    """
+  end
 end
 
 defmodule T3.Steps.Plugins.AgentPlugins do
@@ -440,6 +624,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
 
   alias T3.StreamState
   alias T3.Steps.Plugins.{AcpRegistry, Fixtures, Turns}
+  alias T3.Test.FakeAcp
   alias T3.Test.Node
   alias T3.Test.Node.World
 
@@ -629,5 +814,704 @@ defmodule T3.Steps.Plugins.AgentPlugins do
     assert StreamState.list(state, "message") == []
     assert Registry.lookup(T3.Codex.Registry, context.thread) == []
     context
+  end
+
+  # --- provider plugins ----------------------------------------------------------------
+
+  # A thread on `instance` working in a git checkout of its own, so its turns take
+  # checkpoints that can be restored; its first message is `text`.
+  defp launch(context, instance, text) do
+    work = World.git_repo(context, "work")
+    thread_id = "thread-#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      T3.Orchestration.launch_thread(%{
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => thread_id,
+        "projectId" => World.project(context, "shop").id,
+        "title" => "Work on #{instance}",
+        "modelSelection" => %{"instanceId" => instance, "model" => "#{instance}-1"},
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default",
+        "workspaceStrategy" => %{
+          "type" => "existing_worktree",
+          "worktreePath" => work,
+          "branch" => "main"
+        },
+        "initialMessage" => %{"messageId" => "m1", "text" => text, "attachments" => []}
+      })
+
+    Map.merge(context, %{thread_id: thread_id, work: work})
+  end
+
+  defp state(thread_id), do: T3.Streams.Server.state(T3.Streams.ensure(thread_id))
+
+  defp session(thread_id) do
+    World.await_stream(thread_id, fn state ->
+      List.first(StreamState.list(state, "provider-session"))
+    end)
+  end
+
+  defp snapshot(instance), do: FakeAcp.find(T3.Environment.providers(), instance)
+
+  defp answers(thread_id) do
+    for %{"role" => "assistant", "text" => text} <- StreamState.list(state(thread_id), "message"),
+        do: text
+  end
+
+  defp rollback(thread_id, ordinal) do
+    scope_id = T3.Checkpoint.scope_id(thread_id)
+
+    T3.Orchestration.dispatch(%{
+      "type" => "checkpoint.rollback",
+      "commandId" => "cmd-#{System.unique_integer([:positive])}",
+      "threadId" => thread_id,
+      "scopeId" => scope_id,
+      "checkpointId" => T3.Checkpoint.checkpoint_id(scope_id, ordinal)
+    })
+  end
+
+  # Installs the provider fixture `id` (`Fixtures.provider/2` with `opts`) and turns it on.
+  defp provider_plugin(context, id, opts \\ []) do
+    context
+    |> Turns.providers()
+    |> Fixtures.install(id, Fixtures.provider(id, opts))
+    |> Fixtures.enable(id)
+  end
+
+  step "a node with no provider plugins installed", context do
+    Application.put_env(:t3, :bundled_plugins, [])
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :bundled_plugins) end)
+    context = Fixtures.ensure(context)
+
+    assert Enum.filter(
+             elem(T3.Plugins.handle("list", %{}), 1)["plugins"],
+             &(&1["kind"] == "providerAdapter")
+           ) == []
+
+    context
+  end
+
+  step "the user is told to add a provider before starting a thread", context do
+    assert T3.Environment.providers() == []
+    context = World.create_thread(context, "First", "shop")
+    thread_id = World.thread_id(context, "First")
+    {reply, context} = World.dispatch(context, Turns.message(thread_id, "m1", "hello"))
+    assert {:error, message, _} = reply
+    assert message =~ "Add a provider before starting a thread"
+    assert Turns.runs(state(thread_id)) == []
+    context
+  end
+
+  step "the bundled plugins {string} and {string}", %{args: ids} = context do
+    context = context |> Turns.providers() |> Fixtures.ensure()
+
+    for id <- ids,
+        do: assert(%{"source" => "bundled", "status" => "running"} = Fixtures.entry(id))
+
+    drivers = Enum.map(T3.Environment.providers(), & &1["driver"])
+    assert "codex" in drivers and "claudeAgent" in drivers
+    context
+  end
+
+  step "the user disables the {string} plugin", %{args: [id]} = context do
+    {_, context} = World.call!(context, "plugins.disable", %{"id" => id})
+    assert %{"enabled" => false, "status" => "disabled"} = Fixtures.entry(id)
+    context
+  end
+
+  step "Claude keeps working", context do
+    {thread_id, context} = Turns.send_first(context, "claudeAgent", "hello")
+    [%{"providerInstanceId" => "claudeAgent"}] = Turns.await_runs(thread_id, ["completed"])
+    assert "Hello from claude" in answers(thread_id)
+    context
+  end
+
+  step "the bundled plugin {string} has a newer version available", %{args: [id]} = context do
+    context = context |> Turns.providers() |> Fixtures.ensure()
+    Fixtures.probe()
+    node_version = T3.Upgrade.version()
+    assert %{"source" => "bundled", "version" => ^node_version} = Fixtures.entry(id)
+
+    context
+    |> Map.put(:node_version, node_version)
+    |> Map.update(:plugin_updates, %{id => claude_update()}, &Map.put(&1, id, claude_update()))
+  end
+
+  step "Claude runs on the new plugin version", context do
+    assert %{"source" => "file", "version" => "2.0.0", "status" => "running"} =
+             Fixtures.entry("claude")
+
+    {thread_id, context} = Turns.send_first(context, "claudeAgent", "hello")
+    assert_receive {:plugin_turn, "claude", "2.0.0"}, 5_000
+    [_] = Turns.await_runs(thread_id, ["completed"])
+    assert "Hello from claude" in answers(thread_id)
+    context
+  end
+
+  step "the node version is unchanged", context do
+    assert T3.Upgrade.version() == context.node_version
+    context
+  end
+
+  step "a provider plugin {string} that implements the adapter contract directly",
+       %{args: [id]} = context do
+    Map.put(context, :plugin, id)
+  end
+
+  step "the plugin is installed and enabled", context do
+    provider_plugin(context, context.plugin)
+  end
+
+  step "{string} is listed as a provider", %{args: [id]} = context do
+    assert %{"driver" => ^id, "availability" => "available", "models" => [_]} = snapshot(id)
+    context
+  end
+
+  step "it can run turns in {string}", %{args: [_project]} = context do
+    context = launch(context, context.plugin, "hello")
+    [%{"providerInstanceId" => instance}] = Turns.await_runs(context.thread_id, ["completed"])
+    assert instance == context.plugin
+    assert answers(context.thread_id) == ["Hello from #{context.plugin}"]
+    context
+  end
+
+  # --- removing a provider plugin -----------------------------------------------------
+
+  step "threads in {string} that ran on {string}", %{args: [project, id]} = context do
+    context = provider_plugin(context, id) |> Map.put(:plugin, id)
+    context = launch(context, id, "write a.txt")
+    [_] = Turns.await_runs(context.thread_id, ["completed"])
+    assert World.project(context, project)
+    context
+  end
+
+  step "the user removes the {string} plugin", %{args: [id]} = context do
+    context = Fixtures.remove(context, id)
+    assert Fixtures.entry(id) == nil
+    context
+  end
+
+  step "those threads still show their full history", context do
+    state = state(context.thread_id)
+    assert [%{"status" => "completed"}] = Turns.runs(state)
+
+    assert Enum.map(StreamState.list(state, "message"), &{&1["role"], &1["text"]}) == [
+             {"user", "write a.txt"},
+             {"assistant", "Hello from #{context.plugin}"}
+           ]
+
+    context
+  end
+
+  step "their diffs and checkpoints can still be viewed", context do
+    assert [%{"status" => "ready"}] = StreamState.list(state(context.thread_id), "checkpoint")
+
+    assert {:ok, %{"diff" => diff}} =
+             T3.Orchestration.handle("orchestration.getTurnDiff", %{
+               "threadId" => context.thread_id,
+               "fromTurnCount" => 0,
+               "toTurnCount" => 1
+             })
+
+    assert diff =~ "+++ b/a.txt"
+    context
+  end
+
+  step "the instance {string} has custom settings", %{args: [instance]} = context do
+    context = provider_plugin(context, "acme")
+    {settings, version} = T3.Settings.get()
+
+    instances =
+      Map.put(settings["providerInstances"] || %{}, instance, %{
+        "driver" => "acme",
+        "enabled" => true,
+        "displayName" => "Acme at work",
+        "config" => %{"greeting" => "hi team"}
+      })
+
+    {:ok, _} = T3.Settings.put(Map.put(settings, "providerInstances", instances), version)
+    assert %{"displayName" => "Acme at work", "availability" => "available"} = snapshot(instance)
+    Map.put(context, :instance, instance)
+  end
+
+  step "its plugin is removed", context do
+    Fixtures.remove(context, "acme")
+  end
+
+  step "the instance is listed as unavailable with its settings preserved", context do
+    assert %{"availability" => "unavailable", "displayName" => "Acme at work"} =
+             snapshot(context.instance)
+
+    assert %{"driver" => "acme", "config" => %{"greeting" => "hi team"}} =
+             T3.Settings.settings()["providerInstances"][context.instance]
+
+    context
+  end
+
+  step "the plugin is installed again", context do
+    context = Fixtures.install(context, "acme")
+    assert %{"status" => "running"} = Fixtures.entry("acme")
+    context
+  end
+
+  step "{string} works with the same settings", %{args: [instance]} = context do
+    assert %{"availability" => "available"} = snapshot(instance)
+    {thread_id, context} = Turns.send_first(context, instance, "hello")
+    [_] = Turns.await_runs(thread_id, ["completed"])
+    assert answers(thread_id) == ["Hello from acme (hi team)"]
+    context
+  end
+
+  step "a thread that ran on a provider whose plugin was removed", context do
+    context = context |> Turns.providers() |> provider_plugin("acme")
+    context = launch(context, "acme", "remember the basket")
+    [_] = Turns.await_runs(context.thread_id, ["completed"])
+    context = Fixtures.remove(context, "acme")
+    assert {:missing, "acme"} = T3.Plugins.provider("acme")
+    context
+  end
+
+  step "the turn runs on Claude with the thread's history as context", context do
+    [_, second] = Turns.await_runs(context.thread_id, ["completed", "completed"])
+    assert second["providerInstanceId"] == "claudeAgent"
+    assert Enum.any?(answers(context.thread_id), &(&1 =~ "history True"))
+    context
+  end
+
+  # --- capabilities ---------------------------------------------------------------------
+
+  @capabilities %{
+    "interrupt" => :interrupt,
+    "active steering" => :active_steering,
+    "fork" => :fork,
+    "rollback" => :rollback,
+    "structured approval" => :approvals,
+    "plan updates" => :plan_updates,
+    "model switching" => :model_switching,
+    "interaction mode" => :interaction_mode,
+    "text generation" => :text_generation,
+    "native sessions" => :native_sessions,
+    "usage limits" => :usage_limits,
+    "sign-in" => :sign_in
+  }
+
+  step "a provider plugin that does not declare {string}", %{args: [name]} = context do
+    missing = Map.fetch!(@capabilities, name)
+    capabilities = T3.Plugins.ProviderAdapter.capabilities() -- [missing]
+    context = provider_plugin(context, "acme", capabilities: capabilities)
+    refute missing in T3.Plugins.declared("acme").capabilities
+    Map.put(context, :missing, missing)
+  end
+
+  step "the user works in a thread on that provider", context do
+    text = if context.missing in [:interrupt, :active_steering], do: "wait", else: "write a.txt"
+    context = launch(context, "acme", text)
+    status = if text == "wait", do: "running", else: "completed"
+    [_] = Turns.await_runs(context.thread_id, [status])
+    Map.put(context, :session, session(context.thread_id))
+  end
+
+  step "the stop control is not offered while a turn runs", context do
+    refute context.session["capabilities"]["turns"]["supportsInterrupt"]
+
+    assert {:error, "The provider \"acme\" cannot stop a running turn."} =
+             T3.Orchestration.dispatch(%{
+               "type" => "run.interrupt",
+               "commandId" => "cmd-stop",
+               "threadId" => context.thread_id
+             })
+
+    assert [%{"status" => "running"}] = Turns.runs(state(context.thread_id))
+    context
+  end
+
+  step "a follow-up interrupts the turn and starts again with the message", context do
+    assert %{"supportsActiveSteering" => false, "supportsSteeringByInterruptRestart" => true} =
+             context.session["capabilities"]["turns"]
+
+    {{:ok, _}, context} =
+      World.dispatch(
+        context,
+        Map.put(
+          Turns.message(context.thread_id, "m2", "use the red button"),
+          "deliveryIntent",
+          "steer"
+        )
+      )
+
+    [_, restarted] = Turns.await_runs(context.thread_id, ["interrupted", "completed"])
+    assert Turns.await_user_item(context.thread_id, "m2")["runId"] == restarted["id"]
+    assert answers(context.thread_id) == ["Hello from acme"]
+    context
+  end
+
+  step "forking copies the history into a new thread and starts a fresh session", context do
+    refute context.session["capabilities"]["threads"]["canForkThread"]
+    fork_id = "fork-#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      T3.Orchestration.dispatch(%{
+        "type" => "thread.fork",
+        "commandId" => "cmd-fork",
+        "sourceThreadId" => context.thread_id,
+        "targetThreadId" => fork_id
+      })
+
+    assert Enum.map(StreamState.list(state(fork_id), "message"), & &1["text"]) == [
+             "write a.txt",
+             "Hello from acme"
+           ]
+
+    {{:ok, _}, context} = World.dispatch(context, Turns.message(fork_id, "f1", "carry on"))
+    [_, _] = Turns.await_runs(fork_id, ["completed", "completed"])
+    assert "Hello from acme and the history" in answers(fork_id)
+
+    [source_thread] = StreamState.list(state(context.thread_id), "provider-thread")
+
+    assert Enum.all?(
+             StreamState.list(state(fork_id), "provider-thread"),
+             &(&1["id"] != source_thread["id"])
+           )
+
+    context
+  end
+
+  step "reverting restores files and marks the agent context as divergent", context do
+    refute context.session["capabilities"]["threads"]["canRollbackThread"]
+
+    {{:ok, _}, context} =
+      World.dispatch(context, Turns.message(context.thread_id, "m2", "write b.txt"))
+
+    [_, _] = Turns.await_runs(context.thread_id, ["completed", "completed"])
+    assert File.exists?(Path.join(context.work, "b.txt"))
+
+    assert {:ok, _} = rollback(context.thread_id, 1)
+    assert File.exists?(Path.join(context.work, "a.txt"))
+    refute File.exists?(Path.join(context.work, "b.txt"))
+
+    assert [%{"contextDivergent" => true, "nativeThreadRef" => nil}] =
+             StreamState.list(state(context.thread_id), "provider-thread")
+
+    context
+  end
+
+  step "no approval prompts are shown and the plugin decides on its own", context do
+    approvals = context.session["capabilities"]["approvals"]
+    refute approvals["supportsCommandApproval"] or approvals["supportsFileChangeApproval"]
+    assert StreamState.list(state(context.thread_id), "runtime-request") == []
+    assert File.exists?(Path.join(context.work, "a.txt"))
+    context
+  end
+
+  step "no task list is shown for the turn", context do
+    planning = context.session["capabilities"]["planning"]
+    refute planning["emitsPlanUpdated"] or planning["emitsTodoList"]
+    assert StreamState.list(state(context.thread_id), "plan") == []
+    context
+  end
+
+  step "changing the model starts a new thread", context do
+    assert %{"requiresNewThreadForModelChange" => true} = snapshot("acme")
+    refute context.session["capabilities"]["sessions"]["supportsModelSwitchInSession"]
+
+    command =
+      context.thread_id
+      |> Turns.message("m2", "try the other model")
+      |> Map.put("modelSelection", %{"instanceId" => "acme", "model" => "acme-2"})
+
+    {reply, context} = World.dispatch(context, command)
+    assert {:error, message, _} = reply
+    assert message =~ "Start a new thread to use acme-2"
+    assert [_] = Turns.runs(state(context.thread_id))
+    context
+  end
+
+  step "the plan mode toggle is not offered", context do
+    assert %{"showInteractionModeToggle" => false} = snapshot("acme")
+    context
+  end
+
+  step "the provider cannot be picked for titles and commit messages", context do
+    assert %{"supportsTextGeneration" => false} = snapshot("acme")
+    {settings, version} = T3.Settings.get()
+
+    selection = %{"instanceId" => "acme", "model" => "acme-1"}
+
+    {:ok, _} =
+      T3.Settings.put(Map.put(settings, "textGenerationModelSelection", selection), version)
+
+    assert {:error, message} = T3.TextGeneration.branch_name(context.work, "fix the basket")
+    assert message =~ "No text generation provider is available"
+    context
+  end
+
+  step "there is nothing to import from this provider", context do
+    refute Map.has_key?(snapshot("acme"), "nativeSessions")
+
+    assert {:error, %{"_tag" => _, "message" => message}} =
+             T3.Acp.Sessions.list(%{
+               "instanceId" => "acme",
+               "projectId" => World.project(context, "shop").id
+             })
+
+    assert message =~ "unknown ACP agent acme"
+    context
+  end
+
+  step "the limits view does not list this provider", context do
+    refute Map.has_key?(snapshot("acme"), "usageLimits")
+    assert T3.ProviderUsageLimits.get("acme") == nil
+    context
+  end
+
+  step "the user is pointed to the provider's documentation to sign in", context do
+    assert %{
+             "setup" => %{
+               "canAuthenticate" => false,
+               "documentationUrl" => "https://acme.example.com/docs/sign-in"
+             }
+           } = snapshot("acme")
+
+    assert {:error, %{"message" => "This provider does not sign in here."}} =
+             T3.ProviderAuth.start(%{"instanceId" => "acme"})
+
+    context
+  end
+
+  step "a provider plugin that declares rollback but fails every rollback", context do
+    context = provider_plugin(context, "acme", rollback_fails: true)
+    assert :rollback in T3.Plugins.declared("acme").capabilities
+    context = launch(context, "acme", "write a.txt")
+    [_] = Turns.await_runs(context.thread_id, ["completed"])
+
+    {{:ok, _}, context} =
+      World.dispatch(context, Turns.message(context.thread_id, "m2", "write b.txt"))
+
+    [_, _] = Turns.await_runs(context.thread_id, ["completed", "completed"])
+    context
+  end
+
+  step "the user reverts a turn on that provider", context do
+    Map.put(context, :revert, rollback(context.thread_id, 1))
+  end
+
+  step "the revert fails with the plugin's error", context do
+    assert context.revert == {:error, "acme could not rewind its conversation"}
+    context
+  end
+
+  step "the thread is left as it was before the revert", context do
+    state = state(context.thread_id)
+    assert Enum.map(Turns.runs(state), & &1["status"]) == ["completed", "completed"]
+    assert Enum.all?(StreamState.list(state, "checkpoint"), &(&1["status"] == "ready"))
+    assert File.exists?(Path.join(context.work, "b.txt"))
+    context
+  end
+
+  # --- ACP ---------------------------------------------------------------------------
+
+  step "a new agent that speaks ACP", context do
+    context = context |> Turns.providers() |> Fixtures.ensure() |> AcpRegistry.ensure()
+    Map.put(context, :agent, "newcomer")
+  end
+
+  step "its author publishes it to the ACP registry", context do
+    AcpRegistry.publish(context, [AcpRegistry.agent(context, context.agent)])
+  end
+
+  step "users can add it from the registry without a T3 plugin", context do
+    plugins = elem(T3.Plugins.handle("list", %{}), 1)["plugins"]
+    agent = context.agent
+
+    {_, context} = World.call!(context, "server.prepareAcpRegistryAgent", %{"agentId" => agent})
+    context = AcpRegistry.add_instance(context, agent, agent)
+    assert {:ok, ^agent, T3.Plugins.Bundled.Acp} = T3.Plugins.provider(agent)
+
+    {thread_id, context} = Turns.send_first(context, agent, "list the files")
+    [_] = Turns.await_runs(thread_id, ["completed"])
+    assert answers(thread_id) == ["Hello from acp"]
+    assert elem(T3.Plugins.handle("list", %{}), 1)["plugins"] == plugins
+    context
+  end
+
+  step "a provider plugin {string} built on the ACP contract", %{args: [agent]} = context do
+    context = context |> Fixtures.ensure() |> FakeAcp.install(agent, %{}, enabled: true)
+    assert {:ok, ^agent, T3.Plugins.Bundled.Acp} = T3.Plugins.provider(agent)
+    context
+  end
+
+  # Grok's `x.ai/exit_plan_mode` request is outside ACP (`T3.Acp.ThreadRuntime`).
+  step "it adds a plan capture that plain ACP does not have", context do
+    method = "x.ai/exit_plan_mode"
+    refute String.starts_with?(method, ["session/", "fs/", "terminal/"])
+
+    plan = %{
+      "match" => "plan the work",
+      "steps" => [
+        %{
+          "request" => %{
+            "method" => method,
+            "params" => %{"toolCallId" => "plan-1", "planContent" => "# Plan\n\n1. Add the form"}
+          }
+        }
+      ]
+    }
+
+    FakeAcp.install(context, context.provider, %{"turns" => [plan | FakeAcp.turns()]},
+      enabled: true
+    )
+  end
+
+  step "a Grok turn proposes a plan", context do
+    context =
+      context
+      |> FakeAcp.thread("Work", "approval-required")
+      |> FakeAcp.send_message("plan the work")
+
+    FakeAcp.await_run(context, "completed")
+    Map.put(context, :expected_plan, "# Plan\n\n1. Add the form")
+  end
+
+  step "threads are running on Claude and on an ACP agent", context do
+    context = context |> Turns.providers() |> Fixtures.ensure()
+    {claude, context} = Turns.send_first(context, "claudeAgent", "wait for it")
+    [_] = Turns.await_runs(claude, ["running"])
+
+    {acp, context} =
+      Turns.send_first(context, "opencode", "approve ls", %{"runtimeMode" => "approval-required"})
+
+    World.await_stream(acp, fn state ->
+      Enum.find(StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
+    end)
+
+    [{runtime, _}] = Registry.lookup(T3.Claude.Registry, claude)
+    Map.merge(context, %{claude: claude, claude_runtime: runtime, acp: acp})
+  end
+
+  step "the ACP agent's plugin crashes", context do
+    sessions = T3.Plugins.sessions("acp")
+    assert sessions != T3.Plugins.sessions("claudeAgent")
+    Process.exit(sessions, :kill)
+    context
+  end
+
+  step "the Claude threads keep running", context do
+    assert Process.alive?(context.claude_runtime)
+    assert [%{"status" => "running"}] = Turns.runs(state(context.claude))
+    context
+  end
+
+  step "the ACP agent's threads show that their session ended", context do
+    [_] = Turns.await_runs(context.acp, ["failed"])
+    [session] = StreamState.list(state(context.acp), "provider-session")
+    assert session["lastError"] =~ "session ended"
+    context
+  end
+
+  # --- what a provider plugin declares ---------------------------------------------------
+
+  step "the provider plugin {string} declares a binary path and an API key setting",
+       %{args: [id]} = context do
+    provider_plugin(context, id,
+      instance_settings: [
+        %{key: "binaryPath", label: "Binary path"},
+        %{key: "apiKey", label: "API key", secret: true}
+      ]
+    )
+  end
+
+  step "the user adds an {string} instance", %{args: [id]} = context do
+    {%{"plugins" => plugins}, context} = World.call!(context, "plugins.list")
+    Map.put(context, :plugin_entry, Enum.find(plugins, &(&1["id"] == id)))
+  end
+
+  step "the user is asked for a binary path and an API key", context do
+    assert context.plugin_entry["provider"]["instanceSettings"] == [
+             %{"key" => "binaryPath", "label" => "Binary path", "secret" => false},
+             %{"key" => "apiKey", "label" => "API key", "secret" => true}
+           ]
+
+    context
+  end
+
+  step "the provider plugin {string} declares an icon and an accent colour",
+       %{args: [id]} = context do
+    provider_plugin(context, id,
+      icon: "https://#{id}.example.com/icon.svg",
+      accent_color: "#ff6600"
+    )
+  end
+
+  step "the user looks at the provider list", context do
+    elem(FakeAcp.open_config(context), 1)
+  end
+
+  step "{string} is shown with its own icon and colour", %{args: [id]} = context do
+    assert %{"iconUrl" => icon, "accentColor" => "#ff6600"} = FakeAcp.find(context.providers, id)
+    assert icon == "https://#{id}.example.com/icon.svg"
+    context
+  end
+
+  step "the provider plugin {string} supports every mode except auto",
+       %{args: [agent]} = context do
+    context = context |> Fixtures.ensure() |> FakeAcp.install(agent, %{}, enabled: true)
+    assert {:ok, ^agent, T3.Plugins.Bundled.Acp} = T3.Plugins.provider(agent)
+    context
+  end
+
+  step "the user opens the runtime access picker for a Pi thread", context do
+    context |> FakeAcp.thread("Work") |> FakeAcp.open_config() |> elem(1)
+  end
+
+  step "the node has the provider plugin {string} that no client knows about",
+       %{args: [id]} = context do
+    context =
+      provider_plugin(context, id, name: "Acme Agent", icon: "https://#{id}.example.com/icon.svg")
+
+    refute id in ~w(codex claudeAgent) or T3.Acp.agent?(id)
+    context
+  end
+
+  step "the user opens the model picker on any client", context do
+    elem(FakeAcp.open_config(context), 1)
+  end
+
+  step "{string} and its models are listed with the plugin's name and icon",
+       %{args: [id]} = context do
+    assert %{"displayName" => "Acme Agent", "iconUrl" => icon, "models" => models} =
+             FakeAcp.find(context.providers, id)
+
+    assert icon == "https://#{id}.example.com/icon.svg"
+
+    assert Enum.map(models, &Map.take(&1, ~w(slug name isDefault))) == [
+             %{"slug" => "#{id}-1", "name" => "Acme One", "isDefault" => true}
+           ]
+
+    context
+  end
+
+  # Claude as a plugin file: the bundled adapter at version 2.0.0, telling the
+  # probe each turn it runs.
+  defp claude_update do
+    """
+    defmodule T3PluginFixture.ClaudeUpdate do
+      @behaviour T3.Plugins.ProviderAdapter
+      alias T3.Claude.ThreadRuntime
+
+      def manifest, do: %{T3.Plugins.Bundled.Claude.manifest() | version: "2.0.0"}
+
+      def start_turn(thread_id, turn) do
+        if probe = Process.whereis(:t3_plugin_probe), do: send(probe, {:plugin_turn, "claude", "2.0.0"})
+        ThreadRuntime.start_turn(thread_id, turn)
+      end
+
+      defdelegate interrupt(thread_id, run_id), to: ThreadRuntime
+      defdelegate steer(thread_id, run_id, text), to: ThreadRuntime
+      defdelegate respond(thread_id, request_id, response), to: ThreadRuntime
+      defdelegate rollback(thread_id, plan), to: ThreadRuntime
+      defdelegate providers(settings), to: T3.Plugins.Bundled.Claude
+    end
+    """
   end
 end

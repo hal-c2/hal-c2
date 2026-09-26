@@ -3,7 +3,7 @@ defmodule T3.Steps.Plugins.PluginCatalog do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.Plugins.AcpRegistry
+  alias T3.Steps.Plugins.{AcpRegistry, Fixtures}
   alias T3.Test.Node.World
 
   # --- searching the registry ------------------------------------------------------
@@ -192,5 +192,50 @@ defmodule T3.Steps.Plugins.PluginCatalog do
       if match?({:ok, _}, reply), do: AcpRegistry.add_instance(context, id, id), else: context
 
     Map.put(context, :reply, reply)
+  end
+
+  # --- node plugins per environment ------------------------------------------------------
+
+  step "two environments with different node plugins", context do
+    context |> Fixtures.install("gitea") |> Fixtures.install_on_peer("ntfy")
+  end
+
+  step "the user opens the plugin list for the second environment", context do
+    {plugins, context} = Fixtures.list(context, context.peer_environment)
+    Map.put(context, :plugin_list, plugins)
+  end
+
+  step "only that environment's node plugins are listed", context do
+    assert context.plugin_list
+           |> Enum.reject(&(&1["source"] == "bundled"))
+           |> Enum.map(& &1["id"]) == ["ntfy"]
+
+    context
+  end
+
+  step "the node plugin {string} was granted access to project remotes",
+       %{args: [id]} = context do
+    context = context |> Fixtures.install(id)
+
+    {_, context} =
+      World.call!(context, "plugins.saveSettings", %{
+        "id" => id,
+        "settings" => %{"baseUrl" => "https://git.example.com"}
+      })
+
+    Fixtures.enable(context, id)
+  end
+
+  step "the user opens {string} in the plugin list", %{args: [id]} = context do
+    {%{"plugins" => plugins}, context} = World.call!(context, "plugins.list")
+    Map.put(context, :plugin_entry, Enum.find(plugins, &(&1["id"] == id)))
+  end
+
+  step "the granted permissions are shown", context do
+    assert context.plugin_entry["permissions"] == [
+             %{"id" => "project-remotes", "label" => "Read project remotes", "granted" => true}
+           ]
+
+    context
   end
 end
