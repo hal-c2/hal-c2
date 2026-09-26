@@ -5,26 +5,51 @@ compiled Qt 6 / QML binary (`hal-c2-qt`) that hosts the web app in a
 `WebEngineView` and makes everything around the web view - window, chrome,
 layout, colours - a set of QML "bricks" a user can rearrange and restyle from
 `~/.config/hal-c2/shell/`. It coexists with `apps/desktop`; nothing in `apps/web` or
-`apps/server` may become Qt-specific.
+`apps/server-ex` may become Qt-specific.
 
 ## Process model
 
 ```text
 hal-c2-qt (C++/QML, the shell)
   └─ spawns ─► node apps/desktop-qt/host/main.ts  (the desktop host)
-                 └─ spawns ─► node apps/server/src/bin.ts --no-browser  (the server)
-WebEngineView ──── WebSocket ────────────────────────────────────────────► server
+                 ├─ serves ─► apps/web/dist on http://127.0.0.1:<web port>
+                 └─ spawns ─► bin/hal_c2 start | mix hal_c2.server  (the Elixir node)
+WebEngineView ──── WebSocket (protocol 3) ─────────────────────────────► node
 WebEngineView ◄─── WebChannel ───► QML bricks
 ```
 
 - **The web view is the brain.** It keeps its normal WebSocket client to the
-  server, exactly as in a browser tab. The shell never speaks the app protocol
+  node, exactly as in a browser tab. The shell never speaks the app protocol
   and holds no domain state.
-- **The Node desktop host** owns everything TypeScript-owned: server lifecycle
-  today; SSH, Tailscale, secrets, saved environments and updates as they are
-  ported from `apps/desktop`. It reports to the shell over its stdout as
-  newline-delimited JSON (`{"type":"ready","url":...}`); the shell closes the
-  host's stdin when it exits, which is the host's cue to shut the server down.
+- **The Node desktop host** owns everything TypeScript-owned: serving the web
+  bundle and the node's lifecycle today; SSH, Tailscale, secrets and updates as
+  they are ported from `apps/desktop`. It reports to the shell over its stdout
+  as newline-delimited JSON (`ready {url}`, `error {message}`, `exit {code}`);
+  the shell closes the host's stdin when it exits, which is the host's cue to
+  stop the node it started.
+- **The node is started the way Electron starts it.** A release
+  (`HAL_C2_NODE_RELEASE`, else the bundled `hal-c2-node/`) runs `bin/hal_c2
+start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
+  Either gets `HAL_C2_BOOTSTRAP_STDIN=1` and one JSON line on stdin (port, host
+  `127.0.0.1`, `halC2Home` from `--base-dir`, a random `desktopBootstrapToken`;
+  `HalC2.Desktop`), and `HAL_C2_NODE_COMMAND` names the host's Node for the
+  node's JavaScript sidecars. The node runs in its own process group so a stop
+  reaches the BEAM behind `mix` and the release script.
+- **The app is served by the host, not the node.** The node serves no web
+  bundle (`features/node/platform/http-and-hosting.feature`), so the web view
+  runs the app the way the hosted static app runs: no same-origin server,
+  every environment remote (`isHostedStaticApp` treats `window.halC2Shell` as
+  hosted). Loopback HTTP rather than a custom scheme: `http://127.0.0.1` is a
+  secure context (WebCrypto for DPoP), can still reach `http://` nodes on the
+  LAN or tailnet, and needs no C++ scheme handler. The port is derived from the
+  home (or `HAL_C2_WEB_PORT`) and stays the same across launches, because
+  WebEngine keys IndexedDB and localStorage by origin: a new port would be a
+  fresh app with no saved environments or drafts.
+- **The ready URL opens the app paired.** It is the app's
+  `/pair?host=<node>&auto=1#token=<desktopBootstrapToken>`; the pair route
+  exchanges the token like any pairing link and goes to `/` on success. The
+  connection catalog keys a bearer environment by its environment id, so the
+  next launch re-pairs the same entry instead of adding one.
 - **QML gets everything from the web view over WebChannel**, nothing else.
   State flows web → QML (`halC2Shell.publish(key, value)` → `Shell.state[key]`);
   actions flow QML → web (`Shell.dispatch(action, payload)` →
@@ -33,8 +58,11 @@ WebEngineView ◄─── WebChannel ───► QML bricks
   colour scheme, dialogs/context menus later) are served by the shell over the
   same channel; the TypeScript-owned parts stay on the Node side.
 
-Attach mode (`--url <pairing url>`) skips the host entirely and loads a
-running dev server; this is what `vp run dev:qt` uses.
+Attach mode (`--url <link>`) starts no node. The shell hands the link to the
+host (`--attach`): a node pairing link (`mix hal_c2.pair`, `mise run node:pair`)
+gets the app served and opened paired with that node, and any other address is
+loaded as it is. Quitting leaves the attached node running. `mise run desktop`
+attaches this way to the node `mise run node` runs.
 
 ### Web engine
 
@@ -80,8 +108,8 @@ running dev server; this is what `vp run dev:qt` uses.
 | `src/BackendProcess.*`  | Spawns the Node desktop host, waits for `ready`                     |
 | `qml/HalC2/Bricks/`     | Pure-QML bricks (see below) and the injected `js/shell-connect.js`  |
 | `scripts/gen-icons.mjs` | Regenerates `js/lucide.js`, the icon paths `ShellIcon` draws        |
-| `host/main.ts`          | Node desktop host                                                   |
-| `scripts/dev-qt.mjs`    | Build, pair with the dev server, launch                             |
+| `host/main.ts`          | Node desktop host: serves the web bundle, starts or attaches a node |
+| `scripts/dev-qt.mjs`    | Build, pair with the running node, launch                           |
 | `examples/`             | Starter `theme.json` and `shell.qml`                                |
 
 QML modules: `HalC2.Shell` is C++-only (`Shell`, `Theme`, `Runtime`, and `WebProfile`
@@ -136,25 +164,25 @@ Requirements: CMake ≥ 3.21, Ninja, a C++20 compiler, Qt ≥ 6.9 with
 - CI/release builds use `aqtinstall` on every platform for reproducibility.
 
 ```sh
-vp run dev        # terminal 1: server + web (single origin)
-vp run dev:qt     # terminal 2: cmake configure/build, `hal-c2 pair`, launch with --url
+vp run --filter @hal-c2/web build   # once, and after web changes: the shell serves apps/web/dist
+mise run node                       # terminal 1: the Elixir node on 3780 (HAL_C2_NODE_PORT)
+mise run desktop                    # terminal 2: cmake build, `mix hal_c2.pair`, launch with --url
 ```
 
-`dev:qt` resolves the root the way `vp run dev` does (`--home-dir`, else the
-worktree's own `.hal-c2`, else `HAL_C2_HOME`), pairs with the server running
-there, and launches the shell with that root as its `HAL_C2_HOME` so it rices
-from the matching `config/shell/`. With no root, `hal-c2 pair` finds the dev
-server in the XDG directories and the shell rices from
-`~/.config/hal-c2/shell/`. Pass the same
-`--home-dir` to both commands if you set one. Its other flags are `--url` (skip
-pairing), `--release` (no disk QML loading) and `--configure-only` (build, do
-not launch); everything else is forwarded to the binary, so
-`vp run dev:qt --screenshot out.png --action rightPanel.toggle` works.
-`pnpm --filter @hal-c2/desktop-qt build:qt` builds without launching. Build
-output lands in `apps/desktop-qt/build/<debug|release>` (gitignored).
+`mise run desktop` runs `scripts/dev-qt.mjs`. It uses `--home-dir`, else the
+checkout's `.hal-c2` (the root a checkout's node uses), as the shell's
+`HAL_C2_HOME`, so the shell rices from `<root>/config/shell/` and keeps its web
+profile under `<root>/cache`. Its other flags are `--url` (attach to that link
+instead of pairing), `--standalone` (start the shell's own node from source, as
+the installed app does; not next to `mise run node` on the same home),
+`--release` (no disk QML loading) and `--configure-only` (build, do not
+launch, which `mise run desktop:build` runs); everything else is forwarded to
+the binary, so `mise run desktop -- --screenshot out.png --action
+rightPanel.toggle` works. Build output lands in
+`apps/desktop-qt/build/<debug|release>` (gitignored).
 
-Standalone (no dev server): run the binary with no `--url`; it spawns the host,
-which starts the server against a built `apps/web` (`vp run build`).
+Standalone: run the binary with no `--url`; the host serves the built web app
+and starts the node for the shell's home.
 
 CLI: `--url`, `--home-dir`, `--config-dir`, `--qml-dir`, `--host-entry`, `--node`, `--screenshot <png>`
 (grab the window after the page loads, then quit — PR evidence without a
@@ -163,7 +191,10 @@ actions after the page loads, e.g. `--action rightPanel.toggle`), `--key <chord>
 (repeatable; press a key chord after the page loads, e.g. `--key Ctrl+1`, portable
 `QKeySequence` names — `--action` and `--key` run in command-line order, 1.5 s
 apart, so a key test can open a thread first); env `HAL_C2_HOME`,
-`HAL_C2_QML_DIR`, `HAL_C2_NODE_BIN`, `HAL_C2_SERVER_ENTRY`.
+`HAL_C2_QML_DIR`, `HAL_C2_NODE_BIN`, and for the host `HAL_C2_NODE_RELEASE`
+(a node release or its `bin/hal_c2`), `HAL_C2_WEB_DIST` (a built
+`apps/web/dist`), `HAL_C2_NODE_PORT` and `HAL_C2_WEB_PORT` (fixed ports; a taken
+one is an error rather than a silent move).
 
 ## Ricing contract
 
@@ -171,9 +202,7 @@ Config dir: `<config>/shell/`, so `~/.config/hal-c2/shell/` by default on Linux
 and macOS (`XDG_CONFIG_HOME` moves it), `%APPDATA%\hal-c2\config\shell\` on
 Windows, and `<root>/config/shell/` under `--home-dir`, `HAL_C2_HOME` or a
 sandboxed dev run's `<worktree>/.hal-c2`; `--config-dir` overrides just this
-directory. A dev run with no root (`dev-qt.mjs` outside a worktree) passes
-`--config-dir` for the `hal-c2-dev` profile so the shell rices from the same
-profile the dev server stores in. The shell creates it at startup and watches it, so a shell the hosted
+directory. The shell creates it at startup and watches it, so a shell the hosted
 server migrates from an old `~/.hal-c2/shell/` or `~/.t3/shell/` loads without a
 restart.
 
@@ -720,8 +749,10 @@ X11 `WM_CLASS`, so compositor rules can target the window — on Hyprland:
 `.github/workflows/desktop-qt.yml` builds Release binaries on Linux and
 macOS with the official Qt 6.9 binaries (`jurplel/install-qt-action`) and
 packages an AppImage (`scripts/package-linux.sh`, linuxdeploy + its Qt
-plugin) and a macOS bundle (`macdeployqt`). Each package carries the Node
-executable used to install its native runtime dependencies. The Linux path was
+plugin) and a macOS bundle (`macdeployqt`). `scripts/stage-runtime.mjs` stages
+the host's TypeScript, the built web app (`web/`), the node release
+(`hal-c2-node/`, from `mix release`) and the Node executable that runs the
+host and the node's sidecars. The Linux path was
 written against the documented tooling but has only been exercised in CI, not
 on this machine.
 
@@ -747,4 +778,5 @@ the shell. Add a new gap there, and turn a backlog scenario into a real test
 ## Release targets
 
 Linux AppImage and macOS `.app` first, Windows later. Release staging bundles
-the build's Node executable and license beside the host runtime.
+the build's Node executable and license beside the host runtime, and the node
+release, which carries its own Erlang runtime.

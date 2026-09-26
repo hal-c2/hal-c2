@@ -6,9 +6,13 @@ window chrome be rearranged and themed from `~/.config/hal-c2/shell/`.
 Architecture, setup, and the QML/theme contracts: `docs/internals/desktop-qt.md`.
 
 ```sh
-vp run dev                      # terminal 1: server + web
-vp run dev:qt                   # terminal 2: build the shell, pair, launch
+vp run --filter @hal-c2/web build   # the shell serves apps/web/dist; rebuild after web changes
+mise run node                       # terminal 1: the Elixir node
+mise run desktop                    # terminal 2: build the shell, pair with the node, launch
 ```
+
+`mise run desktop -- --standalone` skips the pairing and lets the shell start its own node,
+as the installed app does.
 
 Focused native checks use temporary data and run offscreen:
 
