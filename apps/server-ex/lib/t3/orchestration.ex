@@ -672,7 +672,7 @@ defmodule T3.Orchestration do
 
   # A runtime runs under its provider plugin's sessions supervisor (`T3.Plugins`).
   defp stop_runtimes(thread_id) do
-    for registry <- [T3.Codex.Registry, T3.Claude.Registry, T3.Acp.Registry],
+    for registry <- [T3.Codex.Registry, T3.Claude.Registry, T3.Acp.Registry, T3.Pi.Registry],
         Process.whereis(registry) != nil,
         {pid, _} <- Registry.lookup(registry, thread_id) do
       try do
@@ -695,7 +695,12 @@ defmodule T3.Orchestration do
 
   # The built-in runtimes, and the plugin adapters that can take a runtime call.
   defp runtimes(callback, arity) do
-    builtin = [T3.Codex.ThreadRuntime, T3.Claude.ThreadRuntime, T3.Acp.ThreadRuntime]
+    builtin = [
+      T3.Codex.ThreadRuntime,
+      T3.Claude.ThreadRuntime,
+      T3.Acp.ThreadRuntime,
+      T3.Pi.ThreadRuntime
+    ]
 
     builtin ++
       for(
@@ -1151,6 +1156,8 @@ defmodule T3.Orchestration do
   @doc "The runtime (a `T3.Plugins.ProviderAdapter`) for a provider instance."
   def runtime(instance) do
     case is_binary(instance) && T3.Plugins.provider(instance) do
+      # The bundled ACP plugin serves Pi too, but Pi runs in its own RPC mode.
+      {:ok, _driver, T3.Plugins.Bundled.Acp} -> builtin_runtime(instance)
       {:ok, _driver, module} -> module
       _ -> builtin_runtime(instance)
     end
@@ -1159,7 +1166,11 @@ defmodule T3.Orchestration do
   defp builtin_runtime("claudeAgent"), do: T3.Claude.ThreadRuntime
 
   defp builtin_runtime(instance) when is_binary(instance) and instance != "codex" do
-    if T3.Acp.agent?(instance), do: T3.Acp.ThreadRuntime, else: T3.Codex.ThreadRuntime
+    cond do
+      T3.Acp.driver(instance) == "pi" -> T3.Pi.ThreadRuntime
+      T3.Acp.agent?(instance) -> T3.Acp.ThreadRuntime
+      true -> T3.Codex.ThreadRuntime
+    end
   end
 
   defp builtin_runtime(_codex), do: T3.Codex.ThreadRuntime

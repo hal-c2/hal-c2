@@ -27,11 +27,24 @@ defmodule T3.Steps.Providers.Capabilities do
     context =
       context
       |> World.fake_providers()
+      |> fake_pi(provider)
       |> World.launch_on(@thread, @instances[provider], "wait for me")
 
     World.await_running(context, @thread)
     context
   end
+
+  # Pi runs in its own RPC mode, so its fake is the scripted Pi rather than the ACP agent.
+  defp fake_pi(context, "Pi") do
+    wait = %{"match" => "wait for me", "steps" => [%{"waitAbort" => true}]}
+
+    T3.Test.FakeAcp.install_pi(context, %{},
+      enabled: true,
+      turns: [wait | T3.Test.FakeAcp.pi_turns()]
+    )
+  end
+
+  defp fake_pi(context, _provider), do: context
 
   step "the message waits until the running turn ends", context do
     World.await_runs(context, @thread, ["running", "queued"])

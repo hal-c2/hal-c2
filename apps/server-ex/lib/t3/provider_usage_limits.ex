@@ -153,6 +153,49 @@ defmodule T3.ProviderUsageLimits do
     )
   end
 
+  @doc """
+  `GET url` with a bearer token (or `{:basic, user, password}`, or nil for none):
+  `{:ok, status, decoded_json_or_nil}` or `{:error, reason}`.
+  """
+  def get_json(url, auth, timeout) do
+    headers =
+      case auth do
+        nil ->
+          []
+
+        {:basic, user, password} ->
+          [{~c"authorization", ~c"Basic " ++ to_charlist(Base.encode64("#{user}:#{password}"))}]
+
+        token ->
+          [{~c"authorization", to_charlist("Bearer " <> token)}]
+      end
+
+    request = {to_charlist(url), headers}
+
+    ssl = [
+      verify: :verify_peer,
+      cacerts: :public_key.cacerts_get(),
+      depth: 4,
+      customize_hostname_check: [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]
+    ]
+
+    case :httpc.request(:get, request, [timeout: timeout, connect_timeout: timeout, ssl: ssl],
+           body_format: :binary
+         ) do
+      {:ok, {{_, status, _}, _, body}} ->
+        decoded =
+          case JSON.decode(body) do
+            {:ok, json} -> json
+            _ -> nil
+          end
+
+        {:ok, status, decoded}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   # --- shaping -------------------------------------------------------------------
 
   @doc "`ServerProviderUsageLimits` with its windows in display order."

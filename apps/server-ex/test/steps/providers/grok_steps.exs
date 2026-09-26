@@ -501,6 +501,163 @@ defmodule T3.Steps.Providers.Grok do
     context
   end
 
+  # --- usage limits ---------------------------------------------------------------
+
+  step "Grok is signed in with a Grok account", context do
+    home = T3.Test.Node.tmp_dir(context.node, "grok-home")
+
+    File.write!(
+      Path.join(home, "auth.json"),
+      JSON.encode!(%{
+        "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828" => %{"key" => "grok-token"}
+      })
+    )
+
+    context
+    |> billing(%{
+      "config" => %{
+        "creditUsagePercent" => 42.5,
+        "currentPeriod" => %{
+          "type" => "USAGE_PERIOD_TYPE_MONTHLY",
+          "end" => "2026-10-01T00:00:00Z"
+        }
+      }
+    })
+    |> FakeAcp.install("grok", signed_in_config(), enabled: true)
+    |> grok_env([%{"name" => "GROK_HOME", "value" => home}])
+  end
+
+  step "Grok shows how much of its billing period is used and when it resets", context do
+    assert %{"windows" => [window]} = FakeAcp.find(context.providers, "grok")["usageLimits"]
+
+    assert window == %{
+             "id" => "subscription",
+             "kind" => "monthly",
+             "label" => "Monthly",
+             "usedPercent" => 42.5,
+             "resetsAt" => "2026-10-01T00:00:00.000Z"
+           }
+
+    # Read with the Grok account's own sign-in.
+    requests = T3.Test.FakeHttp.requests(context.billing)
+    assert [_ | _] = requests
+
+    assert Enum.all?(
+             requests,
+             &match?(%{"authorization" => "Bearer grok-token", "query" => "format=credits"}, &1)
+           )
+
+    context
+  end
+
+  step "the Grok instance uses an API key", context do
+    # A signed-in account is on the machine too; the key is what Grok would use.
+    home = T3.Test.Node.tmp_dir(context.node, "grok-home")
+    key = "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"
+    File.write!(Path.join(home, "auth.json"), JSON.encode!(%{key => %{"key" => "grok-token"}}))
+
+    context
+    |> billing(%{"config" => %{"creditUsagePercent" => 10}})
+    |> FakeAcp.install("grok", signed_in_config(), enabled: true)
+    |> grok_env([
+      %{"name" => "GROK_HOME", "value" => home},
+      %{"name" => "XAI_API_KEY", "value" => "xai-test-key"}
+    ])
+  end
+
+  step "Grok's limits are shown as unsupported", context do
+    assert %{"windows" => [], "unavailable" => %{"reason" => "unsupported"}} =
+             FakeAcp.find(context.providers, "grok")["usageLimits"]
+
+    assert T3.Test.FakeHttp.requests(context.billing) == []
+    context
+  end
+
+  # xAI's billing API, played by `T3.Test.FakeHttp`.
+  defp billing(context, response) do
+    {url, log} = T3.Test.FakeHttp.start(%{"/v1/billing" => {200, response}})
+    Application.put_env(:t3, :grok_billing_url, url <> "/v1/billing?format=credits")
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :grok_billing_url) end)
+    Map.put(context, :billing, log)
+  end
+
+  defp grok_env(context, environment) do
+    FakeAcp.settings(
+      &Map.put(&1, "providerInstances", %{
+        "grok" => %{"driver" => "grok", "environment" => environment}
+      })
+    )
+
+    context
+  end
+
+  # --- subagents -------------------------------------------------------------------
+
+  @child_session "0f8e2a4c-5b6d-4e7f-8a9b-1c2d3e4f5a6b"
+
+  # Grok's `task` tool: the child's answer streams under its own session, before the
+  # tool call names that session ("Agent ID: ...") and completes.
+  step "Grok starts a subagent", context do
+    call = %{
+      "toolCallId" => "task-1",
+      "title" => "task",
+      "kind" => "other",
+      "status" => "in_progress",
+      "rawInput" => %{
+        "description" => "Survey the modules",
+        "prompt" => "List the modules in lib",
+        "subagent_type" => "general-purpose"
+      }
+    }
+
+    turns = [
+      %{
+        "match" => "survey the code",
+        "steps" => [
+          %{"update" => Map.put(call, "sessionUpdate", "tool_call")},
+          %{
+            "sessionId" => @child_session,
+            "update" => %{
+              "sessionUpdate" => "agent_message_chunk",
+              "content" => %{"type" => "text", "text" => "lib has three modules"}
+            }
+          },
+          %{
+            "update" => %{
+              "sessionUpdate" => "tool_call_update",
+              "toolCallId" => "task-1",
+              "status" => "completed",
+              "content" => [
+                %{
+                  "type" => "content",
+                  "content" => %{
+                    "type" => "text",
+                    "text" => "Agent ID: #{@child_session}\nlib has three modules"
+                  }
+                }
+              ]
+            }
+          },
+          %{"text" => "The subagent found three modules."}
+        ]
+      }
+      | FakeAcp.turns()
+    ]
+
+    context =
+      context
+      |> FakeAcp.install("grok", Map.put(signed_in_config(), "turns", turns), enabled: true)
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("survey the code")
+
+    FakeAcp.await_run(context, "completed")
+
+    Map.merge(context, %{
+      subagent_prompt: "List the modules in lib",
+      subagent_answer: "lib has three modules"
+    })
+  end
+
   # The agent has started answering: the prompt reached it.
   defp await_answer(context) do
     World.await_stream(World.thread_id(context, context.thread), fn state ->

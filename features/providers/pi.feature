@@ -1,7 +1,7 @@
 # Sources:
 #   docs/user/providers-pi.md
 #   docs/internals/providers.md (Pi RPC mode, forks through the CLI in the destination directory)
-#   apps/server-ex/lib/t3/acp.ex (pi through the registry's pi-acp, PI_ACP_PI_COMMAND)
+#   apps/server-ex/lib/t3/pi.ex, apps/server-ex/lib/t3/pi/thread_runtime.ex (Pi RPC mode)
 #   apps/server/src/provider/Layers/PiProvider.ts, apps/server/src/provider/Drivers/PiDriver.ts
 #   apps/server/src/orchestration-v2/Adapters/PiAdapterV2.ts, apps/server/src/orchestration-v2/Adapters/PiRpc.ts
 #   apps/server/src/orchestration-v2/Adapters/piT3McpInjection.ts, apps/server/src/provider/PiCommands.ts
@@ -25,7 +25,8 @@ Feature: Pi
     When the user opens the list of agents to enable
     Then Pi is not offered
 
-  Scenario: Pi runs through the ACP adapter for Pi
+  # The node runs Pi in its own RPC mode, as the TS server does (PiAdapterV2), not through pi-acp.
+  Scenario: Pi runs in its own RPC mode
     Given Pi is installed and enabled
     When the user sends a message to Pi
     Then the turn runs on the user's own Pi installation
@@ -40,7 +41,6 @@ Feature: Pi
     When the user refreshes provider status
     Then Pi is shown as unsupported with a hint to update to 0.80.5 or newer
 
-  @backlog
   Scenario: Pi launch arguments that change how T3 Code runs Pi are refused
     When the user adds the launch argument "--mode json" to Pi
     Then the setting is refused with a message that T3 Code owns that part of Pi
@@ -56,7 +56,6 @@ Feature: Pi
     Then Pi stays available with the "Pi default" model
     And the first thread lets Pi handle its startup prompt
 
-  @backlog
   Scenario: Pi thinking levels follow the model
     Given the Pi model supports thinking levels up to extra high
     When the user opens the options for that model
@@ -96,46 +95,38 @@ Feature: Pi
     When the user allows it for the session the first time
     Then the second request is allowed without asking
 
-  @backlog
   Scenario: Pi extension dialogs appear in the composer
     When a Pi extension asks the user to pick from a list
     Then the choices appear in the composer and the answer goes back to the extension
 
-  @backlog
   Scenario: A Pi thread can be resumed in the Pi terminal app
     Given a Pi thread in T3 Code
     When the user opens the same session in Pi's own terminal app
     Then the conversation continues there from the same session file
 
-  @backlog
   Scenario: Reverting a Pi turn rewinds Pi's session file
     Given a Pi thread with three turns
     When the user reverts to the end of the first turn
     Then Pi continues from the first turn
 
-  @backlog
   Scenario: Forking a Pi thread copies the native conversation into the new workspace
     Given a Pi thread with three turns
     When the user forks from the second turn into a new worktree
     Then the new thread continues Pi's conversation through the second turn in that worktree
 
-  @backlog
   Scenario: Pi skills appear in the skill menu
     Given Pi loads the project skill "deploy"
     When the user opens the skill menu in a Pi thread
     Then "deploy" is offered and uses Pi's own skill expansion
 
-  @backlog
   Scenario: Pi retries and compactions show in the work log
     When Pi retries a failed request and later compacts the conversation
     Then the work log shows the retry and the compaction
 
-  @backlog
   Scenario: The context meter follows Pi's usage reports
     When Pi reports its context usage while answering
     Then the context meter shows Pi's reported usage
 
-  @backlog
   Scenario: Pi delegates work to child threads through the T3 Code tools
     When Pi delegates a task
     Then the task appears as a child thread in the subagent view

@@ -121,7 +121,7 @@ defmodule T3.JsonRpc.Connection do
   defp handle_line(line, state) do
     T3.ProviderLog.native(Map.get(state, :log), line)
 
-    case JsonRpc.decode(line) do
+    case JsonRpc.decode(line, state.dialect) do
       {:response, id, reply} ->
         {from, pending} = Map.pop(state.pending, id)
         if from, do: GenServer.reply(from, reply)

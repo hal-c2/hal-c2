@@ -32,7 +32,8 @@ defmodule T3.Orchestration.TurnWriter do
 
   @doc """
   Creates the turn item (and its node) for a native item the first time it is seen.
-  `kind` is `:assistant`, `:reasoning`, `:command`, `:file`, `:web`, or `:tool`;
+  `kind` is `:assistant`, `:reasoning`, `:command`, `:file`, `:web`, `:tool`,
+  `:compaction`, or `:error` (a provider failure, such as a retry);
   `fields` are the item type's own fields.
   """
   def ensure_item(state, native, kind, fields \\ %{}) do
@@ -109,6 +110,8 @@ defmodule T3.Orchestration.TurnWriter do
   defp shape(:tool, _, fields), do: {"tool_call", "dynamic_tool", fields}
   defp shape(:subagent, _, fields), do: {"subagent", "subagent", fields}
   defp shape(:plan, _, _), do: {"plan", "proposed_plan", %{"markdown" => "", "streaming" => true}}
+  defp shape(:compaction, _, fields), do: {"system", "compaction", fields}
+  defp shape(:error, _, fields), do: {"system", "error", fields}
 
   defp plan(ids, plan_id, node_id, kind, status, fields) do
     Map.merge(

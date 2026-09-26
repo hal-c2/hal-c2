@@ -65,19 +65,16 @@ Feature: OpenCode
     When the user sets its URL and password on the OpenCode instance
     Then OpenCode threads run on that server
 
-  @backlog
   Scenario: A wrong password for an external OpenCode server is explained
     Given the OpenCode instance points at a server with the wrong password
     When the user refreshes provider status
     Then OpenCode says the server rejected authentication and to check the URL and password
 
-  @backlog
   Scenario: An unreachable external OpenCode server is explained
     Given the OpenCode instance points at a server that is not running
     When the user refreshes provider status
     Then OpenCode says it could not reach the server at that URL
 
-  @backlog
   Scenario: Clearing the server URL goes back to a local OpenCode
     Given the OpenCode instance uses an external server
     When the user clears the server URL
@@ -114,13 +111,11 @@ Feature: OpenCode
       | allow for the session | runs matching commands without asking again     |
       | decline               | does not run it                                 |
 
-  @backlog
   Scenario: OpenCode reasoning variants and agents are offered as options
     When the user opens the options for an OpenCode model
     Then the model's reasoning variants are offered
     And OpenCode's primary agents are offered with "build" as the default
 
-  @backlog
   Scenario: OpenCode plan mode uses OpenCode's plan agent
     When the user switches an OpenCode thread to plan mode
     Then the turn runs with OpenCode's plan agent
@@ -143,19 +138,16 @@ Feature: OpenCode
     When the user forks from the second turn
     Then the new thread continues from a fork of OpenCode's session
 
-  @backlog
   Scenario: OpenCode Go limits are shown for a local OpenCode
     Given OpenCode is signed in to OpenCode Go and runs locally
     When the user opens the limits view
     Then OpenCode Go shows its session, weekly and monthly windows
 
-  @backlog
   Scenario: OpenCode Go limits are unsupported on an external server
     Given the OpenCode instance uses an external server
     When the user opens the limits view
     Then OpenCode's limits are shown as unsupported
 
-  @backlog
   Scenario: An existing thread keeps its OpenCode model when it leaves the catalog
     Given an OpenCode thread uses a model that OpenCode no longer lists
     When the user opens the thread

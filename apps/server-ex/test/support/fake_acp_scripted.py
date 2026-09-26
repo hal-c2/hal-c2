@@ -13,10 +13,12 @@
 #   sessionErrorOnce   the same, for the next session/new only (then removed)
 #   configOptions      session/new's configOptions (default: one model "fake/one")
 #   modes              session/new's modes
+#   rejectUnknownModels  session/set_config_option refuses a model configOptions lacks
 #   turns              [{"match": substring, "steps": [...]}], first match wins
 #   googleAuth         Antigravity's Google sign-in (see fake_google_auth.py)
 #
-# Turn steps: {"text": s}, {"thought": s}, {"update": sessionUpdate}, {"request": {method,
+# Turn steps: {"text": s}, {"thought": s}, {"update": sessionUpdate[, "sessionId": child's
+# session, else the prompt's]}, {"request": {method,
 # params}} (waits for the answer), {"permission": toolCall} (session/request_permission
 # with allow_once/allow_always/reject_once), {"waitCancel": true}, {"exit": code},
 # {"error": {code, message}} (ends the prompt with it), {"stop": reason}.
@@ -127,7 +129,7 @@ def run_turn(mid, sid, text):
             update(sid, {"sessionUpdate": "agent_thought_chunk", "messageId": "th-%s" % mid,
                          "content": {"type": "text", "text": step["thought"]}})
         elif "update" in step:
-            update(sid, step["update"])
+            update(step.get("sessionId", sid), step["update"])
         elif "request" in step:
             request(step["request"]["method"], dict(step["request"].get("params") or {}, sessionId=sid))
         elif "permission" in step:
@@ -192,6 +194,12 @@ while True:
         if method == "session/new":
             result["sessionId"] = "fake-session-%d-%d" % (os.getpid(), sessions)
         send({"id": mid, "result": result})
+    elif (method == "session/set_config_option" and cfg.get("rejectUnknownModels")
+          and params.get("configId") == "model"
+          and params.get("value") not in [o["value"] for o in next(
+              (c for c in cfg.get("configOptions", default_options()) if c["id"] == "model"),
+              {"options": []})["options"]]):
+        send({"id": mid, "error": {"code": -32602, "message": "Model not found: %s" % params.get("value")}})
     elif method in ("session/set_config_option", "session/set_mode", "session/set_model"):
         send({"id": mid, "result": {"configOptions": cfg.get("configOptions", default_options())}})
     elif method == "session/prompt":

@@ -20,10 +20,10 @@ defmodule T3.Acp.ThreadRuntime do
 
   alias T3.JsonRpc.Connection
   alias T3.Orchestration
-  alias T3.Orchestration.Entities
+  alias T3.Orchestration.{Entities, NativeSubagent}
   alias T3.Acp.Antigravity.Session, as: Antigravity
 
-  @state_version 5
+  @state_version 6
   @registry T3.Acp.Registry
 
   # Grok's own requests (`x.ai/...`), bare or wrapped in `{method, params}`.
@@ -125,7 +125,14 @@ defmodule T3.Acp.ThreadRuntime do
        allowed: MapSet.new(),
        # ACP has no system prompt: a session given T3's tools hears about them in
        # its first prompt.
-       announce: false
+       announce: false,
+       # Subagents the agent started this turn (Grok's `task` tool): tool call id ->
+       # %{sub: NativeSubagent handle, session: child session id}.
+       subagents: %{},
+       # Child-session updates that arrived before their subagent named its session.
+       orphans: %{},
+       # The session's config options (`configId` -> current value).
+       config: %{}
      }}
   end
 
@@ -134,12 +141,13 @@ defmodule T3.Acp.ThreadRuntime do
     driver = turn.ids.driver
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:#{driver}:#{turn.ids.run}")
     turn = %{turn | ids: ids}
-    state = %{state | turn: turn, items: %{}, interrupted: false}
+    state = %{state | turn: turn, items: %{}, interrupted: false, subagents: %{}, orphans: %{}}
 
     with :ok <- Antigravity.check_turn(turn),
          {:ok, state} <- ensure_session(state, turn),
          {:ok, state} <- check_model(state, driver, turn.model),
-         state = set_model(state, turn.model) do
+         {:ok, state} <- select_model(state, turn.model),
+         state = set_options(state, turn) do
       started(state)
       conn = state.conn
       session_id = state.session_id
@@ -231,12 +239,14 @@ defmodule T3.Acp.ThreadRuntime do
 
   @impl true
   def handle_info(
-        {:json_rpc, _conn, {:notification, "session/update", %{"update" => update}}},
+        {:json_rpc, _conn, {:notification, "session/update", %{"update" => update} = params}},
         state
       ) do
-    if state.replaying or state.turn == nil,
-      do: {:noreply, state},
-      else: {:noreply, update(update, state)}
+    cond do
+      state.replaying or state.turn == nil -> {:noreply, state}
+      child_session?(params["sessionId"], state) -> {:noreply, child_update(params, state)}
+      true -> {:noreply, update(update, state)}
+    end
   end
 
   def handle_info({:json_rpc, conn, {:request, id, "session/request_permission", params}}, state) do
@@ -359,7 +369,10 @@ defmodule T3.Acp.ThreadRuntime do
     do: state |> Map.put_new(:allowed, MapSet.new()) |> Map.put(:v, 4) |> migrate()
 
   defp migrate(%{v: 4} = state),
-    do: state |> Map.put_new(:options, []) |> Map.put(:v, 5)
+    do: state |> Map.put_new(:options, []) |> Map.put(:v, 5) |> migrate()
+
+  defp migrate(%{v: 5} = state),
+    do: state |> Map.merge(%{subagents: %{}, orphans: %{}, config: %{}}) |> Map.put(:v, 6)
 
   # --- session -------------------------------------------------------------------
 
@@ -478,6 +491,8 @@ defmodule T3.Acp.ThreadRuntime do
         models -> Map.put(state, :options, models)
       end
 
+    state = remember_config(state, result)
+
     case Enum.find(result["configOptions"] || [], &(&1["id"] == "model")) do
       %{"currentValue" => model} -> %{state | model: model}
       _ -> state
@@ -490,6 +505,80 @@ defmodule T3.Acp.ThreadRuntime do
       {:error, message} -> {:error, message, state}
     end
   end
+
+  defp remember_config(state, %{"configOptions" => [_ | _] = options}),
+    do: %{state | config: Map.new(options, &{&1["id"], &1["currentValue"]})}
+
+  defp remember_config(state, _result), do: state
+
+  # OpenCode's agent and reasoning variant (`OpenCodeAdapterV2`): the thread's `agent`
+  # option, else its plan agent in plan mode (back to build after), and `variant`.
+  defp set_options(%{agent: "opencode"} = state, turn) do
+    options = Map.get(turn, :options) || %{}
+
+    value = fn id ->
+      case options[id] do
+        value when is_binary(value) -> value
+        _ -> nil
+      end
+    end
+
+    agent =
+      value.("agent") ||
+        cond do
+          turn.interaction_mode == "plan" -> "plan"
+          state.config["mode"] == "plan" -> "build"
+          true -> nil
+        end
+
+    state |> set_config("mode", agent) |> set_config("effort", value.("variant"))
+  end
+
+  defp set_options(state, _turn), do: state
+
+  defp set_config(state, id, value)
+       when is_binary(value) and is_map_key(state.config, id) do
+    if state.config[id] == value do
+      state
+    else
+      case Connection.call(state.conn, "session/set_config_option", %{
+             "sessionId" => state.session_id,
+             "configId" => id,
+             "value" => value
+           }) do
+        {:ok, result} ->
+          state = remember_config(state, result || %{})
+          %{state | config: Map.put(state.config, id, value)}
+
+        {:error, reason} ->
+          Logger.warning("could not set #{id} to #{value}: #{inspect(reason)}")
+          state
+      end
+    end
+  end
+
+  defp set_config(state, _id, _value), do: state
+
+  # A model OpenCode no longer offers fails the turn, as OpenCode's own prompt does, so
+  # the user can pick another; other agents keep their session's model.
+  defp select_model(%{agent: "opencode"} = state, model)
+       when is_binary(model) and model != "" and model != state.model do
+    case Connection.call(state.conn, "session/set_config_option", %{
+           "sessionId" => state.session_id,
+           "configId" => "model",
+           "value" => model
+         }) do
+      {:ok, result} ->
+        {:ok, remember_config(%{state | model: model}, result || %{})}
+
+      {:error, reason} ->
+        {:error,
+         "the model #{model} is no longer offered (#{format(reason)}). Pick another model and try again.",
+         state}
+    end
+  end
+
+  defp select_model(state, model), do: {:ok, set_model(state, model)}
 
   # "Pi default" leaves the model to the user's own Pi settings.
   defp set_model(%{agent: agent} = state, "default") when agent != nil do
@@ -505,8 +594,8 @@ defmodule T3.Acp.ThreadRuntime do
            "configId" => "model",
            "value" => model
          }) do
-      {:ok, _} ->
-        %{state | model: model}
+      {:ok, result} ->
+        remember_config(%{state | model: model}, result || %{})
 
       {:error, reason} ->
         Logger.warning("could not select #{model}: #{inspect(reason)}")
@@ -539,22 +628,22 @@ defmodule T3.Acp.ThreadRuntime do
   defp update(%{"sessionUpdate" => "agent_thought_chunk"} = u, state),
     do: chunk(state, u, :reasoning)
 
+  defp update(%{"sessionUpdate" => s, "toolCallId" => id} = call, state)
+       when s in ["tool_call", "tool_call_update"] and is_map_key(state.subagents, id),
+       do: subagent_call(state, id, call)
+
   defp update(%{"sessionUpdate" => "tool_call", "toolCallId" => id} = call, state) do
-    {kind, fields} = tool_shape(call)
-    state = state |> flush() |> ensure_item(id, kind, fields)
-    if call["status"] in ["completed", "failed"], do: finish_tool(state, id, call), else: state
+    if subagent_call?(call, state),
+      do: subagent_call(state, id, call),
+      else: tool(state, id, call)
   end
 
   defp update(%{"sessionUpdate" => "tool_call_update", "toolCallId" => id} = call, state) do
-    state =
-      if Map.has_key?(state.items, id),
-        do: state,
-        else:
-          (fn {kind, fields} -> ensure_item(flush(state), id, kind, fields) end).(
-            tool_shape(call)
-          )
-
-    if call["status"] in ["completed", "failed"], do: finish_tool(state, id, call), else: state
+    cond do
+      Map.has_key?(state.items, id) -> tool_update(state, id, call)
+      subagent_call?(call, state) -> subagent_call(state, id, call)
+      true -> tool_update(state, id, call)
+    end
   end
 
   # The agent's task list for the turn (ACP `plan`), replaced whole on each update.
@@ -609,6 +698,143 @@ defmodule T3.Acp.ThreadRuntime do
   end
 
   defp update(_update, state), do: state
+
+  defp tool(state, id, call) do
+    {kind, fields} = tool_shape(call)
+    state = state |> flush() |> ensure_item(id, kind, fields)
+    if call["status"] in ["completed", "failed"], do: finish_tool(state, id, call), else: state
+  end
+
+  defp tool_update(state, id, call) do
+    state =
+      if Map.has_key?(state.items, id),
+        do: state,
+        else:
+          (fn {kind, fields} -> ensure_item(flush(state), id, kind, fields) end).(
+            tool_shape(call)
+          )
+
+    if call["status"] in ["completed", "failed"], do: finish_tool(state, id, call), else: state
+  end
+
+  # --- provider subagents -----------------------------------------------------------
+
+  @uuid "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+  @child_session [
+    ~r/(?:^|\n)\s*Agent ID:\s*(#{@uuid})\b/i,
+    ~r/(?:^|\n)\s*subagent_id:\s*(#{@uuid})\b/i,
+    ~r/===\s*Task\s+(#{@uuid})\s*===/i
+  ]
+
+  # Grok's Task / spawn_subagent tool (XAiAcpExtension.ts `isXAiSpawnOrTaskTool`).
+  defp subagent_call?(call, %{turn: %{ids: %{driver: "grok"}}}) do
+    title = String.downcase(call["title"] || "")
+    input = call["rawInput"] || %{}
+    variant = String.downcase(to_string(input["variant"] || ""))
+
+    title in ["task", "spawn_subagent"] or String.contains?(title, "spawn subagent") or
+      variant in ["task", "cursortask", "spawn_subagent"] or
+      Enum.any?([input["subagent_type"], input["subagentType"]], &(is_binary(&1) and &1 != ""))
+  end
+
+  defp subagent_call?(_call, _state), do: false
+
+  # The subagent's own session streams under another session id: its answer goes to
+  # its child thread. Updates for a session no subagent has named yet wait for it.
+  defp child_session?(session, state),
+    do:
+      is_binary(session) and state.subagents != %{} and state.session_id != nil and
+        session != state.session_id
+
+  defp child_update(%{"sessionId" => session, "update" => update}, state) do
+    case Enum.find(state.subagents, fn {_id, entry} -> entry.session == session end) do
+      {id, %{sub: sub} = entry} ->
+        sub =
+          case update do
+            %{"sessionUpdate" => "agent_message_chunk", "content" => %{"text" => text}}
+            when is_binary(text) ->
+              NativeSubagent.append(sub, text)
+
+            _ ->
+              sub
+          end
+
+        %{state | subagents: Map.put(state.subagents, id, %{entry | sub: sub})}
+
+      nil ->
+        %{state | orphans: Map.update(state.orphans, session, [update], &(&1 ++ [update]))}
+    end
+  end
+
+  defp subagent_call(state, id, call) do
+    state = flush(state)
+    output = content_text(call["content"]) || raw_output(call["rawOutput"])
+    input = call["rawInput"] || %{}
+
+    entry =
+      state.subagents[id] ||
+        %{
+          sub:
+            NativeSubagent.start(state.turn.ids, id, %{
+              "prompt" => input["prompt"],
+              "title" => input["description"],
+              "model" => input["model"]
+            }),
+          session: nil,
+          done: false
+        }
+
+    fresh = entry.session == nil && child_session(output)
+    entry = if fresh, do: %{entry | session: fresh}, else: entry
+
+    {waiting, orphans} =
+      if fresh, do: Map.pop(state.orphans, fresh, []), else: {[], state.orphans}
+
+    state = %{state | subagents: Map.put(state.subagents, id, entry), orphans: orphans}
+
+    state =
+      Enum.reduce(waiting, state, fn update, state ->
+        child_update(%{"sessionId" => fresh, "update" => update}, state)
+      end)
+
+    entry = state.subagents[id]
+
+    # A background spawn's acknowledgement ends the tool call, not the subagent.
+    if call["status"] in ["completed", "failed"] and not entry.done and not spawn_ack?(output) do
+      status = if call["status"] == "failed", do: "failed", else: "completed"
+      sub = NativeSubagent.finish(entry.sub, status, subagent_result(output))
+      %{state | subagents: Map.put(state.subagents, id, %{entry | sub: sub, done: true})}
+    else
+      state
+    end
+  end
+
+  defp child_session(nil), do: nil
+
+  defp child_session(output) do
+    Enum.find_value(@child_session, fn regex ->
+      case Regex.run(regex, output) do
+        [_, id] -> id
+        _ -> nil
+      end
+    end)
+  end
+
+  defp spawn_ack?(nil), do: false
+
+  defp spawn_ack?(output) do
+    output =~ ~r/subagent started in background/i or
+      (output =~ ~r/subagent_id:\s*#{@uuid}/i and output =~ ~r/get_command_or_subagent_output/i)
+  end
+
+  defp subagent_result(nil), do: nil
+
+  defp subagent_result(output) do
+    output
+    |> String.replace(~r/(?:^|\n)\s*(?:Agent ID|subagent_id):\s*#{@uuid}[^\n]*(?:\n|$)/i, "\n")
+    |> String.trim()
+    |> then(&if(&1 == "", do: nil, else: &1))
+  end
 
   defp non_empty(text, fallback) when is_binary(text) do
     case String.trim(text) do

@@ -11,7 +11,7 @@ defmodule T3.Orchestration.IdleSessions do
 
   use GenServer
 
-  @registries [T3.Codex.Registry, T3.Claude.Registry, T3.Acp.Registry]
+  @registries [T3.Codex.Registry, T3.Claude.Registry, T3.Acp.Registry, T3.Pi.Registry]
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
