@@ -3,6 +3,7 @@ import { createPropertyMap, type PropertyMap } from "opentui-qml";
 import type { TuiClient } from "../connection.ts";
 import { buildRows } from "../components/Sidebar.logic.ts";
 import { createStore, type StatusKind, type StoreState } from "../store.ts";
+import { createFilesController } from "./filesState.ts";
 import { buildTuiLayoutState, type TuiMode, type TuiSize } from "./layoutState.ts";
 import { buildTuiSidebarState, idFromKey, threadKey } from "./sidebarState.ts";
 import {
@@ -137,6 +138,16 @@ export function createHost(options: HostOptions): Host {
     copyToClipboard: options.copyToClipboard ?? (() => false),
     publish: (next) => state.set("terminal", next),
   });
+  const files = createFilesController({
+    client,
+    cwd: () => terminalThread()?.cwd ?? null,
+    height: () => {
+      const drawer = state.get("terminal") as { open: boolean; height: number } | undefined;
+      return size.rows - 1 - (drawer?.open ? drawer.height : 0);
+    },
+    setOpen: (open) => setMode(open ? "files" : "compose"),
+    publish: (next) => state.set("files", next),
+  });
   const publish = () => {
     const next = store.getState();
     const prev = last;
@@ -186,6 +197,7 @@ export function createHost(options: HostOptions): Host {
     if (!prev || prev.selection !== next.selection || prev.detail !== next.detail) {
       terminal.sync();
     }
+    if (prev && prev.selection !== next.selection) files.close();
   };
 
   function setMode(next: TuiMode) {
@@ -298,6 +310,7 @@ export function createHost(options: HostOptions): Host {
         options.onQuit?.();
         return;
       default:
+        if (files.dispatch(action, payload)) return;
         if (unknownActions.has(action)) return;
         unknownActions.add(action);
         log(`t3 tui: unknown shell action "${action}"`);
@@ -318,11 +331,15 @@ export function createHost(options: HostOptions): Host {
       state.set("size", size);
       publishLayout();
       terminal.sync();
+      files.sync();
     },
     Shell: { state, dispatch },
     Theme: createTuiTheme(),
-    commands: () => [...terminal.commands()],
-    settled: () => terminal.settled(),
+    commands: () => [...files.commands(), ...terminal.commands()],
+    settled: async () => {
+      await files.settled();
+      await terminal.settled();
+    },
     destroy: () => {
       unsubscribe();
       terminal.dispose();

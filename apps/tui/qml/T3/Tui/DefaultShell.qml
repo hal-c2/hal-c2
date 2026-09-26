@@ -8,7 +8,24 @@ ShellWindow {
     id: shell
     property alias conversation: conversationView
 
-    Conversation { id: conversationView; flexGrow: 1 }
+    Conversation {
+        id: conversationView
+        flexGrow: 1
+        visible: !Shell.state.files.open
+    }
+
+    // Pending the layout's right panel slot: the file browser and an opened
+    // file take the conversation's place.
+    Loader {
+        objectName: "filesPanelLoader"
+        active: Shell.state.files.open && Shell.state.files.viewer === null
+        sourceComponent: FilesPanel { flexGrow: 1 }
+    }
+    Loader {
+        objectName: "fileViewerLoader"
+        active: Shell.state.files.open && Shell.state.files.viewer !== null
+        sourceComponent: FileViewer { flexGrow: 1 }
+    }
 
     // Pending the layout's drawer slot: the terminal sits under the conversation.
     Loader {
@@ -73,6 +90,42 @@ ShellWindow {
         sequence: "ctrl+down"
         enabled: Shell.state.mode === "terminal"
         onActivated: Shell.dispatch("terminal.resize", { delta: -2 })
+    }
+    // File browser and viewer.
+    Shortcut {
+        sequence: "up"
+        enabled: Shell.state.mode === "files"
+        onActivated: Shell.dispatch("files.move", { delta: -1 })
+    }
+    Shortcut {
+        sequence: "down"
+        enabled: Shell.state.mode === "files"
+        onActivated: Shell.dispatch("files.move", { delta: 1 })
+    }
+    Shortcut {
+        sequence: "pageup"
+        enabled: Shell.state.mode === "files"
+        onActivated: Shell.dispatch("files.page", { delta: -1 })
+    }
+    Shortcut {
+        sequence: "pagedown"
+        enabled: Shell.state.mode === "files"
+        onActivated: Shell.dispatch("files.page", { delta: 1 })
+    }
+    Shortcut {
+        sequence: "return, right"
+        enabled: Shell.state.mode === "files"
+        onActivated: Shell.dispatch("files.activate")
+    }
+    Shortcut {
+        sequence: "left, backspace"
+        enabled: Shell.state.mode === "files"
+        onActivated: Shell.dispatch("files.up")
+    }
+    Shortcut {
+        sequence: "escape"
+        enabled: Shell.state.mode === "files"
+        onActivated: Shell.dispatch("files.back")
     }
     // The renderer does not exit on Ctrl+C; the app tears down in order. In the
     // terminal it interrupts the running program instead.

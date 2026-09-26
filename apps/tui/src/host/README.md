@@ -17,6 +17,11 @@ the palette commands that currently apply, and `host.settled()` resolves once
 client calls and emulator writes have landed (tests wait on it). Copying goes
 through `HostOptions.copyToClipboard` (OSC 52 in `src/index.ts`).
 
+`files` is the workspace browser that replaces the conversation while open:
+the visible window of tree rows around the selection, and `viewer` for an
+opened file (a slice of its lines from `top`). Actions are `files.*`
+(`filesState.ts`); stale listings and reads are dropped by generation.
+
 ## Where the rest of ChatView's state goes
 
 ChatView (`src/components/ChatView.tsx`) still owns the state below. Move it
