@@ -19,6 +19,9 @@ export interface PropertyMap {
 
 export function createPropertyMap(initial?: Record<string, unknown>): PropertyMap;
 export function createStore<T extends object>(initial: T): T;
+/** solid-js's reactive root and computation, as opentui-qml re-exports them. */
+export function createRoot<T>(fn: (dispose: () => void) => T): T;
+export function createComputed(fn: () => void): void;
 
 export interface QmlObject {
   readonly typeName: string;

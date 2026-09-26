@@ -2,7 +2,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 
 import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@hal-c2/contracts";
-import { createPropertyMap, type PropertyMap } from "opentui-qml";
+import { createComputed, createPropertyMap, createRoot, type PropertyMap } from "opentui-qml";
 
 import type { TuiClient, TuiConnectionPhase } from "../connection.ts";
 import { resolveSidebarListViewport, STATUS_ROWS } from "../components/ChatView.layout.ts";
@@ -32,6 +32,7 @@ import type { PluginPort, TuiPluginsState } from "./plugins.ts";
 import { buildTuiSettingsState } from "./settingsState.ts";
 import { buildTuiSidebarState, idFromKey, projectKey, threadKey } from "./sidebarState.ts";
 import { createSourceControl, SOURCE_CONTROL_PANEL } from "./sourceControl.ts";
+import { buildStatusRow } from "./statusState.ts";
 import {
   createTerminalController,
   type TerminalScrollAction,
@@ -331,7 +332,7 @@ export function createHost(options: HostOptions): Host {
   // when it opens over the conversation.
   const sidebarSize = () => ({
     width: layout?.sidebarAsMain ? size.columns : (layout?.listWidth ?? 0),
-    rows: size.rows - STATUS_ROWS,
+    rows: size.rows,
   });
   let sidebarSized = "";
   /** `follow`: scroll the selection back into view (not after the mouse wheel). */
@@ -954,6 +955,33 @@ export function createHost(options: HostOptions): Host {
   publishLayout();
   publish();
   composer.sync();
+  // The key-hint and status row follows whatever it reads from the published state.
+  const disposeStatusRow = createRoot((dispose) => {
+    createComputed(() => {
+      const current = state.get("layout") as TuiLayoutState;
+      const hints = state.get("threadHints") as
+        | { items: string[]; banner: string | null }
+        | undefined;
+      const page = state.get("page") as { kind: string } | undefined;
+      state.set(
+        "statusRow",
+        buildStatusRow({
+          mainWidth: current.mainWidth,
+          status: state.get("status") as TuiStatusState,
+          imagePreview: state.get("imageViewer") != null,
+          addingProject: (state.get("addProject") as { open?: boolean } | undefined)?.open === true,
+          questionBanner: hints?.banner ?? null,
+          terminalOpen: current.drawer.open,
+          threadHints: hints?.items ?? [],
+          sourceControlOpen: current.rightPanel.kind === SOURCE_CONTROL_PANEL,
+          working:
+            (state.get("composer") as { isRunning?: boolean } | undefined)?.isRunning === true,
+          draft: page?.kind === "draft",
+        }),
+      );
+    });
+    return dispose;
+  });
   const unsubscribe = store.subscribe(() => {
     publish();
     composer!.sync();
@@ -1000,6 +1028,7 @@ export function createHost(options: HostOptions): Host {
       }),
     reportWarning: (message) => addProblem({ level: "warning", message, where: null }),
     destroy: () => {
+      disposeStatusRow();
       unsubscribeConnection();
       unsubscribe();
       terminal.dispose();

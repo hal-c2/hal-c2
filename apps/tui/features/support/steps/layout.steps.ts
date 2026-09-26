@@ -7,13 +7,15 @@ import {
   CHAT_CONTENT_MAX_WIDTH,
   COMPOSER_MAX_EDITOR_ROWS,
   COMPOSER_MIN_EDITOR_ROWS,
+  LIST_PANE_WIDTH,
   MIN_TERMINAL_DRAWER_ROWS,
   MIN_TIMELINE_ROWS,
 } from "../../../src/components/ChatView.layout.ts";
 import type { TuiLayoutState } from "../../../src/host/layoutState.ts";
+import type { TuiStatusRowState } from "../../../src/host/statusState.ts";
 import { THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
-import { cellAt, expectColour, objectRows, rectOf } from "../design.ts";
+import { cellAt, expectColour, objectRows, rectOf, regionRows } from "../design.ts";
 import { addThread, flush, ui } from "../environment.ts";
 import { ready } from "../gitWorld.ts";
 import { rowPosition, threadRows } from "../threadUi.ts";
@@ -69,10 +71,19 @@ step("the panel sits beside the conversation", async (ctx: World) => {
   expect(panel.x + panel.width).toBeLessThanOrEqual(ctx.columns!);
 });
 
+// ChatView.tsx: the panel takes the conversation pane's place; the prompt stays under it.
 step("the panel replaces the conversation until it is closed", async (ctx: World) => {
   expect(layout(ctx).rightPanel.asMain).toBe(true);
-  expect(box(ctx, "main").visible).toBe(false);
-  expect(box(ctx, "rightPanel")).toMatchObject({ visible: true, width: layout(ctx).mainWidth });
+  await snapshot(ctx);
+  const pane = rectOf(ctx, "conversationPane");
+  expect(box(ctx, "rightPanel").visible).toBe(true);
+  expect(rectOf(ctx, "rightPanel")).toMatchObject({
+    x: pane.x,
+    y: pane.y,
+    width: layout(ctx).mainWidth,
+    height: pane.height,
+  });
+  expect(box(ctx, "composer").visible).toBe(true);
   await press(ctx, "Ctrl+L");
   expect(layout(ctx).rightPanel.visible).toBe(false);
   expect(box(ctx, "rightPanel").visible).toBe(false);
@@ -290,4 +301,95 @@ step("the conversation pane reads {string} in the dim colour", async (ctx: World
 
 step("no {string} title is shown", async (ctx: World, text: string) => {
   expect(await snapshot(ctx)).not.toContain(text);
+});
+
+// --- The frame --------------------------------------------------------------
+
+const statusRow = (ctx: World) => ctx.host!.state.get("statusRow") as TuiStatusRowState;
+
+/** The main column's bottom row, read off the screen, with where it starts. */
+async function bottomRow(ctx: World): Promise<{ text: string; x: number; y: number }> {
+  await snapshot(ctx);
+  const rect = rectOf(ctx, "statusLine");
+  const [text = ""] = await regionRows(ctx, rect);
+  return { text, x: rect.x, y: rect.y };
+}
+
+step("the thread list's border closes on the last row", async (ctx: World) => {
+  const lines = (await snapshot(ctx)).split("\n");
+  const last = lines[ctx.rows! - 1] ?? "";
+  expect(last[0]).toBe("╰");
+  expect(last[LIST_PANE_WIDTH - 1]).toBe("╯");
+  expect(rectOf(ctx, "sidebar")).toMatchObject({ y: 0, height: ctx.rows! });
+});
+
+step("the last row right of the thread list belongs to the main column", async (ctx: World) => {
+  await snapshot(ctx);
+  expect(box(ctx, "statusLine").visible).toBe(true);
+  expect(rectOf(ctx, "statusLine")).toMatchObject({
+    x: LIST_PANE_WIDTH,
+    y: ctx.rows! - 1,
+    width: ctx.columns! - LIST_PANE_WIDTH,
+  });
+});
+
+step("the key hints read {string} in the dim colour", async (ctx: World, hint: string) => {
+  await settle(ctx);
+  const row = await bottomRow(ctx);
+  // A cell of padding, the whole hint, then the gap before the status.
+  expect(row.text.slice(1, 1 + hint.length + 1)).toBe(`${hint} `);
+  expectColour((await cellAt(ctx, row.x + 1, row.y)).span.fg, THEME.dim);
+});
+
+step(
+  'the status ends the bottom row a cell from the right edge, after its "·", in the faint colour',
+  async (ctx: World) => {
+    const status = ctx.host!.state.get("status") as { kind: string; text: string };
+    const row = await bottomRow(ctx);
+    const label = `· ${status.text}`;
+    expect(row.text.endsWith(`${label} `)).toBe(true);
+    const x = row.x + row.text.length - label.length - 1;
+    expectColour((await cellAt(ctx, x, row.y)).span.fg, THEME.faint);
+  },
+);
+
+step('the key hints are cut with "…" where the status begins', async (ctx: World) => {
+  const row = await bottomRow(ctx);
+  const { label } = statusRow(ctx);
+  expect(row.text.startsWith(" Alt+↑/↓ threads")).toBe(true);
+  expect(row.text.endsWith(`…${label} `)).toBe(true);
+});
+
+step(
+  'the status at the end of the bottom row is cut to 32 cells with "…" in the error colour',
+  async (ctx: World) => {
+    const status = ctx.host!.state.get("status") as { kind: string; text: string };
+    const row = await bottomRow(ctx);
+    const shown = row.text.trimEnd().slice(-32);
+    expect(shown.endsWith("…")).toBe(true);
+    expect(`✗ ${status.text}`.startsWith(shown.slice(0, -1))).toBe(true);
+    expect(row.text.length - row.text.trimEnd().length).toBe(1);
+    const x = row.x + row.text.trimEnd().length - 32;
+    expectColour((await cellAt(ctx, x, row.y)).span.fg, THEME.error);
+  },
+);
+
+step("the panel ends on the conversation pane's last row", async (ctx: World) => {
+  await snapshot(ctx);
+  const pane = rectOf(ctx, "conversationPane");
+  const panel = rectOf(ctx, "rightPanel");
+  expect(panel.y).toBe(pane.y);
+  expect(panel.y + panel.height).toBe(pane.y + pane.height);
+});
+
+step("the prompt and the key-hint row stay under the conversation", async (ctx: World) => {
+  const pane = rectOf(ctx, "conversationPane");
+  const panel = rectOf(ctx, "rightPanel");
+  const prompt = rectOf(ctx, "composer");
+  expect(prompt.y).toBeGreaterThanOrEqual(pane.y + pane.height);
+  expect(prompt.x + prompt.width).toBeLessThanOrEqual(panel.x);
+  // The key-hint row spans the main column, under the panel too.
+  const hints = rectOf(ctx, "statusLine");
+  expect(hints.y).toBe(ctx.rows! - 1);
+  expect(hints.x + hints.width).toBe(panel.x + panel.width);
 });

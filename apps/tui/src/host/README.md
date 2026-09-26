@@ -8,7 +8,8 @@ keys and call `Shell.dispatch(action, payload)`.
 Keys published today: `sidebar`, `layout`, `theme`, `notifications` (the
 desktop shell's contract names, extended for the terminal), `mode`, `status`,
 `size`, `page`, `contextMenu`, `overlay`, `composer`, `select` and
-`newThread` (`composerState.ts`), `palette` (`paletteState.ts`), `clock`,
+`newThread` (`composerState.ts`), `palette` (`paletteState.ts`), `statusRow`
+(`statusState.ts`), `clock`,
 `git`, `settings`, `paneScroll`, `terminal`, `files`, `addProject`,
 `keybindings` (`src/keymap.ts`: the chord layers per mode, the reference
 groups and the web parity table), `plugins`, `problems`, `connection` (see
@@ -28,6 +29,10 @@ from `threadView.ts` (below).
   capped content column (`contentWidth`, `contentOffset`) and the prompt's
   `editorRows` / `popoverRows`.
 - `page` has `kind: "draft"` while a new-thread draft with a project is open.
+- `statusRow` is the main column's bottom row as the OpenTUI client draws it:
+  the key hints for what has the keys (`hint`) cut to leave the status glyph
+  and message (`label`, up to 32 cells, `kind` for its colour) their room. It
+  follows the keys it is built from (`layout`, `threadHints`, `status`, ...).
 - `contextMenu` (null when closed): the thread menu's `threadKey`, position,
   size, `rows` (items and separators) and highlighted index. Opening it never
   changes which thread is open.

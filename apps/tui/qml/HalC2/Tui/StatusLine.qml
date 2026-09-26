@@ -1,6 +1,8 @@
 import OpenTUI
 
-// One line at the bottom: the host's status message and its tone.
+// The main column's bottom row (`Shell.state.statusRow`): the key hints for
+// what has the keys, dim, on the left; the status glyph and message, in the
+// status colour, on the right. The host cuts both to fit.
 //
 // Plugins contribute to the "statusbar" slot. In the default "replace" mode a
 // contribution takes the place of the status message; "append" keeps it and
@@ -9,22 +11,29 @@ import OpenTUI
 Rectangle {
     id: line
     property alias slotMode: statusSlot.mode
+    readonly property var row: Shell.state.statusRow
     readonly property var status: Shell.state.status
-    readonly property string glyph: status.kind === "success"
-        ? "✓"
-        : status.kind === "error" ? "✗" : status.kind === "busy" ? "⟳" : "·"
 
     height: 1
+    flexShrink: 0
     color: Theme.colors.bg
     flexDirection: "row"
+    justifyContent: "space-between"
+    overflow: "hidden"
     paddingX: 1
 
+    Text {
+        objectName: "statusHint"
+        flexShrink: 1
+        text: line.row.hint
+        color: Theme.colors.dim
+    }
     Slot {
         id: statusSlot
         objectName: "statusbarSlot"
         name: "statusbar"
         mode: "replace"
-        flexGrow: 1
+        flexShrink: 0
         flexDirection: "row"
         data: ({
             status: line.status,
@@ -32,18 +41,13 @@ Rectangle {
         })
 
         Text {
-            objectName: "statusGlyph"
-            text: line.glyph + " "
-            color: line.status.kind === "success"
-                ? Theme.colors.success
-                : line.status.kind === "error"
-                    ? Theme.colors.error
-                    : line.status.kind === "busy" ? Theme.colors.accent : Theme.colors.faint
-        }
-        Text {
             objectName: "statusText"
-            text: line.status.text
-            color: Theme.colors.dim
+            text: line.row.label
+            color: line.row.kind === "success"
+                ? Theme.colors.success
+                : line.row.kind === "error"
+                    ? Theme.colors.error
+                    : line.row.kind === "busy" ? Theme.colors.accent : Theme.colors.faint
         }
     }
 }

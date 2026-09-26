@@ -310,11 +310,12 @@ step(/^the client reports an? (\w+) message$/, async (ctx: World, tone: string) 
 });
 
 step("the status line starts with {string}", async (ctx: World, glyph: string) => {
+  // The status sits at the right of the bottom row, glyph first, cut to 32 cells.
   const screen = await snapshot(ctx);
-  const text = (ctx.host!.state.get("status") as { text: string }).text;
-  const line = screen.split("\n").find((row) => row.includes(text));
-  expect(line, `the status line does not show "${text}"`).toBeDefined();
-  expect(line!.trimStart().startsWith(`${glyph} `)).toBe(true);
+  const { label } = ctx.host!.state.get("statusRow") as { label: string };
+  expect(label.startsWith(`${glyph} `)).toBe(true);
+  const bottom = screen.replace(/\n$/, "").split("\n").at(-1) ?? "";
+  expect(bottom.trimEnd().endsWith(label)).toBe(true);
 });
 
 // --- icons ---

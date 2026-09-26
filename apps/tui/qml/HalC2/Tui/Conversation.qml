@@ -3,7 +3,7 @@ import OpenTUI
 // The main column's conversation. Like MessagesTimeline, the thread sits in a
 // rounded faint pane: the header, the context meter, the timeline and the
 // pending approvals. The diff viewer takes the pane's place while open; the
-// revert picker and the thread's key hints follow. A new-thread draft shows
+// revert picker follows. A new-thread draft shows
 // the pane empty (the composer below holds the draft).
 Rectangle {
     id: conversation
@@ -61,5 +61,4 @@ Rectangle {
     DiffViewer {}
 
     RevertPicker {}
-    ThreadHints {}
 }

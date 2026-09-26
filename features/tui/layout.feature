@@ -100,74 +100,79 @@ Feature: Terminal layout at every size
   # and the main column ends in one row with the key hints on the left and the
   # status on the right.
 
-  @tui @backlog
+  @tui
   Scenario: The thread list runs down to the last row
     Given the terminal is 120 columns wide
     Then the thread list's border closes on the last row
     And the last row right of the thread list belongs to the main column
 
-  @tui @backlog
+  @tui
   Scenario: The bottom row of the main column shows the key hints and the status
-    Given the terminal is 300 columns wide
-    And the terminal client is open on a thread with focus in the prompt
+    Given the terminal client is open on a thread with focus in the prompt
+    And the terminal is 300 columns wide
     Then the key hints read "Alt+↑/↓ threads · Enter send · ^G editor · ^↑/^↓ size · ^N new · ^E term · ^K commands · ^F find · ^L panel ▸ · ^C quit" in the dim colour
     And the status ends the bottom row a cell from the right edge, after its "·", in the faint colour
 
-  @tui @backlog
+  @tui
   Scenario: The key hints are cut short to leave the status its room
-    Given the terminal is 120 columns wide
-    And the terminal client is open on a thread with focus in the prompt
+    Given the terminal client is open on a thread with focus in the prompt
+    And the terminal is 120 columns wide
     Then the key hints are cut with "…" where the status begins
 
-  @tui @backlog
+  @tui
   Scenario: A long status message is cut to 32 cells
     Given the terminal client is open on a thread with focus in the prompt
     And the user types "Fix the build"
     When the user sends it and the node rejects the message
     Then the status at the end of the bottom row is cut to 32 cells with "…" in the error colour
 
-  @tui @backlog
+  @tui
   Scenario: A running turn offers Esc to stop it
-    Given the terminal is 300 columns wide
+    Given the terminal client is open on a thread with focus in the prompt
     And the agent is working
+    And the terminal is 300 columns wide
     Then the key hints read "Alt+↑/↓ threads · Enter send · ^G editor · ^↑/^↓ size · ^N new · ^E term · ^K commands · ^F find · ^L panel ▸ · Esc stop · ^C quit" in the dim colour
 
-  @tui @backlog
+  @tui
   Scenario: A new-thread draft offers Esc to clear it
-    Given the terminal is 300 columns wide
-    And the terminal client is open on a thread with focus in the prompt
+    Given the terminal client is open on a thread with focus in the prompt
+    And the terminal is 300 columns wide
     When the user presses "Ctrl+N"
     Then the key hints read "Alt+↑/↓ threads · Enter send · ^G editor · ^↑/^↓ size · ^N new · ^E term · ^K commands · ^F find · ^L panel ▸ · Esc clear · ^C quit" in the dim colour
 
-  @tui @backlog
+  @tui
   Scenario: A proposed plan adds ^Y to the key hints
-    Given the terminal is 300 columns wide
+    Given the terminal client is open on a thread with focus in the prompt
     And the agent proposed a plan
+    And the terminal is 300 columns wide
     Then the key hints read "Alt+↑/↓ threads · Enter send · ^G editor · ^↑/^↓ size · ^N new · ^E term · ^Y implement · ^K commands · ^F find · ^L panel ▸ · ^C quit" in the dim colour
 
-  @tui @backlog
+  @tui
   Scenario: The panel key hint points down while the source-control panel is open
     Given the terminal is 300 columns wide
     When the user opens the source-control panel
     Then the key hints read "Alt+↑/↓ threads · Enter send · ^G editor · ^↑/^↓ size · ^N new · ^E term · ^K commands · ^F find · ^L panel ▾ · ^C quit" in the dim colour
 
-  @tui @backlog
+  @tui
   Scenario: The key hints follow the terminal while it is open
     Given the terminal client shows a thread with its terminal open
+    And the terminal is 140 columns wide
     Then the key hints read "^P prompt · ^E close term · ^↑/^↓ size term · keys → shell" in the dim colour
 
-  @tui @backlog
+  @tui
   Scenario: A question set aside takes over the key hints
     Given a question is pending
+    And the terminal is 140 columns wide
     When the user puts the question off
     Then the key hints read "⚠ question pending — ^U to answer · ^C quit" in the dim colour
 
-  @tui @backlog
+  @tui
   Scenario: Adding a project shows the project keys in the key hints
+    Given the terminal is 140 columns wide
     When the user clicks the "+" on the project row
     Then the key hints read "↑/↓ navigate · Enter select · Ctrl+Enter action · Esc back · ^C quit" in the dim colour
 
-  @tui @backlog
+  @tui
   Scenario: A docked detail panel is only as tall as the conversation
     Given the terminal is 160 columns wide
     When the user opens the source-control panel

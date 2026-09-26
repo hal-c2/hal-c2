@@ -216,7 +216,12 @@ step("no second project is created", async (ctx: ProjectsWorld) => {
   expect(listed(ctx).filter((entry) => entry.displayName === "shop")).toHaveLength(1);
 });
 step("the user is told the project was already added", async (ctx: World) => {
-  expect(await settle(ctx)).toContain("Project already added. What should we build?");
+  // The status row cuts it to 32 cells, as the OpenTUI client does.
+  const frame = await settle(ctx);
+  expect((ctx.host!.state.get("status") as { text: string }).text).toBe(
+    "Project already added. What should we build?",
+  );
+  expect(frame).toContain((ctx.host!.state.get("statusRow") as { label: string }).label);
   expect(ctx.host!.state.get("page") as TuiPageState).toMatchObject({
     kind: "draft",
     projectTitle: "shop",
@@ -295,7 +300,10 @@ step("the user is asked where to clone the repository", async (ctx: World) => {
   const frame = await settle(ctx);
   expect(flow(ctx).step).toBe("destination");
   expect(frame).toContain("Clone into");
-  expect(frame).toContain("Choose where to clone the repository.");
+  expect((ctx.host!.state.get("status") as { text: string }).text).toBe(
+    "Choose where to clone the repository.",
+  );
+  expect(frame).toContain((ctx.host!.state.get("statusRow") as { label: string }).label);
 });
 step("a destination folder named {string} is suggested", (ctx: World, name: string) => {
   expect(flow(ctx).query).toBe(`~/${name}`);

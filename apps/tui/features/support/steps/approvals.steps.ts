@@ -72,7 +72,10 @@ step("the agent has three pending approvals", async (ctx: ThreadWorld) => {
 
 step("the key hints offer {string}", async (ctx: ThreadWorld, hint: string) => {
   expect(hostState(ctx, "threadHints").items).toContain(hint);
-  expect(await snapshot(ctx)).toContain(hint);
+  // The key-hint row carries it; like the OpenTUI client's, the row is cut to
+  // leave the status its room, so a narrow terminal may not reach it.
+  const screen = await snapshot(ctx);
+  expect(screen).toContain((hostState(ctx, "statusRow") as { hint: string }).hint);
 });
 
 step("the key hints do not offer {string}", async (ctx: ThreadWorld, hint: string) => {
@@ -101,7 +104,7 @@ step("the user approves it and the request fails", async (ctx: ThreadWorld) => {
 step("the status line says the approval failed", async (ctx: ThreadWorld) => {
   const status = hostState(ctx, "status");
   expect(status).toEqual({ kind: "error", text: "Approval failed: provider offline" });
-  expect(await snapshot(ctx)).toContain("Approval failed: provider offline");
+  expect(await snapshot(ctx)).toContain(hostState(ctx, "statusRow").label);
   expect(await snapshot(ctx)).not.toContain("Approved.");
 });
 
@@ -358,7 +361,7 @@ step("the user is told the answer was sent", async (ctx: ThreadWorld) => {
 
 step("the user is asked to pick an option or type an answer first", async (ctx: ThreadWorld) => {
   expect(hostState(ctx, "status").text).toBe("Pick an option or type an answer first.");
-  expect(await snapshot(ctx)).toContain("Pick an option or type an answer first.");
+  expect(await snapshot(ctx)).toContain(hostState(ctx, "statusRow").label);
 });
 
 // Neither a reply nor an answer reached the agent.
@@ -432,7 +435,8 @@ step("the custom answer is still in the composer", async (ctx: AnswerWorld) => {
     customAnswer: ctx.typedAnswer,
   });
   expect(findObject(ctx, "userInputAnswer").get("text")).toBe(ctx.typedAnswer);
-  expect(await snapshot(ctx)).toContain("answer failed: connection dropped");
+  expect(hostState(ctx, "status").text).toContain("answer failed: connection dropped");
+  expect(await snapshot(ctx)).toContain(hostState(ctx, "statusRow").label);
 });
 
 const expectQuestionClosed = async (ctx: ThreadWorld) => {

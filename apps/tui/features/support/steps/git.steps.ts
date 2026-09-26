@@ -5,6 +5,7 @@ import { expect } from "bun:test";
 
 import type { TuiLayoutState } from "../../../src/host/layoutState.ts";
 import { step } from "../../steps.ts";
+import { rectOf } from "../design.ts";
 import { runLaunch } from "../launchWorld.ts";
 import { runStorageLaunch, type StorageWorld } from "../storageWorld.ts";
 import { runOpentuiQml } from "./qml-runtime.steps.ts";
@@ -399,12 +400,15 @@ async function expectPanelAsMain(ctx: World): Promise<void> {
   await settle(ctx);
   const layout = ctx.host!.state.get("layout") as TuiLayoutState;
   expect(layout.rightPanel.asMain).toBe(true);
-  expect(geometry(findObject(ctx, "sourceControlPanel"))).toMatchObject({
-    visible: true,
-    x: 0,
+  expect(geometry(findObject(ctx, "sourceControlPanel")).visible).toBe(true);
+  // In the conversation pane's place, the prompt still under it.
+  const pane = rectOf(ctx, "conversationPane");
+  expect(rectOf(ctx, "sourceControlPanel")).toMatchObject({
+    x: pane.x,
+    y: pane.y,
     width: layout.mainWidth,
+    height: pane.height,
   });
-  expect(geometry(findObject(ctx, "main")).visible).toBe(false);
 }
 
 step(
