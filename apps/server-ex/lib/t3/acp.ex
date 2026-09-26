@@ -26,6 +26,22 @@ defmodule T3.Acp do
   # The Cursor sidecar: bundled under priv/ in a release, from packages/ in a checkout.
   @cursor_checkout Path.expand("../../../../packages/cursor-acp/src/main.ts", __DIR__)
 
+  @opencode_minimum "1.14.19"
+  @pi_minimum "0.80.5"
+  @pi_modes ~w(approval-required auto-accept-edits full-access)
+  # Deferring to the model in the user's own Pi settings.
+  @pi_default %{
+    "slug" => "default",
+    "name" => "Pi default",
+    "isCustom" => false,
+    "isDefault" => true,
+    "capabilities" => nil
+  }
+  @compact %{
+    "name" => "compact",
+    "description" => "Summarize the conversation and reduce context usage"
+  }
+
   # Instances of this driver run an agent from the ACP Registry (`T3.Acp.Catalog`).
   @registry "acpRegistry"
 
@@ -58,6 +74,14 @@ defmodule T3.Acp do
 
   defp builtin(id), do: if(Map.has_key?(@agents, id), do: {id, %{}})
 
+  @doc "The driver an instance runs (\"grok\", \"opencode\", \"pi\", ...), or nil."
+  def driver(instance) do
+    case instance(instance) do
+      {driver, _entry} -> driver
+      nil -> nil
+    end
+  end
+
   def label(instance) do
     case instance(instance) do
       {_, %{"displayName" => name}} when is_binary(name) -> name
@@ -77,8 +101,8 @@ defmodule T3.Acp do
 
     case override || instance(instance) do
       [_ | _] = command ->
-        {_driver, entry} = instance(instance) || {nil, %{}}
-        {:ok, command, instance_env(entry)}
+        {driver, entry} = instance(instance) || {nil, %{}}
+        {:ok, command, driver_env(driver, entry) ++ instance_env(entry)}
 
       {@registry, entry} ->
         with {:ok, command, env} <- T3.Acp.Catalog.command(entry["config"] || %{}),
@@ -101,9 +125,7 @@ defmodule T3.Acp do
 
       {"pi", entry} ->
         with {:ok, command, env} <- T3.Acp.Catalog.command(%{"agentId" => "pi-acp"}),
-             do:
-               {:ok, command,
-                [{"PI_ACP_PI_COMMAND", binary("pi", entry, "pi")} | env ++ instance_env(entry)]}
+             do: {:ok, command, driver_env("pi", entry) ++ env ++ instance_env(entry)}
 
       {driver, entry} ->
         binary = binary(driver, entry, @agents[driver].binary)
@@ -133,6 +155,10 @@ defmodule T3.Acp do
         {command, electron || []}
     end
   end
+
+  # What an agent's adapter needs to find the agent: Pi's adapter runs the user's Pi.
+  defp driver_env("pi", entry), do: [{"PI_ACP_PI_COMMAND", binary("pi", entry, "pi")}]
+  defp driver_env(_driver, _entry), do: []
 
   # Variables set on the instance in settings, such as an API key.
   defp instance_env(entry) do
@@ -196,6 +222,13 @@ defmodule T3.Acp do
       |> then(&if(failure, do: Map.put(&1, "message", failure), else: &1))
       |> Map.merge(capability_fields(capabilities(id)))
       |> Map.merge(access(id, base["setup"]))
+      |> then(
+        &if(notice = :persistent_term.get({__MODULE__, id, :notice}, nil),
+          do: Map.put(&1, "message", notice),
+          else: &1
+        )
+      )
+      |> driver_fields(driver, id, instance)
     else
       _ -> nil
     end
@@ -338,7 +371,7 @@ defmodule T3.Acp do
           :persistent_term.erase({__MODULE__, id, :error})
 
         {:error, :unauthenticated} ->
-          :persistent_term.put({__MODULE__, id, :error}, "Sign in to use this agent.")
+          :persistent_term.put({__MODULE__, id, :error}, sign_in_hint(id))
           :persistent_term.put({__MODULE__, id, :unauthenticated}, true)
 
         {:error, reason} ->
@@ -352,6 +385,14 @@ defmodule T3.Acp do
     after
       File.rm_rf(dir)
       T3.Settings.notify_providers()
+    end
+  end
+
+  # How to sign in, for an agent that reported it is signed out.
+  defp sign_in_hint(id) do
+    case instance(id) do
+      {"grok", _} -> "Grok CLI is installed but not logged in. Run `grok login`."
+      _ -> "Sign in to use this agent."
     end
   end
 
@@ -389,19 +430,284 @@ defmodule T3.Acp do
   defp describe(reason), do: inspect(reason)
 
   defp read_agent(id, dir) do
-    with_agent(id, dir, fn conn, init ->
-      version = get_in(init, ["agentInfo", "version"]) || "unknown"
-      :persistent_term.put({__MODULE__, id, :version}, version)
-      :persistent_term.put({__MODULE__, id, :capabilities}, init["agentCapabilities"] || %{})
-      :persistent_term.put({__MODULE__, id, :auth_methods}, length(init["authMethods"] || []))
+    {driver, entry} = instance(id)
 
-      case call_serving(conn, id, "session/new", %{"cwd" => dir, "mcpServers" => []}) do
-        {:ok, session} -> :persistent_term.put({__MODULE__, id, :models}, models(session))
-        # ACP's "authentication required".
-        {:error, %{"code" => -32000}} -> {:error, :unauthenticated}
-        {:error, _} = error -> error
+    with :ok <- check_version(id, driver, entry) do
+      with_agent(id, dir, fn conn, init ->
+        # Pi's version is Pi's own, not its adapter's.
+        if driver != "pi",
+          do:
+            :persistent_term.put(
+              {__MODULE__, id, :version},
+              get_in(init, ["agentInfo", "version"]) || "unknown"
+            )
+
+        :persistent_term.put({__MODULE__, id, :capabilities}, init["agentCapabilities"] || %{})
+        :persistent_term.put({__MODULE__, id, :auth_methods}, length(init["authMethods"] || []))
+        :persistent_term.put({__MODULE__, id, :meta}, init["_meta"] || %{})
+
+        case call_serving(conn, id, "session/new", %{"cwd" => dir, "mcpServers" => []}) do
+          {:ok, session} ->
+            :persistent_term.put({__MODULE__, id, :models}, models(session))
+
+          # ACP's "authentication required".
+          {:error, %{"code" => -32000}} ->
+            {:error, :unauthenticated}
+
+          # Pi may stop at a startup prompt only a live session can answer.
+          {:error, _} when driver == "pi" ->
+            :persistent_term.put({__MODULE__, id, :models}, [@pi_default])
+
+            :persistent_term.put(
+              {__MODULE__, id, :notice},
+              "Pi is available, but T3 Code could not refresh its models and commands. The live session will retry startup."
+            )
+
+          {:error, _} = error ->
+            error
+        end
+      end)
+    end
+  end
+
+  # Pi runs through its adapter, which needs Pi #{@pi_minimum} or newer (`pi --version`).
+  defp check_version(id, "pi", entry) do
+    output =
+      with path when is_binary(path) <- System.find_executable(binary("pi", entry, "pi")),
+           task = Task.async(fn -> System.cmd(path, ["--version"], stderr_to_stdout: true) end),
+           {:ok, {out, 0}} <- Task.yield(task, 10_000) || Task.shutdown(task) do
+        out
+      else
+        _ -> ""
+      end
+
+    case Regex.run(~r/\d+\.\d+\.\d+/, output) do
+      [version] ->
+        :persistent_term.put({__MODULE__, id, :version}, version)
+
+        if Version.compare(version, @pi_minimum) == :lt,
+          do: {:error, "Pi #{version} is unsupported. Update to Pi #{@pi_minimum} or newer."},
+          else: :ok
+
+      nil ->
+        {:error,
+         "T3 Code could not determine the Pi version. Pi #{@pi_minimum} or newer is required."}
+    end
+  end
+
+  defp check_version(_id, _driver, _entry), do: :ok
+
+  # --- per-driver fields --------------------------------------------------------
+
+  defp driver_fields(entry, "grok", id, instance) do
+    meta = :persistent_term.get({__MODULE__, id, :meta}, nil) || %{}
+
+    entry
+    |> Map.merge(%{
+      # Grok cannot rewind its own conversation.
+      "supportsConversationRollback" => false,
+      "slashCommands" => grok_commands(meta["availableCommands"])
+    })
+    |> Map.update!("models", &grok_reasoning(&1, get_in(meta, ["modelState", "availableModels"])))
+    |> Map.update!("auth", &grok_auth(&1, instance))
+  end
+
+  defp driver_fields(entry, "opencode", id, _instance) do
+    case stable_version(entry["version"]) do
+      nil ->
+        entry
+
+      version ->
+        entry = Map.put(entry, "compatibilityAdvisory", opencode_advisory(version))
+
+        cond do
+          Version.compare(version, @opencode_minimum) == :lt ->
+            Map.merge(entry, %{
+              "status" => "error",
+              "models" => [],
+              "message" =>
+                "OpenCode v#{version} is too old. Upgrade to v#{@opencode_minimum} or newer."
+            })
+
+          entry["status"] == "ready" and
+              :persistent_term.get({__MODULE__, id, :models}, nil) == [] ->
+            Map.merge(entry, %{
+              "status" => "warning",
+              "message" =>
+                "OpenCode is available, but it did not report any connected upstream providers."
+            })
+
+          true ->
+            entry
+        end
+    end
+  end
+
+  defp driver_fields(entry, "pi", id, _instance) do
+    # Pi's permission gate has no classifier to run auto on.
+    entry = Map.put(entry, "supportedRuntimeModes", @pi_modes)
+
+    if entry["status"] == "ready" and :persistent_term.get({__MODULE__, id, :models}, nil) == [],
+      do:
+        Map.merge(entry, %{
+          "status" => "warning",
+          "auth" => Map.put(entry["auth"], "status", "unauthenticated"),
+          "message" =>
+            "Pi has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent."
+        }),
+      else: entry
+  end
+
+  defp driver_fields(entry, _driver, _id, _instance), do: entry
+
+  # An API key set on the instance signs Grok in; otherwise its own login does.
+  defp grok_auth(auth, instance) do
+    key =
+      Enum.find_value(instance_env(instance), fn {name, value} ->
+        name == "XAI_API_KEY" and String.trim(value) != ""
+      end)
+
+    cond do
+      key ->
+        Map.merge(auth, %{
+          "status" => "authenticated",
+          "type" => "api_key",
+          "label" => "xAI API key"
+        })
+
+      auth["status"] == "authenticated" ->
+        Map.merge(auth, %{"type" => "cached_token", "label" => "Grok account"})
+
+      true ->
+        auth
+    end
+  end
+
+  # Grok's commands from `initialize`; permissions change through T3 only, and
+  # /context completes without output.
+  defp grok_commands(commands) do
+    offered =
+      for %{"name" => name} = command when is_binary(name) <- List.wrap(commands),
+          name = String.trim(name),
+          name != "",
+          String.downcase(name) not in ["always-approve", "context"] do
+        %{"name" => name}
+        |> put_text("description", command["description"])
+        |> then(fn c ->
+          case get_in(command, ["input", "hint"]) do
+            hint when is_binary(hint) and hint != "" ->
+              Map.put(c, "input", %{"hint" => String.trim(hint)})
+
+            _ ->
+              c
+          end
+        end)
+      end
+
+    compact = Enum.find(offered, @compact, &(&1["name"] == "compact"))
+    [compact | Enum.reject(offered, &(&1["name"] == "compact"))]
+  end
+
+  defp put_text(map, key, value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> map
+      text -> Map.put(map, key, text)
+    end
+  end
+
+  defp put_text(map, _key, _value), do: map
+
+  # Reasoning levels a Grok model advertises in `initialize`'s model state.
+  defp grok_reasoning(models, [_ | _] = available) do
+    by_id = Map.new(available, &{&1["modelId"], &1["_meta"] || %{}})
+
+    Enum.map(models, fn model ->
+      case reasoning_descriptor(by_id[model["slug"]] || %{}) do
+        nil -> model
+        descriptor -> Map.put(model, "capabilities", %{"optionDescriptors" => [descriptor]})
       end
     end)
+  end
+
+  defp grok_reasoning(models, _available), do: models
+
+  defp reasoning_descriptor(%{"supportsReasoningEffort" => false}), do: nil
+
+  defp reasoning_descriptor(meta) do
+    options =
+      (meta["reasoningEfforts"] || [])
+      |> Enum.flat_map(fn
+        %{} = effort ->
+          case Enum.find(
+                 [effort["value"], effort["id"]],
+                 &(is_binary(&1) and &1 =~ ~r/^[a-z0-9_-]+$/i)
+               ) do
+            nil -> []
+            value -> [{value, effort}]
+          end
+
+        _ ->
+          []
+      end)
+      |> Enum.uniq_by(&elem(&1, 0))
+
+    current =
+      if Enum.any?(options, &(elem(&1, 0) == meta["reasoningEffort"])),
+        do: meta["reasoningEffort"]
+
+    advertised =
+      for {value, effort} <- options,
+          effort["default"] == true or effort["isDefault"] == true,
+          do: value
+
+    default = if current in advertised, do: current, else: List.first(advertised)
+
+    if options != [] do
+      %{
+        "id" => "reasoningEffort",
+        "label" => "Reasoning",
+        "type" => "select",
+        "options" =>
+          for {value, effort} <- options do
+            %{
+              "id" => value,
+              "label" =>
+                (is_binary(effort["label"]) && String.trim(effort["label"]) != "" &&
+                   String.trim(effort["label"])) || value
+            }
+            |> put_text("description", effort["description"])
+            |> then(&if(value == default, do: Map.put(&1, "isDefault", true), else: &1))
+          end
+      }
+      |> then(
+        &if(current || default, do: Map.put(&1, "currentValue", current || default), else: &1)
+      )
+    end
+  end
+
+  defp stable_version(version) when is_binary(version) do
+    case Regex.run(~r/^v?(\d+\.\d+\.\d+)$/, String.trim(version)) do
+      [_, stable] -> stable
+      _ -> nil
+    end
+  end
+
+  defp stable_version(_version), do: nil
+
+  # T3's bundled compatibility policy for OpenCode: older than the minimum is broken.
+  defp opencode_advisory(version) do
+    broken = Version.compare(version, @opencode_minimum) == :lt
+
+    %{
+      "status" => if(broken, do: "broken", else: "unknown"),
+      "message" =>
+        if(broken,
+          do:
+            "This provider version is known to be incompatible with this T3 Code release. Use >=#{@opencode_minimum}."
+        ),
+      "recommendedVersion" => nil,
+      "recommendedRange" => ">=#{@opencode_minimum}"
+    }
   end
 
   @doc """
@@ -457,7 +763,9 @@ defmodule T3.Acp do
           :auth_methods,
           :unauthenticated,
           :error,
-          :loading
+          :loading,
+          :meta,
+          :notice
         ],
         do: :persistent_term.erase({__MODULE__, id, key})
 

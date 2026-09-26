@@ -35,7 +35,6 @@ Feature: Pi
     When the user sends a message to Pi
     Then that Pi binary runs the turn
 
-  @backlog
   Scenario: Pi older than 0.80.5 is refused
     Given the installed Pi is 0.79.0
     When the user refreshes provider status
@@ -46,13 +45,11 @@ Feature: Pi
     When the user adds the launch argument "--mode json" to Pi
     Then the setting is refused with a message that T3 Code owns that part of Pi
 
-  @backlog
   Scenario: Pi with no usable models explains how to sign in
     Given Pi reports no models
     When the user refreshes provider status
     Then Pi says to sign in with Pi in a terminal or configure an API key
 
-  @backlog
   Scenario: Pi stays usable when discovery cannot finish
     Given Pi discovery needs interactive input
     When the user refreshes provider status
@@ -66,7 +63,6 @@ Feature: Pi
     Then off, minimal, low, medium, high and extra high are offered
     And Pi's configured level is marked as the default
 
-  @backlog
   Scenario Outline: Pi access modes decide which tools ask first
     Given the thread runs Pi in <mode>
     When Pi wants to <action>
@@ -81,24 +77,20 @@ Feature: Pi
       | auto-accept edits | run a command    | asked for approval      |
       | full access       | run a command    | allowed without asking  |
 
-  @backlog
   Scenario: Auto mode is not offered for Pi
     When the user opens the access picker in a Pi thread
     Then auto is not offered
 
-  @backlog
   Scenario: Older Pi threads saved in auto behave as approval required
     Given a Pi thread saved with auto mode
     When the user opens the thread
     Then it shows and behaves as approval required
 
-  @backlog
   Scenario: Changing the access mode restarts Pi on the same conversation
     Given a Pi thread with history
     When the user switches the thread to full access
     Then Pi restarts and continues the same native conversation
 
-  @backlog
   Scenario: Allowing a Pi tool for the session stops further prompts for it
     Given Pi asked to run the same command twice
     When the user allows it for the session the first time
@@ -148,7 +140,6 @@ Feature: Pi
     When Pi delegates a task
     Then the task appears as a child thread in the subagent view
 
-  @backlog
   Scenario: Pi exiting mid-turn is reported
     Given a Pi turn is running
     When the Pi process exits unexpectedly

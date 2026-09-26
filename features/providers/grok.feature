@@ -55,19 +55,16 @@ Feature: Grok
     When the user opens the usage summary
     Then Grok's tokens and cost are included
 
-  @backlog
   Scenario: An xAI API key in the instance's environment signs Grok in
     Given the Grok instance has an xAI API key in its environment
     When the user opens the provider list
     Then Grok shows that it uses an xAI API key
 
-  @backlog
   Scenario: Grok's plan becomes a plan the user can implement
     When Grok proposes a plan
     Then the plan is shown as a proposed plan
     And the user can implement it
 
-  @backlog
   Scenario: Grok's questions are asked in T3 Code
     When Grok asks the user a question
     Then the question is shown and the answer is sent back to Grok
@@ -77,18 +74,15 @@ Feature: Grok
     When Grok starts a subagent
     Then the subagent's work is grouped under the step that started it
 
-  @backlog
   Scenario: Grok's always-approve command is not offered
     When the user types a slash in a Grok thread
     Then Grok's own always-approve command is not offered
     And "/compact" is offered
 
-  @backlog
   Scenario: Grok reasoning choices come from the model
     When the user opens the options for a Grok model that supports reasoning
     Then the reasoning levels Grok offers for that model are shown
 
-  @backlog
   Scenario: Reverting is not offered for Grok threads
     Given a Grok thread with two turns
     When the user looks at the first turn
@@ -106,7 +100,6 @@ Feature: Grok
     When the user opens the limits view
     Then Grok's limits are shown as unsupported
 
-  @backlog
   Scenario: A Grok usage limit stops the turn with a clear reason
     When Grok stops because the account hit its usage limit
     Then the thread says Grok's usage limit was reached
