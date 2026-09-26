@@ -138,8 +138,8 @@ Feature: Claude
     When the user picks that model
     Then the user is told which Claude version the model needs
 
-  @backlog
   Scenario Outline: Claude model options
+    Given the installed Claude can run every model in the manifest
     When the user opens the options for a Claude model that supports <option>
     Then the user can choose <choices>
 
@@ -148,6 +148,20 @@ Feature: Claude
       | reasoning      | low, medium, high, extra high, max, ultracode, ultrathink |
       | fast mode      | on or off                                                 |
       | context window | 200k or 1M                                                |
+
+  Scenario Outline: A Claude turn runs with the model options the user picked
+    Given the installed Claude can run every model in the manifest
+    When the user sends a message to Claude on a model with <option> set to "<value>"
+    Then Claude is started with <started>
+
+    Examples:
+      | option         | value      | started                                            |
+      | reasoning      | high       | the effort "high"                                  |
+      | reasoning      | ultracode  | the effort "xhigh" and the setting "ultracode" on  |
+      | reasoning      | ultrathink | no effort, and the message asks it to ultrathink   |
+      | fast mode      | on         | the setting "fastMode" on                          |
+      | thinking       | off        | the setting "alwaysThinkingEnabled" off            |
+      | context window | 1m         | a model id ending in "[1m]"                        |
 
   @backlog
   Scenario: Claude compacts the conversation after the configured size

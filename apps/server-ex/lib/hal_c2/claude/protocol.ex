@@ -34,6 +34,11 @@ defmodule HalC2.Claude.Protocol do
 
     base ++
       flag("--model", opts[:model]) ++
+      flag("--effort", opts[:effort]) ++
+      if(opts[:settings] in [nil, %{}],
+        do: [],
+        else: ["--settings", JSON.encode!(opts[:settings])]
+      ) ++
       flag("--permission-mode", opts[:permission_mode]) ++
       flag("--resume", opts[:resume]) ++
       if(opts[:resume] && opts[:resume_at],

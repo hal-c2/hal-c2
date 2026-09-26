@@ -13,6 +13,14 @@ defmodule HalC2.Steps.Providers.Claude do
 
   @thread "Claude work"
 
+  # The composer's option ids, by the names the scenarios use.
+  @options %{
+    "reasoning" => "effort",
+    "fast mode" => "fastMode",
+    "thinking" => "thinking",
+    "context window" => "contextWindow"
+  }
+
   # --- install and updates -----------------------------------------------------------
 
   step "the claude command is installed on the node", context do
@@ -136,6 +144,87 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "the installed Claude can run every model in the manifest", context do
+    World.fake_providers(context, claude_version: "999.0.0")
+  end
+
+  step ~r/^the user opens the options for a Claude model that supports (?<option>.+)$/,
+       %{args: [option]} = context do
+    {providers, context} = World.provider_list(context)
+    id = @options[option]
+    model = Enum.find(claude(providers)["models"], &descriptor(&1, id))
+    assert model, "no Claude model offers #{option}"
+    # Its choices are checked by the Codex steps' "the user can choose".
+    Map.put(context, :option_descriptor, descriptor(model, id))
+  end
+
+  step ~r/^the user sends a message to Claude on a model with (?<option>.+) set to "(?<value>[^"]+)"$/,
+       %{args: [option, value]} = context do
+    id = @options[option]
+    {providers, context} = World.provider_list(context)
+
+    model =
+      Enum.find(claude(providers)["models"], fn model ->
+        case descriptor(model, id) do
+          %{"type" => "boolean"} -> value in ["on", "off"]
+          %{"options" => options} -> Enum.any?(options, &(&1["id"] == value))
+          nil -> false
+        end
+      end)
+
+    assert model, "no Claude model offers #{option} #{value}"
+    value = Map.get(%{"on" => true, "off" => false}, value, value)
+
+    selection = %{
+      "instanceId" => "claudeAgent",
+      "model" => model["slug"],
+      "options" => [%{"id" => id, "value" => value}]
+    }
+
+    context =
+      World.launch_on(context, @thread, "claudeAgent", "hello", %{"modelSelection" => selection})
+
+    World.await_runs(context, @thread, ["completed"])
+    assert [argv] = for(%{"argv" => argv} <- World.provider_log(context, "claude"), do: argv)
+    Map.merge(context, %{argv: argv, model: model["slug"]})
+  end
+
+  step "Claude is started with the effort {string}", %{args: [effort]} = context do
+    assert ["--effort", effort] in pairs(context.argv)
+    context
+  end
+
+  step ~r/^Claude is started with the effort "(?<effort>[^"]+)" and the setting "(?<key>[^"]+)" on$/,
+       %{args: [effort, key]} = context do
+    assert ["--effort", effort] in pairs(context.argv)
+    assert settings(context)[key] == true
+    context
+  end
+
+  step "Claude is started with no effort, and the message asks it to ultrathink", context do
+    refute "--effort" in context.argv
+
+    assert ["Ultrathink:\nhello"] =
+             for(
+               %{"in" => %{"type" => "user", "message" => %{"content" => text}}} <-
+                 World.provider_log(context, "claude"),
+               do: text
+             )
+
+    context
+  end
+
+  step ~r/^Claude is started with the setting "(?<key>[^"]+)" (?<value>on|off)$/,
+       %{args: [key, value]} = context do
+    assert settings(context)[key] == (value == "on")
+    context
+  end
+
+  step "Claude is started with a model id ending in {string}", %{args: [suffix]} = context do
+    assert ["--model", context.model <> suffix] in pairs(context.argv)
+    context
+  end
+
   step "the Claude CLI is signed in with a subscription", context do
     # The fake reports me@example.com on a Max subscription when it starts.
     World.fake_providers(context)
@@ -192,7 +281,8 @@ defmodule HalC2.Steps.Providers.Claude do
 
   step "Claude answers it on {string}", %{args: [model]} = context do
     assert [_, argv] = World.claude_starts(context)
-    assert ["--model", model] in Enum.chunk_every(argv, 2, 1, :discard)
+    # The model's default context window may add a suffix, such as "[1m]".
+    assert Enum.any?(pairs(argv), &match?(["--model", ^model <> _], &1))
     Map.put(context, :argv, argv)
   end
 
@@ -536,6 +626,16 @@ defmodule HalC2.Steps.Providers.Claude do
     {providers, context} = World.provider_list(context)
     assert claude(providers)["enabled"] == (offered == "offered again")
     context
+  end
+
+  defp descriptor(model, id),
+    do: Enum.find(get_in(model, ["capabilities", "optionDescriptors"]) || [], &(&1["id"] == id))
+
+  defp pairs(argv), do: Enum.chunk_every(argv, 2, 1, :discard)
+
+  defp settings(context) do
+    [_, json] = Enum.find(pairs(context.argv), &match?(["--settings", _], &1))
+    JSON.decode!(json)
   end
 
   defp claude(providers), do: Enum.find(providers, &(&1["instanceId"] == "claudeAgent"))

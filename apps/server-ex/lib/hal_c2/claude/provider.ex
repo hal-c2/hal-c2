@@ -51,11 +51,103 @@ defmodule HalC2.Claude.Provider do
         "isCustom" => false,
         "isDefault" => model["slug"] == @catalog["defaults"]["chat"],
         "isLegacy" => model["status"] == "legacy",
-        # Reasoning, fast mode and context window need the session to pass them to the CLI.
-        "capabilities" => nil
+        "capabilities" => profile(model)["capabilities"]
       }
       |> then(&if model["badge"], do: Map.put(&1, "badge", model["badge"]), else: &1)
     end
+  end
+
+  @doc """
+  How the CLI runs `model` with the options picked in the composer (option id -> value),
+  as the model's manifest profile maps them: the model id (a context window adds its
+  suffix, such as `[1m]`), the `--effort` level, `--settings` (fast mode, thinking,
+  ultracode), and an effort the CLI has no level for, which goes in the prompt instead
+  (`prompt/2`). A model the manifest does not know runs as named, without options.
+  """
+  @spec launch(String.t() | nil, map) :: %{
+          model: String.t() | nil,
+          effort: String.t() | nil,
+          settings: map,
+          prompt_effort: String.t() | nil
+        }
+  def launch(model, options) do
+    case find(model) do
+      nil ->
+        %{model: model, effort: nil, settings: %{}, prompt_effort: nil}
+
+      entry ->
+        profile = profile(entry)
+        descriptors = get_in(profile, ["capabilities", "optionDescriptors"]) || []
+        adapter = get_in(profile, ["adapter", "claudeCode"]) || %{}
+        effort = choice(descriptors, "effort", options)
+
+        suffix =
+          Enum.find_value(adapter["modelSuffixes"] || %{}, "", fn {id, suffixes} ->
+            suffixes[choice(descriptors, id, options)]
+          end)
+
+        settings = %{
+          "fastMode" => toggle(descriptors, "fastMode", options),
+          "alwaysThinkingEnabled" => toggle(descriptors, "thinking", options),
+          "ultracode" => if(effort == "ultracode", do: true)
+        }
+
+        injected = (descriptor(descriptors, "effort") || %{})["promptInjectedValues"] || []
+
+        %{
+          model: entry["slug"] <> suffix,
+          effort: Map.get(adapter["effortMap"] || %{}, effort, effort),
+          settings: Map.reject(settings, fn {_, value} -> value == nil end),
+          prompt_effort: if(effort in injected, do: effort)
+        }
+    end
+  end
+
+  @doc """
+  The message as Claude gets it: ultrathink is asked for in the prompt, except on a
+  slash command, which the prefix would turn into prose.
+  """
+  @spec prompt(String.t(), String.t() | nil) :: String.t()
+  def prompt(text, "ultrathink") do
+    if text =~ ~r{^\s*/[^\s/]+(\s|$)} or String.starts_with?(String.trim(text), "Ultrathink:"),
+      do: text,
+      else: "Ultrathink:\n" <> String.trim(text)
+  end
+
+  def prompt(text, _effort), do: text
+
+  # The catalog model named by its slug or one of its aliases.
+  defp find(model) when is_binary(model) do
+    name = String.downcase(model)
+
+    Enum.find(@catalog["models"], fn entry ->
+      Enum.any?([entry["slug"] | entry["aliases"] || []], &(String.downcase(&1) == name))
+    end)
+  end
+
+  defp find(_model), do: nil
+
+  defp profile(model), do: @catalog["profiles"][model["profile"]] || %{}
+
+  defp descriptor(descriptors, id), do: Enum.find(descriptors, &(&1["id"] == id))
+
+  # The picked value of a select option, or its default when none of its values is picked.
+  defp choice(descriptors, id, options) do
+    with %{"type" => "select", "options" => values} <- descriptor(descriptors, id) do
+      ids = Enum.map(values, & &1["id"])
+
+      if options[id] in ids,
+        do: options[id],
+        else: Enum.find_value(values, &(&1["isDefault"] == true && &1["id"]))
+    else
+      _ -> nil
+    end
+  end
+
+  # A boolean option the model has, when the user set it.
+  defp toggle(descriptors, id, options) do
+    if match?(%{"type" => "boolean"}, descriptor(descriptors, id)) and is_boolean(options[id]),
+      do: options[id]
   end
 
   # A model gated on a CLI version is left out while the installed version is unknown.

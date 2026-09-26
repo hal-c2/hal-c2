@@ -5,10 +5,10 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   One CLI process serves every turn of the thread: each message is another user
   message on its stream-json input. If the process has gone, or the turn is on
-  another model, the next turn starts a new one with `--resume` on the recorded
-  session id. Text and thinking stream from partial messages and are written as
-  appends; tool calls become command, file-change, web-search, or generic tool
-  items, finished by their tool results.
+  another model or other model options, the next turn starts a new one with
+  `--resume` on the recorded session id. Text and thinking stream from partial
+  messages and are written as appends; tool calls become command, file-change,
+  web-search, or generic tool items, finished by their tool results.
   """
 
   use GenServer, restart: :temporary
@@ -17,6 +17,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   import HalC2.Orchestration.TurnWriter
 
+  alias HalC2.Claude.Provider
   alias HalC2.Claude.Session
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
@@ -137,8 +138,9 @@ defmodule HalC2.Claude.ThreadRuntime do
        requests: %{},
        # The session's permission mode, switched before a turn that needs another.
        permission_mode: nil,
-       # The model the session's CLI was started on; a turn on another model restarts it.
-       model: nil,
+       # How the session's CLI was started (`Provider.launch/2`); a turn on another model
+       # or other model options restarts it.
+       launch: nil,
        # A steer ends the turn's current part with an "aborted" result; that one
        # result is not the end of the turn.
        steered: false
@@ -148,7 +150,8 @@ defmodule HalC2.Claude.ThreadRuntime do
   @impl true
   def handle_call({:start_turn, turn}, _from, state) do
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:claudeAgent:#{turn.ids.run}")
-    turn = %{turn | ids: ids}
+    launch = Provider.launch(turn.model, Map.get(turn, :options, %{}))
+    turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
     state = %{state | turn: turn, items: %{}, blocks: %{}, interrupted: false}
 
     case open_session(state, turn) do
@@ -220,6 +223,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   def handle_call({:steer, run_id, text}, _from, %{turn: %{ids: %{run: run_id}}} = state)
       when state.session != nil do
+    text = Provider.prompt(text, state.turn.launch.prompt_effort)
     Session.send_message(state.session, text, priority: "now")
     {:reply, :ok, %{state | steered: true}}
   end
@@ -339,7 +343,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        state
        |> Map.put_new(:permission_mode, nil)
        |> Map.put_new(:steered, false)
-       |> Map.put_new(:model, nil)
+       |> Map.put_new(:launch, nil)
        |> Map.update!(:requests, &upgrade_requests/1)
        |> Map.put(:v, @state_version)}
 
@@ -404,7 +408,11 @@ defmodule HalC2.Claude.ThreadRuntime do
   # The message, with where its files are; images go inline as content blocks.
   defp claude_content(turn) do
     attachments = Map.get(turn, :attachments, [])
-    text = HalC2.Attachments.prompt_text(turn.text, attachments)
+
+    text =
+      turn.text
+      |> Provider.prompt(turn.launch.prompt_effort)
+      |> HalC2.Attachments.prompt_text(attachments)
 
     case HalC2.Attachments.native_images(attachments) do
       [] ->
@@ -549,10 +557,10 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp semver(_text), do: nil
 
-  # The CLI takes its model at launch, so a turn on another model resumes the
+  # The CLI takes its model and options at launch, so a turn on others resumes the
   # conversation in a new process.
   defp ensure_session(%{session: session} = state, turn)
-       when session != nil and state.model != turn.model do
+       when session != nil and state.launch != turn.launch do
     GenServer.stop(session)
     ensure_session(%{state | session: nil}, turn)
   end
@@ -573,7 +581,9 @@ defmodule HalC2.Claude.ThreadRuntime do
     opts = [
       handler: self(),
       cd: turn.cwd,
-      model: turn.model,
+      model: turn.launch.model,
+      effort: turn.launch.effort,
+      settings: turn.launch.settings,
       permission_mode: permission_mode(turn),
       resume: fork_or(turn, :thread, turn.native_thread_id),
       resume_at: fork_or(turn, :turn, Map.get(turn, :head)),
@@ -594,7 +604,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     case Session.start_link(opts) do
       {:ok, session} ->
         {:ok,
-         %{state | session: session, permission_mode: permission_mode(turn), model: turn.model}}
+         %{state | session: session, permission_mode: permission_mode(turn), launch: turn.launch}}
 
       {:error, reason} ->
         {:error, reason}

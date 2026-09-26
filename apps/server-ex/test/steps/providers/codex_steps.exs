@@ -490,7 +490,7 @@ defmodule HalC2.Steps.Providers.Codex do
   # The labels offered, in order ("a, b, c" or "a or b"), for the opened option.
   step ~r/^the user can choose (?<choices>(?:[\w ]+, )+[\w ]+|[\w ]+ or [\w ]+)$/,
        %{args: [choices]} = context do
-    expected = String.split(choices, ~r/, | or /)
+    expected = choices |> String.downcase() |> String.split(~r/, | or /)
 
     offered =
       case context.option_descriptor do
