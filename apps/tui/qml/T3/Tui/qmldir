@@ -7,3 +7,4 @@ Sidebar 1.0 Sidebar.qml
 SidebarThreadRow 1.0 SidebarThreadRow.qml
 StatusLine 1.0 StatusLine.qml
 Conversation 1.0 Conversation.qml
+ComposerActions 1.0 ComposerActions.qml

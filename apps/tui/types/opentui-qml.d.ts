@@ -49,6 +49,8 @@ export interface PluginInfo {
 
 export function listPlugins(engine: QmlEngine): PluginInfo[];
 export function unregisterPlugin(engine: QmlEngine, id: string): boolean;
+/** Register a plugin spec or load a QML plugin file; failures reach `onError`. */
+export function addPlugin(engine: QmlEngine, plugin: object | string): Promise<void>;
 export function parseQml(source: string, filename?: string): unknown;
 export class QmlSyntaxError extends Error {}
 

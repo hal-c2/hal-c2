@@ -445,8 +445,13 @@ export function buildTuiRuntime(options: TuiOptions): TuiRuntime {
 
 // ── Imperative client surface consumed by the UI components ────────────────
 
+/** Where the loopback connection is: first connect, live, or retrying after a drop. */
+export type TuiConnectionPhase = "connecting" | "connected" | "reconnecting";
+
 export interface TuiClient {
   readonly hostPlatform: NodeJS.Platform;
+  /** Live connection phase (emits the current one first). Returns an unsubscribe fn. */
+  readonly subscribeConnection: (onPhase: (phase: TuiConnectionPhase) => void) => () => void;
   readonly browseFilesystem: (partialPath: string, cwd?: string) => Promise<FilesystemBrowseResult>;
   readonly discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
   readonly lookupRepository: (
@@ -783,6 +788,30 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
           destinationPath: TrimmedNonEmptyString.make(destinationPath),
         }),
       ),
+    subscribeConnection: (onPhase) => {
+      let connectedOnce = false;
+      return drainStreamUntilUnsubscribe(
+        Stream.unwrap(
+          Effect.gen(function* () {
+            const supervisor = yield* EnvironmentSupervisor;
+            return SubscriptionRef.changes(supervisor.state);
+          }),
+        ).pipe(
+          Stream.tap((state) =>
+            Effect.sync(() => {
+              if (state.phase === "connected") connectedOnce = true;
+              onPhase(
+                state.phase === "connected"
+                  ? "connected"
+                  : connectedOnce
+                    ? "reconnecting"
+                    : "connecting",
+              );
+            }),
+          ),
+        ),
+      );
+    },
     subscribeShell: (onSnapshot) => {
       shellWarm ??= startWarmSubscriptionRef(makeEnvironmentShellState());
       return subscribeToWarmRef(shellWarm, (state) => {

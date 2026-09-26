@@ -219,9 +219,8 @@ step("it exits with status {int}", (ctx: RuntimeWorld, status: number) => {
  * `opentui-qml app.qml ...`: the command as the feature spells it, run in a temp directory.
  * `app.qml` (and `./plugins`) are written for the scenario unless an earlier step did.
  */
-step("the user runs {string}", async (ctx: RuntimeWorld, command: string) => {
-  const [program, ...args] = command.split(/\s+/);
-  expect(program).toBe("opentui-qml");
+step(/^the user runs "(opentui-qml(?: [^"]*)?)"$/, async (ctx: RuntimeWorld, command: string) => {
+  const [, ...args] = command.split(/\s+/);
   if (args.includes("--plugins")) writePluginsFixture(ctx);
   if (!ctx.qmlFile) {
     const contextKeys = args

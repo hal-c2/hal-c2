@@ -5,7 +5,12 @@ import {
   type VcsStatusResult,
 } from "@t3tools/contracts";
 
-import type { OrchestrationShellSnapshot, TuiClient, TuiThreadPage } from "../../src/connection.ts";
+import type {
+  OrchestrationShellSnapshot,
+  TuiClient,
+  TuiConnectionPhase,
+  TuiThreadPage,
+} from "../../src/connection.ts";
 
 // Fixtures and an in-memory TuiClient, shared by the component tests and the
 // Gherkin world. Feed it with `connect()` (the default shell snapshot),
@@ -172,7 +177,11 @@ export function fakeClient({
   readonly emitTerminalMetadata: (event: TerminalMetadataStreamEvent) => void;
   /** Push live detail to whoever subscribed to that thread. */
   readonly emitThread: (detail: OrchestrationThread, page?: TuiThreadPage) => void;
+  /** Move the connection to a phase (the client starts "connecting"). */
+  readonly emitConnection: (phase: TuiConnectionPhase) => void;
 } {
+  let connectionPhase: TuiConnectionPhase = "connecting";
+  const connectionSubscribers = new Set<(phase: TuiConnectionPhase) => void>();
   let shellSubscriber: ((snapshot: OrchestrationShellSnapshot) => void) | null = null;
   let terminalMetadataSubscriber: ((event: TerminalMetadataStreamEvent) => void) | null = null;
   const subscribedThreadIds: string[] = [];
@@ -182,6 +191,13 @@ export function fakeClient({
   >();
   const client = {
     hostPlatform: "linux",
+    subscribeConnection: (onPhase: (phase: TuiConnectionPhase) => void) => {
+      connectionSubscribers.add(onPhase);
+      onPhase(connectionPhase);
+      return () => {
+        connectionSubscribers.delete(onPhase);
+      };
+    },
     browseFilesystem,
     discoverSourceControl,
     lookupRepository,
@@ -244,11 +260,19 @@ export function fakeClient({
   } as unknown as TuiClient;
   return {
     client,
-    connect: () => shellSubscriber?.(shellSnapshot),
+    connect: () => {
+      connectionPhase = "connected";
+      for (const onPhase of connectionSubscribers) onPhase(connectionPhase);
+      shellSubscriber?.(shellSnapshot);
+    },
     emitShell: (snapshot) => shellSubscriber?.(snapshot),
     subscribedThreadIds,
     emitTerminalMetadata: (event) => terminalMetadataSubscriber?.(event),
     emitThread: (next, page = { hasMore: false, loadingOlder: false }) =>
       threadSubscribers.get(next.id)?.(next, page),
+    emitConnection: (phase) => {
+      connectionPhase = phase;
+      for (const onPhase of connectionSubscribers) onPhase(phase);
+    },
   };
 }

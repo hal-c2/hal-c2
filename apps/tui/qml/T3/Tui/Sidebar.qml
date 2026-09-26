@@ -2,10 +2,13 @@ import OpenTUI
 
 // The thread list: a filter field over the rows of `Shell.state.sidebar`.
 // Typing filters (`sidebar.filter.set`), Enter keeps the filter
-// (`sidebar.filter.commit`); the shell's Esc clears it.
+// (`sidebar.filter.commit`); the shell's Esc clears it. Plugins fill the
+// "sidebar.footer" slot at the bottom; the "list" keymap moves the selection.
 Rectangle {
     id: bar
     property alias filter: filterInput
+    property alias footerMode: footerSlot.mode
+    property alias keymap: listKeymap
     // Bound by the shell to the host's mode, so the field follows the keys.
     property bool filterFocused: false
 
@@ -64,5 +67,25 @@ Rectangle {
         visible: bar.sidebar.rows.length === 0
         text: bar.sidebar.filter.length > 0 ? "No matching threads" : "No threads yet"
         color: Theme.colors.faint
+    }
+
+    Item { flexGrow: 1 }
+
+    Slot {
+        id: footerSlot
+        objectName: "sidebarFooterSlot"
+        name: "sidebar.footer"
+        flexDirection: "column"
+    }
+
+    Keymap {
+        id: listKeymap
+        objectName: "listKeymap"
+        name: "list"
+        bindings: ({ "j": "next", "k": "previous" })
+        handlers: ({
+            next: () => Shell.dispatch("thread.next"),
+            previous: () => Shell.dispatch("thread.previous")
+        })
     }
 }
