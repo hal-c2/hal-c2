@@ -589,7 +589,7 @@ defmodule HalC2.Vcs do
   # checkout's hal-c2.json, else every level.
   defp submodules(cwd, worktree) do
     HalC2.Settings.for_project(HalC2.Projects.at(cwd))["worktreeSubmodules"] ||
-      with {:ok, text} <- File.read(Path.join(worktree, "hal-c2.json")),
+      with {:ok, text} <- HalC2.ProjectFile.read(worktree),
            {:ok, %{"worktreeSubmodules" => mode}} <- JSON.decode(text) do
         mode
       else

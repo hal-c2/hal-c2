@@ -171,8 +171,16 @@ defmodule HalC2.Store do
   def put_meta(store \\ __MODULE__, key, value),
     do: GenServer.call(store, {:put_meta, key, value})
 
-  @doc "The node's database in its HAL-C2 home, which the application and mix tasks open."
-  def home_path, do: Path.join(Application.fetch_env!(:hal_c2, :home), "hal-c2.sqlite")
+  @doc """
+  The node's database in its HAL-C2 home, which the application and mix tasks open. A
+  home from before the rename keeps its `t3.sqlite`.
+  """
+  def home_path do
+    home = Application.fetch_env!(:hal_c2, :home)
+    path = Path.join(home, "hal-c2.sqlite")
+    legacy = Path.join(home, "t3.sqlite")
+    if not File.exists?(path) and File.exists?(legacy), do: legacy, else: path
+  end
 
   @doc "The store schema version this node writes; stores with a newer one are refused."
   def schema_version, do: @schema_version

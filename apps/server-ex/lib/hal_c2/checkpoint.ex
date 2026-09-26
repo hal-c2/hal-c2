@@ -15,6 +15,8 @@ defmodule HalC2.Checkpoint do
   alias HalC2.Orchestration.Entities
 
   @refs_prefix "refs/hal-c2/orchestration-v2/checkpoints"
+  # Where checkpoints taken before the rename live; recorded refs name them directly.
+  @legacy_refs_prefix "refs/t3/orchestration-v2/checkpoints"
   @diff_max_bytes 10_000_000
   @identity [
     {"GIT_AUTHOR_NAME", "HAL-C2"},
@@ -66,7 +68,7 @@ defmodule HalC2.Checkpoint do
     ref = ref(scope_id, ordinal)
 
     with true <- repo?(cwd),
-         false <- exists?(cwd, ref),
+         nil <- existing(cwd, ref),
          {:error, reason} <- capture(cwd, ref) do
       require Logger
       Logger.warning("checkpoint baseline failed in #{cwd}: #{inspect(reason)}")
@@ -81,7 +83,6 @@ defmodule HalC2.Checkpoint do
   """
   def capture_run(cwd, scope_id, ordinal, run_id, node_id, thread_id, at) do
     ref = ref(scope_id, ordinal)
-    previous = ref(scope_id, max(ordinal - 1, 0))
 
     {status, files} =
       cond do
@@ -91,7 +92,7 @@ defmodule HalC2.Checkpoint do
         capture(cwd, ref) != :ok ->
           {"error", []}
 
-        exists?(cwd, previous) ->
+        previous = existing(cwd, ref(scope_id, max(ordinal - 1, 0))) ->
           case git(
                  cwd,
                  ~w(diff --numstat -z --no-color --no-ext-diff --no-textconv) ++
@@ -131,7 +132,7 @@ defmodule HalC2.Checkpoint do
     repo = repo?(cwd)
 
     for n <- Enum.uniq([0, max(ordinal - 1, 0)]) do
-      ref = ref(scope_id, n)
+      found = repo && existing(cwd, ref(scope_id, n))
 
       %{
         "id" => checkpoint_id(scope_id, n),
@@ -142,8 +143,8 @@ defmodule HalC2.Checkpoint do
         "parentCheckpointId" => nil,
         "ordinalWithinScope" => n,
         "appRunOrdinal" => nil,
-        "ref" => ref,
-        "status" => if(repo and exists?(cwd, ref), do: "ready", else: "missing"),
+        "ref" => found || ref(scope_id, n),
+        "status" => if(found, do: "ready", else: "missing"),
         "files" => [],
         "capturedAt" => at
       }
@@ -214,8 +215,13 @@ defmodule HalC2.Checkpoint do
     state
     |> HalC2.StreamState.list("checkpoint-scope")
     |> Enum.filter(&(&1["kind"] == "root_run"))
-    |> Enum.map(&ref(&1["id"], 0))
-    |> Enum.find(&exists?(cwd, &1))
+    |> Enum.find_value(&existing(cwd, ref(&1["id"], 0)))
+  end
+
+  # A derived checkpoint ref as it exists in `cwd`, taken before the rename or since.
+  defp existing(cwd, ref) do
+    legacy = String.replace_prefix(ref, @refs_prefix, @legacy_refs_prefix)
+    Enum.find([ref, legacy], &exists?(cwd, &1))
   end
 
   defp diff_result(thread_id, from, to, diff),
@@ -288,7 +294,8 @@ defmodule HalC2.Checkpoint do
              {:ok, commit} <-
                git(
                  cwd,
-                 @durable ++ ["commit-tree", String.trim(tree), "-m", "hal-c2 checkpoint ref=#{ref}"],
+                 @durable ++
+                   ["commit-tree", String.trim(tree), "-m", "hal-c2 checkpoint ref=#{ref}"],
                  env: env
                ),
              {:ok, _} <- git(cwd, @durable ++ ["update-ref", ref, String.trim(commit)]) do

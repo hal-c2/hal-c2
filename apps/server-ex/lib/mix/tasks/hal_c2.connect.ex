@@ -47,7 +47,9 @@ defmodule Mix.Tasks.HalC2.Connect do
         disconnect(true)
 
       _ ->
-        Mix.raise("Usage: mix hal_c2.connect [login | link | status | unlink | logout] [--headless]")
+        Mix.raise(
+          "Usage: mix hal_c2.connect [login | link | status | unlink | logout] [--headless]"
+        )
     end
   end
 
@@ -60,11 +62,14 @@ defmodule Mix.Tasks.HalC2.Connect do
 
       if offer_service() do
         Mix.shell().info(
-          if match?({:unix, :darwin}, Application.get_env(:hal_c2, :service_platform, :os.type())),
-            do:
-              "\n✓ Background service ready\n\nHAL-C2 is set to run while you are logged in to this Mac. The server establishes the HAL-C2 Connect link on startup.",
-            else:
-              "\n✓ Background service ready\n\nHAL-C2 is set to keep running after you log out. The server establishes the HAL-C2 Connect link on startup."
+          if match?(
+               {:unix, :darwin},
+               Application.get_env(:hal_c2, :service_platform, :os.type())
+             ),
+             do:
+               "\n✓ Background service ready\n\nHAL-C2 is set to run while you are logged in to this Mac. The server establishes the HAL-C2 Connect link on startup.",
+             else:
+               "\n✓ Background service ready\n\nHAL-C2 is set to keep running after you log out. The server establishes the HAL-C2 Connect link on startup."
         )
       else
         Mix.shell().info(
@@ -237,10 +242,17 @@ defmodule Mix.Tasks.HalC2.Connect do
 
     next =
       cond do
-        not signed_in -> "Run `hal-c2 connect link` to authorize and enable HAL-C2 Connect."
-        not desired -> "Run `hal-c2 connect link` to enable HAL-C2 Connect."
-        not linked -> "Start HAL-C2 to provision the environment link and launch its managed tunnel."
-        true -> nil
+        not signed_in ->
+          "Run `hal-c2 connect link` to authorize and enable HAL-C2 Connect."
+
+        not desired ->
+          "Run `hal-c2 connect link` to enable HAL-C2 Connect."
+
+        not linked ->
+          "Start HAL-C2 to provision the environment link and launch its managed tunnel."
+
+        true ->
+          nil
       end
 
     Enum.join(
@@ -327,7 +339,7 @@ defmodule Mix.Tasks.HalC2.Connect do
   # operator, with a session minted from its store.
   defp live_unlink do
     base = "http://127.0.0.1:#{Application.get_env(:hal_c2, :port, 3780)}"
-    store = Path.join(Application.fetch_env!(:hal_c2, :home), "hal-c2.sqlite")
+    store = HalC2.Store.home_path()
 
     with {:ok, _} <-
            :httpc.request(
@@ -343,7 +355,8 @@ defmodule Mix.Tasks.HalC2.Connect do
              {~c"#{base}/oauth/token", [], ~c"application/x-www-form-urlencoded",
               URI.encode_query(%{
                 "grant_type" => "urn:ietf:params:oauth:grant-type:token-exchange",
-                "subject_token_type" => "urn:hal-c2:params:oauth:token-type:environment-bootstrap",
+                "subject_token_type" =>
+                  "urn:hal-c2:params:oauth:token-type:environment-bootstrap",
                 "subject_token" => credential,
                 "client_label" => "hal-c2 connect"
               })},

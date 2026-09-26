@@ -107,8 +107,10 @@ defmodule HalC2.Cluster do
   end
 
   defp revoked?(cert, dir) do
+    # Any `name@address` CN: certificates issued before the rename say `t3@address`.
     with {:ok, list} <- File.read(Path.join(dir, "revoked")),
-         ["hal_c2@" <> address] <- X509.Certificate.subject(cert, "CN") do
+         [name] <- X509.Certificate.subject(cert, "CN"),
+         [_, address] <- String.split(name, "@", parts: 2) do
       {:Validity, not_before, _} = X509.Certificate.validity(cert)
       issued = DateTime.to_unix(X509.DateTime.to_datetime(not_before)) + @backdate_seconds
 
