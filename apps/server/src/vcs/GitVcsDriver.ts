@@ -411,6 +411,14 @@ const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
+const CHECKPOINT_REF_NAMESPACE = "refs/hal-c2/";
+const LEGACY_CHECKPOINT_REF_NAMESPACE = "refs/t3/";
+
+/** The pre-rename location of a checkpoint ref, or null when it has none. */
+export const legacyCheckpointRef = (checkpointRef: string): string | null =>
+  checkpointRef.startsWith(CHECKPOINT_REF_NAMESPACE)
+    ? LEGACY_CHECKPOINT_REF_NAMESPACE + checkpointRef.slice(CHECKPOINT_REF_NAMESPACE.length)
+    : null;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -754,7 +762,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       ...(env !== undefined ? { env } : {}),
     }).pipe(Effect.map((result) => result.exitCode === 0));
 
-  const resolveCheckpointCommit = (cwd: string, checkpointRef: string) =>
+  const resolveRefCommit = (cwd: string, checkpointRef: string) =>
     execute({
       operation: "GitVcsDriver.checkpoints.resolveCheckpointCommit",
       cwd,
@@ -767,6 +775,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         }
         const commit = result.stdout.trim();
         return commit.length > 0 ? commit : null;
+      }),
+    );
+
+  // Checkpoints written before the rename live under refs/t3/. Reads of a
+  // refs/hal-c2/ ref fall back to that namespace; writes only use the new one.
+  const resolveCheckpointCommit = (cwd: string, checkpointRef: string) =>
+    resolveRefCommit(cwd, checkpointRef).pipe(
+      Effect.flatMap((commit) => {
+        const legacyRef = legacyCheckpointRef(checkpointRef);
+        return commit !== null || legacyRef === null
+          ? Effect.succeed(commit)
+          : resolveRefCommit(cwd, legacyRef);
       }),
     );
 
@@ -1153,15 +1173,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "checkpoint.fallback_from_to_head": input.fallbackFromToHead,
       });
 
-      let fromRevision: string = input.fromCheckpointRef;
+      const resolvedFromCommit = yield* resolveCheckpointCommit(input.cwd, input.fromCheckpointRef);
+      let fromRevision: string = resolvedFromCommit ?? input.fromCheckpointRef;
       if (input.fallbackFromToHead === true) {
-        const resolvedFromCommit = yield* resolveCheckpointCommit(
-          input.cwd,
-          input.fromCheckpointRef,
-        );
-        if (resolvedFromCommit) {
-          fromRevision = resolvedFromCommit;
-        } else {
+        if (!resolvedFromCommit) {
           const headCommit = yield* resolveHeadCommit(input.cwd);
           if (!headCommit) {
             return yield* new VcsProcessExitError({
@@ -1175,6 +1190,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           fromRevision = headCommit;
         }
       }
+      const toRevision =
+        (yield* resolveCheckpointCommit(input.cwd, input.toCheckpointRef)) ?? input.toCheckpointRef;
 
       const result = yield* execute({
         operation,
@@ -1188,7 +1205,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           ...PATCH_RENDER_PREFIX_ARGS,
           ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
           `${fromRevision}^{commit}`,
-          `${input.toCheckpointRef}^{commit}`,
+          `${toRevision}^{commit}`,
         ],
         allowNonZeroExit: true,
         maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
@@ -1211,7 +1228,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     deleteCheckpointRefs: Effect.fn("GitVcsDriver.checkpoints.deleteCheckpointRefs")(
       function* (input) {
         yield* Effect.forEach(
-          input.checkpointRefs,
+          input.checkpointRefs.flatMap((checkpointRef) => {
+            const legacyRef = legacyCheckpointRef(checkpointRef);
+            return legacyRef === null ? [checkpointRef] : [checkpointRef, legacyRef];
+          }),
           (checkpointRef) =>
             execute({
               operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",

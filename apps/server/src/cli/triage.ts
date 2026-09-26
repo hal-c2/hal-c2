@@ -16,7 +16,6 @@ import * as NodeReadlinePromises from "node:readline/promises";
 
 import { HostProcessArchitecture, HostProcessPlatform } from "@hal-c2/shared/hostProcess";
 import { isCommandAvailable, resolveSpawnCommand } from "@hal-c2/shared/shell";
-import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -28,7 +27,7 @@ import { Command, Flag } from "effect/unstable/cli";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
-import { resolveBaseDir } from "../os-jank.ts";
+import { configuredHalC2HomeFromEnv, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { baseDirFlag } from "./config.ts";
 import { resolveCliCommand } from "./invocation.ts";
@@ -169,8 +168,7 @@ export const triageCommand = Command.make("triage", {
       // --base-dir wins; HALC2_HOME is its documented env equivalent (same
       // precedence as `hal-c2 pair`).
       const explicitBaseDir = Option.getOrUndefined(flags.baseDir);
-      const envHome = yield* Config.String("HALC2_HOME").pipe(Config.option);
-      const baseDir = yield* resolveBaseDir(explicitBaseDir ?? Option.getOrUndefined(envHome));
+      const baseDir = yield* resolveBaseDir(explicitBaseDir ?? (yield* configuredHalC2HomeFromEnv));
       const paths = yield* ServerConfig.deriveServerPaths(baseDir, undefined, {});
 
       const now = yield* DateTime.now;

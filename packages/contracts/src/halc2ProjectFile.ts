@@ -8,6 +8,15 @@ import type { ProjectScopedServerSettingKey, ServerSettings } from "./settings.t
 /** File name of the checked-in HAL-C2 project file, resolved at the workspace root. */
 export const HALC2_PROJECT_FILE_NAME = "hal-c2.json";
 
+/** The project file name from before the rename; read only when `hal-c2.json` is absent. */
+export const LEGACY_PROJECT_FILE_NAME = "t3.json";
+
+/** Project file names in lookup order: the first one present wins. */
+export const HALC2_PROJECT_FILE_NAMES = [
+  HALC2_PROJECT_FILE_NAME,
+  LEGACY_PROJECT_FILE_NAME,
+] as const;
+
 /** Public URL of the published JSON Schema for {@link HalC2ProjectFile}. */
 export const HALC2_PROJECT_FILE_SCHEMA_URL = "https://hal-c2.example/schema/hal-c2.json";
 

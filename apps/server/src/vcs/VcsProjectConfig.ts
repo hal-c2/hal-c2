@@ -72,23 +72,27 @@ export const make = Effect.gen(function* () {
   const findConfigPath = Effect.fn("VcsProjectConfig.findConfigPath")(function* (cwd: string) {
     let current = cwd;
     while (true) {
-      const candidate = path.join(current, ".hal-c2", "vcs.json");
-      const exists = yield* fileSystem.exists(candidate).pipe(
-        Effect.mapError(
-          (cause) =>
-            new VcsProjectConfigError({
-              operation: "inspect",
-              cwd,
-              configPath: candidate,
-              cause,
-            }),
-        ),
-        Effect.catchTags({
-          VcsProjectConfigError: (error) => logVcsProjectConfigError(error).pipe(Effect.as(false)),
-        }),
-      );
-      if (exists) {
-        return Option.some(candidate);
+      // `.t3` is the directory name from before the rename; `.hal-c2` wins when both exist.
+      for (const directory of [".hal-c2", ".t3"]) {
+        const candidate = path.join(current, directory, "vcs.json");
+        const exists = yield* fileSystem.exists(candidate).pipe(
+          Effect.mapError(
+            (cause) =>
+              new VcsProjectConfigError({
+                operation: "inspect",
+                cwd,
+                configPath: candidate,
+                cause,
+              }),
+          ),
+          Effect.catchTags({
+            VcsProjectConfigError: (error) =>
+              logVcsProjectConfigError(error).pipe(Effect.as(false)),
+          }),
+        );
+        if (exists) {
+          return Option.some(candidate);
+        }
       }
 
       const parent = path.dirname(current);

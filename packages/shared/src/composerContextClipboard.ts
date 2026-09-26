@@ -38,7 +38,8 @@ export function decodeComposerContextClipboardHtml(
   // `encodeURIComponent` expands one non-ASCII code unit to up to nine characters, so a
   // fragment just under the limit must still survive the round trip through the attribute.
   if (!html || html.length > MAX_FRAGMENT_CHARS * 9 + HTML_WRAPPER_SLACK_CHARS) return null;
-  const encoded = /data-hal-c2-context-fragment=["']([^"']+)["']/.exec(html)?.[1];
+  // `data-t3-context-fragment` is the pre-rename attribute; it is read, never written.
+  const encoded = /data-(?:hal-c2|t3)-context-fragment=["']([^"']+)["']/.exec(html)?.[1];
   if (!encoded) return null;
   try {
     return decodeComposerContextFragment(decodeURIComponent(encoded));

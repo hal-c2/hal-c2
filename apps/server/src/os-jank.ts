@@ -6,8 +6,11 @@ import {
   readPathFromLaunchctl,
   resolveWindowsEnvironment,
 } from "@hal-c2/shared/shell";
+import { configuredHalC2Home, resolveHalC2Home } from "@hal-c2/shared/devHome";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as NodeOS from "node:os";
 
@@ -102,10 +105,29 @@ export const expandHomePath = Effect.fn(function* (input: string) {
   return input;
 });
 
+const optionalEnv = (name: string) =>
+  Config.String(name).pipe(Config.option, Config.map(Option.getOrUndefined));
+
+/**
+ * The base dir the environment names: `HALC2_HOME`, else the deprecated
+ * `T3CODE_HOME` (warned once). Undefined when neither is set.
+ */
+export const configuredHalC2HomeFromEnv = Effect.gen(function* () {
+  const env = yield* Config.all({
+    HALC2_HOME: optionalEnv("HALC2_HOME"),
+    T3CODE_HOME: optionalEnv("T3CODE_HOME"),
+  });
+  return yield* configuredHalC2Home(env);
+});
+
+/**
+ * An explicit base dir (flag or env, `~` expanded), or the default home:
+ * `~/.hal-c2`, falling back to an existing pre-rename `~/.t3`.
+ */
 export const resolveBaseDir = Effect.fn(function* (raw: string | undefined) {
-  const { join, resolve } = yield* Path.Path;
+  const { resolve } = yield* Path.Path;
   if (!raw || raw.trim().length === 0) {
-    return join(NodeOS.homedir(), ".hal-c2");
+    return yield* resolveHalC2Home({ env: {}, homeDir: NodeOS.homedir() });
   }
   return resolve(yield* expandHomePath(raw.trim()));
 });

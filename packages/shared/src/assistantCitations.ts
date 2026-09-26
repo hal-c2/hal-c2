@@ -8,11 +8,14 @@ import * as Schema from "effect/Schema";
 
 const CITATION_PROTOCOL = "hal-c2-citation:";
 const CITATION_HREF_PREFIX = `${CITATION_PROTOCOL}//v1/`;
+// Messages persisted before the rename quote with `t3-citation:` links; they are read, never written.
+const LEGACY_CITATION_PROTOCOL = "t3-citation:";
+const LEGACY_CITATION_HREF_PREFIX = `${LEGACY_CITATION_PROTOCOL}//v1/`;
 // Percent encoding needs up to nine characters per UTF-16 code unit; 16k covers selectors.
 const MAX_CITATION_HREF_LENGTH =
   9 * (ASSISTANT_CITATION_MAX_TEXT_LENGTH + ASSISTANT_CITATION_MAX_COMMENT_LENGTH) + 16_000;
 const CITATION_LINK = new RegExp(
-  String.raw`\[Assistant quote\]\((${CITATION_HREF_PREFIX}[^\s)]{1,${MAX_CITATION_HREF_LENGTH - CITATION_HREF_PREFIX.length}})\)`,
+  String.raw`\[Assistant quote\]\(((?:${CITATION_HREF_PREFIX}|${LEGACY_CITATION_HREF_PREFIX})[^\s)]{1,${MAX_CITATION_HREF_LENGTH - CITATION_HREF_PREFIX.length}})\)`,
   "g",
 );
 const decodeCitation = Schema.decodeUnknownOption(AssistantCitation);
@@ -51,14 +54,18 @@ export function formatAssistantCitationHref(citation: AssistantCitation): string
 }
 
 export function parseAssistantCitationHref(href: string): AssistantCitation | null {
-  if (!href.startsWith(CITATION_HREF_PREFIX) || href.length > MAX_CITATION_HREF_LENGTH) {
+  const legacy = href.startsWith(LEGACY_CITATION_HREF_PREFIX);
+  if (
+    (!legacy && !href.startsWith(CITATION_HREF_PREFIX)) ||
+    href.length > MAX_CITATION_HREF_LENGTH
+  ) {
     return null;
   }
   try {
     const url = new URL(href);
     const parts = url.pathname.slice(1).split("/");
     if (
-      url.protocol !== CITATION_PROTOCOL ||
+      url.protocol !== (legacy ? LEGACY_CITATION_PROTOCOL : CITATION_PROTOCOL) ||
       url.hostname !== "v1" ||
       parts.length !== 3 ||
       url.username ||

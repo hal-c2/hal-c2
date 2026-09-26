@@ -22,7 +22,6 @@ import {
   ensureTailscaleServe,
   readTailscaleStatus,
 } from "@hal-c2/tailscale";
-import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -36,7 +35,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
-import { resolveBaseDir } from "../os-jank.ts";
+import { configuredHalC2HomeFromEnv, resolveBaseDir } from "../os-jank.ts";
 import {
   type PersistedServerRuntimeState,
   isProcessAlive,
@@ -209,8 +208,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
     if (worktreeHome !== undefined) {
       bases.push(worktreeHome);
     }
-    const envHome = yield* Config.String("HALC2_HOME").pipe(Config.option);
-    bases.push(yield* resolveBaseDir(Option.getOrUndefined(envHome)));
+    bases.push(yield* resolveBaseDir(yield* configuredHalC2HomeFromEnv));
   }
 
   const checkedStatePaths: Array<string> = [];

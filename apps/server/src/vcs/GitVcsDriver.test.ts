@@ -1127,6 +1127,63 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+it.effect("reads, diffs, restores and deletes pre-rename checkpoints under refs/t3", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "hal-c2-legacy-checkpoint-" });
+    const git = (args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "legacy-checkpoint-test", cwd, args });
+    yield* git(["init"]);
+    yield* git(["config", "user.name", "Test"]);
+    yield* git(["config", "user.email", "test@test.com"]);
+    const filePath = path.join(cwd, "file.txt");
+    yield* fileSystem.writeFileString(filePath, "before\n");
+    yield* git(["add", "."]);
+    yield* git(["commit", "-m", "initial"]);
+
+    const oldRef = CheckpointRef.make("refs/hal-c2/checkpoints/thread/turn/0");
+    const newRef = CheckpointRef.make("refs/hal-c2/checkpoints/thread/turn/1");
+    const head = (yield* git(["rev-parse", "HEAD"])).stdout.trim();
+    yield* git(["update-ref", "refs/t3/checkpoints/thread/turn/0", head]);
+
+    assert.strictEqual(
+      GitVcsDriver.legacyCheckpointRef(oldRef),
+      "refs/t3/checkpoints/thread/turn/0",
+    );
+    assert.isNull(GitVcsDriver.legacyCheckpointRef("refs/heads/main"));
+    assert.isTrue(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef: oldRef }));
+
+    yield* fileSystem.writeFileString(filePath, "after\n");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: newRef });
+    const written = yield* git(["for-each-ref", "--format=%(refname)", "refs/"]);
+    assert.include(written.stdout, "refs/hal-c2/checkpoints/thread/turn/1");
+    assert.notInclude(written.stdout, "refs/t3/checkpoints/thread/turn/1");
+
+    const diff = yield* driver.checkpoints.diffCheckpoints({
+      cwd,
+      fromCheckpointRef: oldRef,
+      toCheckpointRef: newRef,
+      ignoreWhitespace: false,
+    });
+    assert.include(diff, "-before");
+    assert.include(diff, "+after");
+
+    assert.isTrue(
+      yield* driver.checkpoints.restoreCheckpoint({
+        cwd,
+        checkpointRef: oldRef,
+        fallbackToHead: false,
+      }),
+    );
+    assert.strictEqual(yield* fileSystem.readFileString(filePath), "before\n");
+
+    yield* driver.checkpoints.deleteCheckpointRefs({ cwd, checkpointRefs: [oldRef] });
+    assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef: oldRef }));
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
 it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
   let observedEnv: NodeJS.ProcessEnv | undefined;
   let observedAppendTruncationMarker: boolean | undefined;

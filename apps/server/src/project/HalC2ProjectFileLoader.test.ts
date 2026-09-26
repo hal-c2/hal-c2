@@ -20,10 +20,14 @@ const makeTempDir = Effect.gen(function* () {
   });
 });
 
-const writeProjectFile = Effect.fn("writeProjectFile")(function* (cwd: string, contents: string) {
+const writeProjectFile = Effect.fn("writeProjectFile")(function* (
+  cwd: string,
+  contents: string,
+  fileName = "hal-c2.json",
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  yield* fileSystem.writeFileString(path.join(cwd, "hal-c2.json"), contents).pipe(Effect.orDie);
+  yield* fileSystem.writeFileString(path.join(cwd, fileName), contents).pipe(Effect.orDie);
 });
 
 it.layer(TestLayer)("HalC2ProjectFileLoader", (it) => {
@@ -48,6 +52,31 @@ it.layer(TestLayer)("HalC2ProjectFileLoader", (it) => {
           expect(loaded.value.iconPath).toBe("assets/logo.svg");
           expect(loaded.value.scripts).toEqual([{ name: "Dev", command: "pnpm dev" }]);
         }
+      }),
+    );
+
+    it.effect("reads a pre-rename t3.json when hal-c2.json is missing", () =>
+      Effect.gen(function* () {
+        const loader = yield* HalC2ProjectFileLoader.HalC2ProjectFileLoader;
+        const cwd = yield* makeTempDir;
+        yield* writeProjectFile(cwd, `{ "iconPath": "legacy.svg" }`, "t3.json");
+
+        const loaded = yield* loader.load(cwd);
+
+        expect(Option.map(loaded, (file) => file.iconPath)).toEqual(Option.some("legacy.svg"));
+      }),
+    );
+
+    it.effect("prefers hal-c2.json over t3.json", () =>
+      Effect.gen(function* () {
+        const loader = yield* HalC2ProjectFileLoader.HalC2ProjectFileLoader;
+        const cwd = yield* makeTempDir;
+        yield* writeProjectFile(cwd, `{ "iconPath": "legacy.svg" }`, "t3.json");
+        yield* writeProjectFile(cwd, `{ "iconPath": "current.svg" }`);
+
+        const loaded = yield* loader.load(cwd);
+
+        expect(Option.map(loaded, (file) => file.iconPath)).toEqual(Option.some("current.svg"));
       }),
     );
 

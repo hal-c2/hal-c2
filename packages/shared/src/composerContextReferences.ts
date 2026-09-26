@@ -15,11 +15,14 @@ import {
 
 const CONTEXT_PROTOCOL = "hal-c2-context:";
 const COMPOSER_CONTEXT_HREF_PREFIX = `${CONTEXT_PROTOCOL}//v1/`;
+// Messages persisted before the rename carry `t3-context:` links; they are read, never written.
+const LEGACY_CONTEXT_PROTOCOL = "t3-context:";
+const LEGACY_COMPOSER_CONTEXT_HREF_PREFIX = `${LEGACY_CONTEXT_PROTOCOL}//v1/`;
 const CONTEXT_KIND_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
 const CONTEXT_ID_PATTERN = /^[a-z0-9_-]{1,128}$/i;
 const MAX_LINK_LABEL_LENGTH = 512;
 const CONTEXT_LINK = new RegExp(
-  String.raw`(!?)\[([^\]\n]{0,${MAX_LINK_LABEL_LENGTH}})\]\((${COMPOSER_CONTEXT_HREF_PREFIX}[^\s)]{1,200})\)`,
+  String.raw`(!?)\[([^\]\n]{0,${MAX_LINK_LABEL_LENGTH}})\]\(((?:${COMPOSER_CONTEXT_HREF_PREFIX}|${LEGACY_COMPOSER_CONTEXT_HREF_PREFIX})[^\s)]{1,200})\)`,
   "g",
 );
 
@@ -30,8 +33,13 @@ export function formatComposerContextHref(kind: ComposerContextKind, contextId: 
 export function parseComposerContextHref(
   href: string,
 ): { kind: ComposerContextKind; contextId: ComposerContextId } | null {
-  if (!href.startsWith(COMPOSER_CONTEXT_HREF_PREFIX)) return null;
-  const rest = href.slice(COMPOSER_CONTEXT_HREF_PREFIX.length);
+  const prefix = href.startsWith(COMPOSER_CONTEXT_HREF_PREFIX)
+    ? COMPOSER_CONTEXT_HREF_PREFIX
+    : href.startsWith(LEGACY_COMPOSER_CONTEXT_HREF_PREFIX)
+      ? LEGACY_COMPOSER_CONTEXT_HREF_PREFIX
+      : null;
+  if (prefix === null) return null;
+  const rest = href.slice(prefix.length);
   const parts = rest.split("/");
   if (parts.length !== 2) return null;
   const [kind, contextId] = parts as [string, string];
@@ -76,7 +84,9 @@ export function collectComposerContextReferences(
   const occurrences: ComposerContextReferenceOccurrence[] = [];
   // No link can match without the protocol prefix; skip the scan entirely on
   // plain prose so long messages never pay for a regex walk per `[`.
-  if (!text.includes("](hal-c2-context:")) return occurrences;
+  if (!text.includes(`](${CONTEXT_PROTOCOL}`) && !text.includes(`](${LEGACY_CONTEXT_PROTOCOL}`)) {
+    return occurrences;
+  }
   for (const match of text.matchAll(CONTEXT_LINK)) {
     const parsed = parseComposerContextHref(match[3]!);
     if (!parsed) continue;

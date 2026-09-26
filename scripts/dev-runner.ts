@@ -5,11 +5,17 @@ import * as NodeOS from "node:os";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@hal-c2/shared/Net";
-import { resolveGitWorktreePath, resolveWorktreeHalC2Home } from "@hal-c2/shared/devHome";
+import {
+  configuredHalC2Home,
+  resolveGitWorktreePath,
+  resolveHalC2Home,
+  resolveWorktreeHalC2Home,
+} from "@hal-c2/shared/devHome";
 import { HostProcessEnvironment, HostProcessWorkingDirectory } from "@hal-c2/shared/hostProcess";
 import { resolveSpawnCommand } from "@hal-c2/shared/shell";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Hash from "effect/Hash";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -67,9 +73,8 @@ export function isProxiableBindHost(host: string): boolean {
   );
 }
 
-export const DEFAULT_HALC2_HOME = Effect.map(Effect.service(Path.Path), (path) =>
-  path.join(NodeOS.homedir(), ".hal-c2"),
-);
+/** `~/.hal-c2`, or an existing pre-rename `~/.t3` (see @hal-c2/shared/devHome). */
+export const DEFAULT_HALC2_HOME = resolveHalC2Home({ env: {}, homeDir: NodeOS.homedir() });
 
 const MODE_ARGS = {
   dev: [
@@ -266,7 +271,9 @@ export function resolveOffset(config: {
   return Effect.succeed({ offset: 0, source: "default ports" });
 }
 
-function resolveBaseDir(baseDir: string | undefined): Effect.Effect<string, never, Path.Path> {
+function resolveBaseDir(
+  baseDir: string | undefined,
+): Effect.Effect<string, never, FileSystem.FileSystem | Path.Path> {
   return Effect.gen(function* () {
     const path = yield* Path.Path;
     const configured = baseDir?.trim();
@@ -305,7 +312,11 @@ export function createDevRunnerEnv({
   host,
   port,
   devUrl,
-}: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, never, Path.Path> {
+}: CreateDevRunnerEnvInput): Effect.Effect<
+  NodeJS.ProcessEnv,
+  never,
+  FileSystem.FileSystem | Path.Path
+> {
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
@@ -328,6 +339,8 @@ export function createDevRunnerEnv({
     } else {
       delete output.HALC2_HOME;
     }
+    // The caller already folded a legacy T3CODE_HOME into halc2Home.
+    delete output.T3CODE_HOME;
 
     // A dev-runner server is never launcher-managed. When the shell that runs
     // this script was itself spawned by the machine's managed hal-c2 service (an
@@ -674,7 +687,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     const resolvedHalC2Home =
       (input.halc2Home?.trim() || undefined) ??
       worktreeHome ??
-      (hostEnvironment.HALC2_HOME?.trim() || undefined);
+      (yield* configuredHalC2Home(hostEnvironment));
     const env = yield* createDevRunnerEnv({
       mode: input.mode,
       baseEnv: hostEnvironment,

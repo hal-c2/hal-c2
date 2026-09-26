@@ -59,6 +59,16 @@ describe("assistant citation references", () => {
     expect(serializeAssistantCitation(legacyCitation)).toBe(`[Assistant quote](${legacyHref})`);
   });
 
+  it("reads pre-rename t3-citation links but writes only hal-c2-citation", () => {
+    const preRenameHref = legacyHref.replace("hal-c2-citation:", "t3-citation:");
+    expect(parseAssistantCitationHref(preRenameHref)).toStrictEqual(legacyCitation);
+    const marker = `[Assistant quote](${preRenameHref})`;
+    expect(collectAssistantCitations(`About ${marker}.`)).toEqual([
+      { citation: legacyCitation, source: marker, start: 6, end: 6 + marker.length },
+    ]);
+    expect(serializeAssistantCitation(legacyCitation)).toBe(`[Assistant quote](${legacyHref})`);
+  });
+
   it("round-trips complete quote data without a server origin", () => {
     const href = formatAssistantCitationHref(citation);
     expect(parseAssistantCitationHref(href)).toEqual(citation);

@@ -2,6 +2,9 @@
  * HalC2ProjectFileLoader - Effect service that loads the checked-in `hal-c2.json`
  * project file from a workspace root.
  *
+ * A repository that still only has the pre-rename `t3.json` is read from that
+ * file instead; `hal-c2.json` wins when both exist.
+ *
  * Loading is best-effort: a missing file resolves to `Option.none`, and
  * unreadable or invalid files are logged and treated as absent so callers
  * can fall back to their defaults.
@@ -16,7 +19,11 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { HALC2_PROJECT_FILE_NAME, type HalC2ProjectFile } from "@hal-c2/contracts";
+import {
+  HALC2_PROJECT_FILE_NAME,
+  HALC2_PROJECT_FILE_NAMES,
+  type HalC2ProjectFile,
+} from "@hal-c2/contracts";
 import { HalC2ProjectFileFromJson } from "@hal-c2/shared/halc2ProjectFile";
 
 const decodeHalC2ProjectFileJson = Schema.decodeEffect(HalC2ProjectFileFromJson);
@@ -31,7 +38,7 @@ export class HalC2ProjectFileLoadError extends Schema.TaggedError<HalC2ProjectFi
   },
 ) {
   override get message(): string {
-    return `Failed to ${this.operation} ${HALC2_PROJECT_FILE_NAME} at ${this.filePath}.`;
+    return `Failed to ${this.operation} project file at ${this.filePath}.`;
   }
 }
 
@@ -66,23 +73,33 @@ export const make = Effect.gen(function* () {
 
   const load: HalC2ProjectFileLoader["Service"]["load"] = Effect.fn("HalC2ProjectFileLoader.load")(
     function* (workspaceRoot) {
-      const filePath = path.join(workspaceRoot, HALC2_PROJECT_FILE_NAME);
-      const raw = yield* fileSystem.readFileString(filePath).pipe(
-        Effect.map(Option.some),
-        Effect.catchTags({
-          PlatformError: (error) =>
-            error.reason._tag === "NotFound"
-              ? Effect.succeed(Option.none<string>())
-              : logHalC2ProjectFileLoadError(
-                  new HalC2ProjectFileLoadError({
-                    operation: "read",
-                    workspaceRoot,
-                    filePath,
-                    cause: error,
-                  }),
-                ).pipe(Effect.as(Option.none<string>())),
-        }),
-      );
+      let filePath = path.join(workspaceRoot, HALC2_PROJECT_FILE_NAME);
+      let raw = Option.none<string>();
+      for (const fileName of HALC2_PROJECT_FILE_NAMES) {
+        filePath = path.join(workspaceRoot, fileName);
+        const read = yield* fileSystem.readFileString(filePath).pipe(
+          Effect.map((contents) => ({ found: true as const, contents: Option.some(contents) })),
+          Effect.catchTags({
+            PlatformError: (error) =>
+              error.reason._tag === "NotFound"
+                ? Effect.succeed({ found: false as const, contents: Option.none<string>() })
+                : logHalC2ProjectFileLoadError(
+                    new HalC2ProjectFileLoadError({
+                      operation: "read",
+                      workspaceRoot,
+                      filePath,
+                      cause: error,
+                    }),
+                  ).pipe(Effect.as({ found: true as const, contents: Option.none<string>() })),
+          }),
+        );
+        // Only a missing file falls through: an unreadable hal-c2.json must not
+        // silently hand the project to a stale t3.json.
+        if (read.found) {
+          raw = read.contents;
+          break;
+        }
+      }
       if (Option.isNone(raw)) {
         return Option.none<HalC2ProjectFile>();
       }

@@ -70,7 +70,8 @@ jobs:
 
           base_version="$(node -p "require('./apps/desktop/package.json').version")"
           node scripts/update-release-package-versions.ts "${base_version}-pr.${PR_NUMBER}.${GITHUB_RUN_NUMBER}"
-          # Public HAL-C2 Connect identifiers (Clerk publishable key, relay URL).
+          # HAL-C2 Connect identifiers (Clerk publishable key, relay URL); empty
+          # in .env.example until a fork fills in its own Clerk and relay.
           cp .env.example .env
 
       - uses: ./.github/actions/setup-apt-mirrors

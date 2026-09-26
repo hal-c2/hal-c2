@@ -1103,12 +1103,16 @@ export function extractMcpToolCallIdentity(
   ].filter((value): value is string => typeof value === "string");
   for (const candidate of candidates) {
     const trimmed = candidate.trim();
-    const match =
-      HALC2_MCP_TITLE_CALL.exec(trimmed) ??
-      HALC2_MCP_TITLE_SUFFIX_CALL.exec(trimmed) ??
-      HALC2_MCP_BARE_TITLE_CALL.exec(trimmed);
-    const candidateTool = match?.groups?.tool;
-    if (candidateTool !== undefined && HALC2_MCP_TOOL_NAMES.has(candidateTool)) {
+    // Tool names start with `halc2_`, which the server-prefix pattern would
+    // also strip, so take the first pattern that yields a known tool.
+    const candidateTool = [
+      HALC2_MCP_TITLE_CALL,
+      HALC2_MCP_TITLE_SUFFIX_CALL,
+      HALC2_MCP_BARE_TITLE_CALL,
+    ]
+      .map((pattern) => pattern.exec(trimmed)?.groups?.tool)
+      .find((tool) => tool !== undefined && HALC2_MCP_TOOL_NAMES.has(tool));
+    if (candidateTool !== undefined) {
       return { server: "hal-c2", tool: candidateTool };
     }
   }

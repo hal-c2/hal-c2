@@ -249,7 +249,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         color: "violet",
       });
 
-      for (const text of ["HAL-C2", "e\u0301", "किखि", "क्ष्म", "\u1100\u1161\u11a8"]) {
+      for (const text of ["C2", "e\u0301", "किखि", "क्ष्म", "\u1100\u1161\u11a8"]) {
         const monogram = { kind: "monogram", text, color: "violet" } as const;
         const result = yield* decideOrchestrationCommand({
           command: {

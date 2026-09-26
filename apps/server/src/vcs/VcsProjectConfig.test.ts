@@ -54,6 +54,28 @@ describe("VcsProjectConfig", () => {
     );
   });
 
+  it.layer(TestLayer)("still reads a pre-rename .t3/vcs.json", (it) => {
+    it.effect("returns the legacy configured kind", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "hal-c2-vcs-config-test-",
+        });
+        const configDir = path.join(root, ".t3");
+        yield* fileSystem.makeDirectory(configDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(configDir, "vcs.json"),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          JSON.stringify({ vcs: { kind: "jj" } }),
+        );
+
+        const config = yield* VcsProjectConfig.VcsProjectConfig;
+        assert.equal(yield* config.resolveKind({ cwd: root }), "jj");
+      }),
+    );
+  });
+
   it.layer(TestLayer)("continues to parent configs after a candidate inspect failure", (it) => {
     it.effect("logs the failed candidate and returns the parent config", () => {
       const messages: unknown[] = [];

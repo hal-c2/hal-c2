@@ -307,13 +307,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       assert.deepStrictEqual(latestConfig, {
         provider: "github",
-        owner: "pingdotgg",
+        owner: "hal-c2",
         repo: "hal-c2",
         releaseType: "release",
       });
       assert.deepStrictEqual(nightlyConfig, {
         provider: "github",
-        owner: "pingdotgg",
+        owner: "hal-c2",
         repo: "hal-c2",
         releaseType: "prerelease",
         channel: "nightly",
@@ -357,7 +357,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",
-          owner: "pingdotgg",
+          owner: "hal-c2",
           repo: "hal-c2",
           releaseType: "release",
         },

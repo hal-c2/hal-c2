@@ -118,7 +118,7 @@ export const SHOWCASE_PROJECTS = [
     title: "HAL-C2",
     directory: "hal-c2",
     repositoryUrl: "https://github.com/hal-c2/hal-c2.git",
-    favicon: PROJECT_FAVICONS.hal - c2,
+    favicon: PROJECT_FAVICONS["hal-c2"],
   },
   {
     id: "react",
@@ -298,7 +298,7 @@ async function seedHalC2Workspace(workspaceRoot: string): Promise<void> {
     NodePath.join(workspaceRoot, "package.json"),
     `${JSON.stringify({ name: "hal-c2", private: true, scripts: { test: "vp test" } }, null, 2)}\n`,
   );
-  await NodeFSP.writeFile(NodePath.join(workspaceRoot, "favicon.svg"), PROJECT_FAVICONS.hal - c2);
+  await NodeFSP.writeFile(NodePath.join(workspaceRoot, "favicon.svg"), PROJECT_FAVICONS["hal-c2"]);
   await NodeFSP.writeFile(
     NodePath.join(workspaceRoot, "apps/mobile/src/features/home/environmentPresence.ts"),
     BASE_ENVIRONMENT_PRESENCE,
