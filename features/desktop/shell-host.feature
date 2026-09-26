@@ -3,7 +3,7 @@
 #   apps/desktop-qt/host/main.test.ts (these scenarios, by name, against a fake node)
 #   apps/desktop-qt/src/BackendProcess.cpp (host process, ready/error lines, stdin close on exit)
 #   apps/desktop-qt/src/main.cpp (--url attach mode, --home-dir, --screenshot scripted runs)
-#   apps/desktop-qt/src/WebProfile.cpp (Chromium flags for a run without a display)
+#   apps/desktop-qt/src/WebProfile.cpp (software rendering for a run without a display)
 #   apps/server-ex/lib/hal_c2/desktop.ex (bootstrap line on standard input)
 #   apps/web/src/components/auth/PairingRouteSurface.tsx (hosted pairing route, auto=1)
 #   docs/internals/desktop-qt.md (process model)
