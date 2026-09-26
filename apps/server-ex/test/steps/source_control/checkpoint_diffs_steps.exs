@@ -88,7 +88,8 @@ defmodule T3.Steps.SourceControl.CheckpointDiffs do
   end
 
   step "there is one checkpoint for each of the {int} turns", %{args: [n]} = context do
-    turns = Enum.filter(context.checkpoints, &(&1["appRunOrdinal"] > 0))
+    # The baselines before a run (the checkout before turn 1) belong to no turn.
+    turns = Enum.filter(context.checkpoints, &is_integer(&1["appRunOrdinal"]))
     assert Enum.map(turns, & &1["appRunOrdinal"]) == Enum.to_list(1..n)
 
     for checkpoint <- turns do

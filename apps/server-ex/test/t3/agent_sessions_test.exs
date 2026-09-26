@@ -123,14 +123,22 @@ defmodule T3.AgentSessionsTest do
     assert {:ok, %{"importedCount" => 2, "skippedCount" => 0}} =
              AgentSessions.import_project(%{"projectId" => "p1", "expectedWorkspaceRoot" => app})
 
-    # The wizard imports right after creating a project, before its sidebar row.
-    # These sessions already belong to p1, so they stay there.
-    {:ok, _} =
-      T3.Projects.mutate(%{
-        "type" => "project.create",
-        "projectId" => "p2",
-        "workspaceRoot" => app
-      })
+    # These sessions already belong to p1, so they stay there when a second project
+    # on the same folder imports. `project.create` refuses a folder another project
+    # owns, so p2 is stored as data, as a database imported from the Node server can hold.
+    at = T3.Orchestration.Entities.now()
+
+    p2 = %{
+      "id" => "p2",
+      "title" => "app",
+      "workspaceRoot" => app,
+      "scripts" => [],
+      "createdAt" => at,
+      "updatedAt" => at,
+      "deletedAt" => nil
+    }
+
+    {:ok, _} = T3.Streams.commit("p2", :project, [{"project", "p2", T3.Patch.diff(nil, p2)}])
 
     assert {:ok, %{"importedCount" => 0, "skippedCount" => 2}} =
              AgentSessions.import_project(%{"projectId" => "p2"})

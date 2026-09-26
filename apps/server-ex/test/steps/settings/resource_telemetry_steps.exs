@@ -88,7 +88,9 @@ defmodule T3.Steps.Settings.ResourceTelemetry do
     assert %{"source" => "unknown", "onBattery" => "unknown", "stale" => true} = snapshot["power"]
     assert snapshot["health"]["desktop"]["status"] == "unavailable"
     assert snapshot["processes"] != []
-    assert Enum.all?(snapshot["processes"], &(&1["ioSemantics"] == "unavailable"))
+    # Application I/O is the instrumented, per-operation attribution. The storage
+    # counters each process reports from /proc/<pid>/io are separate
+    # (node/platform/diagnostics.feature, "The node reports per-process I/O").
     assert snapshot["attribution"]["entries"] == []
     context
   end
