@@ -40,8 +40,9 @@ running dev server; this is what `vp run dev:qt` uses.
 
 - **One profile.** `src/WebProfile.cpp` configures Qt WebEngine's default
   profile and registers it as the `WebProfile` singleton: storage and a 64 MiB
-  disk HTTP cache under `shell-web` in the cache directory (`~/.cache/hal-c2/shell-web`, or
-  `<root>/cache/shell-web` under `--home-dir` or `HAL_C2_HOME`), cookies forced persistent, permissions stored.
+  disk HTTP cache under `<cache>/shell-web` (`~/.cache/hal-c2/shell-web`, or
+  `<root>/cache/shell-web` under `--home-dir` or `HAL_C2_HOME`; see
+  `src/StoragePaths.h`), cookies forced persistent, permissions stored.
   Every `WebSurface` shares it, so the embed surfaces reuse the primary's
   session and the bundle comes from cache on the next start. Chromium cannot
   share a profile directory between processes: a second shell on the same
@@ -139,10 +140,12 @@ vp run dev        # terminal 1: server + web (single origin)
 vp run dev:qt     # terminal 2: cmake configure/build, `hal-c2 pair`, launch with --url
 ```
 
-`dev:qt` resolves its directories the way `vp run dev` does (`--home-dir`,
-else the worktree's own `.hal-c2`, else `HAL_C2_HOME`, else the XDG directories), pairs with
-the server running there, and launches the shell on the same directories so it
-rices from the matching `config/shell/`. Pass the same
+`dev:qt` resolves the root the way `vp run dev` does (`--home-dir`, else the
+worktree's own `.hal-c2`, else `HAL_C2_HOME`), pairs with the server running
+there, and launches the shell with that root as its `HAL_C2_HOME` so it rices
+from the matching `config/shell/`. With no root, `hal-c2 pair` finds the dev
+server in the XDG directories and the shell rices from
+`~/.config/hal-c2/shell/`. Pass the same
 `--home-dir` to both commands if you set one. Its other flags are `--url` (skip
 pairing), `--release` (no disk QML loading) and `--configure-only` (build, do
 not launch); everything else is forwarded to the binary, so
@@ -164,10 +167,13 @@ apart, so a key test can open a thread first); env `HAL_C2_HOME`,
 
 ## Ricing contract
 
-Config dir: `shell/` in the config directory, so `~/.config/hal-c2/shell/` by
-default (`%APPDATA%\hal-c2\config\shell\` on Windows) and
-`<worktree>/.hal-c2/config/shell/` for a sandboxed dev run; `--config-dir`
-overrides it.
+Config dir: `<config>/shell/`, so `~/.config/hal-c2/shell/` by default on Linux
+and macOS (`XDG_CONFIG_HOME` moves it), `%APPDATA%\hal-c2\config\shell\` on
+Windows, and `<root>/config/shell/` under `--home-dir`, `HAL_C2_HOME` or a
+sandboxed dev run's `<worktree>/.hal-c2`; `--config-dir` overrides just this
+directory. The shell creates it at startup and watches it, so a shell the hosted
+server migrates from an old `~/.hal-c2/shell/` or `~/.t3/shell/` loads without a
+restart.
 
 ### `theme.json`
 

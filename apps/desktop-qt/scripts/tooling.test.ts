@@ -75,3 +75,37 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
     },
   );
 });
+
+describe.skipIf(platform === "win32")("theme-from-terminal output", () => {
+  it("writes into the shell's config dir: root, then HAL_C2_HOME, then XDG", async () => {
+    const {
+      resolveOutput,
+    }: {
+      resolveOutput: (
+        argument: string | undefined,
+        env: Record<string, string>,
+        root: string | null,
+      ) => string;
+    } = await import(new URL("./theme-from-terminal.mjs", import.meta.url).href);
+    const home = NodeOS.homedir();
+    expect(resolveOutput(undefined, {}, null)).toBe(
+      NodePath.join(home, ".config/hal-c2/shell/theme.json"),
+    );
+    expect(resolveOutput(undefined, { XDG_CONFIG_HOME: "/xdg/config" }, null)).toBe(
+      "/xdg/config/hal-c2/shell/theme.json",
+    );
+    expect(resolveOutput(undefined, { XDG_CONFIG_HOME: "config" }, null)).toBe(
+      NodePath.join(home, ".config/hal-c2/shell/theme.json"),
+    );
+    expect(resolveOutput(undefined, { HAL_C2_HOME: "/srv/hal-c2" }, null)).toBe(
+      "/srv/hal-c2/config/shell/theme.json",
+    );
+    expect(resolveOutput(undefined, { HAL_C2_HOME: NodePath.join(home, ".hal-c2") }, null)).toBe(
+      NodePath.join(home, ".config/hal-c2/shell/theme.json"),
+    );
+    expect(resolveOutput(undefined, { HAL_C2_HOME: "/srv/hal-c2" }, "/tmp/sandbox")).toBe(
+      "/tmp/sandbox/config/shell/theme.json",
+    );
+    expect(resolveOutput("/elsewhere/rice.json", {}, null)).toBe("/elsewhere/rice.json");
+  });
+});

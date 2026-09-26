@@ -5,11 +5,13 @@
  *   3. launch hal-c2-qt --url <pairing url>
  *
  * Flags the script consumes:
- *   --home-dir <dir>   HAL-C2 data directory of the dev server to pair with (same
- *                      as `vp run dev --home-dir`). Also becomes the shell's
- *                      HAL_C2_HOME so it rices from <dir>/shell. Defaults to the
- *                      worktree's own .hal-c2, then HAL_C2_HOME, then ~/.hal-c2 — the
- *                      precedence `vp run dev` and `hal-c2 pair` use.
+ *   --home-dir <dir>   root of the dev server to pair with (same as
+ *                      `vp run dev --home-dir`). Also becomes the shell's
+ *                      HAL_C2_HOME so it rices from <dir>/config/shell. Defaults to
+ *                      the worktree's own .hal-c2, then HAL_C2_HOME; with neither,
+ *                      `hal-c2 pair` finds the dev server in the XDG directories and
+ *                      the shell rices from ~/.config/hal-c2/shell — the precedence
+ *                      `vp run dev` and `hal-c2 pair` use.
  *   --url <url>        skip pairing and load this URL
  *   --release          build with CMAKE_BUILD_TYPE=Release (no disk QML loading)
  *   --configure-only   stop after the CMake build
@@ -26,7 +28,10 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import { halC2HomeRoot, resolveHalC2Dirs } from "@hal-c2/shared/xdgDirs";
+
 import { findPairingUrl } from "../host/pairingUrl.ts";
+import { resolveWorktreeHome } from "./worktreeHome.mjs";
 
 const appDir = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 const serverBin = NodePath.resolve(appDir, "../server/src/bin.ts");
@@ -41,7 +46,7 @@ function usage() {
     [
       "Usage: vp run dev:qt [--home-dir <dir>] [--url <url>] [--release] [--configure-only] [-- <hal-c2-qt args>]",
       "",
-      "  --home-dir <dir>   data directory of the dev server to pair with (as `vp run dev --home-dir`)",
+      "  --home-dir <dir>   root of the dev server to pair with (as `vp run dev --home-dir`)",
       "  --url <url>        skip pairing and load this URL",
       "  --release          Release build (no disk QML loading)",
       "  --configure-only   build, do not launch",
@@ -131,51 +136,47 @@ function expandHome(raw) {
 }
 
 /**
- * The worktree-local `.hal-c2` when this checkout is a linked git worktree, else
- * undefined. Mirrors `resolveWorktreeHalC2Home` in packages/shared/devHome:
- * git puts a linked worktree's git dir at `<common-dir>/worktrees/<name>`.
+ * `--home-dir` > worktree `.hal-c2` > `HAL_C2_HOME`, as `vp run dev` and `hal-c2 pair`
+ * resolve it. Undefined means no root: the dev server lives in the XDG directories.
  */
-function resolveWorktreeHome() {
-  const gitDir = capture("git", ["-C", appDir, "rev-parse", "--absolute-git-dir"]);
-  const topLevel = capture("git", ["-C", appDir, "rev-parse", "--show-toplevel"]);
-  if (gitDir === undefined || topLevel === undefined) return undefined;
-  const segments = gitDir.split(/[/\\]/).filter((segment) => segment.length > 0);
-  const isLinkedWorktree = segments.length >= 3 && segments.at(-2) === "worktrees";
-  return isLinkedWorktree ? NodePath.join(topLevel, ".hal-c2") : undefined;
-}
-
-/** `--home-dir` > worktree `.hal-c2` > `HAL_C2_HOME` > `~/.hal-c2`, as `vp run dev` and `hal-c2 pair` resolve it. */
-function resolveHomeDir() {
+function resolveRoot() {
   const explicit = options.homeDir ?? "";
   if (explicit.trim().length > 0) return NodePath.resolve(expandHome(explicit));
-  const worktreeHome = resolveWorktreeHome();
+  const worktreeHome = resolveWorktreeHome(appDir);
   if (worktreeHome !== undefined) return worktreeHome;
-  const fromEnv = process.env.HAL_C2_HOME ?? "";
-  if (fromEnv.trim().length > 0) return NodePath.resolve(expandHome(fromEnv));
-  const shared = NodePath.join(NodeOS.homedir(), ".hal-c2");
-  refuseLiveInstall(shared);
-  return shared;
+  const root = halC2HomeRoot({
+    env: process.env,
+    homeDir: NodeOS.homedir(),
+    // oxlint-disable-next-line hal-c2/no-global-process-runtime -- Standalone dev script has no Effect runtime.
+    platform: NodeOS.platform(),
+  });
+  if (root !== undefined) return root;
+  refuseLiveInstall();
+  return undefined;
 }
 
 /**
- * `pair --base-dir ~/.hal-c2` probes `userdata` (the installed app's database)
- * before `dev` (what a plain-checkout `vp run dev` serves). Pairing must never
- * mint a token into the live install, so bail out while that app is running.
+ * Without a root, `hal-c2 pair` probes the installed app's directories before the
+ * development ones. Pairing must never mint a token into the live install, so bail
+ * out while that app is running.
  */
-function refuseLiveInstall(sharedHome) {
-  const userdata = NodePath.join(sharedHome, "userdata");
+function refuseLiveInstall() {
+  const { state } = resolveHalC2Dirs({
+    env: process.env,
+    homeDir: NodeOS.homedir(),
+    // oxlint-disable-next-line hal-c2/no-global-process-runtime -- Standalone dev script has no Effect runtime.
+    platform: NodeOS.platform(),
+  });
   let pid;
   try {
-    pid = JSON.parse(
-      NodeFS.readFileSync(NodePath.join(userdata, "server-runtime.json"), "utf8"),
-    ).pid;
+    pid = JSON.parse(NodeFS.readFileSync(NodePath.join(state, "server-runtime.json"), "utf8")).pid;
     if (typeof pid !== "number") return;
     process.kill(pid, 0);
   } catch {
     return;
   }
   fail(
-    `the installed HAL-C2 app is running against ${userdata}; pairing here would target it instead of your dev server. Pass --url <pairing url from vp run dev>, or run from a worktree / with --home-dir.`,
+    `the installed HAL-C2 app is running from ${state}; pairing here would target it instead of your dev server. Pass --url <pairing url from vp run dev>, or run from a worktree / with --home-dir.`,
   );
 }
 
@@ -208,10 +209,10 @@ function binaryPath() {
   return found ?? fail(`built binary not found under ${buildDir}`);
 }
 
-function pairWithDevServer(homeDir) {
+function pairWithDevServer(root) {
   const result = NodeChildProcess.spawnSync(
     process.execPath,
-    [serverBin, "pair", "--base-dir", homeDir],
+    [serverBin, "pair", ...(root === undefined ? [] : ["--base-dir", root])],
     { cwd: appDir, encoding: "utf8" },
   );
   const url = findPairingUrl(`${result.stdout}\n${result.stderr}`);
@@ -220,23 +221,23 @@ function pairWithDevServer(homeDir) {
   // checked) through the Effect logger, i.e. on stdout.
   process.stderr.write(`${result.stdout}${result.stderr}`.trim() + "\n");
   return fail(
-    `no running dev server under ${homeDir}. Start \`vp run dev\` in another terminal first (same --home-dir), or pass --url <pairing url>.`,
+    `no running dev server ${root === undefined ? "in the XDG directories" : `under ${root}`}. Start \`vp run dev\` in another terminal first (same --home-dir), or pass --url <pairing url>.`,
   );
 }
 
 build();
 if (options.configureOnly) process.exit(0);
 
-const homeDir = resolveHomeDir();
-const url = options.url ?? pairWithDevServer(homeDir);
+const root = resolveRoot();
+const url = options.url ?? pairWithDevServer(root);
 const binary = binaryPath();
 const binaryArgs = ["--url", url, ...shellArgs];
-process.stderr.write(`[dev-qt] home ${homeDir}\n`);
+process.stderr.write(`[dev-qt] root ${root ?? "none (XDG directories)"}\n`);
 process.stderr.write(`[dev-qt] launching ${binary} ${binaryArgs.join(" ")}\n`);
 const child = NodeChildProcess.spawn(binary, binaryArgs, {
   stdio: "inherit",
   cwd: appDir,
-  env: { ...process.env, HAL_C2_HOME: homeDir },
+  env: root === undefined ? process.env : { ...process.env, HAL_C2_HOME: root },
 });
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => child.kill(signal));

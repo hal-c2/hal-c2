@@ -11,8 +11,8 @@
 #   apps/server-ex/config/runtime.exs (HAL_C2_NODE_HOME, HAL_C2_HOME)
 #   apps/server-ex/rel/env.sh.eex (the release's home)
 #   apps/server-ex/README.md (Run, Release: where the node keeps its state)
-#   apps/desktop-qt/src/main.cpp (--home-dir, shell config dir, web profile, --base-dir for the hosted server)
-#   apps/desktop/src/app/DesktopAppActivation.ts (desktop app control socket)
+#   apps/desktop-qt/src/StoragePaths.cpp, apps/desktop-qt/src/main.cpp (--home-dir, shell config dir, web profile, --base-dir for the hosted server)
+#   packages/shared/src/desktopAppControlSocket.ts, apps/desktop/src/app/DesktopAppActivation.ts (desktop app control socket)
 #   apps/desktop/src/wsl/DesktopWslEnvironment.ts (wsl-runtime inside a distro)
 #   apps/tui/src/shellConfigDir.ts (HAL_C2_TUI_SHELL_DIR, config/shell/tui)
 #   docs/internals/glossary.md (HAL-C2 home)
@@ -336,7 +336,7 @@ Feature: Where HAL-C2 keeps its files
         | triage source checkouts           | ~/.cache/hal-c2/source                        |
         | the WSL server tree               | ~/.cache/hal-c2/wsl-server-tree               |
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The desktop app's control socket lives in the runtime directory
       Given <runtime>
       When the user starts the desktop app
@@ -347,7 +347,7 @@ Feature: Where HAL-C2 keeps its files
         | XDG_RUNTIME_DIR is "/run/user/1000" | /run/user/1000/hal-c2 |
         | XDG_RUNTIME_DIR is not set          | ~/.local/state/hal-c2 |
 
-    @backlog @desktop
+    @desktop
     Scenario: The desktop app on Windows keeps its named pipe
       Given a Windows user
       When the user starts the desktop app
@@ -379,7 +379,7 @@ Feature: Where HAL-C2 keeps its files
         | XDG_STATE_HOME is not set             | ~/.local/state/hal-c2/ssh-launch    |
         | XDG_STATE_HOME is "/var/lib/me/state" | /var/lib/me/state/hal-c2/ssh-launch |
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A WSL distro keeps its runtime state in its own state directory
       Given a WSL distro where <setting>
       When the desktop app starts a server inside that distro

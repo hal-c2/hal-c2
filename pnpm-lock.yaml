@@ -217,6 +217,9 @@ importers:
 
   apps/desktop-qt:
     devDependencies:
+      '@hal-c2/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4

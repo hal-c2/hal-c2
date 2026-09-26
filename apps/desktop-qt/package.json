@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@hal-c2/shared": "workspace:*",
     "@types/node": "catalog:"
   }
 }

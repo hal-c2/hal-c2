@@ -71,6 +71,8 @@ qt_add_executable(hal-c2-qt
   src/ShellBridge.h
   src/ShellRuntime.cpp
   src/ShellRuntime.h
+  src/StoragePaths.cpp
+  src/StoragePaths.h
   src/ThemeStore.cpp
   src/ThemeStore.h
   src/WebProfile.cpp

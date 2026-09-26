@@ -16,29 +16,19 @@
 #include "NativeNotifications.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
+#include "StoragePaths.h"
 #include "ThemeStore.h"
 #include "WebProfile.h"
 
 namespace {
 
-// HAL-C2 home, resolved the way the dev runner resolves it: `--home-dir`, then
-// HAL_C2_HOME, then ~/.hal-c2. The rice and browser profile live beside the
-// server's state, so a sandboxed home carries the whole app.
-QString resolveHomeDir(const QString& override) {
-  if (!override.trimmed().isEmpty()) {
-    return QDir(override).absolutePath();
-  }
-  const QString fromEnv =
-      QProcessEnvironment::systemEnvironment().value(QStringLiteral("HAL_C2_HOME"));
-  return fromEnv.isEmpty() ? QDir::home().filePath(QStringLiteral(".hal-c2"))
-                           : QDir(fromEnv).absolutePath();
-}
-
-QString resolveConfigDir(const QString& override, const QString& homeDir) {
+// The user's shell (shell.qml, theme.json, qml/) lives in `<config>/shell`;
+// `--config-dir` moves just that directory.
+QString resolveConfigDir(const QString& override, const StoragePaths& storage) {
   if (!override.isEmpty()) {
     return QDir(override).absolutePath();
   }
-  return QDir(homeDir).absoluteFilePath(QStringLiteral("shell"));
+  return QDir(storage.config).absoluteFilePath(QStringLiteral("shell"));
 }
 
 QString resolveQmlSourceDir(const QString& override) {
@@ -104,7 +94,7 @@ int main(int argc, char* argv[]) {
       QStringLiteral("url"));
   const QCommandLineOption configDirOption(
       QStringLiteral("config-dir"),
-      QStringLiteral("Directory holding shell.qml, theme.json and qml/ (default $HAL_C2_HOME/shell, i.e. ~/.hal-c2/shell)."),
+      QStringLiteral("Directory holding shell.qml, theme.json and qml/ (default <config>/shell, i.e. ~/.config/hal-c2/shell)."),
       QStringLiteral("dir"));
   const QCommandLineOption appIdOption(
       QStringLiteral("app-id"),
@@ -115,7 +105,7 @@ int main(int argc, char* argv[]) {
       QStringLiteral("Allow local folder import for an attached URL known to use this machine's filesystem."));
   const QCommandLineOption homeDirOption(
       QStringLiteral("home-dir"),
-      QStringLiteral("HAL-C2 data directory for the shell profile, rice and server."),
+      QStringLiteral("One root for the shell's and the hosted server's files (<dir>/config, data, state, cache)."),
       QStringLiteral("dir"));
   const QCommandLineOption qmlDirOption(
       QStringLiteral("qml-dir"),
@@ -149,8 +139,11 @@ int main(int argc, char* argv[]) {
     QGuiApplication::setDesktopFileName(parser.value(appIdOption).trimmed());
   }
 
-  const QString homeDir = resolveHomeDir(parser.value(homeDirOption));
-  const QString configDir = resolveConfigDir(parser.value(configDirOption), homeDir);
+  const StoragePaths storage = resolveStoragePaths(parser.value(homeDirOption));
+  const QString configDir = resolveConfigDir(parser.value(configDirOption), storage);
+  // Created up front so the shell and theme watchers are live from the start: when
+  // the hosted server migrates an old home, the user's shell lands here and reloads.
+  QDir().mkpath(configDir);
   const QString qmlSourceDir =
       resolveQmlSourceDir(parser.isSet(qmlDirOption) ? parser.value(qmlDirOption) : QString());
   qInfo().noquote() << "[shell] config dir:" << configDir;
@@ -159,7 +152,7 @@ int main(int argc, char* argv[]) {
   }
 
   // Configured before any engine exists so the first page already lands on it.
-  WebProfile webProfile(QDir(homeDir).filePath(QStringLiteral("userdata/shell-web")));
+  WebProfile webProfile(QDir(storage.cache).filePath(QStringLiteral("shell-web")));
   qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", webProfile.profile());
 
   ShellBridge bridge;
@@ -182,8 +175,9 @@ int main(int argc, char* argv[]) {
   backendOptions.nodeExecutable = parser.value(nodeOption);
   backendOptions.hostEntry = parser.value(hostEntryOption);
   backendOptions.hostArguments = parser.positionalArguments();
-  if (parser.isSet(homeDirOption)) {
-    backendOptions.hostArguments.prepend(QStringLiteral("--base-dir=%1").arg(homeDir));
+  // Without a root the server resolves the same XDG directories itself.
+  if (!storage.root.isEmpty()) {
+    backendOptions.hostArguments.prepend(QStringLiteral("--base-dir=%1").arg(storage.root));
   }
   BackendProcess backend(backendOptions);
   QObject::connect(&backend, &BackendProcess::ready, &bridge, &ShellBridge::setPageUrl);
