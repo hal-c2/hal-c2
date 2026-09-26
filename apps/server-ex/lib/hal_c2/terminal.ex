@@ -674,6 +674,27 @@ defmodule HalC2.Terminal do
     end
   end
 
+  @doc """
+  A thread's saved scrollback as `[{terminal_id, text}]`, read from disk so it works
+  whether or not its terminals are running. A thread file carries it.
+  """
+  def saved_scrollback(thread_id) do
+    prefix = "terminal_#{Base.url_encode64(thread_id, padding: false)}_"
+
+    for path <- Path.wildcard(history_path(thread_id, "*")),
+        name = Path.basename(path, ".log"),
+        String.starts_with?(name, prefix),
+        {:ok, id} <- [Base.url_decode64(String.replace_prefix(name, prefix, ""), padding: false)],
+        do: {id, read_history(thread_id, id)}
+  end
+
+  @doc "Saves scrollback for a thread's terminal, as a thread file brings it."
+  def put_scrollback(thread_id, terminal_id, text) do
+    path = history_path(thread_id, terminal_id)
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, text)
+  end
+
   # `terminal_id` "*" gives a wildcard pattern for all of a thread's terminals.
   defp history_path(thread_id, terminal_id) do
     terminal =

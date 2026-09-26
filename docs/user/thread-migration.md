@@ -34,9 +34,26 @@ Before continuing a long or important thread, read the recent transcript and inc
 requirements the agent still needs in your next message. Starting a new thread and pasting a short
 handoff is also a good choice when the old conversation contains conflicting instructions.
 
+## Copying a thread to another machine
+
+The Elixir node can write one thread to a file and read it on another machine, for machines that
+are not in one cluster:
+
+```sh
+mix hal_c2.thread.export "Fix the cart" alpha.hal-c2-thread
+mix hal_c2.thread.import alpha.hal-c2-thread --project shop
+```
+
+The file carries the conversation, attachments, terminal scrollback, checkpoints and, when the
+provider can carry it, the agent's own session. Exporting leaves the thread where it was. Without
+`--project`, the thread goes into the one project that is a checkout of the same repository; if
+there are several or none, name one. Checkpoints only come along into a checkout of the same
+repository. A file from the previous server imports too, and its next message hands the
+conversation over as a provider switch does. Nothing is imported from a damaged file.
+
 ## Keeping a recovery copy
 
-HAL-C2 does not currently have a whole-thread export command. Before a major server update, stop
+The previous server does not have a whole-thread export command. Before a major server update, stop
 the server and copy its [data directory](./install.md#where-hal-c2-keeps-its-files) to a safe
 location. The default is `~/.local/share/hal-c2`; a server started with `--base-dir <path>` uses
 `<path>/data`. The V1 database is the `state.sqlite` in it.

@@ -455,14 +455,14 @@ Feature: Moving a thread and its agent to another machine
       Then the file holds the thread with its history, attachments, terminal scrollback, checkpoints and the agent's session
       And "Alpha" stays on "laptop" unchanged
 
-    @backlog @node
+    @node
     Scenario: Importing a thread from the command line into a chosen project
       Given "desktop" has left the cluster
       And the file "alpha.hal-c2-thread" was exported from "laptop"
       When the user imports the file on "desktop" into the project "shop"
       Then "Alpha" is listed under "desktop" in "shop" with everything a move carries
 
-    @backlog @node
+    @node
     Scenario Outline: Importing without naming a project
       Given "desktop" instead has <projects>
       When the user imports "alpha.hal-c2-thread" on "desktop" without naming a project
@@ -474,28 +474,28 @@ Feature: Moving a thread and its agent to another machine
         | two projects that are checkouts of the same repository | the import is refused and asks the user to name one       |
         | no checkout of the repository                          | the import is refused and asks the user to name a project |
 
-    @backlog @node
+    @node
     Scenario: Importing the same file twice finds the thread already there
       Given "alpha.hal-c2-thread" was imported on "desktop"
       When the user imports it on "desktop" again
       Then the user is told "Alpha" is already on "desktop"
       And there is still one "Alpha"
 
-    @backlog @node
+    @node
     Scenario: A file from a newer HAL-C2 is refused
       Given "alpha.hal-c2-thread" was exported by a newer HAL-C2 in a format "desktop" does not know
       When the user imports it on "desktop"
       Then the user is told the file needs a newer HAL-C2
       And nothing is imported
 
-    @backlog @node
+    @node
     Scenario: A file exported by the previous server is imported without the agent's session
       Given a thread file exported by the previous server
       When the user imports it on "desktop"
       Then the thread is listed with its history, attachments and terminal scrollback
       And its next message hands the conversation over to the agent
 
-    @backlog @node
+    @node
     Scenario: A damaged file is refused
       Given one of the attachments in "alpha.hal-c2-thread" does not match its checksum
       When the user imports it on "desktop"
