@@ -1408,6 +1408,22 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
+  it("recovers halc2_ tool names that the server-prefix pattern would otherwise strip", () => {
+    for (const title of ["halc2_thread_list", "hal-c2_halc2_thread_list"]) {
+      const toolCall = toolCallFromUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: `bare-${title}`,
+        kind: "other",
+        title,
+        status: "pending",
+      });
+      expect(extractMcpToolCallIdentity(toolCall), title).toEqual({
+        server: "hal-c2",
+        tool: "halc2_thread_list",
+      });
+    }
+  });
+
   it("recovers HAL-C2 identity from Gemini and qwen MCP-server title templates", () => {
     // Gemini CLI 0.55.1: "<tool> (<server> MCP Server)"; qwen-code 0.21.12
     // appends ": <args json>" to the same template.
