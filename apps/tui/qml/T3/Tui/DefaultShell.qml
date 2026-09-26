@@ -9,8 +9,13 @@ ShellWindow {
     property alias conversation: conversationView
     readonly property string mode: Shell.state.mode
 
-    // The source-control panel fills `layout.rightPanel` when that is its kind.
-    rightPanelComponent: Shell.state.layout.rightPanel.kind === "sourceControl" ? sourceControlPanel : null
+    // The detail panel fills `layout.rightPanel` by its kind: source control,
+    // or the file browser (an opened file in its place).
+    rightPanelComponent: Shell.state.layout.rightPanel.kind === "sourceControl"
+        ? sourceControlPanel
+        : Shell.state.layout.rightPanel.kind === "files"
+            ? (Shell.state.files.viewer === null ? filesPanel : fileViewer)
+            : null
     Component {
         id: sourceControlPanel
         RightPanel {
@@ -20,11 +25,39 @@ ShellWindow {
                 : Shell.state.layout.rightPanel.width
         }
     }
+    Component {
+        id: filesPanel
+        FilesPanel {
+            flexGrow: 1
+            width: Shell.state.layout.rightPanel.asMain
+                ? Shell.state.layout.mainWidth
+                : Shell.state.layout.rightPanel.width
+        }
+    }
+    Component {
+        id: fileViewer
+        FileViewer {
+            flexGrow: 1
+            width: Shell.state.layout.rightPanel.asMain
+                ? Shell.state.layout.mainWidth
+                : Shell.state.layout.rightPanel.width
+        }
+    }
+    // The thread's terminal fills `layout.drawer` under the conversation.
+    drawerComponent: terminalDrawer
+    Component {
+        id: terminalDrawer
+        TerminalDrawer { flexGrow: 1 }
+    }
+
+    // Adding a project (and, with none yet, the invitation to) is a page in
+    // the conversation's place.
+    readonly property bool addingProject: Shell.state.addProject.open || Shell.state.addProject.invite
 
     // The conversation, or the settings page in its place.
     Conversation {
         id: conversationView
-        visible: Shell.state.page.kind !== "draft" && !Shell.state.settings.active
+        visible: Shell.state.page.kind !== "draft" && !Shell.state.settings.active && !shell.addingProject
         flexGrow: 1
         flexShrink: 1
     }
@@ -33,7 +66,16 @@ ShellWindow {
         active: Shell.state.settings.active
         SettingsPage { flexGrow: 1 }
     }
-    NewThreadForm { flexGrow: 1; flexShrink: 1 }
+    Loader {
+        objectName: "addProjectLoader"
+        active: shell.addingProject
+        sourceComponent: AddProject { flexGrow: 1 }
+    }
+    NewThreadForm {
+        flexGrow: 1
+        flexShrink: 1
+        visible: draft !== null && !shell.addingProject
+    }
     CommandPalette {}
     ThreadOverlay {
         height: Shell.state.layout.composerRows
@@ -42,6 +84,7 @@ ShellWindow {
         visible: Shell.state.overlay === null
             && Shell.state.page.kind !== "draft"
             && !Shell.state.settings.active
+            && !shell.addingProject
     }
 
     Shortcut {
@@ -71,7 +114,7 @@ ShellWindow {
     }
     Shortcut {
         sequence: "ctrl+e"
-        enabled: shell.mode === "compose"
+        enabled: shell.mode === "compose" || shell.mode === "terminal"
         onActivated: Shell.dispatch("terminal.toggle")
     }
 
@@ -145,6 +188,104 @@ ShellWindow {
         onActivated: settingsLoader.item?.scroll(-Math.max(1, Shell.state.size.rows - 4))
     }
 
-    // The renderer does not exit on Ctrl+C; the app tears down in order.
-    Shortcut { sequence: "ctrl+c"; onActivated: Shell.dispatch("app.quit") }
+    // The terminal drawer. Focused, every other key goes to the running program.
+    Shortcut {
+        sequence: "ctrl+p"
+        enabled: Shell.state.terminal.open && (shell.mode === "compose" || shell.mode === "terminal")
+        onActivated: Shell.dispatch("terminal.focus.toggle")
+    }
+    Shortcut {
+        sequence: "ctrl+o"
+        enabled: shell.mode === "terminal"
+        onActivated: Shell.dispatch("terminal.copy")
+    }
+    Shortcut {
+        sequence: "shift+pageup"
+        enabled: shell.mode === "terminal"
+        onActivated: Shell.dispatch("terminal.scroll", { action: "page-up" })
+    }
+    Shortcut {
+        sequence: "shift+pagedown"
+        enabled: shell.mode === "terminal"
+        onActivated: Shell.dispatch("terminal.scroll", { action: "page-down" })
+    }
+    Shortcut {
+        sequence: "shift+up"
+        enabled: shell.mode === "terminal"
+        onActivated: Shell.dispatch("terminal.scroll", { action: "line-up" })
+    }
+    Shortcut {
+        sequence: "shift+down"
+        enabled: shell.mode === "terminal"
+        onActivated: Shell.dispatch("terminal.scroll", { action: "line-down" })
+    }
+    Shortcut {
+        sequence: "ctrl+up"
+        enabled: shell.mode === "terminal"
+        onActivated: Shell.dispatch("terminal.resize", { delta: 2 })
+    }
+    Shortcut {
+        sequence: "ctrl+down"
+        enabled: shell.mode === "terminal"
+        onActivated: Shell.dispatch("terminal.resize", { delta: -2 })
+    }
+    // File browser and viewer.
+    Shortcut {
+        sequence: "up"
+        enabled: shell.mode === "files"
+        onActivated: Shell.dispatch("files.move", { delta: -1 })
+    }
+    Shortcut {
+        sequence: "down"
+        enabled: shell.mode === "files"
+        onActivated: Shell.dispatch("files.move", { delta: 1 })
+    }
+    Shortcut {
+        sequence: "pageup"
+        enabled: shell.mode === "files"
+        onActivated: Shell.dispatch("files.page", { delta: -1 })
+    }
+    Shortcut {
+        sequence: "pagedown"
+        enabled: shell.mode === "files"
+        onActivated: Shell.dispatch("files.page", { delta: 1 })
+    }
+    Shortcut {
+        sequence: "return, right"
+        enabled: shell.mode === "files"
+        onActivated: Shell.dispatch("files.activate")
+    }
+    Shortcut {
+        sequence: "left, backspace"
+        enabled: shell.mode === "files"
+        onActivated: Shell.dispatch("files.up")
+    }
+    Shortcut {
+        sequence: "escape"
+        enabled: shell.mode === "files"
+        onActivated: Shell.dispatch("files.back")
+    }
+    // Adding a project: the path field keeps the typing, these move and leave.
+    Shortcut {
+        sequence: "up"
+        enabled: shell.mode === "project"
+        onActivated: Shell.dispatch("project.add.move", { delta: -1 })
+    }
+    Shortcut {
+        sequence: "down"
+        enabled: shell.mode === "project"
+        onActivated: Shell.dispatch("project.add.move", { delta: 1 })
+    }
+    Shortcut {
+        sequence: "escape"
+        enabled: shell.mode === "project"
+        onActivated: Shell.dispatch("project.add.back")
+    }
+    // The renderer does not exit on Ctrl+C; the app tears down in order. In the
+    // terminal it interrupts the running program instead.
+    Shortcut {
+        sequence: "ctrl+c"
+        enabled: shell.mode !== "terminal"
+        onActivated: Shell.dispatch("app.quit")
+    }
 }

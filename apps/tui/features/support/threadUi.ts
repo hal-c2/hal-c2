@@ -110,6 +110,23 @@ export async function runCommand(ctx: World, name: string): Promise<void> {
   await flush(ctx);
 }
 
+/**
+ * Choose a palette command among the matches, as the user does: open the
+ * palette (Ctrl+K) unless it is open, type the name, arrow down to it, Enter.
+ */
+export async function chooseCommand(ctx: World, name: string): Promise<void> {
+  await ui(ctx);
+  // A focused terminal keeps Ctrl+K for its program: hand focus back (Ctrl+P) first.
+  if (ctx.host!.state.get("mode") === "terminal") await pressKey(ctx, "Ctrl+P");
+  if (!palette(ctx).open) await pressKey(ctx, "Ctrl+K");
+  await typeText(ctx, name);
+  const index = palette(ctx).items.findIndex((item) => item.title === name);
+  expect(index, `no "${name}" in the palette`).toBeGreaterThanOrEqual(0);
+  for (let i = 0; i < index; i += 1) await pressKey(ctx, "Down");
+  await pressKey(ctx, "Enter");
+  await flush(ctx);
+}
+
 export async function filterBy(ctx: World, query: string): Promise<void> {
   await ui(ctx);
   await pressKey(ctx, "Ctrl+F");

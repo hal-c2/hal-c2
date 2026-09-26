@@ -174,9 +174,9 @@ Feature: Terminal drawer in the terminal client
     Then the status line says "<message>"
 
     Examples:
-      | condition                                   | message                                   |
-      | the terminal is empty                       | Terminal is empty.                        |
-      | the user's terminal does not support OSC 52 | Clipboard not supported by this terminal. |
+      | condition                                             | message                                   |
+      | the terminal is empty                                 | Terminal is empty.                        |
+      | the user's terminal does not support clipboard writes | Clipboard not supported by this terminal. |
 
   @tui
   Scenario: Pasting into the terminal cannot break out of bracketed paste

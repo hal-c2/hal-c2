@@ -3,6 +3,7 @@ import {
   type GitRunStackedActionResult,
   type GitStackedAction,
   type OrchestrationThread,
+  type TerminalAttachStreamEvent,
   type TerminalMetadataStreamEvent,
   type VcsStatusResult,
 } from "@t3tools/contracts";
@@ -59,6 +60,7 @@ export function shell(
       title: "Thread one",
       updatedAt: "2026-07-13T00:00:00.000Z",
       session: { status: "idle" },
+      latestTurn: null,
     },
   ] as unknown as OrchestrationShellSnapshot["threads"],
   projects: OrchestrationShellSnapshot["projects"] = [
@@ -158,6 +160,11 @@ export function fakeClient({
   revertCheckpoint = async () => {},
   getTurnDiff = async () => "",
   getFullThreadDiff = async () => "",
+  listEntries = async () => [],
+  readFile = async () => null,
+  hostPlatform = "linux",
+  terminalHistory = () => "",
+  onTerminalWrite,
 }: {
   readonly detail?: OrchestrationThread;
   readonly shellSnapshot?: OrchestrationShellSnapshot;
@@ -196,6 +203,13 @@ export function fakeClient({
   readonly revertCheckpoint?: TuiClient["revertCheckpoint"];
   readonly getTurnDiff?: TuiClient["getTurnDiff"];
   readonly getFullThreadDiff?: TuiClient["getFullThreadDiff"];
+  readonly listEntries?: TuiClient["listEntries"];
+  readonly readFile?: TuiClient["readFile"];
+  readonly hostPlatform?: NodeJS.Platform;
+  /** History replayed in the snapshot a terminal sends when it is attached. */
+  readonly terminalHistory?: (threadId: string, terminalId: string) => string;
+  /** Plays the program behind a terminal: sees each write after it is recorded. */
+  readonly onTerminalWrite?: (terminal: FakeTerminal, data: string) => void;
 } = {}): {
   readonly client: TuiClient;
   readonly connect: () => void;
@@ -214,7 +228,27 @@ export function fakeClient({
   readonly setGitOutcome: (outcome: FakeGitOutcome) => void;
   /** The diff fetches in `calls`, in order. */
   readonly diffCalls: ReadonlyArray<FakeDiffCall>;
+  /** Attached terminals by `threadId:terminalId`, with what they were sent. */
+  readonly terminals: Map<string, FakeTerminal>;
 } {
+  const terminals = new Map<string, FakeTerminal>();
+  const terminalFor = (threadId: string, terminalId: string): FakeTerminal => {
+    const key = `${threadId}:${terminalId}`;
+    let terminal = terminals.get(key);
+    if (!terminal) {
+      terminal = {
+        threadId,
+        terminalId,
+        attach: null,
+        attachCount: 0,
+        writes: [],
+        listener: null,
+        emit: (event) => terminal!.listener?.(event),
+      };
+      terminals.set(key, terminal);
+    }
+    return terminal;
+  };
   let shellSubscriber: ((snapshot: OrchestrationShellSnapshot) => void) | null = null;
   let terminalMetadataSubscriber: ((event: TerminalMetadataStreamEvent) => void) | null = null;
   const subscribedThreadIds: string[] = [];
@@ -234,7 +268,7 @@ export function fakeClient({
     return Promise.resolve(value);
   };
   const client = {
-    hostPlatform: "linux",
+    hostPlatform,
     browseFilesystem,
     discoverSourceControl,
     lookupRepository,
@@ -278,8 +312,44 @@ export function fakeClient({
     getFullThreadDiff,
     createProject,
     createThread,
-    subscribeTerminal: () => () => {},
-    terminalWrite: async () => {},
+    listEntries,
+    readFile,
+    subscribeTerminal: (
+      input: Parameters<TuiClient["subscribeTerminal"]>[0],
+      onEvent: (event: TerminalAttachStreamEvent) => void,
+    ) => {
+      const terminal = terminalFor(input.threadId, input.terminalId);
+      terminal.attach = input;
+      terminal.attachCount += 1;
+      terminal.listener = onEvent;
+      // The server answers an attach with the session's snapshot.
+      onEvent({
+        type: "snapshot",
+        threadId: input.threadId,
+        terminalId: input.terminalId,
+        createdAt: "2026-07-13T00:00:00.000Z",
+        snapshot: {
+          threadId: input.threadId,
+          terminalId: input.terminalId,
+          cwd: input.cwd,
+          worktreePath: input.worktreePath,
+          status: "running",
+          pid: 1,
+          history: terminalHistory(input.threadId, input.terminalId),
+          exitCode: null,
+          exitSignal: null,
+          updatedAt: "2026-07-13T00:00:00.000Z",
+        },
+      } as unknown as TerminalAttachStreamEvent);
+      return () => {
+        if (terminal.listener === onEvent) terminal.listener = null;
+      };
+    },
+    terminalWrite: async (threadId: string, terminalId: string, data: string) => {
+      const terminal = terminalFor(threadId, terminalId);
+      terminal.writes.push(data);
+      onTerminalWrite?.(terminal, data);
+    },
     terminalResize: async () => {},
     terminalClear,
     terminalRestart,
@@ -321,6 +391,7 @@ export function fakeClient({
     emitShell: (snapshot) => shellSubscriber?.(snapshot),
     subscribedThreadIds,
     emitTerminalMetadata: (event) => terminalMetadataSubscriber?.(event),
+    terminals,
     emitThread: (next, page = { hasMore: false, loadingOlder: false }) => {
       detail = next;
       threadSubscribers.get(next.id)?.(next, page);
@@ -380,4 +451,17 @@ export interface FakeDiffCall {
   readonly method: "getTurnDiff" | "getFullThreadDiff";
   readonly threadId: string;
   readonly toTurnCount: number;
+}
+
+/** One attached terminal session in the fake: what it was attached with and sent. */
+export interface FakeTerminal {
+  readonly threadId: string;
+  readonly terminalId: string;
+  attach: Parameters<TuiClient["subscribeTerminal"]>[0] | null;
+  attachCount: number;
+  /** Bytes written to the PTY (keys and pastes). */
+  readonly writes: string[];
+  listener: ((event: TerminalAttachStreamEvent) => void) | null;
+  /** Push a stream event to the attached client, if any. */
+  readonly emit: (event: TerminalAttachStreamEvent) => void;
 }

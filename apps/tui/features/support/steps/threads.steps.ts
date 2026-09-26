@@ -18,6 +18,7 @@ import {
   type EnvThread,
 } from "../environment.ts";
 import {
+  chooseCommand,
   chooseMenuItem,
   click,
   clickText,
@@ -921,12 +922,14 @@ step("the turn stops", (ctx: ThreadsWorld) => {
 
 // --- Palette ----------------------------------------------------------------
 
-step("the command palette is open", async (ctx: World) => {
+async function openPalette(ctx: World) {
   await ui(ctx);
   await pressKey(ctx, "Ctrl+K");
   expect(palette(ctx).open).toBe(true);
   expect(geometry(findObject(ctx, "commandPalette")).visible).toBe(true);
-});
+}
+step("the command palette is open", openPalette);
+step("the user opens the command palette", openPalette);
 
 step(
   /^"([^"]*)" is listed (first|as a fuzzy subsequence match|through its keywords)$/,
@@ -946,16 +949,7 @@ step("{string} is offered", async (ctx: World, command: string) => {
   expect(await snapshot(ctx)).toContain(command);
 });
 
-step("the user chooses {string} from the command palette", async (ctx: World, command: string) => {
-  await ui(ctx);
-  await pressKey(ctx, "Ctrl+K");
-  await typeText(ctx, command);
-  const index = palette(ctx).items.findIndex((item) => item.title === command);
-  expect(index, `no "${command}" in the palette`).toBeGreaterThanOrEqual(0);
-  for (let i = 0; i < index; i += 1) await pressKey(ctx, "Down");
-  await pressKey(ctx, "Enter");
-  await flush(ctx);
-});
+step("the user chooses {string} from the command palette", chooseCommand);
 
 step("the palette shows that there are no matching commands", async (ctx: World) => {
   expect(palette(ctx).items).toEqual([]);
@@ -1016,6 +1010,8 @@ step("the user opens the new thread form", async (ctx: World) => {
 });
 
 step("a draft thread opens in {string}", async (ctx: World, project: string) => {
+  await ctx.host!.settled();
+  await flush(ctx);
   expect(ctx.host!.state.get("page")).toMatchObject({ kind: "draft", projectTitle: project });
   expect(draft(ctx)?.projectName).toBe(project);
   expect(await snapshot(ctx)).toContain(`New thread · ${project}`);

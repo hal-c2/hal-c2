@@ -24,3 +24,7 @@ Notifications 1.0 Notifications.qml
 RightPanel 1.0 RightPanel.qml
 GitActions 1.0 GitActions.qml
 SettingsPage 1.0 SettingsPage.qml
+TerminalDrawer 1.0 TerminalDrawer.qml
+FilesPanel 1.0 FilesPanel.qml
+FileViewer 1.0 FileViewer.qml
+AddProject 1.0 AddProject.qml

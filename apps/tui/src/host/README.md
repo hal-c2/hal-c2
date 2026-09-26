@@ -8,7 +8,8 @@ keys and call `Shell.dispatch(action, payload)`.
 Keys published today: `sidebar`, `layout`, `theme`, `notifications` (the
 desktop shell's contract names, extended for the terminal), `mode`, `status`,
 `size`, `page`, `contextMenu`, `overlay`, `palette`, `newThread`, `clock`,
-`git`, `settings`, and the open thread's keys from `threadView.ts` (below).
+`git`, `settings`, `terminal`, `files`, `addProject`, and the open thread's
+keys from `threadView.ts` (below).
 
 - `sidebar` adds the list viewport (`visibleRows`, `scrollTop`,
   `hiddenAbove`/`hiddenBelow`), `scopeLabel`, and a `draft` row while the
@@ -38,12 +39,13 @@ Actions, by area (payloads use `key` / `projectKey` from `sidebarState.ts`):
 | Thread rows | `thread.menu {key, x, y}`, `thread.rename {key, title?}`, `thread.archive`, `thread.unarchive`, `thread.delete` (asks), `thread.delete.confirm`, `thread.settle`, `thread.unsettle`, `thread.copy {key, what}`, `thread.stop` |
 | Menus       | `contextMenu.move {delta}`, `contextMenu.select {index?}`, `overlay.cancel`, `palette.open/close/query/move/run`                                                                                                              |
 | New thread  | `thread.new {projectKey?}`, `newThread.workspaceMode {mode}`, `newThread.branch {name}`, `newThread.submit {message}`, `newThread.cancel`                                                                                     |
-| Layout      | `rightPanel.toggle/open {kind?}`, `rightPanel.focus/blur/close`, `terminal.toggle`, `terminal.resize {height}`, `composer.text.set {text}`, `layout.popover {rows}`, `clock.tick`, `app.quit`                                 |
+| Layout      | `rightPanel.toggle/open {kind?}`, `rightPanel.focus/blur/close`, `terminal.*` (below), `composer.text.set {text}`, `layout.popover {rows}`, `clock.tick`, `app.quit`                                                          |
 
 The palette also lists "Show project <name>" / "Show all projects"
 (`sidebar.scope`), the selected thread's actions, and `detailCommands.ts`
 ("View all changes", "Revert to checkpoint…", "Show/Hide source-control
-panel", "Settings").
+panel", "Settings"), then the entries of the files, add-project and terminal
+controllers below ("Browse files", "Add project", "Show/Hide terminal", ...).
 
 The source-control panel is the `rightPanel` kind `"sourceControl"`
 (`RightPanel.qml`). `sourceControl.ts` publishes `git` and handles, with the
@@ -71,6 +73,32 @@ conversation: `settings.open`, `settings.close` (`mode: "settings"`).
 and `diff`. `diff.open {turnCount?, path?}` opens one turn (all changes
 without one); the timeline's changed-file rows and the palette open it.
 
+`terminal` is the selected thread's drawer, painted in the `layout.drawer`
+slot: tabs, size and the active terminal's rows as styled text. The drawer's
+open state and the height the user asked for feed the layout, which clamps the
+rows; the emulator is sized from `layout.drawer.rows` and `layout.mainWidth`.
+The host runs one headless emulator per open tab (`terminalState.ts`), so
+switching tabs never replays and only the shown tab tells the server its size.
+Focusing it is `mode: "terminal"`, where Ctrl+C goes to the program. Actions:
+`terminal.toggle/open/focus.toggle/new/next/previous/select {id}/close {id?}/clear/restart/copy`,
+`terminal.input {data}`, `terminal.paste {text}`, `terminal.scroll {action}`,
+`terminal.resize {height}` or `{delta}`. `host.settled()` resolves once
+client calls and emulator writes have landed (tests wait on it). Copying goes
+through `HostOptions.copyToClipboard` (OSC 52 in `src/index.ts`).
+
+`files` is the workspace browser, the `rightPanel` kind `"files"`
+(`FilesPanel.qml`, or `FileViewer.qml` while `viewer` is set): the visible
+window of tree rows around the selection, and `viewer` for an opened file (a
+slice of its lines from `top`). It opens focused (`mode: "files"`); another
+panel kind or another thread closes it. Actions are `files.*`
+(`filesState.ts`); stale listings and reads are dropped by generation.
+
+`addProject` is the add-project flow (`addProjectState.ts`): source, then a
+local folder or a repository and its clone destination, with the folders
+under the typed path. `invite` is true while the environment has no
+projects. Actions are `project.add` and `project.add.*` (`mode: "project"`).
+An added project opens the new-thread form for it (`thread.new {projectKey}`).
+
 ## Where the rest of ChatView's state goes
 
 ChatView (`src/components/ChatView.tsx`) still owns the state below. Move it
@@ -81,6 +109,5 @@ here as each brick lands, keeping one key per concern:
 | `focus` (compose, filter, command, select, ...)       | `mode`     |
 | composer text, attachments, model/runtime/interaction | `composer` |
 | select overlay                                        | `overlay`  |
-| right panel files and plan surfaces                   | `layout`   |
-| terminal drawer tabs, height, attach state            | `terminal` |
+| right panel plan surface                              | `layout`   |
 | image preview                                         | `overlay`  |

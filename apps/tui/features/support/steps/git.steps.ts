@@ -23,6 +23,7 @@ import {
   statusText,
   vcsStatus,
 } from "../gitWorld.ts";
+import { chooseCommand } from "../threadUi.ts";
 import { findObject, geometry, pressKey, typeText, type World } from "../world.ts";
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -243,7 +244,12 @@ step(
 
 // --- running actions ---
 
-step("the user runs {string}", runAction);
+// One "the user runs" for every world: palette commands (T5's add-project
+// entries; later T6's) go through the palette, everything else is a git action.
+const PALETTE_COMMANDS = new Set(["Add project", "Open WSL folder"]);
+step("the user runs {string}", (ctx: World, label: string) =>
+  PALETTE_COMMANDS.has(label) ? chooseCommand(ctx, label) : runAction(ctx, label),
+);
 step("the user runs {string} from the keyboard", (ctx: World, label: string) =>
   runFromPanel(ctx, label),
 );

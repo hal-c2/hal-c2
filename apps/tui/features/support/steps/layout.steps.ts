@@ -14,7 +14,7 @@ import type { TuiLayoutState } from "../../../src/host/layoutState.ts";
 import { step } from "../../steps.ts";
 import { addThread, flush, ui } from "../environment.ts";
 import { ready } from "../gitWorld.ts";
-import { sidebar } from "../threadUi.ts";
+import { sidebar, threadRows } from "../threadUi.ts";
 import {
   boot,
   findObject,
@@ -161,9 +161,27 @@ step("the prompt scrolls to keep the cursor visible", async (ctx: World) => {
 
 // --- Terminal drawer --------------------------------------------------------
 
-step("the terminal drawer is open", async (ctx: World) => {
+/**
+ * Show the drawer: it is the selected thread's terminal, so the first listed
+ * thread is opened first. Opening focuses the terminal; Ctrl+P hands the
+ * keys back to the prompt.
+ */
+async function showDrawer(ctx: World) {
   await boot(ctx);
+  if (!(ctx.host!.state.get("terminal") as { available: boolean }).available) {
+    ctx.fake!.connect();
+    await flush(ctx);
+    const first = threadRows(ctx)[0];
+    expect(first, "no thread to open a terminal on").toBeDefined();
+    ctx.host!.dispatch("thread.open", { key: first!.key });
+  }
   await press(ctx, "Ctrl+E");
+  await ctx.host!.settled();
+  if (ctx.host!.state.get("mode") === "terminal") await press(ctx, "Ctrl+P");
+}
+
+step("the terminal drawer is open", async (ctx: World) => {
+  await showDrawer(ctx);
   expect(layout(ctx).drawer.open).toBe(true);
   expect(box(ctx, "drawer").visible).toBe(true);
 });
@@ -187,8 +205,7 @@ step("the timeline keeps at least {int} rows", async (ctx: World, rows: number) 
 });
 
 step("the terminal drawer is open at its preferred size", async (ctx: LayoutWorld) => {
-  await boot(ctx);
-  await press(ctx, "Ctrl+E");
+  await showDrawer(ctx);
   ctx.drawerRows = Math.floor(ctx.rows! * 0.4);
   expect(layout(ctx).drawer.rows).toBe(ctx.drawerRows);
   expect(box(ctx, "drawer").height).toBe(ctx.drawerRows);

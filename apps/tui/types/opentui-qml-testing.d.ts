@@ -1,5 +1,5 @@
 // See opentui-qml.d.ts: the slice of `opentui-qml/testing` the TUI uses.
-import type { CapturedFrame } from "@opentui/core";
+import type { CapturedFrame, CliRenderer } from "@opentui/core";
 import type { KeyInput } from "@opentui/core/testing";
 import type { QmlApp, QmlEngine, QmlObject, RunQmlOptions } from "opentui-qml";
 
@@ -27,6 +27,7 @@ export interface QmlTestApp {
   setup: { captureSpans(): CapturedFrame };
   /** Raw stdin: `pressKeys(["\x1b]11;..."])` writes the bytes as the terminal would. */
   mockInput: { pressKeys(keys: KeyInput[], delayMs?: number): Promise<void> };
+  renderer: CliRenderer;
   warnings: string[];
   errors: unknown[];
   renderOnce(): Promise<void>;

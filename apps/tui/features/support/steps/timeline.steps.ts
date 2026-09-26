@@ -4,7 +4,7 @@ import { expect } from "bun:test";
 import { TextAttributes } from "@opentui/core";
 
 import { step } from "../../steps.ts";
-import { advance, findObject, geometry, pressKey, snapshot } from "../world.ts";
+import { advance, findObject, geometry, pressKey, snapshot, type World } from "../world.ts";
 import {
   activity,
   checkpoint,
@@ -719,10 +719,14 @@ step("the diff viewer is open", async (ctx: ThreadWorld) => {
   expect(findObject(ctx, "diffViewer").get("visible")).toBe(true);
 });
 
-// After the diff viewer (here) or the settings page (settings.steps.ts) closes.
+// After the diff viewer (here), the settings page (settings.steps.ts) or the
+// file browser (files.steps.ts) closes.
 step("the conversation is shown again", async (ctx: ThreadWorld) => {
+  await ctx.host!.settled();
   const screen = await snapshot(ctx);
   expect(hostState(ctx, "mode")).toBe("compose");
+  expect(hostState(ctx, "files").open).toBe(false);
+  expect(screen).not.toContain("files · ");
   expect(hostState(ctx, "settings").active).toBe(false);
   expect(() => findObject(ctx, "settingsPage")).toThrow();
   expect(findObject(ctx, "diffViewer").get("visible")).toBe(false);
@@ -745,12 +749,13 @@ async function threeCheckpoints(ctx: ThreadWorld) {
   }));
 }
 
-step('the user opens "Revert to checkpoint…"', async (ctx: ThreadWorld) => {
-  await threeCheckpoints(ctx);
+/** 'the user opens "Revert to checkpoint…"' (registered with files' "the user opens {string}"). */
+export async function openRevertPicker(ctx: World): Promise<void> {
+  await threeCheckpoints(ctx as ThreadWorld);
   // The palette's "Revert to checkpoint…" entry dispatches this action.
   ctx.host!.dispatch("checkpoint.revert.open");
   await settle();
-});
+}
 
 step("the revert picker is open", async (ctx: ThreadWorld) => {
   await threeCheckpoints(ctx);

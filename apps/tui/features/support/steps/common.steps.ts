@@ -103,9 +103,12 @@ step("a connected environment with the project {string}", (ctx: World, title: st
   addProject(ctx, title);
 });
 
+// Typing lands where the keys are (prompt, filter, add-project path, terminal);
+// the host's in-flight calls (T5's browse and terminal writes) settle first.
 step("the user types {string}", async (ctx: World, text: string) => {
   await boot(ctx);
   await typeText(ctx, text);
+  await ctx.host!.settled();
   await flush(ctx);
 });
 
@@ -116,7 +119,12 @@ async function expectStatusLine(ctx: World, text: string) {
   expect(await snapshot(ctx)).toContain(text);
 }
 
-step(/^the status line (?:says|reads) "([^"]*)"$/, expectStatusLine);
+// "says"/"reads" is the outcome: in-flight calls land first. "is told" reads
+// the line as it is now, so a busy message ("Clearing terminal…") is seen.
+step(/^the status line (?:says|reads) "([^"]*)"$/, async (ctx: World, text: string) => {
+  if (ctx.host) await ctx.host.settled();
+  await expectStatusLine(ctx, text);
+});
 step("the user is told {string}", expectStatusLine);
 
 // --- merged T1 + T2 ---
@@ -133,9 +141,13 @@ step("the prompt is empty", async (ctx: World) => {
 
 // --- added by T4 ---
 
+// Keys go to the prompt: not a menu, panel or the terminal drawer (T5).
 step("the prompt has focus", async (ctx: World) => {
   await snapshot(ctx);
+  await ctx.host!.settled();
   expect(ctx.host!.state.get("mode")).toBe("compose");
+  const terminal = ctx.host!.state.get("terminal") as { focused: boolean } | undefined;
+  expect(terminal?.focused ?? false).toBe(false);
 });
 
 step("the user presses escape", async (ctx: World) => {

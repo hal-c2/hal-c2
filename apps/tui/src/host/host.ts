@@ -7,9 +7,12 @@ import {
   nextSidebarRefreshAt,
   SIDEBAR_SETTLED_SECTION_ID,
 } from "../components/Sidebar.logic.ts";
+import type { Command } from "../commands.ts";
 import { createStore, type StatusKind, type StoreState } from "../store.ts";
 import { revertableCheckpoints } from "../timeline.ts";
+import { createAddProjectController } from "./addProjectState.ts";
 import { detailCommands } from "./detailCommands.ts";
+import { createFilesController, FILES_PANEL } from "./filesState.ts";
 import {
   buildTuiLayoutState,
   type TuiLayoutState,
@@ -20,6 +23,11 @@ import { createNewThreadFlow, type NewThreadSettings } from "./newThread.ts";
 import { buildTuiSettingsState } from "./settingsState.ts";
 import { buildTuiSidebarState, idFromKey, projectKey, threadKey } from "./sidebarState.ts";
 import { createSourceControl, SOURCE_CONTROL_PANEL } from "./sourceControl.ts";
+import {
+  createTerminalController,
+  type TerminalScrollAction,
+  type TerminalThread,
+} from "./terminalState.ts";
 import { createThreadActions } from "./threadActions.ts";
 import { createTuiTheme, TUI_THEME_STATE, type TuiTheme } from "./theme.ts";
 import { createThreadView } from "./threadView.ts";
@@ -82,6 +90,12 @@ export interface Host {
   readonly Theme: TuiTheme;
   /** Settles once the server config (settlement support, new-thread defaults) has loaded or failed. */
   readonly ready: Promise<void>;
+  /**
+   * Resolves once client calls and terminal writes in flight (files, add
+   * project, terminal) have landed and their state is published: the receipt
+   * tests wait on.
+   */
+  readonly settled: () => Promise<void>;
   readonly destroy: () => void;
 }
 
@@ -112,8 +126,6 @@ export function createHost(options: HostOptions): Host {
   let rightPanel: string | null = null;
   let rightPanelFocused = false;
   let settingsOpen = false;
-  let drawerOpen = false;
-  let drawerRows: number | null = null;
   let composerText = "";
   let popoverRows = 0;
   let settlementSupported = false;
@@ -160,8 +172,9 @@ export function createHost(options: HostOptions): Host {
       rightPanel,
       rightPanelFocused,
       mode,
-      drawerOpen,
-      drawerRows,
+      // The drawer slot follows the selected thread's terminal.
+      drawerOpen: terminal.visible(),
+      drawerRows: terminal.preferredRows(),
       composerText,
       popoverRows: popoverRows + threadActions.popoverRows(),
     });
@@ -249,6 +262,11 @@ export function createHost(options: HostOptions): Host {
     if (!prev || prev.detail !== next.detail || prev.vcsStatus !== next.vcsStatus) {
       publishSettings();
     }
+    if (!prev || prev.selection !== next.selection || prev.detail !== next.detail) {
+      terminal.sync();
+    }
+    if (prev && prev.selection !== next.selection) files.close();
+    if (prev && prev.shell !== next.shell) addProject.sync();
   };
 
   /** "compose" means the prompt has the keys, or an open question when one waits. */
@@ -262,16 +280,28 @@ export function createHost(options: HostOptions): Host {
   // Where keys go when a menu, prompt or palette closes.
   const restingMode = (): TuiMode => (newThread.draft() ? "newThread" : "compose");
 
+  /** The mode a focused detail panel of `kind` takes. */
+  const panelMode = (kind: string | null): TuiMode | null =>
+    kind === SOURCE_CONTROL_PANEL
+      ? sourceControl.focusMode()
+      : kind === FILES_PANEL
+        ? "files"
+        : null;
+
   /** Open `kind` in the detail panel (null closes it); a focused panel takes the keys. */
   const setRightPanel = (kind: string | null, focused: boolean) => {
-    const wasSourceControl = rightPanel === SOURCE_CONTROL_PANEL;
+    const previous = rightPanel;
     rightPanel = kind;
     rightPanelFocused = kind !== null && focused;
+    const wasSourceControl = previous === SOURCE_CONTROL_PANEL;
     const isSourceControl = rightPanel === SOURCE_CONTROL_PANEL;
     if (isSourceControl !== wasSourceControl) sourceControl.panelChanged(isSourceControl);
+    // Another panel in the slot closes the file browser.
+    if (previous === FILES_PANEL && kind !== FILES_PANEL) files.close();
     publishLayout();
-    if (rightPanelFocused && isSourceControl) setMode(sourceControl.focusMode());
-    else if (mode === "panel" || mode === "commit") setMode(restingMode());
+    const focusMode = rightPanelFocused ? panelMode(rightPanel) : null;
+    if (focusMode) setMode(focusMode);
+    else if (mode === "panel" || mode === "commit" || mode === "files") setMode(restingMode());
   };
   const sourceControl = createSourceControl({
     store,
@@ -284,6 +314,85 @@ export function createHost(options: HostOptions): Host {
     focusPanel: () => setRightPanel(SOURCE_CONTROL_PANEL, true),
     copyToClipboard: options.copyToClipboard,
   });
+
+  /** The selected thread's terminal and file workspace: its worktree, else the project root. */
+  const selectedWorkspace = (): TerminalThread | null => {
+    const current = store.getState();
+    if (current.selection?.kind !== "thread") return null;
+    const threadId = current.selection.id;
+    const shellThread = current.shell?.threads.find((thread) => thread.id === threadId);
+    const detail = current.detail?.id === threadId ? current.detail : null;
+    const projectId = detail?.projectId ?? shellThread?.projectId;
+    const worktreePath = detail?.worktreePath ?? shellThread?.worktreePath ?? null;
+    const workspaceRoot =
+      current.shell?.projects.find((project) => project.id === projectId)?.workspaceRoot ??
+      process.cwd();
+    return {
+      threadId,
+      title: detail?.title ?? shellThread?.title ?? "",
+      cwd: worktreePath ?? workspaceRoot,
+      worktreePath,
+    };
+  };
+  // The terminal fills the `layout.drawer` slot; the layout sizes it.
+  const terminal = createTerminalController({
+    client,
+    store,
+    thread: selectedWorkspace,
+    width: () => layout.mainWidth,
+    rows: () => layout.drawer.rows,
+    layoutChanged: () => publishLayout(),
+    isFocused: () => mode === "terminal",
+    setFocused: (focused) => {
+      if (focused) setMode("terminal");
+      else if (mode === "terminal") setMode(restingMode());
+    },
+    copyToClipboard: options.copyToClipboard ?? (() => false),
+    publish: (next) => state.set("terminal", next),
+  });
+  // The file browser and viewer fill the `layout.rightPanel` slot (kind "files").
+  const files = createFilesController({
+    client,
+    cwd: () => selectedWorkspace()?.cwd ?? null,
+    height: () => size.rows - STATUS_ROWS,
+    setOpen: (open) => {
+      if (open) setRightPanel(FILES_PANEL, true);
+      else if (rightPanel === FILES_PANEL) setRightPanel(null, false);
+    },
+    publish: (next) => state.set("files", next),
+  });
+  // Adding a project is a page over the conversation (mode "project").
+  const addProject = createAddProjectController({
+    client,
+    store,
+    currentProjectCwd: () => {
+      const current = store.getState();
+      const selection = current.selection;
+      const projectId =
+        selection?.kind === "project"
+          ? selection.id
+          : selection?.kind === "thread"
+            ? current.shell?.threads.find((thread) => thread.id === selection.id)?.projectId
+            : current.projectScopeId;
+      return (
+        current.shell?.projects.find((project) => project.id === projectId)?.workspaceRoot ?? null
+      );
+    },
+    // Pending the settings key: new paths start in the home folder.
+    baseDirectory: () => null,
+    height: () => size.rows - STATUS_ROWS,
+    setOpen: (open) => setMode(open ? "project" : restingMode()),
+    // The new project opens on a new-thread draft.
+    openDraft: (projectId) => dispatch("thread.new", { projectKey: projectKey(projectId) }),
+    publish: (next) => state.set("addProject", next),
+  });
+  /** The files, add-project and terminal entries, as palette commands. */
+  const areaCommands = (): Command[] =>
+    [...addProject.commands(), ...files.commands(), ...terminal.commands()].map((command) => ({
+      id: command.action,
+      title: command.title,
+      run: () => dispatch(command.action),
+    }));
 
   const unknownActions = new Set<string>();
   const dispatch = (action: string, payload?: unknown) => {
@@ -379,20 +488,70 @@ export function createHost(options: HostOptions): Host {
         if (mode === "settings") setMode(restingMode());
         return;
       case "terminal.toggle":
-        drawerOpen = !drawerOpen;
-        publishLayout();
+        terminal.toggle();
         return;
+      case "terminal.open":
+        terminal.open();
+        return;
+      case "terminal.focus.toggle":
+        terminal.toggleFocus();
+        return;
+      case "terminal.new":
+        terminal.newTab();
+        return;
+      case "terminal.next":
+        terminal.cycle(1);
+        return;
+      case "terminal.previous":
+        terminal.cycle(-1);
+        return;
+      case "terminal.select": {
+        const id = payloadField(payload, "id");
+        if (typeof id === "string") terminal.select(id);
+        return;
+      }
+      case "terminal.close": {
+        const id = payloadField(payload, "id");
+        terminal.close(typeof id === "string" ? id : undefined);
+        return;
+      }
+      case "terminal.clear":
+        terminal.clear();
+        return;
+      case "terminal.restart":
+        terminal.restart();
+        return;
+      case "terminal.copy":
+        terminal.copy();
+        return;
+      case "terminal.input": {
+        const data = payloadField(payload, "data");
+        if (typeof data === "string") terminal.input(data);
+        return;
+      }
+      case "terminal.paste": {
+        const text = payloadField(payload, "text");
+        if (typeof text === "string") terminal.paste(text);
+        return;
+      }
+      case "terminal.scroll": {
+        const scroll = payloadField(payload, "action");
+        if (typeof scroll === "string") terminal.scroll(scroll as TerminalScrollAction);
+        return;
+      }
       case "terminal.resize": {
-        const height = Number(payloadField(payload, "height"));
-        if (!Number.isFinite(height)) return;
-        drawerRows = Math.max(1, Math.floor(height));
-        publishLayout();
+        const height = payloadField(payload, "height");
+        const delta = payloadField(payload, "delta");
+        if (typeof height === "number") terminal.setHeight(height);
+        else if (typeof delta === "number") terminal.resizeBy(delta);
         return;
       }
       case "composer.text.set": {
         const text = payloadField(payload, "text");
         composerText = typeof text === "string" ? text : "";
         publishLayout();
+        // A taller prompt can take rows from the drawer.
+        terminal.sync();
         return;
       }
       case "layout.popover": {
@@ -407,6 +566,7 @@ export function createHost(options: HostOptions): Host {
       default:
         if (threadView.dispatch(action, payload)) return;
         if (sourceControl.dispatch(action, payload)) return;
+        if (files.dispatch(action, payload) || addProject.dispatch(action, payload)) return;
         if (unknownActions.has(action)) return;
         unknownActions.add(action);
         log(`t3 tui: unknown shell action "${action}"`);
@@ -425,13 +585,15 @@ export function createHost(options: HostOptions): Host {
     dispatch,
     copyToClipboard: options.copyToClipboard,
     // The source-control panel, diff viewer and settings entries.
-    moreCommands: () =>
-      detailCommands({
+    moreCommands: () => [
+      ...detailCommands({
         panelOpen: rightPanel === SOURCE_CONTROL_PANEL,
         hasCheckpoints:
           revertableCheckpoints(store.getState().detail?.checkpoints ?? []).length > 0,
         dispatch,
       }),
+      ...areaCommands(),
+    ],
   });
   const newThread = createNewThreadFlow({
     client,
@@ -473,12 +635,20 @@ export function createHost(options: HostOptions): Host {
       state.set("size", size);
       publishLayout();
       publishSidebar();
+      terminal.sync();
+      files.sync();
     },
     Shell: { state, dispatch },
     Theme: createTuiTheme(),
     ready,
+    settled: async () => {
+      await addProject.settled();
+      await files.settled();
+      await terminal.settled();
+    },
     destroy: () => {
       unsubscribe();
+      terminal.dispose();
       store.stop();
     },
   };

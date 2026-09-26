@@ -152,6 +152,17 @@ export async function typeText(ctx: World, text: string): Promise<void> {
   await (await boot(ctx)).typeText(text);
 }
 
+export async function paste(ctx: World, text: string): Promise<void> {
+  await (await boot(ctx)).paste(text);
+}
+
+/** Wait for the host's in-flight client calls and terminal writes, then render. */
+export async function settle(ctx: World): Promise<string> {
+  const app = await boot(ctx);
+  await ctx.host!.settled();
+  return app.snapshot();
+}
+
 export async function advance(ctx: World, ms: number): Promise<void> {
   await (await boot(ctx)).advance(ms);
 }
