@@ -1882,8 +1882,8 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
   end
 
   # Sends a message to a thread on a cluster member and returns what its agent was given.
-  # Sends `text` on `machine` with the thread's agent (Codex unless it runs on a fake
-  # ACP agent) and returns the prompt that agent was given.
+  # Sends `text` on `machine` with the thread's agent (Codex unless it runs on Claude or
+  # a fake ACP agent) and returns the prompt that agent was given.
   defp remote_turn(context, machine, id, text) do
     node = Machines.node_of(context, machine)
 
@@ -1892,6 +1892,10 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
         %{selection: selection} ->
           dir = HalC2.Steps.Providers.PortableSessions.acp_dir(context, machine)
           {selection, Path.join(dir, "acp-inputs.jsonl")}
+
+        nil when context.session.driver == "claudeAgent" ->
+          {%{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-6"},
+           Path.join(Machines.home(context, machine), "claude-inputs.jsonl")}
 
         nil ->
           {%{"instanceId" => "codex", "model" => "gpt-5.4"},

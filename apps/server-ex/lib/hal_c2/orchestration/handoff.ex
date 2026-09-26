@@ -102,7 +102,7 @@ defmodule HalC2.Orchestration.Handoff do
   # Codex by its thread id and the rollout's path.
   defp carried(%{"carriedSession" => %{"driver" => driver} = session}, driver, true) do
     thread = if driver == "codex", do: session["nativeId"], else: session["path"]
-    %{thread: thread, turn: nil, path: session["path"], carried: true}
+    %{thread: thread, turn: nil, path: session["path"], carried: true, from: session["from"]}
   end
 
   defp carried(_provider_thread, _driver, _fresh), do: nil

@@ -68,7 +68,7 @@ defmodule HalC2.PortableSessions do
   Places a carried session (decoded, each file's bytes under `"data"`) for the
   project at `root`: `{%{providerThreadId, carriedSession} | nil, notes}`.
   """
-  def place(%{"driver" => driver, "files" => [_ | _] = files} = session, root, _archive)
+  def place(%{"driver" => driver, "files" => [_ | _] = files} = session, root, archive)
       when driver in @drivers do
     instance = session["instanceId"] || driver
     from = session["cwd"]
@@ -98,7 +98,8 @@ defmodule HalC2.PortableSessions do
              "driver" => driver,
              "instanceId" => instance,
              "nativeId" => native_id,
-             "path" => path
+             "path" => path,
+             "from" => get_in(archive, ["thread", "machine"])
            }
          }, []}
 

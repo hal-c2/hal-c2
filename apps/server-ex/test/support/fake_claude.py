@@ -30,6 +30,9 @@ session = "fake-session-1"
 # process as Claude Code does.
 SESSIONS = os.environ.get("CLAUDE_CONFIG_DIR") if os.environ.get("FAKE_SESSIONS") else None
 VERSION = os.environ.get("FAKE_CLAUDE_VERSION", "2.1.0")
+if sys.argv[1:] and sys.argv[-1] == "--version":
+    print(f"{VERSION} (Claude Code)")
+    sys.exit(0)
 transcript, earlier = None, []
 
 def version(text):

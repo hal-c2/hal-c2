@@ -401,6 +401,16 @@ defmodule HalC2.ThreadMove do
               {kind, eid} != {"thread", id},
               do: {kind, eid, Patch.delete()}
 
+        # The agent sessions the thread ran here stay in the providers' homes; they
+        # are the thread's, so an import of this machine's history skips them.
+        sessions =
+          for pt <- StreamState.list(state, "provider-thread"),
+              %{"driver" => driver, "nativeId" => native} <- [pt["nativeThreadRef"]],
+              is_binary(native),
+              do: "#{driver}:#{native}"
+
+        moved = if sessions == [], do: moved, else: Map.put(moved, "sessions", sessions)
+
         forward =
           Orchestration.upsert(state, "thread", id, fn thread ->
             thread

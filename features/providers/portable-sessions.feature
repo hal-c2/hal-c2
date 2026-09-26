@@ -156,7 +156,7 @@ Feature: Carrying an agent's own session to another machine
     And the user sends a message in "Alpha"
     Then the agent on "desktop" continues the carried session
 
-  @backlog @node
+  @node
   Scenario: A destination provider that cannot read the session falls back to the handoff
     Given "Alpha" runs on Claude and "desktop" has an older Claude than "laptop"
     And the older Claude cannot open the session written by the newer one
@@ -203,7 +203,7 @@ Feature: Carrying an agent's own session to another machine
     Then the session is still in the Claude home on "laptop", unchanged
     And the user can still resume it with Claude Code on "laptop"
 
-  @backlog @node
+  @node
   Scenario: The source's copy is not offered for import after the thread moved
     Given "Alpha" moved to "desktop" with its Claude session
     When "laptop" scans for agent history

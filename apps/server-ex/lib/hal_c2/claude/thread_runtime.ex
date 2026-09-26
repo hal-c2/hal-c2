@@ -148,8 +148,9 @@ defmodule HalC2.Claude.ThreadRuntime do
     turn = %{turn | ids: ids}
     state = %{state | turn: turn, items: %{}, blocks: %{}, interrupted: false}
 
-    case ensure_session(state, turn) do
-      {:ok, state} ->
+    case open_session(state, turn) do
+      {:ok, state, turn} ->
+        state = %{state | turn: turn}
         Session.send_message(state.session, claude_content(turn))
         at = Entities.now()
 
@@ -421,6 +422,128 @@ defmodule HalC2.Claude.ThreadRuntime do
       do: "plan",
       else: Map.get(@permission_modes, turn.runtime_mode, "default")
   end
+
+  # A session carried from another machine that this Claude cannot open (a newer
+  # Claude Code wrote it, say) ends before it answers `initialize`. The turn then starts
+  # a new session with the handoff instead, and the user is told.
+  defp open_session(%{session: nil} = state, %{fork: %{carried: true} = fork} = turn) do
+    case ensure_session(state, turn) do
+      {:ok, state} ->
+        if opened?(state.session),
+          do: {:ok, state, turn},
+          else: handed_over(%{state | session: nil}, turn, fork)
+
+      {:error, _reason} ->
+        handed_over(state, turn, fork)
+    end
+  end
+
+  defp open_session(state, turn) do
+    with {:ok, state} <- ensure_session(state, turn), do: {:ok, state, turn}
+  end
+
+  defp opened?(session) do
+    receive do
+      {:claude, ^session, {:initialized, _reply}} -> true
+      {:EXIT, ^session, _reason} -> false
+    after
+      20_000 -> true
+    end
+  end
+
+  defp handed_over(state, turn, fork) do
+    turn = %{
+      turn
+      | fork: nil,
+        text: HalC2.Orchestration.Handoff.prompt(fork[:fallback], turn.text)
+    }
+
+    with {:ok, state} <- ensure_session(state, turn) do
+      not_carried(state, turn, fork)
+      {:ok, state, turn}
+    end
+  end
+
+  defp not_carried(state, turn, fork) do
+    at = Entities.now()
+    id = "turn-item:claudeAgent:session-not-carried:#{turn.ids.run}"
+    here = HalC2.ThreadArchive.label()
+    mine = claude_version(turn)
+    written = written_version(fork[:path])
+
+    why =
+      if mine && written && fork[:from] && Version.compare(mine, written) == :lt,
+        do:
+          ": Claude Code there (#{mine}) is older than on #{fork[:from]} (#{written}), which wrote it. It started a new session",
+        else: ", so it started a new one"
+
+    message =
+      "Claude on #{here} could not continue its own session#{why} with a summary of the conversation."
+
+    commit(state, fn stream ->
+      [
+        Orchestration.create(
+          "turn-item",
+          id,
+          Entities.turn_item(
+            turn.ids,
+            id,
+            "error",
+            Orchestration.next_ordinal(stream),
+            "completed",
+            at,
+            %{
+              "title" => "Session not carried",
+              "failure" => %{
+                "class" => "provider_error",
+                "message" => String.slice(message, 0, 4096),
+                "code" => "session_not_carried",
+                "retryable" => false
+              }
+            }
+          )
+        )
+      ]
+    end)
+  end
+
+  # The version `claude --version` reports here, as the turn would run it.
+  defp claude_version(turn) do
+    [command | args] = Application.get_env(:hal_c2, :claude_command) || ["claude"]
+    env = Enum.to_list(HalC2.Settings.instance_env(Entities.instance(turn.ids)))
+
+    case System.cmd(command, args ++ ["--version"], env: env, stderr_to_stdout: true) do
+      {out, 0} -> out |> String.split() |> List.first() |> semver()
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  # The newest Claude Code version that wrote an entry of the transcript at `path`.
+  defp written_version(path) when is_binary(path) do
+    path
+    |> File.stream!()
+    |> Stream.map(&JSON.decode/1)
+    |> Stream.flat_map(fn
+      {:ok, %{"version" => version}} when is_binary(version) -> List.wrap(semver(version))
+      _ -> []
+    end)
+    |> Enum.max(Version, fn -> nil end)
+  rescue
+    _ -> nil
+  end
+
+  defp written_version(_path), do: nil
+
+  defp semver(text) when is_binary(text) do
+    case Version.parse(text) do
+      {:ok, version} -> version
+      :error -> nil
+    end
+  end
+
+  defp semver(_text), do: nil
 
   defp ensure_session(%{session: session} = state, turn) when session != nil do
     mode = permission_mode(turn)

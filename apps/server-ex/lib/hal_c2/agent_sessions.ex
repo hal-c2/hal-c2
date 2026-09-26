@@ -380,7 +380,14 @@ defmodule HalC2.AgentSessions do
       |> Enum.filter(&(Path.expand(&1.cwd) == root))
       |> Enum.sort_by(& &1.mtime, :desc)
 
-    {done, pending} = Enum.split_with(recent, &imported?(&1, project_id))
+    moved = moved_sessions()
+
+    {done, pending} =
+      Enum.split_with(
+        recent,
+        &(imported?(&1, project_id) or MapSet.member?(moved, "#{&1.source}:#{&1.session_id}"))
+      )
+
     {too_big, pending} = Enum.split_with(pending, &(&1.size > max_import_bytes()))
     {eligible, over_budget} = Enum.split(pending, @max_imports)
     already = done |> Enum.map(&"import:#{&1.source}:#{&1.session_id}") |> MapSet.new()
@@ -425,6 +432,17 @@ defmodule HalC2.AgentSessions do
   end
 
   defp imported?(_transcript, _project_id), do: false
+
+  # The sessions of threads that moved from this node to another (`HalC2.ThreadMove`),
+  # as "source:id": they belong to those threads, not to an import.
+  defp moved_sessions do
+    for {{node, _id}, {"thread", %{"movedTo" => %{"sessions" => sessions}}}} <-
+          HalC2.Shell.rows(),
+        node == node(),
+        session <- sessions,
+        into: MapSet.new(),
+        do: session
+  end
 
   # Creates the thread unless it exists; an existing import counts as done.
   defp write_thread(thread_id, project_id, thread) do

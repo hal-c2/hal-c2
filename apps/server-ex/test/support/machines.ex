@@ -24,6 +24,7 @@ defmodule HalC2.Test.Machines do
     Node.World.put_env("HAL_C2_LABEL", local)
     for {key, value} <- sessions(context.node.home), do: Node.World.put_env(key, value)
     Node.World.put_app_env(:agent_sessions_home, user_home(context.node.home))
+    ExUnit.Callbacks.on_exit(fn -> File.rm_rf(user_home(context.node.home)) end)
     distribute()
     context = %{context | node: Node.restart(context.node)}
 
@@ -139,10 +140,11 @@ defmodule HalC2.Test.Machines do
 
   @doc """
   A machine's user home, where its agents keep their sessions: "~" in a feature.
-  Each machine's Claude, Codex and Pi homes are the defaults under it.
+  Each machine's Claude, Codex and Pi homes are the defaults under it. It sits beside
+  the machine's HAL-C2 home, not inside it, as a real user's does.
   """
   def user_home(context, label) when is_binary(label), do: user_home(home(context, label))
-  def user_home(home) when is_binary(home), do: Path.join(home, "user")
+  def user_home(home) when is_binary(home), do: home <> "-user"
 
   # The fake agents keep sessions the way the real ones do, in the machine's own homes.
   defp sessions(home) do

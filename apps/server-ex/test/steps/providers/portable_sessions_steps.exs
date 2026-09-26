@@ -378,6 +378,88 @@ defmodule HalC2.Steps.Providers.PortableSessions do
     run_natively(context, title, "Codex")
   end
 
+  step "{string} runs on Claude and {string} has an older Claude than {string}",
+       %{args: [title, older, newer]} = context do
+    assert Machines.machine(context, newer) == :local
+
+    ["env" | rest] =
+      Machines.on(context, older, Application, :get_env, [:hal_c2, :claude_command])
+
+    Machines.on(context, older, Application, :put_env, [
+      :hal_c2,
+      :claude_command,
+      ["env", "FAKE_CLAUDE_VERSION=2.0.0" | rest]
+    ])
+
+    context |> run_natively(title, "Claude") |> Map.put(:older, older)
+  end
+
+  step "the older Claude cannot open the session written by the newer one", context do
+    written = for %{"version" => v} <- records(context.session.original), do: v
+    assert written != [] and Enum.all?(written, &(Version.compare(&1, "2.0.0") == :gt))
+
+    [command | args] =
+      Machines.on(context, context.older, Application, :get_env, [:hal_c2, :claude_command])
+
+    {out, 0} = System.cmd(command, args ++ ["--version"])
+    assert out =~ "2.0.0"
+    context
+  end
+
+  step "a new Claude session starts on {string} with the handoff", %{args: [machine]} = context do
+    assert context.remote_prompt =~ @history
+    assert context.remote_prompt =~ "write run-1.txt"
+
+    argv =
+      Machines.home(context, machine)
+      |> Path.join("claude-argv.jsonl")
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> List.last()
+      |> JSON.decode!()
+
+    refute "--resume" in argv or "--fork-session" in argv
+    context
+  end
+
+  step "the user is told Claude on {string} could not continue the session and is older than on {string}",
+       %{args: [machine, source]} = context do
+    id = World.thread_id(context, context.moved_title)
+    items = Machines.on(context, machine, Machines, :entities, [id, "turn-item"])
+
+    assert %{"failure" => %{"message" => message}} =
+             Enum.find(items, &(get_in(&1, ["failure", "code"]) == "session_not_carried"))
+
+    assert message =~ "Claude on #{machine} could not continue its own session"
+    assert message =~ "older than on #{source}"
+    context
+  end
+
+  step "{string} scans for agent history", %{args: [machine]} = context do
+    assert {:ok, scan} = Machines.on(context, machine, HalC2.AgentSessions, :scan, [%{}])
+    Map.merge(context, %{scan: scan, scanned: machine})
+  end
+
+  step "the session of {string} is marked as already imported", %{args: [_title]} = context do
+    machine = context.scanned
+    %{id: project} = context.checkouts[machine][title_project(context, machine)]
+    root = Path.expand(root(context, machine))
+
+    assert %{"alreadyImported" => true, "projectId" => ^project} =
+             Enum.find(context.scan["candidates"], &(&1["path"] == root))
+
+    # Importing the project's history leaves the moved thread's session to the thread.
+    assert {:ok, %{"importedCount" => 1}} =
+             Machines.on(context, machine, HalC2.AgentSessions, :import_project, [
+               %{"projectId" => project}
+             ])
+
+    rows = Machines.on(context, machine, Machines, :rows, [])
+    import = "import:#{context.session.driver}:#{context.session.native}"
+    refute Enum.any?(rows, fn {_kind, row} -> row["id"] == import end)
+    context
+  end
+
   # --- Claude Code's file history --------------------------------------------------
 
   step "{string} runs on Claude and Claude Code kept file backups for its session",
