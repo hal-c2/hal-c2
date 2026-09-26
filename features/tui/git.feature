@@ -59,6 +59,21 @@ Feature: Source control from the terminal
     Then the panel's third row reads "  no git status" in the dim colour
 
   @backlog @tui
+  Scenario: The source-control panel in the conversation's place is titled inside a rounded border
+    Given the terminal is 100 columns wide
+    When the user presses "Ctrl+L"
+    Then the source-control panel has a rounded border in the accent colour
+    And the panel's first row reads "Source Control" in bold
+    And the panel's second row reads "↑/↓ select · Enter activate · Esc back" in the dim colour
+
+  @backlog @tui
+  Scenario: Without git status the panel in the conversation's place says so, indented
+    Given git status could not be read
+    And the terminal is 100 columns wide
+    When the user opens the source-control panel
+    Then the panel's third row reads "  no git status" in the dim colour
+
+  @backlog @tui
   Scenario: The working tree is summed up on one line
     Given the terminal is 150 columns wide
     And the workspace has uncommitted changes
