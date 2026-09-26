@@ -19,7 +19,7 @@ describe("markdownLines", () => {
       "",
       "Some bold text",
       "",
-      "• one",
+      "- one",
       "2. two",
       "",
       "─".repeat(24),
@@ -31,9 +31,39 @@ describe("markdownLines", () => {
 
   it("keeps a fenced block verbatim in the code colour", () => {
     const lines = render("```ts\nconst a = **b**; // https://example.com\n```");
-    expect(lines.map(plainText)).toEqual(["  const a = **b**; // https://example.com"]);
+    expect(lines.map(plainText)).toEqual(["const a = **b**; // https://example.com"]);
     expect(lines[0]!.chunks).toHaveLength(1);
     expect(lines[0]!.chunks[0]!.fg).toEqual(THEME.warning);
+  });
+
+  it("keeps list markers as written, bold in the accent colour", () => {
+    const [star, number] = render("* star\n10. ten");
+    expect([star, number].map((line) => plainText(line!))).toEqual(["* star", "10. ten"]);
+    const marker = number!.chunks.find((part) => part.text === "10.")!;
+    expect(marker.fg).toEqual(THEME.accent);
+    expect((marker.attributes ?? 0) & TextAttributes.BOLD).toBe(TextAttributes.BOLD);
+  });
+
+  it("sets a fenced block off from the text around it", () => {
+    expect(render("before\n```\ncode\n```\nafter").map(plainText)).toEqual([
+      "before",
+      "",
+      "code",
+      "",
+      "after",
+    ]);
+  });
+
+  it("boxes a pipe table across the width with its header in the accent colour", () => {
+    const lines = markdownLines("| A | B |\n|---|---|\n| 1 | 2 |", THEME, 11);
+    expect(lines.map(plainText)).toEqual([
+      "┌────┬────┐",
+      "│A   │B   │",
+      "├────┼────┤",
+      "│1   │2   │",
+      "└────┴────┘",
+    ]);
+    expect(lines[1]!.chunks.find((part) => part.text === "A")!.fg).toEqual(THEME.accent);
   });
 
   it("links bare URLs without their trailing punctuation", () => {

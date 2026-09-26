@@ -76,16 +76,81 @@ const HEADING = /^[ \t]{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
 const LIST_ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
 const QUOTE = /^[ \t]{0,3}>\s?(.*)$/;
 const RULE = /^[ \t]{0,3}([-*_])(?:\s*\1){2,}\s*$/;
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+const TABLE_DIVIDER = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+
+const tableCells = (row: string): string[] =>
+  row
+    .trim()
+    .replace(/^\||\|$/g, "")
+    .split("|")
+    .map((cell) => cell.trim());
+
+/** A pipe table boxed across `width` in equal columns, header cells in the list style. */
+function tableLines(rows: ReadonlyArray<string>, width: number, palette: Palette): StyledText[] {
+  const [head = [], ...body] = rows.filter((row) => !TABLE_DIVIDER.test(row)).map(tableCells);
+  const count = Math.max(1, head.length);
+  const inner = Math.max(count, width - count - 1);
+  const widths = Array.from(
+    { length: count },
+    (_, index) => Math.floor(inner / count) + (index < inner % count ? 1 : 0),
+  );
+  const border = (left: string, mid: string, right: string) =>
+    styled(chunk(left + widths.map((w) => "─".repeat(w)).join(mid) + right, { fg: palette.faint }));
+  const row = (cells: ReadonlyArray<string>, style: ChunkStyle) =>
+    styled(
+      ...widths.flatMap((w, index) => {
+        const text = clipCells(cells[index] ?? "", w);
+        return [
+          chunk("│", { fg: palette.faint }),
+          chunk(text, { fg: palette.text, ...style }),
+          chunk(" ".repeat(Math.max(0, w - Bun.stringWidth(text)))),
+        ];
+      }),
+      chunk("│", { fg: palette.faint }),
+    );
+  return [
+    border("┌", "┬", "┐"),
+    row(head, { fg: palette.accent, bold: true }),
+    border("├", "┼", "┤"),
+    ...body.map((cells) => row(cells, {})),
+    border("└", "┴", "┘"),
+  ];
+}
+
+function clipCells(text: string, width: number): string {
+  if (Bun.stringWidth(text) <= width) return text;
+  let out = "";
+  for (const char of text) {
+    if (Bun.stringWidth(out + char) > width) break;
+    out += char;
+  }
+  return out;
+}
 
 /**
- * Markdown as styled lines: headings bold in the accent colour, list markers
- * in the accent colour, fenced code in the code colour (no inline styling or
- * links inside it), quotes dimmed, inline emphasis, code spans and links.
+ * Markdown as styled lines, laid out like OpenTUI's Markdown renderable with
+ * the TUI syntax style (theme.ts createTuiSyntaxStyle): headings bold in the
+ * accent colour, list markers as written in bold accent, fenced code in the
+ * code colour and set off by a blank line on each side, quotes behind a faint
+ * bar, rules and tables across `width`, inline emphasis, code spans and links.
  */
-export function markdownLines(markdown: string, palette: Palette): StyledText[] {
+export function markdownLines(markdown: string, palette: Palette, width = 24): StyledText[] {
   const lines: StyledText[] = [];
+  const blankLast = () => lines.length === 0 || plainText(lines.at(-1)!) === "";
+  const separate = () => {
+    if (!blankLast()) lines.push(styled(chunk("")));
+  };
   let fence: string | null = null;
-  let blank = false;
+  let afterBlock = false;
+  let table: string[] = [];
+  const flushTable = () => {
+    if (table.length === 0) return;
+    separate();
+    lines.push(...tableLines(table, width, palette));
+    table = [];
+    afterBlock = true;
+  };
   for (const raw of markdown.replace(/\r\n?/g, "\n").split("\n")) {
     const fenceMatch = raw.match(FENCE);
     if (fence !== null) {
@@ -95,23 +160,30 @@ export function markdownLines(markdown: string, palette: Palette): StyledText[] 
         fenceMatch[1].length >= fence.length
       ) {
         fence = null;
+        afterBlock = true;
         continue;
       }
-      lines.push(styled(chunk(`  ${raw}`, { fg: palette.warning })));
-      blank = false;
+      lines.push(styled(chunk(raw, { fg: palette.warning })));
       continue;
     }
+    if (TABLE_ROW.test(raw)) {
+      table.push(raw);
+      continue;
+    }
+    flushTable();
     if (fenceMatch?.[1]) {
       fence = fenceMatch[1];
+      separate();
       continue;
     }
     if (raw.trim().length === 0) {
       // One blank line between blocks; none leading.
-      if (!blank && lines.length > 0) lines.push(styled(chunk("")));
-      blank = true;
+      if (!blankLast()) lines.push(styled(chunk("")));
+      afterBlock = false;
       continue;
     }
-    blank = false;
+    if (afterBlock) separate();
+    afterBlock = false;
     const heading = raw.match(HEADING);
     if (heading) {
       lines.push({
@@ -120,15 +192,16 @@ export function markdownLines(markdown: string, palette: Palette): StyledText[] 
       continue;
     }
     if (RULE.test(raw)) {
-      lines.push(styled(chunk("─".repeat(24), { fg: palette.faint })));
+      lines.push(styled(chunk("─".repeat(Math.max(1, width)), { fg: palette.faint })));
       continue;
     }
     const item = raw.match(LIST_ITEM);
     if (item) {
-      const marker = /\d/.test(item[2]!) ? item[2]! : "•";
       lines.push(
         styled(
-          chunk(`${item[1]}${marker} `, { fg: palette.accent }),
+          item[1] ? chunk(item[1]) : null,
+          chunk(item[2]!, { fg: palette.accent, bold: true }),
+          chunk(" "),
           ...inlineMarkdown(item[3] ?? "", palette),
         ),
       );
@@ -146,6 +219,7 @@ export function markdownLines(markdown: string, palette: Palette): StyledText[] 
     }
     lines.push({ chunks: inlineMarkdown(raw, palette) });
   }
+  flushTable();
   while (lines.length > 0 && plainText(lines.at(-1)!) === "") lines.pop();
   return lines;
 }

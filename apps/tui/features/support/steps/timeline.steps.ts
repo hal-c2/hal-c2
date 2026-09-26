@@ -3,7 +3,9 @@
 import { expect } from "bun:test";
 import { TextAttributes } from "@opentui/core";
 
+import { THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
+import { block, cellAt, cellOn, expectColour, objectRows, rectOf, textAt } from "../design.ts";
 import { advance, findObject, geometry, pressKey, snapshot, type World } from "../world.ts";
 import {
   activity,
@@ -334,8 +336,9 @@ step("the header shows {string}", async (ctx: ThreadWorld, text: string) => {
   const header = hostState(ctx, "timeline").header;
   expect(plain(header.right.text)).toContain(`· ${text}`);
   expect(findObject(ctx, "conversationStatus").get("visible")).toBe(true);
-  const firstLine = (await snapshot(ctx)).split("\n")[0]!;
-  expect(firstLine).toContain(`· ${text}`);
+  const title = plain(header.text);
+  const headerRow = (await snapshot(ctx)).split("\n").find((line) => line.includes(title))!;
+  expect(headerRow).toContain(`· ${text}`);
 });
 
 step("it shows a meter with the tokens used and the percentage", async (ctx: ThreadWorld) => {
@@ -427,11 +430,11 @@ step(
     const emphasis = find("important").chunks;
     expect(bold(emphasis.find((part) => part.text === "important"))).toBe(true);
     expect(bold(emphasis.find((part) => part.text === "This is "))).toBe(false);
-    expect(plain(find("first item"))).toBe("• first item");
+    expect(plain(find("first item"))).toBe("- first item");
     const code = find("const answer");
     expect(code.chunks[0]!.fg).not.toEqual(emphasis[0]!.fg);
     const screen = await snapshot(ctx);
-    for (const text of ["Release notes", "• first item", "• second item", "const answer = 42;"]) {
+    for (const text of ["Release notes", "- first item", "- second item", "const answer = 42;"]) {
       expect(screen).toContain(text);
     }
     expect(screen).not.toContain("**");
@@ -482,12 +485,13 @@ step("the message is aligned to the right and collapsed", async (ctx: ThreadWorl
   const main = geometry(findObject(ctx, "main"));
   // The bubble ends at the column's right edge and starts well right of its left edge.
   expect(row.indexOf("Requirement 1")).toBeGreaterThan(main.x + geometry(column).x + 4);
-  expect(screen).toContain("⌄ Show full message");
+  // The bubble is as narrow as its text, so the toggle wraps like the OpenTUI client's.
+  expect(screen).toContain("⌄ Show full");
   expect(screen).not.toContain("Requirement 30");
 });
 
 step("expanding it shows the full message", async (ctx: ThreadWorld) => {
-  await clickText(ctx, "Show full message");
+  await clickText(ctx, "Show full");
   expect(timelineText(ctx)).toContain("Requirement 30");
   expect(await snapshot(ctx)).toContain("⌃ Show less");
 });
@@ -791,4 +795,88 @@ step("the workspace is unchanged", async (ctx: ThreadWorld) => {
   expect(recorded(ctx, "revertCheckpoint")).toEqual([]);
   expect(findObject(ctx, "revertPicker").get("visible")).toBe(false);
   expect(hostState(ctx, "mode")).toBe("compose");
+});
+
+// --- the OpenTUI client's look ------------------------------------------------------
+
+step(
+  "the conversation is framed by a rounded border in the faint colour",
+  async (ctx: ThreadWorld) => {
+    await snapshot(ctx);
+    const pane = rectOf(ctx, "conversationPane");
+    const right = pane.x + pane.width - 1;
+    const bottom = pane.y + pane.height - 1;
+    const corners = [
+      [pane.x, pane.y, "╭"],
+      [right, pane.y, "╮"],
+      [pane.x, bottom, "╰"],
+      [right, bottom, "╯"],
+    ] as const;
+    for (const [x, y, glyph] of corners) {
+      const cell = await cellAt(ctx, x, y);
+      expect(cell.text).toBe(glyph);
+      expectColour(cell.span.fg, THEME.faint);
+    }
+  },
+);
+
+step("the thread's title is inside the frame", async (ctx: ThreadWorld) => {
+  await snapshot(ctx);
+  const pane = rectOf(ctx, "conversationPane");
+  const title = rectOf(ctx, "conversationTitle");
+  expect(title.x).toBeGreaterThan(pane.x);
+  expect(title.y).toBeGreaterThan(pane.y);
+  expect(title.x + title.width).toBeLessThan(pane.x + pane.width);
+  expect(title.y + title.height).toBeLessThan(pane.y + pane.height);
+  expect((await objectRows(ctx, "conversationTitle")).join("")).toContain(ctx.thread!.title);
+});
+
+step(
+  "the user asked {string}, the agent ran {string} and replied {string}",
+  async (ctx: ThreadWorld, ask: string, cmd: string, reply: string) => {
+    await updateThread(ctx, () => ({
+      messages: [message("ask", "user", ask, 1), message("reply", "assistant", reply, 3)],
+      activities: [command("cmd", 2, cmd)],
+    }));
+  },
+);
+
+step("the timeline reads:", async (ctx: ThreadWorld, expected: string) => {
+  expect(block(await objectRows(ctx, "timelineColumn"))).toBe(block(expected.split("\n")));
+});
+
+step(
+  "the border around {string} is drawn in the accent colour",
+  async (ctx: ThreadWorld, text: string) => {
+    const at = await textAt(ctx, text);
+    const side = await cellAt(ctx, at.x - 2, at.y);
+    expect(side.text).toBe("│");
+    expectColour(side.span.fg, THEME.accent);
+    const corner = await cellAt(ctx, at.x - 2, at.y - 1);
+    expect(corner.text).toBe("╭");
+    expectColour(corner.span.fg, THEME.accent);
+  },
+);
+
+step(
+  "the user sent twelve lines from {string} to {string}",
+  async (ctx: ThreadWorld, first: string, last: string) => {
+    const prefix = first.replace(/\d+$/, "");
+    const count = Number(last.slice(prefix.length));
+    const text = Array.from({ length: count }, (_, index) => `${prefix}${index + 1}`).join("\n");
+    await updateThread(ctx, () => ({ messages: [message("twelve", "user", text, 1)] }));
+  },
+);
+
+step("the agent replied with a list and a code block", async (ctx: ThreadWorld) => {
+  const text = "Steps:\n\n- first item\n- second item\n\n```ts\nconst answer = 42;\n```\nDone.";
+  await updateThread(ctx, () => ({ messages: [message("list", "assistant", text, 1)] }));
+});
+
+step("the list markers are bold in the accent colour", async (ctx: ThreadWorld) => {
+  for (const item of ["first item", "second item"]) {
+    const marker = await cellOn(ctx, item, "-");
+    expectColour(marker.span.fg, THEME.accent);
+    expect(marker.span.attributes & TextAttributes.BOLD).toBeTruthy();
+  }
 });

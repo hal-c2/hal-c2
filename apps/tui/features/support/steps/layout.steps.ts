@@ -11,7 +11,9 @@ import {
   MIN_TIMELINE_ROWS,
 } from "../../../src/components/ChatView.layout.ts";
 import type { TuiLayoutState } from "../../../src/host/layoutState.ts";
+import { THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
+import { cellAt, expectColour, objectRows, rectOf } from "../design.ts";
 import { addThread, flush, ui } from "../environment.ts";
 import { ready } from "../gitWorld.ts";
 import { sidebar, threadRows } from "../threadUi.ts";
@@ -21,9 +23,11 @@ import {
   geometry,
   pressKey,
   resize,
+  settle,
   snapshot,
   typeText,
   type World,
+  useClient,
 } from "../world.ts";
 
 interface LayoutWorld extends World {
@@ -270,3 +274,24 @@ step(
     for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(ctx.columns!);
   },
 );
+
+// --- the empty conversation pane ---
+
+step("the terminal client is connected with no thread open", async (ctx: World) => {
+  useClient(ctx);
+  await boot(ctx);
+  ctx.fake!.connect();
+  await settle(ctx);
+});
+
+step("the conversation pane reads {string} in the dim colour", async (ctx: World, text: string) => {
+  expect((await objectRows(ctx, "conversationEmpty")).join("")).toContain(text);
+  const hint = rectOf(ctx, "conversationEmpty");
+  const cell = await cellAt(ctx, hint.x, hint.y);
+  expect(cell.text).toBe(text[0]!);
+  expectColour(cell.span.fg, THEME.dim);
+});
+
+step("no {string} title is shown", async (ctx: World, text: string) => {
+  expect(await snapshot(ctx)).not.toContain(text);
+});

@@ -6,6 +6,6 @@ Text {
     objectName: "workingIndicator"
     readonly property var working: Shell.state.timeline ? Shell.state.timeline.working : null
     visible: working !== null
-    marginTop: 1
+    marginBottom: 1
     text: working ? working.text : ""
 }

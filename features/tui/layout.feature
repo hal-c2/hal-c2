@@ -47,7 +47,7 @@ Feature: Terminal layout at every size
     When the user opens the source-control panel
     Then the panel replaces the conversation until it is closed
 
-  @tui @backlog
+  @tui
   Scenario: Before a thread is open the conversation pane says how to pick one
     Given the terminal client is connected with no thread open
     Then the conversation pane reads "Select a thread to view its conversation." in the dim colour

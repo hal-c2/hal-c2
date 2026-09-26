@@ -1,7 +1,8 @@
 import OpenTUI
 
-// Pending approvals (Shell.state.approvals): the selected one answers to ^A
-// (approve) and ^R (deny); ↑/↓ pick another while the prompt is empty.
+// Pending approvals (Shell.state.approvals), under the timeline at its width:
+// the selected one answers to ^A (approve) and ^R (deny); ↑/↓ pick another
+// while the prompt is empty.
 Rectangle {
     id: panel
     objectName: "approvals"
@@ -10,6 +11,8 @@ Rectangle {
     visible: approvals.count > 0
     flexDirection: "column"
     flexShrink: 0
+    width: Shell.state.timeline.width
+    alignSelf: "center"
     border.width: 1
     border.style: "rounded"
     border.color: Theme.colors.error
@@ -26,10 +29,17 @@ Rectangle {
     }
     Repeater {
         model: panel.approvals.items
-        delegate: Text {
+        delegate: Item {
             objectName: "approval-" + modelData.requestId
-            text: (modelData.active ? "▸ " : "  ") + modelData.label
-            color: modelData.active ? Theme.colors.text : Theme.colors.dim
+            flexDirection: "row"
+            Text {
+                text: modelData.active ? "▸ " : "  "
+                color: modelData.active ? Theme.colors.accent : Theme.colors.dim
+            }
+            Text {
+                text: modelData.label
+                color: modelData.active ? Theme.colors.text : Theme.colors.dim
+            }
         }
     }
     Text { text: panel.approvals.hint; color: Theme.colors.dim }

@@ -133,12 +133,12 @@ Feature: Reading a thread in the terminal
     Then the message is aligned to the right and collapsed
     And expanding it shows the full message
 
-  @tui @backlog
+  @tui
   Scenario: The conversation sits in a rounded pane
     Then the conversation is framed by a rounded border in the faint colour
     And the thread's title is inside the frame
 
-  @tui @backlog
+  @tui
   Scenario: Entries are spaced like the OpenTUI client
     Given the user asked "Fix the build", the agent ran "bun run build" and replied "Fixed."
     Then the timeline reads:
@@ -153,12 +153,12 @@ Feature: Reading a thread in the terminal
       Fixed.
       """
 
-  @tui @backlog
+  @tui
   Scenario: The user's message is boxed in the accent colour
     Given the user asked "Fix the build", the agent ran "bun run build" and replied "Fixed."
     Then the border around "Fix the build" is drawn in the accent colour
 
-  @tui @backlog
+  @tui
   Scenario: A collapsed message keeps its bubble as narrow as its text
     Given the user sent twelve lines from "Requirement 1" to "Requirement 12"
     Then the timeline reads:
@@ -177,7 +177,7 @@ Feature: Reading a thread in the terminal
       ╰────────────────╯
       """
 
-  @tui @backlog
+  @tui
   Scenario: Lists and code blocks read like the OpenTUI client
     Given the agent replied with a list and a code block
     Then the timeline reads:

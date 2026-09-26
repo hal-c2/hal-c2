@@ -135,6 +135,8 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   let detail: OrchestrationThread | null = null;
   let page: StoreState["threadPage"] = null;
   let paneWidth = 1;
+  /** The selected project's title while a project row (not a thread) is selected. */
+  let projectHint: string | null = null;
   let view: TimelineView = EMPTY_TIMELINE_VIEW;
   let timeline: TimelineState | null = null;
   let pendingOlder: { readonly detailId: string; readonly rowCount: number } | null = null;
@@ -182,7 +184,9 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       paneWidth,
       nowMs: options.nowMs(),
       palette,
-      emptyHint: "Select a thread with Alt+↑/↓ or click",
+      emptyHint: projectHint
+        ? `${projectHint} — Enter to expand, then Alt+↑/↓ to pick a thread.`
+        : "Select a thread to view its conversation.",
       attachments: attachments.get,
       cellPixels: cellPixels(),
     });
@@ -640,6 +644,10 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
 
   const sync = (next: StoreState, prev: StoreState | null) => {
     const selectedThreadId = next.selection?.kind === "thread" ? next.selection.id : null;
+    const selectedProject =
+      next.selection?.kind === "project"
+        ? (next.shell?.projects.find((project) => project.id === next.selection?.id)?.title ?? null)
+        : null;
     if (next.shell && prev?.shell !== next.shell) {
       alerts = nextThreadAlerts(
         alerts,
@@ -654,6 +662,11 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     }
     if (!prev || prev.shell !== next.shell || prev.selection !== next.selection) {
       publishNotifications();
+    }
+
+    if (selectedProject !== projectHint) {
+      projectHint = selectedProject;
+      if (!next.detail) publishTimeline();
     }
 
     if (prev && prev.detail === next.detail && prev.threadPage === next.threadPage) return;

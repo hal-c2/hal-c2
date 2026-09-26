@@ -108,7 +108,13 @@ export interface TimelineItem {
   /** Width of the item's box (the column width unless boxed). */
   readonly width: number;
   readonly marginTop: number;
+  readonly marginBottom: number;
   readonly lines: ReadonlyArray<TimelineLine>;
+  /**
+   * A collapsed message: `lines[from, to)` sit in a box `rows` tall that
+   * clips them, soft-wrapped rows included.
+   */
+  readonly clip: { readonly from: number; readonly to: number; readonly rows: number } | null;
 }
 
 export interface TimelineState {
@@ -161,7 +167,9 @@ const item = (
   kind: TimelineItem["kind"],
   width: number,
   lines: ReadonlyArray<TimelineLine>,
-  extra: Partial<Pick<TimelineItem, "align" | "boxed" | "marginTop">> = {},
+  extra: Partial<
+    Pick<TimelineItem, "align" | "boxed" | "marginTop" | "marginBottom" | "clip">
+  > = {},
 ): TimelineItem => ({
   key,
   kind,
@@ -169,7 +177,9 @@ const item = (
   boxed: extra.boxed ?? false,
   width,
   marginTop: extra.marginTop ?? 0,
+  marginBottom: extra.marginBottom ?? 0,
   lines,
+  clip: extra.clip ?? null,
 });
 
 /** Timeline column width inside a pane of `paneWidth` (border + padding = 4). */
@@ -219,9 +229,13 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
           ? "▴ Loading earlier turns…"
           : "▴ Load earlier turns";
     items.push(
-      item("pager:older", "pager", width, [
-        line(styled(chunk(label, { fg: palette.dim })), "timeline.showOlder"),
-      ]),
+      item(
+        "pager:older",
+        "pager",
+        width,
+        [line(styled(chunk(label, { fg: palette.dim })), "timeline.showOlder")],
+        { marginBottom: 1 },
+      ),
     );
   }
   for (const row of rows.slice(window.start, window.end)) pushRow(items, row, ctx);
@@ -237,7 +251,7 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
             "timeline.showNewer",
           ),
         ],
-        { marginTop: 1 },
+        { marginTop: 1, marginBottom: 1 },
       ),
     );
   }
@@ -286,7 +300,7 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
       ? {
           id: plan.id,
           title: styled(chunk("◆ ", { fg: palette.accent }), chunk(plan.title, { bold: true })),
-          lines: markdownLines(linkifyTimelineUrls(plan.body), palette),
+          lines: markdownLines(linkifyTimelineUrls(plan.body), palette, Math.max(1, width - 4)),
           hint: "proposed plan · ^Y implement · ^B build mode to refine",
         }
       : null,
@@ -346,6 +360,8 @@ const PREVIEW_MAX_WIDTH_PX = 420;
 const PREVIEW_MAX_HEIGHT_PX = 440;
 /** The least room the link part of an attachment line keeps before it is clipped. */
 const ATTACHMENT_TAIL_MIN = 8;
+/** Room a user bubble keeps for an attachment line's link/state tail. */
+const ATTACHMENT_TAIL_WIDTH = 28;
 
 type ImageAttachment = { readonly id: string; readonly name: string; readonly sizeBytes: number };
 
@@ -408,7 +424,7 @@ function attachmentLines(
     ),
   ];
   if (image) {
-    const cells = previewCells(image, lineWidth, ctx.cellPixels);
+    const cells = previewCells(image, lineWidth - 2, ctx.cellPixels);
     lines.push({
       ...line(styled(), "image.open", { id: attachment.id }),
       image: { id: attachment.id, source: image.source, ...cells },
@@ -444,39 +460,58 @@ function pushRow(items: TimelineItem[], row: TimelineRow, ctx: RowContext): void
 function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext): void {
   const { palette, width } = ctx;
   if (row.kind === "work") {
-    items.push(item(row.id, "work", width, workGroupLines(row.id, row.groupedEntries, ctx)));
+    items.push(
+      item(row.id, "work", width, workGroupLines(row.id, row.groupedEntries, ctx), {
+        marginBottom: 1,
+      }),
+    );
     return;
   }
   const message = row.message;
   const rawBody = message.text.trim().length > 0 ? message.text : "…";
-  const body = markdownLines(linkifyTimelineUrls(rawBody), palette);
+  const body = linkifyTimelineUrls(rawBody);
   const images = (message.attachments ?? []).filter((attachment) => attachment.type === "image");
 
   if (message.role === "user") {
+    // MessagesTimeline's bubble: its longest line plus chrome, at most 80% of
+    // the column, and wide enough for an attachment's label, link and preview.
     const maxBubble = Math.max(8, Math.floor(width * 0.8));
-    const canCollapse = shouldCollapseUserMessage(rawBody);
-    const toggleWidth = canCollapse ? Bun.stringWidth("⌄ Show full message") : 1;
-    // An attachment's label and link, or its preview, widen the bubble as far as it may go.
-    const attachmentWidth = images.length > 0 ? maxBubble - 4 : 0;
     const longest = rawBody
       .split("\n")
-      .reduce((max, text) => Math.max(max, Bun.stringWidth(text)), toggleWidth);
-    const bubbleWidth = Math.max(
-      1,
-      Math.min(width, maxBubble, Math.max(longest, attachmentWidth) + 4),
-    );
+      .reduce((max, text) => Math.max(max, Bun.stringWidth(text)), 1);
+    const attachmentMinWidth =
+      images.length > 0
+        ? Math.min(
+            maxBubble,
+            Math.max(
+              images.reduce(
+                (max, attachment) => Math.max(max, Bun.stringWidth(attachmentLabel(attachment))),
+                0,
+              ) +
+                2 +
+                ATTACHMENT_TAIL_WIDTH,
+              Math.round(PREVIEW_MAX_WIDTH_PX / ctx.cellPixels.width),
+            ) + 4,
+          )
+        : 1;
+    const bubbleWidth = Math.max(attachmentMinWidth, Math.min(width, maxBubble, longest + 4));
+    const innerWidth = Math.max(1, bubbleWidth - 4);
+    const bodyLines = markdownLines(body, palette, innerWidth);
     const imageLines = images.flatMap((attachment) =>
-      attachmentLines(attachment, bubbleWidth - 4, ctx),
+      attachmentLines(attachment, Math.max(8, innerWidth), ctx),
     );
+    const head = imageLines.length > 0 ? [...imageLines, line(styled(chunk("")))] : [];
+    const canCollapse = shouldCollapseUserMessage(rawBody);
     const expanded = ctx.view.expandedMessages.has(message.id);
-    const shown = canCollapse && !expanded ? clipRows(body, bubbleWidth - 4) : body;
+    const collapsed = canCollapse && !expanded;
+    const shown = collapsed ? clipRows(bodyLines, innerWidth) : bodyLines;
     items.push(
       item(
         row.id,
         "message",
         bubbleWidth,
         [
-          ...imageLines,
+          ...head,
           ...shown.map((text) => line(text)),
           ...(canCollapse
             ? [
@@ -490,38 +525,60 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
               ]
             : []),
         ],
-        { align: "right", boxed: true, marginTop: 1 },
+        {
+          align: "right",
+          boxed: true,
+          marginTop: 1,
+          marginBottom: 1,
+          clip: collapsed
+            ? {
+                from: head.length,
+                to: head.length + shown.length,
+                rows: COLLAPSED_USER_MESSAGE_ROWS,
+              }
+            : null,
+        },
       ),
     );
     return;
   }
 
   const imageLines = images.flatMap((attachment) => attachmentLines(attachment, width, ctx));
-  items.push(
-    item(row.id, "message", width, [...body.map((text) => line(text)), ...imageLines], {
-      marginTop: 1,
-    }),
-  );
   const checkpoint = ctx.checkpointByMessage.get(message.id);
+  items.push(
+    item(
+      row.id,
+      "message",
+      width,
+      [
+        ...markdownLines(body, palette, width).map((text) => line(text)),
+        ...(imageLines.length > 0 ? [line(styled(chunk(""))), ...imageLines] : []),
+      ],
+      { marginTop: 1, marginBottom: checkpoint ? 0 : 1 },
+    ),
+  );
   if (checkpoint) {
     items.push(
       item(`files:${message.id}`, "files", width, changedFilesLines(checkpoint, ctx), {
         marginTop: 1,
+        marginBottom: 1,
       }),
     );
   }
 }
 
-/** Keep the first rows of a collapsed message, counting soft-wrapped rows. */
+/**
+ * The lines a collapsed message mounts: enough to fill its clipped rows
+ * (counting soft-wrapped rows), the last one possibly cut by the clip.
+ */
 function clipRows(lines: ReadonlyArray<StyledText>, innerWidth: number): StyledText[] {
   const kept: StyledText[] = [];
   let rows = 0;
   for (const text of lines) {
+    if (rows >= COLLAPSED_USER_MESSAGE_ROWS) break;
     const plain = text.chunks.map((part) => part.text).join("");
-    const height = Math.max(1, Math.ceil(Bun.stringWidth(plain) / Math.max(1, innerWidth)));
-    if (rows + height > COLLAPSED_USER_MESSAGE_ROWS) break;
     kept.push(text);
-    rows += height;
+    rows += Math.max(1, Math.ceil(Bun.stringWidth(plain) / Math.max(1, innerWidth)));
   }
   return kept;
 }

@@ -242,6 +242,10 @@ export async function openThread(
   ctx.fake!.connect();
   ctx.fake!.emitThread(detail, ctx.page);
   await settle();
+  // The first frame lays the timeline out beside a scrollbar that turns out
+  // not to be needed; the next one gives the column its full width back.
+  await snapshot(ctx);
+  await snapshot(ctx);
 }
 
 /** Apply a change to the open thread and stream it in. */

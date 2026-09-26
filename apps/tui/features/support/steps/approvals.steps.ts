@@ -2,7 +2,9 @@
 // composer/question-answers.feature): approvals, questions and plans.
 import { expect } from "bun:test";
 
+import { THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
+import { cellOn, expectColour, rectOf } from "../design.ts";
 import { PROVIDERS } from "../fakeClient.ts";
 import { findObject, pressKey, settle as settleHost, snapshot, typeText } from "../world.ts";
 import { prepareHost, seedLocalFiles, type ComposerWorld } from "./composer.steps.ts";
@@ -10,6 +12,7 @@ import {
   activity,
   approvalRequest,
   approvalResolved,
+  clickText,
   deferred,
   hostState,
   latestTurn,
@@ -588,4 +591,36 @@ step("the plan card shows the latest turn's plan", async (ctx: ThreadWorld) => {
   const screen = await snapshot(ctx);
   expect(screen).toContain("◆ Latest turn plan");
   expect(screen).not.toContain("Older turn plan");
+});
+
+step(
+  "the approval panel is inside the conversation frame and as wide as the timeline",
+  async (ctx: ThreadWorld) => {
+    await snapshot(ctx);
+    const pane = rectOf(ctx, "conversationPane");
+    const panel = rectOf(ctx, "approvals");
+    const timeline = rectOf(ctx, "timeline");
+    const column = rectOf(ctx, "timelineColumn");
+    expect(panel.x).toBeGreaterThan(pane.x);
+    expect(panel.x + panel.width).toBeLessThan(pane.x + pane.width);
+    expect(panel.y).toBeGreaterThanOrEqual(timeline.y + timeline.height);
+    expect(panel.y + panel.height).toBeLessThan(pane.y + pane.height);
+    expect({ x: panel.x, width: panel.width }).toEqual({ x: column.x, width: column.width });
+  },
+);
+
+step(
+  "the selected approval's {string} marker is in the accent colour",
+  async (ctx: ThreadWorld, marker: string) => {
+    const cell = await cellOn(ctx, marker, marker);
+    expectColour(cell.span.fg, THEME.accent);
+  },
+);
+
+step("the user clicks the plan card's caption", async (ctx: ThreadWorld) => {
+  await clickText(ctx, "proposed plan");
+});
+
+step("the plan is not handed to the agent", (ctx: ThreadWorld) => {
+  expect(recorded(ctx, "implementPlan")).toEqual([]);
 });
