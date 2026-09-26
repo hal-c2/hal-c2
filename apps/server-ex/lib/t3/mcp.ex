@@ -108,7 +108,7 @@ defmodule T3.Mcp do
         {200, result(id, %{})}
 
       "tools/list" ->
-        {200, result(id, %{"tools" => T3.Mcp.Tools.list()})}
+        {200, result(id, %{"tools" => T3.Mcp.Tools.list() ++ plugin_tools()})}
 
       "tools/call" ->
         %{"name" => name} = params = request["params"] || %{}
@@ -119,9 +119,20 @@ defmodule T3.Mcp do
     end
   end
 
+  # Tools of the enabled tool packs (`T3.Plugins`); T3's own keep their names.
+  defp plugin_tools do
+    own = MapSet.new(T3.Mcp.Tools.list(), & &1["name"])
+    Enum.reject(T3.Plugins.tools(), &MapSet.member?(own, &1["name"]))
+  end
+
   # A tool's answer as MCP content; a failure is an error result the agent can read.
   defp call(name, arguments, caller) do
-    case T3.Mcp.Tools.call(name, arguments, caller) do
+    answer =
+      if Enum.any?(T3.Mcp.Tools.list(), &(&1["name"] == name)),
+        do: T3.Mcp.Tools.call(name, arguments, caller),
+        else: T3.Plugins.call_tool(name, arguments) || T3.Mcp.Tools.call(name, arguments, caller)
+
+    case answer do
       {:ok, value} ->
         %{
           "content" => [%{"type" => "text", "text" => JSON.encode!(value)}],

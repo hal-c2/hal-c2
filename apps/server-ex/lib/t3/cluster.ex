@@ -13,6 +13,7 @@ defmodule T3.Cluster do
     * `ca.key` - the CA key (only on members that can invite)
     * `node.pem`, `node.key` - this machine's certificate and key
     * `ssl_dist.conf` - the distribution TLS options, read by the VM at boot
+    * `revoked` - members this machine no longer admits (`revoke/2`)
     * `vm.args` - the flags from `vm_args/1`, which a release boots with
 
   Distribution runs without EPMD on `@dist_port`, one node per machine, named
@@ -23,6 +24,8 @@ defmodule T3.Cluster do
 
   @dist_port 4370
   @valid_days 3650
+  # Certificates start this long before they are issued, for clock skew between machines.
+  @backdate_seconds 300
 
   def dist_port, do: @dist_port
 
@@ -78,6 +81,47 @@ defmodule T3.Cluster do
   end
 
   @doc """
+  Stops admitting the member at `address` on this machine: every certificate issued
+  for it until now fails the distribution handshake here, in both directions, from
+  the next connection on (the running node reads the list at each handshake). Run it
+  on every member; an address invited again later gets a certificate that passes.
+  """
+  @spec revoke(String.t(), String.t()) :: :ok
+  def revoke(home, address) do
+    dir = dir(home)
+    File.write!(Path.join(dir, "revoked"), "#{address} #{System.os_time(:second)}\n", [:append])
+    # Configs written before revocation existed lack the check; it applies from the next boot.
+    write(dir, "ssl_dist.conf", ssl_dist_conf(dir))
+  end
+
+  @doc false
+  # The distribution handshake's `verify_fun` (see `ssl_dist_conf/1`): OTP still checks
+  # the chain, and a peer certificate for a revoked address fails if it predates the
+  # revocation.
+  def verify_peer(_cert, {:bad_cert, reason}, _dir), do: {:fail, reason}
+  def verify_peer(_cert, {:extension, _}, dir), do: {:unknown, dir}
+  def verify_peer(_cert, :valid, dir), do: {:valid, dir}
+
+  def verify_peer(cert, :valid_peer, dir) do
+    if revoked?(cert, dir), do: {:fail, :revoked}, else: {:valid, dir}
+  end
+
+  defp revoked?(cert, dir) do
+    with {:ok, list} <- File.read(Path.join(dir, "revoked")),
+         ["t3@" <> address] <- X509.Certificate.subject(cert, "CN") do
+      {:Validity, not_before, _} = X509.Certificate.validity(cert)
+      issued = DateTime.to_unix(X509.DateTime.to_datetime(not_before)) + @backdate_seconds
+
+      Enum.any?(String.split(list, "\n", trim: true), fn line ->
+        [revoked, at] = String.split(line)
+        revoked == address and issued <= String.to_integer(at)
+      end)
+    else
+      _ -> false
+    end
+  end
+
+  @doc """
   VM flags for a clustered node: TLS distribution, no EPMD, the fixed port, and the
   node name. Returns `nil` until the machine has a certificate.
   """
@@ -126,7 +170,7 @@ defmodule T3.Cluster do
       |> X509.PublicKey.derive()
       |> X509.Certificate.new("/CN=t3@#{address}", ca, ca_key,
         template: :server,
-        validity: @valid_days,
+        validity: X509.Certificate.Validity.days_from_now(@valid_days, @backdate_seconds),
         extensions: [subject_alt_name: X509.Certificate.Extension.subject_alt_name([san])]
       )
 
@@ -150,7 +194,7 @@ defmodule T3.Cluster do
     write(dir, "vm.args", String.replace(vm_args(home), " -", "\n-") <> "\n")
   end
 
-  # file:consult/1 format: plain terms only, no function calls.
+  # file:consult/1 format: plain terms only, no function calls (an external fun is a term).
   defp ssl_dist_conf(dir) do
     opts = fn extra ->
       [
@@ -158,6 +202,7 @@ defmodule T3.Cluster do
         keyfile: to_charlist(Path.join(dir, "node.key")),
         cacertfile: to_charlist(Path.join(dir, "ca.pem")),
         verify: :verify_peer,
+        verify_fun: {&__MODULE__.verify_peer/3, to_charlist(dir)},
         versions: [:"tlsv1.3"]
       ] ++ extra
     end

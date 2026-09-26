@@ -29,7 +29,12 @@ defmodule T3.Cluster.Tailscale do
 
   @impl GenServer
   def handle_info(:poll, state) do
-    nodes = discover(Keyword.get(state.config, :command, ["tailscale", "status", "--json"]))
+    command =
+      Keyword.get_lazy(state.config, :command, fn ->
+        Application.get_env(:t3, :tailscale_command, ["tailscale"]) ++ ["status", "--json"]
+      end)
+
+    nodes = discover(command)
     Cluster.Strategy.connect_nodes(state.topology, state.connect, state.list_nodes, nodes)
 
     Process.send_after(

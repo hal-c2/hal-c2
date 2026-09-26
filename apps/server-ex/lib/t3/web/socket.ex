@@ -129,6 +129,32 @@ defmodule T3.Web.Socket do
     end
   end
 
+  def handle_info({:t3_relay_client_install, node, event}, state) do
+    case state.by_terminal do
+      %{{:relay_client_install, ^node} => id} ->
+        case event do
+          {:error, detail} ->
+            frame = Map.put(error_frame(id, detail["reason"]), "detail", detail)
+            {:push, Protocol.encode(frame), unsubscribe(state, id)}
+
+          %{"type" => "complete"} ->
+            frames = [
+              Protocol.encode(%{"t" => "relayClientInstall", "id" => id, "event" => event}),
+              Protocol.encode(%{"t" => "end", "id" => id})
+            ]
+
+            {:push, frames, unsubscribe(state, id)}
+
+          _ ->
+            {:push, Protocol.encode(%{"t" => "relayClientInstall", "id" => id, "event" => event}),
+             state}
+        end
+
+      _ ->
+        {:ok, state}
+    end
+  end
+
   # The node moved to another version in place; clients watching it see its new
   # descriptor as a `ready`.
   def handle_info({:t3_upgraded, node, outcome}, state) do
@@ -767,6 +793,32 @@ defmodule T3.Web.Socket do
     end
   end
 
+  # Installing software on the host is for sessions that may change its relay setup.
+  defp subscribe(state, id, {:relay_client_install, node} = shape, _) do
+    allowed =
+      state.session == nil or
+        Enum.any?(
+          T3.Auth.clients(),
+          &(&1["sessionId"] == state.session and "relay:write" in &1["scopes"])
+        )
+
+    case allowed && remote(node, T3.Connect.RelayClient, :start_install, [self()]) do
+      false ->
+        {:push, Protocol.encode(error_frame(id, "relay:write is required")), state}
+
+      {:ok, :ok} ->
+        {:ok,
+         %{
+           state
+           | subs: Map.put(state.subs, id, shape),
+             by_terminal: Map.put(state.by_terminal, {:relay_client_install, node}, id)
+         }}
+
+      {:error, reason} ->
+        {:push, Protocol.encode(error_frame(id, reason)), state}
+    end
+  end
+
   defp subscribe(state, id, {:git_action, node, %{"actionId" => action_id} = input} = shape, _) do
     case remote(node, T3.GitActions, :start, [input, self()]) do
       {:ok, :ok} ->
@@ -854,6 +906,13 @@ defmodule T3.Web.Socket do
 
       {{:server_update, node, _input}, subs} ->
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:server_update, node})}
+
+      {{:relay_client_install, node}, subs} ->
+        %{
+          state
+          | subs: subs,
+            by_terminal: Map.delete(state.by_terminal, {:relay_client_install, node})
+        }
 
       {{:git_action, _node, %{"actionId" => action_id}}, subs} ->
         %{

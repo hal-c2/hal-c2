@@ -51,6 +51,8 @@ defmodule T3.Auth do
     {"auth_pairing", "label", "TEXT"},
     {"auth_pairing", "scopes", "TEXT"},
     {"auth_pairing", "created_at", "INTEGER"},
+    # T3 Connect credentials: the DPoP key thumbprint that must redeem them.
+    {"auth_pairing", "proof_jkt", "TEXT"},
     {"auth_sessions", "id", "TEXT"},
     {"auth_sessions", "last_connected_at", "INTEGER"},
     {"auth_sessions", "device_type", "TEXT"},
@@ -60,19 +62,25 @@ defmodule T3.Auth do
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
-  @doc "Creates a pairing token in the store at `path`; usable from outside the node."
-  @spec create_pairing_token(String.t()) :: String.t()
-  def create_pairing_token(path) do
+  @doc """
+  Creates a pairing token in the store at `path`; usable from outside the node.
+  `admin: true` pairs with the operator's scopes, for tools on the host itself.
+  """
+  @spec create_pairing_token(String.t(), keyword) :: String.t()
+  def create_pairing_token(path, opts \\ []) do
+    scopes = if opts[:admin], do: @admin_scopes, else: @standard_scopes
+
     with_db(path, fn db ->
       ensure_schema(db)
-      insert_pairing(db, nil, @standard_scopes)
+      insert_pairing(db, nil, scopes)
     end)
     |> Map.fetch!("credential")
   end
 
   @doc """
   Exchanges a pairing token for `{:ok, access_token, expires_in_s, scopes}`.
-  `client` describes who asked: `label`, `device_type`, `os`, `user_agent`.
+  `client` describes who asked: `label`, `device_type`, `os`, `user_agent`, and
+  `proof_jkt`, the DPoP key it proved (a T3 Connect credential needs its own).
   """
   @spec exchange(String.t(), map) :: {:ok, String.t(), pos_integer, [String.t()]} | :error
   def exchange(pairing_token, client \\ %{}),
@@ -174,10 +182,15 @@ defmodule T3.Auth do
               else: {:error, []}
 
           true ->
+            # A credential bound to a device's key stays unused for anyone else.
             case query(
                    db,
-                   "DELETE FROM auth_pairing WHERE token_hash = ?1 RETURNING expires_at, id, scopes",
-                   [hash(token)]
+                   """
+                   DELETE FROM auth_pairing
+                   WHERE token_hash = ?1 AND (proof_jkt IS NULL OR proof_jkt = ?2)
+                   RETURNING expires_at, id, scopes
+                   """,
+                   [hash(token), client[:proof_jkt]]
                  ) do
               [[expires_at, id, scopes]] when expires_at > 0 ->
                 removed = [event("pairingLinkRemoved", %{"id" => id})]
@@ -233,11 +246,17 @@ defmodule T3.Auth do
 
   def handle_call({:create_link, input}, _from, state) do
     scopes = Enum.filter(input["scopes"] || @standard_scopes, &(&1 in @admin_scopes))
-    link = with_db(state.path, &insert_pairing(&1, input["label"], scopes))
+    ttl = input["ttlMs"] || @pairing_ttl
+
+    link =
+      with_db(
+        state.path,
+        &insert_pairing(&1, input["label"], scopes, ttl, input["proofKeyThumbprint"])
+      )
 
     listed =
       Map.drop(link, ["credential"])
-      |> Map.merge(%{"scopes" => scopes, "subject" => "pairing-link"})
+      |> Map.merge(%{"scopes" => scopes, "subject" => input["subject"] || "pairing-link"})
 
     state = broadcast(state, [event("pairingLinkUpserted", listed)])
     {:reply, {:ok, Map.take(link, ~w(id credential label expiresAt))}, state}
@@ -302,22 +321,22 @@ defmodule T3.Auth do
 
   # --- store -------------------------------------------------------------------
 
-  defp insert_pairing(db, label, scopes) do
+  defp insert_pairing(db, label, scopes, ttl \\ @pairing_ttl, proof_jkt \\ nil) do
     token = random_token()
     id = "pairing-" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
     created = now()
 
     exec(
       db,
-      "INSERT INTO auth_pairing (token_hash, expires_at, id, label, scopes, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-      [hash(token), created + @pairing_ttl, id, label, Enum.join(scopes, " "), created]
+      "INSERT INTO auth_pairing (token_hash, expires_at, id, label, scopes, created_at, proof_jkt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+      [hash(token), created + ttl, id, label, Enum.join(scopes, " "), created, proof_jkt]
     )
 
     %{
       "id" => id,
       "credential" => token,
       "createdAt" => iso(created),
-      "expiresAt" => iso(created + @pairing_ttl)
+      "expiresAt" => iso(created + ttl)
     }
     |> put_present("label", label)
   end

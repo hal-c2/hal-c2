@@ -19,25 +19,26 @@
 
 Feature: T3 Connect
   T3 Connect links an environment to the user's cloud account so their other devices can
-  reach it through a managed tunnel. The node has no relay support yet.
+  reach it through a managed tunnel.
 
   Background:
     Given a running node
     And a user signed in to T3 Connect
 
-  @backlog @node
+  @node
   Scenario: Linking proves the node's identity and lists it for the account
     When the user links the node to their account
     Then the node proves its identity to the relay
     And the node joins the account's environment list
 
+  # Blocker: needs a real tunnel edge in front of the node; the fake relay client only runs the connector.
   @backlog @node
   Scenario: A linked node is reachable through its managed tunnel
     Given a linked node
     When a device signed in to the same account chooses it
     Then the device connects through the node's tunnel address
 
-  @backlog @node
+  @node
   Scenario: The relay brokers a credential the device redeems directly
     Given a linked node
     When a signed-in device asks the relay for access
@@ -45,13 +46,13 @@ Feature: T3 Connect
     And the device exchanges it with the node for a session
     And the relay never sees the session
 
-  @backlog @node
+  @node
   Scenario: A minted credential is useless without the device's key
     Given a credential minted for one device
     When another process presents it without that device's key
     Then the node refuses it
 
-  @backlog @node
+  @node
   Scenario: Health checks answer once per nonce
     Given a linked node
     When T3 Connect checks its health with a nonce
@@ -59,25 +60,26 @@ Feature: T3 Connect
     When the same request is replayed
     Then the node refuses it
 
-  @backlog @node
+  @node
   Scenario: Relay requests that name another node or user are refused
     Given a linked node
     When a relay request arrives for another environment or another account
     Then the node refuses it
 
-  @backlog @node
+  @node
   Scenario: The tunnel exposes only the node's loopback origin
     Given a linked node
     When a request through the tunnel carries forwarded authority headers
     Then the node's link proof rejects it
 
-  @backlog @node
+  @node
   Scenario: Unlinking stops relay access
     Given a linked node
     When the user unlinks it
     Then the relay no longer reaches it
     And its link state reads unlinked
 
+  # Blocker: the relay's database and the client's retry live outside the node; the node's unlink has no failing teardown step.
   @backlog @node
   Scenario: Unlinking keeps access if the teardown fails
     Given a linked node
@@ -86,13 +88,13 @@ Feature: T3 Connect
     Then the link stays usable
     And the unlink can be retried
 
-  @backlog @node
+  @node
   Scenario: A link recorded while the node is stopped takes effect at startup
     Given the user linked the node while it was stopped
     When the node starts
     Then it brings up its tunnel
 
-  @backlog @node
+  @node
   Scenario: A normal shutdown releases the tunnel but keeps the address
     Given a node linked from the command line
     When the node shuts down
@@ -100,12 +102,13 @@ Feature: T3 Connect
     And the account shows it offline rather than unauthorized
     And the next start reuses its address
 
-  @backlog @node
+  @node
   Scenario: A hot upgrade keeps the tunnel
     Given a linked node
     When the node upgrades itself
     Then its tunnel stays up throughout
 
+  # Blocker: account limits and deregistering are relay-side; the node takes no part.
   @backlog @node
   Scenario: Deregistering frees an offline node's place
     Given a linked node that is offline
@@ -113,12 +116,14 @@ Feature: T3 Connect
     Then its cloud access is revoked
     And its place counts no longer toward the account's limit
 
+  # Blocker: the node has no OAuth sign-in (browser or device code) nor a background service installer to offer.
   @backlog @node
   Scenario: An operator links the node from the command line
     When an operator runs the connect command on the host
     Then it asks the operator to sign in
     And offers to install the background service
 
+  # Blocker: device-code sign-in against the account's auth provider is not implemented in the node.
   @backlog @node
   Scenario: Signing in over SSH uses a device code
     Given an operator on the host over SSH
@@ -126,24 +131,25 @@ Feature: T3 Connect
     Then it prints a browser link and a short code
     And continues once the code is approved on another device
 
-  @backlog @node
+  @node
   Scenario: Saving a sign-in alone does not make the node reachable
     Given an operator signed in without starting the node
     Then no device can reach the node until it runs
 
-  @backlog @node
+  @node
   Scenario: The operator inspects the saved link
     When the operator asks for the connect status
     Then it prints the saved authorization and link settings
     And does not test reachability
 
-  @backlog @node
+  @node
   Scenario: Unlinking from the command line keeps the sign-in
     Given a linked node
     When the operator unlinks from the command line
     Then the node stops being exposed
     And the operator stays signed in
 
+  # Blocker: the node installs no background service to keep; `mix t3.connect logout` clears the sign-in and link.
   @backlog @node
   Scenario: Logging out clears the sign-in and the link
     Given a linked node
@@ -158,6 +164,7 @@ Feature: T3 Connect
     When the user signs out of T3 Connect
     Then the background service keeps running and stays installed
 
+  # Blocker: node sessions are plain bearer tokens with no DPoP binding or renewal to exercise.
   @backlog @node
   Scenario: Credentials renew without disconnecting
     Given a device connected through T3 Connect
@@ -165,7 +172,7 @@ Feature: T3 Connect
     Then it is renewed without closing the connection
     And a renewal that fails affects only that request
 
-  @backlog @node
+  @node
   Scenario Outline: A failure at startup names its recovery
     Given the relay answers the node with <failure>
     When the node starts
@@ -178,17 +185,17 @@ Feature: T3 Connect
       | an expired or invalid link proof          | check the host's clock and update                           |
       | a 403 without a recognised error          | check relay access, proxies and firewall rules              |
 
-  @backlog @node
+  @node
   Scenario: Temporary relay failures are retried at startup
     Given the relay answers 408, 429 or a server error
     When the node starts
     Then it keeps retrying for up to ten minutes
 
-  @backlog @node
+  @node
   Scenario Outline: The node reports its relay client
     Given the relay client is <state>
     When a client asks for the relay client status
-    Then the node answers "<status>"
+    Then the relay client status is "<status>"
 
     Examples:
       | state                                    | status      |
@@ -198,20 +205,20 @@ Feature: T3 Connect
       | not installed                            | missing     |
       | not built for this platform              | unsupported |
 
-  @backlog @node
+  @node
   Scenario: Installing the relay client streams its stages
     Given the relay client is missing
     When a client installs it
     Then the node reports checking, downloading, verifying, installing, validating and activating
     And finishes with the client available
 
-  @backlog @node
+  @node
   Scenario: A second install waits for the first
     Given a relay client install in progress
     When another client installs it
     Then the second install waits for the lock
 
-  @backlog @node
+  @node
   Scenario Outline: A relay client install that fails says why
     Given <situation>
     When a client installs the relay client

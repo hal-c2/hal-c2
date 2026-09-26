@@ -43,6 +43,7 @@ defmodule T3.Devices.Proxy do
                       authorization dpop content-length accept-encoding)
   @dropped_response ~w(connection keep-alive transfer-encoding content-length)
   @credentials ~w(wsTicket hostId token)
+  @unavailable "The node with this device is unavailable."
 
   @doc "Serves one `/api/device-hub` request; `segments` is the path after the prefix."
   def serve(conn, segments) do
@@ -74,6 +75,7 @@ defmodule T3.Devices.Proxy do
                conn,
                if(controls, do: "orchestration:operate", else: "orchestration:read")
              ) do
+          :ok when owner == :offline -> send_resp(conn, 502, @unavailable)
           :ok -> relay(conn, owner, path <> search(conn), socket)
           {status, body} -> json(conn, status, body)
         end
@@ -109,14 +111,14 @@ defmodule T3.Devices.Proxy do
         {:DOWN, ^ref, _, _, _} ->
           send_resp(conn, 502, "The device hub did not answer.")
       after
-        30_000 ->
+        Application.get_env(:t3, :device_hub_answer_timeout, 30_000) ->
           send(relay, :stop)
           send_resp(conn, 504, "The device hub did not answer in time.")
       end
     else
       {:error, :not_running} -> send_resp(conn, 503, "Device hub is not running")
       {:error, :too_large} -> send_resp(conn, 413, "Request Entity Too Large")
-      _ -> send_resp(conn, 502, "The node with this device is unavailable.")
+      _ -> send_resp(conn, 502, @unavailable)
     end
   end
 
@@ -172,7 +174,19 @@ defmodule T3.Devices.Proxy do
   defp websocket?(conn),
     do: Enum.any?(get_req_header(conn, "upgrade"), &(String.downcase(&1) == "websocket"))
 
-  defp known_node(name), do: Enum.find([node() | Node.list()], &(Atom.to_string(&1) == name))
+  # A member the shell still lists but that is not connected is `:offline`, not unknown.
+  defp known_node(name) do
+    case Enum.find([node() | Node.list()], &(Atom.to_string(&1) == name)) do
+      nil -> if offline?(name), do: :offline
+      owner -> owner
+    end
+  end
+
+  defp offline?(name) do
+    Enum.any?(T3.Shell.environments(), fn {peer, _} -> Atom.to_string(peer) == name end)
+  rescue
+    ArgumentError -> false
+  end
 
   defp authorize(conn, scope) do
     scopes =

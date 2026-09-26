@@ -41,6 +41,7 @@ defmodule T3.Application do
           T3.Orchestration.Settlement,
           T3.Usage,
           T3.Mcp,
+          T3.Plugins,
           T3.Upgrade,
           T3.BackgroundPolicy,
           T3.EnvironmentThemes,
@@ -56,6 +57,8 @@ defmodule T3.Application do
           T3.Acp.UrlAuth,
           Supervisor.child_spec({Task, &T3.Acp.load/0}, id: :acp_models),
           T3.Web,
+          # T3 Connect: the managed tunnel, the startup link, activity publishing.
+          T3.Connect.Supervisor,
           # Turns the restart cut off go on, where the user asked for that.
           Supervisor.child_spec({Task, &T3.Orchestration.Recovery.continue/0}, id: :continue),
           # Projects that ask for it are brought up to date.
@@ -70,7 +73,8 @@ defmodule T3.Application do
 
   # Named nodes find peers listed in T3_PEERS (node names such as t3@192.168.1.20);
   # nodes with cluster certificates also search the tailnet.
-  defp discovery(home) do
+  @doc false
+  def discovery(home) do
     static =
       case System.get_env("T3_PEERS") do
         nil -> []

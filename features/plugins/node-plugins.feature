@@ -19,7 +19,7 @@ Feature: Node plugins
   Background:
     Given a node with a plugins directory
 
-  @node @backlog
+  @node
   Scenario Outline: The node discovers each kind of plugin from its plugins directory
     Given the plugins directory contains a <kind> plugin named "<name>"
     When the node starts
@@ -33,21 +33,21 @@ Feature: Node plugins
       | notification channel    | ntfy           |
       | text-generation backend | local-llama    |
 
-  @node @backlog
+  @node
   Scenario: A module that implements no known behaviour is ignored with a warning
     Given the plugins directory contains a module that implements no plugin behaviour
     When the node starts
     Then the node logs that the module is not a plugin
     And it is not listed as a plugin
 
-  @node @backlog
+  @node
   Scenario: A plugin that fails to load does not stop the node
     Given the plugins directory contains "broken" whose code does not load
     When the node starts
     Then the node is ready
     And "broken" is listed with its load error
 
-  @node @backlog
+  @node
   Scenario: A newly discovered plugin is off until the user enables it
     Given the plugins directory gains the plugin "gitea"
     When the node rescans its plugins
@@ -60,72 +60,72 @@ Feature: Node plugins
     Then "ntfy" runs on the first environment
     And "ntfy" stays disabled on the second environment
 
-  @node @backlog
+  @node
   Scenario: Disabling a plugin stops it and removes what it contributed
     Given the MCP tool pack "jira-tools" is enabled
     When the user disables "jira-tools"
     Then its tools are no longer offered to agents in new turns
     And its settings are kept for when it is enabled again
 
-  @node @backlog
+  @node
   Scenario: Re-enabling a plugin restores it with its saved settings
     Given the user disabled "jira-tools" after setting its site URL
     When the user enables "jira-tools"
     Then its tools are offered again with the same site URL
 
-  @node @backlog
+  @node
   Scenario: The enabled set survives a node restart
     Given the user enabled "gitea" and disabled "ntfy"
     When the node restarts
     Then "gitea" is enabled and "ntfy" is disabled
 
-  @node @backlog
+  @node
   Scenario: A plugin built for an incompatible node version is refused
     Given the plugin "old-host" declares that it needs an older plugin API
     When the node starts
     Then "old-host" is listed as incompatible with the version it needs
     And it is not started
 
-  @node @backlog
+  @node
   Scenario: A plugin that needs a newer node asks the user to update the node
     Given the plugin "future-tools" needs a newer plugin API than the node offers
     When the user tries to enable "future-tools"
     Then the user is told to update the node first
 
-  @node @backlog
+  @node
   Scenario: A crashing plugin is restarted without touching the rest of the node
     Given the notification channel "ntfy" is enabled
     When "ntfy" crashes
     Then its supervisor restarts it
     And running threads and other plugins are unaffected
 
-  @node @backlog
+  @node
   Scenario: A plugin that keeps crashing is stopped and reported
     Given "ntfy" crashes repeatedly within a short time
     When its restart limit is reached
     Then "ntfy" is stopped and listed as failed with its last error
     And the node keeps running
 
-  @node @backlog
+  @node
   Scenario: A failed plugin can be restarted by the user
     Given "ntfy" is listed as failed
     When the user restarts "ntfy"
     Then "ntfy" runs again
 
-  @node @backlog
+  @node
   Scenario: Each plugin has its own settings, validated by the plugin
     Given the git host "gitea" asks for a base URL and a token
     When the user saves a base URL that is not a URL
     Then the save is refused with the plugin's message
     And the previous settings are kept
 
-  @node @backlog
+  @node
   Scenario: Secret plugin settings are stored separately and never sent back to clients
     When the user saves a token for "gitea"
     Then the token is stored in the node's secrets
     And clients only see that a token is set
 
-  @node @backlog
+  @node
   Scenario: Plugin settings reach every client of the node
     Given two clients are connected to the same environment
     When the user changes a setting of "gitea" on the first client
@@ -144,27 +144,27 @@ Feature: Node plugins
     Then the node restarts on the new version
     And the outcome of the update is reported when it is ready again
 
-  @node @backlog
+  @node
   Scenario: A hot upgrade reloads changed plugins in place
     Given the plugin "ntfy" is enabled
     When a new version of "ntfy" is placed in the plugins directory and the node reloads
     Then "ntfy" runs the new version without a node restart
     And plugins that did not change keep running untouched
 
-  @node @backlog
+  @node
   Scenario: A plugin whose new version fails to load keeps running the old one
     Given the plugin "ntfy" is enabled
     When a new version of "ntfy" that fails to load is placed in the plugins directory
     Then the node keeps running the old version of "ntfy"
     And the failed reload is reported
 
-  @node @backlog
+  @node
   Scenario: Removing a plugin from the directory stops it on the next scan
     Given the plugin "gitea" is enabled
     When "gitea" is removed from the plugins directory and the node rescans
     Then "gitea" is stopped and no longer listed
 
-  @node @backlog
+  @node
   Scenario: A git host plugin adds a remote the source control features understand
     Given the git host plugin "gitea" is enabled with a base URL
     And a project whose remote is on that host
@@ -177,20 +177,20 @@ Feature: Node plugins
     When a turn finishes while no client is focused on the thread
     Then "ntfy" delivers the notification
 
-  @node @backlog
+  @node
   Scenario: A text-generation backend plugin can write titles and commit messages
     Given the text-generation backend "local-llama" is enabled
     And the user picks "local-llama" for text generation
     When a thread needs a title
     Then "local-llama" writes the title
 
-  @node @backlog
+  @node
   Scenario: An MCP tool pack is offered to agents next to the built-in T3 tools
     Given the MCP tool pack "jira-tools" is enabled
     When an agent starts a turn in a project that allows MCP
     Then the agent can call the "jira-tools" tools
 
-  @node @backlog
+  @node
   Scenario: A project that turns off MCP gets no tool pack tools either
     Given the MCP tool pack "jira-tools" is enabled
     And the project has MCP turned off

@@ -5,6 +5,7 @@ defmodule Mix.Tasks.T3.Cluster do
       mix t3.cluster invite ADDRESS FILE  # on a member: write a join bundle for ADDRESS
       mix t3.cluster join FILE            # on the new machine: install the bundle
       mix t3.cluster vm-args              # flags to boot this node clustered
+      mix t3.cluster revoke ADDRESS       # on every member: stop admitting ADDRESS
 
   ADDRESS is how other members reach the machine, usually its Tailscale IP. A join
   bundle contains the new machine's private key: move it privately and delete it.
@@ -35,6 +36,10 @@ defmodule Mix.Tasks.T3.Cluster do
       ["join", file] ->
         :ok = T3.Cluster.join(home, File.read!(file))
         Mix.shell().info("Joined as t3@#{T3.Cluster.address(home)}")
+
+      ["revoke", address] ->
+        :ok = T3.Cluster.revoke(home, address)
+        Mix.shell().info("Revoked t3@#{address} on this machine; run this on every member")
 
       ["vm-args"] ->
         IO.puts(T3.Cluster.vm_args(home) || Mix.raise("not in a cluster yet"))

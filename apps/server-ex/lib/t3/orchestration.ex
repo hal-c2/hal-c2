@@ -1188,6 +1188,12 @@ defmodule T3.Orchestration do
       thread == nil ->
         {[], {:error, "unknown thread #{thread_id}"}}
 
+      # No other provider stands in for one this node no longer has.
+      missing = missing_instance(thread, command) ->
+        {[],
+         {:error,
+          "The provider \"#{missing}\" is not available on this node; its plugin may have been removed. Pick another provider for this thread."}}
+
       get_in(command, ["dispatchMode", "type"]) == "defer_start" ->
         prepare_run(state, thread, runs, command)
 
@@ -1219,6 +1225,16 @@ defmodule T3.Orchestration do
       true ->
         new_run(state, thread, runs, command)
     end
+  end
+
+  defp missing_instance(thread, command) do
+    selection = command["modelSelection"] || thread["modelSelection"]
+    instance = selection["instanceId"] || thread["providerInstanceId"] || "codex"
+    driver = get_in(T3.Settings.settings(), ["providerInstances", instance, "driver"])
+
+    unless instance in ["codex", "claudeAgent"] or driver in ["codex", "claudeAgent"] or
+             T3.Acp.agent?(instance),
+           do: instance
   end
 
   # A message whose run waits for its workspace (`release_prepared/2`).

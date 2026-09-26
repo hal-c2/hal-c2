@@ -163,7 +163,8 @@ defmodule T3.TextGeneration do
       "codex" -> enabled?(settings, id) and executable?(codex_command())
       "claudeAgent" -> enabled?(settings, id) and executable?(claude_command())
       driver when driver in @acp_drivers -> T3.Acp.enabled?(id) and acp_installed?(id)
-      _ -> false
+      # A text-generation backend plugin (`T3.Plugins.TextGeneration`) by its id.
+      _ -> T3.Plugins.text_backend?(id)
     end
   end
 
@@ -219,9 +220,12 @@ defmodule T3.TextGeneration do
         "codex" ->
           {"Codex", codex(cwd, prompt, json_schema, selection, opts[:images] || [])}
 
-        _ ->
+        driver when driver in @acp_drivers ->
           label = T3.Acp.label(selection["instanceId"])
           {label, acp(selection, prompt, label)}
+
+        plugin ->
+          {plugin, T3.Plugins.generate(plugin, prompt, json_schema)}
       end
 
     with {:ok, out} <- result do

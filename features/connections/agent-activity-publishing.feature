@@ -13,18 +13,18 @@
 Feature: Publishing agent activity
   A linked environment can sign and publish what its agents are doing so the user's phone
   gets alerts and live activity through T3 Connect. Phones register with the relay, not with
-  the node. The node publishes nothing yet.
+  the node.
 
   Background:
     Given a node linked to T3 Connect
 
-  @backlog @node
+  @node
   Scenario: Publishing is off until the user turns it on
     Given agent activity publishing is off
     When an agent finishes a turn
     Then the node publishes nothing to the relay
 
-  @backlog @node
+  @node
   Scenario Outline: The node publishes each phase of an agent's work
     Given agent activity publishing is on
     When an agent <event>
@@ -40,48 +40,50 @@ Feature: Publishing agent activity
       | completes its turn             | completed            |
       | fails its turn                 | failed               |
 
-  @backlog @node
-  Scenario: Activity left behind by a restart is marked stale
+  @node
+  # Neither server publishes a "stale" phase: the node settles the cut-off turn as
+  # interrupted when it starts, and an interrupted turn shows no activity.
+  Scenario: Activity left behind by a restart is withdrawn
     Given a published thread that was running
     When the node restarts without finishing it
-    Then the node publishes it as stale
+    Then the node withdraws the thread's activity
 
-  @backlog @node
+  @node
   Scenario: A deleted thread's activity is withdrawn
     Given a published thread
     When the thread is deleted
     Then the node publishes an empty state for it
 
-  @backlog @node
+  @node
   Scenario: Every update is signed by the node
     Given agent activity publishing is on
     When the node publishes an update
     Then the update carries the node's signed proof for that thread and state
 
-  @backlog @node
+  @node
   Scenario: The relay refuses a replayed update
     Given an update the relay already accepted
     When it is sent again
     Then the relay refuses it as a replay
 
-  @backlog @node
+  @node
   Scenario: Turning publishing off stops alerts
     Given agent activity publishing is on
     When the user turns it off
     Then later agent activity is not published
 
-  @backlog @node
+  @node
   Scenario: Removing the tunnel keeps publishing on
     Given agent activity publishing is on
     When the managed tunnel is removed
     Then publishing stays on
 
-  @backlog @node
+  @node
   Scenario: A directly paired environment cannot publish
     Given a node paired directly and not linked to T3 Connect
     Then the user cannot turn on agent activity publishing
 
-  @backlog @node
+  @node
   Scenario: A failed publish does not disturb the turn
     Given the relay cannot be reached
     When an agent completes its turn
