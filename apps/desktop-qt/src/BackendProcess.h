@@ -35,5 +35,7 @@ private:
   QProcess m_process;
   QByteArray m_stdoutBuffer;
   bool m_announced = false;
+  // The host said why it failed; its exit that follows adds nothing.
+  bool m_reportedError = false;
   bool m_stopping = false;
 };

@@ -24,7 +24,7 @@ BackendProcess::BackendProcess(Options options, QObject* parent)
     }
   });
   connect(&m_process, &QProcess::finished, this, [this](int exitCode, QProcess::ExitStatus status) {
-    if (m_stopping) {
+    if (m_stopping || m_reportedError) {
       return;
     }
     const QString how = status == QProcess::CrashExit ? QStringLiteral("crashed")
@@ -91,6 +91,7 @@ void BackendProcess::handleLine(const QByteArray& line) {
     m_announced = true;
     emit ready(url);
   } else if (type == QStringLiteral("error")) {
+    m_reportedError = true;
     emit failed(message.value(QStringLiteral("message")).toString());
   }
 }
