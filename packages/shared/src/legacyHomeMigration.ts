@@ -74,6 +74,7 @@ const PROFILE_DATA_ENTRIES = [
   "browser-artifacts",
   "snap-shots",
   "providers",
+  "provider-auth",
   "device",
 ] as const;
 

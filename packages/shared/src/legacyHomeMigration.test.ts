@@ -228,6 +228,34 @@ describe("migrateLegacyHome", () => {
     expect(NodeFS.existsSync(NodePath.join(dirs.config, "settings.json"))).toBe(false);
   });
 
+  it("merges into a config dir that already exists but holds no data", async () => {
+    const homeDir = makeHome();
+    makeT3Home(homeDir);
+    write(NodePath.join(homeDir, ".t3", "userdata", "client-settings.json"), '{"c":1}');
+    write(NodePath.join(homeDir, ".t3", "userdata", "clerk-tokens.json"), "{}");
+    write(NodePath.join(homeDir, ".t3", "userdata", "connection-catalog.json"), "{}");
+    write(NodePath.join(homeDir, ".t3", "userdata", "snap-shots", "s.png"), "png");
+    write(NodePath.join(homeDir, ".t3", "userdata", "browser-artifacts", "b.json"), "{}");
+    const { options, dirs } = optionsFor(homeDir);
+    // A desktop app that started first may have made an empty shell dir.
+    NodeFS.mkdirSync(NodePath.join(dirs.config, "shell"), { recursive: true });
+
+    expect((await migrateLegacyHome(options)).outcome).toBe("migrated");
+    expect(NodeFS.existsSync(NodePath.join(dirs.config, "shell", "tui", "shell.qml"))).toBe(true);
+    expect(NodeFS.existsSync(NodePath.join(dirs.config, "shell", "shell.qml"))).toBe(true);
+    expect(NodeFS.readFileSync(NodePath.join(dirs.config, "client-settings.json"), "utf8")).toBe(
+      '{"c":1}',
+    );
+    for (const entry of [
+      "clerk-tokens.json",
+      "connection-catalog.json",
+      "snap-shots/s.png",
+      "browser-artifacts/b.json",
+    ]) {
+      expect(NodeFS.existsSync(NodePath.join(dirs.data, entry))).toBe(true);
+    }
+  });
+
   it("does not run again after the data directory is removed, until the record is", async () => {
     const homeDir = makeHome();
     makeT3Home(homeDir);
