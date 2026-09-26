@@ -25,10 +25,10 @@ defmodule HalC2.UpgradeTest do
   end
 
   # A bundle holding `modules` ({new source, running source}) compiled into
-  # lib/hal-c2-2.0.0/ebin; the running version stays loaded.
+  # lib/hal_c2-2.0.0/ebin; the running version stays loaded.
   defp bundle(dir, manifest, modules) do
     root = Path.join(dir, "bundle")
-    ebin = Path.join([root, "lib", "hal-c2-2.0.0", "ebin"])
+    ebin = Path.join([root, "lib", "hal_c2-2.0.0", "ebin"])
     rel = Path.join([root, "releases", manifest["version"]])
     File.mkdir_p!(ebin)
     File.mkdir_p!(rel)
