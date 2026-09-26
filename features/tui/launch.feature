@@ -108,7 +108,9 @@ Feature: Launching and leaving the terminal client
     When the user presses "Ctrl+C"
     Then the terminal client closes and the terminal returns to its previous screen
 
-  @tui
+  # Needs a focused terminal tab (T5's terminal drawer) and a global keymap that
+  # hands Ctrl+C to it; today the shell's global keymap always quits on Ctrl+C.
+  @backlog @tui
   Scenario: Ctrl+C inside a focused terminal goes to the shell instead of quitting
     Given a terminal tab has focus
     When the user presses "Ctrl+C"

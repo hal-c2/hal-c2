@@ -208,18 +208,20 @@ step('the user runs "opentui-qml" with a file that fails to load', async (ctx: R
   await runCli(ctx, ["broken.qml"]);
 });
 
-step("it exits with status {int}", (ctx: RuntimeWorld, status: number) => {
+/** `it exits with status {int}` after an `opentui-qml` run (routed in common.steps.ts). */
+export function expectCliStatus(ctx: RuntimeWorld, status: number): void {
   const { code, stdout, stderr } = ctx.cli!;
   expect(code).toBe(status);
   if (status === 0) expect(stdout).toContain("Usage: opentui-qml");
   else expect(stderr).toContain(status === 2 ? "Usage: opentui-qml" : "opentui-qml: ");
-});
+}
 
 /**
  * `opentui-qml app.qml ...`: the command as the feature spells it, run in a temp directory.
  * `app.qml` (and `./plugins`) are written for the scenario unless an earlier step did.
+ * `the user runs {string}` routes here (common.steps.ts).
  */
-step(/^the user runs "(opentui-qml(?: [^"]*)?)"$/, async (ctx: RuntimeWorld, command: string) => {
+export async function runOpentuiQml(ctx: RuntimeWorld, command: string): Promise<void> {
   const [, ...args] = command.split(/\s+/);
   if (args.includes("--plugins")) writePluginsFixture(ctx);
   if (!ctx.qmlFile) {
@@ -238,7 +240,7 @@ Item {
     );
   }
   await runCli(ctx, args);
-});
+}
 
 step(
   'QML sees "count" as the number 3 and "name" as the string "demo"',

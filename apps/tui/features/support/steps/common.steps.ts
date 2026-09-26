@@ -3,6 +3,9 @@
 import { expect } from "bun:test";
 
 import { step } from "../../steps.ts";
+import { runLaunch } from "../launchWorld.ts";
+import { expectClientStatus } from "./launch.steps.ts";
+import { expectCliStatus, runOpentuiQml } from "./qml-runtime.steps.ts";
 import { LIST_PANE_WIDTH } from "../../../src/components/ChatView.layout.ts";
 import {
   boot,
@@ -99,3 +102,14 @@ step(
 step("the user types {string}", async (ctx: World, text: string) => {
   await typeText(ctx, text);
 });
+
+// One sentence, several programs: route by what the scenario ran.
+step("the user runs {string}", async (ctx: World, command: string) => {
+  if (command === "t3 tui") return void (await runLaunch(ctx));
+  if (/^opentui-qml(?: |$)/.test(command)) return runOpentuiQml(ctx, command);
+  throw new Error(`the user runs "${command}": no runner for this command`);
+});
+
+step("it exits with status {int}", (ctx: World, status: number) =>
+  ctx.cli ? expectCliStatus(ctx, status) : expectClientStatus(ctx, status),
+);
