@@ -37,7 +37,7 @@ export interface TuiLayoutState extends ChatColumnLayout, ChatVerticalLayout {
   readonly sidebarAsMain: boolean;
   /**
    * The detail panel slot (`ShellWindow.rightPanelComponent`). `kind` names
-   * the panel the host opened ("sourceControl", "files", …); `asMain` means
+   * the panel the host opened ("sourceControl"); `asMain` means
    * the main column is too narrow to share, so the panel replaces the
    * conversation until it closes. `focused` says the panel has the keys.
    */

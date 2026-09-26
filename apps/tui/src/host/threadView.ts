@@ -61,6 +61,8 @@ export interface ThreadViewOptions {
   readonly composerWidth?: () => number;
   /** The open question appeared, moved, or was set aside or answered. */
   readonly onQuestionChange?: () => void;
+  /** The diff or image view opened or closed over the conversation pane. */
+  readonly paneReplacedChanged?: () => void;
 }
 
 export interface ThreadView {
@@ -72,8 +74,10 @@ export interface ThreadView {
   readonly dispatch: (action: string, payload: unknown) => boolean;
   /** "userInput" while a question waits for an answer, otherwise "compose". */
   readonly composeMode: () => TuiMode;
-  /** The terminal was resized (the image viewer refits). */
+  /** The conversation pane was resized (the image viewer refits). */
   readonly resize: () => void;
+  /** The diff or image view has the conversation pane. */
+  readonly paneReplaced: () => boolean;
   /** Resolves once attachment links and previews asked for so far have landed. */
   readonly settled: () => Promise<void>;
   /** The question the composer shows (open, not set aside): how many options it lists. */
@@ -108,8 +112,6 @@ interface DiffState {
   readonly view: "unified" | "split";
   readonly status: DiffStatus;
   readonly text: string;
-  /** Why the last load failed. */
-  readonly error: string;
 }
 
 const CLOSED_DIFF: DiffState = {
@@ -119,7 +121,6 @@ const CLOSED_DIFF: DiffState = {
   view: "unified",
   status: "loading",
   text: "",
-  error: "",
 };
 
 const field = (payload: unknown, name: string): unknown =>
@@ -217,6 +218,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   const viewImage = (id: string | null) => {
     const attachment = id === null ? null : imageAttachment(id);
     const image = attachment ? attachments.get(attachment.id).image : null;
+    const wasOpen = imageViewer !== null;
     imageViewer =
       attachment && image
         ? buildImageViewerState({
@@ -227,6 +229,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
           })
         : null;
     state.set("imageViewer", imageViewer);
+    if (wasOpen !== (imageViewer !== null)) options.paneReplacedChanged?.();
   };
 
   const openImage = (id: unknown) => {
@@ -588,7 +591,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
         status === "loading"
           ? "loading…"
           : status === "error"
-            ? `failed to load diff: ${diff.error}`
+            ? "failed to load diff"
             : status === "empty"
               ? "no changes in this turn"
               : "",
@@ -612,7 +615,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
         : checkpoint
           ? client.getTurnDiff(detail.id as never, checkpoint.checkpointTurnCount)
           : null;
-    diff = { ...diff, status: request ? "loading" : "empty", text: "", error: "" };
+    diff = { ...diff, status: request ? "loading" : "empty", text: "" };
     publishDiff();
     if (!request) return;
     const id = ++diffRequest;
@@ -622,9 +625,9 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
         diff = { ...diff, text, status: text.trim().length > 0 ? "ready" : "empty" };
         publishDiff();
       },
-      (error) => {
+      () => {
         if (id !== diffRequest || !diff.open) return;
-        diff = { ...diff, status: "error", error: errorText(error) };
+        diff = { ...diff, status: "error" };
         publishDiff();
       },
     );
@@ -636,7 +639,9 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       turnCount === null
         ? -1
         : checkpoints().findIndex((checkpoint) => checkpoint.checkpointTurnCount === turnCount);
+    const wasOpen = diff.open;
     diff = { ...diff, open: true, index: index >= 0 ? index + 1 : 0, focusPath: path };
+    if (!wasOpen) options.paneReplacedChanged?.();
     options.setMode("diff");
     loadDiff();
   };
@@ -649,7 +654,9 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
 
   const closeDiff = () => {
     diffRequest += 1;
+    const wasOpen = diff.open;
     diff = { ...CLOSED_DIFF, view: diff.view };
+    if (wasOpen) options.paneReplacedChanged?.();
     options.setMode("compose");
     publishDiff();
   };
@@ -898,6 +905,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     resize: () => {
       if (imageViewer) viewImage(imageViewer.id);
     },
+    paneReplaced: () => diff.open || imageViewer !== null,
     settled: attachments.settled,
     question: () => {
       const current = activeQuestion()?.questions[question.questionIndex];

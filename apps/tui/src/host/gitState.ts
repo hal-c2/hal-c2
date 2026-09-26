@@ -8,7 +8,7 @@ import {
   resolveGitQuickAction,
   type GitPanelAction,
 } from "../gitActions.logic.ts";
-import { fileTypeColor } from "../icons.ts";
+import { clip } from "../format.ts";
 
 /** One row of the source-control panel's action list. */
 export interface TuiGitAction {
@@ -21,14 +21,8 @@ export interface TuiGitAction {
   /** The stacked action a `git` row runs. */
   readonly action: GitStackedAction | null;
   readonly url: string | null;
-}
-
-/** A working-tree file as the panel lists it, tinted by its type (null: dimmed). */
-export interface TuiGitFile {
-  readonly path: string;
-  readonly insertions: number;
-  readonly deletions: number;
-  readonly color: string | null;
+  /** The label as the row draws it: " ↗" after a link, clipped to the panel. */
+  readonly text: string;
 }
 
 /**
@@ -37,15 +31,17 @@ export interface TuiGitFile {
  * action list, the pending commit message prompt).
  */
 export interface TuiGitState extends ShellGitState {
-  readonly files: ReadonlyArray<TuiGitFile>;
+  /** The branch as the "on …" row draws it, clipped to the panel. */
+  readonly branchText: string;
   readonly actions: ReadonlyArray<TuiGitAction>;
   readonly selectedIndex: number;
-  /** The highlighted action's hint (why it is disabled, or how it opens). */
+  /** The highlighted action's hint (why it is disabled, or how it opens), indented and clipped. */
   readonly selectedHint: string | null;
   /** "↑2 ↓1 upstream", "up to date with upstream", or "" without an upstream. */
   readonly syncLine: string;
-  /** "◰ PR #12 open ↗", or "". */
-  readonly prLine: string;
+  /** "◰ PR #12 " in the state's colour, then "open ↗" dimmed; "" without a PR. */
+  readonly prLabel: string;
+  readonly prStateLabel: string;
   readonly prState: string | null;
   readonly prUrl: string | null;
   /** "3 files · +10 -2", or "working tree clean". */
@@ -59,8 +55,11 @@ export function buildTuiGitState(input: {
   readonly busy: boolean;
   readonly selectedIndex: number;
   readonly commitPrompt: TuiGitState["commitPrompt"];
+  /** The panel's width; RightPanel clips its rows to the room inside border and padding. */
+  readonly width: number;
 }): TuiGitState {
   const { status, busy } = input;
+  const room = Math.max(6, input.width - 4);
   const quick = resolveGitQuickAction(status, busy);
   const actions = buildGitPanelActions(status, busy).map((action): TuiGitAction => ({
     id: action.id,
@@ -71,6 +70,7 @@ export function buildTuiGitState(input: {
     kind: action.kind,
     action: action.kind === "git" ? action.action : null,
     url: action.kind === "url" ? action.url : null,
+    text: clip(`${action.label}${action.kind === "url" ? " ↗" : ""}`, room - 2),
   }));
   const selectedIndex = clampIndex(input.selectedIndex, actions.length);
   const menuItems = buildGitMenuItems(status, busy);
@@ -98,24 +98,31 @@ export function buildTuiGitState(input: {
     hints: [],
     branch: status?.refName ?? null,
     isDefaultRef: status?.isDefaultRef ?? false,
-    files: (status?.workingTree.files ?? []).map((file) => ({
-      path: file.path,
-      insertions: file.insertions,
-      deletions: file.deletions,
-      color: fileTypeColor(file.path),
+    // The contract's commit-dialog list; the panel itself shows only the count.
+    files: (status?.workingTree.files ?? []).map(({ path, insertions, deletions }) => ({
+      path,
+      insertions,
+      deletions,
     })),
+    branchText: clip(status?.refName ?? "(detached)", room),
     pendingDefaultBranch: null,
     actions,
     selectedIndex,
-    selectedHint: actions[selectedIndex]?.hint ?? null,
+    selectedHint: actions[selectedIndex]?.hint
+      ? clip(`  ${actions[selectedIndex]!.hint}`, room)
+      : null,
     syncLine: status ? syncLine(status) : "",
-    prLine: pr ? `◰ PR #${pr.number} ${pr.state} ↗` : "",
+    prLabel: pr ? `◰ PR #${pr.number} ` : "",
+    prStateLabel: pr ? `${pr.state} ↗` : "",
     prState: pr?.state ?? null,
     prUrl: pr?.url ?? null,
     changesLine: !status
       ? ""
       : status.hasWorkingTreeChanges
-        ? `${fileCount} ${fileCount === 1 ? "file" : "files"} · +${status.workingTree.insertions} -${status.workingTree.deletions}`
+        ? clip(
+            `${fileCount} ${fileCount === 1 ? "file" : "files"} · +${status.workingTree.insertions} -${status.workingTree.deletions}`,
+            room,
+          )
         : "working tree clean",
     commitPrompt: input.commitPrompt,
   };

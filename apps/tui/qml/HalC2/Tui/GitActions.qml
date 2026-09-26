@@ -24,7 +24,8 @@ Item {
             text: selected ? "▸ " : "  "
             color: selected ? Theme.colors.accent : Theme.colors.dim
             Span {
-                text: modelData.label + (modelData.kind === "url" ? " ↗" : "")
+                href: modelData.url ?? ""
+                text: modelData.text
                 color: modelData.disabled
                     ? Theme.colors.faint
                     : (selected && list.focused) || modelData.primary
@@ -36,8 +37,7 @@ Item {
     Text {
         objectName: "gitHint"
         visible: list.git.selectedHint !== null
-        text: "  " + (list.git.selectedHint ?? "")
+        text: list.git.selectedHint ?? ""
         color: list.git.actions[list.git.selectedIndex]?.disabled ? Theme.colors.warning : Theme.colors.dim
-        wrapMode: Text.Wrap
     }
 }

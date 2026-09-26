@@ -2,9 +2,10 @@ import OpenTUI
 
 // The main column's conversation. Like MessagesTimeline, the thread sits in a
 // rounded faint pane: the header, the context meter, the timeline and the
-// pending approvals. The diff viewer takes the pane's place while open; the
-// revert picker follows. A new-thread draft shows
-// the pane empty (the composer below holds the draft).
+// pending approvals. Like ChatView, the file browser, the diff viewer and the
+// image preview take the pane's place while open, in that order; the revert
+// picker follows. A new-thread draft shows the pane empty (the composer below
+// holds the draft).
 Rectangle {
     id: conversation
     objectName: "conversation"
@@ -12,6 +13,9 @@ Rectangle {
     readonly property var timeline: Shell.state.timeline
     readonly property var header: draft ? null : timeline.header
     readonly property bool draft: page.kind === "draft"
+    readonly property bool filesOpen: Shell.state.files.open
+    readonly property bool diffOpen: !filesOpen && Shell.state.diff.open
+    readonly property bool imageOpen: !filesOpen && !diffOpen && Shell.state.imageViewer !== null
 
     color: Theme.colors.bg
     flexDirection: "column"
@@ -20,7 +24,7 @@ Rectangle {
 
     Rectangle {
         objectName: "conversationPane"
-        visible: !Shell.state.diff.open
+        visible: !conversation.filesOpen && !conversation.diffOpen && !conversation.imageOpen
         flexDirection: "column"
         flexGrow: 1
         flexShrink: 1
@@ -58,7 +62,10 @@ Rectangle {
         Timeline { visible: conversation.timeline.kind !== "none" && !conversation.draft }
         Approvals { visible: !conversation.draft && Shell.state.approvals.count > 0 }
     }
-    DiffViewer {}
+    FilesPanel {}
+    FileViewer {}
+    DiffViewer { visible: conversation.diffOpen; flexShrink: 1 }
+    ImageViewer { visible: conversation.imageOpen }
 
     RevertPicker {}
 }

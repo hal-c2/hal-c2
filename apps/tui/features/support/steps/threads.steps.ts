@@ -11,6 +11,7 @@ import {
   block,
   cellAt,
   expectColour,
+  expectRoundedFrame,
   objectRows,
   rectOf,
   regionRows,
@@ -1292,17 +1293,7 @@ step("the top of the thread list reads:", async (ctx: World, expected: string) =
 });
 
 async function expectRoundedBorder(ctx: World, rect: Rect, name: string): Promise<void> {
-  const { x, y, width, height } = rect;
-  for (const [cx, cy, glyph] of [
-    [x, y, "╭"],
-    [x + width - 1, y, "╮"],
-    [x, y + height - 1, "╰"],
-    [x + width - 1, y + height - 1, "╯"],
-  ] as const) {
-    const cell = await cellAt(ctx, cx, cy);
-    expect(cell.text).toBe(glyph);
-    expectColour(cell.span.fg, colour(name));
-  }
+  await expectRoundedFrame(ctx, rect, colour(name));
 }
 
 step("the thread list has a rounded border in the faint colour", async (ctx: World) => {

@@ -15,7 +15,14 @@ import type { TuiLayoutState } from "../../../src/host/layoutState.ts";
 import type { TuiStatusRowState } from "../../../src/host/statusState.ts";
 import { THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
-import { cellAt, expectColour, objectRows, rectOf, regionRows } from "../design.ts";
+import {
+  cellAt,
+  expectColour,
+  expectRoundedFrame,
+  objectRows,
+  rectOf,
+  regionRows,
+} from "../design.ts";
 import { addThread, flush, ui } from "../environment.ts";
 import { ready } from "../gitWorld.ts";
 import { rowPosition, threadRows } from "../threadUi.ts";
@@ -92,23 +99,55 @@ step("the panel replaces the conversation until it is closed", async (ctx: World
 
 // --- Content column ---------------------------------------------------------
 
+// MessagesTimeline caps its timeline column and ChatComposer its surface at
+// 96 cells, each centred in the chat column; the pane itself spans the column.
 step(
   "the conversation and prompt are no wider than {int} columns and centred",
   async (ctx: World, cap: number) => {
     expect(cap).toBe(CHAT_CONTENT_MAX_WIDTH);
     await snapshot(ctx);
-    const main = box(ctx, "main");
-    const content = box(ctx, "content");
-    expect(content.width).toBe(cap);
-    expect(box(ctx, "conversation").width).toBeLessThanOrEqual(cap);
-    expect(box(ctx, "composer").width).toBeLessThanOrEqual(cap);
-    // Centred in the main column (within a cell of rounding).
-    const left = content.x;
-    const right = main.width - content.x - content.width;
-    expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
-    expect(left).toBeGreaterThan(0);
+    const main = rectOf(ctx, "main");
+    const centred = (name: string) => {
+      const rect = rectOf(ctx, name);
+      expect(rect.width).toBeLessThanOrEqual(cap);
+      const left = rect.x - main.x;
+      const right = main.x + main.width - rect.x - rect.width;
+      expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
+      expect(left).toBeGreaterThan(0);
+    };
+    centred("composerDock");
+    if (box(ctx, "timeline").visible) centred("timelineColumn");
   },
 );
+
+step("the conversation pane runs from the thread list to the right edge", async (ctx: World) => {
+  await snapshot(ctx);
+  const pane = rectOf(ctx, "conversationPane");
+  expect(pane.x).toBe(rectOf(ctx, "sidebar").width);
+  expect(pane.x + pane.width).toBe(ctx.columns!);
+});
+
+step(
+  "the thread title is on the pane's first row and its status ends that row",
+  async (ctx: World) => {
+    const pane = rectOf(ctx, "conversationPane");
+    const title = rectOf(ctx, "conversationTitle");
+    const status = rectOf(ctx, "conversationStatus");
+    expect(title.y).toBe(pane.y + 1);
+    expect(status.y).toBe(title.y);
+    expect(title.x).toBe(pane.x + 2);
+    expect(status.x + status.width).toBe(pane.x + pane.width - 2);
+  },
+);
+
+step("the timeline column is {int} cells wide in the middle of the pane", async (ctx, width) => {
+  const pane = rectOf(ctx as World, "conversationPane");
+  const column = rectOf(ctx as World, "timelineColumn");
+  expect(column.width).toBe(width);
+  const left = column.x - pane.x;
+  const right = pane.x + pane.width - column.x - column.width;
+  expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
+});
 
 // --- Resizing ---------------------------------------------------------------
 
@@ -392,4 +431,48 @@ step("the prompt and the key-hint row stay under the conversation", async (ctx: 
   const hints = rectOf(ctx, "statusLine");
   expect(hints.y).toBe(ctx.rows! - 1);
   expect(hints.x + hints.width).toBe(panel.x + panel.width);
+});
+
+// ChatView puts the file browser, the diff viewer and the image preview in the
+// conversation pane's place: the chat column's width and the panes' rows.
+const PANE_REPLACEMENTS: Record<string, string> = {
+  "file browser": "filesPanel",
+  "diff viewer": "diffViewer",
+  "image preview": "imageViewer",
+};
+type PaneWorld = World & { paneReplacement?: string };
+step(
+  /^the (file browser|diff viewer|image preview) covers the conversation pane inside a rounded border in the accent colour$/,
+  async (ctx: PaneWorld, which: string) => {
+    await snapshot(ctx);
+    const layout = ctx.host!.state.get("layout") as TuiLayoutState;
+    const objectName = PANE_REPLACEMENTS[which]!;
+    const rect = rectOf(ctx, objectName);
+    expect(box(ctx, "conversationPane").visible).toBe(false);
+    expect(box(ctx, "rightPanel").visible).toBe(false);
+    expect(rect).toEqual({
+      ...rectOf(ctx, "conversation"),
+      width: layout.chatWidth,
+      height: layout.panesRows,
+    });
+    expect(rect.x).toBe(rectOf(ctx, "content").x);
+    await expectRoundedFrame(ctx, rect, THEME.accent);
+    ctx.paneReplacement = objectName;
+  },
+);
+
+step("the prompt is still shown under it", async (ctx: PaneWorld) => {
+  const replacement = rectOf(ctx, ctx.paneReplacement!);
+  expect(box(ctx, "composerDock").visible).toBe(true);
+  expect(rectOf(ctx, "composerDock").y).toBeGreaterThanOrEqual(replacement.y + replacement.height);
+});
+
+step("the thread list and the prompt are still shown", async (ctx: PaneWorld) => {
+  const replacement = rectOf(ctx, ctx.paneReplacement!);
+  expect(box(ctx, "sidebar").visible).toBe(true);
+  expect(rectOf(ctx, "sidebar").x + rectOf(ctx, "sidebar").width).toBeLessThanOrEqual(
+    replacement.x,
+  );
+  expect(box(ctx, "composerDock").visible).toBe(true);
+  expect(rectOf(ctx, "composerDock").y).toBeGreaterThanOrEqual(replacement.y + replacement.height);
 });

@@ -11,34 +11,13 @@ ShellWindow {
     property alias palette: paletteView
     property alias select: selectView
 
-    // The detail panel fills `layout.rightPanel` by its kind: source control,
-    // or the file browser (an opened file in its place).
+    // The detail panel fills `layout.rightPanel` by its kind: source control.
     rightPanelComponent: Shell.state.layout.rightPanel.kind === "sourceControl"
         ? sourceControlPanel
-        : Shell.state.layout.rightPanel.kind === "files"
-            ? (Shell.state.files.viewer === null ? filesPanel : fileViewer)
-            : null
+        : null
     Component {
         id: sourceControlPanel
         RightPanel {
-            flexGrow: 1
-            width: Shell.state.layout.rightPanel.asMain
-                ? Shell.state.layout.mainWidth
-                : Shell.state.layout.rightPanel.width
-        }
-    }
-    Component {
-        id: filesPanel
-        FilesPanel {
-            flexGrow: 1
-            width: Shell.state.layout.rightPanel.asMain
-                ? Shell.state.layout.mainWidth
-                : Shell.state.layout.rightPanel.width
-        }
-    }
-    Component {
-        id: fileViewer
-        FileViewer {
             flexGrow: 1
             width: Shell.state.layout.rightPanel.asMain
                 ? Shell.state.layout.mainWidth

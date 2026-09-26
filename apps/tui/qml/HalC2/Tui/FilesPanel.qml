@@ -1,34 +1,32 @@
 import OpenTUI
 
-// The workspace file browser: the tree from `Shell.state.files`, folders
-// first and collapsed until opened. The host keeps the listing, the
-// selection and the window of rows that fits; this paints them.
+// The workspace file browser (FilesView): in the conversation pane's place,
+// the tree from `Shell.state.files`, folders first and collapsed until
+// opened. The host keeps the listing, the selection, the window of rows that
+// fits and each row's styled line; this paints them.
 Rectangle {
     id: panel
     objectName: "filesPanel"
     readonly property var files: Shell.state.files
 
+    visible: files.open && files.viewer === null
+    flexDirection: "column"
+    flexGrow: 1
+    flexShrink: 1
     border.width: 1
+    border.style: "rounded"
     border.color: Theme.colors.accent
     color: Theme.colors.bg
-    flexDirection: "column"
     paddingX: 1
 
-    Row {
-        height: 1
-        Text {
-            objectName: "filesHeader"
-            flexShrink: 0
-            text: "files · " + panel.files.cwd
-            color: Theme.colors.accent
-        }
-        Text {
-            flexShrink: 1
-            truncate: true
-            wrapMode: "none"
-            text: "  ·  ↑/↓ select · Enter open/expand · ← up · Esc close"
-            color: Theme.colors.dim
-        }
+    Text {
+        objectName: "filesHeader"
+        flexShrink: 0
+        wrapMode: "none"
+        truncate: true
+        text: panel.files.title
+        color: Theme.colors.accent
+        Span { text: panel.files.hint; color: Theme.colors.dim }
     }
 
     Text {
@@ -40,15 +38,17 @@ Rectangle {
 
     Repeater {
         model: panel.files.rows
-        delegate: Text {
-            text: modelData.text
-            truncate: true
-            wrapMode: "none"
-            color: modelData.selected
-                ? Theme.colors.text
-                : modelData.kind === "dir" ? Theme.colors.accent : Theme.colors.dim
-            font.bold: modelData.selected
+        // The highlighted row's background spans the pane, as FilesView's does.
+        delegate: Rectangle {
+            flexShrink: 0
+            height: 1
+            color: modelData.selected ? Theme.colors.selectedBg : Theme.colors.bg
             onMouseDown: Shell.dispatch("files.select", { path: modelData.path })
+            Text {
+                wrapMode: "none"
+                truncate: true
+                text: modelData.line
+            }
         }
     }
 }

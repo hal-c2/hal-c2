@@ -59,12 +59,12 @@ Window {
                 flexShrink: 1
                 flexDirection: "column"
 
-                // Capped at 96 cells and centred, like the web's chat column.
+                // The chat column: the conversation pane spans it; the timeline
+                // and the prompt centre their own 96-cell columns inside it.
                 Item {
                     id: contentView
                     objectName: "content"
-                    width: win.layout.contentWidth
-                    alignSelf: "center"
+                    width: win.layout.chatWidth
                     flexGrow: 1
                     flexShrink: 1
                     flexDirection: "column"
@@ -107,6 +107,5 @@ Window {
         }
     }
 
-    ImageViewer {}
     ContextMenu {}
 }

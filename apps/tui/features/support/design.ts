@@ -135,3 +135,22 @@ export function expectColour(actual: CapturedSpan["fg"], expected: CapturedSpan[
     slot: expected.slot,
   });
 }
+
+/** A rounded border drawn around `rect`: its four corners in the colour `fg`. */
+export async function expectRoundedFrame(
+  ctx: World,
+  rect: Rect,
+  fg: CapturedSpan["fg"],
+): Promise<void> {
+  const { x, y, width, height } = rect;
+  for (const [cx, cy, glyph] of [
+    [x, y, "╭"],
+    [x + width - 1, y, "╮"],
+    [x, y + height - 1, "╰"],
+    [x + width - 1, y + height - 1, "╯"],
+  ] as const) {
+    const cell = await cellAt(ctx, cx, cy);
+    expect(cell.text).toBe(glyph);
+    expectColour(cell.span.fg, fg);
+  }
+}

@@ -9,7 +9,8 @@ import { ansi, statusGlyphColor, THEME, THREAD_STATUS_GLYPHS } from "../../../sr
 import type { TuiSidebarState } from "../../../src/host/sidebarState.ts";
 import { scheduleColorCapabilityLog } from "../../../src/terminalStartup.ts";
 import { shell } from "../fakeClient.ts";
-import { changes, ready, scm, setCheckout, settle, vcsStatus } from "../gitWorld.ts";
+import { ready, scm, settle } from "../gitWorld.ts";
+import { cellAt, cellOn, expectColour, rectOf, regionRows } from "../design.ts";
 import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@hal-c2/contracts";
 import { decodeImage } from "@hal-c2/opentui-image";
 import type { QmlObject } from "opentui-qml";
@@ -22,10 +23,13 @@ import { addThread, flush, ui } from "../environment.ts";
 import { launchSetup, type LaunchWorld } from "../launchWorld.ts";
 import { thread } from "../fakeClient.ts";
 import {
+  checkpoint,
   hostState,
+  latestTurn,
   message,
   plain,
   openThread,
+  updateThread,
   timelineText,
   type ThreadWorld,
 } from "../threadWorld.ts";
@@ -79,14 +83,6 @@ function spanOn(ctx: World, rowText: string, text: string): CapturedSpan {
 
 /** Cells that draw something (blank cells have no visible foreground). */
 const inked = (span: CapturedSpan) => span.text.trim().length > 0;
-
-/** Same terminal colour (default, or the same palette slot). */
-function expectColour(actual: CapturedSpan["fg"], expected: CapturedSpan["fg"]): void {
-  expect({ intent: actual.intent, slot: actual.slot }).toEqual({
-    intent: expected.intent,
-    slot: expected.slot,
-  });
-}
 
 // --- the terminal's own theme ---
 
@@ -337,25 +333,33 @@ step("every tool and status icon is a single-column character in any monospace f
 
 step(
   "a changed file {string} and a changed file {string}",
-  async (ctx: World, first: string, second: string) => {
-    scm(ctx);
-    setCheckout(ctx, vcsStatus(changes(first, second)));
-    await ready(ctx);
-    ctx.host!.dispatch("rightPanel.open");
-    await settle(ctx);
+  async (ctx: ThreadWorld, first: string, second: string) => {
+    // A turn's changed-files tree, where MessagesTimeline tints each file's "◦".
+    await openThread(ctx);
+    await updateThread(ctx, () => ({
+      latestTurn: latestTurn("turn-1", 0, 30, "done"),
+      messages: [
+        message("ask", "user", "Make the change", 0, { turnId: "turn-1" } as never),
+        message("done", "assistant", "Done.", 30, { turnId: "turn-1" } as never),
+      ],
+      checkpoints: [checkpoint(1, [first, second], 30, "done")],
+    }));
+    await snapshot(ctx);
   },
 );
 
-step("{string} is tinted for its file type", (ctx: World, path: string) => {
+const fileMarker = (ctx: World, path: string) => cellOn(ctx, `◦ ${path.split("/").pop()}`, "◦");
+
+step("{string} is tinted for its file type", async (ctx: World, path: string) => {
   const colour = fileTypeColor(path);
   expect(colour, `${path} has no file type colour`).not.toBeNull();
-  const fg = spanOn(ctx, path, path).fg;
-  expectColour(fg, ansi(colour!));
-  expect(fg.slot).not.toBe(THEME.dim.slot);
+  const { span } = await fileMarker(ctx, path);
+  expectColour(span.fg, ansi(colour!));
 });
 
-step("{string} is dimmed", (ctx: World, path: string) => {
-  expectColour(spanOn(ctx, path, path).fg, THEME.dim);
+// A file with no type colour keeps the faint marker.
+step("{string} is dimmed", async (ctx: World, path: string) => {
+  expectColour((await fileMarker(ctx, path)).span.fg, THEME.faint);
 });
 
 // --- mouse ---
@@ -743,17 +747,21 @@ step("the image opens fitted inside the terminal without distortion", async (ctx
     height: viewer.rows,
   });
   expect(image.get("status")).toBe("ready");
+  // It fits the conversation pane it replaces (ImageLightbox).
+  const layout = hostState(ctx, "layout");
+  const pane = { columns: layout.chatWidth, rows: layout.panesRows };
+  const frame = rectOf(ctx, "imageViewer");
   const drawn = (image as unknown as { renderable: { x: number; y: number } }).renderable;
-  expect(drawn.x).toBeGreaterThanOrEqual(0);
-  expect(drawn.y).toBeGreaterThanOrEqual(0);
-  expect(drawn.x + viewer.columns).toBeLessThanOrEqual(ctx.columns!);
-  expect(drawn.y + viewer.rows).toBeLessThanOrEqual(ctx.rows!);
+  expect(drawn.x).toBeGreaterThanOrEqual(frame.x);
+  expect(drawn.y).toBeGreaterThanOrEqual(frame.y);
+  expect(drawn.x + viewer.columns).toBeLessThanOrEqual(frame.x + frame.width);
+  expect(drawn.y + viewer.rows).toBeLessThanOrEqual(frame.y + frame.height);
   // It fills the room it has in one direction and keeps the image's shape:
   // cells are taller than wide, so the rows follow from the columns.
   const cell = FALLBACK_CELL_PIXELS;
   const expectedRows = (viewer.columns * cell.width) / PNG_ASPECT / cell.height;
   expect(Math.abs(viewer.rows - expectedRows)).toBeLessThanOrEqual(1);
-  expect(viewer.columns >= ctx.columns! - 4 || viewer.rows >= ctx.rows! - 4).toBe(true);
+  expect(viewer.columns >= pane.columns - 4 || viewer.rows >= pane.rows - 4).toBe(true);
 });
 
 const timelineScroll = (ctx: World) => Number(findObject(ctx, "timeline").get("contentY"));
@@ -784,7 +792,7 @@ step("the image closes", async (ctx: ImageWorld) => {
   expect(hostState(ctx, "imageViewer")).toBeNull();
   expect(hostState(ctx, "mode")).not.toBe("imagePreview");
   await snapshot(ctx);
-  expect(geometry(findObject(ctx, "imageViewerLayer")).visible).toBe(false);
+  expect(geometry(findObject(ctx, "imageViewer")).visible).toBe(false);
 });
 
 step("the timeline is at the same scroll position as before", async (ctx: ImageWorld) => {
@@ -792,3 +800,16 @@ step("the timeline is at the same scroll position as before", async (ctx: ImageW
   expect(timelineScroll(ctx)).toBe(ctx.scrollBefore!);
   expect(inlineImage(ctx)).not.toBeNull();
 });
+
+step(
+  "the preview's top row shows {string} on the left and {string} on the right in the dim colour",
+  async (ctx: ImageWorld, title: string, hint: string) => {
+    await snapshot(ctx);
+    const { x, y, width } = rectOf(ctx, "imageViewer");
+    const [row] = await regionRows(ctx, { x: x + 2, y: y + 1, width: width - 4, height: 1 });
+    expect(row!.startsWith(title)).toBe(true);
+    expect(row!.endsWith(hint)).toBe(true);
+    expectColour((await cellAt(ctx, x + 2, y + 1)).span.fg, THEME.text);
+    expectColour((await cellAt(ctx, x + width - 3, y + 1)).span.fg, THEME.dim);
+  },
+);

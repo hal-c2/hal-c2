@@ -1,16 +1,18 @@
 import type { ImagePreview } from "@hal-c2/opentui-image";
 
+import { clip } from "../format.ts";
 import type { TuiSize } from "./layoutState.ts";
-import { attachmentLabel, FALLBACK_CELL_PIXELS, type CellPixels } from "./timelineState.ts";
+import { FALLBACK_CELL_PIXELS, type CellPixels } from "./timelineState.ts";
 
 /**
  * Published under `imageViewer` (null when closed): an image attachment open
- * full size over the whole terminal, `columns` × `rows` cells with the image's
- * aspect kept. Esc or a click closes it (`image.close`).
+ * full size in the conversation pane's place (ImageLightbox), `columns` ×
+ * `rows` cells with the image's aspect kept. Esc or a click closes it
+ * (`image.close`).
  */
 export interface TuiImageViewerState {
   readonly id: string;
-  /** `▣ name · 12 KB`, clipped by the brick. */
+  /** `name · 12 KB`, the name clipped to leave room for the hint. */
   readonly title: string;
   readonly hint: string;
   readonly source: Uint8Array;
@@ -53,6 +55,7 @@ const VIEWER_CHROME_ROWS = 4;
 export function buildImageViewerState(input: {
   readonly attachment: { readonly id: string; readonly name: string; readonly sizeBytes: number };
   readonly image: ImagePreview;
+  /** The conversation pane the preview fills. */
   readonly size: TuiSize;
   readonly cellPixels: CellPixels | null;
 }): TuiImageViewerState {
@@ -65,10 +68,13 @@ export function buildImageViewerState(input: {
     cellWidth: cell.width,
     cellHeight: cell.height,
   });
+  const sizeKb = Math.max(1, Math.round(input.attachment.sizeBytes / 1024));
+  const hint = input.size.columns >= 48 ? "Esc / click to close" : "Esc close";
+  const metadataWidth = Math.max(4, input.size.columns - hint.length - 9);
   return {
     id: input.attachment.id,
-    title: attachmentLabel(input.attachment),
-    hint: input.size.columns >= 48 ? "Esc / click to close" : "Esc close",
+    title: `${clip(input.attachment.name, metadataWidth)} · ${sizeKb} KB`,
+    hint,
     source: input.image.source,
     ...fitted,
   };

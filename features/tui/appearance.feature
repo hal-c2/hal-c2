@@ -217,7 +217,7 @@ Feature: Colour, icons, mouse and images in the terminal
     Then the image closes
     And the timeline is at the same scroll position as before
 
-  @backlog @tui
+  @tui
   Scenario: A full-size image takes the conversation pane's place
     Given an inline image in the timeline
     And the terminal is 120 columns wide
@@ -226,7 +226,7 @@ Feature: Colour, icons, mouse and images in the terminal
     And the thread list and the prompt are still shown
     And the key hints read "image preview · Esc or click to close · ^C quit" in the dim colour
 
-  @backlog @tui
+  @tui
   Scenario: The image preview names the image and how to close it
     Given an inline image in the timeline
     And the terminal is 120 columns wide

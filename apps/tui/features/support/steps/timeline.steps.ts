@@ -5,7 +5,16 @@ import { TextAttributes } from "@opentui/core";
 
 import { THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
-import { block, cellAt, cellOn, expectColour, objectRows, rectOf, textAt } from "../design.ts";
+import {
+  block,
+  cellAt,
+  cellOn,
+  expectColour,
+  objectRows,
+  rectOf,
+  regionRows,
+  textAt,
+} from "../design.ts";
 import { advance, findObject, geometry, pressKey, snapshot, type World } from "../world.ts";
 import {
   activity,
@@ -696,7 +705,7 @@ step(
 const DIFF_MESSAGES: Record<string, string> = {
   "a loading hint": "loading…",
   "that there are no changes": "no changes in this turn",
-  "the error": "failed to load diff: checkpoint ref is missing",
+  "the error": "failed to load diff",
 };
 
 step(
@@ -884,3 +893,16 @@ step("the list markers are bold in the accent colour", async (ctx: ThreadWorld) 
     expect(marker.span.attributes & TextAttributes.BOLD).toBeTruthy();
   }
 });
+
+step(
+  "the diff viewer reads {string} in the error colour",
+  async (ctx: ThreadWorld, text: string) => {
+    await snapshot(ctx);
+    const { x, y, width } = rectOf(ctx, "diffViewer");
+    const message = rectOf(ctx, "diffMessage");
+    expect(message.y).toBe(y + 2);
+    const [row] = await regionRows(ctx, { x: x + 2, y: message.y, width: width - 4, height: 1 });
+    expect(row!.trimEnd()).toBe(text);
+    expectColour((await cellAt(ctx, x + 2, message.y)).span.fg, THEME.error);
+  },
+);

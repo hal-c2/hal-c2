@@ -24,6 +24,8 @@ export function createSourceControl(deps: {
   readonly setMode: (mode: TuiMode) => void;
   /** Whether the source-control panel is open and has the keys. */
   readonly panel: () => { readonly open: boolean; readonly focused: boolean };
+  /** The panel's width in cells. */
+  readonly width: () => number;
   /** Open the source-control panel with the keys on it. */
   readonly focusPanel: () => void;
   /** Put text on the system clipboard; false when the terminal cannot (OSC 52). */
@@ -41,6 +43,7 @@ export function createSourceControl(deps: {
       busy: current().gitBusy,
       selectedIndex: gitIndex,
       commitPrompt,
+      width: deps.width(),
     });
   const publishGit = () => {
     const next = gitState();
@@ -157,9 +160,16 @@ export function createSourceControl(deps: {
     if (!prev || prev.vcsStatus !== next.vcsStatus || prev.gitBusy !== next.gitBusy) publishGit();
   };
 
+  let publishedWidth = -1;
   return {
     dispatch,
     publish,
+    /** The panel was resized: its rows clip to the new width. */
+    resize: () => {
+      if (deps.width() === publishedWidth) return;
+      publishedWidth = deps.width();
+      publishGit();
+    },
     /** The panel opened (highlight the first action) or closed (drop a pending commit message). */
     panelChanged: (open: boolean) => {
       if (open) gitIndex = 0;

@@ -19,7 +19,7 @@ import { revertableCheckpoints } from "../timeline.ts";
 import { createAddProjectController } from "./addProjectState.ts";
 import { createComposer, type ImageDecoder } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
-import { createFilesController, FILES_PANEL } from "./filesState.ts";
+import { createFilesController } from "./filesState.ts";
 import {
   buildTuiLayoutState,
   composerSurfaceWidth,
@@ -228,6 +228,8 @@ export function createHost(options: HostOptions): Host {
   let rightPanel: string | null = null;
   let rightPanelFocused = false;
   let settingsOpen = false;
+  // The file browser takes the conversation pane's place (FilesView).
+  let filesOpen = false;
   // The prompt's editor rows (the composer's 3–8, or as set by Ctrl+Up / Ctrl+Down).
   let editorRows: number | undefined;
   let popoverRows = 0;
@@ -291,16 +293,21 @@ export function createHost(options: HostOptions): Host {
     nowMs: () => Date.parse(now()),
     inlineImages: (options.inlineImages ?? null) !== null,
     ...(options.cellPixels ? { cellPixels: options.cellPixels } : {}),
-    size: () => size,
+    // The image preview fills the conversation pane (ImageLightbox).
+    size: () => ({ columns: layout.chatWidth, rows: layout.panesRows }),
     composerWidth: () => composerSurfaceWidth(layout.chatWidth),
+    paneReplacedChanged: () => publishLayout(),
     onQuestionChange: () => composer?.sync(),
   });
   let layout: TuiLayoutState;
   const publishLayout = () => {
+    const previous = layout;
     layout = buildTuiLayoutState({
       size,
       sidebarCollapsed,
-      rightPanel,
+      // Like ChatView, the panel hides (without closing) while the files,
+      // diff or image view has the conversation pane.
+      rightPanel: filesOpen || threadView.paneReplaced() ? null : rightPanel,
       rightPanelFocused,
       mode,
       // The drawer slot follows the selected thread's terminal.
@@ -313,7 +320,12 @@ export function createHost(options: HostOptions): Host {
     state.set("layout", layout);
     // The list's rows are drawn to its width and windowed to its height.
     if (JSON.stringify(sidebarSize()) !== sidebarSized) publishSidebar();
-    threadView.setPaneWidth(layout.contentWidth);
+    threadView.setPaneWidth(layout.chatWidth);
+    if (previous?.chatWidth !== layout.chatWidth || previous?.panesRows !== layout.panesRows) {
+      threadView.resize();
+      files?.sync();
+    }
+    sourceControl.resize();
     // The footer's compact form follows the conversation width.
     composer?.relayout();
   };
@@ -444,11 +456,7 @@ export function createHost(options: HostOptions): Host {
 
   /** The mode a focused detail panel of `kind` takes. */
   const panelMode = (kind: string | null): TuiMode | null =>
-    kind === SOURCE_CONTROL_PANEL
-      ? sourceControl.focusMode()
-      : kind === FILES_PANEL
-        ? "files"
-        : null;
+    kind === SOURCE_CONTROL_PANEL ? sourceControl.focusMode() : null;
 
   /** Open `kind` in the detail panel (null closes it); a focused panel takes the keys. */
   const setRightPanel = (kind: string | null, focused: boolean) => {
@@ -458,12 +466,10 @@ export function createHost(options: HostOptions): Host {
     const wasSourceControl = previous === SOURCE_CONTROL_PANEL;
     const isSourceControl = rightPanel === SOURCE_CONTROL_PANEL;
     if (isSourceControl !== wasSourceControl) sourceControl.panelChanged(isSourceControl);
-    // Another panel in the slot closes the file browser.
-    if (previous === FILES_PANEL && kind !== FILES_PANEL) files.close();
     publishLayout();
     const focusMode = rightPanelFocused ? panelMode(rightPanel) : null;
     if (focusMode) setMode(focusMode);
-    else if (mode === "panel" || mode === "commit" || mode === "files") setMode(restingMode());
+    else if (mode === "panel" || mode === "commit") setMode(restingMode());
   };
   const sourceControl = createSourceControl({
     store,
@@ -473,6 +479,7 @@ export function createHost(options: HostOptions): Host {
       open: rightPanel === SOURCE_CONTROL_PANEL,
       focused: rightPanel === SOURCE_CONTROL_PANEL && rightPanelFocused,
     }),
+    width: () => (layout ? layout.rightPanel.width : 0),
     focusPanel: () => setRightPanel(SOURCE_CONTROL_PANEL, true),
     copyToClipboard: options.copyToClipboard,
   });
@@ -512,14 +519,17 @@ export function createHost(options: HostOptions): Host {
     copyToClipboard: options.copyToClipboard ?? (() => false),
     publish: (next) => state.set("terminal", next),
   });
-  // The file browser and viewer fill the `layout.rightPanel` slot (kind "files").
+  // The file browser and viewer take the conversation pane's place.
   const files = createFilesController({
     client,
     cwd: () => selectedWorkspace()?.cwd ?? null,
-    height: () => size.rows - STATUS_ROWS,
+    height: () => layout.panesRows,
+    width: () => layout.chatWidth,
     setOpen: (open) => {
-      if (open) setRightPanel(FILES_PANEL, true);
-      else if (rightPanel === FILES_PANEL) setRightPanel(null, false);
+      filesOpen = open;
+      publishLayout();
+      if (open) setMode("files");
+      else if (mode === "files") setMode(restingMode());
     },
     publish: (next) => state.set("files", next),
   });
@@ -1004,8 +1014,6 @@ export function createHost(options: HostOptions): Host {
       publishLayout();
       publishSidebar();
       terminal.sync();
-      files.sync();
-      threadView.resize();
     },
     Shell: { state, dispatch },
     Theme: createTuiTheme(),

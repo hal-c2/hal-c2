@@ -1,7 +1,8 @@
 import OpenTUI
 
-// The source-control panel: where the branch stands (`Shell.state.git`) and
-// the actions that move it forward. Keys come from the shell's panel-mode
+// The source-control panel (RightPanel.tsx): where the branch stands
+// (`Shell.state.git`, clipped to the panel by the host) and the actions that
+// move it forward. Keys come from the shell's panel-mode
 // shortcuts; a commit asks for its message at the bottom (commit mode).
 Rectangle {
     id: panel
@@ -13,20 +14,24 @@ Rectangle {
     onPromptChanged: commitInput.text = ""
 
     border.width: 1
+    border.style: "rounded"
     border.color: focused ? Theme.colors.accent : Theme.colors.faint
-    title: panel.git.busy ? " Source Control · working… " : " Source Control "
-    titleColor: panel.git.busy ? Theme.colors.warning : Theme.colors.text
     color: Theme.colors.bg
     flexDirection: "column"
     paddingX: 1
 
     Text {
-        text: panel.focused ? "↑/↓ select · Enter run · Esc back" : "^L focus panel"
+        objectName: "sourceControlTitle"
+        Bold { text: "Source Control"; color: Theme.colors.text }
+        Span { text: panel.git.busy ? " · working…" : ""; color: Theme.colors.warning }
+    }
+    Text {
+        text: panel.focused ? "↑/↓ select · Enter activate · Esc back" : "^L focus panel"
         color: Theme.colors.dim
     }
     Text {
         visible: !panel.git.available
-        text: panel.git.busy ? "loading git status…" : "no git status"
+        text: panel.git.busy ? "  loading git status…" : "  no git status"
         color: Theme.colors.dim
     }
     Item {
@@ -34,9 +39,10 @@ Rectangle {
         visible: panel.git.available
         flexDirection: "column"
         Text {
+            objectName: "gitBranch"
             text: "on "
             color: Theme.colors.dim
-            Span { text: panel.git.branch ?? "(detached)"; color: Theme.colors.text }
+            Span { text: panel.git.branchText; color: Theme.colors.text }
         }
         Text {
             visible: panel.git.syncLine.length > 0
@@ -44,20 +50,20 @@ Rectangle {
             color: Theme.colors.dim
         }
         Text {
-            visible: panel.git.prLine.length > 0
-            text: panel.git.prLine
-            color: panel.git.prState === "open"
-                ? Theme.colors.success
-                : panel.git.prState === "merged" ? Theme.ansi("magenta") : Theme.colors.dim
-        }
-        Text { text: panel.git.changesLine; color: Theme.colors.dim }
-        Repeater {
-            model: panel.git.files
-            delegate: Text {
-                text: "  " + modelData.path + "  +" + modelData.insertions + " -" + modelData.deletions
-                color: modelData.color ? Theme.ansi(modelData.color) : Theme.colors.dim
+            objectName: "gitPullRequest"
+            visible: panel.git.prLabel.length > 0
+            Link {
+                href: panel.git.prUrl ?? ""
+                Span {
+                    text: panel.git.prLabel
+                    color: panel.git.prState === "open"
+                        ? Theme.colors.success
+                        : panel.git.prState === "merged" ? Theme.ansi("magenta") : Theme.colors.dim
+                }
+                Span { text: panel.git.prStateLabel; color: Theme.colors.dim }
             }
         }
+        Text { text: panel.git.changesLine; color: Theme.colors.dim }
     }
 
     GitActions { marginTop: 1; focused: panel.focused }

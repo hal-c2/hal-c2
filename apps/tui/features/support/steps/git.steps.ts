@@ -5,7 +5,10 @@ import { expect } from "bun:test";
 
 import type { TuiLayoutState } from "../../../src/host/layoutState.ts";
 import { step } from "../../steps.ts";
-import { rectOf } from "../design.ts";
+import { TextAttributes } from "@opentui/core";
+
+import { THEME } from "../../../src/theme.ts";
+import { expectColour, expectRoundedFrame, objectRows, rectOf, textWithin } from "../design.ts";
 import { runLaunch } from "../launchWorld.ts";
 import { runStorageLaunch, type StorageWorld } from "../storageWorld.ts";
 import { runOpentuiQml } from "./qml-runtime.steps.ts";
@@ -212,7 +215,73 @@ async function expectPanelHint(ctx: World, text: string): Promise<void> {
 }
 
 step("the reason given is {string}", expectPanelHint);
-step("the panel shows {string}", expectPanelHint);
+
+// --- the panel as RightPanel.tsx draws it ---
+
+/** The panel's rows inside its border and padding. */
+async function panelRows(ctx: World): Promise<string[]> {
+  await settle(ctx);
+  const rows = await objectRows(ctx, "sourceControlPanel");
+  return rows.slice(1, -1).map((row) => row.slice(2, -2));
+}
+
+const panelInner = (ctx: World) => {
+  const rect = rectOf(ctx, "sourceControlPanel");
+  return { x: rect.x + 2, y: rect.y + 1, width: rect.width - 4, height: rect.height - 2 };
+};
+
+step("the panel shows {string}", async (ctx: World, text: string) => {
+  expect((await panelRows(ctx)).join("\n")).toContain(text);
+});
+
+step("the panel shows {string} in the dim colour", async (ctx: World, text: string) => {
+  expect((await panelRows(ctx)).join("\n")).toContain(text);
+  expectColour((await textWithin(ctx, panelInner(ctx), text)).span.fg, THEME.dim);
+});
+
+step("the source-control panel has a rounded border in the accent colour", async (ctx: World) => {
+  await settle(ctx);
+  await expectRoundedFrame(ctx, rectOf(ctx, "sourceControlPanel"), THEME.accent);
+});
+
+const ORDINALS = ["first", "second", "third"];
+step(
+  /^the panel's (first|second|third) row reads "([^"]*)"(?: in (bold|the dim colour))?$/,
+  async (ctx: World, ordinal: string, text: string, style?: string) => {
+    const index = ORDINALS.indexOf(ordinal);
+    expect((await panelRows(ctx))[index]!.trimEnd()).toBe(text);
+    const inner = panelInner(ctx);
+    const at = await textWithin(ctx, { ...inner, y: inner.y + index, height: 1 }, text.trim());
+    if (style === "bold") expect(at.span.attributes & TextAttributes.BOLD).toBeTruthy();
+    if (style === "the dim colour") expectColour(at.span.fg, THEME.dim);
+  },
+);
+
+step("the changed files are not listed one by one", async (ctx: World) => {
+  const rows = (await panelRows(ctx)).join("\n");
+  for (const file of scm(ctx).status!.workingTree.files) expect(rows).not.toContain(file.path);
+});
+
+step('"◰ PR #42" is in the success colour and "open ↗" in the dim colour', async (ctx: World) => {
+  const inner = panelInner(ctx);
+  expectColour((await textWithin(ctx, inner, "◰ PR #42")).span.fg, THEME.success);
+  expectColour((await textWithin(ctx, inner, "open ↗")).span.fg, THEME.dim);
+});
+
+step("the branch is named {string}", (ctx: World, name: string) => {
+  setCheckout(ctx, vcsStatus({ refName: name }));
+});
+
+step('the branch line ends with "…" inside the panel\'s border', async (ctx: World) => {
+  await settle(ctx);
+  const inner = panelInner(ctx);
+  const branch = rectOf(ctx, "gitBranch");
+  expect(branch.x).toBe(inner.x);
+  expect(branch.x + branch.width).toBeLessThanOrEqual(inner.x + inner.width);
+  // RightPanel clips the name to the panel; "on " before it wraps the end onto a second row.
+  const rows = (await objectRows(ctx, "gitBranch")).map((row) => row.trimEnd());
+  expect(rows.join("").endsWith("…")).toBe(true);
+});
 
 step("the quick action is disabled with {string}", async (ctx: World, reason: string) => {
   await ready(ctx);

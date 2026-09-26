@@ -60,7 +60,7 @@ Feature: Terminal layout at every size
     Given the terminal is 300 columns wide
     Then the conversation and prompt are no wider than 96 columns and centred
 
-  @backlog @tui
+  @tui
   Scenario: On a wide terminal the conversation pane fills the chat column
     Given the terminal client is open on a thread with focus in the prompt
     And the terminal is 200 columns wide

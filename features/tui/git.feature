@@ -43,7 +43,7 @@ Feature: Source control from the terminal
     And the panel's first row reads "Source Control" in bold
     And the panel's second row reads "↑/↓ select · Enter activate · Esc back" in the dim colour
 
-  @backlog @tui
+  @tui
   Scenario: A running git action marks the panel title
     Given the terminal is 150 columns wide
     And a git action is running
@@ -58,7 +58,7 @@ Feature: Source control from the terminal
     When the user opens the source-control panel
     Then the panel's third row reads "  no git status" in the dim colour
 
-  @backlog @tui
+  @tui
   Scenario: The source-control panel in the conversation's place is titled inside a rounded border
     Given the terminal is 100 columns wide
     When the user presses "Ctrl+L"
@@ -66,14 +66,14 @@ Feature: Source control from the terminal
     And the panel's first row reads "Source Control" in bold
     And the panel's second row reads "↑/↓ select · Enter activate · Esc back" in the dim colour
 
-  @backlog @tui
+  @tui
   Scenario: Without git status the panel in the conversation's place says so, indented
     Given git status could not be read
     And the terminal is 100 columns wide
     When the user opens the source-control panel
     Then the panel's third row reads "  no git status" in the dim colour
 
-  @backlog @tui
+  @tui
   Scenario: The working tree is summed up on one line
     Given the terminal is 150 columns wide
     And the workspace has uncommitted changes
@@ -81,7 +81,7 @@ Feature: Source control from the terminal
     Then the panel shows "2 files · +6 -2" in the dim colour
     And the changed files are not listed one by one
 
-  @backlog @tui
+  @tui
   Scenario: A pull request shows its number in its state's colour
     Given the terminal is 150 columns wide
     And the checkout's branch has an open pull request
@@ -89,7 +89,7 @@ Feature: Source control from the terminal
     Then the panel shows "◰ PR #42 open ↗"
     And "◰ PR #42" is in the success colour and "open ↗" in the dim colour
 
-  @backlog @tui
+  @tui
   Scenario: A long branch name is cut to fit the panel
     Given the terminal is 150 columns wide
     And the branch is named "feature/an-extremely-long-branch-name-that-does-not-fit"

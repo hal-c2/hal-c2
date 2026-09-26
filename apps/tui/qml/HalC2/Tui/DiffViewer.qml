@@ -35,6 +35,8 @@ Rectangle {
         id: body
         visible: viewer.diff.message === ""
         flexGrow: 1
+        flexShrink: 1
+        flexBasis: 0
 
         Item {
             flexDirection: "column"

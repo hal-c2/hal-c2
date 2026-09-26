@@ -4,7 +4,10 @@
 // steps drive the browser with keys and assert on the frame and `files` key.
 import { expect } from "bun:test";
 
+import { fileTypeColor } from "../../../src/icons.ts";
+import { ansi, THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
+import { expectColour, rectOf, regionRows, textWithin, cellAt, type Rect } from "../design.ts";
 import type { TuiFilesState } from "../../../src/host/filesState.ts";
 import { threadKey } from "../../../src/host/sidebarState.ts";
 import type { Environment } from "../environment.ts";
@@ -247,7 +250,7 @@ step("the browser says there are no files", async (ctx: World) => {
   expect(files(ctx).rows.length).toBe(0);
 });
 async function listingFailed(ctx: World) {
-  expect(await settle(ctx)).toContain("failed to list files: permission denied");
+  expect(await settle(ctx)).toContain("failed to list files");
   expect(files(ctx).status).toBe("error");
 }
 step("the browser shows the error", listingFailed);
@@ -322,12 +325,13 @@ step("pressing {string} once more returns to the conversation", async (ctx: Worl
   await conversationShown(ctx);
 });
 
-step("the browser shows the read error", async (ctx: World) => {
-  expect(await settle(ctx)).toContain("failed to read file: not a text file");
-});
-step("the user is told the file could not be read", async (ctx: World) => {
-  expect(await settle(ctx)).toContain("failed to read file: permission denied");
-});
+// FilesView gives no reason, only that the read failed.
+async function readFailed(ctx: World) {
+  expect(await settle(ctx)).toContain("failed to read file");
+  expect(files(ctx).viewer?.status).toBe("error");
+}
+step("the browser shows the read error", readFailed);
+step("the user is told the file could not be read", readFailed);
 step("the user is told the file is empty", async (ctx: World) => {
   expect(await settle(ctx)).toContain("(empty file)");
 });
@@ -340,3 +344,63 @@ step("the user is told the file is empty", async (ctx: World) => {
 step("the prompt already has the most attachments a turn allows", ensureOpen);
 // "the user opens the command palette" (threads.steps.ts) opens it and
 // "{string} is not offered" (projects.steps.ts) checks its commands.
+
+// --- How it draws (FilesView) ----------------------------------------------------------
+
+/** The browser or the open file, whichever is shown, inside its border. */
+const browserInner = (ctx: World): Rect => {
+  const name = files(ctx).viewer ? "fileViewer" : "filesPanel";
+  const { x, y, width, height } = rectOf(ctx, name);
+  return { x: x + 2, y: y + 1, width: width - 4, height: height - 2 };
+};
+
+step("the browser's first row reads {string}", async (ctx: World, text: string) => {
+  await settle(ctx);
+  const inner = browserInner(ctx);
+  const [first] = await regionRows(ctx, { ...inner, height: 1 });
+  expect(first!.trimEnd()).toBe(text);
+});
+
+step("the browser reads {string} in the error colour", async (ctx: World, text: string) => {
+  await settle(ctx);
+  const inner = browserInner(ctx);
+  const [, second] = await regionRows(ctx, { ...inner, height: 2 });
+  expect(second!.trimEnd()).toBe(text);
+  expectColour((await textWithin(ctx, inner, text)).span.fg, THEME.error);
+});
+
+type HighlightWorld = World & { highlight?: { x: number; y: number } };
+step(
+  "the highlighted row {string} has the selection background",
+  async (ctx: HighlightWorld, text: string) => {
+    await settle(ctx);
+    const inner = browserInner(ctx);
+    const at = await textWithin(ctx, inner, text);
+    ctx.highlight = at;
+    for (let x = inner.x; x < inner.x + inner.width; x += 1) {
+      expectColour((await cellAt(ctx, x, at.y)).span.bg, THEME.selectedBg);
+    }
+  },
+);
+
+step(
+  "its markers are in the accent colour and its name in the text colour",
+  async (ctx: HighlightWorld) => {
+    const { x, y } = ctx.highlight!;
+    // "▸ ▸ " then the folder's name.
+    for (let offset = 0; offset < 4; offset += 1) {
+      expectColour((await cellAt(ctx, x + offset, y)).span.fg, THEME.accent);
+    }
+    expectColour((await cellAt(ctx, x + 4, y)).span.fg, THEME.text);
+  },
+);
+
+step(
+  "the name {string} is in the dim colour and its {string} in the colour of its file type",
+  async (ctx: World, name: string, glyph: string) => {
+    const inner = browserInner(ctx);
+    const at = await textWithin(ctx, inner, `${glyph} ${name}`);
+    expectColour(at.span.fg, ansi(fileTypeColor(name)!));
+    expectColour((await cellAt(ctx, at.x + 2, at.y)).span.fg, THEME.dim);
+  },
+);

@@ -92,8 +92,12 @@ step("a commit {string} holds both files", async (ctx: World, message: string) =
   expect(ctx.fake!.gitCalls).toEqual([
     { method: "runGitStackedAction", cwd: CWD, action: "commit", commitMessage: message },
   ]);
-  // The server commits the whole working tree the panel listed.
-  expect(gitState(ctx).files.map((file) => file.path)).toEqual(["src/cart.ts", "src/tax.ts"]);
+  // The server commits the whole working tree the panel summed up.
+  expect(gitState(ctx).changesLine).toBe("2 files · +6 -2");
+  expect(scm(ctx).status!.workingTree.files.map((file) => file.path)).toEqual([
+    "src/cart.ts",
+    "src/tax.ts",
+  ]);
 });
 
 step("the user is told the commit was made with its short hash", async (ctx: World) => {
@@ -125,8 +129,12 @@ step("nothing is committed and both files are still changed", async (ctx: World)
   expect(ctx.fake!.gitCalls).toEqual([]);
   expect(gitState(ctx).commitPrompt).toBeNull();
   expect(gitState(ctx).changesLine).toBe("2 files · +6 -2");
-  expect(screen).toContain("src/cart.ts");
-  expect(screen).toContain("src/tax.ts");
+  // RightPanel.tsx sums the tree up on one line; it lists no files.
+  expect(screen).toContain("2 files · +6 -2");
+  expect(scm(ctx).status!.workingTree.files.map((file) => file.path)).toEqual([
+    "src/cart.ts",
+    "src/tax.ts",
+  ]);
 });
 
 step("the user runs a commit from the terminal client", (ctx: World) => runAction(ctx, "Commit"));
@@ -197,7 +205,6 @@ step(
     const screen = await settle(ctx);
     expect(gitState(ctx).changesLine).toBe("1 file · +3 -1");
     expect(screen).toContain("1 file · +3 -1");
-    expect(screen).toContain("src/cart.ts");
     expect(ctx.fake!.gitCalls).toEqual([]);
   },
 );

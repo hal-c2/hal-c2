@@ -1,15 +1,16 @@
-// The workspace file browser (palette → Browse files), host side. It replaces
-// the conversation with the workspace as a tree, folders collapsed, and opens
-// a file in the same pane. The listing and the open file live here; the
+// The workspace file browser (palette → Browse files), host side. Like
+// FilesView.tsx it takes the conversation pane's place with the workspace as a
+// tree, folders collapsed, and opens a file in the same pane. The listing and the open file live here; the
 // FilesPanel and FileViewer bricks only paint `files` and dispatch `files.*`.
 import type { ProjectEntry } from "@hal-c2/contracts";
 
 import type { TuiClient } from "../connection.ts";
 import { filetypeForPath } from "../diffSplit.ts";
 import { buildFileTree, collectDirPaths, flattenFileTree, type FlatTreeRow } from "../fileTree.ts";
-
-/** The `layout.rightPanel.kind` the browser and viewer fill. */
-export const FILES_PANEL = "files";
+import { clip } from "../format.ts";
+import { fileTypeColor } from "../icons.ts";
+import { ansi, type Palette, THEME } from "../theme.ts";
+import { chunk, plainText, styled, type StyledText } from "./styledText.ts";
 
 /** Rows the panel's border and header take. */
 export const FILES_CHROME_ROWS = 3;
@@ -19,6 +20,8 @@ export interface TuiFilesRow {
   readonly path: string;
   /** The row as drawn: selection marker, indent, folder or file glyph, name. */
   readonly text: string;
+  /** The same row styled as FilesView draws it. */
+  readonly line: StyledText;
   readonly selected: boolean;
 }
 
@@ -38,8 +41,11 @@ export interface TuiFileViewerState {
 /** Published under `files`. */
 export interface TuiFilesState {
   readonly open: boolean;
-  /** The workspace the browser lists, as shown in the header. */
+  /** The workspace the browser lists. */
   readonly cwd: string;
+  /** The header: `files · <cwd>` (or `file · <path>`) in accent, then the keys, dimmed. */
+  readonly title: string;
+  readonly hint: string;
   readonly status: "loading" | "ready" | "empty" | "error";
   /** The body line when there are no rows to show (loading, empty, error). */
   readonly message: string;
@@ -52,8 +58,10 @@ export interface FilesControllerOptions {
   readonly client: Pick<TuiClient, "listEntries" | "readFile">;
   /** The selected thread's workspace, or null without one. */
   readonly cwd: () => string | null;
-  /** Height of the pane the browser replaces. */
+  /** Size of the pane the browser replaces. */
   readonly height: () => number;
+  readonly width: () => number;
+  readonly palette?: Palette;
   readonly setOpen: (open: boolean) => void;
   readonly publish: (state: TuiFilesState) => void;
 }
@@ -72,13 +80,13 @@ export interface FilesController {
 const CLOSED: TuiFilesState = {
   open: false,
   cwd: "",
+  title: "",
+  hint: "",
   status: "loading",
   message: "",
   rows: [],
   viewer: null,
 };
-
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 function treeRows(entries: ReadonlyArray<ProjectEntry>) {
   // Folders come from the file paths; ignored entries (node_modules, build
@@ -90,27 +98,43 @@ function treeRows(entries: ReadonlyArray<ProjectEntry>) {
   );
 }
 
-function rowText(row: FlatTreeRow, selected: boolean): string {
-  const marker = selected ? "▸ " : "  ";
+/** FilesView's tree row: marker and glyph, then the name clipped to `nameRoom`. */
+function rowLine(row: FlatTreeRow, active: boolean, nameRoom: number, palette: Palette) {
+  const marker = active ? "▸ " : "  ";
   const indent = "  ".repeat(row.depth);
-  return row.kind === "dir"
-    ? `${marker}${indent}${row.collapsed ? "▸" : "▾"} ${row.name}/`
-    : `${marker}${indent}◦ ${row.name}`;
+  const bg = active ? { bg: palette.selectedBg } : {};
+  const name = { fg: active ? palette.text : palette.dim, ...bg };
+  if (row.kind === "dir") {
+    return styled(
+      chunk(`${marker}${indent}${row.collapsed ? "▸" : "▾"} `, {
+        fg: active ? palette.accent : palette.dim,
+        ...bg,
+      }),
+      chunk(clip(`${row.name}/`, nameRoom), name),
+    );
+  }
+  const typeColor = fileTypeColor(row.path);
+  return styled(
+    chunk(`${marker}${indent}◦ `, {
+      fg: typeColor ? ansi(typeColor) : active ? palette.bg : palette.faint,
+      ...bg,
+    }),
+    chunk(clip(row.name, nameRoom), name),
+  );
 }
 
 export function createFilesController(options: FilesControllerOptions): FilesController {
   const { client } = options;
+  const palette = options.palette ?? THEME;
   let open = false;
   let cwd = "";
   let status: TuiFilesState["status"] = "loading";
-  let listError = "";
   let tree: ReturnType<typeof buildFileTree> = [];
   let collapsed = new Set<string>();
   let selectedPath: string | null = null;
   let viewer: {
     path: string;
     status: TuiFileViewerState["status"];
-    error: string;
     lines: string[];
     top: number;
   } | null = null;
@@ -142,23 +166,32 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
       Math.max(0, index - Math.floor(height / 2)),
       Math.max(0, all.length - height),
     );
-    const rows = all.slice(start, start + height).map((row, offset) => ({
-      kind: row.kind,
-      path: row.path,
-      text: rowText(row, start + offset === index),
-      selected: start + offset === index,
-    }));
+    const nameRoom = Math.max(8, options.width() - 18);
+    const rows = all.slice(start, start + height).map((row, offset) => {
+      const line = rowLine(row, start + offset === index, nameRoom, palette);
+      return {
+        kind: row.kind,
+        path: row.path,
+        text: plainText(line),
+        line,
+        selected: start + offset === index,
+      };
+    });
     const message =
       status === "loading"
         ? "loading…"
         : status === "error"
-          ? `failed to list files: ${listError}`
+          ? "failed to list files"
           : status === "empty"
             ? "no files"
             : "";
     options.publish({
       open,
       cwd,
+      title: viewer ? `file · ${clip(viewer.path, 40)}` : `files · ${clip(cwd, 40)}`,
+      hint: viewer
+        ? "  ·  PgUp/PgDn scroll · Esc back"
+        : "  ·  ↑/↓ select · Enter open/expand · Esc close",
       status,
       message,
       rows,
@@ -169,7 +202,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
           viewer.status === "loading"
             ? "loading…"
             : viewer.status === "error"
-              ? `failed to read file: ${viewer.error}`
+              ? "failed to read file"
               : viewer.lines.length === 1 && viewer.lines[0] === ""
                 ? "(empty file)"
                 : "",
@@ -205,10 +238,9 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
           selectedPath = flat()[0]?.path ?? null;
           publish();
         },
-        (error) => {
+        () => {
           if (token !== generation) return;
           status = "error";
-          listError = errorText(error);
           publish();
         },
       ),
@@ -226,19 +258,19 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
 
   const openFile = (path: string) => {
     const token = ++generation;
-    viewer = { path, status: "loading", error: "", lines: [], top: 0 };
+    viewer = { path, status: "loading", lines: [], top: 0 };
     publish();
     track(
       client.readFile(cwd, path).then(
         (content) => {
           if (token !== generation || !viewer) return;
-          if (content === null) viewer = { ...viewer, status: "error", error: "not a text file" };
+          if (content === null) viewer = { ...viewer, status: "error" };
           else viewer = { ...viewer, status: "ready", lines: content.split("\n") };
           publish();
         },
-        (error) => {
+        () => {
           if (token !== generation || !viewer) return;
-          viewer = { ...viewer, status: "error", error: errorText(error) };
+          viewer = { ...viewer, status: "error" };
           publish();
         },
       ),

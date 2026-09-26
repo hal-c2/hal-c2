@@ -22,7 +22,7 @@ Feature: Browsing workspace files and projects in the terminal
     When the user chooses "Browse files" from the command palette
     Then the workspace name is shown above a tree of folders and files
 
-  @backlog @tui
+  @tui
   Scenario: The file browser takes the conversation pane's place
     Given the terminal is 150 columns wide
     When the user browses files
@@ -30,7 +30,7 @@ Feature: Browsing workspace files and projects in the terminal
     And the prompt is still shown under it
     And the browser's first row reads "files · ~/code/shop  ·  ↑/↓ select · Enter open/expand · Esc close"
 
-  @backlog @tui
+  @tui
   Scenario: The highlighted row stands out from the rest of the tree
     Given the file browser is open
     Then the highlighted row "▸ ▸ src/" has the selection background
@@ -56,7 +56,7 @@ Feature: Browsing workspace files and projects in the terminal
     Then the file's name is shown above its contents
     And the contents are highlighted as TypeScript
 
-  @backlog @tui
+  @tui
   Scenario: An open file's header names it and how to scroll
     Given the terminal is 150 columns wide
     And the user is reading "src/app.ts" in the file browser
@@ -87,7 +87,7 @@ Feature: Browsing workspace files and projects in the terminal
     When the user opens "secret.bin"
     Then the browser shows the read error
 
-  @backlog @tui
+  @tui
   Scenario Outline: A browser error is one short line in the error colour
     Given <failure>
     When <action>
