@@ -20,7 +20,7 @@
 # "options"}} (waits for the answer, then says it), {"event": {...}} (sent as is),
 # {"mcp": {"name", "arguments"}} (a HAL-C2 MCP tool call), {"waitAbort": true}, {"exit": code}.
 # Without a match the reply names the conversation so far.
-import json, os, sys, urllib.request, uuid
+import json, os, sys, time, urllib.request, uuid
 
 DIR = os.environ["FAKE_DIR"]
 LOG = os.path.join(DIR, "log.jsonl")
@@ -53,12 +53,34 @@ def arg(name):
     return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else None
 
 
+# With FAKE_SESSIONS set, sessions are kept the way Pi keeps them: JSONL files under
+# $PI_CODING_AGENT_SESSION_DIR (else $PI_CODING_AGENT_DIR/sessions), in a folder named by
+# the working directory ("--home-me-shop--"), each starting with a header that records
+# the cwd. A session whose recorded cwd does not exist is refused, as Pi refuses it.
+PI_SESSIONS = None
+if os.environ.get("FAKE_SESSIONS"):
+    PI_SESSIONS = os.environ.get("PI_CODING_AGENT_SESSION_DIR") or (
+        os.environ.get("PI_CODING_AGENT_DIR") and os.path.join(os.environ["PI_CODING_AGENT_DIR"], "sessions"))
+
+
 def load(path):
+    if path.endswith(".jsonl"):
+        with open(path) as f:
+            lines = [json.loads(line) for line in f if line.strip()]
+        header = lines[0] if lines and lines[0].get("type") == "session" else {}
+        if not os.path.isdir(header.get("cwd") or ""):
+            sys.stderr.write("Session %s was recorded in %s, which does not exist\n" % (path, header.get("cwd")))
+            sys.exit(1)
+        return [line for line in lines if line.get("type") != "session"]
     with open(path) as f:
         return json.load(f)["entries"]
 
 
 def new_path():
+    if PI_SESSIONS:
+        folder = os.path.join(PI_SESSIONS, "--%s--" % os.getcwd().lstrip("/").replace("/", "-"))
+        os.makedirs(folder, exist_ok=True)
+        return os.path.join(folder, "%s_%s.jsonl" % (time.strftime("%Y-%m-%dT%H-%M-%S"), uuid.uuid4()))
     os.makedirs(SESSIONS, exist_ok=True)
     return os.path.join(SESSIONS, "%s.json" % uuid.uuid4().hex[:12])
 
@@ -68,7 +90,13 @@ class Session:
         self.path, self.entries = path, entries
 
     def save(self):
-        if self.path:
+        if self.path and self.path.endswith(".jsonl"):
+            header = {"type": "session", "version": 3, "id": os.path.basename(self.path)[20:-6],
+                      "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z"), "cwd": os.getcwd()}
+            with open(self.path, "w") as f:
+                for line in [header] + self.entries:
+                    f.write(json.dumps(line) + "\n")
+        elif self.path:
             with open(self.path, "w") as f:
                 json.dump({"entries": self.entries}, f)
 

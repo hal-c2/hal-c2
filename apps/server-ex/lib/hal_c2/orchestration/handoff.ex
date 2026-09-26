@@ -40,6 +40,13 @@ defmodule HalC2.Orchestration.Handoff do
     fresh =
       provider_thread == nil or get_in(provider_thread, ["nativeThreadRef", "nativeId"]) == nil
 
+    {fork, fork_changes} =
+      case carried(provider_thread, driver, fresh) do
+        nil when fork == nil -> {nil, fork_changes}
+        nil -> {fork, fork_changes}
+        carried -> {carried, fork_changes ++ [consumed(state, provider_thread)]}
+      end
+
     {history, delta_changes} =
       cond do
         fork != nil -> {nil, []}
@@ -56,6 +63,25 @@ defmodule HalC2.Orchestration.Handoff do
       changes: Enum.reject(fork_changes ++ delta_changes ++ merge_changes, &is_nil/1)
     }
   end
+
+  # A session carried from another machine (`HalC2.PortableSessions`): the run
+  # branches a new session from the copy. Claude and Pi find the copy by its path,
+  # Codex by its thread id and the rollout's path.
+  defp carried(%{"carriedSession" => %{"driver" => driver} = session}, driver, true) do
+    thread = if driver == "codex", do: session["nativeId"], else: session["path"]
+    %{thread: thread, turn: nil, path: session["path"], carried: true}
+  end
+
+  defp carried(_provider_thread, _driver, _fresh), do: nil
+
+  defp consumed(state, provider_thread),
+    do:
+      Orchestration.upsert(
+        state,
+        "provider-thread",
+        provider_thread["id"],
+        &Map.delete(&1, "carriedSession")
+      )
 
   # A provider thread the thread comes back to (the user switched to another agent
   # and back) gets only the turns other provider threads ran since it last ran

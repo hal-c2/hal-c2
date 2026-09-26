@@ -22,6 +22,8 @@ defmodule HalC2.Test.Machines do
   """
   def cluster(context, local, others) do
     Node.World.put_env("HAL_C2_LABEL", local)
+    for {key, value} <- sessions(context.node.home), do: Node.World.put_env(key, value)
+    Node.World.put_app_env(:agent_sessions_home, user_home(context.node.home))
     distribute()
     context = %{context | node: Node.restart(context.node)}
 
@@ -33,7 +35,11 @@ defmodule HalC2.Test.Machines do
   @doc "Starts `label` as a member (`:cluster`) or a machine on its own (`:alone`)."
   def start(context, label, mode, home \\ nil) do
     home = home || Node.tmp_dir(context.node, label)
-    env = [{~c"HAL_C2_LABEL", String.to_charlist(label)}]
+
+    env =
+      for {key, value} <- [{"HAL_C2_LABEL", label} | sessions(home)],
+          do: {String.to_charlist(key), String.to_charlist(value)}
+
     args = Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
 
     opts =
@@ -60,7 +66,11 @@ defmodule HalC2.Test.Machines do
     ExUnit.Callbacks.on_exit(fn -> if Process.alive?(peer), do: :peer.stop(peer) end)
     machine = %{node: node, peer: peer, home: home, mode: mode, label: label}
 
-    for {key, value} <- [start_node: true, home: home, port: 0] ++ fakes(home),
+    app_env =
+      [start_node: true, home: home, port: 0, agent_sessions_home: user_home(home)] ++
+        fakes(home)
+
+    for {key, value} <- app_env,
         do: :ok = call(machine, Application, :put_env, [:hal_c2, key, value])
 
     {:ok, _} = call(machine, Application, :ensure_all_started, [:hal_c2], 30_000)
@@ -127,6 +137,25 @@ defmodule HalC2.Test.Machines do
     end
   end
 
+  @doc """
+  A machine's user home, where its agents keep their sessions: "~" in a feature.
+  Each machine's Claude, Codex and Pi homes are the defaults under it.
+  """
+  def user_home(context, label) when is_binary(label), do: user_home(home(context, label))
+  def user_home(home) when is_binary(home), do: Path.join(home, "user")
+
+  # The fake agents keep sessions the way the real ones do, in the machine's own homes.
+  defp sessions(home) do
+    user = user_home(home)
+
+    [
+      {"FAKE_SESSIONS", "1"},
+      {"CLAUDE_CONFIG_DIR", Path.join(user, ".claude")},
+      {"CODEX_HOME", Path.join(user, ".codex")},
+      {"PI_CODING_AGENT_DIR", Path.join(user, ".pi/agent")}
+    ]
+  end
+
   # --- run on a machine ----------------------------------------------------------------
 
   @doc "This node's own sidebar rows, as `{kind, row}`, once pending ones are written."
@@ -154,6 +183,49 @@ defmodule HalC2.Test.Machines do
       })
 
     HalC2.Streams.flush_shell(id)
+  end
+
+  @doc """
+  Sends `text` to the thread `id` on this node and waits for its run to finish;
+  returns the run.
+  """
+  def send_message(id, text, selection \\ %{"instanceId" => "codex", "model" => "gpt-5.4"}) do
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
+    ordinal = length(entities(id, "run")) + 1
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => id,
+        "messageId" => "msg-#{System.unique_integer([:positive])}",
+        "text" => text,
+        "attachments" => [],
+        "modelSelection" => selection,
+        "dispatchMode" => %{"type" => "start_immediately"},
+        "createdBy" => "user",
+        "creationSource" => "web"
+      })
+
+    await_run(id, ordinal)
+  end
+
+  defp await_run(id, ordinal) do
+    run =
+      Enum.find(
+        entities(id, "run"),
+        &(&1["ordinal"] == ordinal and &1["status"] in ~w(completed failed interrupted))
+      )
+
+    if run do
+      run
+    else
+      receive do
+        {:hal_c2_stream, ^id, _} -> await_run(id, ordinal)
+      after
+        15_000 -> raise "run #{ordinal} of #{id} never finished"
+      end
+    end
   end
 
   @doc "Deletes a project on this node."

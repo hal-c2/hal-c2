@@ -445,6 +445,8 @@ defmodule HalC2.Claude.ThreadRuntime do
       fork_session: Map.get(turn, :fork) != nil,
       partial_messages: true,
       mcp: HalC2.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids)),
+      # The instance's variables in settings (such as CLAUDE_CONFIG_DIR) reach Claude.
+      env: Enum.to_list(HalC2.Settings.instance_env(Entities.instance(turn.ids))),
       log: state.thread_id
     ]
 

@@ -69,6 +69,16 @@ defmodule HalC2.Settings do
     end
   end
 
+  @doc "The variables set on provider instance `instance` in settings, as a map."
+  def instance_env(instance) do
+    entry = (settings()["providerInstances"] || %{})[instance] || %{}
+
+    for %{"name" => name, "value" => value} <- entry["environment"] || [],
+        is_binary(name) and is_binary(value),
+        into: %{},
+        do: {name, value}
+  end
+
   @doc "`{settings, version}`."
   def get do
     GenServer.call(__MODULE__, :get)

@@ -435,8 +435,20 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp connect(%{conn: nil} = state, turn) do
     cmd = Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
 
+    # The instance's variables in settings (such as CODEX_HOME) reach Codex.
+    env =
+      if ids = turn[:ids],
+        do: Enum.to_list(HalC2.Settings.instance_env(Entities.instance(ids))),
+        else: []
+
     with {:ok, conn} <-
-           Connection.start_link(cmd: cmd, handler: self(), cd: turn.cwd, log: turn.ids.thread),
+           Connection.start_link(
+             cmd: cmd,
+             handler: self(),
+             cd: turn.cwd,
+             env: env,
+             log: turn.ids.thread
+           ),
          {:ok, _} <-
            Connection.call(conn, "initialize", %{
              "clientInfo" => %{
@@ -461,11 +473,14 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp ensure_native_thread(%{native_thread_id: id} = state, _turn) when is_binary(id),
     do: {:ok, state}
 
-  # A fork's first turn starts from a copy of the source thread, cut after its turn.
-  defp ensure_native_thread(state, %{fork: %{thread: source, turn: last}} = turn) do
+  # A fork's first turn starts from a copy of the source thread, cut after its turn;
+  # a session carried from another machine is forked whole from its rollout's path.
+  defp ensure_native_thread(state, %{fork: %{thread: source, turn: last} = fork} = turn) do
     params =
       thread_params(state, turn)
-      |> Map.merge(%{"threadId" => source, "lastTurnId" => last})
+      |> Map.put("threadId", source)
+      |> then(&if(last, do: Map.put(&1, "lastTurnId", last), else: &1))
+      |> then(&if(fork[:path], do: Map.put(&1, "path", fork[:path]), else: &1))
 
     case Connection.call(state.conn, "thread/fork", params) do
       {:ok, %{"thread" => %{"id" => id}}} -> {:ok, %{state | native_thread_id: id}}

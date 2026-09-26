@@ -7,7 +7,7 @@
 # permission answer adds for the session (updatedPermissions) let later matching
 # commands run without asking. Each turn's message text is appended to
 # $FAKE_CLAUDE_LOG when it is set.
-import json, os, sys
+import json, os, re, sys, uuid
 
 # With FAKE_CLAUDE_TRACE set, the argv and every message read are appended to it as JSON lines.
 TRACE = os.environ.get("FAKE_CLAUDE_TRACE")
@@ -21,6 +21,51 @@ def send(msg):
     sys.stdout.flush()
 
 session = "fake-session-1"
+# With FAKE_SESSIONS set, the fake keeps transcripts the way Claude Code does:
+# $CLAUDE_CONFIG_DIR/projects/<working directory, each other character a dash>/<session
+# id>.jsonl, one entry per message recording its cwd, sessionId and the version that
+# wrote it. --resume takes a session id (looked up for the working directory) or a
+# transcript's path, and --fork-session continues it as a new session; a missing
+# transcript, or one written by a newer version than FAKE_CLAUDE_VERSION, ends the
+# process as Claude Code does.
+SESSIONS = os.environ.get("CLAUDE_CONFIG_DIR") if os.environ.get("FAKE_SESSIONS") else None
+VERSION = os.environ.get("FAKE_CLAUDE_VERSION", "2.1.0")
+transcript, earlier = None, []
+
+def version(text):
+    return tuple(int(part) for part in text.split(".") if part.isdigit())
+
+def record(role, text):
+    if transcript:
+        with open(transcript, "a") as f:
+            f.write(json.dumps({"type": role, "sessionId": session, "cwd": os.getcwd(), "version": VERSION,
+                                "uuid": str(uuid.uuid4()), "message": {"role": role, "content": text}}) + "\n")
+
+if SESSIONS:
+    folder = os.path.join(SESSIONS, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.getcwd()))
+    resume = sys.argv[sys.argv.index("--resume") + 1] if "--resume" in sys.argv else None
+    entries = []
+    if resume:
+        source = resume if resume.endswith(".jsonl") else os.path.join(folder, resume + ".jsonl")
+        if not os.path.exists(source):
+            sys.stderr.write(f"No conversation found with session ID: {resume}\n")
+            sys.exit(1)
+        with open(source) as f:
+            entries = [json.loads(line) for line in f if line.strip()]
+        newest = max((e.get("version", "0") for e in entries), key=version, default="0")
+        if version(newest) > version(VERSION):
+            sys.stderr.write(f"This session was written by Claude Code {newest}; update to open it.\n")
+            sys.exit(1)
+        earlier = [e["message"]["content"] for e in entries if e.get("type") == "user"]
+    if resume and "--fork-session" not in sys.argv:
+        session, transcript = os.path.basename(source)[:-6], source
+    else:
+        session = str(uuid.uuid4())
+        os.makedirs(folder, exist_ok=True)
+        transcript = os.path.join(folder, session + ".jsonl")
+        with open(transcript, "w") as f:
+            for e in entries:
+                f.write(json.dumps({**e, "sessionId": session}) + "\n")
 # FAKE_CLAUDE_ARGV_LOG names a file each start appends its arguments to, as one JSON list.
 if os.environ.get("FAKE_CLAUDE_ARGV_LOG"):
     with open(os.environ["FAKE_CLAUDE_ARGV_LOG"], "a") as f:
@@ -92,6 +137,7 @@ for line in sys.stdin:
         with open(os.environ["FAKE_CLAUDE_INPUT_LOG"], "a") as f:
             f.write(json.dumps(text) + "\n")
     send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku"})
+    record("user", text)
     # "usage limit until EPOCH": the plan's five-hour window rejects the turn until then.
     if text.startswith("usage limit until "):
         resets = int(text.rsplit(" ", 1)[1])
@@ -107,7 +153,7 @@ for line in sys.stdin:
         send({"type": "result", "subtype": "success", "is_error": True, "result": "Invalid API key · Please run /login", "session_id": session})
         continue
     if "where are we" in text:
-        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {'<conversation_history>' in text}"}]}})
+        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {'<conversation_history>' in text}" + (f" earlier [{' | '.join(earlier)}]" if SESSIONS else "")}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     if "approve" in text and mode == "auto":

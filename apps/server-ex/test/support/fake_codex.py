@@ -10,7 +10,7 @@
 # names exists, turn/steer is refused. "stream ..." turns pace themselves by gate files
 # in FAKE_CODEX_GATE (see stream_reply); "answer from gate" waits for the gate file
 # "answer" and replies with its contents, or with no message when it is empty.
-import json, os, sys, time
+import glob, json, os, sys, time, uuid
 
 # With FAKE_CODEX_TRACE set, every message read is appended to it as a JSON line.
 # FAKE_CODEX_MODELS is the JSON `data` model/list answers with.
@@ -59,6 +59,59 @@ def say(ctx, text):
         send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-say-{ctx['turnId']}-{i}", "text": ""}}})
         send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-say-{ctx['turnId']}-{i}", "text": part}}})
     send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
+
+
+# With FAKE_SESSIONS set, the fake keeps rollout files the way Codex does, under
+# $CODEX_HOME/sessions/YYYY/MM/DD/rollout-<time>-<thread id>.jsonl: a session_meta line
+# naming the thread's cwd, then per turn a turn_context with its cwd and the user's
+# message. thread/resume and thread/fork (by threadId, or by the rollout's `path`) read
+# them back, and a rollout written by a newer Codex than FAKE_CODEX_VERSION is refused.
+SESSIONS = os.environ.get("CODEX_HOME") if os.environ.get("FAKE_SESSIONS") else None
+VERSION = os.environ.get("FAKE_CODEX_VERSION", "0.130.0")
+rollout = None
+
+def version(text):
+    return tuple(int(part) for part in text.split(".") if part.isdigit())
+
+def rollout_find(tid):
+    found = glob.glob(os.path.join(SESSIONS, "sessions", "*", "*", "*", f"rollout-*-{tid}.jsonl"))
+    return found[0] if found else None
+
+def rollout_read(path):
+    with open(path) as f:
+        records = [json.loads(line) for line in f if line.strip()]
+    meta = records[0]["payload"] if records and records[0].get("type") == "session_meta" else {}
+    if version(meta.get("cli_version", "0")) > version(VERSION):
+        raise ValueError(f"rollout {path} was written by a newer Codex ({meta.get('cli_version')})")
+    return records
+
+def rollout_append(record):
+    if rollout:
+        with open(rollout, "a") as f:
+            f.write(json.dumps({"timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()), **record}) + "\n")
+
+def rollout_new(tid, cwd, records=(), forked_from=None):
+    global rollout
+    now = time.gmtime()
+    folder = os.path.join(SESSIONS, "sessions", time.strftime("%Y", now), time.strftime("%m", now), time.strftime("%d", now))
+    os.makedirs(folder, exist_ok=True)
+    rollout = os.path.join(folder, f"rollout-{time.strftime('%Y-%m-%dT%H-%M-%S', now)}-{tid}.jsonl")
+    meta = {"id": tid, "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", now), "cwd": cwd, "originator": "fake", "cli_version": VERSION}
+    if forked_from:
+        meta["forked_from_id"] = forked_from
+    rollout_append({"type": "session_meta", "payload": meta})
+    for record in records:
+        if record.get("type") != "session_meta":
+            with open(rollout, "a") as f:
+                f.write(json.dumps(record) + "\n")
+
+def rollout_history():
+    if not rollout:
+        return []
+    with open(rollout) as f:
+        records = [json.loads(line) for line in f if line.strip()]
+    return [r["payload"]["content"][0]["text"] for r in records
+            if r.get("type") == "response_item" and r["payload"].get("role") == "user"]
 
 thread_id = "native-thread-1"
 # Current Codex keeps paginated history, which only rewinds with thread/revert.
@@ -129,6 +182,19 @@ for line in sys.stdin:
         if os.environ.get("FAKE_CODEX_SESSION_LOG"):
             with open(os.environ["FAKE_CODEX_SESSION_LOG"], "a") as f:
                 f.write(json.dumps({"method": method, "params": params}) + "\n")
+        if SESSIONS and method == "thread/start":
+            thread_id = str(uuid.uuid4())
+            rollout_new(thread_id, params.get("cwd"))
+        elif SESSIONS:
+            path = rollout_find(params["threadId"])
+            try:
+                if not path:
+                    raise ValueError(f"no rollout found for thread id {params['threadId']}")
+                rollout_read(path)
+            except ValueError as error:
+                send({"id": mid, "error": {"code": -32600, "message": str(error)}})
+                continue
+            thread_id, rollout = params["threadId"], path
         send({"id": mid, "result": {"thread": {"id": thread_id}}})
     elif method == "turn/start":
         # FAKE_CODEX_INPUT_LOG collects every turn's input, one JSON line each.
@@ -138,6 +204,8 @@ for line in sys.stdin:
         turns += 1
         turn_id = f"native-turn-{turns}"
         text = params["input"][0]["text"]
+        rollout_append({"type": "turn_context", "payload": {"cwd": params.get("cwd"), "model": params.get("model")}})
+        rollout_append({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}})
         if "exit before starting" in text:
             sys.exit(1)
         send({"id": mid, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
@@ -163,6 +231,8 @@ for line in sys.stdin:
             continue
         if "where are we" in text:
             where = f"on {thread_id} history {'<conversation_history>' in text} merged {'<merged_work>' in text}"
+            if SESSIONS:
+                where += " earlier [" + " | ".join(rollout_history()[:-1]) + "]"
             send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-where", "text": ""}}})
             send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-where", "text": where}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
@@ -298,6 +368,20 @@ for line in sys.stdin:
         send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-steer", "text": ""}}})
         send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-steer", "text": text}}})
         send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
+    elif method == "thread/fork" and SESSIONS:
+        # A fork by `path` reads that rollout; the new thread works in the given cwd.
+        path = params.get("path") or rollout_find(params["threadId"])
+        try:
+            if not path or not os.path.exists(path):
+                raise ValueError(f"no rollout found for thread id {params.get('threadId')}")
+            records = rollout_read(path)
+        except ValueError as error:
+            send({"id": mid, "error": {"code": -32600, "message": str(error)}})
+            continue
+        source = records[0]["payload"]["id"]
+        thread_id = str(uuid.uuid4())
+        rollout_new(thread_id, params.get("cwd") or records[0]["payload"].get("cwd"), records, source)
+        send({"id": mid, "result": {"thread": {"id": thread_id}}})
     elif method == "thread/fork":
         thread_id = f"forked-{params['threadId']}-at-{params.get('lastTurnId')}"
         send({"id": mid, "result": {"thread": {"id": thread_id}}})

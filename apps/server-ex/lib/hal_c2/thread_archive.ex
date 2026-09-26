@@ -278,7 +278,7 @@ defmodule HalC2.ThreadArchive do
     same_repo? = repository(dest_root) != nil and repository(dest_root) == meta["repository"]
 
     {checkpoint_notes, checkpoints_ok?} = place_checkpoints(archive, dest_root, same_repo?)
-    {session_changes, session_notes} = place_session(archive, dest_root, opts)
+    {carried_session, session_notes} = place_session(archive, dest_root, opts)
 
     entities =
       for [kind, eid, entity] <- archive["entities"] do
@@ -292,7 +292,10 @@ defmodule HalC2.ThreadArchive do
         {kind, eid, entity}
       end
 
-    entities = Enum.map(entities, &carried(&1, id, archive, meta, dest_root))
+    entities =
+      entities
+      |> Enum.map(&carried(&1, id, archive, meta, dest_root))
+      |> Enum.map(&with_session(&1, carried_session))
 
     for %{"fileName" => name, "data" => data} <- archive["attachments"] do
       path = Path.join(Attachments.dir(), Path.basename(name))
@@ -304,7 +307,7 @@ defmodule HalC2.ThreadArchive do
         do: Terminal.put_scrollback(id, terminal, data)
 
     at = archive["updatedAt"] || System.os_time(:millisecond)
-    changes = changes(id, entities, at) ++ session_changes
+    changes = changes(id, entities, at)
     commit(id, changes)
 
     {:ok,
@@ -312,7 +315,7 @@ defmodule HalC2.ThreadArchive do
        thread: id,
        title: meta["title"],
        project: project["id"],
-       session: session_changes != [],
+       session: carried_session != nil,
        notes: checkpoint_notes ++ session_notes
      }}
   end
@@ -342,6 +345,15 @@ defmodule HalC2.ThreadArchive do
   end
 
   defp carried(row, _id, _archive, _meta, _root), do: row
+
+  # The provider thread whose session came along continues from the copy.
+  defp with_session(
+         {"provider-thread", eid, entity},
+         %{"providerThreadId" => eid, "carriedSession" => session}
+       ),
+       do: {"provider-thread", eid, Map.put(entity, "carriedSession", session)}
+
+  defp with_session(row, _carried), do: row
 
   # Every entity as a patch from what this node has (nothing, or a forwarding record
   # and the copy it left behind), so a thread coming back does not repeat anything.
@@ -583,12 +595,12 @@ defmodule HalC2.ThreadArchive do
     PortableSessions.export(state, thread, cwd)
   end
 
-  defp place_session(%{"session" => nil}, _root, _opts), do: {[], []}
+  defp place_session(%{"session" => nil}, _root, _opts), do: {nil, []}
 
   defp place_session(%{"session" => session} = archive, root, opts) do
     if Keyword.get(opts, :session, true),
       do: PortableSessions.place(session, root, archive),
-      else: {[], []}
+      else: {nil, []}
   end
 
   @doc """

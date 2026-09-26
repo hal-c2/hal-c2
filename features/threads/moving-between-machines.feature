@@ -449,7 +449,7 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: Moving between machines outside a cluster
 
-    @backlog @node
+    @node
     Scenario: Exporting a thread from the command line
       When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
       Then the file holds the thread with its history, attachments, terminal scrollback, checkpoints and the agent's session

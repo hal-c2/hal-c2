@@ -242,7 +242,7 @@ Feature: Carrying an agent's own session to another machine
     Then the file backups stay on "laptop"
     And rewinding "Alpha" on "desktop" uses HAL-C2's checkpoints
 
-  @backlog @node
+  @node
   Scenario: A thread file carries the agent's session the same way a move does
     Given "Alpha" runs on Codex with a native session
     When the user exports "Alpha" on "laptop" and imports the file on "desktop"

@@ -455,6 +455,11 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     checkpoints = Machines.on(context, machine, Machines, :entities, [id, "checkpoint"])
     assert [_ | _] = ready = Enum.filter(checkpoints, &(&1["status"] == "ready"))
     for c <- ready, do: assert(HalC2.Checkpoint.exists?(root, c["ref"]))
+
+    # The agent's session: a copy placed on the machine, which the next run branches from.
+    pts = Machines.on(context, machine, Machines, :entities, [id, "provider-thread"])
+    assert [%{"path" => copy}] = for(%{"carriedSession" => s} <- pts, do: s)
+    assert Machines.on(context, machine, File, :exists?, [copy])
     context
   end
 
