@@ -5,6 +5,7 @@
 #   packages/contracts/src/orchestrationV2.ts (thread.metadata.update limitRecovery)
 #   apps/server-ex/lib/t3/projection/thread_error.ex (usageLimitResetAt)
 #   apps/server-ex/lib/t3/orchestration.ex (metadata.update limitRecovery)
+#   apps/server-ex/lib/t3/orchestration/limit_recovery.ex (arm and resume at the reset)
 
 Feature: Threads stopped by a usage limit
   When an agent stops on a usage or rate limit, the thread says so and the user decides
@@ -31,19 +32,19 @@ Feature: Threads stopped by a usage limit
     When the user opens "Port tests"
     Then the agent's explanation of the limit is shown in the conversation
 
-  @backlog @node
+  @node
   Scenario: Resuming at the reset time
     Given "Port tests" stopped on a usage limit that resets at 14:00
     When the user chooses to resume at the reset
     Then "Port tests" continues on its own at 14:00
 
-  @backlog @node
+  @node
   Scenario: Cancelling a scheduled resume
     Given "Port tests" is scheduled to resume at 14:00
     When the user cancels the scheduled resume
     Then "Port tests" does not continue at 14:00
 
-  @backlog @node
+  @node
   Scenario Outline: A scheduled resume is dropped when the user moves on
     Given "Port tests" is scheduled to resume at 14:00
     When the user <action> before 14:00
@@ -55,14 +56,14 @@ Feature: Threads stopped by a usage limit
       | archives "Port tests" |
       | settles "Port tests"  |
 
-  @backlog @node
+  @node
   Scenario: An overdue resume runs after a restart
     Given "Port tests" was scheduled to resume at 14:00
     And the environment was stopped from 13:00 until 15:00
     When the environment starts again
     Then "Port tests" continues
 
-  @backlog @node
+  @node
   Scenario: Limit stops resume on their own when the user chose that
     Given the user turned on auto-resume for limited threads
     When Claude stops "Port tests" on a usage limit that resets at 14:00

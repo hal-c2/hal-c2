@@ -6,7 +6,7 @@
 #   apps/server-ex/lib/t3/orchestration.ex (runtime-request.respond, thread.user-input.dismiss)
 #   apps/server-ex/lib/t3/orchestration/turn_writer.ex (approval_request, user_input_request items)
 #   apps/server-ex/lib/t3/codex/thread_runtime.ex (acceptAlways becomes acceptForSession)
-#   apps/server-ex/lib/t3/claude/thread_runtime.ex (every accept is a one-time allow)
+#   apps/server-ex/lib/t3/claude/thread_runtime.ex (session approvals add session permission rules)
 #   apps/server-ex/lib/t3/acp/thread_runtime.ex (allow_once, allow_always, reject_once)
 #   apps/web/src/components/chat/ComposerPendingApprovalActions.tsx
 #   apps/web/src/components/chat/ComposerPendingApprovalPanel.tsx
@@ -51,13 +51,12 @@ Feature: Approvals and agent questions
       | Codex                                   | allow it for the rest of the session              |
       | an ACP agent such as OpenCode or Cursor | allow it always, or once if always is not offered |
 
-  @plugin-claude @node @backlog
+  @plugin-claude @node
   Scenario: Claude remembers an approval for the session
     Given the thread runs on Claude
     When the user always allows "npm test" for this session
     And the agent asks to run "npm test" again
     Then the command runs without asking
-    # The node answers every Claude accept as a one-time allow today.
 
   @shared @backlog
   Scenario Outline: A request says what kind of permission it wants

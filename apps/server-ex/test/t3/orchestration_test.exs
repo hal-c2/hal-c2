@@ -219,6 +219,37 @@ defmodule T3.OrchestrationTest do
     assert %{"context" => %{"records" => [^skill]}} = StreamState.get(state, "message")["m1"]
   end
 
+  test "a launch reuses only an existing empty thread of its project" do
+    reuse = fn thread_id, project_id ->
+      Orchestration.launch_thread(%{
+        "commandId" => "c-#{System.unique_integer([:positive])}",
+        "threadId" => thread_id,
+        "projectId" => project_id,
+        "title" => "Draft",
+        "reuseExistingThread" => true,
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "workspaceStrategy" => %{"type" => "root"},
+        "initialMessage" => %{"messageId" => "m1", "text" => "hi", "attachments" => []}
+      })
+    end
+
+    assert {:error, "Thread missing does not exist."} = reuse.("missing", "project-1")
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "thread.create",
+        "threadId" => "draft",
+        "projectId" => "project-1",
+        "title" => "Draft"
+      })
+
+    assert {:error, "Only an empty active thread" <> _} = reuse.("draft", "project-2")
+
+    thread_id = launch("list the files")
+    _ = await_run(thread_id, "completed")
+    assert {:error, "Only an empty active thread" <> _} = reuse.(thread_id, "project-1")
+  end
+
   test "feedback goes to Codex for the thread's provider thread" do
     thread_id = launch("list the files")
     _ = await_run(thread_id, "completed")

@@ -534,7 +534,8 @@ defmodule T3.Steps.Preview.Automation do
     answer(context, "recordingStop", fn _request, _context -> {:ok, recording(nil)} end)
   end
 
-  step ~r/^the agent asks to (?!.* allowing \d+ seconds$)(?<action>.+)$/,
+  # `run "..."` requests are the timeline's approval steps, not browser actions.
+  step ~r/^the agent asks to (?!run ")(?!.* allowing \d+ seconds$)(?<action>.+)$/,
        %{args: [action]} = context do
     act(context, action)
   end

@@ -86,11 +86,6 @@ defmodule T3.Steps.Files.ProjectIdentity do
     await_themes(context, &(id in &1))
   end
 
-  step "the user deletes {string}", %{args: [file]} = context do
-    File.rm!(Path.join(context.node.home, file))
-    context
-  end
-
   step "{string} is no longer offered", %{args: [id]} = context do
     await_themes(context, &(id not in &1))
   end

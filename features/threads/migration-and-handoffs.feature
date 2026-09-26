@@ -75,7 +75,7 @@ Feature: Carrying threads and context across servers and agents
     When the user opens the app
     Then the user is told the threads were brought over
 
-  @backlog @node
+  @node
   Scenario: A short conversation is handed over whole
     Given the thread "Alpha" has a short conversation on Codex
     When the user switches "Alpha" to Claude and sends a message
@@ -112,7 +112,7 @@ Feature: Carrying threads and context across servers and agents
       | 500    | 1024  |
       | 100000 | 64000 |
 
-  @backlog @node
+  @node
   Scenario: Reasoning, tool state and attachments are not handed over
     Given the thread "Alpha" has attachments and tool activity
     When the user switches "Alpha" to another agent

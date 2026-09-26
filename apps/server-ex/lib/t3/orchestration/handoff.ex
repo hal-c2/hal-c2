@@ -6,7 +6,8 @@ defmodule T3.Orchestration.Handoff do
   runs on the same provider (`fork`). Otherwise, and whenever a run starts a
   provider thread while the thread already has history (a switch to another
   provider, or an agent session lost to a rewind), the provider gets a
-  transcript of that history ahead of the message. Work merged back from a fork
+  transcript of that history ahead of the message. A provider thread that the
+  thread comes back to gets only the runs it missed. Work merged back from a fork
   arrives the same way, as a transcript prepared when it was merged.
   """
 
@@ -43,7 +44,7 @@ defmodule T3.Orchestration.Handoff do
         fork != nil -> nil
         fork_context != nil -> fork_context
         fresh -> transcript(state, ordinal)
-        true -> nil
+        true -> missed(state, provider_thread, ordinal)
       end
 
     {merged, merge_changes} = merge_backs(state, transfers, driver, run_id, at)
@@ -53,6 +54,20 @@ defmodule T3.Orchestration.Handoff do
       context: wrap(history, merged),
       changes: Enum.reject(fork_changes ++ merge_changes, &is_nil/1)
     }
+  end
+
+  # Returning to a provider thread that sat out some runs (the user switched to
+  # another agent and back): it hears only the runs it missed.
+  defp missed(state, provider_thread, ordinal) do
+    state
+    |> StreamState.list("run")
+    |> Enum.filter(&(&1["providerThreadId"] == provider_thread["id"] and &1["ordinal"] < ordinal))
+    |> Enum.map(& &1["ordinal"])
+    |> Enum.max(fn -> nil end)
+    |> case do
+      nil -> nil
+      last -> transcript(state, ordinal, last)
+    end
   end
 
   # Same provider: the run forks the source's native thread at the fork point.
@@ -174,7 +189,12 @@ defmodule T3.Orchestration.Handoff do
       )
       |> Enum.sort_by(& &1["ordinal"])
 
-    messages = StreamState.list(state, "message") |> Enum.group_by(& &1["runId"])
+    # A run's user message comes before its replies, whatever their ids.
+    messages =
+      state
+      |> StreamState.list("message")
+      |> Enum.sort_by(&{&1["createdAt"] || "", if(&1["role"] == "user", do: 0, else: 1)})
+      |> Enum.group_by(& &1["runId"])
 
     lines =
       for run <- runs,

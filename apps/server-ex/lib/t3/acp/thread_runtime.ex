@@ -154,7 +154,8 @@ defmodule T3.Acp.ThreadRuntime do
     else
       {:error, reason, state} ->
         Logger.warning("#{driver} turn failed to start: #{inspect(reason)}")
-        finish(state, "failed", "#{T3.Acp.label(driver)} could not start: #{format(reason)}")
+        failure = if reason == :closed, do: reason, else: format(reason)
+        finish(state, "failed", start_failure(T3.Acp.label(driver), failure))
         {:reply, :ok, %{state | turn: nil}}
     end
   end

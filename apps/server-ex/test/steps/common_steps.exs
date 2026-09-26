@@ -161,8 +161,16 @@ defmodule T3.Steps.Common do
     context
   end
 
+  # A thread search (`context.matches`, the name is a thread) or a file listing.
   step "{string} is not returned", %{args: [name]} = context do
-    refute name in context.listing, "#{name} is in #{inspect(context.listing)}"
+    if Map.has_key?(context[:threads] || %{}, name) do
+      assert context.matches != [] or context.query != "", "the search ran"
+      id = World.thread_id(context, name)
+      assert Enum.filter(context.matches, &(&1["threadId"] == id)) == []
+    else
+      refute name in context.listing, "#{name} is in #{inspect(context.listing)}"
+    end
+
     context
   end
 
@@ -393,25 +401,6 @@ defmodule T3.Steps.Common do
     Map.put(context, :follow_up, message_id)
   end
 
-  step "the message joins the running turn", context do
-    %{thread: thread_id, run: run_id} = context.running
-
-    item =
-      World.await_stream(thread_id, fn state ->
-        Enum.find(
-          T3.StreamState.list(state, "turn-item"),
-          &(&1["messageId"] == context.follow_up)
-        )
-      end)
-
-    assert %{"inputIntent" => "steer", "runId" => ^run_id} = item
-
-    assert [%{"id" => ^run_id}] =
-             T3.StreamState.list(T3.Streams.Server.state(T3.Streams.ensure(thread_id)), "run")
-
-    context
-  end
-
   # Node plugins (`T3.Plugins`) turned on or off as a client does; other features'
   # "enables"/"disables" steps can extend these by what the name refers to.
   step "the user enables {string}", %{args: [id]} = context do
@@ -483,12 +472,14 @@ defmodule T3.Steps.Common do
         context
 
       true ->
-        {:ok, _} =
-          T3.Orchestration.dispatch(%{
-            "type" => "thread.delete",
-            "commandId" => "cmd-#{System.unique_integer([:positive])}",
-            "threadId" => World.thread_id(context, name)
-          })
+        unless World.thread(context, name)["deletedAt"] do
+          {:ok, _} =
+            T3.Orchestration.dispatch(%{
+              "type" => "thread.delete",
+              "commandId" => "cmd-#{System.unique_integer([:positive])}",
+              "threadId" => World.thread_id(context, name)
+            })
+        end
 
         assert World.thread(context, name)["deletedAt"]
         context
@@ -762,10 +753,6 @@ defmodule T3.Steps.Common do
   end
 
   # A client shows a thread of the project: it watches the project's checkout status.
-  step "the user is looking at a thread in {string}", %{args: [title]} = context do
-    World.watch_vcs(context, World.project(context, title).root)
-  end
-
   # The branch picker of the checkout under test (`context.cwd`): `vcs.listRefs`.
   step "the user opens the branch list", context do
     {reply, context} = World.call(context, "vcs.listRefs", %{"cwd" => context.cwd})
@@ -845,55 +832,94 @@ defmodule T3.Steps.Common do
     end
   end
 
-  # A thread's worktree setup (`World.launch_in_worktree/4`): `context.setup_thread`
-  # and the snapshots seen so far, `context.setup_snapshots`.
+  # A thread's worktree setup, in one of two fixtures: `World.launch_in_worktree/4`
+  # leaves `context.setup_thread` and the snapshots seen so far in
+  # `context.setup_snapshots` (source-control and files scenarios); the threads
+  # scenarios read the current thread's setup after the fact (`World.setup_result/2`).
   step "the user cancels the setup", context do
-    {reply, context} =
-      World.call(context, "worktreeSetup.cancel", %{"threadId" => context.setup_thread})
+    if context[:setup_thread] do
+      {reply, context} =
+        World.call(context, "worktreeSetup.cancel", %{"threadId" => context.setup_thread})
 
-    assert {:ok, %{"cancelled" => cancelled}} = reply
-    Map.put(context, :setup_cancelled, cancelled)
+      assert {:ok, %{"cancelled" => cancelled}} = reply
+      Map.put(context, :setup_cancelled, cancelled)
+    else
+      {reply, context} =
+        World.call(context, "worktreeSetup.cancel", %{
+          "threadId" => World.thread_id(context, World.current(context))
+        })
+
+      Map.put(context, :reply, reply)
+    end
   end
 
   step "the setup is not cancelled", context do
-    assert context.setup_cancelled == false
-    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
-    assert snapshot["phase"] == "done"
-    context
+    if context[:setup_thread] do
+      assert context.setup_cancelled == false
+      {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+      assert snapshot["phase"] == "done"
+      context
+    else
+      assert {:ok, %{"cancelled" => false}} = context.reply
+      assert World.setup_result(context, World.current(context))["phase"] == "done"
+      context
+    end
   end
 
   step "the setup fails with {string}", %{args: [message]} = context do
-    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    {snapshot, context} = setup_outcome(context)
     assert %{"phase" => "failed", "error" => ^message} = snapshot
     context
   end
 
   step "the setup fails with a message starting {string}", %{args: [message]} = context do
-    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    {snapshot, context} = setup_outcome(context)
     assert %{"phase" => "failed", "error" => error} = snapshot
     assert String.starts_with?(error, message), "the setup failed with #{inspect(error)}"
     context
   end
 
+  # The finished setup snapshot of whichever thread the scenario set up.
+  defp setup_outcome(context) do
+    if context[:setup_thread],
+      do: World.await_setup(context, &(&1["phase"] != "running")),
+      else: {World.setup_result(context, World.current(context)), context}
+  end
+
   # After a failed setup: the agent stage never ran and the thread's run ended
   # without a turn.
   step "the agent does not start", context do
-    thread_id = context.setup_thread
-    {last, context} = World.await_setup(context, &(&1["phase"] != "running"))
-    assert World.setup_stage(last, "agent") == "pending"
+    if context[:setup_thread] do
+      thread_id = context.setup_thread
+      {last, context} = World.await_setup(context, &(&1["phase"] != "running"))
+      assert World.setup_stage(last, "agent") == "pending"
 
-    state = T3.Streams.Server.state(T3.Streams.ensure(thread_id))
-    assert [%{"status" => "failed"}] = T3.StreamState.list(state, "run")
-    refute Enum.any?(T3.StreamState.list(state, "message"), &(&1["role"] == "assistant"))
-    context
+      state = T3.Streams.Server.state(T3.Streams.ensure(thread_id))
+      assert [%{"status" => "failed"}] = T3.StreamState.list(state, "run")
+      refute Enum.any?(T3.StreamState.list(state, "message"), &(&1["role"] == "assistant"))
+      context
+    else
+      title = World.current(context)
+      World.setup_result(context, title)
+      assert World.codex_requests(context, "turn/start") == []
+      assert Enum.all?(World.runs(context, title), &(&1["status"] in ["failed", "cancelled"]))
+      context
+    end
   end
 
   # `context.worktree` is `%{path, root}`: the worktree the scenario is about and
   # the checkout it belongs to.
   step "the worktree is removed", context do
-    %{path: path, root: root} = context.worktree
-    refute File.exists?(path), "the worktree #{path} is still there"
-    refute path in World.worktrees(root), "git still lists #{path}"
+    case context[:worktree] do
+      %{path: path, root: root} ->
+        refute File.exists?(path), "the worktree #{path} is still there"
+        refute path in World.worktrees(root), "git still lists #{path}"
+
+      nil ->
+        assert is_binary(context.worktree_path)
+        refute File.exists?(context.worktree_path)
+    end
+
     context
   end
 
@@ -1056,5 +1082,214 @@ defmodule T3.Steps.Common do
 
     T3.Test.AcpFixtures.await_runs(ctx.threads["Work"], 1)
     Map.put(ctx, :thread, "Work")
+  end
+
+  # --- added by W1 ---
+  # The thread a scenario is "looking at" is `context.current` (a title); steps
+  # without a thread name act on it.
+
+  # Threads and timeline scenarios open a fresh current thread; files and
+  # source-control scenarios watch the existing project's VCS status instead.
+  step "the user is looking at a thread in {string}", %{args: [project]} = context do
+    if String.contains?(context.feature_file, ["/files/", "/source-control/"]) do
+      World.watch_vcs(context, World.project(context, project).root)
+    else
+      context =
+        if Map.has_key?(context.projects, project),
+          do: context,
+          else: World.create_project(context, project)
+
+      context
+      |> World.create_thread("Current thread", project)
+      |> Map.put(:current, "Current thread")
+      |> then(&World.put_client(&1, World.client(&1)))
+    end
+  end
+
+  step "a project with an open thread", context do
+    context
+    |> World.create_project("shop")
+    |> World.create_thread("Open thread", "shop")
+    |> Map.put(:current, "Open thread")
+    |> then(&World.put_client(&1, World.client(&1)))
+  end
+
+  step "the agent is working", context do
+    World.working_thread(context, World.current(context))
+  end
+
+  step "the agent is working in {string}", %{args: [thread]} = context do
+    World.working_thread(context, thread)
+  end
+
+  step "{string} is archived", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    {:ok, _} = T3.Orchestration.dispatch(%{"type" => "thread.archive", "threadId" => id})
+    World.await_row(id, &(&1["archivedAt"] != nil))
+    context
+  end
+
+  # Used both to delete a thread and to observe that it was deleted.
+  step "the user interrupts the turn", context do
+    title = World.current(context)
+
+    run =
+      context |> World.runs(title) |> Enum.find(&(&1["status"] in ~w(starting running waiting)))
+
+    assert run, "no running turn in #{title}"
+
+    {:ok, _} =
+      T3.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, title),
+        "runId" => run["id"]
+      })
+
+    Map.put(context, :interrupted_run, run["id"])
+  end
+
+  step "the turn stops", context do
+    run_id = context[:interrupted_run]
+
+    World.await_thread(context, World.current(context), fn state ->
+      Enum.any?(
+        T3.StreamState.list(state, "run"),
+        &(&1["status"] == "interrupted" and run_id in [nil, &1["id"]])
+      )
+    end)
+
+    context
+  end
+
+  step "the running turn is interrupted", context do
+    World.await_thread(
+      context,
+      World.current(context),
+      &Enum.any?(T3.StreamState.list(&1, "run"), fn run -> run["status"] == "interrupted" end)
+    )
+
+    context
+  end
+
+  step "the agent asks to run {string}", %{args: [command]} = context do
+    World.request_from_agent(context, "approve run: #{command}")
+  end
+
+  step "a client archives {string}", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    {{:ok, _}, context} = World.dispatch(context, %{"type" => "thread.archive", "threadId" => id})
+    World.await_row(id, &(&1["archivedAt"] != nil))
+    context
+  end
+
+  # A thread by that name, else a project; the reply is kept as `context.reply`.
+  step "a client deletes {string}", %{args: [name]} = context do
+    delete(context, name)
+  end
+
+  # A file below the T3 home (files/project-identity) or a thread or project.
+  step "the user deletes {string}", %{args: [name]} = context do
+    path = Path.join(context.node.home, name)
+
+    if File.exists?(path) do
+      File.rm!(path)
+      context
+    else
+      delete(context, name)
+    end
+  end
+
+  step ~r/^a client snoozes "(?<thread>[^"]+)" until (?<until>.+)$/,
+       %{args: [thread, until]} = context do
+    until = World.local_time(context, until)
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "thread.snooze",
+        "threadId" => World.thread_id(context, thread),
+        "snoozedUntil" => until
+      })
+
+    World.await_row(World.thread_id(context, thread), &(&1["snoozedUntil"] == until))
+    Map.put(context, :snoozed_until, until)
+  end
+
+  step "a client unsnoozes {string}", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{"type" => "thread.unsnooze", "threadId" => id})
+
+    World.await_row(id, &(&1["snoozedUntil"] == nil))
+    context
+  end
+
+  step "a client marks {string} unread", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{"type" => "thread.mark-unread", "threadId" => id})
+
+    World.await_row(id, &(&1["lastVisitedAt"] == nil))
+    context
+  end
+
+  step "{string} is active again", %{args: [thread]} = context do
+    row = World.row(context, thread)
+    assert row["snoozedUntil"] == nil
+    assert row["archivedAt"] == nil
+    assert row["settledOverride"] in [nil, "active"]
+    context
+  end
+
+  # Into a draft ("a new thread titled ...") this launches the thread with a title
+  # asked for, as the web client does; otherwise it is sent to the current thread.
+  step "the user sends {string}", %{args: [text]} = context do
+    case context[:draft] do
+      nil ->
+        title = World.current(context)
+        {{:ok, _}, context} = World.send_message(context, title, text)
+        context
+
+      draft ->
+        context = if context[:title_generator], do: context, else: World.title_generator(context)
+
+        {{:ok, _}, context} =
+          World.launch_thread(context, nil, text, %{"title" => draft, "generateTitle" => true})
+
+        Map.merge(context, %{current: draft, draft: nil})
+    end
+  end
+
+  # Forks the source's latest finished run into a thread with that name.
+  step "{string} is a fork of {string}", %{args: [fork, source]} = context do
+    context = World.fork_thread(context, source, fork)
+
+    assert World.thread(context, fork)["lineage"]["parentThreadId"] ==
+             World.thread_id(context, source)
+
+    context
+  end
+
+  # Worktree setup of the thread in `context.current`; `context.worktree_path` is the
+  # worktree it made.
+  defp delete(context, name) do
+    case {(context[:threads] || %{})[name], (context[:projects] || %{})[name]} do
+      {id, _} when is_binary(id) ->
+        {{:ok, _} = reply, context} =
+          World.dispatch(context, %{"type" => "thread.delete", "threadId" => id})
+
+        World.await_row(id, &(&1["deletedAt"] != nil))
+        Map.put(context, :reply, reply)
+
+      {nil, %{id: id}} ->
+        {reply, context} =
+          World.dispatch(context, %{"type" => "project.delete", "projectId" => id})
+
+        Map.put(context, :reply, reply)
+
+      _ ->
+        flunk("no thread or project #{inspect(name)} in this scenario")
+    end
   end
 end

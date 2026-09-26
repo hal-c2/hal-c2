@@ -345,14 +345,16 @@ defmodule T3.WorktreeSetup do
       "env" => %{"NO_COLOR" => "1", "FORCE_COLOR" => "0"}
     }
 
-    with {:ok, _} <- T3.Terminal.open(input),
-         {:ok, _} <- T3.Terminal.attach(input, self()),
+    with {:ok, _} <- terminal(:open, [input]),
+         {:ok, _} <- terminal(:attach, [input, self()]),
          {:ok, _} <-
-           T3.Terminal.write(%{
-             "threadId" => thread_id,
-             "terminalId" => "setup",
-             "data" => "#{script["command"]}; printf '\\n__t3_setup_#{token}_%s\\n' $?\r"
-           }) do
+           terminal(:write, [
+             %{
+               "threadId" => thread_id,
+               "terminalId" => "setup",
+               "data" => "#{script["command"]}; printf '\\n__t3_setup_#{token}_%s\\n' $?\r"
+             }
+           ]) do
       set.(
         &Map.put(&1, "setupScript", %{
           "name" => script["name"],
@@ -367,13 +369,20 @@ defmodule T3.WorktreeSetup do
     end
   end
 
+  # The terminal service may be down; that is a script that cannot start.
+  defp terminal(fun, args) do
+    apply(T3.Terminal, fun, args)
+  catch
+    :exit, _ -> {:error, :unavailable}
+  end
+
   defp await_script({thread_id, token}, status, set, opts) do
     case collect({thread_id, "setup"}, Regex.compile!("__t3_setup_#{token}_(\\d+)"), "", set) do
-      0 ->
-        status.("setup-script", "done", %{"detail" => "exited with 0"})
+      {0, tail} ->
+        status.("setup-script", "done", %{"detail" => "exited with 0", "tail" => tail})
 
-      code ->
-        status.("setup-script", "failed", %{"detail" => "exited with #{code}"})
+      {code, tail} ->
+        status.("setup-script", "failed", %{"detail" => "exited with #{code}", "tail" => tail})
         if opts[:fatal], do: fail("Setup script exited with #{code}.")
     end
   end
@@ -386,26 +395,28 @@ defmodule T3.WorktreeSetup do
 
         case Regex.run(marker, buffer) do
           [_, code] ->
-            String.to_integer(code)
+            {String.to_integer(code), tail(buffer)}
 
           nil ->
-            tail =
-              buffer
-              |> String.split(~r/\r?\n/, trim: true)
-              |> Enum.reject(&String.contains?(&1, "__t3_setup_"))
-              |> Enum.take(-@tail_lines)
-              |> Enum.map(&String.slice(&1, 0, 200))
-
-            set.(&set_stage(&1, "setup-script", "running", %{"tail" => tail}))
+            set.(&set_stage(&1, "setup-script", "running", %{"tail" => tail(buffer)}))
             collect(key, marker, buffer, set)
         end
 
       {:t3_terminal, ^key, %{"type" => "exited"}} ->
-        1
+        {1, tail(buffer)}
 
       {:t3_terminal, ^key, _event} ->
         collect(key, marker, buffer, set)
     end
+  end
+
+  # The last lines of the script's output, without the exit marker.
+  defp tail(buffer) do
+    buffer
+    |> String.split(~r/\r?\n/, trim: true)
+    |> Enum.reject(&String.contains?(&1, "__t3_setup_"))
+    |> Enum.take(-@tail_lines)
+    |> Enum.map(&String.slice(&1, 0, 200))
   end
 
   # The temporary branch gets a name from the first message, in the background.

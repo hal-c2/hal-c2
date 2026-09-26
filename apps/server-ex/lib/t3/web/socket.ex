@@ -7,7 +7,9 @@ defmodule T3.Web.Socket do
   once the mailbox is drained, merged per entity, so a burst of streaming tokens
   becomes one frame. A subscription whose unsent buffer passes `@max_buffered` is
   dropped with a `resync`; the client resubscribes from its offset and the stream
-  replays from the log instead of this process holding the backlog.
+  replays from the log instead of this process holding the backlog. That replay is
+  never itself cut short by a resync, or a client behind by more than the limit would
+  be told to resync forever.
   """
 
   @behaviour WebSock
@@ -521,11 +523,14 @@ defmodule T3.Web.Socket do
       # The owning node may be gone or slow; the client retries when it is back.
       case remote(node, T3.Streams, :subscribe, [stream_id, self(), offset]) do
         {:ok, :ok} ->
+          # Until `live`, events are the stream's replay from `offset`: bounded by the
+          # stream, and resyncing on them would only ask for the same replay again.
           {:ok,
            %{
              state
              | subs: Map.put(state.subs, id, shape),
-               by_stream: Map.put(state.by_stream, stream_id, id)
+               by_stream: Map.put(state.by_stream, stream_id, id),
+               buffers: Map.put(state.buffers, id, %{events: [], bytes: 0, replay: true})
            }}
 
         {:error, reason} ->
@@ -1047,6 +1052,16 @@ defmodule T3.Web.Socket do
   # Replayed events may still be buffered; they go out before the live marker.
   defp stream_message(state, id, {:live, seq}) do
     {frames, state} = flush(state)
+
+    state =
+      case state.buffers do
+        %{^id => buffer} ->
+          %{state | buffers: Map.put(state.buffers, id, Map.delete(buffer, :replay))}
+
+        _ ->
+          state
+      end
+
     {:push, frames ++ [Protocol.encode(%{"t" => "live", "id" => id, "offset" => seq})], state}
   end
 
@@ -1056,7 +1071,7 @@ defmodule T3.Web.Socket do
     buffer = Map.get(state.buffers, id, %{events: [], bytes: 0})
     bytes = buffer.bytes + Enum.reduce(events, 0, &(:erlang.external_size(&1.patch) + &2))
 
-    if bytes > @max_buffered do
+    if bytes > @max_buffered and not Map.get(buffer, :replay, false) do
       # The client has everything before the oldest event it has not been sent.
       oldest = List.last(buffer.events) || hd(events)
       state = unsubscribe(state, id)

@@ -96,13 +96,30 @@ defmodule T3.Claude.Protocol do
     JSON.encode_to_iodata!(message)
   end
 
-  @spec permission_reply(String.t(), :allow | {:allow, map} | {:deny, String.t()}, map) :: iodata
+  @spec permission_reply(
+          String.t(),
+          :allow | {:allow, map} | {:allow_session, [map]} | {:deny, String.t()},
+          map
+        ) :: iodata
   def permission_reply(request_id, decision, original_input) do
     body =
       case decision do
-        :allow -> %{"behavior" => "allow", "updatedInput" => original_input}
-        {:allow, input} -> %{"behavior" => "allow", "updatedInput" => input}
-        {:deny, message} -> %{"behavior" => "deny", "message" => message}
+        :allow ->
+          %{"behavior" => "allow", "updatedInput" => original_input}
+
+        # Allowed, and the CLI adds these permission rules for the rest of the session.
+        {:allow_session, updates} ->
+          %{
+            "behavior" => "allow",
+            "updatedInput" => original_input,
+            "updatedPermissions" => updates
+          }
+
+        {:allow, input} ->
+          %{"behavior" => "allow", "updatedInput" => input}
+
+        {:deny, message} ->
+          %{"behavior" => "deny", "message" => message}
       end
 
     control_success(request_id, body)
