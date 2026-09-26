@@ -1,12 +1,15 @@
 import * as NodeFS from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { createCliRenderer } from "@opentui/core";
-import { createRoot } from "@opentui/react";
 import { installKittyClipboardExtension } from "@t3tools/opentui-image";
+import { runShell } from "opentui-qml";
 
-import { ChatView } from "./components/ChatView.tsx";
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
 import { detectKittyGraphicsTerminal } from "./terminalGraphics.ts";
+import { createHost } from "./host/host.ts";
 import {
   ensureColorCapabilityEnv,
   prepareTerminalViewport,
@@ -80,6 +83,24 @@ const mintSocketUrl = (): Promise<string> =>
     }
   });
 
+/**
+ * The `T3.Tui` bricks ship next to the bundle (`dist/qml`, copied by the build)
+ * and live at `apps/tui/qml` when running from source.
+ */
+function resolveQmlDir(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const bundled = join(here, "qml");
+  return NodeFS.existsSync(join(bundled, "T3/Tui/qmldir")) ? bundled : join(here, "../qml");
+}
+
+/** Where a user's `shell.qml` (and extra `qml/` modules) override the default shell. */
+function resolveShellConfigDir(): string {
+  return (
+    process.env.T3_TUI_SHELL_DIR ??
+    join(process.env.T3CODE_HOME ?? join(homedir(), ".t3"), "shell", "tui")
+  );
+}
+
 async function main(): Promise<void> {
   const origin = process.env.T3_TUI_ORIGIN;
   const bearerToken = process.env.T3_TUI_BEARER;
@@ -89,6 +110,14 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+
+  const appendLog = (line: string) => {
+    try {
+      NodeFS.appendFileSync(logPath, `${line}\n`);
+    } catch {
+      // Diagnostics only — never let logging break the UI.
+    }
+  };
 
   const options: TuiOptions = { origin, bearerToken, mintSocketUrl, logPath };
   const runtime = buildTuiRuntime(options);
@@ -111,58 +140,73 @@ async function main(): Promise<void> {
   // rewrite TERM) and invisible in the output itself, so record what the
   // renderer actually detected: once right after startup and once after the
   // capability handshake has settled.
-  const logColorCapabilities = (stage: string) => {
-    try {
-      NodeFS.appendFileSync(
-        logPath,
-        `[color-caps ${stage}] TERM=${process.env.TERM ?? ""} COLORTERM=${
-          process.env.COLORTERM ?? ""
-        } caps=${JSON.stringify(renderer.capabilities)}\n`,
-      );
-    } catch {
-      // Diagnostics only — never let logging break startup.
-    }
-  };
+  const logColorCapabilities = (stage: string) =>
+    appendLog(
+      `[color-caps ${stage}] TERM=${process.env.TERM ?? ""} COLORTERM=${
+        process.env.COLORTERM ?? ""
+      } caps=${JSON.stringify(renderer.capabilities)}`,
+    );
   logColorCapabilities("startup");
   setTimeout(() => logColorCapabilities("settled"), 2000).unref?.();
   installKittyClipboardExtension(renderer, {
     tmuxPassthrough,
   });
 
-  try {
-    let resolveDone: () => void = () => {};
-    const done = new Promise<void>((resolve) => {
-      resolveDone = resolve;
-    });
-    let exiting = false;
-    const handleExit = () => {
-      if (exiting) return;
-      exiting = true;
-      try {
-        renderer.destroy();
-      } catch {
-        // best effort — destroy restores the terminal
-      }
-      resolveDone();
-    };
+  let resolveDone: () => void = () => {};
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
+  let exiting = false;
+  const handleExit = () => {
+    if (exiting) return;
+    exiting = true;
+    try {
+      if (!renderer.isDestroyed) renderer.destroy();
+    } catch {
+      // best effort — destroy restores the terminal
+    }
+    resolveDone();
+  };
 
-    // Raw mode usually delivers Ctrl+C as a keystroke (handled in <App/>), but some
-    // terminals/multiplexers send a real signal — handle both so one press quits.
+  const host = createHost({
+    client,
+    size: { columns: renderer.width, rows: renderer.height },
+    onQuit: handleExit,
+    log: appendLog,
+  });
+
+  try {
+    // Raw mode usually delivers Ctrl+C as a keystroke (the shell dispatches
+    // `app.quit`), but some terminals/multiplexers send a real signal — handle
+    // both so one press quits. `Qt.quit()` from a user shell destroys the renderer.
     process.once("SIGINT", handleExit);
     process.once("SIGTERM", handleExit);
+    renderer.once("destroy", handleExit);
+    renderer.on("resize", (columns: number, rows: number) => host.resize({ columns, rows }));
 
-    createRoot(renderer).render(<ChatView client={client} onExit={handleExit} />);
+    const qmlDir = resolveQmlDir();
+    await runShell({
+      appId: "t3",
+      renderer,
+      defaultShell: join(qmlDir, "T3/Tui/DefaultShell.qml"),
+      modules: { "T3.Tui": join(qmlDir, "T3/Tui") },
+      importPaths: [qmlDir],
+      configDir: resolveShellConfigDir(),
+      singletons: { Shell: host.Shell, Theme: host.Theme },
+      watch: process.env.T3_TUI_DEV === "1",
+      onWarning: (message) => appendLog(`[qml warning] ${message}`),
+      onError: (error, context) =>
+        appendLog(`[qml error${context ? ` ${context}` : ""}] ${String(error)}`),
+    });
 
     await done;
   } catch (error) {
     // Restore the terminal before the error propagates — otherwise it's left in
     // raw/alt-screen mode with a garbled message.
-    try {
-      renderer.destroy();
-    } catch {
-      // best effort
-    }
+    handleExit();
     throw error;
+  } finally {
+    host.destroy();
   }
   // The renderer is already torn down (handleExit). Dispose the RPC runtime, then
   // force-exit: the live WebSocket and the IPC channel to the parent would
