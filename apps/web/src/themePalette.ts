@@ -295,15 +295,15 @@ export function subscribeToCustomThemes(listener: () => void): () => void {
   };
 }
 
-// Earlier builds shipped every maintainer theme under a hal-c2- prefix; only the
-// genuinely HAL-C2-branded palette keeps it. Stored preferences and mixes with the
+// Earlier builds shipped every maintainer theme under a t3- prefix; only the
+// T3-branded palette kept it. Stored preferences and mixes with the
 // old ids stay readable through this alias table.
 const LEGACY_THEME_ID_ALIASES: Readonly<Record<string, string>> = {
   [LEGACY_T3_CHAT_DARK_THEME_ID]: T3_CHAT_THEME_ID,
-  "hal-c2-grove": GROVE_THEME_ID,
-  "hal-c2-ocean": OCEAN_THEME_ID,
-  "hal-c2-ember": EMBER_THEME_ID,
-  "hal-c2-iris": IRIS_THEME_ID,
+  "t3-grove": GROVE_THEME_ID,
+  "t3-ocean": OCEAN_THEME_ID,
+  "t3-ember": EMBER_THEME_ID,
+  "t3-iris": IRIS_THEME_ID,
 };
 
 function normalizeThemeId(themeId: string): string {

@@ -140,10 +140,10 @@
           "ember",
           "iris",
           "t3-chat-dark",
-          "hal-c2-grove",
-          "hal-c2-ocean",
-          "hal-c2-ember",
-          "hal-c2-iris",
+          "t3-grove",
+          "t3-ocean",
+          "t3-ember",
+          "t3-iris",
         ];
         // Update every theme-color meta so any element another layer added
         // carries the resolved color too.
@@ -220,14 +220,14 @@
           const storedTheme = window.localStorage.getItem("hal-c2:theme");
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           // Older builds stored the dark T3 Chat palette as its own theme id
-          // and every maintainer theme under a hal-c2- prefix; keep those
+          // and every maintainer theme under a t3- prefix; keep those
           // preferences readable. Mirrors the runtime's legacy alias table.
           const LEGACY_THEME_IDS = {
             "t3-chat-dark": "t3-chat",
-            "hal-c2-grove": "grove",
-            "hal-c2-ocean": "ocean",
-            "hal-c2-ember": "ember",
-            "hal-c2-iris": "iris",
+            "t3-grove": "grove",
+            "t3-ocean": "ocean",
+            "t3-ember": "ember",
+            "t3-iris": "iris",
           };
           const isLegacyT3ChatDark = storedTheme === "t3-chat-dark";
           const themeId =

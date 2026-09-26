@@ -1014,10 +1014,10 @@ describe("stored theme preferences", () => {
 
   it("resolves legacy hal-c2-prefixed ids onto the renamed themes", () => {
     for (const [legacy, theme] of [
-      ["hal-c2-grove", GROVE_THEME],
-      ["hal-c2-ocean", OCEAN_THEME],
-      ["hal-c2-ember", EMBER_THEME],
-      ["hal-c2-iris", IRIS_THEME],
+      ["t3-grove", GROVE_THEME],
+      ["t3-ocean", OCEAN_THEME],
+      ["t3-ember", EMBER_THEME],
+      ["t3-iris", IRIS_THEME],
     ] as const) {
       expect(getThemeDefinition(legacy)).toBe(theme);
       expect(isKnownThemePreference(legacy)).toBe(true);
@@ -1026,9 +1026,7 @@ describe("stored theme preferences", () => {
     // The dark-variant alias keeps its raw form: it still carries a mode hint.
     expect(canonicalThemePreference("t3-chat-dark")).toBe("t3-chat-dark");
     // A stored mix that predates the rename resolves to the new ids.
-    expect(
-      parseThemeHalves(JSON.stringify({ light: "hal-c2-ocean", dark: "hal-c2-grove" })),
-    ).toEqual({
+    expect(parseThemeHalves(JSON.stringify({ light: "t3-ocean", dark: "t3-grove" }))).toEqual({
       light: OCEAN_THEME.id,
       dark: GROVE_THEME.id,
     });
