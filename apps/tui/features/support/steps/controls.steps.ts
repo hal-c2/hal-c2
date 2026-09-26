@@ -254,6 +254,7 @@ step("one provider is disabled and another is unavailable", async (ctx: Controls
 });
 
 async function openModelPicker(ctx: World): Promise<void> {
+  if (!ctx.host) await openOnThread(ctx);
   await pressKey(ctx, "Ctrl+Shift+M");
   await settle(ctx);
   expect(select(ctx)).toMatchObject({ open: true, kind: "model", status: "ready" });
@@ -454,7 +455,7 @@ step("a new worktree from the current branch is preselected", async (ctx: World)
   });
 });
 
-step(/^a new-thread draft ([^"]+)$/, async (ctx: ControlsWorld, gap: string) => {
+step(/^a new-thread draft (?!opens$)([^"]+)$/, async (ctx: ControlsWorld, gap: string) => {
   switch (gap) {
     case "with no project":
       await restartClient(ctx, { shellSnapshot: shell([] as never, [] as never) });
@@ -977,4 +978,73 @@ step("the model's reasoning levels are offered", async (ctx: World) => {
   expect(select(ctx).options.map((option) => option.label)).toEqual(["Low", "Medium", "High"]);
   const text = await snapshot(ctx);
   for (const label of ["Low", "Medium", "High"]) expect(text).toContain(label);
+});
+
+// --- navigation/command-palette.feature -------------------------------------
+
+step("the user has a project {string} with threads", async (ctx: World, title: string) => {
+  const threads = shell().threads;
+  await openOnThread(ctx, thread(), {
+    shellSnapshot: shell(
+      [...threads, { ...threads[0]!, id: "t2", title: "Thread two" }] as never,
+      [{ ...project, title }] as never,
+    ),
+  });
+});
+
+step("the user is looking at a thread in that project", async (ctx: World) => {
+  await settle(ctx);
+  expect(ctx.host!.state.get("page")).toMatchObject({ kind: "thread", threadId: "t1" });
+});
+
+async function openPalette(ctx: World): Promise<void> {
+  if (!ctx.host) await openOnThread(ctx);
+  await pressKey(ctx, "Ctrl+K");
+  await settle(ctx);
+}
+
+step("the user presses the command palette shortcut", openPalette);
+
+// Given: open it. Then: it is open, drawn, and keys go to it.
+step("the command palette is open", async (ctx: World) => {
+  if (ctx.stepType !== "Outcome") await openPalette(ctx);
+  await settle(ctx);
+  expect(palette(ctx).open).toBe(true);
+  expect(ctx.host!.state.get("mode")).toBe("command");
+  expect(geometry(findObject(ctx, "commandPalette")).visible).toBe(true);
+  expect(await snapshot(ctx)).toContain("New thread");
+});
+
+step("the search field has keyboard focus", async (ctx: World) => {
+  expect(findObject(ctx, "paletteQuery").get("focus")).toBe(true);
+});
+
+step("the command palette is closed", async (ctx: World) => {
+  await settle(ctx);
+  expect(palette(ctx).open).toBe(false);
+  expect(ctx.host!.state.get("mode")).toBe("compose");
+  expect(geometry(findObject(ctx, "commandPalette")).visible).toBe(false);
+});
+
+step("the command palette lists {string}", async (ctx: World, title: string) => {
+  await openPalette(ctx);
+  expect(palette(ctx).commands.map((command) => command.title)).toContain(title);
+});
+
+step(
+  "the user moves the highlight to {string} and presses Enter",
+  async (ctx: World, title: string) => {
+    const target = palette(ctx).commands.findIndex((command) => command.title === title);
+    while (palette(ctx).index !== target) {
+      await pressKey(ctx, "Down");
+      await settle(ctx);
+    }
+    expect(await snapshot(ctx)).toContain(`▸ ${title}`);
+    await pressKey(ctx, "Enter");
+    await settle(ctx);
+  },
+);
+
+step("settings open", async (ctx: World) => {
+  expect(ctx.dispatched!.map((entry) => entry.action)).toContain("settings.open");
 });
