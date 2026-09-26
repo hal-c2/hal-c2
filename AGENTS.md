@@ -1,15 +1,18 @@
 # HAL-C2
 
-HAL-C2 is a minimal GUI for coding agents. It is a fork of [T3 Code](https://github.com/pingdotgg/t3code) (upstream `pingdotgg/t3code`), maintained at `hal-c2/hal-c2`. A server wraps provider CLIs and agents (Codex, Claude Code, Cursor, Grok, OpenCode, Antigravity) and serves web, desktop, mobile, and terminal clients.
+HAL-C2 is a minimal GUI for coding agents. It is a fork of [T3 Code](https://github.com/pingdotgg/t3code) (upstream `pingdotgg/t3code`), maintained at `hal-c2/hal-c2`. A server wraps provider CLIs and agents (Codex, Claude Code, Cursor, Grok, OpenCode, Antigravity) and serves desktop, mobile, and terminal clients.
 
 ## What the fork adds
 
-Upstream's Node server (`apps/server`), React web app (`apps/web`), Electron desktop (`apps/desktop`), and React Native app (`apps/mobile`) are still here and still work. The fork moves toward:
+Upstream's Node server (`apps/server`), React web app (`apps/web`), Electron desktop (`apps/desktop`), and React Native app (`apps/mobile`) are **legacy**. They stay building and working only until the surfaces below can replace them, and then they are deleted. Do not add features to them; fix them only when a change would otherwise break them. The fork's product is:
 
 - **The node**: an Elixir/OTP server in `apps/server-ex`. Each machine runs one node; nodes cluster and share one sidebar. Clients pair with it like any other environment.
 - **Qt/QML desktop** in `apps/desktop-qt`.
+- **QML mobile**, the phone and tablet client, built from the same QML as the desktop.
 - **QML TUI** in `apps/tui`, rendered by opentui-qml.
-- **Gherkin as the ledger.** Every behaviour HAL-C2 has, will have, or dropped is a scenario under `features/`. Read `features/README.md` before touching behaviour: one directory per domain, surfaces are tags (`@node`, `@desktop`, `@mobile`, `@tui`, `@shared`), status is `@backlog` or `@dropped` (no tag means it passes on the node/QML stack today), and `@plugin-<id>` marks plugin behaviour. Every file names its sources in a `# Sources:` comment. Run node scenarios with `mise exec -- mix features <globs relative to features/>` in `apps/server-ex`, never without globs.
+- **No web client.** The hosted web app and the locally served one go away with the Node server.
+- **Threads move between machines**, including the agent's own session, so work started on one node continues on another. Specified under `features/threads/`.
+- **Gherkin as the ledger.** The legacy surfaces can only be deleted once every behaviour they carry passes as a scenario on the node, QML and TUI. Every behaviour HAL-C2 has, will have, or dropped is a scenario under `features/`. Read `features/README.md` before touching behaviour: one directory per domain, surfaces are tags (`@node`, `@desktop`, `@mobile`, `@tui`, `@shared`), status is `@backlog` or `@dropped` (no tag means it passes on the node/QML stack today), and `@plugin-<id>` marks plugin behaviour. Every file names its sources in a `# Sources:` comment. Run node scenarios with `mise exec -- mix features <globs relative to features/>` in `apps/server-ex`, never without globs.
 
 ## What we keep from upstream
 
@@ -18,7 +21,7 @@ The values are upstream's, and we owe T3 Code and its maintainers the product th
 - **Open.** The code and the reasoning are public.
 - **Performance.** Audit for regressions: too much data over websockets, CSS animations spiking the GPU, lists that are hard to render. Every change considers its performance cost.
 - **Remote ready.** The websocket layer (the `hal-c2` CLI and the node) is what makes LAN, Tailscale, and HAL-C2 Connect (a self-hosted relay, also in this repo) work. New features must work over all of them.
-- **Multi-surface.** Web (hosted, and served locally by `hal-c2`), desktop (Electron, which bundles the server and can host remote clients, and Qt), mobile, and the TUI. Features reach every surface where reasonable.
+- **Multi-surface.** Desktop (Qt), mobile (QML), and the TUI, all against the node. Features reach every surface where reasonable. The legacy web, Electron and React Native clients are not surfaces new work targets.
 - **Small systems.** Do not preserve complexity because it exists, and do not add machinery because it looks impressive. Understand the real constraint, then build the smallest model that makes the correct behavior unsurprising. Measure twice, cut once, and yagni. Honor the developer's intent minimally and realistically.
 
 The rest of this document is good defaults, not hard rules. The developer's preferences override anything here.
@@ -32,7 +35,7 @@ HAL-C2 is often developed from inside HAL-C2 (or upstream T3 Code), controlled r
 - **user** means the person using HAL-C2 to direct coding agents.
 - **agent** means the coding agent a user runs inside HAL-C2. Depending on context, that may also include you.
 - **provider** means the agent runtime or harness HAL-C2 talks to, such as Codex, Claude, Cursor, or OpenCode.
-- **client** means the web, desktop, mobile, or terminal UI.
+- **client** means the desktop, mobile, or terminal UI (and, until deleted, the legacy web app).
 - **node** means the Elixir server in `apps/server-ex`.
 - **environment** means one running HAL-C2 server (Node or the node) and the machine, filesystem, provider credentials, and state it owns.
 - **project** means an environment-local workspace record rooted at a directory.
@@ -51,10 +54,10 @@ HAL-C2 is often developed from inside HAL-C2 (or upstream T3 Code), controlled r
 The most common defect in this repo is a change that works on the path you tested and is missing everywhere else. Before calling frontend work done, walk this list and say which entries applied:
 
 - **Entry points.** A behavior reachable from the chat view is usually also reachable from Settings, the command palette, and a keybinding. Fixing one is not fixing the feature.
-- **Clients.** Web, desktop (Electron wraps web and adds shell/IPC; `apps/desktop-qt` is QML), mobile (React Native, separate navigation), and the TUI. Shared logic lives in `packages/client-runtime`; QML shared between desktop, mobile, and TUI is `@shared` in `features/`.
-- **Servers.** Behaviour served by `apps/server` usually needs a decision for the node too. Write or update the scenario under `features/` and tag its status.
+- **Clients.** Qt desktop, QML mobile, and the TUI. QML shared between them is `@shared` in `features/`. The legacy clients (web, Electron, React Native) only need to keep working; `packages/client-runtime` is theirs.
+- **Servers.** New behaviour lives in the node. Behaviour that still only exists in `apps/server` needs a scenario under `features/` tagged `@backlog` so the ledger knows what the node must gain before the Node server is deleted.
 - **Providers.** Codex, Claude, Cursor, Grok, OpenCode, and Antigravity each have an adapter. Provider-shaped features need a decision per adapter, even if the decision is "not supported here".
-- **Contracts.** Anything crossing the wire is typed in `packages/contracts`. Change the schema and the server, web, mobile, and desktop all follow.
+- **Contracts.** Anything crossing the wire is typed in `packages/contracts`; the node and the QML clients follow the same RPC names (see `features/parity/`).
 - **Reverse states.** If you added a way in, add the way out and the way to see it. Snooze needs unsnooze. Close needs reopen. A one-way door is a bug.
 - **Connection modes.** Local, remote/relay, and tunnel behave differently. Multi-device and multi-environment cases are real.
 - **Docs.** Check whether the change makes existing guidance inaccurate. Apply the [documentation rules](#documentation) before adding anything.
@@ -135,14 +138,14 @@ Full glossary with file links: `docs/internals/glossary.md`
 
 ## Where code lives
 
-- `apps/server` - the Node server: WebSocket, orchestration, providers, checkpointing. Effect-heavy: read `.repos/effect-smol/LLMS.md` before writing Effect code.
-- `apps/web` - React/Vite UI. `apps/desktop` wraps it, `apps/mobile` is React Native, `apps/marketing` is the site.
 - `apps/server-ex` - the node (Elixir/OTP): run and test with `mise exec -- mix ...`; read its README first.
 - `apps/desktop-qt` - the Qt/QML desktop. `apps/tui` - the QML TUI on opentui-qml; its scenarios run with `TUI_FEATURES="<globs>.feature" bun test ./features/runner.ts`.
+- `apps/server` (legacy) - the Node server: WebSocket, orchestration, providers, checkpointing. Effect-heavy: read `.repos/effect-smol/LLMS.md` before writing Effect code.
+- `apps/web`, `apps/desktop`, `apps/mobile` (legacy) - React/Vite UI, the Electron wrapper, and the React Native app. `apps/marketing` is the site.
 - `features/` - the Gherkin behaviour ledger; see `features/README.md`.
 - `packages/contracts` - Effect/Schema contracts plus small derived helpers. No heavy runtime logic.
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.
-- `packages/client-runtime` - client code shared by web and mobile.
+- `packages/client-runtime` - client code shared by the legacy web and mobile clients.
 - `.repos/` - vendored read-only references. Prefer their patterns over invented ones. Never edit or import from them. Sync with `vpr sync:repos` when bumping the matching dependency.
 
 ## Taste

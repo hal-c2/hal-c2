@@ -1,9 +1,18 @@
 # HAL-C2 feature specifications
 
 Every behaviour HAL-C2 has, will have, or has deliberately dropped is written here in Gherkin.
-This tree is the feature-loss ledger for the move from the TypeScript server, the web app
-and the React Native app to the Elixir node with QML on every surface. A behaviour that is
-not in this tree does not exist as far as the rewrite is concerned.
+This tree is the feature-loss ledger for the move from the legacy surfaces to the HAL-C2 stack:
+
+| Legacy, to be deleted                     | Replaced by                            |
+| ----------------------------------------- | -------------------------------------- |
+| the Node server (`apps/server`)           | the Elixir node (`apps/server-ex`)     |
+| the Electron desktop app (`apps/desktop`) | the Qt/QML desktop (`apps/desktop-qt`) |
+| the React Native app (`apps/mobile`)      | the QML mobile client                  |
+| the web app (`apps/web`)                  | nothing; there is no web client        |
+|                                           | the QML TUI (`apps/tui`)               |
+
+A legacy surface can be deleted once every scenario it served passes on its replacement. A
+behaviour that is not in this tree does not exist as far as the move is concerned.
 
 ## Layout
 
