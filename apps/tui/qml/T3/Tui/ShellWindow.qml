@@ -31,6 +31,7 @@ Window {
             visible: win.layout.sidebarVisible || win.layout.sidebarAsMain
             width: win.layout.sidebarAsMain ? Shell.state.size.columns : win.layout.listWidth
             filterFocused: Shell.state.mode === "filter"
+            listFocused: Shell.state.mode === "list"
         }
         Item {
             id: mainView

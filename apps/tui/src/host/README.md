@@ -33,7 +33,9 @@ loaded as a plugin directory, `T3_TUI_PLUGINS` adds files or directories (a
 path list), and `keymap.json` overrides keymaps by action (`{"ctrl+p":
 "palette.open"}` for the global keymap, `{"list": {"n": "next"}}` for a named
 one, `null` unbinds). The keymaps are `globalKeymap` in DefaultShell and
-`list` in Sidebar.
+`list` in Sidebar. `list` is live only in mode `list` (`sidebar.list.focus`,
+left with Esc or `sidebar.list.blur`), so its single-letter keys never fire
+while something else has the keys. No key enters `list` yet.
 
 ## Where the rest of ChatView's state goes
 

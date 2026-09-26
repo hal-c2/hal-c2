@@ -232,6 +232,12 @@ export function createHost(options: HostOptions): Host {
         store.setFilter("");
         setMode("compose");
         return;
+      case "sidebar.list.focus":
+        setMode("list");
+        return;
+      case "sidebar.list.blur":
+        setMode("compose");
+        return;
       case "plugins.refresh":
         refreshPlugins();
         return;

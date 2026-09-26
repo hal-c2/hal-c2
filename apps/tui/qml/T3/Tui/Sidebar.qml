@@ -11,6 +11,8 @@ Rectangle {
     property alias keymap: listKeymap
     // Bound by the shell to the host's mode, so the field follows the keys.
     property bool filterFocused: false
+    // The list has the keys: its keymap is live and Esc hands them back.
+    property bool listFocused: false
 
     readonly property var sidebar: Shell.state.sidebar
     // Typing breaks a `text` binding, so follow the host's filter by hand
@@ -19,7 +21,7 @@ Rectangle {
     onFilterQueryChanged: if (filterInput.text !== filterQuery) filterInput.text = filterQuery
 
     border.width: 1
-    border.color: filterFocused ? Theme.colors.accent : Theme.colors.faint
+    border.color: filterFocused || listFocused ? Theme.colors.accent : Theme.colors.faint
     title: " Threads "
     titleColor: Theme.colors.dim
     color: Theme.colors.bg
@@ -82,10 +84,12 @@ Rectangle {
         id: listKeymap
         objectName: "listKeymap"
         name: "list"
-        bindings: ({ "j": "next", "k": "previous" })
+        enabled: bar.listFocused
+        bindings: ({ "j": "next", "k": "previous", "escape": "leave" })
         handlers: ({
             next: () => Shell.dispatch("thread.next"),
-            previous: () => Shell.dispatch("thread.previous")
+            previous: () => Shell.dispatch("thread.previous"),
+            leave: () => Shell.dispatch("sidebar.list.blur")
         })
     }
 }

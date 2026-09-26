@@ -1,7 +1,8 @@
 import { resolveChatColumnLayout, type ChatColumnLayout } from "../components/ChatView.layout.ts";
 import type { KeyBindingMode } from "../hooks/useKeyBindings.ts";
 
-export type TuiMode = KeyBindingMode;
+/** `list`: the thread list has the keys (its "list" keymap is live). */
+export type TuiMode = KeyBindingMode | "list";
 
 export interface TuiSize {
   readonly columns: number;

@@ -10,6 +10,8 @@ import { runShell } from "opentui-qml";
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
 import { detectKittyGraphicsTerminal } from "./terminalGraphics.ts";
 import { createHost } from "./host/host.ts";
+import { enginePluginPort } from "./host/plugins.ts";
+import { readUserConfig } from "./host/userConfig.ts";
 import {
   ensureColorCapabilityEnv,
   prepareTerminalViewport,
@@ -119,6 +121,16 @@ async function main(): Promise<void> {
     }
   };
 
+  // Read the user's keymap and plugin locations before taking over the terminal,
+  // so a broken keymap.json stops here with a readable error.
+  const configDir = resolveShellConfigDir();
+  const configWarnings: string[] = [];
+  const userConfig = readUserConfig({
+    configDir,
+    pluginPaths: process.env.T3_TUI_PLUGINS,
+    warn: (message) => configWarnings.push(message),
+  });
+
   const options: TuiOptions = { origin, bearerToken, mintSocketUrl, logPath };
   const runtime = buildTuiRuntime(options);
   const client = makeTuiClient(runtime, origin);
@@ -174,6 +186,7 @@ async function main(): Promise<void> {
     onQuit: handleExit,
     log: appendLog,
   });
+  for (const message of configWarnings) host.reportWarning(message);
 
   try {
     // Raw mode usually delivers Ctrl+C as a keystroke (the shell dispatches
@@ -185,19 +198,22 @@ async function main(): Promise<void> {
     renderer.on("resize", (columns: number, rows: number) => host.resize({ columns, rows }));
 
     const qmlDir = resolveQmlDir();
-    await runShell({
+    const app = await runShell({
       appId: "t3",
       renderer,
       defaultShell: join(qmlDir, "T3/Tui/DefaultShell.qml"),
       modules: { "T3.Tui": join(qmlDir, "T3/Tui") },
       importPaths: [qmlDir],
-      configDir: resolveShellConfigDir(),
+      configDir,
+      plugins: [...userConfig.plugins],
+      pluginDirs: [...userConfig.pluginDirs],
+      ...(userConfig.keymap ? { keymap: userConfig.keymap } : {}),
       singletons: { Shell: host.Shell, Theme: host.Theme },
       watch: process.env.T3_TUI_DEV === "1",
-      onWarning: (message) => appendLog(`[qml warning] ${message}`),
-      onError: (error, context) =>
-        appendLog(`[qml error${context ? ` ${context}` : ""}] ${String(error)}`),
+      onWarning: host.reportWarning,
+      onError: host.reportError,
     });
+    host.attachPlugins(enginePluginPort(app.engine));
 
     await done;
   } catch (error) {
