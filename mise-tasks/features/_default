@@ -6,7 +6,8 @@ summary=() status=0
 for task in features:node:all features:tui:all features:desktop; do
   args=()
   [[ $task == features:tui:all ]] && args=("$@")
-  if mise run "$task" "${args[@]}"; then
+  # ${args[@]+…}: an empty array under set -u is an error on macOS bash 3.2.
+  if mise run "$task" ${args[@]+"${args[@]}"}; then
     summary+=("  ok      $task")
   else
     summary+=("  FAILED  $task") status=1

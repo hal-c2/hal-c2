@@ -4,5 +4,7 @@
 #USAGE flag "--backlog" help="Also run @backlog scenarios (or set INCLUDE_BACKLOG=1)"
 set -euo pipefail
 # The runner's own default is features/tui/ only; @shared scenarios live in every domain.
-mapfile -t files < <(cd ../../features && grep -rlE --include='*.feature' '@(tui|shared)\b' . | sed 's|^\./||' | sort)
-exec "$MISE_CONFIG_ROOT/mise-tasks/features/tui/_default" "$@" "${files[@]}"
+# A read loop, not mapfile: macOS ships bash 3.2.
+files=()
+while IFS= read -r file; do files+=("$file"); done < <(cd ../../features && grep -rlE --include='*.feature' '@(tui|shared)\b' . | sed 's|^\./||' | sort)
+exec "$MISE_CONFIG_ROOT/mise-tasks/features/tui/_default" "$@" ${files[@]+"${files[@]}"}

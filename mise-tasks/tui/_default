@@ -7,6 +7,7 @@ args=("$@")
 if [[ " $* " != *" --base-dir"* && " $* " != *" --url"* && -z ${HAL_C2_NODE_HOME:-} ]]; then
   # A checkout's node (`mise run node`) keeps its runtime record and access token
   # under <checkout>/.hal-c2 (apps/server-ex/config/config.exs).
-  args=(--base-dir "$PWD/.hal-c2" "${args[@]}")
+  args=(--base-dir "$PWD/.hal-c2" ${args[@]+"${args[@]}"})
 fi
-exec bun apps/tui/dist/index.js "${args[@]}"
+# ${args[@]+…}: an empty array under set -u is an error on macOS bash 3.2.
+exec bun apps/tui/dist/index.js ${args[@]+"${args[@]}"}

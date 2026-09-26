@@ -35,7 +35,7 @@ version() {
 qt_bin_dirs() {
   local prefixes=() prefix
   IFS=: read -ra prefixes <<<"${QT_ROOT_DIR:-}:${QT_PREFIX:-}:${CMAKE_PREFIX_PATH:-}"
-  for prefix in "${prefixes[@]}"; do [[ -n $prefix ]] && echo "$prefix/bin"; done
+  for prefix in ${prefixes[@]+"${prefixes[@]}"}; do [[ -n $prefix ]] && echo "$prefix/bin"; done
   version qtpaths6 --query QT_INSTALL_BINS
   version qmake6 -query QT_INSTALL_BINS
 }
