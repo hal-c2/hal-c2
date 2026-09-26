@@ -1,30 +1,39 @@
 /**
- * Where HAL-C2 keeps its state, and how to keep development state away from
- * the shared home that a user's installed HAL-C2 runs against.
+ * Where a HAL-C2 process keeps its files, and how to keep development state
+ * away from the directories a user's installed HAL-C2 runs against.
  *
- * The base dir is resolved in one place so the server, the service launcher
- * and the dev scripts agree:
+ * `@hal-c2/shared/xdgDirs` does the path arithmetic. This module adds the one
+ * thing it cannot do synchronously, finding a linked git worktree, and decides
+ * the root and profile in one order so the server, the dev runner and the
+ * scripts agree:
  *
- * 1. `HAL_C2_HOME`.
- * 2. The legacy `T3CODE_HOME`, still honoured (with one deprecation warning)
- *    so service units and shell profiles written before the rename keep
- *    working.
- * 3. `~/.hal-c2` when it exists.
- * 4. `~/.t3` when it exists: an install from before the rename is used in
- *    place, read-write, with no copy or migration.
- * 5. `~/.hal-c2`, created on first use.
+ * 1. An explicit root (`--base-dir`, `--home-dir`).
+ * 2. The linked worktree's own gitignored `.hal-c2`, when the caller asks for
+ *    worktree detection. Feature work in a throwaway branch must not share a
+ *    database with the real app, so this outranks an ambient `HAL_C2_HOME`.
+ * 3. `HAL_C2_HOME`, unless it names an old home (`~/.t3`, `~/.hal-c2`).
+ * 4. The XDG directories, in `hal-c2-dev` for a development server and
+ *    `hal-c2` otherwise.
  *
- * A linked git worktree gets its own (gitignored) `.hal-c2`, with the same
- * fallback to an existing `.t3`: feature work in a throwaway branch must not
- * share a database with the real app, and an ambient `HAL_C2_HOME` counts as an
- * explicit base dir — flipping the state directory from `<base>/dev` to
- * `<base>/userdata`, the live production database.
+ * Under a root there is one profile. `T3CODE_HOME` and `T3_HOME` never pick a
+ * home; they only tell the migration where an old one is.
  */
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+
+import {
+  HAL_C2_APP_DIR,
+  HAL_C2_DEV_APP_DIR,
+  halC2HomeRoot,
+  isLegacyHome,
+  resolveHalC2Dirs,
+  type HalC2Dirs,
+  type HalC2DirsEnvironment,
+  type HalC2Profile,
+} from "./xdgDirs.ts";
 
 /**
  * A `.git` file points at the real git directory. A linked worktree's lives at
@@ -98,91 +107,96 @@ export const resolveGitWorktreePath = (
     }
   });
 
+export const HAL_C2_HOME_DIR_NAME = ".hal-c2";
+
 /**
- * The worktree-local data directory for `cwd`, or undefined outside a linked
- * worktree. Deliberately does not require the directory to exist yet: falling
- * back because it is missing would send callers at the shared home.
+ * The worktree-local root for `cwd`, `<worktree>/.hal-c2`, or undefined outside
+ * a linked worktree. It need not exist yet: falling back because it is missing
+ * would send callers at the user's real directories.
  */
 export const resolveWorktreeHalC2Home = (
   cwd: string,
 ): Effect.Effect<string | undefined, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
+    const path = yield* Path.Path;
     const worktreePath = yield* resolveGitWorktreePath(cwd);
-    if (worktreePath === undefined) {
-      return undefined;
-    }
-    return yield* resolveStateDirIn(worktreePath);
+    return worktreePath === undefined ? undefined : path.join(worktreePath, HAL_C2_HOME_DIR_NAME);
   });
 
-export const HAL_C2_HOME_DIR_NAME = ".hal-c2";
-/** The state dir name used before the rename; read in place when it is the only one present. */
-export const LEGACY_HOME_DIR_NAME = ".t3";
+/** Which rule picked the root, or undefined for the XDG directories. */
+export type HalC2RootSource = "explicit" | "worktree" | "env";
 
-/** The environment variables that name a base dir. */
-export interface HalC2HomeEnvironment {
-  readonly HAL_C2_HOME?: string | undefined;
-  readonly T3CODE_HOME?: string | undefined;
+export interface HalC2Location {
+  readonly dirs: HalC2Dirs;
+  /** The single root every kind lives under, or undefined for XDG. */
+  readonly root: string | undefined;
+  readonly rootSource: HalC2RootSource | undefined;
+  /** `hal-c2-dev` only for a development process with no root. */
+  readonly profile: HalC2Profile;
 }
 
-let legacyHomeEnvWarned = false;
-
-/**
- * The base dir the environment names, or undefined when it names none.
- * `HAL_C2_HOME` wins; the legacy `T3CODE_HOME` is honoured and logs a
- * deprecation warning once per process. Values are trimmed, and a blank value
- * is no selection.
- */
-export const configuredHalC2Home = (env: HalC2HomeEnvironment): Effect.Effect<string | undefined> =>
-  Effect.gen(function* () {
-    const current = env.HAL_C2_HOME?.trim();
-    if (current) {
-      return current;
-    }
-    const legacy = env.T3CODE_HOME?.trim();
-    if (!legacy) {
-      return undefined;
-    }
-    if (!legacyHomeEnvWarned) {
-      legacyHomeEnvWarned = true;
-      yield* Effect.logWarning("T3CODE_HOME is deprecated; set HAL_C2_HOME instead.");
-    }
-    return legacy;
-  });
-
-/**
- * `<parent>/.hal-c2` when it exists, else an existing `<parent>/.t3`, else
- * `<parent>/.hal-c2` (not created here). Used for both the user home and a
- * worktree's dev state.
- */
-export const resolveStateDirIn = (
-  parent: string,
-): Effect.Effect<string, never, FileSystem.FileSystem | Path.Path> =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const current = path.join(parent, HAL_C2_HOME_DIR_NAME);
-    const isDirectory = (candidate: string) =>
-      fileSystem.stat(candidate).pipe(
-        Effect.map((info) => info.type === "Directory"),
-        Effect.orElseSucceed(() => false),
-      );
-    if (yield* isDirectory(current)) {
-      return current;
-    }
-    const legacy = path.join(parent, LEGACY_HOME_DIR_NAME);
-    return (yield* isDirectory(legacy)) ? legacy : current;
-  });
-
-/**
- * The HAL-C2 base dir in the order documented at the top of this file. An
- * explicit `--base-dir` style value belongs to the caller and outranks all of
- * it; `homeDir` is the user's home directory (`os.homedir()`).
- */
-export const resolveHalC2Home = (options: {
-  readonly env: HalC2HomeEnvironment;
+export interface ResolveHalC2LocationOptions {
+  /** `--base-dir` or `--home-dir`; resolved against the working directory. */
+  readonly explicitRoot?: string | undefined;
+  /**
+   * Detect a linked worktree from here. Only development tooling passes it: an
+   * installed `hal-c2` started inside a user's own worktree keeps using XDG.
+   */
+  readonly worktreeCwd?: string | undefined;
+  readonly env: HalC2DirsEnvironment;
+  /** The user's home directory, `os.homedir()`. */
   readonly homeDir: string;
-}): Effect.Effect<string, never, FileSystem.FileSystem | Path.Path> =>
+  readonly platform: NodeJS.Platform;
+  /** A development server: picks the `hal-c2-dev` profile when there is no root. */
+  readonly development?: boolean | undefined;
+}
+
+/**
+ * The root, profile and directories in the order documented at the top of
+ * this file. An explicit root that names an old home is ignored with a
+ * warning: the old homes are only ever read by the migration.
+ */
+export const resolveHalC2Location = (
+  options: ResolveHalC2LocationOptions,
+): Effect.Effect<HalC2Location, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
-    const configured = yield* configuredHalC2Home(options.env);
-    return configured ?? (yield* resolveStateDirIn(options.homeDir));
+    const path = yield* Path.Path;
+    const { env, homeDir, platform } = options;
+    const pick = (root: string, rootSource: HalC2RootSource): HalC2Location => ({
+      dirs: resolveHalC2Dirs({ env, homeDir, platform, root }),
+      root,
+      rootSource,
+      profile: HAL_C2_APP_DIR,
+    });
+
+    const explicit = options.explicitRoot?.trim();
+    if (explicit) {
+      const root = path.resolve(explicit);
+      if (!isLegacyHome(root, { homeDir, platform })) {
+        return pick(root, "explicit");
+      }
+      yield* Effect.logWarning(
+        `Ignoring ${root} as a HAL-C2 home: it is an old home that HAL-C2 only migrates from.`,
+      );
+    }
+
+    if (options.worktreeCwd !== undefined) {
+      const worktreeRoot = yield* resolveWorktreeHalC2Home(options.worktreeCwd);
+      if (worktreeRoot !== undefined) {
+        return pick(worktreeRoot, "worktree");
+      }
+    }
+
+    const envRoot = halC2HomeRoot({ env, homeDir, platform });
+    if (envRoot !== undefined) {
+      return pick(envRoot, "env");
+    }
+
+    const profile = options.development ? HAL_C2_DEV_APP_DIR : HAL_C2_APP_DIR;
+    return {
+      dirs: resolveHalC2Dirs({ env, homeDir, platform, profile }),
+      root: undefined,
+      rootSource: undefined,
+      profile,
+    };
   });

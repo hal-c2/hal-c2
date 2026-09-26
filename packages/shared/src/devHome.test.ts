@@ -7,9 +7,8 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 
 import {
-  configuredHalC2Home,
   resolveGitWorktreePath,
-  resolveHalC2Home,
+  resolveHalC2Location,
   resolveWorktreeHalC2Home,
 } from "./devHome.ts";
 
@@ -109,71 +108,126 @@ describe("resolveWorktreeHalC2Home", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps using an existing .t3 when the worktree has no .hal-c2", () =>
+  it.effect("never falls back to an existing .t3", () =>
     Effect.gen(function* () {
       const { root, nested } = yield* makeRepo("worktree");
       NodeFS.mkdirSync(NodePath.join(root, ".t3"));
       const home = yield* resolveWorktreeHalC2Home(nested);
-      assert.equal(home, NodePath.join(NodePath.resolve(root), ".t3"));
+      assert.equal(home, NodePath.join(NodePath.resolve(root), ".hal-c2"));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 
-const makeHome = (dirs: ReadonlyArray<string>) =>
-  Effect.acquireRelease(
-    Effect.sync(() => {
-      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hal-c2-userhome-"));
-      for (const dir of dirs) {
-        NodeFS.mkdirSync(NodePath.join(root, dir));
-      }
-      return root;
-    }),
-    (root) => Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+describe("resolveHalC2Location", () => {
+  const homeDir = "/home/me";
+  const platform = "linux" as const;
+
+  it.effect("uses the XDG directories with the installed profile by default", () =>
+    Effect.gen(function* () {
+      const location = yield* resolveHalC2Location({ env: {}, homeDir, platform });
+      assert.equal(location.root, undefined);
+      assert.equal(location.profile, "hal-c2");
+      assert.equal(location.dirs.data, "/home/me/.local/share/hal-c2");
+      assert.equal(location.dirs.config, "/home/me/.config/hal-c2");
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-describe("resolveHalC2Home", () => {
-  it.effect("prefers HAL_C2_HOME over the legacy T3CODE_HOME and any existing home", () =>
+  it.effect("gives a development server with no root the hal-c2-dev profile", () =>
     Effect.gen(function* () {
-      const homeDir = yield* makeHome([".hal-c2", ".t3"]);
-      const env = { HAL_C2_HOME: " /srv/hal-c2 ", T3CODE_HOME: "/srv/t3" };
-      assert.equal(yield* resolveHalC2Home({ env, homeDir }), "/srv/hal-c2");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      const location = yield* resolveHalC2Location({
+        env: {},
+        homeDir,
+        platform,
+        development: true,
+      });
+      assert.equal(location.profile, "hal-c2-dev");
+      assert.equal(location.dirs.state, "/home/me/.local/state/hal-c2-dev");
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("honours the legacy T3CODE_HOME when HAL_C2_HOME is unset or blank", () =>
+  it.effect("puts every kind under HAL_C2_HOME with one profile", () =>
     Effect.gen(function* () {
-      const homeDir = yield* makeHome([".hal-c2"]);
-      const env = { HAL_C2_HOME: "  ", T3CODE_HOME: "/srv/t3" };
-      assert.equal(yield* resolveHalC2Home({ env, homeDir }), "/srv/t3");
-      assert.equal(yield* configuredHalC2Home({ T3CODE_HOME: "/srv/t3" }), "/srv/t3");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("uses an existing ~/.hal-c2 before an existing ~/.t3", () =>
-    Effect.gen(function* () {
-      const homeDir = yield* makeHome([".hal-c2", ".t3"]);
-      assert.equal(
-        yield* resolveHalC2Home({ env: {}, homeDir }),
-        NodePath.join(homeDir, ".hal-c2"),
+      const location = yield* resolveHalC2Location({
+        env: { HAL_C2_HOME: "/srv/hal-c2", XDG_DATA_HOME: "/xdg/data" },
+        homeDir,
+        platform,
+        development: true,
+      });
+      assert.deepEqual(
+        { root: location.root, source: location.rootSource, profile: location.profile },
+        { root: "/srv/hal-c2", source: "env", profile: "hal-c2" },
       );
+      assert.equal(location.dirs.data, "/srv/hal-c2/data");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("never uses T3CODE_HOME, T3_HOME or an old home named by HAL_C2_HOME", () =>
+    Effect.gen(function* () {
+      const location = yield* resolveHalC2Location({
+        env: { HAL_C2_HOME: "/home/me/.t3", T3CODE_HOME: "/srv/t3", T3_HOME: "/srv/t3" },
+        homeDir,
+        platform,
+      });
+      assert.equal(location.root, undefined);
+      assert.equal(location.dirs.data, "/home/me/.local/share/hal-c2");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("lets a worktree's .hal-c2 outrank HAL_C2_HOME", () =>
+    Effect.gen(function* () {
+      const { root, nested } = yield* makeRepo("worktree");
+      const location = yield* resolveHalC2Location({
+        env: { HAL_C2_HOME: "/srv/hal-c2" },
+        worktreeCwd: nested,
+        homeDir,
+        platform,
+        development: true,
+      });
+      const expected = NodePath.join(NodePath.resolve(root), ".hal-c2");
+      assert.equal(location.root, expected);
+      assert.equal(location.rootSource, "worktree");
+      assert.equal(location.profile, "hal-c2");
+      assert.equal(location.dirs.data, NodePath.join(expected, "data"));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("uses an existing ~/.t3 in place when there is no ~/.hal-c2", () =>
+  it.effect("ignores worktrees unless the caller asks", () =>
     Effect.gen(function* () {
-      const homeDir = yield* makeHome([".t3"]);
-      assert.equal(yield* resolveHalC2Home({ env: {}, homeDir }), NodePath.join(homeDir, ".t3"));
-      assert.isFalse(NodeFS.existsSync(NodePath.join(homeDir, ".hal-c2")));
+      const location = yield* resolveHalC2Location({
+        env: { HAL_C2_HOME: "/srv/hal-c2" },
+        homeDir,
+        platform,
+      });
+      assert.equal(location.rootSource, "env");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("lets an explicit root outrank the worktree and HAL_C2_HOME", () =>
+    Effect.gen(function* () {
+      const { nested } = yield* makeRepo("worktree");
+      const location = yield* resolveHalC2Location({
+        explicitRoot: " /tmp/sandbox ",
+        env: { HAL_C2_HOME: "/srv/hal-c2" },
+        worktreeCwd: nested,
+        homeDir,
+        platform,
+      });
+      assert.equal(location.root, "/tmp/sandbox");
+      assert.equal(location.rootSource, "explicit");
+      assert.equal(location.dirs.cache, "/tmp/sandbox/cache");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("defaults to ~/.hal-c2 on a fresh machine", () =>
+  it.effect("refuses an old home as an explicit root", () =>
     Effect.gen(function* () {
-      const homeDir = yield* makeHome([]);
-      assert.equal(
-        yield* resolveHalC2Home({ env: {}, homeDir }),
-        NodePath.join(homeDir, ".hal-c2"),
-      );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      const location = yield* resolveHalC2Location({
+        explicitRoot: "/home/me/.hal-c2",
+        env: {},
+        homeDir,
+        platform,
+      });
+      assert.equal(location.root, undefined);
+      assert.equal(location.dirs.data, "/home/me/.local/share/hal-c2");
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
