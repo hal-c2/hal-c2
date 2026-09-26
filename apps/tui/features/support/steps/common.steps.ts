@@ -101,3 +101,9 @@ step("the status line says {string}", async (ctx: World, text: string) => {
   await settle(ctx);
   expect(String(findObject(ctx, "statusText").get("text"))).toContain(text);
 });
+
+/** Feedback the user reads: the status line carries it. */
+step("the user is told {string}", async (ctx: World, text: string) => {
+  await settle(ctx);
+  expect(String(findObject(ctx, "statusText").get("text"))).toContain(text);
+});

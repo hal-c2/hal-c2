@@ -9,7 +9,7 @@ import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS, type OrchestrationThread } from "@t
 import { step } from "../../steps.ts";
 import type { TuiComposerState } from "../../../src/host/composerState.ts";
 import type { EditorCommand } from "../../../src/promptEditor.ts";
-import { PROVIDERS, thread } from "../fakeClient.ts";
+import { PROVIDERS, shell, thread } from "../fakeClient.ts";
 import {
   boot,
   findObject,
@@ -43,6 +43,11 @@ export interface ComposerWorld extends World {
   clipboard?: { bytes: Uint8Array; mimeType: string };
   textBeforePaste?: string;
   releaseSend?: () => void;
+  /** Attachments already in the draft before the step under test. */
+  attachedBefore?: number;
+  /** Text the user typed before the step under test. */
+  typedText?: string;
+  threadBDraft?: string;
 }
 
 export function composer(ctx: World): TuiComposerState {
@@ -440,9 +445,9 @@ step("the prompt holds the prose without the path", async (ctx: World) => {
   expect(text).toContain("look wrong?");
 });
 
-step("nothing is attached", async (ctx: World) => {
+step("nothing is attached", async (ctx: ComposerWorld) => {
   await settle(ctx);
-  expect(composer(ctx).attachments).toHaveLength(0);
+  expect(composer(ctx).attachments).toHaveLength(ctx.attachedBefore ?? 0);
 });
 
 // --- Attachment chips ------------------------------------------------------
@@ -452,9 +457,13 @@ async function attach(ctx: World, name: string): Promise<void> {
   await settle(ctx);
 }
 
+// Given: attach it. Then: it is attached (and shown).
 step("{string} is attached", async (ctx: World, name: string) => {
-  await attach(ctx, name);
+  if (ctx.stepType === "Outcome") await settle(ctx);
+  else await attach(ctx, name);
   expect(attachmentNames(ctx)).toContain(name);
+  await snapshot(ctx);
+  expect(String(findObject(ctx, "composerAttachments").get("text"))).toContain(name);
 });
 
 step("the user attaches {string} again", async (ctx: World, name: string) => {
@@ -535,3 +544,322 @@ step(
     expect(uploads[0]!.sizeBytes).toBeLessThanOrEqual(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
   },
 );
+
+// --- composer/*.feature -------------------------------------------------------
+
+step("a project with an open thread", async (ctx: ComposerWorld) => {
+  await openOnThread(ctx);
+});
+
+step("a thread whose agent is working on a turn", async (ctx: ComposerWorld) => {
+  await openOnThread(ctx, running(thread()));
+  expect(composer(ctx).isRunning).toBe(true);
+});
+
+step("the thread's provider is ready", async (ctx: World) => {
+  await settle(ctx);
+  expect(composer(ctx).selectedModel).not.toBeNull();
+});
+
+step("the user has typed {string}", async (ctx: ComposerWorld, text: string) => {
+  await typeIntoPrompt(ctx, (ctx.typedText = text));
+});
+
+step(/^the user presses (Enter|Escape)( again)?$/, async (ctx: World, key: string) => {
+  await pressKey(ctx, key === "Escape" ? "Esc" : key);
+  await settle(ctx);
+});
+
+step("the user types {string}", async (ctx: World, text: string) => {
+  await typeText(ctx, text);
+});
+
+// "\n" in a feature string is a line break.
+const unescape = (text: string) => text.replace(/\\n/g, "\n");
+
+// Given: type it. Then: the draft is exactly that.
+step("the draft reads {string}", async (ctx: ComposerWorld, text: string) => {
+  if (ctx.stepType === "Outcome") await expectPrompt(ctx, unescape(text));
+  else await typeIntoPrompt(ctx, (ctx.typedText = text));
+});
+
+step("the draft is empty", async (ctx: World) => {
+  await expectPrompt(ctx, "");
+});
+
+step("the composer is empty", async (ctx: World) => {
+  await expectPrompt(ctx, "");
+  expect(composer(ctx).attachments).toHaveLength(0);
+});
+
+step("the message {string} is sent to the agent", async (ctx: World, text: string) => {
+  await settle(ctx);
+  const sent = callsTo(ctx, "sendReply");
+  expect(sent.map((call) => call.args[1])).toEqual([text]);
+  expect(String((sent[0]!.args[0] as OrchestrationThread).id)).toBe("t1");
+});
+
+// --- Sending while a send is in flight
+
+step("the user has sent {string}", async (ctx: ComposerWorld, text: string) => {
+  let release!: () => void;
+  const answered = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  ctx.releaseSend = release;
+  ctx.cleanups.push(() => release());
+  ctx.fake!.override("sendReply", () => answered);
+  await typeIntoPrompt(ctx, text);
+  await pressKey(ctx, "Enter");
+  expect(callsTo(ctx, "sendReply").map((call) => call.args[1])).toEqual([text]);
+});
+
+step("the reply is still sending", (ctx: World) => {
+  expect(composer(ctx).isSendBusy).toBe(true);
+});
+
+step(
+  "the draft reads {string} after the send completes",
+  async (ctx: ComposerWorld, text: string) => {
+    ctx.releaseSend!();
+    await settle(ctx);
+    expect(composer(ctx).isSendBusy).toBe(false);
+    await expectPrompt(ctx, text);
+    expect(callsTo(ctx, "sendReply")).toHaveLength(1);
+  },
+);
+
+step("the user sends it and the node rejects the message", async (ctx: World) => {
+  ctx.fake!.override("sendReply", () => Promise.reject(new Error("turn rejected by the node")));
+  await pressKey(ctx, "Enter");
+  await settle(ctx);
+});
+
+step("the user sees why the send failed", async (ctx: World) => {
+  await settle(ctx);
+  expect(String(findObject(ctx, "statusText").get("text"))).toContain("turn rejected by the node");
+});
+
+step("the draft reads {string} again", async (ctx: World, text: string) => {
+  await expectPrompt(ctx, text);
+});
+
+// --- Drafts per thread
+
+const TWO_THREADS = [
+  {
+    id: "t1",
+    projectId: "p1",
+    title: "Thread A",
+    updatedAt: "2026-07-13T00:00:02.000Z",
+    session: { status: "idle" },
+  },
+  {
+    id: "t2",
+    projectId: "p1",
+    title: "Thread B",
+    updatedAt: "2026-07-13T00:00:01.000Z",
+    session: { status: "idle" },
+  },
+];
+
+step("the user has typed {string} in thread A", async (ctx: ComposerWorld, text: string) => {
+  ctx.fake!.emitShell(shell(TWO_THREADS as never));
+  ctx.fake!.emitThread({
+    ...thread(),
+    id: "t2",
+    title: "Thread B",
+  } as unknown as OrchestrationThread);
+  await settle(ctx);
+  expect(composer(ctx).target).toBe("thread:t1");
+  await typeIntoPrompt(ctx, text);
+});
+
+step("the user switches to thread B and back to thread A", async (ctx: ComposerWorld) => {
+  await pressKey(ctx, "Alt+Down");
+  await settle(ctx);
+  expect(composer(ctx).target).toBe("thread:t2");
+  ctx.threadBDraft = composer(ctx).text;
+  await pressKey(ctx, "Alt+Up");
+  await settle(ctx);
+  expect(composer(ctx).target).toBe("thread:t1");
+});
+
+step("thread A's draft reads {string}", async (ctx: World, text: string) => {
+  await expectPrompt(ctx, text);
+});
+
+step("thread B's draft is empty", (ctx: ComposerWorld) => {
+  expect(ctx.threadBDraft).toBe("");
+});
+
+// --- New threads
+
+step("the user is starting a new thread in the project", async (ctx: World) => {
+  await pressKey(ctx, "Ctrl+N");
+  await settle(ctx);
+  expect(composer(ctx).newThread?.projectId).toBe("p1");
+});
+
+step("the user sends {string}", async (ctx: World, text: string) => {
+  await typeIntoPrompt(ctx, text);
+  await pressKey(ctx, "Enter");
+  await settle(ctx);
+});
+
+step("a thread titled from {string} is created", async (ctx: World, text: string) => {
+  const created = callsTo(ctx, "createThread");
+  expect(created).toHaveLength(1);
+  expect(created[0]!.args[0]).toMatchObject({ projectId: "p1", title: text });
+  expect(composer(ctx).newThread).toBeNull();
+});
+
+step("its first turn starts with that message", (ctx: World) => {
+  const [input] = callsTo(ctx, "createThread")[0]!.args as [
+    { title: string; firstMessage: string },
+  ];
+  expect(input.firstMessage).toBe(input.title);
+  expect(callsTo(ctx, "sendReply")).toHaveLength(0);
+});
+
+// --- Escape on a running turn
+
+step("the turn is still running", async (ctx: World) => {
+  await settle(ctx);
+  expect(composer(ctx).isRunning).toBe(true);
+  expect(callsTo(ctx, "interrupt")).toHaveLength(0);
+});
+
+step("the running turn is interrupted", async (ctx: World) => {
+  await settle(ctx);
+  expect(callsTo(ctx, "interrupt").map((call) => String(call.args[0]))).toEqual(["t1"]);
+});
+
+// --- Outside editor
+
+step("the user's editor is set in VISUAL or EDITOR", (ctx: ComposerWorld) => {
+  ctx.editorEnv!.VISUAL = "nvim";
+});
+
+step(
+  "the user opens the draft in their editor and saves {string}",
+  async (ctx: ComposerWorld, text: string) => {
+    await saveInEditor(ctx, `${unescape(text)}\n\n\n`);
+    expect(ctx.editorRuns![0]!.command.cmd).toBe("nvim");
+  },
+);
+
+step("the draft reads the saved text without trailing blank lines", async (ctx: World) => {
+  await expectPrompt(ctx, "start\nmore");
+});
+
+step(
+  "the user saves a line naming {string} from their editor",
+  async (ctx: ComposerWorld, path: string) => {
+    ctx.editorEnv!.EDITOR = "vi";
+    ctx.fake!.workspaceFiles.set(path, PNG);
+    ctx.fake!.workspaceFiles.set(path.replace(/^\.\//, ""), PNG);
+    await saveInEditor(ctx, `Why is this broken?\n${path}`);
+  },
+);
+
+step("that line is not part of the prompt text", async (ctx: World) => {
+  await expectPrompt(ctx, "Why is this broken?");
+});
+
+// --- Attachments
+
+step("the draft carries {string}", async (ctx: ComposerWorld, name: string) => {
+  if (ctx.stepType === "Outcome") {
+    await settle(ctx);
+    expect(attachmentNames(ctx)).toContain(name);
+    return;
+  }
+  ctx.fake!.workspaceFiles.set(name, PNG);
+  await typeIntoPrompt(ctx, (ctx.typedText = "What is wrong here?"));
+  await attach(ctx, name);
+  expect(attachmentNames(ctx)).toEqual([name]);
+});
+
+step("the user removes {string}", async (ctx: World, name: string) => {
+  expect(attachmentNames(ctx).at(-1)).toBe(name);
+  await pressKey(ctx, "Ctrl+K");
+  await typeText(ctx, "remove last attachment");
+  await settle(ctx);
+  await pressKey(ctx, "Enter");
+  await settle(ctx);
+});
+
+step("the draft carries no attachments", async (ctx: World) => {
+  await settle(ctx);
+  expect(composer(ctx).attachments).toHaveLength(0);
+  await snapshot(ctx);
+  expect(findObject(ctx, "composerAttachments").get("visible")).toBe(false);
+});
+
+step("the typed text is unchanged", async (ctx: ComposerWorld) => {
+  await expectPrompt(ctx, ctx.typedText ?? "");
+});
+
+step(/^the user pastes (.+) into the prompt$/, async (ctx: ComposerWorld, raw: string) => {
+  const pasted = raw.trim();
+  const path = (pasted.match(/^'([^']+)'/)?.[1] ?? pasted.split(" ")[0])!;
+  if (path.startsWith("/")) ctx.localImages!.set(path, PNG);
+  else if (path.startsWith("~/")) ctx.localImages!.set(`${HOME}${path.slice(1)}`, PNG);
+  else ctx.fake!.workspaceFiles.set(path, PNG);
+  await pasteText(ctx, pasted);
+});
+
+step("the prompt text reads {string}", async (ctx: World, text: string) => {
+  await expectPrompt(ctx, text);
+});
+
+step("the terminal can read images from the clipboard", (ctx: ComposerWorld) => {
+  expect(ctx.kittyKeyboard).toBe(true);
+  ctx.clipboard = { bytes: PNG, mimeType: "image/png" };
+});
+
+step("the user pastes an image", async (ctx: ComposerWorld) => {
+  await pasteBytes(ctx, ctx.clipboard!.bytes, ctx.clipboard!.mimeType);
+});
+
+step("a clipboard image is attached to the draft", async (ctx: World) => {
+  await settle(ctx);
+  expect(attachmentNames(ctx)).toEqual(["clipboard-image-1.png"]);
+});
+
+step(/^the user tries to attach (.+)$/, async (ctx: ComposerWorld, image: string) => {
+  const files = ctx.fake!.workspaceFiles;
+  switch (image) {
+    case "a 12 MB photo":
+      files.set("photo.png", new Uint8Array(12 * 1024 * 1024));
+      await attach(ctx, "photo.png");
+      return;
+    case "an empty image file":
+      files.set("empty.png", new Uint8Array(0));
+      await attach(ctx, "empty.png");
+      return;
+    case "a file that is not a supported image":
+      files.set("notes.txt", new TextEncoder().encode("notes"));
+      await attach(ctx, "notes.txt");
+      return;
+    case "an image that is already attached":
+      files.set("bug.png", PNG);
+      await attach(ctx, "bug.png");
+      ctx.attachedBefore = 1;
+      await attach(ctx, "bug.png");
+      return;
+    case "a 101st image":
+      for (let index = 0; index < PROVIDER_SEND_TURN_MAX_ATTACHMENTS; index += 1) {
+        files.set(`shot-${index}.png`, PNG);
+        ctx.host!.dispatch("composer.attach", { path: `shot-${index}.png` });
+      }
+      await settle(ctx);
+      ctx.attachedBefore = PROVIDER_SEND_TURN_MAX_ATTACHMENTS;
+      files.set("one-more.png", PNG);
+      await attach(ctx, "one-more.png");
+      return;
+    default:
+      throw new Error(`unknown image "${image}"`);
+  }
+});
