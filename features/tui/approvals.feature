@@ -81,6 +81,42 @@ Feature: Approvals, questions and plans from the keyboard
     Then the composer shows the question with its options
     And the primary action is "Submit answer"
 
+  @tui @backlog
+  Scenario: A question reads like the OpenTUI client inside the composer
+    Given the agent asks "Which database?" with the options "Postgres" and "SQLite"
+    Then the composer reads:
+      """
+      Question
+      Which database?
+      ▸ ( ) Postgres
+        ( ) SQLite
+      ↑/↓ select · Enter submit · Esc defer
+
+      Type your own answer, or leave blank to use the selected option
+      """
+    And the question's header and the "▸" marker are in the accent colour
+    And the primary action reads "▸ Submit answer ⏎"
+
+  @tui @backlog
+  Scenario: A multiple-choice question asks for a pick instead of a typed answer
+    Given the agent asks "Which checks?" allowing several of "lint", "test" and "build"
+    Then the composer reads:
+      """
+      Question
+      Which checks?
+      ▸ [ ] lint
+        [ ] test
+        [ ] build
+      ↑/↓ move · Space toggle · Enter submit · Esc defer
+
+      pick an option above, then Enter to submit
+      """
+
+  @tui @backlog
+  Scenario: Several questions show which one is being answered
+    Given the agent asks two questions in one request
+    Then the question's header is followed by "(1 of 2)" in the dim colour
+
   @tui
   Scenario: Enter answers a single-choice question with the highlighted option
     Given the agent asks "Which database?" with the options "Postgres" and "SQLite"

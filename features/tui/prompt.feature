@@ -1,5 +1,6 @@
 # Sources:
-#   apps/tui/src/components/ChatComposer.tsx, ChatComposer.test.tsx
+#   apps/tui/src/components/ChatComposer.tsx, ChatComposer.test.tsx (placeholder, caption, attachment chips)
+#   apps/tui/src/components/ChatView.tsx (the prompt's placeholder)
 #   apps/tui/src/components/ComposerFooter.tsx (primary action)
 #   apps/tui/src/components/ChatView.tsx (send acknowledgement, image paste, attachment limits)
 #   apps/tui/src/promptEditor.ts, promptEditor.test.ts ($EDITOR)
@@ -14,6 +15,15 @@ Feature: Writing a prompt in the terminal
 
   Background:
     Given the terminal client is open on a thread with focus in the prompt
+
+  @tui @backlog
+  Scenario: The prompt says what it can do
+    Then the prompt placeholder reads "Ask anything, @tag files/folders, $use skills, or / for commands"
+
+  @tui @backlog
+  Scenario: The prompt is a caption while the terminal has the keys
+    Given the terminal drawer has focus
+    Then the composer reads "^P prompt · " in the accent colour, then the placeholder in the dim colour
 
   @tui
   Scenario: Enter sends the reply
@@ -163,6 +173,18 @@ Feature: Writing a prompt in the terminal
     Given "logo.png" is attached
     When the user removes the last attachment
     Then "logo.png" is no longer attached
+
+  @tui @backlog
+  Scenario: Attached images are removable chips
+    Given "logo.png" is attached
+    Then the composer shows "× logo.png" with the "×" in the accent colour
+    When the user clicks "× logo.png"
+    Then "logo.png" is no longer attached
+
+  @tui @backlog
+  Scenario: Attachments beyond the composer's width are counted
+    Given five images are attached
+    Then the composer shows four of them and "+1 more" in the dim colour
 
   @tui
   Scenario: Attached images are sent with the reply
