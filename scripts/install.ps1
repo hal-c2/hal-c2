@@ -7,7 +7,9 @@
 #   HALC2_CHANNEL           release train to follow: stable, nightly, or preview
 #                            (default: stable; preview is a maintainers' test train)
 #   HALC2_VERSION           exact version to install (overrides HALC2_CHANNEL)
-#   HALC2_HOME              HAL-C2 home directory (default: ~\.hal-c2)
+#   HALC2_HOME              HAL-C2 home directory (default: ~\.hal-c2, or an
+#                            existing ~\.t3 from before the rename; the legacy
+#                            T3CODE_HOME is still honoured)
 #   HALC2_INSTALL_BIN_DIR   where hal-c2.exe is linked (default: ~\.local\bin)
 #   HALC2_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
@@ -18,7 +20,17 @@ $ErrorActionPreference = "Stop"
 
 $repo = "hal-c2/hal-c2"
 $baseUrl = if ($env:HALC2_RELEASE_BASE_URL) { $env:HALC2_RELEASE_BASE_URL.TrimEnd("/") } else { "https://github.com/$repo/releases/download" }
-$halc2Home = if ($env:HALC2_HOME) { $env:HALC2_HOME } else { Join-Path $HOME ".hal-c2" }
+# Same order as @hal-c2/shared/devHome: an existing pre-rename ~\.t3 is used in place.
+$halc2Home = if ($env:HALC2_HOME) {
+  $env:HALC2_HOME
+} elseif ($env:T3CODE_HOME) {
+  Write-Warning "hal-c2 install: T3CODE_HOME is deprecated; set HALC2_HOME instead."
+  $env:T3CODE_HOME
+} elseif ((Test-Path (Join-Path $HOME ".hal-c2") -PathType Container) -or -not (Test-Path (Join-Path $HOME ".t3") -PathType Container)) {
+  Join-Path $HOME ".hal-c2"
+} else {
+  Join-Path $HOME ".t3"
+}
 $binDir = if ($env:HALC2_INSTALL_BIN_DIR) { $env:HALC2_INSTALL_BIN_DIR } else { Join-Path $HOME ".local\bin" }
 
 function Fail([string] $message) {

@@ -1,11 +1,24 @@
 /**
- * Where development state lives, and how to keep it away from the shared
- * `~/.hal-c2` that a user's installed HAL-C2 runs against.
+ * Where HAL-C2 keeps its state, and how to keep development state away from
+ * the shared home that a user's installed HAL-C2 runs against.
  *
- * A linked git worktree gets its own (gitignored) `.hal-c2`: feature work in a
- * throwaway branch must not share a database with the real app, and an ambient
- * `HALC2_HOME` counts as an explicit base dir — flipping the state directory
- * from `<base>/dev` to `<base>/userdata`, the live production database.
+ * The base dir is resolved in one place so the server, the service launcher
+ * and the dev scripts agree:
+ *
+ * 1. `HALC2_HOME`.
+ * 2. The legacy `T3CODE_HOME`, still honoured (with one deprecation warning)
+ *    so service units and shell profiles written before the rename keep
+ *    working.
+ * 3. `~/.hal-c2` when it exists.
+ * 4. `~/.t3` when it exists: an install from before the rename is used in
+ *    place, read-write, with no copy or migration.
+ * 5. `~/.hal-c2`, created on first use.
+ *
+ * A linked git worktree gets its own (gitignored) `.hal-c2`, with the same
+ * fallback to an existing `.t3`: feature work in a throwaway branch must not
+ * share a database with the real app, and an ambient `HALC2_HOME` counts as an
+ * explicit base dir — flipping the state directory from `<base>/dev` to
+ * `<base>/userdata`, the live production database.
  */
 
 import * as Effect from "effect/Effect";
@@ -98,6 +111,78 @@ export const resolveWorktreeHalC2Home = (
     if (worktreePath === undefined) {
       return undefined;
     }
+    return yield* resolveStateDirIn(worktreePath);
+  });
+
+export const HALC2_HOME_DIR_NAME = ".hal-c2";
+/** The state dir name used before the rename; read in place when it is the only one present. */
+export const LEGACY_HOME_DIR_NAME = ".t3";
+
+/** The environment variables that name a base dir. */
+export interface HalC2HomeEnvironment {
+  readonly HALC2_HOME?: string | undefined;
+  readonly T3CODE_HOME?: string | undefined;
+}
+
+let legacyHomeEnvWarned = false;
+
+/**
+ * The base dir the environment names, or undefined when it names none.
+ * `HALC2_HOME` wins; the legacy `T3CODE_HOME` is honoured and logs a
+ * deprecation warning once per process. Values are trimmed, and a blank value
+ * is no selection.
+ */
+export const configuredHalC2Home = (env: HalC2HomeEnvironment): Effect.Effect<string | undefined> =>
+  Effect.gen(function* () {
+    const current = env.HALC2_HOME?.trim();
+    if (current) {
+      return current;
+    }
+    const legacy = env.T3CODE_HOME?.trim();
+    if (!legacy) {
+      return undefined;
+    }
+    if (!legacyHomeEnvWarned) {
+      legacyHomeEnvWarned = true;
+      yield* Effect.logWarning("T3CODE_HOME is deprecated; set HALC2_HOME instead.");
+    }
+    return legacy;
+  });
+
+/**
+ * `<parent>/.hal-c2` when it exists, else an existing `<parent>/.t3`, else
+ * `<parent>/.hal-c2` (not created here). Used for both the user home and a
+ * worktree's dev state.
+ */
+export const resolveStateDirIn = (
+  parent: string,
+): Effect.Effect<string, never, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return path.join(worktreePath, ".hal-c2");
+    const current = path.join(parent, HALC2_HOME_DIR_NAME);
+    const isDirectory = (candidate: string) =>
+      fileSystem.stat(candidate).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      );
+    if (yield* isDirectory(current)) {
+      return current;
+    }
+    const legacy = path.join(parent, LEGACY_HOME_DIR_NAME);
+    return (yield* isDirectory(legacy)) ? legacy : current;
+  });
+
+/**
+ * The HAL-C2 base dir in the order documented at the top of this file. An
+ * explicit `--base-dir` style value belongs to the caller and outranks all of
+ * it; `homeDir` is the user's home directory (`os.homedir()`).
+ */
+export const resolveHalC2Home = (options: {
+  readonly env: HalC2HomeEnvironment;
+  readonly homeDir: string;
+}): Effect.Effect<string, never, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    const configured = yield* configuredHalC2Home(options.env);
+    return configured ?? (yield* resolveStateDirIn(options.homeDir));
   });

@@ -1259,6 +1259,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         readonly halc2Home: string | undefined;
         readonly cwd: string;
         readonly ambientHome: string | undefined;
+        readonly legacyAmbientHome?: string;
       }) =>
         Effect.gen(function* () {
           let captured: Record<string, string | undefined> | undefined;
@@ -1278,12 +1279,15 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
             Effect.provideService(HostProcessPlatform, "linux"),
             Effect.provideService(HostProcessWorkingDirectory, input.cwd),
-            Effect.provideService(
-              HostProcessEnvironment,
-              input.ambientHome === undefined ? {} : { HALC2_HOME: input.ambientHome },
-            ),
+            Effect.provideService(HostProcessEnvironment, {
+              ...(input.ambientHome === undefined ? {} : { HALC2_HOME: input.ambientHome }),
+              ...(input.legacyAmbientHome === undefined
+                ? {}
+                : { T3CODE_HOME: input.legacyAmbientHome }),
+            }),
           );
 
+          assert.equal(captured?.T3CODE_HOME, undefined);
           return captured?.HALC2_HOME;
         });
 
@@ -1335,6 +1339,19 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             ambientHome: "/home/user/.hal-c2",
           });
           assert.equal(home, path.resolve("/home/user/.hal-c2"));
+        }),
+      );
+
+      it.effect("carries a legacy ambient T3CODE_HOME forward as HALC2_HOME", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const home = yield* spawnedHome({
+            halc2Home: undefined,
+            cwd: NodeOS.tmpdir(),
+            ambientHome: undefined,
+            legacyAmbientHome: "/home/user/.t3",
+          });
+          assert.equal(home, path.resolve("/home/user/.t3"));
         }),
       );
 

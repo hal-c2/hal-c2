@@ -25,7 +25,6 @@ import {
 } from "@hal-c2/contracts";
 import { fromJsonStringPretty, fromLenientJson } from "@hal-c2/shared/schemaJson";
 import { BUILT_IN_THEME_IDS, UNPUBLISHABLE_THEME_IDS } from "@hal-c2/shared/themePalettes";
-import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -42,7 +41,7 @@ import {
   readPublishedThemes,
   readThemeFileGuarded,
 } from "../environmentTheme.ts";
-import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { configuredHalC2HomeFromEnv, expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
 
 /** Settings files outlive the build that reads them, so the object is carried
@@ -178,13 +177,11 @@ export class ThemeTargetMissingError extends Schema.TaggedError<ThemeTargetMissi
   }
 }
 
-const envHalC2Home = Config.String("HALC2_HOME").pipe(Config.option);
-
 const resolveThemePaths = Effect.fn(function* (explicitBaseDir: Option.Option<string>) {
   // Same precedence as the rest of the CLI: --base-dir, then HALC2_HOME,
   // then the default home. A provisioning script exporting HALC2_HOME must
   // not have this one command silently target the default install.
-  const envHome = Option.filter(yield* envHalC2Home, (value) => value.trim().length > 0);
+  const envHome = Option.fromUndefinedOr(yield* configuredHalC2HomeFromEnv);
   const configuredBaseDir = Option.orElse(explicitBaseDir, () => envHome);
   const baseDir = yield* resolveBaseDir(Option.getOrUndefined(configuredBaseDir));
   const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined, {

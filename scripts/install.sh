@@ -8,7 +8,9 @@
 #   HALC2_CHANNEL           release train to follow: stable, nightly, or preview
 #                            (default: stable; preview is a maintainers' test train)
 #   HALC2_VERSION           exact version to install (overrides HALC2_CHANNEL)
-#   HALC2_HOME              HAL-C2 home directory (default: ~/.hal-c2)
+#   HALC2_HOME              HAL-C2 home directory (default: ~/.hal-c2, or an
+#                            existing ~/.t3 from before the rename; the legacy
+#                            T3CODE_HOME is still honoured)
 #   HALC2_INSTALL_BIN_DIR   where the `hal-c2` symlink goes (default: ~/.local/bin)
 #   HALC2_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
@@ -19,7 +21,17 @@ set -eu
 
 repo="hal-c2/hal-c2"
 base_url="${HALC2_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
-halc2_home="${HALC2_HOME:-$HOME/.hal-c2}"
+# Same order as @hal-c2/shared/devHome: an existing pre-rename ~/.t3 is used in place.
+if [ -n "${HALC2_HOME:-}" ]; then
+  halc2_home="$HALC2_HOME"
+elif [ -n "${T3CODE_HOME:-}" ]; then
+  printf 'hal-c2 install: T3CODE_HOME is deprecated; set HALC2_HOME instead.\n' >&2
+  halc2_home="$T3CODE_HOME"
+elif [ -d "$HOME/.hal-c2" ] || [ ! -d "$HOME/.t3" ]; then
+  halc2_home="$HOME/.hal-c2"
+else
+  halc2_home="$HOME/.t3"
+fi
 bin_dir="${HALC2_INSTALL_BIN_DIR:-$HOME/.local/bin}"
 
 fail() {
@@ -40,13 +52,7 @@ step() {
   else printf '  %s\n' "$1" >&2; fi
 }
 if "$interactive"; then
-  printf '\n%s' "$bold" >&2
-  printf '  %s\n' '██████████ ████████ ' >&2
-  printf '  %s\n' '    ███       ▄██▀       HAL-C2' >&2
-  printf '  %s%s     %sCLI installer%s\n' '    ███       ████▄ ' "$reset" "$muted" "$reset$bold" >&2
-  printf '  %s\n' '    ███    ▄     ███' >&2
-  printf '  %s\n' '    ███    ███████▀ ' >&2
-  printf '%s\n' "$reset" >&2
+  printf '\n  %sHAL-C2%s  %sCLI installer%s\n\n' "$bold" "$reset" "$muted" "$reset" >&2
 fi
 step "Finding your release..."
 

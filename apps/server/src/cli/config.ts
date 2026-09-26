@@ -21,7 +21,7 @@ import { Argument, Flag } from "effect/unstable/cli";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
-import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { configuredHalC2HomeFromEnv, expandHomePath, resolveBaseDir } from "../os-jank.ts";
 
 const modeFlag = Flag.Literals("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -123,7 +123,6 @@ const EnvServerConfig = Config.all({
   ),
   port: Config.Port("HALC2_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.String("HALC2_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
-  halc2Home: Config.String("HALC2_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devAllowedOrigins: Config.String("HALC2_DEV_ALLOWED_ORIGINS").pipe(
     Config.withDefault(""),
@@ -257,6 +256,7 @@ export const resolveServerConfig = (
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
     const env = yield* EnvServerConfig;
+    const envHalC2Home = yield* configuredHalC2HomeFromEnv;
     const normalizedFlags = {
       mode: flags.mode ?? Option.none(),
       port: flags.port ?? Option.none(),
@@ -311,7 +311,7 @@ export const resolveServerConfig = (
       mode === "web" && devUrl !== undefined ? yield* DevAuthTokenConfig : undefined;
     const explicitBaseDir = resolveOptionPrecedence(
       normalizedFlags.baseDir,
-      Option.fromUndefinedOr(env.halc2Home),
+      Option.fromUndefinedOr(envHalC2Home),
     ).pipe(Option.filter((value) => value.trim().length > 0));
     const baseDir = yield* resolveBaseDir(
       Option.getOrUndefined(

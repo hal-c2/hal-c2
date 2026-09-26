@@ -627,7 +627,8 @@ export class Launcher {
 }
 
 export async function main(): Promise<void> {
-  const baseDir = process.env.HALC2_HOME?.trim();
+  // Units installed before the rename still export T3CODE_HOME.
+  const baseDir = process.env.HALC2_HOME?.trim() || process.env.T3CODE_HOME?.trim();
   if (baseDir === undefined || baseDir === "") {
     throw new Error("HALC2_HOME is required by the HAL-C2 service launcher.");
   }
