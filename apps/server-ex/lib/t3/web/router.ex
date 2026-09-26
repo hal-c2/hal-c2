@@ -56,17 +56,20 @@ defmodule T3.Web.Router do
   end
 
   # Pairing: exchange a one-time pairing token for a bearer access token.
+  # A DPoP proof names the device key a T3 Connect credential was minted for.
   post "/oauth/token" do
     params = conn.body_params
 
     with "urn:ietf:params:oauth:grant-type:token-exchange" <- params["grant_type"],
          "urn:t3:params:oauth:token-type:environment-bootstrap" <- params["subject_token_type"],
+         {:ok, proof_jkt} <- dpop_thumbprint(conn),
          {:ok, access, expires_in, scopes} <-
            T3.Auth.exchange(params["subject_token"] || "", %{
              label: params["client_label"],
              device_type: params["client_device_type"],
              os: params["client_os"],
-             user_agent: conn |> get_req_header("user-agent") |> List.first()
+             user_agent: conn |> get_req_header("user-agent") |> List.first(),
+             proof_jkt: proof_jkt
            }) do
       json(conn, 200, %{
         "access_token" => access,
@@ -274,6 +277,24 @@ defmodule T3.Web.Router do
     end
   end
 
+  defp dpop_thumbprint(conn) do
+    case get_req_header(conn, "dpop") do
+      [] ->
+        {:ok, nil}
+
+      [proof] ->
+        url = "#{conn.scheme}://#{conn.host}:#{conn.port}#{conn.request_path}"
+
+        case T3.Connect.Jwt.verify_dpop(proof, conn.method, url, System.os_time(:second)) do
+          {:ok, %{thumbprint: thumbprint}} -> {:ok, thumbprint}
+          {:error, _} -> :error
+        end
+
+      _ ->
+        :error
+    end
+  end
+
   defp trace_id, do: Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
 
   defp bearer_session(conn) do
@@ -359,6 +380,10 @@ defmodule T3.Web.Router do
   catch
     _, _ -> {:error, 502, "The node holding this file is unavailable."}
   end
+
+  # T3 Connect: a client's link settings, and the relay's signed requests.
+  forward "/api/connect", to: T3.Connect.Http
+  forward "/api/t3-connect", to: T3.Connect.Http
 
   # Every node's device hub, relayed to the node that owns it (`T3.Devices.Proxy`).
   match "/api/device-hub/*rest", do: T3.Devices.Proxy.serve(conn, rest)

@@ -115,4 +115,77 @@ defmodule T3.Steps.Common do
     {%{"t" => "pong"}, client} = T3.Test.WsClient.recv(client, 1_000)
     World.put_client(context, client)
   end
+
+  # --- added by W3 ---
+
+  step "two clients are connected to the same environment", context do
+    context
+    |> World.put_client("first", Node.connect(context.node))
+    |> World.put_client("second", Node.connect(context.node))
+  end
+
+  # --- added by W3-D ---
+
+  # A follow-up while `context.running` (`%{thread, run}`) has a turn going, sent
+  # as the composer sends it; the node steers or queues it by the provider.
+  step "the user sends a follow-up message", context do
+    message_id = "follow-up-#{System.unique_integer([:positive])}"
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "message.dispatch",
+        "threadId" => context.running.thread,
+        "messageId" => message_id,
+        "text" => "look here instead",
+        "attachments" => [],
+        "dispatchMode" => %{"type" => "start_immediately"},
+        "deliveryIntent" => "auto"
+      })
+
+    Map.put(context, :follow_up, message_id)
+  end
+
+  step "the message joins the running turn", context do
+    %{thread: thread_id, run: run_id} = context.running
+
+    item =
+      World.await_stream(thread_id, fn state ->
+        Enum.find(
+          T3.StreamState.list(state, "turn-item"),
+          &(&1["messageId"] == context.follow_up)
+        )
+      end)
+
+    assert %{"inputIntent" => "steer", "runId" => ^run_id} = item
+
+    assert [%{"id" => ^run_id}] =
+             T3.StreamState.list(T3.Streams.Server.state(T3.Streams.ensure(thread_id)), "run")
+
+    context
+  end
+
+  # Node plugins (`T3.Plugins`) turned on or off as a client does; other features'
+  # "enables"/"disables" steps can extend these by what the name refers to.
+  step "the user enables {string}", %{args: [id]} = context do
+    {result, context} = World.call!(context, "plugins.enable", %{"id" => id})
+    Map.put(context, :reply, {:ok, result})
+  end
+
+  step "the user disables {string}", %{args: [id]} = context do
+    {result, context} = World.call!(context, "plugins.disable", %{"id" => id})
+    Map.put(context, :reply, {:ok, result})
+  end
+
+  # --- added by W3-A ---
+
+  # HTTP steps leave `context.response` as `%{status: integer, ...}`.
+  step "the node answers not found", context do
+    assert %{status: 404} = context.response
+    context
+  end
+
+  step "the node answers {int}", %{args: [status]} = context do
+    assert context.response.status == status
+    context
+  end
 end

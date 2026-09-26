@@ -27,6 +27,8 @@ defmodule T3.Web.Protocol do
     * `{"type": "serverUpdate", "node": n, "input": ServerSelfUpdateInput}`: moves
       that node to another version (`T3.Upgrade`), streaming its progress and
       ending after `complete`
+    * `{"type": "relayClientInstall", "node": n}`: installs that node's relay client
+      (`cloud.installRelayClient`), streaming its stages and ending after `complete`
     * `{"type": "localServers", "node": n}`: web servers listening on that node's
       host (`DiscoveredLocalServerList`), then the list whenever it changes
     * `{"type": "devices", "node": n}`: that node's simulators, emulators and
@@ -70,6 +72,7 @@ defmodule T3.Web.Protocol do
       {"t": "config.ready", "id", "environment", "updateOutcome"} (the node moved to
         another version in place: its new descriptor, and how the update went)
       {"t": "serverUpdate", "id", "event"} (ServerSelfUpdateProgressEvent)
+      {"t": "relayClientInstall", "id", "event"} (RelayClientInstallProgressEvent)
       {"t": "config.themes", "id", "themes"} (the EnvironmentTheme[] it publishes; after
         the snapshot, then on every change)
       {"t": "config.usageLimitSources", "id", "sources"} (its UsageLimitSourceSnapshot[];
@@ -196,6 +199,10 @@ defmodule T3.Web.Protocol do
 
   defp decode_shape(%{"type" => "serverUpdate", "node" => node, "input" => %{} = input}, nodes) do
     with {:ok, node} <- known_node(node, nodes), do: {:ok, {:server_update, node, input}}
+  end
+
+  defp decode_shape(%{"type" => "relayClientInstall", "node" => node}, nodes) do
+    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:relay_client_install, node}}
   end
 
   defp decode_shape(%{"type" => "localServers", "node" => node}, nodes) do

@@ -430,7 +430,7 @@ defmodule T3.Devices do
   @doc false
   def platform_reason("ios") do
     cond do
-      :os.type() != {:unix, :darwin} -> "iOS Simulators need macOS with Xcode."
+      os_type() != {:unix, :darwin} -> "iOS Simulators need macOS with Xcode."
       System.find_executable("xcrun") == nil -> "Xcode command line tools were not found."
       true -> nil
     end
@@ -454,6 +454,9 @@ defmodule T3.Devices do
         nil
     end
   end
+
+  # Tests stand in for a Mac with `config :t3, :os_type`.
+  defp os_type, do: Application.get_env(:t3, :os_type) || :os.type()
 
   defp android_sdk do
     home = System.user_home() || ""

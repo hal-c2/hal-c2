@@ -353,11 +353,19 @@ defmodule T3.Attachments do
     with [payload, _signature] <- String.split(token, ".", parts: 2),
          {:ok, json} <- Base.url_decode64(payload, padding: false),
          {:ok, %{"node" => name}} <- JSON.decode(json),
-         node when node != nil <- Enum.find([node() | Node.list()], &(Atom.to_string(&1) == name)) do
+         node when node != nil <- Enum.find(known_nodes(), &(Atom.to_string(&1) == name)) do
       {:ok, node}
     else
       _ -> :error
     end
+  end
+
+  # Members that went offline stay known to the shell, so their links fail as
+  # unavailable rather than invalid.
+  defp known_nodes do
+    [node() | Node.list()] ++ for {node, _} <- T3.Shell.environments(), do: node
+  rescue
+    ArgumentError -> [node() | Node.list()]
   end
 
   defp sign(claims) do

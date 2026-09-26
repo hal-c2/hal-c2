@@ -17,32 +17,49 @@ defmodule T3.Test.Node do
 
   @doc """
   Starts a node in `dir` and returns what steps need to talk to it:
-  `%{port, environment, home}`.
+  `%{port, environment, home}`. `port` 0 picks a free one.
   """
-  def start(dir) do
+  def start(dir, port \\ 0) do
     File.mkdir_p!(dir)
     Application.put_env(:t3, :home, dir)
-    Application.put_env(:t3, :port, 0)
+    Application.put_env(:t3, :port, port)
     :persistent_term.erase({T3.Web, :token})
     start_supervised!({T3.Store, path: Path.join(dir, "t3.sqlite")})
     start_supervised!(T3.Auth)
     start_supervised!(T3.Streams)
     start_supervised!(T3.Shell)
-    {:ok, {_ip, port}} = ThousandIsland.listener_info(start_supervised!(T3.Web))
-    [{_node, %{"environmentId" => environment}}] = T3.Shell.environments()
+    web = start_supervised!(Supervisor.child_spec(T3.Web, id: T3.Web))
+    # A named node finds its peers as it would at boot (T3_PEERS, the tailnet).
+    for spec <- T3.Application.discovery(dir),
+        do: start_supervised!(Supervisor.child_spec(spec, id: :discovery))
+
+    {:ok, {_ip, port}} = ThousandIsland.listener_info(web)
+    # The port it got, as a configured node knows its own (`mix t3.pair` reads it).
+    Application.put_env(:t3, :port, port)
+    {_, %{"environmentId" => environment}} = List.keyfind(T3.Shell.environments(), node(), 0)
     :ok = T3.Shell.subscribe(self())
     %{port: port, environment: environment, home: dir, store: Path.join(dir, "t3.sqlite")}
   end
 
   @doc """
   Stops the node's services and starts them again on the same state, as a
-  restart does. Sockets are gone afterwards; steps reconnect.
+  restart does, on the same port. Settings, plugins (`T3.Plugins`) and T3
+  Connect, when a step started them, restart too. Sockets are gone afterwards; steps reconnect.
   """
-  def restart(%{home: dir}) do
-    for child <- [T3.Web, T3.Shell, T3.Streams, T3.Auth, T3.Store],
+  def restart(%{home: dir, port: port}) do
+    # Stops first, so a normal shutdown can still release its tunnel.
+    connect? = ExUnit.Callbacks.stop_supervised(T3.Connect.Supervisor) == :ok
+    plugins? = ExUnit.Callbacks.stop_supervised(T3.Plugins) == :ok
+    settings? = ExUnit.Callbacks.stop_supervised(T3.Settings) == :ok
+
+    for child <- [:discovery, T3.Web, T3.Shell, T3.Streams, T3.Auth, T3.Store],
         do: ExUnit.Callbacks.stop_supervised(child)
 
-    start(dir)
+    node = start(dir, port)
+    if settings?, do: ensure(T3.Settings)
+    if plugins?, do: ensure(T3.Plugins)
+    if connect?, do: ensure(T3.Connect.Supervisor)
+    node
   end
 
   @doc "Starts a service under the test supervisor if it is not running yet."
@@ -153,6 +170,112 @@ defmodule T3.Test.Node do
     {_, client} = await(client, &(&1["t"] == "config.usageLimitSources" and &1["id"] == id))
     client
   end
+
+  @doc """
+  An HTTP request to the node (or to a base URL such as `"http://10.0.0.5:3773"`):
+  `{status, body}`, with a JSON body decoded. `opts`: `:bearer`, `:json` (a body to
+  encode), `:form` (a map sent urlencoded).
+  """
+  def http(node_or_base, method, path, opts \\ []) do
+    base =
+      if is_binary(node_or_base), do: node_or_base, else: "http://127.0.0.1:#{node_or_base.port}"
+
+    url = String.to_charlist(base <> path)
+
+    headers =
+      for token <- List.wrap(opts[:bearer]),
+          do: {~c"authorization", ~c"Bearer " ++ String.to_charlist(token)}
+
+    request =
+      cond do
+        body = opts[:json] ->
+          {url, headers, ~c"application/json", JSON.encode!(body)}
+
+        form = opts[:form] ->
+          {url, headers, ~c"application/x-www-form-urlencoded", URI.encode_query(form)}
+
+        true ->
+          {url, headers}
+      end
+
+    {:ok, {{_, status, _}, _, body}} =
+      :httpc.request(method, request, [timeout: 5_000], body_format: :binary)
+
+    case JSON.decode(body) do
+      {:ok, decoded} -> {status, decoded}
+      _ -> {status, body}
+    end
+  end
+
+  @doc "Pairs a device with `scopes` (default standard); returns its bearer access token."
+  def pair(scopes \\ nil, label \\ "Device") do
+    {:ok, %{"credential" => credential}} =
+      T3.Auth.create_pairing_link(%{"scopes" => scopes || T3.Auth.standard_scopes()})
+
+    {:ok, access, _expires, _scopes} = T3.Auth.exchange(credential, %{label: label})
+    access
+  end
+
+  @doc "Pairs over HTTP as a client does: posts `credential` to `/oauth/token`; `{status, body}`."
+  def pair_http(node_or_base, credential, label \\ "Device") do
+    http(node_or_base, :post, "/oauth/token",
+      form: %{
+        "grant_type" => "urn:ietf:params:oauth:grant-type:token-exchange",
+        "subject_token_type" => "urn:t3:params:oauth:token-type:environment-bootstrap",
+        "subject_token" => credential,
+        "client_label" => label
+      }
+    )
+  end
+
+  @doc "Opens a socket for a bearer access token (through a WebSocket ticket)."
+  def connect_as(node, access) do
+    {:ok, ticket, _} = T3.Auth.issue_ticket(access)
+    connect(node, "wsTicket=#{ticket}")
+  end
+
+  @doc "A non-loopback IPv4 address of this machine, as a string (what LAN clients dial)."
+  def lan_address do
+    {:ok, interfaces} = :inet.getifaddrs()
+
+    ips =
+      for {_name, opts} <- interfaces,
+          {:addr, {a, _, _, _} = ip} <- opts,
+          a != 127,
+          do: ip
+
+    assert ip = List.first(ips), "no LAN address on this machine"
+    ip |> :inet.ntoa() |> List.to_string()
+  end
+
+  @doc """
+  Runs a Mix task (`Mix.Tasks.T3.Pair`, say) in the node's home as an operator
+  would and returns the lines it printed. A `Mix.raise` comes back as `{:error, message}`.
+  """
+  def run_task(task, args) do
+    previous = Mix.shell()
+    Mix.shell(Mix.Shell.Process)
+
+    try do
+      task.run(args)
+      collect_info([])
+    rescue
+      e in Mix.Error -> {:error, e.message}
+    after
+      Mix.shell(previous)
+    end
+  end
+
+  defp collect_info(lines) do
+    receive do
+      {:mix_shell, :info, [line]} -> collect_info([line | lines])
+    after
+      0 -> Enum.reverse(lines)
+    end
+  end
+
+  @doc "The scopes an administrator's session carries."
+  def admin_scopes, do: T3.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
 end
 
 defmodule T3.Test.Node.World do
@@ -402,4 +525,30 @@ defmodule T3.Test.Node.World do
   def days(n), do: n * 24 * 60 * 60 * 1_000
 
   def slug(title), do: title |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
+
+  @doc """
+  Waits until `fun` returns a truthy value for a thread's stream state
+  (`T3.Streams.Server.state/1`), checking again after each event; returns it.
+  """
+  def await_stream(thread_id, fun, timeout \\ 5_000) do
+    :ok = T3.Streams.subscribe(thread_id, self(), nil)
+
+    try do
+      await_stream_state(thread_id, fun, timeout)
+    after
+      T3.Streams.unsubscribe(thread_id, self())
+    end
+  end
+
+  defp await_stream_state(thread_id, fun, timeout) do
+    if result = fun.(T3.Streams.Server.state(T3.Streams.ensure(thread_id))) do
+      result
+    else
+      receive do
+        {:t3_stream, ^thread_id, _} -> await_stream_state(thread_id, fun, timeout)
+      after
+        timeout -> flunk("thread #{thread_id} never reached the expected state")
+      end
+    end
+  end
 end

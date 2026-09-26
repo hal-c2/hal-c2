@@ -25,6 +25,8 @@ defmodule T3.Upgrade do
 
   require Logger
 
+  # `bin/t3-service` starts the node again when it exits with this status. The exit
+  # itself is `:restart_exit` in the app env (`System.stop/1` unless a test swaps it).
   @restart_status 75
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -245,7 +247,7 @@ defmodule T3.Upgrade do
       # After the reply has gone out.
       spawn(fn ->
         Process.sleep(500)
-        System.stop(@restart_status)
+        Application.get_env(:t3, :restart_exit, &System.stop/1).(@restart_status)
       end)
 
       {:ok, result}

@@ -100,11 +100,14 @@ defmodule T3.PullRequests do
   @doc """
   `pullRequests.list`: each GitHub repository read at once, newest update first. A
   repository that could not be read is an entry in `errors` rather than a failure,
-  unless no host the listing covers can be read at all.
+  unless no host the listing covers can be read at all. Repositories on a host a git
+  host plugin serves (`T3.Plugins.GitHost`) are read through it, on the first page.
   """
   def list(input) do
     with {:ok, cursors} <- decode_cursors(input["cursors"]) do
       {github, others} = input |> workspace() |> Enum.split_with(&(&1.kind == "github"))
+      {hosted, others} = Enum.split_with(others, &T3.Plugins.git_host(&1.host))
+      plugged = if cursors, do: plugin_listing([]), else: plugin_listing(hosted)
 
       identities =
         github
@@ -117,6 +120,7 @@ defmodule T3.PullRequests do
 
       providers =
         for({host, identity} <- identities, do: provider(host, counts[host], identity)) ++
+          plugged.providers ++
           for {host, [first | _] = on_host} <- Enum.group_by(others, & &1.host) do
             %{
               "host" => host,
@@ -140,11 +144,11 @@ defmodule T3.PullRequests do
 
         case Enum.find(failures, &(elem(&1, 0) in [:missing, :unauthenticated])) ||
                List.first(failures) do
-          nil ->
+          failure when failure == nil or hosted != [] ->
             {:ok,
              Map.merge(result, %{
-               "entries" => [],
-               "errors" => [],
+               "entries" => plugged.entries,
+               "errors" => plugged.errors,
                "truncated" => false,
                "nextCursors" => %{}
              })}
@@ -165,13 +169,52 @@ defmodule T3.PullRequests do
         {:ok,
          Map.merge(result, %{
            "entries" =>
-             batches |> Enum.flat_map(& &1.entries) |> Enum.sort_by(& &1["updatedAt"], :desc),
-           "errors" => Enum.map(unreadable, &unreadable/1) ++ Enum.flat_map(batches, & &1.errors),
+             (Enum.flat_map(batches, & &1.entries) ++ plugged.entries)
+             |> Enum.sort_by(& &1["updatedAt"], :desc),
+           "errors" =>
+             Enum.map(unreadable, &unreadable/1) ++
+               Enum.flat_map(batches, & &1.errors) ++ plugged.errors,
            "truncated" => Enum.any?(batches, & &1.truncated),
            "nextCursors" => for(b <- batches, b.next, into: %{}, do: {b.key, b.next})
          })}
       end
     end
+  end
+
+  # Repositories read through their host's plugin, which names their entries' provider.
+  defp plugin_listing(projects) do
+    at = System.system_time(:millisecond)
+
+    reads =
+      for project <- projects, plugin = T3.Plugins.git_host(project.host) do
+        {project, plugin, T3.Plugins.pull_requests(plugin, project.repository)}
+      end
+
+    %{
+      providers:
+        for {host, [{_, plugin, _} | _] = on_host} <- Enum.group_by(reads, &elem(&1, 0).host) do
+          %{
+            "host" => host,
+            "kind" => plugin,
+            "searchesOnHost" => false,
+            "projectCount" => length(on_host),
+            "configured" => true,
+            "detail" => nil
+          }
+        end,
+      entries:
+        for {project, plugin, {:ok, items}} <- reads, item <- items do
+          Map.merge(item, %{
+            "provider" => plugin,
+            "host" => project.host,
+            "projectId" => project.id,
+            "projectTitle" => project.title,
+            "repository" => project.repository,
+            "observedAt" => at
+          })
+        end,
+      errors: for({project, _, {:error, _}} <- reads, do: unreadable(project))
+    }
   end
 
   defp provider(host, count, identity) do

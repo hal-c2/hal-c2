@@ -146,7 +146,7 @@ Feature: Clustering one person's machines
     Then the app hands over the join bundle privately
     And the other machine joins without the command line
 
-  @backlog @node
+  @node
   Scenario: A member removed from the cluster can no longer connect
     Given a member whose certificate was revoked
     When it tries to connect

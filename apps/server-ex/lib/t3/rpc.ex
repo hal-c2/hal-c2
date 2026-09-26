@@ -157,6 +157,7 @@ defmodule T3.Rpc do
   def handle("review.getDiffPreview", input), do: T3.Review.diff_preview(input)
   def handle("review.getDiffFileContents", input), do: T3.Review.file_contents(input)
   def handle("pullRequests." <> method, input), do: T3.PullRequests.handle(method, input)
+  def handle("plugins." <> method, input), do: T3.Plugins.handle(method, input)
   def handle("git.resolvePullRequest", input), do: T3.PullRequests.Checkout.resolve(input)
   def handle("git.preparePullRequestThread", input), do: T3.PullRequests.Checkout.prepare(input)
   def handle("vcs.refreshStatus", input), do: T3.Vcs.refresh_status(input)
@@ -173,5 +174,6 @@ defmodule T3.Rpc do
   def handle("terminal.clear", input), do: T3.Terminal.clear(input)
   def handle("terminal.restart", input), do: T3.Terminal.restart(input)
   def handle("terminal.close", input), do: T3.Terminal.close(input)
+  def handle("cloud.getRelayClientStatus", _), do: {:ok, T3.Connect.RelayClient.resolve()}
   def handle(method, _payload), do: {:error, "#{method} is not served by this node yet"}
 end

@@ -32,7 +32,7 @@ Feature: How clients reach an environment
     When a client on the node's machine connects to the loopback address
     Then it reaches the node
 
-  @backlog @node
+  @node
   Scenario: An operator starts a node that listens on its LAN address
     When an operator starts the node with a LAN host
     Then clients on the LAN can pair with it
@@ -83,20 +83,20 @@ Feature: How clients reach an environment
     When the user turns on Tailscale HTTPS
     Then the client says to start Tailscale to set up HTTPS through MagicDNS
 
-  @backlog @node
+  @node
   Scenario: An operator pairs over Tailscale HTTPS from the command line
     Given the node's machine is on a tailnet
     When an operator asks for a Tailscale pairing link
     Then the node is served at its tailnet HTTPS name
     And the printed link uses that name
 
-  @backlog @node
+  @node
   Scenario: The Tailscale route survives a restart
     Given an operator created a Tailscale pairing link
     When the node restarts
     Then the tailnet HTTPS name still reaches it
 
-  @backlog @node
+  @node
   Scenario: A taken Tailscale port can be replaced
     Given the default tailnet HTTPS port is in use
     When an operator asks for a Tailscale pairing link on another port

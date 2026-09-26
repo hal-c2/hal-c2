@@ -73,7 +73,7 @@ Feature: Agent providers are plugins
     Then "acme-native" is listed as a provider
     And it can run turns in "shop"
 
-  @node @backlog
+  @node
   Scenario: A turn on an instance whose plugin is missing is refused clearly
     Given a thread that used the instance "acme_work"
     And the plugin behind "acme_work" has been removed

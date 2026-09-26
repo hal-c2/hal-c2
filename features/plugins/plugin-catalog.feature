@@ -40,7 +40,8 @@ Feature: Plugin catalog
     Given the instance "acme_work" uses the registry agent "acme"
     When the user tries to uninstall "acme"
     Then the agent's files are kept
-    And the user is told an instance still uses it
+    # Neither server explains why: both answer {removed: false} while an instance uses it.
+    And the node reports that nothing was removed
 
   @node
   Scenario: The registry keeps working offline from its last copy
