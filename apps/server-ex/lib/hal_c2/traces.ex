@@ -26,7 +26,7 @@ defmodule HalC2.Traces do
   @doc "The collector client spans are forwarded to, if any."
   def otlp_url, do: Application.get_env(:hal_c2, :otlp_traces_url)
 
-  def path, do: Path.join([Application.fetch_env!(:hal_c2, :home), "logs", "server.trace.ndjson"])
+  def path, do: Path.join([HalC2.Paths.state_dir(), "logs", "server.trace.ndjson"])
 
   @doc """
   Runs `fun` and, while tracing is on, records it as a span named `name`. A result of

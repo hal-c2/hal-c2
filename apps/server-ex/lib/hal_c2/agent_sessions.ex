@@ -160,10 +160,10 @@ defmodule HalC2.AgentSessions do
   defp cwd(_), do: nil
 
   # The user's home, temp folders, downloads, Codex scratch folders, and HAL-C2's own
-  # worktrees (under `.t3` before the rename) are never projects.
+  # data (its worktrees among it, under `.hal-c2` or `.t3` before XDG) are never projects.
   defp excluded?(path) do
     home = user_home()
-    hal_c2_home = Path.expand(Application.get_env(:hal_c2, :home, Path.join(home, ".hal-c2")))
+    hal_c2_home = Path.expand(HalC2.Paths.data_dir())
 
     path in [home, Path.expand(System.tmp_dir!()), "/tmp", "/private/tmp"] or
       Enum.any?(

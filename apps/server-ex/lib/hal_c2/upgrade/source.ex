@@ -257,8 +257,9 @@ defmodule HalC2.Upgrade.Source do
 
   # --- paths ---------------------------------------------------------------------------
 
-  defp cache_dir(version),
-    do: Path.join([Application.fetch_env!(:hal_c2, :home), "upgrades", version])
+  @doc false
+  def cache_dir(version),
+    do: Path.join([HalC2.Paths.data_dir(), "upgrades", version])
 
   defp archive_path(version, platform),
     do: Path.join(cache_dir(version), file_name(version, platform))

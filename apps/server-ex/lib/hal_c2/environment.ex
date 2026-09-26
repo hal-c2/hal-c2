@@ -129,8 +129,6 @@ defmodule HalC2.Environment do
   """
   @spec server_config() :: map
   def server_config do
-    home = Application.fetch_env!(:hal_c2, :home)
-
     %{
       "environment" => descriptor(),
       "auth" => %{
@@ -140,7 +138,7 @@ defmodule HalC2.Environment do
         "sessionCookieName" => "hal_c2_session"
       },
       "cwd" => File.cwd!(),
-      "keybindingsConfigPath" => Path.join(home, "keybindings.json"),
+      "keybindingsConfigPath" => Path.join(HalC2.Paths.config_dir(), "keybindings.json"),
       # Clients compile the rules with the defaults into `keybindings`.
       "keybindings" => [],
       "keybindingRules" => HalC2.Keybindings.rules(),
@@ -149,7 +147,7 @@ defmodule HalC2.Environment do
       "availableEditors" => HalC2.Editors.available(),
       "observability" =>
         %{
-          "logsDirectoryPath" => Path.join(home, "logs"),
+          "logsDirectoryPath" => Path.join(HalC2.Paths.state_dir(), "logs"),
           "localTracingEnabled" => HalC2.Traces.enabled?(),
           "otlpTracesEnabled" => HalC2.Traces.otlp_url() != nil,
           "otlpMetricsEnabled" => false,
@@ -225,7 +223,7 @@ defmodule HalC2.Environment do
   def id do
     case :persistent_term.get({__MODULE__, :id}, nil) do
       nil ->
-        path = Path.join(Application.fetch_env!(:hal_c2, :home), "environment-id")
+        path = Path.join(HalC2.Paths.data_dir(), "environment-id")
 
         id =
           case File.read(path) do

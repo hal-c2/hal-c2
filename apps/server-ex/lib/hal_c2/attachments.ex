@@ -585,7 +585,7 @@ defmodule HalC2.Attachments do
   defp secret do
     case :persistent_term.get({__MODULE__, :secret}, nil) do
       nil ->
-        path = Path.join([home(), "secrets", "asset-signing-key"])
+        path = Path.join([HalC2.Paths.data_dir(), "secrets", "asset-signing-key"])
 
         key =
           case File.read(path) do
@@ -643,7 +643,7 @@ defmodule HalC2.Attachments do
     if segment in ["", "pending"], do: "_pending", else: segment
   end
 
-  defp dir, do: Path.join(home(), "attachments")
-  defp home, do: Application.fetch_env!(:hal_c2, :home)
+  @doc false
+  def dir, do: Path.join(HalC2.Paths.data_dir(), "attachments")
   defp now_ms, do: System.system_time(:millisecond)
 end

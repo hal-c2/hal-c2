@@ -676,13 +676,11 @@ defmodule HalC2.Terminal do
 
   # `terminal_id` "*" gives a wildcard pattern for all of a thread's terminals.
   defp history_path(thread_id, terminal_id) do
-    home = Application.fetch_env!(:hal_c2, :home)
-
     terminal =
       if terminal_id == "*", do: "*", else: Base.url_encode64(terminal_id, padding: false)
 
     name = "terminal_#{Base.url_encode64(thread_id, padding: false)}_#{terminal}.log"
-    Path.join([home, "terminals", name])
+    Path.join([HalC2.Paths.state_dir(), "terminals", name])
   end
 
   defp now, do: DateTime.utc_now() |> DateTime.to_iso8601()

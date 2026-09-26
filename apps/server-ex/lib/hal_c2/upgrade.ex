@@ -465,7 +465,7 @@ defmodule HalC2.Upgrade do
   defp announce, do: HalC2.Settings.notify_upgraded(outcome())
 
   defp outcome_path,
-    do: Path.join([Application.fetch_env!(:hal_c2, :home), "upgrades", "outcome.json"])
+    do: Path.join([HalC2.Paths.data_dir(), "upgrades", "outcome.json"])
 
   defp notify(nil, _stage), do: :ok
 

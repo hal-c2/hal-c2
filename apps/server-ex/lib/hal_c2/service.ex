@@ -3,7 +3,13 @@ defmodule HalC2.Service do
   The node as a background service for the operator's user (`hal-c2 service`,
   `apps/server/src/cloud/bootService.ts`): a systemd user unit on Linux, a
   LaunchAgent on macOS. The unit runs the release's `bin/hal-c2-service` (or
-  `mix hal_c2.server` from a checkout) with this node's home.
+  `mix hal_c2.server` from a checkout). It names a home only when the user chose one
+  (`HAL_C2_NODE_HOME`, or a `HAL_C2_HOME` that is not an old home); otherwise the
+  service uses the XDG directories (`HalC2.Paths`). A unit written before, by
+  T3 Code or before the rename (`t3code.service`, `com.t3tools.t3code.service`,
+  `io.github.halc2.halc2.service`) and with `T3CODE_HOME` or an old home in it, is
+  still found by its path; `status` and `uninstall` see it, and installing again
+  replaces it.
 
   HAL-C2 Connect offers to install it (`mix hal_c2.connect`), but the two are managed
   separately: signing out of HAL-C2 Connect never stops or removes the service.
@@ -18,6 +24,9 @@ defmodule HalC2.Service do
 
   @unit "hal-c2.service"
   @label "io.github.halc2.service"
+  # Units written before the rename (T3 Code's, and HAL-C2's first launchd label).
+  @old_units ["t3code.service"]
+  @old_labels ["com.t3tools.t3code.service", "io.github.halc2.halc2.service"]
 
   @doc "Runs a `bin/hal-c2-service` subcommand and prints its outcome; exits 1 on failure."
   def main(args) do
@@ -76,13 +85,14 @@ defmodule HalC2.Service do
 
       manager ->
         path = unit_path(manager)
-        existing = File.read(path)
+        installed = installed(manager)
 
         %{
           "supported" => true,
-          "installed" => match?({:ok, _}, existing),
-          "current" => existing == {:ok, render(manager)},
-          "unitPath" => path,
+          "installed" => installed != [],
+          "current" =>
+            installed == [{name(manager), path}] and File.read(path) == {:ok, render(manager)},
+          "unitPath" => if(installed == [], do: path, else: installed |> hd() |> elem(1)),
           "logPath" => log_path()
         }
     end
@@ -96,11 +106,17 @@ defmodule HalC2.Service do
     with manager when manager != nil <- manager() || {:error, unsupported()} do
       before = status()
       path = unit_path(manager)
-      File.mkdir_p!(Path.dirname(path))
-      File.mkdir_p!(Path.dirname(log_path()))
-      File.write!(path, render(manager))
 
-      case run_all(activate(manager, path)) do
+      # A unit from before the rename is replaced by this one.
+      result =
+        with :ok <- remove(manager, Enum.reject(installed(manager), &(elem(&1, 1) == path))) do
+          File.mkdir_p!(Path.dirname(path))
+          File.mkdir_p!(Path.dirname(log_path()))
+          File.write!(path, render(manager))
+          run_all(activate(manager, path))
+        end
+
+      case result do
         :ok -> {:ok, Map.put(status(), "previouslyInstalled", before["installed"])}
         error -> error
       end
@@ -109,19 +125,32 @@ defmodule HalC2.Service do
 
   @doc "Stops the service and removes it from startup. Projects and settings stay."
   def uninstall do
-    with manager when manager != nil <- manager() || {:error, unsupported()} do
-      path = unit_path(manager)
+    with manager when manager != nil <- manager() || {:error, unsupported()},
+         do: remove(manager, installed(manager))
+  end
 
-      if File.exists?(path) do
-        with :ok <- run_all(deactivate(manager, path)) do
-          File.rm!(path)
-          if manager == :systemd, do: run_all([{"systemctl", ["--user", "daemon-reload"]}])
-          :ok
+  defp remove(_manager, []), do: :ok
+
+  defp remove(manager, units) do
+    result =
+      Enum.reduce_while(units, :ok, fn {name, path}, :ok ->
+        case run_all(deactivate(manager, name)) do
+          :ok -> {:cont, File.rm!(path)}
+          error -> {:halt, error}
         end
-      else
-        :ok
-      end
-    end
+      end)
+
+    if result == :ok and manager == :systemd,
+      do: run_all([{"systemctl", ["--user", "daemon-reload"]}]),
+      else: result
+  end
+
+  # The units on disk as `{name, path}`, this node's first, then any from before the rename.
+  defp installed(manager) do
+    for name <- [name(manager) | old_names(manager)],
+        path = unit_path(manager, name),
+        File.exists?(path),
+        do: {name, path}
   end
 
   # --- platform ----------------------------------------------------------------------
@@ -138,13 +167,30 @@ defmodule HalC2.Service do
 
   defp user_home, do: Application.get_env(:hal_c2, :service_user_home) || System.user_home!()
 
-  defp unit_path(:systemd), do: Path.join([user_home(), ".config", "systemd", "user", @unit])
+  defp name(:systemd), do: @unit
+  defp name(:launchd), do: @label
 
-  defp unit_path(:launchd),
-    do: Path.join([user_home(), "Library", "LaunchAgents", @label <> ".plist"])
+  defp old_names(:systemd), do: @old_units
+  defp old_names(:launchd), do: @old_labels
 
-  defp log_path,
-    do: Path.join([Application.fetch_env!(:hal_c2, :home), "logs", "boot-service.log"])
+  defp unit_path(manager), do: unit_path(manager, name(manager))
+
+  defp unit_path(:systemd, unit), do: Path.join([user_home(), ".config", "systemd", "user", unit])
+
+  defp unit_path(:launchd, label),
+    do: Path.join([user_home(), "Library", "LaunchAgents", label <> ".plist"])
+
+  defp log_path, do: Path.join([HalC2.Paths.state_dir(), "logs", "boot-service.log"])
+
+  # The home variables the user set for this process that the unit should keep:
+  # `HAL_C2_NODE_HOME`, or a `HAL_C2_HOME` root. An old home is never written back.
+  defp chosen_home do
+    for {name, kind} <- [{"HAL_C2_NODE_HOME", :node}, {"HAL_C2_HOME", :root}],
+        dir = System.get_env(name),
+        dir not in [nil, ""],
+        HalC2.Paths.root?(dir, kind, HalC2.Paths.user_home()),
+        do: {name, String.trim(dir)}
+  end
 
   # Linger keeps the user manager, and so the service, running after logout.
   defp activate(:systemd, _path) do
@@ -167,10 +213,10 @@ defmodule HalC2.Service do
     ]
   end
 
-  defp deactivate(:systemd, _path), do: [{"systemctl", ["--user", "disable", "--now", @unit]}]
+  defp deactivate(:systemd, unit), do: [{"systemctl", ["--user", "disable", "--now", unit]}]
 
-  defp deactivate(:launchd, _path),
-    do: [{"launchctl", ["bootout", "gui/#{uid()}/#{@label}"], :ignore}]
+  defp deactivate(:launchd, label),
+    do: [{"launchctl", ["bootout", "gui/#{uid()}/#{label}"], :ignore}]
 
   defp uid do
     {out, 0} = System.cmd("id", ["-u"])
@@ -190,7 +236,7 @@ defmodule HalC2.Service do
     log = log_path()
 
     Enum.join(
-      [
+      List.flatten([
         "[Unit]",
         "Description=HAL-C2 server",
         "StartLimitIntervalSec=300",
@@ -199,7 +245,7 @@ defmodule HalC2.Service do
         "[Service]",
         "Type=simple",
         "WorkingDirectory=#{quote_value(cwd)}",
-        "Environment=HAL_C2_NODE_HOME=#{quote_value(Application.fetch_env!(:hal_c2, :home))}",
+        for({name, dir} <- chosen_home(), do: "Environment=#{name}=#{quote_value(dir)}"),
         "Environment=PATH=#{quote_value(System.get_env("PATH", ""))}",
         "ExecStart=#{Enum.map_join(argv, " ", &quote_value/1)}",
         "KillMode=mixed",
@@ -212,7 +258,7 @@ defmodule HalC2.Service do
         "[Install]",
         "WantedBy=default.target",
         ""
-      ],
+      ]),
       "\n"
     )
   end
@@ -228,6 +274,11 @@ defmodule HalC2.Service do
 
     log = x.(log_path())
 
+    env =
+      Enum.map_join([{"PATH", System.get_env("PATH", "")} | chosen_home()], "\n", fn {k, v} ->
+        "    <key>#{k}</key>\n    <string>#{x.(v)}</string>"
+      end)
+
     """
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -241,10 +292,7 @@ defmodule HalC2.Service do
       </array>
       <key>EnvironmentVariables</key>
       <dict>
-        <key>PATH</key>
-        <string>#{x.(System.get_env("PATH", ""))}</string>
-        <key>HAL_C2_NODE_HOME</key>
-        <string>#{x.(Application.fetch_env!(:hal_c2, :home))}</string>
+    #{env}
       </dict>
       <key>WorkingDirectory</key>
       <string>#{x.(cwd)}</string>

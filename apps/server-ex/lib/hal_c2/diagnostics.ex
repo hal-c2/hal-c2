@@ -89,8 +89,7 @@ defmodule HalC2.Diagnostics do
 
   defp untraced do
     %{
-      "traceFilePath" =>
-        Path.join([Application.fetch_env!(:hal_c2, :home), "logs", "server.trace.ndjson"]),
+      "traceFilePath" => Path.join([HalC2.Paths.state_dir(), "logs", "server.trace.ndjson"]),
       "scannedFilePaths" => [],
       "readAt" => now(),
       "recordCount" => 0,

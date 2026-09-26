@@ -295,7 +295,7 @@ defmodule HalC2.Test.AcpFixtures do
     )
 
     :persistent_term.erase({HalC2.Acp.Catalog, :index})
-    File.rm(Path.join([ctx.node.home, "cache", "acp-registry", "registry.json"]))
+    File.rm(Path.join([HalC2.Paths.cache_dir(), "acp-registry", "registry.json"]))
     ctx
   end
 

@@ -112,7 +112,7 @@ defmodule HalC2.UsageLimitSources do
   defp key_path(id),
     do:
       Path.join([
-        Application.fetch_env!(:hal_c2, :home),
+        HalC2.Paths.data_dir(),
         "secrets",
         "usage-limit-source-#{Base.url_encode64(id, padding: false)}.bin"
       ])

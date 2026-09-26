@@ -141,13 +141,13 @@ defmodule HalC2.AuthTest do
       HalC2.Desktop.apply_bootstrap(%{
         "port" => 4123,
         "host" => "0.0.0.0",
-        "halC2Home" => "/home/me/.hal-c2",
+        "halC2Home" => "/home/me/hal-c2-profile",
         "noBrowser" => true
       })
 
     assert Application.get_env(:hal_c2, :port) == 4123
     assert Application.get_env(:hal_c2, :host) == "0.0.0.0"
-    assert Application.get_env(:hal_c2, :home) == "/home/me/.hal-c2/elixir"
+    assert Application.get_env(:hal_c2, :home) == {:root, "/home/me/hal-c2-profile"}
   end
 
   test "browsers on other origins may call the node", %{port: port} do

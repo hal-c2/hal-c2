@@ -17,7 +17,7 @@ defmodule Mix.Tasks.HalC2.Import do
   @impl true
   def run([source]) do
     Mix.Task.run("app.config")
-    home = Application.fetch_env!(:hal_c2, :home)
+    home = HalC2.Paths.data_dir()
     {:ok, _} = Application.ensure_all_started(:exqlite)
     {:ok, _} = HalC2.Store.start_link(path: HalC2.Store.home_path())
 

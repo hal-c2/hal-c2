@@ -4,7 +4,8 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   import ExUnit.Assertions
 
   alias Exqlite.Sqlite3
-  alias HalC2.Test.{Node, WsClient}
+  alias HalC2.Paths
+  alias HalC2.Test.{Node, Storage, WsClient}
   alias HalC2.Test.Node.World
 
   # Boot configuration is read the way a node boots: `config/config.exs` for the
@@ -14,9 +15,15 @@ defmodule HalC2.Steps.Platform.NodeStartup do
 
   # --- the printed URL -------------------------------------------------------------------
 
+  # With the scenario's user (`HalC2.Test.Storage`) the node starts from a checkout
+  # under their home, as `mix hal_c2.server` does there.
   step "a developer starts the node from a checkout", context do
-    [line] = World.mix_output(Mix.Tasks.HalC2.Server, :announce)
-    Map.merge(context, %{printed: line, boot: boot_config(:dev)})
+    if context[:storage_user] do
+      Storage.start_checkout(context, :checkout)
+    else
+      [line] = World.mix_output(Mix.Tasks.HalC2.Server, :announce)
+      Map.merge(context, %{printed: line, boot: boot_config(:dev)})
+    end
   end
 
   step "it prints a WebSocket URL on loopback with the node's own access token", context do
@@ -51,13 +58,6 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     Map.put(context, :boot_env, :prod)
   end
 
-  step "the home directory is set with its name from before the rename, T3CODE_HOME={string}",
-       %{args: [home]} = context do
-    clear_home_env()
-    World.put_os_env("T3CODE_HOME", home)
-    Map.put(context, :boot_env, :prod)
-  end
-
   step "the bind host is set to {string} in the environment", %{args: [host]} = context do
     World.put_os_env("HAL_C2_NODE_HOST", nil)
     World.put_os_env("HAL_C2_HOST", host)
@@ -75,63 +75,75 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     context
   end
 
-  step "its database, logs and worktrees live under {string}", %{args: [home]} = context do
-    boot = boot_config(context.boot_env)
-    assert boot[:home] == home
-
-    paths =
-      with_app_env([home: home], fn ->
-        [
-          HalC2.Store.home_path(),
-          HalC2.Traces.path(),
-          HalC2.ProviderLog.path("thread-1"),
-          HalC2.Vcs.worktree_path("/code/app", "feature/login")
-        ]
-      end)
-
-    for path <- paths, do: assert(String.starts_with?(path, home <> "/"), path)
-    context
-  end
-
   step "no home directory is configured", context do
-    clear_home_env()
+    Storage.user(context)
+  end
+
+  step "its settings are in {string}", %{args: [dir]} = context do
+    expected = Storage.path(context, dir)
+    assert Paths.config_dir() == expected
+    :ok = World.merge_settings(%{"providers" => %{"grok" => %{"enabled" => false}}})
+    assert File.regular?(Path.join(expected, "settings.json"))
     context
   end
 
-  step "its state lives in the checkout's {string} directory", %{args: [dir]} = context do
-    {top, 0} = System.cmd("git", ["rev-parse", "--show-toplevel"], cd: project_dir())
-    top = String.trim(top)
-    expected = Path.join(top, dir)
-    # A checkout that only has the sandbox from before the rename keeps it.
-    legacy = Path.join(top, ".t3/elixir")
+  step ~r/^its database, secrets and worktrees are in (?<dir>.+)$/, %{args: [dir]} = context do
+    expected = where(context, dir)
+    assert Paths.data_dir() == expected
+    assert HalC2.Store.home_path() == Path.join(expected, "hal-c2.sqlite")
+    assert File.regular?(HalC2.Store.home_path())
+    :ok = HalC2.Connect.Secrets.put("relay-token", "s3cret")
+    assert File.regular?(Path.join(expected, "secrets/relay-token.bin"))
+    worktree = HalC2.Vcs.worktree_path("/code/app", "feature/login")
+    assert String.starts_with?(worktree, Path.join(expected, "worktrees") <> "/")
+    context
+  end
 
-    if File.dir?(expected) or not File.dir?(legacy),
-      do: assert(context.boot[:home] == expected),
-      else: assert(context.boot[:home] == legacy)
+  step ~r/^its logs are in (?<dir>.+)$/, %{args: [dir]} = context do
+    expected = where(context, dir)
+    assert Path.join(Paths.state_dir(), "logs") == expected
+    assert HalC2.Environment.server_config()["observability"]["logsDirectoryPath"] == expected
+
+    for path <- [HalC2.Traces.path(), HalC2.ProviderLog.path("thread-1")],
+        do: assert(String.starts_with?(path, expected <> "/"), path)
 
     context
   end
 
-  step "the user's home holds the node state of an install from before the rename", context do
-    user_home = Node.tmp_dir(context.node, "user-home")
-    File.mkdir_p!(Path.join(user_home, ".t3/elixir"))
-    Map.put(context, :user_home, user_home)
+  step "its downloaded tools are in {string}", %{args: [dir]} = context do
+    expected = Storage.path(context, dir)
+    assert String.starts_with?(HalC2.Acp.Antigravity.managed_dir(), expected <> "/")
+    context
+  end
+
+  step ~r/^its database is in (?<dir>.+)$/, %{args: [dir]} = context do
+    expected = where(context, dir)
+    assert HalC2.Store.home_path() == Path.join(expected, "hal-c2.sqlite")
+    assert File.regular?(HalC2.Store.home_path())
+    context
+  end
+
+  step "the user's home has a {string} directory", %{args: [dir]} = context do
+    context = Storage.user(context)
+    File.mkdir_p!(Storage.path(context, dir))
+    context
+  end
+
+  step "nothing is written to the user's XDG directories", context do
+    for dir <- ~w(~/.config/hal-c2 ~/.local/share/hal-c2 ~/.local/state/hal-c2 ~/.cache/hal-c2),
+        do: Storage.assert_untouched(context, Storage.path(context, dir))
+
+    context
   end
 
   step "a user starts the node from a release", context do
-    user_home = context[:user_home] || Node.tmp_dir(context.node, "user-home")
-    Map.merge(context, %{user_home: user_home, boot: release_boot(user_home)})
-  end
-
-  step "its state lives in {string}", %{args: ["~/" <> rest]} = context do
-    assert context.boot[:home] == Path.join(context.user_home, rest)
-    context
+    Storage.start(context)
   end
 
   step "the node starts from a checkout or a release", context do
     World.put_os_env("HAL_C2_HOST", nil)
     World.put_os_env("HAL_C2_NODE_HOST", nil)
-    boots = [boot_config(:dev), release_boot(Node.tmp_dir(context.node, "user-home"))]
+    boots = [boot_config(:dev), boot_config(:prod)]
     Map.put(context, :boots, boots)
   end
 
@@ -185,8 +197,12 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   # --- identity ---------------------------------------------------------------------------
 
   step "the node starts for the first time", context do
-    fresh = Node.tmp_dir(context.node, "fresh-home")
-    %{context | node: Node.restart(%{context.node | home: fresh}), clients: %{}}
+    if context[:storage_user] do
+      Storage.first_start(context)
+    else
+      fresh = Node.tmp_dir(context.node, "fresh-home")
+      %{context | node: Node.restart(%{context.node | home: fresh}), clients: %{}}
+    end
   end
 
   step "it writes an access token file readable only by its owner", context do
@@ -330,7 +346,8 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     user_home = Node.tmp_dir(context.node, "user-home")
     World.put_app_env(:service_user_home, user_home)
     World.put_app_env(:service_platform, {:unix, :linux})
-    tools = fake_service_manager(context)
+    for name <- ~w(HAL_C2_NODE_HOME HAL_C2_HOME), do: World.put_os_env(name, nil)
+    tools = Storage.service_manager(context)
     assert {:ok, status} = HalC2.Service.install()
     Map.merge(context, %{service: status, service_tools: tools})
   end
@@ -339,16 +356,18 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     unit = File.read!(context.service["unitPath"])
     release = System.get_env("RELEASE_ROOT")
     assert unit =~ "ExecStart=#{release}/bin/hal-c2-service"
-    assert unit =~ "Environment=HAL_C2_NODE_HOME=#{context.node.home}"
+    # The user named no home, so the service finds the node's directories itself.
+    refute unit =~ "HAL_C2_NODE_HOME"
+    refute unit =~ "HAL_C2_HOME"
     assert context.service["installed"] and context.service["current"]
-    assert "--user daemon-reload" in calls(context)
-    assert "--user restart hal-c2.service" in calls(context)
+    assert "systemctl --user daemon-reload" in calls(context)
+    assert "systemctl --user restart hal-c2.service" in calls(context)
     context
   end
 
   step "it starts on login", context do
     assert File.read!(context.service["unitPath"]) =~ "WantedBy=default.target"
-    assert "--user enable hal-c2.service" in calls(context)
+    assert "systemctl --user enable hal-c2.service" in calls(context)
     # Lingering keeps it running after the user logs out.
     assert File.exists?(Path.join(Path.dirname(context.service_tools), "linger"))
     context
@@ -359,7 +378,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     assert log == Path.join([context.node.home, "logs", "boot-service.log"])
 
     assert :ok = HalC2.Service.uninstall()
-    assert "--user disable --now hal-c2.service" in calls(context)
+    assert "systemctl --user disable --now hal-c2.service" in calls(context)
     refute HalC2.Service.status()["installed"]
 
     refute File.exists?(context.service["unitPath"])
@@ -473,10 +492,26 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   step "the desktop app launches the node in bootstrap mode", context do
     World.put_os_env("HAL_C2_BOOTSTRAP_STDIN", "1")
     # Everything the bootstrap sets comes back when the scenario ends.
-    for key <- [:home, :port, :host, :desktop_token],
-        do: World.put_app_env(key, Application.get_env(:hal_c2, key))
+    # Restored after the scenario; a key that was unset stays unset.
+    for key <- [:home, :port, :host, :desktop_token] do
+      previous = Application.fetch_env(:hal_c2, key)
+      World.put_app_env(key, nil)
+      with {:ok, value} <- previous, do: Application.put_env(:hal_c2, key, value)
+      if previous == :error, do: Application.delete_env(:hal_c2, key)
+    end
 
     context
+  end
+
+  step "the desktop app launches the node in bootstrap mode with the HAL-C2 home {string}",
+       %{args: [home]} = context do
+    context = Storage.user(context)
+    desktop_bootstrap(context, %{"halC2Home" => Storage.path(context, home)})
+  end
+
+  step "the desktop app launches the node in bootstrap mode without a HAL-C2 home", context do
+    context = Storage.user(context)
+    desktop_bootstrap(context, %{})
   end
 
   step "it writes the port, host, HAL-C2 home and bootstrap token as one line on standard input",
@@ -510,6 +545,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
         do: ExUnit.Callbacks.stop_supervised(child)
 
     :persistent_term.erase({HalC2.Web, :token})
+    HalC2.Paths.ensure!()
 
     for child <- [
           {HalC2.Store, path: HalC2.Store.home_path()},
@@ -532,15 +568,6 @@ defmodule HalC2.Steps.Platform.NodeStartup do
 
     # The window pairs with the token it passed.
     assert {200, %{"access_token" => _}} = Node.exchange(%{port: port}, context.desktop.token)
-    context
-  end
-
-  step "keeps its state under the {string} directory of that HAL-C2 home",
-       %{args: [dir]} = context do
-    home = Path.join(context.desktop.hal_c2_home, dir)
-    assert Application.fetch_env!(:hal_c2, :home) == home
-    assert HalC2.Store.home_path() == Path.join(home, "hal-c2.sqlite")
-    assert File.exists?(Path.join(home, "access-token"))
     context
   end
 
@@ -621,8 +648,9 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   # --- cluster boot -----------------------------------------------------------------------
 
   step "the home directory holds cluster boot arguments", context do
+    # A node root (HAL_C2_NODE_HOME): the arguments are in its data directory.
     home = Node.tmp_dir(context.node, "clustered")
-    :ok = HalC2.Cluster.init(home, "100.64.0.9")
+    :ok = HalC2.Cluster.init(Path.join(home, "data"), "100.64.0.9")
     Map.put(context, :cluster_home, home)
   end
 
@@ -631,7 +659,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   end
 
   step "it starts with cluster distribution over mutual TLS", context do
-    args_file = Path.join([context.cluster_home, "cluster", "vm.args"])
+    args_file = Path.join([context.cluster_home, "data", "cluster", "vm.args"])
     assert context.release_env["ELIXIR_ERL_OPTIONS"] =~ "-args_file #{args_file}"
     # The release script starts no distribution of its own; the flags do.
     assert context.release_env["RELEASE_DISTRIBUTION"] == "none"
@@ -667,28 +695,13 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   end
 
   # Every variable that names the node's home, now and from before the rename.
-  @home_env ~w(HAL_C2_NODE_HOME HAL_C2_HOME T3_HOME T3CODE_HOME)
+  @home_env ~w(HAL_C2_NODE_HOME HAL_C2_HOME T3_HOME T3CODE_HOME XDG_DATA_HOME)
 
   defp clear_home_env, do: for(name <- @home_env, do: World.put_os_env(name, nil))
 
-  # A release boots with the HAL_C2_NODE_HOME its env.sh settles on for this user.
-  defp release_boot(user_home) do
-    home = release_env(nil, [{"HOME", user_home}])["HAL_C2_NODE_HOME"]
-    previous = System.get_env("HAL_C2_NODE_HOME")
-    System.put_env("HAL_C2_NODE_HOME", home)
-
-    try do
-      boot_config(:prod)
-    after
-      if previous,
-        do: System.put_env("HAL_C2_NODE_HOME", previous),
-        else: System.delete_env("HAL_C2_NODE_HOME")
-    end
-  end
-
   # What rel/env.sh.eex exports, sourced the way the release script does, with
-  # `node_home` as the node's state directory (nil: the script resolves it).
-  defp release_env(node_home, env \\ []) do
+  # `node_home` as the node's root (HAL_C2_NODE_HOME).
+  defp release_env(node_home) do
     script = Path.join(project_dir(), "rel/env.sh.eex")
 
     {out, 0} =
@@ -696,7 +709,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
         "sh",
         [
           "-c",
-          ~s(. "$0"; printf '%s\\n' "$HAL_C2_NODE_HOME" "$RELEASE_DISTRIBUTION" "${ELIXIR_ERL_OPTIONS:-}"),
+          ~s(. "$0"; printf '%s\\n' "$RELEASE_DISTRIBUTION" "${ELIXIR_ERL_OPTIONS:-}"),
           script
         ],
         env:
@@ -704,11 +717,11 @@ defmodule HalC2.Steps.Platform.NodeStartup do
             {"HAL_C2_NODE_HOME", node_home},
             {"RELEASE_DISTRIBUTION", nil},
             {"ELIXIR_ERL_OPTIONS", nil}
-          ] ++ for(name <- @home_env -- ["HAL_C2_NODE_HOME"], do: {name, nil}) ++ env
+          ] ++ for(name <- @home_env -- ["HAL_C2_NODE_HOME"], do: {name, nil})
       )
 
-    [home, dist, opts] = String.split(out, "\n") |> Enum.take(3)
-    %{"HAL_C2_NODE_HOME" => home, "RELEASE_DISTRIBUTION" => dist, "ELIXIR_ERL_OPTIONS" => opts}
+    [dist, opts] = String.split(out, "\n") |> Enum.take(2)
+    %{"RELEASE_DISTRIBUTION" => dist, "ELIXIR_ERL_OPTIONS" => opts}
   end
 
   # `{ip, port}` of the listener `HalC2.Web` would start under `boot`.
@@ -773,39 +786,38 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     end
   end
 
-  # systemctl and loginctl stand-ins on PATH: they log their arguments and keep the
-  # unit's enabled and active state in files, so status reads what install did.
-  defp fake_service_manager(context) do
-    bin = Node.tmp_dir(context.node, "service-bin")
-    File.mkdir_p!(bin)
-    log = Path.join(bin, "calls.log")
+  # Starts the node as the desktop app does: `bootstrap` (and the port, host and token)
+  # on standard input, then the node on the home it names.
+  defp desktop_bootstrap(context, bootstrap) do
+    World.put_os_env("HAL_C2_BOOTSTRAP_STDIN", "1")
 
-    File.write!(Path.join(bin, "systemctl"), """
-    #!/bin/sh
-    echo "$*" >> "#{log}"
-    state="#{bin}"
-    case "$2" in
-      enable) touch "$state/enabled" ;;
-      restart) touch "$state/active" ;;
-      disable) rm -f "$state/enabled" "$state/active" ;;
-      is-enabled) [ -f "$state/enabled" ] || exit 1 ;;
-      is-active) [ -f "$state/active" ] || exit 3 ;;
-    esac
-    exit 0
-    """)
+    # Restored after the scenario; a key that was unset stays unset.
+    for key <- [:home, :port, :host, :desktop_token] do
+      previous = Application.fetch_env(:hal_c2, key)
+      World.put_app_env(key, nil)
+      with {:ok, value} <- previous, do: Application.put_env(:hal_c2, key, value)
+      if previous == :error, do: Application.delete_env(:hal_c2, key)
+    end
 
-    File.write!(Path.join(bin, "loginctl"), """
-    #!/bin/sh
-    case "$1" in
-      enable-linger) touch "#{bin}/linger" ;;
-      show-user) [ -f "#{bin}/linger" ] && echo Linger=yes || echo Linger=no ;;
-    esac
-    """)
+    Application.put_env(:hal_c2, :home, Storage.release_spec())
+    line = JSON.encode!(Map.merge(%{"desktopBootstrapToken" => "desktop-token"}, bootstrap))
+    {:ok, stdin} = StringIO.open(line <> "\n")
 
-    for tool <- ["systemctl", "loginctl"], do: File.chmod!(Path.join(bin, tool), 0o755)
-    World.put_os_env("PATH", bin <> ":" <> System.get_env("PATH"))
-    log
+    :ok =
+      Task.async(fn ->
+        Process.group_leader(self(), stdin)
+        HalC2.Desktop.configure()
+      end)
+      |> Task.await()
+
+    put_in(context, [:node, :spec], Application.get_env(:hal_c2, :home))
   end
+
+  # Where a feature's directory is: a quoted path, or `the checkout's "..."`.
+  defp where(context, "the checkout's \"" <> rest),
+    do: Path.join(context.checkout, String.trim_trailing(rest, "\""))
+
+  defp where(context, "\"" <> rest), do: Storage.path(context, String.trim_trailing(rest, "\""))
 
   defp calls(context),
     do: context.service_tools |> File.read!() |> String.split("\n", trim: true)

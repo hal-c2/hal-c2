@@ -35,7 +35,7 @@ Feature: Where HAL-C2 keeps its files
 
   Rule: Each kind of file has one base directory
 
-    @backlog @node
+    @node
     Scenario Outline: With nothing configured each kind uses its platform default
       Given a <platform> user with no XDG variables and no HAL-C2 home configured
       When HAL-C2 starts
@@ -59,13 +59,13 @@ Feature: Where HAL-C2 keeps its files
         | Windows  | cache   | %LOCALAPPDATA%\hal-c2\cache |
         | Windows  | runtime | %LOCALAPPDATA%\hal-c2\state |
 
-    @backlog @node
+    @node
     Scenario: macOS keeps nothing in the Library folder
       Given a macOS user with no XDG variables and no HAL-C2 home configured
       When HAL-C2 starts and saves its settings
       Then nothing is written under "~/Library/Application Support"
 
-    @backlog @node
+    @node
     Scenario Outline: An XDG variable moves its kind on every platform
       Given a <platform> user with <variable> set to "<value>"
       When HAL-C2 starts
@@ -83,7 +83,7 @@ Feature: Where HAL-C2 keeps its files
         | Windows  | XDG_CONFIG_HOME | D:\xdg\config     | config  | D:\xdg\config\hal-c2     |
         | Windows  | XDG_CACHE_HOME  | D:\xdg\cache      | cache   | D:\xdg\cache\hal-c2      |
 
-    @backlog @node
+    @node
     Scenario Outline: An XDG variable that is not an absolute path is ignored
       Given a Linux user with <variable> set to <value>
       When HAL-C2 starts
@@ -97,7 +97,7 @@ Feature: Where HAL-C2 keeps its files
         | XDG_RUNTIME_DIR | ""              | runtime | ~/.local/state/hal-c2 |
         | XDG_RUNTIME_DIR | "run/user/1000" | runtime | ~/.local/state/hal-c2 |
 
-    @backlog @node
+    @node
     Scenario Outline: Every directory HAL-C2 creates is private to the user
       Given a Linux user whose <kind> directory does not exist yet
       When HAL-C2 starts
@@ -111,14 +111,14 @@ Feature: Where HAL-C2 keeps its files
         | cache   |
         | runtime |
 
-    @backlog @node
+    @node
     Scenario: Secrets stay private inside the data directory
       When HAL-C2 stores a secret for the first time
       Then its "secrets" directory in the data directory is readable only by the user
 
   Rule: One root can hold every kind
 
-    @backlog @node
+    @node
     Scenario Outline: HAL_C2_HOME puts every kind under one root
       Given HAL_C2_HOME is "/srv/hal-c2"
       When HAL-C2 starts
@@ -132,7 +132,7 @@ Feature: Where HAL-C2 keeps its files
         | cache   | /srv/hal-c2/cache  |
         | runtime | /srv/hal-c2/state  |
 
-    @backlog @node
+    @node
     Scenario Outline: HAL_C2_HOME outranks the XDG variables
       Given HAL_C2_HOME is "/srv/hal-c2"
       And <variable> is set to "<value>"
@@ -144,7 +144,7 @@ Feature: Where HAL-C2 keeps its files
         | XDG_DATA_HOME   | /xdg/data      | data    | /srv/hal-c2/data  |
         | XDG_RUNTIME_DIR | /run/user/1000 | runtime | /srv/hal-c2/state |
 
-    @backlog @node
+    @node
     Scenario: A worktree's own directory outranks an ambient HAL_C2_HOME
       Given HAL_C2_HOME is "/srv/hal-c2" in the developer's shell
       When a developer starts HAL-C2 from a linked git worktree
@@ -184,7 +184,7 @@ Feature: Where HAL-C2 keeps its files
         | state  | ~/.local/state/hal-c2-dev | ~/.local/state/hal-c2 |
         | cache  | ~/.cache/hal-c2-dev       | ~/.cache/hal-c2       |
 
-    @backlog @node
+    @node
     Scenario Outline: Under an explicit root there is one profile
       Given <root>
       When a developer starts a development server
@@ -192,10 +192,16 @@ Feature: Where HAL-C2 keeps its files
       And there is no "dev" or "userdata" level inside it
 
       Examples:
-        | root                                          | path                          |
-        | HAL_C2_HOME is "/srv/hal-c2"                  | "/srv/hal-c2/data"            |
-        | the server is started from a linked worktree  | the worktree's ".hal-c2/data" |
-        | the server is given --base-dir "/tmp/sandbox" | "/tmp/sandbox/data"           |
+        | root                                         | path                          |
+        | the server is started from a linked worktree | the worktree's ".hal-c2/data" |
+
+      # A node from a checkout always keeps its files in the checkout's .hal-c2, whatever
+      # HAL_C2_HOME says, and --base-dir is the TypeScript server's.
+      @backlog
+      Examples: Not yet on the node
+        | root                                          | path                |
+        | HAL_C2_HOME is "/srv/hal-c2"                  | "/srv/hal-c2/data"  |
+        | the server is given --base-dir "/tmp/sandbox" | "/tmp/sandbox/data" |
 
     @backlog @node
     Scenario Outline: Pairing finds a running server in either profile
@@ -215,7 +221,7 @@ Feature: Where HAL-C2 keeps its files
 
     # The node keeps its files under an "elixir" level in each kind so it never collides
     # with the server the desktop app hosts, which uses the same root.
-    @backlog @node
+    @node
     Scenario Outline: Each of the node's files lives in the kind it belongs to
       When a user starts the node from a release
       Then the node keeps <what> at "<path>"
@@ -246,7 +252,7 @@ Feature: Where HAL-C2 keeps its files
         | the usage scan cache            | ~/.cache/hal-c2/elixir/usage-scan-cache.bin       |
         | model rates for usage           | ~/.cache/hal-c2/elixir/usage-model-rates.json     |
 
-    @backlog @node
+    @node
     Scenario Outline: HAL_C2_NODE_HOME is a root for the node alone
       Given HAL_C2_NODE_HOME is "/srv/node"
       When the node starts
@@ -259,13 +265,13 @@ Feature: Where HAL-C2 keeps its files
         | its logs         | /srv/node/state/logs           |
         | downloaded tools | /srv/node/cache/tools          |
 
-    @backlog @node
+    @node
     Scenario: HAL_C2_NODE_HOME outranks HAL_C2_HOME for the node
       Given HAL_C2_NODE_HOME is "/srv/node" and HAL_C2_HOME is "/srv/hal-c2"
       When the node starts
       Then its database is "/srv/node/data/hal-c2.sqlite"
 
-    @backlog @node
+    @node
     Scenario: Clearing the cache loses nothing the user made
       Given the node has threads, settings, provider sign-ins and secrets
       When the user deletes "~/.cache/hal-c2" and restarts the node

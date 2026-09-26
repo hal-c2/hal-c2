@@ -43,7 +43,7 @@ defmodule HalC2.ProviderLog do
       end
 
     Path.join([
-      Application.fetch_env!(:hal_c2, :home),
+      HalC2.Paths.state_dir(),
       "logs",
       "provider",
       "events.#{segment}.log"

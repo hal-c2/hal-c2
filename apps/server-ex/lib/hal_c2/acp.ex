@@ -315,9 +315,10 @@ defmodule HalC2.Acp do
         k == "CURSOR_API_KEY" and String.trim(v) != ""
       end)
 
-  # Each instance keeps its own Cursor sign-in, owner-only, under the HAL-C2 home.
-  defp cursor_credentials(id),
-    do: Path.join([Application.fetch_env!(:hal_c2, :home), "provider-auth", id, "cursor.json"])
+  @doc false
+  # Each instance keeps its own Cursor sign-in, owner-only, in the node's data.
+  def cursor_credentials(id),
+    do: Path.join([HalC2.Paths.data_dir(), "provider-auth", id, "cursor.json"])
 
   # A registry agent is installed when first used, so it counts as available.
   defp base_entry(id, @registry, instance) do

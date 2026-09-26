@@ -53,7 +53,7 @@ defmodule HalC2.Web do
   def token do
     case :persistent_term.get({__MODULE__, :token}, nil) do
       nil ->
-        path = Path.join(Application.fetch_env!(:hal_c2, :home), "access-token")
+        path = Path.join(HalC2.Paths.data_dir(), "access-token")
 
         token =
           case File.read(path) do

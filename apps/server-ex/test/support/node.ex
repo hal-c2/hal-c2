@@ -18,19 +18,33 @@ defmodule HalC2.Test.Node do
   @doc """
   Starts a node in `dir` and returns what steps need to talk to it:
   `%{port, environment, home}`. `port` 0 picks a free one.
+
+  The node keeps every file in `dir` itself unless `opts[:home]` gives it a `:home`
+  as a release has one (`nil` for the XDG directories, `{:root, dir}`,
+  `{:node, dir}`, see `HalC2.Paths`); it then readies its directories as
+  `HalC2.Application` does, migrating with `opts[:migration]` where the app env
+  allows, and `dir` only holds the scenario's scratch files.
   """
-  def start(dir, port \\ 0) do
+  def start(dir, port \\ 0, opts \\ []) do
     File.mkdir_p!(dir)
-    Application.put_env(:hal_c2, :home, dir)
+    spec = Keyword.get(opts, :home, dir)
+    Application.put_env(:hal_c2, :home, spec)
     Application.put_env(:hal_c2, :port, port)
     :persistent_term.erase({HalC2.Web, :token})
-    start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
+
+    unless is_binary(spec) do
+      :persistent_term.erase({HalC2.Environment, :id})
+      :ok = HalC2.Application.prepare_files(Keyword.get(opts, :migration, []))
+    end
+
+    store = HalC2.Store.home_path()
+    start_supervised!({HalC2.Store, path: store})
     start_supervised!(HalC2.Auth)
     start_supervised!(HalC2.Streams)
     start_supervised!(HalC2.Shell)
     web = start_supervised!(Supervisor.child_spec(HalC2.Web, id: HalC2.Web))
     # A named node finds its peers as it would at boot (HAL_C2_PEERS, the tailnet).
-    for spec <- HalC2.Application.discovery(dir),
+    for spec <- HalC2.Application.discovery(HalC2.Paths.data_dir()),
         do: start_supervised!(Supervisor.child_spec(spec, id: :discovery))
 
     {:ok, {_ip, port}} = ThousandIsland.listener_info(web)
@@ -38,7 +52,8 @@ defmodule HalC2.Test.Node do
     Application.put_env(:hal_c2, :port, port)
     {_, %{"environmentId" => environment}} = List.keyfind(HalC2.Shell.environments(), node(), 0)
     :ok = HalC2.Shell.subscribe(self())
-    %{port: port, environment: environment, home: dir, store: Path.join(dir, "hal-c2.sqlite")}
+    node = %{port: port, environment: environment, home: dir, store: store}
+    if is_binary(spec), do: node, else: Map.put(node, :spec, spec)
   end
 
   @doc """
@@ -77,7 +92,18 @@ defmodule HalC2.Test.Node do
     stop(node)
     while_stopped.()
     ensured = Process.get({__MODULE__, :ensured}, [])
-    node = start(dir, port)
+
+    opts =
+      if Map.has_key?(node, :spec),
+        do: [home: node.spec, migration: node[:migration] || []],
+        else: []
+
+    node =
+      if(opts[:migration],
+        do: Map.put(start(dir, port, opts), :migration, opts[:migration]),
+        else: start(dir, port, opts)
+      )
+
     # In the application's order: cut-off turns settle before the optional
     # services (HAL-C2 Connect among them) are back, then the boot tasks run.
     HalC2.Orchestration.Recovery.run()
@@ -3669,7 +3695,7 @@ defmodule HalC2.Test.Node.World do
   """
   def acp_registry_agent(context, id, name) do
     context = fake_providers(context)
-    cache = Path.join([context.node.home, "cache", "acp-registry", "registry.json"])
+    cache = Path.join([HalC2.Paths.cache_dir(), "acp-registry", "registry.json"])
     File.mkdir_p!(Path.dirname(cache))
 
     File.write!(

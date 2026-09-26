@@ -303,7 +303,7 @@ defmodule HalC2.Connect.RelayClient do
     {platform, arch} = target()
 
     Path.join([
-      Application.fetch_env!(:hal_c2, :home),
+      HalC2.Paths.cache_dir(),
       "tools",
       "cloudflared",
       @version,

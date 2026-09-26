@@ -135,7 +135,7 @@ defmodule HalC2.Acp.Antigravity do
   def managed_dir,
     do:
       Path.join([
-        Application.fetch_env!(:hal_c2, :home),
+        HalC2.Paths.cache_dir(),
         "tools",
         "antigravity-acp",
         platform_name()
@@ -325,7 +325,7 @@ defmodule HalC2.Acp.Antigravity do
   @doc "An instance's private Google profile (the agent's `GEMINI_HOME`)."
   def profile(instance) do
     hash = :crypto.hash(:sha256, instance) |> Base.encode16(case: :lower)
-    Path.join([Application.fetch_env!(:hal_c2, :home), "providers", "antigravity", hash])
+    Path.join([HalC2.Paths.data_dir(), "providers", "antigravity", hash])
   end
 
   @doc "The agent's saved Google login in a profile."

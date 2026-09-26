@@ -583,7 +583,7 @@ defmodule HalC2.Acp.Catalog do
 
   defp registry_url, do: Application.get_env(:hal_c2, :acp_registry_url, @url)
 
-  defp home, do: Application.fetch_env!(:hal_c2, :home)
-  defp cache_path, do: Path.join([home(), "cache", "acp-registry", "registry.json"])
-  defp tools_dir, do: Path.join(home(), "tools")
+  @doc false
+  def cache_path, do: Path.join([HalC2.Paths.cache_dir(), "acp-registry", "registry.json"])
+  defp tools_dir, do: Path.join(HalC2.Paths.cache_dir(), "tools")
 end

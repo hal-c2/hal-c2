@@ -197,10 +197,14 @@ defmodule HalC2.Mcp.Preview do
 
   defp text_block(text), do: %{"type" => "text", "text" => text}
 
+  @doc false
+  # Where saved screenshots go, kept with the user's data.
+  def artifacts_dir, do: Path.join(HalC2.Paths.data_dir(), "browser-artifacts")
+
   defp maybe_save(false, _url, _png), do: {:ok, nil}
 
   defp maybe_save(true, url, png) do
-    dir = Path.join(Application.fetch_env!(:hal_c2, :home), "browser-artifacts")
+    dir = artifacts_dir()
     stamp = System.system_time(:millisecond) |> Integer.to_string(36) |> String.downcase()
     suffix = :crypto.strong_rand_bytes(4) |> Base.encode16(case: :lower)
     path = Path.join(dir, "browser-screenshot-#{site_slug(url)}-#{stamp}-#{suffix}.png")

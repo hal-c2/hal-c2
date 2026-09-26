@@ -119,5 +119,5 @@ defmodule HalC2.Keybindings do
     {:ok, %{"rules" => rules}}
   end
 
-  defp path, do: Path.join(Application.fetch_env!(:hal_c2, :home), "keybindings.json")
+  defp path, do: Path.join(HalC2.Paths.config_dir(), "keybindings.json")
 end

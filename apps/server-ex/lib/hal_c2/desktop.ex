@@ -8,7 +8,9 @@ defmodule HalC2.Desktop do
   `/oauth/token` for a bearer session (`HalC2.Auth`), so the local machine needs no
   pairing. The token never appears in argv or the environment.
 
-  Node state goes to `<halC2Home>/elixir`, apart from the Node server's.
+  `halC2Home` is the root of the node's files (`<halC2Home>/data/elixir` and so on,
+  apart from the Node server's); with none, or an old `~/.t3`/`~/.hal-c2` home, the node
+  uses the XDG directories.
   """
 
   @doc "Reads the bootstrap and applies it to the app env; a no-op outside the desktop app."
@@ -23,8 +25,10 @@ defmodule HalC2.Desktop do
 
   @doc false
   def apply_bootstrap(bootstrap) do
-    if home = bootstrap["halC2Home"],
-      do: Application.put_env(:hal_c2, :home, Path.join(home, "elixir"))
+    home = bootstrap["halC2Home"]
+
+    if is_binary(home) and HalC2.Paths.root?(home, :root, HalC2.Paths.user_home()),
+      do: Application.put_env(:hal_c2, :home, {:root, home})
 
     if port = bootstrap["port"], do: Application.put_env(:hal_c2, :port, port)
     if host = bootstrap["host"], do: Application.put_env(:hal_c2, :host, host)

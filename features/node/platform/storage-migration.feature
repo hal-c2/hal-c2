@@ -26,7 +26,7 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
 
   Rule: Migration copies from one old home, first match wins
 
-    @backlog @node
+    @node
     Scenario Outline: The old home is chosen in a fixed order
       Given <homes>
       When HAL-C2 starts for the first time
@@ -40,45 +40,50 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
         | "~/.hal-c2" and "~/.t3" both exist                              | ~/.hal-c2 |
         | only "~/.t3" exists                                             | ~/.t3     |
 
-    @backlog @node
+    @node
     Scenario: A T3CODE_HOME that names a missing directory is skipped
       Given T3CODE_HOME is "/srv/gone", which does not exist
       And "~/.t3" exists
       When HAL-C2 starts for the first time
       Then it copies from "~/.t3"
 
-    @backlog @node
+    @node
     Scenario: T3CODE_HOME is never used as HAL-C2's home
       Given T3CODE_HOME is "/srv/t3"
       When HAL-C2 starts for the first time and the user creates a thread
       Then the thread is stored in "~/.local/share/hal-c2"
       And nothing is written under "/srv/t3"
 
-    @backlog @node
+    @node
     Scenario: With no old home HAL-C2 starts fresh
       Given there is no "~/.hal-c2", no "~/.t3" and no T3CODE_HOME or T3_HOME
       When HAL-C2 starts for the first time
       Then it starts with no threads or projects
       And no migration is recorded
 
-    @backlog @node
+    @node
     Scenario Outline: Each part of HAL-C2 copies from its own part of the old home
       Given "~/.t3" holds state for the installed app, a development server and the node
       When <what> starts for the first time
       Then it copies from "<source>"
 
       Examples:
+        | what     | source       |
+        | the node | ~/.t3/elixir |
+
+      # The TypeScript servers' migration.
+      @backlog
+      Examples: Not yet on the node
         | what                 | source         |
         | the installed server | ~/.t3/userdata |
         | a development server | ~/.t3/dev      |
-        | the node             | ~/.t3/elixir   |
 
   Rule: Migration copies what the user cannot get back, and nothing else
 
     Background:
       Given "~/.t3" is the old home
 
-    @backlog @node
+    @node
     Scenario Outline: The node's files land in the kind they belong to
       Given the old home holds "<old>"
       When the node starts for the first time
@@ -123,20 +128,20 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
         | ~/.t3/caches/acp-auth-claude.json      | ~/.local/share/hal-c2/acp-auth/acp-auth-claude.json |
         | ~/.t3/userdata/logs                    | ~/.local/state/hal-c2/logs                          |
 
-    @backlog @node
+    @node
     Scenario: A database is copied whole while T3 Code still has it open
       Given T3 Code is running against "~/.t3" and writing to its database
       When HAL-C2 copies the database
       Then the copy is a consistent snapshot that opens without repair
       And T3 Code keeps running undisturbed
 
-    @backlog @node
+    @node
     Scenario: A half-copied database is never at its final path
       Given HAL-C2 is copying the database from the old home
       When HAL-C2 looks for its database before the copy finishes
       Then there is no database at its final path yet
 
-    @backlog @node
+    @node
     Scenario Outline: What can be downloaded or rebuilt again is not copied
       Given the old home holds <what> at "<old>"
       When HAL-C2 starts for the first time
@@ -152,13 +157,13 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
         | the desktop app's web profile | ~/.t3/userdata/shell-web           |
         | the node's download cache     | ~/.t3/elixir/cache                 |
 
-    @backlog @node
+    @node
     Scenario: Copied secrets stay private
       Given the old home holds secrets
       When HAL-C2 copies them
       Then the copied "secrets" directory is readable only by the user
 
-    @backlog @node
+    @node
     Scenario: Nothing in the new directories points back into the old home
       When HAL-C2 migrates from the old home
       Then no file or directory it created is a link into "~/.t3"
@@ -169,19 +174,19 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
       Given "~/.t3" is the old home
       And a thread in project "api" works in the worktree "~/.t3/worktrees/api/feature-login"
 
-    @backlog @node
+    @node
     Scenario: Existing worktrees are not copied
       When HAL-C2 migrates from the old home
       Then nothing is copied from "~/.t3/worktrees"
 
-    @backlog @node
+    @node
     Scenario: A migrated thread keeps working in its worktree
       Given HAL-C2 migrated from the old home
       When the user sends a message in that thread
       Then the agent works in "~/.t3/worktrees/api/feature-login"
       And the project's repository still lists that worktree
 
-    @backlog @node
+    @node
     Scenario: New worktrees are created in HAL-C2's data directory
       Given HAL-C2 migrated from the old home
       When the user starts a new thread in a new worktree of "api"
@@ -192,26 +197,26 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
     Background:
       Given "~/.t3" is the old home
 
-    @backlog @node
+    @node
     Scenario: A finished migration is recorded
       When HAL-C2 migrates from the old home
       Then "~/.local/state/hal-c2/migrated-from.json" names "~/.t3", when it ran and what it copied
       And HAL-C2 logs one line saying it migrated from "~/.t3"
 
-    @backlog @node
+    @node
     Scenario: A later change to the old home is not seen
       Given HAL-C2 migrated from the old home
       And the user then renamed a thread in T3 Code
       When HAL-C2 restarts
       Then the thread keeps its old name in HAL-C2
 
-    @backlog @node
+    @node
     Scenario: The old home is left exactly as it was
       When HAL-C2 migrates from the old home and runs for a while
       Then every file in "~/.t3" is byte-for-byte what it was before
       And no file was added to or removed from "~/.t3"
 
-    @backlog @node
+    @node
     Scenario Outline: Migration does not run when HAL-C2 already has data
       Given HAL-C2's data directory already holds "<file>"
       When <what> starts
@@ -219,33 +224,38 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
       And the old home is not read
 
       Examples:
-        | what                 | file                                       |
-        | the installed server | ~/.local/share/hal-c2/environment-id       |
-        | the installed server | ~/.local/share/hal-c2/statev2.sqlite       |
-        | the node             | ~/.local/share/hal-c2/elixir/hal-c2.sqlite |
+        | what     | file                                       |
+        | the node | ~/.local/share/hal-c2/elixir/hal-c2.sqlite |
 
-    @backlog @node
+      # The TypeScript server's migration.
+      @backlog
+      Examples: Not yet on the node
+        | what                 | file                                 |
+        | the installed server | ~/.local/share/hal-c2/environment-id |
+        | the installed server | ~/.local/share/hal-c2/statev2.sqlite |
+
+    @node
     Scenario: Migration does not run again after the user removes the data directory
       Given HAL-C2 migrated from the old home
       When the user deletes "~/.local/share/hal-c2" and HAL-C2 restarts
       Then it starts with no threads or projects
       And nothing is copied from the old home
 
-    @backlog @node
+    @node
     Scenario: Removing the migration record lets migration run again
       Given HAL-C2 migrated from the old home
       When the user deletes "~/.local/share/hal-c2" and "~/.local/state/hal-c2/migrated-from.json"
       And HAL-C2 restarts
       Then it copies from "~/.t3" again
 
-    @backlog @node
+    @node
     Scenario: HAL_C2_NO_MIGRATE starts fresh without reading the old home
       Given HAL_C2_NO_MIGRATE is "1"
       When HAL-C2 starts for the first time
       Then it starts with no threads or projects
       And the old home is not read
 
-    @backlog @node
+    @node
     Scenario: HAL-C2 started once with HAL_C2_NO_MIGRATE does not migrate later
       Given HAL-C2 started once with HAL_C2_NO_MIGRATE set to "1"
       When HAL-C2 restarts without it
@@ -256,7 +266,7 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
     Background:
       Given "~/.t3" is the old home
 
-    @backlog @node
+    @node
     Scenario Outline: A copy that fails leaves no half-migrated data
       Given <failure>
       When HAL-C2 starts for the first time
@@ -272,7 +282,7 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
         | a file in the old home cannot be read      |
         | the old home's database is corrupt         |
 
-    @backlog @node
+    @node
     Scenario: A migration cut short by a crash runs again on the next start
       Given HAL-C2 was stopped partway through copying from the old home
       When HAL-C2 starts again
@@ -281,7 +291,7 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
 
   Rule: Background services installed before still work
 
-    @backlog @node
+    @node
     Scenario Outline: A service installed before is still recognised
       Given a <manager> service installed before, whose definition sets <variable>
       When the user runs "hal-c2 service status"
@@ -297,7 +307,7 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
         | launchd | HALC2_HOME  |
         | launchd | HAL_C2_HOME |
 
-    @backlog @node
+    @node
     Scenario: A service installed by T3 Code migrates on its next start
       Given a service installed before whose definition sets T3CODE_HOME to "~/.t3"
       And HAL-C2's data directory does not exist yet
@@ -307,7 +317,7 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
 
     # Interpretation: services written before always named their home. A definition that
     # names an old home as HAL_C2_HOME or HALC2_HOME must not make HAL-C2 use it in place.
-    @backlog @node
+    @node
     Scenario Outline: A service that names an old home as its root migrates instead
       Given a service installed before whose definition sets <variable> to "<home>"
       When the service starts HAL-C2
@@ -320,20 +330,20 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
         | HALC2_HOME  | ~/.hal-c2 |
         | HAL_C2_HOME | ~/.t3     |
 
-    @backlog @node
+    @node
     Scenario: A new service relies on the XDG directories
       Given no HAL-C2 home is configured
       When the user runs "hal-c2 service install"
       Then the service definition names no HAL-C2 home
       And the service keeps its files in the XDG directories
 
-    @backlog @node
+    @node
     Scenario: A new service keeps a home the user chose
       Given HAL_C2_HOME is "/srv/hal-c2"
       When the user runs "hal-c2 service install"
       Then the service definition sets HAL_C2_HOME to "/srv/hal-c2"
 
-    @backlog @node
+    @node
     Scenario: Reinstalling a service from before rewrites it for the XDG directories
       Given a service installed before whose definition sets T3CODE_HOME
       And no HAL-C2 home is configured

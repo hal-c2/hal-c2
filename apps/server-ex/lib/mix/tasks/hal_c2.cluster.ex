@@ -16,7 +16,7 @@ defmodule Mix.Tasks.HalC2.Cluster do
   @impl true
   def run(args) do
     Mix.Task.run("app.config")
-    home = Application.fetch_env!(:hal_c2, :home)
+    home = HalC2.Paths.data_dir()
 
     case args do
       ["init", address] ->

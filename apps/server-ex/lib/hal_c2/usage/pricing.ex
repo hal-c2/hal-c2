@@ -30,6 +30,10 @@ defmodule HalC2.Usage.Pricing do
     }
   end
 
+  @doc false
+  # The last fetched table, kept in the cache.
+  def snapshot_path, do: Path.join(HalC2.Paths.cache_dir(), "usage-model-rates.json")
+
   @doc """
   Loads the table when it is older than the TTL (or than a minute, when `force`d),
   preferring a fresh copy and falling back to the snapshot on disk. With neither,
@@ -38,7 +42,7 @@ defmodule HalC2.Usage.Pricing do
   def load(rates, force) do
     now = System.system_time(:millisecond)
     max_age = if force, do: @refresh_floor_ms, else: @ttl_ms
-    path = Path.join(Application.fetch_env!(:hal_c2, :home), "usage-model-rates.json")
+    path = snapshot_path()
 
     rates =
       with nil <- rates.fetched_at_ms,

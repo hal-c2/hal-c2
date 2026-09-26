@@ -81,6 +81,22 @@ defmodule HalC2.Cluster do
   end
 
   @doc """
+  Rewrites the files that name the cluster directory's own path (`ssl_dist.conf`,
+  `vm.args`) after the directory was copied under `home` (`HalC2.Migration`).
+  """
+  @spec relocate(String.t()) :: :ok
+  def relocate(home) do
+    dir = dir(home)
+
+    if address(home) do
+      write(dir, "ssl_dist.conf", ssl_dist_conf(dir))
+      write(dir, "vm.args", String.replace(vm_args(home), " -", "\n-") <> "\n")
+    end
+
+    :ok
+  end
+
+  @doc """
   Stops admitting the member at `address` on this machine: every certificate issued
   for it until now fails the distribution handshake here, in both directions, from
   the next connection on (the running node reads the list at each handshake). Run it

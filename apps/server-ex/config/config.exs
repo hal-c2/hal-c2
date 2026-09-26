@@ -1,16 +1,14 @@
 import Config
 
-# State lives in the checkout's gitignored .hal-c2 sandbox during development so a dev
-# node never opens the real ~/.hal-c2. A checkout that only has the .t3 sandbox from
-# before the rename keeps using it. Releases resolve the user's home in rel/env.sh.eex;
-# runtime.exs reads the result.
-checkout = Path.expand("../../..", __DIR__)
-sandbox = Path.join(checkout, ".hal-c2/elixir")
-legacy_sandbox = Path.join(checkout, ".t3/elixir")
-
-home =
-  if not File.dir?(sandbox) and File.dir?(legacy_sandbox), do: legacy_sandbox, else: sandbox
-
-config :hal_c2, home: home, start_node: true
+# Where the node keeps its files (`HalC2.Paths`). A release uses the user's XDG
+# directories unless config/runtime.exs names a root. During development the
+# checkout's gitignored .hal-c2 is the root, so a dev node never opens the user's
+# own files, and it never migrates from an old home (`HalC2.Migration`).
+if config_env() == :prod do
+  config :hal_c2, start_node: true
+else
+  checkout = Path.expand("../../..", __DIR__)
+  config :hal_c2, home: {:root, Path.join(checkout, ".hal-c2")}, migrate: false, start_node: true
+end
 
 import_config "#{config_env()}.exs"

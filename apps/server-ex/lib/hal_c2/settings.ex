@@ -151,7 +151,7 @@ defmodule HalC2.Settings do
   @doc "The document as settings.json holds it, for tools running beside a node."
   def saved, do: read(path())
 
-  defp path, do: Path.join(Application.fetch_env!(:hal_c2, :home), "settings.json")
+  defp path, do: Path.join(HalC2.Paths.config_dir(), "settings.json")
 
   defp read(path) do
     with {:ok, text} <- File.read(path),

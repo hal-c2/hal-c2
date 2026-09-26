@@ -157,15 +157,9 @@ defmodule HalC2.Pi do
     |> Enum.reject(&(&1 in ["--tools", "-t"]))
   end
 
-  @doc "HAL-C2's Pi extension, written under the HAL-C2 home where Pi can load it."
+  @doc "HAL-C2's Pi extension, written to the node's cache directory where Pi can load it."
   def extension_path do
-    path =
-      Path.join([
-        Application.fetch_env!(:hal_c2, :home),
-        "caches",
-        "pi",
-        "pi-hal-c2-mcp-extension.ts"
-      ])
+    path = Path.join([HalC2.Paths.cache_dir(), "pi", "pi-hal-c2-mcp-extension.ts"])
 
     source = File.read!(Application.app_dir(:hal_c2, "priv/pi/hal-c2-mcp-extension.ts"))
 

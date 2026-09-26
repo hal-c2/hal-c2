@@ -46,6 +46,6 @@ defmodule HalC2.Connect.Secrets do
     :ok
   end
 
-  defp dir, do: Path.join(Application.fetch_env!(:hal_c2, :home), "secrets")
+  defp dir, do: Path.join(HalC2.Paths.data_dir(), "secrets")
   defp path(name), do: Path.join(dir(), name <> ".bin")
 end

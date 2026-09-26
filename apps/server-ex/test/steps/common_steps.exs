@@ -879,12 +879,19 @@ defmodule HalC2.Steps.Common do
     "Commit, push & create PR" => "commit_push_pr"
   }
 
-  # Runs a git action by its menu label in the checkout under test (`context.cwd`).
+  # Runs a git action by its menu label in the checkout under test (`context.cwd`), or
+  # `hal-c2 service <command>` as the scenario's user (`HalC2.Test.Storage.service/2`).
   step "the user runs {string}", %{args: [label]} = context do
-    action = @git_actions[label] || flunk("no git action is labelled #{inspect(label)}")
-    extra = context[:git_action_input] || %{}
-    {events, context} = World.git_action(context, context.cwd, action, extra)
-    Map.put(context, :git_events, events)
+    case label do
+      "hal-c2 service " <> command ->
+        HalC2.Test.Storage.service(context, command)
+
+      _ ->
+        action = @git_actions[label] || flunk("no git action is labelled #{inspect(label)}")
+        extra = context[:git_action_input] || %{}
+        {events, context} = World.git_action(context, context.cwd, action, extra)
+        Map.put(context, :git_events, events)
+    end
   end
 
   # What the user was told: `context.told` when a step set it, else the failure of

@@ -363,7 +363,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
   step "the node has never fetched the registry", context do
     ctx = Acp.ready(context)
-    refute File.exists?(Path.join([ctx.node.home, "cache", "acp-registry", "registry.json"]))
+    refute File.exists?(Path.join([HalC2.Paths.cache_dir(), "acp-registry", "registry.json"]))
     assert :persistent_term.get({HalC2.Acp.Catalog, :index}, nil) == nil
     ctx
   end
@@ -388,7 +388,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     ctx = Acp.publish(context)
     {:ok, [_]} = HalC2.Acp.Catalog.index(true)
     assert Acp.registry_requests(ctx) == ["registry.json"]
-    cache = Path.join([ctx.node.home, "cache", "acp-registry", "registry.json"])
+    cache = Path.join([HalC2.Paths.cache_dir(), "acp-registry", "registry.json"])
     File.touch!(cache, System.os_time(:second) - 3600)
     # A node that starts now has only the file.
     :persistent_term.erase({HalC2.Acp.Catalog, :index})

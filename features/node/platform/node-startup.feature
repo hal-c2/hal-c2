@@ -43,7 +43,7 @@ Feature: Starting the node
     When the node starts
     Then it serves clients on port 4100
 
-  @backlog @node
+  @node
   Scenario: HAL_C2_HOME is the root of the node's files
     Given HAL_C2_HOME is "/srv/hal-c2"
     When the node starts
@@ -60,7 +60,7 @@ Feature: Starting the node
     When the node starts
     Then its database, logs and worktrees live under "/srv/t3/elixir"
 
-  @backlog @node
+  @node
   Scenario: A checkout keeps its state inside the checkout
     Given no home directory is configured
     When a developer starts the node from a checkout
@@ -68,14 +68,14 @@ Feature: Starting the node
     And its logs are in the checkout's ".hal-c2/state/elixir/logs"
     And nothing is written to the user's XDG directories
 
-  @backlog @node
+  @node
   Scenario: A checkout keeps its state inside the checkout even when HAL_C2_HOME is set
     Given HAL_C2_HOME is "/srv/hal-c2" in the developer's shell
     When a developer starts the node from a checkout
     Then its database is in the checkout's ".hal-c2/data/elixir"
     And nothing is written under "/srv/hal-c2"
 
-  @backlog @node
+  @node
   Scenario: A release keeps its state in the user's XDG directories
     Given no home directory is configured
     When a user starts the node from a release
@@ -84,7 +84,7 @@ Feature: Starting the node
     And its logs are in "~/.local/state/hal-c2/elixir/logs"
     And its downloaded tools are in "~/.cache/hal-c2/elixir/tools"
 
-  @backlog @node
+  @node
   Scenario: A release never keeps its state in the old HAL-C2 home
     Given no home directory is configured
     And the user's home has a "~/.hal-c2/elixir" directory
@@ -189,14 +189,14 @@ Feature: Starting the node
     Then the node listens on that host and port
     And the token never appears in the process arguments or environment
 
-  @backlog @node
+  @node
   Scenario: The HAL-C2 home the desktop app names is the root of the node's files
     Given the desktop app launches the node in bootstrap mode with the HAL-C2 home "/tmp/sandbox"
     When the node starts
     Then its database is in "/tmp/sandbox/data/elixir"
     And its logs are in "/tmp/sandbox/state/elixir/logs"
 
-  @backlog @node
+  @node
   Scenario: A desktop app that names no HAL-C2 home leaves the node on the XDG directories
     Given the desktop app launches the node in bootstrap mode without a HAL-C2 home
     When the node starts

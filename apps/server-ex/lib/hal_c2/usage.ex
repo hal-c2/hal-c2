@@ -438,7 +438,8 @@ defmodule HalC2.Usage do
       else: %{state | files: files, dirty: true}
   end
 
-  defp cache_path, do: Path.join(Application.fetch_env!(:hal_c2, :home), "usage-scan-cache.bin")
+  @doc false
+  def cache_path, do: Path.join(HalC2.Paths.cache_dir(), "usage-scan-cache.bin")
 
   defp load_cache(%{loaded: true} = state), do: state
 

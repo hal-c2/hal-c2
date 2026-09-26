@@ -100,16 +100,16 @@ defmodule HalC2.StorageCleanup do
     end
 
     for {dir, key} <- [
-          {"browser-artifacts", "browserArtifactsAfterDays"},
-          {"logs", "logsAfterDays"}
+          {Path.join(HalC2.Paths.data_dir(), "browser-artifacts"), "browserArtifactsAfterDays"},
+          {Path.join(HalC2.Paths.state_dir(), "logs"), "logsAfterDays"}
         ],
-        do: files(Path.join(home(), dir), key, get_in(settings, ["storageCleanup", key]), now)
+        do: files(dir, key, get_in(settings, ["storageCleanup", key]), now)
   end
 
   # --- worktrees -----------------------------------------------------------------
 
   defp worktrees(settings, now) do
-    root = Path.join(home(), "worktrees")
+    root = worktrees_root()
     rows = for {{node, _id}, row} <- HalC2.Shell.rows(), node == node(), do: row
     projects = for {"project", project} <- rows, into: %{}, do: {project["id"], project}
     threads = for {"thread", thread} <- rows, is_binary(thread["worktreePath"]), do: thread
@@ -357,7 +357,7 @@ defmodule HalC2.StorageCleanup do
     thread_ok and not busy?(path) and not holds_project?(path, fresh_projects) and
       checkout(
         path,
-        Path.join(home(), "worktrees") |> real_or_self(),
+        worktrees_root() |> real_or_self(),
         thread["branch"],
         Map.values(projects)
       ) ==
@@ -408,5 +408,5 @@ defmodule HalC2.StorageCleanup do
 
   defp real_or_self(path), do: with({:ok, real} <- real(path), do: real, else: (_ -> path))
 
-  defp home, do: Application.fetch_env!(:hal_c2, :home)
+  defp worktrees_root, do: Path.join(HalC2.Paths.data_dir(), "worktrees")
 end

@@ -354,7 +354,7 @@ defmodule HalC2.Plugins do
     {:ok, supervisor} = DynamicSupervisor.start_link(strategy: :one_for_one)
     :ets.new(@providers, [:named_table, :protected, :set, read_concurrency: true])
     :ok = HalC2.Settings.watch(self())
-    dir = Path.join(Application.fetch_env!(:hal_c2, :home), "plugins")
+    dir = Path.join(HalC2.Paths.data_dir(), "plugins")
 
     state = %{dir: dir, supervisor: supervisor, plugins: %{}, refs: %{}, watchers: %{}}
     {:ok, state, {:continue, :scan}}
@@ -865,7 +865,7 @@ defmodule HalC2.Plugins do
 
   defp secret_path(id, key) do
     name = Base.url_encode64("#{id}/#{key}", padding: false)
-    Path.join([Application.fetch_env!(:hal_c2, :home), "secrets", "plugin-#{name}.bin"])
+    Path.join([HalC2.Paths.data_dir(), "secrets", "plugin-#{name}.bin"])
   end
 
   defp write_secret(path, value) do

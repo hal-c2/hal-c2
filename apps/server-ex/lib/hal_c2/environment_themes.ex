@@ -62,7 +62,7 @@ defmodule HalC2.EnvironmentThemes do
     end
   end
 
-  defp dir, do: Path.join(Application.fetch_env!(:hal_c2, :home), "themes")
+  defp dir, do: Path.join(HalC2.Paths.config_dir(), "themes")
 
   # What a change would show in: names, sizes and modification times.
   defp stamp do

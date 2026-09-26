@@ -1,24 +1,19 @@
 import Config
 
-# The node's state directory. `HAL_C2_NODE_HOME` names it outright (rel/env.sh.eex and
-# service units set it); `HAL_C2_HOME` is the HAL-C2 home shared with the Node server,
-# whose state is under `userdata/`, and the node keeps its own under `elixir/`.
-# `T3_HOME` and `T3CODE_HOME` are those two from before the rename. A checkout ignores
-# the shared home a dev server or agent may have exported, like the Node dev runner:
-# its own `.hal-c2` wins (config.exs).
+# Where the node keeps its files (`HalC2.Paths`). `HAL_C2_NODE_HOME` is a root for the
+# node alone; `HAL_C2_HOME` is the HAL-C2 root shared with the TypeScript server, which
+# `HalC2.Paths` ignores when it names an old home (`~/.t3`, `~/.hal-c2`). With neither,
+# a release uses the XDG directories. A checkout ignores the HAL_C2_HOME a dev server
+# or agent may have exported: its own `.hal-c2` wins (config.exs). T3CODE_HOME and
+# T3_HOME only say where to migrate from (`HalC2.Migration`).
 present = fn name -> if (value = System.get_env(name)) not in [nil, ""], do: value end
-shared = config_env() == :prod
 
-home =
-  cond do
-    dir = present.("HAL_C2_NODE_HOME") -> dir
-    base = shared && present.("HAL_C2_HOME") -> Path.join(base, "elixir")
-    dir = present.("T3_HOME") -> dir
-    base = shared && present.("T3CODE_HOME") -> Path.join(base, "elixir")
-    true -> nil
-  end
+cond do
+  dir = present.("HAL_C2_NODE_HOME") -> config(:hal_c2, home: {:node, dir})
+  root = config_env() == :prod && present.("HAL_C2_HOME") -> config(:hal_c2, home: {:root, root})
+  true -> :ok
+end
 
-if home, do: config(:hal_c2, home: home)
 if port = present.("HAL_C2_NODE_PORT"), do: config(:hal_c2, port: String.to_integer(port))
 # The address to bind, loopback by default; a LAN or tailnet address lets other devices pair.
 # `HAL_C2_NODE_HOST` sits alongside `HAL_C2_NODE_PORT`; `HAL_C2_HOST`, the Node server's name

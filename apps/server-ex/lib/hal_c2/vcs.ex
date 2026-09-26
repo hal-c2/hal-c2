@@ -558,8 +558,12 @@ defmodule HalC2.Vcs do
 
   @doc "Where a new worktree of `cwd` on `branch` goes when no path is given."
   def worktree_path(cwd, branch) do
-    home = Application.fetch_env!(:hal_c2, :home)
-    Path.join([home, "worktrees", Path.basename(cwd), String.replace(branch, "/", "-")])
+    Path.join([
+      HalC2.Paths.data_dir(),
+      "worktrees",
+      Path.basename(cwd),
+      String.replace(branch, "/", "-")
+    ])
   end
 
   @doc """

@@ -8,7 +8,7 @@ defmodule HalC2.Application do
     children =
       if Application.fetch_env!(:hal_c2, :start_node) do
         :ok = HalC2.Desktop.configure()
-        home = Application.fetch_env!(:hal_c2, :home)
+        :ok = prepare_files()
 
         [
           {HalC2.Store, path: HalC2.Store.home_path()},
@@ -67,7 +67,7 @@ defmodule HalC2.Application do
           Supervisor.child_spec({Task, &HalC2.Orchestration.Recovery.continue/0}, id: :continue),
           # Projects that ask for it are brought up to date.
           Supervisor.child_spec({Task, &HalC2.Projects.auto_pull/0}, id: :auto_pull)
-        ] ++ discovery(home)
+        ] ++ discovery(HalC2.Paths.data_dir())
       else
         []
       end
@@ -75,10 +75,24 @@ defmodule HalC2.Application do
     Supervisor.start_link(children, strategy: :one_for_one, name: HalC2.Supervisor)
   end
 
+  @doc """
+  Readies the node's directories before anything opens a file in them: migrates from
+  an old home the first time (`HalC2.Migration`), unless `:migrate` is false (a
+  checkout) or the node keeps everything in one directory (tests), then creates the
+  directories that are missing. `opts` go to `HalC2.Migration.run/1`.
+  """
+  def prepare_files(opts \\ []) do
+    if Application.get_env(:hal_c2, :migrate, true) and
+         not is_binary(Application.get_env(:hal_c2, :home)),
+       do: HalC2.Migration.run(opts)
+
+    HalC2.Paths.ensure!()
+  end
+
   # Named nodes find peers listed in HAL_C2_PEERS (node names such as hal_c2@192.168.1.20);
   # nodes with cluster certificates also search the tailnet.
   @doc false
-  def discovery(home) do
+  def discovery(data_dir) do
     static =
       case System.get_env("HAL_C2_PEERS") do
         nil -> []
@@ -86,7 +100,9 @@ defmodule HalC2.Application do
       end
 
     tailnet =
-      if HalC2.Cluster.address(home), do: [tailnet: [strategy: HalC2.Cluster.Tailscale]], else: []
+      if HalC2.Cluster.address(data_dir),
+        do: [tailnet: [strategy: HalC2.Cluster.Tailscale]],
+        else: []
 
     if Node.alive?() and static ++ tailnet != [],
       do: [{Cluster.Supervisor, [static ++ tailnet, [name: HalC2.ClusterSupervisor]]}],

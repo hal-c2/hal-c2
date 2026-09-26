@@ -37,7 +37,7 @@ defmodule HalC2.ScheduledTasks do
 
   @impl true
   def init(nil) do
-    path = Path.join(Application.fetch_env!(:hal_c2, :home), "scheduled-tasks.json")
+    path = Path.join(HalC2.Paths.data_dir(), "scheduled-tasks.json")
 
     tasks =
       for task <- load(path), into: %{} do

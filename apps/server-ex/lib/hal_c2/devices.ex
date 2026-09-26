@@ -608,7 +608,7 @@ defmodule HalC2.Devices do
 
   defp tool_paths(tool, version \\ nil) do
     spec = @tools[tool]
-    dir = Path.join([home(), "tools", spec.name, version || spec.version])
+    dir = Path.join([HalC2.Paths.cache_dir(), "tools", spec.name, version || spec.version])
 
     %{
       dir: dir,
@@ -694,7 +694,7 @@ defmodule HalC2.Devices do
     spec = @tools[tool]
 
     installed =
-      case File.ls(Path.join([home(), "tools", spec.name])) do
+      case File.ls(Path.join([HalC2.Paths.cache_dir(), "tools", spec.name])) do
         {:ok, names} ->
           names
           |> Enum.filter(
@@ -870,11 +870,12 @@ defmodule HalC2.Devices do
     end)
   end
 
-  defp agent_state_dir, do: Path.join([home(), "device", "agent-device"])
+  @doc false
+  def agent_state_dir, do: Path.join([HalC2.Paths.data_dir(), "device", "agent-device"])
 
   # One endpoint file per host, so a restarted daemon never retargets other commands.
   defp write_agent_config(agent) do
-    file = Path.join([home(), "device", "hosts", key(@local) <> ".json"])
+    file = Path.join([HalC2.Paths.data_dir(), "device", "hosts", key(@local) <> ".json"])
 
     content =
       JSON.encode!(%{"daemonBaseUrl" => agent["baseUrl"], "daemonAuthToken" => agent["token"]})
@@ -900,7 +901,7 @@ defmodule HalC2.Devices do
   # A launcher for the pinned CLI that refuses commands not pinned to a device_open
   # session, so an agent never drives the user's other devices by accident.
   defp write_shim(%{"node" => node, "entry" => entry}) do
-    dir = Path.join([home(), "device", "bin"])
+    dir = Path.join([HalC2.Paths.data_dir(), "device", "bin"])
     File.mkdir_p!(dir)
     launcher = Path.join(dir, "agent-device-launcher.mjs")
 
@@ -1034,7 +1035,6 @@ defmodule HalC2.Devices do
   defp reason(%{"reason" => reason, "_tag" => "DeviceHostUnavailableError"}), do: reason
   defp reason(%{"message" => message}), do: message
 
-  defp home, do: Application.fetch_env!(:hal_c2, :home)
   defp now, do: DateTime.utc_now() |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()
 
   # --- server ------------------------------------------------------------------------------
