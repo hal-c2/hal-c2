@@ -21,3 +21,10 @@ private:
   QLockFile m_lock;
   QQuickWebEngineProfile* m_profile;
 };
+
+// Runs after the QGuiApplication exists and before any web view. Without a
+// display (the offscreen platform) Qt Quick can only draw with its software
+// renderer; Chromium composites on the GPU unless the software renderer is
+// chosen explicitly, and its frames then never reach the window, so grabs and
+// --screenshot show an empty view.
+void useSoftwareRenderingWithoutDisplay();

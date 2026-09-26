@@ -438,6 +438,7 @@ Window {
 int main(int argc, char** argv) {
   QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
+  useSoftwareRenderingWithoutDisplay();
   ShellRuntimeTest test;
   return QTest::qExec(&test, argc, argv);
 }

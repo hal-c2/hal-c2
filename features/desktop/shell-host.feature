@@ -137,7 +137,7 @@ Feature: The desktop app runs its own node
 
   Rule: A scripted screenshot shows what the user would see
 
-    @desktop @backlog
+    @desktop
     Scenario: A screenshot taken without a display shows the app's page
       Given the desktop app runs without a display
       When the user starts the desktop app asking for a screenshot

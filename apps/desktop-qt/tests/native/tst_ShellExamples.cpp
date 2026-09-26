@@ -424,6 +424,7 @@ private slots:
 int main(int argc, char** argv) {
   QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
+  useSoftwareRenderingWithoutDisplay();
   ShellExamplesTest test;
   return QTest::qExec(&test, argc, argv);
 }

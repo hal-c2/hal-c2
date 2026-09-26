@@ -1,6 +1,8 @@
 #include "WebProfile.h"
 
 #include <QDir>
+#include <QGuiApplication>
+#include <QQuickWindow>
 #include <QQuickWebEngineDownloadRequest>
 #include <QQuickWebEngineProfile>
 #include <QtLogging>
@@ -46,4 +48,10 @@ WebProfile::WebProfile(const QString& dataDir)
                                               .filePath(download->downloadFileName());
                      download->accept();
                    });
+}
+
+void useSoftwareRenderingWithoutDisplay() {
+  if (QGuiApplication::platformName() == QLatin1String("offscreen")) {
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
+  }
 }

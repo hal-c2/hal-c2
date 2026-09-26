@@ -219,6 +219,39 @@ private slots:
     }
   }
 
+  // Mirrors "A screenshot taken without a display shows the app's page" in
+  // features/desktop/shell-host.feature: --screenshot is a window grab.
+  void windowGrabWithoutDisplayShowsThePage() {
+    QFile page(directory.filePath("grab.html"));
+    QVERIFY(page.open(QIODevice::WriteOnly));
+    page.write("<!doctype html><title>Grab fixture</title><style>html,body{margin:0;height:100%;background:rgb(12,200,90)}</style>");
+    page.close();
+    QQmlComponent fixture(engine.get());
+    fixture.setData(R"(
+      import QtQuick
+      import HalC2.Bricks
+      Window {
+        id: root
+        width: 200; height: 120; visible: true
+        property url pageUrl
+        WebSurface {
+          objectName: "grabView"
+          anchors.fill: parent
+          shellIntegration: false
+          url: root.pageUrl
+        }
+      }
+    )", QUrl::fromLocalFile(directory.filePath("grab.qml")));
+    QVERIFY2(fixture.isReady(), qPrintable(fixture.errorString()));
+    std::unique_ptr<QObject> object(fixture.createWithInitialProperties({{"pageUrl", QUrl::fromLocalFile(page.fileName())}}));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    QVERIFY(window);
+    auto* view = window->findChild<QQuickItem*>("grabView");
+    QVERIFY(view);
+    QTRY_COMPARE(view->property("title").toString(), QString("Grab fixture"));
+    QTRY_COMPARE_WITH_TIMEOUT(window->grabWindow().pixelColor(100, 60), QColor(12, 200, 90), 10000);
+  }
+
   void cleanupTestCase() {
     component.reset();
     engine.reset();
@@ -230,6 +263,7 @@ private slots:
 int main(int argc, char** argv) {
   QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
+  useSoftwareRenderingWithoutDisplay();
   AppViewsTest test;
   return QTest::qExec(&test, argc, argv);
 }

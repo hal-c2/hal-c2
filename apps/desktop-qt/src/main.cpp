@@ -83,6 +83,7 @@ int main(int argc, char* argv[]) {
   }
   QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
+  useSoftwareRenderingWithoutDisplay();
 
   QCommandLineParser parser;
   parser.setApplicationDescription(QStringLiteral("HAL-C2 Qt shell"));
