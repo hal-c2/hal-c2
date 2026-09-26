@@ -42,7 +42,7 @@ Feature: The protocol 3 WebSocket
     When the client subscribes to a thread from the beginning
     Then it receives the thread's snapshot in parts until done
     And then a frame saying the subscription is live
-    And later changes arrive as events
+    And later changes arrive live as events
 
   @node
   Scenario: A client resumes a thread from the offset it last saw
@@ -98,9 +98,7 @@ Feature: The protocol 3 WebSocket
     When it adds a keybinding and then removes it
     Then each change arrives as the complete list of rules
 
-  # The node routes these only under its own names t3.upsertKeybinding and t3.removeKeybinding;
-  # parity/rpc.feature records the contract methods as reached "rpc as t3.*".
-  @node @backlog
+  @node
   Scenario Outline: A client calling the contract's keybinding method <method> is answered
     Given the client follows the node's config
     When it calls <method>
@@ -199,13 +197,13 @@ Feature: The protocol 3 WebSocket
     Then it is blocked before opening a socket
     And it says which side to update
 
-  @backlog @node
+  @node
   Scenario: A client with a newer protocol than the node is refused with an update message
     Given a client speaking a protocol newer than the node's
     When it opens a socket
     Then the node refuses with a message naming the node to update
 
-  @backlog @node
+  @node
   Scenario: A node revoking a session closes that session's open sockets
     Given a client session has an open socket
     When an administrator revokes that session

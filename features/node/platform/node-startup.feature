@@ -1,9 +1,9 @@
 # Sources:
-#   apps/server-ex/config/runtime.exs (T3_HOME, T3_PORT)
+#   apps/server-ex/config/runtime.exs (T3_HOME, T3_PORT, T3CODE_HOST)
 #   apps/server/src/cli/config.ts (T3CODE_HOST)
 #   apps/server-ex/lib/mix/tasks/t3.server.ex, t3.import.ex, t3.bundle.ex
 #   apps/server-ex/rel/env.sh.eex (RELEASE_DISTRIBUTION, cluster vm.args)
-#   apps/server-ex/rel/overlays/bin/t3-service (restart loop on exit 75)
+#   apps/server-ex/rel/overlays/bin/t3-service (restart loop on exit 75), lib/t3/service.ex
 #   apps/server-ex/lib/t3/desktop.ex (T3_BOOTSTRAP_STDIN), acp.ex (T3_NODE_COMMAND, T3_NODE_ELECTRON)
 #   apps/server-ex/lib/t3/web.ex (access-token), environment.ex (environment-id, T3_LABEL, descriptor)
 #   apps/server-ex/lib/t3/import/v2.ex
@@ -55,15 +55,13 @@ Feature: Starting the node
     When the node starts from a checkout or a release
     Then only clients on the same machine can reach it
 
-  # apps/server-ex/config/runtime.exs reads only T3_HOME and T3_PORT; the TypeScript server
-  # reads T3CODE_HOST (apps/server/src/cli/config.ts).
-  @backlog @node
+  @node
   Scenario: The bind address comes from the environment
     Given the bind host is set to "100.64.0.7" in the environment
     When the node starts
     Then it serves clients on "100.64.0.7"
 
-  @backlog @node
+  @node
   Scenario: A user starts the node on a network address for LAN pairing
     When a user starts the node with a LAN or tailnet host address
     Then clients on that network can reach it
@@ -107,7 +105,7 @@ Feature: Starting the node
     Then the wrapper starts the node again
     And any other exit stops the wrapper
 
-  @backlog @node
+  @node
   Scenario: A user installs the node as a background service with one command
     When a user asks to install the background service
     Then the node is registered with the system's service manager

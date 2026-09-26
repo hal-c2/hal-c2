@@ -410,16 +410,7 @@ defmodule T3.Steps.Common do
 
   # --- added by W3-A ---
 
-  # HTTP steps leave `context.response` as `%{status: integer, ...}`.
-  step "the node answers not found", context do
-    assert %{status: 404} = context.response
-    context
-  end
-
-  step "the node answers {int}", %{args: [status]} = context do
-    assert context.response.status == status
-    context
-  end
+  # "the node answers not found" and "the node answers {int}": the one HTTP status step below.
 
   # --- added by W2 ---
 
@@ -525,10 +516,13 @@ defmodule T3.Steps.Common do
   # worktree the scenario is about (`World.worktree_thread/4`).
   step("the node sweeps storage", context, do: World.sweep_storage(context))
 
+  # With `context.control` (a worktree the same sweep had to remove), also that the
+  # sweep did run.
   step "the worktree is kept", context do
     path = context.worktree.path
     assert File.dir?(path), "the worktree #{path} was removed"
     assert path in worktrees(context.worktree.root)
+    if control = context[:control], do: refute(File.exists?(control), "the sweep did not run")
     context
   end
 
@@ -658,9 +652,7 @@ defmodule T3.Steps.Common do
     client =
       case refused do
         "text that is not JSON" ->
-          {:ok, ws, data} = Mint.WebSocket.encode(client.ws, {:text, "not json {"})
-          {:ok, conn} = Mint.WebSocket.stream_request_body(client.conn, client.ref, data)
-          %{client | conn: conn, ws: ws}
+          Node.send_text(client, "not json {")
 
         "a frame " <> _ ->
           WsClient.send_json(client, %{"t" => "nope", "id" => 40})
@@ -1498,6 +1490,38 @@ defmodule T3.Steps.Common do
       run["status"] == status
     end)
 
+    context
+  end
+
+  # --- added by W6 ---
+
+  # An HTTP answer a previous step stored as `context.response`: `{status, headers,
+  # body}` as `T3.Test.Node.request/4` returns it, or a map with a `:status`.
+  step ~r/^the node answers (?<status>not found|unauthorized|service unavailable|bad gateway|\d{3})$/,
+       %{args: [status]} = context do
+    expected =
+      case status do
+        "not found" -> 404
+        "unauthorized" -> 401
+        "service unavailable" -> 503
+        "bad gateway" -> 502
+        code -> String.to_integer(code)
+      end
+
+    actual =
+      case context.response do
+        {status, _headers, _body} -> status
+        %{status: status} -> status
+      end
+
+    assert actual == expected
+    context
+  end
+
+  # Stops the server a previous step started as `context.dev_server`.
+  step "that server stops", context do
+    Process.unlink(context.dev_server)
+    :ok = Supervisor.stop(context.dev_server)
     context
   end
 end

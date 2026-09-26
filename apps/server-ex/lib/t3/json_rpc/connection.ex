@@ -5,7 +5,8 @@ defmodule T3.JsonRpc.Connection do
   Callers use `call/4` and `notify/3`. Incoming notifications and server-to-client
   requests go to the `:handler` pid as `{:json_rpc, conn, message}`; the handler
   answers requests with `respond/3`. If the subprocess exits, pending calls fail with
-  `{:error, :closed}` and the connection stops.
+  `{:error, :closed}` and the connection stops. With `:log` (a thread id), every
+  line the subprocess sends also goes to `T3.ProviderLog`.
 
   The state is versioned so a hot upgrade can migrate it in `code_change/3`.
   """
@@ -22,6 +23,7 @@ defmodule T3.JsonRpc.Connection do
           | {:dialect, JsonRpc.dialect()}
           | {:cd, String.t()}
           | {:env, [{String.t(), String.t()}]}
+          | {:log, String.t() | nil}
 
   @spec start_link([option]) :: GenServer.on_start()
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, hibernate_after: 15_000)
@@ -57,7 +59,8 @@ defmodule T3.JsonRpc.Connection do
            handler: Keyword.fetch!(opts, :handler),
            dialect: Keyword.get(opts, :dialect, :bare),
            next_id: 1,
-           pending: %{}
+           pending: %{},
+           log: Keyword.get(opts, :log)
          }}
 
       {:error, reason} ->
@@ -116,6 +119,8 @@ defmodule T3.JsonRpc.Connection do
   defp migrate(state), do: Map.put(state, :v, @state_version)
 
   defp handle_line(line, state) do
+    T3.ProviderLog.native(Map.get(state, :log), line)
+
     case JsonRpc.decode(line) do
       {:response, id, reply} ->
         {from, pending} = Map.pop(state.pending, id)

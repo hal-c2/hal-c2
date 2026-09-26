@@ -209,7 +209,10 @@ defmodule T3.Steps.Settings.Diagnostics do
   end
 
   # Posts spans as the web client's OTLP exporter does, with a paired client's token.
+  # The node keeps client spans only while tracing is on (`T3.Traces.enabled?/0`).
   defp post_traces(context, spans) do
+    World.put_app_env(:trace, true)
+
     {:ok, access, _expires, _scopes} =
       T3.Auth.exchange(T3.Auth.create_pairing_token(context.node.store), %{"label" => "Web"})
 

@@ -83,42 +83,7 @@ defmodule T3.Connect.Jwt do
 
   defp pem(type, der), do: String.trim(:public_key.pem_encode([{type, der, :not_encrypted}]))
 
-  # --- DPoP ---------------------------------------------------------------------
-
-  @doc """
-  Checks a DPoP proof for `method` and `url`: `{:ok, %{thumbprint, jti}}` or
-  `{:error, code}` (`packages/shared/src/dpop.ts`). With `access_token`, the proof
-  must name it (`ath`), as a request with a DPoP-bound token does.
-  """
-  def verify_dpop(proof, method, url, now \\ System.os_time(:second), access_token \\ nil) do
-    with [h, p, s] <- String.split(proof || "", "."),
-         {:ok, %{"typ" => "dpop+jwt", "alg" => "ES256", "jwk" => jwk}} <- decode(h),
-         {:ok, %{"htm" => htm, "htu" => htu, "jti" => jti, "iat" => iat} = claims}
-         when is_integer(iat) and is_binary(jti) <- decode(p),
-         {:ok, point} <- ec_point(jwk),
-         :ok <- check(String.upcase(htm) == String.upcase(method), :method_mismatch),
-         :ok <- check(htu == htu(url), :url_mismatch),
-         :ok <-
-           check(
-             access_token == nil or claims["ath"] == b64(:crypto.hash(:sha256, access_token)),
-             :ath_mismatch
-           ),
-         {:ok, <<r::256, s::256>>} <- Base.url_decode64(s, padding: false),
-         der = :public_key.der_encode(:"ECDSA-Sig-Value", {:"ECDSA-Sig-Value", r, s}),
-         :ok <-
-           check(
-             :crypto.verify(:ecdsa, :sha256, h <> "." <> p, der, [point, :secp256r1]),
-             :invalid_signature
-           ),
-         :ok <- check(iat <= now + 5 and now - iat <= @max_age, :time_window) do
-      {:ok, %{thumbprint: thumbprint(jwk), jti: jti}}
-    else
-      {:error, code} when is_atom(code) -> {:error, code}
-      _ -> {:error, :malformed_proof}
-    end
-  rescue
-    _ -> {:error, :invalid_proof}
-  end
+  # --- DPoP (proofs are checked by `T3.Auth.Dpop`) --------------------------------
 
   @doc "The RFC 7638 thumbprint of a P-256 JWK."
   def thumbprint(%{"crv" => crv, "kty" => kty, "x" => x, "y" => y}) do
@@ -127,23 +92,6 @@ defmodule T3.Connect.Jwt do
 
     b64(:crypto.hash(:sha256, canonical))
   end
-
-  # A proof names the URL without its query or fragment.
-  defp htu(url) do
-    uri = URI.parse(url)
-    URI.to_string(%{uri | query: nil, fragment: nil})
-  end
-
-  defp ec_point(%{"kty" => "EC", "crv" => "P-256", "x" => x, "y" => y}) do
-    with {:ok, <<_::binary-size(32)>> = x} <- Base.url_decode64(x, padding: false),
-         {:ok, <<_::binary-size(32)>> = y} <- Base.url_decode64(y, padding: false),
-         do: {:ok, <<4, x::binary, y::binary>>}
-  end
-
-  defp ec_point(_), do: :error
-
-  defp check(true, _code), do: :ok
-  defp check(_, code), do: {:error, code}
 
   def b64(bytes), do: Base.url_encode64(bytes, padding: false)
 

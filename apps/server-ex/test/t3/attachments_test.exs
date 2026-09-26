@@ -58,7 +58,7 @@ defmodule T3.AttachmentsTest do
                %{attachment | "id" => "pending-00000000-0000-0000-0000-000000000000"}
              ])
 
-    {:ok, %{"relativeUrl" => "/api/assets/" <> asset}} =
+    {:ok, %{"relativeUrl" => "/api/assets/" <> url}} =
       Attachments.create_url(%{
         "resource" => %{
           "_tag" => "attachment",
@@ -67,7 +67,10 @@ defmodule T3.AttachmentsTest do
         }
       })
 
-    assert {:ok, @png, "image/png", _name, "attachment"} = Attachments.read(asset)
+    [asset, _name] = String.split(url, "/")
+    assert {:ok, 200, headers, @png} = Attachments.serve(asset)
+    assert {"content-type", "image/png"} in headers
+    assert {"content-disposition", ~s(attachment; filename="#{claimed}.png")} in headers
   end
 
   test "the HTTP routes take an upload and serve an asset" do

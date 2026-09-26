@@ -5,6 +5,13 @@
 # fails to boot, the start_erl.data it replaced is put back and the old one starts.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
+
+# `t3-service install|status|uninstall` registers this release with the user's
+# service manager (`T3.Service.main/1`).
+case "${1:-}" in
+  install | status | uninstall) exec "$here/t3" eval "T3.Service.main([\"$1\"])" ;;
+esac
+
 releases="$here/../releases"
 export T3_SERVICE=1
 while :; do

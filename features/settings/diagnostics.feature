@@ -1,6 +1,6 @@
 # Sources:
 #   apps/server-ex/lib/t3/diagnostics.ex (process list, history, signals, traces)
-#   apps/server-ex/lib/t3/traces.ex (client trace forwarding, trace diagnostics)
+#   apps/server-ex/lib/t3/traces.ex (node spans, client trace forwarding, trace diagnostics)
 #   apps/server-ex/test/node_parity_test.exs (diagnostics RPCs aligned)
 #   apps/server-ex/test/features_backlog_test.exs (client trace forwarding)
 #   packages/contracts/src/rpc.ts (server.getProcessDiagnostics, server.getProcessResourceHistory, server.signalProcess, server.getTraceDiagnostics)
@@ -70,7 +70,7 @@ Feature: Diagnostics
   @node
   Scenario: Clients forward their traces to the node
     When a client sends its traces to the node
-    # The node traces none of its own work; the file holds what clients send.
+    # With tracing on, the file holds what clients send beside the node's own spans.
     Then the node records them in its trace file
 
   @backlog @shared

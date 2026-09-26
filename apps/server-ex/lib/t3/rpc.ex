@@ -183,4 +183,38 @@ defmodule T3.Rpc do
   def handle("terminal.list", input), do: T3.Terminal.list(input)
   def handle("cloud.getRelayClientStatus", _), do: {:ok, T3.Connect.RelayClient.resolve()}
   def handle(method, _payload), do: {:error, "#{method} is not served by this node yet"}
+
+  # Methods a session with `orchestration:read` alone may call, as the Node server's
+  # `RPC_REQUIRED_SCOPES` declares them; every other method changes something.
+  @reads ~w(
+    orchestration.getWorkflowScript orchestration.getTurnDiff orchestration.getFullThreadDiff
+    orchestration.searchThreads orchestration.getArchivedShellSnapshot
+    orchestration.getThreadProjection server.getSettings t3.readSettings t3.threadRows
+    server.getConfig server.probe server.discoverSourceControl server.getTraceDiagnostics
+    server.getProcessDiagnostics server.getHostResources server.getProcessResourceHistory
+    server.getResourceTelemetryHistory server.getUsageSummary server.refreshUsageRates
+    server.reportClientActivity server.getBackgroundPolicy server.searchAcpRegistry
+    server.listAcpRegistrySessions server.listAcpRegistryProviders scheduledTasks.list
+    sourceControl.lookupRepository projects.listEntries projects.readFile
+    projects.searchContents projects.searchEntries filesystem.browse agentSessions.scan
+    assets.createUrl vcs.refreshStatus vcs.listRefs preview.list device.list device.detail
+  )
+  @pull_request_writes ~w(
+    runAction update comment updateComment submitReview replyToThread setThreadResolution
+    setReaction setFilesViewed requestReviewers setLabels
+  )
+
+  @doc "The session scope a client needs to call `method`."
+  @spec required_scope(String.t()) :: String.t()
+  def required_scope("terminal." <> _), do: "terminal:operate"
+  def required_scope("review." <> _), do: "review:write"
+  def required_scope("cloud.getRelayClientStatus"), do: "relay:read"
+  def required_scope("cloud." <> _), do: "relay:write"
+
+  def required_scope("pullRequests." <> method),
+    do:
+      if(method in @pull_request_writes, do: "orchestration:operate", else: "orchestration:read")
+
+  def required_scope(method) when method in @reads, do: "orchestration:read"
+  def required_scope(_method), do: "orchestration:operate"
 end

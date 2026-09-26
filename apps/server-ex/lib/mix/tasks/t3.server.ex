@@ -12,8 +12,12 @@ defmodule Mix.Tasks.T3.Server do
   @impl true
   def run(_args) do
     Mix.Task.run("app.start")
-    port = Application.get_env(:t3, :port, 3780)
-    Mix.shell().info("T3 node #{node()} ws://127.0.0.1:#{port}/ws?token=#{T3.Web.token()}")
+    announce()
     Process.sleep(:infinity)
+  end
+
+  @doc "Prints the running node's WebSocket URL with its access token."
+  def announce do
+    Mix.shell().info("T3 node #{node()} #{T3.Web.base_url("ws")}/ws?token=#{T3.Web.token()}")
   end
 end

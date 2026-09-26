@@ -75,21 +75,23 @@ Feature: Background work and storage cleanup on the node
 
   @node
   Scenario: A locked host pauses background work
-    Given the host reports it is locked
+    Given a client in front shows a checkout and provider status
+    When the host reports it is locked
     Then the node pauses periodic git and provider refreshes
 
   @node
   Scenario: A client reads the policy the node applies
     When a client asks for the background policy
-    Then it receives the profile, the effective values and why work is paused if it is
+    # BackgroundPolicySnapshot (TS and node) carries no profile or pause reason.
+    Then it receives the host's power state, the active client leases and whether background work may run
 
-  @backlog @node
+  @node
   Scenario: A client following the background policy sees it change
     Given a client follows the background policy
     When the host goes onto battery
     Then the client receives the new policy
 
-  @backlog @node
+  @node
   Scenario: A node without a desktop host learns host power from the operating system
     Given a node started without the desktop app
     When the laptop it runs on switches to battery
@@ -117,9 +119,9 @@ Feature: Background work and storage cleanup on the node
     Examples:
       | rule                             | condition                                  |
       | after 7 idle days                | has been idle for 8 days                   |
-      | once merged                      | belongs to a merged pull request           |
+      | once merged                      | has a merged pull request                  |
       | once their thread is deleted     | belongs to a deleted thread                |
-      | when unchanged from default      | has a branch already in the default branch |
+      | when unchanged from default      | has no commits beyond the default branch   |
 
   @node
   Scenario Outline: A worktree the sweep must not touch
@@ -151,7 +153,7 @@ Feature: Background work and storage cleanup on the node
     And a terminal opened in it during the sweep
     Then the worktree is kept
 
-  @backlog @node
+  @node
   Scenario: A removed worktree can be checked out again
     Given the sweep removed a thread's worktree
     When the user continues the thread

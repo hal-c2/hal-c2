@@ -379,7 +379,8 @@ defmodule T3.Acp.ThreadRuntime do
              handler: self(),
              cd: turn.cwd,
              env: env,
-             dialect: :v2
+             dialect: :v2,
+             log: turn.ids.thread
            ),
          {:ok, init} <-
            Connection.call(conn, "initialize", %{

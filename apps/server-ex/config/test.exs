@@ -12,3 +12,7 @@ config :t3, provider_update_checks: false
 
 # Usage pricing never fetches the LiteLLM table; tests that price point this at a file.
 config :t3, usage_rates_url: "t3-test-no-usage-rates.json"
+
+# The background policy never reads this machine's power supplies; tests that do
+# point this at a directory of fake ones.
+config :t3, power_supply_dir: nil

@@ -37,6 +37,8 @@ defmodule T3.Web.Protocol do
       progress (`ProjectCloneSnapshot[]`), then the whole list on every change
     * `{"type": "scheduledTasks", "node": n}`: that node's scheduled tasks, then
       the whole list again whenever one changes
+    * `{"type": "backgroundPolicy", "node": n}`: that node's background policy
+      (`BackgroundPolicySnapshot`), then again whenever it changes
     * `{"type": "pullRequestRefreshes", "node": n}`: that node's pull request
       refresh revision, then each new one (`pullRequests.subscribeRefreshes`)
     * `{"type": "providerAuth", "node": n, "instanceId": id}`: that provider
@@ -87,6 +89,7 @@ defmodule T3.Web.Protocol do
       {"t": "providerInstall", "id", "state"} (ProviderInstallState)
       {"t": "worktreeSetup", "id", "event"} (WorktreeSetupStreamEvent)
       {"t": "scheduledTasks", "id", "tasks"} (ScheduledTask[])
+      {"t": "backgroundPolicy", "id", "policy"} (BackgroundPolicySnapshot)
       {"t": "projectClones", "id", "clones"} (ProjectCloneSnapshot[])
       {"t": "preview", "id", "event"} (PreviewEvent)
       {"t": "previewAutomation", "id", "event"} (PreviewAutomationStreamEvent)
@@ -222,6 +225,10 @@ defmodule T3.Web.Protocol do
 
   defp decode_shape(%{"type" => "scheduledTasks", "node" => node}, nodes) do
     with {:ok, node} <- known_node(node, nodes), do: {:ok, {:scheduled_tasks, node}}
+  end
+
+  defp decode_shape(%{"type" => "backgroundPolicy", "node" => node}, nodes) do
+    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:background_policy, node}}
   end
 
   defp decode_shape(%{"type" => "pullRequestRefreshes", "node" => node}, nodes) do

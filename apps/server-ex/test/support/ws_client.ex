@@ -74,12 +74,18 @@ defmodule T3.Test.WsClient do
   defp recv_http(conn, acc) do
     socket = Mint.HTTP.get_socket(conn)
 
+    # Only this connection's socket messages (data, close, error); the test process
+    # also gets shell pushes.
     receive do
       message
       when is_tuple(message) and tuple_size(message) >= 2 and elem(message, 1) == socket ->
         {:ok, conn, responses} = Mint.WebSocket.stream(conn, message)
         acc = acc ++ responses
         if Enum.any?(acc, &match?({:done, _}, &1)), do: {conn, acc}, else: recv_http(conn, acc)
+
+      {tag, ^socket} = message when tag in [:tcp_closed, :ssl_closed] ->
+        {:ok, conn, responses} = Mint.WebSocket.stream(conn, message)
+        {conn, acc ++ responses}
     end
   end
 end

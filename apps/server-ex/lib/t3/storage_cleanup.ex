@@ -46,10 +46,8 @@ defmodule T3.StorageCleanup do
   @impl true
   def init(nil) do
     T3.Settings.watch(self())
-    schedule(Application.get_env(:t3, :storage_cleanup_first_ms, 60_000))
-    # The policy in force now, so the first change after start sweeps too.
-    policy = if Process.whereis(T3.Settings), do: policy(T3.Settings.settings())
-    {:ok, %{policy: policy}}
+    timer = schedule(Application.get_env(:t3, :storage_cleanup_first_ms, 60_000))
+    {:ok, %{policy: current_policy(), timer: timer}}
   end
 
   @impl true
@@ -61,8 +59,7 @@ defmodule T3.StorageCleanup do
   @impl true
   def handle_info(:tick, state) do
     run()
-    schedule(:timer.hours(1))
-    {:noreply, state}
+    {:noreply, %{state | timer: schedule(:timer.hours(1))}}
   end
 
   # A changed policy is applied at once; other settings changes are not a reason to sweep.
@@ -74,8 +71,15 @@ defmodule T3.StorageCleanup do
 
   def handle_info(_other, state), do: {:noreply, state}
 
-  defp schedule(nil), do: :ok
+  defp schedule(nil), do: nil
   defp schedule(ms), do: Process.send_after(self(), :tick, ms)
+
+  # Held from the start, so the first change after it sweeps too.
+  defp current_policy do
+    policy(T3.Settings.settings())
+  catch
+    :exit, _ -> nil
+  end
 
   defp policy(settings) do
     overrides =

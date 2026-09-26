@@ -11,10 +11,58 @@ defmodule T3.Service do
   `systemctl`, `loginctl` and `launchctl` are looked up as `:<exe>_command` in the
   app env first, so tests can stand in for the service manager; `:service_user_home`
   replaces the user's home directory the unit is written under.
+
+  A release reaches it as `bin/t3-service install|status|uninstall` (`main/1`), a
+  checkout as `mix t3.service`.
   """
 
   @unit "t3code.service"
   @label "com.t3tools.t3code.service"
+
+  @doc "Runs a `bin/t3-service` subcommand and prints its outcome; exits 1 on failure."
+  def main(args) do
+    case command(args) do
+      {:ok, text} ->
+        IO.puts(text)
+
+      {:error, message} ->
+        IO.puts(:stderr, message)
+        System.halt(1)
+    end
+  end
+
+  @doc "`install`, `status` or `uninstall` as `{:ok, text}` or `{:error, message}`."
+  def command(["install"]) do
+    with {:ok, result} <- install() do
+      verb = if result["previouslyInstalled"], do: "updated", else: "installed"
+      {:ok, "Background service #{verb}. Logs: #{result["logPath"]}"}
+    end
+  end
+
+  def command(["status"]) do
+    status = status()
+
+    {:ok,
+     cond do
+       not status["supported"] ->
+         "Background service: not supported on this platform"
+
+       not status["installed"] ->
+         "Background service: not installed"
+
+       status["current"] ->
+         "Background service: installed\n  Unit: #{status["unitPath"]}\n  Logs: #{status["logPath"]}"
+
+       true ->
+         "Background service: installed, needs an update (run install again)"
+     end}
+  end
+
+  def command(["uninstall"]) do
+    with :ok <- uninstall(), do: {:ok, "Background service removed."}
+  end
+
+  def command(_), do: {:error, "usage: t3-service install | status | uninstall"}
 
   @doc """
   `%{"supported", "installed", "current", "unitPath", "logPath"}`: whether this

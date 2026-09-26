@@ -149,62 +149,62 @@ Feature: Attachments and assets served by the node
     Then the node forwards the request to the issuer
     And only the issuer checks the signature
 
+  # The node now serves favicons, app icons and GitHub media (below); only a kind
+  # outside the contract is left.
   @node
   Scenario Outline: Asset kinds the node does not serve yet
     When the client asks for an asset URL for <resource>
     Then the node fails saying files are not served by this node yet
 
     Examples:
-      | resource             |
-      | a project favicon    |
-      | a native app icon    |
-      | GitHub media         |
+      | resource                              |
+      | an asset kind this node does not know |
 
-  @backlog @node
+  @node
   Scenario: The node serves a project's favicon
     Given a project with a favicon in its repository
     When a client asks for the project's favicon
     Then the node serves that icon
 
-  @backlog @node
+  @node
   Scenario: A project without a favicon falls back to the default icon
     Given a project with no favicon
     When a client asks for the project's favicon
     Then the node answers not found
     And the client shows the default project icon
 
-  @backlog @node
+  @node
   Scenario: The node serves a native app's icon for a work log entry
     Given a work log entry that names an application on the host
     When a client asks for that application's icon
     Then the node serves the icon
 
-  @backlog @node
+  @node
   Scenario: A missing app icon keeps the entry's text
     Given a work log entry naming an application the host does not have
     When a client asks for its icon
     Then the node answers not found
     And the entry keeps its text
 
-  @backlog @node
+  @node
   Scenario: The node proxies GitHub media with the user's GitHub credentials
     Given a pull request comment with an image in a private repository
     When a client asks for that image
     Then the node fetches it with the host's GitHub credentials and serves it
 
-  @backlog @node
+  @node
   Scenario: A private repository token never reaches the client
     When a client reads proxied GitHub media
     Then the response carries no GitHub token
 
-  @backlog @node
+  @node
   Scenario: A replaced file needs a new asset URL
     Given a signed URL for a media file on the host
     When the file is replaced atomically by another file
     Then the old URL no longer serves it
     And editing the same file in place keeps the URL working
 
-  @backlog @node
+  @node
   Scenario: Host videos seek without downloading the whole file
     Given a signed URL for a video on the host
     When a player seeks into the video

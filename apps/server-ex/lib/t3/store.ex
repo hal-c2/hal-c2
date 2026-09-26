@@ -12,6 +12,9 @@ defmodule T3.Store do
 
   Patches larger than `@compress_over` bytes (mostly command output) are stored
   zstd-compressed behind a zero byte, which a JSON document can never start with.
+
+  The meta table records the schema version the file was written with. A node
+  refuses to open a store from a newer schema rather than misread it.
   """
 
   use GenServer
@@ -168,6 +171,12 @@ defmodule T3.Store do
   def put_meta(store \\ __MODULE__, key, value),
     do: GenServer.call(store, {:put_meta, key, value})
 
+  @doc "The node's database in its T3 home, which the application and mix tasks open."
+  def home_path, do: Path.join(Application.fetch_env!(:t3, :home), "t3.sqlite")
+
+  @doc "The store schema version this node writes; stores with a newer one are refused."
+  def schema_version, do: @schema_version
+
   @spec path(GenServer.server()) :: String.t()
   def path(store \\ __MODULE__), do: GenServer.call(store, :path)
 
@@ -256,6 +265,23 @@ defmodule T3.Store do
         ],
         do: :ok = Sqlite3.execute(db, "PRAGMA " <> pragma)
 
+    :ok = Sqlite3.execute(db, hd(@schema))
+
+    case stored_version(db) do
+      found when found > @schema_version ->
+        Sqlite3.close(db)
+
+        {:stop,
+         {:newer_schema,
+          "#{path} was written with store schema version #{found}; " <>
+            "this node reads up to version #{@schema_version}. Upgrade the node to open it."}}
+
+      _ ->
+        open(path, db)
+    end
+  end
+
+  defp open(path, db) do
     Enum.each(@schema, &(:ok = Sqlite3.execute(db, &1)))
 
     :ok =
@@ -283,6 +309,20 @@ defmodule T3.Store do
        # Stream keys never change, so they are cached for the life of the process.
        keys: %{}
      }}
+  end
+
+  # The schema version a store was written with, or 0 for a new file.
+  defp stored_version(db) do
+    {:ok, stmt} = Sqlite3.prepare(db, "SELECT value FROM meta WHERE key = 'schema_version'")
+
+    result =
+      case Sqlite3.step(db, stmt) do
+        {:row, [value]} -> String.to_integer(value)
+        :done -> 0
+      end
+
+    :ok = Sqlite3.release(db, stmt)
+    result
   end
 
   @impl true

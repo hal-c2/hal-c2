@@ -20,7 +20,10 @@ defmodule T3.Web.Socket do
 
   # Sockets are Bandit's processes, so a code upgrade in place (`T3.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
-  @state_version 1
+  @state_version 2
+
+  @doc "How long a client RPC may run before it fails as timed out (`:rpc_timeout`)."
+  def rpc_timeout, do: Application.get_env(:t3, :rpc_timeout, :timer.minutes(10))
 
   @impl true
   def init(opts) do
@@ -31,6 +34,8 @@ defmodule T3.Web.Socket do
     state = %{
       v: @state_version,
       session: session,
+      # What the session may do; the node's own token may do anything.
+      scopes: session_scopes(session),
       subs: %{},
       by_stream: %{},
       by_terminal: %{},
@@ -59,7 +64,11 @@ defmodule T3.Web.Socket do
         {:push, Protocol.encode(%{"t" => "pong"}), state}
 
       {:ok, {:sub, id, shape, offset}} ->
-        subscribe(state, id, shape, offset)
+        scope = shape_scope(shape)
+
+        if allowed?(state, scope),
+          do: subscribe(state, id, shape, offset),
+          else: {:push, Protocol.encode(error_frame(id, "#{scope} is required")), state}
 
       {:ok, {:unsub, id}} ->
         {:ok, unsubscribe(state, id)}
@@ -311,6 +320,17 @@ defmodule T3.Web.Socket do
     end
   end
 
+  def handle_info({:t3_background_policy, node, policy}, state) do
+    case state.by_terminal do
+      %{{:background_policy, ^node} => id} ->
+        frame = %{"t" => "backgroundPolicy", "id" => id, "policy" => policy}
+        {:push, Protocol.encode(frame), state}
+
+      _ ->
+        {:ok, state}
+    end
+  end
+
   def handle_info({:t3_pull_request_refreshes, node, revision}, state) do
     case state.by_terminal do
       %{{:pull_request_refreshes, ^node} => id} ->
@@ -374,6 +394,10 @@ defmodule T3.Web.Socket do
     end
   end
 
+  # An administrator revoked this socket's session: it may not stay connected.
+  def handle_info({:t3_session_revoked, session}, %{session: session} = state),
+    do: {:stop, :normal, {4401, "session revoked"}, state}
+
   def handle_info({:rpc_reply, id, reply}, state) do
     frame =
       case reply do
@@ -411,8 +435,27 @@ defmodule T3.Web.Socket do
 
   # Runs a client RPC on the node that owns the environment, off this process so a
   # slow command never holds up streaming.
+  # Each method needs the scope the contract declares for it (`T3.Rpc.required_scope/1`).
   defp rpc(state, id, environment, method, payload) do
+    scope = T3.Rpc.required_scope(method)
+
+    if allowed?(state, scope) do
+      run_rpc(state, id, environment, method, payload)
+    else
+      error = %{
+        "_tag" => "EnvironmentScopeRequiredError",
+        "requiredScope" => scope,
+        "message" => "#{scope} is required"
+      }
+
+      send(self(), {:rpc_reply, id, {:error, error}})
+      state
+    end
+  end
+
+  defp run_rpc(state, id, environment, method, payload) do
     socket = self()
+    timeout = rpc_timeout()
 
     Task.start(fn ->
       reply =
@@ -430,8 +473,9 @@ defmodule T3.Web.Socket do
             try do
               # Each call runs in its own task; some (a provider update, a
               # scheduled task run) take minutes.
-              :erpc.call(node, T3.Rpc, :handle, [method, payload || %{}], :timer.minutes(10))
+              :erpc.call(node, T3.Rpc, :handle, [method, payload || %{}], timeout)
             catch
+              :error, {:erpc, :timeout} -> {:error, "#{method} timed out"}
               :error, {:erpc, reason} -> {:error, "node unavailable: #{reason}"}
               kind, reason -> {:error, Exception.format(kind, reason)}
             end
@@ -614,34 +658,24 @@ defmodule T3.Web.Socket do
     end
   end
 
-  # Only an administrative session (or the node's own token) sees who is paired.
+  # Only an administrative session (or the node's own token) sees who is paired;
+  # `shape_scope/1` asks for access:read.
   defp subscribe(state, id, :auth_access, _offset) do
-    allowed =
-      state.session == nil or
-        Enum.any?(
-          T3.Auth.clients(),
-          &(&1["sessionId"] == state.session and "access:read" in &1["scopes"])
-        )
+    {:ok, revision, snapshot} = T3.Auth.subscribe(self())
 
-    if allowed do
-      {:ok, revision, snapshot} = T3.Auth.subscribe(self())
+    event = %{
+      "version" => 1,
+      "revision" => revision,
+      "type" => "snapshot",
+      "payload" => snapshot
+    }
 
-      event = %{
-        "version" => 1,
-        "revision" => revision,
-        "type" => "snapshot",
-        "payload" => snapshot
-      }
-
-      {:push, Protocol.encode(%{"t" => "authAccess", "id" => id, "event" => own(event, state)}),
-       %{
-         state
-         | subs: Map.put(state.subs, id, :auth_access),
-           by_terminal: Map.put(state.by_terminal, :auth_access, id)
-       }}
-    else
-      {:push, Protocol.encode(error_frame(id, "access:read is required")), state}
-    end
+    {:push, Protocol.encode(%{"t" => "authAccess", "id" => id, "event" => own(event, state)}),
+     %{
+       state
+       | subs: Map.put(state.subs, id, :auth_access),
+         by_terminal: Map.put(state.by_terminal, :auth_access, id)
+     }}
   end
 
   defp subscribe(state, id, {:resource_telemetry, node} = shape, _offset) do
@@ -745,6 +779,21 @@ defmodule T3.Web.Socket do
            state
            | subs: Map.put(state.subs, id, shape),
              by_terminal: Map.put(state.by_terminal, {:scheduled_tasks, node}, id)
+         }}
+
+      {:error, reason} ->
+        {:push, Protocol.encode(error_frame(id, reason)), state}
+    end
+  end
+
+  defp subscribe(state, id, {:background_policy, node} = shape, _offset) do
+    case remote(node, T3.BackgroundPolicy, :subscribe, [self()]) do
+      {:ok, {:ok, policy}} ->
+        {:push, Protocol.encode(%{"t" => "backgroundPolicy", "id" => id, "policy" => policy}),
+         %{
+           state
+           | subs: Map.put(state.subs, id, shape),
+             by_terminal: Map.put(state.by_terminal, shape, id)
          }}
 
       {:error, reason} ->
@@ -925,10 +974,36 @@ defmodule T3.Web.Socket do
         entry -> entry
       end)
 
-    %{state | by_terminal: by_terminal} |> Map.put(:v, 1)
+    %{state | by_terminal: by_terminal} |> Map.put(:v, 1) |> migrate()
   end
 
+  # Version 2: the session's scopes, checked on every call and subscription.
+  defp migrate(%{v: 1} = state),
+    do: state |> Map.put(:scopes, session_scopes(state.session)) |> Map.put(:v, 2)
+
   defp migrate(state), do: state
+
+  defp session_scopes(nil), do: :all
+
+  defp session_scopes(session) do
+    case T3.Auth.session_scopes(session) do
+      {:ok, scopes} -> scopes
+      :error -> []
+    end
+  end
+
+  defp allowed?(%{scopes: :all}, _scope), do: true
+  defp allowed?(%{scopes: scopes}, scope), do: scope in scopes
+
+  # The scope each shape needs, as the Node server's subscribe methods declare it.
+  defp shape_scope({:terminal, _, _}), do: "terminal:operate"
+  defp shape_scope({:terminals, _}), do: "terminal:operate"
+  defp shape_scope(:auth_access), do: "access:read"
+
+  defp shape_scope({kind, _, _}) when kind in [:server_update, :git_action, :preview_automation],
+    do: "orchestration:operate"
+
+  defp shape_scope(_shape), do: "orchestration:read"
 
   defp config_ids(state, node), do: Map.get(state.by_terminal, {:settings, node}, [])
 
@@ -984,7 +1059,8 @@ defmodule T3.Web.Socket do
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, :auth_access)}
 
       {{:resource_telemetry, node}, subs} ->
-        :erpc.cast(node, T3.Diagnostics, :unsubscribe, [self()])
+        # A direct cast keeps order with this socket's later frames.
+        GenServer.cast({T3.Diagnostics, node}, {:unsubscribe, self()})
 
         %{
           state
@@ -1020,6 +1096,10 @@ defmodule T3.Web.Socket do
           | subs: subs,
             by_terminal: Map.delete(state.by_terminal, {:scheduled_tasks, node})
         }
+
+      {{:background_policy, node} = shape, subs} ->
+        :erpc.cast(node, T3.BackgroundPolicy, :unsubscribe, [self()])
+        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
 
       {{:pull_request_refreshes, node} = shape, subs} ->
         :erpc.cast(node, T3.PullRequests.Refreshes, :unsubscribe, [self()])

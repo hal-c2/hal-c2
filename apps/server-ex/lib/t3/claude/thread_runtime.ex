@@ -439,7 +439,8 @@ defmodule T3.Claude.ThreadRuntime do
       resume_at: fork_or(turn, :turn, Map.get(turn, :head)),
       fork_session: Map.get(turn, :fork) != nil,
       partial_messages: true,
-      mcp: T3.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids))
+      mcp: T3.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids)),
+      log: state.thread_id
     ]
 
     opts =

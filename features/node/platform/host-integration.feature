@@ -73,12 +73,14 @@ Feature: The node working with its host machine
 
   @node
   Scenario: Browsing folders to add a project
+    Given the home folder has a dev folder holding api, tests, tools, .tmp, .trash and a file todo.txt
     When a client browses "~/dev/t"
     Then the node lists folders in "~/dev" whose names start with "t"
     And hidden folders are left out
 
   @node
   Scenario: Browsing a folder lists everything in it
+    Given the home folder has a dev folder holding api, tests, tools, .tmp, .trash and a file todo.txt
     When a client browses "~/dev/"
     Then the node lists every folder in "~/dev", hidden ones included
 

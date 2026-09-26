@@ -7,7 +7,8 @@ defmodule Mix.Tasks.T3.Pair do
       mix t3.pair [BASE_URL]
       mix t3.pair --tailscale [--tailscale-serve-port PORT]
 
-  `BASE_URL` defaults to the local listener, `http://127.0.0.1:3780`.
+  `BASE_URL` defaults to the node's own address (`T3.Web.base_url/1`), such as
+  `http://127.0.0.1:3780`, or the LAN or tailnet address it was bound to.
 
   `--tailscale` publishes the node over Tailscale Serve HTTPS (port 443 unless
   `--tailscale-serve-port` names another) and pairs through the machine's tailnet
@@ -25,7 +26,6 @@ defmodule Mix.Tasks.T3.Pair do
     {opts, rest} =
       OptionParser.parse!(args, strict: [tailscale: :boolean, tailscale_serve_port: :integer])
 
-    home = Application.fetch_env!(:t3, :home)
     port = Application.get_env(:t3, :port, 3780)
     serve_port = opts[:tailscale_serve_port] || T3.TailscaleServe.default_port()
 
@@ -36,10 +36,10 @@ defmodule Mix.Tasks.T3.Pair do
           {:error, message} -> Mix.raise(message)
         end
       else
-        List.first(rest) || "http://127.0.0.1:#{port}"
+        List.first(rest) || T3.Web.base_url()
       end
 
-    token = T3.Auth.create_pairing_token(Path.join(home, "t3.sqlite"))
+    token = T3.Auth.create_pairing_token(T3.Store.home_path())
     Mix.shell().info("#{String.trim_trailing(base, "/")}/?token=#{token}")
 
     if opts[:tailscale] do

@@ -11,11 +11,17 @@ defmodule T3.BackgroundPolicy do
   foreground client (any client, in the "performance" profile) must want the scope,
   and neither that client nor the host may be constrained by the background
   activity settings (locked, low power, on battery, hot).
+
+  Watchers (`subscribe/1`, `subscribeBackgroundPolicy`) get
+  `{:t3_background_policy, node, snapshot}` whenever the policy changes. Until a
+  desktop reports host power, a Linux node reads whether it is on battery from
+  `/sys/class/power_supply` every 30 seconds.
   """
 
   use GenServer
 
   @default_ttl 45_000
+  @power_every 30_000
   @max_ttl 120_000
   @max_leases_per_client 16
   @presets %{
@@ -74,6 +80,10 @@ defmodule T3.BackgroundPolicy do
 
   def report_host_power(snapshot), do: GenServer.cast(__MODULE__, {:power, snapshot})
 
+  @doc "Sends `pid` the policy whenever it changes; returns the current one."
+  def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
+  def unsubscribe(pid), do: GenServer.cast(__MODULE__, {:unsubscribe, pid})
+
   @doc "`server.getBackgroundPolicy`: `BackgroundPolicySnapshot`."
   def snapshot do
     GenServer.call(__MODULE__, :snapshot)
@@ -106,11 +116,19 @@ defmodule T3.BackgroundPolicy do
   # --- server ------------------------------------------------------------------------
 
   @impl true
-  def init(nil), do: {:ok, %{leases: %{}, power: unknown_power(), monitors: %{}}}
+  def init(nil) do
+    send(self(), :probe_power)
+    {:ok, %{leases: %{}, power: unknown_power(), monitors: %{}, watchers: %{}, power_timer: nil}}
+  end
 
   @impl true
   def handle_call(:snapshot, _from, state),
     do: {:reply, compute(state.leases, state.power, settings(), now_ms()), state}
+
+  def handle_call({:subscribe, pid}, _from, state) do
+    watchers = Map.put_new_lazy(state.watchers, pid, fn -> Process.monitor(pid) end)
+    {:reply, {:ok, current(state)}, %{state | watchers: watchers}}
+  end
 
   def handle_call({:watched, scope}, _from, state) do
     now = now_ms()
@@ -169,7 +187,13 @@ defmodule T3.BackgroundPolicy do
       Map.put_new_lazy(state.monitors, pid, fn -> Process.monitor(pid) end)
 
     Process.send_after(self(), {:expire, key, lease.expires_ms}, ttl)
-    {:noreply, %{state | leases: leases, monitors: monitors}}
+    {:noreply, notify(state, %{state | leases: leases, monitors: monitors})}
+  end
+
+  def handle_cast({:unsubscribe, pid}, state) do
+    {ref, watchers} = Map.pop(state.watchers, pid)
+    if ref, do: Process.demonitor(ref, [:flush])
+    {:noreply, %{state | watchers: watchers}}
   end
 
   def handle_cast({:power, snapshot}, state) do
@@ -182,7 +206,7 @@ defmodule T3.BackgroundPolicy do
         _ -> true
       end
 
-    {:noreply, if(newer, do: %{state | power: snapshot}, else: state)}
+    {:noreply, if(newer, do: notify(state, %{state | power: snapshot}), else: state)}
   end
 
   # A lease not renewed by the time it expires goes.
@@ -190,7 +214,7 @@ defmodule T3.BackgroundPolicy do
   def handle_info({:expire, key, expires_ms}, state) do
     case state.leases do
       %{^key => %{expires_ms: ^expires_ms}} ->
-        {:noreply, %{state | leases: Map.delete(state.leases, key)}}
+        {:noreply, notify(state, %{state | leases: Map.delete(state.leases, key)})}
 
       _ ->
         {:noreply, state}
@@ -199,7 +223,81 @@ defmodule T3.BackgroundPolicy do
 
   def handle_info({:DOWN, _ref, :process, pid, _}, state) do
     leases = Map.reject(state.leases, fn {{owner, _}, _} -> owner == pid end)
-    {:noreply, %{state | leases: leases, monitors: Map.delete(state.monitors, pid)}}
+
+    next = %{
+      state
+      | leases: leases,
+        monitors: Map.delete(state.monitors, pid),
+        watchers: Map.delete(state.watchers, pid)
+    }
+
+    {:noreply, notify(state, next)}
+  end
+
+  # A desktop's report wins; without one the node asks the operating system.
+  def handle_info(:probe_power, state) do
+    if state.power_timer, do: Process.cancel_timer(state.power_timer)
+    state = %{state | power_timer: Process.send_after(self(), :probe_power, @power_every)}
+
+    case state.power["source"] in ["unknown", "node-linux"] && os_power() do
+      %{} = power -> {:noreply, notify(state, %{state | power: power})}
+      _ -> {:noreply, state}
+    end
+  end
+
+  defp current(state), do: compute(state.leases, state.power, settings(), now_ms())
+
+  # Tells watchers when the policy changed, not when only its time did.
+  defp notify(before, next) do
+    if next.watchers != %{} do
+      snapshot = current(next)
+
+      drop =
+        &(&1
+          |> Map.delete("updatedAt")
+          |> Map.update!("hostPower", fn p -> Map.delete(p, "updatedAt") end))
+
+      if drop.(snapshot) != drop.(current(before)),
+        do:
+          for({pid, _} <- next.watchers, do: send(pid, {:t3_background_policy, node(), snapshot}))
+    end
+
+    next
+  end
+
+  # Whether a Linux host runs on battery, from its power supplies: any mains or USB
+  # supply online means plugged in; a battery with none online means on battery.
+  defp os_power do
+    with dir when is_binary(dir) <-
+           Application.get_env(:t3, :power_supply_dir, "/sys/class/power_supply"),
+         {:unix, :linux} <- Application.get_env(:t3, :os_type, :os.type()),
+         {:ok, names} <- File.ls(dir) do
+      supplies =
+        for name <- names do
+          read = &(Path.join([dir, name, &1]) |> File.read() |> then(fn r -> elem(r, 1) end))
+          {String.trim(to_string(read.("type"))), String.trim(to_string(read.("online")))}
+        end
+
+      external = for {type, online} <- supplies, type in ["Mains", "USB"], do: online
+      battery? = Enum.any?(supplies, &(elem(&1, 0) == "Battery"))
+
+      on_battery =
+        cond do
+          "1" in external -> "false"
+          battery? -> "true"
+          true -> nil
+        end
+
+      if on_battery,
+        do: %{
+          unknown_power()
+          | "source" => "node-linux",
+            "onBattery" => on_battery,
+            "stale" => false
+        }
+    else
+      _ -> nil
+    end
   end
 
   # A client connection keeps at most 16 leases; the oldest goes first.

@@ -180,49 +180,49 @@ Feature: Node authentication and scopes
     Then its pairing and session records gain the missing fields
     And existing sessions keep working
 
-  @backlog @node
+  @node
   Scenario: Every RPC requires the scope it declares
     Given a device paired without terminal:operate
     When it tries to write to a terminal
     Then the node refuses saying terminal:operate is required
 
-  # The node deletes the session record, so the next ticket fails, but sockets already open
-  # stay connected until they drop.
-  @backlog @node
+  @node
   Scenario: Revoking a client closes the sockets it has open
     Given a paired client has an open socket
     When an administrator revokes that client
     Then the client's socket is closed as revoked
     And it cannot reconnect with its old session
 
-  @backlog @node
+  @node
   Scenario: A token exchange can narrow the scopes it asks for
     Given a pairing link with administrative scopes
     When a client exchanges it asking only for orchestration:read
     Then its session carries only orchestration:read
 
-  @backlog @node
+  @node
   Scenario: A client proves possession of its key with DPoP
     Given a client that paired with a DPoP key
     When it presents its access token with a proof
     Then the node accepts it
     And a token presented with an invalid proof is refused rather than treated as a bearer
 
-  @backlog @node
+  @node
   Scenario: A reusable development credential signs in every worktree on one host
     Given a fixed development auth token is configured
     When a browser presents it to a development node
     Then the node grants an administrative session
     And revoking it locally does not affect another worktree
 
-  @backlog @node
+  @node
   Scenario: The desktop's new bootstrap session replaces its previous one
     Given the desktop app exchanged its bootstrap token before a restart
     When it exchanges the new token after the restart
     Then the earlier desktop session is revoked in the same step
 
-  @backlog @node
+  @node
+  # The clients to list are paired first; the scenario named none.
   Scenario: A command-line tool lists and revokes access
+    Given three paired clients
     When an operator lists sessions from the node's command line
     Then it sees the same clients as Connections settings
     And it can revoke one of them

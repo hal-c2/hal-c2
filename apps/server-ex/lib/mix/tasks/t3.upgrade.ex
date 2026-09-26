@@ -8,8 +8,8 @@ defmodule Mix.Tasks.T3.Upgrade do
       mix t3.upgrade --dev NODE [NODE ...] [--cookie COOKIE]
 
   Without `--dev`, builds the prod release and its bundle, sends the bundle to the
-  first node, and has each named node update to it; the others fetch it from the
-  first over HTTP. Nodes must run a release under `bin/t3-service` for changes that
+  first node, and has each named node update to it; the others fetch it over HTTP
+  from a peer that already has it. Nodes must run a release under `bin/t3-service` for changes that
   need a restart.
 
   With `--dev`, compiles and has nodes started from this checkout (`mix run`)
@@ -62,24 +62,31 @@ defmodule Mix.Tasks.T3.Upgrade do
   end
 
   @doc false
-  # Sends the bundle at `path` to the first node and has every node update to it.
-  def release([first | _] = nodes, path) do
-    manifest = path |> manifest()
+  # Sends the bundle at `path` to the nodes (`roll_out/2`) and prints each reply.
+  def release(nodes, path) do
+    for {node, reply} <- roll_out(nodes, path) do
+      case reply do
+        {:ok, result} ->
+          Mix.shell().info("#{node}: #{result["method"]} to #{result["targetVersion"]}")
+
+        {:error, %{"reason" => reason}} ->
+          Mix.shell().error("#{node}: #{reason}")
+      end
+    end
+  end
+
+  @doc """
+  Sends the bundle at `path` to the first of `nodes` and has each update to it, in
+  order; the others fetch it from a peer that has it. Returns each node's reply.
+  """
+  def roll_out([first | _] = nodes, path) do
+    manifest = manifest(path)
     version = manifest["version"]
-    platform = manifest["platform"]
-    send_bundle(first, version, platform, path)
+    send_bundle(first, version, manifest["platform"], path)
 
     for node <- nodes do
-      case :erpc.call(
-             node,
-             T3.Upgrade,
-             :update,
-             [%{"targetVersion" => version}],
-             :timer.minutes(15)
-           ) do
-        {:ok, result} -> Mix.shell().info("#{node}: #{result["method"]} to #{version}")
-        {:error, %{"reason" => reason}} -> Mix.shell().error("#{node}: #{reason}")
-      end
+      input = [%{"targetVersion" => version}]
+      {node, :erpc.call(node, T3.Upgrade, :update, input, :timer.minutes(15))}
     end
   end
 
