@@ -1,5 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  type GitRunStackedActionResult,
+  type GitStackedAction,
   type OrchestrationThread,
   type TerminalMetadataStreamEvent,
   type VcsStatusResult,
@@ -70,7 +72,7 @@ export function shell(
 }
 
 export function fakeClient({
-  detail,
+  detail: initialDetail,
   shellSnapshot = shell(),
   sendReply = () => Promise.resolve(),
   respondUserInput = () => Promise.resolve(),
@@ -100,7 +102,9 @@ export function fakeClient({
   settleThread = async () => {},
   unsettleThread = async () => {},
   vcsStatus,
-  runGitPull = async () => {},
+  runGitPull,
+  getTurnDiff,
+  getFullThreadDiff,
   getAttachmentUrl = async () => null,
   getAttachmentImage = async () => null,
   readFileBase64 = async () => null,
@@ -156,6 +160,8 @@ export function fakeClient({
   readonly unsettleThread?: TuiClient["unsettleThread"];
   readonly vcsStatus?: VcsStatusResult;
   readonly runGitPull?: TuiClient["runGitPull"];
+  readonly getTurnDiff?: TuiClient["getTurnDiff"];
+  readonly getFullThreadDiff?: TuiClient["getFullThreadDiff"];
   readonly getAttachmentUrl?: TuiClient["getAttachmentUrl"];
   readonly getAttachmentImage?: TuiClient["getAttachmentImage"];
   readonly readFileBase64?: TuiClient["readFileBase64"];
@@ -172,6 +178,14 @@ export function fakeClient({
   readonly emitTerminalMetadata: (event: TerminalMetadataStreamEvent) => void;
   /** Push live detail to whoever subscribed to that thread. */
   readonly emitThread: (detail: OrchestrationThread, page?: TuiThreadPage) => void;
+  /** Replace the git status; delivered now to subscribers and later to new ones (null: none). */
+  readonly setVcsStatus: (status: VcsStatusResult | null) => void;
+  /** Every git mutation the client was asked for, in order. */
+  readonly gitCalls: FakeGitCall[];
+  /** How the next git mutations end (default: they succeed). */
+  readonly setGitOutcome: (outcome: FakeGitOutcome) => void;
+  /** Every diff fetched, in order. */
+  readonly diffCalls: FakeDiffCall[];
 } {
   let shellSubscriber: ((snapshot: OrchestrationShellSnapshot) => void) | null = null;
   let terminalMetadataSubscriber: ((event: TerminalMetadataStreamEvent) => void) | null = null;
@@ -180,6 +194,19 @@ export function fakeClient({
     string,
     (thread: OrchestrationThread, page: TuiThreadPage) => void
   >();
+  // The warm cache: the detail given, then whatever was last emitted.
+  let detail = initialDetail;
+  let currentVcsStatus: VcsStatusResult | null = vcsStatus ?? null;
+  const vcsSubscribers = new Set<(status: VcsStatusResult) => void>();
+  const gitCalls: FakeGitCall[] = [];
+  let gitOutcome: FakeGitOutcome = { kind: "succeed" };
+  const settleGit = <T>(value: T): Promise<T> => {
+    const outcome = gitOutcome;
+    if (outcome.kind === "hang") return new Promise<T>(() => {});
+    if (outcome.kind === "fail") return Promise.reject(new Error(outcome.message));
+    return Promise.resolve(value);
+  };
+  const diffCalls: FakeDiffCall[] = [];
   const client = {
     hostPlatform: "linux",
     browseFilesystem,
@@ -204,8 +231,11 @@ export function fakeClient({
     },
     peekThread: () => detail ?? null,
     subscribeVcsStatus: (_cwd: string, onStatus: (status: VcsStatusResult) => void) => {
-      if (vcsStatus) onStatus(vcsStatus);
-      return () => {};
+      vcsSubscribers.add(onStatus);
+      if (currentVcsStatus) onStatus(currentVcsStatus);
+      return () => {
+        vcsSubscribers.delete(onStatus);
+      };
     },
     subscribeTerminalMetadata: (onEvent: (event: TerminalMetadataStreamEvent) => void) => {
       terminalMetadataSubscriber = onEvent;
@@ -239,8 +269,24 @@ export function fakeClient({
     getAttachmentUrl,
     getAttachmentImage,
     readFileBase64,
-    runGitStackedAction: async () => {},
-    runGitPull,
+    runGitStackedAction: (input: Parameters<TuiClient["runGitStackedAction"]>[0]) => {
+      gitCalls.push({ method: "runGitStackedAction", ...input });
+      return settleGit(gitOutcome.kind === "succeed" ? (gitOutcome.result ?? null) : null);
+    },
+    runGitPull: (cwd: string) => {
+      gitCalls.push({ method: "runGitPull", cwd });
+      return runGitPull ? runGitPull(cwd) : settleGit(undefined);
+    },
+    getTurnDiff: (threadId: string, toTurnCount: number) => {
+      diffCalls.push({ method: "getTurnDiff", threadId, toTurnCount });
+      return getTurnDiff ? getTurnDiff(threadId as never, toTurnCount) : Promise.resolve("");
+    },
+    getFullThreadDiff: (threadId: string, toTurnCount: number) => {
+      diffCalls.push({ method: "getFullThreadDiff", threadId, toTurnCount });
+      return getFullThreadDiff
+        ? getFullThreadDiff(threadId as never, toTurnCount)
+        : Promise.resolve("");
+    },
   } as unknown as TuiClient;
   return {
     client,
@@ -248,7 +294,40 @@ export function fakeClient({
     emitShell: (snapshot) => shellSubscriber?.(snapshot),
     subscribedThreadIds,
     emitTerminalMetadata: (event) => terminalMetadataSubscriber?.(event),
-    emitThread: (next, page = { hasMore: false, loadingOlder: false }) =>
-      threadSubscribers.get(next.id)?.(next, page),
+    emitThread: (next, page = { hasMore: false, loadingOlder: false }) => {
+      detail = next;
+      threadSubscribers.get(next.id)?.(next, page);
+    },
+    setVcsStatus: (status) => {
+      currentVcsStatus = status;
+      if (status) for (const subscriber of vcsSubscribers) subscriber(status);
+    },
+    gitCalls,
+    setGitOutcome: (outcome) => {
+      gitOutcome = outcome;
+    },
+    diffCalls,
   };
+}
+
+export type FakeGitCall =
+  | {
+      readonly method: "runGitStackedAction";
+      readonly cwd: string;
+      readonly action: GitStackedAction;
+      readonly commitMessage?: string;
+      readonly featureBranch?: boolean;
+    }
+  | { readonly method: "runGitPull"; readonly cwd: string };
+
+export type FakeGitOutcome =
+  | { readonly kind: "succeed"; readonly result?: GitRunStackedActionResult }
+  | { readonly kind: "fail"; readonly message: string }
+  /** Never settles: the action stays running. */
+  | { readonly kind: "hang" };
+
+export interface FakeDiffCall {
+  readonly method: "getTurnDiff" | "getFullThreadDiff";
+  readonly threadId: string;
+  readonly toTurnCount: number;
 }

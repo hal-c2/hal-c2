@@ -84,3 +84,19 @@ step(
     expect(await app.snapshot()).not.toContain(text);
   },
 );
+
+// --- added by T4 ---
+
+step("the prompt has focus", async (ctx: World) => {
+  await snapshot(ctx);
+  expect(ctx.host!.state.get("mode")).toBe("compose");
+});
+
+async function expectStatus(ctx: World, text: string): Promise<void> {
+  const screen = await snapshot(ctx);
+  expect((ctx.host!.state.get("status") as { text: string }).text).toBe(text);
+  expect(screen).toContain(text);
+}
+
+step("the status line says {string}", expectStatus);
+step("the status line reads {string}", expectStatus);

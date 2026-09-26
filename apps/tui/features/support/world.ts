@@ -30,6 +30,10 @@ export interface World extends StepContext {
   /** What the host logged (unknown actions). */
   logs?: string[];
   quitRequested?: boolean;
+  /** What the app copied to the clipboard, and whether the terminal honours OSC 52. */
+  clipboard?: { copies: string[]; supported: boolean };
+  /** Deliver the first snapshot right after boot (scenarios that start on an open thread). */
+  connectOnBoot?: boolean;
 }
 
 /** Set up the fake client before boot; later calls replace it only if not booted. */
@@ -49,12 +53,20 @@ export async function boot(
   const rows = size.rows ?? ctx.rows ?? DEFAULT_ROWS;
   const fake = ctx.fake ?? useClient(ctx);
   const logs: string[] = (ctx.logs ??= []);
+  const clipboard = (ctx.clipboard ??= { copies: [], supported: true });
   const host = createHost({
     client: fake.client,
     size: { columns, rows },
     log: (message) => logs.push(message),
     onQuit: () => {
       ctx.quitRequested = true;
+    },
+    clipboard: {
+      // A terminal without OSC 52 drops the escape sequence.
+      copy: (text) => {
+        if (clipboard.supported) clipboard.copies.push(text);
+      },
+      supported: () => clipboard.supported,
     },
   });
   ctx.cleanups.push(() => host.destroy());
@@ -69,6 +81,7 @@ export async function boot(
   );
   ctx.cleanups.push(() => app.destroy());
   Object.assign(ctx, { columns, rows, host, app });
+  if (ctx.connectOnBoot) fake.connect();
   return app;
 }
 
@@ -103,6 +116,11 @@ const NAMED_KEYS: Record<string, string> = {
   home: "HOME",
   end: "END",
   space: " ",
+  // KeyCodes has no page keys: the raw sequences parse to pageup / pagedown.
+  pgup: "\x1b[5~",
+  pageup: "\x1b[5~",
+  pgdn: "\x1b[6~",
+  pagedown: "\x1b[6~",
 };
 
 /** Press a key as the feature files spell it: "Ctrl+F", "Esc", "Alt+Up", "Shift+Tab". */
