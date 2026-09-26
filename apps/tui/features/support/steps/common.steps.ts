@@ -4,7 +4,16 @@ import { expect } from "bun:test";
 
 import { step } from "../../steps.ts";
 import { LIST_PANE_WIDTH } from "../../../src/components/ChatView.layout.ts";
-import { boot, findObject, geometry, pressKey, resize, snapshot, type World } from "../world.ts";
+import {
+  boot,
+  findObject,
+  geometry,
+  pressKey,
+  resize,
+  snapshot,
+  typeText,
+  type World,
+} from "../world.ts";
 
 const NARROW_COLUMNS = 70;
 const STATUS_ROWS = 1;
@@ -84,3 +93,9 @@ step(
     expect(await app.snapshot()).not.toContain(text);
   },
 );
+
+// --- added by T6 ---
+
+step("the user types {string}", async (ctx: World, text: string) => {
+  await typeText(ctx, text);
+});
