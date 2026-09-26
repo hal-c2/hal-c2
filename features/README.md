@@ -90,4 +90,21 @@ Each of these must be named in at least one `# Sources:` block:
 - every keybinding id in `packages/contracts/src/keybindings.ts` (see `navigation/keybindings.feature`)
 - every command palette entry
 
-No step definitions live here yet. Runners are added per surface once the features are agreed.
+## Running
+
+The mise tasks in `mise-tasks/` are the way to run them (`mise tasks ls`); globs are relative to
+`features/`. On the TUI, `@backlog` scenarios run only with `--backlog` or `INCLUDE_BACKLOG=1`. On
+the node they always run (`mix features` is `mix test --only cucumber`, whose include beats the
+backlog exclude), so backlog scenarios failing there is expected.
+
+| Surface    | Task                                                      | Raw command                                                                                  |
+| ---------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| node       | `mise run features:node <globs>`, `features:node:all`     | `mix features <globs>` in `apps/server-ex`                                                   |
+| TUI        | `mise run features:tui <globs>`, `features:tui:all`       | `TUI_FEATURES="<globs>" [TUI_INCLUDE_BACKLOG=1] bun test ./features/runner.ts` in `apps/tui` |
+| Qt desktop | `mise run features:desktop` (`:qml` and `:native` halves) | `vp run --filter @hal-c2/desktop-qt test:qml`, ctest per `apps/desktop-qt/README.md`         |
+
+Node globs are required; `features:node:all` runs the suite one top-level directory at a time,
+because one run of everything is slow. `features:tui:all` runs every file with a `@tui` or
+`@shared` scenario. The desktop has no Gherkin runner yet: `apps/desktop-qt/tests/tst_Scenarios.qml`
+mirrors the `qt-scenarios.feature` files by hand. `mise run features` runs all three and reports
+each. Step definitions live in `apps/server-ex/test/steps/` and `apps/tui/features/`.

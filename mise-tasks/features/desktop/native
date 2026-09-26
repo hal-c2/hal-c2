@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+#MISE description="Build (when needed) and run the Qt desktop's native tests with ctest"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+"$MISE_CONFIG_ROOT/mise-tasks/deps/check" --require native >/dev/null
+build=apps/desktop-qt/build/tests/native
+[[ -f $build/CMakeCache.txt ]] || cmake -S apps/desktop-qt/tests/native -B "$build"
+cmake --build "$build" --parallel
+exec ctest --test-dir "$build" --output-on-failure

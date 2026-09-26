@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="vp i for the JS workspace; the lockfile stays frozen when CI is set"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+if [[ -n ${CI:-} ]]; then vp i --frozen-lockfile; else vp i; fi

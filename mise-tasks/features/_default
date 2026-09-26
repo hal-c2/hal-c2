@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+#MISE description="Run every surface's feature suite (node, TUI, Qt desktop), continuing past failures"
+#USAGE flag "--backlog" help="Also run the TUI's @backlog scenarios (or set INCLUDE_BACKLOG=1); the node always runs them"
+set -euo pipefail
+summary=() status=0
+for task in features:node:all features:tui:all features:desktop; do
+  args=()
+  [[ $task == features:tui:all ]] && args=("$@")
+  if mise run "$task" "${args[@]}"; then
+    summary+=("  ok      $task")
+  else
+    summary+=("  FAILED  $task") status=1
+  fi
+done
+echo
+printf '%s\n' "${summary[@]}"
+exit $status

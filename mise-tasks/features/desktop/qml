@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Run the Qt desktop's QML tests offscreen, tst_Scenarios.qml included"
+#MISE dir="{{config_root}}/apps/desktop-qt"
+set -euo pipefail
+"$MISE_CONFIG_ROOT/mise-tasks/deps/check" --require qml >/dev/null
+exec node scripts/test-qml.mjs

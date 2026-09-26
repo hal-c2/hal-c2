@@ -2,13 +2,18 @@
 
 ## First checkout
 
-Install `vp` using the [root README](../../README.md#install-vp). The checkout requires Node 24;
-Bun is optional. From the repository root:
+Install `vp` using the [root README](../../README.md#install-vp) and [mise](https://mise.jdx.dev).
+From the repository root:
 
 ```sh
-vp i
-vp run dev
+mise install       # Erlang, Elixir, Node and Bun, pinned in mise.toml
+mise run install   # vp i, then mix deps.get and mix compile in apps/server-ex
+mise run deps:check
 ```
+
+`deps:check` also reports cmake and Qt 6.9+, which the Qt desktop needs from the system package
+manager. Without mise: `vp i` at the root, `mix deps.get` in `apps/server-ex`. `vp run dev`
+starts the legacy Node server and web app.
 
 Open the pairing URL printed by the dev runner. The bare origin does not authenticate
 a new browser.
@@ -123,6 +128,8 @@ vp lint <files>
 vp run --filter <package> typecheck
 ```
 
+Behaviour scenarios run per surface with `mise run features:node <globs>`, `features:tui` and
+`features:desktop`; see [running features](../../features/README.md#running).
 Use `vp run lint:mobile` for native mobile changes. CI owns the full suite; see
 [ci.yml](../../.github/workflows/ci.yml) for its current jobs.
 The [manual Windows lane](../../.github/workflows/windows-tests.yml) is available for focused

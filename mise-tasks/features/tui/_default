@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#MISE description="Run @tui and @shared scenarios for the given globs on the terminal client"
+#MISE dir="{{config_root}}/apps/tui"
+#USAGE flag "--backlog" help="Also run @backlog scenarios (or set INCLUDE_BACKLOG=1)"
+#USAGE arg "[glob]" var=#true help="Feature globs relative to features/, e.g. tui/layout.feature"
+set -euo pipefail
+
+backlog=${INCLUDE_BACKLOG:-${TUI_INCLUDE_BACKLOG:-}}
+globs=()
+for arg in "$@"; do
+  if [[ $arg == --backlog ]]; then backlog=1; else globs+=("$arg"); fi
+done
+if ((${#globs[@]} == 0)); then
+  cat >&2 <<'USAGE'
+usage: mise run features:tui [--backlog] <glob>...
+
+Globs are relative to features/, e.g. `mise run features:tui 'tui/*.feature'`.
+`mise run features:tui:all` runs every file with @tui or @shared scenarios.
+--backlog or INCLUDE_BACKLOG=1 also runs @backlog scenarios.
+USAGE
+  exit 2
+fi
+
+TUI_FEATURES="${globs[*]}" TUI_INCLUDE_BACKLOG=${backlog:-0} exec bun test ./features/runner.ts

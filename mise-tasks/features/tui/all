@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Run every feature file with @tui or @shared scenarios on the terminal client"
+#MISE dir="{{config_root}}/apps/tui"
+#USAGE flag "--backlog" help="Also run @backlog scenarios (or set INCLUDE_BACKLOG=1)"
+set -euo pipefail
+# The runner's own default is features/tui/ only; @shared scenarios live in every domain.
+mapfile -t files < <(cd ../../features && grep -rlE --include='*.feature' '@(tui|shared)\b' . | sed 's|^\./||' | sort)
+exec "$MISE_CONFIG_ROOT/mise-tasks/features/tui/_default" "$@" "${files[@]}"

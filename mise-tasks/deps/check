@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+#MISE description="Report the tools the runners need and their versions (never fails on its own)"
+#USAGE flag "--require <part>" help="Exit 1 when the tools for this part are missing" {
+#USAGE   choices "qml" "native"
+#USAGE }
+# features:desktop:qml and :native call this script with --require, so a missing Qt
+# or cmake fails there with the same report.
+set -euo pipefail
+
+require=""
+while (($#)); do
+  case $1 in
+    --require) require=${2:?--require needs qml or native}; shift 2 ;;
+    *) echo "deps:check: unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+
+missing=()
+row() { # row <name> <version, empty when missing> [parts that require it]
+  if [[ -n $2 ]]; then
+    printf '  %-18s %s\n' "$1" "$2"
+  else
+    printf '  %-18s missing\n' "$1"
+    [[ -n $require && " ${3:-} " == *" $require "* ]] && missing+=("$1")
+  fi
+  return 0
+}
+# Line $LINE (default 1) of a command's output, empty when the tool is not on PATH.
+version() {
+  command -v "$1" >/dev/null 2>&1 || return 0
+  { "$@" 2>/dev/null || true; } | sed -n "${LINE:-1}p"
+}
+
+# Where qmltestrunner lives, searched the way apps/desktop-qt/scripts/test-qml.mjs does.
+qt_bin_dirs() {
+  local prefixes=() prefix
+  IFS=: read -ra prefixes <<<"${QT_ROOT_DIR:-}:${QT_PREFIX:-}:${CMAKE_PREFIX_PATH:-}"
+  for prefix in "${prefixes[@]}"; do [[ -n $prefix ]] && echo "$prefix/bin"; done
+  version qtpaths6 --query QT_INSTALL_BINS
+  version qmake6 -query QT_INSTALL_BINS
+}
+qmltestrunner=""
+while read -r dir; do
+  [[ -n $dir && -x $dir/qmltestrunner ]] && { qmltestrunner=$dir/qmltestrunner; break; }
+done < <(qt_bin_dirs)
+qmltestrunner=${qmltestrunner:-$(command -v qmltestrunner || true)}
+qt_version=$(version qtpaths6 --query QT_VERSION)
+qt_version=${qt_version:-$(version qmake6 -query QT_VERSION)}
+
+echo "Node runner and install (mise install provides these)"
+row erlang "$(version erl -noshell -eval 'io:format("OTP ~s~n", [erlang:system_info(otp_release)]), halt().')"
+row elixir "$(LINE=3 version elixir --version)"
+row mix "$(LINE=3 version mix --version)"
+row node "$(version node --version)"
+row bun "$(version bun --version)"
+row vp "$(version vp --version)"
+echo "Qt desktop (system packages)"
+row cmake "$(version cmake --version)" native
+row qmltestrunner "${qmltestrunner:+${qt_version:+Qt $qt_version, }$qmltestrunner}" "qml native"
+row qtpaths6/qmake6 "${qt_version:+Qt $qt_version}"
+[[ $(uname) == Linux ]] && row dbus-run-session "$(command -v dbus-run-session || true)" native
+
+if ((${#missing[@]})); then
+  cat >&2 <<MSG
+
+The Qt desktop tests ($require) need: ${missing[*]}.
+Install Qt 6.9+ (Quick, QuickTest, WebEngine, WebChannel, DBus) and cmake from your
+system package manager, or point QT_ROOT_DIR or CMAKE_PREFIX_PATH at a Qt install.
+See apps/desktop-qt/README.md.
+MSG
+  exit 1
+fi

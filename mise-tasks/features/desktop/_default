@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Run the Qt desktop's native and QML tests, reporting both"
+set -euo pipefail
+status=0
+mise run features:desktop:native || status=1
+mise run features:desktop:qml || status=1
+exit $status
