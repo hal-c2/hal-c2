@@ -19,14 +19,16 @@ manager. Without mise: `vp i` at the root, `mix deps.get` in `apps/server-ex`.
 ```sh
 mise run node              # Elixir node in the foreground; --cluster boots it clustered
 mise run node:pair         # one-time pairing URL for that node (--tailscale to publish it)
-mise run desktop           # build the Qt shell, pair it with the running node, launch
+mise run desktop           # build the web app and the Qt shell, pair it with the running node, launch
 mise run desktop:build     # build only (--release for a Release build)
 mise run tui               # bundle apps/tui and open it on the running node
+mise run web:build         # the web app the Qt shell serves; desktop and desktop:build depend on it
+mise run tui:build         # the TUI bundle; tui depends on it
 ```
 
 Arguments pass straight through (`mise run desktop -- --help` for the Qt script's own
-flags). The Qt shell serves the built web app itself, so run `vp run --filter @hal-c2/web build`
-once before `mise run desktop` and again after web changes. It pairs with the node on
+flags). The build tasks declare their sources, so a dependent task skips them while nothing
+changed. The Qt shell serves the built web app itself and pairs with the node on
 `HAL_C2_NODE_PORT` (default 3780); `--url` takes a pairing link for another node, and
 `--standalone` starts the shell's own node from source, as the installed app does, so do not
 combine it with `mise run node` on the same home.

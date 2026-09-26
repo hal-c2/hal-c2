@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Bundle the terminal client (apps/tui/dist); skipped while the sources are unchanged"
+#MISE dir="{{config_root}}/apps/tui"
+#MISE sources=["src/**/*", "qml/**/*", "package.json", "../../packages/*/src/**/*"]
+#MISE outputs=["dist/index.js"]
+set -euo pipefail
+exec bun run --silent build

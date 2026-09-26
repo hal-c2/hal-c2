@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #MISE description="Build the Qt desktop shell, pair it with the running Elixir node (mise run node), and launch it (args go to dev-qt.mjs and hal-c2-qt)"
 #MISE dir="{{config_root}}/apps/desktop-qt"
+#MISE depends=["web:build"]
 set -euo pipefail
 # Pairs with the node `mise run node` runs (HAL_C2_NODE_PORT, default 3780), or attaches to
 # the pairing link --url names; --standalone starts the shell's own node instead. The shell
-# serves apps/web/dist, so build it first: vp run --filter @hal-c2/web build.
+# serves apps/web/dist, which web:build keeps current.
 exec node scripts/dev-qt.mjs "$@"

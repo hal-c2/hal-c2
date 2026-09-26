@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-#MISE description="Bundle the terminal client and open it on the running Elixir node (--base-dir defaults to ./.hal-c2, --url <pairing link> for a remote one)"
+#MISE description="Open the terminal client on the running Elixir node (--base-dir defaults to ./.hal-c2, --url <pairing link> for a remote one)"
 #MISE dir="{{config_root}}"
+#MISE depends=["tui:build"]
 set -euo pipefail
-(cd apps/tui && bun run --silent build >/dev/null)
 args=("$@")
 if [[ " $* " != *" --base-dir"* && " $* " != *" --url"* && -z ${HAL_C2_NODE_HOME:-} ]]; then
   # A checkout's node (`mise run node`) keeps its runtime record and access token

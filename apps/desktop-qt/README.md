@@ -6,9 +6,8 @@ window chrome be rearranged and themed from `~/.config/hal-c2/shell/`.
 Architecture, setup, and the QML/theme contracts: `docs/internals/desktop-qt.md`.
 
 ```sh
-vp run --filter @hal-c2/web build   # the shell serves apps/web/dist; rebuild after web changes
-mise run node                       # terminal 1: the Elixir node
-mise run desktop                    # terminal 2: build the shell, pair with the node, launch
+mise run node       # terminal 1: the Elixir node
+mise run desktop    # terminal 2: build the web app (apps/web/dist) and the shell, pair with the node, launch
 ```
 
 `mise run desktop -- --standalone` skips the pairing and lets the shell start its own node,

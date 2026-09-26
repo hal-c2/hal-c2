@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Build the web app the Qt desktop shell serves (apps/web/dist); skipped while the sources are unchanged"
+#MISE dir="{{config_root}}"
+#MISE sources=["apps/web/src/**/*", "apps/web/index.html", "apps/web/vite.config.ts", "apps/web/package.json", "packages/*/src/**/*", "third-party-licenses.config.json"]
+#MISE outputs=["apps/web/dist/index.html"]
+set -euo pipefail
+exec vp run --filter @hal-c2/web build
