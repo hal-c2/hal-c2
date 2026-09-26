@@ -15,8 +15,8 @@ import {
 
 const review = { kind: "review-comment", contextId: "rc-1", label: "a.ts L4" };
 const preview = { kind: "preview-annotation", contextId: "pa-1", label: "Checkout" };
-const reviewLink = "[a.ts L4](t3-context://v1/review-comment/rc-1)";
-const previewLink = "[Checkout](t3-context://v1/preview-annotation/pa-1)";
+const reviewLink = "[a.ts L4](hal-c2-context://v1/review-comment/rc-1)";
+const previewLink = "[Checkout](hal-c2-context://v1/preview-annotation/pa-1)";
 
 describe("composerContextReferences", () => {
   it.each([

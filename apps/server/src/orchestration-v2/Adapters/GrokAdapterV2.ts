@@ -1,13 +1,13 @@
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import { xAiRateLimitedErrorCode } from "../../provider/acp/XAiAcpExtension.ts";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
+import { HostProcessEnvironment, HostProcessPlatform } from "@hal-c2/shared/hostProcess";
+import { resolveSelfInvocation, type SelfInvocation } from "@hal-c2/shared/nodeRuntime";
 import {
   defaultInstanceIdForDriver,
   GrokSettings,
   ProviderDriverKind,
   type OrchestrationV2ProviderCapabilities,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -142,7 +142,7 @@ const registerGrokAcpExtensions: NonNullable<AcpAdapterV2Flavor["registerExtensi
 
 /**
  * Grok intercepts exit_plan_mode and reverse-requests client approval. Capture
- * the plan into T3's proposed-plan card and abandon the native gate so the
+ * the plan into HAL-C2's proposed-plan card and abandon the native gate so the
  * turn does not hang (#8358; mirrors the Claude ExitPlanMode pattern). Plan
  * content preference: the request payload, then the plan.md contents sniffed
  * from tool calls this turn, then the empty-state placeholder.

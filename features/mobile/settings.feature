@@ -1,12 +1,12 @@
 # Sources:
-#   apps/mobile/src/features/settings/SettingsRouteScreen.tsx (T3 Account row, sections)
+#   apps/mobile/src/features/settings/SettingsRouteScreen.tsx (HAL-C2 Account row, sections)
 #   apps/mobile/src/features/settings/SettingsAuthRouteScreen.tsx (sign in, profile, sign out)
 #   apps/mobile/src/Stack.tsx (SettingsWaitlist keeps the old waitlist link working)
 #   apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx (Refresh cloud environments)
 #   apps/mobile/src/features/settings/SettingsAppearanceRouteScreen.tsx
 #   apps/mobile/src/features/settings/appearance/sections/ (theme, text, code and diffs, terminal)
 #   apps/mobile/src/lib/appearancePreferences.ts (automatic sizes follow the text size; limits)
-#   apps/mobile/src/lib/mobileTheme.ts (T3 Code, Material You, built-in themes)
+#   apps/mobile/src/lib/mobileTheme.ts (HAL-C2, Material You, built-in themes)
 #   apps/mobile/src/features/settings/SettingsScheduledTasksRouteScreen.tsx
 # Settings shared with the desktop (thread behaviour, follow-ups, project grouping, project
 # defaults, provider accounts, licenses) are specified in features/settings/ and
@@ -14,49 +14,49 @@
 # No phone client exists on hal-c2, so everything here is @backlog.
 
 Feature: Settings that belong to the phone
-  Some settings only make sense on a phone: how the app looks on this device, the T3 account
+  Some settings only make sense on a phone: how the app looks on this device, the HAL-C2 account
   it is signed in with, and editing scheduled tasks with a touch keyboard.
 
   Background:
     Given the phone is paired with "My MacBook"
 
-  Rule: T3 account
+  Rule: HAL-C2 account
 
     @backlog @mobile
-    Scenario: Settings says whether the phone is signed in to T3
-      Given the user is signed in to T3 as "sam@example.com"
+    Scenario: Settings says whether the phone is signed in to HAL-C2
+      Given the user is signed in to HAL-C2 as "sam@example.com"
       When the user opens settings
-      Then the T3 account shows "sam@example.com"
+      Then the HAL-C2 account shows "sam@example.com"
 
     @backlog @mobile
-    Scenario: The user signs in to T3 from settings
-      Given the user is signed out of T3
-      When the user signs in to T3 from settings
-      Then the T3 account shows the user's email
+    Scenario: The user signs in to HAL-C2 from settings
+      Given the user is signed out of HAL-C2
+      When the user signs in to HAL-C2 from settings
+      Then the HAL-C2 account shows the user's email
 
     @backlog @mobile
     Scenario: Signing out returns the user to settings
-      Given the user is looking at their T3 profile
+      Given the user is looking at their HAL-C2 profile
       When the user signs out
       Then the user is back in settings
-      And the T3 account offers to sign in
+      And the HAL-C2 account offers to sign in
 
     @backlog @mobile
-    Scenario: The old waitlist link opens T3 sign in
-      When the user follows a link to the T3 waitlist
-      Then the user is asked to sign in to T3
+    Scenario: The old waitlist link opens HAL-C2 sign in
+      When the user follows a link to the HAL-C2 waitlist
+      Then the user is asked to sign in to HAL-C2
 
     @backlog @mobile
-    Scenario: A build without T3 Connect offers no T3 account
-      Given the app was built without T3 Connect
-      When the user follows a link to the T3 account
-      Then the user sees settings without a T3 account
+    Scenario: A build without HAL-C2 Connect offers no HAL-C2 account
+      Given the app was built without HAL-C2 Connect
+      When the user follows a link to the HAL-C2 account
+      Then the user sees settings without a HAL-C2 account
 
     @backlog @mobile
-    Scenario: The user refreshes environments from T3 Connect
-      Given the user is signed in to T3 Connect
+    Scenario: The user refreshes environments from HAL-C2 Connect
+      Given the user is signed in to HAL-C2 Connect
       When the user refreshes cloud environments
-      Then environments added to the user's T3 Connect profile are listed
+      Then environments added to the user's HAL-C2 Connect profile are listed
 
   Rule: Appearance
 
@@ -78,10 +78,10 @@ Feature: Settings that belong to the phone
 
     @backlog @mobile
     Scenario: A theme is chosen for only light or only dark
-      Given the theme is "T3 Code"
+      Given the theme is "HAL-C2"
       When the user chooses "Ocean" for dark only
       Then "Ocean" is used in dark
-      And "T3 Code" is still used in light
+      And "HAL-C2" is still used in light
 
     @backlog @mobile
     Scenario: Material You is offered when the phone provides its own colours

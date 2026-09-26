@@ -16,7 +16,7 @@ import {
   ThreadId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -2076,7 +2076,7 @@ describe("OpenCodeAdapterV2", () => {
       Effect.provide(
         Layer.mergeAll(
           idAllocatorLayer,
-          ServerConfig.layerTest(process.cwd(), { prefix: "t3-opencode-v2-adapter-" }).pipe(
+          ServerConfig.layerTest(process.cwd(), { prefix: "hal-c2-opencode-v2-adapter-" }).pipe(
             Layer.provide(NodeServices.layer),
           ),
         ),

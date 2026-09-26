@@ -1,9 +1,9 @@
 # Sources:
 #   docs/user/project-settings.md (Defaults and inheritance, Submodules, automatic pull)
 #   apps/web/src/components/settings/ProjectDefaultsSettings.tsx
-#   apps/server-ex/lib/t3/settings.ex (project-scoped keys, for_project)
+#   apps/server-ex/lib/hal_c2/settings.ex (project-scoped keys, for_project)
 #   packages/contracts/src/project.ts (defaultModelSelection, defaultThreadEnvMode, autoPull)
-#   packages/contracts/src/rpc.ts (t3.readSettings, t3.writeSettings)
+#   packages/contracts/src/rpc.ts (halc2.readSettings, halc2.writeSettings)
 #   Cross-domain: these rows are the ones ProjectDefaultsSettings.tsx embeds in the General,
 #   Source Control and Integrations panels; no other settings/ file repeats them. How overrides
 #   resolve, mixed values across environments and models missing on one environment are owned
@@ -21,7 +21,7 @@ Feature: Project defaults settings
   Scenario: A project's override wins over the environment's value
     Given "laptop" uses the default workspace "local"
     And "shop" overrides the default workspace to "worktree"
-    # Neither server serves project-resolved settings; the node resolves them (T3.Settings.for_project).
+    # Neither server serves project-resolved settings; the node resolves them (HalC2.Settings.for_project).
     When the node resolves the settings for "shop"
     Then the default workspace is "worktree"
 
@@ -31,7 +31,7 @@ Feature: Project defaults settings
   Scenario: A project's model override on a disabled provider falls back to the environment's
     Given "laptop" uses the default model "Sonnet"
     And "shop" overrides the default model with a model from a disabled provider
-    # Neither server serves project-resolved settings; the node resolves them (T3.Settings.for_project).
+    # Neither server serves project-resolved settings; the node resolves them (HalC2.Settings.for_project).
     When the node resolves the settings for "shop"
     Then the default model is "Sonnet"
 

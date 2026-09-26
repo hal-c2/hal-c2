@@ -1,4 +1,4 @@
-import type { OrchestrationCheckpointSummary } from "@t3tools/contracts";
+import type { OrchestrationCheckpointSummary } from "@hal-c2/contracts";
 import * as React from "react";
 
 import { clip } from "../format.ts";

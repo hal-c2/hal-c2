@@ -1,20 +1,20 @@
-defmodule T3.Steps.Settings.ResourceTelemetry do
+defmodule HalC2.Steps.Settings.ResourceTelemetry do
   @moduledoc """
   The resource monitor on a node: the `resourceTelemetry` socket shape streams a
   snapshot after every sample (every 2s while watched, 15s otherwise), and the
-  sampler keeps an hour of samples (`T3.Diagnostics`).
+  sampler keeps an hour of samples (`HalC2.Diagnostics`).
   """
   use Cucumber.StepDefinition
 
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @hour 60 * 60_000
 
   step "the user watches the resource monitor", context do
-    Node.ensure(T3.Diagnostics)
+    Node.ensure(HalC2.Diagnostics)
 
     client =
       context
@@ -37,8 +37,8 @@ defmodule T3.Steps.Settings.ResourceTelemetry do
   end
 
   step "no client watches the resource monitor", context do
-    Node.ensure(T3.Diagnostics)
-    assert :sys.get_state(T3.Diagnostics).watchers == %{}
+    Node.ensure(HalC2.Diagnostics)
+    assert :sys.get_state(HalC2.Diagnostics).watchers == %{}
     context
   end
 
@@ -69,7 +69,7 @@ defmodule T3.Steps.Settings.ResourceTelemetry do
   end
 
   step "the user retries the resource monitor", context do
-    Node.ensure(T3.Diagnostics)
+    Node.ensure(HalC2.Diagnostics)
     asked = DateTime.utc_now() |> DateTime.truncate(:millisecond)
     {reply, context} = World.call(context, "server.retryResourceTelemetry")
     Map.merge(context, %{reply: reply, asked: asked})

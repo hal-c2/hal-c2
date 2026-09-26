@@ -8,7 +8,7 @@
  *
  * @module provider/Layers/codexResetCredit
  */
-import type { ProviderConsumeResetCreditOutcome } from "@t3tools/contracts";
+import type { ProviderConsumeResetCreditOutcome } from "@hal-c2/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -43,7 +43,7 @@ export class CodexResetCreditCoordinator extends Context.Service<
       consume: (idempotencyKey: string) => Effect.Effect<ProviderConsumeResetCreditOutcome, E, R>,
     ) => Effect.Effect<ProviderConsumeResetCreditOutcome, E | PlatformError.PlatformError, R>;
   }
->()("t3/provider/Layers/codexResetCredit/CodexResetCreditCoordinator") {}
+>()("hal-c2/provider/Layers/codexResetCredit/CodexResetCreditCoordinator") {}
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {

@@ -3,8 +3,8 @@ import {
   OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
   type ThreadId,
-} from "@t3tools/contracts";
-import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
+} from "@hal-c2/contracts";
+import { isOrchestrationV2TurnItemVisible } from "@hal-c2/shared/orchestrationV2Timeline";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 

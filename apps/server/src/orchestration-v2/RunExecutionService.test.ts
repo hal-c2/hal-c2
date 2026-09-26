@@ -26,7 +26,7 @@ import {
   ServerSettingsError,
   ThreadId,
   TurnItemId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as DateTime from "effect/DateTime";

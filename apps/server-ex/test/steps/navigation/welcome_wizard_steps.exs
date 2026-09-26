@@ -1,4 +1,4 @@
-defmodule T3.Steps.Navigation.WelcomeWizard do
+defmodule HalC2.Steps.Navigation.WelcomeWizard do
   @moduledoc """
   Steps for `features/navigation/welcome-wizard.feature`: the project scan and the
   history import behind the wizard (`agentSessions.scan`, `agentSessions.import`).
@@ -11,8 +11,8 @@ defmodule T3.Steps.Navigation.WelcomeWizard do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node.World
 
   @day 86_400
   # WelcomeWizard.tsx
@@ -295,7 +295,7 @@ defmodule T3.Steps.Navigation.WelcomeWizard do
     project_id = World.project(context).id
 
     threads =
-      for {{node, _}, {"thread", %{"projectId" => ^project_id} = t}} <- T3.Shell.rows(),
+      for {{node, _}, {"thread", %{"projectId" => ^project_id} = t}} <- HalC2.Shell.rows(),
           node == node(),
           do: t["id"]
 
@@ -309,7 +309,7 @@ defmodule T3.Steps.Navigation.WelcomeWizard do
   defp fixture(%{wizard_home: _} = context), do: context
 
   defp fixture(context) do
-    home = Path.join(System.tmp_dir!(), "t3-wizard-#{System.unique_integer([:positive])}")
+    home = Path.join(System.tmp_dir!(), "hal-c2-wizard-#{System.unique_integer([:positive])}")
     File.mkdir_p!(home)
     ExUnit.Callbacks.on_exit(fn -> File.rm_rf!(home) end)
     put_app_env(:agent_sessions_home, home)
@@ -319,13 +319,13 @@ defmodule T3.Steps.Navigation.WelcomeWizard do
   end
 
   defp put_app_env(key, value) do
-    previous = Application.fetch_env(:t3, key)
-    Application.put_env(:t3, key, value)
+    previous = Application.fetch_env(:hal_c2, key)
+    Application.put_env(:hal_c2, key, value)
 
     ExUnit.Callbacks.on_exit(fn ->
       case previous do
-        {:ok, value} -> Application.put_env(:t3, key, value)
-        :error -> Application.delete_env(:t3, key)
+        {:ok, value} -> Application.put_env(:hal_c2, key, value)
+        :error -> Application.delete_env(:hal_c2, key)
       end
     end)
   end
@@ -462,11 +462,11 @@ defmodule T3.Steps.Navigation.WelcomeWizard do
 
   defp thread(session) do
     id = thread_id(session)
-    StreamState.get(T3.Streams.Server.state(T3.Streams.ensure(id)), "thread")[id]
+    StreamState.get(HalC2.Streams.Server.state(HalC2.Streams.ensure(id)), "thread")[id]
   end
 
   defp messages(_context, session) do
-    T3.Streams.Server.state(T3.Streams.ensure(thread_id(session)))
+    HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id(session)))
     |> StreamState.list("message")
   end
 end

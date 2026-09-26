@@ -1,14 +1,14 @@
-import { ComposerContextId } from "@t3tools/contracts";
+import { ComposerContextId } from "@hal-c2/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "react-native";
-import type { EnvironmentId } from "@t3tools/contracts";
-import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
-import { ComposerEditor as NativeComposerEditor } from "../native/T3ComposerEditor";
-import type { ComposerEditorProps as NativeComposerEditorProps } from "../native/T3ComposerEditor";
+import type { EnvironmentId } from "@hal-c2/contracts";
+import { encodeComposerContextFragment } from "@hal-c2/shared/composerContextClipboard";
+import { collectComposerContextReferences } from "@hal-c2/shared/composerContextReferences";
+import { ComposerEditor as NativeComposerEditor } from "../native/HalC2ComposerEditor";
+import type { ComposerEditorProps as NativeComposerEditorProps } from "../native/HalC2ComposerEditor";
 import {
   appendComposerDraftAttachments,
   createComposerDraftContextHistory,
@@ -264,4 +264,4 @@ export type {
   ComposerEditorHandle,
   ComposerEditorSelection,
   ComposerTextPaste,
-} from "../native/T3ComposerEditor";
+} from "../native/HalC2ComposerEditor";

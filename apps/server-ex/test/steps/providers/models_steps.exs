@@ -1,13 +1,13 @@
-defmodule T3.Steps.Providers.Models do
+defmodule HalC2.Steps.Providers.Models do
   @moduledoc """
   Steps for `features/providers/models.feature`: the models each provider reports, the
   defaults a new thread and text generation start from, and how they fall back.
-  Providers run on the test fakes (`T3.Test.Node.World.fake_providers/2`).
+  Providers run on the test fakes (`HalC2.Test.Node.World.fake_providers/2`).
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   # --- the TUI's pickers (they flatten the node's provider list, `apps/tui/src/models.ts`) ---
 
@@ -53,7 +53,7 @@ defmodule T3.Steps.Providers.Models do
     )
 
     context = World.fake_providers(context)
-    T3.Codex.Provider.load()
+    HalC2.Codex.Provider.load()
     Map.put(context, :selection, %{"instanceId" => "codex", "model" => "gpt-6-luna"})
   end
 
@@ -82,7 +82,7 @@ defmodule T3.Steps.Providers.Models do
     System.put_env("FAKE_ACP_MODELS", JSON.encode!([name]))
     context = World.fake_providers(context)
     World.merge_settings(%{"providers" => %{"opencode" => %{"enabled" => true}}})
-    T3.Acp.reload("opencode")
+    HalC2.Acp.reload("opencode")
     context
   end
 
@@ -144,7 +144,7 @@ defmodule T3.Steps.Providers.Models do
 
   step "the user has not picked a text-generation model", context do
     context = World.text_writers(context, [:codex])
-    {settings, _} = T3.Settings.get()
+    {settings, _} = HalC2.Settings.get()
     refute settings["textGenerationModelSelection"]
     context
   end
@@ -245,7 +245,7 @@ defmodule T3.Steps.Providers.Models do
   # Saves a custom model the way the settings panel does: read, add, write back.
   defp add_custom_model(context, setting) do
     {{:ok, %{"settings" => settings, "version" => version}}, context} =
-      World.call(context, "t3.readSettings")
+      World.call(context, "halc2.readSettings")
 
     settings =
       update_in(
@@ -259,7 +259,7 @@ defmodule T3.Steps.Providers.Models do
       )
 
     {{:ok, _}, context} =
-      World.call(context, "t3.writeSettings", %{"settings" => settings, "version" => version})
+      World.call(context, "halc2.writeSettings", %{"settings" => settings, "version" => version})
 
     Map.put(context, :custom_model, setting)
   end
@@ -278,7 +278,7 @@ defmodule T3.Steps.Providers.Models do
   end
 
   defp project_settings(context, project),
-    do: T3.Settings.for_project(World.project(context, project).id)
+    do: HalC2.Settings.for_project(World.project(context, project).id)
 
   # `flattenModelOptions`: every model of each enabled, available provider.
   defp flatten(providers) do

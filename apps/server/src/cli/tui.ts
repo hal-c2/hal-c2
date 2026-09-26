@@ -4,7 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { AuthStandardClientScopes } from "@t3tools/contracts";
+import { AuthStandardClientScopes } from "@hal-c2/contracts";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -46,7 +46,7 @@ interface MintRequest {
  * cannot fix this up itself. Terminals that ship their own TERM value (Ghostty's
  * `xterm-ghostty`) and sessions that dropped COLORTERM would otherwise render
  * with the renderer's baked legacy palette instead of the terminal's theme.
- * Mirrors `ensureColorCapabilityEnv` in @t3tools/tui.
+ * Mirrors `ensureColorCapabilityEnv` in @hal-c2/tui.
  */
 const TRUECOLOR_TERMINAL_PATTERN =
   /ghostty|kitty|wezterm|alacritty|foot|rio|contour|iterm|vscode|-direct/i;
@@ -61,7 +61,7 @@ export function colorCapabilityEnv(env: NodeJS.ProcessEnv): { readonly COLORTERM
 
 /**
  * Run the Bun TUI subprocess. The OpenTUI renderer requires Bun, so the Node
- * `t3 tui` command (which holds the server's auth) bootstraps a session here and
+ * `hal-c2 tui` command (which holds the server's auth) bootstraps a session here and
  * spawns `bun <entry>`, then answers the child's websocket-ticket requests over
  * the Node IPC channel (fd 3). Resolves when the child exits, or immediately with
  * a hint if Bun isn't installed.
@@ -74,7 +74,7 @@ function runBunTui(input: {
   readonly shellDir: string;
   readonly mintSocketUrl: () => Promise<string>;
 }): Promise<void> {
-  const bunCommand = process.env.T3_TUI_BUN ?? "bun";
+  const bunCommand = process.env.HALC2_TUI_BUN ?? "bun";
   const bundledEntry = NodeURL.fileURLToPath(new URL("./tui/index.js", import.meta.url));
   const unpackedEntry = bundledEntry.replace(/(?:app|server)\.asar([\\/])/, "app.asar.unpacked$1");
   const workspaceEntry = NodeURL.fileURLToPath(
@@ -92,10 +92,10 @@ function runBunTui(input: {
       env: {
         ...process.env,
         ...colorCapabilityEnv(process.env),
-        T3_TUI_ORIGIN: input.origin,
-        T3_TUI_BEARER: input.bearerToken,
-        T3_TUI_LOG: input.logPath,
-        T3_TUI_SHELL_DIR: input.shellDir,
+        HALC2_TUI_ORIGIN: input.origin,
+        HALC2_TUI_BEARER: input.bearerToken,
+        HALC2_TUI_LOG: input.logPath,
+        HALC2_TUI_SHELL_DIR: input.shellDir,
       },
     });
 
@@ -117,11 +117,11 @@ function runBunTui(input: {
     child.on("error", (error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") {
         process.stderr.write(
-          "`t3 tui` needs Bun to run its terminal UI. Install it from https://bun.sh " +
-            "(or set T3_TUI_BUN to a bun binary).\n",
+          "`hal-c2 tui` needs Bun to run its terminal UI. Install it from https://bun.sh " +
+            "(or set HALC2_TUI_BUN to a bun binary).\n",
         );
       } else {
-        process.stderr.write(`t3 tui: failed to start Bun: ${error.message}\n`);
+        process.stderr.write(`hal-c2 tui: failed to start Bun: ${error.message}\n`);
       }
       process.exitCode = 1;
       resolve();
@@ -133,7 +133,7 @@ function runBunTui(input: {
 
 export const tuiCommand = Command.make("tui", { ...authLocationFlags }).pipe(
   Command.withDescription(
-    "Open a terminal UI for the running local T3 Code server (requires Bun; no port forwarding).",
+    "Open a terminal UI for the running local HAL-C2 server (requires Bun; no port forwarding).",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -143,14 +143,14 @@ export const tuiCommand = Command.make("tui", { ...authLocationFlags }).pipe(
       const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
       if (Option.isNone(runtimeState)) {
         yield* Console.error(
-          "No running T3 Code server was found. Start one with `t3 serve` (or `t3 start`) first.",
+          "No running HAL-C2 server was found. Start one with `hal-c2 serve` (or `hal-c2 start`) first.",
         );
         process.exitCode = 1;
         return;
       }
       if (!(yield* isLivePersistedServerRuntimeState(runtimeState.value))) {
         yield* Console.error(
-          "The recorded T3 Code server is no longer running. Start it with `t3 serve` (or `t3 start`) first.",
+          "The recorded HAL-C2 server is no longer running. Start it with `hal-c2 serve` (or `hal-c2 start`) first.",
         );
         process.exitCode = 1;
         return;
@@ -180,8 +180,8 @@ export const tuiCommand = Command.make("tui", { ...authLocationFlags }).pipe(
               const auth = yield* EnvironmentAuth.EnvironmentAuth;
               return yield* auth.issueSession({
                 scopes: AuthStandardClientScopes,
-                subject: "t3-tui",
-                label: "T3 Code TUI",
+                subject: "hal-c2-tui",
+                label: "HAL-C2 TUI",
                 ttl: Duration.days(30),
               });
             }),

@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
-import T3.Shell
-import T3.Bricks
+import HalC2.Shell
+import HalC2.Bricks
 
 // Graphite glass: one rounded window with a hairline edge, traffic lights in
 // the corner, a translucent sidebar for the compositor to blur behind, and

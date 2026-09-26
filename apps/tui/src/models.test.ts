@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import { ProviderInstanceId, type ServerProvider } from "@hal-c2/contracts";
 import {
   currentModelIndex,
   flattenModelOptions,

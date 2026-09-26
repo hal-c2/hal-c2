@@ -1,22 +1,22 @@
-defmodule T3.Steps.Files.ProjectFile do
+defmodule HalC2.Steps.Files.ProjectFile do
   @moduledoc """
   Steps for `features/files/project-file.feature`: how deep `vcs.createWorktree`
-  fills submodules (the checkout's t3.json against the project's settings), and
-  the icon t3.json names. The checkout gets a submodule "middle" that has its own
+  fills submodules (the checkout's hal-c2.json against the project's settings), and
+  the icon hal-c2.json names. The checkout gets a submodule "middle" that has its own
   submodule "inner", each holding a README.md.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
-  step "the checkout's t3.json asks for {string} submodules", %{args: [mode]} = context do
-    context |> submodules() |> commit_t3_json(JSON.encode!(%{"worktreeSubmodules" => mode}))
+  step "the checkout's hal-c2.json asks for {string} submodules", %{args: [mode]} = context do
+    context |> submodules() |> commit_halc2_json(JSON.encode!(%{"worktreeSubmodules" => mode}))
   end
 
-  step "the checkout's t3.json is not valid JSON", context do
-    context |> submodules() |> commit_t3_json("{\"worktreeSubmodules\": ")
+  step "the checkout's hal-c2.json is not valid JSON", context do
+    context |> submodules() |> commit_halc2_json("{\"worktreeSubmodules\": ")
   end
 
   step "the project's settings asks for {string} submodules", %{args: [mode]} = context do
@@ -27,16 +27,16 @@ defmodule T3.Steps.Files.ProjectFile do
     context |> submodules() |> project_setting(mode)
   end
 
-  step "{string} has no t3.json and no submodule setting", %{args: [project]} = context do
+  step "{string} has no hal-c2.json and no submodule setting", %{args: [project]} = context do
     context = submodules(context)
-    refute File.exists?(Path.join(World.project(context, project).root, "t3.json"))
-    refute T3.Settings.for_project(World.project(context, project).id)["worktreeSubmodules"]
+    refute File.exists?(Path.join(World.project(context, project).root, "hal-c2.json"))
+    refute HalC2.Settings.for_project(World.project(context, project).id)["worktreeSubmodules"]
     context
   end
 
   step "a new worktree is created for {string}", %{args: [project]} = context do
     root = World.project(context, project).root
-    branch = "t3/worktree-#{System.unique_integer([:positive])}"
+    branch = "hal-c2/worktree-#{System.unique_integer([:positive])}"
 
     {reply, context} =
       World.call(context, "vcs.createWorktree", %{
@@ -68,9 +68,9 @@ defmodule T3.Steps.Files.ProjectFile do
 
   # --- the icon ------------------------------------------------------------------------
 
-  step "the checkout's t3.json names {string} as its icon", %{args: [icon]} = context do
+  step "the checkout's hal-c2.json names {string} as its icon", %{args: [icon]} = context do
     root = World.project(context).root
-    File.write!(Path.join(root, "t3.json"), JSON.encode!(%{"iconPath" => icon}))
+    File.write!(Path.join(root, "hal-c2.json"), JSON.encode!(%{"iconPath" => icon}))
 
     write(
       root,
@@ -97,8 +97,8 @@ defmodule T3.Steps.Files.ProjectFile do
   defp submodules(%{submodules: true} = context), do: context
 
   defp submodules(context) do
-    Node.ensure(T3.Settings)
-    Node.ensure({Registry, keys: :unique, name: T3.Vcs.Registry})
+    Node.ensure(HalC2.Settings)
+    Node.ensure({Registry, keys: :unique, name: HalC2.Vcs.Registry})
     allow_file_submodules()
     inner = World.git_repo(context, "inner")
     middle = World.git_repo(context, "middle")
@@ -130,22 +130,22 @@ defmodule T3.Steps.Files.ProjectFile do
     World.git!(root, ["commit", "-q", "-m", "add #{path}"])
   end
 
-  defp commit_t3_json(context, text) do
+  defp commit_halc2_json(context, text) do
     root = World.project(context).root
-    File.write!(Path.join(root, "t3.json"), text)
-    World.git!(root, ~w(add t3.json))
-    World.git!(root, ~w(commit -q -m t3.json))
+    File.write!(Path.join(root, "hal-c2.json"), text)
+    World.git!(root, ~w(add hal-c2.json))
+    World.git!(root, ~w(commit -q -m hal-c2.json))
     context
   end
 
   defp project_setting(context, mode) do
-    {settings, version} = T3.Settings.get()
+    {settings, version} = HalC2.Settings.get()
     id = World.project(context).id
 
     overrides =
       Map.put(settings["projectSettingsOverrides"] || %{}, id, %{"worktreeSubmodules" => mode})
 
-    {:ok, _} = T3.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
     context
   end
 

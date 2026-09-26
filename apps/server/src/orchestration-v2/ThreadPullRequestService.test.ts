@@ -1,4 +1,4 @@
-import { ProjectId, type OrchestrationProjectShell } from "@t3tools/contracts";
+import { ProjectId, type OrchestrationProjectShell } from "@hal-c2/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -26,22 +26,22 @@ describe("ThreadPullRequestServiceV2 project guard", () => {
         resolve: (root) => {
           resolvedRoot = root;
           return Effect.succeed({
-            canonicalKey: "github.com/pingdotgg/t3code",
+            canonicalKey: "github.com/hal-c2/hal-c2",
             locator: {
               source: "git-remote" as const,
               remoteName: "origin",
-              remoteUrl: "git@github.com:pingdotgg/t3code.git",
+              remoteUrl: "git@github.com:hal-c2/hal-c2.git",
             },
             provider: "github" as const,
-            displayName: "pingdotgg/t3code",
+            displayName: "hal-c2/hal-c2",
             owner: "pingdotgg",
-            name: "t3code",
+            name: "hal-c2",
           });
         },
       });
       expect(resolvedRoot).toBe("/workspace/project");
-      expect(result.repository).toBe("pingdotgg/t3code");
-      expect(result.project.repositoryIdentity?.canonicalKey).toBe("github.com/pingdotgg/t3code");
+      expect(result.repository).toBe("hal-c2/hal-c2");
+      expect(result.project.repositoryIdentity?.canonicalKey).toBe("github.com/hal-c2/hal-c2");
     }),
   );
 

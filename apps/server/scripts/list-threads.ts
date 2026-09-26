@@ -2,7 +2,7 @@
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
+import { fromJsonStringPretty } from "@hal-c2/shared/schemaJson";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -17,11 +17,13 @@ export const listThreadsCommand = Command.make(
   "list-threads",
   {
     source: Flag.String("source").pipe(
-      Flag.withDescription("Workspace root, T3 base directory, or direct state directory."),
+      Flag.withDescription("Workspace root, HAL-C2 base directory, or direct state directory."),
     ),
     state: Flag.Literals("state", ThreadTransferState.literals).pipe(
       Flag.withDefault("userdata"),
-      Flag.withDescription("State directory below the T3 base directory; defaults to userdata."),
+      Flag.withDescription(
+        "State directory below the HAL-C2 base directory; defaults to userdata.",
+      ),
     ),
     json: Flag.Boolean("json").pipe(
       Flag.withDefault(false),

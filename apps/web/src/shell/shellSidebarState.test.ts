@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@hal-c2/client-runtime/state/models";
+import { EnvironmentId, ProjectId, ThreadId } from "@hal-c2/contracts";
 
 import { makeThreadFixture } from "../test-fixtures";
 import type { SidebarProjectSnapshot } from "../sidebarProjectGrouping";
@@ -29,14 +29,14 @@ function makeProjectGroup(): SidebarProjectSnapshot {
   return {
     id: projectId,
     environmentId,
-    title: "T3 Code",
+    title: "HAL-C2",
     workspaceRoot: "/repo",
     defaultModelSelection: null,
     scripts: [],
     createdAt: "2026-03-09T10:00:00.000Z",
     updatedAt: "2026-03-09T10:00:00.000Z",
-    projectKey: "logical:t3code",
-    displayName: "T3 Code",
+    projectKey: "logical:hal-c2",
+    displayName: "HAL-C2",
     groupedProjectCount: 1,
     environmentPresence: "local-only",
     allRemoteMembersAreDesktopLocal: false,
@@ -50,7 +50,7 @@ function makeProjectGroup(): SidebarProjectSnapshot {
 describe("buildLogicalProjectKeyMap", () => {
   it("maps every member ref of a group to the group's logical key", () => {
     const map = buildLogicalProjectKeyMap([makeProjectGroup()]);
-    expect(map.get(`${environmentId}:${projectId}`)).toBe("logical:t3code");
+    expect(map.get(`${environmentId}:${projectId}`)).toBe("logical:hal-c2");
   });
 });
 
@@ -90,7 +90,7 @@ describe("buildShellSidebarState", () => {
       scopeProjectKey: null,
       partition,
       capabilitiesFor: () => ({ threadSettlement: true, threadSnooze: true }),
-      threadCountByLogicalKey: new Map([["logical:t3code", 3]]),
+      threadCountByLogicalKey: new Map([["logical:hal-c2", 3]]),
       lastVisitedAtByKey: { [`${environmentId}:working`]: "2026-03-09T11:00:00.000Z" },
       drafts: [],
       activeThreadKey: `${environmentId}:pinned`,
@@ -99,8 +99,8 @@ describe("buildShellSidebarState", () => {
 
     expect(state.projects).toEqual([
       {
-        key: "logical:t3code",
-        displayName: "T3 Code",
+        key: "logical:hal-c2",
+        displayName: "HAL-C2",
         environmentId,
         projectId,
         workspaceRoot: "/repo",
@@ -109,7 +109,7 @@ describe("buildShellSidebarState", () => {
     ]);
     expect(state.pinned[0]).toMatchObject({
       key: `${environmentId}:pinned`,
-      projectKey: "logical:t3code",
+      projectKey: "logical:hal-c2",
       pinned: true,
       status: "ready",
       canSettle: true,
@@ -135,19 +135,19 @@ describe("buildShellSidebarState", () => {
   it("caps settled rows and reports the full count", () => {
     const state = buildShellSidebarState({
       projectGroups: [makeProjectGroup()],
-      scopeProjectKey: "logical:t3code",
+      scopeProjectKey: "logical:hal-c2",
       partition,
       capabilitiesFor: () => undefined,
       threadCountByLogicalKey: new Map(),
       lastVisitedAtByKey: {},
-      drafts: [{ draftId: "draft-1", projectKey: "logical:t3code", label: "Draft" }],
+      drafts: [{ draftId: "draft-1", projectKey: "logical:hal-c2", label: "Draft" }],
       activeThreadKey: null,
       activeDraftId: "draft-1",
     });
     expect(state.pinned[0]).toMatchObject({ canSettle: false, canSnooze: false });
     expect(state.settled).toHaveLength(SHELL_SIDEBAR_SETTLED_LIMIT);
     expect(state.settledTotal).toBe(SHELL_SIDEBAR_SETTLED_LIMIT + 5);
-    expect(state.scopeProjectKey).toBe("logical:t3code");
+    expect(state.scopeProjectKey).toBe("logical:hal-c2");
     expect(state.drafts).toHaveLength(1);
     expect(state.activeDraftId).toBe("draft-1");
   });

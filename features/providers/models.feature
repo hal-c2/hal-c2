@@ -1,8 +1,8 @@
 # Sources:
-#   apps/server-ex/lib/t3/codex/provider.ex (model/list), apps/server-ex/lib/t3/claude/provider.ex (aliases)
-#   apps/server-ex/lib/t3/acp.ex (models from the model config option, subProvider)
-#   apps/server-ex/lib/t3/settings.ex (textGenerationModelSelection, defaultModelSelection dropped for disabled providers)
-#   apps/server-ex/lib/t3/text_generation.ex (defaults and fallback)
+#   apps/server-ex/lib/hal_c2/codex/provider.ex (model/list), apps/server-ex/lib/hal_c2/claude/provider.ex (aliases)
+#   apps/server-ex/lib/hal_c2/acp.ex (models from the model config option, subProvider)
+#   apps/server-ex/lib/hal_c2/settings.ex (textGenerationModelSelection, defaultModelSelection dropped for disabled providers)
+#   apps/server-ex/lib/hal_c2/text_generation.ex (defaults and fallback)
 #   apps/tui/src/models.ts (flat model picker, effort choices)
 #   apps/server/src/provider/ModelManifest.ts, apps/server/src/provider/model-manifest.json
 #   apps/server/src/provider/providerCompatibility.ts (applyProviderCompatibility: remote policy over bundled)

@@ -32,7 +32,7 @@ BackendProcess::BackendProcess(Options options, QObject* parent)
     // A host that dies after announcing leaves the web view on a dead origin;
     // say so instead of letting the page spin on reconnects forever.
     emit failed(m_announced
-                    ? QStringLiteral("Desktop host exited (code %1, %2). Restart T3 Code to reconnect.")
+                    ? QStringLiteral("Desktop host exited (code %1, %2). Restart HAL-C2 to reconnect.")
                           .arg(exitCode)
                           .arg(how)
                     : QStringLiteral("Desktop host exited before it was ready (code %1, %2).")

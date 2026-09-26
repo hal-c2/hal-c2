@@ -1,4 +1,4 @@
-defmodule T3.Steps.Orchestration.ScheduledTasks do
+defmodule HalC2.Steps.Orchestration.ScheduledTasks do
   @moduledoc """
   Steps for `features/node/orchestration/scheduled-tasks.feature`.
 
@@ -11,9 +11,9 @@ defmodule T3.Steps.Orchestration.ScheduledTasks do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.ScheduledTasks
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.ScheduledTasks
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @hour 3_600_000
   @monday ~D[2026-07-06]
@@ -23,8 +23,8 @@ defmodule T3.Steps.Orchestration.ScheduledTasks do
   # --- background ----------------------------------------------------------------------
 
   step "the local time zone of the node is used for times of day", context do
-    Node.ensure(T3.ScheduledTasks)
-    Node.ensure(T3.WorktreeSetup)
+    Node.ensure(HalC2.ScheduledTasks)
+    Node.ensure(HalC2.WorktreeSetup)
     at = DateTime.utc_now()
     noon = ScheduledTasks.next_run(%{"type" => "fixed_time", "timeOfDay" => "12:00"}, at)
     assert %NaiveDateTime{hour: 12, minute: 0} = local(noon)
@@ -406,7 +406,7 @@ defmodule T3.Steps.Orchestration.ScheduledTasks do
     id = task_id(context, name)
     # Its message goes out, and the run is over once the scheduler has no run left.
     World.await_state(context, "t-#{name}", fn state ->
-      Enum.any?(T3.StreamState.list(state, "message"), &(&1["scheduledTaskId"] == id))
+      Enum.any?(HalC2.StreamState.list(state, "message"), &(&1["scheduledTaskId"] == id))
     end)
 
     context
@@ -644,7 +644,7 @@ defmodule T3.Steps.Orchestration.ScheduledTasks do
 
   step "a stored task from an older version runs every 30 seconds", context do
     context = pin(context, at(context, "08:00"))
-    :ok = ExUnit.Callbacks.stop_supervised(T3.ScheduledTasks)
+    :ok = ExUnit.Callbacks.stop_supervised(HalC2.ScheduledTasks)
     created = iso(context.now)
 
     legacy =
@@ -668,7 +668,7 @@ defmodule T3.Steps.Orchestration.ScheduledTasks do
   end
 
   step "the node loads it", context do
-    Node.ensure(T3.ScheduledTasks)
+    Node.ensure(HalC2.ScheduledTasks)
     assert %{"schedule" => %{"everyMs" => 30_000}} = current(context, "legacy")
     run_due(context, "legacy")
   end
@@ -685,10 +685,10 @@ defmodule T3.Steps.Orchestration.ScheduledTasks do
   # Pins the scheduler's clock at `at` (a UTC DateTime) for the rest of the scenario.
   defp pin(context, at) do
     at = DateTime.truncate(at, :millisecond)
-    Application.put_env(:t3, :scheduled_tasks_clock, fn -> at end)
+    Application.put_env(:hal_c2, :scheduled_tasks_clock, fn -> at end)
 
     ExUnit.Callbacks.on_exit({__MODULE__, :clock}, fn ->
-      Application.delete_env(:t3, :scheduled_tasks_clock)
+      Application.delete_env(:hal_c2, :scheduled_tasks_clock)
     end)
 
     Map.put(context, :now, at)
@@ -848,7 +848,7 @@ defmodule T3.Steps.Orchestration.ScheduledTasks do
       task
     else
       receive do
-        {:t3_scheduled_tasks, _, _} -> await_changed(context, name, fun)
+        {:halc2_scheduled_tasks, _, _} -> await_changed(context, name, fun)
       after
         5_000 -> flunk("task #{name} never got there: #{inspect(task)}")
       end
@@ -866,7 +866,7 @@ defmodule T3.Steps.Orchestration.ScheduledTasks do
 
   # Holds the task's thread so a run sending into it stays running.
   defp suspend(context, name) do
-    stream = T3.Streams.ensure(World.thread_id(context, "t-#{name}"))
+    stream = HalC2.Streams.ensure(World.thread_id(context, "t-#{name}"))
     :sys.suspend(stream)
     stream
   end
@@ -889,7 +889,7 @@ defmodule T3.Steps.Orchestration.ScheduledTasks do
 
     thread =
       await_launched(fn ->
-        Enum.find_value(T3.Shell.rows(), fn
+        Enum.find_value(HalC2.Shell.rows(), fn
           {{_, id}, {"thread", %{"title" => ^title, "projectId" => ^project}}} -> id
           _ -> nil
         end)
@@ -903,7 +903,7 @@ defmodule T3.Steps.Orchestration.ScheduledTasks do
     case find.() do
       nil ->
         receive do
-          {:t3_shell, _} -> await_launched(find)
+          {:halc2_shell, _} -> await_launched(find)
         after
           5_000 -> flunk("no thread was launched")
         end
@@ -915,7 +915,7 @@ defmodule T3.Steps.Orchestration.ScheduledTasks do
 
   # A thread of `project` with a turn running, whose agent calls the MCP tools.
   defp caller(context, thread, project) do
-    Node.ensure(T3.Mcp)
+    Node.ensure(HalC2.Mcp)
 
     context =
       if (context[:threads] || %{})[thread],
@@ -929,7 +929,7 @@ defmodule T3.Steps.Orchestration.ScheduledTasks do
   end
 
   defp tool(context, thread, name, arguments) do
-    %{authorization: auth} = T3.Mcp.server(World.thread_id(context, thread), "codex")
+    %{authorization: auth} = HalC2.Mcp.server(World.thread_id(context, thread), "codex")
 
     request = %{
       "jsonrpc" => "2.0",
@@ -938,7 +938,7 @@ defmodule T3.Steps.Orchestration.ScheduledTasks do
       "params" => %{"name" => name, "arguments" => arguments}
     }
 
-    case T3.Mcp.handle(auth, JSON.encode!(request)) do
+    case HalC2.Mcp.handle(auth, JSON.encode!(request)) do
       {200, %{"result" => %{"isError" => true, "content" => [%{"text" => text}]}}} ->
         {:error, text}
 

@@ -1,5 +1,5 @@
 import { RGBA, StyledText, TextAttributes, type TextChunk } from "@opentui/core";
-import type { ThreadId } from "@t3tools/contracts";
+import type { ThreadId } from "@hal-c2/contracts";
 import * as XtermHeadless from "@xterm/headless";
 
 import { MIN_TERMINAL_DRAWER_ROWS } from "../components/ChatView.layout.ts";

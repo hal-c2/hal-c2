@@ -1,4 +1,4 @@
-defmodule T3.Steps.Providers.Usage do
+defmodule HalC2.Steps.Providers.Usage do
   @moduledoc """
   Steps for `features/providers/usage.feature`: `server.getUsageSummary` and
   `server.refreshUsageRates` over transcripts written into the scenario's home.
@@ -11,8 +11,8 @@ defmodule T3.Steps.Providers.Usage do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # Per-token USD, as LiteLLM's table lists them.
   @rates %{
@@ -68,7 +68,7 @@ defmodule T3.Steps.Providers.Usage do
     ])
 
     grok(dirs.grok, "main", [grok_completed("p1", at, "grok-4", input: 800, output: 200)])
-    Node.ensure(T3.Usage)
+    Node.ensure(HalC2.Usage)
     Map.put(context, :usage_dirs, dirs)
   end
 
@@ -418,12 +418,12 @@ defmodule T3.Steps.Providers.Usage do
 
   step "the user resets {string} to automatic", %{args: [model]} = context do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "t3.readSettings")
+      World.call!(context, "halc2.readSettings")
 
     settings = update_in(settings, ["usagePriceOverrides"], &Map.delete(&1, model))
 
     {_, context} =
-      World.call!(context, "t3.writeSettings", %{"settings" => settings, "version" => version})
+      World.call!(context, "halc2.writeSettings", %{"settings" => settings, "version" => version})
 
     context
   end
@@ -604,12 +604,12 @@ defmodule T3.Steps.Providers.Usage do
 
   defp save_prices(context, prices) do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "t3.readSettings")
+      World.call!(context, "halc2.readSettings")
 
     settings = Map.update(settings, "usagePriceOverrides", prices, &Map.merge(&1, prices))
 
     {_, context} =
-      World.call!(context, "t3.writeSettings", %{"settings" => settings, "version" => version})
+      World.call!(context, "halc2.writeSettings", %{"settings" => settings, "version" => version})
 
     context
   end

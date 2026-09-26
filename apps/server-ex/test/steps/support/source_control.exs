@@ -1,4 +1,4 @@
-defmodule T3.Steps.SourceControl.Shared do
+defmodule HalC2.Steps.SourceControl.Shared do
   @moduledoc """
   Setup the `features/source-control/` step files share (loaded before the step
   files, so they can call it). Conventions the step files follow:
@@ -12,8 +12,8 @@ defmodule T3.Steps.SourceControl.Shared do
 
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @fake_text Path.expand("../../support/fake_text_cli.py", __DIR__)
 
@@ -24,8 +24,8 @@ defmodule T3.Steps.SourceControl.Shared do
   (`test/support/fake_text_cli.py`). The checkout under test is its root.
   """
   def thread_in_git_project(context, title) do
-    Node.ensure({Registry, keys: :unique, name: T3.Vcs.Registry})
-    Node.ensure({DynamicSupervisor, name: T3.Vcs.Supervisor, strategy: :one_for_one})
+    Node.ensure({Registry, keys: :unique, name: HalC2.Vcs.Registry})
+    Node.ensure({DynamicSupervisor, name: HalC2.Vcs.Supervisor, strategy: :one_for_one})
     %{writer_log: writer_log} = answering_writer(context)
     repository = "acme/#{World.slug(title)}"
     context = World.create_project(context, title)
@@ -60,14 +60,14 @@ defmodule T3.Steps.SourceControl.Shared do
   its prompts to `context.writer_log`.
   """
   def answering_writer(context) do
-    Node.ensure(T3.Settings)
-    writer = Application.get_env(:t3, :text_claude_command)
+    Node.ensure(HalC2.Settings)
+    writer = Application.get_env(:hal_c2, :text_claude_command)
     writer_log = Path.join(Node.tmp_dir(context.node, "writer"), "calls.jsonl")
-    Application.put_env(:t3, :text_claude_command, @fake_text)
+    Application.put_env(:hal_c2, :text_claude_command, @fake_text)
     System.put_env("FAKE_TEXT_LOG", writer_log)
 
     ExUnit.Callbacks.on_exit(fn ->
-      Application.put_env(:t3, :text_claude_command, writer)
+      Application.put_env(:hal_c2, :text_claude_command, writer)
       System.delete_env("FAKE_TEXT_LOG")
     end)
 
@@ -452,17 +452,17 @@ defmodule T3.Steps.SourceControl.Shared do
   end
 
   @doc """
-  A fake Bitbucket API (`T3.Steps.SourceControl.FakeBitbucket`) the node reaches
-  through `T3CODE_BITBUCKET_API_BASE_URL`, with `T3CODE_BITBUCKET_ACCESS_TOKEN` set
+  A fake Bitbucket API (`HalC2.Steps.SourceControl.FakeBitbucket`) the node reaches
+  through `HALC2_BITBUCKET_API_BASE_URL`, with `HALC2_BITBUCKET_ACCESS_TOKEN` set
   to the token it knows as octocat's, until the scenario ends.
   """
   def fake_bitbucket(context) do
     server =
-      Node.ensure({Bandit, plug: T3.Steps.SourceControl.FakeBitbucket, port: 0, ip: :loopback})
+      Node.ensure({Bandit, plug: HalC2.Steps.SourceControl.FakeBitbucket, port: 0, ip: :loopback})
 
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
-    put_env("T3CODE_BITBUCKET_API_BASE_URL", "http://127.0.0.1:#{port}/2.0")
-    put_env("T3CODE_BITBUCKET_ACCESS_TOKEN", T3.Steps.SourceControl.FakeBitbucket.token())
+    put_env("HALC2_BITBUCKET_API_BASE_URL", "http://127.0.0.1:#{port}/2.0")
+    put_env("HALC2_BITBUCKET_ACCESS_TOKEN", HalC2.Steps.SourceControl.FakeBitbucket.token())
     context
   end
 
@@ -477,7 +477,7 @@ defmodule T3.Steps.SourceControl.Shared do
   end
 end
 
-defmodule T3.Steps.SourceControl.FakeBitbucket do
+defmodule HalC2.Steps.SourceControl.FakeBitbucket do
   @moduledoc false
   # Bitbucket's `/user` and `/repositories/{workspace}/{slug}` for one token.
   @behaviour Plug

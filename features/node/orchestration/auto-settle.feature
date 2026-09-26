@@ -1,8 +1,8 @@
 # Sources:
 #   packages/contracts/src/orchestrationV2.ts (thread.auto-settle, thread.settled)
 #   packages/contracts/src/settings.ts (sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays)
-#   apps/server-ex/lib/t3/orchestration/settlement.ex
-#   apps/server-ex/lib/t3/orchestration.ex (thread.auto-settle)
+#   apps/server-ex/lib/hal_c2/orchestration/settlement.ex
+#   apps/server-ex/lib/hal_c2/orchestration.ex (thread.auto-settle)
 #   apps/server/src/orchestration-v2/ (auto-settle reactor)
 #   docs/user/thread-sidebar.md
 Feature: Threads settle on their own

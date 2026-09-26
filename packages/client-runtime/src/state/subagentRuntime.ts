@@ -18,8 +18,8 @@
  * metadata).
  */
 import * as DateTime from "effect/DateTime";
-import type { OrchestrationThreadActivity, OrchestrationV2Subagent } from "@t3tools/contracts";
-import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
+import type { OrchestrationThreadActivity, OrchestrationV2Subagent } from "@hal-c2/contracts";
+import { isOrchestrationV2WorkActive } from "@hal-c2/contracts";
 
 export type RuntimeSubagentStatus =
   | "pending"

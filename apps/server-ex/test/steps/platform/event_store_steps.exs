@@ -1,12 +1,12 @@
-defmodule T3.Steps.Platform.EventStore do
+defmodule HalC2.Steps.Platform.EventStore do
   @moduledoc "Steps for features/node/platform/event-store.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias Exqlite.Sqlite3
-  alias T3.{Store, StreamState, Streams}
-  alias T3.Test.{Node, WsClient}
-  alias T3.Test.Node.World
+  alias HalC2.{Store, StreamState, Streams}
+  alias HalC2.Test.{Node, WsClient}
+  alias HalC2.Test.Node.World
 
   # --- offsets --------------------------------------------------------------------------
 
@@ -56,13 +56,13 @@ defmodule T3.Steps.Platform.EventStore do
 
   step "an assistant message is streaming", context do
     message = %{"id" => "msg-stream", "role" => "assistant", "text" => "Hel", "streaming" => true}
-    commit(context, [{"message", "msg-stream", T3.Patch.diff(nil, message)}])
+    commit(context, [{"message", "msg-stream", HalC2.Patch.diff(nil, message)}])
     Map.put(context, :message, message)
   end
 
   step "more text arrives for it", context do
     next = %{context.message | "text" => "Hello, world"}
-    seq = commit(context, [{"message", "msg-stream", T3.Patch.diff(context.message, next)}])
+    seq = commit(context, [{"message", "msg-stream", HalC2.Patch.diff(context.message, next)}])
     Map.put(context, :seq, seq)
   end
 
@@ -96,9 +96,9 @@ defmodule T3.Steps.Platform.EventStore do
   step "a thread last active an hour ago", context do
     id = World.thread_id(context, "main")
     at = System.os_time(:millisecond) - 60 * 60 * 1_000
-    iso = T3.Projection.JS.iso(at)
+    iso = HalC2.Projection.JS.iso(at)
     commit(context, [{"thread", id, %{"s" => %{"updatedAt" => iso}}, at}])
-    row = World.await_row(id, &(T3.Projection.JS.epoch_ms(&1["updatedAt"]) == at))
+    row = World.await_row(id, &(HalC2.Projection.JS.epoch_ms(&1["updatedAt"]) == at))
     Map.put(context, :active_at, row["updatedAt"])
   end
 
@@ -143,7 +143,7 @@ defmodule T3.Steps.Platform.EventStore do
       "providerInstanceId" => "codex"
     }
 
-    commit(context, [{"provider-session", "ps-1", T3.Patch.diff(nil, session)}])
+    commit(context, [{"provider-session", "ps-1", HalC2.Patch.diff(nil, session)}])
     assert StreamState.get(thread_state(context), "provider-session")["ps-1"]
     context
   end
@@ -173,7 +173,7 @@ defmodule T3.Steps.Platform.EventStore do
   step "a command writes more than a kilobyte of output", context do
     output = Enum.map_join(1..200, "\n", &"line #{&1} of the build output")
     item = %{"id" => "cmd-1", "type" => "command_execution", "output" => output}
-    seq = commit(context, [{"turn-item", "cmd-1", T3.Patch.diff(nil, item)}])
+    seq = commit(context, [{"turn-item", "cmd-1", HalC2.Patch.diff(nil, item)}])
     Map.merge(context, %{seq: seq, output: output})
   end
 
@@ -408,7 +408,7 @@ defmodule T3.Steps.Platform.EventStore do
             else: []
 
         {:ok, _} =
-          Streams.commit(id, :thread, [{"thread", id, T3.Patch.diff(nil, thread)} | notes])
+          Streams.commit(id, :thread, [{"thread", id, HalC2.Patch.diff(nil, thread)} | notes])
 
         World.await_row(id, & &1)
         id
@@ -416,7 +416,7 @@ defmodule T3.Steps.Platform.EventStore do
 
     for id <- ids, do: idle_stop(id)
     # Rows from before the restart must not stand in for rebuilt ones.
-    T3.Shell.online_nodes()
+    HalC2.Shell.online_nodes()
     flush_rows()
 
     sql!(
@@ -513,7 +513,7 @@ defmodule T3.Steps.Platform.EventStore do
   end
 
   step "an older node opens it", context do
-    for child <- [T3.Web, T3.Shell, T3.Streams, T3.Auth, T3.Store],
+    for child <- [HalC2.Web, HalC2.Shell, HalC2.Streams, HalC2.Auth, HalC2.Store],
         do: ExUnit.Callbacks.stop_supervised(child)
 
     Map.put(
@@ -536,7 +536,7 @@ defmodule T3.Steps.Platform.EventStore do
 
   defp dispatch(command),
     do:
-      T3.Orchestration.dispatch(
+      HalC2.Orchestration.dispatch(
         Map.put_new(command, "commandId", "cmd-#{System.unique_integer([:positive])}")
       )
 
@@ -595,7 +595,7 @@ defmodule T3.Steps.Platform.EventStore do
 
   defp flush_rows do
     receive do
-      {:t3_shell, _} -> flush_rows()
+      {:halc2_shell, _} -> flush_rows()
     after
       0 -> :ok
     end
@@ -620,7 +620,7 @@ defmodule T3.Steps.Platform.EventStore do
 
   defp await_update(id) do
     receive do
-      {:t3_shell, {:rows, _, rows}} ->
+      {:halc2_shell, {:rows, _, rows}} ->
         case List.keyfind(rows, id, 0) do
           {^id, {"thread", row}} -> row
           nil -> await_update(id)
@@ -632,7 +632,7 @@ defmodule T3.Steps.Platform.EventStore do
 
   # Indexes old messages as the application does once at startup.
   defp backfill do
-    :ok = T3.Search.backfill()
+    :ok = HalC2.Search.backfill()
     Store.path()
   end
 end

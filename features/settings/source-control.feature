@@ -2,8 +2,8 @@
 #   docs/user/source-control.md (providers, rescan)
 #   apps/web/src/components/settings/SourceControlSettings.tsx
 #   packages/contracts/src/rpc.ts (server.discoverSourceControl)
-#   apps/server-ex/lib/t3/source_control.ex (discover)
-#   apps/server-ex/lib/t3/background_policy.ex (automaticGitFetchInterval)
+#   apps/server-ex/lib/hal_c2/source_control.ex (discover)
+#   apps/server-ex/lib/hal_c2/background_policy.ex (automaticGitFetchInterval)
 
 Feature: Source Control settings
   The Source Control panel shows which version control and hosting tools the server
@@ -66,7 +66,7 @@ Feature: Source Control settings
   @backlog @desktop @mobile
   Scenario: A host that is not supported yet is marked coming soon
     When the panel loads
-    Then hosts T3 Code cannot use yet are marked "Coming Soon"
+    Then hosts HAL-C2 cannot use yet are marked "Coming Soon"
 
   @backlog @desktop @mobile
   Scenario: Changing the automatic fetch interval

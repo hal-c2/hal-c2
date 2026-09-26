@@ -9,9 +9,9 @@ import type {
   Todo as OpenCodeTodo,
   ToolPart,
 } from "@opencode-ai/sdk/v2";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { causeErrorTag } from "@t3tools/shared/observability";
+import { HostProcessEnvironment } from "@hal-c2/shared/hostProcess";
+import { getModelSelectionStringOptionValue } from "@hal-c2/shared/model";
+import { causeErrorTag } from "@hal-c2/shared/observability";
 import {
   defaultInstanceIdForDriver,
   type ModelSelection,
@@ -37,7 +37,7 @@ import {
   type ProviderSessionId,
   type RuntimeRequestId,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -64,7 +64,7 @@ import {
   summarizeNativeProtocolPayload,
 } from "../../provider/NativeProtocolLogging.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
-import { t3OrchestrationSystemPrompt } from "../../provider/T3OrchestrationInstructions.ts";
+import { halc2OrchestrationSystemPrompt } from "../../provider/HalC2OrchestrationInstructions.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import {
   OpenCodeRuntime,
@@ -1012,12 +1012,12 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
         });
 
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-        const hasT3Mcp = mcpSession !== undefined && !connection.external;
-        const orchestrationSystemPrompt = t3OrchestrationSystemPrompt(hasT3Mcp);
-        if (hasT3Mcp) {
+        const hasHalC2Mcp = mcpSession !== undefined && !connection.external;
+        const orchestrationSystemPrompt = halc2OrchestrationSystemPrompt(hasHalC2Mcp);
+        if (hasHalC2Mcp) {
           yield* runOpenCodeSdk("mcp.add", () =>
             client.mcp.add({
-              name: "t3-code",
+              name: "hal-c2",
               config: {
                 type: "remote",
                 url: mcpSession.endpoint,
@@ -3107,12 +3107,12 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               const response = yield* sdkCall(
                 "session.create",
                 {
-                  title: `T3 Code ${threadInput.threadId}`,
+                  title: `HAL-C2 ${threadInput.threadId}`,
                   permission: openCodePermissionRules(threadInput.runtimePolicy),
                 },
                 () =>
                   client.session.create({
-                    title: `T3 Code ${threadInput.threadId}`,
+                    title: `HAL-C2 ${threadInput.threadId}`,
                     permission: openCodePermissionRules(threadInput.runtimePolicy),
                   }),
               );

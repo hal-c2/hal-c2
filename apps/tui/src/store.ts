@@ -1,4 +1,4 @@
-import type { GitStackedAction, OrchestrationThread, VcsStatusResult } from "@t3tools/contracts";
+import type { GitStackedAction, OrchestrationThread, VcsStatusResult } from "@hal-c2/contracts";
 
 import type { OrchestrationShellSnapshot, TuiClient, TuiThreadPage } from "./connection.ts";
 import { gitActionNeedsCommitMessage } from "./gitActions.logic.ts";

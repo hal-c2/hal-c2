@@ -1,4 +1,4 @@
-import type { EditorId, EnvironmentId, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import type { EditorId, EnvironmentId, ResolvedKeybindingsConfig } from "@hal-c2/contracts";
 import { useEffect } from "react";
 
 import { usePreferredEditor } from "../../editorPreferences";

@@ -18,17 +18,17 @@ describe("ThreadMetadataMcpUpdateInput", () => {
       decodeUpdate({
         action: "link_pull_request",
         pullRequest: {
-          repository: "pingdotgg/t3code",
+          repository: "hal-c2/hal-c2",
           number: 8689,
-          url: "https://github.com/pingdotgg/t3code/pull/8689",
+          url: "https://github.com/hal-c2/hal-c2/pull/8689",
         },
       }),
       {
         action: "link_pull_request",
         pullRequest: {
-          repository: "pingdotgg/t3code",
+          repository: "hal-c2/hal-c2",
           number: 8689,
-          url: "https://github.com/pingdotgg/t3code/pull/8689",
+          url: "https://github.com/hal-c2/hal-c2/pull/8689",
         },
       },
     );
@@ -45,9 +45,9 @@ describe("ThreadMetadataMcpUpdateInput", () => {
       decodeUpdate({
         action: "unlink_pull_request",
         pullRequest: {
-          repository: "pingdotgg/t3code",
+          repository: "hal-c2/hal-c2",
           number: 8689,
-          url: "https://github.com/pingdotgg/t3code/pull/8689",
+          url: "https://github.com/hal-c2/hal-c2/pull/8689",
         },
       }),
     );
@@ -76,15 +76,15 @@ describe("ThreadMetadataMcpUpdateInput", () => {
       decodeUpdate({
         action: "link_pull_request",
         pullRequest: {
-          repository: "engineering/t3code",
+          repository: "engineering/hal-c2",
           number: 42,
-          url: "https://git.corp.example/engineering/t3code/pulls/42",
+          url: "https://git.corp.example/engineering/hal-c2/pulls/42",
         },
       }).pullRequest,
       {
-        repository: "engineering/t3code",
+        repository: "engineering/hal-c2",
         number: 42,
-        url: "https://git.corp.example/engineering/t3code/pulls/42",
+        url: "https://git.corp.example/engineering/hal-c2/pulls/42",
       },
     );
 
@@ -92,7 +92,7 @@ describe("ThreadMetadataMcpUpdateInput", () => {
       assert.throws(() =>
         decodeUpdate({
           action: "link_pull_request",
-          pullRequest: { repository: "pingdotgg/t3code", number: 8690, url },
+          pullRequest: { repository: "hal-c2/hal-c2", number: 8690, url },
         }),
       );
     }

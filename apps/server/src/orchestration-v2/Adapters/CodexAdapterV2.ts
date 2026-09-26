@@ -23,10 +23,10 @@ import {
   defaultInstanceIdForDriver,
   isOrchestrationV2WorkActive,
   ProviderDriverKind,
-} from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+} from "@hal-c2/contracts";
+import { HostProcessEnvironment } from "@hal-c2/shared/hostProcess";
+import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@hal-c2/shared/model";
+import { resolveSpawnCommand } from "@hal-c2/shared/shell";
 import type {
   ChatAttachment,
   OrchestrationV2AppThread,
@@ -54,7 +54,7 @@ import type {
   RuntimeMode,
   RuntimeRequestId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexSchema from "effect-codex-app-server/schema";
@@ -215,8 +215,8 @@ const decodeCodexBackgroundTerminalsListResponse = Schema.decodeUnknownEffect(
   CodexBackgroundTerminalsListResponse,
 );
 const CODEX_CLIENT_INFO = {
-  name: "t3code_desktop",
-  title: "T3 Code Desktop",
+  name: "halc2_desktop",
+  title: "HAL-C2 Desktop",
   version: "0.1.0",
 } as const;
 const CODEX_CLIENT_CAPABILITIES = {
@@ -673,7 +673,7 @@ export function buildCodexTurnStartParams(input: {
   readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly modelSelection: ModelSelection;
-  readonly hasT3Mcp?: boolean;
+  readonly hasHalC2Mcp?: boolean;
   readonly browserToolsAvailable?: boolean;
   readonly deviceToolsAvailable?: boolean;
 }) {
@@ -695,7 +695,7 @@ export function buildCodexTurnStartParams(input: {
       selectedEffort === undefined ? undefined : yield* decodeTurnReasoningEffort(selectedEffort);
     const serviceTier = getCodexServiceTierOptionValue(input.modelSelection);
     const developerInstructions =
-      input.hasT3Mcp !== true
+      input.hasHalC2Mcp !== true
         ? undefined
         : buildCodexDeveloperInstructions(
             input.runtimePolicy.interactionMode,
@@ -728,7 +728,7 @@ export function buildCodexTurnStartParams(input: {
       cwd: input.runtimePolicy.cwd,
       model: input.modelSelection.model,
       // Model catalogues can default summaries to "none". Request them on every
-      // turn, including resumed threads, for T3's reasoning timeline.
+      // turn, including resumed threads, for HAL-C2's reasoning timeline.
       summary: "detailed",
       // Always explicit: omitting this on resume leaves Codex's previous
       // reviewer sticky after switching away from Auto mode.
@@ -1120,7 +1120,7 @@ export interface CodexAppServerClientFactoryShape {
 export class CodexAppServerClientFactory extends Context.Service<
   CodexAppServerClientFactory,
   CodexAppServerClientFactoryShape
->()("t3/orchestration-v2/Adapters/CodexAdapterV2/CodexAppServerClientFactory") {}
+>()("hal-c2/orchestration-v2/Adapters/CodexAdapterV2/CodexAppServerClientFactory") {}
 
 export function codexThreadRuntimeParams(input: {
   readonly threadId: ThreadId | null;
@@ -1141,7 +1141,7 @@ export function codexThreadRuntimeParams(input: {
       : {
           config: {
             mcp_servers: {
-              "t3-code": {
+              "hal-c2": {
                 url: mcpSession.endpoint,
                 http_headers: {
                   Authorization: mcpSession.authorizationHeader,
@@ -5307,7 +5307,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 codexInput,
                 runtimePolicy: turnInput.runtimePolicy,
                 modelSelection: turnInput.modelSelection,
-                hasT3Mcp: mcpSession !== undefined,
+                hasHalC2Mcp: mcpSession !== undefined,
                 browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
                 deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               });

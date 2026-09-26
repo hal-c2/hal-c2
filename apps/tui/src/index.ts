@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { createCliRenderer } from "@opentui/core";
-import { installKittyClipboardExtension } from "@t3tools/opentui-image";
+import { installKittyClipboardExtension } from "@hal-c2/opentui-image";
 import { runShell } from "opentui-qml";
 
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
@@ -21,7 +21,7 @@ import {
   TUI_RENDERER_CONFIG,
 } from "./terminalStartup.ts";
 
-// This is the Bun entry point spawned by the Node `t3 tui` command. It receives
+// This is the Bun entry point spawned by the Node `hal-c2 tui` command. It receives
 // the server origin + a bearer token via env, and mints fresh websocket URLs by
 // asking the parent (which holds EnvironmentAuth) over the Node IPC channel —
 // the parent stays alive for the whole session and answers each request.
@@ -36,13 +36,13 @@ process.on("disconnect", socketTickets.disconnect);
 const mintSocketUrl = socketTickets.mint;
 
 /**
- * The `T3.Tui` bricks ship next to the bundle (`dist/qml`, copied by the build)
+ * The `HalC2.Tui` bricks ship next to the bundle (`dist/qml`, copied by the build)
  * and live at `apps/tui/qml` when running from source.
  */
 function resolveQmlDir(): string {
   const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
   const bundled = NodePath.join(here, "qml");
-  return NodeFS.existsSync(NodePath.join(bundled, "T3/Tui/qmldir"))
+  return NodeFS.existsSync(NodePath.join(bundled, "HalC2/Tui/qmldir"))
     ? bundled
     : NodePath.join(here, "../qml");
 }
@@ -50,17 +50,21 @@ function resolveQmlDir(): string {
 /** Where a user's `shell.qml` (and extra `qml/` modules) override the default shell. */
 function resolveShellConfigDir(): string {
   return (
-    process.env.T3_TUI_SHELL_DIR ??
-    NodePath.join(process.env.T3CODE_HOME ?? NodePath.join(NodeOS.homedir(), ".t3"), "shell", "tui")
+    process.env.HALC2_TUI_SHELL_DIR ??
+    NodePath.join(
+      process.env.HALC2_HOME ?? NodePath.join(NodeOS.homedir(), ".hal-c2"),
+      "shell",
+      "tui",
+    )
   );
 }
 
 async function main(): Promise<void> {
-  const origin = process.env.T3_TUI_ORIGIN;
-  const bearerToken = process.env.T3_TUI_BEARER;
-  const logPath = process.env.T3_TUI_LOG ?? "/tmp/t3-tui.log";
+  const origin = process.env.HALC2_TUI_ORIGIN;
+  const bearerToken = process.env.HALC2_TUI_BEARER;
+  const logPath = process.env.HALC2_TUI_LOG ?? "/tmp/hal-c2-tui.log";
   if (!origin || !bearerToken) {
-    process.stderr.write("t3 tui: missing T3_TUI_ORIGIN / T3_TUI_BEARER\n");
+    process.stderr.write("hal-c2 tui: missing HALC2_TUI_ORIGIN / HALC2_TUI_BEARER\n");
     process.exitCode = 1;
     return;
   }
@@ -79,7 +83,7 @@ async function main(): Promise<void> {
   const configWarnings: string[] = [];
   const userConfig = readUserConfig({
     configDir,
-    pluginPaths: process.env.T3_TUI_PLUGINS,
+    pluginPaths: process.env.HALC2_TUI_PLUGINS,
     warn: (message) => configWarnings.push(message),
   });
 
@@ -167,17 +171,17 @@ async function main(): Promise<void> {
 
     const qmlDir = resolveQmlDir();
     const app = await runShell({
-      appId: "t3",
+      appId: "hal-c2",
       renderer,
-      defaultShell: NodePath.join(qmlDir, "T3/Tui/DefaultShell.qml"),
-      modules: { "T3.Tui": NodePath.join(qmlDir, "T3/Tui") },
+      defaultShell: NodePath.join(qmlDir, "HalC2/Tui/DefaultShell.qml"),
+      modules: { "HalC2.Tui": NodePath.join(qmlDir, "HalC2/Tui") },
       importPaths: [qmlDir],
       configDir,
       plugins: [...userConfig.plugins],
       pluginDirs: [...userConfig.pluginDirs],
       ...(userConfig.keymap ? { keymap: userConfig.keymap } : {}),
       singletons: { Shell: host.Shell, Theme: host.Theme },
-      watch: process.env.T3_TUI_DEV === "1",
+      watch: process.env.HALC2_TUI_DEV === "1",
       onWarning: host.reportWarning,
       onError: host.reportError,
     });
@@ -203,6 +207,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  process.stderr.write(`t3 tui crashed: ${String(error)}\n`);
+  process.stderr.write(`hal-c2 tui crashed: ${String(error)}\n`);
   process.exit(1);
 });

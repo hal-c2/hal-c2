@@ -1,5 +1,5 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@hal-c2/contracts";
+import { scopedThreadKey } from "@hal-c2/client-runtime/environment";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -36,7 +36,7 @@ describe("retained shell embed navigation", () => {
       vi.stubGlobal("window", {
         addEventListener: () => {},
         removeEventListener: () => {},
-        t3Shell: {
+        halc2Shell: {
           onState: async (listener: typeof publish) => {
             publish = listener;
             return () => {};

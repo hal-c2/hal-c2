@@ -1,16 +1,16 @@
 # Sources:
 #   docs/user/usage.md (Understand your usage, Set custom model prices)
-#   apps/server-ex/lib/t3/usage.ex (server.getUsageSummary, server.refreshUsageRates, windows, fingerprints, 90-day cache)
-#   apps/server-ex/lib/t3/usage/transcripts.ex (Claude, Codex and Grok Build transcripts)
-#   apps/server-ex/lib/t3/usage/pricing.ex (rate table, daily TTL, snapshot fallback, usagePriceOverrides, cost sources)
-#   apps/server-ex/lib/t3/usage/aggregator.ex
+#   apps/server-ex/lib/hal_c2/usage.ex (server.getUsageSummary, server.refreshUsageRates, windows, fingerprints, 90-day cache)
+#   apps/server-ex/lib/hal_c2/usage/transcripts.ex (Claude, Codex and Grok Build transcripts)
+#   apps/server-ex/lib/hal_c2/usage/pricing.ex (rate table, daily TTL, snapshot fallback, usagePriceOverrides, cost sources)
+#   apps/server-ex/lib/hal_c2/usage/aggregator.ex
 #   apps/web/src/routes/usage.tsx, apps/web/src/components/usage/ (environment filter, model prices dialog)
 #   packages/contracts/src/usage.ts (UsageSummary, UsageReadError, cost sources)
 
 @node
 Feature: Usage
   Usage adds up token use and estimated API-equivalent cost from the provider CLIs' own
-  session history, so work done outside T3 Code counts too. Each provider plugin that
+  session history, so work done outside HAL-C2 counts too. Each provider plugin that
   keeps transcripts contributes them; the node prices them and the clients combine
   environments.
 
@@ -37,7 +37,7 @@ Feature: Usage
       | per hour without start and end instants | Hourly usage requires valid sinceTime and untilTime instants            |
       | without a time zone                     | sinceDay, untilDay, and timeZone are required                            |
 
-  Scenario: Work done in the CLI outside T3 Code is counted
+  Scenario: Work done in the CLI outside HAL-C2 is counted
     Given the user ran Claude Code directly in a terminal yesterday
     When the user opens Usage
     Then yesterday's Claude usage includes that session

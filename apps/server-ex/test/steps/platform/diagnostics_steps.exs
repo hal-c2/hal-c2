@@ -1,11 +1,11 @@
-defmodule T3.Steps.Platform.Diagnostics do
+defmodule HalC2.Steps.Platform.Diagnostics do
   @moduledoc "Steps for features/node/platform/diagnostics.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
-  alias T3.Test.WsClient
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
+  alias HalC2.Test.WsClient
 
   @hour 3_600_000
 
@@ -21,7 +21,7 @@ defmodule T3.Steps.Platform.Diagnostics do
   # The services a provider turn, a terminal and the sampler need.
   defp services do
     World.provider_services()
-    Node.ensure(T3.Diagnostics)
+    Node.ensure(HalC2.Diagnostics)
   end
 
   defp fake_codex(context) do
@@ -51,10 +51,10 @@ defmodule T3.Steps.Platform.Diagnostics do
     {frame["config"], World.put_client(context, client)}
   end
 
-  defp snapshot, do: elem(T3.Diagnostics.retry(), 1)["snapshot"]
+  defp snapshot, do: elem(HalC2.Diagnostics.retry(), 1)["snapshot"]
 
   defp timer_ms do
-    %{timer: timer} = :sys.get_state(T3.Diagnostics)
+    %{timer: timer} = :sys.get_state(HalC2.Diagnostics)
     Process.read_timer(timer)
   end
 
@@ -74,11 +74,11 @@ defmodule T3.Steps.Platform.Diagnostics do
       "resourceSpans" => [
         %{
           "resource" => %{
-            "attributes" => [%{"key" => "service.name", "value" => %{"stringValue" => "t3-web"}}]
+            "attributes" => [%{"key" => "service.name", "value" => %{"stringValue" => "hal-c2-web"}}]
           },
           "scopeSpans" => [
             %{
-              "scope" => %{"name" => "t3-web"},
+              "scope" => %{"name" => "hal-c2-web"},
               "spans" => [
                 %{
                   "traceId" => "0af7651916cd43dd8448eb211c80319c",
@@ -112,7 +112,7 @@ defmodule T3.Steps.Platform.Diagnostics do
 
   defp paired(context) do
     {:ok, access, _expires, _scopes} =
-      T3.Auth.exchange(T3.Auth.create_pairing_token(context.node.store), %{"label" => "Web"})
+      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.node.store), %{"label" => "Web"})
 
     Map.put(context, :access_token, access)
   end
@@ -125,7 +125,7 @@ defmodule T3.Steps.Platform.Diagnostics do
 
     post "/v1/traces" do
       {:ok, body, conn} = Plug.Conn.read_body(conn)
-      [test] = Application.fetch_env!(:t3, :test_collector)
+      [test] = Application.fetch_env!(:hal_c2, :test_collector)
       send(test, {:collected, body, Plug.Conn.get_req_header(conn, "x-team")})
       send_resp(conn, 200, "{}")
     end
@@ -137,7 +137,7 @@ defmodule T3.Steps.Platform.Diagnostics do
     File.write!(path, script)
 
     {:ok, conn} =
-      T3.JsonRpc.Connection.start_link(
+      HalC2.JsonRpc.Connection.start_link(
         cmd: ["python3", "-u", path],
         handler: self(),
         log: "thread-logged"
@@ -149,7 +149,7 @@ defmodule T3.Steps.Platform.Diagnostics do
 
   defp log_records do
     "thread-logged"
-    |> T3.ProviderLog.path()
+    |> HalC2.ProviderLog.path()
     |> File.read!()
     |> String.split("\n", trim: true)
     |> Enum.map(fn line ->
@@ -187,7 +187,7 @@ defmodule T3.Steps.Platform.Diagnostics do
   # --- sampling --------------------------------------------------------------------
 
   step "nobody watches the resource monitor", context do
-    assert %{watchers: watchers} = :sys.get_state(T3.Diagnostics)
+    assert %{watchers: watchers} = :sys.get_state(HalC2.Diagnostics)
     assert watchers == %{}
     context
   end
@@ -210,7 +210,7 @@ defmodule T3.Steps.Platform.Diagnostics do
 
   step "each sample is pushed to the client", context do
     # The next tick of the sampler, without waiting two seconds for it.
-    send(T3.Diagnostics, :sample)
+    send(HalC2.Diagnostics, :sample)
     client = World.client(context)
     {frame, client} = Node.await(client, &(&1["t"] == "resourceTelemetry" and &1["id"] == 7))
     assert frame["snapshot"]["readAt"] >= context.telemetry["readAt"]
@@ -227,7 +227,7 @@ defmodule T3.Steps.Platform.Diagnostics do
   end
 
   step "the node goes back to sampling every fifteen seconds", context do
-    assert :sys.get_state(T3.Diagnostics).watchers == %{}
+    assert :sys.get_state(HalC2.Diagnostics).watchers == %{}
     assert snapshot()["sampleIntervalMs"] == 15_000
     assert timer_ms() > 2_000
     context
@@ -266,14 +266,14 @@ defmodule T3.Steps.Platform.Diagnostics do
   step "the node has run for two hours", context do
     now = System.system_time(:millisecond)
 
-    :sys.replace_state(T3.Diagnostics, fn %{samples: [{_, rows} | _] = samples} = state ->
+    :sys.replace_state(HalC2.Diagnostics, fn %{samples: [{_, rows} | _] = samples} = state ->
       old = for minutes <- 115..5//-10, do: {now - minutes * 60_000, rows}
       %{state | samples: samples ++ Enum.reverse(old)}
     end)
 
     # Its next sample drops whatever is older than an hour.
-    send(T3.Diagnostics, :sample)
-    assert length(:sys.get_state(T3.Diagnostics).samples) > 0
+    send(HalC2.Diagnostics, :sample)
+    assert length(:sys.get_state(HalC2.Diagnostics).samples) > 0
     Map.put(context, :asked_at, now)
   end
 
@@ -288,7 +288,7 @@ defmodule T3.Steps.Platform.Diagnostics do
   end
 
   step "it receives the last hour of samples", context do
-    %{samples: samples} = :sys.get_state(T3.Diagnostics)
+    %{samples: samples} = :sys.get_state(HalC2.Diagnostics)
     now = System.system_time(:millisecond)
     assert Enum.all?(samples, fn {at, _} -> now - at <= @hour end)
     assert context.history["retainedSampleCount"] == length(samples)
@@ -338,7 +338,7 @@ defmodule T3.Steps.Platform.Diagnostics do
   end
 
   step "a client asks the node to retry resource telemetry", context do
-    before = :sys.get_state(T3.Diagnostics).samples |> length()
+    before = :sys.get_state(HalC2.Diagnostics).samples |> length()
     asked = DateTime.utc_now()
     {result, context} = rpc!(context, "server.retryResourceTelemetry")
     Map.merge(context, %{retry: result, samples_before: before, asked_at: asked})
@@ -348,7 +348,7 @@ defmodule T3.Steps.Platform.Diagnostics do
     assert context.retry["accepted"] == true
     {:ok, read_at, _} = DateTime.from_iso8601(context.retry["snapshot"]["readAt"])
     assert DateTime.compare(read_at, DateTime.truncate(context.asked_at, :second)) != :lt
-    assert length(:sys.get_state(T3.Diagnostics).samples) == context.samples_before + 1
+    assert length(:sys.get_state(HalC2.Diagnostics).samples) == context.samples_before + 1
     context
   end
 
@@ -391,9 +391,9 @@ defmodule T3.Steps.Platform.Diagnostics do
   end
 
   step "a client signals that process to terminate", context do
-    [{runtime, _}] = Registry.lookup(T3.Codex.Registry, World.thread_id(context, "main"))
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, World.thread_id(context, "main"))
     conn = :sys.get_state(runtime).conn
-    assert T3.JsonRpc.Connection.os_pid(conn) == context.target["pid"]
+    assert HalC2.JsonRpc.Connection.os_pid(conn) == context.target["pid"]
     context = Map.put(context, :conn_ref, Process.monitor(conn))
 
     {result, context} =
@@ -557,7 +557,7 @@ defmodule T3.Steps.Platform.Diagnostics do
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
     put_env(:test_collector, [self()])
     put_env(:otlp_traces_url, "http://127.0.0.1:#{port}/v1/traces")
-    put_env(:otlp_headers, %{"x-team" => "t3"})
+    put_env(:otlp_headers, %{"x-team" => "hal_c2"})
     paired(context)
   end
 
@@ -567,7 +567,7 @@ defmodule T3.Steps.Platform.Diagnostics do
 
   step "the node forwards them to the collector", context do
     assert {204, _, _} = context.response
-    assert_receive {:collected, body, ["t3"]}, 5_000
+    assert_receive {:collected, body, ["hal_c2"]}, 5_000
     assert %{"resourceSpans" => [%{"scopeSpans" => [%{"spans" => [span]}]}]} = JSON.decode!(body)
     assert span["name"] == "composer.submit"
     {config, _} = server_config(context)
@@ -601,8 +601,8 @@ defmodule T3.Steps.Platform.Diagnostics do
               send({"id": msg["id"], "error": {"code": -32000, "message": "too deep", "data": nested}})
       """)
 
-    {:ok, big} = T3.JsonRpc.Connection.call(context.conn, "big", %{})
-    deep = T3.JsonRpc.Connection.call(context.conn, "deep", %{})
+    {:ok, big} = HalC2.JsonRpc.Connection.call(context.conn, "big", %{})
+    deep = HalC2.JsonRpc.Connection.call(context.conn, "deep", %{})
     Map.merge(context, %{big: big, deep: deep})
   end
 
@@ -669,8 +669,8 @@ defmodule T3.Steps.Platform.Diagnostics do
               send({"id": msg["id"], "error": {"code": -32601, "message": "unknown"}})
       """)
 
-    {:ok, _} = T3.JsonRpc.Connection.call(context.conn, "run", %{})
-    {:error, _} = T3.JsonRpc.Connection.call(context.conn, "nope", %{})
+    {:ok, _} = HalC2.JsonRpc.Connection.call(context.conn, "run", %{})
+    {:error, _} = HalC2.JsonRpc.Connection.call(context.conn, "nope", %{})
 
     notifications =
       for _ <- 1..12 do

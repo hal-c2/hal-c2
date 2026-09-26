@@ -1,4 +1,4 @@
-import { CheckpointRef, EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
+import { CheckpointRef, EnvironmentId, MessageId, RunId, ThreadId } from "@hal-c2/contracts";
 import {
   act,
   createRef,
@@ -342,7 +342,7 @@ function buildSnapShotTimelineEntry(previewUrl?: string) {
             kind: "snap-shot" as const,
             capturedAt: "2026-03-17T19:12:28.000Z",
             appName: "Terminal",
-            windowTitle: "t3code — Tests",
+            windowTitle: "hal-c2 — Tests",
             appIconDataUrl: "data:image/png;base64,aWNvbg==",
           },
         },
@@ -567,15 +567,15 @@ describe("MessagesTimeline", () => {
         {...buildProps()}
         timelineEntries={[
           buildUserTimelineEntry(
-            '<script>globalThis.__t3Xss = 1</script><img src="x" onerror="globalThis.__t3Xss = 2">',
+            '<script>globalThis.__halc2Xss = 1</script><img src="x" onerror="globalThis.__halc2Xss = 2">',
           ),
         ]}
       />,
     );
 
-    expect(markup).toContain("&lt;script&gt;globalThis.__t3Xss = 1&lt;/script&gt;");
+    expect(markup).toContain("&lt;script&gt;globalThis.__halc2Xss = 1&lt;/script&gt;");
     expect(markup).toContain(
-      "&lt;img src=&quot;x&quot; onerror=&quot;globalThis.__t3Xss = 2&quot;&gt;",
+      "&lt;img src=&quot;x&quot; onerror=&quot;globalThis.__halc2Xss = 2&quot;&gt;",
     );
     expect(markup).not.toMatch(/<script(?:\s|>)/i);
     expect(markup).not.toMatch(/<img(?:\s|>)/i);
@@ -605,11 +605,11 @@ describe("MessagesTimeline", () => {
         timelineEntries={[
           buildAssistantTimelineEntry(
             [
-              '<details open onclick="globalThis.__t3Xss = 1">',
+              '<details open onclick="globalThis.__halc2Xss = 1">',
               "<summary>Safe details</summary>",
-              "<script>globalThis.__t3Xss = 2</script>",
-              '<img src="x" onerror="globalThis.__t3Xss = 3">',
-              '<a href="javascript:globalThis.__t3Xss = 4">Unsafe link</a>',
+              "<script>globalThis.__halc2Xss = 2</script>",
+              '<img src="x" onerror="globalThis.__halc2Xss = 3">',
+              '<a href="javascript:globalThis.__halc2Xss = 4">Unsafe link</a>',
               "</details>",
             ].join(""),
           ),
@@ -623,7 +623,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("onclick=");
     expect(markup).not.toContain("onerror=");
     expect(markup).not.toContain("javascript:");
-    expect(markup).not.toContain("globalThis.__t3Xss");
+    expect(markup).not.toContain("globalThis.__halc2Xss");
   });
   it("renders progressive history controls ahead of the bounded timeline", () => {
     const markup = renderToStaticMarkup(
@@ -885,7 +885,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Terminal");
-    expect(markup).toContain("t3code — Tests");
+    expect(markup).toContain("hal-c2 — Tests");
     expect(markup).toContain('src="data:image/png;base64,aWNvbg=="');
     expect(onAnchorReady).toHaveBeenCalledOnce();
     expect(onAnchorReady).toHaveBeenCalledWith(firstEntry.message.id, 0);
@@ -898,7 +898,7 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("screenshot.png");
     expect(markup).not.toContain("Terminal");
-    expect(markup).not.toContain("t3code — Tests");
+    expect(markup).not.toContain("hal-c2 — Tests");
     expect(markup).not.toContain('src="data:image/png;base64,aWNvbg=="');
     expect(markup).not.toContain("h-28 w-52 max-w-full");
   });
@@ -2087,11 +2087,11 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Received 1 update and ran 1 command");
   });
 
-  it("renders T3 MCP dynamic tools with the product logo and pretty name", async () => {
+  it("renders HAL-C2 MCP dynamic tools with the product logo and pretty name", async () => {
     activityTestState.expanded = true;
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const item = {
-      id: "tool-t3-thread-read",
+      id: "tool-hal-c2-thread-read",
       threadId: "thread-source",
       runId: null,
       nodeId: null,
@@ -2106,7 +2106,7 @@ describe("MessagesTimeline", () => {
       completedAt: null,
       updatedAt: {},
       type: "dynamic_tool",
-      toolName: "mcp__t3-code__t3_thread_read",
+      toolName: "mcp__hal-c2__halc2_thread_read",
       input: { threadId: "thread-child" },
       output: { messages: [] },
     } as const;
@@ -2156,10 +2156,10 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    // The T3 wordmark replaces the generic tool icon for T3 MCP calls.
+    // The HAL-C2 wordmark replaces the generic tool icon for HAL-C2 MCP calls.
     expect(markup).toContain('viewBox="15.5309 37 94.3941 56.96"');
-    expect(markup).toContain("Read a T3 thread");
-    expect(markup).not.toContain("mcp__t3-code__t3_thread_read");
+    expect(markup).toContain("Read a HAL-C2 thread");
+    expect(markup).not.toContain("mcp__hal-c2__halc2_thread_read");
   });
 
   it("formats changed file paths from the workspace root", async () => {
@@ -2191,16 +2191,16 @@ describe("MessagesTimeline", () => {
               tone: "tool",
               itemType: "file_change",
               toolLifecycleStatus: "completed",
-              changedFiles: ["C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts"],
+              changedFiles: ["C:/Users/mike/dev-stuff/hal-c2/apps/web/src/session-logic.ts"],
             },
           },
         ]}
-        workspaceRoot="C:/Users/mike/dev-stuff/t3code"
+        workspaceRoot="C:/Users/mike/dev-stuff/hal-c2"
       />,
     );
 
-    expect(markup).toContain("t3code/apps/web/src/session-logic.ts");
-    expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
+    expect(markup).toContain("hal-c2/apps/web/src/session-logic.ts");
+    expect(markup).not.toContain("C:/Users/mike/dev-stuff/hal-c2/apps/web/src/session-logic.ts");
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", () => {

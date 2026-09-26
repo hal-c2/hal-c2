@@ -1,4 +1,4 @@
-defmodule T3.Steps.Common do
+defmodule HalC2.Steps.Common do
   @moduledoc """
   Steps shared by more than one feature directory: the environment a scenario
   starts from, its projects and threads, and the node's lifecycle. A step that
@@ -8,8 +8,8 @@ defmodule T3.Steps.Common do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # --- environments, projects and threads ---------------------------------------
 
@@ -79,9 +79,9 @@ defmodule T3.Steps.Common do
 
   step "a paired client", context do
     {:ok, access, _expires, _scopes} =
-      T3.Auth.exchange(T3.Auth.create_pairing_token(context.node.store), %{"label" => "Phone"})
+      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.node.store), %{"label" => "Phone"})
 
-    {:ok, ticket, _} = T3.Auth.issue_ticket(access)
+    {:ok, ticket, _} = HalC2.Auth.issue_ticket(access)
     client = Node.connect(context.node, "wsTicket=#{ticket}")
     context |> Map.put(:access_token, access) |> World.put_client("paired", client)
   end
@@ -111,8 +111,8 @@ defmodule T3.Steps.Common do
   end
 
   step "the socket stays open", context do
-    client = T3.Test.WsClient.send_json(World.client(context), %{"t" => "ping"})
-    {%{"t" => "pong"}, client} = T3.Test.WsClient.recv(client, 1_000)
+    client = HalC2.Test.WsClient.send_json(World.client(context), %{"t" => "ping"})
+    {%{"t" => "pong"}, client} = HalC2.Test.WsClient.recv(client, 1_000)
     World.put_client(context, client)
   end
 
@@ -120,7 +120,7 @@ defmodule T3.Steps.Common do
 
   step "a client browses {string}", %{args: [partial]} = context do
     # `~` goes to the node as typed, with the scenario's home as its `$HOME`.
-    real = T3.Test.Node.Host.path(context, partial)
+    real = HalC2.Test.Node.Host.path(context, partial)
     partial = if String.starts_with?(partial, "~"), do: partial, else: real
     {reply, context} = World.call(context, "filesystem.browse", %{"partialPath" => partial})
 
@@ -134,7 +134,7 @@ defmodule T3.Steps.Common do
   end
 
   step "the folder {string} exists", %{args: [path]} = context do
-    real = T3.Test.Node.Host.path(context, path)
+    real = HalC2.Test.Node.Host.path(context, path)
 
     # Before the scenario acts this sets the folder up; once a request was
     # answered it is the outcome to check.
@@ -188,7 +188,7 @@ defmodule T3.Steps.Common do
   # --- added by W4 (terminal) ---
 
   step "a cluster of two nodes", context do
-    peer = T3.Test.Node.start_peer(context.node)
+    peer = HalC2.Test.Node.start_peer(context.node)
     assert peer in :erlang.nodes()
     Map.put(context, :peer, peer)
   end
@@ -202,7 +202,7 @@ defmodule T3.Steps.Common do
     root =
       if context[:projects] not in [nil, %{}], do: World.project(context).root, else: File.cwd!()
 
-    Map.put(context, :title_result, T3.TextGeneration.thread_title(root, "Fix the login form"))
+    Map.put(context, :title_result, HalC2.TextGeneration.thread_title(root, "Fix the login form"))
   end
 
   step "the user is asked to approve it", context do
@@ -211,7 +211,7 @@ defmodule T3.Steps.Common do
       assert request["kind"] in ~w(command file-change file-read permission)
       Map.put(context, :request, request)
     else
-      request = T3.Test.FakeAcp.await_request(context)
+      request = HalC2.Test.FakeAcp.await_request(context)
       assert request["status"] == "pending"
       assert request["kind"] in ~w(command file-change file-read permission)
 
@@ -224,7 +224,7 @@ defmodule T3.Steps.Common do
 
   step "the user stops the turn", context do
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "run.interrupt",
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
         "threadId" => World.thread_id(context, context.thread)
@@ -241,13 +241,13 @@ defmodule T3.Steps.Common do
       |> Map.delete(:pending_launch)
       |> World.launch_on("Work", "opencode", "approve", fields)
     else
-      T3.Test.FakeAcp.send_message(context, "please run a command")
+      HalC2.Test.FakeAcp.send_message(context, "please run a command")
     end
   end
 
   step "the user enables Grok", context do
-    {_, context} = T3.Test.FakeAcp.open_config(context)
-    T3.Test.FakeAcp.enable(context, "grok")
+    {_, context} = HalC2.Test.FakeAcp.open_config(context)
+    HalC2.Test.FakeAcp.enable(context, "grok")
   end
 
   # The provider features on fakes: the fake asks to run a tool before answering and
@@ -258,7 +258,7 @@ defmodule T3.Steps.Common do
       assert {:ok, %{"title" => "ACP title, tool cancelled"}} = context.title_result
     else
       assert {:ok, %{"title" => "Fake title"}} = context.title_result
-      T3.Test.FakeAcp.assert_tools_refused(context)
+      HalC2.Test.FakeAcp.assert_tools_refused(context)
     end
 
     context
@@ -288,8 +288,8 @@ defmodule T3.Steps.Common do
       {providers, context} = World.provider_list(context)
       Map.put(context, :providers, providers)
     else
-      T3.Test.FakeAcp.services()
-      {_, context} = T3.Test.FakeAcp.open_config(context)
+      HalC2.Test.FakeAcp.services()
+      {_, context} = HalC2.Test.FakeAcp.open_config(context)
       context
     end
   end
@@ -301,7 +301,7 @@ defmodule T3.Steps.Common do
       plan =
         World.await_value(context, title, fn state ->
           Enum.find(
-            T3.StreamState.list(state, "plan"),
+            HalC2.StreamState.list(state, "plan"),
             &(&1["kind"] == "proposed_plan" and &1["status"] == "active")
           )
         end)
@@ -312,7 +312,7 @@ defmodule T3.Steps.Common do
       plan =
         World.await_stream(World.thread_id(context, context.thread), fn state ->
           state
-          |> T3.StreamState.list("plan")
+          |> HalC2.StreamState.list("plan")
           |> Enum.find(&(&1["kind"] == "proposed_plan" and &1["status"] == "active"))
         end)
 
@@ -337,8 +337,8 @@ defmodule T3.Steps.Common do
         })
 
       World.await_value(context, title, fn state ->
-        length(T3.StreamState.list(state, "run")) > count and
-          T3.StreamState.get(state, "plan")[ref["planId"]]["status"] == "completed"
+        length(HalC2.StreamState.list(state, "run")) > count and
+          HalC2.StreamState.get(state, "plan")[ref["planId"]]["status"] == "completed"
       end)
 
       World.await_idle(context, title)
@@ -347,7 +347,7 @@ defmodule T3.Steps.Common do
       thread_id = World.thread_id(context, context.thread)
 
       {:ok, _} =
-        T3.Orchestration.dispatch(%{
+        HalC2.Orchestration.dispatch(%{
           "type" => "message.dispatch",
           "commandId" => "cmd-#{System.unique_integer([:positive])}",
           "threadId" => thread_id,
@@ -358,7 +358,7 @@ defmodule T3.Steps.Common do
         })
 
       World.await_stream(thread_id, fn state ->
-        T3.StreamState.get(state, "plan")[context.plan["id"]]["status"] == "completed"
+        HalC2.StreamState.get(state, "plan")[context.plan["id"]]["status"] == "completed"
       end)
 
       context
@@ -366,11 +366,11 @@ defmodule T3.Steps.Common do
   end
 
   # The tool went ahead: the turn finished without a pending approval, and an
-  # agent played by `T3.Test.FakeAcp` ran it without asking the user.
+  # agent played by `HalC2.Test.FakeAcp` ran it without asking the user.
   step "it is allowed without asking", context do
-    state = T3.Test.FakeAcp.await_run(context, "completed")
-    refute Enum.any?(T3.StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
-    if context[:fakes], do: T3.Test.FakeAcp.assert_allowed(context)
+    state = HalC2.Test.FakeAcp.await_run(context, "completed")
+    refute Enum.any?(HalC2.StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
+    if context[:fakes], do: HalC2.Test.FakeAcp.assert_allowed(context)
     context
   end
 
@@ -389,7 +389,7 @@ defmodule T3.Steps.Common do
       request = context[:request] || World.await_request(context, title)
 
       {:ok, _} =
-        T3.Orchestration.dispatch(%{
+        HalC2.Orchestration.dispatch(%{
           "type" => "runtime-request.respond",
           "threadId" => World.thread_id(context, title),
           "requestId" => request["id"],
@@ -398,8 +398,8 @@ defmodule T3.Steps.Common do
 
       Map.put(context, :request, request)
     else
-      request = context[:request] || T3.Test.FakeAcp.await_request(context)
-      context = T3.Test.FakeAcp.respond(context, request["id"], %{"decision" => decision})
+      request = context[:request] || HalC2.Test.FakeAcp.await_request(context)
+      context = HalC2.Test.FakeAcp.respond(context, request["id"], %{"decision" => decision})
       Map.put(context, :decision, decision)
     end
   end
@@ -411,7 +411,7 @@ defmodule T3.Steps.Common do
       refute "auto" in context.permission_modes
       context
     else
-      modes = T3.Test.FakeAcp.find(context.providers, context.provider)["supportedRuntimeModes"]
+      modes = HalC2.Test.FakeAcp.find(context.providers, context.provider)["supportedRuntimeModes"]
       assert [_ | _] = modes
       refute "auto" in modes
       context
@@ -420,13 +420,13 @@ defmodule T3.Steps.Common do
 
   # What a client reads to show a thread: its provider in the provider list.
   step "the user opens the thread", context do
-    {_, context} = T3.Test.FakeAcp.open_config(context)
+    {_, context} = HalC2.Test.FakeAcp.open_config(context)
     context
   end
 
   step "the user switches the thread to full access", context do
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.runtime-mode.set",
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
         "threadId" => World.thread_id(context, context[:current_thread] || context.thread),
@@ -438,7 +438,7 @@ defmodule T3.Steps.Common do
 
   # The agent's tool waits on the user: a pending approval in the thread.
   step "it is asked for approval", context do
-    request = T3.Test.FakeAcp.await_request(context)
+    request = HalC2.Test.FakeAcp.await_request(context)
     assert request["status"] == "pending"
     Map.put(context, :request, request)
   end
@@ -480,7 +480,7 @@ defmodule T3.Steps.Common do
     end
   end
 
-  # Node plugins (`T3.Plugins`) turned on or off as a client does; other features'
+  # Node plugins (`HalC2.Plugins`) turned on or off as a client does; other features'
   # "enables"/"disables" steps can extend these by what the name refers to.
   step "the user enables {string}", %{args: [id]} = context do
     {result, context} = World.call!(context, "plugins.enable", %{"id" => id})
@@ -498,12 +498,12 @@ defmodule T3.Steps.Common do
   # message the user sees is the error (with its detail) or a message in the result.
   # Opening a settings page is a client connected to a node whose settings are served.
   step "the user has opened the General settings", context do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     World.put_client(context, World.client(context))
   end
 
   step "the user is connected to an environment and opens Settings, Source Control", context do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     World.put_client(context, World.client(context))
   end
 
@@ -548,7 +548,7 @@ defmodule T3.Steps.Common do
       true ->
         unless World.thread(context, name)["deletedAt"] do
           {:ok, _} =
-            T3.Orchestration.dispatch(%{
+            HalC2.Orchestration.dispatch(%{
               "type" => "thread.delete",
               "commandId" => "cmd-#{System.unique_integer([:positive])}",
               "threadId" => World.thread_id(context, name)
@@ -580,7 +580,7 @@ defmodule T3.Steps.Common do
     request = context[:request] || World.await_request(context, title)
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "runtime-request.respond",
         "threadId" => World.thread_id(context, title),
         "requestId" => request["id"],
@@ -644,7 +644,7 @@ defmodule T3.Steps.Common do
   step "a thread's worktree belongs to a deleted thread", context do
     context = World.worktree_thread(context, "deleted work")
     id = World.thread_id(context, "deleted work")
-    {:ok, _} = T3.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})
+    {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})
     World.await_row(id, & &1["deletedAt"])
     context
   end
@@ -666,11 +666,11 @@ defmodule T3.Steps.Common do
     end)
   end
 
-  # The desktop's power report (`server.reportHostPowerState`); `T3.BackgroundPolicy`
+  # The desktop's power report (`server.reportHostPowerState`); `HalC2.BackgroundPolicy`
   # takes it without replying, so the step waits until the policy has it.
   step ~r/^the host reports it is (?<state>locked|on low power|on battery)$/,
        %{args: [state]} = context do
-    policy = Node.ensure(T3.BackgroundPolicy)
+    policy = Node.ensure(HalC2.BackgroundPolicy)
     :erlang.trace(policy, true, [:receive])
     flag = &to_string(state == &1)
 
@@ -689,7 +689,7 @@ defmodule T3.Steps.Common do
 
     {nil, context} = World.call!(context, "server.reportHostPowerState", snapshot)
     assert_receive {:trace, ^policy, :receive, {:"$gen_cast", {:power, ^snapshot}}}, 2_000
-    assert T3.BackgroundPolicy.snapshot()["hostPower"] == snapshot
+    assert HalC2.BackgroundPolicy.snapshot()["hostPower"] == snapshot
     context
   end
 
@@ -802,7 +802,7 @@ defmodule T3.Steps.Common do
   end
 
   step "the node answers with a pong", context do
-    {frame, client} = T3.Test.WsClient.recv(World.client(context), 1_000)
+    {frame, client} = HalC2.Test.WsClient.recv(World.client(context), 1_000)
     assert frame == %{"t" => "pong"}
     World.put_client(context, client)
   end
@@ -810,7 +810,7 @@ defmodule T3.Steps.Common do
   # A frame the node refuses; the refusal frame is `context.refusal`.
   step ~r/^the client sends (?<case>text that is not JSON|a frame of an unknown type|a frame with an unknown or missing type|a subscription to an unknown shape|a subscription to a shape type the node does not know|a subscription naming an unknown node|a subscription naming a node outside the cluster|a config subscription for an unknown environment|an authAccess subscription from a session without access:read|an RPC for an unknown environment|an rpc for an unknown environment|an rpc whose node has gone away)$/,
        %{args: [refused]} = context do
-    alias T3.Test.WsClient
+    alias HalC2.Test.WsClient
     client = World.client(context)
 
     client =
@@ -832,27 +832,27 @@ defmodule T3.Steps.Common do
 
         "an authAccess subscription" <> _ ->
           {:ok, %{"credential" => credential}} =
-            T3.Auth.create_pairing_link(%{
+            HalC2.Auth.create_pairing_link(%{
               "label" => "Standard",
-              "scopes" => T3.Auth.standard_scopes()
+              "scopes" => HalC2.Auth.standard_scopes()
             })
 
           {:ok, access, _expires, _scopes} =
-            T3.Auth.exchange(credential, %{"label" => "Standard"})
+            HalC2.Auth.exchange(credential, %{"label" => "Standard"})
 
-          {:ok, ticket, _} = T3.Auth.issue_ticket(access)
+          {:ok, ticket, _} = HalC2.Auth.issue_ticket(access)
 
           Node.sub(Node.connect(context.node, "wsTicket=#{ticket}"), 44, %{"type" => "authAccess"})
 
         "an rpc whose node has gone away" ->
           # A peer the shell knows by its environment, but no longer reachable.
           gone = :"gone@127.0.0.1"
-          GenServer.cast(T3.Shell, {:peer_environment, gone, %{"environmentId" => "env-gone"}})
-          assert_receive {:t3_shell, {:environment, ^gone, _}}, 1_000
-          Node.rpc(client, "env-gone", 46, "t3.readSettings", %{})
+          GenServer.cast(HalC2.Shell, {:peer_environment, gone, %{"environmentId" => "env-gone"}})
+          assert_receive {:halc2_shell, {:environment, ^gone, _}}, 1_000
+          Node.rpc(client, "env-gone", 46, "halc2.readSettings", %{})
 
         _unknown_environment ->
-          Node.rpc(client, "env-missing", 45, "t3.readSettings", %{})
+          Node.rpc(client, "env-missing", 45, "halc2.readSettings", %{})
       end
 
     {frame, client} = Node.await(client, &(&1["t"] in ["error", "rpc.error"]))
@@ -929,7 +929,7 @@ defmodule T3.Steps.Common do
 
   # A second worktree of the checkout under test holds `branch`, made from HEAD when new.
   step "{string} is checked out in another worktree", %{args: [branch]} = context do
-    path = T3.Test.Node.tmp_dir(context.node, "worktree")
+    path = HalC2.Test.Node.tmp_dir(context.node, "worktree")
     File.rmdir!(path)
     exists? = World.git!(context.cwd, ["branch", "--list", branch]) != ""
     args = if exists?, do: [path, branch], else: ["-b", branch, path]
@@ -939,16 +939,16 @@ defmodule T3.Steps.Common do
 
   # Expanding a file of the working tree review (`review.getDiffFileContents`).
   step "the user expands {string}", %{args: [path]} = context do
-    T3.Steps.SourceControl.Shared.expand_review_file(context, path)
+    HalC2.Steps.SourceControl.Shared.expand_review_file(context, path)
   end
 
   # The scenario's node is the remote environment `name`; the default client is the
   # user's local one. Starts with no GitHub account believed yet.
   step "the user is connected to the local environment and the remote environment {string}",
        %{args: [name]} = context do
-    T3.PullRequests.invalidate(%{})
+    HalC2.PullRequests.invalidate(%{})
     context = World.put_client(context, World.client(context))
-    assert [{_node, %{"environmentId" => id}}] = T3.Shell.environments()
+    assert [{_node, %{"environmentId" => id}}] = HalC2.Shell.environments()
     assert id == context.node.environment
     Map.put(context, :remote, name)
   end
@@ -1062,9 +1062,9 @@ defmodule T3.Steps.Common do
       {last, context} = World.await_setup(context, &(&1["phase"] != "running"))
       assert World.setup_stage(last, "agent") == "pending"
 
-      state = T3.Streams.Server.state(T3.Streams.ensure(thread_id))
-      assert [%{"status" => "failed"}] = T3.StreamState.list(state, "run")
-      refute Enum.any?(T3.StreamState.list(state, "message"), &(&1["role"] == "assistant"))
+      state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+      assert [%{"status" => "failed"}] = HalC2.StreamState.list(state, "run")
+      refute Enum.any?(HalC2.StreamState.list(state, "message"), &(&1["role"] == "assistant"))
       context
     else
       title = World.current(context)
@@ -1093,15 +1093,15 @@ defmodule T3.Steps.Common do
 
   # --- added by W10 ---
 
-  # Providers run as the fakes of `T3.Test.AcpFixtures`; no real provider CLI starts.
+  # Providers run as the fakes of `HalC2.Test.AcpFixtures`; no real provider CLI starts.
 
   step "the user refreshes the status of every provider", context do
-    ctx = T3.Test.AcpFixtures.ready(context)
-    Node.ensure(T3.ProviderUsageLimits)
+    ctx = HalC2.Test.AcpFixtures.ready(context)
+    Node.ensure(HalC2.ProviderUsageLimits)
     # The boot probe has finished once this returns.
-    :ok = T3.ProviderUsageLimits.refresh([])
-    before = Map.new(["codex", "claudeAgent"], &{&1, T3.ProviderUsageLimits.get(&1)})
-    at = T3.Orchestration.Entities.now()
+    :ok = HalC2.ProviderUsageLimits.refresh([])
+    before = Map.new(["codex", "claudeAgent"], &{&1, HalC2.ProviderUsageLimits.get(&1)})
+    at = HalC2.Orchestration.Entities.now()
     {result, ctx} = World.call!(ctx, "server.refreshProviders", %{})
     Map.put(ctx, :refreshed, %{before: before, at: at, providers: result["providers"]})
   end
@@ -1111,7 +1111,7 @@ defmodule T3.Steps.Common do
       World.merge_settings(%{"providers" => %{"grok" => %{"enabled" => false}}})
       context
     else
-      T3.Test.AcpFixtures.write_settings(context, fn settings ->
+      HalC2.Test.AcpFixtures.write_settings(context, fn settings ->
         settings
         |> put_in([Access.key("providers", %{}), Access.key("grok", %{}), "enabled"], false)
         |> then(fn settings ->
@@ -1129,14 +1129,14 @@ defmodule T3.Steps.Common do
       context = World.fake_providers(context)
 
       :persistent_term.put(
-        {T3.ProviderUpdates, "claudeAgent"},
+        {HalC2.ProviderUpdates, "claudeAgent"},
         {"9.9.9", System.monotonic_time(:millisecond)}
       )
 
       context
     else
       # An executable outside every installer's layout, behind the latest release.
-      ctx = T3.Test.AcpFixtures.ready(context)
+      ctx = HalC2.Test.AcpFixtures.ready(context)
       fake_claude = Path.expand("../support/fake_claude.py", __DIR__)
       path = Path.join(context.node.home, "odd/bin/claude")
       File.mkdir_p!(Path.dirname(path))
@@ -1148,10 +1148,10 @@ defmodule T3.Steps.Common do
       """)
 
       File.chmod!(path, 0o755)
-      Application.put_env(:t3, :claude_command, [path])
+      Application.put_env(:hal_c2, :claude_command, [path])
 
       :persistent_term.put(
-        {T3.ProviderUpdates, "claudeAgent"},
+        {HalC2.ProviderUpdates, "claudeAgent"},
         {"9.9.9", System.monotonic_time(:millisecond)}
       )
 
@@ -1164,11 +1164,11 @@ defmodule T3.Steps.Common do
   # node's answer in `context.reply`.
 
   step "the user searches the ACP registry for {string}", %{args: [query]} = context do
-    alias T3.Test.AcpFixtures, as: Acp
+    alias HalC2.Test.AcpFixtures, as: Acp
     ctx = Acp.serve_registry(context)
 
     other =
-      if T3.Acp.Catalog.platform() == "linux-x86_64", do: "darwin-aarch64", else: "linux-x86_64"
+      if HalC2.Acp.Catalog.platform() == "linux-x86_64", do: "darwin-aarch64", else: "linux-x86_64"
 
     agent = fn id, name, fields ->
       Map.merge(
@@ -1280,13 +1280,13 @@ defmodule T3.Steps.Common do
           ctx =
             context
             |> Map.delete(:pending_launch)
-            |> T3.Test.AcpFixtures.launch("Work", instance, "hello", mode: fields["runtimeMode"])
+            |> HalC2.Test.AcpFixtures.launch("Work", instance, "hello", mode: fields["runtimeMode"])
 
-          T3.Test.AcpFixtures.await_runs(ctx.threads["Work"], 1)
+          HalC2.Test.AcpFixtures.await_runs(ctx.threads["Work"], 1)
           Map.put(ctx, :thread, "Work")
 
         nil ->
-          T3.Test.FakeAcp.send_message(context, "Hello")
+          HalC2.Test.FakeAcp.send_message(context, "Hello")
       end
     end
   end
@@ -1344,7 +1344,7 @@ defmodule T3.Steps.Common do
       # As an outcome ("... is archived" after an archive) it only checks.
       World.row(context, thread)["archivedAt"] == nil ->
         {:ok, _} =
-          T3.Orchestration.dispatch(%{
+          HalC2.Orchestration.dispatch(%{
             "type" => "thread.archive",
             "commandId" => "cmd-archive-#{System.unique_integer([:positive])}",
             "threadId" => id
@@ -1364,7 +1364,7 @@ defmodule T3.Steps.Common do
       title = World.current_thread(context)
 
       {:ok, _} =
-        T3.Orchestration.dispatch(%{
+        HalC2.Orchestration.dispatch(%{
           "type" => "run.interrupt",
           "threadId" => World.thread_id(context, title)
         })
@@ -1379,7 +1379,7 @@ defmodule T3.Steps.Common do
       assert run, "no running turn in #{title}"
 
       {:ok, _} =
-        T3.Orchestration.dispatch(%{
+        HalC2.Orchestration.dispatch(%{
           "type" => "run.interrupt",
           "threadId" => World.thread_id(context, title),
           "runId" => run["id"]
@@ -1394,7 +1394,7 @@ defmodule T3.Steps.Common do
 
     World.await_thread(context, World.current(context), fn state ->
       Enum.any?(
-        T3.StreamState.list(state, "run"),
+        HalC2.StreamState.list(state, "run"),
         &(&1["status"] == "interrupted" and run_id in [nil, &1["id"]])
       )
     end)
@@ -1406,7 +1406,7 @@ defmodule T3.Steps.Common do
     World.await_thread(
       context,
       World.current(context),
-      &Enum.any?(T3.StreamState.list(&1, "run"), fn run -> run["status"] == "interrupted" end)
+      &Enum.any?(HalC2.StreamState.list(&1, "run"), fn run -> run["status"] == "interrupted" end)
     )
 
     context
@@ -1425,7 +1425,7 @@ defmodule T3.Steps.Common do
     delete(context, name)
   end
 
-  # A file below the T3 home (files/project-identity) or a thread or project.
+  # A file below the HAL-C2 home (files/project-identity) or a thread or project.
   step "the user deletes {string}", %{args: [name]} = context do
     path = Path.join(context.node.home, name)
 
@@ -1524,7 +1524,7 @@ defmodule T3.Steps.Common do
 
   # Cancels the provider's running install (`provider.install.cancel`); keeps the reply.
   step "the user cancels the installation", context do
-    %{"operationId" => op} = T3.Acp.Antigravity.Installation.state()
+    %{"operationId" => op} = HalC2.Acp.Antigravity.Installation.state()
     assert is_binary(op)
 
     {reply, context} =
@@ -1539,9 +1539,9 @@ defmodule T3.Steps.Common do
   # Every thread of the scenario still has its messages.
   step "thread history is kept", context do
     for {_title, id} <- context.threads do
-      state = T3.Streams.Server.state(T3.Streams.ensure(id))
-      assert %{^id => _} = T3.StreamState.get(state, "thread")
-      assert [_ | _] = T3.StreamState.list(state, "message")
+      state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
+      assert %{^id => _} = HalC2.StreamState.get(state, "thread")
+      assert [_ | _] = HalC2.StreamState.list(state, "message")
     end
 
     context
@@ -1559,7 +1559,7 @@ defmodule T3.Steps.Common do
 
   # A node plugin replaced by its newer version, as a client's update does: the
   # plugin file a step staged in `context.plugin_updates` goes into the plugins
-  # directory (`T3.Plugins` picks it up on the rescan). Without a staged plugin it
+  # directory (`HalC2.Plugins` picks it up on the rescan). Without a staged plugin it
   # is a provider CLI update (`server.updateProvider`); the reply is `context.reply`
   # and the pushes that follow stay to be received.
   step "the user updates {string}", %{args: [id]} = context do
@@ -1578,9 +1578,9 @@ defmodule T3.Steps.Common do
         path = Path.join([context.node.home, "plugins", "#{id}.ex"])
         File.mkdir_p!(Path.dirname(path))
         File.write!(path, source)
-        Node.ensure(T3.Settings)
-        Node.ensure(T3.Plugins)
-        {:ok, _} = T3.Plugins.handle("rescan", %{})
+        Node.ensure(HalC2.Settings)
+        Node.ensure(HalC2.Plugins)
+        {:ok, _} = HalC2.Plugins.handle("rescan", %{})
         context
     end
   end
@@ -1588,7 +1588,7 @@ defmodule T3.Steps.Common do
   # The provider list a client last read (`context.providers`), or the node's.
   step ~r/^(Codex|Claude) is not offered as a provider$/, %{args: [name]} = context do
     driver = %{"Codex" => "codex", "Claude" => "claudeAgent"}[name]
-    providers = context[:providers] || T3.Environment.providers()
+    providers = context[:providers] || HalC2.Environment.providers()
     refute Enum.any?(providers, &(&1["driver"] == driver or &1["instanceId"] == driver))
     context
   end
@@ -1605,7 +1605,7 @@ defmodule T3.Steps.Common do
           "modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}
         })
 
-      World.await_value(context, title, &(length(T3.StreamState.list(&1, "run")) > count))
+      World.await_value(context, title, &(length(HalC2.StreamState.list(&1, "run")) > count))
       World.await_idle(context, title)
       context
     else
@@ -1670,7 +1670,7 @@ defmodule T3.Steps.Common do
 
   # Refusals of commands and RPCs alike: the step before it leaves the reply in
   # `context.reply`, `{:error, message, detail}` from a socket or `{:error, message}`
-  # from `T3.Orchestration.dispatch/1`.
+  # from `HalC2.Orchestration.dispatch/1`.
   # Ids in the refusal are compared by the names the scenario gives them (`World.named/2`);
   # the message is the refusal or a part of it.
   step "the command fails with {string}", %{args: [message]} = context do
@@ -1694,14 +1694,14 @@ defmodule T3.Steps.Common do
     |> Map.merge(%{run_title: thread, thread: thread})
   end
 
-  # The transcript a client shows (`T3.Projection.Timeline`), in `context.timeline`.
+  # The transcript a client shows (`HalC2.Projection.Timeline`), in `context.timeline`.
   step "a client reads the timeline of {string}", %{args: [thread]} = context do
-    resolve = fn id -> T3.Streams.Server.state(T3.Streams.ensure(id)) end
+    resolve = fn id -> HalC2.Streams.Server.state(HalC2.Streams.ensure(id)) end
 
     Map.put(
       context,
       :timeline,
-      T3.Projection.Timeline.visible_items(World.state(context, thread), resolve)
+      HalC2.Projection.Timeline.visible_items(World.state(context, thread), resolve)
     )
   end
 
@@ -1716,9 +1716,9 @@ defmodule T3.Steps.Common do
   # (it may have finished already) and is out of the queue.
   step "a run for {string} starts", %{args: [text]} = context do
     World.await_state(context, context.thread, fn state ->
-      messages = T3.StreamState.get(state, "message")
+      messages = HalC2.StreamState.get(state, "message")
 
-      Enum.any?(T3.StreamState.list(state, "run"), fn run ->
+      Enum.any?(HalC2.StreamState.list(state, "run"), fn run ->
         run["status"] in ~w(starting running waiting completed) and
           run["queuePosition"] == nil and messages[run["userMessageId"]]["text"] == text
       end)
@@ -1731,7 +1731,7 @@ defmodule T3.Steps.Common do
   # else the latest run of `context.thread`, ends with `status`.
   step ~r/^the run is (?<status>failed|interrupted)$/, %{args: [status]} = context do
     World.await_state(context, context.thread, fn state ->
-      runs = T3.StreamState.list(state, "run")
+      runs = HalC2.StreamState.list(state, "run")
 
       run =
         if context[:running],
@@ -1747,7 +1747,7 @@ defmodule T3.Steps.Common do
   # --- added by W6 ---
 
   # An HTTP answer a previous step stored as `context.response`: `{status, headers,
-  # body}` as `T3.Test.Node.request/4` returns it, or a map with a `:status`.
+  # body}` as `HalC2.Test.Node.request/4` returns it, or a map with a `:status`.
   step ~r/^the node answers (?<status>not found|unauthorized|service unavailable|bad gateway|\d{3})$/,
        %{args: [status]} = context do
     expected =
@@ -1795,13 +1795,13 @@ defmodule T3.Steps.Common do
   end
 
   # Five minutes on the node's clock: its five-minute timers fire, as their message
-  # arrives (the idle session check, `T3.Orchestration.IdleSessions`).
+  # arrives (the idle session check, `HalC2.Orchestration.IdleSessions`).
   step "five minutes pass", context do
     if World.fakes_feature?(context) do
       World.run_periodic_checks()
       context
     else
-      pid = Node.ensure(T3.Orchestration.IdleSessions)
+      pid = Node.ensure(HalC2.Orchestration.IdleSessions)
       send(pid, :check)
       # The check has run once the server answers the next call.
       _ = :sys.get_state(pid)
@@ -1814,29 +1814,29 @@ defmodule T3.Steps.Common do
   # means is the one the scenario last started (`World.current_thread/1`).
 
   # The provider list after the node read every provider's quota again
-  # (`T3.ProviderUsageLimits`). The ACP provider features (Grok, OpenCode) run their
-  # own `T3.Test.FakeAcp`; Codex and Claude then probe only a missing CLI, never the
+  # (`HalC2.ProviderUsageLimits`). The ACP provider features (Grok, OpenCode) run their
+  # own `HalC2.Test.FakeAcp`; Codex and Claude then probe only a missing CLI, never the
   # machine's own.
   step "the user opens the limits view", context do
     if World.fakes_feature?(context) do
       context = World.fake_providers(context)
-      Node.ensure(T3.ProviderUsageLimits)
-      :ok = T3.ProviderUsageLimits.refresh()
+      Node.ensure(HalC2.ProviderUsageLimits)
+      :ok = HalC2.ProviderUsageLimits.refresh()
       # Accounts arrive as casts the probes sent; this call lands after them.
-      :sys.get_state(T3.ProviderUsageLimits)
+      :sys.get_state(HalC2.ProviderUsageLimits)
       {providers, context} = World.provider_list(context)
       Map.put(context, :providers, providers)
     else
-      T3.Test.FakeAcp.services()
+      HalC2.Test.FakeAcp.services()
 
       for key <- [:codex_command, :claude_command],
-          Application.get_env(:t3, key) == nil,
-          do: World.put_app_env(key, ["t3-test-no-#{key}"])
+          Application.get_env(:hal_c2, key) == nil,
+          do: World.put_app_env(key, ["hal-c2-test-no-#{key}"])
 
-      Node.ensure(T3.ProviderUsageLimits)
-      :ok = T3.ProviderUsageLimits.refresh()
-      :sys.get_state(T3.ProviderUsageLimits)
-      {providers, context} = T3.Test.FakeAcp.open_config(context)
+      Node.ensure(HalC2.ProviderUsageLimits)
+      :ok = HalC2.ProviderUsageLimits.refresh()
+      :sys.get_state(HalC2.ProviderUsageLimits)
+      {providers, context} = HalC2.Test.FakeAcp.open_config(context)
       Map.put(context, :providers, providers)
     end
   end
@@ -1855,8 +1855,8 @@ defmodule T3.Steps.Common do
 
   step "the user starts a new thread in {string}", %{args: [project]} = context do
     # The client fills a new thread from the project's settings over the
-    # environment's (`resolveProjectSettings`), which `T3.Settings.for_project/1` mirrors.
-    settings = T3.Settings.for_project(World.project(context, project).id)
+    # environment's (`resolveProjectSettings`), which `HalC2.Settings.for_project/1` mirrors.
+    settings = HalC2.Settings.for_project(World.project(context, project).id)
 
     fields =
       %{
@@ -1873,7 +1873,7 @@ defmodule T3.Steps.Common do
   step "the user starts a new thread", context do
     # As in a project: the environment's defaults, over the client's full access.
     project = if context[:projects] not in [nil, %{}], do: World.project(context).id
-    settings = T3.Settings.for_project(project)
+    settings = HalC2.Settings.for_project(project)
 
     fields =
       %{
@@ -1898,31 +1898,31 @@ defmodule T3.Steps.Common do
 
     state =
       World.await_stream(thread_id, fn state ->
-        if Enum.any?(T3.StreamState.list(state, "subagent"), &(&1["status"] == "completed")),
+        if Enum.any?(HalC2.StreamState.list(state, "subagent"), &(&1["status"] == "completed")),
           do: state
       end)
 
-    [task] = T3.StreamState.list(state, "subagent")
-    run = T3.StreamState.get(state, "run")[task["runId"]]
-    node = T3.StreamState.get(state, "node")[task["id"]]
+    [task] = HalC2.StreamState.list(state, "subagent")
+    run = HalC2.StreamState.get(state, "run")[task["runId"]]
+    node = HalC2.StreamState.get(state, "node")[task["id"]]
     assert %{"kind" => "subagent", "parentNodeId" => root} = node
     assert root == run["rootNodeId"] and task["parentNodeId"] == root
 
     assert [%{"nodeId" => node_id, "childThreadId" => child_id}] =
-             state |> T3.StreamState.list("turn-item") |> Enum.filter(&(&1["type"] == "subagent"))
+             state |> HalC2.StreamState.list("turn-item") |> Enum.filter(&(&1["type"] == "subagent"))
 
     assert node_id == task["id"] and child_id == task["childThreadId"]
 
-    child = T3.Streams.Server.state(T3.Streams.ensure(child_id))
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(child_id))
 
     assert %{
              "lineage" => %{"parentThreadId" => ^thread_id, "relationshipToParent" => "subagent"},
              "forkedFrom" => %{"nodeId" => ^node_id}
-           } = T3.StreamState.get(child, "thread")[child_id]
+           } = HalC2.StreamState.get(child, "thread")[child_id]
 
     messages =
       child
-      |> T3.StreamState.list("message")
+      |> HalC2.StreamState.list("message")
       |> Enum.sort_by(& &1["createdAt"])
       |> Enum.map(&{&1["role"], &1["text"]})
 
@@ -1932,7 +1932,7 @@ defmodule T3.Steps.Common do
     assert task["result"] == answer
 
     # The child's work is not the parent's: its answer is not in the parent thread.
-    refute Enum.any?(T3.StreamState.list(state, "message"), &(&1["text"] == answer))
+    refute Enum.any?(HalC2.StreamState.list(state, "message"), &(&1["text"] == answer))
     context
   end
 end

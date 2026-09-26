@@ -1,4 +1,4 @@
-defmodule T3.Steps.Settings.General do
+defmodule HalC2.Steps.Settings.General do
   @moduledoc """
   General settings the node itself acts on: auto-settling, response streaming,
   continuing after a restart, where new worktrees start and the text generation
@@ -8,10 +8,10 @@ defmodule T3.Steps.Settings.General do
 
   import ExUnit.Assertions
 
-  alias T3.Orchestration.{Settlement, TurnWriter}
-  alias T3.StreamState
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Orchestration.{Settlement, TurnWriter}
+  alias HalC2.StreamState
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @thread "Ship checkout"
   @toggles %{
@@ -99,14 +99,14 @@ defmodule T3.Steps.Settings.General do
     project = World.project(context, "shop").id
 
     {:ok, _} =
-      T3.Streams.commit(id, :thread, [
+      HalC2.Streams.commit(id, :thread, [
         {"turn-item", "reply", %{"s" => %{"id" => "reply", "text" => ""}}}
       ])
 
     state = %{
       thread_id: id,
       turn: %{
-        streaming_mode: T3.Settings.for_project(project)["responseStreamingMode"] || "paragraph"
+        streaming_mode: HalC2.Settings.for_project(project)["responseStreamingMode"] || "paragraph"
       },
       items: %{"a" => %{id: "reply", message: nil, kind: :assistant}},
       buffer: %{},
@@ -143,7 +143,7 @@ defmodule T3.Steps.Settings.General do
     at = World.iso_from_now(-60_000)
 
     {:ok, _} =
-      T3.Streams.commit(id, :thread, [
+      HalC2.Streams.commit(id, :thread, [
         {"provider-thread", "pt-1",
          %{
            "s" => %{
@@ -202,13 +202,13 @@ defmodule T3.Steps.Settings.General do
 
     upstream = Node.tmp_dir(context.node, "upstream")
     World.git!(upstream, ["clone", "-q", origin, "."])
-    World.git!(upstream, ~w(config user.email t3@example.com))
-    World.git!(upstream, ~w(config user.name T3))
+    World.git!(upstream, ~w(config user.email hal-c2@example.com))
+    World.git!(upstream, ~w(config user.name HAL-C2))
     World.git!(upstream, ~w(commit -q --allow-empty -m upstream))
     World.git!(upstream, ~w(push -q origin main))
 
     {:ok, result} =
-      T3.Mcp.Tools.call("t3_worktree_handoff", %{"branch" => "t3/ship-checkout"}, %{
+      HalC2.Mcp.Tools.call("halc2_worktree_handoff", %{"branch" => "hal-c2/ship-checkout"}, %{
         thread_id: World.thread_id(context, @thread),
         instance: "codex"
       })
@@ -247,7 +247,7 @@ defmodule T3.Steps.Settings.General do
   step "the node names a new thread", context do
     context = shop(context)
     root = World.project(context, "shop").root
-    {:ok, title} = T3.TextGeneration.thread_title(root, "Fix the checkout total")
+    {:ok, title} = HalC2.TextGeneration.thread_title(root, "Fix the checkout total")
     Map.put(context, :title, title)
   end
 
@@ -280,7 +280,7 @@ defmodule T3.Steps.Settings.General do
     base = %{"threadId" => id, "host" => "github.com", "repository" => "acme/shop", "number" => 5}
 
     {:ok, _} =
-      T3.Orchestration.dispatch(
+      HalC2.Orchestration.dispatch(
         Map.merge(base, %{
           "type" => "thread.pull-request.link",
           "url" => "https://github.com/acme/shop/pull/5",
@@ -289,7 +289,7 @@ defmodule T3.Steps.Settings.General do
       )
 
     {:ok, _} =
-      T3.Orchestration.dispatch(
+      HalC2.Orchestration.dispatch(
         Map.merge(base, %{
           "type" => "thread.pull-request-link.sync",
           "snapshot" => %{
@@ -317,12 +317,12 @@ defmodule T3.Steps.Settings.General do
 
   defp reply_text(thread_id),
     do:
-      StreamState.get(T3.Streams.Server.state(T3.Streams.ensure(thread_id)), "turn-item")["reply"][
+      StreamState.get(HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id)), "turn-item")["reply"][
         "text"
       ]
 
   defp thread_state(context),
-    do: T3.Streams.Server.state(T3.Streams.ensure(World.thread_id(context, @thread)))
+    do: HalC2.Streams.Server.state(HalC2.Streams.ensure(World.thread_id(context, @thread)))
 
   defp worktree_head(context),
     do: World.git!(context.worktree["worktreePath"], ~w(rev-parse HEAD))

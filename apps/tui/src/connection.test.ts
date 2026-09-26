@@ -7,7 +7,7 @@ import {
   type TuiCreateThreadInput,
   type TuiRuntime,
 } from "./connection.ts";
-import { MessageId, ProviderInstanceId, type ThreadId } from "@t3tools/contracts";
+import { MessageId, ProviderInstanceId, type ThreadId } from "@hal-c2/contracts";
 
 // A fake runtime that just counts runFork calls. Each cold warm-thread scope does
 // one runFork(Effect.scoped(...)); reuse does none; eviction does one more
@@ -77,7 +77,7 @@ describe("new-thread bootstrap", () => {
     const bootstrap = buildThreadCreationBootstrap(
       input,
       "2026-07-15T12:00:00.000Z",
-      "t3code/1234abcd",
+      "hal-c2/1234abcd",
     );
 
     expect(bootstrap).toMatchObject({
@@ -89,7 +89,7 @@ describe("new-thread bootstrap", () => {
       prepareWorktree: {
         projectCwd: "/workspace/project-one",
         baseBranch: "main",
-        branch: "t3code/1234abcd",
+        branch: "hal-c2/1234abcd",
         startFromOrigin: true,
       },
       runSetupScript: true,

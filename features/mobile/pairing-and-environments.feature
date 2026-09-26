@@ -6,8 +6,8 @@
 #   apps/mobile/src/features/connection/CloudEnvironmentRows.tsx
 #   apps/mobile/src/features/connection/ConnectionTraceId.tsx
 #   apps/mobile/src/features/connection/GitHubRoutingSettings.tsx
-#   apps/mobile/src/features/cloud/ConnectOnboarding.tsx (Set up T3 Connect)
-#   apps/mobile/src/features/cloud/T3ConnectProfilePage.tsx (registered servers)
+#   apps/mobile/src/features/cloud/ConnectOnboarding.tsx (Set up HAL-C2 Connect)
+#   apps/mobile/src/features/cloud/HalC2ConnectProfilePage.tsx (registered servers)
 #   apps/mobile/src/features/cloud/linkEnvironment.ts
 #   apps/mobile/app.config.ts (local network usage, camera)
 # Shared pairing and relay behaviour lives in features/connections/. This file covers the
@@ -119,39 +119,39 @@ Feature: Pairing a phone with environments
     Then the trace id is on the clipboard
 
   @backlog @mobile
-  Scenario: Signing in to T3 Connect offers to set up relayed environments
-    Given the user has environments registered with T3 Connect
-    When the user signs in to T3 Connect on the phone
-    Then the user is offered to set up T3 Connect
+  Scenario: Signing in to HAL-C2 Connect offers to set up relayed environments
+    Given the user has environments registered with HAL-C2 Connect
+    When the user signs in to HAL-C2 Connect on the phone
+    Then the user is offered to set up HAL-C2 Connect
     And the registered environments are listed to enable
 
   @backlog @mobile
   Scenario: The user enables a relayed environment during setup
-    Given the T3 Connect setup lists "Office Mac"
+    Given the HAL-C2 Connect setup lists "Office Mac"
     When the user enables "Office Mac"
     Then "Office Mac" is added to the phone through the relay
 
   @backlog @mobile
-  Scenario: The user can decline T3 Connect setup for good
-    Given the T3 Connect setup is showing
+  Scenario: The user can decline HAL-C2 Connect setup for good
+    Given the HAL-C2 Connect setup is showing
     When the user asks not to see it again
     Then the setup does not reappear for that account on this phone
 
   @backlog @mobile
   Scenario: A relayed environment can be removed from this phone only
-    Given the phone uses "Office Mac" through T3 Connect
+    Given the phone uses "Office Mac" through HAL-C2 Connect
     When the user removes "Office Mac" from this phone
     Then "Office Mac" is no longer listed on this phone
-    And "Office Mac" stays registered with T3 Connect
+    And "Office Mac" stays registered with HAL-C2 Connect
 
   @backlog @mobile
-  Scenario: Only a directly paired environment can be linked to T3 Connect
+  Scenario: Only a directly paired environment can be linked to HAL-C2 Connect
     Given the phone reaches "Office Mac" only through the relay
-    Then the user is not offered to link "Office Mac" to T3 Connect
+    Then the user is not offered to link "Office Mac" to HAL-C2 Connect
 
   @backlog @mobile
-  Scenario: The user deregisters a server from their T3 Connect profile
-    Given "Old Laptop" is registered with the user's T3 Connect account
+  Scenario: The user deregisters a server from their HAL-C2 Connect profile
+    Given "Old Laptop" is registered with the user's HAL-C2 Connect account
     When the user deregisters "Old Laptop" and confirms
     Then "Old Laptop" is no longer registered
 

@@ -7,7 +7,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as NodeSqliteClient from "@hal-c2/shared/nodeSqliteClient";
 import { exportThread, importThread, listThreads } from "./thread-transfer.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -29,7 +29,7 @@ const createFixtureDatabase = Effect.fn("createThreadTransferFixtureDatabase")(f
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const stateDir = path.join(input.workspace, ".t3", input.state ?? "userdata");
+  const stateDir = path.join(input.workspace, ".hal-c2", input.state ?? "userdata");
   const databasePath = path.join(stateDir, "statev2.sqlite");
   yield* fs.makeDirectory(stateDir, { recursive: true });
   yield* Effect.gen(function* () {
@@ -180,14 +180,14 @@ it.layer(NodeServices.layer)("thread transfer", (it) => {
         orchestrationVersion: 1,
       });
       const attachmentName = "thread-v1-00000000-0000-4000-8000-000000000001.png";
-      const sourceAttachments = path.join(source, ".t3", "userdata", "attachments");
+      const sourceAttachments = path.join(source, ".hal-c2", "userdata", "attachments");
       yield* fs.makeDirectory(sourceAttachments, { recursive: true });
       yield* fs.writeFile(
         path.join(sourceAttachments, attachmentName),
         Uint8Array.from([137, 80, 78, 71]),
       );
       const terminalLogName = `terminal_${Encoding.encodeBase64Url("thread-v1")}.log`;
-      const sourceTerminalLogs = path.join(source, ".t3", "userdata", "logs", "terminals");
+      const sourceTerminalLogs = path.join(source, ".hal-c2", "userdata", "logs", "terminals");
       yield* fs.makeDirectory(sourceTerminalLogs, { recursive: true });
       yield* fs.writeFileString(
         path.join(sourceTerminalLogs, terminalLogName),
@@ -228,12 +228,14 @@ it.layer(NodeServices.layer)("thread transfer", (it) => {
       assert.equal(imported.targetProjectId, "project-target");
       assert.isTrue(yield* fs.exists(imported.backup));
       assert.isTrue(
-        yield* fs.exists(path.join(destination, ".t3", "userdata", "attachments", attachmentName)),
+        yield* fs.exists(
+          path.join(destination, ".hal-c2", "userdata", "attachments", attachmentName),
+        ),
       );
       assert.equal(imported.terminalLogCount, 1);
       assert.equal(
         yield* fs.readFileString(
-          path.join(destination, ".t3", "userdata", "logs", "terminals", terminalLogName),
+          path.join(destination, ".hal-c2", "userdata", "logs", "terminals", terminalLogName),
         ),
         "\u001b[32mterminal output\u001b[0m\n",
       );
@@ -273,7 +275,7 @@ it.layer(NodeServices.layer)("thread transfer", (it) => {
           includeV1EventBesideV2: true,
           state: "dev",
         });
-        const sourceTerminalLogs = path.join(source, ".t3", "dev", "logs", "terminals");
+        const sourceTerminalLogs = path.join(source, ".hal-c2", "dev", "logs", "terminals");
         yield* fs.makeDirectory(sourceTerminalLogs, { recursive: true });
         yield* fs.writeFileString(
           path.join(sourceTerminalLogs, `terminal_${Encoding.encodeBase64Url("thread-v2")}.log`),

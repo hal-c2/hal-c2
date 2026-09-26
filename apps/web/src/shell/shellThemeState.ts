@@ -1,4 +1,4 @@
-import type { ShellThemeState } from "@t3tools/contracts/shell";
+import type { ShellThemeState } from "@hal-c2/contracts/shell";
 
 import type { ThemeColorRole } from "../themePalette";
 

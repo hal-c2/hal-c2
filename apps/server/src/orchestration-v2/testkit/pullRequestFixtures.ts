@@ -1,4 +1,4 @@
-import type { OrchestrationThreadShell, OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import type { OrchestrationThreadShell, OrchestrationV2ThreadShell } from "@hal-c2/contracts";
 import * as DateTime from "effect/DateTime";
 export function v2PullRequestThread(thread: OrchestrationThreadShell): OrchestrationV2ThreadShell {
   return {

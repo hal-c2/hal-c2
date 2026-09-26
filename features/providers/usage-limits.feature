@@ -1,9 +1,9 @@
 # Sources:
 #   docs/user/usage.md (Track subscription limits, Connect a CLIProxyAPI hub, Subscription usage widget)
-#   apps/server-ex/lib/t3/provider_usage_limits.ex, apps/server-ex/lib/t3/provider_usage_limits/codex.ex,
-#   apps/server-ex/lib/t3/provider_usage_limits/claude.ex (probes, probeFailed, unsupported, provider.consumeResetCredit)
-#   apps/server-ex/lib/t3/usage_limit_sources.ex, apps/server-ex/lib/t3/usage_limit_sources/cliproxy.ex (hubs, sealed keys)
-#   apps/server-ex/lib/t3/background_policy.ex (providerHealthRefreshInterval, client leases)
+#   apps/server-ex/lib/hal_c2/provider_usage_limits.ex, apps/server-ex/lib/hal_c2/provider_usage_limits/codex.ex,
+#   apps/server-ex/lib/hal_c2/provider_usage_limits/claude.ex (probes, probeFailed, unsupported, provider.consumeResetCredit)
+#   apps/server-ex/lib/hal_c2/usage_limit_sources.ex, apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex (hubs, sealed keys)
+#   apps/server-ex/lib/hal_c2/background_policy.ex (providerHealthRefreshInterval, client leases)
 #   apps/web/src/components/usage/UsageLimits.tsx, apps/web/src/components/usage/UsageLimitsPooled.tsx
 #   apps/web/src/components/settings/UsageProviderSettings.tsx, apps/web/src/components/settings/AddUsageLimitSourceDialog.tsx
 #   packages/contracts/src/providerUsageLimits.ts, packages/contracts/src/usageLimitSourceId.ts

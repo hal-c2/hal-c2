@@ -1,4 +1,4 @@
-import { createFilesystemEnvironmentAtoms } from "@t3tools/client-runtime/state/filesystem";
+import { createFilesystemEnvironmentAtoms } from "@hal-c2/client-runtime/state/filesystem";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 

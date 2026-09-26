@@ -1,20 +1,20 @@
-defmodule T3.Steps.Connections.DeviceHub do
+defmodule HalC2.Steps.Connections.DeviceHub do
   @moduledoc """
   Steps for `features/connections/device-hub.feature`.
 
   The node's device tools are real processes run against fakes: `npm` installs
   the fake hub and agent-device from `test/support` on first use, the Android SDK
   is a directory of fake `adb` and `emulator` scripts under `ANDROID_HOME`, and a
-  Mac is `config :t3, :os_type` plus a fake `xcrun` on PATH. The fakes log every
+  Mac is `config :hal_c2, :os_type` plus a fake `xcrun` on PATH. The fakes log every
   host command to `calls.log`, so a step can see what ran and in what order.
-  `T3.Devices` starts on the first step that uses it, after the Given steps have
+  `HalC2.Devices` starts on the first step that uses it, after the Given steps have
   shaped the machine.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @support Path.expand("../../support", __DIR__)
   @simulator %{
@@ -37,12 +37,12 @@ defmodule T3.Steps.Connections.DeviceHub do
   end
 
   step "the node runs on Linux", context do
-    Application.put_env(:t3, :os_type, {:unix, :linux})
+    Application.put_env(:hal_c2, :os_type, {:unix, :linux})
     context
   end
 
   step "a Mac without Xcode command line tools", context do
-    Application.put_env(:t3, :os_type, {:unix, :darwin})
+    Application.put_env(:hal_c2, :os_type, {:unix, :darwin})
     assert System.find_executable("xcrun") == nil, "this machine has xcrun on PATH"
     context
   end
@@ -50,7 +50,7 @@ defmodule T3.Steps.Connections.DeviceHub do
   step "no Android SDK is installed", context do
     System.delete_env("ANDROID_HOME")
     System.delete_env("ANDROID_SDK_ROOT")
-    assert T3.Devices.platform_reason("android") =~ "Android SDK was not found"
+    assert HalC2.Devices.platform_reason("android") =~ "Android SDK was not found"
     context
   end
 
@@ -82,7 +82,7 @@ defmodule T3.Steps.Connections.DeviceHub do
   step "the node installs and starts no device tools", context do
     assert {:ok, %{"hostStatus" => "disabled", "devices" => []}} = context.reply
     refute File.exists?(Path.join(context.node.home, "tools"))
-    assert T3.Devices.hub_origin() == nil
+    assert HalC2.Devices.hub_origin() == nil
     refute File.exists?(context.devices.log)
     context
   end
@@ -104,7 +104,7 @@ defmodule T3.Steps.Connections.DeviceHub do
   end
 
   step "runs it on a loopback port", context do
-    assert "http://127.0.0.1:" <> port = T3.Devices.hub_origin()
+    assert "http://127.0.0.1:" <> port = HalC2.Devices.hub_origin()
     assert {:ok, 200, "ok"} = hub_get("/readyz")
     assert String.to_integer(port) != context.node.port
     context
@@ -162,7 +162,7 @@ defmodule T3.Steps.Connections.DeviceHub do
 
   step "the device is recorded as open", context do
     assert {:ok, %{"deviceId" => "SIM-1"}} = context.reply
-    assert [%{"threadId" => "t1", "deviceId" => "SIM-1"}] = T3.Devices.state()["sessions"]
+    assert [%{"threadId" => "t1", "deviceId" => "SIM-1"}] = HalC2.Devices.state()["sessions"]
     context
   end
 
@@ -185,7 +185,7 @@ defmodule T3.Steps.Connections.DeviceHub do
              context.reply
 
     assert message =~ "Device nope was not found"
-    assert T3.Devices.state()["sessions"] == []
+    assert HalC2.Devices.state()["sessions"] == []
     context
   end
 
@@ -397,7 +397,7 @@ defmodule T3.Steps.Connections.DeviceHub do
   step "a client with read access opens a device's stream through the node", context do
     ticket = ticket(["orchestration:read"])
     devices()
-    {:ok, _} = T3.Devices.list(%{})
+    {:ok, _} = HalC2.Devices.list(%{})
 
     response =
       http(
@@ -466,13 +466,13 @@ defmodule T3.Steps.Connections.DeviceHub do
 
   step "a client asks the device proxy for the hub's shell route", context do
     devices()
-    response = http(context, "GET", base() <> "/vendor/serve-sim/exec?token=#{T3.Web.token()}")
+    response = http(context, "GET", base() <> "/vendor/serve-sim/exec?token=#{HalC2.Web.token()}")
     Map.put(context, :response, response)
   end
 
   step "a client posts to a read-only device route", context do
     devices()
-    response = http(context, "POST", base() <> "/api/devices?token=#{T3.Web.token()}", body: "{}")
+    response = http(context, "POST", base() <> "/api/devices?token=#{HalC2.Web.token()}", body: "{}")
     Map.put(context, :response, response)
   end
 
@@ -483,8 +483,8 @@ defmodule T3.Steps.Connections.DeviceHub do
 
   step "a client that cannot set headers on an image stream", context do
     devices()
-    {:ok, _} = T3.Devices.list(%{})
-    {:ok, ticket, _} = T3.Auth.issue_ticket(context.access_token)
+    {:ok, _} = HalC2.Devices.list(%{})
+    {:ok, ticket, _} = HalC2.Auth.issue_ticket(context.access_token)
     Map.put(context, :ticket, ticket)
   end
 
@@ -501,7 +501,7 @@ defmodule T3.Steps.Connections.DeviceHub do
 
     # Once its five minutes are up, the same address is refused.
     true =
-      :ets.update_element(T3.Auth.Tickets, context.ticket, {2, System.os_time(:millisecond) - 1})
+      :ets.update_element(HalC2.Auth.Tickets, context.ticket, {2, System.os_time(:millisecond) - 1})
 
     assert %{status: 401} = http(context, "GET", context.stream_path)
     context
@@ -509,20 +509,20 @@ defmodule T3.Steps.Connections.DeviceHub do
 
   step "the device hub is not running", context do
     devices()
-    assert T3.Devices.hub_origin() == nil
+    assert HalC2.Devices.hub_origin() == nil
     context
   end
 
   step "the hub does not answer", context do
     devices()
-    {:ok, _} = T3.Devices.list(%{})
+    {:ok, _} = HalC2.Devices.list(%{})
     Map.put(context, :hub_query, "&fake=drop")
   end
 
   step "the hub does not answer in time", context do
     devices()
-    {:ok, _} = T3.Devices.list(%{})
-    Application.put_env(:t3, :device_hub_answer_timeout, 200)
+    {:ok, _} = HalC2.Devices.list(%{})
+    Application.put_env(:hal_c2, :device_hub_answer_timeout, 200)
     Map.put(context, :hub_query, "&fake=hang")
   end
 
@@ -530,10 +530,10 @@ defmodule T3.Steps.Connections.DeviceHub do
     devices()
     peer = :"laptop@offline.example"
     # What a peer's shell pushes on connect; it stays listed after the peer goes down.
-    GenServer.cast(T3.Shell, {:peer_environment, peer, %{"environmentId" => "env-laptop"}})
+    GenServer.cast(HalC2.Shell, {:peer_environment, peer, %{"environmentId" => "env-laptop"}})
     # A call after the cast: the shell has handled it once this answers.
-    refute peer in T3.Shell.online_nodes()
-    assert Enum.any?(T3.Shell.environments(), &(elem(&1, 0) == peer))
+    refute peer in HalC2.Shell.online_nodes()
+    assert Enum.any?(HalC2.Shell.environments(), &(elem(&1, 0) == peer))
 
     Map.put(
       context,
@@ -545,7 +545,7 @@ defmodule T3.Steps.Connections.DeviceHub do
   step "a client asks for a device route through the proxy", context do
     path =
       (context[:hub_base] || base()) <>
-        "/api/devices?token=#{T3.Web.token()}" <> (context[:hub_query] || "")
+        "/api/devices?token=#{HalC2.Web.token()}" <> (context[:hub_query] || "")
 
     Map.put(context, :response, http(context, "GET", path))
   end
@@ -675,7 +675,7 @@ defmodule T3.Steps.Connections.DeviceHub do
            } =
              context.agent_result["structuredContent"]
 
-    assert ["--platform", "ios", "--udid", "SIM-1", "--config", config, "--session", "t3-" <> _] =
+    assert ["--platform", "ios", "--udid", "SIM-1", "--config", config, "--session", "hal-c2-" <> _] =
              args
 
     assert File.exists?(command)
@@ -801,7 +801,7 @@ defmodule T3.Steps.Connections.DeviceHub do
     assert sessions(@agent_thread) == []
     {:ok, 200, body} = hub_get("/api/devices")
     assert JSON.decode!(body)["emulators"] == []
-    refute Enum.any?(T3.Devices.state()["devices"], & &1["booted"])
+    refute Enum.any?(HalC2.Devices.state()["devices"], & &1["booted"])
     context
   end
 
@@ -865,8 +865,8 @@ defmodule T3.Steps.Connections.DeviceHub do
     |> put_env("FAKE_HUB_EMULATORS", nil)
     |> tap(fn _ ->
       ExUnit.Callbacks.on_exit(fn ->
-        Application.delete_env(:t3, :os_type)
-        Application.delete_env(:t3, :device_hub_answer_timeout)
+        Application.delete_env(:hal_c2, :os_type)
+        Application.delete_env(:hal_c2, :device_hub_answer_timeout)
       end)
     end)
   end
@@ -874,7 +874,7 @@ defmodule T3.Steps.Connections.DeviceHub do
   # A Mac with Xcode: `xcrun simctl` keeps each simulator's ui settings in files.
   defp mac(context, simulators) do
     %{bin: bin, log: log} = context.devices
-    Application.put_env(:t3, :os_type, {:unix, :darwin})
+    Application.put_env(:hal_c2, :os_type, {:unix, :darwin})
 
     script(Path.join(bin, "xcrun"), """
     #!/bin/sh
@@ -932,8 +932,8 @@ defmodule T3.Steps.Connections.DeviceHub do
   defp restore_env(name, value), do: System.put_env(name, value)
 
   defp write_settings(context, changes) do
-    Node.ensure(T3.Settings)
-    {settings, version} = T3.Settings.get()
+    Node.ensure(HalC2.Settings)
+    {settings, version} = HalC2.Settings.get()
 
     settings =
       Map.merge(settings, changes, fn
@@ -941,13 +941,13 @@ defmodule T3.Steps.Connections.DeviceHub do
         _, _, new -> new
       end)
 
-    {:ok, _} = T3.Settings.put(settings, version)
+    {:ok, _} = HalC2.Settings.put(settings, version)
     context
   end
 
   defp devices do
-    Node.ensure(T3.Settings)
-    Node.ensure(T3.Devices)
+    Node.ensure(HalC2.Settings)
+    Node.ensure(HalC2.Devices)
   end
 
   # An RPC on the paired client; installing and booting take longer than most calls.
@@ -990,9 +990,9 @@ defmodule T3.Steps.Connections.DeviceHub do
   end
 
   defp sessions(thread),
-    do: Enum.filter(T3.Devices.state()["sessions"], &(&1["threadId"] == thread))
+    do: Enum.filter(HalC2.Devices.state()["sessions"], &(&1["threadId"] == thread))
 
-  defp device(id), do: Enum.find(T3.Devices.state()["devices"], &(&1["id"] == id))
+  defp device(id), do: Enum.find(HalC2.Devices.state()["devices"], &(&1["id"] == id))
 
   defp hub_simulator(id) do
     {:ok, 200, body} = hub_get("/api/devices")
@@ -1000,7 +1000,7 @@ defmodule T3.Steps.Connections.DeviceHub do
   end
 
   defp hub_get(path) do
-    request = {String.to_charlist(T3.Devices.hub_origin() <> path), []}
+    request = {String.to_charlist(HalC2.Devices.hub_origin() <> path), []}
 
     case :httpc.request(:get, request, [timeout: 5_000], body_format: :binary) do
       {:ok, {{_, status, _}, _, body}} -> {:ok, status, body}
@@ -1008,15 +1008,15 @@ defmodule T3.Steps.Connections.DeviceHub do
     end
   end
 
-  defp base, do: T3.Devices.hub_base_path()
+  defp base, do: HalC2.Devices.hub_base_path()
 
   # A session with only `scopes`, and a WebSocket ticket for it.
   defp ticket(scopes) do
     {:ok, %{"credential" => credential}} =
-      T3.Auth.create_pairing_link(%{"label" => "Viewer", "scopes" => scopes})
+      HalC2.Auth.create_pairing_link(%{"label" => "Viewer", "scopes" => scopes})
 
-    {:ok, access, _, ^scopes} = T3.Auth.exchange(credential, %{"label" => "Viewer"})
-    {:ok, ticket, _} = T3.Auth.issue_ticket(access)
+    {:ok, access, _, ^scopes} = HalC2.Auth.exchange(credential, %{"label" => "Viewer"})
+    {:ok, ticket, _} = HalC2.Auth.issue_ticket(access)
     ticket
   end
 
@@ -1064,8 +1064,8 @@ defmodule T3.Steps.Connections.DeviceHub do
 
   defp tool(context, name, arguments, thread) do
     devices()
-    Node.ensure(T3.Mcp)
-    %{authorization: auth} = T3.Mcp.server(thread, "codex")
+    Node.ensure(HalC2.Mcp)
+    %{authorization: auth} = HalC2.Mcp.server(thread, "codex")
 
     body =
       JSON.encode!(%{
@@ -1075,7 +1075,7 @@ defmodule T3.Steps.Connections.DeviceHub do
         "params" => %{"name" => name, "arguments" => arguments}
       })
 
-    {200, %{"result" => result}} = T3.Mcp.handle(auth, body)
+    {200, %{"result" => result}} = HalC2.Mcp.handle(auth, body)
     {result, context}
   end
 

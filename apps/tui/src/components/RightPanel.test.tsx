@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import * as React from "react";
 import { testRender } from "@opentui/react/test-utils";
 
-import type { VcsStatusResult } from "@t3tools/contracts";
+import type { VcsStatusResult } from "@hal-c2/contracts";
 import { buildGitPanelActions, type GitPanelAction } from "../gitActions.logic.ts";
 import { RightPanel } from "./RightPanel.tsx";
 

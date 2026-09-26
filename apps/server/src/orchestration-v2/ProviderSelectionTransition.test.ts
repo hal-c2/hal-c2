@@ -4,7 +4,7 @@ import {
   type ModelSelection,
   type OrchestrationV2ProviderCapabilities,
   ProviderInstanceId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 
 import { AcpProviderCapabilitiesV2 } from "./Adapters/AcpAdapterV2.ts";
 import { acpSelectionTransition } from "./ProviderSelectionTransition.ts";

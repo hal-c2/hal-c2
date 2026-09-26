@@ -1,9 +1,9 @@
 # Sources:
-#   apps/server-ex/lib/t3/preview_automation.ex (host registration, routing, timeouts, current tab, error messages)
-#   apps/server-ex/lib/t3/mcp/preview.ex (preview_* MCP tools, timed tools, snapshot bounds, screenshots, recordings, tool icon)
-#   apps/server-ex/lib/t3/mcp/tools.ex (t3_preview_list, t3_preview_close)
-#   apps/server-ex/lib/t3/web/socket.ex (previewAutomation shape, previewAutomation.respond, previewAutomation.focusHost)
-#   apps/server-ex/test/t3/preview_automation_test.exs
+#   apps/server-ex/lib/hal_c2/preview_automation.ex (host registration, routing, timeouts, current tab, error messages)
+#   apps/server-ex/lib/hal_c2/mcp/preview.ex (preview_* MCP tools, timed tools, snapshot bounds, screenshots, recordings, tool icon)
+#   apps/server-ex/lib/hal_c2/mcp/tools.ex (halc2_preview_list, halc2_preview_close)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (previewAutomation shape, previewAutomation.respond, previewAutomation.focusHost)
+#   apps/server-ex/test/hal_c2/preview_automation_test.exs
 #   packages/contracts/src/previewAutomation.ts
 #   apps/web/src/components/preview/PreviewAutomationHosts.tsx
 #   apps/web/src/components/preview/previewAutomationRequestConsumer.ts
@@ -44,7 +44,7 @@ Feature: Agents drive the preview browser
     Scenario: An action nobody can host fails with guidance
       Given no desktop is offering its browser
       When an agent asks to take a snapshot
-      Then the tool fails with "No preview automation host is available for snapshot. Open T3 Code's desktop app with this thread's browser panel available."
+      Then the tool fails with "No preview automation host is available for snapshot. Open HAL-C2's desktop app with this thread's browser panel available."
 
     @node
     Scenario: A browser that cannot do an action is not swapped for another mid-task
@@ -184,7 +184,7 @@ Feature: Agents drive the preview browser
       Examples:
         | situation                               | message                                                             |
         | the recording upload cannot be claimed  | The preview recording could not be transferred to this environment. |
-        | the desktop app is too old to upload it | Update T3 Code's desktop app to transfer preview recordings.        |
+        | the desktop app is too old to upload it | Update HAL-C2's desktop app to transfer preview recordings.        |
 
     @node
     Scenario Outline: An agent's request to <action> reaches the browser

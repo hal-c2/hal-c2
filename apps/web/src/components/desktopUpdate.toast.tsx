@@ -1,4 +1,4 @@
-import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopBridge, DesktopUpdateState } from "@hal-c2/contracts";
 import { ArrowRightIcon } from "lucide-react";
 
 import {

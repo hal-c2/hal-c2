@@ -1,7 +1,7 @@
 import type {
   RelayClientDeviceRecord,
   RelayDeviceRegistrationRequest,
-} from "@t3tools/contracts/relay";
+} from "@hal-c2/contracts/relay";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -68,7 +68,7 @@ export class Devices extends Context.Service<
       readonly userId: string;
     }) => Effect.Effect<ReadonlyArray<RelayClientDeviceRecord>, DeviceListPersistenceError>;
   }
->()("t3code-relay/agentActivity/Devices") {}
+>()("hal-c2-relay/agentActivity/Devices") {}
 
 export const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;

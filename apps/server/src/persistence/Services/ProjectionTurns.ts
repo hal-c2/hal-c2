@@ -13,12 +13,12 @@ import {
   NonNegativeInt,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import {
   OrchestrationCheckpointFile,
   OrchestrationCheckpointStatus,
   OrchestrationProposedPlanId,
-} from "@t3tools/contracts/legacy-orchestration";
+} from "@hal-c2/contracts/legacy-orchestration";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
@@ -169,4 +169,4 @@ export interface ProjectionTurnRepositoryShape {
 export class ProjectionTurnRepository extends Context.Service<
   ProjectionTurnRepository,
   ProjectionTurnRepositoryShape
->()("t3/persistence/Services/ProjectionTurns/ProjectionTurnRepository") {}
+>()("hal-c2/persistence/Services/ProjectionTurns/ProjectionTurnRepository") {}

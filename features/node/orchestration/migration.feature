@@ -1,6 +1,6 @@
 # Sources:
-#   apps/server-ex/lib/t3/import/v2.ex (Node V2 orchestration_events import)
-#   apps/server-ex/lib/mix/tasks/t3.import.ex (the manual import task)
+#   apps/server-ex/lib/hal_c2/import/v2.ex (Node V2 orchestration_events import)
+#   apps/server-ex/lib/mix/tasks/hal_c2.import.ex (the manual import task)
 #   apps/server/src/orchestration-v2/LegacyV1ThreadImporter.ts,
 #     apps/server/src/serverRuntimeStartup.ts (legacyThreadMigration startup phase),
 #     apps/server/src/orchestration-v2/ContextHandoffService.ts (legacy import summary)

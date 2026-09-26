@@ -26,10 +26,10 @@ private:
 
 private slots:
   void qmlTypeAcceptsExplicitConfiguration() {
-    qmlRegisterType<LocalTranscriber>("T3.DictationTest", 1, 0, "LocalTranscriber");
+    qmlRegisterType<LocalTranscriber>("HalC2.DictationTest", 1, 0, "LocalTranscriber");
     QQmlEngine engine;
     QQmlComponent component(&engine);
-    component.setData("import T3.DictationTest 1.0\nLocalTranscriber { program: \"/configured/python\"; arguments: [\"/path with spaces/helper.py\", \"--language\", \"zh-CN\"] }", QUrl());
+    component.setData("import HalC2.DictationTest 1.0\nLocalTranscriber { program: \"/configured/python\"; arguments: [\"/path with spaces/helper.py\", \"--language\", \"zh-CN\"] }", QUrl());
     QVERIFY2(component.isReady(), qPrintable(component.errorString()));
     std::unique_ptr<QObject> object(component.create());
     QVERIFY(object);

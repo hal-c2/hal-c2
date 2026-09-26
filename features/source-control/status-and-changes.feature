@@ -2,11 +2,11 @@
 #   docs/user/source-control.md
 #   packages/contracts/src/vcs.ts (VcsStatusLocalResult, VcsStatusRemoteResult, VcsStatusStreamEvent, VcsDriverKind)
 #   packages/contracts/src/rpc.ts (vcs.refreshStatus, subscribeVcsStatus, vcs.init)
-#   apps/server-ex/lib/t3/vcs.ex (status, init)
-#   apps/server-ex/lib/t3/vcs/watch.ex
-#   apps/server-ex/lib/t3/background_policy.ex (automaticGitFetchInterval)
+#   apps/server-ex/lib/hal_c2/vcs.ex (status, init)
+#   apps/server-ex/lib/hal_c2/vcs/watch.ex
+#   apps/server-ex/lib/hal_c2/background_policy.ex (automaticGitFetchInterval)
 #   apps/web/src/components/GitActionsControl.tsx (Initialize Git)
-#   apps/desktop-qt/qml/T3/Bricks/GitActions.qml (Initialize Git, git pill)
+#   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (Initialize Git, git pill)
 #   apps/tui/src/gitActions.logic.ts (mergeVcsStatus, resolveGitQuickAction)
 #   apps/tui/src/connection.ts (subscribeVcsStatus)
 

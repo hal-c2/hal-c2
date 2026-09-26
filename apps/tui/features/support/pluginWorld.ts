@@ -96,7 +96,7 @@ export function asSlot(name: string): SlotName {
 
 export function pluginDir(ctx: PluginWorld): string {
   if (!ctx.pluginDir) {
-    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-tui-plugins-"));
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hal-c2-tui-plugins-"));
     ctx.cleanups.push(() => NodeFS.rmSync(dir, { recursive: true, force: true }));
     ctx.pluginDir = dir;
   }
@@ -190,7 +190,7 @@ function prepareShell(ctx: PluginWorld, extra: StartOptions) {
   ctx.qml = {
     ...ctx.qml,
     ...(modes.length > 0
-      ? { shellSource: `import T3.Tui\nDefaultShell { ${modes.join("; ")} }\n` }
+      ? { shellSource: `import HalC2.Tui\nDefaultShell { ${modes.join("; ")} }\n` }
       : {}),
     plugins: [...(ctx.scriptPlugins ?? []), ...files, ...(extra.plugins ?? [])],
     ...(extra.pluginDirs ? { pluginDirs: extra.pluginDirs } : {}),

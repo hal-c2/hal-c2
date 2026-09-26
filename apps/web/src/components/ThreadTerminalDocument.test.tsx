@@ -1,4 +1,4 @@
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@hal-c2/client-runtime/environment";
 import {
   EnvironmentId,
   ProjectId,
@@ -9,7 +9,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type TerminalSummary,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { act, useEffect, type ComponentProps } from "react";
@@ -289,7 +289,7 @@ beforeEach(() => {
     },
     requestAnimationFrame: () => 1,
     cancelAnimationFrame: () => {},
-    t3Shell: { dispatch: fixture.dispatch },
+    halc2Shell: { dispatch: fixture.dispatch },
   });
   useTerminalUiStateStore.setState({ terminalUiStateByThreadKey: {} });
   useRightPanelStore.setState({ byThreadKey: {} });
@@ -391,9 +391,9 @@ describe("dedicated thread terminals", () => {
     vi.stubGlobal("requestAnimationFrame", () => 1);
     await mount();
     for (const theme of ["dark", "light"]) {
-      window.localStorage.setItem("t3code:theme", theme);
+      window.localStorage.setItem("hal-c2:theme", theme);
       await act(() => {
-        window.dispatchEvent(Object.assign(new Event("storage"), { key: "t3code:theme" }));
+        window.dispatchEvent(Object.assign(new Event("storage"), { key: "hal-c2:theme" }));
       });
       expect(classes.has("dark")).toBe(theme === "dark");
     }
@@ -445,7 +445,7 @@ describe("dedicated thread terminals", () => {
     expect(drawer().terminalLaunchLocationsById?.get("term-1")).toMatchObject({
       cwd: "/worktrees/task",
       worktreePath: "/worktrees/task",
-      runtimeEnv: { T3CODE_PROJECT_ROOT: "/repo", T3CODE_WORKTREE_PATH: "/worktrees/task" },
+      runtimeEnv: { HALC2_PROJECT_ROOT: "/repo", HALC2_WORKTREE_PATH: "/worktrees/task" },
     });
   });
 

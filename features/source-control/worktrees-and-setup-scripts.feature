@@ -2,16 +2,16 @@
 #   docs/user/source-control.md
 #   packages/contracts/src/vcs.ts (VcsCreateWorktreeInput, VcsRemoveWorktreeInput)
 #   packages/contracts/src/worktreeSetup.ts (WorktreeSetupSnapshot, stages, phases)
-#   packages/contracts/src/worktreeMcp.ts (t3_worktree_handoff, t3_worktree_status, t3_worktree_list)
+#   packages/contracts/src/worktreeMcp.ts (halc2_worktree_handoff, halc2_worktree_status, halc2_worktree_list)
 #   packages/contracts/src/rpc.ts (vcs.createWorktree, vcs.removeWorktree, subscribeWorktreeSetup, worktreeSetup.cancel)
-#   apps/server-ex/lib/t3/vcs.ex (create_worktree, remove_worktree)
-#   apps/server-ex/lib/t3/worktree_setup.ex
-#   apps/server-ex/lib/t3/mcp/tools/projects.ex (t3_worktree_handoff, t3_worktree_status, t3_worktree_list)
+#   apps/server-ex/lib/hal_c2/vcs.ex (create_worktree, remove_worktree)
+#   apps/server-ex/lib/hal_c2/worktree_setup.ex
+#   apps/server-ex/lib/hal_c2/mcp/tools/projects.ex (halc2_worktree_handoff, halc2_worktree_status, halc2_worktree_list)
 #   apps/web/src/components/BranchToolbarEnvModeSelector.tsx
 #   apps/web/src/components/BranchToolbar.logic.ts (Previous worktree, worktree submodules)
 #   apps/web/src/components/WorktreeBaseBranchPicker.tsx
 #   apps/web/src/components/chat/WorktreeSetupCard.tsx
-#   apps/desktop-qt/qml/T3/Bricks/Composer.qml (checkout mode)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (checkout mode)
 #   packages/contracts/src/shell.ts (workspace.envMode.set)
 
 Feature: Worktrees and setup scripts
@@ -44,9 +44,9 @@ Feature: Worktrees and setup scripts
     Then the worktree starts from "release/2"
 
   @node
-  Scenario: A new worktree is made under the T3 home by default
+  Scenario: A new worktree is made under the HAL-C2 home by default
     When a worktree is created for the branch "feature/tax" with no path given
-    Then it is made in the T3 home's worktrees folder under the repository and branch names
+    Then it is made in the HAL-C2 home's worktrees folder under the repository and branch names
 
   @node
   Scenario: Starting from origin fetches the base first

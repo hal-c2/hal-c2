@@ -3,7 +3,7 @@ import {
   ProviderSetupError,
   type ProviderAuthState,
   type ProviderInstanceId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -185,7 +185,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
             openBrowser: false,
             store: pendingStore,
             signal,
-            apiKeyName: `T3 Code - ${options.displayName}`,
+            apiKeyName: `HAL-C2 - ${options.displayName}`,
             onLoginUrl: (authorizationUrl) => {
               if (active === flow) Queue.offerUnsafe(urls, authorizationUrl);
             },
@@ -292,7 +292,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
 
   const controller: ProviderAuthController = {
     credentialBinding: options.credentialBinding ?? {
-      owner: "t3",
+      owner: "hal-c2",
       key: `cursor:${options.instanceId}`,
     },
     isChangingCredentials: Effect.sync(() => operation !== "idle"),
@@ -440,7 +440,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
         Stream.map((current) => {
           const state = {
             ...current.state,
-            credentialOwner: "t3" as const,
+            credentialOwner: "hal-c2" as const,
             methods: [
               {
                 id: "browser",

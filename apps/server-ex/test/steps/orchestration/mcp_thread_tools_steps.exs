@@ -1,17 +1,17 @@
-defmodule T3.Steps.Orchestration.McpThreadTools do
+defmodule HalC2.Steps.Orchestration.McpThreadTools do
   @moduledoc """
   Steps for `features/node/orchestration/mcp-thread-tools.feature`, and the MCP
   caller setup and failure steps the other MCP features share.
 
   MCP tool calls keep their outcome in `context.mcp_result`: `{:ok, result}` or
-  `{:error, code, message}` (see `T3.Test.Node.World.mcp_tool/5`). Turns run on the
+  `{:error, code, message}` (see `HalC2.Test.Node.World.mcp_tool/5`). Turns run on the
   fake Codex CLI: "wait" keeps one running, steering it with "say X" ends it.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node.World
 
   @fake_text Path.expand("../../support/fake_text_cli.py", __DIR__)
   @active ~w(preparing starting running waiting)
@@ -63,7 +63,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   # --- listing and reading ---------------------------------------------------------
 
   step("the agent of {string} lists threads", %{args: [caller]} = context,
-    do: Map.put(context, :mcp_result, World.mcp_tool(context, caller, "t3_thread_list"))
+    do: Map.put(context, :mcp_result, World.mcp_tool(context, caller, "halc2_thread_list"))
   )
 
   step "it receives {string} and {string} with the project id and the caller's own id",
@@ -118,7 +118,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
           {context, %{"limit" => 1}, :first}
       end
 
-    result = World.mcp_tool(context, caller, "t3_thread_list", arguments)
+    result = World.mcp_tool(context, caller, "halc2_thread_list", arguments)
     context |> Map.put(:mcp_result, result) |> Map.put(:expected_threads, expected)
   end
 
@@ -153,7 +153,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   step "the agent of {string} reads {string} after position {int}",
        %{args: [caller, thread, position]} = context do
     result =
-      World.mcp_tool(context, caller, "t3_thread_read", %{
+      World.mcp_tool(context, caller, "halc2_thread_read", %{
         "threadId" => World.thread_id(context, thread),
         "afterPosition" => position
       })
@@ -183,12 +183,12 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     assert %{"status" => "completed"} = World.finish_turn(context, thread, "edit notes.md")
 
     messages =
-      World.mcp_tool(context, caller, "t3_thread_read", %{
+      World.mcp_tool(context, caller, "halc2_thread_read", %{
         "threadId" => World.thread_id(context, thread)
       })
 
     result =
-      World.mcp_tool(context, caller, "t3_thread_read", %{
+      World.mcp_tool(context, caller, "halc2_thread_read", %{
         "threadId" => World.thread_id(context, thread),
         "view" => "activity"
       })
@@ -217,7 +217,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   step "the agent of {string} reads it with a limit of 20,000 characters",
        %{args: [caller]} = context do
     result =
-      World.mcp_tool(context, caller, "t3_thread_read", %{
+      World.mcp_tool(context, caller, "halc2_thread_read", %{
         "threadId" => World.thread_id(context, context.long_thread),
         "maxCharsPerItem" => 20_000
       })
@@ -231,7 +231,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     assert text == String.slice(context.long_text, 0, 20_000)
 
     assert {:ok, %{"items" => [rest]}} =
-             World.mcp_tool(context, context.reader, "t3_thread_read", %{
+             World.mcp_tool(context, context.reader, "halc2_thread_read", %{
                "threadId" => World.thread_id(context, context.long_thread),
                "itemId" => item,
                "maxCharsPerItem" => 20_000,
@@ -244,7 +244,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   end
 
   step("the agent of {string} reads without naming a thread", %{args: [caller]} = context,
-    do: Map.put(context, :mcp_result, World.mcp_tool(context, caller, "t3_thread_read"))
+    do: Map.put(context, :mcp_result, World.mcp_tool(context, caller, "halc2_thread_read"))
   )
 
   step "it receives {string}", %{args: [thread]} = context do
@@ -329,7 +329,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     id = World.thread_id(context, thread)
 
     task =
-      Task.async(fn -> World.mcp_tool(context, caller, "t3_thread_wait", %{"threadId" => id}) end)
+      Task.async(fn -> World.mcp_tool(context, caller, "halc2_thread_wait", %{"threadId" => id}) end)
 
     Map.put(context, :wait, task)
   end
@@ -352,7 +352,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     started = System.monotonic_time(:millisecond)
 
     result =
-      World.mcp_tool(context, caller, "t3_thread_wait", %{
+      World.mcp_tool(context, caller, "halc2_thread_wait", %{
         "threadId" => World.thread_id(context, thread),
         "timeoutMs" => 1_000
       })
@@ -385,7 +385,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
         else: %{"threadId" => World.thread_id(context, thread)}
 
     # The thread is idle, so the wait answers at once whatever it would allow.
-    result = World.mcp_tool(context, caller, "t3_thread_wait", arguments)
+    result = World.mcp_tool(context, caller, "halc2_thread_wait", arguments)
 
     context
     |> Map.put(:mcp_result, result)
@@ -403,7 +403,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
         "1 hour" -> 60 * 60 * 1_000
       end
 
-    assert T3.Mcp.Tools.wait_timeout(context.requested_timeout) == limit
+    assert HalC2.Mcp.Tools.wait_timeout(context.requested_timeout) == limit
     context
   end
 
@@ -413,7 +413,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     started = System.monotonic_time(:millisecond)
 
     result =
-      World.mcp_tool(context, caller, "t3_thread_wait", %{
+      World.mcp_tool(context, caller, "halc2_thread_wait", %{
         "threadId" => World.thread_id(context, thread),
         "timeoutMs" => 60_000
       })
@@ -436,7 +436,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
 
   step "the agent of {string} interrupts {string}", %{args: [caller, thread]} = context do
     result =
-      World.mcp_tool(context, caller, "t3_thread_interrupt", %{
+      World.mcp_tool(context, caller, "halc2_thread_interrupt", %{
         "threadId" => World.thread_id(context, thread)
       })
 
@@ -472,7 +472,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   end
 
   step "the agent of {string} searches for {string}", %{args: [caller, word]} = context do
-    result = World.mcp_tool(context, caller, "t3_thread_search", %{"query" => word})
+    result = World.mcp_tool(context, caller, "halc2_thread_search", %{"query" => word})
     Map.put(context, :mcp_result, result)
   end
 
@@ -484,13 +484,13 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   end
 
   step("the agent of {string} reads the environment", %{args: [caller]} = context,
-    do: Map.put(context, :mcp_result, World.mcp_tool(context, caller, "t3_environment_read"))
+    do: Map.put(context, :mcp_result, World.mcp_tool(context, caller, "halc2_environment_read"))
   )
 
   step "it receives the environment id, label, platform, the caller's thread and project",
        context do
     assert {:ok, result} = context.mcp_result
-    descriptor = T3.Environment.descriptor()
+    descriptor = HalC2.Environment.descriptor()
     assert result["environmentId"] == descriptor["environmentId"]
     assert is_binary(result["environmentId"])
     assert result["label"] == descriptor["label"]
@@ -502,7 +502,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
 
   step "each enabled provider instance with its driver, status and model slugs", context do
     assert {:ok, %{"providers" => providers}} = context.mcp_result
-    enabled = for p <- T3.Environment.providers(), p["enabled"] != false, do: p
+    enabled = for p <- HalC2.Environment.providers(), p["enabled"] != false, do: p
 
     assert Enum.map(providers, & &1["providerInstanceId"]) ==
              Enum.map(enabled, & &1["instanceId"])
@@ -516,11 +516,11 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
 
   step "the agent of {string} updates the default thread workspace mode and the writing style",
        %{args: [caller]} = context do
-    {settings, version} = T3.Settings.get()
-    {:ok, _} = T3.Settings.put(Map.put(settings, "enableAgentBrowserAccess", true), version)
+    {settings, version} = HalC2.Settings.get()
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "enableAgentBrowserAccess", true), version)
 
     result =
-      World.mcp_tool(context, caller, "t3_environment_preferences_update", %{
+      World.mcp_tool(context, caller, "halc2_environment_preferences_update", %{
         "defaultThreadEnvMode" => "worktree",
         "sourceControlWritingStyle" => %{"mode" => "custom", "customInstructions" => "Be brief."},
         "enableAgentBrowserAccess" => false
@@ -533,14 +533,14 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     assert {:ok, result} = context.mcp_result
     assert result["defaultThreadEnvMode"] == "worktree"
     assert result["sourceControlWritingStyle"]["customInstructions"] == "Be brief."
-    {settings, _} = T3.Settings.get()
+    {settings, _} = HalC2.Settings.get()
     assert settings["defaultThreadEnvMode"] == "worktree"
     assert settings["sourceControlWritingStyle"]["mode"] == "custom"
     context
   end
 
   step "settings outside the allowed list are left alone", context do
-    {settings, _} = T3.Settings.get()
+    {settings, _} = HalC2.Settings.get()
     assert settings["enableAgentBrowserAccess"] == true
     context
   end
@@ -550,7 +550,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   step "the agent of {string} launches a thread in {string} with message {string}",
        %{args: [caller, project, text]} = context do
     result =
-      World.mcp_tool(context, caller, "t3_thread_launch", %{
+      World.mcp_tool(context, caller, "halc2_thread_launch", %{
         "projectId" => World.project(context, project).id,
         "title" => "Release notes",
         "message" => text
@@ -595,7 +595,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     }
 
     result =
-      World.mcp_tool(context, caller, "t3_thread_launch", %{
+      World.mcp_tool(context, caller, "halc2_thread_launch", %{
         "title" => "With attachment",
         "message" => "look",
         "attachments" => [attachment]
@@ -607,7 +607,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   step "the agent of {string} launches a thread in project {string}",
        %{args: [caller, project]} = context do
     result =
-      World.mcp_tool(context, caller, "t3_thread_launch", %{
+      World.mcp_tool(context, caller, "halc2_thread_launch", %{
         "projectId" => project,
         "title" => "Lost",
         "message" => "say hi"
@@ -644,7 +644,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
 
     for {%{"threadId" => id, "runId" => run_id}, i} <- Enum.with_index(threads, 1) do
       assert run_id != nil
-      state = T3.Streams.Server.state(T3.Streams.ensure(id))
+      state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
       run = StreamState.get(state, "run")[run_id]
       assert run["queuePosition"] == nil
       assert StreamState.get(state, "message")[run["userMessageId"]]["text"] == "say batch #{i}"
@@ -693,7 +693,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     caller = World.thread_id(context, "caller")
 
     batch =
-      for {{_node, id}, {"thread", _row}} <- T3.Shell.rows(),
+      for {{_node, id}, {"thread", _row}} <- HalC2.Shell.rows(),
           String.starts_with?(id, "thread:mcp:#{caller}:"),
           do: id
 
@@ -741,7 +741,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     assert message =~ "20"
     caller = World.thread_id(context, "caller")
 
-    refute Enum.any?(T3.Shell.rows(), fn {{_node, id}, {kind, _row}} ->
+    refute Enum.any?(HalC2.Shell.rows(), fn {{_node, id}, {kind, _row}} ->
              kind == "thread" and String.starts_with?(id, "thread:mcp:#{caller}:")
            end)
 
@@ -784,7 +784,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   step "the first exists, the third was not attempted", context do
     caller = World.thread_id(context, "caller")
     World.await_row("thread:mcp:#{caller}:broken:0", & &1)
-    assert T3.Shell.row(node(), "thread:mcp:#{caller}:broken:2") == nil
+    assert HalC2.Shell.row(node(), "thread:mcp:#{caller}:broken:2") == nil
     context
   end
 
@@ -805,7 +805,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   end
 
   step "the agent of {string} forks itself", %{args: [caller]} = context do
-    result = World.mcp_tool(context, caller, "t3_thread_fork", %{"title" => "Agent fork"})
+    result = World.mcp_tool(context, caller, "halc2_thread_fork", %{"title" => "Agent fork"})
     Map.put(context, :mcp_result, result)
   end
 
@@ -815,7 +815,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     World.await_row(id, & &1)
 
     fork =
-      T3.Streams.Server.state(T3.Streams.ensure(id)) |> StreamState.get("thread") |> Map.get(id)
+      HalC2.Streams.Server.state(HalC2.Streams.ensure(id)) |> StreamState.get("thread") |> Map.get(id)
 
     assert fork["createdBy"] == "agent"
     assert fork["creationSource"] == "mcp"
@@ -831,7 +831,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     id = "th-fork-#{System.unique_integer([:positive])}"
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.fork",
         "commandId" => "cmd-fork-#{id}",
         "sourceThreadId" => World.thread_id(context, parent),
@@ -849,7 +849,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
 
   step "the agent of {string} merges back into {string}", %{args: [caller, parent]} = context do
     result =
-      World.mcp_tool(context, caller, "t3_thread_merge_back", %{
+      World.mcp_tool(context, caller, "halc2_thread_merge_back", %{
         "targetThreadId" => World.thread_id(context, parent)
       })
 
@@ -902,7 +902,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
       World.mcp_tool(
         context,
         caller,
-        "t3_thread_update",
+        "halc2_thread_update",
         Map.merge(arguments, %{"threadId" => World.thread_id(context, thread), "action" => action})
       )
 
@@ -944,7 +944,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     instance = if instance == "its own instance", do: "codex", else: "claudeAgent"
 
     result =
-      World.mcp_tool(context, caller, "t3_thread_configure", %{
+      World.mcp_tool(context, caller, "halc2_thread_configure", %{
         "modelSelection" => %{"instanceId" => instance, "model" => model}
       })
 
@@ -980,7 +980,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   step "the agent of {string} reads the configuration of {string}",
        %{args: [caller, thread]} = context do
     result =
-      World.mcp_tool(context, caller, "t3_thread_configuration", %{
+      World.mcp_tool(context, caller, "halc2_thread_configuration", %{
         "threadId" => World.thread_id(context, thread)
       })
 
@@ -1020,7 +1020,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
 
     if action == "mark_unread" do
       {:ok, _} =
-        T3.Orchestration.dispatch(%{
+        HalC2.Orchestration.dispatch(%{
           "type" => "thread.visit",
           "commandId" => "cmd-visit-#{System.unique_integer([:positive])}",
           "threadId" => id,
@@ -1058,7 +1058,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   step "the agent of {string} snoozes {string} without a time",
        %{args: [caller, thread]} = context do
     result =
-      World.mcp_tool(context, caller, "t3_thread_organize", %{
+      World.mcp_tool(context, caller, "halc2_thread_organize", %{
         "threadId" => World.thread_id(context, thread),
         "action" => "snooze"
       })
@@ -1071,7 +1071,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     id = "th-fork-#{System.unique_integer([:positive])}"
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.fork",
         "commandId" => "cmd-fork-#{id}",
         "sourceThreadId" => World.thread_id(context, thread),
@@ -1086,7 +1086,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     assert %{"status" => "completed"} = World.finish_turn(context, "fork", "write fork.txt")
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.merge_back",
         "commandId" => "cmd-merge-#{id}",
         "sourceThreadId" => id,
@@ -1101,7 +1101,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   step "the agent of {string} lists the transfers of {string}",
        %{args: [caller, thread]} = context do
     result =
-      World.mcp_tool(context, caller, "t3_thread_transfers", %{
+      World.mcp_tool(context, caller, "halc2_thread_transfers", %{
         "threadId" => World.thread_id(context, thread)
       })
 
@@ -1137,7 +1137,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   step "it sends the uploaded attachment to {string} with a message",
        %{args: [thread]} = context do
     result =
-      World.mcp_tool(context, context.uploader, "t3_thread_send_attachments", %{
+      World.mcp_tool(context, context.uploader, "halc2_thread_send_attachments", %{
         "threadId" => World.thread_id(context, thread),
         "message" => "say see attached",
         "attachments" => [context.attachment]
@@ -1153,7 +1153,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     assert message["senderThreadId"] == World.thread_id(context, context.uploader)
     assert [attachment] = message["attachments"]
     assert attachment["name"] == "notes.txt"
-    assert File.exists?(T3.Attachments.path(attachment))
+    assert File.exists?(HalC2.Attachments.path(attachment))
     context
   end
 
@@ -1173,7 +1173,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
       if context[:attachment], do: context, else: prepare_upload(context, caller) |> upload()
 
     result =
-      World.mcp_tool(context, caller, "t3_thread_send_attachments", %{
+      World.mcp_tool(context, caller, "halc2_thread_send_attachments", %{
         "threadId" => World.thread_id(context, thread),
         "message" => "say see attached",
         "attachments" => [context.attachment]
@@ -1201,7 +1201,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     assert [_] = Path.wildcard(Path.join(attachments_dir(), id <> ".*"))
 
     assert {:ok, %{}} =
-             World.mcp_tool(context, context.uploader, "t3_attachment_discard", %{
+             World.mcp_tool(context, context.uploader, "halc2_attachment_discard", %{
                "attachmentId" => id
              })
 
@@ -1234,7 +1234,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     assert {:ok, %{"providers" => providers}} = context.mcp_result
 
     assert Enum.map(providers, & &1["providerInstanceId"]) ==
-             Enum.map(T3.Environment.providers(), & &1["instanceId"])
+             Enum.map(HalC2.Environment.providers(), & &1["instanceId"])
 
     for provider <- providers do
       assert is_boolean(provider["canRunChildTask"])
@@ -1270,7 +1270,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
       World.mcp_tool(
         context,
         caller,
-        "t3_thread_send",
+        "halc2_thread_send",
         Map.put(arguments, "threadId", World.thread_id(context, thread))
       )
 
@@ -1298,7 +1298,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     World.mcp_tool(
       context,
       caller,
-      "t3_thread_organize",
+      "halc2_thread_organize",
       Map.merge(arguments, %{"threadId" => World.thread_id(context, thread), "action" => action})
     )
   end
@@ -1327,7 +1327,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
 
   defp link(context, caller, thread) do
     assert {:ok, _} =
-             World.mcp_tool(context, caller, "t3_thread_update", %{
+             World.mcp_tool(context, caller, "halc2_thread_update", %{
                "threadId" => World.thread_id(context, thread),
                "action" => "link_pull_request",
                "pullRequest" => pull_request()
@@ -1339,8 +1339,8 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   defp use_fake_text(context) do
     log = Path.join(context.node.home, "text-calls.jsonl")
     System.put_env("FAKE_TEXT_LOG", log)
-    previous = Application.get_env(:t3, :text_codex_command)
-    Application.put_env(:t3, :text_codex_command, @fake_text)
+    previous = Application.get_env(:hal_c2, :text_codex_command)
+    Application.put_env(:hal_c2, :text_codex_command, @fake_text)
 
     ExUnit.Callbacks.on_exit(fn ->
       System.delete_env("FAKE_TEXT_LOG")
@@ -1360,7 +1360,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
   # OpenCode (the fake ACP agent) asks for a sign-in that never happened, so the
   # provider list reports it signed out.
   defp signed_out_agent(context) do
-    {settings, version} = T3.Settings.get()
+    {settings, version} = HalC2.Settings.get()
 
     instances = %{
       "opencode" => %{
@@ -1372,25 +1372,25 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
       }
     }
 
-    {:ok, _} = T3.Settings.put(Map.put(settings, "providerInstances", instances), version)
-    :ok = T3.Settings.watch(self())
-    T3.Acp.forget("opencode")
-    T3.Acp.entry("opencode")
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "providerInstances", instances), version)
+    :ok = HalC2.Settings.watch(self())
+    HalC2.Acp.forget("opencode")
+    HalC2.Acp.entry("opencode")
     await_signed_out("opencode")
   end
 
   defp await_signed_out(instance) do
-    if get_in(T3.Acp.entry(instance), ["auth", "status"]) == "unauthenticated" do
+    if get_in(HalC2.Acp.entry(instance), ["auth", "status"]) == "unauthenticated" do
       :ok
     else
-      assert_receive {:t3_providers_changed, _}, 5_000
+      assert_receive {:halc2_providers_changed, _}, 5_000
       await_signed_out(instance)
     end
   end
 
   defp prepare_upload(context, caller) do
     result =
-      World.mcp_tool(context, caller, "t3_attachment_prepare_upload", %{
+      World.mcp_tool(context, caller, "halc2_attachment_prepare_upload", %{
         "upload" => %{
           "type" => "file",
           "name" => "notes.txt",
@@ -1407,7 +1407,7 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
       context.mcp_result
 
-    :ok = T3.Attachments.store(token, "hello")
+    :ok = HalC2.Attachments.store(token, "hello")
 
     Map.put(context, :attachment, %{
       "type" => "file",
@@ -1418,10 +1418,10 @@ defmodule T3.Steps.Orchestration.McpThreadTools do
     })
   end
 
-  defp attachments_dir, do: Path.join(Application.fetch_env!(:t3, :home), "attachments")
+  defp attachments_dir, do: Path.join(Application.fetch_env!(:hal_c2, :home), "attachments")
 
   # Puts an app env key back as it was; one that was unset stays unset (a nil value
   # would override `Application.get_env/3` defaults in later scenarios).
-  defp restore_app_env(key, nil), do: Application.delete_env(:t3, key)
-  defp restore_app_env(key, value), do: Application.put_env(:t3, key, value)
+  defp restore_app_env(key, nil), do: Application.delete_env(:hal_c2, key)
+  defp restore_app_env(key, value), do: Application.put_env(:hal_c2, key, value)
 end

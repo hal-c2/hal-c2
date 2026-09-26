@@ -1,10 +1,10 @@
 # Sources:
 #   docs/user/providers-claude.md
 #   docs/internals/providers.md (Claude homes, update ownership)
-#   apps/server-ex/lib/t3/claude/provider.ex, apps/server-ex/lib/t3/claude/thread_runtime.ex, apps/server-ex/lib/t3/claude/session.ex
-#   apps/server-ex/lib/t3/provider_updates.ex (claudeAgent advisory, claude update)
-#   apps/server-ex/lib/t3/provider_usage_limits/claude.ex (get_usage)
-#   apps/server-ex/lib/t3/text_generation.ex (claude -p)
+#   apps/server-ex/lib/hal_c2/claude/provider.ex, apps/server-ex/lib/hal_c2/claude/thread_runtime.ex, apps/server-ex/lib/hal_c2/claude/session.ex
+#   apps/server-ex/lib/hal_c2/provider_updates.ex (claudeAgent advisory, claude update)
+#   apps/server-ex/lib/hal_c2/provider_usage_limits/claude.ex (get_usage)
+#   apps/server-ex/lib/hal_c2/text_generation.ex (claude -p)
 #   apps/server/src/provider/Layers/ClaudeProvider.ts, apps/server/src/provider/ClaudeModelCatalog.ts, apps/server/src/provider/ClaudeModelManifest.ts
 #   apps/server/src/provider/Drivers/ClaudeDriver.ts, apps/server/src/provider/Drivers/ClaudeHome.ts
 #   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts
@@ -81,15 +81,15 @@ Feature: Claude
     Then the plan is shown as a proposed plan
     And the user can implement it
 
-  Scenario: Claude's questions are asked in T3 Code
+  Scenario: Claude's questions are asked in HAL-C2
     When Claude asks the user a multiple choice question
     Then the question is shown with its choices
     And the user's answer is sent back to Claude
 
-  Scenario: Claude can use the T3 Code tools
-    Given the project allows the T3 Code tools
+  Scenario: Claude can use the HAL-C2 tools
+    Given the project allows the HAL-C2 tools
     When a Claude turn starts
-    Then Claude can call the T3 Code tools for this thread
+    Then Claude can call the HAL-C2 tools for this thread
 
   Scenario: Reverting a Claude turn restores the conversation to that point
     Given a Claude thread with three turns

@@ -30,7 +30,7 @@ Feature: Customising the phone UI with a QML file
 
   @backlog @mobile
   Scenario: The user opens a QML file shared from another app
-    When the user shares "compact-list.qml" to T3 Code from another app
+    When the user shares "compact-list.qml" to HAL-C2 from another app
     Then the user is offered to preview it as a UI customisation
 
   @backlog @mobile

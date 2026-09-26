@@ -1,11 +1,11 @@
 # Sources:
 #   packages/contracts/src/rpc.ts (WS_METHODS, every Rpc.make)
 #   packages/contracts/src/orchestrationV2.ts (ORCHESTRATION_V2_WS_METHODS)
-#   apps/server-ex/test/t3/node_parity_test.exs (@methods: status and how each method is reached)
-#   apps/server-ex/lib/t3/rpc.ex, apps/server-ex/lib/t3/orchestration.ex, apps/server-ex/lib/t3/pull_requests.ex
-#   apps/server-ex/lib/t3/web/protocol.ex (shapes)
+#   apps/server-ex/test/hal_c2/node_parity_test.exs (@methods: status and how each method is reached)
+#   apps/server-ex/lib/hal_c2/rpc.ex, apps/server-ex/lib/hal_c2/orchestration.ex, apps/server-ex/lib/hal_c2/pull_requests.ex
+#   apps/server-ex/lib/hal_c2/web/protocol.ex (shapes)
 #   packages/client-runtime/src/v3/clusterSocket.ts (protocol 3 client adapter)
-#   apps/server-ex/test/t3/features_backlog_test.exs (provider-install, t3-connect-relay-client)
+#   apps/server-ex/test/hal_c2/features_backlog_test.exs (provider-install, hal-c2-connect-relay-client)
 #   Counts: 168 contract methods; 159 aligned, 6 backlog, 3 dropped.
 #   WS_METHODS also names projects.add, projects.list and projects.remove with no Rpc.make
 #   behind them; neither server routes them, so they are recorded as dropped names.
@@ -28,8 +28,8 @@ Feature: RPC parity with the TypeScript server
 
     Examples: 159 aligned methods
       | method                                   | domain            | via                                                                       |
-      | server.upsertKeybinding                  | server            | rpc as t3.upsertKeybinding                                                |
-      | server.removeKeybinding                  | server            | rpc as t3.removeKeybinding                                                |
+      | server.upsertKeybinding                  | server            | rpc as halc2.upsertKeybinding                                                |
+      | server.removeKeybinding                  | server            | rpc as halc2.removeKeybinding                                                |
       | server.probe                             | server            | client adapter: answered by the client: a connected socket is a live node |
       | server.getConfig                         | server            | shape config                                                              |
       | server.refreshProviders                  | server            | rpc                                                                       |
@@ -44,7 +44,7 @@ Feature: RPC parity with the TypeScript server
       | server.updateServer                      | server            | rpc                                                                       |
       | server.updateServerWithProgress          | server            | shape serverUpdate                                                        |
       | server.getSettings                       | server            | rpc                                                                       |
-      | server.updateSettings                    | server            | rpc as t3.writeSettings                                                   |
+      | server.updateSettings                    | server            | rpc as halc2.writeSettings                                                   |
       | server.discoverSourceControl             | server            | rpc                                                                       |
       | server.searchAcpRegistry                 | server            | rpc                                                                       |
       | server.prepareAcpRegistryAgent           | server            | rpc                                                                       |
@@ -170,7 +170,7 @@ Feature: RPC parity with the TypeScript server
       | orchestration.getFullThreadDiff          | orchestration     | rpc                                                                       |
       | orchestration.searchThreads              | orchestration     | rpc                                                                       |
       | orchestration.getArchivedShellSnapshot   | orchestration     | rpc                                                                       |
-      | orchestration.getThreadProjection        | orchestration     | rpc as t3.threadRows                                                      |
+      | orchestration.getThreadProjection        | orchestration     | rpc as halc2.threadRows                                                      |
       | orchestration.getWorkflowScript          | orchestration     | rpc                                                                       |
       | orchestration.launchThread               | orchestration     | rpc                                                                       |
       | orchestration.subscribeShell             | orchestration     | shape shell                                                               |
@@ -199,8 +199,8 @@ Feature: RPC parity with the TypeScript server
       | provider.install.cancel    | provider | provider-install        |
       | provider.install.subscribe | provider | provider-install        |
       | provider.install.remove    | provider | provider-install        |
-      | cloud.getRelayClientStatus | cloud    | t3-connect-relay-client |
-      | cloud.installRelayClient   | cloud    | t3-connect-relay-client |
+      | cloud.getRelayClientStatus | cloud    | hal-c2-connect-relay-client |
+      | cloud.installRelayClient   | cloud    | hal-c2-connect-relay-client |
 
   # The node refuses these as unserved methods: desktop update handoff is replaced by hot
   # upgrades, the archived-shell subscription has no subscriber, and terminal events arrive
@@ -237,11 +237,11 @@ Feature: RPC parity with the TypeScript server
 
     Examples: node-only methods behind aligned contract methods
       | method              | result                                                        |
-      | t3.readSettings     | the settings document with its version                        |
-      | t3.writeSettings    | the new version, or a stale-settings error for an old version |
-      | t3.threadRows       | one thread's stream rows with their offset and time           |
-      | t3.upsertKeybinding | the keybindings after the change                              |
-      | t3.removeKeybinding | the keybindings after the removal                             |
+      | halc2.readSettings     | the settings document with its version                        |
+      | halc2.writeSettings    | the new version, or a stale-settings error for an old version |
+      | halc2.threadRows       | one thread's stream rows with their offset and time           |
+      | halc2.upsertKeybinding | the keybindings after the change                              |
+      | halc2.removeKeybinding | the keybindings after the removal                             |
 
   @node
   Scenario: A method outside the contract is refused

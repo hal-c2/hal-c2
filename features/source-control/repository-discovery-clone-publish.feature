@@ -2,10 +2,10 @@
 #   docs/user/source-control.md (providers, CLI and auth setup, clone via Add Project, Publish Repository)
 #   packages/contracts/src/sourceControl.ts (SourceControlDiscoveryResult, SourceControlRepositoryLookupInput, SourceControlCloneRepositoryInput, SourceControlPublishRepositoryInput)
 #   packages/contracts/src/rpc.ts (server.discoverSourceControl, sourceControl.lookupRepository, sourceControl.cloneRepository, sourceControl.publishRepository, projectClone.start, projectClone.retry, projectClone.cancel, subscribeProjectClones)
-#   apps/server-ex/lib/t3/source_control.ex
-#   apps/server-ex/lib/t3/project_clones.ex
+#   apps/server-ex/lib/hal_c2/source_control.ex
+#   apps/server-ex/lib/hal_c2/project_clones.ex
 #   apps/web/src/components/GitActionsControl.tsx (publish repository)
-#   apps/desktop-qt/qml/T3/Bricks/GitActions.qml (Publish repository)
+#   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (Publish repository)
 #   apps/tui/src/features.backlog.test.ts (repository-setup-publishing)
 
 Feature: Finding hosting tools, cloning and publishing repositories

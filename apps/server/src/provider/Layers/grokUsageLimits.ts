@@ -1,5 +1,5 @@
 import * as NodeOS from "node:os";
-import type { ServerProviderUsageWindow } from "@t3tools/contracts";
+import type { ServerProviderUsageWindow } from "@hal-c2/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -62,7 +62,7 @@ export const readGrokUsageLimits = Effect.fn("readGrokUsageLimits")(function* (
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   return yield* Effect.gen(function* () {
-    // T3's ACP adapter explicitly selects API-key auth when this variable is set.
+    // HAL-C2's ACP adapter explicitly selects API-key auth when this variable is set.
     if (environment.XAI_API_KEY?.trim()) {
       return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     }

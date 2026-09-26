@@ -2,8 +2,8 @@
 #   apps/web/src/components/settings/IntegrationsSettings.tsx
 #   apps/web/src/components/settings/IntegrationsSettings.logic.test.ts
 #   docs/user/devices.md (Settings → Integrations → Devices, device tool updates, auto-show floating preview)
-#   apps/server-ex/lib/t3/devices.ex (device.configure, device.list updateTool and inspectOnly)
-#   apps/server-ex/lib/t3/rpc.ex (device.configure, device.list)
+#   apps/server-ex/lib/hal_c2/devices.ex (device.configure, device.list updateTool and inspectOnly)
+#   apps/server-ex/lib/hal_c2/rpc.ex (device.configure, device.list)
 #   Ownership: this file is the only settings file for "Open links in", browser profiles and
 #   auto-show floating preview (browser-import.feature covers importing cookies into a profile).
 #   Terminal font and theme belong to the Appearance page in navigation/appearance.feature
@@ -43,9 +43,9 @@ Feature: Integrations settings
         | mouse presses to be shown            | highlight mouse presses and held buttons     |
 
     @backlog @desktop
-    Scenario: Links can open in T3 Code or in the default browser
-      When the user chooses to open links in T3 Code
-      Then links in the chat and terminal open in T3 Code's browser
+    Scenario: Links can open in HAL-C2 or in the default browser
+      When the user chooses to open links in HAL-C2
+      Then links in the chat and terminal open in HAL-C2's browser
       When the user chooses the default browser
       Then links open in the default browser
 
@@ -56,7 +56,7 @@ Feature: Integrations settings
 
     @backlog @desktop
     Scenario: Browser defaults are unavailable in a web browser
-      Given the user is using T3 Code in a web browser
+      Given the user is using HAL-C2 in a web browser
       Then the browser defaults cannot be changed
       And the user is told they are only available in the desktop app
 

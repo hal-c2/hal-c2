@@ -3,12 +3,12 @@ import {
   scopeProjectRef,
   scopeThreadRef,
   scopedThreadKey,
-} from "@t3tools/client-runtime/environment";
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
-import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
-import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
-import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
+} from "@hal-c2/client-runtime/environment";
+import { settlePromise, squashAtomCommandFailure } from "@hal-c2/client-runtime/state/runtime";
+import { canSnooze, threadWokeAt } from "@hal-c2/client-runtime/state/thread-settled";
+import { threadRuntimeCanArchive } from "@hal-c2/client-runtime/state/models";
+import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@hal-c2/contracts";
+import { resolveWorktreeCleanup } from "@hal-c2/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";

@@ -1,4 +1,4 @@
-import deviceStreamScript from "@t3tools/mobile-device-stream";
+import deviceStreamScript from "@hal-c2/mobile-device-stream";
 import {
   useEffect,
   useEffectEvent,
@@ -11,7 +11,7 @@ import {
 } from "react";
 import { ActivityIndicator, Platform, Pressable, View } from "react-native";
 import { WebView } from "react-native-webview";
-import type { DeviceStreamStatus } from "@t3tools/client-runtime/device/stream";
+import type { DeviceStreamStatus } from "@hal-c2/client-runtime/device/stream";
 
 import { AppText } from "../../components/AppText";
 
@@ -99,7 +99,7 @@ function DeviceStreamDocumentView({
     if (!active.current || failed.current) return;
     failed.current = true;
     void onInputConnected(false);
-    webView.current?.injectJavaScript("window.T3DeviceStream?.stop(); true;");
+    webView.current?.injectJavaScript("window.HalC2DeviceStream?.stop(); true;");
     setError(message);
     setStatus("error");
   };
@@ -122,7 +122,7 @@ function DeviceStreamDocumentView({
   );
   const command = (button: keyof DeviceStreamRef) => {
     webView.current?.injectJavaScript(
-      `window.T3DeviceStream?.command(${JSON.stringify(button)}); true;`,
+      `window.HalC2DeviceStream?.command(${JSON.stringify(button)}); true;`,
     );
   };
   useImperativeHandle(ref, () => ({
@@ -138,7 +138,7 @@ function DeviceStreamDocumentView({
     const view = webView.current;
     return () => {
       active.current = false;
-      view?.injectJavaScript("window.T3DeviceStream?.stop(); true;");
+      view?.injectJavaScript("window.HalC2DeviceStream?.stop(); true;");
     };
   }, []);
   const processTerminated = () => {

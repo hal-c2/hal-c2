@@ -4,7 +4,7 @@ import { MockTreeSitterClient } from "@opentui/core/testing";
 import * as React from "react";
 import { testRender } from "@opentui/react/test-utils";
 
-import type { OrchestrationThread } from "@t3tools/contracts";
+import type { OrchestrationThread } from "@hal-c2/contracts";
 import {
   MessagesTimeline,
   resolveTimelineWindow,

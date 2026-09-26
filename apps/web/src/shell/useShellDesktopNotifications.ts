@@ -1,4 +1,4 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { EnvironmentThreadShell } from "@hal-c2/client-runtime/state/models";
 import { useEffect, useRef } from "react";
 
 import { createDesktopNotificationTracker } from "./shellDesktopNotifications";
@@ -10,7 +10,7 @@ export function useShellDesktopNotifications(threads: ReadonlyArray<EnvironmentT
     tracker.current ??= createDesktopNotificationTracker();
     const events = tracker.current(threads);
     if (events.length > 0) {
-      void window.t3Shell?.publish("desktopNotifications", events);
+      void window.halc2Shell?.publish("desktopNotifications", events);
     }
   }, [threads]);
 }

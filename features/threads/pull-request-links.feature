@@ -3,8 +3,8 @@
 #   apps/web/src/hooks/usePullRequestLinking.ts
 #   apps/web/src/hooks/useSupportsMultiplePullRequests.ts
 #   packages/contracts/src/orchestrationV2.ts (thread.pull-request.link, thread.pull-request.unlink, thread.pull-request-link.sync, thread.pull-request.sync, thread.pull-request-synced)
-#   apps/server-ex/lib/t3/orchestration.ex (pull-request link, unlink, sync)
-#   apps/server-ex/lib/t3/pull_requests/discovery.ex
+#   apps/server-ex/lib/hal_c2/orchestration.ex (pull-request link, unlink, sync)
+#   apps/server-ex/lib/hal_c2/pull_requests/discovery.ex
 
 Feature: Linking pull requests to threads
   A thread follows the pull request for its branch on its own. The user or the agent can

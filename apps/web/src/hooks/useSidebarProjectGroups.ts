@@ -1,4 +1,4 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { EnvironmentThreadShell } from "@hal-c2/client-runtime/state/models";
 import { useMemo } from "react";
 
 import {

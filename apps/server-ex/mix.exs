@@ -1,11 +1,11 @@
-defmodule T3.MixProject do
+defmodule HalC2.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :t3,
-      # Nodes carry the T3 version, so clients compare them like any server.
-      version: t3_version(),
+      app: :hal_c2,
+      # Nodes carry the HAL-C2 version, so clients compare them like any server.
+      version: halc2_version(),
       elixir: "~> 1.20",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: if(Mix.env() == :test, do: ["lib", "test/support"], else: ["lib"]),
@@ -14,7 +14,7 @@ defmodule T3.MixProject do
       aliases: [features: &features/1],
       deps: deps(),
       releases: [
-        t3: [
+        hal_c2: [
           include_executables_for: [:unix],
           strip_beams: true,
           steps: [:assemble, &stage_cursor_acp/1, &write_upgrade_manifest/1]
@@ -28,7 +28,7 @@ defmodule T3.MixProject do
   def application do
     [
       extra_applications: [:logger, :inets, :ssl, :public_key],
-      mod: {T3.Application, []}
+      mod: {HalC2.Application, []}
     ]
   end
 
@@ -54,7 +54,7 @@ defmodule T3.MixProject do
   defp stage_cursor_acp(release) do
     root = Path.expand("../..", __DIR__)
     package = Path.join(root, "packages/cursor-acp")
-    target = Path.join([release.path, "lib", "t3-#{release.version}", "priv", "cursor-acp"])
+    target = Path.join([release.path, "lib", "hal-c2-#{release.version}", "priv", "cursor-acp"])
     File.rm_rf!(target)
     File.mkdir_p!(target)
 
@@ -80,15 +80,15 @@ defmodule T3.MixProject do
   # and default to every file; see test/support/features.ex.
   defp features(args) do
     {globs, rest} = Enum.split_while(args, &(&1 != "--"))
-    if globs != [], do: System.put_env("T3_FEATURES", Enum.join(globs, ","))
-    System.put_env("T3_FEATURES", System.get_env("T3_FEATURES") || "**/*.feature")
+    if globs != [], do: System.put_env("HALC2_FEATURES", Enum.join(globs, ","))
+    System.put_env("HALC2_FEATURES", System.get_env("HALC2_FEATURES") || "**/*.feature")
     Mix.env(:test)
     Mix.Task.run("test", ["--only", "cucumber" | Enum.drop(rest, 1)])
   end
 
-  # `T3_VERSION` names a build apart from the package's release (nightlies, local builds).
-  defp t3_version do
-    System.get_env("T3_VERSION") || package_version()
+  # `HALC2_NODE_VERSION` names a build apart from the package's release (nightlies, local builds).
+  defp halc2_version do
+    System.get_env("HALC2_NODE_VERSION") || package_version()
   end
 
   defp package_version do
@@ -99,7 +99,7 @@ defmodule T3.MixProject do
   end
 
   # What a running node compares with a new release to decide whether it can load
-  # the new code in place (`T3.Upgrade`): the runtime, applications, native
+  # the new code in place (`HalC2.Upgrade`): the runtime, applications, native
   # libraries and configuration, each of which only a restart can change.
   defp write_upgrade_manifest(release) do
     lib = Path.join(release.path, "lib")

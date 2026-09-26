@@ -7,7 +7,7 @@ import remarkGfm from "remark-gfm";
 import type { Plugin } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
-import { remarkCodexDirectives } from "@t3tools/client-runtime/codex-markdown-directives";
+import { remarkCodexDirectives } from "@hal-c2/client-runtime/codex-markdown-directives";
 import { remarkGithubAlerts } from "./markdown-github-alerts";
 import { createIncrementalMarkdownPlugin } from "./markdown-incremental";
 import { remarkNormalizeListItemIndentation } from "./markdown-list-indentation";
@@ -59,7 +59,9 @@ describe("incremental Markdown parsing", () => {
     const next = source + " more";
     expect(render(next, incremental, parsedSources)).toEqual(render(next));
     expect(parsedSources).not.toContain(next);
-    expect(parsedSources.some((text) => text.startsWith("t3-markdown-inline-prefix:"))).toBe(true);
+    expect(parsedSources.some((text) => text.startsWith("hal-c2-markdown-inline-prefix:"))).toBe(
+      true,
+    );
   });
 
   it.each([

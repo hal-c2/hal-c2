@@ -2,7 +2,7 @@ import {
   EnvironmentId,
   WS_METHODS,
   type SourceControlPublishRepositoryResult,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -35,12 +35,12 @@ const TARGET = new PrimaryConnectionTarget({
 const PUBLISH_RESULT: SourceControlPublishRepositoryResult = {
   repository: {
     provider: "github",
-    nameWithOwner: "t3tools/t3code",
-    url: "https://github.com/t3tools/t3code",
-    sshUrl: "git@github.com:t3tools/t3code.git",
+    nameWithOwner: "hal-c2/hal-c2",
+    url: "https://github.com/hal-c2/hal-c2",
+    sshUrl: "git@github.com:hal-c2/hal-c2.git",
   },
   remoteName: "origin",
-  remoteUrl: "git@github.com:t3tools/t3code.git",
+  remoteUrl: "git@github.com:hal-c2/hal-c2.git",
   branch: "main",
   upstreamBranch: "origin/main",
   status: "pushed",
@@ -139,7 +139,7 @@ describe("source control environment atoms", () => {
             input: {
               cwd: "/repo",
               provider: "github",
-              repository: "t3tools/t3code",
+              repository: "hal-c2/hal-c2",
               visibility: "private",
             },
           }),
@@ -155,7 +155,7 @@ describe("source control environment atoms", () => {
             input: {
               cwd: "/repo",
               provider: "github",
-              repository: "t3tools/t3code",
+              repository: "hal-c2/hal-c2",
               visibility: "private",
             },
           }),

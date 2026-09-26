@@ -1,4 +1,4 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey } from "@hal-c2/client-runtime/environment";
 import type {
   ModelSelection,
   ProviderDriverKind,
@@ -8,9 +8,9 @@ import type {
   RuntimeMode,
   ScopedThreadRef,
   ServerProviderModel,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import { useMemo, useState } from "react";
-import type { ShellComposerState } from "@t3tools/contracts/shell";
+import type { ShellComposerState } from "@hal-c2/contracts/shell";
 
 import { useShellActions } from "./useShellActions";
 import { useShellPublish } from "./useShellPublish";

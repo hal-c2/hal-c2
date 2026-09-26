@@ -1,9 +1,9 @@
-defmodule T3.Steps.Terminal.Io do
+defmodule HalC2.Steps.Terminal.Io do
   @moduledoc "Steps for `features/terminal/io.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.{Terminal, World}
+  alias HalC2.Test.Node.{Terminal, World}
 
   @clients ["default", "second"]
 
@@ -270,7 +270,7 @@ defmodule T3.Steps.Terminal.Io do
     %{"threadId" => thread, "terminalId" => terminal} = context.terminal
 
     assert Enum.any?(
-             T3.Terminal.Hub.summaries(),
+             HalC2.Terminal.Hub.summaries(),
              &match?(%{"threadId" => ^thread, "terminalId" => ^terminal, "label" => ^label}, &1)
            )
 

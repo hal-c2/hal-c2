@@ -17,8 +17,8 @@ import type {
   ProjectReadFileResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
-} from "@t3tools/contracts";
-import { chatImageMimeTypeForPath, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
+} from "@hal-c2/contracts";
+import { chatImageMimeTypeForPath, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@hal-c2/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -131,7 +131,7 @@ export class WorkspaceFileSystem extends Context.Service<
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
   }
->()("t3/workspace/WorkspaceFileSystem") {}
+>()("hal-c2/workspace/WorkspaceFileSystem") {}
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {

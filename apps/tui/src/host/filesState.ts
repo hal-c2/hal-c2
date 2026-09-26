@@ -2,7 +2,7 @@
 // the conversation with the workspace as a tree, folders collapsed, and opens
 // a file in the same pane. The listing and the open file live here; the
 // FilesPanel and FileViewer bricks only paint `files` and dispatch `files.*`.
-import type { ProjectEntry } from "@t3tools/contracts";
+import type { ProjectEntry } from "@hal-c2/contracts";
 
 import type { TuiClient } from "../connection.ts";
 import { filetypeForPath } from "../diffSplit.ts";

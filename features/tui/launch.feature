@@ -1,51 +1,51 @@
 # Sources:
-#   apps/server/src/cli/tui.ts (t3 tui launcher, bearer session, Bun spawn, mintSocketUrl IPC)
+#   apps/server/src/cli/tui.ts (hal-c2 tui launcher, bearer session, Bun spawn, mintSocketUrl IPC)
 #   apps/tui/src/index.tsx (renderer config, signals, crash handling, colour capability log)
 #   apps/tui/src/terminalStartup.ts (tmux viewport preparation)
 #   apps/tui/src/connection.ts (initial "Connecting…" status)
 #   apps/tui/src/features.backlog.test.ts (environment-connections, environment-access-management)
-#   apps/server-ex/test/t3/features_backlog_test.exs (TUI launch against the Elixir node)
+#   apps/server-ex/test/hal_c2/features_backlog_test.exs (TUI launch against the Elixir node)
 #   Shared domain: connections/ owns pairing and remote access; this file holds the terminal twist.
 
 Feature: Launching and leaving the terminal client
-  The terminal client is started from the command line next to a running T3 Code server.
+  The terminal client is started from the command line next to a running HAL-C2 server.
   It takes over the terminal while open and gives it back intact when it leaves.
 
   @tui
   Scenario: The terminal client opens against the running local server
-    Given a T3 Code server is running on this machine
-    When the user runs "t3 tui"
+    Given a HAL-C2 server is running on this machine
+    When the user runs "hal-c2 tui"
     Then the terminal client opens in the alternate screen
     And the status line says "Connecting…" until the first snapshot arrives
 
   @tui
   Scenario: Launching without a running server explains how to start one
-    Given no T3 Code server is running on this machine
-    When the user runs "t3 tui"
-    Then the command fails with "No running T3 Code server was found. Start one with `t3 serve` (or `t3 start`) first."
+    Given no HAL-C2 server is running on this machine
+    When the user runs "hal-c2 tui"
+    Then the command fails with "No running HAL-C2 server was found. Start one with `hal-c2 serve` (or `hal-c2 start`) first."
 
   @tui
   Scenario: Launching against a server that has since stopped says so
-    Given the recorded T3 Code server is no longer running
-    When the user runs "t3 tui"
+    Given the recorded HAL-C2 server is no longer running
+    When the user runs "hal-c2 tui"
     Then the command fails and says the recorded server is no longer running
 
   @tui
   Scenario: Launching without Bun points the user at bun.sh
     Given Bun is not installed
-    When the user runs "t3 tui"
+    When the user runs "hal-c2 tui"
     Then the command fails with a hint to install Bun from bun.sh
 
   @tui
   Scenario: The user chooses which Bun runs the terminal client
-    Given the environment variable "T3_TUI_BUN" names a Bun binary
-    When the user runs "t3 tui"
+    Given the environment variable "HALC2_TUI_BUN" names a Bun binary
+    When the user runs "hal-c2 tui"
     Then the terminal client runs on that Bun binary
 
   @tui
   Scenario: The terminal client gets its own revocable session
-    When the user runs "t3 tui"
-    Then the server lists a client session labelled "T3 Code TUI"
+    When the user runs "hal-c2 tui"
+    Then the server lists a client session labelled "HAL-C2 TUI"
     And the session expires after 30 days if never closed
 
   @tui
@@ -57,7 +57,7 @@ Feature: Launching and leaving the terminal client
   Scenario Outline: Known truecolor terminals get full colour even when they do not advertise it
     Given the user's terminal is <terminal>
     And the terminal does not set COLORTERM
-    When the user runs "t3 tui"
+    When the user runs "hal-c2 tui"
     Then the terminal client renders in truecolor
 
     Examples:
@@ -75,26 +75,26 @@ Feature: Launching and leaving the terminal client
   @tui
   Scenario: A colour setting the shell already made is left alone
     Given the shell already set COLORTERM
-    When the user runs "t3 tui"
+    When the user runs "hal-c2 tui"
     Then the terminal client keeps the shell's COLORTERM
 
   @tui
   Scenario: An unrecognised terminal is not promised truecolor
     Given the user's terminal is not one the client recognises
     And the terminal does not set COLORTERM
-    When the user runs "t3 tui"
+    When the user runs "hal-c2 tui"
     Then the client does not claim truecolor support
 
   @tui
   Scenario: Starting outside tmux never calls tmux
     Given the user is not inside tmux
-    When the user runs "t3 tui"
+    When the user runs "hal-c2 tui"
     Then the client does not run any tmux command
 
   @tui
   Scenario: Starting inside a tmux pane in copy mode leaves copy mode first
     Given the user is inside a tmux pane that is in copy mode
-    When the user runs "t3 tui"
+    When the user runs "hal-c2 tui"
     Then the pane leaves copy mode before the terminal client draws
 
   @tui
@@ -130,7 +130,7 @@ Feature: Launching and leaving the terminal client
   Scenario: Leaving revokes the client's session on the server
     Given the terminal client is open
     When the user leaves the terminal client
-    Then the server no longer lists the "T3 Code TUI" session
+    Then the server no longer lists the "HAL-C2 TUI" session
 
   @tui
   Scenario: A crash still gives the terminal back
@@ -146,19 +146,19 @@ Feature: Launching and leaving the terminal client
     Then the running turns keep going on the server
     And re-attaching later opens the same thread with the same focus
 
-  # `t3 tui` finds servers through the Node server's runtime file; the Elixir node
+  # `hal-c2 tui` finds servers through the Node server's runtime file; the Elixir node
   # does not write one yet.
   @backlog @tui
   Scenario: The terminal client launches against an Elixir node
     Given an Elixir node is running on this machine
-    When the user runs "t3 tui"
+    When the user runs "hal-c2 tui"
     Then the terminal client connects to that node
 
   # The TUI reaches only the server that launched it: the host has no environment
   # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: The user pairs the terminal client with a remote environment
-    Given a pairing link from a remote T3 Code environment
+    Given a pairing link from a remote HAL-C2 environment
     When the user starts the terminal client with that pairing link
     Then the client connects to the remote environment
     And later launches reuse the paired credential

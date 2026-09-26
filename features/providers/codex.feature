@@ -1,11 +1,11 @@
 # Sources:
 #   docs/user/providers-codex.md
 #   docs/internals/providers.md (Codex async questions, shadow homes, update ownership)
-#   apps/server-ex/lib/t3/codex/provider.ex, apps/server-ex/lib/t3/codex/thread_runtime.ex
-#   apps/server-ex/lib/t3/orchestration.ex (provider.uploadFeedback)
-#   apps/server-ex/lib/t3/provider_updates.ex (@openai/codex advisory)
-#   apps/server-ex/lib/t3/provider_usage_limits/codex.ex (account/rateLimits/read, reset credits)
-#   apps/server-ex/lib/t3/text_generation.ex (codex exec)
+#   apps/server-ex/lib/hal_c2/codex/provider.ex, apps/server-ex/lib/hal_c2/codex/thread_runtime.ex
+#   apps/server-ex/lib/hal_c2/orchestration.ex (provider.uploadFeedback)
+#   apps/server-ex/lib/hal_c2/provider_updates.ex (@openai/codex advisory)
+#   apps/server-ex/lib/hal_c2/provider_usage_limits/codex.ex (account/rateLimits/read, reset credits)
+#   apps/server-ex/lib/hal_c2/text_generation.ex (codex exec)
 #   apps/server/src/provider/Layers/CodexProvider.ts, apps/server/src/provider/Layers/CodexSessionRuntime.ts
 #   apps/server/src/provider/Drivers/CodexDriver.ts, apps/server/src/provider/Drivers/CodexHomeLayout.ts
 #   apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
@@ -15,7 +15,7 @@
 @plugin-codex @node
 Feature: Codex
   Codex runs as a bundled provider plugin through the codex app-server protocol. The
-  node reads Codex's own model list, maps T3 Code's access modes to Codex's approval
+  node reads Codex's own model list, maps HAL-C2's access modes to Codex's approval
   and sandbox policies, and keeps Codex's login where Codex keeps it.
 
   Background:
@@ -46,7 +46,7 @@ Feature: Codex
     When the user updates Codex
     Then Codex is updated through npm and the new version is shown
 
-  Scenario Outline: Codex approvals are answered from T3 Code
+  Scenario Outline: Codex approvals are answered from HAL-C2
     Given the thread runs Codex with approval required
     When Codex asks to <action>
     Then the user is asked to approve it
@@ -70,7 +70,7 @@ Feature: Codex
       | decline               | skips the command and continues             |
       | cancel                | stops the turn                              |
 
-  Scenario: Codex questions are asked in T3 Code
+  Scenario: Codex questions are asked in HAL-C2
     When Codex asks the user a question with choices
     Then the question is shown with its choices
     And the user's answer is sent back to Codex
@@ -91,10 +91,10 @@ Feature: Codex
     Then the task list shows each step and its status
     And the finished plan is shown as a proposed plan
 
-  Scenario: Codex can use the T3 Code tools
-    Given the project allows the T3 Code tools
+  Scenario: Codex can use the HAL-C2 tools
+    Given the project allows the HAL-C2 tools
     When a Codex turn starts
-    Then Codex can call the T3 Code tools for this thread
+    Then Codex can call the HAL-C2 tools for this thread
 
   Scenario: Reverting a Codex turn rolls Codex back too
     Given a Codex thread with three turns

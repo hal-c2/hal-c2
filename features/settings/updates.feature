@@ -1,8 +1,8 @@
 # Sources:
 #   docs/user/updating.md
 #   docs/internals/server-updates.md
-#   apps/server-ex/lib/t3/upgrade.ex (server.updateServer, server.updateServerWithProgress)
-#   apps/server-ex/lib/t3/provider_updates.ex (server.updateProvider, version advisories)
+#   apps/server-ex/lib/hal_c2/upgrade.ex (server.updateServer, server.updateServerWithProgress)
+#   apps/server-ex/lib/hal_c2/provider_updates.ex (server.updateProvider, version advisories)
 #   apps/server-ex/test/node_parity_test.exs (server.commitDesktopUpdate not applicable)
 #   packages/contracts/src/rpc.ts (server.updateServer, server.updateServerWithProgress, server.commitDesktopUpdate, server.updateProvider)
 #   apps/web/src/components/ServerUpdateAction.tsx

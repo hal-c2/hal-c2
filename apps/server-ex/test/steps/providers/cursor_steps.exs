@@ -1,9 +1,9 @@
-defmodule T3.Steps.Providers.Cursor do
+defmodule HalC2.Steps.Providers.Cursor do
   @moduledoc """
   Steps for `features/providers/cursor.feature`.
 
-  Cursor runs as the node runs it (`T3.Acp`: the cursor-acp agent), over a fake Cursor
-  SDK (`test/support/fake_cursor.mjs`, set up by `T3.Test.AcpFixtures.ready/1`). The
+  Cursor runs as the node runs it (`HalC2.Acp`: the cursor-acp agent), over a fake Cursor
+  SDK (`test/support/fake_cursor.mjs`, set up by `HalC2.Test.AcpFixtures.ready/1`). The
   fake logs what the SDK is asked to do to `<agents>/cursor-<instance>.log`, and a
   browser sign-in finishes once `<agents>/cursor-<instance>.login-done` exists. RPCs
   go through the client "ops", so frames other clients await are never skipped.
@@ -12,9 +12,9 @@ defmodule T3.Steps.Providers.Cursor do
 
   import ExUnit.Assertions
 
-  alias T3.Test.AcpFixtures, as: Acp
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.AcpFixtures, as: Acp
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @api_key "crsr-test-key"
 
@@ -39,7 +39,7 @@ defmodule T3.Steps.Providers.Cursor do
   defp agents(ctx, id \\ "cursor"), do: Enum.filter(log(ctx, id), &(&1["event"] == "agent"))
 
   defp credentials(id),
-    do: Path.join([Application.fetch_env!(:t3, :home), "provider-auth", id, "cursor.json"])
+    do: Path.join([Application.fetch_env!(:hal_c2, :home), "provider-auth", id, "cursor.json"])
 
   # A Cursor sign-in the fake SDK accepts, as a finished browser login leaves it.
   defp sign_in(id) do
@@ -184,16 +184,16 @@ defmodule T3.Steps.Providers.Cursor do
 
   step "Cursor is not enabled on the node", context do
     ctx = Acp.ready(context)
-    refute T3.Acp.enabled?("cursor")
+    refute HalC2.Acp.enabled?("cursor")
     ctx
   end
 
   step "no Cursor process is started", context do
     # The node's boot probe, then the provider list clients get.
-    T3.Acp.load()
+    HalC2.Acp.load()
     entry = Acp.provider("cursor")
     assert entry == nil or entry["enabled"] == false
-    assert :persistent_term.get({T3.Acp, "cursor", :loading}, false) == false
+    assert :persistent_term.get({HalC2.Acp, "cursor", :loading}, false) == false
     assert log(context) == []
     context
   end

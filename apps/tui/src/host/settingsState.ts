@@ -1,5 +1,5 @@
-import type { OrchestrationThread, VcsStatusResult } from "@t3tools/contracts";
-import type { ShellSettingsState } from "@t3tools/contracts/shell";
+import type { OrchestrationThread, VcsStatusResult } from "@hal-c2/contracts";
+import type { ShellSettingsState } from "@hal-c2/contracts/shell";
 
 import { composerControls, interactionModeLabel, runtimeModeLabel } from "../controls.ts";
 import { KEYBINDING_GROUPS } from "../keymap.ts";

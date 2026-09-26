@@ -4,8 +4,8 @@
 #   packages/contracts/src/rpc.ts (orchestration.getThreadProjection, orchestration.subscribeShell,
 #     orchestration.subscribeThread, orchestration.subscribeArchivedShell,
 #     orchestration.getArchivedShellSnapshot)
-#   apps/server-ex/lib/t3/projection/shell.ex, thread_error.ex, background_work.ex, timeline.ex
-#   apps/server-ex/lib/t3/orchestration.ex (getArchivedShellSnapshot)
+#   apps/server-ex/lib/hal_c2/projection/shell.ex, thread_error.ex, background_work.ex, timeline.ex
+#   apps/server-ex/lib/hal_c2/orchestration.ex (getArchivedShellSnapshot)
 #   apps/server/src/orchestration-v2/ (projector, shell and thread projections)
 Feature: What the engine projects for clients
   Clients render projections, not raw entities. A thread's shell row summarizes

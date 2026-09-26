@@ -5,8 +5,8 @@
 #   apps/web/src/components/settings/deviceHostConnectionChecks.ts
 #   apps/web/src/components/settings/useHostConnectionChecks.ts
 #   docs/user/devices.md (SSH device hosts)
-#   apps/server-ex/lib/t3/devices.ex (device.testHost, ssh hosts reported unavailable)
-#   apps/server-ex/lib/t3/rpc.ex (device.testHost, device.list retryHostId)
+#   apps/server-ex/lib/hal_c2/devices.ex (device.testHost, ssh hosts reported unavailable)
+#   apps/server-ex/lib/hal_c2/rpc.ex (device.testHost, device.list retryHostId)
 
 Feature: Device hosts
   Simulators and emulators on another machine used to be reached over SSH from an environment.
@@ -23,7 +23,7 @@ Feature: Device hosts
       Given a device host "Mac mini" with the SSH target "mac-mini"
       When the node tests the connection to "Mac mini"
       Then "Mac mini" is reported unavailable
-      And the reason says to run T3 on "mac-mini" and add it to this cluster as a node
+      And the reason says to run HAL-C2 on "mac-mini" and add it to this cluster as a node
 
     @node
     Scenario: A configured SSH device host is listed as unavailable

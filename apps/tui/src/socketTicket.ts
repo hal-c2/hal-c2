@@ -1,5 +1,5 @@
 /**
- * Websocket URLs come from the `t3 tui` launcher over the Node IPC channel: the
+ * Websocket URLs come from the `hal-c2 tui` launcher over the Node IPC channel: the
  * client sends `{ type: "mintSocketUrl", id }` and the launcher answers
  * `{ type: "socketUrl", id, url }` with a freshly ticketed URL. The entry wires
  * `receive` to `process.on("message")` and `disconnect` to
@@ -42,7 +42,7 @@ export function makeSocketTicketMinter(input: {
     new Promise<string>((resolve, reject) => {
       const send = input.send;
       if (!send) {
-        reject(new Error("no IPC channel to the t3 parent process"));
+        reject(new Error("no IPC channel to the hal-c2 parent process"));
         return;
       }
       const id = nextRequestId++;
@@ -85,7 +85,7 @@ export function makeSocketTicketMinter(input: {
     /** The launcher went away: settle every outstanding request now. */
     disconnect: (): void => {
       for (const entry of pending.values()) {
-        entry.reject(new Error("t3 parent IPC channel closed"));
+        entry.reject(new Error("hal-c2 parent IPC channel closed"));
       }
       pending.clear();
     },

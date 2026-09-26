@@ -17,7 +17,7 @@ import {
   type ProviderDriverKind,
   type ProviderReplayTranscript,
   type ProviderUserInputAnswers,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 

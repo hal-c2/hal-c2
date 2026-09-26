@@ -1,7 +1,7 @@
-defmodule T3.Steps.Preview.Automation do
+defmodule HalC2.Steps.Preview.Automation do
   @moduledoc """
   Steps for `features/preview/automation.feature`: agents' `preview_*` MCP tools,
-  routed by `T3.PreviewAutomation` to desktops' browsers.
+  routed by `HalC2.PreviewAutomation` to desktops' browsers.
 
   A desktop is a socket subscribed to the `previewAutomation` shape
   (`context.desktops`, by name; its client id is the name). The agent's tool call
@@ -13,9 +13,9 @@ defmodule T3.Steps.Preview.Automation do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
-  alias T3.Test.WsClient
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
+  alias HalC2.Test.WsClient
 
   @host_sub 81
   @watch 82
@@ -258,7 +258,7 @@ defmodule T3.Steps.Preview.Automation do
   step "the node checks another tab's page for a tool result", context do
     scope = caller(context)
     opts = [tab_id: "tab-2", update_current_tab: false]
-    context = serve(context, fn -> T3.PreviewAutomation.invoke(scope, "status", %{}, opts) end)
+    context = serve(context, fn -> HalC2.PreviewAutomation.invoke(scope, "status", %{}, opts) end)
     assert {:ok, %{"tabId" => "tab-2"}} = context.result
     context
   end
@@ -518,7 +518,7 @@ defmodule T3.Steps.Preview.Automation do
 
   step "the tool result gives the attachment's path", context do
     assert {:ok, %{"id" => id, "path" => path}} = context.result
-    assert path == T3.Attachments.path(%{"id" => id})
+    assert path == HalC2.Attachments.path(%{"id" => id})
     assert File.read!(path) == @recording
     context
   end
@@ -526,7 +526,7 @@ defmodule T3.Steps.Preview.Automation do
   # The desktop names an upload it never made.
   step "the recording upload cannot be claimed", context do
     answer(context, "recordingStop", fn _request, _context ->
-      {:ok, recording("pending-#{T3.Environment.uuid4()}-webm")}
+      {:ok, recording("pending-#{HalC2.Environment.uuid4()}-webm")}
     end)
   end
 
@@ -594,11 +594,11 @@ defmodule T3.Steps.Preview.Automation do
   end
 
   step "an agent lists the thread's preview tabs", context do
-    Map.put(context, :result, T3.Mcp.Tools.call("t3_preview_list", %{}, caller(context)))
+    Map.put(context, :result, HalC2.Mcp.Tools.call("halc2_preview_list", %{}, caller(context)))
   end
 
   step "it receives the first 20 tabs and a cursor for the rest", context do
-    {:ok, all} = T3.Preview.list(%{"threadId" => caller(context).thread_id})
+    {:ok, all} = HalC2.Preview.list(%{"threadId" => caller(context).thread_id})
     assert {:ok, %{"sessions" => sessions, "nextCursor" => 20}} = context.result
     assert sessions == Enum.take(all["sessions"], 20)
     Map.put(context, :all_tabs, all["sessions"])
@@ -606,7 +606,7 @@ defmodule T3.Steps.Preview.Automation do
 
   step "listing again from that cursor returns the last 5 with no further cursor", context do
     assert {:ok, %{"sessions" => sessions, "nextCursor" => nil}} =
-             T3.Mcp.Tools.call("t3_preview_list", %{"cursor" => 20}, caller(context))
+             HalC2.Mcp.Tools.call("halc2_preview_list", %{"cursor" => 20}, caller(context))
 
     assert sessions == Enum.drop(context.all_tabs, 20)
     assert length(sessions) == 5
@@ -637,7 +637,7 @@ defmodule T3.Steps.Preview.Automation do
   end
 
   step "the agent closes that tab", context do
-    result = T3.Mcp.Tools.call("t3_preview_close", %{"tabId" => context.tab}, caller(context))
+    result = HalC2.Mcp.Tools.call("halc2_preview_close", %{"tabId" => context.tab}, caller(context))
     Map.put(context, :result, result)
   end
 
@@ -661,11 +661,11 @@ defmodule T3.Steps.Preview.Automation do
   # --- desktops --------------------------------------------------------------------------------
 
   defp services do
-    Node.ensure(T3.Preview)
-    Node.ensure(T3.PreviewAutomation)
+    Node.ensure(HalC2.Preview)
+    Node.ensure(HalC2.PreviewAutomation)
   end
 
-  defp broker, do: :sys.get_state(T3.PreviewAutomation)
+  defp broker, do: :sys.get_state(HalC2.PreviewAutomation)
 
   # Registers a socket as the browser host `client_id`, waiting for its connection.
   defp connect_desktop(context, name, operations \\ nil, client_id \\ nil) do
@@ -776,7 +776,7 @@ defmodule T3.Steps.Preview.Automation do
 
   defp images(content), do: for(%{"type" => "image"} = image <- content, do: image)
 
-  defp artifacts, do: Path.join(Application.fetch_env!(:t3, :home), "browser-artifacts")
+  defp artifacts, do: Path.join(Application.fetch_env!(:hal_c2, :home), "browser-artifacts")
 
   defp recording(id) do
     %{
@@ -790,7 +790,7 @@ defmodule T3.Steps.Preview.Automation do
   # Uploads the recording the way the desktop does: a signed URL, then an HTTP POST.
   defp upload(context) do
     {:ok, %{"attachmentId" => id, "relativeUrl" => path}} =
-      T3.Attachments.create_upload_url(%{
+      HalC2.Attachments.create_upload_url(%{
         "name" => "recording.webm",
         "mimeType" => "video/webm",
         "sizeBytes" => byte_size(@recording),
@@ -830,7 +830,7 @@ defmodule T3.Steps.Preview.Automation do
   defp tool(context, name, args) do
     context = default_desktop(context)
     scope = caller(context)
-    serve(context, fn -> T3.Mcp.Tools.call(name, args, scope) end)
+    serve(context, fn -> HalC2.Mcp.Tools.call(name, args, scope) end)
   end
 
   # Starts an action and returns once its request reached a desktop, unanswered
@@ -839,7 +839,7 @@ defmodule T3.Steps.Preview.Automation do
     {tool, args, operation} = Map.fetch!(@actions, action)
     context = default_desktop(context)
     scope = caller(context)
-    task = Task.async(fn -> T3.Mcp.Tools.call(tool, Map.merge(args, extra), scope) end)
+    task = Task.async(fn -> HalC2.Mcp.Tools.call(tool, Map.merge(args, extra), scope) end)
 
     case loop(Map.put(context, :task, task), &(&1["operation"] == operation)) do
       %{held: _} = context -> context
@@ -917,7 +917,7 @@ defmodule T3.Steps.Preview.Automation do
   defp respond(context, name, request) do
     case reply(request, context) do
       :timeout ->
-        send(Process.whereis(T3.PreviewAutomation), {:timeout, request["requestId"]})
+        send(Process.whereis(HalC2.PreviewAutomation), {:timeout, request["requestId"]})
         context
 
       {:ok, result} ->

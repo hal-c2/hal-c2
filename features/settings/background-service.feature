@@ -1,12 +1,12 @@
 # Sources:
 #   docs/user/background-service.md
-#   apps/server-ex/lib/t3/background_policy.ex (profiles, leases, host power, pause rules)
-#   apps/server-ex/lib/t3/web/socket.ex (server.reportClientActivity)
+#   apps/server-ex/lib/hal_c2/background_policy.ex (profiles, leases, host power, pause rules)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (server.reportClientActivity)
 #   apps/server-ex/test/node_parity_test.exs (reportHostPowerState, getBackgroundPolicy, reportClientActivity aligned)
-#   apps/server-ex/rel/overlays/bin/t3-service
+#   apps/server-ex/rel/overlays/bin/hal-c2-service
 #   packages/contracts/src/rpc.ts (server.getBackgroundPolicy, server.reportHostPowerState, server.reportClientActivity)
 #   apps/web/src/components/settings/SettingsPanels.tsx (background activity profile and dialog)
-#   apps/server/src/cli (t3 service install, status, restart, uninstall)
+#   apps/server/src/cli (hal-c2 service install, status, restart, uninstall)
 #   apps/server/src/serviceLauncher.ts
 
 Feature: Background activity and the background service

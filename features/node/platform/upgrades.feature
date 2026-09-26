@@ -1,15 +1,15 @@
 # Sources:
-#   apps/server-ex/lib/t3/upgrade.ex (plan, hot load, restart with exit 75, outcome)
-#   apps/server-ex/lib/t3/upgrade/source.ex (cache, cluster peer, release URL, SHA-256)
-#   apps/server-ex/lib/t3/hot.ex (md5 skip, code_change, soft purge, lingering modules)
-#   apps/server-ex/lib/mix/tasks/t3.upgrade.ex, t3.bundle.ex
-#   apps/server-ex/lib/t3/web/router.ex (GET /api/upgrade/:token)
-#   apps/server-ex/lib/t3/web/socket.ex (serverUpdate shape, config.ready updateOutcome, @state_version)
-#   apps/server-ex/rel/overlays/bin/t3-service
+#   apps/server-ex/lib/hal_c2/upgrade.ex (plan, hot load, restart with exit 75, outcome)
+#   apps/server-ex/lib/hal_c2/upgrade/source.ex (cache, cluster peer, release URL, SHA-256)
+#   apps/server-ex/lib/hal_c2/hot.ex (md5 skip, code_change, soft purge, lingering modules)
+#   apps/server-ex/lib/mix/tasks/hal_c2.upgrade.ex, hal_c2.bundle.ex
+#   apps/server-ex/lib/hal_c2/web/router.ex (GET /api/upgrade/:token)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (serverUpdate shape, config.ready updateOutcome, @state_version)
+#   apps/server-ex/rel/overlays/bin/hal-c2-service
 #   packages/contracts/src/server.ts (server.updateServer, server.updateServerWithProgress, server.commitDesktopUpdate)
 #   docs/internals/server-updates.md
 #   docs/user/updating.md
-#   docs/user/background-service.md (t3 update, channels)
+#   docs/user/background-service.md (hal-c2 update, channels)
 
 Feature: Node self-update and hot upgrades
   A node moves to another version in place when the change allows, and restarts into it
@@ -127,7 +127,7 @@ Feature: Node self-update and hot upgrades
 
   @node
   Scenario: The bundle location can be overridden
-    Given T3_UPGRADE_URL points to a private mirror
+    Given HALC2_UPGRADE_URL points to a private mirror
     When the node downloads a bundle
     Then it downloads from the mirror
 
@@ -183,7 +183,7 @@ Feature: Node self-update and hot upgrades
     And the database is restored to its state before the trial
 
   # Desktop-app two-phase update handoff. A node updates itself in place or restarts under
-  # bin/t3-service; the Electron app's bundled backend is not how hal-c2 ships the node.
+  # bin/hal-c2-service; the Electron app's bundled backend is not how hal-c2 ships the node.
   @dropped @node
   Scenario: The desktop app commits a prepared update after reconnecting
     Given the desktop app prepared an update and received a token

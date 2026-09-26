@@ -12,10 +12,10 @@ import {
   type SourceControlRepositoryInfo,
   type ThreadId,
   type VcsRef,
-} from "@t3tools/contracts";
-import { truncate } from "@t3tools/shared/String";
+} from "@hal-c2/contracts";
+import { truncate } from "@hal-c2/shared/String";
 import { useRenderer, useTerminalDimensions } from "@opentui/react";
-import { getKittyClipboardManager } from "@t3tools/opentui-image";
+import { getKittyClipboardManager } from "@hal-c2/opentui-image";
 import {
   addProjectRemoteSourceLabel,
   buildAddProjectRemoteSourceReadiness,
@@ -23,16 +23,16 @@ import {
   resolveAddProjectPath,
   sortAddProjectProviderSources,
   type AddProjectRemoteSource,
-} from "@t3tools/client-runtime/operations/projects";
+} from "@hal-c2/client-runtime/operations/projects";
 import {
   filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
-} from "@t3tools/client-runtime/state/filesystem";
+} from "@hal-c2/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
   findProjectByPath,
   hasTrailingPathSeparator,
-} from "@t3tools/client-runtime/state/projects";
+} from "@hal-c2/client-runtime/state/projects";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -1157,7 +1157,7 @@ export function ChatView({
         selectedProjectId ??
         (state.selection?.kind === "thread" ? (detail?.projectId ?? null) : null),
       thread: detail,
-      // Null means inherit; without a repository t3.json that resolves to local.
+      // Null means inherit; without a repository hal-c2.json that resolves to local.
       defaultEnvironmentMode: newThreadSettings.defaultThreadEnvMode ?? "local",
     });
     setProjectIndex(context.projectIndex);
@@ -2417,7 +2417,7 @@ export function ChatView({
     void (async () => {
       let dir: string | null = null;
       try {
-        dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-prompt-"));
+        dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "hal-c2-prompt-"));
         const file = NodePath.join(dir, "prompt.md");
         await NodeFSP.writeFile(file, draftText, "utf8");
         const { cmd, args } = resolveEditorCommand({

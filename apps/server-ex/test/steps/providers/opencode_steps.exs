@@ -1,16 +1,16 @@
-defmodule T3.Steps.Providers.Opencode do
+defmodule HalC2.Steps.Providers.Opencode do
   @moduledoc """
   Steps for `features/providers/opencode.feature`: OpenCode's ACP mode (`opencode acp`),
-  played by the scripted fake (`T3.Test.FakeAcp`) behind the instance's binary path.
+  played by the scripted fake (`HalC2.Test.FakeAcp`) behind the instance's binary path.
   """
   use Cucumber.StepDefinition
 
   import ExUnit.Assertions
 
-  alias T3.Test.FakeAcp
-  alias T3.Test.Node.World
+  alias HalC2.Test.FakeAcp
+  alias HalC2.Test.Node.World
 
-  # A supported OpenCode (1.14.19 is the oldest T3 Code runs) connected to `models`.
+  # A supported OpenCode (1.14.19 is the oldest HAL-C2 runs) connected to `models`.
   defp models(models),
     do: %{
       "version" => "1.14.19",
@@ -35,7 +35,7 @@ defmodule T3.Steps.Providers.Opencode do
   end
 
   step "no OpenCode process is started", context do
-    T3.Acp.load()
+    HalC2.Acp.load()
     assert %{"enabled" => false} = FakeAcp.entry("opencode")
     assert FakeAcp.starts(context, "opencode") == []
     context
@@ -82,8 +82,8 @@ defmodule T3.Steps.Providers.Opencode do
 
   step "the opencode command is not installed on the node", context do
     FakeAcp.services()
-    T3.Acp.forget("opencode")
-    missing = Path.join(T3.Test.Node.tmp_dir(context.node, "no-opencode"), "opencode")
+    HalC2.Acp.forget("opencode")
+    missing = Path.join(HalC2.Test.Node.tmp_dir(context.node, "no-opencode"), "opencode")
     FakeAcp.settings(&put_in(&1, ["providers"], %{"opencode" => %{"binaryPath" => missing}}))
     Map.put(context, :provider, "opencode")
   end
@@ -114,7 +114,7 @@ defmodule T3.Steps.Providers.Opencode do
 
   step "the request is granted without asking the user", context do
     state = FakeAcp.await_run(context, "completed")
-    assert T3.StreamState.list(state, "runtime-request") == []
+    assert HalC2.StreamState.list(state, "runtime-request") == []
 
     assert [%{"result" => %{"outcome" => %{"outcome" => "selected", "optionId" => "once"}}}] =
              FakeAcp.answers(context)
@@ -191,9 +191,9 @@ defmodule T3.Steps.Providers.Opencode do
     Map.put(context, :entry, FakeAcp.probe(context.provider))
   end
 
-  step "OpenCode is reported as a known broken version for this T3 Code release", context do
+  step "OpenCode is reported as a known broken version for this HAL-C2 release", context do
     assert %{"status" => "broken", "message" => message} = context.entry["compatibilityAdvisory"]
-    assert message =~ "known to be incompatible with this T3 Code release"
+    assert message =~ "known to be incompatible with this HAL-C2 release"
     context
   end
 
@@ -264,8 +264,8 @@ defmodule T3.Steps.Providers.Opencode do
 
     context = FakeAcp.send_message(context, "please run a command")
     state = FakeAcp.await_runs(context, 2)
-    assert Enum.all?(T3.StreamState.list(state, "run"), &(&1["status"] == "completed"))
-    refute Enum.any?(T3.StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
+    assert Enum.all?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "completed"))
+    refute Enum.any?(HalC2.StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
 
     assert [_, %{"result" => %{"outcome" => %{"outcome" => "selected"}}}] =
              FakeAcp.answers(context)
@@ -363,7 +363,7 @@ defmodule T3.Steps.Providers.Opencode do
       |> FakeAcp.thread()
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.interaction-mode.set",
         "commandId" => "cmd-plan-#{System.unique_integer([:positive])}",
         "threadId" => World.thread_id(context, context.thread),
@@ -396,7 +396,7 @@ defmodule T3.Steps.Providers.Opencode do
   # set on the instance with its password.
   defp external(context, password, respond) do
     {url, log} =
-      T3.Test.FakeHttp.start(%{
+      HalC2.Test.FakeHttp.start(%{
         "/provider" => fn conn ->
           expected = "Basic " <> Base.encode64("opencode:secret")
 
@@ -458,7 +458,7 @@ defmodule T3.Steps.Providers.Opencode do
 
   step "the user clears the server URL", context do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "t3.readSettings")
+      World.call!(context, "halc2.readSettings")
 
     settings =
       update_in(
@@ -468,7 +468,7 @@ defmodule T3.Steps.Providers.Opencode do
       )
 
     {_, context} =
-      World.call!(context, "t3.writeSettings", %{"settings" => settings, "version" => version})
+      World.call!(context, "halc2.writeSettings", %{"settings" => settings, "version" => version})
 
     context
   end
@@ -483,7 +483,7 @@ defmodule T3.Steps.Providers.Opencode do
         Enum.sort(slugs) == ["anthropic/claude-sonnet-4", "openai/gpt-5"]
       end)
 
-    served = length(T3.Test.FakeHttp.requests(context.server_log))
+    served = length(HalC2.Test.FakeHttp.requests(context.server_log))
 
     context =
       context
@@ -495,7 +495,7 @@ defmodule T3.Steps.Providers.Opencode do
 
     FakeAcp.await_run(context, "completed")
     assert [_ | _] = FakeAcp.received(context, "session/prompt", "opencode")
-    assert length(T3.Test.FakeHttp.requests(context.server_log)) == served
+    assert length(HalC2.Test.FakeHttp.requests(context.server_log)) == served
     context
   end
 
@@ -509,7 +509,7 @@ defmodule T3.Steps.Providers.Opencode do
              "OpenCode server rejected authentication. Check the server URL and password."
 
     # It asked the server, as the `opencode` user with the configured password.
-    assert [%{"authorization" => auth} | _] = T3.Test.FakeHttp.requests(context.server_log)
+    assert [%{"authorization" => auth} | _] = HalC2.Test.FakeHttp.requests(context.server_log)
     assert auth == "Basic " <> Base.encode64("opencode:wrong")
     context
   end
@@ -528,7 +528,7 @@ defmodule T3.Steps.Providers.Opencode do
 
   step "OpenCode is signed in to OpenCode Go and runs locally", context do
     {url, log} =
-      T3.Test.FakeHttp.start(%{
+      HalC2.Test.FakeHttp.start(%{
         "/zen/go/v1/usage" =>
           {200,
            %{
@@ -540,8 +540,8 @@ defmodule T3.Steps.Providers.Opencode do
            }}
       })
 
-    Application.put_env(:t3, :opencode_go_usage_url, url <> "/zen/go/v1/usage")
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :opencode_go_usage_url) end)
+    Application.put_env(:hal_c2, :opencode_go_usage_url, url <> "/zen/go/v1/usage")
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :opencode_go_usage_url) end)
     auth = JSON.encode!(%{"opencode-go" => %{"type" => "api", "key" => "go-key"}})
 
     context
@@ -589,7 +589,7 @@ defmodule T3.Steps.Providers.Opencode do
            ]
 
     # Read with OpenCode's own Go key.
-    assert [_ | _] = requests = T3.Test.FakeHttp.requests(context.usage_log)
+    assert [_ | _] = requests = HalC2.Test.FakeHttp.requests(context.usage_log)
     assert Enum.all?(requests, &(&1["authorization"] == "Bearer go-key"))
     context
   end
@@ -635,12 +635,12 @@ defmodule T3.Steps.Providers.Opencode do
     context = FakeAcp.send_message(context, "fix the bug")
     state = FakeAcp.await_run(context, "failed")
 
-    assert [%{"lastError" => error}] = T3.StreamState.list(state, "provider-session")
+    assert [%{"lastError" => error}] = HalC2.StreamState.list(state, "provider-session")
     assert error =~ "the model #{@gone} is no longer offered"
     assert error =~ "Pick another model"
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.model-selection.set",
         "commandId" => "cmd-model-#{System.unique_integer([:positive])}",
         "threadId" => thread_id,
@@ -652,7 +652,7 @@ defmodule T3.Steps.Providers.Opencode do
 
     assert ["failed", "completed"] =
              state
-             |> T3.StreamState.list("run")
+             |> HalC2.StreamState.list("run")
              |> Enum.sort_by(& &1["ordinal"])
              |> Enum.map(& &1["status"])
 

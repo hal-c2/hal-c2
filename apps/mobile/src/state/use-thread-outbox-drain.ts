@@ -3,17 +3,17 @@ import {
   threadRuntimeIsActive,
   type EnvironmentProject,
   type EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/shell";
-import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
+} from "@hal-c2/client-runtime/state/shell";
+import type { AtomCommandResult } from "@hal-c2/client-runtime/state/runtime";
+import { deriveThreadTitleSeed } from "@hal-c2/client-runtime/operations";
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type MessageId,
-} from "@t3tools/contracts";
-import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+} from "@hal-c2/contracts";
+import { buildTemporaryWorktreeBranchName } from "@hal-c2/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -87,7 +87,7 @@ import {
 
 // Ordinary offline behavior (a socket dropping mid-request, a retryable
 // attachment upload failure) must not spam `console.warn` on every backoff
-// retry; it goes to the filterable `[t3-thread-outbox]` debug log instead.
+// retry; it goes to the filterable `[hal-c2-thread-outbox]` debug log instead.
 // Failures the server decided stay on `console.warn`.
 const threadOutboxDebug = createDebugLogger("thread-outbox");
 

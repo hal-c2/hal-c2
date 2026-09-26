@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
-import type { ImagePreview } from "@t3tools/opentui-image";
+import type { ImagePreview } from "@hal-c2/opentui-image";
 import * as React from "react";
 
 import { deferMouseAction } from "../mouse.ts";

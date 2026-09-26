@@ -2,7 +2,7 @@ import {
   type AcpRegistryAcceptUrlAuthInput,
   type AcpRegistryUrlAuthAction,
   type ProviderInstanceId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
@@ -99,7 +99,7 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
       onUpdate: (action: AcpRegistryUrlAuthAction | null) => Effect.Effect<void>,
     ) => Effect.Effect<void>;
   }
->()("t3/provider/acp/AcpRegistryRuntimeCoordinator") {
+>()("hal-c2/provider/acp/AcpRegistryRuntimeCoordinator") {
   static get layer() {
     return layer;
   }

@@ -1,5 +1,5 @@
 {
-  "name": "@t3tools/tui",
+  "name": "@hal-c2/tui",
   "version": "0.0.27",
   "private": true,
   "files": [
@@ -19,12 +19,12 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
+    "@hal-c2/client-runtime": "workspace:*",
+    "@hal-c2/contracts": "workspace:*",
+    "@hal-c2/opentui-image": "workspace:*",
+    "@hal-c2/shared": "workspace:*",
     "@opentui/core": "^0.5.12",
     "@opentui/react": "^0.5.12",
-    "@t3tools/client-runtime": "workspace:*",
-    "@t3tools/contracts": "workspace:*",
-    "@t3tools/opentui-image": "workspace:*",
-    "@t3tools/shared": "workspace:*",
     "@xterm/headless": "^5.5.0",
     "effect": "catalog:",
     "opentui-qml": "github:hal-c2/opentui-qml",

@@ -1,7 +1,7 @@
 # Sources:
-#   apps/server-ex/lib/t3/acp.ex (grok agent, permission-mode args, supportsTextGeneration)
-#   apps/server-ex/lib/t3/acp/thread_runtime.ex (permission requests, session/cancel)
-#   apps/server-ex/lib/t3/usage/transcripts.ex (Grok transcripts)
+#   apps/server-ex/lib/hal_c2/acp.ex (grok agent, permission-mode args, supportsTextGeneration)
+#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (permission requests, session/cancel)
+#   apps/server-ex/lib/hal_c2/usage/transcripts.ex (Grok transcripts)
 #   apps/server/src/provider/Layers/GrokProvider.ts, apps/server/src/provider/Drivers/GrokDriver.ts, apps/server/src/provider/acp/GrokAcpSupport.ts
 #   apps/server/src/orchestration-v2/Adapters/GrokAdapterV2.ts, apps/server/src/provider/Drivers/GrokSkills.ts
 #   apps/server/src/provider/Layers/grokUsageLimits.ts, apps/server/src/textGeneration/GrokTextGeneration.ts
@@ -65,7 +65,7 @@ Feature: Grok
     Then the plan is shown as a proposed plan
     And the user can implement it
 
-  Scenario: Grok's questions are asked in T3 Code
+  Scenario: Grok's questions are asked in HAL-C2
     When Grok asks the user a question
     Then the question is shown and the answer is sent back to Grok
 

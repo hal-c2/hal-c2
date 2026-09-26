@@ -1,4 +1,4 @@
-defmodule T3.Steps.Orchestration.CheckpointsAndRollback do
+defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
   @moduledoc """
   Steps for `features/node/orchestration/checkpoints-and-rollback.feature`: real turns
   on the fake Codex CLI (`test/support/fake_codex.py`: "write NAME", "indent NAME",
@@ -8,10 +8,10 @@ defmodule T3.Steps.Orchestration.CheckpointsAndRollback do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Checkpoint
-  alias T3.StreamState
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Checkpoint
+  alias HalC2.StreamState
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # --- setup ---------------------------------------------------------------------
 
@@ -60,7 +60,7 @@ defmodule T3.Steps.Orchestration.CheckpointsAndRollback do
         git(cwd(context, thread), ~w(rev-parse --path-format=absolute --git-common-dir))
       )
 
-    File.write!(Path.join(common, "refs/t3"), "")
+    File.write!(Path.join(common, "refs/hal-c2"), "")
     Map.put(context, :run_title, thread)
   end
 
@@ -134,7 +134,7 @@ defmodule T3.Steps.Orchestration.CheckpointsAndRollback do
     id = "th-#{fork}-#{System.unique_integer([:positive])}"
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.fork",
         "commandId" => "cmd-fork-#{id}",
         "createdBy" => "user",
@@ -159,7 +159,7 @@ defmodule T3.Steps.Orchestration.CheckpointsAndRollback do
   step "a ready checkpoint for that run exists under a hidden checkpoint ref", context do
     checkpoint = last_checkpoint(context)
     assert checkpoint["status"] == "ready"
-    assert "refs/t3/orchestration-v2/checkpoints/" <> _ = checkpoint["ref"]
+    assert "refs/hal-c2/orchestration-v2/checkpoints/" <> _ = checkpoint["ref"]
     cwd = cwd(context, context.run_title)
     assert Checkpoint.exists?(cwd, checkpoint["ref"])
     # Hidden: no branch or tag shows it.
@@ -369,8 +369,8 @@ defmodule T3.Steps.Orchestration.CheckpointsAndRollback do
 
   step "a Codex thread whose history needs more than one page to rewind", context do
     context = World.providers(context)
-    ["env" | rest] = Application.get_env(:t3, :codex_command)
-    Application.put_env(:t3, :codex_command, ["env", "FAKE_CODEX_PAGE_SIZE=1" | rest])
+    ["env" | rest] = Application.get_env(:hal_c2, :codex_command)
+    Application.put_env(:hal_c2, :codex_command, ["env", "FAKE_CODEX_PAGE_SIZE=1" | rest])
     complete_through(context, "t1", 3)
   end
 
@@ -493,9 +493,9 @@ defmodule T3.Steps.Orchestration.CheckpointsAndRollback do
   step "clients see the worktree's git status after the restore", context do
     assert {:ok, _} = context.reply
     cwd = cwd(context, context.run_title)
-    local = T3.Vcs.local_status(cwd)
+    local = HalC2.Vcs.local_status(cwd)
     refute Enum.any?(local["workingTree"]["files"], &(&1["path"] == "run-2.txt"))
-    assert_receive {:t3_vcs, ^cwd, %{"_tag" => "localUpdated", "local" => ^local}}, 5_000
+    assert_receive {:halc2_vcs, ^cwd, %{"_tag" => "localUpdated", "local" => ^local}}, 5_000
     context
   end
 
@@ -651,22 +651,22 @@ defmodule T3.Steps.Orchestration.CheckpointsAndRollback do
 
   defp watch(cwd) do
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.Vcs.Registry}, id: T3.Vcs.Registry)
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Vcs.Registry}, id: HalC2.Vcs.Registry)
     )
 
     Node.ensure(
-      Supervisor.child_spec({DynamicSupervisor, name: T3.Vcs.Supervisor, strategy: :one_for_one},
-        id: T3.Vcs.Supervisor
+      Supervisor.child_spec({DynamicSupervisor, name: HalC2.Vcs.Supervisor, strategy: :one_for_one},
+        id: HalC2.Vcs.Supervisor
       )
     )
 
-    T3.Vcs.Watch.subscribe(cwd, self())
+    HalC2.Vcs.Watch.subscribe(cwd, self())
   end
 
   # The tree of everything in the worktree (tracked and untracked, minus ignored),
   # captured the way checkpoints are.
   defp tree(cwd) do
-    ref = "refs/t3/test/now-#{System.unique_integer([:positive])}"
+    ref = "refs/hal-c2/test/now-#{System.unique_integer([:positive])}"
     :ok = Checkpoint.capture(cwd, ref)
     tree = git(cwd, ["rev-parse", "#{ref}^{tree}"])
     Checkpoint.delete_ref(cwd, ref)
@@ -683,7 +683,7 @@ defmodule T3.Steps.Orchestration.CheckpointsAndRollback do
   # Sets fields of an entity in a thread's stream, creating it if need be.
   defp put(context, thread, kind, id, fields) do
     {:ok, _} =
-      T3.Streams.commit(World.thread_id(context, thread), :thread, [{kind, id, %{"s" => fields}}])
+      HalC2.Streams.commit(World.thread_id(context, thread), :thread, [{kind, id, %{"s" => fields}}])
 
     context
   end
@@ -692,7 +692,7 @@ defmodule T3.Steps.Orchestration.CheckpointsAndRollback do
     do: Enum.filter(World.codex_methods(context), &(&1 in ~w(thread/revert thread/rollback)))
 
   defp git(cwd, args) do
-    {:ok, out} = T3.Git.ok(cwd, args)
+    {:ok, out} = HalC2.Git.ok(cwd, args)
     out
   end
 end

@@ -1,7 +1,7 @@
 export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris"] as const;
 
-/** The standard T3 Code palette, kept separate from the optional built-in theme library. */
-export const MOBILE_DEFAULT_THEME_ID = "t3-code";
+/** The standard HAL-C2 palette, kept separate from the optional built-in theme library. */
+export const MOBILE_DEFAULT_THEME_ID = "hal-c2";
 
 /**
  * Every palette the mobile app can render. Declared here so host-side tooling
@@ -22,10 +22,10 @@ export const RESERVED_THEME_IDS: ReadonlySet<string> = new Set([
   "dark",
   ...BUILT_IN_THEME_IDS,
   "t3-chat-dark",
-  "t3-grove",
-  "t3-ocean",
-  "t3-ember",
-  "t3-iris",
+  "hal-c2-grove",
+  "hal-c2-ocean",
+  "hal-c2-ember",
+  "hal-c2-iris",
 ]);
 
 /**
@@ -122,13 +122,13 @@ export type ThemeDefinition = Readonly<{
 }>;
 
 /**
- * The palette T3 Code wears with no theme installed, captured from the app's
+ * The palette HAL-C2 wears with no theme installed, captured from the app's
  * stock tokens (index.css) so a draft seeded from the default look paints the
  * pixels the user is already seeing. Alpha-bearing tokens are flattened over
  * their real backdrops (canvas, or the sidebar for its rows) because theme
  * colors are stored as opaque OKLCH tokens.
  */
-export const T3_CODE_LIGHT_THEME_COLORS: ThemeColors = {
+export const HALC2_LIGHT_THEME_COLORS: ThemeColors = {
   canvas: "#fcfcfc",
   chrome: "#fcfcfc",
   toolbar: "#fcfcfc",
@@ -188,7 +188,7 @@ export const T3_CODE_LIGHT_THEME_COLORS: ThemeColors = {
   terminalScrollbarHover: "#bdbdbd",
 };
 
-export const T3_CODE_DARK_THEME_COLORS: ThemeColors = {
+export const HALC2_DARK_THEME_COLORS: ThemeColors = {
   canvas: "#0a0a0a",
   chrome: "#0a0a0a",
   toolbar: "#0a0a0a",

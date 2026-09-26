@@ -3,7 +3,7 @@ import type {
   OrchestrationThread,
   ProviderInteractionMode,
   RuntimeMode,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 
 // Friendly labels for the composer controls, mirroring the web composer's toolbar
 // (apps/web/src/components/chat/ChatComposer.tsx runtimeModeConfig + the plan/build

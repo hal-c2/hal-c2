@@ -1,5 +1,5 @@
 const PRIVATE_WORKSPACE_IMPORT =
-  /(?:from\s+|import\s+|import\s*\(\s*|require\s*\(\s*)["'](@t3tools\/[^"']+)["']/u;
+  /(?:from\s+|import\s+|import\s*\(\s*|require\s*\(\s*)["'](@hal-c2\/[^"']+)["']/u;
 const OPAQUE_PACKAGE_REQUIRE =
   /createRequire\([^)]*\)\s*\(\s*["']((?:@[^/"']+\/)?[^/"']+)["']\s*\)/u;
 

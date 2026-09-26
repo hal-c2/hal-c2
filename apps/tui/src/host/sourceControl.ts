@@ -1,4 +1,4 @@
-import type { GitStackedAction } from "@t3tools/contracts";
+import type { GitStackedAction } from "@hal-c2/contracts";
 import type { PropertyMap } from "opentui-qml";
 
 import type { Store, StoreState } from "../store.ts";

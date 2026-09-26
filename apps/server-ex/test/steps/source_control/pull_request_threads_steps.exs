@@ -1,9 +1,9 @@
-defmodule T3.Steps.SourceControl.PullRequestThreads do
+defmodule HalC2.Steps.SourceControl.PullRequestThreads do
   @moduledoc """
   Steps for `features/source-control/pull-request-threads.feature`: opening a pull
   request in a thread (`git.resolvePullRequest`, `git.preparePullRequestThread`) and
-  the links a thread keeps (`thread.pull-request.link`, `T3.PullRequests.Discovery`,
-  `T3.PullRequests.Sync`, `pullRequests.linkedThreads`).
+  the links a thread keeps (`thread.pull-request.link`, `HalC2.PullRequests.Discovery`,
+  `HalC2.PullRequests.Sync`, `pullRequests.linkedThreads`).
 
   Pull request 42 of "acme/shop" has a real head: a commit pushed to the fake
   GitHub's `refs/pull/42/head` (and to its branch, unless it comes from a fork).
@@ -12,9 +12,9 @@ defmodule T3.Steps.SourceControl.PullRequestThreads do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.SourceControl.Shared
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @repository "acme/shop"
   @url "https://github.com/acme/shop/pull/42"
@@ -76,7 +76,7 @@ defmodule T3.Steps.SourceControl.PullRequestThreads do
     project = World.project(context, repository)
 
     {:ok, _} =
-      T3.Projects.mutate(%{
+      HalC2.Projects.mutate(%{
         "type" => "project.update",
         "projectId" => project.id,
         "scripts" => [
@@ -133,7 +133,7 @@ defmodule T3.Steps.SourceControl.PullRequestThreads do
   end
 
   step "the new thread is linked to pull request {int}", %{args: [number]} = context do
-    :ok = T3.PullRequests.Discovery.sweep()
+    :ok = HalC2.PullRequests.Discovery.sweep()
     row = World.await_row(World.thread_id(context, "PR 42"), &(&1["branchPullRequest"] != nil))
     assert %{"number" => ^number, "url" => @url} = row["branchPullRequest"]
     context
@@ -262,9 +262,9 @@ defmodule T3.Steps.SourceControl.PullRequestThreads do
 
   step "the agent in {string} opens pull request {int} and links it with its tool",
        %{args: [title, number]} = context do
-    Node.ensure(T3.Mcp)
+    Node.ensure(HalC2.Mcp)
     context = thread(context, title)
-    %{authorization: auth} = T3.Mcp.server(World.thread_id(context, title), "codex")
+    %{authorization: auth} = HalC2.Mcp.server(World.thread_id(context, title), "codex")
 
     body =
       JSON.encode!(%{
@@ -277,7 +277,7 @@ defmodule T3.Steps.SourceControl.PullRequestThreads do
         }
       })
 
-    assert {200, %{"result" => %{"structuredContent" => linked}}} = T3.Mcp.handle(auth, body)
+    assert {200, %{"result" => %{"structuredContent" => linked}}} = HalC2.Mcp.handle(auth, body)
     assert %{"number" => ^number, "alreadyLinked" => false} = linked
     Map.put(context, :expected_source, "agent")
   end
@@ -335,7 +335,7 @@ defmodule T3.Steps.SourceControl.PullRequestThreads do
   step "within a minute {string} shows that pull request as its branch's",
        %{args: [title]} = context do
     context = discovery(context)
-    :ok = T3.PullRequests.Discovery.sweep()
+    :ok = HalC2.PullRequests.Discovery.sweep()
     row = World.await_row(World.thread_id(context, title), &(&1["branchPullRequest"] != nil))
 
     assert %{"number" => 42, "url" => @url, "repository" => @repository} =
@@ -351,7 +351,7 @@ defmodule T3.Steps.SourceControl.PullRequestThreads do
 
     # What an earlier discovery wrote.
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.pull-request.sync",
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
         "threadId" => id,
@@ -384,7 +384,7 @@ defmodule T3.Steps.SourceControl.PullRequestThreads do
 
   step "the thread's pull requests are checked again", context do
     context = discovery(context)
-    :ok = T3.PullRequests.Discovery.sweep()
+    :ok = HalC2.PullRequests.Discovery.sweep()
     assert World.cli_calls(context, "--head feature/tax") != []
     context
   end
@@ -413,7 +413,7 @@ defmodule T3.Steps.SourceControl.PullRequestThreads do
   end
 
   step "{string} shows the new review state after the next sync", %{args: [title]} = context do
-    :ok = T3.PullRequests.Sync.sweep()
+    :ok = HalC2.PullRequests.Sync.sweep()
     link = await_link(context, title, 42, &(&1["snapshot"]["reviewDecision"] == "approved"))
     assert link["snapshot"]["updatedAt"] == "2026-09-03T00:00:00Z"
     context
@@ -432,7 +432,7 @@ defmodule T3.Steps.SourceControl.PullRequestThreads do
 
   step "the sync sweep runs", context do
     reads = summary_reads(context)
-    :ok = T3.PullRequests.Sync.sweep()
+    :ok = HalC2.PullRequests.Sync.sweep()
     Map.put(context, :reads_before, reads)
   end
 
@@ -552,7 +552,7 @@ defmodule T3.Steps.SourceControl.PullRequestThreads do
   end
 
   defp discovery(context) do
-    Node.ensure({T3.PullRequests.Discovery, interval: nil})
+    Node.ensure({HalC2.PullRequests.Discovery, interval: nil})
     context
   end
 
@@ -578,7 +578,7 @@ defmodule T3.Steps.SourceControl.PullRequestThreads do
       else: World.create_thread(context, title, @repository)
   end
 
-  # A manual link, as the link dialog makes it, synced by `T3.PullRequests.Sync`.
+  # A manual link, as the link dialog makes it, synced by `HalC2.PullRequests.Sync`.
   defp link(context, repository, number, title) do
     context = context |> thread(title) |> sync()
     id = World.thread_id(context, title)
@@ -605,7 +605,7 @@ defmodule T3.Steps.SourceControl.PullRequestThreads do
   end
 
   defp sync(context) do
-    Node.ensure({T3.PullRequests.Sync, interval: nil})
+    Node.ensure({HalC2.PullRequests.Sync, interval: nil})
     context = World.cli_rules(context, %{"args" => ["stacks?pull_request="], "stdout" => []})
     if context[:summaries], do: context, else: summaries(context, %{})
   end

@@ -111,7 +111,7 @@ it.layer(NodeServices.layer)("readProviderReplayTranscript", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3 replay fixture " });
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2 replay fixture " });
       const filePath = path.join(dir, "transcript.ndjson");
       yield* fs.writeFileString(filePath, FILE_URL_TRANSCRIPT);
 
@@ -141,14 +141,14 @@ it.layer(NodeServices.layer)("readProviderReplayTranscript", (it) => {
         );
 
       const driveLetter = yield* readAsWindows(
-        new URL("file:///C:/Users/dev/t3%20worktree/transcript.ndjson"),
+        new URL("file:///C:/Users/dev/hal-c2%20worktree/transcript.ndjson"),
       );
       const unc = yield* readAsWindows(new URL("file://fileserver/shared/transcript.ndjson"));
 
       assert.equal(driveLetter.scenario, "file-url-read");
       assert.equal(unc.scenario, "file-url-read");
       assert.deepEqual(requestedPaths, [
-        "C:\\Users\\dev\\t3 worktree\\transcript.ndjson",
+        "C:\\Users\\dev\\hal-c2 worktree\\transcript.ndjson",
         "\\\\fileserver\\shared\\transcript.ndjson",
       ]);
     }),

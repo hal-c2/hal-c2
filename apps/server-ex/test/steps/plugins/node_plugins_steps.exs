@@ -1,18 +1,18 @@
-defmodule T3.Steps.Plugins.Release do
+defmodule HalC2.Steps.Plugins.Release do
   @moduledoc """
   A node running from a release, for upgrade scenarios: a temporary `RELEASE_ROOT`
   with the running version's `upgrade.json`, and bundles of the next version in the
-  node's upgrade cache (`T3.Upgrade.Source.put/3`). A bundle carries one fixture
+  node's upgrade cache (`HalC2.Upgrade.Source.put/3`). A bundle carries one fixture
   module whose running version is loaded now; changing a plain module loads in
   place, changing a supervisor needs a restart.
   """
 
-  alias T3.Test.Node
+  alias HalC2.Test.Node
 
   @manifest %{
     "otpRelease" => "29",
     "erts" => "17.0.5",
-    "applications" => %{"t3_fixture" => "1"},
+    "applications" => %{"halc2_fixture" => "1"},
     "nifs" => %{},
     "config" => "c"
   }
@@ -21,16 +21,16 @@ defmodule T3.Steps.Plugins.Release do
   def ensure(%{release: %{}} = context), do: context
 
   def ensure(context) do
-    Node.ensure(T3.Settings)
-    Node.ensure(T3.Upgrade)
+    Node.ensure(HalC2.Settings)
+    Node.ensure(HalC2.Upgrade)
     root = Node.tmp_dir(context.node, "release")
-    current = T3.Upgrade.version()
+    current = HalC2.Upgrade.version()
     write_manifest(root, current)
     File.write!(Path.join([root, "releases", "start_erl.data"]), "17.0.5 #{current}\n")
     File.mkdir_p!(Path.join(root, "lib"))
 
     path = :code.get_path()
-    env = for key <- ~w(RELEASE_ROOT T3_SERVICE), into: %{}, do: {key, System.get_env(key)}
+    env = for key <- ~w(RELEASE_ROOT HALC2_SERVICE), into: %{}, do: {key, System.get_env(key)}
     System.put_env("RELEASE_ROOT", root)
     # The bundles load several versions of the fixture modules.
     Code.put_compiler_option(:ignore_module_conflict, true)
@@ -43,9 +43,9 @@ defmodule T3.Steps.Plugins.Release do
           do: if(value, do: System.put_env(key, value), else: System.delete_env(key))
 
       Code.put_compiler_option(:ignore_module_conflict, false)
-      Application.delete_env(:t3, :restart_exit)
-      :persistent_term.erase({T3.Upgrade, :version})
-      :persistent_term.erase({T3.Upgrade, :outcome})
+      Application.delete_env(:hal_c2, :restart_exit)
+      :persistent_term.erase({HalC2.Upgrade, :version})
+      :persistent_term.erase({HalC2.Upgrade, :outcome})
     end)
 
     Map.put(context, :release, %{root: root, from: current})
@@ -57,7 +57,7 @@ defmodule T3.Steps.Plugins.Release do
   """
   def put_bundle(context, target, source, running) do
     bundle = Node.tmp_dir(context.node, "bundle")
-    ebin = Path.join([bundle, "lib", "t3_fixture-#{target}", "ebin"])
+    ebin = Path.join([bundle, "lib", "halc2_fixture-#{target}", "ebin"])
     File.mkdir_p!(ebin)
     write_manifest(bundle, target)
 
@@ -74,7 +74,7 @@ defmodule T3.Steps.Plugins.Release do
           do: {to_charlist(Path.relative_to(file, bundle)), to_charlist(file)}
 
     :ok = :erl_tar.create(to_charlist(archive), files, [:compressed])
-    :ok = T3.Upgrade.Source.put(target, T3.Upgrade.platform(), archive)
+    :ok = HalC2.Upgrade.Source.put(target, HalC2.Upgrade.platform(), archive)
     context
   end
 
@@ -89,11 +89,11 @@ defmodule T3.Steps.Plugins.Release do
   end
 end
 
-defmodule T3.Steps.Plugins.LogTap do
+defmodule HalC2.Steps.Plugins.LogTap do
   @moduledoc "A `:logger` handler that sends the test process what the node logs."
 
   def attach do
-    id = :"t3_log_tap_#{System.unique_integer([:positive])}"
+    id = :"halc2_log_tap_#{System.unique_integer([:positive])}"
     :ok = :logger.add_handler(id, __MODULE__, %{config: %{pid: self()}, level: :warning})
     ExUnit.Callbacks.on_exit(fn -> :logger.remove_handler(id) end)
   end
@@ -116,17 +116,17 @@ defmodule T3.Steps.Plugins.LogTap do
   end
 end
 
-defmodule T3.Steps.Plugins.NodePlugins do
+defmodule HalC2.Steps.Plugins.NodePlugins do
   @moduledoc "Steps for `features/plugins/node-plugins.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.Plugins.{Fixtures, LogTap, Release, Turns}
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Steps.Plugins.{Fixtures, LogTap, Release, Turns}
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
-  @plain "T3.Steps.Plugins.NodePlugins.Plain"
-  @tree "T3.Steps.Plugins.NodePlugins.Tree"
+  @plain "HalC2.Steps.Plugins.NodePlugins.Plain"
+  @tree "HalC2.Steps.Plugins.NodePlugins.Tree"
 
   step "a node with a plugins directory", context do
     File.mkdir_p!(Path.join(context.node.home, "plugins"))
@@ -139,7 +139,7 @@ defmodule T3.Steps.Plugins.NodePlugins do
     context = context |> World.create_project("shop") |> Turns.providers()
     {thread_id, context} = Turns.send_first(context, "codex", "wait for it")
     [run] = Turns.await_runs(thread_id, ["running"])
-    [{session, _}] = Registry.lookup(T3.Codex.Registry, thread_id)
+    [{session, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
     Map.put(context, :running, %{thread: thread_id, run: run["id"], session: session})
   end
 
@@ -162,7 +162,7 @@ defmodule T3.Steps.Plugins.NodePlugins do
   step "the new code is loaded in place", context do
     assert {:ok, %{"method" => "hot-upgrade", "targetVersion" => target}} = context.reply
     assert target == context.target
-    assert T3.Upgrade.version() == target
+    assert HalC2.Upgrade.version() == target
     assert apply(Module.concat([@plain]), :v, []) == 2
     context
   end
@@ -170,10 +170,10 @@ defmodule T3.Steps.Plugins.NodePlugins do
   step "the provider session and client connections stay up", context do
     %{thread: thread_id, run: run_id, session: session} = context.running
     assert Process.alive?(session)
-    assert [{^session, _}] = Registry.lookup(T3.Codex.Registry, thread_id)
+    assert [{^session, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
 
     assert [%{"id" => ^run_id, "status" => "running"}] =
-             Turns.runs(T3.Streams.Server.state(T3.Streams.ensure(thread_id)))
+             Turns.runs(HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id)))
 
     # The socket that asked for the update is still served.
     {{:ok, _}, context} = World.call(context, "server.getSettings")
@@ -182,8 +182,8 @@ defmodule T3.Steps.Plugins.NodePlugins do
 
   step "the node installs a version that changes a supervisor", context do
     test = self()
-    Application.put_env(:t3, :restart_exit, &send(test, {:restart_exit, &1}))
-    System.put_env("T3_SERVICE", "1")
+    Application.put_env(:hal_c2, :restart_exit, &send(test, {:restart_exit, &1}))
+    System.put_env("HALC2_SERVICE", "1")
     context = Release.ensure(context)
     target = context.release.from <> "-tree"
 
@@ -198,16 +198,16 @@ defmodule T3.Steps.Plugins.NodePlugins do
   end
 
   step "the node restarts on the new version", context do
-    # The node exits for bin/t3-service, whose next boot runs what start_erl.data names.
+    # The node exits for bin/hal-c2-service, whose next boot runs what start_erl.data names.
     assert_receive {:restart_exit, 75}, 2_000
     start = File.read!(Path.join([context.release.root, "releases", "start_erl.data"]))
     assert [_erts, booted] = String.split(start)
     assert booted == context.target
 
-    :persistent_term.put({T3.Upgrade, :version}, booted)
-    :ok = ExUnit.Callbacks.stop_supervised(T3.Upgrade)
+    :persistent_term.put({HalC2.Upgrade, :version}, booted)
+    :ok = ExUnit.Callbacks.stop_supervised(HalC2.Upgrade)
     node = Node.restart(context.node)
-    Node.ensure(T3.Upgrade)
+    Node.ensure(HalC2.Upgrade)
     %{context | node: node, clients: %{}}
   end
 
@@ -251,7 +251,7 @@ defmodule T3.Steps.Plugins.NodePlugins do
 
     File.write!(
       Fixtures.path(context, "notes"),
-      "defmodule T3PluginFixture.Notes do\n  def hello, do: :world\nend\n"
+      "defmodule HalC2PluginFixture.Notes do\n  def hello, do: :world\nend\n"
     )
 
     Fixtures.ensure(context)
@@ -276,7 +276,7 @@ defmodule T3.Steps.Plugins.NodePlugins do
 
   step "the node is ready", context do
     {_, context} = World.call!(context, "server.getSettings")
-    assert Process.alive?(Process.whereis(T3.Plugins))
+    assert Process.alive?(Process.whereis(HalC2.Plugins))
     context
   end
 
@@ -313,7 +313,7 @@ defmodule T3.Steps.Plugins.NodePlugins do
 
   step "its tools are no longer offered to agents in new turns", context do
     names = context |> agent_turn() |> tool_names()
-    assert Enum.all?(T3.Mcp.Tools.list(), &(&1["name"] in names))
+    assert Enum.all?(HalC2.Mcp.Tools.list(), &(&1["name"] in names))
     refute "jira_search" in names
     context
   end
@@ -371,9 +371,9 @@ defmodule T3.Steps.Plugins.NodePlugins do
        %{args: [id]} = context do
     # Enabled before this node stopped offering the API it was built for.
     context = Fixtures.ensure(context)
-    {settings, version} = T3.Settings.get()
+    {settings, version} = HalC2.Settings.get()
     plugins = Map.put(settings["plugins"] || %{}, id, %{"enabled" => true})
-    {:ok, _} = T3.Settings.put(Map.put(settings, "plugins", plugins), version)
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version)
     File.write!(Fixtures.path(context, id), Fixtures.source(id))
     Map.put(context, :plugin, id)
   end
@@ -391,7 +391,7 @@ defmodule T3.Steps.Plugins.NodePlugins do
 
   step "it is not started", context do
     assert Process.whereis(Fixtures.module(context.plugin)) == nil
-    assert T3.Plugins.git_host("git.example.com") == nil
+    assert HalC2.Plugins.git_host("git.example.com") == nil
     context
   end
 
@@ -418,7 +418,7 @@ defmodule T3.Steps.Plugins.NodePlugins do
     # A thread and another plugin run alongside, to show they are left alone.
     context = context |> bystander(id) |> running_thread()
     Fixtures.probe()
-    T3.Plugins.subscribe(self())
+    HalC2.Plugins.subscribe(self())
     pid = crash(id)
     Map.put(context, :crashed, pid)
   end
@@ -441,7 +441,7 @@ defmodule T3.Steps.Plugins.NodePlugins do
     assert Process.alive?(session)
 
     assert [%{"id" => ^run_id, "status" => "running"}] =
-             Turns.runs(T3.Streams.Server.state(T3.Streams.ensure(thread_id)))
+             Turns.runs(HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id)))
 
     context
   end
@@ -466,7 +466,7 @@ defmodule T3.Steps.Plugins.NodePlugins do
   end
 
   step "the node keeps running", context do
-    assert Process.whereis(T3.Plugins) == context.plugins_pid
+    assert Process.whereis(HalC2.Plugins) == context.plugins_pid
     {_, context} = World.call!(context, "server.getSettings")
     context
   end
@@ -596,14 +596,14 @@ defmodule T3.Steps.Plugins.NodePlugins do
     context = bystander(context, id)
     File.write!(Fixtures.path(context, id), Fixtures.source(id, "2.0.0"))
     {_, context} = World.call!(context, "plugins.rescan")
-    Map.merge(context, %{plugin: id, plugins_pid: Process.whereis(T3.Plugins)})
+    Map.merge(context, %{plugin: id, plugins_pid: Process.whereis(HalC2.Plugins)})
   end
 
   step ~r/^"(?<id>[^"]+)" runs the new version without a node restart$/,
        %{args: [id]} = context do
     assert %{"status" => "running", "version" => "2.0.0"} = Fixtures.entry(id)
     assert GenServer.call(Fixtures.module(id), :version) == "2.0.0"
-    assert Process.whereis(T3.Plugins) == context.plugins_pid
+    assert Process.whereis(HalC2.Plugins) == context.plugins_pid
     context
   end
 
@@ -692,12 +692,12 @@ defmodule T3.Steps.Plugins.NodePlugins do
 
   step "the user picks {string} for text generation", %{args: [id]} = context do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "t3.readSettings")
+      World.call!(context, "halc2.readSettings")
 
     selection = %{"instanceId" => id, "model" => "llama-3"}
 
     {_, context} =
-      World.call!(context, "t3.writeSettings", %{
+      World.call!(context, "halc2.writeSettings", %{
         "settings" => Map.put(settings, "textGenerationModelSelection", selection),
         "version" => version
       })
@@ -738,7 +738,7 @@ defmodule T3.Steps.Plugins.NodePlugins do
   step ~r/^the agent can call the "(?<id>[^"]+)" tools$/, %{args: [_id]} = context do
     names = tool_names(context)
     assert "jira_search" in names
-    assert Enum.all?(T3.Mcp.Tools.list(), &(&1["name"] in names))
+    assert Enum.all?(HalC2.Mcp.Tools.list(), &(&1["name"] in names))
 
     assert %{"structuredContent" => %{"site" => "https://acme.atlassian.net", "issues" => [_]}} =
              mcp(context, "tools/call", %{
@@ -752,34 +752,34 @@ defmodule T3.Steps.Plugins.NodePlugins do
   step "the project has MCP turned off", context do
     context = World.create_project(context, "shop")
     project = context.projects["shop"].id
-    {settings, version} = T3.Settings.get()
+    {settings, version} = HalC2.Settings.get()
 
     overrides =
       Map.put(settings["projectSettingsOverrides"] || %{}, project, %{
         "enableAgentBrowserAccess" => false
       })
 
-    {:ok, _} = T3.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
     context
   end
 
   step ~r/^no "(?<id>[^"]+)" tools are offered$/, %{args: [_id]} = context do
-    # The whole t3-code MCP server, tool packs included, is kept from the agent.
+    # The whole hal-c2 MCP server, tool packs included, is kept from the agent.
     assert context.mcp == nil
-    assert T3.Plugins.tools() != []
+    assert HalC2.Plugins.tools() != []
     context
   end
 
-  # A new turn's agent in "shop": the MCP server its runtime would hand it (`T3.Mcp.for_agent/2`).
+  # A new turn's agent in "shop": the MCP server its runtime would hand it (`HalC2.Mcp.for_agent/2`).
   defp agent_turn(context) do
-    Node.ensure(T3.Mcp)
+    Node.ensure(HalC2.Mcp)
 
     context =
       if context[:projects]["shop"], do: context, else: World.create_project(context, "shop")
 
     context = World.create_thread(context, "Agent #{System.unique_integer([:positive])}", "shop")
     thread_id = context.threads |> Map.values() |> List.last()
-    Map.put(context, :mcp, T3.Mcp.for_agent(thread_id, "codex"))
+    Map.put(context, :mcp, HalC2.Mcp.for_agent(thread_id, "codex"))
   end
 
   defp tool_names(context), do: Enum.map(mcp(context, "tools/list")["tools"], & &1["name"])
@@ -847,7 +847,7 @@ defmodule T3.Steps.Plugins.NodePlugins do
     context = context |> World.create_project("shop") |> Turns.providers()
     {thread_id, context} = Turns.send_first(context, "codex", "hello")
     Turns.await_runs(thread_id, ["completed"])
-    refute T3.BackgroundPolicy.watched?(thread_id)
+    refute HalC2.BackgroundPolicy.watched?(thread_id)
     Map.put(context, :thread_id, thread_id)
   end
 
@@ -897,7 +897,7 @@ defmodule T3.Steps.Plugins.NodePlugins do
     context = context |> World.create_project("shop") |> Turns.providers()
     {thread_id, context} = Turns.send_first(context, "codex", "wait for it")
     [run] = Turns.await_runs(thread_id, ["running"])
-    [{session, _}] = Registry.lookup(T3.Codex.Registry, thread_id)
+    [{session, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
     Map.put(context, :running, %{thread: thread_id, run: run["id"], session: session})
   end
 
@@ -912,7 +912,7 @@ defmodule T3.Steps.Plugins.NodePlugins do
   defp crash_repeatedly(context, id) do
     context = context |> Fixtures.install(id) |> Fixtures.enable(id)
     Fixtures.probe()
-    T3.Plugins.subscribe(self())
+    HalC2.Plugins.subscribe(self())
 
     for _ <- 1..3 do
       crash(id)
@@ -920,10 +920,10 @@ defmodule T3.Steps.Plugins.NodePlugins do
     end
 
     crash(id)
-    Map.merge(context, %{plugin: id, plugins_pid: Process.whereis(T3.Plugins)})
+    Map.merge(context, %{plugin: id, plugins_pid: Process.whereis(HalC2.Plugins)})
   end
 
-  # The listing of `id` once it satisfies `fun`, from `T3.Plugins` pushes.
+  # The listing of `id` once it satisfies `fun`, from `HalC2.Plugins` pushes.
   defp await_plugin(id, fun) do
     entry = Fixtures.entry(id)
 
@@ -931,7 +931,7 @@ defmodule T3.Steps.Plugins.NodePlugins do
       entry
     else
       receive do
-        {:t3_plugins, _node, list} ->
+        {:halc2_plugins, _node, list} ->
           entry = Enum.find(list, &(&1["id"] == id))
           if fun.(entry), do: entry, else: await_plugin(id, fun)
       after

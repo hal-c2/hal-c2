@@ -4,8 +4,8 @@ import {
   type ProjectScript,
   type VcsRef,
   type VcsStatusResult,
-} from "@t3tools/contracts";
-import type { ShellWorkspaceState } from "@t3tools/contracts/shell";
+} from "@hal-c2/contracts";
+import type { ShellWorkspaceState } from "@hal-c2/contracts/shell";
 
 import {
   resolveEnvModeLabel,

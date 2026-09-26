@@ -83,7 +83,7 @@ export const OrchestrationProject = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   // Per-project override for where new threads start. Null/absent means
-  // "no override": clients fall back to t3.json, then the global setting.
+  // "no override": clients fall back to hal-c2.json, then the global setting.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   // Opt-in because background sync performs network I/O and may move the checkout.
   // Optional on the wire so cached snapshots from older servers still decode.
@@ -243,7 +243,7 @@ export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
 
 /**
  * Legacy single-PR link. Still emitted as the thread's derived current pull
- * request (see `@t3tools/shared/threadPullRequests`) so clients from before
+ * request (see `@hal-c2/shared/threadPullRequests`) so clients from before
  * `pullRequests` keep working independently of their release schedule.
  */
 export const ThreadLinkedPullRequest = Schema.Struct({

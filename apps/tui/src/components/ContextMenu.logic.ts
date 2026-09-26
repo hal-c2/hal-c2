@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem } from "@hal-c2/contracts";
 
 // Pure context-menu geometry and keyboard stepping, shared by the React menu
 // and the QML shell host.

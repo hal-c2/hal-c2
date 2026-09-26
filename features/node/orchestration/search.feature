@@ -1,7 +1,7 @@
 # Sources:
 #   packages/contracts/src/rpc.ts (orchestration.searchThreads)
 #   packages/contracts/src/orchestration.ts (OrchestrationSearchThreadsInput, OrchestrationThreadSearchMatch)
-#   apps/server-ex/lib/t3/search.ex
+#   apps/server-ex/lib/hal_c2/search.ex
 #   apps/server/src/orchestration-v2/ (thread search query)
 #   docs/user/ (searching threads)
 Feature: Searching threads by what was said

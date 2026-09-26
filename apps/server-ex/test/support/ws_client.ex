@@ -1,4 +1,4 @@
-defmodule T3.Test.WsClient do
+defmodule HalC2.Test.WsClient do
   @moduledoc "Minimal blocking WebSocket client for tests, speaking JSON text frames."
 
   def connect(port, path) do

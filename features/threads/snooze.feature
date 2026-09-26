@@ -3,11 +3,11 @@
 #   packages/client-runtime/src/state/threadSettled.ts (snooze presets, wake labels, canSnooze, raised hand)
 #   apps/web/src/components/CustomSnoozeDialog.tsx
 #   apps/web/src/components/threadActionMenu.logic.ts (Snooze submenu, Wake thread)
-#   apps/desktop-qt/qml/T3/Bricks/Sidebar.qml (Snoozed section)
-#   apps/desktop-qt/qml/T3/Bricks/SidebarThreadRow.qml (Snooze, Wake, Woke pill, wake label)
+#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Snoozed section)
+#   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (Snooze, Wake, Woke pill, wake label)
 #   packages/contracts/src/shell.ts (thread.snoozeMenu, thread.unsnooze, thread.wokeDismiss)
 #   packages/contracts/src/orchestrationV2.ts (thread.snooze, thread.unsnooze, thread.snoozed, thread.unsnoozed)
-#   apps/server-ex/lib/t3/orchestration.ex (snooze, unsnooze)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (snooze, unsnooze)
 
 Feature: Snoozing threads
   Snoozing parks a thread until a chosen time. It comes back on its own, or earlier when

@@ -1,6 +1,6 @@
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
-import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { type ServerLifecycleWelcomePayload } from "@hal-c2/contracts";
+import { scopedProjectKey, scopeProjectRef } from "@hal-c2/client-runtime/environment";
+import { squashAtomCommandFailure } from "@hal-c2/client-runtime/state/runtime";
 import {
   Outlet,
   Link,
@@ -44,7 +44,7 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
-import { isT3Shell, isT3ShellEmbed } from "../env";
+import { isHalC2Shell, isHalC2ShellEmbed } from "../env";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
@@ -53,7 +53,7 @@ import {
   ShellSettingsBridge,
   ShellThemeBridge,
   ShellToastBridge,
-  T3ShellBridge,
+  HalC2ShellBridge,
 } from "../shell/lazy";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -203,7 +203,7 @@ function RootRouteView() {
 
   // The shell's embed documents skip the app chrome but keep the providers
   // the panel content relies on (toasts, confirms, appearance sync, events).
-  if (isT3ShellEmbed && pathname.startsWith("/embed/")) {
+  if (isHalC2ShellEmbed && pathname.startsWith("/embed/")) {
     return (
       <ToastProvider>
         <AnchoredToastProvider>
@@ -233,7 +233,7 @@ function RootRouteView() {
   // decision is known, so a fresh install renders nothing (not the shell,
   // not a flash of threads) before landing on the welcome wizard.
   return (
-    <ToastProvider shellMirror={isT3Shell ? <ShellToastBridge /> : undefined}>
+    <ToastProvider shellMirror={isHalC2Shell ? <ShellToastBridge /> : undefined}>
       <AnchoredToastProvider>
         <DocumentTitleSync />
         <ContrastAppearanceSync />
@@ -261,9 +261,9 @@ function RootRouteView() {
             <EventRouter skipInitialBootstrapNavigation={returningFromWelcomeRef.current} />
           ) : null}
           {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
-          {isT3Shell ? <T3ShellBridge /> : null}
-          {isT3Shell ? <ShellSettingsBridge /> : null}
-          {isT3Shell ? <ShellThemeBridge /> : null}
+          {isHalC2Shell ? <HalC2ShellBridge /> : null}
+          {isHalC2Shell ? <ShellSettingsBridge /> : null}
+          {isHalC2Shell ? <ShellThemeBridge /> : null}
           {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
           {appShell}
           {/* Above the router: a theme draft is judged by walking the app, so the

@@ -1,12 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { ThreadTurnSubagents } from "@t3tools/client-runtime/state/thread-subagents";
+import type { ThreadTurnSubagents } from "@hal-c2/client-runtime/state/thread-subagents";
 import {
   isOrchestrationV2WorkActive,
   type EnvironmentId,
   type OrchestrationV2Subagent,
   type ThreadId,
-} from "@t3tools/contracts";
-import { deriveSubagentElapsedMs, formatDuration } from "@t3tools/shared/orchestrationTiming";
+} from "@hal-c2/contracts";
+import { deriveSubagentElapsedMs, formatDuration } from "@hal-c2/shared/orchestrationTiming";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as DateTime from "effect/DateTime";
 import * as Haptics from "expo-haptics";
@@ -134,7 +134,7 @@ function AgentRow(props: {
     <View className="min-h-14 flex-row items-center gap-3 border-b border-border py-3">
       <SubagentStatusDot tone={presentation.tone} placement="sheet" />
       <View className="min-w-0 flex-1 gap-0.5">
-        <Text className="font-t3-medium text-sm text-foreground" numberOfLines={1}>
+        <Text className="font-halc2-medium text-sm text-foreground" numberOfLines={1}>
           {presentation.title}
         </Text>
         <Text className="text-xs text-foreground-muted" numberOfLines={1}>

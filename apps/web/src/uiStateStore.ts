@@ -1,19 +1,19 @@
 import { Debouncer } from "@tanstack/react-pacer";
-import type { PullRequestMergeMethod } from "@t3tools/contracts";
+import type { PullRequestMergeMethod } from "@hal-c2/contracts";
 import { create } from "zustand";
-import { isT3ShellEmbed } from "./env";
+import { isHalC2ShellEmbed } from "./env";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 
-export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
+export const PERSISTED_STATE_KEY = "hal-c2:ui-state:v1";
 // Version 1 stored card visibility, not folder expansion.
 const THREAD_CHANGED_FILES_EXPANSION_VERSION = 2;
 const LEGACY_PERSISTED_STATE_KEYS = [
-  "t3code:renderer-state:v8",
-  "t3code:renderer-state:v7",
-  "t3code:renderer-state:v6",
-  "t3code:renderer-state:v5",
-  "t3code:renderer-state:v4",
-  "t3code:renderer-state:v3",
+  "hal-c2:renderer-state:v8",
+  "hal-c2:renderer-state:v7",
+  "hal-c2:renderer-state:v6",
+  "hal-c2:renderer-state:v5",
+  "hal-c2:renderer-state:v4",
+  "hal-c2:renderer-state:v3",
   "codething:renderer-state:v4",
   "codething:renderer-state:v3",
   "codething:renderer-state:v2",
@@ -460,12 +460,12 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     ),
 }));
 
-if (!isT3ShellEmbed) {
+if (!isHalC2ShellEmbed) {
   useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
 }
 
 if (
-  !isT3ShellEmbed &&
+  !isHalC2ShellEmbed &&
   typeof window !== "undefined" &&
   typeof window.addEventListener === "function"
 ) {

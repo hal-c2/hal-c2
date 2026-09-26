@@ -1,7 +1,7 @@
 "use client";
 
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, ThreadId, type TerminalMetadataStreamEvent } from "@t3tools/contracts";
+import { scopeThreadRef } from "@hal-c2/client-runtime/environment";
+import { type EnvironmentId, ThreadId, type TerminalMetadataStreamEvent } from "@hal-c2/contracts";
 import { memo, useEffect, useRef } from "react";
 
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";

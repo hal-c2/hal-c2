@@ -1,6 +1,6 @@
-defmodule T3.Test.FakeRelay do
+defmodule HalC2.Test.FakeRelay do
   @moduledoc """
-  The T3 Connect relay as a node sees it, served on a loopback port: environment
+  The HAL-C2 Connect relay as a node sees it, served on a loopback port: environment
   links (challenge, link, tunnel release, deregistering), the account's environment
   list and device connections, agent activity, relay client downloads, and the
   account's OAuth sign-in (authorization code with PKCE, device code, refresh). It
@@ -96,10 +96,10 @@ defmodule T3.Test.FakeRelay do
   def get(%{state: state}, key), do: Agent.get(state, &Map.get(&1, key))
 
   @doc "The relay's mint public key, as it hands it to a node (SPKI PEM)."
-  def mint_public_pem(relay), do: T3.Connect.Jwt.public_pem(relay.public)
+  def mint_public_pem(relay), do: HalC2.Connect.Jwt.public_pem(relay.public)
 
   @doc "A JWT signed by the relay with header `typ`."
-  def sign(relay, payload, typ), do: T3.Connect.Jwt.sign(payload, typ, relay.private)
+  def sign(relay, payload, typ), do: HalC2.Connect.Jwt.sign(payload, typ, relay.private)
 
   @doc """
   Plays the hosted `/connect` page for a signed-in browser: the account approves a
@@ -148,10 +148,10 @@ defmodule T3.Test.FakeRelay do
     {path, typ, own} =
       case kind do
         :health ->
-          {"/api/t3-connect/health", "t3-cloud-health+jwt", %{"scope" => ["environment:status"]}}
+          {"/api/hal-c2-connect/health", "hal-c2-cloud-health+jwt", %{"scope" => ["environment:status"]}}
 
         {:mint, jkt} ->
-          {"/api/t3-connect/mint-credential", "t3-cloud-mint+jwt",
+          {"/api/hal-c2-connect/mint-credential", "hal-c2-cloud-mint+jwt",
            %{
              "scope" => ["environment:connect"],
              "cnf" => %{"jkt" => jkt},
@@ -162,7 +162,7 @@ defmodule T3.Test.FakeRelay do
     claims =
       %{
         "iss" => relay.url,
-        "aud" => "t3-env:" <> env,
+        "aud" => "hal-c2-env:" <> env,
         "sub" => relay.user,
         "jti" => "jti-#{System.unique_integer([:positive])}",
         "nonce" => "nonce-#{System.unique_integer([:positive])}",
@@ -180,8 +180,8 @@ defmodule T3.Test.FakeRelay do
   @doc "Sends a signed request `ask/5` made again, as a replay."
   def replay(relay, base, :health, claims),
     do:
-      send_proof(base <> "/api/t3-connect/health", %{
-        "proof" => sign(relay, claims, "t3-cloud-health+jwt")
+      send_proof(base <> "/api/hal-c2-connect/health", %{
+        "proof" => sign(relay, claims, "hal-c2-cloud-health+jwt")
       })
 
   defp send_proof(url, body) do
@@ -255,9 +255,9 @@ defmodule T3.Test.FakeRelay do
           %{"environmentId" => env, "environmentPublicKey" => pem, "challenge" => challenge} =
             claims} <- JSON.decode(json),
          true <- challenge == s[:challenge],
-         {:ok, public} <- T3.Connect.Jwt.raw_public(pem),
+         {:ok, public} <- HalC2.Connect.Jwt.raw_public(pem),
          {:ok, _} <-
-           T3.Connect.Jwt.verify(proof, "t3-env-link+jwt", public, "t3-env:" <> env, s_url(conn)) do
+           HalC2.Connect.Jwt.verify(proof, "hal-c2-env-link+jwt", public, "hal-c2-env:" <> env, s_url(conn)) do
       # One tunnel per environment, kept across links, as the relay reuses its address.
       # A deregistered environment that links again gets a new credential.
       credential =
@@ -505,7 +505,7 @@ defmodule T3.Test.FakeRelay do
           "providerKind" => "cloudflare_tunnel",
           "connectorToken" => link["connector"],
           "tunnelId" => link["tunnelId"],
-          "tunnelName" => String.replace_prefix(link["tunnelId"], "tunnel-", "t3-")
+          "tunnelName" => String.replace_prefix(link["tunnelId"], "tunnel-", "hal-c2-")
         },
         else: nil
 
@@ -513,7 +513,7 @@ defmodule T3.Test.FakeRelay do
       "relayIssuer" => s_url(conn),
       "cloudUserId" => @user,
       "environmentCredential" => link["credential"],
-      "cloudMintPublicKey" => T3.Connect.Jwt.public_pem(s.public),
+      "cloudMintPublicKey" => HalC2.Connect.Jwt.public_pem(s.public),
       "endpointRuntime" => runtime
     })
   end

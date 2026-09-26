@@ -1,9 +1,9 @@
-defmodule T3.Steps.Orchestration.QueueAndSteering do
+defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # Turns run on the scripted fakes (`World.providers/1`): a message containing "wait"
   # keeps its turn running until it is completed or interrupted. Messages are found by
@@ -284,7 +284,7 @@ defmodule T3.Steps.Orchestration.QueueAndSteering do
        context do
     queue_command(context, "queued-run.edit", %{
       "runId" => List.last(context.queued),
-      "text" => "Look at [README.md](t3-context://v1/mention/readme)",
+      "text" => "Look at [README.md](hal-c2-context://v1/mention/readme)",
       "attachments" => [],
       "context" => %{
         "version" => 1,
@@ -357,7 +357,7 @@ defmodule T3.Steps.Orchestration.QueueAndSteering do
   step "no run starts for it", context do
     [id] = context.queued
     # What a run's end asks for; a held queue does not start.
-    :ok = T3.Orchestration.start_next(World.thread_id(context, context.thread))
+    :ok = HalC2.Orchestration.start_next(World.thread_id(context, context.thread))
     assert %{"status" => "queued", "startedAt" => nil} = run(context, id)
     assert World.codex_requests(context, "turn/start") == []
     context
@@ -377,7 +377,7 @@ defmodule T3.Steps.Orchestration.QueueAndSteering do
     assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
     World.await_latest_run(context, thread, "completed")
     # Its end asks for the next queued message, as the runtime does.
-    :ok = T3.Orchestration.start_next(World.thread_id(context, thread))
+    :ok = HalC2.Orchestration.start_next(World.thread_id(context, thread))
     context
   end
 
@@ -479,14 +479,14 @@ defmodule T3.Steps.Orchestration.QueueAndSteering do
 
   defp upload(name) do
     {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
-      T3.Attachments.create_upload_url(%{
+      HalC2.Attachments.create_upload_url(%{
         "type" => "image",
         "name" => name,
         "mimeType" => "image/png",
         "sizeBytes" => 4
       })
 
-    :ok = T3.Attachments.store(token, "png!")
+    :ok = HalC2.Attachments.store(token, "png!")
     %{"type" => "image", "id" => id, "name" => name, "mimeType" => "image/png", "sizeBytes" => 4}
   end
 end

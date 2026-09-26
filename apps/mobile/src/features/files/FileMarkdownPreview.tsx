@@ -1,6 +1,6 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
-import { getBrowseDirectoryPath } from "@t3tools/client-runtime/state/projects";
+import type { EnvironmentId, ThreadId } from "@hal-c2/contracts";
+import { resolveMediaSource } from "@hal-c2/client-runtime/media-source";
+import { getBrowseDirectoryPath } from "@hal-c2/client-runtime/state/projects";
 import { useCallback, useMemo, useState } from "react";
 import {
   Markdown,
@@ -64,7 +64,7 @@ function useMarkdownPreviewStyles(renderImage?: MarkdownImageRenderer): Markdown
     const renderers: CustomRenderers = {
       link: ({ href, children }) => (
         <NativeText
-          className="font-t3-medium"
+          className="font-halc2-medium"
           onPress={() => {
             if (href) {
               void tryOpenExternalUrl(href, "markdown-link");

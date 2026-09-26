@@ -4,14 +4,14 @@ import type {
   ProviderOptionDescriptor,
   ProviderOptionSelection,
   ServerProvider,
-} from "@t3tools/contracts";
-import { isProviderAvailable } from "@t3tools/contracts";
+} from "@hal-c2/contracts";
+import { isProviderAvailable } from "@hal-c2/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   createModelSelection,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
-} from "@t3tools/shared/model";
+} from "@hal-c2/shared/model";
 
 // Flatten the server config's providers into a flat, selectable model list for the
 // picker. Mirrors the web app's model assembly (apps/web/src/modelSelection.ts) at

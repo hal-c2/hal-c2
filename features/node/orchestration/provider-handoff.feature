@@ -4,8 +4,8 @@
 #     provider-session.updated)
 #   packages/contracts/src/providerInstance.ts, packages/contracts/src/model.ts,
 #   packages/contracts/src/modelSelection.ts
-#   apps/server-ex/lib/t3/orchestration.ex (provider.switch, thread.model-selection.set)
-#   apps/server-ex/lib/t3/orchestration/handoff.ex
+#   apps/server-ex/lib/hal_c2/orchestration.ex (provider.switch, thread.model-selection.set)
+#   apps/server-ex/lib/hal_c2/orchestration/handoff.ex
 #   apps/server/src/orchestration-v2/ (capabilities and degradation policies)
 Feature: Changing model and provider mid-thread
   A thread can change model or move to another provider between turns. The next

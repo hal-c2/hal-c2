@@ -1,11 +1,11 @@
 # Sources:
-#   apps/server-ex/lib/t3/cluster.ex (cluster CA, mutual TLS distribution, vm.args)
-#   apps/server-ex/lib/t3/cluster/tailscale.ex (discovery)
-#   apps/server-ex/lib/mix/tasks/t3.cluster.ex (init, invite, join, vm-args)
-#   apps/server-ex/lib/t3/shell.ex (cluster-wide sidebar, offline peers)
-#   apps/server-ex/lib/t3/environment.ex (descriptor cluster list)
-#   apps/server-ex/lib/t3/web/router.ex (/.well-known/t3/environment, forwarded uploads)
-#   apps/server-ex/lib/t3/devices/proxy.ex (device hub of any node)
+#   apps/server-ex/lib/hal_c2/cluster.ex (cluster CA, mutual TLS distribution, vm.args)
+#   apps/server-ex/lib/hal_c2/cluster/tailscale.ex (discovery)
+#   apps/server-ex/lib/mix/tasks/hal_c2.cluster.ex (init, invite, join, vm-args)
+#   apps/server-ex/lib/hal_c2/shell.ex (cluster-wide sidebar, offline peers)
+#   apps/server-ex/lib/hal_c2/environment.ex (descriptor cluster list)
+#   apps/server-ex/lib/hal_c2/web/router.ex (/.well-known/hal-c2/environment, forwarded uploads)
+#   apps/server-ex/lib/hal_c2/devices/proxy.ex (device hub of any node)
 #   packages/client-runtime/src/v3/clusterSocket.ts (one socket per cluster)
 #   packages/client-runtime/src/v3/clusterMembers.ts (registering members that join later)
 #   packages/client-runtime/src/connection/compatibility.ts (descriptorServesEnvironment)
@@ -67,7 +67,7 @@ Feature: Clustering one person's machines
 
   @node
   Scenario: Members can be listed statically
-    Given T3_PEERS names a member's node
+    Given HALC2_PEERS names a member's node
     When the node starts
     Then it connects to that member without tailnet discovery
 

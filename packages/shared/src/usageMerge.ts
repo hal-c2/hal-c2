@@ -13,7 +13,7 @@ import {
   type UsageProviderKind,
   type UsageSourceFingerprint,
   type UsageSummary,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 
 export interface EnvironmentUsage {
   readonly environmentId: EnvironmentId;

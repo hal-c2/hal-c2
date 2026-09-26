@@ -1,10 +1,10 @@
 # Sources:
 #   docs/user/providers-pi.md
 #   docs/internals/providers.md (Pi RPC mode, forks through the CLI in the destination directory)
-#   apps/server-ex/lib/t3/pi.ex, apps/server-ex/lib/t3/pi/thread_runtime.ex (Pi RPC mode)
+#   apps/server-ex/lib/hal_c2/pi.ex, apps/server-ex/lib/hal_c2/pi/thread_runtime.ex (Pi RPC mode)
 #   apps/server/src/provider/Layers/PiProvider.ts, apps/server/src/provider/Drivers/PiDriver.ts
 #   apps/server/src/orchestration-v2/Adapters/PiAdapterV2.ts, apps/server/src/orchestration-v2/Adapters/PiRpc.ts
-#   apps/server/src/orchestration-v2/Adapters/piT3McpInjection.ts, apps/server/src/provider/PiCommands.ts
+#   apps/server/src/orchestration-v2/Adapters/piHalC2McpInjection.ts, apps/server/src/provider/PiCommands.ts
 #   apps/server/src/provider/Layers/piThinkingCapabilities.ts, apps/server/src/textGeneration/PiTextGeneration.ts
 
 @plugin-pi @node
@@ -41,9 +41,9 @@ Feature: Pi
     When the user refreshes provider status
     Then Pi is shown as unsupported with a hint to update to 0.80.5 or newer
 
-  Scenario: Pi launch arguments that change how T3 Code runs Pi are refused
+  Scenario: Pi launch arguments that change how HAL-C2 runs Pi are refused
     When the user adds the launch argument "--mode json" to Pi
-    Then the setting is refused with a message that T3 Code owns that part of Pi
+    Then the setting is refused with a message that HAL-C2 owns that part of Pi
 
   Scenario: Pi with no usable models explains how to sign in
     Given Pi reports no models
@@ -100,7 +100,7 @@ Feature: Pi
     Then the choices appear in the composer and the answer goes back to the extension
 
   Scenario: A Pi thread can be resumed in the Pi terminal app
-    Given a Pi thread in T3 Code
+    Given a Pi thread in HAL-C2
     When the user opens the same session in Pi's own terminal app
     Then the conversation continues there from the same session file
 
@@ -127,7 +127,7 @@ Feature: Pi
     When Pi reports its context usage while answering
     Then the context meter shows Pi's reported usage
 
-  Scenario: Pi delegates work to child threads through the T3 Code tools
+  Scenario: Pi delegates work to child threads through the HAL-C2 tools
     When Pi delegates a task
     Then the task appears as a child thread in the subagent view
 

@@ -1,4 +1,4 @@
-defmodule T3.Steps.Preview.Remote do
+defmodule HalC2.Steps.Preview.Remote do
   @moduledoc """
   Steps for `features/preview/remote.feature`: browser tabs, local server
   suggestions and agent browser hosts of another node, reached through a socket
@@ -11,9 +11,9 @@ defmodule T3.Steps.Preview.Remote do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
-  alias T3.Test.WsClient
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
+  alias HalC2.Test.WsClient
 
   @sub 91
   @remote_thread "th-remote"
@@ -30,7 +30,7 @@ defmodule T3.Steps.Preview.Remote do
 
   step "a thread on a second node has browser tabs", context do
     {:ok, %{"tabId" => tab}} =
-      :erpc.call(context.peer, T3.Preview, :open, [
+      :erpc.call(context.peer, HalC2.Preview, :open, [
         %{"threadId" => @remote_thread, "url" => "http://localhost:5173/"}
       ])
 
@@ -46,8 +46,8 @@ defmodule T3.Steps.Preview.Remote do
     %{peer: peer, tab: tab} = context
     url = "http://localhost:5173/cart"
     input = %{"threadId" => @remote_thread, "tabId" => tab, "url" => url}
-    {:ok, _} = :erpc.call(peer, T3.Preview, :navigate, [input])
-    {:ok, %{"serverEpoch" => epoch}} = :erpc.call(peer, T3.Preview, :list, [input])
+    {:ok, _} = :erpc.call(peer, HalC2.Preview, :navigate, [input])
+    {:ok, %{"serverEpoch" => epoch}} = :erpc.call(peer, HalC2.Preview, :list, [input])
 
     {frame, _client} =
       Node.await(World.client(context), fn frame ->
@@ -57,16 +57,16 @@ defmodule T3.Steps.Preview.Remote do
     assert %{"threadId" => @remote_thread, "serverEpoch" => ^epoch} = frame["event"]
     assert frame["event"]["snapshot"]["navStatus"]["url"] == url
     # This node's own tabs have their own run.
-    Node.ensure(T3.Preview)
+    Node.ensure(HalC2.Preview)
 
-    assert T3.Preview.list(%{"threadId" => @remote_thread}) |> elem(1) |> Map.get("serverEpoch") !=
+    assert HalC2.Preview.list(%{"threadId" => @remote_thread}) |> elem(1) |> Map.get("serverEpoch") !=
              epoch
 
     context
   end
 
   step "the client opens a browser tab for a thread on the second node", context do
-    Node.ensure(T3.Preview)
+    Node.ensure(HalC2.Preview)
     input = %{"threadId" => @remote_thread, "url" => "http://localhost:5173/"}
 
     {reply, client} =
@@ -80,10 +80,10 @@ defmodule T3.Steps.Preview.Remote do
   end
 
   step "the tab is kept by the second node", context do
-    {:ok, remote} = :erpc.call(context.peer, T3.Preview, :list, [%{"threadId" => @remote_thread}])
+    {:ok, remote} = :erpc.call(context.peer, HalC2.Preview, :list, [%{"threadId" => @remote_thread}])
     assert [%{"tabId" => tab}] = remote["sessions"]
     assert tab == context.tab
-    {:ok, local} = T3.Preview.list(%{"threadId" => @remote_thread})
+    {:ok, local} = HalC2.Preview.list(%{"threadId" => @remote_thread})
     assert local["sessions"] == []
     context
   end
@@ -127,8 +127,8 @@ defmodule T3.Steps.Preview.Remote do
   step "servers on the first node's machine are not", context do
     refute Enum.any?(context.servers, &(&1["port"] == context.first_port))
     # This node's own suggestions do include it.
-    Node.ensure(T3.LocalServers)
-    assert {:ok, %{"servers" => servers}} = T3.LocalServers.subscribe(self())
+    Node.ensure(HalC2.LocalServers)
+    assert {:ok, %{"servers" => servers}} = HalC2.LocalServers.subscribe(self())
     assert Enum.any?(servers, &(&1["port"] == context.first_port))
     context
   end
@@ -195,7 +195,7 @@ defmodule T3.Steps.Preview.Remote do
 
     task =
       Task.async(fn ->
-        :erpc.call(peer, T3.PreviewAutomation, :invoke, [scope, "status", %{}])
+        :erpc.call(peer, HalC2.PreviewAutomation, :invoke, [scope, "status", %{}])
       end)
 
     {request, context} = request(context)
@@ -222,7 +222,7 @@ defmodule T3.Steps.Preview.Remote do
   end
 
   step "a desktop is offering its browser to a node", context do
-    Node.ensure(T3.PreviewAutomation)
+    Node.ensure(HalC2.PreviewAutomation)
 
     context
     |> Map.put(:scope, %{thread_id: "th-agent", instance: "codex"})
@@ -232,7 +232,7 @@ defmodule T3.Steps.Preview.Remote do
   # With an action in flight, so its fate can be checked.
   step "the desktop's connection to the server closes", context do
     scope = context.scope
-    task = Task.async(fn -> T3.PreviewAutomation.invoke(scope, "click", %{}) end)
+    task = Task.async(fn -> HalC2.PreviewAutomation.invoke(scope, "click", %{}) end)
     {%{"operation" => "click"}, context} = request(context)
     Mint.HTTP.close(World.client(context).conn)
 
@@ -246,24 +246,24 @@ defmodule T3.Steps.Preview.Remote do
             %{"_tag" => "PreviewAutomationClientDisconnectedError", "clientId" => "desktop-1"}} =
              Task.await(context.task)
 
-    refute Map.has_key?(:sys.get_state(T3.PreviewAutomation).clients, "desktop-1")
+    refute Map.has_key?(:sys.get_state(HalC2.PreviewAutomation).clients, "desktop-1")
 
     assert {:error, %{"_tag" => "PreviewAutomationNoAvailableHostError"}} =
-             T3.PreviewAutomation.invoke(context.scope, "click", %{})
+             HalC2.PreviewAutomation.invoke(context.scope, "click", %{})
 
     context
   end
 
   step "any action it had not answered fails as disconnected", context do
     # Awaited by the previous step, which needed the drop to have happened.
-    assert :sys.get_state(T3.PreviewAutomation).pending == %{}
+    assert :sys.get_state(HalC2.PreviewAutomation).pending == %{}
     context
   end
 
   step "a client is watching a node's browser tabs", context do
-    Node.ensure(T3.Preview)
+    Node.ensure(HalC2.Preview)
     client = context |> World.client() |> watch(%{"type" => "preview"}, node()) |> ping()
-    assert map_size(:sys.get_state(T3.Preview).watchers) == 1
+    assert map_size(:sys.get_state(HalC2.Preview).watchers) == 1
     World.put_client(context, "default", client)
   end
 
@@ -273,8 +273,8 @@ defmodule T3.Steps.Preview.Remote do
   end
 
   step "the node stops sending it tab changes", context do
-    assert :sys.get_state(T3.Preview).watchers == %{}
-    {:ok, _} = T3.Preview.open(%{"threadId" => "th-local", "url" => "http://localhost:5173/"})
+    assert :sys.get_state(HalC2.Preview).watchers == %{}
+    {:ok, _} = HalC2.Preview.open(%{"threadId" => "th-local", "url" => "http://localhost:5173/"})
     client = World.client(context) |> WsClient.send_json(%{"t" => "ping"})
     {_pong, skipped, _client} = WsClient.recv_until(client, &(&1["t"] == "pong"))
     assert Enum.filter(skipped, &(&1["t"] == "preview")) == []
@@ -291,14 +291,14 @@ defmodule T3.Steps.Preview.Remote do
 
   # The peer's environment descriptor, once this node's shell has it (RPCs route by it).
   defp environment(peer) do
-    T3.Shell.subscribe(self())
+    HalC2.Shell.subscribe(self())
 
-    case List.keyfind(T3.Shell.environments(), peer, 0) do
+    case List.keyfind(HalC2.Shell.environments(), peer, 0) do
       {^peer, descriptor} ->
         descriptor
 
       nil ->
-        assert_receive {:t3_shell, {:environment, ^peer, descriptor}}, 10_000
+        assert_receive {:halc2_shell, {:environment, ^peer, descriptor}}, 10_000
         descriptor
     end
   end
@@ -308,13 +308,13 @@ defmodule T3.Steps.Preview.Remote do
   defp start_peer(context) do
     unless :erlang.is_alive() do
       {_, 0} = System.cmd("epmd", ["-daemon"])
-      name = :"t3features#{System.unique_integer([:positive])}@127.0.0.1"
+      name = :"halc2features#{System.unique_integer([:positive])}@127.0.0.1"
       {:ok, _} = :net_kernel.start(name, %{name_domain: :longnames})
     end
 
     {:ok, peer, name} =
       :peer.start(%{
-        name: :"t3peer#{System.unique_integer([:positive])}",
+        name: :"halc2peer#{System.unique_integer([:positive])}",
         host: ~c"127.0.0.1",
         longnames: true,
         peer_down: :continue,
@@ -325,9 +325,9 @@ defmodule T3.Steps.Preview.Remote do
     home = Path.join(context.node.home, "peer-gone")
 
     for {key, value} <- [start_node: true, home: home, port: 0],
-        do: :ok = :erpc.call(name, Application, :put_env, [:t3, key, value])
+        do: :ok = :erpc.call(name, Application, :put_env, [:hal_c2, key, value])
 
-    {:ok, _} = :erpc.call(name, Application, :ensure_all_started, [:t3])
+    {:ok, _} = :erpc.call(name, Application, :ensure_all_started, [:hal_c2])
     name
   end
 

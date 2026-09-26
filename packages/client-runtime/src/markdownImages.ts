@@ -1,4 +1,4 @@
-import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { isWindowsAbsolutePath } from "@hal-c2/shared/path";
 
 import {
   normalizeMarkdownLinkDestination,

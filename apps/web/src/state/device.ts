@@ -1,12 +1,12 @@
 import { useMemo } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { createDeviceEnvironmentAtoms } from "@t3tools/client-runtime/state/device";
+import { createDeviceEnvironmentAtoms } from "@hal-c2/client-runtime/state/device";
 import {
   atDeviceHubBasePath,
   type DeviceHubAccess,
   resolveDeviceHubAccess,
-} from "@t3tools/client-runtime/state/deviceHubAccess";
-import type { DeviceServiceState, EnvironmentId } from "@t3tools/contracts";
+} from "@hal-c2/client-runtime/state/deviceHubAccess";
+import type { DeviceServiceState, EnvironmentId } from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";

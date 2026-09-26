@@ -1,16 +1,16 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useIsFocused, useNavigation } from "@react-navigation/native";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { summarizeSubagentStatuses } from "@t3tools/client-runtime/state/subagent-display";
+import { scopeThreadRef } from "@hal-c2/client-runtime/environment";
+import { summarizeSubagentStatuses } from "@hal-c2/client-runtime/state/subagent-display";
 import {
   isActiveSubagentStatus,
   isTerminalSubagentStatus,
-} from "@t3tools/client-runtime/state/subagentRuntime";
+} from "@hal-c2/client-runtime/state/subagentRuntime";
 import type {
   EnvironmentId,
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import { useEffect, useState } from "react";
 import { AppState, Pressable, View, type ColorValue } from "react-native";
 
@@ -130,7 +130,7 @@ export function ThreadSubagentGroup(props: {
             ) : null}
           </View>
           <View className="min-w-0 flex-1 gap-0.5">
-            <Text numberOfLines={1} className="font-t3-medium text-sm text-foreground">
+            <Text numberOfLines={1} className="font-halc2-medium text-sm text-foreground">
               {label}
             </Text>
             <Text
@@ -192,7 +192,7 @@ export function ThreadSubagentGroup(props: {
                   <View className="flex-row items-baseline gap-2">
                     <Text
                       numberOfLines={1}
-                      className="min-w-0 shrink font-t3-medium text-sm text-foreground"
+                      className="min-w-0 shrink font-halc2-medium text-sm text-foreground"
                     >
                       {presentation.title}
                     </Text>

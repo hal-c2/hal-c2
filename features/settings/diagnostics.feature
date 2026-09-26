@@ -1,6 +1,6 @@
 # Sources:
-#   apps/server-ex/lib/t3/diagnostics.ex (process list, history, signals, traces)
-#   apps/server-ex/lib/t3/traces.ex (node spans, client trace forwarding, trace diagnostics)
+#   apps/server-ex/lib/hal_c2/diagnostics.ex (process list, history, signals, traces)
+#   apps/server-ex/lib/hal_c2/traces.ex (node spans, client trace forwarding, trace diagnostics)
 #   apps/server-ex/test/node_parity_test.exs (diagnostics RPCs aligned)
 #   apps/server-ex/test/features_backlog_test.exs (client trace forwarding)
 #   packages/contracts/src/rpc.ts (server.getProcessDiagnostics, server.getProcessResourceHistory, server.signalProcess, server.getTraceDiagnostics)

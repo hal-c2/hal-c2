@@ -66,7 +66,7 @@ Feature: Snap Shot settings
     Examples:
       | shortcut                                  | reason                                         |
       | a modifier with no key on Linux           | Linux shortcuts need a letter, number or function key |
-      | a shortcut T3 Code already uses           | it collides with a T3 Code keybinding           |
+      | a shortcut HAL-C2 already uses           | it collides with a HAL-C2 keybinding           |
       | a shortcut the system reserves            | the system reserves it                          |
 
   Scenario: Including app text
@@ -93,7 +93,7 @@ Feature: Snap Shot settings
     Then the user is told capture effects are not available on Niri
 
   Scenario: Reviewing compositor changes again
-    Given a Hyprland session where the Snap Shot binding changed outside T3 Code
+    Given a Hyprland session where the Snap Shot binding changed outside HAL-C2
     When the panel loads
     Then setup reopens to review the changes
 

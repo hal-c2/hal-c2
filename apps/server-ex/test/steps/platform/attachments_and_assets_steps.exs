@@ -1,10 +1,10 @@
-defmodule T3.Steps.Platform.AttachmentsAndAssets do
+defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
   @moduledoc "Steps for features/node/platform/attachments-and-assets.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @mb 1024 * 1024
   @png_magic <<137, 80, 78, 71, 13, 10, 26, 10>>
@@ -25,7 +25,7 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
 
     {:ok, result} =
       if now,
-        do: T3.Attachments.create_upload_url(input, now),
+        do: HalC2.Attachments.create_upload_url(input, now),
         else: elem(rpc(context, "attachments.createUploadUrl", input), 0)
 
     attachment = %{
@@ -61,7 +61,7 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
   end
 
   defp messages(thread_id),
-    do: T3.StreamState.list(T3.Streams.Server.state(T3.Streams.ensure(thread_id)), "message")
+    do: HalC2.StreamState.list(HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id)), "message")
 
   defp message(context),
     do: Enum.find(messages(thread(context)), &(&1["id"] == context.message_id))
@@ -102,7 +102,7 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
        "attachmentId" => claimed["id"],
        "fileName" => "shot.png",
        "mimeType" => "image/png"
-     }, File.read!(T3.Attachments.path(claimed))}
+     }, File.read!(HalC2.Attachments.path(claimed))}
   end
 
   defp resource(context, "a file in the project") do
@@ -154,12 +154,12 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
     World.put_app_env(:gh_command, @fake_gh)
     System.put_env("FAKE_GH_RULES", Path.join(home, "gh-rules.json"))
     System.put_env("FAKE_GH_LOG", Path.join(home, "gh.log"))
-    :persistent_term.erase({T3.Attachments.GitHubMedia, :token})
+    :persistent_term.erase({HalC2.Attachments.GitHubMedia, :token})
 
     ExUnit.Callbacks.on_exit(fn ->
       System.delete_env("FAKE_GH_RULES")
       System.delete_env("FAKE_GH_LOG")
-      :persistent_term.erase({T3.Attachments.GitHubMedia, :token})
+      :persistent_term.erase({HalC2.Attachments.GitHubMedia, :token})
     end)
 
     File.write!(Path.join(home, "gh-rules.json"), JSON.encode!(rules))
@@ -196,9 +196,9 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
         startup_log: false
       )
 
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :github_media_origin) end)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :github_media_origin) end)
     {:ok, {_ip, port}} = ThousandIsland.listener_info(pid)
-    Application.put_env(:t3, :github_media_origin, "http://127.0.0.1:#{port}")
+    Application.put_env(:hal_c2, :github_media_origin, "http://127.0.0.1:#{port}")
 
     context
     |> Map.put(:github, %{token: token, bytes: bytes})
@@ -254,7 +254,7 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
 
   step "the node accepts the upload", context do
     assert {204, _, _} = context.response
-    path = T3.Attachments.path(context.attachment)
+    path = HalC2.Attachments.path(context.attachment)
     assert File.stat!(path).size == 2 * @mb
     context
   end
@@ -275,7 +275,7 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
 
   step "the node refuses the link as invalid or expired", context do
     assert {403, _, "The link is invalid or expired."} = context.response
-    refute T3.Attachments.path(context.attachment)
+    refute HalC2.Attachments.path(context.attachment)
     context
   end
 
@@ -339,7 +339,7 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
 
   step "the node answers that the body is the wrong size", context do
     assert {400, _, "The body is the wrong size."} = context.response
-    refute T3.Attachments.path(context.attachment)
+    refute HalC2.Attachments.path(context.attachment)
     context
   end
 
@@ -381,10 +381,10 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
 
   step "the provider can read it", context do
     [claimed] = message(context)["attachments"]
-    path = T3.Attachments.path(claimed)
-    assert File.read!(path) == File.read!(T3.Attachments.path(context.attachment))
+    path = HalC2.Attachments.path(claimed)
+    assert File.read!(path) == File.read!(HalC2.Attachments.path(context.attachment))
 
-    assert T3.Attachments.prompt_text("look", [%{type: "image", name: "shot.png", path: path}]) =~
+    assert HalC2.Attachments.prompt_text("look", [%{type: "image", name: "shot.png", path: path}]) =~
              path
 
     context
@@ -402,8 +402,8 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
     assert [image, text] = message(context)["attachments"]
     assert %{"type" => "image", "name" => "shot.png"} = image
     assert %{"type" => "file", "name" => "notes.txt"} = text
-    assert File.read!(T3.Attachments.path(text)) == "remember the milk\n"
-    assert File.regular?(T3.Attachments.path(image))
+    assert File.read!(HalC2.Attachments.path(text)) == "remember the milk\n"
+    assert File.regular?(HalC2.Attachments.path(image))
     context
   end
 
@@ -437,10 +437,10 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
 
   step "an upload no message claimed for 25 hours", context do
     attachment = upload!(context, "image", "old.png", "image/png", png(256))
-    path = T3.Attachments.path(attachment)
+    path = HalC2.Attachments.path(attachment)
     File.touch!(path, System.os_time(:second) - 25 * 60 * 60)
     # The sweep runs at most every 15 minutes; this scenario starts a fresh window.
-    :persistent_term.erase({T3.Attachments, :swept})
+    :persistent_term.erase({HalC2.Attachments, :swept})
     Map.merge(context, %{attachment: attachment, old_path: path})
   end
 
@@ -448,7 +448,7 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
     # Asking for an upload URL is what runs the sweep.
     fresh = upload!(context, "image", "new.png", "image/png", png(256))
     refute File.exists?(context.old_path)
-    assert T3.Attachments.path(fresh)
+    assert HalC2.Attachments.path(fresh)
     context
   end
 
@@ -461,7 +461,7 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
   end
 
   step "the upload is gone", context do
-    refute T3.Attachments.path(context.attachment)
+    refute HalC2.Attachments.path(context.attachment)
     context
   end
 
@@ -494,7 +494,7 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
     for {stored, name} <- [{first, "paste-1.png"}, {second, "paste-2.png"}] do
       assert %{"type" => "image", "name" => ^name, "sizeBytes" => 300} = stored
       assert String.starts_with?(stored["id"], thread(context))
-      assert File.read!(T3.Attachments.path(stored)) == context.pasted
+      assert File.read!(HalC2.Attachments.path(stored)) == context.pasted
     end
 
     context
@@ -521,7 +521,7 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
     issued = System.system_time(:millisecond) - 61 * 60_000
 
     {:ok, %{"relativeUrl" => old}} =
-      T3.Attachments.create_url(%{"resource" => context.resource}, issued)
+      HalC2.Attachments.create_url(%{"resource" => context.resource}, issued)
 
     assert {403, _, "The link is invalid or expired."} = Node.request(context.node, :get, old)
     context
@@ -592,7 +592,7 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
     resource = %{"_tag" => "media-file", "threadId" => "th-peer", "path" => path}
 
     {:ok, %{"relativeUrl" => url}} =
-      :erpc.call(peer.name, T3.Attachments, :create_url, [%{"resource" => resource}])
+      :erpc.call(peer.name, HalC2.Attachments, :create_url, [%{"resource" => resource}])
 
     Map.merge(context, %{node: node, peer: peer, peer_url: url, bytes: bytes})
   end
@@ -604,15 +604,15 @@ defmodule T3.Steps.Platform.AttachmentsAndAssets do
   step "the node forwards the request to the issuer", context do
     assert {200, _, body} = context.response
     assert body == context.bytes
-    assert {:ok, context.peer.name} == T3.Attachments.issuer(token(context.peer_url))
+    assert {:ok, context.peer.name} == HalC2.Attachments.issuer(token(context.peer_url))
     context
   end
 
   step "only the issuer checks the signature", context do
     # This node's own key does not verify the peer's signature; the peer's does.
     token = token(context.peer_url)
-    assert {:error, 403, _} = T3.Attachments.serve(token)
-    assert {:ok, 200, _, _} = :erpc.call(context.peer.name, T3.Attachments, :serve, [token, %{}])
+    assert {:error, 403, _} = HalC2.Attachments.serve(token)
+    assert {:ok, 200, _, _} = :erpc.call(context.peer.name, HalC2.Attachments, :serve, [token, %{}])
     context
   end
 

@@ -20,7 +20,7 @@ One directory per product domain, not per surface. Surfaces are tags.
 | `preview/`        | in-app preview surfaces                                                      |
 | `files/`          | project files, explorer, folder operations, project scripts and actions      |
 | `settings/`       | every settings panel, scopes and inheritance, storage, diagnostics, updates  |
-| `connections/`    | pairing, devices, remote access, T3 Connect, clustering                      |
+| `connections/`    | pairing, devices, remote access, HAL-C2 Connect, clustering                  |
 | `node/`           | the Elixir node itself: protocol, auth, orchestration engine, checkpoints    |
 | `providers/`      | each agent provider as a plugin: install, auth, models, usage, sessions      |
 | `plugins/`        | the plugin system: UI plugins, node plugins, agent plugins                   |

@@ -6,11 +6,11 @@
  *
  * @module ProjectionPendingApprovalRepository
  */
-import { ApprovalRequestId, IsoDateTime, ThreadId, TurnId } from "@t3tools/contracts";
+import { ApprovalRequestId, IsoDateTime, ThreadId, TurnId } from "@hal-c2/contracts";
 import {
   ProjectionPendingApprovalDecision,
   ProjectionPendingApprovalStatus,
-} from "@t3tools/contracts/legacy-orchestration";
+} from "@hal-c2/contracts/legacy-orchestration";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
@@ -87,4 +87,4 @@ export interface ProjectionPendingApprovalRepositoryShape {
 export class ProjectionPendingApprovalRepository extends Context.Service<
   ProjectionPendingApprovalRepository,
   ProjectionPendingApprovalRepositoryShape
->()("t3/persistence/Services/ProjectionPendingApprovals/ProjectionPendingApprovalRepository") {}
+>()("hal-c2/persistence/Services/ProjectionPendingApprovals/ProjectionPendingApprovalRepository") {}

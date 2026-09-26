@@ -1,10 +1,10 @@
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef } from "@hal-c2/client-runtime/environment";
 import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
   type ModelSelection,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   resolveThreadActionProjectRef,

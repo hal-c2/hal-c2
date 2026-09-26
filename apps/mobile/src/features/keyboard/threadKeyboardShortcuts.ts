@@ -1,5 +1,5 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@hal-c2/client-runtime/state/shell";
+import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@hal-c2/contracts";
 import { useCallback } from "react";
 
 import type { ThreadListV2ListItem } from "../threads/threadListV2";

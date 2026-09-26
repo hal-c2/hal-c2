@@ -1,8 +1,8 @@
-import type { OrchestrationProjectShell, OrchestrationThread, VcsRef } from "@t3tools/contracts";
+import type { OrchestrationProjectShell, OrchestrationThread, VcsRef } from "@hal-c2/contracts";
 import {
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchSelectionTarget,
-} from "@t3tools/shared/git";
+} from "@hal-c2/shared/git";
 
 export type NewThreadWorkspaceMode = "current" | "new-worktree";
 

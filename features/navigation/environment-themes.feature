@@ -1,9 +1,9 @@
 # Sources:
 #   docs/user/appearance.md (Environment themes, Publish a theme)
-#   apps/server-ex/lib/t3/environment_themes.ex
-#   apps/server-ex/lib/t3/settings.ex (notify_themes)
-#   apps/server-ex/lib/t3/web/protocol.ex (config.themes)
-#   apps/server/src/cli/theme.ts (t3 theme set, clear, show)
+#   apps/server-ex/lib/hal_c2/environment_themes.ex
+#   apps/server-ex/lib/hal_c2/settings.ex (notify_themes)
+#   apps/server-ex/lib/hal_c2/web/protocol.ex (config.themes)
+#   apps/server/src/cli/theme.ts (hal-c2 theme set, clear, show)
 #   docs/internals/desktop-qt.md (theme.json ricing contract)
 #   apps/desktop-qt/src/ThemeStore.cpp
 
@@ -99,13 +99,13 @@ Feature: Environment themes and the desktop shell theme
     @node
     Scenario: Setting a default switches connected clients
       Given two clients are connected
-      When the server operator runs "t3 theme set nightfall"
+      When the server operator runs "hal-c2 theme set nightfall"
       Then both clients switch to "nightfall"
 
     @node
     Scenario: An offline client applies the default when it reconnects
       Given a client is offline
-      When the server operator runs "t3 theme set nightfall"
+      When the server operator runs "hal-c2 theme set nightfall"
       And the client reconnects
       Then the client switches to "nightfall"
 
@@ -119,13 +119,13 @@ Feature: Environment themes and the desktop shell theme
     @node
     Scenario: Setting the same default again reapplies it
       Given the server default is "nightfall" and the user switched to "Nord"
-      When the server operator runs "t3 theme set nightfall" again
+      When the server operator runs "hal-c2 theme set nightfall" again
       Then the client switches to "nightfall"
 
     @node
     Scenario: Clearing the default leaves current themes alone
       Given the server default is "nightfall"
-      When the server operator runs "t3 theme clear"
+      When the server operator runs "hal-c2 theme clear"
       Then no default is set
       And every client keeps its current theme
 
@@ -133,7 +133,7 @@ Feature: Environment themes and the desktop shell theme
     Scenario: Showing the default and published themes
       # A default is set first so the listing has something to show.
       Given the server default is "nightfall"
-      When the server operator runs "t3 theme show"
+      When the server operator runs "hal-c2 theme show"
       Then the default theme and every published theme are listed
 
   Rule: The desktop shell theme file

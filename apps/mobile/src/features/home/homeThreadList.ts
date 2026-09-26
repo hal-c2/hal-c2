@@ -1,18 +1,18 @@
-import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
+import { buildProjectGroups } from "@hal-c2/client-runtime/state/project-grouping";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/shell";
+} from "@hal-c2/client-runtime/state/shell";
 import {
   getThreadSortTimestamp,
   toSortableTimestamp,
-} from "@t3tools/client-runtime/state/thread-sort";
+} from "@hal-c2/client-runtime/state/thread-sort";
 import type {
   EnvironmentId,
   ScopedProjectRef,
   SidebarProjectGroupingMode,
   SidebarProjectSortOrder,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 

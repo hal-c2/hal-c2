@@ -1,5 +1,5 @@
-import type { EnvironmentId } from "@t3tools/contracts";
-import type { ShellLocalProject } from "@t3tools/contracts/shell";
+import type { EnvironmentId } from "@hal-c2/contracts";
+import type { ShellLocalProject } from "@hal-c2/contracts/shell";
 import type { SidebarProjectSnapshot } from "../sidebarProjectGrouping";
 
 /** Loopback is necessary, not sufficient: native also gates forwarded localhost URLs. */

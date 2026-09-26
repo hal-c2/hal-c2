@@ -4,7 +4,7 @@ import {
   PreviewAutomationUnavailableError,
   PreviewListResult,
   PreviewTabId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
 import { PreviewManager } from "../../../preview/Manager.ts";
@@ -15,7 +15,7 @@ const shared = {
   failureMode: "return" as const,
   dependencies: [McpInvocationContext, PreviewManager],
 };
-const PreviewListTool = Tool.make("t3_preview_list", {
+const PreviewListTool = Tool.make("halc2_preview_list", {
   ...shared,
   description:
     "List this thread's preview tabs. Pages reflect the current server state and may shift as tabs change.",
@@ -30,7 +30,7 @@ const PreviewListTool = Tool.make("t3_preview_list", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
-const PreviewCloseTool = Tool.make("t3_preview_close", {
+const PreviewCloseTool = Tool.make("halc2_preview_close", {
   ...shared,
   description:
     "Close one preview tab owned by this thread through the normal server/host tab lifecycle. This does not wait for renderer cleanup.",

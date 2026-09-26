@@ -1,4 +1,4 @@
-defmodule T3.Steps.Providers.SessionImport do
+defmodule HalC2.Steps.Providers.SessionImport do
   @moduledoc """
   Steps for `features/providers/session-import.feature`: scanning Claude Code and Codex
   history (`agentSessions.scan` / `agentSessions.import`) and managing an ACP agent's
@@ -10,7 +10,7 @@ defmodule T3.Steps.Providers.SessionImport do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   @session_ids %{
     "shop-1" => "0b8f5c1e-4a7d-4c2b-9e1f-2d3c4b5a6f70",
@@ -68,7 +68,7 @@ defmodule T3.Steps.Providers.SessionImport do
         "the temporary directory" -> System.tmp_dir!()
         "the Downloads directory" -> Path.join(System.user_home!(), "Downloads")
         "a git worktree of another checkout" -> worktree(context)
-        "a T3 Code worktree" -> dir!(context, "~/.t3/worktrees/shop/feature")
+        "a HAL-C2 worktree" -> dir!(context, "~/.hal-c2/worktrees/shop/feature")
       end
 
     session(context, :codex, "shop-1", dir)
@@ -148,16 +148,16 @@ defmodule T3.Steps.Providers.SessionImport do
     assert {:ok, %{"importedCount" => 1, "skippedCount" => 0}} = context.reply
     id = "import:claudeAgent:#{@session_ids["shop-1"]}"
     assert World.await_row(id, & &1)["title"] == "Fix the login bug"
-    state = T3.Streams.Server.state(T3.Streams.ensure(id))
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
 
-    assert for(m <- T3.StreamState.list(state, "message"), do: {m["role"], m["text"]}) ==
+    assert for(m <- HalC2.StreamState.list(state, "message"), do: {m["role"], m["text"]}) ==
              [{"user", "Fix the login bug\nplease"}, {"assistant", "Fixed."}]
 
     context
   end
 
   step "the session from two months ago is not imported", context do
-    assert T3.Shell.row(node(), "import:claudeAgent:#{@session_ids["old"]}") == nil
+    assert HalC2.Shell.row(node(), "import:claudeAgent:#{@session_ids["old"]}") == nil
     context
   end
 
@@ -218,7 +218,7 @@ defmodule T3.Steps.Providers.SessionImport do
     root = dir!(context, dir)
 
     {:ok, _} =
-      T3.Projects.mutate(%{
+      HalC2.Projects.mutate(%{
         "type" => "project.update",
         "projectId" => id,
         "workspaceRoot" => root
@@ -236,7 +236,7 @@ defmodule T3.Steps.Providers.SessionImport do
 
   step "the user imports sessions into a project that was deleted", context do
     context = World.create_project(context, "shop")
-    {:ok, _} = T3.Projects.mutate(%{"type" => "project.delete", "projectId" => "shop"})
+    {:ok, _} = HalC2.Projects.mutate(%{"type" => "project.delete", "projectId" => "shop"})
     World.await_row("shop", &(&1 == nil or &1["deletedAt"] != nil))
     {reply, context} = World.call(context, "agentSessions.import", %{"projectId" => "shop"})
     Map.put(context, :reply, reply)
@@ -268,7 +268,7 @@ defmodule T3.Steps.Providers.SessionImport do
     assert {:ok, %{"imported" => false, "threadId" => ^id}} = context.reply
 
     threads =
-      for {{_node, _id}, {"thread", row}} <- T3.Shell.rows(), row["projectId"] == "shop", do: row
+      for {{_node, _id}, {"thread", row}} <- HalC2.Shell.rows(), row["projectId"] == "shop", do: row
 
     assert length(threads) == 1
     context
@@ -281,7 +281,7 @@ defmodule T3.Steps.Providers.SessionImport do
   step "the thread is supervised and uses the agent's default model", context do
     assert {:ok, %{"threadId" => id}} = context.reply
     row = World.await_row(id, & &1)
-    [default | _] = T3.Acp.entry(@gemini)["models"]
+    [default | _] = HalC2.Acp.entry(@gemini)["models"]
     assert row["runtimeMode"] == "approval-required"
     assert row["modelSelection"] == %{"instanceId" => @gemini, "model" => default["slug"]}
     context
@@ -359,7 +359,7 @@ defmodule T3.Steps.Providers.SessionImport do
 
   step "the user deletes the thread and then the native session", context do
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.delete",
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
         "threadId" => context.imported_thread
@@ -394,7 +394,7 @@ defmodule T3.Steps.Providers.SessionImport do
   defp homes(%{user_home: _} = context), do: context
 
   defp homes(context) do
-    home = Path.join(System.tmp_dir!(), "t3-user-#{System.unique_integer([:positive])}")
+    home = Path.join(System.tmp_dir!(), "hal-c2-user-#{System.unique_integer([:positive])}")
     File.mkdir_p!(home)
     ExUnit.Callbacks.on_exit(fn -> File.rm_rf(home) end)
     context = Map.put(context, :user_home, home)

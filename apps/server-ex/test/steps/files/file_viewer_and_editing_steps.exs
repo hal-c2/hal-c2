@@ -1,14 +1,14 @@
-defmodule T3.Steps.Files.FileViewerAndEditing do
+defmodule HalC2.Steps.Files.FileViewerAndEditing do
   @moduledoc """
   Steps for `features/files/file-viewer-and-editing.feature`: `projects.readFile`
   and `projects.writeFile` over the socket. Absolute paths are the scenario's host
-  paths (`T3.Test.Node.Host`).
+  paths (`HalC2.Test.Node.Host`).
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.{Host, World}
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.{Host, World}
 
   # A PNG's signature and header: bytes that are not text.
   @png <<137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8,
@@ -127,7 +127,7 @@ defmodule T3.Steps.Files.FileViewerAndEditing do
   end
 
   step "a client lists the files of {string}", %{args: [project]} = context do
-    Node.ensure(T3.Workspace)
+    Node.ensure(HalC2.Workspace)
 
     {reply, context} =
       World.call(context, "projects.listEntries", %{"cwd" => World.project(context, project).root})
@@ -149,7 +149,7 @@ defmodule T3.Steps.Files.FileViewerAndEditing do
   end
 
   defp read(context, project, file, input) do
-    Node.ensure(T3.Workspace)
+    Node.ensure(HalC2.Workspace)
 
     {reply, context} =
       World.call(

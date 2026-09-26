@@ -1,4 +1,4 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey } from "@hal-c2/client-runtime/environment";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   EditorId,
@@ -6,7 +6,7 @@ import {
   type ProjectScript,
   type ScopedThreadRef,
   type VcsStatusResult,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useRef, useState } from "react";
 

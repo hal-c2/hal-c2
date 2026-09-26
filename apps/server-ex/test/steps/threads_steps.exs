@@ -1,12 +1,12 @@
-defmodule T3.Steps.Threads do
+defmodule HalC2.Steps.Threads do
   @moduledoc "Steps for `features/threads/`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Orchestration.{LimitRecovery, Settlement}
-  alias T3.Projection.JS
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Orchestration.{LimitRecovery, Settlement}
+  alias HalC2.Projection.JS
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # --- settle.feature ------------------------------------------------------------------
 
@@ -132,7 +132,7 @@ defmodule T3.Steps.Threads do
 
     Map.put(context, :pending_settle, %{
       "type" => "thread.auto-settle",
-      "commandId" => "server:auto-settle:#{row["id"]}:#{T3.Environment.uuid4()}",
+      "commandId" => "server:auto-settle:#{row["id"]}:#{HalC2.Environment.uuid4()}",
       "threadId" => row["id"],
       "snapshotAt" => row["updatedAt"],
       "settledAt" => row["latestUserMessageAt"]
@@ -141,7 +141,7 @@ defmodule T3.Steps.Threads do
 
   step "the user writes in {string} before the settle is applied", %{args: [thread]} = context do
     context = World.add_message(context, thread, "user", "One more thing")
-    assert {:error, _} = T3.Orchestration.dispatch(context.pending_settle)
+    assert {:error, _} = HalC2.Orchestration.dispatch(context.pending_settle)
     context
   end
 
@@ -373,7 +373,7 @@ defmodule T3.Steps.Threads do
     |> Enum.filter(fn {_, row} -> row["pinnedAt"] != nil and row["archivedAt"] == nil end)
     |> Enum.sort_by(fn {_, row} ->
       key = row["pinOrderKey"]
-      {key == nil, key || "", -T3.Projection.JS.epoch_ms(row["createdAt"]), row["id"]}
+      {key == nil, key || "", -HalC2.Projection.JS.epoch_ms(row["createdAt"]), row["id"]}
     end)
     |> Enum.map(&elem(&1, 0))
   end
@@ -386,8 +386,8 @@ defmodule T3.Steps.Threads do
 
       anchor =
         max(
-          T3.Projection.JS.epoch_ms(row["createdAt"]),
-          T3.Projection.JS.epoch_ms(row["unsettledAt"]) || 0
+          HalC2.Projection.JS.epoch_ms(row["createdAt"]),
+          HalC2.Projection.JS.epoch_ms(row["unsettledAt"]) || 0
         )
 
       {key != nil, key || "", -anchor, row["id"]}
@@ -489,7 +489,7 @@ defmodule T3.Steps.Threads do
     id = World.thread_id(context, thread)
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.snooze",
         "threadId" => id,
         "snoozedUntil" => until
@@ -594,7 +594,7 @@ defmodule T3.Steps.Threads do
     World.await_thread(
       context,
       title,
-      &(T3.StreamState.get(&1, "run")[run]["status"] == "cancelled")
+      &(HalC2.StreamState.get(&1, "run")[run]["status"] == "cancelled")
     )
 
     context
@@ -606,7 +606,7 @@ defmodule T3.Steps.Threads do
         if context.threads[title], do: context, else: World.create_thread(context, title, "shop")
 
       id = World.thread_id(context, title)
-      {:ok, _} = T3.Orchestration.dispatch(%{"type" => "thread.archive", "threadId" => id})
+      {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "thread.archive", "threadId" => id})
       World.await_row(id, &(&1["archivedAt"] != nil))
       context
     end)
@@ -618,7 +618,7 @@ defmodule T3.Steps.Threads do
     {result, context} = World.call!(context, "orchestration.getArchivedShellSnapshot")
     id = World.thread_id(context, thread)
     refute Enum.any?(result["threads"], &(&1["id"] == id))
-    {:ok, _} = T3.Orchestration.dispatch(%{"type" => "thread.archive", "threadId" => id})
+    {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "thread.archive", "threadId" => id})
     World.await_row(id, &(&1["archivedAt"] != nil))
     context
   end
@@ -675,14 +675,14 @@ defmodule T3.Steps.Threads do
   step "the agent session is stopped", context do
     id = World.thread_id(context, "Old spike")
     state = World.stream(context, "Old spike")
-    assert Enum.all?(T3.StreamState.list(state, "provider-session"), &(&1["status"] == "stopped"))
+    assert Enum.all?(HalC2.StreamState.list(state, "provider-session"), &(&1["status"] == "stopped"))
 
     refute Enum.any?(
-             T3.StreamState.list(state, "run"),
+             HalC2.StreamState.list(state, "run"),
              &(&1["status"] in ~w(queued preparing starting running waiting))
            )
 
-    assert Registry.lookup(T3.Codex.Registry, id) == []
+    assert Registry.lookup(HalC2.Codex.Registry, id) == []
     context
   end
 
@@ -775,7 +775,7 @@ defmodule T3.Steps.Threads do
       |> World.add_message("Old work", "user", "migrate the invoices table")
 
     # Waits out the store's queued writes (the index is written asynchronously).
-    path = T3.Store.path()
+    path = HalC2.Store.path()
     {:ok, db} = Exqlite.Sqlite3.open(path)
 
     :ok =
@@ -798,7 +798,7 @@ defmodule T3.Steps.Threads do
   step "the old threads are indexed once and can be searched", context do
     context = search(context, "invoices table")
     assert [_] = matches(context, "Old work")
-    assert T3.Store.meta(T3.Store.path(), "messages_indexed") == "1"
+    assert HalC2.Store.meta(HalC2.Store.path(), "messages_indexed") == "1"
     context
   end
 
@@ -919,7 +919,7 @@ defmodule T3.Steps.Threads do
   end
 
   step "the thread has no messages", context do
-    assert T3.StreamState.get(World.stream(context, World.current(context)), "message") == %{}
+    assert HalC2.StreamState.get(World.stream(context, World.current(context)), "message") == %{}
     context
   end
 
@@ -931,20 +931,20 @@ defmodule T3.Steps.Threads do
   end
 
   step "the agent renames its thread to {string}", %{args: [title]} = context do
-    Node.ensure(T3.Mcp)
+    Node.ensure(HalC2.Mcp)
 
     %{authorization: auth} =
-      T3.Mcp.server(World.thread_id(context, World.current(context)), "codex")
+      HalC2.Mcp.server(World.thread_id(context, World.current(context)), "codex")
 
     {200, %{"result" => result}} =
-      T3.Mcp.handle(
+      HalC2.Mcp.handle(
         auth,
         JSON.encode!(%{
           "jsonrpc" => "2.0",
           "id" => 1,
           "method" => "tools/call",
           "params" => %{
-            "name" => "t3_thread_update",
+            "name" => "halc2_thread_update",
             "arguments" => %{"action" => "rename", "title" => title}
           }
         })
@@ -1147,7 +1147,7 @@ defmodule T3.Steps.Threads do
     state = World.await_runs(context, "Draft", ["completed"])
 
     assert [%{"text" => text}] =
-             T3.StreamState.list(state, "message") |> Enum.filter(&(&1["role"] == "user"))
+             HalC2.StreamState.list(state, "message") |> Enum.filter(&(&1["role"] == "user"))
 
     assert text == context.launch_text
     assert text in World.started_turns(context)
@@ -1243,7 +1243,7 @@ defmodule T3.Steps.Threads do
 
   step "the user links {string} to pull request {int} again",
        %{args: [thread, number]} = context do
-    before = T3.Streams.Server.state(T3.Streams.ensure(World.thread_id(context, thread))).seq
+    before = HalC2.Streams.Server.state(HalC2.Streams.ensure(World.thread_id(context, thread))).seq
     context = manual_link(context, thread, number)
     Map.put(context, :seq_before, before)
   end
@@ -1251,7 +1251,7 @@ defmodule T3.Steps.Threads do
   step "{string} has one link to pull request {int}", %{args: [thread, number]} = context do
     assert pull_request_numbers(World.thread(context, thread)) == [number]
 
-    assert T3.Streams.Server.state(T3.Streams.ensure(World.thread_id(context, thread))).seq ==
+    assert HalC2.Streams.Server.state(HalC2.Streams.ensure(World.thread_id(context, thread))).seq ==
              context.seq_before
 
     context
@@ -1276,8 +1276,8 @@ defmodule T3.Steps.Threads do
   end
 
   step "the environment refreshes the stack", context do
-    T3.PullRequests.Sync.request(%{"repository" => "acme/shop", "number" => 5})
-    :ok = T3.PullRequests.Sync.sweep()
+    HalC2.PullRequests.Sync.request(%{"repository" => "acme/shop", "number" => 5})
+    :ok = HalC2.PullRequests.Sync.sweep()
     context
   end
 
@@ -1286,7 +1286,7 @@ defmodule T3.Steps.Threads do
     assert pull_request_numbers(thread) == [5]
 
     assert %{"source" => "stack-dismissed"} =
-             Enum.find(T3.Projection.PullRequests.of(thread), &(&1["number"] == 6))
+             Enum.find(HalC2.Projection.PullRequests.of(thread), &(&1["number"] == 6))
 
     context
   end
@@ -1304,7 +1304,7 @@ defmodule T3.Steps.Threads do
     assert pull_request_numbers(thread) == [5, 6]
 
     assert %{"source" => "manual"} =
-             Enum.find(T3.Projection.PullRequests.of(thread), &(&1["number"] == 6))
+             Enum.find(HalC2.Projection.PullRequests.of(thread), &(&1["number"] == 6))
 
     context
   end
@@ -1315,13 +1315,13 @@ defmodule T3.Steps.Threads do
   end
 
   step "the agent links pull request {int} to its thread", %{args: [number]} = context do
-    Node.ensure(T3.Mcp)
+    Node.ensure(HalC2.Mcp)
 
     %{authorization: auth} =
-      T3.Mcp.server(World.thread_id(context, World.current(context)), "codex")
+      HalC2.Mcp.server(World.thread_id(context, World.current(context)), "codex")
 
     {200, %{"result" => result}} =
-      T3.Mcp.handle(
+      HalC2.Mcp.handle(
         auth,
         JSON.encode!(%{
           "jsonrpc" => "2.0",
@@ -1359,7 +1359,7 @@ defmodule T3.Steps.Threads do
 
   # --- limited-threads.feature -----------------------------------------------------
   # Times are the next such wall-clock time (UTC), so a reset is always ahead of the
-  # stop; the recovery sweep (`T3.Orchestration.LimitRecovery`) is run with the clock
+  # stop; the recovery sweep (`HalC2.Orchestration.LimitRecovery`) is run with the clock
   # the step names.
 
   step "a connected environment with the thread {string} on Claude", %{args: [title]} = context do
@@ -1492,9 +1492,9 @@ defmodule T3.Steps.Threads do
   end
 
   step "the user turned on auto-resume for limited threads", context do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     write_settings(context, %{"autoResumeLimitedThreads" => true})
-    assert T3.Settings.settings()["autoResumeLimitedThreads"] == true
+    assert HalC2.Settings.settings()["autoResumeLimitedThreads"] == true
     context
   end
 
@@ -1540,7 +1540,7 @@ defmodule T3.Steps.Threads do
     assert [%{"usageLimitContinuationOfRunId" => run_id}] = resumes(context, thread, at)
 
     World.await_thread(context, thread, fn state ->
-      runs = state |> T3.StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+      runs = state |> HalC2.StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
       length(runs) == 2 and hd(runs)["id"] == run_id
     end)
 
@@ -1553,7 +1553,7 @@ defmodule T3.Steps.Threads do
   defp continued?(context, thread) do
     context
     |> World.stream(thread)
-    |> T3.StreamState.list("message")
+    |> HalC2.StreamState.list("message")
     |> Enum.any?(&(&1["role"] == "user" and &1["text"] == "Continue where you left off."))
   end
 
@@ -1651,8 +1651,8 @@ defmodule T3.Steps.Threads do
   step "the fork is rejected because only finished runs can be used", context do
     assert {:error, message, _} = context.reply
     assert message =~ "only finished runs can be used"
-    target = T3.Streams.Server.state(T3.Streams.ensure(context.fork_id))
-    assert T3.StreamState.list(target, "thread") == []
+    target = HalC2.Streams.Server.state(HalC2.Streams.ensure(context.fork_id))
+    assert HalC2.StreamState.list(target, "thread") == []
     context
   end
 
@@ -1670,10 +1670,10 @@ defmodule T3.Steps.Threads do
   step "no agent session is started for the fork", context do
     assert {:ok, _} = context.reply
     context = put_in(context, [:threads, "fork"], context.fork_id)
-    state = World.await_thread(context, "fork", &(T3.StreamState.list(&1, "thread") != []))
-    assert T3.StreamState.list(state, "provider-session") == []
-    assert Registry.lookup(T3.Codex.Registry, context.fork_id) == []
-    assert Enum.all?(T3.StreamState.list(state, "run"), &(&1["status"] == "completed"))
+    state = World.await_thread(context, "fork", &(HalC2.StreamState.list(&1, "thread") != []))
+    assert HalC2.StreamState.list(state, "provider-session") == []
+    assert Registry.lookup(HalC2.Codex.Registry, context.fork_id) == []
+    assert Enum.all?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "completed"))
     context
   end
 
@@ -1683,7 +1683,7 @@ defmodule T3.Steps.Threads do
     assert reply =~ ~r/^on forked-native-thread-1-at-native-turn-1 history False/
 
     assert [%{"status" => "consumed", "resolution" => %{"strategy" => "native_fork"}}] =
-             T3.StreamState.list(state, "context-transfer")
+             HalC2.StreamState.list(state, "context-transfer")
 
     context
   end
@@ -1706,7 +1706,7 @@ defmodule T3.Steps.Threads do
     assert context.where =~ ~r/^on forked-native-thread-1-at-native-turn-1 history False/
 
     assert [%{"resolution" => %{"strategy" => "native_fork"}}] =
-             T3.StreamState.list(context.fork_state, "context-transfer")
+             HalC2.StreamState.list(context.fork_state, "context-transfer")
 
     context
   end
@@ -1738,7 +1738,7 @@ defmodule T3.Steps.Threads do
       assert context.where =~ "history True"
 
       assert [%{"strategy" => "full_thread_summary", "summaryText" => summary}] =
-               T3.StreamState.list(context.fork_state, "context-handoff")
+               HalC2.StreamState.list(context.fork_state, "context-handoff")
 
       assert summary =~ "User: hello"
       assert summary =~ "Assistant: Hello from codex"
@@ -1764,7 +1764,7 @@ defmodule T3.Steps.Threads do
     assert context.where =~ "history True"
 
     assert [%{"summaryText" => "[earlier messages omitted]\n\n" <> kept}] =
-             T3.StreamState.list(context.fork_state, "context-handoff")
+             HalC2.StreamState.list(context.fork_state, "context-handoff")
 
     assert String.length(kept) == 60_000
     assert kept =~ ~r/User: newest work\n\nAssistant: [^\n]+\z/
@@ -1797,7 +1797,7 @@ defmodule T3.Steps.Threads do
     assert reply =~ "merged True"
 
     assert [%{"strategy" => "fork_delta_summary", "summaryText" => summary}] =
-             T3.StreamState.list(state, "context-handoff")
+             HalC2.StreamState.list(state, "context-handoff")
 
     assert summary =~ "User: write fork.txt"
     refute summary =~ "User: hello"
@@ -1815,7 +1815,7 @@ defmodule T3.Steps.Threads do
     assert message ==
              "Thread #{World.thread_id(context, other)} is not a fork of #{World.thread_id(context, source)}."
 
-    assert World.stream(context, source) |> T3.StreamState.list("context-transfer") == []
+    assert World.stream(context, source) |> HalC2.StreamState.list("context-transfer") == []
     context
   end
 
@@ -1847,11 +1847,11 @@ defmodule T3.Steps.Threads do
 
     assert ["consumed", "superseded"] =
              state
-             |> T3.StreamState.list("context-transfer")
+             |> HalC2.StreamState.list("context-transfer")
              |> Enum.map(& &1["status"])
              |> Enum.sort()
 
-    assert [%{"summaryText" => summary}] = T3.StreamState.list(state, "context-handoff")
+    assert [%{"summaryText" => summary}] = HalC2.StreamState.list(state, "context-handoff")
     assert summary =~ "User: write more.txt"
     context
   end
@@ -1947,13 +1947,13 @@ defmodule T3.Steps.Threads do
 
     state =
       World.await_thread(context, title, fn state ->
-        runs = T3.StreamState.list(state, "run")
+        runs = HalC2.StreamState.list(state, "run")
         length(runs) == done + 1 and Enum.all?(runs, &(&1["status"] == "completed"))
       end)
 
     reply =
       state
-      |> T3.StreamState.list("message")
+      |> HalC2.StreamState.list("message")
       |> Enum.filter(&(&1["role"] == "assistant"))
       |> Enum.max_by(& &1["createdAt"])
 
@@ -1975,7 +1975,7 @@ defmodule T3.Steps.Threads do
   defp messages(context, title) do
     context
     |> World.stream(title)
-    |> T3.StreamState.list("message")
+    |> HalC2.StreamState.list("message")
     |> Enum.sort_by(&{&1["createdAt"], &1["role"] != "user"})
   end
 
@@ -2067,7 +2067,7 @@ defmodule T3.Steps.Threads do
   end
 
   step "it is on a temporary branch", context do
-    assert context.checked_out["branch"] =~ ~r"^t3code/[0-9a-f]{8}$"
+    assert context.checked_out["branch"] =~ ~r"^hal-c2/[0-9a-f]{8}$"
     context
   end
 
@@ -2076,11 +2076,11 @@ defmodule T3.Steps.Threads do
 
     state =
       World.await_thread(context, World.current(context), fn state ->
-        branch = T3.StreamState.list(state, "thread") |> hd() |> Map.get("branch")
+        branch = HalC2.StreamState.list(state, "thread") |> hd() |> Map.get("branch")
         branch not in [nil, temporary]
       end)
 
-    branch = hd(T3.StreamState.list(state, "thread"))["branch"]
+    branch = hd(HalC2.StreamState.list(state, "thread"))["branch"]
     assert World.git!(context.worktree_path, ~w(branch --show-current)) == branch
     assert [prompt] = branch_prompts(context)
     assert prompt =~ context.setup_text
@@ -2162,9 +2162,9 @@ defmodule T3.Steps.Threads do
     Map.put(context, :worktree_path, snapshot["worktreePath"])
   end
 
-  # Setup progress is held by `T3.WorktreeSetup`, which the node starts afresh.
+  # Setup progress is held by `HalC2.WorktreeSetup`, which the node starts afresh.
   step "the environment restarts", context do
-    ExUnit.Callbacks.stop_supervised(T3.WorktreeSetup)
+    ExUnit.Callbacks.stop_supervised(HalC2.WorktreeSetup)
     %{context | node: Node.restart(context.node), clients: %{}} |> World.thread_worktrees()
   end
 
@@ -2356,12 +2356,12 @@ defmodule T3.Steps.Threads do
 
   # With no terminal service the script has nowhere to run.
   step "the setup script cannot be started", context do
-    :ok = ExUnit.Callbacks.stop_supervised(T3.Terminal.Supervisor)
+    :ok = ExUnit.Callbacks.stop_supervised(HalC2.Terminal.Supervisor)
     context
   end
 
   step "the agent cannot be started", context do
-    Application.put_env(:t3, :codex_command, ["sh", "-c", "exit 1"])
+    Application.put_env(:hal_c2, :codex_command, ["sh", "-c", "exit 1"])
     context
   end
 
@@ -2380,14 +2380,14 @@ defmodule T3.Steps.Threads do
     id = World.thread_id(context, title)
 
     {:ok, _} =
-      T3.Projects.mutate(%{
+      HalC2.Projects.mutate(%{
         "type" => "project.update",
         "projectId" => project.id,
         "scripts" => List.wrap(context.setup_script)
       })
 
     World.await_row(project.id, &(&1["scripts"] == List.wrap(context.setup_script)))
-    nil = T3.WorktreeSetup.subscribe(id, self())
+    nil = HalC2.WorktreeSetup.subscribe(id, self())
     text = "Add totals to the cart"
 
     {{:ok, _}, context} =
@@ -2407,7 +2407,7 @@ defmodule T3.Steps.Threads do
         id = World.thread_id(context, World.current(context))
 
         receive do
-          {:t3_worktree_setup, ^id, snapshot} ->
+          {:halc2_worktree_setup, ^id, snapshot} ->
             await_setup(%{context | snapshots: context.snapshots ++ [snapshot]}, done)
         after
           15_000 -> flunk("the setup never got there: #{inspect(List.last(context.snapshots))}")
@@ -2502,7 +2502,7 @@ defmodule T3.Steps.Threads do
 
   step "the node imports that log", context do
     {log, titles} = context.v2_log
-    assert {:ok, %{streams: streams}} = T3.Import.V2.run(log, T3.Store)
+    assert {:ok, %{streams: streams}} = HalC2.Import.V2.run(log, HalC2.Store)
     assert streams > 0
     context = %{context | node: Node.restart(context.node), clients: %{}}
     Enum.reduce(titles, context, &put_in(&2, [:threads, &1], "v2-#{String.downcase(&1)}"))
@@ -2515,13 +2515,13 @@ defmodule T3.Steps.Threads do
 
       assert context
              |> World.stream(title)
-             |> T3.StreamState.list("message")
+             |> HalC2.StreamState.list("message")
              |> Enum.map(& &1["text"])
              |> Enum.sort() ==
                ["#{title} answer", "#{title} question"]
     end
 
-    assert {_kind, %{"title" => "legacy shop"}} = T3.Shell.row(node(), "v2-project")
+    assert {_kind, %{"title" => "legacy shop"}} = HalC2.Shell.row(node(), "v2-project")
     context
   end
 
@@ -2563,13 +2563,13 @@ defmodule T3.Steps.Threads do
     png = <<137, 80, 78, 71, 13, 10, 26, 10>>
 
     {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
-      T3.Attachments.create_upload_url(%{
+      HalC2.Attachments.create_upload_url(%{
         "name" => "a.png",
         "mimeType" => "image/png",
         "sizeBytes" => byte_size(png)
       })
 
-    :ok = T3.Attachments.store(token, png)
+    :ok = HalC2.Attachments.store(token, png)
 
     image = %{
       "type" => "image",
@@ -2585,12 +2585,12 @@ defmodule T3.Steps.Threads do
     # The fake Codex runs `ls` (output "a.txt") in every turn.
     state =
       World.await_thread(context, title, fn state ->
-        Enum.any?(T3.StreamState.list(state, "run"), &(&1["status"] == "completed")) and
-          Enum.any?(T3.StreamState.list(state, "turn-item"), &(&1["input"] == "ls"))
+        Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "completed")) and
+          Enum.any?(HalC2.StreamState.list(state, "turn-item"), &(&1["input"] == "ls"))
       end)
 
     assert [%{"attachments" => [_]}] =
-             state |> T3.StreamState.list("message") |> Enum.filter(&(&1["role"] == "user"))
+             state |> HalC2.StreamState.list("message") |> Enum.filter(&(&1["role"] == "user"))
 
     context
   end
@@ -2731,13 +2731,13 @@ defmodule T3.Steps.Threads do
     File.write!(Path.join(home, "gh-rules.json"), JSON.encode!(rules))
 
     unless context[:gh] do
-      previous = Application.get_env(:t3, :gh_command)
-      Application.put_env(:t3, :gh_command, Path.expand("../support/fake_gh.py", __DIR__))
+      previous = Application.get_env(:hal_c2, :gh_command)
+      Application.put_env(:hal_c2, :gh_command, Path.expand("../support/fake_gh.py", __DIR__))
       System.put_env("FAKE_GH_RULES", Path.join(home, "gh-rules.json"))
       System.put_env("FAKE_GH_LOG", Path.join(home, "gh.log"))
 
       ExUnit.Callbacks.on_exit(fn ->
-        Application.put_env(:t3, :gh_command, previous)
+        Application.put_env(:hal_c2, :gh_command, previous)
         System.delete_env("FAKE_GH_RULES")
         System.delete_env("FAKE_GH_LOG")
       end)
@@ -2758,8 +2758,8 @@ defmodule T3.Steps.Threads do
   end
 
   defp discover(context) do
-    Node.ensure({T3.PullRequests.Discovery, interval: nil})
-    :ok = T3.PullRequests.Discovery.sweep()
+    Node.ensure({HalC2.PullRequests.Discovery, interval: nil})
+    :ok = HalC2.PullRequests.Discovery.sweep()
     context
   end
 
@@ -2798,8 +2798,8 @@ defmodule T3.Steps.Threads do
   defp pull_request_numbers(thread),
     do:
       thread
-      |> T3.Projection.PullRequests.of()
-      |> T3.Projection.PullRequests.visible()
+      |> HalC2.Projection.PullRequests.of()
+      |> HalC2.Projection.PullRequests.visible()
       |> Enum.map(& &1["number"])
 
   # Links pull request 5, whose native stack also holds 6, and lets the sync bring 6.
@@ -2842,11 +2842,11 @@ defmodule T3.Steps.Threads do
         }
       ])
 
-    Node.ensure({T3.PullRequests.Sync, interval: nil})
+    Node.ensure({HalC2.PullRequests.Sync, interval: nil})
     context = manual_link(context, thread, 5)
     # The sync reads links from the sidebar rows.
     World.await_row(World.thread_id(context, thread), &match?([_], &1["pullRequests"]))
-    :ok = T3.PullRequests.Sync.sweep()
+    :ok = HalC2.PullRequests.Sync.sweep()
     assert pull_request_numbers(World.thread(context, thread)) == [5, 6]
     context
   end
@@ -2872,10 +2872,10 @@ defmodule T3.Steps.Threads do
     context
     |> World.await_thread(
       title,
-      &(T3.StreamState.get(&1, "thread")[id]["titleRegeneration"] == nil),
+      &(HalC2.StreamState.get(&1, "thread")[id]["titleRegeneration"] == nil),
       10_000
     )
-    |> T3.StreamState.get("thread")
+    |> HalC2.StreamState.get("thread")
     |> Map.fetch!(id)
   end
 
@@ -2913,7 +2913,7 @@ defmodule T3.Steps.Threads do
       seen
     else
       receive do
-        {:t3_stream, ^id, {:events, events}} ->
+        {:halc2_stream, ^id, {:events, events}} ->
           changes = for event <- events, do: {event.kind, event.entity, event.patch["s"] || %{}}
           history(context, done, seen ++ changes)
       after
@@ -2948,14 +2948,14 @@ defmodule T3.Steps.Threads do
 
   # The settlement service reads settings and sweeps only when asked.
   defp settings(context) do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     Node.ensure({Settlement, interval: nil})
     context
   end
 
   defp write_settings(context, patch) do
-    {settings, version} = T3.Settings.get()
-    {:ok, _} = T3.Settings.put(deep_merge(settings, patch), version)
+    {settings, version} = HalC2.Settings.get()
+    {:ok, _} = HalC2.Settings.put(deep_merge(settings, patch), version)
     context
   end
 
@@ -2967,7 +2967,7 @@ defmodule T3.Steps.Threads do
     id = World.thread_id(context, thread)
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.pull-request.link",
         "threadId" => id,
         "host" => "github.com",
@@ -2988,7 +2988,7 @@ defmodule T3.Steps.Threads do
       Map.merge(%{"title" => "PR #{number}", "syncedAt" => World.iso_from_now(0)}, snapshot)
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.pull-request-link.sync",
         "threadId" => id,
         "host" => "github.com",

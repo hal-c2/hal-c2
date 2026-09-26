@@ -1,8 +1,8 @@
 # Sources:
 #   docs/user/providers-opencode.md
 #   docs/internals/providers.md (OpenCode server per thread, full-access replies once)
-#   apps/server-ex/lib/t3/acp.ex (opencode acp, models split into subProvider)
-#   apps/server-ex/lib/t3/acp/thread_runtime.ex
+#   apps/server-ex/lib/hal_c2/acp.ex (opencode acp, models split into subProvider)
+#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex
 #   apps/server/src/provider/Layers/OpenCodeProvider.ts, apps/server/src/provider/Drivers/OpenCodeDriver.ts
 #   apps/server/src/provider/opencodeRuntime.ts, apps/server/src/provider/OpenCodeServerOwner.ts
 #   apps/server/src/orchestration-v2/Adapters/OpenCodeAdapterV2.ts
@@ -157,7 +157,7 @@ Feature: OpenCode
   Scenario: An OpenCode older than the supported range is flagged as known broken
     Given OpenCode 1.14.10 is installed
     When the node checks its providers
-    Then OpenCode is reported as a known broken version for this T3 Code release
+    Then OpenCode is reported as a known broken version for this HAL-C2 release
     And the user is told to use OpenCode 1.14.19 or newer
 
   Scenario: OpenCode in the supported range carries no compatibility warning

@@ -1,4 +1,4 @@
-defmodule T3.Steps.Files.FileExplorer do
+defmodule HalC2.Steps.Files.FileExplorer do
   @moduledoc """
   Steps for `features/files/file-explorer.feature`: `projects.listEntries` over the
   socket. A listing's paths go in `context.listing` for the shared "is returned"
@@ -7,8 +7,8 @@ defmodule T3.Steps.Files.FileExplorer do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   step "{string} holds {string}, {string}, {string} and an ignored {string} folder",
        %{args: [project, a, b, c, ignored]} = context do
@@ -102,9 +102,9 @@ defmodule T3.Steps.Files.FileExplorer do
   end
 
   step "a client writes {string} in {string}", %{args: [file, project]} = context do
-    Node.ensure(T3.Workspace)
+    Node.ensure(HalC2.Workspace)
     # Absolute paths are the scenario's host paths, so a stray write stays in it.
-    path = T3.Test.Node.Host.path(context, file)
+    path = HalC2.Test.Node.Host.path(context, file)
     contents = "export const written = #{System.unique_integer([:positive])};\n"
 
     {reply, context} =
@@ -118,7 +118,7 @@ defmodule T3.Steps.Files.FileExplorer do
   end
 
   defp list(context, project, input) do
-    Node.ensure(T3.Workspace)
+    Node.ensure(HalC2.Workspace)
     input = Map.put(input, "cwd", World.project(context, project).root)
     {reply, context} = World.call(context, "projects.listEntries", input)
 

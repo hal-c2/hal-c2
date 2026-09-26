@@ -45,13 +45,13 @@ import {
   type VcsStatusResult,
   type VcsSwitchRefResult,
   WS_METHODS,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import {
   EnvironmentSupervisor,
   type PreparedConnection,
   PrimaryConnectionTarget,
   type SupervisorConnectionState,
-} from "@t3tools/client-runtime/connection";
+} from "@hal-c2/client-runtime/connection";
 import {
   archiveThread as archiveThreadOp,
   createProject as createProjectOp,
@@ -68,8 +68,8 @@ import {
   unarchiveThread as unarchiveThreadOp,
   unsettleThread as unsettleThreadOp,
   updateThreadMetadata,
-} from "@t3tools/client-runtime/operations";
-import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
+} from "@hal-c2/client-runtime/operations";
+import { inferProjectTitleFromPath } from "@hal-c2/client-runtime/state/projects";
 import {
   remoteHttpClientLayer,
   request,
@@ -77,19 +77,19 @@ import {
   RpcSessionFactory,
   runStream,
   subscribe,
-} from "@t3tools/client-runtime/rpc";
-import { ShellSnapshotLoader } from "@t3tools/client-runtime/state/shell";
-import type { RpcSession } from "@t3tools/client-runtime/rpc";
-import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+} from "@hal-c2/client-runtime/rpc";
+import { ShellSnapshotLoader } from "@hal-c2/client-runtime/state/shell";
+import type { RpcSession } from "@hal-c2/client-runtime/rpc";
+import { buildTemporaryWorktreeBranchName } from "@hal-c2/shared/git";
 
 import { mergeVcsStatus } from "./gitActions.logic.ts";
 
 import { flattenModelOptions, type ModelOption } from "./models.ts";
-import { EnvironmentCacheStore } from "@t3tools/client-runtime/platform";
+import { EnvironmentCacheStore } from "@hal-c2/client-runtime/platform";
 import {
   type EnvironmentShellState,
   makeEnvironmentShellState,
-} from "@t3tools/client-runtime/state/shell";
+} from "@hal-c2/client-runtime/state/shell";
 import {
   boundedThreadSnapshotLoaderLayer,
   type EnvironmentThreadState,
@@ -97,8 +97,8 @@ import {
   ThreadHistoryController,
   threadHistoryControllerLayer,
   ThreadSnapshotLoader,
-} from "@t3tools/client-runtime/state/threads";
-import type { ThreadHistoryMeta } from "@t3tools/client-runtime/state/threads";
+} from "@hal-c2/client-runtime/state/threads";
+import type { ThreadHistoryMeta } from "@hal-c2/client-runtime/state/threads";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -117,7 +117,7 @@ import type { HttpClient } from "effect/unstable/http";
 import * as Socket from "effect/unstable/socket/Socket";
 
 import { createAttachmentImageCache } from "./attachmentImages.ts";
-import type { ImagePreview } from "@t3tools/opentui-image";
+import type { ImagePreview } from "@hal-c2/opentui-image";
 import {
   presentTuiShell,
   presentTuiThread,
@@ -155,7 +155,7 @@ export interface TuiOptions {
 
 /** Stable id used to label this client's connection in traces/logs. */
 const TUI_ENVIRONMENT_ID = EnvironmentId.make("local-tui");
-const TUI_LABEL = "T3 Code";
+const TUI_LABEL = "HAL-C2";
 const RECONNECT_DELAY = Duration.seconds(2);
 
 /** Trim a free-text field, returning a branded value or null when empty. */
@@ -629,7 +629,7 @@ const THREAD_WARM_LIMIT = 8;
 
 export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
   const attachmentImages = createAttachmentImageCache();
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- @t3tools/shared/hostProcess imports node:sea, which the Bun-run TUI lacks.
+  // oxlint-disable-next-line hal-c2/no-global-process-runtime -- @hal-c2/shared/hostProcess imports node:sea, which the Bun-run TUI lacks.
   const hostPlatform = process.platform;
   const drainStreamUntilUnsubscribe = <A>(
     stream: Stream.Stream<A, unknown, EnvironmentSupervisor>,

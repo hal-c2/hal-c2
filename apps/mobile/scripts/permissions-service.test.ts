@@ -6,11 +6,13 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { expect, it } from "vite-plus/test";
 
-// oxlint-disable-next-line t3code/no-global-process-runtime -- This test compiles against the host Foundation framework.
+// oxlint-disable-next-line hal-c2/no-global-process-runtime -- This test compiles against the host Foundation framework.
 it.skipIf(NodeOS.platform() !== "darwin")(
   "registers and reads native permissions concurrently without corrupting the registry",
   () => {
-    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-permissions-test-"));
+    const directory = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "hal-c2-permissions-test-"),
+    );
     try {
       const require = NodeModule.createRequire(import.meta.url);
       const core = NodePath.dirname(

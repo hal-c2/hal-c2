@@ -1,4 +1,4 @@
-defmodule T3.Steps.Timeline.ScrollingAndLinks do
+defmodule HalC2.Steps.Timeline.ScrollingAndLinks do
   @moduledoc """
   Steps for the `@node` scenarios of `features/timeline/scrolling-and-links.feature`:
   a client following a thread stream over the WebSocket. The agent's writing is
@@ -9,8 +9,8 @@ defmodule T3.Steps.Timeline.ScrollingAndLinks do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node, as: TestNode
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node, as: TestNode
+  alias HalC2.Test.Node.World
 
   @history 300
   @reply "message:live-reply"
@@ -27,7 +27,7 @@ defmodule T3.Steps.Timeline.ScrollingAndLinks do
       |> Map.put(:current, "Current thread")
 
     id = World.thread_id(context, "Current thread")
-    at = T3.Orchestration.Entities.now()
+    at = HalC2.Orchestration.Entities.now()
 
     history =
       for n <- 1..@history do
@@ -35,10 +35,10 @@ defmodule T3.Steps.Timeline.ScrollingAndLinks do
          %{"s" => message(id, "message:history-#{n}", "Earlier reply #{n}.", at)}}
       end
 
-    {:ok, _} = T3.Streams.commit(id, :thread, history)
+    {:ok, _} = HalC2.Streams.commit(id, :thread, history)
 
     {:ok, _} =
-      T3.Streams.commit(id, :thread, [{"message", @reply, %{"s" => message(id, @reply, "", at)}}])
+      HalC2.Streams.commit(id, :thread, [{"message", @reply, %{"s" => message(id, @reply, "", at)}}])
 
     context
   end
@@ -131,7 +131,7 @@ defmodule T3.Steps.Timeline.ScrollingAndLinks do
 
   defp sub(client, id, shape, offset),
     do:
-      T3.Test.WsClient.send_json(client, %{
+      HalC2.Test.WsClient.send_json(client, %{
         "t" => "sub",
         "id" => id,
         "shape" => shape,
@@ -169,7 +169,7 @@ defmodule T3.Steps.Timeline.ScrollingAndLinks do
   # The node's socket process for the follower: the stream's one subscriber that is
   # not this test process.
   defp socket_pid(stream_id) do
-    %{subscribers: subscribers} = :sys.get_state(T3.Streams.ensure(stream_id))
+    %{subscribers: subscribers} = :sys.get_state(HalC2.Streams.ensure(stream_id))
     assert [pid] = Map.keys(subscribers) -- [self()]
     pid
   end
@@ -184,7 +184,7 @@ defmodule T3.Steps.Timeline.ScrollingAndLinks do
       try do
         Enum.reduce(deltas, nil, fn delta, _ ->
           {:ok, seq} =
-            T3.Streams.commit(id, :thread, [{"message", @reply, %{"a" => %{"text" => delta}}}])
+            HalC2.Streams.commit(id, :thread, [{"message", @reply, %{"a" => %{"text" => delta}}}])
 
           seq
         end)
@@ -210,7 +210,7 @@ defmodule T3.Steps.Timeline.ScrollingAndLinks do
   defp events(frames), do: Enum.flat_map(frames, &Map.get(&1, "events", []))
 
   defp apply_event(entity, [_seq, "message", @reply, patch, _at]),
-    do: T3.Patch.apply(entity, patch)
+    do: HalC2.Patch.apply(entity, patch)
 
   defp apply_event(entity, _event), do: entity
 end

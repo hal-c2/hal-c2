@@ -1,9 +1,9 @@
 # Sources:
 #   packages/contracts/src/orchestrationV2.ts (runtime-request.respond, runtime-request.updated,
 #     thread.user-input.dismiss, plan.updated, turn-item.updated, node.updated)
-#   apps/server-ex/lib/t3/orchestration.ex (runtime-request.respond, thread.user-input.dismiss,
+#   apps/server-ex/lib/hal_c2/orchestration.ex (runtime-request.respond, thread.user-input.dismiss,
 #     implemented_plan)
-#   apps/server-ex/lib/t3/orchestration/turn_writer.ex (open_request, open_question,
+#   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (open_request, open_question,
 #     resolve_request, plans)
 #   apps/server/src/orchestration-v2/ (runtime request lifecycle)
 Feature: Approvals, questions and plans

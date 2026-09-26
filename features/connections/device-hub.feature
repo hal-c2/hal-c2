@@ -1,9 +1,9 @@
 # Sources:
-#   apps/server-ex/lib/t3/devices.ex (device.list, device.open, device.close, device.shutdown,
+#   apps/server-ex/lib/hal_c2/devices.ex (device.list, device.open, device.close, device.shutdown,
 #     device.detail, device.action, device.testHost, devices shape, platform reasons)
-#   apps/server-ex/lib/t3/devices/actions.ex (per-platform actions, DeviceActionUnavailableError)
-#   apps/server-ex/lib/t3/devices/proxy.ex (/api/device-hub/*, route allowlist, scopes, cluster relay)
-#   apps/server-ex/lib/t3/mcp/devices.ex (device_list, device_open, device_screenshot, device_close,
+#   apps/server-ex/lib/hal_c2/devices/actions.ex (per-platform actions, DeviceActionUnavailableError)
+#   apps/server-ex/lib/hal_c2/devices/proxy.ex (/api/device-hub/*, route allowlist, scopes, cluster relay)
+#   apps/server-ex/lib/hal_c2/mcp/devices.ex (device_list, device_open, device_screenshot, device_close,
 #     agent device access with the project override, quick start)
 #   docs/user/devices.md (Agents and devices: a device an agent opens floats over the chat)
 #   docs/user/devices.md (Device panel, agent access, remote streaming)

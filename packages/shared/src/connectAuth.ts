@@ -12,7 +12,7 @@ const CONNECT_AUTHORIZE_PATH = "/connect";
  * decide whether it is the hosted deployment — the two must agree, so the
  * default lives here.
  */
-export const DEFAULT_HOSTED_APP_URL = "https://app.t3.codes";
+export const DEFAULT_HOSTED_APP_URL = "https://app.hal-c2.example";
 
 /**
  * Requested at authorize time by the hosted page and by the CLI's device

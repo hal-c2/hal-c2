@@ -4,7 +4,7 @@
 #   apps/web/src/shell/shellDesktopNotifications.ts (transitions only, archived threads skipped)
 #   apps/web/src/shell/useShellDesktopNotifications.ts
 #   apps/web/src/shell/ShellToastBridge.tsx
-#   apps/desktop-qt/qml/T3/Bricks/Notifications.qml (in-app alert cards, dismiss, actions)
+#   apps/desktop-qt/qml/HalC2/Bricks/Notifications.qml (in-app alert cards, dismiss, actions)
 #   apps/desktop-qt/tests/tst_Notifications.qml
 #   apps/desktop-qt/tests/tst_Scenarios.qml (notification scenarios)
 #   apps/desktop-qt/src/NativeNotifications.h
@@ -21,7 +21,7 @@
 # mobile/notifications.feature.
 
 Feature: Alerts when a thread needs the user
-  The user runs agents in the background. T3 Code tells them when a thread finishes
+  The user runs agents in the background. HAL-C2 tells them when a thread finishes
   or is waiting on them, without alerting for the thread they are already looking at.
 
   Background:

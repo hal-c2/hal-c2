@@ -1,4 +1,4 @@
-import { createReviewEnvironmentAtoms } from "@t3tools/client-runtime/state/review";
+import { createReviewEnvironmentAtoms } from "@hal-c2/client-runtime/state/review";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 

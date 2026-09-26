@@ -1,15 +1,15 @@
-import type { EnvironmentId, T3ProjectFileScript, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, HalC2ProjectFileScript, ThreadId } from "@hal-c2/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
-  useT3ProjectFileScripts: vi.fn(),
+  useHalC2ProjectFileScripts: vi.fn(),
   projectScriptsControl: vi.fn(),
 }));
 
-vi.mock("../../hooks/useT3ProjectFileScripts", () => ({
-  useT3ProjectFileScripts: (...args: ReadonlyArray<unknown>) =>
-    testState.useT3ProjectFileScripts(...args),
+vi.mock("../../hooks/useHalC2ProjectFileScripts", () => ({
+  useHalC2ProjectFileScripts: (...args: ReadonlyArray<unknown>) =>
+    testState.useHalC2ProjectFileScripts(...args),
 }));
 vi.mock("../BranchToolbar", () => ({
   BranchToolbar: () => null,
@@ -31,11 +31,11 @@ import { ThreadDetailsPanel, type ThreadDetailsPanelProps } from "./ThreadDetail
 
 describe("ThreadDetailsPanel", () => {
   beforeEach(() => {
-    testState.useT3ProjectFileScripts.mockReset();
+    testState.useHalC2ProjectFileScripts.mockReset();
     testState.projectScriptsControl.mockReset();
   });
 
-  it("passes checked-in t3.json scripts to the project scripts control", () => {
+  it("passes checked-in hal-c2.json scripts to the project scripts control", () => {
     const environmentId = "environment:thread-details" as EnvironmentId;
     const gitCwd = "/tmp/thread-details-project";
     const fileScripts = [
@@ -44,8 +44,8 @@ describe("ThreadDetailsPanel", () => {
         command: "vp check",
         icon: "test",
       },
-    ] satisfies ReadonlyArray<T3ProjectFileScript>;
-    testState.useT3ProjectFileScripts.mockReturnValue(fileScripts);
+    ] satisfies ReadonlyArray<HalC2ProjectFileScript>;
+    testState.useHalC2ProjectFileScripts.mockReturnValue(fileScripts);
 
     const props: ThreadDetailsPanelProps = {
       mode: "popover",
@@ -76,7 +76,7 @@ describe("ThreadDetailsPanel", () => {
 
     renderToStaticMarkup(<ThreadDetailsPanel {...props} />);
 
-    expect(testState.useT3ProjectFileScripts).toHaveBeenCalledWith(environmentId, gitCwd);
+    expect(testState.useHalC2ProjectFileScripts).toHaveBeenCalledWith(environmentId, gitCwd);
     expect(testState.projectScriptsControl).toHaveBeenCalledWith(
       expect.objectContaining({
         displayMode: "panel",

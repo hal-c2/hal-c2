@@ -1,11 +1,11 @@
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { resolveProjectSettings } from "@hal-c2/shared/projectSettings";
 import {
   CommandId,
   MessageId,
   type OrchestrationV2Run,
   type RunId,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 

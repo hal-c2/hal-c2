@@ -1,8 +1,8 @@
 # Sources:
 #   /home/olafura/dev/opentui-qml/docs/DESIGN.md (goal: the same QML on Qt and in the terminal)
-#   apps/desktop-qt/qml/T3/Bricks/Sidebar.qml, SidebarThreadRow.qml
-#   apps/desktop-qt/qml/T3/Bricks/Composer.qml
-#   apps/desktop-qt/qml/T3/Bricks/SettingsNav.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml, SidebarThreadRow.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/SettingsNav.qml
 #   apps/tui/src/components/Sidebar.tsx, ChatComposer.tsx, MessagesTimeline.tsx, SettingsView.tsx
 #     (the React screens the shared QML replaces)
 #   Shared domains: threads/, composer/, timeline/ and settings/ own the behaviour; this file owns

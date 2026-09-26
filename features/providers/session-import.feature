@@ -1,8 +1,8 @@
 # Sources:
-#   apps/server-ex/lib/t3/agent_sessions.ex (agentSessions.scan, agentSessions.import)
-#   apps/server-ex/lib/t3/acp/sessions.ex (server.listAcpRegistrySessions, server.importAcpRegistrySession,
+#   apps/server-ex/lib/hal_c2/agent_sessions.ex (agentSessions.scan, agentSessions.import)
+#   apps/server-ex/lib/hal_c2/acp/sessions.ex (server.listAcpRegistrySessions, server.importAcpRegistrySession,
 #     server.deleteAcpRegistrySession, capability checks, error codes)
-#   apps/server-ex/lib/t3/orchestration/handoff.ex (a follow-up resumes the native session)
+#   apps/server-ex/lib/hal_c2/orchestration/handoff.ex (a follow-up resumes the native session)
 #   apps/server/src/agentSessions.ts, apps/web/src/components/settings/AcpSessionManagementSection.tsx
 #   packages/contracts/src/agentSessions.ts
 # The wizard's import step is specified in features/navigation/welcome-wizard.feature and the
@@ -10,7 +10,7 @@
 
 @node
 Feature: Importing native agent sessions
-  Conversations the user had with an agent outside T3 Code can become T3 threads. Each
+  Conversations the user had with an agent outside HAL-C2 can become HAL-C2 threads. Each
   provider plugin that keeps its own history says where it lives and how to resume it;
   the imported thread continues the native session on its next message.
 
@@ -44,7 +44,7 @@ Feature: Importing native agent sessions
       | the temporary directory            |
       | the Downloads directory            |
       | a git worktree of another checkout |
-      | a T3 Code worktree                 |
+      | a HAL-C2 worktree                 |
 
   Scenario: A directory that is already a project is marked as imported
     Given the project "shop" is rooted at "~/code/shop"
@@ -111,7 +111,7 @@ Feature: Importing native agent sessions
   Scenario: An imported ACP session cannot be deleted while its thread exists
     Given a Gemini session imported as a thread
     When the user deletes the native session
-    Then the user is told "Delete the imported T3 thread before deleting its native ACP session."
+    Then the user is told "Delete the imported HAL-C2 thread before deleting its native ACP session."
 
   Scenario: A native session can be deleted once its thread is deleted
     Given a Gemini session imported as a thread

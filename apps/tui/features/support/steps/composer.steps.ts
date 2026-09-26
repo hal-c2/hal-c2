@@ -4,7 +4,7 @@
 import { expect } from "bun:test";
 import * as NodeFS from "node:fs/promises";
 
-import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS, type OrchestrationThread } from "@t3tools/contracts";
+import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS, type OrchestrationThread } from "@hal-c2/contracts";
 
 import { step } from "../../steps.ts";
 import type { TuiComposerState, TuiNewThreadState } from "../../../src/host/composerState.ts";
@@ -537,7 +537,7 @@ step(
     const uploads = sent[0]!.args[2] as Array<{ name: string; sizeBytes: number; dataUrl: string }>;
     expect(uploads.map((upload) => upload.name)).toEqual([name]);
     expect(uploads[0]!.dataUrl.startsWith("data:image/")).toBe(true);
-    const { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } = await import("@t3tools/contracts");
+    const { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } = await import("@hal-c2/contracts");
     expect(uploads[0]!.sizeBytes).toBeLessThanOrEqual(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
   },
 );

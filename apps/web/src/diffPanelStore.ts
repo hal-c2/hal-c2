@@ -1,12 +1,12 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { RunId, ScopedThreadRef } from "@t3tools/contracts";
+import { scopedThreadKey } from "@hal-c2/client-runtime/environment";
+import type { RunId, ScopedThreadRef } from "@hal-c2/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 import { appViewStorageKey } from "./shell/appViewStorage";
 
-export const DIFF_PANEL_STORAGE_KEY = appViewStorageKey("t3code:diff-panel-state:v1");
+export const DIFF_PANEL_STORAGE_KEY = appViewStorageKey("hal-c2:diff-panel-state:v1");
 
 export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }

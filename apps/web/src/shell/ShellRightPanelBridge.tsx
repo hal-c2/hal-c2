@@ -1,5 +1,5 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
+import { scopedThreadKey } from "@hal-c2/client-runtime/environment";
+import type { PreviewSessionSnapshot, ScopedThreadRef } from "@hal-c2/contracts";
 import { useMemo } from "react";
 
 import { useShellActions } from "./useShellActions";

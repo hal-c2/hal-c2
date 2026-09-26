@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import type { OrchestrationThreadActivity } from "@hal-c2/contracts";
 import {
   deriveContextWindow,
   formatContextWindow,

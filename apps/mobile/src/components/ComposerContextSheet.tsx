@@ -1,13 +1,13 @@
 import { SourceFileSurface } from "../features/files/SourceFileSurface";
-import { filePreviewKind } from "@t3tools/shared/filePreview";
+import { filePreviewKind } from "@hal-c2/shared/filePreview";
 import type {
   ComposerContextRecord,
   ElementContextSource,
   EnvironmentId,
   ScopedThreadRef,
-} from "@t3tools/contracts";
-import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { videoMimeType } from "@t3tools/shared/video";
+} from "@hal-c2/contracts";
+import { formatAttachmentSize } from "@hal-c2/client-runtime/state/attachments";
+import { videoMimeType } from "@hal-c2/shared/video";
 import { useState } from "react";
 import {
   Alert,
@@ -223,7 +223,7 @@ export function ComposerContextSheet(props: {
               <SymbolView name="terminal" size={20} tintColor={terminalTheme.palette[2]} />
             ) : null}
             <View className="min-w-0 flex-1">
-              <Text className="text-base font-t3-semibold text-foreground" numberOfLines={2}>
+              <Text className="text-base font-halc2-semibold text-foreground" numberOfLines={2}>
                 {terminal?.terminalLabel ?? props.label}
               </Text>
               {terminal ? (

@@ -1,10 +1,10 @@
-export * from "@t3tools/shared/terminalLinks";
+export * from "@hal-c2/shared/terminalLinks";
 
 import {
   formatFilePathPosition,
   splitFilePathPosition,
-} from "@t3tools/client-runtime/markdown-links";
-import { resolveTerminalPath } from "@t3tools/shared/terminalLinks";
+} from "@hal-c2/client-runtime/markdown-links";
+import { resolveTerminalPath } from "@hal-c2/shared/terminalLinks";
 
 import { isMacPlatform } from "./lib/utils";
 

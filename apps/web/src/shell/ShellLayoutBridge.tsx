@@ -1,4 +1,4 @@
-import type { ShellLayoutState } from "@t3tools/contracts/shell";
+import type { ShellLayoutState } from "@hal-c2/contracts/shell";
 import { useMemo } from "react";
 
 import { useSidebar } from "../components/ui/sidebar";

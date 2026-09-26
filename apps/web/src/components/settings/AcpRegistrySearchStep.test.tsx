@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
+import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@hal-c2/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { visitElements } from "../../test/reactElementTree";
@@ -66,7 +66,7 @@ vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => state.prepare,
 }));
 
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+vi.mock("@hal-c2/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: () => false,
   squashAtomCommandFailure: () => new Error("Prepare failed."),
 }));

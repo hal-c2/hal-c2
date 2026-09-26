@@ -3,8 +3,8 @@
 #     node.updated, turn-item.updated, message.updated, runtime-request.updated,
 #     provider-thread.updated, provider-session.updated, queue.resume)
 #   packages/contracts/src/settings.ts (continueThreadsAfterServerUpdate)
-#   apps/server-ex/lib/t3/orchestration/recovery.ex
-#   apps/server-ex/lib/t3/orchestration/idle_sessions.ex
+#   apps/server-ex/lib/hal_c2/orchestration/recovery.ex
+#   apps/server-ex/lib/hal_c2/orchestration/idle_sessions.ex
 #   apps/server/src/orchestration-v2/ (startup recovery, idle session reaper)
 #   apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts (limit recovery at the reset time)
 #   packages/contracts/src/orchestrationV2.ts (OrchestrationV2LimitRecovery)

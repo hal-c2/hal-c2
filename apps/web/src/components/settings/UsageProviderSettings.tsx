@@ -1,4 +1,4 @@
-import type { EnvironmentId, UnifiedSettings } from "@t3tools/contracts";
+import type { EnvironmentId, UnifiedSettings } from "@hal-c2/contracts";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 

@@ -2,10 +2,10 @@
 #   docs/user/keybindings.md (keybindings.json, rule shape, when keys, precedence)
 #   packages/contracts/src/keybindings.ts (limits, forward-compatible decoding, KeybindingsConfigParseError)
 #   packages/shared/src/keybindings.ts (when-expression evaluation)
-#   apps/server-ex/lib/t3/keybindings.ex (server.upsertKeybinding, server.removeKeybinding)
+#   apps/server-ex/lib/hal_c2/keybindings.ex (server.upsertKeybinding, server.removeKeybinding)
 
 Feature: Customising keybindings
-  Custom rules live in keybindings.json in the T3 home. Each rule names a key, a command and
+  Custom rules live in keybindings.json in the HAL-C2 home. Each rule names a key, a command and
   an optional condition. The node stores the rules; clients merge them over the defaults.
 
   Rule: The node stores custom rules

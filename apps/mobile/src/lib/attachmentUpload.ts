@@ -1,19 +1,19 @@
-import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import { resolveAssetUrl } from "@hal-c2/client-runtime/state/assets";
 import {
   clampFileAttachmentUploadBytes,
   fileAttachmentTooLargeMessage,
   isAssetAttachmentNotFoundFailure,
   runAttachmentUploadCycle,
   verifyPersistedAttachmentUpload,
-} from "@t3tools/client-runtime/state/attachments";
-import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+} from "@hal-c2/client-runtime/state/attachments";
+import { runAtomCommand, squashAtomCommandFailure } from "@hal-c2/client-runtime/state/runtime";
 import type {
   ChatFileAttachment,
   ChatImageAttachment,
   EnvironmentId,
   UploadChatImageAttachment,
-} from "@t3tools/contracts";
-import { PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES } from "@t3tools/contracts";
+} from "@hal-c2/contracts";
+import { PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES } from "@hal-c2/contracts";
 import * as Option from "effect/Option";
 
 import { appAtomRegistry } from "../state/atom-registry";
@@ -28,7 +28,7 @@ import {
   type DraftComposerAttachment,
   type DraftComposerImageAttachment,
 } from "./composerImages";
-import { imageMimeType } from "@t3tools/shared/image";
+import { imageMimeType } from "@hal-c2/shared/image";
 import { uuidv4 } from "./uuid";
 
 /**
@@ -271,7 +271,7 @@ async function uploadFileBytes(
   }
   const file =
     fileUri === undefined
-      ? new File(Paths.cache, `t3-upload-${uuidv4()}`)
+      ? new File(Paths.cache, `hal-c2-upload-${uuidv4()}`)
       : new File(resolveOwnedComposerAttachmentFileUri(fileUri, Paths.document.uri) ?? fileUri);
   try {
     if (fileUri === undefined && inlineDataUrl !== undefined) {

@@ -1,6 +1,6 @@
 import { RGBA } from "@opentui/core";
 import { usePaste } from "@opentui/react";
-import type { ThreadId } from "@t3tools/contracts";
+import type { ThreadId } from "@hal-c2/contracts";
 import * as XtermHeadless from "@xterm/headless";
 import * as React from "react";
 

@@ -6,16 +6,16 @@ import type {
   ProviderOptionSelection,
   RuntimeMode,
   ServerProviderModel,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import type {
   ShellComposerOption,
   ShellComposerState,
   ShellComposerSuggestion,
-} from "@t3tools/contracts/shell";
+} from "@hal-c2/contracts/shell";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
-} from "@t3tools/shared/model";
+} from "@hal-c2/shared/model";
 
 import type { AppModelOption } from "../modelSelection";
 import type { ProviderInstanceEntry } from "../providerInstances";

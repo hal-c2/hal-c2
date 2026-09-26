@@ -8,7 +8,7 @@ import {
   OpenCodeSettings,
   PiSettings,
   ProviderDriverKind,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import type * as Schema from "effect/Schema";
 
 type ProviderSettingsSchema = {

@@ -4,12 +4,12 @@ import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
-export const RELAY_LINK_PROOF_TYP = "t3-env-link+jwt";
-export const RELAY_MINT_REQUEST_TYP = "t3-cloud-mint+jwt";
-export const RELAY_HEALTH_REQUEST_TYP = "t3-cloud-health+jwt";
-export const RELAY_MINT_RESPONSE_TYP = "t3-env-mint+jwt";
-export const RELAY_HEALTH_RESPONSE_TYP = "t3-env-health+jwt";
-export const RELAY_ACTIVITY_PUBLISH_TYP = "t3-env-activity+jwt";
+export const RELAY_LINK_PROOF_TYP = "hal-c2-env-link+jwt";
+export const RELAY_MINT_REQUEST_TYP = "hal-c2-cloud-mint+jwt";
+export const RELAY_HEALTH_REQUEST_TYP = "hal-c2-cloud-health+jwt";
+export const RELAY_MINT_RESPONSE_TYP = "hal-c2-env-mint+jwt";
+export const RELAY_HEALTH_RESPONSE_TYP = "hal-c2-env-health+jwt";
+export const RELAY_ACTIVITY_PUBLISH_TYP = "hal-c2-env-activity+jwt";
 
 export class RelayJwtError extends Schema.TaggedError<RelayJwtError>()("RelayJwtError", {
   operation: Schema.Literals(["sign", "verify"]),

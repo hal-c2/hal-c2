@@ -45,7 +45,7 @@ interface RuntimeWorld extends World {
 
 function tempDir(ctx: RuntimeWorld): string {
   if (!ctx.dir) {
-    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-tui-qml-"));
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hal-c2-tui-qml-"));
     ctx.cleanups.push(() => NodeFS.rmSync(dir, { recursive: true, force: true }));
     ctx.dir = dir;
   }

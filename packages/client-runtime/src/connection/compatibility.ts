@@ -2,7 +2,7 @@ import {
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   ORCHESTRATION_PROTOCOL_VERSION,
   type ExecutionEnvironmentDescriptor,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 
 import { ConnectionBlockedError } from "./model.ts";
 
@@ -40,7 +40,7 @@ export function orchestrationProtocolCompatibilityError(
     detail:
       serverProtocolVersion > ORCHESTRATION_PROTOCOL_VERSION
         ? `This client is not supported by this server. Update your app or use a compatible release to connect to ${descriptor.label}.`
-        : `This client requires a newer server. Update T3 Code on ${descriptor.label} to connect.`,
+        : `This client requires a newer server. Update HAL-C2 on ${descriptor.label} to connect.`,
   });
 }
 

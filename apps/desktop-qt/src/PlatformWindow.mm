@@ -10,10 +10,10 @@
 #include <QWindow>
 #include "QtLiquidGlassCommon.h"
 
-@interface T3GlassHost : NSView
+@interface HalC2GlassHost : NSView
 @end
 
-@implementation T3GlassHost
+@implementation HalC2GlassHost
 - (NSView*)hitTest:(NSPoint)point {
   return nil;
 }
@@ -92,7 +92,7 @@ private:
       // Keep Qt as the native content view; AppKit keeps drawing the title bar
       // (as the toolbar band above when the shell draws under it). The
       // negative layer order puts glass behind Qt's transparent Metal layer.
-      m_container = [[T3GlassHost alloc] initWithFrame:qtView.bounds];
+      m_container = [[HalC2GlassHost alloc] initWithFrame:qtView.bounds];
       m_container.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
       m_container.wantsLayer = YES;
       m_container.layer.zPosition = -1;
@@ -124,7 +124,7 @@ private:
     native.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
     native.toolbarStyle = NSWindowToolbarStyleUnifiedCompact;
     if (native.toolbar == nil) {
-      NSToolbar* toolbar = [[NSToolbar alloc] initWithIdentifier:@"t3-shell-titlebar"];
+      NSToolbar* toolbar = [[NSToolbar alloc] initWithIdentifier:@"hal-c2-shell-titlebar"];
       native.toolbar = toolbar;
       [toolbar release];
     }

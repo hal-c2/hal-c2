@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { EditorId, ProjectScript, VcsStatusResult } from "@t3tools/contracts";
+import type { EditorId, ProjectScript, VcsStatusResult } from "@hal-c2/contracts";
 
 import { buildShellWorkspaceState } from "./shellWorkspaceState";
 
@@ -21,7 +21,7 @@ const script = { id: "dev", name: "Dev server", command: "vp run dev" } as Proje
 function baseInput() {
   return {
     threadKey: "env:thread",
-    projectTitle: "t3code",
+    projectTitle: "hal-c2",
     projectRoot: "/repo",
     threadTitle: "Feature X",
     isDraft: false,

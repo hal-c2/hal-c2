@@ -7,7 +7,7 @@
 #   packages/client-runtime/src/state/threads.ts (five idle minutes of thread cache)
 #   packages/client-runtime/src/connection/compatibility.ts (ConnectionBlockedError)
 #   apps/web/src/versionSkew.ts (server older than the client, nightly comparison, dismissals)
-#   apps/server-ex/lib/t3/environment.ex (serverVersion in the descriptor)
+#   apps/server-ex/lib/hal_c2/environment.ex (serverVersion in the descriptor)
 #   packages/client-runtime/src/v3/clusterSocket.ts, v3/clusterMembers.ts, v3/session.ts
 #   apps/web/src/components/settings/ConnectionsSettings.tsx ("Reconnecting: <reason>", Copy trace ID)
 #   apps/mobile/src/features/connection/ConnectionStatusDot.tsx, connectionTone.ts,
@@ -152,9 +152,9 @@ Feature: Connection health
     Then its credential, cached data and drafts are cleared
 
   @backlog @desktop @mobile
-  Scenario: Signing out of T3 Connect keeps directly paired environments
+  Scenario: Signing out of HAL-C2 Connect keeps directly paired environments
     Given one relayed and one directly paired environment
-    When the user signs out of T3 Connect
+    When the user signs out of HAL-C2 Connect
     Then the directly paired environment stays
 
   @backlog @shared
@@ -166,16 +166,16 @@ Feature: Connection health
 
     Examples:
       | protocol                       | advice                                   |
-      | a newer protocol than the client | update T3 Code on this device          |
-      | an older protocol than the client | update T3 Code on that environment    |
+      | a newer protocol than the client | update HAL-C2 on this device          |
+      | an older protocol than the client | update HAL-C2 on that environment    |
 
   # A different app version does not block the connection; only a server behind the client
   # warns. settings/updates.feature holds updating the server from that warning and keeping
   # a dismissed notice dismissed for its version.
   @backlog @shared
-  Scenario Outline: A server on another T3 Code version warns only when it is behind
-    Given this client runs T3 Code <client>
-    And the environment's node runs T3 Code <server>
+  Scenario Outline: A server on another HAL-C2 version warns only when it is behind
+    Given this client runs HAL-C2 <client>
+    And the environment's node runs HAL-C2 <server>
     When the client connects
     Then the connection is used as normal
     And the client <warning>

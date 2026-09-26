@@ -1,4 +1,4 @@
-defmodule T3.Steps.Settings.DeviceHosts do
+defmodule HalC2.Steps.Settings.DeviceHosts do
   @moduledoc """
   SSH device hosts on a node: `device.testHost` and `device.list` report them
   unavailable with the reason to add that machine as a cluster node instead.
@@ -8,13 +8,13 @@ defmodule T3.Steps.Settings.DeviceHosts do
 
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   step "the user has opened the Integrations settings for the environment {string}",
        %{args: [_environment]} = context do
     context = World.fake_device_tools(context)
-    Node.ensure(T3.Devices)
+    Node.ensure(HalC2.Devices)
 
     context
     |> World.put_client("default", World.client(context))
@@ -50,10 +50,10 @@ defmodule T3.Steps.Settings.DeviceHosts do
     context
   end
 
-  step "the reason says to run T3 on {string} and add it to this cluster as a node",
+  step "the reason says to run HAL-C2 on {string} and add it to this cluster as a node",
        %{args: [target]} = context do
     {:error, _, %{"reason" => reason}} = context.reply
-    assert reason =~ "Run T3 on #{target} and add it to this cluster as a node"
+    assert reason =~ "Run HAL-C2 on #{target} and add it to this cluster as a node"
     context
   end
 
@@ -96,7 +96,7 @@ defmodule T3.Steps.Settings.DeviceHosts do
 
     for platform <- platforms do
       assert %{"available" => false, "reason" => said} = platform
-      assert said =~ "Run T3 on #{config["target"]}"
+      assert said =~ "Run HAL-C2 on #{config["target"]}"
       if reason, do: assert(said == reason)
     end
   end

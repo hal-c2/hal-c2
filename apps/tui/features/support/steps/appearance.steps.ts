@@ -10,8 +10,8 @@ import type { TuiSidebarState } from "../../../src/host/sidebarState.ts";
 import { scheduleColorCapabilityLog } from "../../../src/terminalStartup.ts";
 import { shell } from "../fakeClient.ts";
 import { changes, ready, scm, setCheckout, settle, vcsStatus } from "../gitWorld.ts";
-import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
-import { decodeImage } from "@t3tools/opentui-image";
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@hal-c2/contracts";
+import { decodeImage } from "@hal-c2/opentui-image";
 import type { QmlObject } from "opentui-qml";
 
 import { createAttachmentImageCache } from "../../../src/attachmentImages.ts";
@@ -495,7 +495,7 @@ const ATTACHMENT = {
   mimeType: "image/png",
   sizeBytes: 48 * 1024,
 } as const;
-const ATTACHMENT_URL = "https://t3.example/attachments/att-screenshot";
+const ATTACHMENT_URL = "https://hal-c2.example/attachments/att-screenshot";
 
 function images(ctx: ImageWorld): ImageFixture {
   return (ctx.images ??= {

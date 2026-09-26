@@ -7,7 +7,7 @@ import { DesktopEnvironment } from "../../app/DesktopEnvironment.ts";
 
 /** Absolute path to the helper shipped with this desktop instance. */
 export const LinuxBrowserSecretPath = Context.Reference<string | undefined>(
-  "@t3tools/desktop/preview/BrowserImport/LinuxBrowserSecretPath",
+  "@hal-c2/desktop/preview/BrowserImport/LinuxBrowserSecretPath",
   { defaultValue: () => undefined },
 );
 
@@ -17,7 +17,7 @@ export const layer = Layer.effect(
     const environment = yield* DesktopEnvironment;
     if (environment.platform !== "linux") return undefined;
     const fileSystem = yield* FileSystem.FileSystem;
-    const relative = environment.path.join("browser-secret", "t3-browser-secret");
+    const relative = environment.path.join("browser-secret", "hal-c2-browser-secret");
     const candidates = environment.isPackaged
       ? [environment.path.join(environment.resourcesPath, relative)]
       : [
@@ -27,7 +27,7 @@ export const layer = Layer.effect(
             "browser-secret",
             "build",
             environment.processArch,
-            "t3-browser-secret",
+            "hal-c2-browser-secret",
           ),
           ...environment.resolveResourcePathCandidates(relative),
         ];

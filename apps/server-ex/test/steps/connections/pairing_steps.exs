@@ -1,13 +1,13 @@
-defmodule T3.Steps.Connections.Pairing do
+defmodule HalC2.Steps.Connections.Pairing do
   @moduledoc """
   Steps for `features/connections/pairing.feature`: pairing links printed by
-  `mix t3.pair` on the host and minted by an administrator over HTTP, paired
+  `mix hal_c2.pair` on the host and minted by an administrator over HTTP, paired
   through `/oauth/token` as a client does.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
+  alias HalC2.Test.Node
 
   # --- printed on the host ---------------------------------------------------------
 
@@ -28,14 +28,14 @@ defmodule T3.Steps.Connections.Pairing do
   end
 
   step "the token grants standard scopes for five minutes", context do
-    assert [link] = T3.Auth.pairing_links()
-    assert link["scopes"] == T3.Auth.standard_scopes()
+    assert [link] = HalC2.Auth.pairing_links()
+    assert link["scopes"] == HalC2.Auth.standard_scopes()
     {:ok, created, _} = DateTime.from_iso8601(link["createdAt"])
     {:ok, expires, _} = DateTime.from_iso8601(link["expiresAt"])
     assert DateTime.diff(expires, created) == 5 * 60
 
     assert {200, %{"scope" => scope}} = Node.pair_http(context.node, context.token)
-    assert String.split(scope) == T3.Auth.standard_scopes()
+    assert String.split(scope) == HalC2.Auth.standard_scopes()
     # One time only.
     assert {400, %{"error" => "invalid_grant"}} = Node.pair_http(context.node, context.token)
     context
@@ -69,7 +69,7 @@ defmodule T3.Steps.Connections.Pairing do
 
   step "the link is listed under that label until it is used", context do
     assert listed_link(context)["label"] == context.link_label
-    assert listed_link(context)["scopes"] == T3.Auth.standard_scopes()
+    assert listed_link(context)["scopes"] == HalC2.Auth.standard_scopes()
     assert {200, _} = Node.pair_http(context.node, context.link["credential"])
     assert listed_link(context) == nil
     context
@@ -126,7 +126,7 @@ defmodule T3.Steps.Connections.Pairing do
   # --- helpers -----------------------------------------------------------------------
 
   defp print_link(base) do
-    assert [line] = Node.run_task(Mix.Tasks.T3.Pair, [base])
+    assert [line] = Node.run_task(Mix.Tasks.HalC2.Pair, [base])
     line
   end
 
@@ -134,7 +134,7 @@ defmodule T3.Steps.Connections.Pairing do
     assert {200, link} =
              Node.http(context.node, :post, "/api/auth/pairing-token",
                bearer: context.admin_access,
-               json: %{"label" => label, "scopes" => T3.Auth.standard_scopes()}
+               json: %{"label" => label, "scopes" => HalC2.Auth.standard_scopes()}
              )
 
     context |> Map.put(:link, link) |> Map.put(:link_label, label)

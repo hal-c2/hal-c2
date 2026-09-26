@@ -2,18 +2,18 @@
 #   docs/user/mobile-notifications.md
 #   apps/mobile/src/features/agent-awareness/ (push registration, live activity arming, channels)
 #   apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx
-#   apps/mobile/modules/t3-agent-notifications
+#   apps/mobile/modules/hal-c2-agent-notifications
 #   apps/mobile/src/Stack.tsx (notification navigation)
 # Agent activity publishing on the environment is specified in features/connections/.
 # This file covers what the phone does with it.
 
 Feature: Push notifications and live agent activity
-  A phone signed in to T3 Connect is told when an agent finishes, fails, needs approval or
+  A phone signed in to HAL-C2 Connect is told when an agent finishes, fails, needs approval or
   asks a question, and can follow ongoing work from the lock screen.
 
   Background:
-    Given the user is signed in to T3 Connect on the phone
-    And the phone uses "My MacBook" through T3 Connect
+    Given the user is signed in to HAL-C2 Connect on the phone
+    And the phone uses "My MacBook" through HAL-C2 Connect
     And "My MacBook" publishes agent activity
 
   @backlog @mobile
@@ -33,7 +33,7 @@ Feature: Push notifications and live agent activity
   Scenario: Turning off device notifications goes through the system settings
     Given device notifications are on
     When the user turns off device notifications
-    Then the phone's notification settings for T3 Code open
+    Then the phone's notification settings for HAL-C2 open
 
   @backlog @mobile
   Scenario: A registration that fails says so and can be retried
@@ -44,10 +44,10 @@ Feature: Push notifications and live agent activity
     Then the phone registers with the relay again
 
   @backlog @mobile
-  Scenario: Notifications require T3 Connect
-    Given the user is signed out of T3 Connect
+  Scenario: Notifications require HAL-C2 Connect
+    Given the user is signed out of HAL-C2 Connect
     When the user opens notification settings
-    Then the user is asked to sign in to T3 Connect
+    Then the user is asked to sign in to HAL-C2 Connect
 
   @backlog @mobile
   Scenario: An app build too old for notifications says so
@@ -167,7 +167,7 @@ Feature: Push notifications and live agent activity
   @backlog @mobile
   Scenario: Signing out ends lock screen activity and stops alerts
     Given the lock screen shows agent work in progress
-    When the user signs out of T3 Connect
+    When the user signs out of HAL-C2 Connect
     Then the lock screen activity ends
     And the phone stops receiving alerts
 

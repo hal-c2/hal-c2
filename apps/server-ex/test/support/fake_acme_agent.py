@@ -1,4 +1,4 @@
-# A configurable fake ACP agent for the provider features (`T3.Test.AcpFixtures`).
+# A configurable fake ACP agent for the provider features (`HalC2.Test.AcpFixtures`).
 #
 #   fake_acme_agent.py --control DIR --name NAME [--argv0 PATH] [agent args...]
 #

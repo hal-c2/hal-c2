@@ -5,7 +5,7 @@ import {
   type ProjectCreatePayload,
   type ProjectUpdatePayload,
   type ProjectSnapshot,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -125,7 +125,7 @@ export class ProjectService extends Context.Service<
     ) => Effect.Effect<Option.Option<Project>, ProjectOperationError>;
     readonly snapshot: Effect.Effect<ProjectSnapshot, ProjectOperationError>;
   }
->()("t3/project/ProjectService") {}
+>()("hal-c2/project/ProjectService") {}
 
 export const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;

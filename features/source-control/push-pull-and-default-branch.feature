@@ -2,13 +2,13 @@
 #   docs/user/source-control.md
 #   packages/contracts/src/git.ts (GitRunStackedActionResult, GitActionToastCta)
 #   packages/contracts/src/rpc.ts (git.runStackedAction, vcs.pull)
-#   apps/server-ex/lib/t3/git_actions.ex (push step, toast)
-#   apps/server-ex/lib/t3/vcs.ex (pull)
-#   apps/server-ex/lib/t3/projects.ex (auto_pull), apps/server-ex/lib/t3/application.ex (boot task)
+#   apps/server-ex/lib/hal_c2/git_actions.ex (push step, toast)
+#   apps/server-ex/lib/hal_c2/vcs.ex (pull)
+#   apps/server-ex/lib/hal_c2/projects.ex (auto_pull), apps/server-ex/lib/hal_c2/application.ex (boot task)
 #   packages/contracts/src/settings.ts (defaultAutoPull)
 #   apps/web/src/components/GitActionsControl.logic.ts (default-branch confirmation, toasts)
-#   apps/desktop-qt/qml/T3/Bricks/GitActions.qml (default-branch dialog)
-#   apps/desktop-qt/qml/T3/Bricks/Notifications.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (default-branch dialog)
+#   apps/desktop-qt/qml/HalC2/Bricks/Notifications.qml
 #   apps/tui/src/store.ts (pullGit, runGitAction)
 
 Feature: Pushing, pulling and guarding the default branch

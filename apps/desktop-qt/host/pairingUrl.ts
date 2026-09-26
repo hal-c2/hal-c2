@@ -1,6 +1,6 @@
 /**
  * The server announces its startup URL either as a headless `Pairing URL: <url>`
- * line (apps/server/src/startupAccess.ts, also what `t3 pair` prints) or as a
+ * line (apps/server/src/startupAccess.ts, also what `hal-c2 pair` prints) or as a
  * `pairingUrl: <url>` log annotation in web mode (serverRuntimeStartup.ts).
  */
 export function parsePairingUrlLine(line: string): string | undefined {

@@ -1,4 +1,4 @@
-import type { ProviderInstanceId, UnifiedSettings } from "@t3tools/contracts";
+import type { ProviderInstanceId, UnifiedSettings } from "@hal-c2/contracts";
 import { useCallback } from "react";
 
 import { getCustomModelOptionsByInstance } from "../../modelSelection";

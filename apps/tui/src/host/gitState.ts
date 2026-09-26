@@ -1,5 +1,5 @@
-import type { GitStackedAction, VcsStatusResult } from "@t3tools/contracts";
-import type { ShellGitState } from "@t3tools/contracts/shell";
+import type { GitStackedAction, VcsStatusResult } from "@hal-c2/contracts";
+import type { ShellGitState } from "@hal-c2/contracts/shell";
 
 import {
   buildGitMenuItems,

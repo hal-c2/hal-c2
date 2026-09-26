@@ -1,4 +1,4 @@
-import type { ShellDesktopNotification, ShellNotification } from "@t3tools/contracts/shell";
+import type { ShellDesktopNotification, ShellNotification } from "@hal-c2/contracts/shell";
 
 import type { OrchestrationShellSnapshot } from "../connection.ts";
 

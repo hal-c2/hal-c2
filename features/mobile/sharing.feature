@@ -15,7 +15,7 @@ Feature: Sharing into and out of the phone app
 
   @backlog @mobile
   Scenario Outline: Sharing into the app starts a task with the shared content
-    When the user shares <content> to T3 Code from another app
+    When the user shares <content> to HAL-C2 from another app
     Then a new task opens with <content> in its draft
 
     Examples:
@@ -28,7 +28,7 @@ Feature: Sharing into and out of the phone app
 
   @backlog @mobile
   Scenario: The user chooses which project receives shared content
-    When the user shares two photos to T3 Code
+    When the user shares two photos to HAL-C2
     Then the user is asked which project should receive the 2 images
     When the user chooses "docs"
     Then the new task in "docs" has the 2 images attached
@@ -41,7 +41,7 @@ Feature: Sharing into and out of the phone app
 
   @backlog @mobile
   Scenario: Sharing more items than a task can take keeps the first eight
-    When the user shares ten photos to T3 Code on an iPhone
+    When the user shares ten photos to HAL-C2 on an iPhone
     Then the new task has eight photos attached
 
   @backlog @mobile
@@ -64,7 +64,7 @@ Feature: Sharing into and out of the phone app
 
   @backlog @mobile
   Scenario: Shared content survives the app being killed during import
-    Given the user shared a photo to T3 Code
+    Given the user shared a photo to HAL-C2
     And the app was closed before the import finished
     When the user opens the app
     Then the import finishes into a new task
@@ -73,7 +73,7 @@ Feature: Sharing into and out of the phone app
   @backlog @mobile
   Scenario: Sharing into the app with no paired environment asks the user to pair first
     Given the phone has no paired environments
-    When the user shares a photo to T3 Code
+    When the user shares a photo to HAL-C2
     Then the user is asked to add an environment
     And the photo is kept until a project can receive it
 

@@ -1,4 +1,4 @@
-import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
+import { DEFAULT_SIGNAL_EXPORT } from "@hal-c2/shared/observability";
 import type { InteractionUpdate, RunResult } from "@cursor/sdk";
 import { Agent } from "../../provider/cursorSdk.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -7,7 +7,7 @@ import {
   type ModelSelection,
   type ProviderReplayTranscript,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -533,7 +533,7 @@ function makeReplayServerConfig(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const baseDir = yield* fs.makeTempDirectory({
-      prefix: `t3-orchestration-v2-cursor-${scenario}-`,
+      prefix: `hal-c2-orchestration-v2-cursor-${scenario}-`,
     });
     const stateDir = path.join(baseDir, "userdata");
     const logsDir = path.join(stateDir, "logs");
@@ -568,7 +568,7 @@ function makeReplayServerConfig(
       otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
       otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
       otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
-      otlpServiceName: "t3-server",
+      otlpServiceName: "hal-c2-server",
       mode: "web",
       port: 0,
       host: undefined,

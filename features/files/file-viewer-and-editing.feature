@@ -1,6 +1,6 @@
 # Sources:
-#   apps/server-ex/lib/t3/workspace.ex (read_file, write_file, path checks)
-#   apps/server-ex/lib/t3/editors.ex (shell.openInEditor)
+#   apps/server-ex/lib/hal_c2/workspace.ex (read_file, write_file, path checks)
+#   apps/server-ex/lib/hal_c2/editors.ex (shell.openInEditor)
 #   apps/web/src/components/files/FilePreviewPanel.tsx
 #   apps/web/src/components/chat/ThreadDetailsPanel.tsx, OpenInPicker.tsx, OpenInPicker.logic.ts (open the workspace)
 #   apps/web/src/remoteOpen.ts (SSH deep links for a remote environment; remoteOpenTargets not sent by the node)
@@ -14,7 +14,7 @@
 #   apps/web/src/components/chat/ExpandedImageDialog.tsx, ExpandedImagePreview.tsx (images from the conversation)
 #   apps/web/src/components/chat/ChatComposer.tsx (opening a draft attachment)
 #   packages/shared/src/filePreview.ts (preview kinds: image, pdf, markdown, html, text, media)
-#   apps/desktop-qt/qml/T3/Bricks/Composer.qml (draft attachments listed, not opened)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (draft attachments listed, not opened)
 #   apps/tui/src/components/FilesView.tsx
 #   apps/tui/src/features.backlog.test.ts (workspace-file-actions)
 #   apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx

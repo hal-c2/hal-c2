@@ -4,8 +4,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderInstanceConfig,
-} from "@t3tools/contracts";
-import { getBackgroundActivityPresetSettings } from "@t3tools/shared/backgroundActivitySettings";
+} from "@hal-c2/contracts";
+import { getBackgroundActivityPresetSettings } from "@hal-c2/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -196,7 +196,7 @@ describe("buildProviderInstanceUpdatePatch", () => {
       driver: ProviderDriverKind.make("codex"),
       enabled: true,
       config: {
-        binaryPath: "/opt/t3/codex",
+        binaryPath: "/opt/hal-c2/codex",
       },
     } satisfies ProviderInstanceConfig;
 

@@ -556,7 +556,7 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
         prepareWorktree: {
           projectCwd: "/tmp/workspace",
           baseBranch: "main",
-          branch: "t3code/example",
+          branch: "hal-c2/example",
           startFromOrigin: true,
           requireWorktree: true,
         },
@@ -786,9 +786,9 @@ it.effect("decodes thread pull request links with snapshot and stack", () =>
       pullRequests: [
         {
           host: "github.com",
-          repository: "pingdotgg/t3code",
+          repository: "hal-c2/hal-c2",
           number: 42,
-          url: "https://github.com/pingdotgg/t3code/pull/42",
+          url: "https://github.com/hal-c2/hal-c2/pull/42",
           source: "agent",
           linkedAt: "2026-01-01T00:00:00.000Z",
           snapshot: null,
@@ -796,9 +796,9 @@ it.effect("decodes thread pull request links with snapshot and stack", () =>
         },
         {
           host: "github.com",
-          repository: "pingdotgg/t3code",
+          repository: "hal-c2/hal-c2",
           number: 43,
-          url: "https://github.com/pingdotgg/t3code/pull/43",
+          url: "https://github.com/hal-c2/hal-c2/pull/43",
           source: "stack",
           linkedAt: "2026-01-01T00:01:00.000Z",
           snapshot: {
@@ -814,7 +814,7 @@ it.effect("decodes thread pull request links with snapshot and stack", () =>
             kind: "native",
             id: "7",
             number: 3,
-            url: "https://github.com/pingdotgg/t3code/stacks/3",
+            url: "https://github.com/hal-c2/hal-c2/stacks/3",
             base: "main",
             layers: [
               { number: 42, headBranch: "feature/stack-1", state: "open" },
@@ -1150,9 +1150,9 @@ it.effect("accepts thread.pull-request.link and .unlink commands", () =>
       commandId: "cmd-link-pull-request",
       threadId: "thread-1",
       host: "github.com",
-      repository: "pingdotgg/t3code",
+      repository: "hal-c2/hal-c2",
       number: 42,
-      url: "https://github.com/pingdotgg/t3code/pull/42",
+      url: "https://github.com/hal-c2/hal-c2/pull/42",
       source: "manual",
     });
     assert.strictEqual(link.type, "thread.pull-request.link");
@@ -1166,7 +1166,7 @@ it.effect("accepts thread.pull-request.link and .unlink commands", () =>
       commandId: "cmd-unlink-pull-request",
       threadId: "thread-1",
       host: "github.com",
-      repository: "pingdotgg/t3code",
+      repository: "hal-c2/hal-c2",
       number: 42,
     });
     assert.strictEqual(unlink.type, "thread.pull-request.unlink");
@@ -1190,9 +1190,9 @@ it.effect("still decodes a persisted thread.meta-updated event carrying linkedPu
         threadId: "thread-1",
         linkedPullRequest: {
           projectId: "project-1",
-          repository: "pingdotgg/t3code",
+          repository: "hal-c2/hal-c2",
           number: 42,
-          url: "https://github.com/pingdotgg/t3code/pull/42",
+          url: "https://github.com/hal-c2/hal-c2/pull/42",
         },
         updatedAt: "2026-01-01T00:00:00.000Z",
       },
@@ -1225,9 +1225,9 @@ it.effect("accepts pull request synchronization only as an internal command", ()
   Effect.gen(function* () {
     const pullRequest = {
       projectId: ProjectId.make("project-1"),
-      repository: "pingdotgg/t3code",
+      repository: "hal-c2/hal-c2",
       number: 42,
-      url: "https://github.com/pingdotgg/t3code/pull/42",
+      url: "https://github.com/hal-c2/hal-c2/pull/42",
     };
     const command = {
       type: "thread.pull-request.sync" as const,
@@ -1562,7 +1562,7 @@ it.effect("project icon overrides accept Lucide icons, colors, and emoji", () =>
 
 it.effect("project monograms validate text and palette colors", () =>
   Effect.gen(function* () {
-    for (const text of ["A", "T3", "É", "文書", "कि", "किखि", "e\u0301"]) {
+    for (const text of ["A", "HAL-C2", "É", "文書", "कि", "किखि", "e\u0301"]) {
       const projectIcon = {
         kind: "monogram",
         color: "violet",
@@ -1583,7 +1583,7 @@ it.effect("project monograms validate text and palette colors", () =>
       { kind: "monogram", text: "\u0301", color: "blue" },
       { kind: "monogram", text: "A B", color: "blue" },
       { kind: "monogram", text: "🚀", color: "blue" },
-      { kind: "monogram", text: "T3", color: "ultraviolet" },
+      { kind: "monogram", text: "HAL-C2", color: "ultraviolet" },
     ]) {
       const result = yield* Effect.exit(
         decodeOrchestrationCommand({
@@ -1645,7 +1645,7 @@ const decodeNightlyIcon = Schema.decodeUnknownEffect(
 it.effect("sends monograms as fallback icons that old and nightly clients can decode", () =>
   Effect.gen(function* () {
     const fallback = { kind: "lucide", name: "folder-code", color: "violet" } as const;
-    for (const text of ["T3", "क्ष्म", "e\u0301"]) {
+    for (const text of ["HAL-C2", "क्ष्म", "e\u0301"]) {
       const monogram = { kind: "monogram", text, color: "violet" } as const;
       const wire = yield* encodeProjectIcon(monogram);
       assert.deepEqual(wire, { ...fallback, monogramText: text });

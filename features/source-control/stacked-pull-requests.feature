@@ -2,8 +2,8 @@
 #   docs/user/source-control.md (GitHub stacks)
 #   packages/contracts/src/pullRequest.ts (PullRequestStack, expectedStackHeads)
 #   packages/contracts/src/rpc.ts (pullRequests.stack, pullRequests.runAction)
-#   apps/server-ex/lib/t3/pull_requests/github_stack.ex
-#   apps/server-ex/lib/t3/pull_requests/sync.ex (stack layers)
+#   apps/server-ex/lib/hal_c2/pull_requests/github_stack.ex
+#   apps/server-ex/lib/hal_c2/pull_requests/sync.ex (stack layers)
 #   apps/web/src/components/pullRequest/PullRequestStackMenu.tsx
 #   apps/web/src/components/pullRequest/PullRequestStackHeader.tsx
 #   apps/web/src/components/pullRequest/PullRequestStackLayers.tsx
@@ -11,7 +11,7 @@
 #   apps/web/src/components/pullRequest/PullRequestStackPopover.tsx
 
 Feature: Stacked pull requests
-  GitHub stacks are pull requests layered on one another. T3 Code shows the layers,
+  GitHub stacks are pull requests layered on one another. HAL-C2 shows the layers,
   merges a layer with everything below it, and rebases the whole stack bottom up.
 
   Background:

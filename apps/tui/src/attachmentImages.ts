@@ -1,6 +1,6 @@
 // @effect-diagnostics globalFetch:off
-import { decodeImage, type ImagePreview } from "@t3tools/opentui-image";
-import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
+import { decodeImage, type ImagePreview } from "@hal-c2/opentui-image";
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@hal-c2/contracts";
 
 const DEFAULT_CACHE_ENTRIES = 24;
 const DEFAULT_FETCH_TIMEOUT_MS = 10_000;

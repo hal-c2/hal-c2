@@ -1,11 +1,11 @@
-import type { ComposerTextPaste } from "../native/T3ComposerEditor.types";
+import type { ComposerTextPaste } from "../native/HalC2ComposerEditor.types";
 import { useAtomValue } from "@effect/atom-react";
-import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import { threadRuntimeIsActive } from "@hal-c2/client-runtime/state/shell";
 import {
   deriveThreadActivityRun,
   deriveThreadRuntime,
   threadRuntimeHasInterruptibleRun,
-} from "@t3tools/client-runtime/state/thread-execution";
+} from "@hal-c2/client-runtime/state/thread-execution";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "react-native";
 
@@ -20,17 +20,17 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
   type ThreadId,
-} from "@t3tools/contracts";
-import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
-import { nextPastedTextFileName, pastedTextDisposition } from "@t3tools/client-runtime/text-paste";
+} from "@hal-c2/contracts";
+import { safeErrorLogAttributes } from "@hal-c2/client-runtime/errors";
+import { clampFileAttachmentUploadBytes } from "@hal-c2/client-runtime/state/attachments";
+import { nextPastedTextFileName, pastedTextDisposition } from "@hal-c2/client-runtime/text-paste";
 import {
   parseCodexFeedbackCommand,
   submitCodexFeedback,
   type CodexFeedbackSubmission,
-} from "@t3tools/client-runtime/state/threads";
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
-import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
+} from "@hal-c2/client-runtime/state/threads";
+import { resolveThreadWorkingStartedAt } from "@hal-c2/client-runtime/state/models";
+import { upgradeLegacyContextMessage } from "@hal-c2/shared/composerContextLegacy";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
 import { uuidv4 } from "../lib/uuid";
 
@@ -78,7 +78,7 @@ import {
 import {
   resolveComposerDispatchMode,
   type ActiveTurnComposerAction,
-} from "@t3tools/client-runtime/state/composer-dispatch";
+} from "@hal-c2/client-runtime/state/composer-dispatch";
 import { Atom } from "effect/unstable/reactivity";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { prepareTurnAttachments } from "../lib/attachmentUpload";

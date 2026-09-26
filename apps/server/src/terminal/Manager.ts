@@ -40,13 +40,13 @@ import {
   ClaudeSettings,
   CodexSettings,
   ProviderInstanceId,
-} from "@t3tools/contracts";
-import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { mergePathEntries } from "@t3tools/shared/shell";
+} from "@hal-c2/contracts";
+import { makeKeyedCoalescingWorker } from "@hal-c2/shared/KeyedCoalescingWorker";
+import { HostProcessArchitecture, HostProcessPlatform } from "@hal-c2/shared/hostProcess";
+import { mergePathEntries } from "@hal-c2/shared/shell";
 
 import { acpRegistryManagedBinaryDirectories } from "../provider/acp/AcpRegistrySupport.ts";
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import { getTerminalLabel } from "@hal-c2/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -230,7 +230,7 @@ export class TerminalManager extends Context.Service<
       listener: (event: TerminalMetadataStreamEvent) => Effect.Effect<void>,
     ) => Effect.Effect<() => void>;
   }
->()("t3/terminal/Manager/TerminalManager") {}
+>()("hal-c2/terminal/Manager/TerminalManager") {}
 
 interface TerminalSubprocessInspectResult {
   readonly hasRunningSubprocess: boolean;
@@ -1229,7 +1229,7 @@ function toSessionKey(threadId: string, terminalId: string): string {
 
 function shouldExcludeTerminalEnvKey(key: string): boolean {
   const normalizedKey = key.toUpperCase();
-  if (normalizedKey.startsWith("T3CODE_")) {
+  if (normalizedKey.startsWith("HALC2_")) {
     return true;
   }
   if (normalizedKey.startsWith("VITE_")) {
@@ -1243,7 +1243,7 @@ function shouldExcludeTerminalEnvKey(key: string): boolean {
 // not inherit them.
 const APPIMAGE_RUNTIME_ENV_KEYS = ["APPIMAGE", "APPDIR", "ARGV0", "OWD"] as const;
 // Colon-separated search-path variables the AppImage runtime points at its
-// temporary mount (e.g. /tmp/.mount_T3-XXXX/usr/bin, the bundled glib schemas,
+// temporary mount (e.g. /tmp/.mount_HAL-C2-XXXX/usr/bin, the bundled glib schemas,
 // and an $APPDIR/usr/share XDG data entry). Only the mount segments are
 // dropped; the user's real entries are preserved. When nothing but mount
 // segments remain the variable is removed entirely so consumers fall back to

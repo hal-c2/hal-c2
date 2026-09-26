@@ -1,4 +1,4 @@
-import { ComposerContextId, type ComposerContextRecord } from "@t3tools/contracts";
+import { ComposerContextId, type ComposerContextRecord } from "@hal-c2/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { upgradeLegacyContextMessage } from "./composerContextLegacy.ts";
@@ -69,7 +69,7 @@ describe("serializeLegacyContextMessage", () => {
     const legacy = serializeLegacyContextMessage({ text, records: [terminal] });
 
     // An older server forwards text verbatim, so the payload has to be in it.
-    expect(legacy).not.toContain("t3-context://");
+    expect(legacy).not.toContain("hal-c2-context://");
     expect(legacy).toContain("boom");
 
     // A newer client reading that message reconstructs the same excerpt.
@@ -87,7 +87,7 @@ describe("serializeLegacyContextMessage", () => {
   it("inlines a review comment with its diff intact", () => {
     const text = `See ${formatComposerContextReference(review)} here`;
     const legacy = serializeLegacyContextMessage({ text, records: [review] });
-    expect(legacy).not.toContain("t3-context://");
+    expect(legacy).not.toContain("hal-c2-context://");
 
     const upgraded = upgradeLegacyContextMessage(legacy);
     expect(upgraded.records[0]).toMatchObject({

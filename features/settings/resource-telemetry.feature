@@ -1,7 +1,7 @@
 # Sources:
 #   docs/internals/resource-telemetry.md
-#   apps/server-ex/lib/t3/diagnostics.ex (ps sampling, one hour of samples, retry)
-#   apps/server-ex/lib/t3/web/socket.ex (resourceTelemetry subscription)
+#   apps/server-ex/lib/hal_c2/diagnostics.ex (ps sampling, one hour of samples, retry)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (resourceTelemetry subscription)
 #   packages/contracts/src/resourceTelemetry.ts
 #   packages/contracts/src/rpc.ts (subscribeResourceTelemetry, server.getResourceTelemetryHistory, server.retryResourceTelemetry)
 #   apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx

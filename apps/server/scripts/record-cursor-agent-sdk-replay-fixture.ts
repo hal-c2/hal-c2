@@ -105,7 +105,7 @@ async function prepareWorkspace(scenario: RecordingName): Promise<{
   readonly cwd: string;
   readonly owned: boolean;
 }> {
-  const configuredCwd = process.env.T3_CURSOR_REPLAY_CWD?.trim();
+  const configuredCwd = process.env.HALC2_CURSOR_REPLAY_CWD?.trim();
   if (configuredCwd) {
     return {
       cwd: configuredCwd,
@@ -145,7 +145,7 @@ async function writeFixtureFiles(cwd: string): Promise<void> {
   );
 }
 
-const scenario = (readArgValue("--scenario") ?? process.env.T3_CURSOR_REPLAY_SCENARIO) as
+const scenario = (readArgValue("--scenario") ?? process.env.HALC2_CURSOR_REPLAY_SCENARIO) as
   | RecordingName
   | undefined;
 if (scenario === undefined || RECORDINGS[scenario] === undefined) {
@@ -183,7 +183,7 @@ try {
     ...(scenario === "tool_call_read_only" ? { transcriptPrompts: recording.prompts } : {}),
     modelSelection: {
       ...CURSOR_MODEL_SELECTION,
-      model: process.env.T3_CURSOR_REPLAY_MODEL ?? CURSOR_MODEL_SELECTION.model,
+      model: process.env.HALC2_CURSOR_REPLAY_MODEL ?? CURSOR_MODEL_SELECTION.model,
     },
     cwd: workspace.cwd,
     ...(transcriptCwd === undefined ? {} : { transcriptCwd }),

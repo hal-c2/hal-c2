@@ -1,5 +1,5 @@
 import type { ScrollBoxRenderable } from "@opentui/core";
-import type { VcsStatusResult } from "@t3tools/contracts";
+import type { VcsStatusResult } from "@hal-c2/contracts";
 import * as React from "react";
 
 import { type ComposerControls, interactionModeLabel, runtimeModeLabel } from "../controls.ts";

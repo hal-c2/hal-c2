@@ -1,4 +1,4 @@
-defmodule T3.Steps.Timeline.PlansAndSubagents do
+defmodule HalC2.Steps.Timeline.PlansAndSubagents do
   @moduledoc """
   Steps for the `@node` scenarios of `features/timeline/plans-and-subagents.feature`.
   The working agent delegates through the node's MCP `delegate_task` tool, as a
@@ -8,13 +8,13 @@ defmodule T3.Steps.Timeline.PlansAndSubagents do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node.World
 
   step "the agent delegates {string} to a subagent", %{args: [task]} = context do
     title = World.current(context)
     before = World.stream(context, title)
-    T3.Test.Node.ensure(T3.Mcp)
+    HalC2.Test.Node.ensure(HalC2.Mcp)
     result = delegate(context, %{"task" => task})
 
     # Every version of the parent's subagent item since the call, oldest first: the
@@ -67,7 +67,7 @@ defmodule T3.Steps.Timeline.PlansAndSubagents do
 
   step "the agent delegated a task and chose to carry on", context do
     context = World.working_thread(context, World.current(context))
-    T3.Test.Node.ensure(T3.Mcp)
+    HalC2.Test.Node.ensure(HalC2.Mcp)
     result = delegate(context, %{"task" => "answer from gate"})
     Map.merge(context, %{delegated: result["structuredContent"], mode: :carry_on})
   end
@@ -75,7 +75,7 @@ defmodule T3.Steps.Timeline.PlansAndSubagents do
   step "the agent delegated a task and chose to wait for it", context do
     title = World.current(context)
     context = World.working_thread(context, title)
-    T3.Test.Node.ensure(T3.Mcp)
+    HalC2.Test.Node.ensure(HalC2.Mcp)
 
     waiting =
       Task.async(fn -> delegate(context, %{"task" => "answer from gate", "mode" => "wait"}) end)
@@ -125,13 +125,13 @@ defmodule T3.Steps.Timeline.PlansAndSubagents do
   end
 
   # Calls the node's MCP tool `delegate_task` as the current thread's provider. The
-  # test process must have started `T3.Mcp` (`T3.Test.Node.ensure/1`).
+  # test process must have started `HalC2.Mcp` (`HalC2.Test.Node.ensure/1`).
   defp delegate(context, arguments) do
     parent_id = World.thread_id(context, World.current(context))
-    %{authorization: auth} = T3.Mcp.server(parent_id, "codex")
+    %{authorization: auth} = HalC2.Mcp.server(parent_id, "codex")
 
     {200, %{"result" => result}} =
-      T3.Mcp.handle(
+      HalC2.Mcp.handle(
         auth,
         JSON.encode!(%{
           "jsonrpc" => "2.0",
@@ -170,7 +170,7 @@ defmodule T3.Steps.Timeline.PlansAndSubagents do
     title = World.current(context)
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "run.interrupt",
         "threadId" => World.thread_id(context, title),
         "runId" => run["id"]
@@ -213,15 +213,15 @@ defmodule T3.Steps.Timeline.PlansAndSubagents do
   end
 
   defp await(id, fun) do
-    :ok = T3.Streams.subscribe(id, self(), nil)
-    state = T3.Streams.Server.state(T3.Streams.ensure(id))
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
     if fun.(state), do: state, else: await_next(id, fun)
   end
 
   defp await_next(id, fun) do
     receive do
-      {:t3_stream, ^id, _} ->
-        state = T3.Streams.Server.state(T3.Streams.ensure(id))
+      {:halc2_stream, ^id, _} ->
+        state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
         if fun.(state), do: state, else: await_next(id, fun)
     after
       5_000 -> flunk("thread #{id} never reached the expected state")
@@ -231,7 +231,7 @@ defmodule T3.Steps.Timeline.PlansAndSubagents do
   # The states a stream passed through after `seq`, from the commits already in the mailbox.
   defp events(id, seq, state) do
     receive do
-      {:t3_stream, ^id, {:events, events}} ->
+      {:halc2_stream, ^id, {:events, events}} ->
         next =
           Enum.reduce(
             Enum.filter(events, &(&1.seq > seq)),

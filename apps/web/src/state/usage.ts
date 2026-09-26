@@ -12,13 +12,13 @@ import {
   type EnvironmentId,
   type UsageSummary,
   type UsageSummaryInput,
-} from "@t3tools/contracts";
-import { refreshUsage } from "@t3tools/client-runtime/state/usage";
+} from "@hal-c2/contracts";
+import { refreshUsage } from "@hal-c2/client-runtime/state/usage";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 
-import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
+import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@hal-c2/shared/usageMerge";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";

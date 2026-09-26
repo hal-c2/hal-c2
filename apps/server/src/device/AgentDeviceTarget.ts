@@ -20,7 +20,7 @@ export const agentDeviceConfigPath = (stateDir: string, hostId: string, path: Pa
   path.join(stateDir, "device", "hosts", `${key(hostId)}.json`);
 
 export const agentDeviceSession = (threadId: string, hostId: string, deviceId: string) =>
-  `t3-${key(JSON.stringify([threadId, hostId, deviceId]))}`;
+  `hal-c2-${key(JSON.stringify([threadId, hostId, deviceId]))}`;
 
 export const writeAgentDeviceConfig = Effect.fn("AgentDeviceTarget.writeConfig")(function* (
   file: string,

@@ -6,9 +6,9 @@ import {
   type ServerProviderAuth,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import type * as EffectAcpSchema from "effect-acp/compat";
-import { causeErrorTag } from "@t3tools/shared/observability";
+import { causeErrorTag } from "@hal-c2/shared/observability";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -18,8 +18,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { createModelCapabilities } from "@t3tools/shared/model";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { createModelCapabilities } from "@hal-c2/shared/model";
+import { resolveSpawnCommand } from "@hal-c2/shared/shell";
 
 import {
   AUTH_PROBE_TIMEOUT_MS,
@@ -85,7 +85,7 @@ export function buildInitialGrokProviderSnapshot(
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Grok is disabled in T3 Code settings.",
+          message: "Grok is disabled in HAL-C2 settings.",
         },
       });
     }
@@ -329,7 +329,7 @@ export function grokSlashCommandsFromInitialize(
     if (Option.isNone(decoded)) continue;
     const command = decoded.value;
     const name = command.name.trim();
-    // Permission changes must go through T3 so the client and provider agree.
+    // Permission changes must go through HAL-C2 so the client and provider agree.
     if (!name || name.toLowerCase() === "always-approve") continue;
     // Grok advertises /context, but its ACP handler completes without emitting output.
     if (name.toLowerCase() === "context") continue;
@@ -359,7 +359,7 @@ const discoverGrokMetadataViaAcpInitialize = (
       environment,
       childProcessSpawner,
       cwd: process.cwd(),
-      clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
+      clientInfo: { name: "hal-c2-provider-probe", version: "0.0.0" },
     });
     const initialized = yield* acp.initialize();
     return {
@@ -391,7 +391,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Grok is disabled in T3 Code settings.",
+        message: "Grok is disabled in HAL-C2 settings.",
       },
     });
   }

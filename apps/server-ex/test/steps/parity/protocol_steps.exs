@@ -1,17 +1,17 @@
-defmodule T3.Steps.Parity.Protocol do
+defmodule HalC2.Steps.Parity.Protocol do
   @moduledoc """
   Steps for `features/parity/protocol.feature`: the protocol 3 wire as a client
-  sees it. Shapes are subscribed and driven through `T3.Steps.Parity.Shapes`;
+  sees it. Shapes are subscribed and driven through `HalC2.Steps.Parity.Shapes`;
   the frame a scenario checks is `context.received`.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.Parity.Fixtures
-  alias T3.Steps.Parity.Shapes
-  alias T3.Test.Node
-  alias T3.Test.Node.World
-  alias T3.Test.WsClient
+  alias HalC2.Steps.Parity.Fixtures
+  alias HalC2.Steps.Parity.Shapes
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
+  alias HalC2.Test.WsClient
 
   step "a protocol 3 client connected to it", context do
     World.put_client(context, Node.connect(context.node))
@@ -56,7 +56,7 @@ defmodule T3.Steps.Parity.Protocol do
       "rpc" ->
         # The payload is optional: this one has none.
         message = %{"t" => "rpc", "id" => 7, "environment" => context.node.environment}
-        message = Map.put(message, "method", "t3.readSettings")
+        message = Map.put(message, "method", "halc2.readSettings")
         client = WsClient.send_json(client, message)
         context |> World.put_client(client) |> Map.put(:sent, %{id: 7})
     end
@@ -74,7 +74,7 @@ defmodule T3.Steps.Parity.Protocol do
         World.put_client(context, client)
 
       "nothing further under that id" ->
-        {:ok, _} = T3.ScheduledTasks.upsert(Fixtures.task())
+        {:ok, _} = HalC2.ScheduledTasks.upsert(Fixtures.task())
         World.put_client(context, Shapes.quiet(World.client(context), id))
 
       "an rpc.result or an rpc.error under that id" ->
@@ -206,10 +206,10 @@ defmodule T3.Steps.Parity.Protocol do
           {frame, World.put_client(context, client)}
 
         "rpc.result" ->
-          reply(context, 32, "t3.readSettings", %{})
+          reply(context, 32, "halc2.readSettings", %{})
 
         "rpc.error" ->
-          reply(context, 33, "t3.writeSettings", %{"settings" => %{}, "version" => -1})
+          reply(context, 33, "halc2.writeSettings", %{"settings" => %{}, "version" => -1})
 
         opening when opening in ~w(shell snapshot config) ->
           context = Shapes.subscribe(context, Shapes.shape_for(opening))
@@ -222,7 +222,7 @@ defmodule T3.Steps.Parity.Protocol do
     Map.put(context, :received, received)
   end
 
-  # The keys each frame carries besides `t`, from `apps/server-ex/lib/t3/web/protocol.ex`.
+  # The keys each frame carries besides `t`, from `apps/server-ex/lib/hal_c2/web/protocol.ex`.
   @carries %{
     "hello" => ~w(protocol node),
     "pong" => [],
@@ -351,9 +351,9 @@ defmodule T3.Steps.Parity.Protocol do
 
     late =
       case type do
-        "gitAction" -> {:t3_git_action, "parity-action", %{"kind" => "phase_started"}}
-        "serverUpdate" -> {:t3_server_update, node(), %{"type" => "progress"}}
-        "previewAutomation" -> {:t3_preview_automation, node(), "parity-host", %{"type" => "x"}}
+        "gitAction" -> {:halc2_git_action, "parity-action", %{"kind" => "phase_started"}}
+        "serverUpdate" -> {:halc2_server_update, node(), %{"type" => "progress"}}
+        "previewAutomation" -> {:halc2_preview_automation, node(), "parity-host", %{"type" => "x"}}
       end
 
     send(socket, late)
@@ -378,7 +378,7 @@ defmodule T3.Steps.Parity.Protocol do
 
   step "the client calls server.reportClientActivity in an rpc frame", context do
     {client, session} = Shapes.paired_client(context, "Activity")
-    policy = Node.ensure(T3.BackgroundPolicy)
+    policy = Node.ensure(HalC2.BackgroundPolicy)
     {socket, context} = Shapes.socket_pid(World.put_client(context, client))
     :erlang.trace(policy, true, [:receive])
 
@@ -390,7 +390,7 @@ defmodule T3.Steps.Parity.Protocol do
 
   step "the node records the activity lease for the client's session and socket", context do
     %{session: session, socket: socket} = context.activity
-    leases = Map.values(:sys.get_state(T3.BackgroundPolicy).leases)
+    leases = Map.values(:sys.get_state(HalC2.BackgroundPolicy).leases)
     lease = Enum.find(leases, &(&1["clientId"] == "parity-client"))
     assert lease, "no lease in #{inspect(leases)}"
     assert lease["sessionId"] == session
@@ -434,14 +434,14 @@ defmodule T3.Steps.Parity.Protocol do
 
   defp ticket do
     {:ok, %{"credential" => credential}} =
-      T3.Auth.create_pairing_link(%{"label" => "Adapter", "scopes" => T3.Auth.standard_scopes()})
+      HalC2.Auth.create_pairing_link(%{"label" => "Adapter", "scopes" => HalC2.Auth.standard_scopes()})
 
-    {:ok, access, _expires, _scopes} = T3.Auth.exchange(credential, %{"label" => "Adapter"})
-    T3.Auth.issue_ticket(access)
+    {:ok, access, _expires, _scopes} = HalC2.Auth.exchange(credential, %{"label" => "Adapter"})
+    HalC2.Auth.issue_ticket(access)
   end
 end
 
-defmodule T3.Steps.Parity.Shapes do
+defmodule HalC2.Steps.Parity.Shapes do
   @moduledoc """
   Every protocol 3 shape, subscribed the way a client does and driven through the
   node's own services: `subscribe/3` opens one on the default socket and records
@@ -450,10 +450,10 @@ defmodule T3.Steps.Parity.Shapes do
   """
   import ExUnit.Assertions
 
-  alias T3.Steps.Parity.Fixtures
-  alias T3.Test.Node
-  alias T3.Test.Node.World
-  alias T3.Test.WsClient
+  alias HalC2.Steps.Parity.Fixtures
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
+  alias HalC2.Test.WsClient
 
   @ids %{
     "shell" => 1,
@@ -477,16 +477,16 @@ defmodule T3.Steps.Parity.Shapes do
     "serverUpdate" => 19
   }
 
-  # The services a node-wide shape reads, as `T3.Application` starts them.
+  # The services a node-wide shape reads, as `HalC2.Application` starts them.
   @services %{
-    "scheduledTasks" => T3.ScheduledTasks,
-    "projectClones" => T3.ProjectClones,
-    "preview" => T3.Preview,
-    "resourceTelemetry" => T3.Diagnostics,
-    "localServers" => T3.LocalServers,
-    "pullRequestRefreshes" => T3.PullRequests.Refreshes,
-    "worktreeSetup" => T3.WorktreeSetup,
-    "previewAutomation" => T3.PreviewAutomation
+    "scheduledTasks" => HalC2.ScheduledTasks,
+    "projectClones" => HalC2.ProjectClones,
+    "preview" => HalC2.Preview,
+    "resourceTelemetry" => HalC2.Diagnostics,
+    "localServers" => HalC2.LocalServers,
+    "pullRequestRefreshes" => HalC2.PullRequests.Refreshes,
+    "worktreeSetup" => HalC2.WorktreeSetup,
+    "previewAutomation" => HalC2.PreviewAutomation
   }
 
   @gone :"gone@127.0.0.1"
@@ -587,9 +587,9 @@ defmodule T3.Steps.Parity.Shapes do
         assert %{"t" => "shell", "nodes" => nodes, "rows" => rows} = frame
 
         assert Enum.map(nodes, & &1["node"]) ==
-                 Enum.map(T3.Shell.environments(), &to_string(elem(&1, 0)))
+                 Enum.map(HalC2.Shell.environments(), &to_string(elem(&1, 0)))
 
-        assert length(rows) == length(T3.Shell.rows())
+        assert length(rows) == length(HalC2.Shell.rows())
 
       {"stream", [first | _] = frames} ->
         assert first["part"] == 0
@@ -675,7 +675,7 @@ defmodule T3.Steps.Parity.Shapes do
         {Map.put(node, "stream", f.thread), context}
 
       "config" ->
-        Enum.each([T3.EnvironmentThemes, T3.UsageLimitSources], &Node.ensure/1)
+        Enum.each([HalC2.EnvironmentThemes, HalC2.UsageLimitSources], &Node.ensure/1)
 
         if form == "environment",
           do: {%{"environment" => context.node.environment}, context},
@@ -721,7 +721,7 @@ defmodule T3.Steps.Parity.Shapes do
 
       "devices" ->
         context = World.fake_device_tools(context)
-        ensure([T3.Devices])
+        ensure([HalC2.Devices])
         {node, context}
 
       "serverUpdate" ->
@@ -752,11 +752,11 @@ defmodule T3.Steps.Parity.Shapes do
 
       "shell.environment" ->
         descriptor = %{"environmentId" => "env-gone"}
-        GenServer.cast(T3.Shell, {:peer_environment, @gone, descriptor})
+        GenServer.cast(HalC2.Shell, {:peer_environment, @gone, descriptor})
         await(context, t, id, &(&1["node"] == to_string(@gone)))
 
       "shell.node" ->
-        send(T3.Shell, {:nodedown, @gone})
+        send(HalC2.Shell, {:nodedown, @gone})
         await(context, t, id, &(&1["online"] == false))
 
       "live" ->
@@ -764,13 +764,13 @@ defmodule T3.Steps.Parity.Shapes do
 
       "events" ->
         item = %{"s" => %{"id" => "parity-item", "text" => "hi"}}
-        {:ok, _} = T3.Streams.commit(f.thread, :thread, [{"turn-item", "parity-item", item}])
+        {:ok, _} = HalC2.Streams.commit(f.thread, :thread, [{"turn-item", "parity-item", item}])
         await(context, t, id)
 
       "resync" ->
         # One change larger than the socket buffers for a subscription.
         big = %{"s" => %{"id" => "parity-big", "text" => String.duplicate("x", 9_000_000)}}
-        {:ok, _} = T3.Streams.commit(f.thread, :thread, [{"turn-item", "parity-big", big}])
+        {:ok, _} = HalC2.Streams.commit(f.thread, :thread, [{"turn-item", "parity-big", big}])
         await(context, t, id, & &1, 10_000)
 
       "config.settings" ->
@@ -782,7 +782,7 @@ defmodule T3.Steps.Parity.Shapes do
         await(context, t, id)
 
       "config.keybindings" ->
-        {:ok, _} = T3.Keybindings.upsert(Fixtures.keybinding())
+        {:ok, _} = HalC2.Keybindings.upsert(Fixtures.keybinding())
         await(context, t, id)
 
       "config.themes" ->
@@ -796,18 +796,18 @@ defmodule T3.Steps.Parity.Shapes do
         }
 
         File.write!(Path.join(dir, "parity.json"), JSON.encode!(theme))
-        send(T3.EnvironmentThemes, :check)
+        send(HalC2.EnvironmentThemes, :check)
         await(context, t, id)
 
       "config.usageLimitSources" ->
         source = %{"kind" => "cliproxy", "url" => "http://127.0.0.1:1", "enabled" => true}
         context = World.update_settings(context, %{"usageLimitSources" => %{"parity" => source}})
-        :ok = T3.UsageLimitSources.refresh()
+        :ok = HalC2.UsageLimitSources.refresh()
         await(context, t, id)
 
       "config.ready" ->
-        # What `T3.Upgrade` announces once a version has loaded in place.
-        T3.Settings.notify_upgraded(%{"id" => "parity", "status" => "committed"})
+        # What `HalC2.Upgrade` announces once a version has loaded in place.
+        HalC2.Settings.notify_upgraded(%{"id" => "parity", "status" => "committed"})
         await(context, t, id)
 
       "terminal" ->
@@ -838,16 +838,16 @@ defmodule T3.Steps.Parity.Shapes do
       "worktreeSetup" ->
         project = %{"workspaceRoot" => f.root}
         strategy = %{"branch" => "parity", "baseRef" => "main"}
-        T3.WorktreeSetup.start(f.thread, "run-parity", project, strategy, "go")
+        HalC2.WorktreeSetup.start(f.thread, "run-parity", project, strategy, "go")
         await(context, t, id)
 
       "scheduledTasks" ->
-        {:ok, _} = T3.ScheduledTasks.upsert(Fixtures.task())
+        {:ok, _} = HalC2.ScheduledTasks.upsert(Fixtures.task())
         await(context, t, id)
 
       "authAccess" ->
-        link = %{"label" => "Later", "scopes" => T3.Auth.standard_scopes()}
-        {:ok, _} = T3.Auth.create_pairing_link(link)
+        link = %{"label" => "Later", "scopes" => HalC2.Auth.standard_scopes()}
+        {:ok, _} = HalC2.Auth.create_pairing_link(link)
         await(context, t, id)
 
       "projectClones" ->
@@ -856,7 +856,7 @@ defmodule T3.Steps.Parity.Shapes do
         await(context, t, id)
 
       "pullRequestRefreshes" ->
-        T3.PullRequests.Refreshes.bump()
+        HalC2.PullRequests.Refreshes.bump()
         await(context, t, id)
 
       "preview" ->
@@ -869,7 +869,7 @@ defmodule T3.Steps.Parity.Shapes do
         {frame, context} = await(context, t, id, &(&1["event"]["type"] == "request"))
         %{"requestId" => request} = frame["event"]["request"]
 
-        T3.PreviewAutomation.respond(%{
+        HalC2.PreviewAutomation.respond(%{
           "requestId" => request,
           "clientId" => "parity-host",
           "connectionId" => frame["event"]["connectionId"],
@@ -888,7 +888,7 @@ defmodule T3.Steps.Parity.Shapes do
         result
 
       "resourceTelemetry" ->
-        send(T3.Diagnostics, :sample)
+        send(HalC2.Diagnostics, :sample)
         await(context, t, id)
 
       "localServers" ->
@@ -900,7 +900,7 @@ defmodule T3.Steps.Parity.Shapes do
           )
 
         {:ok, {_, port}} = ThousandIsland.listener_info(server)
-        send(T3.LocalServers, :scan)
+        send(HalC2.LocalServers, :scan)
         listed = &Enum.any?(&1["list"]["servers"], fn s -> s["port"] == port end)
         await(context, t, id, listed, 8_000)
 
@@ -933,7 +933,7 @@ defmodule T3.Steps.Parity.Shapes do
     scope = %{thread_id: f.thread, instance: "codex"}
 
     Task.async(fn ->
-      T3.PreviewAutomation.invoke(scope, "status", %{}, timeout_ms: timeout_ms)
+      HalC2.PreviewAutomation.invoke(scope, "status", %{}, timeout_ms: timeout_ms)
     end)
   end
 
@@ -958,7 +958,7 @@ defmodule T3.Steps.Parity.Shapes do
     def init(test), do: test
 
     def call(conn, test) do
-      send(test, {:t3_parity_download, self(), conn.request_path})
+      send(test, {:halc2_parity_download, self(), conn.request_path})
 
       receive do
         {:serve, status, body} -> Plug.Conn.send_resp(conn, status, body)
@@ -973,12 +973,12 @@ defmodule T3.Steps.Parity.Shapes do
   defp update_gate(context) do
     root = Node.tmp_dir(context.node, "release")
     for dir <- ~w(releases lib bin), do: File.mkdir_p!(Path.join(root, dir))
-    start = "#{:erlang.system_info(:version)} #{T3.Upgrade.version()}\n"
+    start = "#{:erlang.system_info(:version)} #{HalC2.Upgrade.version()}\n"
     File.write!(Path.join([root, "releases", "start_erl.data"]), start)
 
     World.put_app_env(:restart_exit, fn _status -> :ok end)
     World.put_env("RELEASE_ROOT", root)
-    World.put_env("T3_SERVICE", "1")
+    World.put_env("HALC2_SERVICE", "1")
 
     gate =
       Node.ensure(
@@ -988,13 +988,13 @@ defmodule T3.Steps.Parity.Shapes do
       )
 
     {:ok, {_, port}} = ThousandIsland.listener_info(gate)
-    World.put_env("T3_UPGRADE_URL", "http://127.0.0.1:#{port}/{version}/{platform}.tar.gz")
+    World.put_env("HALC2_UPGRADE_URL", "http://127.0.0.1:#{port}/{version}/{platform}.tar.gz")
 
-    Node.ensure(T3.Upgrade)
+    Node.ensure(HalC2.Upgrade)
 
     ExUnit.Callbacks.on_exit(fn ->
-      :persistent_term.erase({T3.Upgrade, :version})
-      :persistent_term.erase({T3.Upgrade, :outcome})
+      :persistent_term.erase({HalC2.Upgrade, :version})
+      :persistent_term.erase({HalC2.Upgrade, :outcome})
     end)
 
     context
@@ -1002,24 +1002,24 @@ defmodule T3.Steps.Parity.Shapes do
 
   @doc "Answers the pending bundle download with a bundle for the target and its checksum."
   def serve_bundle do
-    assert_receive {:t3_parity_download, gate, path}, 5_000
+    assert_receive {:halc2_parity_download, gate, path}, 5_000
     assert path =~ @target
     archive = bundle()
     send(gate, {:serve, 200, archive})
 
-    assert_receive {:t3_parity_download, gate, sum_path}, 5_000
+    assert_receive {:halc2_parity_download, gate, sum_path}, 5_000
     assert String.ends_with?(sum_path, ".sha256")
     send(gate, {:serve, 200, Base.encode16(:crypto.hash(:sha256, archive), case: :lower)})
   end
 
   @doc "Answers the pending bundle download with a 404."
   def refuse_bundle do
-    assert_receive {:t3_parity_download, gate, _path}, 5_000
+    assert_receive {:halc2_parity_download, gate, _path}, 5_000
     send(gate, {:serve, 404, ""})
   end
 
   defp bundle do
-    path = Path.join(System.tmp_dir!(), "t3-parity-#{System.unique_integer([:positive])}.tar.gz")
+    path = Path.join(System.tmp_dir!(), "hal-c2-parity-#{System.unique_integer([:positive])}.tar.gz")
     manifest = JSON.encode!(%{"version" => @target})
 
     :ok =
@@ -1038,7 +1038,7 @@ defmodule T3.Steps.Parity.Shapes do
 
   @doc "Opens a new socket with the node's token and returns its first frame."
   def open_socket(context) do
-    {:ok, client} = WsClient.connect(context.node.port, "/ws?token=#{T3.Web.token()}")
+    {:ok, client} = WsClient.connect(context.node.port, "/ws?token=#{HalC2.Web.token()}")
     {frame, _client} = WsClient.recv(client, 1_000)
     frame
   end
@@ -1056,23 +1056,23 @@ defmodule T3.Steps.Parity.Shapes do
   subscriber when it subscribes to the shell. Returns `{pid, context}`.
   """
   def socket_pid(context) do
-    before = Map.keys(:sys.get_state(T3.Shell).subscribers)
+    before = Map.keys(:sys.get_state(HalC2.Shell).subscribers)
     client = Node.sub(World.client(context), 99, %{"type" => "shell"})
     {_, client} = Node.await(client, &(&1["t"] == "shell" and &1["id"] == 99))
-    [pid] = Map.keys(:sys.get_state(T3.Shell).subscribers) -- before
+    [pid] = Map.keys(:sys.get_state(HalC2.Shell).subscribers) -- before
     {pid, World.put_client(context, client)}
   end
 
   @doc "A socket paired under `label` with standard scopes; returns `{client, session_id}`."
   def paired_client(context, label) do
     {:ok, %{"credential" => credential}} =
-      T3.Auth.create_pairing_link(%{"label" => label, "scopes" => T3.Auth.standard_scopes()})
+      HalC2.Auth.create_pairing_link(%{"label" => label, "scopes" => HalC2.Auth.standard_scopes()})
 
-    sessions = fn -> Enum.map(T3.Auth.clients(), & &1["sessionId"]) end
+    sessions = fn -> Enum.map(HalC2.Auth.clients(), & &1["sessionId"]) end
     before = sessions.()
-    {:ok, access, _expires, _scopes} = T3.Auth.exchange(credential, %{"label" => label})
+    {:ok, access, _expires, _scopes} = HalC2.Auth.exchange(credential, %{"label" => label})
     [session] = sessions.() -- before
-    {:ok, ticket, _} = T3.Auth.issue_ticket(access)
+    {:ok, ticket, _} = HalC2.Auth.issue_ticket(access)
     {Node.connect(context.node, "wsTicket=#{ticket}"), session}
   end
 end

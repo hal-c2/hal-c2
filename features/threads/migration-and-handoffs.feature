@@ -3,8 +3,8 @@
 #   docs/user/portable-handoffs.md
 #   docs/internals/context-handoffs.md
 #   apps/web/src/components/LegacyThreadMigrationToast.tsx
-#   apps/server-ex/lib/t3/import/v2.ex
-#   apps/server-ex/lib/t3/orchestration/handoff.ex
+#   apps/server-ex/lib/hal_c2/import/v2.ex
+#   apps/server-ex/lib/hal_c2/orchestration/handoff.ex
 
 Feature: Carrying threads and context across servers and agents
   Threads made on an older server come across once, with their conversation. When an

@@ -1,4 +1,4 @@
-import { extractTerminalLinks } from "@t3tools/shared/terminalLinks";
+import { extractTerminalLinks } from "@hal-c2/shared/terminalLinks";
 
 /** Match the terminal link payload bound and avoid rescanning pathological messages. */
 const TIMELINE_LINK_MAX_CHARS = 4 * 1024;

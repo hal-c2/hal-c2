@@ -2,7 +2,7 @@ import {
   OrchestrationV2AppThread,
   OrchestrationV2TurnItem,
   type OrchestrationV2ThreadProjection,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 

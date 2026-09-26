@@ -2,20 +2,20 @@
 
 ## Purpose
 
-T3 exposes V2 orchestration through its app-owned MCP endpoint. A provider
+HAL-C2 exposes V2 orchestration through its app-owned MCP endpoint. A provider
 agent can use this endpoint to:
 
 - create an app-owned sub-agent on any supported provider instance;
 - wait for or poll the sub-agent's durable result;
 - cancel an active delegated task; and
-- create one or more ordinary top-level T3 threads;
+- create one or more ordinary top-level HAL-C2 threads;
 - list and incrementally read project threads;
 - rename threads, regenerate titles, and link or unlink pull requests;
 - send or steer follow-up messages; and
 - wait for or interrupt ordinary thread runs.
 
-These are T3 orchestration operations, not provider-native sub-agent APIs.
-Delegated tasks always create a T3 child thread and run. The child receives
+These are HAL-C2 orchestration operations, not provider-native sub-agent APIs.
+Delegated tasks always create a HAL-C2 child thread and run. The child receives
 only the supplied task prompt, plus an optional role instruction supplied in
 the same tool call. Parent conversation history is not copied into the child.
 
@@ -34,14 +34,14 @@ The orchestration tools share the existing authenticated HTTP MCP endpoint:
 http://127.0.0.1:<server-port>/mcp
 ```
 
-The provider-visible server key is `t3-code`. The endpoint registers both the
+The provider-visible server key is `hal-c2`. The endpoint registers both the
 preview toolkit and the orchestration toolkit.
 
 Before `ProviderSessionManager` opens a new V2 provider session, it asks
 `McpSessionRegistry` for a credential scoped to:
 
-- the T3 environment;
-- the parent T3 thread;
+- the HAL-C2 environment;
+- the parent HAL-C2 thread;
 - the concrete provider instance; and
 - the provider session.
 
@@ -62,11 +62,11 @@ Codex app-server receives the remote MCP server through command-line config
 overrides:
 
 ```text
--c mcp_servers.t3-code.url=http://127.0.0.1:<port>/mcp
--c mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"
+-c mcp_servers.hal-c2.url=http://127.0.0.1:<port>/mcp
+-c mcp_servers.hal-c2.bearer_token_env_var="HALC2_MCP_BEARER_TOKEN"
 ```
 
-The provider-session token is placed in `T3_MCP_BEARER_TOKEN`. Both the
+The provider-session token is placed in `HALC2_MCP_BEARER_TOKEN`. Both the
 production Codex launcher and the injectable test launcher use the same
 projection helper.
 
@@ -77,7 +77,7 @@ Claude receives an HTTP MCP server in its query options:
 ```ts
 {
   mcpServers: {
-    "t3-code": {
+    "hal-c2": {
       type: "http",
       url: "http://127.0.0.1:<port>/mcp",
       headers: {
@@ -87,7 +87,7 @@ Claude receives an HTTP MCP server in its query options:
   },
   allowedTools: [
     // existing allowed tools
-    "mcp__t3-code__*",
+    "mcp__hal-c2__*",
   ],
 }
 ```
@@ -146,25 +146,25 @@ provider-specific extensions; those remain in flavors such as Grok.
 ### Pi V2
 
 Pi core has no MCP client. When a provider session credential exists, the
-adapter writes a T3-owned extension into the server cache and spawns
-`pi --mode rpc --extension <cache>/pi-t3-mcp-extension.ts` with:
+adapter writes a HAL-C2-owned extension into the server cache and spawns
+`pi --mode rpc --extension <cache>/pi-hal-c2-mcp-extension.ts` with:
 
 ```text
-T3_MCP_URL=http://127.0.0.1:<port>/mcp
-T3_MCP_BEARER_TOKEN=<provider-session-token>
+HALC2_MCP_URL=http://127.0.0.1:<port>/mcp
+HALC2_MCP_BEARER_TOKEN=<provider-session-token>
 ```
 
 The extension connects to that HTTP endpoint, lists tools, and registers each
-one with `pi.registerTool` under a `mcp__t3-code__` namespace
-(`mcp__t3-code__delegate_task`, `mcp__t3-code__t3_thread_launch`, and the rest).
+one with `pi.registerTool` under a `mcp__hal-c2__` namespace
+(`mcp__hal-c2__delegate_task`, `mcp__hal-c2__halc2_thread_launch`, and the rest).
 The bridge calls the original MCP tool name over HTTP. Follow-up requests send
 `mcp-protocol-version: 2025-06-18`; Effect's MCP transport returns 400
-without it. The first turn of a session also receives the shared T3
+without it. The first turn of a session also receives the shared HAL-C2
 orchestration instructions.
 
-Pi keeps ownership of native extension discovery. T3 does not replace Pi's
+Pi keeps ownership of native extension discovery. HAL-C2 does not replace Pi's
 `subagent` tool or reproduce Pi's package and project-trust loader. Durable
-delegation goes through the namespaced T3 MCP `delegate_task` tool and the
+delegation goes through the namespaced HAL-C2 MCP `delegate_task` tool and the
 shared orchestration child-thread lifecycle. When Pi's example `subagent`
 extension is installed, the adapter observes its documented `details.results`
 shape and projects task cards with no child thread id. Unknown result shapes
@@ -200,7 +200,7 @@ adapter support, disabled state, missing executable, or missing authentication.
 
 ### `delegate_task`
 
-Creates a T3-owned child thread and immediately dispatches the supplied task
+Creates a HAL-C2-owned child thread and immediately dispatches the supplied task
 prompt.
 
 ```ts
@@ -273,11 +273,11 @@ the published task result.
 
 Interrupts the currently active task run through the normal V2 `run.interrupt`
 command. Native background work between turns currently has no interruptible run. It is idempotent for terminal tasks and accepts an optional cancellation
-reason. Use `t3_thread_interrupt` to interrupt a later follow-up run.
+reason. Use `halc2_thread_interrupt` to interrupt a later follow-up run.
 
 ### `create_threads`
 
-Creates between one and twenty ordinary top-level T3 threads:
+Creates between one and twenty ordinary top-level HAL-C2 threads:
 
 ```ts
 type CreateThreadsInput = {
@@ -301,7 +301,7 @@ inherit the parent's project, branch, and worktree path, but they have no
 sub-agent lineage. Entries with a prompt immediately dispatch a run; entries
 without a prompt remain idle.
 
-### `t3_thread_launch`
+### `halc2_thread_launch`
 
 Launches one ordinary top-level thread through the app's launch service. Use an
 explicit `workspaceStrategy` to create a new worktree (`worktree` with `baseRef`),
@@ -316,14 +316,14 @@ workspace does not. For stacked PRs, use the parent branch as `baseRef` with
 no retry key, so inspect existing threads after a failed or lost response before
 launching again. `create_threads` remains the batch option for a shared checkout.
 
-### `t3_thread_list`
+### `halc2_thread_list`
 
 Lists durable thread shells in the calling thread's project, newest first.
 Callers can filter by title, run status, and whether app-owned sub-agent threads
 are included. Results are bounded and offset-paginated. Deleted threads and
 threads from other projects are never exposed.
 
-### `t3_thread_read`
+### `halc2_thread_read`
 
 Reads a project-scoped thread's durable state, recent runs, and visible
 timeline. The default `messages` view returns user messages, assistant
@@ -338,7 +338,7 @@ and `creationSource: "mcp"`; provider output uses `creationSource: "provider"`.
 Actor and ingress are separate so agent-authored user-role messages remain
 distinguishable from human-authored messages.
 
-### `t3_thread_update`
+### `halc2_thread_update`
 
 Updates metadata for the calling thread or another thread in the same project.
 The typed actions are `rename`, `regenerate_title`, `link_pull_request`, and
@@ -352,7 +352,7 @@ resultant title, title-regeneration marker, and linked pull request. Reusing a
 receipt. Thread list and read results expose the linked pull request, and thread
 detail also exposes an in-flight title regeneration.
 
-### `t3_thread_send`
+### `halc2_thread_send`
 
 Sends a message to an ordinary or delegated thread in the calling project:
 
@@ -367,14 +367,14 @@ The target runtime and interaction modes may not be broader than the caller's.
 Stable command and message IDs are derived from `clientRequestId` for
 idempotent retries.
 
-### `t3_thread_wait`
+### `halc2_thread_wait`
 
 Waits for a selected run to become `completed`, `failed`, `cancelled`,
 `interrupted`, or `rolled_back`. Without `runId`, it pins the latest run at call
 time; an idle thread returns immediately. A timeout reports the latest durable
 status and does not cancel work.
 
-### `t3_thread_interrupt`
+### `halc2_thread_interrupt`
 
 Interrupts a selected active run through the normal V2 `run.interrupt` command.
 Without `runId`, it selects the newest interruptible run. A terminal run is

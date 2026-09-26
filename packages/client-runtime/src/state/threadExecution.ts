@@ -1,9 +1,9 @@
 import {
   latestRootProviderFailure,
   threadErrorSummary,
-} from "@t3tools/shared/orchestrationV2ThreadError";
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
-import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+} from "@hal-c2/shared/orchestrationV2ThreadError";
+import type { OrchestrationV2ThreadProjection } from "@hal-c2/contracts";
+import { derivePendingBackgroundWork } from "@hal-c2/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
 import {

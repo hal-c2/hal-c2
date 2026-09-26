@@ -1,12 +1,12 @@
-defmodule T3.Steps.Plugins.AcpRegistry do
+defmodule HalC2.Steps.Plugins.AcpRegistry do
   @moduledoc """
   A fake ACP Registry for plugin scenarios: a loopback HTTP server that serves
-  `registry.json` and agent archives from a directory, with `T3.Acp.Catalog`
+  `registry.json` and agent archives from a directory, with `HalC2.Acp.Catalog`
   pointed at it. Agents are archives holding `bin/fake`, which runs the fake ACP
   agent (`test/support/fake_acp.py`).
   """
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   defmodule Files do
     @moduledoc false
@@ -28,11 +28,11 @@ defmodule T3.Steps.Plugins.AcpRegistry do
   def ensure(%{registry: %{}} = context), do: context
 
   def ensure(context) do
-    T3.Test.Node.ensure(T3.Settings)
-    served = T3.Test.Node.tmp_dir(context.node, "registry")
+    HalC2.Test.Node.ensure(HalC2.Settings)
+    served = HalC2.Test.Node.tmp_dir(context.node, "registry")
 
     server =
-      T3.Test.Node.ensure(
+      HalC2.Test.Node.ensure(
         Supervisor.child_spec({Bandit, plug: {Files, served}, port: 0, ip: :loopback},
           id: :acp_registry
         )
@@ -40,12 +40,12 @@ defmodule T3.Steps.Plugins.AcpRegistry do
 
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
     base = "http://127.0.0.1:#{port}"
-    Application.put_env(:t3, :acp_registry_url, "#{base}/registry.json")
-    :persistent_term.erase({T3.Acp.Catalog, :index})
+    Application.put_env(:hal_c2, :acp_registry_url, "#{base}/registry.json")
+    :persistent_term.erase({HalC2.Acp.Catalog, :index})
 
     ExUnit.Callbacks.on_exit(fn ->
-      Application.delete_env(:t3, :acp_registry_url)
-      :persistent_term.erase({T3.Acp.Catalog, :index})
+      Application.delete_env(:hal_c2, :acp_registry_url)
+      :persistent_term.erase({HalC2.Acp.Catalog, :index})
     end)
 
     script = Path.join(served, "fake")
@@ -73,7 +73,7 @@ defmodule T3.Steps.Plugins.AcpRegistry do
         "authors" => ["Tests"],
         "distribution" => %{
           "binary" => %{
-            T3.Acp.Catalog.platform() => %{
+            HalC2.Acp.Catalog.platform() => %{
               "archive" => "#{base}/fake.tar.gz",
               "cmd" => "./bin/fake",
               "args" => ["--acp"],
@@ -96,7 +96,7 @@ defmodule T3.Steps.Plugins.AcpRegistry do
       JSON.encode!(%{"version" => "1.0.0", "agents" => agents})
     )
 
-    :persistent_term.erase({T3.Acp.Catalog, :index})
+    :persistent_term.erase({HalC2.Acp.Catalog, :index})
     put_in(context, [:registry, :agents], agents)
   end
 
@@ -106,7 +106,7 @@ defmodule T3.Steps.Plugins.AcpRegistry do
   """
   def add_instance(context, instance_id, agent_id) do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "t3.readSettings")
+      World.call!(context, "halc2.readSettings")
 
     instance = %{
       "driver" => "acpRegistry",
@@ -117,7 +117,7 @@ defmodule T3.Steps.Plugins.AcpRegistry do
     instances = Map.put(settings["providerInstances"] || %{}, instance_id, instance)
 
     {_, context} =
-      World.call!(context, "t3.writeSettings", %{
+      World.call!(context, "halc2.writeSettings", %{
         "settings" => Map.put(settings, "providerInstances", instances),
         "version" => version
       })
@@ -129,7 +129,7 @@ defmodule T3.Steps.Plugins.AcpRegistry do
   def tools_dir(context, agent_id), do: Path.join([context.node.home, "tools", agent_id])
 end
 
-defmodule T3.Steps.Plugins.Turns do
+defmodule HalC2.Steps.Plugins.Turns do
   @moduledoc """
   Turns on fake providers for plugin scenarios: the fake Codex, Claude and ACP
   agents under `test/support`, run by the node's own runtimes. A running turn is
@@ -137,58 +137,58 @@ defmodule T3.Steps.Plugins.Turns do
   follow-up steps in `common_steps.exs` read.
   """
 
-  alias T3.StreamState
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @support Path.expand("../../support", __DIR__)
 
   @doc "Starts what provider turns need and points the node at the fake agents."
   def providers(context) do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
 
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.Codex.Registry},
-        id: T3.Codex.Registry
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Codex.Registry},
+        id: HalC2.Codex.Registry
       )
     )
 
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.Claude.Registry},
-        id: T3.Claude.Registry
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Claude.Registry},
+        id: HalC2.Claude.Registry
       )
     )
 
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.Acp.Registry}, id: T3.Acp.Registry)
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Acp.Registry}, id: HalC2.Acp.Registry)
     )
 
     Node.ensure(
       Supervisor.child_spec(
-        {DynamicSupervisor, name: T3.Codex.Supervisor, strategy: :one_for_one},
-        id: T3.Codex.Supervisor
+        {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one},
+        id: HalC2.Codex.Supervisor
       )
     )
 
-    Application.put_env(:t3, :codex_command, [
+    Application.put_env(:hal_c2, :codex_command, [
       "python3",
       "-u",
       Path.join(@support, "fake_codex.py")
     ])
 
-    Application.put_env(:t3, :claude_command, [
+    Application.put_env(:hal_c2, :claude_command, [
       "python3",
       "-u",
       Path.join(@support, "fake_claude.py")
     ])
 
-    Application.put_env(:t3, :acp_commands, %{
+    Application.put_env(:hal_c2, :acp_commands, %{
       "opencode" => ["python3", "-u", Path.join(@support, "fake_acp.py")]
     })
 
     ExUnit.Callbacks.on_exit(fn ->
       for key <- [:codex_command, :claude_command, :acp_commands],
-          do: Application.delete_env(:t3, key)
+          do: Application.delete_env(:hal_c2, key)
     end)
 
     context
@@ -248,16 +248,16 @@ defmodule T3.Steps.Plugins.Turns do
   end
 end
 
-defmodule T3.Steps.Plugins.Fixtures do
+defmodule HalC2.Steps.Plugins.Fixtures do
   @moduledoc """
   Node plugins for scenarios, written as source files into the node's plugins
-  directory (`T3.Plugins`). Each fixture implements the behaviour its id stands for
+  directory (`HalC2.Plugins`). Each fixture implements the behaviour its id stands for
   and runs a process registered under its module name, which answers `:version`,
-  crashes on `:crash`, and tells a process registered as `:t3_plugin_probe` that
+  crashes on `:crash`, and tells a process registered as `:halc2_plugin_probe` that
   it started.
   """
 
-  alias T3.Test.Node
+  alias HalC2.Test.Node
 
   @kinds %{
     "acme-agent" => "ProviderAdapter",
@@ -273,7 +273,7 @@ defmodule T3.Steps.Plugins.Fixtures do
 
   @api %{"old-host" => 0, "future-tools" => 2}
 
-  @doc "The kind a scenario names, as `T3.Plugins` lists it."
+  @doc "The kind a scenario names, as `HalC2.Plugins` lists it."
   def kind("provider adapter"), do: "providerAdapter"
   def kind("MCP tool pack"), do: "mcpToolPack"
   def kind("git host"), do: "gitHost"
@@ -281,12 +281,12 @@ defmodule T3.Steps.Plugins.Fixtures do
   def kind("text-generation backend"), do: "textGeneration"
 
   @doc "The fixture's plugin module."
-  def module(id), do: Module.concat(T3PluginFixture, Macro.camelize(String.replace(id, "-", "_")))
+  def module(id), do: Module.concat(HalC2PluginFixture, Macro.camelize(String.replace(id, "-", "_")))
 
   @doc "Starts settings and plugins; the plugins directory is scanned as they start."
   def ensure(context) do
-    Node.ensure(T3.Settings)
-    Node.ensure(T3.Plugins)
+    Node.ensure(HalC2.Settings)
+    Node.ensure(HalC2.Plugins)
     context
   end
 
@@ -303,7 +303,7 @@ defmodule T3.Steps.Plugins.Fixtures do
   end
 
   def rescan(context) do
-    {:ok, _} = T3.Plugins.handle("rescan", %{})
+    {:ok, _} = HalC2.Plugins.handle("rescan", %{})
     context
   end
 
@@ -317,8 +317,8 @@ defmodule T3.Steps.Plugins.Fixtures do
 
   def peer(context) do
     context = ensure(context)
-    peer = T3.Test.Node.start_peer(context.node)
-    Map.merge(context, %{peer: peer, peer_environment: T3.Test.Node.peer_environment(peer)})
+    peer = HalC2.Test.Node.start_peer(context.node)
+    Map.merge(context, %{peer: peer, peer_environment: HalC2.Test.Node.peer_environment(peer)})
   end
 
   @doc "Writes fixture `id` into the peer node's plugins directory and has it rescan."
@@ -327,34 +327,34 @@ defmodule T3.Steps.Plugins.Fixtures do
     dir = Path.join([context.node.home, "peer", "plugins"])
     File.mkdir_p!(dir)
     File.write!(Path.join(dir, "#{id}.ex"), source(id))
-    {:ok, _} = :erpc.call(context.peer, T3.Plugins, :handle, ["rescan", %{}])
+    {:ok, _} = :erpc.call(context.peer, HalC2.Plugins, :handle, ["rescan", %{}])
     context
   end
 
   @doc "The plugin listing of the environment `environment`, fetched over the client's socket."
   def list(context, environment) do
     {%{"plugins" => plugins}, client} =
-      T3.Test.Node.call!(T3.Test.Node.World.client(context), environment, "plugins.list")
+      HalC2.Test.Node.call!(HalC2.Test.Node.World.client(context), environment, "plugins.list")
 
-    {plugins, T3.Test.Node.World.put_client(context, client)}
+    {plugins, HalC2.Test.Node.World.put_client(context, client)}
   end
 
   @doc "The node's listing of plugin `id`, or nil."
   def entry(id) do
-    {:ok, %{"plugins" => plugins}} = T3.Plugins.handle("list", %{})
+    {:ok, %{"plugins" => plugins}} = HalC2.Plugins.handle("list", %{})
     Enum.find(plugins, &(&1["id"] == id))
   end
 
   @doc "Turns plugin `id` on as a client does, asserting it runs."
   def enable(context, id) do
-    {_, context} = T3.Test.Node.World.call!(context, "plugins.enable", %{"id" => id})
+    {_, context} = HalC2.Test.Node.World.call!(context, "plugins.enable", %{"id" => id})
     %{"status" => "running"} = entry(id)
     context
   end
 
-  @doc "Makes the test process `:t3_plugin_probe`, which fixtures tell when they start."
+  @doc "Makes the test process `:halc2_plugin_probe`, which fixtures tell when they start."
   def probe do
-    if Process.whereis(:t3_plugin_probe) != self(), do: Process.register(self(), :t3_plugin_probe)
+    if Process.whereis(:halc2_plugin_probe) != self(), do: Process.register(self(), :halc2_plugin_probe)
     :ok
   end
 
@@ -368,7 +368,7 @@ defmodule T3.Steps.Plugins.Fixtures do
 
     """
     defmodule #{module} do
-      @behaviour T3.Plugins.#{Map.fetch!(@kinds, id)}
+      @behaviour HalC2.Plugins.#{Map.fetch!(@kinds, id)}
       use GenServer
 
       def manifest do
@@ -385,7 +385,7 @@ defmodule T3.Steps.Plugins.Fixtures do
       def start_link(settings), do: GenServer.start_link(__MODULE__, settings, name: __MODULE__)
 
       def init(settings) do
-        if probe = Process.whereis(:t3_plugin_probe), do: send(probe, {:plugin_started, #{inspect(id)}, self()})
+        if probe = Process.whereis(:halc2_plugin_probe), do: send(probe, {:plugin_started, #{inspect(id)}, self()})
         {:ok, settings}
       end
 
@@ -457,7 +457,7 @@ defmodule T3.Steps.Plugins.Fixtures do
   defp callbacks("ntfy") do
     ~S"""
       def notify(notification, settings) do
-        if probe = Process.whereis(:t3_plugin_probe), do: send(probe, {:notified, "ntfy", notification, settings})
+        if probe = Process.whereis(:halc2_plugin_probe), do: send(probe, {:notified, "ntfy", notification, settings})
         :ok
       end
     """
@@ -489,7 +489,7 @@ defmodule T3.Steps.Plugins.Fixtures do
   def provider(id, opts \\ []) do
     version = opts[:version] || "1.0.0"
     driver = opts[:driver] || id
-    capabilities = Keyword.get(opts, :capabilities, T3.Plugins.ProviderAdapter.capabilities())
+    capabilities = Keyword.get(opts, :capabilities, HalC2.Plugins.ProviderAdapter.capabilities())
 
     provider =
       %{
@@ -529,9 +529,9 @@ defmodule T3.Steps.Plugins.Fixtures do
 
     """
     defmodule #{inspect(module(id))} do
-      @behaviour T3.Plugins.ProviderAdapter
+      @behaviour HalC2.Plugins.ProviderAdapter
       use GenServer
-      alias T3.Orchestration.TurnWriter
+      alias HalC2.Orchestration.TurnWriter
 
       @provider #{inspect(provider)}
 
@@ -549,7 +549,7 @@ defmodule T3.Steps.Plugins.Fixtures do
       def start_link(settings), do: GenServer.start_link(__MODULE__, settings, name: __MODULE__)
 
       def init(_settings) do
-        if probe = Process.whereis(:t3_plugin_probe), do: send(probe, {:plugin_started, #{inspect(id)}, self()})
+        if probe = Process.whereis(:halc2_plugin_probe), do: send(probe, {:plugin_started, #{inspect(id)}, self()})
         {:ok, %{}}
       end
 
@@ -565,7 +565,7 @@ defmodule T3.Steps.Plugins.Fixtures do
 
       def start_turn(thread_id, turn) do
         {:ok, pid} =
-          DynamicSupervisor.start_child(T3.Plugins.sessions(#{inspect(driver)}), %{
+          DynamicSupervisor.start_child(HalC2.Plugins.sessions(#{inspect(driver)}), %{
             id: :turn,
             start: {Task, :start_link, [fn -> run(thread_id, turn) end]},
             restart: :temporary
@@ -585,8 +585,8 @@ defmodule T3.Steps.Plugins.Fixtures do
         if turn.native_thread_id == nil do
           TurnWriter.commit(state, fn stream ->
             [
-              T3.Orchestration.upsert(stream, "provider-thread", ids.provider_thread, fn thread ->
-                Map.put(thread, "nativeThreadRef", T3.Orchestration.Entities.provider_ref("session-\#{thread_id}", ids.driver))
+              HalC2.Orchestration.upsert(stream, "provider-thread", ids.provider_thread, fn thread ->
+                Map.put(thread, "nativeThreadRef", HalC2.Orchestration.Entities.provider_ref("session-\#{thread_id}", ids.driver))
               end)
             ]
           end)
@@ -607,7 +607,7 @@ defmodule T3.Steps.Plugins.Fixtures do
       end
 
       defp answer(turn) do
-        config = get_in(T3.Settings.settings(), ["providerInstances", turn.ids.instance, "config"]) || %{}
+        config = get_in(HalC2.Settings.settings(), ["providerInstances", turn.ids.instance, "config"]) || %{}
         history = if turn.text =~ "<conversation_history>", do: " and the history", else: ""
         greeting = if config["greeting"], do: " (\#{config["greeting"]})", else: ""
         "Hello from #{id}\#{history}\#{greeting}"
@@ -617,16 +617,16 @@ defmodule T3.Steps.Plugins.Fixtures do
   end
 end
 
-defmodule T3.Steps.Plugins.AgentPlugins do
+defmodule HalC2.Steps.Plugins.AgentPlugins do
   @moduledoc "Steps for `features/plugins/agent-plugins.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Steps.Plugins.{AcpRegistry, Fixtures, Turns}
-  alias T3.Test.FakeAcp
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Steps.Plugins.{AcpRegistry, Fixtures, Turns}
+  alias HalC2.Test.FakeAcp
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # --- registry agents ---------------------------------------------------------------
 
@@ -635,7 +635,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
 
     context
     |> AcpRegistry.publish([AcpRegistry.agent(context, id)])
-    |> Map.put(:node_version, T3.Upgrade.version())
+    |> Map.put(:node_version, HalC2.Upgrade.version())
   end
 
   step "the user adds {string} as a provider", %{args: [id]} = context do
@@ -657,7 +657,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
   end
 
   step "no new node version was needed", context do
-    assert T3.Upgrade.version() == context.node_version
+    assert HalC2.Upgrade.version() == context.node_version
     context
   end
 
@@ -675,7 +675,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
         Enum.find(StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
       end)
 
-    [run] = Turns.runs(T3.Streams.Server.state(T3.Streams.ensure(thread_id)))
+    [run] = Turns.runs(HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id)))
     Map.put(context, :running, %{thread: thread_id, run: run["id"], request: request["id"]})
   end
 
@@ -727,8 +727,8 @@ defmodule T3.Steps.Plugins.AgentPlugins do
   # --- built-in ACP agents ---------------------------------------------------------------
 
   step "OpenCode, Grok, Cursor and Pi are installed but not enabled", context do
-    Node.ensure(T3.Settings)
-    markers = T3.Test.Node.tmp_dir(context.node, "started")
+    Node.ensure(HalC2.Settings)
+    markers = HalC2.Test.Node.tmp_dir(context.node, "started")
 
     # Each agent is a script that leaves a marker when something starts it.
     commands =
@@ -739,23 +739,23 @@ defmodule T3.Steps.Plugins.AgentPlugins do
         {id, [script]}
       end
 
-    Application.put_env(:t3, :acp_commands, commands)
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :acp_commands) end)
+    Application.put_env(:hal_c2, :acp_commands, commands)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :acp_commands) end)
 
     # Pi counts as installed where its binary is found.
-    {settings, version} = T3.Settings.get()
+    {settings, version} = HalC2.Settings.get()
     pi = %{"binaryPath" => hd(commands["pi"])}
 
     {:ok, _} =
-      T3.Settings.put(put_in(settings, [Access.key("providers", %{}), "pi"], pi), version)
+      HalC2.Settings.put(put_in(settings, [Access.key("providers", %{}), "pi"], pi), version)
 
     Map.put(context, :markers, markers)
   end
 
   step "none of their processes are started", context do
     # What the node runs at boot and when a client lists its providers.
-    T3.Acp.load()
-    entries = Map.new(T3.Acp.entries(), &{&1["instanceId"], &1})
+    HalC2.Acp.load()
+    entries = Map.new(HalC2.Acp.entries(), &{&1["instanceId"], &1})
 
     for id <- ~w(opencode grok cursor pi) do
       assert %{"enabled" => false} = entries[id], "#{id} is not listed as installed"
@@ -772,7 +772,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
     context =
       context |> Turns.providers() |> World.create_project("shop") |> Fixtures.install("acme")
 
-    {settings, version} = T3.Settings.get()
+    {settings, version} = HalC2.Settings.get()
 
     instances =
       Map.put(settings["providerInstances"] || %{}, instance, %{
@@ -780,7 +780,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
         "enabled" => true
       })
 
-    {:ok, _} = T3.Settings.put(Map.put(settings, "providerInstances", instances), version)
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "providerInstances", instances), version)
 
     context =
       World.create_thread(context, "Acme work", "shop", %{
@@ -791,7 +791,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
   end
 
   step "the plugin behind {string} has been removed", %{args: [instance]} = context do
-    driver = get_in(T3.Settings.settings(), ["providerInstances", instance, "driver"])
+    driver = get_in(HalC2.Settings.settings(), ["providerInstances", instance, "driver"])
     context = Fixtures.remove(context, driver)
     assert Fixtures.entry(driver) == nil
     context
@@ -809,10 +809,10 @@ defmodule T3.Steps.Plugins.AgentPlugins do
   end
 
   step "no other provider runs the turn in its place", context do
-    state = T3.Streams.Server.state(T3.Streams.ensure(context.thread))
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(context.thread))
     assert Turns.runs(state) == []
     assert StreamState.list(state, "message") == []
-    assert Registry.lookup(T3.Codex.Registry, context.thread) == []
+    assert Registry.lookup(HalC2.Codex.Registry, context.thread) == []
     context
   end
 
@@ -825,7 +825,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
     thread_id = "thread-#{System.unique_integer([:positive])}"
 
     {:ok, _} =
-      T3.Orchestration.launch_thread(%{
+      HalC2.Orchestration.launch_thread(%{
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
         "threadId" => thread_id,
         "projectId" => World.project(context, "shop").id,
@@ -844,7 +844,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
     Map.merge(context, %{thread_id: thread_id, work: work})
   end
 
-  defp state(thread_id), do: T3.Streams.Server.state(T3.Streams.ensure(thread_id))
+  defp state(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
 
   defp session(thread_id) do
     World.await_stream(thread_id, fn state ->
@@ -852,7 +852,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
     end)
   end
 
-  defp snapshot(instance), do: FakeAcp.find(T3.Environment.providers(), instance)
+  defp snapshot(instance), do: FakeAcp.find(HalC2.Environment.providers(), instance)
 
   defp answers(thread_id) do
     for %{"role" => "assistant", "text" => text} <- StreamState.list(state(thread_id), "message"),
@@ -860,14 +860,14 @@ defmodule T3.Steps.Plugins.AgentPlugins do
   end
 
   defp rollback(thread_id, ordinal) do
-    scope_id = T3.Checkpoint.scope_id(thread_id)
+    scope_id = HalC2.Checkpoint.scope_id(thread_id)
 
-    T3.Orchestration.dispatch(%{
+    HalC2.Orchestration.dispatch(%{
       "type" => "checkpoint.rollback",
       "commandId" => "cmd-#{System.unique_integer([:positive])}",
       "threadId" => thread_id,
       "scopeId" => scope_id,
-      "checkpointId" => T3.Checkpoint.checkpoint_id(scope_id, ordinal)
+      "checkpointId" => HalC2.Checkpoint.checkpoint_id(scope_id, ordinal)
     })
   end
 
@@ -880,12 +880,12 @@ defmodule T3.Steps.Plugins.AgentPlugins do
   end
 
   step "a node with no provider plugins installed", context do
-    Application.put_env(:t3, :bundled_plugins, [])
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :bundled_plugins) end)
+    Application.put_env(:hal_c2, :bundled_plugins, [])
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :bundled_plugins) end)
     context = Fixtures.ensure(context)
 
     assert Enum.filter(
-             elem(T3.Plugins.handle("list", %{}), 1)["plugins"],
+             elem(HalC2.Plugins.handle("list", %{}), 1)["plugins"],
              &(&1["kind"] == "providerAdapter")
            ) == []
 
@@ -893,7 +893,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
   end
 
   step "the user is told to add a provider before starting a thread", context do
-    assert T3.Environment.providers() == []
+    assert HalC2.Environment.providers() == []
     context = World.create_thread(context, "First", "shop")
     thread_id = World.thread_id(context, "First")
     {reply, context} = World.dispatch(context, Turns.message(thread_id, "m1", "hello"))
@@ -909,7 +909,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
     for id <- ids,
         do: assert(%{"source" => "bundled", "status" => "running"} = Fixtures.entry(id))
 
-    drivers = Enum.map(T3.Environment.providers(), & &1["driver"])
+    drivers = Enum.map(HalC2.Environment.providers(), & &1["driver"])
     assert "codex" in drivers and "claudeAgent" in drivers
     context
   end
@@ -930,7 +930,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
   step "the bundled plugin {string} has a newer version available", %{args: [id]} = context do
     context = context |> Turns.providers() |> Fixtures.ensure()
     Fixtures.probe()
-    node_version = T3.Upgrade.version()
+    node_version = HalC2.Upgrade.version()
     assert %{"source" => "bundled", "version" => ^node_version} = Fixtures.entry(id)
 
     context
@@ -950,7 +950,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
   end
 
   step "the node version is unchanged", context do
-    assert T3.Upgrade.version() == context.node_version
+    assert HalC2.Upgrade.version() == context.node_version
     context
   end
 
@@ -1011,7 +1011,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
     assert Enum.any?(checkpoints, &(&1["appRunOrdinal"] == 1))
 
     assert {:ok, %{"diff" => diff}} =
-             T3.Orchestration.handle("orchestration.getTurnDiff", %{
+             HalC2.Orchestration.handle("orchestration.getTurnDiff", %{
                "threadId" => context.thread_id,
                "fromTurnCount" => 0,
                "toTurnCount" => 1
@@ -1023,7 +1023,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
 
   step "the instance {string} has custom settings", %{args: [instance]} = context do
     context = provider_plugin(context, "acme")
-    {settings, version} = T3.Settings.get()
+    {settings, version} = HalC2.Settings.get()
 
     instances =
       Map.put(settings["providerInstances"] || %{}, instance, %{
@@ -1033,7 +1033,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
         "config" => %{"greeting" => "hi team"}
       })
 
-    {:ok, _} = T3.Settings.put(Map.put(settings, "providerInstances", instances), version)
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "providerInstances", instances), version)
     assert %{"displayName" => "Acme at work", "availability" => "available"} = snapshot(instance)
     Map.put(context, :instance, instance)
   end
@@ -1047,7 +1047,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
              snapshot(context.instance)
 
     assert %{"driver" => "acme", "config" => %{"greeting" => "hi team"}} =
-             T3.Settings.settings()["providerInstances"][context.instance]
+             HalC2.Settings.settings()["providerInstances"][context.instance]
 
     context
   end
@@ -1071,7 +1071,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
     context = launch(context, "acme", "remember the basket")
     [_] = Turns.await_runs(context.thread_id, ["completed"])
     context = Fixtures.remove(context, "acme")
-    assert {:missing, "acme"} = T3.Plugins.provider("acme")
+    assert {:missing, "acme"} = HalC2.Plugins.provider("acme")
     context
   end
 
@@ -1101,9 +1101,9 @@ defmodule T3.Steps.Plugins.AgentPlugins do
 
   step "a provider plugin that does not declare {string}", %{args: [name]} = context do
     missing = Map.fetch!(@capabilities, name)
-    capabilities = T3.Plugins.ProviderAdapter.capabilities() -- [missing]
+    capabilities = HalC2.Plugins.ProviderAdapter.capabilities() -- [missing]
     context = provider_plugin(context, "acme", capabilities: capabilities)
-    refute missing in T3.Plugins.declared("acme").capabilities
+    refute missing in HalC2.Plugins.declared("acme").capabilities
     Map.put(context, :missing, missing)
   end
 
@@ -1119,7 +1119,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
     refute context.session["capabilities"]["turns"]["supportsInterrupt"]
 
     assert {:error, "The provider \"acme\" cannot stop a running turn."} =
-             T3.Orchestration.dispatch(%{
+             HalC2.Orchestration.dispatch(%{
                "type" => "run.interrupt",
                "commandId" => "cmd-stop",
                "threadId" => context.thread_id
@@ -1154,7 +1154,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
     fork_id = "fork-#{System.unique_integer([:positive])}"
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.fork",
         "commandId" => "cmd-fork",
         "sourceThreadId" => context.thread_id,
@@ -1237,14 +1237,14 @@ defmodule T3.Steps.Plugins.AgentPlugins do
 
   step "the provider cannot be picked for titles and commit messages", context do
     assert %{"supportsTextGeneration" => false} = snapshot("acme")
-    {settings, version} = T3.Settings.get()
+    {settings, version} = HalC2.Settings.get()
 
     selection = %{"instanceId" => "acme", "model" => "acme-1"}
 
     {:ok, _} =
-      T3.Settings.put(Map.put(settings, "textGenerationModelSelection", selection), version)
+      HalC2.Settings.put(Map.put(settings, "textGenerationModelSelection", selection), version)
 
-    assert {:error, message} = T3.TextGeneration.branch_name(context.work, "fix the basket")
+    assert {:error, message} = HalC2.TextGeneration.branch_name(context.work, "fix the basket")
     assert message =~ "No text generation provider is available"
     context
   end
@@ -1253,7 +1253,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
     refute Map.has_key?(snapshot("acme"), "nativeSessions")
 
     assert {:error, %{"_tag" => _, "message" => message}} =
-             T3.Acp.Sessions.list(%{
+             HalC2.Acp.Sessions.list(%{
                "instanceId" => "acme",
                "projectId" => World.project(context, "shop").id
              })
@@ -1264,7 +1264,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
 
   step "the limits view does not list this provider", context do
     refute Map.has_key?(snapshot("acme"), "usageLimits")
-    assert T3.ProviderUsageLimits.get("acme") == nil
+    assert HalC2.ProviderUsageLimits.get("acme") == nil
     context
   end
 
@@ -1277,14 +1277,14 @@ defmodule T3.Steps.Plugins.AgentPlugins do
            } = snapshot("acme")
 
     assert {:error, %{"message" => "This provider does not sign in here."}} =
-             T3.ProviderAuth.start(%{"instanceId" => "acme"})
+             HalC2.ProviderAuth.start(%{"instanceId" => "acme"})
 
     context
   end
 
   step "a provider plugin that declares rollback but fails every rollback", context do
     context = provider_plugin(context, "acme", rollback_fails: true)
-    assert :rollback in T3.Plugins.declared("acme").capabilities
+    assert :rollback in HalC2.Plugins.declared("acme").capabilities
     context = launch(context, "acme", "write a.txt")
     [_] = Turns.await_runs(context.thread_id, ["completed"])
 
@@ -1328,28 +1328,28 @@ defmodule T3.Steps.Plugins.AgentPlugins do
     AcpRegistry.publish(context, [AcpRegistry.agent(context, context.agent)])
   end
 
-  step "users can add it from the registry without a T3 plugin", context do
-    plugins = elem(T3.Plugins.handle("list", %{}), 1)["plugins"]
+  step "users can add it from the registry without a HAL-C2 plugin", context do
+    plugins = elem(HalC2.Plugins.handle("list", %{}), 1)["plugins"]
     agent = context.agent
 
     {_, context} = World.call!(context, "server.prepareAcpRegistryAgent", %{"agentId" => agent})
     context = AcpRegistry.add_instance(context, agent, agent)
-    assert {:ok, ^agent, T3.Plugins.Bundled.Acp} = T3.Plugins.provider(agent)
+    assert {:ok, ^agent, HalC2.Plugins.Bundled.Acp} = HalC2.Plugins.provider(agent)
 
     {thread_id, context} = Turns.send_first(context, agent, "list the files")
     [_] = Turns.await_runs(thread_id, ["completed"])
     assert answers(thread_id) == ["Hello from acp"]
-    assert elem(T3.Plugins.handle("list", %{}), 1)["plugins"] == plugins
+    assert elem(HalC2.Plugins.handle("list", %{}), 1)["plugins"] == plugins
     context
   end
 
   step "a provider plugin {string} built on the ACP contract", %{args: [agent]} = context do
     context = context |> Fixtures.ensure() |> FakeAcp.install(agent, %{}, enabled: true)
-    assert {:ok, ^agent, T3.Plugins.Bundled.Acp} = T3.Plugins.provider(agent)
+    assert {:ok, ^agent, HalC2.Plugins.Bundled.Acp} = HalC2.Plugins.provider(agent)
     context
   end
 
-  # Grok's `x.ai/exit_plan_mode` request is outside ACP (`T3.Acp.ThreadRuntime`).
+  # Grok's `x.ai/exit_plan_mode` request is outside ACP (`HalC2.Acp.ThreadRuntime`).
   step "it adds a plan capture that plain ACP does not have", context do
     method = "x.ai/exit_plan_mode"
     refute String.starts_with?(method, ["session/", "fs/", "terminal/"])
@@ -1393,13 +1393,13 @@ defmodule T3.Steps.Plugins.AgentPlugins do
       Enum.find(StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
     end)
 
-    [{runtime, _}] = Registry.lookup(T3.Claude.Registry, claude)
+    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, claude)
     Map.merge(context, %{claude: claude, claude_runtime: runtime, acp: acp})
   end
 
   step "the ACP agent's plugin crashes", context do
-    sessions = T3.Plugins.sessions("acp")
-    assert sessions != T3.Plugins.sessions("claudeAgent")
+    sessions = HalC2.Plugins.sessions("acp")
+    assert sessions != HalC2.Plugins.sessions("claudeAgent")
     Process.exit(sessions, :kill)
     context
   end
@@ -1464,7 +1464,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
   step "the provider plugin {string} supports every mode except auto",
        %{args: [agent]} = context do
     context = context |> Fixtures.ensure() |> FakeAcp.install(agent, %{}, enabled: true)
-    assert {:ok, ^agent, T3.Plugins.Bundled.Acp} = T3.Plugins.provider(agent)
+    assert {:ok, ^agent, HalC2.Plugins.Bundled.Acp} = HalC2.Plugins.provider(agent)
     context
   end
 
@@ -1477,7 +1477,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
     context =
       provider_plugin(context, id, name: "Acme Agent", icon: "https://#{id}.example.com/icon.svg")
 
-    refute id in ~w(codex claudeAgent) or T3.Acp.agent?(id)
+    refute id in ~w(codex claudeAgent) or HalC2.Acp.agent?(id)
     context
   end
 
@@ -1503,14 +1503,14 @@ defmodule T3.Steps.Plugins.AgentPlugins do
   # probe each turn it runs.
   defp claude_update do
     """
-    defmodule T3PluginFixture.ClaudeUpdate do
-      @behaviour T3.Plugins.ProviderAdapter
-      alias T3.Claude.ThreadRuntime
+    defmodule HalC2PluginFixture.ClaudeUpdate do
+      @behaviour HalC2.Plugins.ProviderAdapter
+      alias HalC2.Claude.ThreadRuntime
 
-      def manifest, do: %{T3.Plugins.Bundled.Claude.manifest() | version: "2.0.0"}
+      def manifest, do: %{HalC2.Plugins.Bundled.Claude.manifest() | version: "2.0.0"}
 
       def start_turn(thread_id, turn) do
-        if probe = Process.whereis(:t3_plugin_probe), do: send(probe, {:plugin_turn, "claude", "2.0.0"})
+        if probe = Process.whereis(:halc2_plugin_probe), do: send(probe, {:plugin_turn, "claude", "2.0.0"})
         ThreadRuntime.start_turn(thread_id, turn)
       end
 
@@ -1518,7 +1518,7 @@ defmodule T3.Steps.Plugins.AgentPlugins do
       defdelegate steer(thread_id, run_id, text), to: ThreadRuntime
       defdelegate respond(thread_id, request_id, response), to: ThreadRuntime
       defdelegate rollback(thread_id, plan), to: ThreadRuntime
-      defdelegate providers(settings), to: T3.Plugins.Bundled.Claude
+      defdelegate providers(settings), to: HalC2.Plugins.Bundled.Claude
     end
     """
   end

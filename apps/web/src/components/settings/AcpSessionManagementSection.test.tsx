@@ -6,7 +6,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type ServerProvider,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { visitElements } from "../../test/reactElementTree";

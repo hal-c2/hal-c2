@@ -5,10 +5,10 @@
 #   apps/web/src/hooks/useCopyToClipboard.ts
 #   apps/web/src/components/Sidebar.tsx (multi-select, bulk menu, selection)
 #   apps/web/src/threadSelectionStore.ts
-#   apps/desktop-qt/qml/T3/Bricks/Sidebar.qml (Menu key, Shift+F10)
+#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Menu key, Shift+F10)
 #   apps/desktop-qt/parity/features.backlog.test.ts (sidebar-multi-select-and-reorder: Ctrl-click adds,
 #     Shift-click extends the range, Escape clears the selection)
-#   apps/desktop-qt/qml/T3/Bricks/SidebarThreadRow.qml (right-click opens menu on press)
+#   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (right-click opens menu on press)
 #   apps/tui/src/components/ContextMenu.tsx
 #   apps/tui/src/components/Sidebar.tsx (context menu)
 #   packages/contracts/src/shell.ts (thread.menu)

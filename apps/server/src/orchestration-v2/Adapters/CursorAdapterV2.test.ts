@@ -12,7 +12,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -158,7 +158,7 @@ describe("CursorAdapterV2", () => {
       assert.lengthOf(sentMessages, 1);
       assert.isTrue(sentMessages[0]!.startsWith("/review this with $HOME and $missing\n\n"));
       assert.include(sentMessages[0]!, "Cursor");
-      assert.include(sentMessages[0]!, "T3 Code");
+      assert.include(sentMessages[0]!, "HAL-C2");
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, idAllocatorLayer))),
   );
 
@@ -868,7 +868,7 @@ describe("CursorAdapterV2", () => {
 
     try {
       assert.deepEqual(cursorMcpServers(threadId), {
-        "t3-code": {
+        "hal-c2": {
           type: "http",
           url: "http://127.0.0.1:43123/mcp",
           headers: {

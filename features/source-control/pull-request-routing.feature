@@ -2,7 +2,7 @@
 #   docs/user/source-control.md (GitHub sharing across environments)
 #   packages/contracts/src/pullRequest.ts (PullRequestRouting, PullRequestRoutingIdentity, expectedAccountId, allowStale)
 #   packages/contracts/src/rpc.ts (pullRequests.routing, pullRequests.routingIdentity)
-#   apps/server-ex/lib/t3/pull_requests.ex (routing, routing_identity, verified)
+#   apps/server-ex/lib/hal_c2/pull_requests.ex (routing, routing_identity, verified)
 #   apps/web/src/components/settings/GitHubRoutingSettings.tsx
 #   apps/web/src/connection/catalog.ts (githubRoutingPermissions)
 

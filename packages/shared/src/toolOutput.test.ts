@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { compactDynamicToolOutput, toolOutputIndicatesFailure } from "./toolOutput.ts";
 
 describe("compactDynamicToolOutput", () => {
-  it("extracts IDs through the MCP result envelopes used by T3 summaries", () => {
+  it("extracts IDs through the MCP result envelopes used by HAL-C2 summaries", () => {
     const metadata = { threadId: "thread-1", messageId: "message-1" };
     const json = JSON.stringify({ ...metadata, response: "Private response body" });
     for (const value of [

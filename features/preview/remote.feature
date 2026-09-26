@@ -1,9 +1,9 @@
 # Sources:
-#   apps/server-ex/lib/t3/web/protocol.ex (preview, previewAutomation and localServers shapes; unknown node)
-#   apps/server-ex/lib/t3/web/socket.ex (cross-node subscriptions, remote/4 errors, unsubscribe on close)
-#   apps/server-ex/lib/t3/preview.ex (serverEpoch per node run, watcher monitoring)
-#   apps/server-ex/lib/t3/preview_automation.ex (host stream ends on eviction, dropped on socket exit)
-#   apps/server-ex/lib/t3/local_servers.ex
+#   apps/server-ex/lib/hal_c2/web/protocol.ex (preview, previewAutomation and localServers shapes; unknown node)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (cross-node subscriptions, remote/4 errors, unsubscribe on close)
+#   apps/server-ex/lib/hal_c2/preview.ex (serverEpoch per node run, watcher monitoring)
+#   apps/server-ex/lib/hal_c2/preview_automation.ex (host stream ends on eviction, dropped on socket exit)
+#   apps/server-ex/lib/hal_c2/local_servers.ex
 #   apps/web/src/components/preview/usePreviewSession.ts, useDiscoveredLocalServers.ts
 #   apps/desktop-qt/parity/features.backlog.test.ts (in-app-preview)
 #   Cross-domain: connections/ owns pairing and relay setup; node/ owns cluster membership.

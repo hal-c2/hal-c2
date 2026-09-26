@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import type { ProviderReplayTranscript } from "@t3tools/contracts";
+import type { ProviderReplayTranscript } from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 
 import { classifyClaudeNativeTool } from "../Adapters/ClaudeAdapterV2.ts";
@@ -317,7 +317,7 @@ describe("Claude Agent SDK replay fixtures", () => {
     }),
   );
 
-  it.effect.skipIf(process.env.T3_RECORD_CLAUDE_AGENT_SDK_FIXTURE !== "1")(
+  it.effect.skipIf(process.env.HALC2_RECORD_CLAUDE_AGENT_SDK_FIXTURE !== "1")(
     "records simple from real Claude Code query() output",
     () =>
       Effect.scoped(

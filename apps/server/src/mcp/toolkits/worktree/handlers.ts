@@ -1,4 +1,4 @@
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { OrchestratorMcpFailure } from "@hal-c2/contracts";
 import * as Option from "effect/Option";
 import * as GitWorkflow from "../../../git/GitWorkflowService.ts";
 import * as Project from "../../../project/ProjectService.ts";
@@ -10,7 +10,7 @@ import { WorktreeMcpService } from "../../WorktreeMcpService.ts";
 import { WorktreeToolkit } from "./tools.ts";
 
 const handlers = {
-  t3_worktree_list: (input) =>
+  halc2_worktree_list: (input) =>
     Effect.gen(function* () {
       const context = yield* McpInvocationContext;
       if (!context.capabilities.has("worktree"))
@@ -31,13 +31,13 @@ const handlers = {
         .listRefs({ ...input, cwd: caller.worktreePath ?? project.value.workspaceRoot })
         .pipe(Effect.mapError(unavailable));
     }),
-  t3_worktree_handoff: (input) =>
+  halc2_worktree_handoff: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;
       const service = yield* WorktreeMcpService;
       return yield* service.handoff(scope, input);
     }),
-  t3_worktree_status: () =>
+  halc2_worktree_status: () =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;
       const service = yield* WorktreeMcpService;

@@ -1,4 +1,4 @@
-import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { type EnvironmentConnectionPhase } from "@hal-c2/client-runtime/connection";
 
 export type ThreadContentPresentation =
   | { readonly kind: "ready" }

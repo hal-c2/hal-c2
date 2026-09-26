@@ -14,10 +14,10 @@
       (() => {
         const LIGHT_BACKGROUND = "#ffffff";
         const DARK_BACKGROUND = "#0a0a0a";
-        const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
-        const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
-        const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
-        const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+        const CUSTOM_THEMES_STORAGE_KEY = "hal-c2:themes:v1";
+        const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "hal-c2:theme-follow-system";
+        const THEME_APPEARANCE_MODE_STORAGE_KEY = "hal-c2:theme-appearance-mode";
+        const THEME_HALVES_STORAGE_KEY = "hal-c2:theme-halves:v1";
         const SPLASH_COLORS = {
           light: {
             background: "#ffffff",
@@ -140,10 +140,10 @@
           "ember",
           "iris",
           "t3-chat-dark",
-          "t3-grove",
-          "t3-ocean",
-          "t3-ember",
-          "t3-iris",
+          "hal-c2-grove",
+          "hal-c2-ocean",
+          "hal-c2-ember",
+          "hal-c2-iris",
         ];
         // Update every theme-color meta so any element another layer added
         // carries the resolved color too.
@@ -217,17 +217,17 @@
         };
 
         try {
-          const storedTheme = window.localStorage.getItem("t3code:theme");
+          const storedTheme = window.localStorage.getItem("hal-c2:theme");
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           // Older builds stored the dark T3 Chat palette as its own theme id
-          // and every maintainer theme under a t3- prefix; keep those
+          // and every maintainer theme under a hal-c2- prefix; keep those
           // preferences readable. Mirrors the runtime's legacy alias table.
           const LEGACY_THEME_IDS = {
             "t3-chat-dark": "t3-chat",
-            "t3-grove": "grove",
-            "t3-ocean": "ocean",
-            "t3-ember": "ember",
-            "t3-iris": "iris",
+            "hal-c2-grove": "grove",
+            "hal-c2-ocean": "ocean",
+            "hal-c2-ember": "ember",
+            "hal-c2-iris": "iris",
           };
           const isLegacyT3ChatDark = storedTheme === "t3-chat-dark";
           const themeId =
@@ -489,13 +489,13 @@
         cursor: pointer;
       }
     </style>
-    <title>T3 Code (Alpha)</title>
+    <title>HAL-C2 (Alpha)</title>
   </head>
   <body>
     <div id="root">
       <div id="boot-shell">
-        <div id="boot-shell-card" aria-label="T3 Code splash screen">
-          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" />
+        <div id="boot-shell-card" aria-label="HAL-C2 splash screen">
+          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="HAL-C2" />
         </div>
       </div>
     </div>

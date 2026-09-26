@@ -1,5 +1,5 @@
-import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { ConnectionTarget } from "@hal-c2/client-runtime/connection";
+import type { EnvironmentId } from "@hal-c2/contracts";
 
 interface OnboardingEnvironment {
   readonly environmentId: EnvironmentId;

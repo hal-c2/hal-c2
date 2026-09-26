@@ -6,9 +6,9 @@
 #   apps/tui/src/hooks/useKeyBindings.ts (terminal focus routing)
 #   apps/tui/src/components/ChatView.layout.ts (MIN_TERMINAL_DRAWER_ROWS)
 #   apps/tui/src/features.backlog.test.ts (terminal-session-actions, project-scripts terminal output)
-#   apps/server-ex/test/t3/features_backlog_test.exs (TUI terminals outliving the session, closed terminals)
+#   apps/server-ex/test/hal_c2/features_backlog_test.exs (TUI terminals outliving the session, closed terminals)
 #   apps/tui/src/connection.ts (subscribeTerminalMetadata names no node, so only the connected node's terminals are listed)
-#   apps/server-ex/lib/t3/web/socket.ex (the terminals subscription is per node)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (the terminals subscription is per node)
 #   Shared domain: terminal/ owns terminal sessions on every surface.
 
 Feature: Terminal drawer in the terminal client

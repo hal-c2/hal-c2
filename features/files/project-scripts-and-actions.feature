@@ -1,6 +1,6 @@
 # Sources:
 #   docs/user/project-settings.md (Actions)
-#   apps/server-ex/lib/t3/worktree_setup.ex (setup script)
+#   apps/server-ex/lib/hal_c2/worktree_setup.ex (setup script)
 #   apps/web/src/components/ProjectScriptsControl.tsx
 #   apps/web/src/components/chat/ThreadDetailsPanel.tsx (actions in the thread's details)
 #   apps/web/src/components/projectScriptEditor.tsx
@@ -8,7 +8,7 @@
 #   packages/shared/src/projectScripts.ts
 #   apps/tui/src/features.backlog.test.ts (project-scripts)
 #   packages/contracts/src/project.ts (ProjectScript, ProjectScriptIcon)
-#   packages/contracts/src/rpc.ts (projects.mutate, t3.upsertKeybinding, t3.removeKeybinding)
+#   packages/contracts/src/rpc.ts (projects.mutate, halc2.upsertKeybinding, halc2.removeKeybinding)
 
 Feature: Project actions
   An action is a named command for a project, such as starting the dev server or running

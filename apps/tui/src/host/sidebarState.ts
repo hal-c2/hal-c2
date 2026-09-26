@@ -1,11 +1,11 @@
-import { canSnooze, snoozeWakeLabel } from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, snoozeWakeLabel } from "@hal-c2/client-runtime/state/thread-settled";
 import type {
   ShellSidebarDraft,
   ShellSidebarProject,
   ShellSidebarState,
   ShellSidebarThread,
   ShellSidebarThreadStatus,
-} from "@t3tools/contracts/shell";
+} from "@hal-c2/contracts/shell";
 
 import type { OrchestrationShellSnapshot } from "../connection.ts";
 import type { Row, SidebarSection } from "../components/Sidebar.logic.ts";

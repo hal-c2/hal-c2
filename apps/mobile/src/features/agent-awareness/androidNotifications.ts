@@ -10,7 +10,7 @@ interface AndroidAgentNotifications {
 
 const native =
   Platform.OS === "android"
-    ? requireOptionalNativeModule<AndroidAgentNotifications>("T3AgentNotifications")
+    ? requireOptionalNativeModule<AndroidAgentNotifications>("HalC2AgentNotifications")
     : null;
 
 export function supportsAndroidAgentNotifications(): boolean {
@@ -26,7 +26,7 @@ export function configureAndroidAgentNotifications(
   native?.configure?.(
     deviceId,
     userId,
-    (Array.isArray(scheme) ? scheme[0] : scheme) ?? "t3code",
+    (Array.isArray(scheme) ? scheme[0] : scheme) ?? "hal-c2",
     ongoingEnabled,
   );
 }

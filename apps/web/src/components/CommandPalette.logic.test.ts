@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@hal-c2/contracts";
 import type { Project, Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
@@ -74,24 +74,24 @@ describe("buildCommandPaletteProjectMetadata", () => {
       projects: [
         {
           environmentId: localEnvironmentId,
-          title: "T3 Code",
-          workspaceRoot: "/Users/theo/Projects/t3code",
+          title: "HAL-C2",
+          workspaceRoot: "/Users/theo/Projects/hal-c2",
         },
         {
           environmentId: remoteEnvironmentId,
-          title: "t3code",
-          workspaceRoot: "/srv/t3code",
+          title: "hal-c2",
+          workspaceRoot: "/srv/hal-c2",
         },
       ],
       locationByEnvironmentId: locations,
     });
 
     expect(metadata.searchTerms).toEqual([
-      "T3 Code",
-      "/Users/theo/Projects/t3code",
+      "HAL-C2",
+      "/Users/theo/Projects/hal-c2",
       "Local",
-      "t3code",
-      "/srv/t3code",
+      "hal-c2",
+      "/srv/hal-c2",
       "Build box",
     ]);
     expect(metadata.environmentLabels).toEqual(["Local", "Build box"]);
@@ -103,8 +103,8 @@ describe("buildCommandPaletteProjectMetadata", () => {
       projectSearchItems: [
         {
           kind: "action",
-          value: "project:t3code",
-          title: "T3 Code",
+          value: "project:hal-c2",
+          title: "HAL-C2",
           searchTerms: metadata.searchTerms,
           icon: null,
           run: async () => undefined,
@@ -120,13 +120,13 @@ describe("buildCommandPaletteProjectMetadata", () => {
       projects: [
         {
           environmentId: remoteEnvironmentId,
-          title: "T3 Code",
-          workspaceRoot: "/srv/t3code",
+          title: "HAL-C2",
+          workspaceRoot: "/srv/hal-c2",
         },
         {
           environmentId: remoteEnvironmentId,
-          title: "T3 Code worktree",
-          workspaceRoot: "/srv/t3code-feature",
+          title: "HAL-C2 worktree",
+          workspaceRoot: "/srv/hal-c2-feature",
         },
       ],
       locationByEnvironmentId: locations,
@@ -141,13 +141,13 @@ describe("buildCommandPaletteProjectMetadata", () => {
       projects: [
         {
           environmentId: remoteEnvironmentId,
-          title: "T3 Code",
-          workspaceRoot: "/srv/t3code",
+          title: "HAL-C2",
+          workspaceRoot: "/srv/hal-c2",
         },
         {
           environmentId: secondRemoteEnvironmentId,
-          title: "T3 Code mirror",
-          workspaceRoot: "/srv/mirror/t3code",
+          title: "HAL-C2 mirror",
+          workspaceRoot: "/srv/mirror/hal-c2",
         },
       ],
       locationByEnvironmentId: new Map([
@@ -164,8 +164,8 @@ describe("buildCommandPaletteProjectMetadata", () => {
       projects: [
         {
           environmentId: remoteEnvironmentId,
-          title: "T3 Code",
-          workspaceRoot: "/srv/t3code",
+          title: "HAL-C2",
+          workspaceRoot: "/srv/hal-c2",
         },
       ],
       locationByEnvironmentId: new Map(),
@@ -481,7 +481,7 @@ describe("buildThreadActionItems", () => {
     ];
     const items = buildThreadActionItems({
       threads,
-      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
+      projectTitleById: new Map([[PROJECT_ID, "HAL-C2"]]),
       sortOrder: "created_at",
       icon: null,
       getContentMatch: (thread) =>
@@ -630,7 +630,7 @@ describe("buildThreadActionItems", () => {
   it("keeps message excerpts searchable without replacing thread metadata", () => {
     const [item] = buildThreadActionItems({
       threads: [makeThread({ branch: "feat/search" })],
-      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
+      projectTitleById: new Map([[PROJECT_ID, "HAL-C2"]]),
       sortOrder: "updated_at",
       icon: null,
       getContentMatch: () => ({
@@ -647,7 +647,7 @@ describe("buildThreadActionItems", () => {
       snippet: "The relay reconnect is now bounded.",
       query: "reconnect",
     });
-    expect(item?.description).toBe("T3 Code · #feat/search");
+    expect(item?.description).toBe("HAL-C2 · #feat/search");
   });
 
   it("surfaces threads when the query is their ID, without outranking title matches", () => {
@@ -663,7 +663,7 @@ describe("buildThreadActionItems", () => {
     });
     const items = buildThreadActionItems({
       threads: [idThread, titleThread],
-      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
+      projectTitleById: new Map([[PROJECT_ID, "HAL-C2"]]),
       sortOrder: "updated_at",
       icon: null,
       runThread: async (_thread) => undefined,
@@ -687,7 +687,7 @@ describe("buildThreadActionItems", () => {
   it("prefers renderDescription when provided", () => {
     const [item] = buildThreadActionItems({
       threads: [makeThread({ branch: "feat/search", worktreePath: "/tmp/wt" })],
-      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
+      projectTitleById: new Map([[PROJECT_ID, "HAL-C2"]]),
       sortOrder: "updated_at",
       icon: null,
       renderDescription: (thread, { projectTitle }) =>
@@ -695,7 +695,7 @@ describe("buildThreadActionItems", () => {
       runThread: async (_thread) => undefined,
     });
 
-    expect(item?.description).toBe("T3 Code:feat/search:wt");
+    expect(item?.description).toBe("HAL-C2:feat/search:wt");
   });
 
   it("filters archived threads out of thread search items", () => {
@@ -798,47 +798,45 @@ describe("filterPinnedBrowseEntries", () => {
   });
 });
 
-it.each([
-  "#10839",
-  "10839",
-  "pingdotgg/t3code#10839",
-  "https://github.com/pingdotgg/t3code/pull/10839",
-])("finds linked threads from PR query %s", (query) => {
-  const items = buildThreadActionItems({
-    threads: [
-      makeThread({
-        title: "Implementation",
-        pullRequests: [
-          {
-            host: "github.com",
-            repository: "pingdotgg/t3code",
-            number: 10839,
-            url: "https://github.com/pingdotgg/t3code/pull/10839",
-            source: "manual",
-            linkedAt: "2026-09-08T00:00:00Z",
-            snapshot: null,
-            stack: null,
-          },
-        ],
-      }),
-      makeThread({ id: ThreadId.make("unrelated"), title: "Other work" }),
-    ],
-    projectTitleById: new Map(),
-    sortOrder: "updated_at",
-    icon: null,
-    runThread: async () => undefined,
-  });
-  const groups = filterCommandPaletteGroups({
-    activeGroups: [],
-    query,
-    isInSubmenu: false,
-    projectSearchItems: [],
-    threadSearchItems: items,
-  });
-  expect(groups.flatMap((group) => group.items.map((item) => item.title))).toEqual([
-    "Implementation",
-  ]);
-});
+it.each(["#10839", "10839", "hal-c2/hal-c2#10839", "https://github.com/hal-c2/hal-c2/pull/10839"])(
+  "finds linked threads from PR query %s",
+  (query) => {
+    const items = buildThreadActionItems({
+      threads: [
+        makeThread({
+          title: "Implementation",
+          pullRequests: [
+            {
+              host: "github.com",
+              repository: "hal-c2/hal-c2",
+              number: 10839,
+              url: "https://github.com/hal-c2/hal-c2/pull/10839",
+              source: "manual",
+              linkedAt: "2026-09-08T00:00:00Z",
+              snapshot: null,
+              stack: null,
+            },
+          ],
+        }),
+        makeThread({ id: ThreadId.make("unrelated"), title: "Other work" }),
+      ],
+      projectTitleById: new Map(),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async () => undefined,
+    });
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query,
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: items,
+    });
+    expect(groups.flatMap((group) => group.items.map((item) => item.title))).toEqual([
+      "Implementation",
+    ]);
+  },
+);
 
 describe("filterCommandPaletteGroups", () => {
   it("sorts secondary settings results after other matches", () => {

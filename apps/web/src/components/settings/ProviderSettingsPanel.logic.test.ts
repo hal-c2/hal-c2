@@ -1,4 +1,4 @@
-import { AuthOrchestrationOperateScope, EnvironmentId } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, EnvironmentId } from "@hal-c2/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

@@ -1,4 +1,4 @@
-defmodule T3.Steps.Terminal.Sessions do
+defmodule HalC2.Steps.Terminal.Sessions do
   @moduledoc """
   Steps for `features/terminal/sessions.feature`, plus the terminal steps the
   other `features/terminal/` files share (opening, a shell starting somewhere).
@@ -6,8 +6,8 @@ defmodule T3.Steps.Terminal.Sessions do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.{Terminal, World}
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.{Terminal, World}
 
   # --- shared by features/terminal/ ------------------------------------------------------
 
@@ -61,7 +61,7 @@ defmodule T3.Steps.Terminal.Sessions do
     %{"threadId" => thread, "terminalId" => terminal} = context.terminal
 
     assert Enum.any?(
-             T3.Terminal.Hub.summaries(),
+             HalC2.Terminal.Hub.summaries(),
              &match?(
                %{"threadId" => ^thread, "terminalId" => ^terminal, "status" => "running"},
                &1
@@ -281,28 +281,28 @@ defmodule T3.Steps.Terminal.Sessions do
 
   step "a finished thread's worktree has a running terminal", context do
     context = Terminal.ensure(context)
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
 
-    for registry <- [T3.Codex.Registry, T3.Claude.Registry, T3.Acp.Registry, T3.Vcs.Registry],
+    for registry <- [HalC2.Codex.Registry, HalC2.Claude.Registry, HalC2.Acp.Registry, HalC2.Vcs.Registry],
         do: Node.ensure({Registry, keys: :unique, name: registry})
 
-    Application.put_env(:t3, :storage_cleanup_first_ms, nil)
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :storage_cleanup_first_ms) end)
-    Node.ensure(T3.StorageCleanup)
+    Application.put_env(:hal_c2, :storage_cleanup_first_ms, nil)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :storage_cleanup_first_ms) end)
+    Node.ensure(HalC2.StorageCleanup)
 
     # Worktrees go after a day idle; this thread has been idle since January.
-    {_, version} = T3.Settings.get()
-    {:ok, _} = T3.Settings.put(%{"storageCleanup" => %{"worktreeAfterDays" => 1}}, version)
+    {_, version} = HalC2.Settings.get()
+    {:ok, _} = HalC2.Settings.put(%{"storageCleanup" => %{"worktreeAfterDays" => 1}}, version)
 
     context = World.create_project(context, "app")
     repo = World.project(context, "app").root
 
     {:ok, %{"worktree" => %{"path" => path}}} =
-      T3.Vcs.create_worktree(%{"cwd" => repo, "refName" => "main", "newRefName" => "t3/done"})
+      HalC2.Vcs.create_worktree(%{"cwd" => repo, "refName" => "main", "newRefName" => "hal-c2/done"})
 
     context =
       World.create_thread(context, "Done", "app", %{
-        "branch" => "t3/done",
+        "branch" => "hal-c2/done",
         "worktreePath" => path
       })
 
@@ -320,7 +320,7 @@ defmodule T3.Steps.Terminal.Sessions do
   end
 
   step "storage cleanup looks for worktrees to remove", context do
-    :ok = T3.StorageCleanup.sweep()
+    :ok = HalC2.StorageCleanup.sweep()
     context
   end
 
@@ -328,7 +328,7 @@ defmodule T3.Steps.Terminal.Sessions do
     assert File.dir?(context.worktree)
     # It was the terminal that kept it: with the terminal closed, it goes.
     {{:ok, _}, context} = World.call(context, "terminal.close", context.terminal)
-    :ok = T3.StorageCleanup.sweep()
+    :ok = HalC2.StorageCleanup.sweep()
     refute File.exists?(context.worktree)
     context
   end
@@ -348,8 +348,8 @@ defmodule T3.Steps.Terminal.Sessions do
       for shell <- ~w(/bin/zsh /bin/bash /bin/sh),
           do: if(shell in missing, do: Terminal.folder(context, shell), else: shell)
 
-    Application.put_env(:t3, :terminal_shells, shells)
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :terminal_shells) end)
+    Application.put_env(:hal_c2, :terminal_shells, shells)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :terminal_shells) end)
     context
   end
 

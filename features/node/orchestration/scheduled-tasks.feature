@@ -1,7 +1,7 @@
 # Sources:
-#   apps/server-ex/lib/t3/scheduled_tasks.ex (scheduledTasks.list, scheduledTasks.upsert,
+#   apps/server-ex/lib/hal_c2/scheduled_tasks.ex (scheduledTasks.list, scheduledTasks.upsert,
 #     scheduledTasks.delete, scheduledTasks.setEnabled, scheduledTasks.runNow, watchers)
-#   apps/server-ex/lib/t3/mcp/tools.ex (list_scheduled_tasks, schedule_task,
+#   apps/server-ex/lib/hal_c2/mcp/tools.ex (list_scheduled_tasks, schedule_task,
 #     update_scheduled_task, delete_scheduled_task, run_scheduled_task_now)
 #   apps/server/src/scheduledTasks/ScheduledTaskService.ts, Schedule.ts and their tests
 #   packages/contracts/src/scheduledTask.ts, rpc.ts (scheduledTasks.subscribe)

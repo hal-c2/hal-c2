@@ -16,8 +16,8 @@ describe("connectCliAuth", () => {
 
   it("requires both the publishable key and the CLI OAuth client id", () => {
     vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", TEST_PUBLISHABLE_KEY);
-    vi.stubEnv("VITE_CLERK_JWT_TEMPLATE", "t3-relay");
-    vi.stubEnv("VITE_T3CODE_RELAY_URL", "https://relay.example.com");
+    vi.stubEnv("VITE_CLERK_JWT_TEMPLATE", "hal-c2-relay");
+    vi.stubEnv("VITE_HALC2_RELAY_URL", "https://relay.example.com");
     expect(hasConnectCliAuthConfig()).toBe(false);
 
     vi.stubEnv("VITE_CLERK_CLI_OAUTH_CLIENT_ID", "oauthapp_123");
@@ -60,7 +60,7 @@ describe("connectCliAuth", () => {
     vi.stubEnv("VITE_CLERK_CLI_OAUTH_CLIENT_ID", "oauthapp_123");
 
     const connectUrl =
-      "https://app.t3.codes/connect#state=state-1&challenge=challenge-1&port=34338";
+      "https://app.hal-c2.example/connect#state=state-1&challenge=challenge-1&port=34338";
     const redirectUrl = connectCliSignInRedirectUrl(
       { state: "state-1", challenge: "challenge-1", loopbackPort: 34338 },
       connectUrl,
@@ -74,7 +74,7 @@ describe("connectCliAuth", () => {
     vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", TEST_PUBLISHABLE_KEY);
 
     const connectUrl =
-      "https://app.t3.codes/connect#state=state-1&challenge=challenge-1&port=34338";
+      "https://app.hal-c2.example/connect#state=state-1&challenge=challenge-1&port=34338";
     expect(
       connectCliSignInRedirectUrl(
         { state: "state-1", challenge: "challenge-1", loopbackPort: 34338 },

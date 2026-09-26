@@ -1,5 +1,5 @@
 # Sources:
-#   apps/server-ex/lib/t3/agent_sessions.ex (agentSessions.scan, agentSessions.import)
+#   apps/server-ex/lib/hal_c2/agent_sessions.ex (agentSessions.scan, agentSessions.import)
 #   apps/server/src/project/AgentSessionScanner.ts and its import service
 #   packages/contracts/src/ (AgentSessionScanResult, AgentSessionImportProjectNotFoundError,
 #     AgentSessionImportProjectChangedError)
@@ -31,8 +31,8 @@ Feature: Importing history from agents already used on this machine
       | the home folder itself             |
       | the temporary folder               |
       | a folder under Downloads           |
-      | the T3 home                        |
-      | a T3 worktree                      |
+      | the HAL-C2 home                        |
+      | a HAL-C2 worktree                      |
       | a linked git worktree              |
       | a folder that no longer exists     |
 

@@ -13,7 +13,7 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2StoredEvent,
   type UserInputAttachments,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -27,7 +27,7 @@ import { ThreadManagementService } from "./ThreadManagementService.ts";
 import { dispatchCommand } from "./ThreadMessageIntake.ts";
 
 const intakeTestLayer = ServerConfig.layerTest(process.cwd(), {
-  prefix: "t3-question-intake-",
+  prefix: "hal-c2-question-intake-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
 const failingDispatch = (captured: OrchestrationV2Command[]) =>

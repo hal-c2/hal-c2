@@ -4,7 +4,7 @@
 #   apps/tui/src/components/ChatView.tsx (question panel, defer and reopen)
 #   apps/web/src/components/chat/ComposerPendingUserInputPanel.tsx
 #   apps/web/src/components/chat/ComposerPrimaryActions.tsx (question navigation, plan follow-up)
-#   apps/desktop-qt/qml/T3/Bricks/Composer.qml (Implement, approvals waiting)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (Implement, approvals waiting)
 
 Feature: Answering the agent's questions from the composer
   When the agent asks the user questions, the composer becomes the place to

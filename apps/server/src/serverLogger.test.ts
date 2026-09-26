@@ -8,7 +8,7 @@ import * as Tracer from "effect/Tracer";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
+import { DEFAULT_SIGNAL_EXPORT } from "@hal-c2/shared/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ServerLoggerLive } from "./serverLogger.ts";
@@ -41,7 +41,7 @@ const configLayer = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =
     ServerConfig.ServerConfig,
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      const baseDir = path.join(NodeOS.tmpdir(), "t3-server-logger-test");
+      const baseDir = path.join(NodeOS.tmpdir(), "hal-c2-server-logger-test");
       const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
       return ServerConfig.make({
         logLevel: "Info",
@@ -56,7 +56,7 @@ const configLayer = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =
         otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
         otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
         otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
-        otlpServiceName: "t3-server",
+        otlpServiceName: "hal-c2-server",
         cwd: baseDir,
         baseDir,
         ...derivedPaths,
@@ -144,7 +144,7 @@ describe("ServerLoggerLive", () => {
       const [request] = requests;
       assert.strictEqual(request?.url, "https://collector.example.com/v1/logs");
       assert.include(request?.body ?? "", "server logger under test");
-      assert.include(request?.body ?? "", "t3-server");
+      assert.include(request?.body ?? "", "hal-c2-server");
       assert.include(request?.body ?? "", "service.runtime");
     }),
   );

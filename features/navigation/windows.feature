@@ -4,12 +4,12 @@
 #   apps/desktop/src/window/QuitHold.ts
 #   apps/desktop/src/window/DesktopApplicationMenu.ts (Settings..., View zoom items)
 #   apps/desktop/src/window/DesktopWindow.ts (zoomMain)
-#   apps/desktop-qt/qml/T3/Bricks/ShellWindow.qml (window commands)
-#   apps/desktop-qt/qml/T3/Bricks/TitleBar.qml
-#   apps/desktop-qt/qml/T3/Bricks/WindowControls.qml
-#   apps/desktop-qt/qml/T3/Bricks/AppWindow.qml
-#   apps/desktop-qt/qml/T3/Bricks/AppView.qml
-#   apps/desktop-qt/qml/T3/Bricks/Workspace.qml (frameless drag and maximize)
+#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window commands)
+#   apps/desktop-qt/qml/HalC2/Bricks/TitleBar.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/AppWindow.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/AppView.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (frameless drag and maximize)
 
 Feature: Windows, zoom and quitting
   The desktop app draws its own window frame, can open more than one window, zooms its
@@ -108,7 +108,7 @@ Feature: Windows, zoom and quitting
     @desktop
     Scenario: A window has a sensible title and size
       Given a second window has no page title yet
-      Then its title is "T3 Code"
+      Then its title is "HAL-C2"
       And it cannot be made smaller than 640 by 400
 
   Rule: Zoom

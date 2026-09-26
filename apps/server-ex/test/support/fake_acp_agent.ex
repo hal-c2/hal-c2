@@ -1,4 +1,4 @@
-defmodule T3.Test.FakeAcp do
+defmodule HalC2.Test.FakeAcp do
   @moduledoc """
   A scripted ACP agent (`test/support/fake_acp_scripted.py`) standing in for a
   provider CLI (Grok, OpenCode) in the provider features, and a scripted Pi RPC
@@ -14,8 +14,8 @@ defmodule T3.Test.FakeAcp do
 
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @script Path.expand("fake_acp_scripted.py", __DIR__)
   @pi_script Path.expand("fake_pi_rpc.py", __DIR__)
@@ -151,11 +151,11 @@ defmodule T3.Test.FakeAcp do
   """
   def install(context, instance, config \\ %{}, opts \\ []) do
     services()
-    for id <- @instances, do: T3.Acp.forget(id)
-    ExUnit.Callbacks.on_exit(fn -> for id <- @instances, do: T3.Acp.forget(id) end)
+    for id <- @instances, do: HalC2.Acp.forget(id)
+    ExUnit.Callbacks.on_exit(fn -> for id <- @instances, do: HalC2.Acp.forget(id) end)
 
     dir = Node.tmp_dir(context.node, "fake-#{instance}")
-    # OpenCode reports a version T3 Code supports unless the scenario says otherwise.
+    # OpenCode reports a version HAL-C2 supports unless the scenario says otherwise.
     config =
       if instance == "opencode", do: Map.put_new(config, "version", "1.14.19"), else: config
 
@@ -195,43 +195,43 @@ defmodule T3.Test.FakeAcp do
 
   @doc "The services an ACP thread needs besides the node's own."
   def services do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
 
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.Acp.Registry}, id: :acp_registry)
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Acp.Registry}, id: :acp_registry)
     )
 
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.Pi.Registry}, id: :pi_registry)
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Pi.Registry}, id: :pi_registry)
     )
 
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.Codex.Registry},
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Codex.Registry},
         id: :codex_registry
       )
     )
 
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.Claude.Registry},
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Claude.Registry},
         id: :claude_registry
       )
     )
 
     Node.ensure(
       Supervisor.child_spec(
-        {DynamicSupervisor, name: T3.Codex.Supervisor, strategy: :one_for_one},
+        {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one},
         id: :codex_supervisor
       )
     )
 
-    Node.ensure(T3.Acp.UrlAuth)
+    Node.ensure(HalC2.Acp.UrlAuth)
     :ok
   end
 
   @doc "Rewrites the settings document with `fun`."
   def settings(fun) do
-    {settings, version} = T3.Settings.get()
-    {:ok, _} = T3.Settings.put(fun.(settings), version)
+    {settings, version} = HalC2.Settings.get()
+    {:ok, _} = HalC2.Settings.put(fun.(settings), version)
     :ok
   end
 
@@ -306,7 +306,7 @@ defmodule T3.Test.FakeAcp do
     thread_id = World.thread_id(context, title || context.thread)
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "message.dispatch",
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
         "threadId" => thread_id,
@@ -321,7 +321,7 @@ defmodule T3.Test.FakeAcp do
   @doc "Waits until the thread's latest run has `status`; returns the stream state."
   def await_run(context, status, title \\ nil) do
     World.await_stream(World.thread_id(context, title || context.thread), fn state ->
-      case T3.StreamState.list(state, "run") |> Enum.max_by(& &1["requestedAt"], fn -> nil end) do
+      case HalC2.StreamState.list(state, "run") |> Enum.max_by(& &1["requestedAt"], fn -> nil end) do
         %{"status" => ^status} -> state
         _ -> nil
       end
@@ -331,7 +331,7 @@ defmodule T3.Test.FakeAcp do
   @doc "Waits until the thread has `count` runs that are all finished; returns the state."
   def await_runs(context, count, title \\ nil) do
     World.await_stream(World.thread_id(context, title || context.thread), fn state ->
-      runs = T3.StreamState.list(state, "run")
+      runs = HalC2.StreamState.list(state, "run")
 
       if length(runs) >= count and
            Enum.all?(runs, &(&1["status"] in ~w(completed failed interrupted cancelled))),
@@ -343,7 +343,7 @@ defmodule T3.Test.FakeAcp do
   def await_request(context, title \\ nil) do
     World.await_stream(World.thread_id(context, title || context.thread), fn state ->
       state
-      |> T3.StreamState.list("runtime-request")
+      |> HalC2.StreamState.list("runtime-request")
       |> Enum.find(&(&1["status"] == "pending"))
     end)
   end
@@ -353,7 +353,7 @@ defmodule T3.Test.FakeAcp do
     thread_id = World.thread_id(context, context.thread)
 
     {:ok, _} =
-      T3.Orchestration.dispatch(
+      HalC2.Orchestration.dispatch(
         Map.merge(
           %{
             "type" => "runtime-request.respond",
@@ -369,11 +369,11 @@ defmodule T3.Test.FakeAcp do
   end
 
   @doc "The provider entry of `instance` in the node's provider list, or nil."
-  def entry(instance), do: Enum.find(T3.Environment.providers(), &(&1["instanceId"] == instance))
+  def entry(instance), do: Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == instance))
 
   @doc "Reads the instance's agent again now (the probe `server.refreshProviders` runs)."
   def probe(instance) do
-    T3.Acp.reload(instance)
+    HalC2.Acp.reload(instance)
     entry(instance)
   end
 
@@ -421,7 +421,7 @@ defmodule T3.Test.FakeAcp do
   @doc "Turns an instance on the way a client does: rewriting the settings over the socket."
   def enable(context, instance, enabled \\ true) do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "t3.readSettings")
+      World.call!(context, "halc2.readSettings")
 
     settings =
       put_in(
@@ -431,7 +431,7 @@ defmodule T3.Test.FakeAcp do
       )
 
     {_, context} =
-      World.call!(context, "t3.writeSettings", %{"settings" => settings, "version" => version})
+      World.call!(context, "halc2.writeSettings", %{"settings" => settings, "version" => version})
 
     context
   end
@@ -453,7 +453,7 @@ defmodule T3.Test.FakeAcp do
 
   @doc """
   Asserts the scenario's agent ran its tool without the user being asked: an ACP
-  agent was told yes (allow once or always); the fake Pi's permission gate (T3's
+  agent was told yes (allow once or always); the fake Pi's permission gate (HAL-C2's
   extension, set to the thread's mode) let the tool through without a dialog.
   """
   def assert_allowed(context) do

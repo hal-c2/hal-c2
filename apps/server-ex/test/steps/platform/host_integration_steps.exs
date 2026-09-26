@@ -1,10 +1,10 @@
-defmodule T3.Steps.Platform.HostIntegration do
+defmodule HalC2.Steps.Platform.HostIntegration do
   @moduledoc "Steps for features/node/platform/host-integration.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @editors %{
     "VS Code" => {"code", "vscode"},
@@ -36,7 +36,7 @@ defmodule T3.Steps.Platform.HostIntegration do
 
     File.write!(path, """
     #!/usr/bin/env bash
-    exec 3<>/dev/tcp/127.0.0.1/$T3_TEST_LAUNCH_PORT
+    exec 3<>/dev/tcp/127.0.0.1/$HALC2_TEST_LAUNCH_PORT
     printf '%s\\x1f' "#{name}" "$@" >&3
     printf '\\n' >&3
     read -r -u 3 _
@@ -53,7 +53,7 @@ defmodule T3.Steps.Platform.HostIntegration do
       :gen_tcp.listen(0, [:binary, packet: :line, active: false, ip: {127, 0, 0, 1}])
 
     {:ok, port} = :inet.port(socket)
-    World.put_os_env("T3_TEST_LAUNCH_PORT", Integer.to_string(port))
+    World.put_os_env("HALC2_TEST_LAUNCH_PORT", Integer.to_string(port))
     Map.put(context, :launches, socket)
   end
 
@@ -90,7 +90,7 @@ defmodule T3.Steps.Platform.HostIntegration do
   end
 
   defp server_config(context) do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
 
     client =
       World.client(context)
@@ -245,14 +245,14 @@ defmodule T3.Steps.Platform.HostIntegration do
     Enum.map(entries, & &1["name"])
   end
 
-  # Under the scenario's `$HOME` (`T3.Test.Node.Host`); `context.user_home` names it.
+  # Under the scenario's `$HOME` (`HalC2.Test.Node.Host`); `context.user_home` names it.
   step "the home folder has a dev folder holding api, tests, tools, .tmp, .trash and a file todo.txt",
        context do
-    dev = T3.Test.Node.Host.path(context, "~/dev")
+    dev = HalC2.Test.Node.Host.path(context, "~/dev")
 
     for dir <- ~w(tools tests api .tmp .trash), do: File.mkdir_p!(Path.join(dev, dir))
     File.write!(Path.join(dev, "todo.txt"), "")
-    Map.put(context, :user_home, T3.Test.Node.Host.home(context))
+    Map.put(context, :user_home, HalC2.Test.Node.Host.home(context))
   end
 
   step "the node lists folders in {string} whose names start with {string}",
@@ -311,7 +311,7 @@ defmodule T3.Steps.Platform.HostIntegration do
   end
 
   defp follow_local_servers(context) do
-    Node.ensure(T3.LocalServers)
+    Node.ensure(HalC2.LocalServers)
     shape = %{"type" => "localServers", "node" => Atom.to_string(node())}
     client = World.client(context) |> Node.sub(11, shape)
     {frame, client} = Node.await(client, &(&1["t"] == "localServers" and &1["id"] == 11), 10_000)
@@ -360,12 +360,12 @@ defmodule T3.Steps.Platform.HostIntegration do
   end
 
   step "nobody follows the host's local servers", context do
-    Node.ensure(T3.LocalServers)
+    Node.ensure(HalC2.LocalServers)
     context
   end
 
   step "the node does not scan the host's ports", context do
-    state = :sys.get_state(T3.LocalServers)
+    state = :sys.get_state(HalC2.LocalServers)
     assert state.watchers == %{}
     assert state.timer == nil
     assert state.list == nil
@@ -382,7 +382,7 @@ defmodule T3.Steps.Platform.HostIntegration do
   end
 
   step "the node resolves it", context do
-    Map.put(context, :resolved, T3.Paths.real(context.path))
+    Map.put(context, :resolved, HalC2.Paths.real(context.path))
   end
 
   step "it fails as a symlink loop", context do
@@ -391,7 +391,7 @@ defmodule T3.Steps.Platform.HostIntegration do
   end
 
   step "a provider process writing output faster than the node reads it", context do
-    {:ok, sub} = T3.Subprocess.start(["yes", "a line of provider output"])
+    {:ok, sub} = HalC2.Subprocess.start(["yes", "a line of provider output"])
     assert_receive {:subprocess_lines, reader, lines}, 5_000
     Map.merge(context, %{sub: sub, reader: reader, first: lines})
   end
@@ -400,7 +400,7 @@ defmodule T3.Steps.Platform.HostIntegration do
     # Until the owner acknowledges a batch, the reader does not read again ...
     refute_receive {:subprocess_lines, _, _}, 300
     # ... so the writer blocks on the full pipe.
-    wchan = File.read!("/proc/#{T3.Subprocess.os_pid(context.sub)}/wchan")
+    wchan = File.read!("/proc/#{HalC2.Subprocess.os_pid(context.sub)}/wchan")
     assert wchan =~ "pipe", "the writer is in #{inspect(wchan)}"
     context
   end
@@ -410,11 +410,11 @@ defmodule T3.Steps.Platform.HostIntegration do
     {:memory, memory} = Process.info(context.reader, :memory)
     assert memory < 1_000_000
     # Acknowledging lets exactly the next batch through.
-    T3.Subprocess.ack(context.sub)
+    HalC2.Subprocess.ack(context.sub)
     assert_receive {:subprocess_lines, _, _}, 5_000
     refute_receive {:subprocess_lines, _, _}, 100
-    T3.Subprocess.ack(context.sub)
-    T3.Subprocess.stop(context.sub, 1_000)
+    HalC2.Subprocess.ack(context.sub)
+    HalC2.Subprocess.stop(context.sub, 1_000)
     context
   end
 end

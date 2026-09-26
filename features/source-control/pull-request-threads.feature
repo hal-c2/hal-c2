@@ -3,17 +3,17 @@
 #   packages/contracts/src/git.ts (GitResolvePullRequestInput, GitPreparePullRequestThreadInput, GitPreparePullRequestThreadResult)
 #   packages/contracts/src/rpc.ts (git.resolvePullRequest, git.preparePullRequestThread, pullRequests.linkedThreads, pullRequests.preview)
 #   packages/contracts/src/orchestrationV2.ts (thread.pull-request.link, thread.pull-request.unlink, thread.pull-request-link.sync, thread.pull-request-synced)
-#   apps/server-ex/lib/t3/pull_requests/checkout.ex
-#   apps/server-ex/lib/t3/pull_requests/discovery.ex
-#   apps/server-ex/lib/t3/pull_requests/sync.ex
-#   apps/server-ex/lib/t3/mcp/tools/pull_requests.ex (link_pull_request, unlink_pull_request, list_thread_pull_requests)
-#   apps/server-ex/lib/t3/orchestration.ex (thread.pull-request.link)
+#   apps/server-ex/lib/hal_c2/pull_requests/checkout.ex
+#   apps/server-ex/lib/hal_c2/pull_requests/discovery.ex
+#   apps/server-ex/lib/hal_c2/pull_requests/sync.ex
+#   apps/server-ex/lib/hal_c2/mcp/tools/pull_requests.ex (link_pull_request, unlink_pull_request, list_thread_pull_requests)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (thread.pull-request.link)
 #   apps/web/src/components/PullRequestThreadDialog.tsx
 #   apps/web/src/components/PullRequestContextDetails.tsx
 #   apps/web/src/components/pullRequest/LinkPullRequestDialog.tsx
 #   apps/web/src/components/pullRequest/PullRequestLinkPreview.tsx
 #   apps/web/src/components/pullRequest/pullRequestLinkContextMenu.ts
-#   apps/desktop-qt/qml/T3/Bricks/Composer.qml (open pull request)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (open pull request)
 #   apps/tui/src/features.backlog.test.ts (pull request checkout)
 
 Feature: Threads that work on or link pull requests
@@ -55,7 +55,7 @@ Feature: Threads that work on or link pull requests
   Scenario: A pull request from a fork gets a branch of its own
     Given pull request 42 comes from the fork branch "tax"
     When the user starts a thread on pull request 42 in a new worktree
-    Then the worktree is on the branch "t3code/pr-42/tax" with no upstream
+    Then the worktree is on the branch "hal-c2/pr-42/tax" with no upstream
 
   @node
   Scenario: An existing worktree for the pull request is reused

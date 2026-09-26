@@ -1,10 +1,10 @@
-defmodule T3.Steps.SourceControl.CommitAndGeneratedMessages do
+defmodule HalC2.Steps.SourceControl.CommitAndGeneratedMessages do
   @moduledoc "Steps for `features/source-control/commit-and-generated-messages.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.SourceControl.Shared
-  alias T3.Test.Node.World
+  alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.Test.Node.World
 
   @styles %{
     "Repository conventions" => %{"mode" => "repo_conventions"},
@@ -216,7 +216,7 @@ defmodule T3.Steps.SourceControl.CommitAndGeneratedMessages do
 
     World.put_settings(context, %{"sourceControlWritingStyle" => %{"mode" => "repo_conventions"}})
 
-    assert T3.TextGeneration.driver(T3.TextGeneration.model_selection(context.cwd, :writer)) ==
+    assert HalC2.TextGeneration.driver(HalC2.TextGeneration.model_selection(context.cwd, :writer)) ==
              "claudeAgent"
 
     context

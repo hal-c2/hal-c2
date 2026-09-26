@@ -8,7 +8,7 @@ import {
   ANTIGRAVITY_DEFAULT_MODEL,
   ProviderDriverKind,
   type ServerProvider,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import type { RightPanelSurface } from "../rightPanelStore";
 import {
@@ -22,8 +22,8 @@ import {
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
   type WorktreeSetupSnapshot,
-} from "@t3tools/contracts";
-import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
+} from "@hal-c2/contracts";
+import type { CodexArtifactTemplate } from "@hal-c2/client-runtime/codex-artifact-templates";
 import * as DateTime from "effect/DateTime";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { Atom, AsyncResult } from "effect/unstable/reactivity";
@@ -267,7 +267,7 @@ describe("resolveThreadMetadataUpdateForNextTurn", () => {
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {
     const state = deriveComposerSendState({
-      prompt: "[Terminal 1](t3-context://v1/terminal/ctx-expired)",
+      prompt: "[Terminal 1](hal-c2-context://v1/terminal/ctx-expired)",
       imageCount: 0,
       terminalContexts: [
         {
@@ -291,7 +291,7 @@ describe("deriveComposerSendState", () => {
 
   it("keeps text sendable while excluding expired terminal pills", () => {
     const state = deriveComposerSendState({
-      prompt: `yoo [Terminal 1](t3-context://v1/terminal/ctx-expired) waddup`,
+      prompt: `yoo [Terminal 1](hal-c2-context://v1/terminal/ctx-expired) waddup`,
       imageCount: 0,
       terminalContexts: [
         {
@@ -1869,20 +1869,20 @@ describe("threadShellHasStarted", () => {
 it("follows a changed server PR link without replacing an unrelated open panel", () => {
   const previous = {
     projectId: ProjectId.make("project-1"),
-    repository: "pingdotgg/t3code",
+    repository: "hal-c2/hal-c2",
     number: 42,
-    url: "https://github.com/pingdotgg/t3code/pull/42",
+    url: "https://github.com/hal-c2/hal-c2/pull/42",
   };
   const current = {
     ...previous,
     number: 43,
-    url: "https://github.com/pingdotgg/t3code/pull/43",
+    url: "https://github.com/hal-c2/hal-c2/pull/43",
   };
   const surface = {
     id: "pull-request:previous",
     kind: "pull-request",
     projectId: previous.projectId,
-    repository: "PingDotGG/T3Code",
+    repository: "HAL-C2/HAL-C2",
     number: previous.number,
   } satisfies RightPanelSurface;
 

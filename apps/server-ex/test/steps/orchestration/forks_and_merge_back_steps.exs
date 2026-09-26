@@ -1,4 +1,4 @@
-defmodule T3.Steps.Orchestration.ForksAndMergeBack do
+defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
   @moduledoc """
   Steps for `features/node/orchestration/forks-and-merge-back.feature`: real turns on
   the fake provider CLIs (`test/support/fake_codex.py`, `fake_claude.py`,
@@ -9,8 +9,8 @@ defmodule T3.Steps.Orchestration.ForksAndMergeBack do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node.World
 
   @models %{
     "codex" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
@@ -112,15 +112,15 @@ defmodule T3.Steps.Orchestration.ForksAndMergeBack do
 
   step "{string} has no completed run", %{args: [thread]} = context do
     id = World.thread_id(context, thread)
-    scope = T3.Checkpoint.scope_id(id)
+    scope = HalC2.Checkpoint.scope_id(id)
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "checkpoint.rollback",
         "commandId" => "cmd-rewind-#{System.unique_integer([:positive])}",
         "threadId" => id,
         "scopeId" => scope,
-        "checkpointId" => T3.Checkpoint.checkpoint_id(scope, 0),
+        "checkpointId" => HalC2.Checkpoint.checkpoint_id(scope, 0),
         "restoreFiles" => false
       })
 
@@ -167,7 +167,7 @@ defmodule T3.Steps.Orchestration.ForksAndMergeBack do
   step "{string} was removed from this node", %{args: [thread]} = context do
     context = fork!(context, thread, "f1", :latest)
     id = World.thread_id(context, thread)
-    {:ok, _} = T3.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})
+    {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})
     assert World.thread(context, thread)["deletedAt"]
     context
   end
@@ -573,7 +573,7 @@ defmodule T3.Steps.Orchestration.ForksAndMergeBack do
     target_id =
       (context[:threads] || %{})[target] || "th-#{target}-#{System.unique_integer([:positive])}"
 
-    state = T3.Streams.Server.state(T3.Streams.ensure(source_id))
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(source_id))
 
     {reply, context} =
       World.dispatch(
@@ -607,7 +607,7 @@ defmodule T3.Steps.Orchestration.ForksAndMergeBack do
 
   defp merge_back(context, fork, parent, at) do
     fork_id = id(context, fork)
-    state = T3.Streams.Server.state(T3.Streams.ensure(fork_id))
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(fork_id))
 
     {reply, context} =
       World.dispatch(context, %{

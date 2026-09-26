@@ -12,9 +12,9 @@ import {
   type ServerSettings,
   type ThreadEnvMode,
   type VcsRef,
-} from "@t3tools/contracts";
-import type { ImagePreview } from "@t3tools/opentui-image";
-import { truncate } from "@t3tools/shared/String";
+} from "@hal-c2/contracts";
+import type { ImagePreview } from "@hal-c2/opentui-image";
+import { truncate } from "@hal-c2/shared/String";
 import type { PropertyMap } from "opentui-qml";
 
 import { derivePendingApprovals } from "../approvals.ts";
@@ -1216,7 +1216,7 @@ export function createComposer(options: ComposerOptions): Composer {
       (async () => {
         let dir: string | null = null;
         try {
-          dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-prompt-"));
+          dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "hal-c2-prompt-"));
           const file = NodePath.join(dir, "prompt.md");
           await NodeFSP.writeFile(file, original, "utf8");
           await options.runEditor(resolveEditorCommand(options.env), file);

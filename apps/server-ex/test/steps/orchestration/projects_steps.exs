@@ -1,4 +1,4 @@
-defmodule T3.Steps.Orchestration.Projects do
+defmodule HalC2.Steps.Orchestration.Projects do
   @moduledoc """
   Steps for `features/node/orchestration/projects.feature`. Clients change projects
   over the socket (`projects.mutate`) and the reply is `context.reply`. Folders under
@@ -8,8 +8,8 @@ defmodule T3.Steps.Orchestration.Projects do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @old "2020-01-01T00:00:00.000Z"
 
@@ -101,7 +101,7 @@ defmodule T3.Steps.Orchestration.Projects do
     context = World.create_project(context, id)
     # Backdated, so an update's time is later even within the same millisecond.
     {:ok, _} =
-      T3.Streams.commit(id, :project, [{"project", id, %{"s" => %{"updatedAt" => @old}}}])
+      HalC2.Streams.commit(id, :project, [{"project", id, %{"s" => %{"updatedAt" => @old}}}])
 
     context
   end
@@ -195,7 +195,7 @@ defmodule T3.Steps.Orchestration.Projects do
       |> World.create_thread("second", id)
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.archive",
         "threadId" => World.thread_id(context, "second"),
         "commandId" => "archive-second"
@@ -243,13 +243,13 @@ defmodule T3.Steps.Orchestration.Projects do
     context
     |> World.create_thread(thread, project, %{
       "worktreePath" => worktree,
-      "branch" => "t3/#{thread}"
+      "branch" => "hal-c2/#{thread}"
     })
     |> Map.put(:worktree, worktree)
   end
 
   step "a path inside that worktree belongs to project {string}", %{args: [project]} = context do
-    assert T3.Projects.at(Path.join(context.worktree, "src/app.ts")) == project
+    assert HalC2.Projects.at(Path.join(context.worktree, "src/app.ts")) == project
     context
   end
 
@@ -269,7 +269,7 @@ defmodule T3.Steps.Orchestration.Projects do
   end
 
   step "{string} belongs to project {string}", %{args: [folder, project]} = context do
-    assert T3.Projects.at(path(context, folder)) == project
+    assert HalC2.Projects.at(path(context, folder)) == project
     context
   end
 
@@ -295,7 +295,7 @@ defmodule T3.Steps.Orchestration.Projects do
       {"project", "imported", "project.created", payload, 1_577_836_800_000}
     ])
 
-    {:ok, _} = T3.Import.V2.run(source)
+    {:ok, _} = HalC2.Import.V2.run(source)
 
     # Imports run before a node serves anyone.
     %{context | node: Node.restart(context.node), clients: %{}}
@@ -321,7 +321,7 @@ defmodule T3.Steps.Orchestration.Projects do
              Map.drop(native, ~w(id title workspaceRoot createdAt updatedAt))
 
     {:ok, updated} =
-      T3.Projects.mutate(%{
+      HalC2.Projects.mutate(%{
         "type" => "project.update",
         "projectId" => "imported",
         "title" => "Renamed"
@@ -331,7 +331,7 @@ defmodule T3.Steps.Orchestration.Projects do
 
     assert Map.keys(updated) ==
              Map.keys(
-               T3.Projects.mutate(%{
+               HalC2.Projects.mutate(%{
                  "type" => "project.update",
                  "projectId" => "native",
                  "title" => "Renamed"
@@ -445,22 +445,22 @@ defmodule T3.Steps.Orchestration.Projects do
 
   # The project as stored on the node, or nil.
   defp stored(id) do
-    T3.StreamState.get(T3.StreamState.load(T3.Store.path(), id), "project")[id]
+    HalC2.StreamState.get(HalC2.StreamState.load(HalC2.Store.path(), id), "project")[id]
   end
 
   defp seq(id) do
-    Enum.find_value(T3.Store.list_streams(T3.Store.path()), &(&1.id == id && &1.seq))
+    Enum.find_value(HalC2.Store.list_streams(HalC2.Store.path()), &(&1.id == id && &1.seq))
   end
 
   defp thread_deleted(context, title) do
     id = World.thread_id(context, title)
-    T3.StreamState.get(T3.StreamState.load(T3.Store.path(), id), "thread")[id]["deletedAt"]
+    HalC2.StreamState.get(HalC2.StreamState.load(HalC2.Store.path(), id), "thread")[id]["deletedAt"]
   end
 
   # The project's row as a client subscribed to the shell first sees it.
   defp shell_row(context, id) do
-    T3.Streams.flush_shell(id)
-    :sys.get_state(T3.Shell)
+    HalC2.Streams.flush_shell(id)
+    :sys.get_state(HalC2.Shell)
     client = Node.sub(World.client(context), 900, %{"type" => "shell"})
     {frame, client} = Node.await(client, &(&1["t"] == "shell"))
     Node.unsub(client, 900)
@@ -468,7 +468,7 @@ defmodule T3.Steps.Orchestration.Projects do
     row
   end
 
-  # `~` is the scenario's `$HOME` (`T3.Test.Node.Host`), set once for the scenario, as
+  # `~` is the scenario's `$HOME` (`HalC2.Test.Node.Host`), set once for the scenario, as
   # the node expands it.
   defp home(context), do: tap(context, &Node.Host.home/1)
 

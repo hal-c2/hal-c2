@@ -1,4 +1,4 @@
-import { planPinnedMove } from "@t3tools/client-runtime/state/thread-sort";
+import { planPinnedMove } from "@hal-c2/client-runtime/state/thread-sort";
 import {
   createPendingThreadOrder,
   createThreadMovePlanner,
@@ -8,9 +8,9 @@ import {
   type PendingThreadOrder,
   type ThreadMoveAvailability,
 } from "./threadOrder";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import type { EnvironmentThreadShell } from "@hal-c2/client-runtime/state/shell";
+import { threadSearchMatchKey } from "@hal-c2/client-runtime/state/thread-search";
+import { resolveSnoozePresets } from "@hal-c2/client-runtime/state/thread-settled";
 import {
   CommandId,
   EnvironmentId,
@@ -19,7 +19,7 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -54,9 +54,9 @@ const NOW = "2026-06-02T00:00:00.000Z";
 
 const linkedPullRequest = {
   projectId: ProjectId.make("project-1"),
-  repository: "pingdotgg/t3code",
+  repository: "hal-c2/hal-c2",
   number: 42,
-  url: "https://github.com/pingdotgg/t3code/pull/42",
+  url: "https://github.com/hal-c2/hal-c2/pull/42",
 };
 
 describe("resolveThreadListV2SnoozeMenuSelection", () => {

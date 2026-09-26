@@ -1,4 +1,4 @@
-defmodule T3.Steps.Orchestration.Search do
+defmodule HalC2.Steps.Orchestration.Search do
   @moduledoc """
   Steps for `features/node/orchestration/search.feature`: messages are committed to
   thread streams (which indexes the finished ones), and clients search over the
@@ -7,7 +7,7 @@ defmodule T3.Steps.Orchestration.Search do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   # --- threads and messages ------------------------------------------------------------
 
@@ -217,9 +217,9 @@ defmodule T3.Steps.Orchestration.Search do
   end
 
   defp settle(context) do
-    for {_, id} <- context[:threads] || %{}, do: :ok = T3.Streams.flush_shell(id)
-    :sys.get_state(T3.Shell)
-    :sys.get_state(T3.Store)
+    for {_, id} <- context[:threads] || %{}, do: :ok = HalC2.Streams.flush_shell(id)
+    :sys.get_state(HalC2.Shell)
+    :sys.get_state(HalC2.Store)
   end
 
   defp matches(context) do
@@ -229,5 +229,5 @@ defmodule T3.Steps.Orchestration.Search do
 
   defp found(context, thread), do: Enum.filter(matches(context), &(&1["threadId"] == thread))
 
-  defp epoch(row), do: T3.Projection.JS.epoch_ms(row["updatedAt"])
+  defp epoch(row), do: HalC2.Projection.JS.epoch_ms(row["updatedAt"])
 end

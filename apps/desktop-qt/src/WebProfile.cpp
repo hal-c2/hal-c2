@@ -18,14 +18,14 @@ WebProfile::WebProfile(const QString& dataDir)
       m_profile(QQuickWebEngineProfile::defaultProfile()) {
   QDir().mkpath(dataDir);
   // Chromium cannot share a profile directory between processes. A second
-  // shell on the same T3 home keeps Qt's off-the-record default instead of
+  // shell on the same HAL-C2 home keeps Qt's off-the-record default instead of
   // corrupting the first one's session; cookies and cache then live in memory
   // for its run.
   if (!m_lock.tryLock(0)) {
     qWarning().noquote() << "[web] profile" << dataDir
                          << "is in use by another shell; this instance keeps no browser state";
   } else {
-    m_profile->setStorageName(QStringLiteral("t3code"));
+    m_profile->setStorageName(QStringLiteral("hal-c2"));
     m_profile->setOffTheRecord(false);
     m_profile->setPersistentStoragePath(dataDir);
     m_profile->setCachePath(QDir(dataDir).filePath(QStringLiteral("cache")));

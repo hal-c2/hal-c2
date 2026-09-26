@@ -1,9 +1,9 @@
 # Sources:
-#   apps/server-ex/lib/t3/background_policy.ex (presets, leases, run_scope_work?)
-#   apps/server-ex/lib/t3/vcs/watch.ex (automatic git fetch and status under the policy)
-#   apps/server-ex/lib/t3/provider_usage_limits.ex, usage_limit_sources.ex (provider health refresh)
-#   apps/server-ex/lib/t3/storage_cleanup.ex (worktree and browser artifact sweeps)
-#   apps/server-ex/lib/t3/web/socket.ex (server.reportClientActivity lease per socket)
+#   apps/server-ex/lib/hal_c2/background_policy.ex (presets, leases, run_scope_work?)
+#   apps/server-ex/lib/hal_c2/vcs/watch.ex (automatic git fetch and status under the policy)
+#   apps/server-ex/lib/hal_c2/provider_usage_limits.ex, usage_limit_sources.ex (provider health refresh)
+#   apps/server-ex/lib/hal_c2/storage_cleanup.ex (worktree and browser artifact sweeps)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (server.reportClientActivity lease per socket)
 #   packages/contracts/src/server.ts (server.reportClientActivity, server.reportHostPowerState,
 #     server.getBackgroundPolicy, subscribeBackgroundPolicy)
 #   packages/contracts/src/settings.ts (backgroundActivity, storageCleanup)

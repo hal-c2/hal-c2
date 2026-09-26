@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // @effect-diagnostics globalConsole:off - a plain stdio process; stderr is its log.
-// Cursor over ACP on stdio, for T3 nodes (`T3.Acp`). Usage: main.ts [--mode <runtime mode>]
+// Cursor over ACP on stdio, for HAL-C2 nodes (`HalC2.Acp`). Usage: main.ts [--mode <runtime mode>]
 //
-// T3_CURSOR_CREDENTIALS is where the Cursor sign-in is kept; CURSOR_API_KEY replaces it.
+// HALC2_CURSOR_CREDENTIALS is where the Cursor sign-in is kept; CURSOR_API_KEY replaces it.
 import * as NodeReadline from "node:readline";
 
 import {
@@ -27,13 +27,12 @@ const acp = makeCursorAcp({
   write: (message) => process.stdout.write(`${JSON.stringify(message)}\n`),
   sdk: {
     version: "1.0.31",
-    store: new FileCredentialStore(process.env.T3_CURSOR_CREDENTIALS || undefined),
+    store: new FileCredentialStore(process.env.HALC2_CURSOR_CREDENTIALS || undefined),
     envApiKey: process.env.CURSOR_API_KEY?.trim() || undefined,
     createAgent: (options) => Agent.create(options),
     resumeAgent: (agentId, options) => Agent.resume(agentId, options),
     listModels: (apiKey) => Cursor.models.list({ apiKey }),
-    login: (options) =>
-      Cursor.auth.login({ ...options, openBrowser: false, apiKeyName: "T3 Code" }),
+    login: (options) => Cursor.auth.login({ ...options, openBrowser: false, apiKeyName: "HAL-C2" }),
     isAuthError: (cause) =>
       cause instanceof AuthenticationError ||
       (cause instanceof CursorSdkError && cause.status === 401),

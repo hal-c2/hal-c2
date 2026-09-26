@@ -1,7 +1,7 @@
 import QtQuick
 import QtTest
-import "../qml/T3/Bricks"
-import T3.Shell
+import "../qml/HalC2/Bricks"
+import HalC2.Shell
 
 Item {
     id: root

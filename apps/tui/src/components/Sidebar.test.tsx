@@ -33,7 +33,7 @@ describe("Sidebar search box", () => {
     });
     await t.renderOnce();
     const frame = t.captureCharFrame();
-    expect(frame).toContain("T3");
+    expect(frame).toContain("HAL-C2");
     expect(frame).toContain("Code");
     expect(frame).toContain("Search threads");
     expect(frame).toContain("All projects");

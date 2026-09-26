@@ -3,7 +3,7 @@
 // request instead of hanging the loop (see reconnectWorld.ts). The thread the
 // user is on (T2's thread view) rides through the drop; the fake client's
 // detail map stands in for the real client's warm thread cache (`peekThread`).
-import type { OrchestrationThread } from "@t3tools/contracts";
+import type { OrchestrationThread } from "@hal-c2/contracts";
 import { expect } from "bun:test";
 
 import { step } from "../../steps.ts";
@@ -114,8 +114,8 @@ step("every waiting ticket request fails at once", async (ctx: World) => {
   const waiting = conn.requests.slice(1, 3);
   const outcomes = await Promise.all(waiting.map((request) => conn.settled(request)));
   expect(outcomes).toEqual([
-    { error: "t3 parent IPC channel closed" },
-    { error: "t3 parent IPC channel closed" },
+    { error: "hal-c2 parent IPC channel closed" },
+    { error: "hal-c2 parent IPC channel closed" },
   ]);
   // Their timeouts are cancelled, not what failed them.
   expect(conn.timers.slice(1, 3).every((timer) => timer.cleared)).toBe(true);

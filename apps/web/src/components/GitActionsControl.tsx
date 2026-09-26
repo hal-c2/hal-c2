@@ -1,16 +1,16 @@
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
-import { type ScopedThreadRef } from "@t3tools/contracts";
+import { type ScopedThreadRef } from "@hal-c2/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+} from "@hal-c2/client-runtime/state/runtime";
 import type {
   SourceControlCloneProtocol,
   SourceControlProviderDiscoveryItem,
   SourceControlProviderKind,
   SourceControlPublishRepositoryResult,
   SourceControlRepositoryVisibility,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

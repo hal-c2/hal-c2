@@ -1,8 +1,8 @@
 # Sources:
 #   packages/contracts/src/checkpointDiff.ts (TurnCountRange, getTurnDiff, getFullThreadDiff)
 #   packages/contracts/src/rpc.ts (orchestration.getTurnDiff, orchestration.getFullThreadDiff)
-#   apps/server-ex/lib/t3/checkpoint.ex (turn_diff, capture, start_ref)
-#   apps/server-ex/lib/t3/orchestration.ex (orchestration.getTurnDiff, orchestration.getFullThreadDiff)
+#   apps/server-ex/lib/hal_c2/checkpoint.ex (turn_diff, capture, start_ref)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (orchestration.getTurnDiff, orchestration.getFullThreadDiff)
 #   apps/web/src/components/DiffPanel.tsx (Latest turn, Turn N)
 #   apps/tui/src/components/ChatView.tsx (diff scopes)
 #   apps/tui/src/components/DiffViewer.tsx

@@ -5,8 +5,8 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-} from "@t3tools/contracts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+} from "@hal-c2/contracts";
+import { resolveProjectSettings } from "@hal-c2/shared/projectSettings";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -54,10 +54,10 @@ it.effect.each([
         Effect.provide(PreviewControlsHandlersLive.pipe(Layer.provide(dependencies))),
       );
       const listed = yield* toolkit
-        .handle("t3_preview_list", {})
+        .handle("halc2_preview_list", {})
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
       const closed = yield* toolkit
-        .handle("t3_preview_close", { tabId: tab.tabId })
+        .handle("halc2_preview_close", { tabId: tab.tabId })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
       if (projectAccess) {
         expect(listed.at(-1)?.result).toMatchObject({ sessions: [tab], nextCursor: null });

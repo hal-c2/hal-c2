@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   compileResolvedKeybindingsConfig,
   parseKeybindingShortcut,
-} from "@t3tools/shared/keybindings";
+} from "@hal-c2/shared/keybindings";
 
 import {
   buildShellKeybindings,

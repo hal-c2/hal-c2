@@ -5,7 +5,7 @@
 #   apps/tui/src/components/ChatView.tsx (newTerminal, selectTerminal, closeTerminal, MAX_TERMINALS_PER_THREAD, palette entries)
 #   apps/tui/src/components/ThreadTerminalDrawer.tsx (every tab stays mounted)
 #   apps/tui/src/features.backlog.test.ts (terminal-session-actions)
-#   apps/server-ex/test/t3/features_backlog_test.exs (terminal-list)
+#   apps/server-ex/test/hal_c2/features_backlog_test.exs (terminal-list)
 #   apps/web/src/components/ThreadTerminalDrawer.tsx (splits, MAX_TERMINALS_PER_GROUP)
 #   apps/web/src/components/ThreadTerminals.tsx (hidden threads keep terminals mounted)
 #   apps/web/src/components/useThreadTerminalActions.ts

@@ -1,5 +1,5 @@
-import type { KeybindingShortcut, ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import type { ShellKeybinding, ShellKeybindingsState } from "@t3tools/contracts/shell";
+import type { KeybindingShortcut, ResolvedKeybindingsConfig } from "@hal-c2/contracts";
+import type { ShellKeybinding, ShellKeybindingsState } from "@hal-c2/contracts/shell";
 
 import { isMacPlatform } from "../lib/utils";
 import {

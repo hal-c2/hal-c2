@@ -3,7 +3,7 @@ import type {
   OrchestrationV2Notification,
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 
 /** Keep the delivery message intact while projecting its trigger as an activity. */
 export function notificationTurnItem(

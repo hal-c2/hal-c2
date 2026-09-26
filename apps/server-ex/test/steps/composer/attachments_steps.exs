@@ -1,9 +1,9 @@
-defmodule T3.Steps.Composer.Attachments do
+defmodule HalC2.Steps.Composer.Attachments do
   @moduledoc "Steps for `features/composer/attachments.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   step "a client asks to upload a {word} of {int} MB", %{args: [kind, mb]} = context do
     {reply, context} =
@@ -35,8 +35,8 @@ defmodule T3.Steps.Composer.Attachments do
         "sizeBytes" => byte_size(body)
       })
 
-    :ok = T3.Attachments.store(token, body)
-    path = T3.Attachments.path(%{"id" => id})
+    :ok = HalC2.Attachments.store(token, body)
+    path = HalC2.Attachments.path(%{"id" => id})
     assert File.exists?(path)
     Map.put(context, :upload_path, path)
   end
@@ -45,7 +45,7 @@ defmodule T3.Steps.Composer.Attachments do
   # client next asks for an upload, at most every 15 minutes.
   step "more than 24 hours pass", context do
     File.touch!(context.upload_path, System.os_time(:second) - 25 * 60 * 60)
-    :persistent_term.erase({T3.Attachments, :swept})
+    :persistent_term.erase({HalC2.Attachments, :swept})
 
     {_, context} =
       World.call!(context, "attachments.createUploadUrl", %{

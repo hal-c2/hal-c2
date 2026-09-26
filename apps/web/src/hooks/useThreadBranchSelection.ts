@@ -1,9 +1,9 @@
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@hal-c2/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ThreadId, VcsRef } from "@t3tools/contracts";
+} from "@hal-c2/client-runtime/state/runtime";
+import type { EnvironmentId, ThreadId, VcsRef } from "@hal-c2/contracts";
 import {
   useCallback,
   useDeferredValue,

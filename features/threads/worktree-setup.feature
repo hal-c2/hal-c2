@@ -1,5 +1,5 @@
 # Sources:
-#   apps/server-ex/lib/t3/worktree_setup.ex
+#   apps/server-ex/lib/hal_c2/worktree_setup.ex
 #   apps/web/src/components/chat/WorktreeSetupCard.tsx
 #   packages/contracts/src/rpc.ts (subscribeWorktreeSetup, worktreeSetup.cancel)
 

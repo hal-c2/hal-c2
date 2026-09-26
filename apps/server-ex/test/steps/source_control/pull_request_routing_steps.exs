@@ -1,4 +1,4 @@
-defmodule T3.Steps.SourceControl.PullRequestRouting do
+defmodule HalC2.Steps.SourceControl.PullRequestRouting do
   @moduledoc """
   Steps for `features/source-control/pull-request-routing.feature`. The scenario's
   node is the remote environment (`context.remote`); its fake `gh` is signed in as
@@ -7,8 +7,8 @@ defmodule T3.Steps.SourceControl.PullRequestRouting do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.SourceControl.Shared
-  alias T3.Test.Node.World
+  alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.Test.Node.World
 
   @accounts %{"octocat" => 583_231, "hubot" => 480_938, "monalisa" => 7}
 
@@ -111,7 +111,7 @@ defmodule T3.Steps.SourceControl.PullRequestRouting do
     at = System.monotonic_time(:millisecond) - minutes * 60_000
     identity = %{"id" => "#{@accounts["octocat"]}", "login" => "octocat"}
     # The node's clock cannot be moved, so the verification is dated back where it is held.
-    :persistent_term.put({T3.PullRequests, :viewers}, %{
+    :persistent_term.put({HalC2.PullRequests, :viewers}, %{
       {"github.com", fingerprint} => {at, identity}
     })
 

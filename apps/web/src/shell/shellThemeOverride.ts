@@ -9,7 +9,7 @@ export interface ShellThemeBootstrap {
 
 /** The page takes ownership once; native reinjections subsequently deliver input, not DOM writes. */
 export function claimShellThemeOverride(): void {
-  const bootstrap = (window.__t3ShellTheme ??= {});
+  const bootstrap = (window.__halc2ShellTheme ??= {});
   if (bootstrap.applyOverride) return;
   // Older shells do not supply the override payload, so keep their DOM owner.
   if (bootstrap.observer && !bootstrap.override) return;

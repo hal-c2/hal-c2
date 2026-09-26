@@ -1,12 +1,12 @@
 # Sources:
 #   docs/user/keyboard-focus.md
-#   apps/desktop-qt/qml/T3/Bricks/Sidebar.qml (list keyboard navigation)
-#   apps/desktop-qt/qml/T3/Bricks/SettingsNav.qml
-#   apps/desktop-qt/qml/T3/Bricks/RightPanel.qml (tab activation from the keyboard)
-#   apps/desktop-qt/qml/T3/Bricks/Composer.qml (focusInput)
-#   apps/desktop-qt/qml/T3/Bricks/TerminalDrawer.qml (focusTerminal)
+#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (list keyboard navigation)
+#   apps/desktop-qt/qml/HalC2/Bricks/SettingsNav.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (tab activation from the keyboard)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (focusInput)
+#   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml (focusTerminal)
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
-#   apps/desktop-qt/qml/T3/Bricks/WindowControls.qml (accessible names)
+#   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml (accessible names)
 
 Feature: Keyboard focus and keyboard-only use
   Everything a user can do with the pointer can be done from the keyboard, and focus lands

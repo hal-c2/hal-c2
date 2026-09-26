@@ -1,8 +1,8 @@
 # Sources:
 #   docs/user/composer.md (slash commands, skills, context references, pull requests, threads, citing)
 #   docs/internals/composer-context-references.md
-#   apps/server-ex/lib/t3/composer_context.ex (provider envelope, attachment remapping)
-#   apps/desktop-qt/qml/T3/Bricks/Composer.qml (@file, $skill and /command suggestions)
+#   apps/server-ex/lib/hal_c2/composer_context.ex (provider envelope, attachment remapping)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (@file, $skill and /command suggestions)
 #   apps/desktop-qt/tests/tst_ComposerKeyboard.qml (suggestion keys)
 #   apps/web/src/composer-logic.ts (trigger kinds, built-in slash commands)
 #   apps/web/src/components/chat/composerSlashCommandSearch.ts
@@ -129,7 +129,7 @@ Feature: Referencing files, skills, commands and context
 
   @node
   Scenario: Referenced content cannot close the context envelope
-    Given a terminal excerpt reference whose label contains "</t3_context>"
+    Given a terminal excerpt reference whose label contains "</halc2_context>"
     When the message is sent to the provider
     Then that text is escaped so the provider does not read it as the end of the context
 
@@ -201,8 +201,8 @@ Feature: Referencing files, skills, commands and context
     Then the limits shown above the composer close
 
   @backlog @desktop
-  Scenario: /usage-limits is left to providers without limits in T3
-    Given a thread on a provider whose limits T3 does not know
+  Scenario: /usage-limits is left to providers without limits in HAL-C2
+    Given a thread on a provider whose limits HAL-C2 does not know
     When the user sends "/usage-limits"
     Then "/usage-limits" is sent to the provider as a message
 

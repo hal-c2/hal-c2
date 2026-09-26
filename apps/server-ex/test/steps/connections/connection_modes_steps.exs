@@ -1,14 +1,14 @@
-defmodule T3.Steps.Connections.ConnectionModes do
+defmodule HalC2.Steps.Connections.ConnectionModes do
   @moduledoc """
   Steps for `features/connections/connection-modes.feature`: where the node
-  listens (loopback, a LAN host from `T3_HOST`) and pairing over Tailscale Serve
-  HTTPS with `mix t3.pair --tailscale`, against `test/support/fake_tailscale.py`.
+  listens (loopback, a LAN host from `HALC2_NODE_HOST`) and pairing over Tailscale Serve
+  HTTPS with `mix hal_c2.pair --tailscale`, against `test/support/fake_tailscale.py`.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @tailnet_name "box.tail5e3a.ts.net"
 
@@ -30,23 +30,23 @@ defmodule T3.Steps.Connections.ConnectionModes do
   end
 
   step "it reaches the node", context do
-    client = T3.Test.WsClient.send_json(World.client(context), %{"t" => "ping"})
-    {%{"t" => "pong"}, client} = T3.Test.WsClient.recv(client, 1_000)
+    client = HalC2.Test.WsClient.send_json(World.client(context), %{"t" => "ping"})
+    {%{"t" => "pong"}, client} = HalC2.Test.WsClient.recv(client, 1_000)
     World.put_client(context, client)
   end
 
   step "an operator starts the node with a LAN host", context do
     host = Node.lan_address()
-    System.put_env("T3_HOST", host)
+    System.put_env("HALC2_NODE_HOST", host)
 
     ExUnit.Callbacks.on_exit(fn ->
-      System.delete_env("T3_HOST")
-      Application.delete_env(:t3, :host)
+      System.delete_env("HALC2_NODE_HOST")
+      Application.delete_env(:hal_c2, :host)
     end)
 
     # As a release boots: runtime config reads the environment.
     config = Config.Reader.read!(Path.expand("config/runtime.exs"), env: :test)
-    Application.put_env(:t3, :host, get_in(config, [:t3, :host]))
+    Application.put_env(:hal_c2, :host, get_in(config, [:hal_c2, :host]))
 
     context
     |> Map.merge(%{node: Node.restart(context.node), clients: %{}})
@@ -54,7 +54,7 @@ defmodule T3.Steps.Connections.ConnectionModes do
   end
 
   step "clients on the LAN can pair with it", context do
-    assert [link] = Node.run_task(Mix.Tasks.T3.Pair, [context.lan_base])
+    assert [link] = Node.run_task(Mix.Tasks.HalC2.Pair, [context.lan_base])
     token = token_after(link, "#{context.lan_base}/?token=")
 
     assert {200, %{"access_token" => access}} = Node.pair_http(context.lan_base, token)
@@ -72,7 +72,7 @@ defmodule T3.Steps.Connections.ConnectionModes do
   end
 
   step "an operator asks for a Tailscale pairing link", context do
-    assert [link | _notes] = Node.run_task(Mix.Tasks.T3.Pair, ["--tailscale"])
+    assert [link | _notes] = Node.run_task(Mix.Tasks.HalC2.Pair, ["--tailscale"])
     Map.put(context, :printed, link)
   end
 
@@ -91,14 +91,14 @@ defmodule T3.Steps.Connections.ConnectionModes do
 
   step "an operator created a Tailscale pairing link", context do
     context = on_tailnet(context)
-    assert [_link | _] = Node.run_task(Mix.Tasks.T3.Pair, ["--tailscale"])
+    assert [_link | _] = Node.run_task(Mix.Tasks.HalC2.Pair, ["--tailscale"])
     context
   end
 
   step "the tailnet HTTPS name still reaches it", context do
     assert reaches?(context, "#{@tailnet_name}:443")
     # Pairing again reuses the mapping.
-    assert [link | _] = Node.run_task(Mix.Tasks.T3.Pair, ["--tailscale"])
+    assert [link | _] = Node.run_task(Mix.Tasks.HalC2.Pair, ["--tailscale"])
     token_after(link, "https://#{@tailnet_name}/?token=")
 
     context
@@ -115,11 +115,11 @@ defmodule T3.Steps.Connections.ConnectionModes do
   end
 
   step "an operator asks for a Tailscale pairing link on another port", context do
-    assert {:error, message} = Node.run_task(Mix.Tasks.T3.Pair, ["--tailscale"])
+    assert {:error, message} = Node.run_task(Mix.Tasks.HalC2.Pair, ["--tailscale"])
     assert message =~ "Pass --tailscale-serve-port"
 
     assert [link | _] =
-             Node.run_task(Mix.Tasks.T3.Pair, ["--tailscale", "--tailscale-serve-port", "8443"])
+             Node.run_task(Mix.Tasks.HalC2.Pair, ["--tailscale", "--tailscale-serve-port", "8443"])
 
     Map.put(context, :printed, link)
   end
@@ -153,8 +153,8 @@ defmodule T3.Steps.Connections.ConnectionModes do
     )
 
     script = Path.expand("test/support/fake_tailscale.py")
-    Application.put_env(:t3, :tailscale_command, ["env", "FAKE_TAILSCALE_STATE=#{state}", script])
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :tailscale_command) end)
+    Application.put_env(:hal_c2, :tailscale_command, ["env", "FAKE_TAILSCALE_STATE=#{state}", script])
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :tailscale_command) end)
     Map.put(context, :tailscale_state, state)
   end
 
@@ -168,7 +168,7 @@ defmodule T3.Steps.Connections.ConnectionModes do
 
     match?(
       {200, %{"environmentId" => ^environment}},
-      Node.http(target, :get, "/.well-known/t3/environment")
+      Node.http(target, :get, "/.well-known/hal-c2/environment")
     )
   end
 end

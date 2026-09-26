@@ -1,8 +1,8 @@
-defmodule T3.Steps.Orchestration.RuntimeRequestsAndPlans do
+defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   # Codex's requests and notifications are delivered to the thread's Codex runtime as
   # if the (fake) app-server sent them; its answers reach the fake, which says what it
@@ -290,7 +290,7 @@ defmodule T3.Steps.Orchestration.RuntimeRequestsAndPlans do
   # --- helpers -----------------------------------------------------------------------
 
   defp codex(context) do
-    [{pid, _}] = Registry.lookup(T3.Codex.Registry, World.thread_id(context, "t1"))
+    [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, World.thread_id(context, "t1"))
     {pid, :sys.get_state(pid).conn}
   end
 
@@ -399,14 +399,14 @@ defmodule T3.Steps.Orchestration.RuntimeRequestsAndPlans do
 
   defp upload(name, stored?) do
     {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
-      T3.Attachments.create_upload_url(%{
+      HalC2.Attachments.create_upload_url(%{
         "type" => "image",
         "name" => name,
         "mimeType" => "image/png",
         "sizeBytes" => 4
       })
 
-    if stored?, do: :ok = T3.Attachments.store(token, "png!")
+    if stored?, do: :ok = HalC2.Attachments.store(token, "png!")
     %{"type" => "image", "id" => id, "name" => name, "mimeType" => "image/png", "sizeBytes" => 4}
   end
 

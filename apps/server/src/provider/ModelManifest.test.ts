@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderDriverKind, type ServerProviderModel } from "@t3tools/contracts";
+import { ProviderDriverKind, type ServerProviderModel } from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -556,7 +556,7 @@ it.effect("caches valid compatibility policies and keeps them after a malformed 
     compatibility: [
       {
         driver: "codex",
-        t3CodeRange: ">=0.0.42",
+        halc2Range: ">=0.0.42",
         recommendedVersion: "2.0.0",
         ranges: [{ range: "=2.0.0", status: "supported" }],
       },

@@ -21,16 +21,16 @@
 
 namespace {
 
-// T3 home, resolved the way the dev runner resolves it: `--home-dir`, then
-// T3CODE_HOME, then ~/.t3. The rice and browser profile live beside the
+// HAL-C2 home, resolved the way the dev runner resolves it: `--home-dir`, then
+// HALC2_HOME, then ~/.hal-c2. The rice and browser profile live beside the
 // server's state, so a sandboxed home carries the whole app.
 QString resolveHomeDir(const QString& override) {
   if (!override.trimmed().isEmpty()) {
     return QDir(override).absolutePath();
   }
   const QString fromEnv =
-      QProcessEnvironment::systemEnvironment().value(QStringLiteral("T3CODE_HOME"));
-  return fromEnv.isEmpty() ? QDir::home().filePath(QStringLiteral(".t3"))
+      QProcessEnvironment::systemEnvironment().value(QStringLiteral("HALC2_HOME"));
+  return fromEnv.isEmpty() ? QDir::home().filePath(QStringLiteral(".hal-c2"))
                            : QDir(fromEnv).absolutePath();
 }
 
@@ -46,15 +46,15 @@ QString resolveQmlSourceDir(const QString& override) {
     return override;
   }
   const QString fromEnv =
-      QProcessEnvironment::systemEnvironment().value(QStringLiteral("T3CODE_QML_DIR"));
+      QProcessEnvironment::systemEnvironment().value(QStringLiteral("HALC2_QML_DIR"));
   if (!fromEnv.isEmpty()) {
     return fromEnv;
   }
-  return QStringLiteral(T3_QML_SOURCE_DIR);
+  return QStringLiteral(HALC2_QML_SOURCE_DIR);
 }
 
 QString resolveDefaultHostEntry() {
-  const QString configured = QStringLiteral(T3_HOST_ENTRY);
+  const QString configured = QStringLiteral(HALC2_HOST_ENTRY);
   return QDir::isAbsolutePath(configured)
              ? configured
              : QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(configured);
@@ -62,11 +62,11 @@ QString resolveDefaultHostEntry() {
 
 QString resolveDefaultNodeExecutable() {
   const QString fromEnv =
-      QProcessEnvironment::systemEnvironment().value(QStringLiteral("T3CODE_NODE"));
+      QProcessEnvironment::systemEnvironment().value(QStringLiteral("HALC2_NODE"));
   if (!fromEnv.isEmpty()) {
     return fromEnv;
   }
-  const QString configured = QStringLiteral(T3_NODE_ENTRY);
+  const QString configured = QStringLiteral(HALC2_NODE_ENTRY);
   if (QDir::isAbsolutePath(configured)) {
     return configured;
   }
@@ -79,12 +79,12 @@ QString resolveDefaultNodeExecutable() {
 }  // namespace
 
 int main(int argc, char* argv[]) {
-  QCoreApplication::setOrganizationName(QStringLiteral("T3 Tools"));
-  QCoreApplication::setOrganizationDomain(QStringLiteral("t3.codes"));
-  QCoreApplication::setApplicationName(QStringLiteral("t3code"));
-  QCoreApplication::setApplicationVersion(QStringLiteral(T3_APP_VERSION));
+  QCoreApplication::setOrganizationName(QStringLiteral("HAL-C2"));
+  QCoreApplication::setOrganizationDomain(QStringLiteral("hal-c2.example"));
+  QCoreApplication::setApplicationName(QStringLiteral("hal-c2"));
+  QCoreApplication::setApplicationVersion(QStringLiteral(HALC2_APP_VERSION));
   // Stable app id so compositor rules (blur, opacity, workspace) can target it.
-  QGuiApplication::setDesktopFileName(QStringLiteral("t3code"));
+  QGuiApplication::setDesktopFileName(QStringLiteral("hal-c2"));
 
   // Chromium's classic scrollbars paint a thumb in the page's scrollbar
   // gutters; overlay scrollbars match what the app expects from browsers.
@@ -95,7 +95,7 @@ int main(int argc, char* argv[]) {
   QGuiApplication app(argc, argv);
 
   QCommandLineParser parser;
-  parser.setApplicationDescription(QStringLiteral("T3 Code Qt shell"));
+  parser.setApplicationDescription(QStringLiteral("HAL-C2 Qt shell"));
   parser.addHelpOption();
   parser.addVersionOption();
   const QCommandLineOption urlOption(
@@ -104,18 +104,18 @@ int main(int argc, char* argv[]) {
       QStringLiteral("url"));
   const QCommandLineOption configDirOption(
       QStringLiteral("config-dir"),
-      QStringLiteral("Directory holding shell.qml, theme.json and qml/ (default $T3CODE_HOME/shell, i.e. ~/.t3/shell)."),
+      QStringLiteral("Directory holding shell.qml, theme.json and qml/ (default $HALC2_HOME/shell, i.e. ~/.hal-c2/shell)."),
       QStringLiteral("dir"));
   const QCommandLineOption appIdOption(
       QStringLiteral("app-id"),
-      QStringLiteral("Desktop application identity for this launch profile (default: t3code)."),
+      QStringLiteral("Desktop application identity for this launch profile (default: hal-c2)."),
       QStringLiteral("id"));
   const QCommandLineOption localFolderImportOption(
       QStringLiteral("allow-local-folder-import"),
       QStringLiteral("Allow local folder import for an attached URL known to use this machine's filesystem."));
   const QCommandLineOption homeDirOption(
       QStringLiteral("home-dir"),
-      QStringLiteral("T3 Code data directory for the shell profile, rice and server."),
+      QStringLiteral("HAL-C2 data directory for the shell profile, rice and server."),
       QStringLiteral("dir"));
   const QCommandLineOption qmlDirOption(
       QStringLiteral("qml-dir"),
@@ -160,13 +160,13 @@ int main(int argc, char* argv[]) {
 
   // Configured before any engine exists so the first page already lands on it.
   WebProfile webProfile(QDir(homeDir).filePath(QStringLiteral("userdata/shell-web")));
-  qmlRegisterSingletonInstance("T3.Shell", 1, 0, "WebProfile", webProfile.profile());
+  qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", webProfile.profile());
 
   ShellBridge bridge;
   bridge.setLocalFolderImportEnabled(!parser.isSet(urlOption) || parser.isSet(localFolderImportOption));
-  qmlRegisterType<NativeNotifications>("T3.Shell", 1, 0, "NativeNotifications");
-  qmlRegisterType<LocalTranscriber>("T3.Shell", 1, 0, "LocalTranscriber");
-  qmlRegisterType<LocalFolderModel>("T3.Shell", 1, 0, "LocalFolderModel");
+  qmlRegisterType<NativeNotifications>("HalC2.Shell", 1, 0, "NativeNotifications");
+  qmlRegisterType<LocalTranscriber>("HalC2.Shell", 1, 0, "LocalTranscriber");
+  qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
   ThemeStore theme(configDir);
   ShellRuntime runtime({configDir, qmlSourceDir}, &bridge, &theme);
   // The page publishes its resolved theme; without a theme.json it is the

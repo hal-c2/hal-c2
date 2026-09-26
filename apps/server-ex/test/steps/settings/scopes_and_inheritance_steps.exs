@@ -1,21 +1,21 @@
-defmodule T3.Steps.Settings.ScopesAndInheritance do
+defmodule HalC2.Steps.Settings.ScopesAndInheritance do
   @moduledoc """
-  How a node stores its settings document (versioned `t3.readSettings` /
-  `t3.writeSettings`, pushed to `config` subscribers) and how a project's
-  overrides resolve over it (`T3.Settings.for_project/1`). The scenario's node
+  How a node stores its settings document (versioned `halc2.readSettings` /
+  `halc2.writeSettings`, pushed to `config` subscribers) and how a project's
+  overrides resolve over it (`HalC2.Settings.for_project/1`). The scenario's node
   is the first environment the Background names.
   """
   use Cucumber.StepDefinition
 
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @environment_default %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-6"}
 
   step "the user has environments {string} and {string}", %{args: [here, _other]} = context do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
 
     context
     |> Map.put(:environment_label, here)
@@ -37,14 +37,14 @@ defmodule T3.Steps.Settings.ScopesAndInheritance do
   end
 
   step "the node saves the document", context do
-    assert T3.Settings.settings()["timestampFormat"] == "24-hour"
+    assert HalC2.Settings.settings()["timestampFormat"] == "24-hour"
     context
   end
 
   step "the node answers with the next version", context do
     assert {:ok, %{"version" => version}} = context.reply
     assert version == context.read["default"]["version"] + 1
-    assert {_, ^version} = T3.Settings.get()
+    assert {_, ^version} = HalC2.Settings.get()
     context
   end
 
@@ -71,7 +71,7 @@ defmodule T3.Steps.Settings.ScopesAndInheritance do
   end
 
   step "the first client's change is kept", context do
-    assert T3.Settings.settings()["timestampFormat"] == "24-hour"
+    assert HalC2.Settings.settings()["timestampFormat"] == "24-hour"
     context
   end
 
@@ -90,7 +90,7 @@ defmodule T3.Steps.Settings.ScopesAndInheritance do
         &(&1["t"] == "config.settings" and &1["settings"]["timestampFormat"] == "24-hour")
       )
 
-    assert frame["settings"] == T3.Settings.settings()
+    assert frame["settings"] == HalC2.Settings.settings()
     World.put_client(context, "subscriber", client)
   end
 
@@ -110,7 +110,7 @@ defmodule T3.Steps.Settings.ScopesAndInheritance do
   end
 
   step "the node resolves the settings for {string}", %{args: [project]} = context do
-    Map.put(context, :resolved, T3.Settings.for_project(World.project(context, project).id))
+    Map.put(context, :resolved, HalC2.Settings.for_project(World.project(context, project).id))
   end
 
   step "the default runtime mode is approval required", context do
@@ -119,7 +119,7 @@ defmodule T3.Steps.Settings.ScopesAndInheritance do
   end
 
   step "settings the project does not override keep the environment's values", context do
-    environment = T3.Settings.settings()
+    environment = HalC2.Settings.settings()
 
     assert Map.delete(context.resolved, "defaultRuntimeMode") ==
              Map.delete(environment, "defaultRuntimeMode")
@@ -163,7 +163,7 @@ defmodule T3.Steps.Settings.ScopesAndInheritance do
   end
 
   defp read(context, client) do
-    {{:ok, read}, context} = World.call(context, "t3.readSettings", %{}, client)
+    {{:ok, read}, context} = World.call(context, "halc2.readSettings", %{}, client)
     Map.update(context, :read, %{client => read}, &Map.put(&1, client, read))
   end
 
@@ -174,7 +174,7 @@ defmodule T3.Steps.Settings.ScopesAndInheritance do
     {reply, context} =
       World.call(
         context,
-        "t3.writeSettings",
+        "halc2.writeSettings",
         %{"settings" => document, "version" => version},
         client
       )

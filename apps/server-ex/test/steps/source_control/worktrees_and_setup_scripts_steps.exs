@@ -1,17 +1,17 @@
-defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
+defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
   @moduledoc """
   Steps for `features/source-control/worktrees-and-setup-scripts.feature`: new
-  threads prepared in their own worktree (`T3.WorktreeSetup`, launched with
+  threads prepared in their own worktree (`HalC2.WorktreeSetup`, launched with
   `World.launch_in_worktree/4`), worktrees made and removed over `vcs.*`, and the
-  agent's worktree tools (`T3.Mcp`). Setup progress arrives as snapshots, kept in
+  agent's worktree tools (`HalC2.Mcp`). Setup progress arrives as snapshots, kept in
   order under `context.setup_snapshots`; the agent is the fake Codex app server.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.SourceControl.Shared
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @stages %{
     "Fetch base branch" => "fetch",
@@ -35,7 +35,7 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
     create_worktree(context, branch)
   end
 
-  step "it is made in the T3 home's worktrees folder under the repository and branch names",
+  step "it is made in the HAL-C2 home's worktrees folder under the repository and branch names",
        context do
     %{path: path, root: root, branch: branch} = context.worktree
     name = String.replace(branch, "/", "-")
@@ -97,7 +97,7 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
 
     World.git!(
       other,
-      ~w(-c user.email=t3@example.com -c user.name=T3 commit -q --allow-empty -m ahead)
+      ~w(-c user.email=hal-c2@example.com -c user.name=HAL-C2 commit -q --allow-empty -m ahead)
     )
 
     World.git!(other, ~w(push -q origin main))
@@ -147,7 +147,7 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
 
   step "the worktree first sits on a temporary branch", context do
     {snapshot, context} = World.await_setup(context, & &1["worktreePath"])
-    assert snapshot["branch"] =~ ~r/^t3code\/[0-9a-f]{8}$/
+    assert snapshot["branch"] =~ ~r/^hal-c2\/[0-9a-f]{8}$/
     Map.put(context, :worktree, %{path: snapshot["worktreePath"], branch: snapshot["branch"]})
   end
 
@@ -191,7 +191,7 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
     assert %{"phase" => "done", "worktreePath" => path} = snapshot
     assert %{"terminalId" => ^terminal} = snapshot["setupScript"]
     assert World.setup_stage(snapshot, "setup-script") == "done"
-    assert [_] = Registry.lookup(T3.Terminal.Registry, {context.setup_thread, terminal})
+    assert [_] = Registry.lookup(HalC2.Terminal.Registry, {context.setup_thread, terminal})
     assert String.trim(File.read!(context.setup_log)) == path
     context
   end
@@ -327,7 +327,7 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
     # The run stops waiting for its workspace (it ended elsewhere) before the
     # setup hands it over.
     run = await_run(context.setup_thread, "preparing")
-    T3.Orchestration.fail_prepared(context.setup_thread, run["id"], "cancelled")
+    HalC2.Orchestration.fail_prepared(context.setup_thread, run["id"], "cancelled")
     assert %{"status" => "cancelled"} = await_run(context.setup_thread, "cancelled")
     context
   end
@@ -364,7 +364,7 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
   end
 
   step "it receives the setup's current stages, not a replay", context do
-    current = T3.WorktreeSetup.subscribe(context.setup_thread, self())
+    current = HalC2.WorktreeSetup.subscribe(context.setup_thread, self())
     assert context.watched == current
     assert current["sequence"] > 1
     assert World.setup_stage(current, "checkout") == "done"
@@ -381,7 +381,7 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
   end
 
   step "no setup progress is shown for that thread", context do
-    assert T3.WorktreeSetup.subscribe(context.setup_thread, self()) == nil
+    assert HalC2.WorktreeSetup.subscribe(context.setup_thread, self()) == nil
     context = World.put_client(context, World.client(context))
     context = watch_setup(context)
     assert context.watched == nil
@@ -474,7 +474,7 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
     assert %{"status" => "started", "terminalId" => "setup"} = script
 
     key = %{"threadId" => World.thread_id(context, "Work"), "terminalId" => "setup"}
-    {:ok, terminal} = T3.Terminal.attach(key, self())
+    {:ok, terminal} = HalC2.Terminal.attach(key, self())
     assert terminal["cwd"] == path
     await_output({key["threadId"], "setup"}, "setup-42", terminal["history"] || "")
     assert String.trim(File.read!(context.setup_log)) == path
@@ -487,10 +487,10 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
 
     id = World.thread_id(context, "Work")
     await_run(id, "completed")
-    state = T3.Streams.Server.state(T3.Streams.ensure(id))
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
 
     assert Enum.any?(
-             T3.StreamState.list(state, "message"),
+             HalC2.StreamState.list(state, "message"),
              &(&1["role"] == "user" and &1["text"] == context.continuation)
            )
 
@@ -520,7 +520,7 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
   end
 
   step "the agent asks for its worktree status", context do
-    Map.put(context, :handoff, tool(context, "t3_worktree_status", %{}))
+    Map.put(context, :handoff, tool(context, "halc2_worktree_status", %{}))
   end
 
   step "it learns it is attached, with the worktree path, branch and project root", context do
@@ -541,7 +541,7 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
 
   defp launch(context, text) do
     project = World.project(context)
-    settings = T3.Settings.for_project(project.id)
+    settings = HalC2.Settings.for_project(project.id)
 
     strategy =
       Map.merge(
@@ -598,7 +598,7 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
     ]
 
     {:ok, _} =
-      T3.Projects.mutate(%{
+      HalC2.Projects.mutate(%{
         "type" => "project.update",
         "projectId" => project.id,
         "scripts" => scripts
@@ -656,7 +656,7 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
 
   defp type(context, data) do
     {:ok, _} =
-      T3.Terminal.write(%{
+      HalC2.Terminal.write(%{
         "threadId" => context.setup_thread,
         "terminalId" => "setup",
         "data" => data
@@ -670,7 +670,7 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
     %{path: path} = context.worktree
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.metadata.update",
         "threadId" => World.thread_id(context, "Work"),
         "worktreePath" => path,
@@ -682,12 +682,12 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
   end
 
   defp handoff(context, args),
-    do: Map.put(context, :handoff, tool(context, "t3_worktree_handoff", args))
+    do: Map.put(context, :handoff, tool(context, "halc2_worktree_handoff", args))
 
   # Calls one of the agent's tools as the agent of the thread "Work".
   defp tool(context, name, arguments) do
-    Node.ensure(T3.Mcp)
-    %{authorization: auth} = T3.Mcp.server(World.thread_id(context, "Work"), "codex")
+    Node.ensure(HalC2.Mcp)
+    %{authorization: auth} = HalC2.Mcp.server(World.thread_id(context, "Work"), "codex")
 
     body =
       JSON.encode!(%{
@@ -697,7 +697,7 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
         "params" => %{"name" => name, "arguments" => arguments}
       })
 
-    case T3.Mcp.handle(auth, body) do
+    case HalC2.Mcp.handle(auth, body) do
       {200, %{"result" => %{"isError" => true, "content" => [%{"text" => text}]}}} ->
         {:error, JSON.decode!(text)}
 
@@ -708,18 +708,18 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
 
   # The thread's entity once it satisfies `fun`, following its stream.
   defp await_thread(id, fun) do
-    :ok = T3.Streams.subscribe(id, self(), nil)
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
     follow_thread(id, fun)
   end
 
   defp follow_thread(id, fun) do
-    thread = T3.StreamState.get(T3.Streams.Server.state(T3.Streams.ensure(id)), "thread")[id]
+    thread = HalC2.StreamState.get(HalC2.Streams.Server.state(HalC2.Streams.ensure(id)), "thread")[id]
 
     if thread && fun.(thread) do
       thread
     else
       receive do
-        {:t3_stream, ^id, _} -> follow_thread(id, fun)
+        {:halc2_stream, ^id, _} -> follow_thread(id, fun)
       after
         10_000 -> flunk("the thread never got there: #{inspect(thread)}")
       end
@@ -728,17 +728,17 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
 
   # The thread's newest run once it has `status`.
   defp await_run(id, status) do
-    :ok = T3.Streams.subscribe(id, self(), nil)
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
     follow_run(id, status)
   end
 
   defp follow_run(id, status) do
-    runs = T3.StreamState.list(T3.Streams.Server.state(T3.Streams.ensure(id)), "run")
+    runs = HalC2.StreamState.list(HalC2.Streams.Server.state(HalC2.Streams.ensure(id)), "run")
 
     case Enum.find(runs, &(&1["status"] == status)) do
       nil ->
         receive do
-          {:t3_stream, ^id, _} -> follow_run(id, status)
+          {:halc2_stream, ^id, _} -> follow_run(id, status)
         after
           15_000 -> flunk("no #{status} run: #{inspect(runs)}")
         end
@@ -751,7 +751,7 @@ defmodule T3.Steps.SourceControl.WorktreesAndSetupScripts do
   defp await_output(key, text, buffer) do
     unless String.contains?(buffer, text) do
       receive do
-        {:t3_terminal, ^key, %{"type" => "output", "data" => data}} ->
+        {:halc2_terminal, ^key, %{"type" => "output", "data" => data}} ->
           await_output(key, text, buffer <> data)
       after
         10_000 -> flunk("the terminal never printed #{text}: #{inspect(buffer)}")

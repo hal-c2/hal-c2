@@ -1,8 +1,8 @@
-defmodule T3.Steps.SourceControl.ReviewDiffs do
+defmodule HalC2.Steps.SourceControl.ReviewDiffs do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   defp write(context, path, content) do
     file = Path.join(context.cwd, path)

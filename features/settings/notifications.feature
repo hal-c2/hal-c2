@@ -8,7 +8,7 @@
 Feature: Thread notifications
   The user chooses how this device tells them a thread finished, failed, or needs input or
   approval: a system notification, a sound, both, or nothing, and whether a toast appears while
-  T3 Code is in front.
+  HAL-C2 is in front.
 
   Background:
     Given the user has a thread "Fix login"
@@ -18,7 +18,7 @@ Feature: Thread notifications
     @backlog @desktop
     Scenario Outline: The notification mode decides what happens when a thread finishes in the background
       Given the notification mode is "<mode>"
-      And T3 Code is in the background
+      And HAL-C2 is in the background
       When "Fix login" finishes
       Then <effect>
 
@@ -38,7 +38,7 @@ Feature: Thread notifications
 
     @backlog @desktop
     Scenario: Notifications need a secure page in a web browser
-      Given the user is using T3 Code over plain HTTP in a web browser
+      Given the user is using HAL-C2 over plain HTTP in a web browser
       When the user chooses notifications only
       Then the user is told notifications need HTTPS or the desktop app and that sound only is still available
 
@@ -47,7 +47,7 @@ Feature: Thread notifications
     @backlog @desktop
     Scenario Outline: The title says what the thread needs
       Given the notification mode is "Notifications only"
-      And T3 Code is in the background
+      And HAL-C2 is in the background
       When "Fix login" <event>
       Then a system notification titled "<title>" names "Fix login"
 
@@ -63,12 +63,12 @@ Feature: Thread notifications
     Scenario: Clicking a notification opens the thread
       Given a system notification for "Fix login" is shown
       When the user clicks it
-      Then T3 Code comes to the front showing "Fix login"
+      Then HAL-C2 comes to the front showing "Fix login"
 
     @backlog @desktop
-    Scenario: A toast appears instead while T3 Code is in front
+    Scenario: A toast appears instead while HAL-C2 is in front
       Given in-app notifications are on
-      And T3 Code is in front showing another thread
+      And HAL-C2 is in front showing another thread
       When "Fix login" finishes
       Then a toast says the thread completed and offers to open it
       And no system notification is shown
@@ -76,7 +76,7 @@ Feature: Thread notifications
     @backlog @desktop
     Scenario: The thread on screen does not notify
       Given in-app notifications are on
-      And T3 Code is in front showing "Fix login"
+      And HAL-C2 is in front showing "Fix login"
       When "Fix login" finishes
       Then no toast or notification is shown
 
@@ -90,5 +90,5 @@ Feature: Thread notifications
     Scenario: The app badge counts unseen notifications and clears on focus
       Given two system notifications are waiting
       Then the app shows a badge of 2
-      When the user brings T3 Code to the front
+      When the user brings HAL-C2 to the front
       Then the notifications are dismissed and the badge is cleared

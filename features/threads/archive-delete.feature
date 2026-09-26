@@ -6,7 +6,7 @@
 #   apps/tui/src/components/ThreadOverlays.tsx (delete confirmation)
 #   packages/contracts/src/orchestrationV2.ts (thread.archive, thread.unarchive, thread.delete, thread.archived, thread.unarchived, thread.deleted)
 #   packages/contracts/src/rpc.ts (getArchivedShellSnapshot, subscribeArchivedShell)
-#   apps/server-ex/lib/t3/orchestration.ex (archive, unarchive, delete, getArchivedShellSnapshot)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (archive, unarchive, delete, getArchivedShellSnapshot)
 #   apps/web/src/components/settings/SettingsPanels.tsx (ArchivedThreadsPanel: loading, empty, error, per-project groups)
 
 Feature: Archiving and deleting threads

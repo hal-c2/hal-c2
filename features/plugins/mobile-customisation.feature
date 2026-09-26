@@ -2,7 +2,7 @@
 #   /home/olafura/dev/opentui-qml src/runtime/plugins.ts (Slot replace and append, fallback content)
 #   apps/mobile/src/features/settings (screens a plugin may replace or extend)
 #   apps/mobile/src/features/threads/ThreadSettingsSheet.tsx
-#   apps/server-ex/lib/t3/environment.ex (per-environment identity)
+#   apps/server-ex/lib/hal_c2/environment.ex (per-environment identity)
 
 Feature: Customising the mobile app
   The mobile app is QML too, so the user can load UI plugins onto it the same way as

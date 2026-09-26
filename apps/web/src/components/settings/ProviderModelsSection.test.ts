@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ServerProviderModel } from "@t3tools/contracts";
+import type { ServerProviderModel } from "@hal-c2/contracts";
 
 import { groupModelsForDisplay, nextHiddenModelsForBulkToggle } from "./ProviderModelsSection";
 

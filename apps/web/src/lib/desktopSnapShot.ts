@@ -1,6 +1,6 @@
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge } from "@hal-c2/contracts";
 
-const SNAP_SHOT_FOCUS_EVENT = "t3code:focus-composer";
+const SNAP_SHOT_FOCUS_EVENT = "hal-c2:focus-composer";
 
 export function dispatchSnapShotComposerFocus(): void {
   if (typeof window === "undefined") return;

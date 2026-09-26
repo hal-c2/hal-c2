@@ -1,9 +1,9 @@
 # Sources:
 #   packages/contracts/src/orchestrationV2.ts (OrchestrationV2Command tags, version 2 event types)
 #   packages/contracts/src/orchestration.ts (OrchestrationEventType: the version 1 log)
-#   apps/server-ex/test/t3/node_parity_test.exs (@commands: status and dispatch path of every command)
-#   apps/server-ex/lib/t3/orchestration.ex (dispatch clauses, @thread_updates)
-#   apps/server-ex/lib/t3/import/v2.ex (how each Node event becomes an entity patch)
+#   apps/server-ex/test/hal_c2/node_parity_test.exs (@commands: status and dispatch path of every command)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (dispatch clauses, @thread_updates)
+#   apps/server-ex/lib/hal_c2/import/v2.ex (how each Node event becomes an entity patch)
 #   apps/server/src/orchestration/decider.ts, apps/server/src/orchestration/projector.ts
 #   Counts: 47 commands (37 aligned, 0 backlog, 10 dropped);
 #   41 version 2 events (all aligned); 32 version 1 events (all aligned).
@@ -80,10 +80,10 @@ Feature: Command and event parity with the TypeScript server
       | notification.delivery.accept                   | Node's notification worker                                                         |
       | prepared-run.progress                          | Node's launch worker; runs start in-process here                                   |
       | prepared-run.fail                              | Node's launch worker; runs start in-process here                                   |
-      | delegated_task.request                         | agents delegate over MCP (T3.Orchestration.Delegation)                             |
-      | delegated_task.wake-policy                     | agents delegate over MCP (T3.Orchestration.Delegation)                             |
-      | delegated_task.completion-delivery.acknowledge | agents delegate over MCP (T3.Orchestration.Delegation)                             |
-      | delegated_task.completion-delivery.dispose     | agents delegate over MCP (T3.Orchestration.Delegation)                             |
+      | delegated_task.request                         | agents delegate over MCP (HalC2.Orchestration.Delegation)                             |
+      | delegated_task.wake-policy                     | agents delegate over MCP (HalC2.Orchestration.Delegation)                             |
+      | delegated_task.completion-delivery.acknowledge | agents delegate over MCP (HalC2.Orchestration.Delegation)                             |
+      | delegated_task.completion-delivery.dispose     | agents delegate over MCP (HalC2.Orchestration.Delegation)                             |
       | thread.created.record                          | Node's thread-creation receipt; thread.create records here                         |
 
   @node

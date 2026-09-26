@@ -5,7 +5,7 @@
 #   apps/web/src/components/GitActionsControl.tsx
 #   apps/web/src/shell/ShellGitBridge.tsx
 #   packages/contracts/src/shell.ts (ShellGitState, git.quick, git.menu, git.refresh, git.publish)
-#   apps/desktop-qt/qml/T3/Bricks/GitActions.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml
 #   apps/tui/src/gitActions.logic.ts (resolveGitQuickAction, buildGitMenuItems, buildGitPanelActions)
 #   apps/tui/src/components/RightPanel.tsx
 
@@ -103,7 +103,7 @@ Feature: Recommended git action and the git menu
 
   @desktop
   Scenario: Opening the git menu refreshes status
-    Given the checkout changed outside T3 Code a moment ago
+    Given the checkout changed outside HAL-C2 a moment ago
     When the user opens the git menu
     Then the menu reflects the checkout as it is now
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { voiceInputFreezesEditor } from "@t3tools/client-runtime/voice-input";
+import { voiceInputFreezesEditor } from "@hal-c2/client-runtime/voice-input";
 
 import { resolveVoiceComposerPresentation } from "./voiceInputPresentation";
 

@@ -1,4 +1,4 @@
-import type { ServerConfigStreamEvent } from "@t3tools/contracts";
+import type { ServerConfigStreamEvent } from "@hal-c2/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

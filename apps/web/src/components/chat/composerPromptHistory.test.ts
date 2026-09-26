@@ -87,9 +87,9 @@ describe("recallableComposerPrompt", () => {
 
   it("removes canonical references without restoring dangling chips", () => {
     const sent =
-      "Look at [Terminal](t3-context://v1/terminal/term-1) please\n    indented  code\n![image](t3-context://v1/image/img-1)";
+      "Look at [Terminal](hal-c2-context://v1/terminal/term-1) please\n    indented  code\n![image](hal-c2-context://v1/image/img-1)";
     expect(recallableComposerPrompt(sent)).toBe("Look at please\n    indented  code");
-    expect(recallableComposerPrompt("![image](t3-context://v1/image/img-1)")).toBe("");
+    expect(recallableComposerPrompt("![image](hal-c2-context://v1/image/img-1)")).toBe("");
   });
 
   it("returns an empty string for app-composed sends", () => {

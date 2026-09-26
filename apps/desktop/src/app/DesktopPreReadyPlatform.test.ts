@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform } from "@hal-c2/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -83,13 +83,13 @@ describe("DesktopPreReadyPlatform", () => {
         vi.stubEnv("XDG_DATA_HOME", "/xdg");
         vi.stubEnv("APPIMAGE", "/Applications/current.AppImage");
         getSwitchValueMock.mockReturnValue("");
-        let desktopName = "t3code.desktop";
+        let desktopName = "hal-c2.desktop";
         let desktopEntry = previousEntry;
         setDesktopNameMock.mockImplementation((name: string) => {
           desktopName = name;
         });
         writeFileSyncMock.mockImplementation((path: string, contents: string) => {
-          if (path === "/xdg/applications/com.t3tools.T3Code.desktop") desktopEntry = contents;
+          if (path === "/xdg/applications/io.github.halc2.HalC2.desktop") desktopEntry = contents;
         });
 
         return Effect.scoped(
@@ -101,10 +101,10 @@ describe("DesktopPreReadyPlatform", () => {
               ),
             );
             const identity = yield* Effect.promise(() => portalIdentity);
-            assert.equal(identity.desktopName, "com.t3tools.T3Code.desktop");
+            assert.equal(identity.desktopName, "io.github.halc2.HalC2.desktop");
             assert.include(identity.desktopEntry ?? "", 'Exec="/Applications/current.AppImage" %U');
-            assert.include(identity.desktopEntry ?? "", "Name=T3 Code (Alpha)");
-            assert.include(identity.desktopEntry ?? "", "MimeType=x-scheme-handler/t3code;");
+            assert.include(identity.desktopEntry ?? "", "Name=HAL-C2 (Alpha)");
+            assert.include(identity.desktopEntry ?? "", "MimeType=x-scheme-handler/hal-c2;");
           }),
         ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
       },
@@ -128,7 +128,7 @@ describe("DesktopPreReadyPlatform", () => {
     () =>
       Effect.gen(function* () {
         class ClerkShaped extends Context.Service<ClerkShaped, { readonly ready: true }>()(
-          "@t3tools/desktop/app/DesktopPreReadyPlatform.test/ClerkShaped",
+          "@hal-c2/desktop/app/DesktopPreReadyPlatform.test/ClerkShaped",
         ) {}
 
         const events: Array<string> = [];

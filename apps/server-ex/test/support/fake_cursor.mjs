@@ -1,9 +1,9 @@
 // The Cursor ACP agent (packages/cursor-acp/src/agent.ts) over a fake Cursor SDK,
-// for the Cursor features (`T3.Test.AcpFixtures`).
+// for the Cursor features (`HalC2.Test.AcpFixtures`).
 //
 //   node fake_cursor.mjs --control DIR --mode MODE
 //
-// The instance is the directory T3_CURSOR_CREDENTIALS sits in; its behaviour is
+// The instance is the directory HALC2_CURSOR_CREDENTIALS sits in; its behaviour is
 // DIR/control.json["cursor-<instance>"] (`models`, `revoked`) and everything the SDK
 // is asked to do is appended to DIR/cursor-<instance>.log as JSON lines. Browser
 // sign-in finishes when DIR/cursor-<instance>.login-done exists ("the user finished
@@ -21,7 +21,7 @@ const opt = (flag, fallback) => {
 };
 const dir = opt("--control");
 const mode = opt("--mode", "approval-required");
-const credentials = process.env.T3_CURSOR_CREDENTIALS;
+const credentials = process.env.HALC2_CURSOR_CREDENTIALS;
 const name = `cursor-${path.basename(path.dirname(credentials))}`;
 let control = {};
 try {

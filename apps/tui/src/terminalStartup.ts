@@ -38,7 +38,7 @@ export interface TerminalStartupEnvironment {
  * known to support it before the renderer reads the environment.
  *
  * Bun does not propagate `process.env` writes to the native environ that the
- * renderer's Zig layer reads, so the `t3 tui` Node parent injects the same
+ * renderer's Zig layer reads, so the `hal-c2 tui` Node parent injects the same
  * default at spawn time (`colorCapabilityEnv` in apps/server/src/cli/tui.ts).
  * This in-process call still covers JS-side consumers and any subprocesses the
  * TUI spawns.

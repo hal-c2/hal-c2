@@ -8,11 +8,11 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import { symlinksSupported } from "@hal-c2/shared/testing/symlinks";
 import * as Layer from "effect/Layer";
 
 import { resolveCodexRollbackTurnCount } from "./Adapters/CodexAdapterV2.ts";
@@ -509,7 +509,9 @@ it.effect.skipIf(!symlinksSupported)(
   () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-restore-isolation-" });
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "hal-c2-restore-isolation-",
+      });
       const path = yield* Path.Path;
       const alias = path.join(cwd, "alias");
       yield* fileSystem.symlink(cwd, alias);

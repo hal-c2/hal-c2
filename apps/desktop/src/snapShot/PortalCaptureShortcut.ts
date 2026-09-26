@@ -12,7 +12,7 @@ import {
   type MessageLike,
 } from "dbus-next";
 import * as Schema from "effect/Schema";
-import type { SnapShotKeyChord } from "@t3tools/contracts";
+import type { SnapShotKeyChord } from "@hal-c2/contracts";
 import { HYPRLAND_CAPTURE_ACTION, portalShortcutTrigger } from "./linuxCaptureSession.ts";
 export { portalShortcutTrigger } from "./linuxCaptureSession.ts";
 
@@ -134,9 +134,7 @@ export class PortalCaptureShortcut {
     if (this.managedByHyprland)
       throw new Error("Change the capture binding in your Hyprland config, then save it.");
     if (!this.hasSession || this.version < 2)
-      throw new Error(
-        "Open your desktop's shortcut settings and allow T3 Code's capture shortcut.",
-      );
+      throw new Error("Open your desktop's shortcut settings and allow HAL-C2's capture shortcut.");
     await this.call({
       destination: this.owner,
       path: PATH,
@@ -164,7 +162,7 @@ export class PortalCaptureShortcut {
       // This failed session is closing, so retry can register a fresh one.
       shortcutCanRetry: !this.managedByHyprland,
       shortcutMessage: this.managedByHyprland
-        ? "Couldn't connect to Hyprland shortcuts. Make sure xdg-desktop-portal-hyprland is running, then restart T3 Code."
+        ? "Couldn't connect to Hyprland shortcuts. Make sure xdg-desktop-portal-hyprland is running, then restart HAL-C2."
         : error instanceof Error
           ? error.message
           : "Could not register the capture shortcut.",
@@ -270,7 +268,7 @@ export class PortalCaptureShortcut {
     body: unknown[],
     options: Record<string, Variant<unknown>> = {},
   ) {
-    const token = `t3_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
+    const token = `halc2_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
     const expectedPath = this.namespace + token;
     let resolve!: (body: unknown) => void;
     const response = new Promise<unknown>((done) => {
@@ -304,7 +302,7 @@ export class PortalCaptureShortcut {
             shortcutMessage:
               this.version >= 2
                 ? "Shortcut permission wasn't granted. Open shortcut permissions to allow it."
-                : "Shortcut permission wasn't granted. Allow T3 Code in your desktop's shortcut settings.",
+                : "Shortcut permission wasn't granted. Allow HAL-C2 in your desktop's shortcut settings.",
           });
           return undefined;
         }
@@ -327,7 +325,7 @@ export class PortalCaptureShortcut {
         shortcutPending: false,
         shortcutMessage: shortcut
           ? "Managed by Hyprland. Add the binding to your config and save it."
-          : "Hyprland did not register the capture action. Check that xdg-desktop-portal-hyprland is running, then restart T3 Code.",
+          : "Hyprland did not register the capture action. Check that xdg-desktop-portal-hyprland is running, then restart HAL-C2.",
       });
       return;
     }
@@ -400,7 +398,7 @@ export class PortalCaptureShortcut {
     const created = await this.request("CreateSession", "", [], {
       session_handle_token: new Variant(
         "s",
-        `t3_capture_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
+        `halc2_capture_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
       ),
     });
     const session = decodeSession(created).session_handle.value;
@@ -409,7 +407,7 @@ export class PortalCaptureShortcut {
     this.session = session;
     this.shortcutId = this.managedByHyprland
       ? HYPRLAND_CAPTURE_ACTION
-      : `t3-snap-shot-${NodeCrypto.createHash("sha256").update(trigger).digest("hex").slice(0, 16)}`;
+      : `hal-c2-snap-shot-${NodeCrypto.createHash("sha256").update(trigger).digest("hex").slice(0, 16)}`;
     // Every session must bind, even when the desktop remembers this shortcut's approval.
     const bound = await this.request("BindShortcuts", "oa(sa{sv})s", [
       this.session,

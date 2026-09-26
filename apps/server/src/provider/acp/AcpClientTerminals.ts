@@ -271,7 +271,7 @@ export const makeAcpClientTerminals = (
               ),
             );
 
-            const terminalId = `t3-term-${nextTerminalNumber}`;
+            const terminalId = `hal-c2-term-${nextTerminalNumber}`;
             nextTerminalNumber += 1;
             const record: ManagedAcpTerminal = {
               terminalId,

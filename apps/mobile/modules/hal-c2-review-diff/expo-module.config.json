@@ -1,0 +1,10 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["HalC2ReviewDiffModule"],
+    "podspecPath": "HalC2ReviewDiffNative.podspec"
+  },
+  "android": {
+    "modules": ["expo.modules.halc2reviewdiff.HalC2ReviewDiffModule"]
+  }
+}

@@ -1,4 +1,4 @@
-defmodule T3.Steps.Timeline.ToolCalls do
+defmodule HalC2.Steps.Timeline.ToolCalls do
   @moduledoc """
   Steps for `features/timeline/tool-calls.feature`. The three turns each write one file
   with the fake Codex: "turn-1.txt", "turn-2.txt", "turn-3.txt".
@@ -6,7 +6,7 @@ defmodule T3.Steps.Timeline.ToolCalls do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   step "a thread with three finished turns", context do
     World.finished_turns(

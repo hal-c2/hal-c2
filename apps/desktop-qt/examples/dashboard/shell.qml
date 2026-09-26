@@ -1,8 +1,8 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
-import T3.Shell
-import T3.Bricks
+import HalC2.Shell
+import HalC2.Bricks
 
 // Rosé dashboard: an icon rail owns project scope, the app's places and
 // settings, and the sidebar is just threads. The rail's Dashboard button
@@ -969,7 +969,7 @@ ShellWindow {
 
                                                     Text {
                                                         anchors.centerIn: parent
-                                                        text: root.instance ? root.initialOf(root.instance.displayName) : "T3"
+                                                        text: root.instance ? root.initialOf(root.instance.displayName) : "HAL-C2"
                                                         color: root.accentDeep
                                                         font.family: Theme.fontUi
                                                         font.pixelSize: 30

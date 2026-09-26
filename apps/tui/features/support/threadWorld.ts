@@ -3,7 +3,7 @@
 // steps then change `ctx.thread` with `updateThread`, which pushes it through
 // the fake client like a live server event. Client calls answer through
 // `ctx.respond`, so a scenario can make one fail after boot.
-import type { OrchestrationThread } from "@t3tools/contracts";
+import type { OrchestrationThread } from "@hal-c2/contracts";
 
 import type { TuiClient, TuiThreadPage } from "../../src/connection.ts";
 import type { Environment } from "./environment.ts";
@@ -163,7 +163,7 @@ export function checkpoint(
   return {
     turnId: `turn-${turnCount}`,
     checkpointTurnCount: turnCount,
-    checkpointRef: `refs/t3/checkpoints/${turnCount}`,
+    checkpointRef: `refs/hal-c2/checkpoints/${turnCount}`,
     status: "ready",
     files: files.map((file) =>
       typeof file === "string"

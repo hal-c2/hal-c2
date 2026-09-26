@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-// oxlint-disable-next-line t3code/no-global-process-runtime -- This native integration test uses the host Swift compiler.
+// oxlint-disable-next-line hal-c2/no-global-process-runtime -- This native integration test uses the host Swift compiler.
 describe.skipIf(NodeOS.platform() !== "darwin")(
   "NotificationCenterManager native concurrency",
   () => {
@@ -14,7 +14,7 @@ describe.skipIf(NodeOS.platform() !== "darwin")(
     let executable: string;
 
     beforeAll(() => {
-      directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-notifications-test-"));
+      directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hal-c2-notifications-test-"));
       executable = NodePath.join(directory, "notification-regression");
       const source = NodeFS.readFileSync(
         new URL(

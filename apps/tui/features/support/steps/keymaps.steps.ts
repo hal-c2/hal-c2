@@ -9,7 +9,7 @@ import { expect } from "bun:test";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@hal-c2/contracts";
 
 import { KEYMAP_LAYERS } from "../../../src/keymap.ts";
 import { step } from "../../steps.ts";
@@ -156,7 +156,7 @@ step(
   "the thread list has its own keymap named {string} that binds {string} to {string}",
   (_ctx: KeymapWorld, name: string, key: string, action: string) => {
     // A Given: read the source, so the keymap file that follows still applies at boot.
-    const source = NodeFS.readFileSync(NodePath.join(QML_DIR, "T3/Tui/ShellKeymap.qml"), "utf8");
+    const source = NodeFS.readFileSync(NodePath.join(QML_DIR, "HalC2/Tui/ShellKeymap.qml"), "utf8");
     expect(source).toContain(`name: "${name}"`);
     expect(source).toContain(`bindings: keys.layers.${name}`);
     expect(chordsFor(KEYMAP_LAYERS.list, action)).toContain(key);
@@ -203,17 +203,17 @@ step("the TUI starts with that keymap file", async (ctx: KeymapWorld) => {
   writeFile(ctx, "config/keymap.json", ctx.keymapFile);
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !key.startsWith("T3_TUI_") && key !== "T3CODE_HOME")
+    if (value !== undefined && !key.startsWith("HALC2_TUI_") && key !== "HALC2_HOME")
       env[key] = value;
   }
   const child = Bun.spawn(["bun", "src/index.ts"], {
     cwd: TUI_DIR,
     env: {
       ...env,
-      T3_TUI_ORIGIN: "http://127.0.0.1:9",
-      T3_TUI_BEARER: "unused",
-      T3_TUI_SHELL_DIR: configDir(ctx),
-      T3_TUI_LOG: writeFile(ctx, "tui.log", ""),
+      HALC2_TUI_ORIGIN: "http://127.0.0.1:9",
+      HALC2_TUI_BEARER: "unused",
+      HALC2_TUI_SHELL_DIR: configDir(ctx),
+      HALC2_TUI_LOG: writeFile(ctx, "tui.log", ""),
     },
     stdin: "ignore",
     stdout: "pipe",

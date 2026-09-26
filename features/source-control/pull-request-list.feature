@@ -2,15 +2,15 @@
 #   docs/user/source-control.md (Pull requests page)
 #   packages/contracts/src/pullRequest.ts (PullRequestListInput, PullRequestListResult, PullRequestProviderSummary, PullRequestUnavailableError)
 #   packages/contracts/src/rpc.ts (pullRequests.list, pullRequests.listStats, pullRequests.summary, pullRequests.invalidate, pullRequests.subscribeRefreshes)
-#   apps/server-ex/lib/t3/pull_requests.ex (list, list_stats, summary, invalidate)
-#   apps/server-ex/lib/t3/pull_requests/refreshes.ex
+#   apps/server-ex/lib/hal_c2/pull_requests.ex (list, list_stats, summary, invalidate)
+#   apps/server-ex/lib/hal_c2/pull_requests/refreshes.ex
 #   apps/web/src/components/pullRequest/pullRequestList.logic.ts
 #   apps/web/src/components/pullRequest/PullRequestListFilters.tsx
 #   apps/web/src/components/pullRequest/PullRequestListEmptyState.tsx
 #   apps/web/src/components/pullRequest/PullRequestListRow.tsx
 #   apps/web/src/components/pullRequest/pullRequestProjectFilter.logic.ts
 #   apps/web/src/components/pullRequest/pullRequestListPreferences.ts
-#   apps/desktop-qt/qml/T3/Bricks/Sidebar.qml (Pull requests)
+#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Pull requests)
 #   apps/desktop-qt/parity/features.backlog.test.ts (right panel pull request list)
 
 Feature: Browsing pull requests
@@ -117,7 +117,7 @@ Feature: Browsing pull requests
   @node
   Scenario: Clients hear when the list changed
     Given the user is looking at the pull request list
-    When someone merges a pull request from T3 Code
+    When someone merges a pull request from HAL-C2
     Then the client is told to refresh the list
 
   @node

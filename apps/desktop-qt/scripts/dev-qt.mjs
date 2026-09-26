@@ -2,19 +2,19 @@
  * Dev loop for the Qt shell:
  *   1. configure + build apps/desktop-qt with CMake (incremental after the first run)
  *   2. find the dev server started by `vp run dev` and mint a pairing URL for it
- *   3. launch t3code-qt --url <pairing url>
+ *   3. launch hal-c2-qt --url <pairing url>
  *
  * Flags the script consumes:
- *   --home-dir <dir>   T3 Code data directory of the dev server to pair with (same
+ *   --home-dir <dir>   HAL-C2 data directory of the dev server to pair with (same
  *                      as `vp run dev --home-dir`). Also becomes the shell's
- *                      T3CODE_HOME so it rices from <dir>/shell. Defaults to the
- *                      worktree's own .t3, then T3CODE_HOME, then ~/.t3 — the
- *                      precedence `vp run dev` and `t3 pair` use.
+ *                      HALC2_HOME so it rices from <dir>/shell. Defaults to the
+ *                      worktree's own .hal-c2, then HALC2_HOME, then ~/.hal-c2 — the
+ *                      precedence `vp run dev` and `hal-c2 pair` use.
  *   --url <url>        skip pairing and load this URL
  *   --release          build with CMAKE_BUILD_TYPE=Release (no disk QML loading)
  *   --configure-only   stop after the CMake build
  *   --help
- * Every other argument is passed through to the t3code-qt binary, so the
+ * Every other argument is passed through to the hal-c2-qt binary, so the
  * shell's own flags (--config-dir, --qml-dir, --screenshot, --action, ...)
  * work from `vp run dev:qt` too. A bare `--` forwards the rest verbatim.
  * Environment:
@@ -39,14 +39,14 @@ function fail(message) {
 function usage() {
   process.stdout.write(
     [
-      "Usage: vp run dev:qt [--home-dir <dir>] [--url <url>] [--release] [--configure-only] [-- <t3code-qt args>]",
+      "Usage: vp run dev:qt [--home-dir <dir>] [--url <url>] [--release] [--configure-only] [-- <hal-c2-qt args>]",
       "",
       "  --home-dir <dir>   data directory of the dev server to pair with (as `vp run dev --home-dir`)",
       "  --url <url>        skip pairing and load this URL",
       "  --release          Release build (no disk QML loading)",
       "  --configure-only   build, do not launch",
       "",
-      "Anything else is forwarded to t3code-qt (--config-dir, --qml-dir, --screenshot, --action, ...).",
+      "Anything else is forwarded to hal-c2-qt (--config-dir, --qml-dir, --screenshot, --action, ...).",
       "",
     ].join("\n"),
   );
@@ -131,8 +131,8 @@ function expandHome(raw) {
 }
 
 /**
- * The worktree-local `.t3` when this checkout is a linked git worktree, else
- * undefined. Mirrors `resolveWorktreeT3Home` in packages/shared/devHome:
+ * The worktree-local `.hal-c2` when this checkout is a linked git worktree, else
+ * undefined. Mirrors `resolveWorktreeHalC2Home` in packages/shared/devHome:
  * git puts a linked worktree's git dir at `<common-dir>/worktrees/<name>`.
  */
 function resolveWorktreeHome() {
@@ -141,24 +141,24 @@ function resolveWorktreeHome() {
   if (gitDir === undefined || topLevel === undefined) return undefined;
   const segments = gitDir.split(/[/\\]/).filter((segment) => segment.length > 0);
   const isLinkedWorktree = segments.length >= 3 && segments.at(-2) === "worktrees";
-  return isLinkedWorktree ? NodePath.join(topLevel, ".t3") : undefined;
+  return isLinkedWorktree ? NodePath.join(topLevel, ".hal-c2") : undefined;
 }
 
-/** `--home-dir` > worktree `.t3` > `T3CODE_HOME` > `~/.t3`, as `vp run dev` and `t3 pair` resolve it. */
+/** `--home-dir` > worktree `.hal-c2` > `HALC2_HOME` > `~/.hal-c2`, as `vp run dev` and `hal-c2 pair` resolve it. */
 function resolveHomeDir() {
   const explicit = options.homeDir ?? "";
   if (explicit.trim().length > 0) return NodePath.resolve(expandHome(explicit));
   const worktreeHome = resolveWorktreeHome();
   if (worktreeHome !== undefined) return worktreeHome;
-  const fromEnv = process.env.T3CODE_HOME ?? "";
+  const fromEnv = process.env.HALC2_HOME ?? "";
   if (fromEnv.trim().length > 0) return NodePath.resolve(expandHome(fromEnv));
-  const shared = NodePath.join(NodeOS.homedir(), ".t3");
+  const shared = NodePath.join(NodeOS.homedir(), ".hal-c2");
   refuseLiveInstall(shared);
   return shared;
 }
 
 /**
- * `pair --base-dir ~/.t3` probes `userdata` (the installed app's database)
+ * `pair --base-dir ~/.hal-c2` probes `userdata` (the installed app's database)
  * before `dev` (what a plain-checkout `vp run dev` serves). Pairing must never
  * mint a token into the live install, so bail out while that app is running.
  */
@@ -175,7 +175,7 @@ function refuseLiveInstall(sharedHome) {
     return;
   }
   fail(
-    `the installed T3 Code app is running against ${userdata}; pairing here would target it instead of your dev server. Pass --url <pairing url from vp run dev>, or run from a worktree / with --home-dir.`,
+    `the installed HAL-C2 app is running against ${userdata}; pairing here would target it instead of your dev server. Pass --url <pairing url from vp run dev>, or run from a worktree / with --home-dir.`,
   );
 }
 
@@ -200,9 +200,9 @@ function build() {
 function binaryPath() {
   // macOS bundle, plain executable, Windows executable: whichever this build produced.
   const candidates = [
-    NodePath.join(buildDir, "t3code-qt.app/Contents/MacOS/t3code-qt"),
-    NodePath.join(buildDir, "t3code-qt"),
-    NodePath.join(buildDir, "t3code-qt.exe"),
+    NodePath.join(buildDir, "hal-c2-qt.app/Contents/MacOS/hal-c2-qt"),
+    NodePath.join(buildDir, "hal-c2-qt"),
+    NodePath.join(buildDir, "hal-c2-qt.exe"),
   ];
   const found = candidates.find((candidate) => NodeFS.existsSync(candidate));
   return found ?? fail(`built binary not found under ${buildDir}`);
@@ -216,7 +216,7 @@ function pairWithDevServer(homeDir) {
   );
   const url = findPairingUrl(`${result.stdout}\n${result.stderr}`);
   if (url !== undefined) return url;
-  // `pair` logs its "No running T3 Code server" report (with the state paths it
+  // `pair` logs its "No running HAL-C2 server" report (with the state paths it
   // checked) through the Effect logger, i.e. on stdout.
   process.stderr.write(`${result.stdout}${result.stderr}`.trim() + "\n");
   return fail(
@@ -236,7 +236,7 @@ process.stderr.write(`[dev-qt] launching ${binary} ${binaryArgs.join(" ")}\n`);
 const child = NodeChildProcess.spawn(binary, binaryArgs, {
   stdio: "inherit",
   cwd: appDir,
-  env: { ...process.env, T3CODE_HOME: homeDir },
+  env: { ...process.env, HALC2_HOME: homeDir },
 });
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => child.kill(signal));

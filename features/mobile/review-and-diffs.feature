@@ -1,7 +1,7 @@
 # Sources:
 #   apps/mobile/src/features/review/ (diff source selector, viewed files, comments, notices)
 #   apps/mobile/src/features/diffs/
-#   apps/mobile/modules/t3-review-diff
+#   apps/mobile/modules/hal-c2-review-diff
 #   apps/mobile/src/features/threads/ git routes (git actions, commit, branches, confirm)
 # Diff sources, checkpoints and source control actions are specified in
 # features/source-control/ and features/timeline/. This file covers reading and commenting

@@ -1,8 +1,8 @@
 # Sources:
-#   apps/server-ex/lib/t3/diagnostics.ex (ps sampler, process list, telemetry, signalProcess, traces)
-#   apps/server-ex/lib/t3/environment.ex (server config observability, logs directory)
-#   apps/server-ex/lib/t3/web/socket.ex (resourceTelemetry shape)
-#   apps/server-ex/test/t3/features_backlog_test.exs (client-trace-forwarding)
+#   apps/server-ex/lib/hal_c2/diagnostics.ex (ps sampler, process list, telemetry, signalProcess, traces)
+#   apps/server-ex/lib/hal_c2/environment.ex (server config observability, logs directory)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (resourceTelemetry shape)
+#   apps/server-ex/test/hal_c2/features_backlog_test.exs (client-trace-forwarding)
 #   packages/contracts/src/server.ts (server.getTraceDiagnostics, server.getProcessDiagnostics,
 #     server.getHostResources, server.getProcessResourceHistory, server.getResourceTelemetryHistory,
 #     server.retryResourceTelemetry, server.signalProcess, subscribeResourceTelemetry)

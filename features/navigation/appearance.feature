@@ -11,7 +11,7 @@ Feature: Appearance
   contrast, fonts and motion. Appearance preferences belong to the device.
 
   Background:
-    Given the user is using T3 Code on the desktop
+    Given the user is using HAL-C2 on the desktop
 
   Rule: Light, dark and system
 
@@ -54,7 +54,7 @@ Feature: Appearance
     @backlog @desktop
     Scenario: Appearance preferences stay on this device
       Given the user chose the Dark appearance on the desktop
-      When the user opens T3 Code in a browser signed in to the same environment
+      When the user opens HAL-C2 in a browser signed in to the same environment
       Then the browser keeps its own appearance
 
   Rule: Themes

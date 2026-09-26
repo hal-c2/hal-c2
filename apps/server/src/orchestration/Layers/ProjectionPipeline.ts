@@ -6,12 +6,12 @@ import {
   UserInputAttachmentAnswerPayload,
   type ChatAttachment,
   ThreadId,
-} from "@t3tools/contracts";
-import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
+} from "@hal-c2/contracts";
+import { compareDateTimeStrings } from "@hal-c2/shared/dateTime";
 import type {
   OrchestrationEvent,
   OrchestrationSessionStatus,
-} from "@t3tools/contracts/legacy-orchestration";
+} from "@hal-c2/contracts/legacy-orchestration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -24,7 +24,7 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import {
   legacyThreadPullRequestKey,
   threadPullRequestKeysEqual,
-} from "@t3tools/shared/threadPullRequests";
+} from "@hal-c2/shared/threadPullRequests";
 
 import {
   toPersistenceDecodeError,

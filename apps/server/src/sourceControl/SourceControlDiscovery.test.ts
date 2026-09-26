@@ -9,7 +9,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { VcsProcessSpawnError } from "@t3tools/contracts";
+import { VcsProcessSpawnError } from "@hal-c2/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -33,7 +33,7 @@ const sourceControlProviderRegistryTestLayer = (input: {
     Layer.provide(
       Layer.mergeAll(
         ServerConfig.layerTest(process.cwd(), {
-          prefix: "t3-source-control-registry-test-",
+          prefix: "hal-c2-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)(input.bitbucket),
@@ -452,7 +452,7 @@ it.effect("reports implemented tools separately from locally available executabl
   const testLayer = SourceControlDiscovery.layer.pipe(
     Layer.provide(
       ServerConfig.layerTest(process.cwd(), {
-        prefix: "t3-source-control-discovery-",
+        prefix: "hal-c2-source-control-discovery-",
       }),
     ),
     Layer.provide(Layer.mock(VcsProcess.VcsProcess)(processMock)),
@@ -465,7 +465,7 @@ it.effect("reports implemented tools separately from locally available executabl
             account: Option.none(),
             host: Option.some("bitbucket.org"),
             detail: Option.some(
-              "Set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN, or T3CODE_BITBUCKET_ACCESS_TOKEN.",
+              "Set HALC2_BITBUCKET_EMAIL and HALC2_BITBUCKET_API_TOKEN, or HALC2_BITBUCKET_ACCESS_TOKEN.",
             ),
           }),
         },
@@ -603,7 +603,7 @@ Logged in to gitlab.com as gitlab-user
   const testLayer = SourceControlDiscovery.layer.pipe(
     Layer.provide(
       ServerConfig.layerTest(process.cwd(), {
-        prefix: "t3-source-control-auth-discovery-",
+        prefix: "hal-c2-source-control-auth-discovery-",
       }),
     ),
     Layer.provide(Layer.mock(VcsProcess.VcsProcess)(processMock)),
@@ -1491,7 +1491,7 @@ it.effect(
       const fs = yield* FileSystem.FileSystem;
       const git = yield* VcsProcess.VcsProcess;
       const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-fj-checkout-" });
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-fj-checkout-" });
       const source = path.join(root, "source");
       const cwd = path.join(root, "checkout");
       yield* fs.makeDirectory(source);

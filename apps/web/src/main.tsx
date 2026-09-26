@@ -13,7 +13,7 @@ import {
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
-import { isT3Shell } from "./env";
+import { isHalC2Shell } from "./env";
 import { enableShellDocumentSync } from "./shell/shellDocumentSync";
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
@@ -26,7 +26,7 @@ if (isElectron) {
   syncDocumentWindowControlsOverlayClass();
 }
 
-if (isT3Shell) {
+if (isHalC2Shell) {
   enableShellDocumentSync();
 }
 

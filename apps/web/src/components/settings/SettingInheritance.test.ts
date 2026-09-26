@@ -1,5 +1,5 @@
-import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ProjectId } from "@hal-c2/contracts";
+import { resolveProjectSettings } from "@hal-c2/shared/projectSettings";
 import { describe, expect, it } from "vite-plus/test";
 
 import { settingInheritanceLayers } from "./SettingInheritance";
@@ -55,7 +55,7 @@ describe("settingInheritanceLayers", () => {
     ]);
   });
 
-  it("shows the checkout's t3.json as a layer for file-backed keys", () => {
+  it("shows the checkout's hal-c2.json as a layer for file-backed keys", () => {
     const file = { defaultThreadEnvMode: "worktree" as const };
     const fromFile = settingInheritanceLayers(
       {
@@ -70,7 +70,7 @@ describe("settingInheritanceLayers", () => {
     expect(fromFile.map((layer) => [layer.label, layer.value, layer.effective])).toEqual([
       ["Project", "Inherits", false],
       ["Laptop", "Inherits", false],
-      ["t3.json", "New worktree", true],
+      ["hal-c2.json", "New worktree", true],
       ["Default", "Current checkout", false],
     ]);
     const settings = { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: "local" as const };

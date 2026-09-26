@@ -2,7 +2,7 @@
 // the checkpoint diff viewer over the conversation. The palette's "View all
 // changes" and the timeline's changed-files rows open it with `diff.open`.
 import { expect } from "bun:test";
-import type { OrchestrationThread } from "@t3tools/contracts";
+import type { OrchestrationThread } from "@hal-c2/contracts";
 
 import { step } from "../../steps.ts";
 import { ready, scm, setCheckout, setDetail, settle, vcsStatus } from "../gitWorld.ts";
@@ -33,7 +33,7 @@ function checkpoint(turn: number, paths: string[]): OrchestrationThread["checkpo
   return {
     turnId: `turn-${turn}`,
     checkpointTurnCount: turn,
-    checkpointRef: `refs/t3/checkpoints/${turn}`,
+    checkpointRef: `refs/hal-c2/checkpoints/${turn}`,
     status: "ready",
     files: paths.map((path) => ({ path, kind: "modified", additions: 1, deletions: 1 })),
     assistantMessageId: null,

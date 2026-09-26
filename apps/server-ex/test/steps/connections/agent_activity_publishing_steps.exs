@@ -1,31 +1,31 @@
-defmodule T3.Steps.Connections.AgentActivityPublishing do
+defmodule HalC2.Steps.Connections.AgentActivityPublishing do
   @moduledoc "Steps for `features/connections/agent-activity-publishing.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Connect.{Jwt, Publisher}
-  alias T3.Test.FakeRelay
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Connect.{Jwt, Publisher}
+  alias HalC2.Test.FakeRelay
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @fake_cloudflared Path.expand("../../support/fake_cloudflared.sh", __DIR__)
   @thread "Fix login"
 
   # Linked as the settings page links it: a proof for the relay, then the relay's
   # answer with a managed tunnel. The relay client is a fake on the PATH.
-  step "a node linked to T3 Connect", context do
+  step "a node linked to HAL-C2 Connect", context do
     relay = FakeRelay.start()
     bin = Node.tmp_dir(context.node, "bin")
     connector = Path.join(bin, "cloudflared")
     File.cp!(@fake_cloudflared, connector)
     File.chmod!(connector, 0o755)
-    Application.put_env(:t3, :relay_client_env, %{"PATH" => bin})
+    Application.put_env(:hal_c2, :relay_client_env, %{"PATH" => bin})
 
     ExUnit.Callbacks.on_exit({__MODULE__, :relay_host}, fn ->
-      Application.delete_env(:t3, :relay_client_env)
+      Application.delete_env(:hal_c2, :relay_client_env)
     end)
 
-    Node.ensure(T3.Connect.Supervisor)
+    Node.ensure(HalC2.Connect.Supervisor)
 
     context =
       context |> Map.put(:relay, relay) |> Map.put(:admin, Node.pair(Node.admin_scopes(), "Web"))
@@ -86,7 +86,7 @@ defmodule T3.Steps.Connections.AgentActivityPublishing do
   end
 
   step "the update names the project, thread, model and a link to the thread", context do
-    env = T3.Environment.id()
+    env = HalC2.Environment.id()
     thread = World.thread_id(context, @thread)
 
     assert %{
@@ -107,12 +107,12 @@ defmodule T3.Steps.Connections.AgentActivityPublishing do
     context |> preferences!(true) |> agent("is working") |> assert_published("running")
   end
 
-  # A restart settles the cut-off turn as interrupted before T3 Connect starts again.
+  # A restart settles the cut-off turn as interrupted before HAL-C2 Connect starts again.
   step "the node restarts without finishing it", context do
-    ExUnit.Callbacks.stop_supervised(T3.Connect.Supervisor)
+    ExUnit.Callbacks.stop_supervised(HalC2.Connect.Supervisor)
     node = Node.restart(context.node)
     World.await_row(World.thread_id(context, @thread), &(&1["status"] == "interrupted"))
-    Node.ensure(T3.Connect.Supervisor)
+    Node.ensure(HalC2.Connect.Supervisor)
     Map.put(context, :node, node)
   end
 
@@ -122,7 +122,7 @@ defmodule T3.Steps.Connections.AgentActivityPublishing do
 
   step "the thread is deleted", context do
     thread = World.thread_id(context, @thread)
-    {:ok, _} = T3.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => thread})
+    {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => thread})
     World.await_row(thread, &(&1["deletedAt"] != nil))
     context
   end
@@ -140,10 +140,10 @@ defmodule T3.Steps.Connections.AgentActivityPublishing do
   step "the update carries the node's signed proof for that thread and state", context do
     assert [{state, proof}] = published(context)
     {public, _private} = Jwt.key_pair()
-    env = T3.Environment.id()
+    env = HalC2.Environment.id()
 
     assert {:ok, claims} =
-             Jwt.verify(proof, "t3-env-activity+jwt", public, "t3-env:" <> env, context.relay.url)
+             Jwt.verify(proof, "hal-c2-env-activity+jwt", public, "hal-c2-env:" <> env, context.relay.url)
 
     assert claims["threadId"] == World.thread_id(context, @thread)
     assert claims["environmentId"] == env
@@ -155,7 +155,7 @@ defmodule T3.Steps.Connections.AgentActivityPublishing do
     context = context |> preferences!(true) |> agent("is working")
     assert [{state, proof}] = published(context)
     thread = World.thread_id(context, @thread)
-    assert {T3.Environment.id(), thread, proof} in FakeRelay.get(context.relay, :accepted)
+    assert {HalC2.Environment.id(), thread, proof} in FakeRelay.get(context.relay, :accepted)
     Map.put(context, :update, {thread, %{"state" => state, "proof" => proof}})
   end
 
@@ -163,7 +163,7 @@ defmodule T3.Steps.Connections.AgentActivityPublishing do
     {thread, body} = context.update
 
     reply =
-      T3.Connect.relay(
+      HalC2.Connect.relay(
         :post,
         activity_url(context, thread),
         context.link["environmentCredential"],
@@ -208,14 +208,14 @@ defmodule T3.Steps.Connections.AgentActivityPublishing do
     context |> agent("completes its turn") |> assert_published("completed")
   end
 
-  step "a node paired directly and not linked to T3 Connect", context do
+  step "a node paired directly and not linked to HAL-C2 Connect", context do
     {200, %{"ok" => true}} = connect(context, "/api/connect/unlink", %{})
     context
   end
 
   step "the user cannot turn on agent activity publishing", context do
     assert {409, %{"message" => message}} = preferences(context, true)
-    assert message =~ "Link this environment to T3 Connect"
+    assert message =~ "Link this environment to HAL-C2 Connect"
     {200, state} = Node.http(context.node, :get, "/api/connect/link-state", bearer: context.admin)
     assert state["publishAgentActivity"] == false
     context
@@ -237,7 +237,7 @@ defmodule T3.Steps.Connections.AgentActivityPublishing do
   step "the turn completes as usual", context do
     assert %{"status" => "completed"} = World.row(context, @thread)
     assert [{%{"phase" => "completed"}, _}] = published(context)
-    refute {T3.Environment.id(), World.thread_id(context, @thread)} in accepted(context)
+    refute {HalC2.Environment.id(), World.thread_id(context, @thread)} in accepted(context)
     context
   end
 
@@ -311,7 +311,7 @@ defmodule T3.Steps.Connections.AgentActivityPublishing do
     do: for({env, thread, _} <- FakeRelay.get(context.relay, :accepted), do: {env, thread})
 
   defp activity_path(_context, thread),
-    do: "/v1/environments/#{T3.Environment.id()}/threads/#{thread}/agent-activity"
+    do: "/v1/environments/#{HalC2.Environment.id()}/threads/#{thread}/agent-activity"
 
   defp activity_url(context, thread), do: context.relay.url <> activity_path(context, thread)
 
@@ -338,5 +338,5 @@ defmodule T3.Steps.Connections.AgentActivityPublishing do
     do: Node.http(context.node, :post, path, bearer: context.admin, json: body)
 
   defp relay_post(relay, path, body),
-    do: T3.Connect.relay(:post, relay.url <> path, "clerk-token", body)
+    do: HalC2.Connect.relay(:post, relay.url <> path, "clerk-token", body)
 end

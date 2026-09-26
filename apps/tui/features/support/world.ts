@@ -15,14 +15,14 @@ import type { StepContext } from "../steps.ts";
 import { fakeClient } from "./fakeClient.ts";
 
 export const QML_DIR = NodePath.resolve(import.meta.dir, "../../qml");
-export const DEFAULT_SHELL = NodePath.join(QML_DIR, "T3/Tui/DefaultShell.qml");
+export const DEFAULT_SHELL = NodePath.join(QML_DIR, "HalC2/Tui/DefaultShell.qml");
 
 const DEFAULT_COLUMNS = 100;
 const DEFAULT_ROWS = 40;
 
 /** How the client starts: a user shell, plugins, keymap overrides, context values. */
 export interface BootOptions {
-  /** A user `shell.qml` booted instead of DefaultShell; `import T3.Tui` resolves. */
+  /** A user `shell.qml` booted instead of DefaultShell; `import HalC2.Tui` resolves. */
   shellSource?: string;
   /** Plugin files (paths) or script plugins (`{ id, slots, ... }`). */
   plugins?: Array<string | object>;

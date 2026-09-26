@@ -28,7 +28,7 @@ describe("faviconUrlForOrigin", () => {
   });
 
   it("keeps the public origin, port and requested size", () => {
-    expect(faviconUrlForOrigin("https://github.com:8443/pingdotgg/t3code?private=query", 64)).toBe(
+    expect(faviconUrlForOrigin("https://github.com:8443/hal-c2/hal-c2?private=query", 64)).toBe(
       "https://www.google.com/s2/favicons?domain=github.com%3A8443&sz=64",
     );
   });

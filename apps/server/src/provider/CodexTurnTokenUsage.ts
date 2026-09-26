@@ -1,4 +1,4 @@
-import type { TurnTokenUsage } from "@t3tools/contracts";
+import type { TurnTokenUsage } from "@hal-c2/contracts";
 import type * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 type CodexCumulativeTokenUsage = {

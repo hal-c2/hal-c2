@@ -1,6 +1,6 @@
 # Sources:
 #   docs/user/thread-sidebar.md
-#   apps/desktop-qt/qml/T3/Bricks/Sidebar.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml
 #   apps/desktop-qt/tests/tst_Sidebar.qml
 #   apps/web/src/components/Sidebar.tsx
 #   apps/web/src/components/Sidebar.logic.ts

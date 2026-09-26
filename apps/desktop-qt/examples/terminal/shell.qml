@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
-import T3.Shell
-import T3.Bricks
+import HalC2.Shell
+import HalC2.Bricks
 
 // Terminal: a status line on top (wordmark, prompt mark, thread counts and
 // the model in the palette's colours), the sidebar on the darker chrome,
@@ -96,7 +96,7 @@ ShellWindow {
                 anchors.fill: parent
                 spacing: 0
 
-                T3Wordmark {
+                HalC2Wordmark {
                     Layout.alignment: Qt.AlignVCenter
                     Layout.leftMargin: 14
                     size: 10

@@ -2,7 +2,7 @@ import type {
   OrchestrationThreadActivity,
   UserInputQuestion as ContractUserInputQuestion,
   UserInputQuestionOption,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 
 import { isStalePendingRequestFailureDetail } from "./staleRequest.ts";
 

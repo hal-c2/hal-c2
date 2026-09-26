@@ -2,8 +2,8 @@
 #   packages/contracts/src/rpc.ts (orchestration.launchThread)
 #   packages/contracts/src/orchestrationV2.ts (thread.create, message.dispatch, prepared-run.release,
 #     prepared-run.progress, prepared-run.fail, run.created, run.updated)
-#   apps/server-ex/lib/t3/orchestration.ex (launch_thread, release_prepared, fail_prepared)
-#   apps/server-ex/lib/t3/worktree_setup.ex
+#   apps/server-ex/lib/hal_c2/orchestration.ex (launch_thread, release_prepared, fail_prepared)
+#   apps/server-ex/lib/hal_c2/worktree_setup.ex
 #   apps/server/src/orchestration-v2/ (launch and prepared run handling)
 Feature: Launching a thread with its first message
   Launching creates a thread in the project root, an existing worktree, or a new

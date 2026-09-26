@@ -1,6 +1,6 @@
 import QtQuick
 import QtTest
-import "../qml/T3/Bricks"
+import "../qml/HalC2/Bricks"
 
 Item {
     id: root

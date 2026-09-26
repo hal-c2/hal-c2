@@ -1,10 +1,10 @@
-defmodule T3.Steps.Orchestration.PullRequestLinks do
+defmodule HalC2.Steps.Orchestration.PullRequestLinks do
   @moduledoc "Steps for features/node/orchestration/pull-request-links.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Projection.PullRequests
-  alias T3.Test.Node.World
+  alias HalC2.Projection.PullRequests
+  alias HalC2.Test.Node.World
 
   # --- arranging --------------------------------------------------------------------
 
@@ -62,7 +62,7 @@ defmodule T3.Steps.Orchestration.PullRequestLinks do
   end
 
   step "the thread's worktree changed before discovery finished", context do
-    worktree = T3.Test.Node.tmp_dir(context.node, "worktree")
+    worktree = HalC2.Test.Node.tmp_dir(context.node, "worktree")
 
     context
     |> command(context.thread, "thread.metadata.update", %{"worktreePath" => worktree})
@@ -71,10 +71,10 @@ defmodule T3.Steps.Orchestration.PullRequestLinks do
 
   step "the project's workspace root changed before discovery finished", context do
     project = World.project(context)
-    root = T3.Test.Node.tmp_dir(context.node, "moved")
+    root = HalC2.Test.Node.tmp_dir(context.node, "moved")
 
     {:ok, _} =
-      T3.Projects.mutate(%{
+      HalC2.Projects.mutate(%{
         "type" => "project.update",
         "projectId" => project.id,
         "workspaceRoot" => root
@@ -320,10 +320,10 @@ defmodule T3.Steps.Orchestration.PullRequestLinks do
     |> ok!()
   end
 
-  # What `T3.PullRequests.Discovery` decides from: the thread and its project as seen.
+  # What `HalC2.PullRequests.Discovery` decides from: the thread and its project as seen.
   defp expected(context, thread) do
     row = World.thread(context, thread)
-    {"project", project} = T3.Shell.row(node(), row["projectId"])
+    {"project", project} = HalC2.Shell.row(node(), row["projectId"])
 
     %{
       "workspaceRoot" => project["workspaceRoot"],

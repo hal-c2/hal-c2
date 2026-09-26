@@ -1,20 +1,20 @@
-defmodule T3.Steps.Parity.Commands do
+defmodule HalC2.Steps.Parity.Commands do
   @moduledoc """
   Steps for `features/parity/commands.feature`: every aligned command dispatched
   over the socket and seen by a second socket following the thread, and every
-  event of the Node server's log imported with `T3.Import.V2` into the running
+  event of the Node server's log imported with `HalC2.Import.V2` into the running
   node's store.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias Exqlite.Sqlite3
-  alias T3.StreamState
-  alias T3.Test.{Node, WsClient}
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.{Node, WsClient}
+  alias HalC2.Test.Node.World
 
   @support Path.expand("../../support", __DIR__)
-  @orchestration Path.expand("../../../lib/t3/orchestration.ex", __DIR__)
+  @orchestration Path.expand("../../../lib/hal_c2/orchestration.ex", __DIR__)
   @follow 41
   @url "https://github.com/acme/widgets/pull/"
 
@@ -24,9 +24,9 @@ defmodule T3.Steps.Parity.Commands do
     fake_providers()
 
     {:ok, access, _expires, _scopes} =
-      T3.Auth.exchange(T3.Auth.create_pairing_token(context.node.store), %{"label" => "Phone"})
+      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.node.store), %{"label" => "Phone"})
 
-    {:ok, ticket, _} = T3.Auth.issue_ticket(access)
+    {:ok, ticket, _} = HalC2.Auth.issue_ticket(access)
 
     context
     |> World.create_project("Parity")
@@ -66,7 +66,7 @@ defmodule T3.Steps.Parity.Commands do
       "thread update" ->
         assert thread_update?, "#{type} is not in @thread_updates"
         missing = Map.put(context.command, "threadId", "th-missing-#{System.unique_integer()}")
-        assert {:error, "unknown thread " <> _} = T3.Orchestration.dispatch(missing)
+        assert {:error, "unknown thread " <> _} = HalC2.Orchestration.dispatch(missing)
 
       "dispatch" ->
         refute thread_update?, "#{type} is a thread update"
@@ -106,7 +106,7 @@ defmodule T3.Steps.Parity.Commands do
         assert [%{"s" => %{"status" => "ready"}}] = patches
 
       "a patch that unbinds the session from the thread" ->
-        assert last == T3.Patch.delete()
+        assert last == HalC2.Patch.delete()
 
       "a patch on the session while the thread is bound to it" ->
         assert %{"s" => %{"status" => "running"}} = last
@@ -136,7 +136,7 @@ defmodule T3.Steps.Parity.Commands do
     if expect.entity do
       entity = entities[{kind, expect.id}]
       assert entity, "no #{kind} #{expect.id} in the stream snapshot"
-      assert entity == T3.Web.Wire.entity(kind, expect.entity)
+      assert entity == HalC2.Web.Wire.entity(kind, expect.entity)
     else
       refute Map.has_key?(entities, {kind, expect.id})
     end
@@ -255,17 +255,17 @@ defmodule T3.Steps.Parity.Commands do
 
   step "the imported thread is the same as without it", context do
     assert context.import_report.source_events == length(context.log_rows)
-    store_path = Path.join(Node.tmp_dir(context.node, "without"), "t3.sqlite")
+    store_path = Path.join(Node.tmp_dir(context.node, "without"), "hal-c2.sqlite")
 
     store =
-      ExUnit.Callbacks.start_supervised!({T3.Store, path: store_path, name: nil},
+      ExUnit.Callbacks.start_supervised!({HalC2.Store, path: store_path, name: nil},
         id: :parity_without
       )
 
-    {:ok, _} = T3.Import.V2.run(write_log(context, context.log_without), store)
+    {:ok, _} = HalC2.Import.V2.run(write_log(context, context.log_without), store)
     with_it = entities(context.log_thread)
     assert with_it["thread"][context.log_thread]["title"] == "Imported"
-    assert with_it == StreamState.load(T3.Store.path(store), context.log_thread).entities
+    assert with_it == StreamState.load(HalC2.Store.path(store), context.log_thread).entities
     context
   end
 
@@ -373,7 +373,7 @@ defmodule T3.Steps.Parity.Commands do
         "snapshot" => snapshot,
         "stack" => nil
       }),
-      &match?([%{"snapshot" => ^snapshot}], T3.Projection.PullRequests.of(&1))
+      &match?([%{"snapshot" => ^snapshot}], HalC2.Projection.PullRequests.of(&1))
     )
   end
 
@@ -481,7 +481,7 @@ defmodule T3.Steps.Parity.Commands do
     {tid, [_, queued]} = queue(context, 1)
 
     {:ok, _} =
-      T3.Streams.commit(tid, :thread, [{"run", queued["id"], %{"s" => %{"queueHeld" => true}}}])
+      HalC2.Streams.commit(tid, :thread, [{"run", queued["id"], %{"s" => %{"queueHeld" => true}}}])
 
     %{
       command: %{"threadId" => tid},
@@ -551,14 +551,14 @@ defmodule T3.Steps.Parity.Commands do
     await_runs(tid, ["completed"])
     send!(tid, "write b.txt")
     [_, second] = runs(await_runs(tid, ["completed", "completed"]))
-    scope = T3.Checkpoint.scope_id(tid)
+    scope = HalC2.Checkpoint.scope_id(tid)
 
     run_becomes(
       tid,
       %{
         "threadId" => tid,
         "scopeId" => scope,
-        "checkpointId" => T3.Checkpoint.checkpoint_id(scope, 1),
+        "checkpointId" => HalC2.Checkpoint.checkpoint_id(scope, 1),
         # The thread works in the project root, not a worktree of its own.
         "restoreFiles" => false
       },
@@ -587,7 +587,7 @@ defmodule T3.Steps.Parity.Commands do
     fork = "th-fork-#{System.unique_integer([:positive])}"
 
     {:ok, _} =
-      T3.Orchestration.dispatch(
+      HalC2.Orchestration.dispatch(
         Map.put(fork_command(tid, fork, run["id"]), "type", "thread.fork")
       )
 
@@ -632,7 +632,7 @@ defmodule T3.Steps.Parity.Commands do
 
   defp setup!(context, type, fields \\ %{}) do
     {:ok, _} =
-      T3.Orchestration.dispatch(Map.merge(fields, %{"type" => type, "threadId" => main(context)}))
+      HalC2.Orchestration.dispatch(Map.merge(fields, %{"type" => type, "threadId" => main(context)}))
   end
 
   defp link(number),
@@ -644,7 +644,7 @@ defmodule T3.Steps.Parity.Commands do
       "source" => "manual"
     }
 
-  defp numbers(thread), do: thread |> T3.Projection.PullRequests.of() |> Enum.map(& &1["number"])
+  defp numbers(thread), do: thread |> HalC2.Projection.PullRequests.of() |> Enum.map(& &1["number"])
 
   defp fork_command(source, target, run_id),
     do: %{
@@ -667,37 +667,37 @@ defmodule T3.Steps.Parity.Commands do
 
   # --- providers and runs ------------------------------------------------------------
 
-  # The fake Codex, Claude and ACP CLIs of `T3.OrchestrationTest`, for runs.
+  # The fake Codex, Claude and ACP CLIs of `HalC2.OrchestrationTest`, for runs.
   defp fake_providers do
     for {key, value} <- [
           codex_command: ["python3", "-u", Path.join(@support, "fake_codex.py")],
           claude_command: ["python3", "-u", Path.join(@support, "fake_claude.py")],
           acp_commands: %{"opencode" => ["python3", "-u", Path.join(@support, "fake_acp.py")]}
         ] do
-      previous = Application.fetch_env(:t3, key)
-      Application.put_env(:t3, key, value)
+      previous = Application.fetch_env(:hal_c2, key)
+      Application.put_env(:hal_c2, key, value)
 
       ExUnit.Callbacks.on_exit(fn ->
         case previous do
-          {:ok, value} -> Application.put_env(:t3, key, value)
-          :error -> Application.delete_env(:t3, key)
+          {:ok, value} -> Application.put_env(:hal_c2, key, value)
+          :error -> Application.delete_env(:hal_c2, key)
         end
       end)
     end
 
     for {name, id} <- [
-          {T3.Codex.Registry, :codex_registry},
-          {T3.Claude.Registry, :claude_registry},
-          {T3.Acp.Registry, :acp_registry}
+          {HalC2.Codex.Registry, :codex_registry},
+          {HalC2.Claude.Registry, :claude_registry},
+          {HalC2.Acp.Registry, :acp_registry}
         ],
         do: Node.ensure(Supervisor.child_spec({Registry, keys: :unique, name: name}, id: id))
 
-    Node.ensure({DynamicSupervisor, name: T3.Codex.Supervisor, strategy: :one_for_one})
+    Node.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
   end
 
   defp send!(tid, text) do
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "message.dispatch",
         "threadId" => tid,
         "messageId" => "msg-#{System.unique_integer([:positive])}",
@@ -707,7 +707,7 @@ defmodule T3.Steps.Parity.Commands do
       })
   end
 
-  defp current(tid), do: T3.Streams.Server.state(T3.Streams.ensure(tid))
+  defp current(tid), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(tid))
   defp runs(state), do: state |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
 
   defp await_runs(tid, statuses),
@@ -724,7 +724,7 @@ defmodule T3.Steps.Parity.Commands do
 
   # Waits on the thread's own stream until its state satisfies `fun`.
   defp await_state(tid, fun) do
-    :ok = T3.Streams.subscribe(tid, self(), nil)
+    :ok = HalC2.Streams.subscribe(tid, self(), nil)
     await_state(tid, fun, System.monotonic_time(:millisecond) + 10_000)
   end
 
@@ -735,7 +735,7 @@ defmodule T3.Steps.Parity.Commands do
       state
     else
       receive do
-        {:t3_stream, ^tid, _} -> await_state(tid, fun, deadline)
+        {:halc2_stream, ^tid, _} -> await_state(tid, fun, deadline)
       after
         max(deadline - System.monotonic_time(:millisecond), 0) ->
           flunk("#{tid} never got there: #{inspect(Enum.map(runs(state), & &1["status"]))}")
@@ -785,7 +785,7 @@ defmodule T3.Steps.Parity.Commands do
 
   defp absorb(entities, %{"t" => "events", "id" => @follow, "events" => events}) do
     Enum.reduce(events, entities, fn [_seq, kind, id, patch, _at], acc ->
-      case T3.Patch.apply(acc[{kind, id}], patch) do
+      case HalC2.Patch.apply(acc[{kind, id}], patch) do
         nil -> Map.delete(acc, {kind, id})
         entity -> Map.put(acc, {kind, id}, entity)
       end
@@ -813,7 +813,7 @@ defmodule T3.Steps.Parity.Commands do
   end
 
   defp import_log(context) do
-    {:ok, report} = T3.Import.V2.run(write_log(context, context.log), T3.Store)
+    {:ok, report} = HalC2.Import.V2.run(write_log(context, context.log), HalC2.Store)
     Map.merge(context, %{import_report: report, log_rows: context.log})
   end
 
@@ -845,16 +845,16 @@ defmodule T3.Steps.Parity.Commands do
   end
 
   defp patches(stream, kind, id) do
-    T3.Store.path()
-    |> T3.Store.reduce_stream(stream, 0, [], fn e, acc ->
+    HalC2.Store.path()
+    |> HalC2.Store.reduce_stream(stream, 0, [], fn e, acc ->
       if e.kind == kind and e.entity == id, do: [e.patch | acc], else: acc
     end)
     |> Enum.reverse()
   end
 
-  defp fold(patches), do: Enum.reduce(patches, nil, &T3.Patch.apply(&2, &1))
+  defp fold(patches), do: Enum.reduce(patches, nil, &HalC2.Patch.apply(&2, &1))
 
-  defp entities(stream), do: StreamState.load(T3.Store.path(), stream).entities
+  defp entities(stream), do: StreamState.load(HalC2.Store.path(), stream).entities
 
   defp thread_entity(tid, fields \\ %{}),
     do:
@@ -1190,7 +1190,7 @@ defmodule T3.Steps.Parity.Commands do
         numbers(thread) == []
 
       "thread.pull-request-synced" ->
-        match?([%{"snapshot" => %{"state" => "merged"}}], T3.Projection.PullRequests.of(thread))
+        match?([%{"snapshot" => %{"state" => "merged"}}], HalC2.Projection.PullRequests.of(thread))
 
       "thread.runtime-mode-set" ->
         thread["runtimeMode"] == "approval-required"

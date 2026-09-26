@@ -1,6 +1,6 @@
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge } from "@hal-c2/contracts";
 
-export const DESKTOP_PASTE_AS_TEXT_EVENT = "t3:paste-as-text";
+export const DESKTOP_PASTE_AS_TEXT_EVENT = "hal-c2:paste-as-text";
 
 /** Arm composer paste handling before Electron delivers the native clipboard event. */
 export function installDesktopPasteAsText(

@@ -1,5 +1,5 @@
 /* oxlint-disable react/no-array-index-key -- Table rows and columns have stable positions and may contain identical values. */
-import { parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
+import { parseDelimitedPreview } from "@hal-c2/shared/delimitedPreview";
 import { useMemo } from "react";
 
 import { FileSurfaceNotice } from "./fileSurfaceChrome";

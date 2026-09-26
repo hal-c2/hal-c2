@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "id": "t3-code-shell",
-  "name": "T3 Code (shell)",
+  "id": "hal-c2-shell",
+  "name": "HAL-C2 (shell)",
   "appearance": "dark",
   "colors": {
     "canvas": "#0a0a0a",

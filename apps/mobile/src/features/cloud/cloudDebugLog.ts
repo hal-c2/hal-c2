@@ -2,7 +2,7 @@ import { createDebugLogger } from "../../lib/debugLog";
 
 const logger = createDebugLogger("cloud", {
   enabledInDev: true,
-  legacyGlobalFlag: "__T3_CLOUD_DEBUG__",
+  legacyGlobalFlag: "__HALC2_CLOUD_DEBUG__",
 });
 
 export function isCloudDebugEnabled(): boolean {

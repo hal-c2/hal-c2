@@ -5,7 +5,7 @@
 // what the action does.
 import { expect } from "bun:test";
 
-import type { OrchestrationThread } from "@t3tools/contracts";
+import type { OrchestrationThread } from "@hal-c2/contracts";
 
 import { step } from "../../steps.ts";
 import {
@@ -78,7 +78,7 @@ async function ensureRunning(ctx: KeymapWorld): Promise<void> {
 /** The chord reached `action` and the host handled it (no "unknown action" log). */
 function handled(ctx: World, action: string): void {
   expect(ctx.dispatched!.map((entry) => entry.action)).toContain(action);
-  expect(ctx.logs ?? []).not.toContain(`t3 tui: unknown shell action "${action}"`);
+  expect(ctx.logs ?? []).not.toContain(`hal-c2 tui: unknown shell action "${action}"`);
 }
 
 // --- Parity with the web app -------------------------------------------------

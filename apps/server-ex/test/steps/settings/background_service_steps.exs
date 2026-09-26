@@ -1,21 +1,21 @@
-defmodule T3.Steps.Settings.BackgroundService do
+defmodule HalC2.Steps.Settings.BackgroundService do
   @moduledoc """
   Steps for features/settings/background-service.feature: the background activity
-  profile (`T3.BackgroundPolicy`), clients' activity leases, and the service that
+  profile (`HalC2.BackgroundPolicy`), clients' activity leases, and the service that
   starts the node again after an update restart (the release from
-  `T3.Steps.Settings.HotCodeUpgrade`).
+  `HalC2.Steps.Settings.HotCodeUpgrade`).
 
   Leases arrive over `server.reportClientActivity`, which the socket casts to the
   policy without waiting; steps trace the policy's mailbox to know it has one.
   """
   use Cucumber.StepDefinition
   # Step files compile one by one; the release helpers are in a later one.
-  @compile {:no_warn_undefined, T3.Steps.Settings.HotCodeUpgrade}
+  @compile {:no_warn_undefined, HalC2.Steps.Settings.HotCodeUpgrade}
   import ExUnit.Assertions
 
-  alias T3.BackgroundPolicy
-  alias T3.Steps.Settings.HotCodeUpgrade
-  alias T3.Test.Node.World
+  alias HalC2.BackgroundPolicy
+  alias HalC2.Steps.Settings.HotCodeUpgrade
+  alias HalC2.Test.Node.World
 
   @provider_status %{"type" => "provider-status", "instanceId" => "codex"}
 
@@ -123,7 +123,7 @@ defmodule T3.Steps.Settings.BackgroundService do
 
   # A foreground web client's report on `scopes`, once the policy has it.
   defp report_activity(context, scopes, extra \\ %{}) do
-    policy = T3.Test.Node.ensure(BackgroundPolicy)
+    policy = HalC2.Test.Node.ensure(BackgroundPolicy)
     :erlang.trace(policy, true, [:receive])
 
     report =

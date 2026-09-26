@@ -1,4 +1,4 @@
-defmodule T3.Steps.Orchestration.AutoSettle do
+defmodule HalC2.Steps.Orchestration.AutoSettle do
   @moduledoc """
   Steps for `features/node/orchestration/auto-settle.feature`. The settlement
   service starts, without its timer, only once a step sweeps (or changes the
@@ -8,15 +8,15 @@ defmodule T3.Steps.Orchestration.AutoSettle do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Orchestration.Settlement
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Orchestration.Settlement
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @hour 60 * 60 * 1_000
 
   step "auto-settle after {int} days and auto-settle on merge are on",
        %{args: [days]} = context do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
 
     write_settings(context, %{
       "sidebarAutoSettleAfterDays" => days,
@@ -143,7 +143,7 @@ defmodule T3.Steps.Orchestration.AutoSettle do
   end
 
   step "thread {string} has background tasks still running", %{args: [thread]} = context do
-    [run | _] = World.state(context, thread) |> T3.StreamState.list("run")
+    [run | _] = World.state(context, thread) |> HalC2.StreamState.list("run")
     id = "item-#{System.unique_integer([:positive])}"
 
     context =
@@ -200,8 +200,8 @@ defmodule T3.Steps.Orchestration.AutoSettle do
     row = World.row(context, "t1")
     assert row["settledAt"] != nil
 
-    assert T3.Projection.JS.epoch_ms(row["settledAt"]) ==
-             T3.Projection.JS.epoch_ms(row["latestUserMessageAt"])
+    assert HalC2.Projection.JS.epoch_ms(row["settledAt"]) ==
+             HalC2.Projection.JS.epoch_ms(row["latestUserMessageAt"])
 
     context
   end
@@ -250,14 +250,14 @@ defmodule T3.Steps.Orchestration.AutoSettle do
   end
 
   step "thread {string} was updated after that snapshot", %{args: [thread]} = context do
-    snapshot = T3.Projection.JS.epoch_ms(context.auto_settle["snapshotAt"])
+    snapshot = HalC2.Projection.JS.epoch_ms(context.auto_settle["snapshotAt"])
     context = World.patch_thread(context, thread, %{"title" => "Renamed"})
-    assert T3.Projection.JS.epoch_ms(World.row(context, thread)["updatedAt"]) > snapshot
+    assert HalC2.Projection.JS.epoch_ms(World.row(context, thread)["updatedAt"]) > snapshot
     context
   end
 
   step "the auto-settle command runs", context do
-    Map.put(context, :auto_settle_result, T3.Orchestration.dispatch(context.auto_settle))
+    Map.put(context, :auto_settle_result, HalC2.Orchestration.dispatch(context.auto_settle))
   end
 
   step "the user unsettled {string}", %{args: [thread]} = context do
@@ -267,7 +267,7 @@ defmodule T3.Steps.Orchestration.AutoSettle do
   end
 
   step "an auto-settle command for {string} runs", %{args: [thread]} = context do
-    result = T3.Orchestration.dispatch(auto_settle(context, thread))
+    result = HalC2.Orchestration.dispatch(auto_settle(context, thread))
     Map.put(context, :auto_settle_result, result)
   end
 
@@ -327,7 +327,7 @@ defmodule T3.Steps.Orchestration.AutoSettle do
 
     %{
       "type" => "thread.auto-settle",
-      "commandId" => "server:auto-settle:#{row["id"]}:#{T3.Environment.uuid4()}",
+      "commandId" => "server:auto-settle:#{row["id"]}:#{HalC2.Environment.uuid4()}",
       "threadId" => row["id"],
       "snapshotAt" => row["updatedAt"],
       "settledAt" => row["latestUserMessageAt"] || row["createdAt"]
@@ -335,8 +335,8 @@ defmodule T3.Steps.Orchestration.AutoSettle do
   end
 
   defp write_settings(context, patch) do
-    {settings, version} = T3.Settings.get()
-    {:ok, _} = T3.Settings.put(deep_merge(settings, patch), version)
+    {settings, version} = HalC2.Settings.get()
+    {:ok, _} = HalC2.Settings.put(deep_merge(settings, patch), version)
     context
   end
 
@@ -348,7 +348,7 @@ defmodule T3.Steps.Orchestration.AutoSettle do
     id = World.thread_id(context, thread)
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.pull-request.link",
         "threadId" => id,
         "host" => "github.com",
@@ -377,7 +377,7 @@ defmodule T3.Steps.Orchestration.AutoSettle do
       )
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.pull-request-link.sync",
         "threadId" => id,
         "host" => "github.com",

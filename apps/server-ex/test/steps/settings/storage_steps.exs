@@ -1,7 +1,7 @@
-defmodule T3.Steps.Settings.Storage do
+defmodule HalC2.Steps.Settings.Storage do
   @moduledoc """
   Steps for `features/settings/storage.feature`: the node's storage sweep
-  (`T3.StorageCleanup`) against real worktrees of the scenario's project. Merged
+  (`HalC2.StorageCleanup`) against real worktrees of the scenario's project. Merged
   pull requests come from the fake `gh` (`test/support/fake_gh.py`); the
   project gets an `origin` on "github.com" so the node asks it.
   """
@@ -9,7 +9,7 @@ defmodule T3.Steps.Settings.Storage do
 
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   @fake_gh Path.expand("../../support/fake_gh.py", __DIR__)
 
@@ -105,7 +105,7 @@ defmodule T3.Steps.Settings.Storage do
     assert thread["worktreePath"] == path
 
     assert {:ok, %{"worktree" => %{"path" => ^path}}} =
-             T3.Vcs.create_worktree(%{"cwd" => root, "refName" => branch, "path" => path})
+             HalC2.Vcs.create_worktree(%{"cwd" => root, "refName" => branch, "path" => path})
 
     assert World.git!(path, ~w(rev-parse --abbrev-ref HEAD)) == branch
     context
@@ -124,10 +124,10 @@ defmodule T3.Steps.Settings.Storage do
   # message land while the sweep waits on that answer.
   step "the user sends a message in its thread before removal", context do
     context = World.start_storage_cleanup(context)
-    refute Process.whereis(T3.Terminal.Hub), "a real terminal hub is running"
-    Process.register(self(), T3.Terminal.Hub)
-    cleanup = Process.whereis(T3.StorageCleanup)
-    task = Task.async(fn -> T3.StorageCleanup.sweep() end)
+    refute Process.whereis(HalC2.Terminal.Hub), "a real terminal hub is running"
+    Process.register(self(), HalC2.Terminal.Hub)
+    cleanup = Process.whereis(HalC2.StorageCleanup)
+    task = Task.async(fn -> HalC2.StorageCleanup.sweep() end)
 
     send_message = fn ->
       World.add_message(context, "idle work", "user", "One more thing")
@@ -136,7 +136,7 @@ defmodule T3.Steps.Settings.Storage do
     try do
       assert hub(task, cleanup, send_message, false), "the sweep never checked the worktree"
     after
-      Process.unregister(T3.Terminal.Hub)
+      Process.unregister(HalC2.Terminal.Hub)
     end
 
     assert World.row(context, "idle work")["latestUserMessageAt"]
@@ -185,10 +185,10 @@ defmodule T3.Steps.Settings.Storage do
   end
 
   step "nothing is removed", context do
-    rules = T3.StorageCleanup.rules(T3.Settings.settings(), World.project(context).id)
+    rules = HalC2.StorageCleanup.rules(HalC2.Settings.settings(), World.project(context).id)
     assert Enum.all?(rules, fn {_rule, on} -> on in [nil, false] end)
-    assert get_in(T3.Settings.settings(), ["storageCleanup", "browserArtifactsAfterDays"]) == nil
-    assert get_in(T3.Settings.settings(), ["storageCleanup", "logsAfterDays"]) == nil
+    assert get_in(HalC2.Settings.settings(), ["storageCleanup", "browserArtifactsAfterDays"]) == nil
+    assert get_in(HalC2.Settings.settings(), ["storageCleanup", "logsAfterDays"]) == nil
 
     for path <- context.removables, do: assert(File.exists?(path), "#{path} was removed")
     context
@@ -201,13 +201,13 @@ defmodule T3.Steps.Settings.Storage do
   end
 
   step "the user turns on a rule that covers it", context do
-    {{:ok, read}, context} = World.call(context, "t3.readSettings")
+    {{:ok, read}, context} = World.call(context, "halc2.readSettings")
 
     settings =
       World.deep_merge(read["settings"], %{"storageCleanup" => %{"worktreeAfterDays" => 7}})
 
     {reply, context} =
-      World.call(context, "t3.writeSettings", %{
+      World.call(context, "halc2.writeSettings", %{
         "settings" => settings,
         "version" => read["version"]
       })
@@ -219,8 +219,8 @@ defmodule T3.Steps.Settings.Storage do
   # No hourly tick is scheduled in scenarios (`World.start_storage_cleanup/1`), so
   # the removal can only come from the settings change.
   step "the node sweeps without waiting for the next hour", context do
-    assert Application.get_env(:t3, :storage_cleanup_first_ms) == nil
-    _ = :sys.get_state(T3.StorageCleanup)
+    assert Application.get_env(:hal_c2, :storage_cleanup_first_ms) == nil
+    _ = :sys.get_state(HalC2.StorageCleanup)
     refute File.exists?(context.worktree.path)
     context
   end
@@ -309,7 +309,7 @@ defmodule T3.Steps.Settings.Storage do
   defp deleted_worktree(context, title) do
     context = World.worktree_thread(context, title)
     id = World.thread_id(context, title)
-    {:ok, _} = T3.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})
+    {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})
     World.await_row(id, & &1["deletedAt"])
     context
   end

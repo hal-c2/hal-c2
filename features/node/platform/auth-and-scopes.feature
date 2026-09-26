@@ -1,15 +1,15 @@
 # Sources:
-#   apps/server-ex/lib/t3/auth.ex (pairing tokens, sessions, tickets, desktop bootstrap, access stream)
-#   apps/server-ex/lib/t3/web/router.ex (/oauth/token, /api/auth/*, with_scope)
-#   apps/server-ex/lib/t3/web/socket.ex (authAccess shape, current session)
-#   apps/server-ex/lib/mix/tasks/t3.pair.ex
-#   apps/server-ex/test/t3/scenarios_test.exs (access scenarios)
+#   apps/server-ex/lib/hal_c2/auth.ex (pairing tokens, sessions, tickets, desktop bootstrap, access stream)
+#   apps/server-ex/lib/hal_c2/web/router.ex (/oauth/token, /api/auth/*, with_scope)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (authAccess shape, current session)
+#   apps/server-ex/lib/mix/tasks/hal_c2.pair.ex
+#   apps/server-ex/test/hal_c2/scenarios_test.exs (access scenarios)
 #   packages/contracts/src/auth.ts, environmentHttp.ts (AuthAccessStreamEvent, scope errors)
 #   apps/server/src/auth/SessionStore.ts (WebSocketSessionRevokedError)
 #   docs/user/remote-access.md (Manage or revoke access)
 #   docs/internals/environment-auth.md
 #   docs/operations/development.md (Reusable dev credential)
-#   AGENTS.md (npx t3 pair, T3CODE_DEV_AUTH_TOKEN)
+#   AGENTS.md (npx hal-c2 pair, HALC2_DEV_AUTH_TOKEN)
 
 Feature: Node authentication and scopes
   A node issues its own sessions. Pairing hands out a session with a set of scopes, a

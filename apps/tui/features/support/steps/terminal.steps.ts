@@ -5,7 +5,7 @@
 // `settle` (the host's receipt for in-flight calls and emulator writes).
 import { expect } from "bun:test";
 import { PasteEvent, type TextChunk } from "@opentui/core";
-import type { TerminalAttachStreamEvent } from "@t3tools/contracts";
+import type { TerminalAttachStreamEvent } from "@hal-c2/contracts";
 
 import { step } from "../../steps.ts";
 import type { TuiTerminalState } from "../../../src/host/terminalState.ts";

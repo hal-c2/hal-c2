@@ -3,14 +3,14 @@ import {
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@t3tools/client-runtime/environment";
+} from "@hal-c2/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommandResult,
-} from "@t3tools/client-runtime/state/runtime";
-import type { ScopedThreadRef } from "@t3tools/contracts";
-import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
+} from "@hal-c2/client-runtime/state/runtime";
+import type { ScopedThreadRef } from "@hal-c2/contracts";
+import { resolveProjectScripts } from "@hal-c2/shared/projectScripts";
 import { useEffect, useMemo } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
@@ -54,7 +54,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 // This document has neither a composer nor the conversation's private error banner.
 const ignore = () => undefined;
 const addTerminalContext = (selection: TerminalContextSelection) => {
-  void window.t3Shell?.dispatch("composer.terminalContext.add", selection);
+  void window.halc2Shell?.dispatch("composer.terminalContext.add", selection);
 };
 function reportThreadCommandFailure(result: AtomCommandResult<unknown, unknown>, title: string) {
   if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;

@@ -1,8 +1,8 @@
 # Sources:
 #   packages/contracts/src/orchestrationV2.ts (plan.updated, subagent.updated, proposed_plan, todo_list, subagent, handoff, fork, compaction, thread_created, delegated_task.request, delegated_task.wake-policy, delegated_task.completion-delivery.acknowledge, delegated_task.completion-delivery.dispose)
-#   apps/server-ex/lib/t3/orchestration/turn_writer.ex (proposed_plan, todo_list)
-#   apps/server-ex/lib/t3/orchestration/delegation.ex (delegate_task, completion wake, no answer)
-#   apps/server-ex/lib/t3/projection/timeline.ex (fork marker)
+#   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (proposed_plan, todo_list)
+#   apps/server-ex/lib/hal_c2/orchestration/delegation.ex (delegate_task, completion wake, no answer)
+#   apps/server-ex/lib/hal_c2/projection/timeline.ex (fork marker)
 #   apps/web/src/components/chat/ProposedPlanCard.tsx
 #   apps/web/src/components/chat/ComposerPlanFollowUpBanner.tsx
 #   apps/web/src/components/chat/ComposerPrimaryActions.tsx (Refine, Implement, Implement in a new thread)

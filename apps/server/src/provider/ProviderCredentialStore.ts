@@ -13,7 +13,7 @@ export const make = Effect.fn("ProviderCredentialStore.make")(function* (
     .update(`${driver.length}:${driver}${bindingId}`)
     .digest("hex")}`;
   return {
-    binding: { owner: "t3" as const, key },
+    binding: { owner: "hal-c2" as const, key },
     get: secrets.get(key),
     set: (credentials: Uint8Array) => secrets.set(key, credentials),
     remove: secrets.remove(key),

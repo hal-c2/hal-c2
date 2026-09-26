@@ -1,5 +1,5 @@
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef, scopedThreadKey } from "@hal-c2/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@hal-c2/contracts";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
 import { appViewStorageKey } from "./appViewStorage";
@@ -11,10 +11,10 @@ afterEach(() => {
 });
 
 it("leaves ordinary browsers and coordinated primary/embed clients on existing keys", () => {
-  expect(appViewStorageKey("t3code:composer-drafts:v1")).toBe("t3code:composer-drafts:v1");
+  expect(appViewStorageKey("hal-c2:composer-drafts:v1")).toBe("hal-c2:composer-drafts:v1");
   for (const surfaceId of ["primary", "panel"]) {
-    vi.stubGlobal("window", { t3Shell: { surfaceId } });
-    expect(appViewStorageKey("t3code:composer-drafts:v1")).toBe("t3code:composer-drafts:v1");
+    vi.stubGlobal("window", { halc2Shell: { surfaceId } });
+    expect(appViewStorageKey("hal-c2:composer-drafts:v1")).toBe("hal-c2:composer-drafts:v1");
   }
 });
 
@@ -30,7 +30,7 @@ it("restores each independent client's actual draft and panel stores without ove
       "window",
       Object.assign(new EventTarget(), {
         localStorage: storage,
-        __t3AppViewStorageId: id,
+        __halc2AppViewStorageId: id,
       }),
     );
     vi.stubGlobal("localStorage", storage);

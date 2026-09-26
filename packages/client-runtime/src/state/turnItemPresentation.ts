@@ -1,4 +1,4 @@
-import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
+import type { OrchestrationV2TurnItem } from "@hal-c2/contracts";
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
 

@@ -17,7 +17,7 @@ import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
-import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@t3tools/shared/observability";
+import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@hal-c2/shared/observability";
 
 export const DEFAULT_PORT = 3773;
 
@@ -102,7 +102,7 @@ export class ServerConfig extends Context.Service<
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
   }
->()("t3/config/ServerConfig") {
+>()("hal-c2/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */
   static readonly layerTest = (
     cwd: string,
@@ -119,7 +119,7 @@ export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config)
 export const otlpResource = (config: ServerConfig["Service"]) => ({
   serviceName: config.otlpServiceName,
   attributes: {
-    "service.runtime": "t3-server",
+    "service.runtime": "hal-c2-server",
     "service.mode": config.mode,
   },
 });
@@ -220,7 +220,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
     otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
     otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
-    otlpServiceName: "t3-server",
+    otlpServiceName: "hal-c2-server",
     cwd,
     baseDir,
     ...derivedPaths,

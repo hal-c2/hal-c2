@@ -1,13 +1,13 @@
-defmodule T3.Steps.SourceControl do
+defmodule HalC2.Steps.SourceControl do
   @moduledoc """
   Steps several `features/source-control/` files share; their setup lives in
-  `T3.Steps.SourceControl.Shared` (`test/steps/support/source_control.exs`).
+  `HalC2.Steps.SourceControl.Shared` (`test/steps/support/source_control.exs`).
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.SourceControl.Shared
-  alias T3.Test.Node.World
+  alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.Test.Node.World
 
   step "a connected environment with a thread in the git project {string}",
        %{args: [title]} = context do
@@ -70,7 +70,7 @@ defmodule T3.Steps.SourceControl do
   end
 
   step "the GitHub CLI is not signed in", context do
-    T3.PullRequests.invalidate(%{})
+    HalC2.PullRequests.invalidate(%{})
 
     World.cli_rules(context, %{
       "args" => ["api user"],

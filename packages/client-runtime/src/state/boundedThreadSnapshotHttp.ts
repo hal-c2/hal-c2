@@ -1,4 +1,4 @@
-import type { ThreadId } from "@t3tools/contracts";
+import type { ThreadId } from "@hal-c2/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -78,12 +78,10 @@ export const boundedThreadSnapshotLoaderLayer: Layer.Layer<
           signer,
           remoteAuthorization,
         }).pipe(
-          Effect.map(
-            (snapshot): ThreadSnapshotLoadResult => ({
-              _tag: "present",
-              snapshot,
-            }),
-          ),
+          Effect.map((snapshot): ThreadSnapshotLoadResult => ({
+            _tag: "present",
+            snapshot,
+          })),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.catchTags({
             EnvironmentResourceNotFoundError: () =>
@@ -110,21 +108,19 @@ export const boundedThreadSnapshotLoaderLayer: Layer.Layer<
           signer,
           remoteAuthorization,
         }).pipe(
-          Effect.map(
-            (bounded): ThreadSnapshotLoadResult => ({
-              _tag: "present",
-              snapshot: {
-                snapshotSequence: bounded.snapshotSequence,
-                projection: bounded.projection,
-                latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
-              },
-              history: {
-                historyCursor: bounded.historyCursor,
-                hasMoreHistory: bounded.hasMoreHistory,
-                latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
-              },
-            }),
-          ),
+          Effect.map((bounded): ThreadSnapshotLoadResult => ({
+            _tag: "present",
+            snapshot: {
+              snapshotSequence: bounded.snapshotSequence,
+              projection: bounded.projection,
+              latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+            },
+            history: {
+              historyCursor: bounded.historyCursor,
+              hasMoreHistory: bounded.hasMoreHistory,
+              latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+            },
+          })),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.catchTags({
             EnvironmentResourceNotFoundError: () =>

@@ -10,7 +10,7 @@
 #   apps/web/src/components/settings/KeybindingsSettings.tsx (navigation and scope only)
 #   apps/web/src/components/settings/ThemeSettings.tsx (navigation only)
 #   docs/user/appearance.md (Settings → Appearance, Settings → Keybindings)
-#   apps/desktop-qt/qml/T3/Bricks/SettingsNav.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/SettingsNav.qml
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
 #   apps/tui/src/components/SettingsView.tsx
 #   apps/tui/src/keymap.ts
@@ -58,7 +58,7 @@ Feature: Settings search and navigation
     Scenario: The project section appears only while editing a project
       Given the user is editing settings for all projects
       Then there is no project section
-      When the user chooses the project "t3code"
+      When the user chooses the project "hal-c2"
       Then the project section is listed first
 
     @backlog @desktop
@@ -68,9 +68,9 @@ Feature: Settings search and navigation
 
     @backlog @desktop
     Scenario: Moving between sections keeps the chosen scope
-      Given the user is editing settings for the project "t3code"
+      Given the user is editing settings for the project "hal-c2"
       When the user opens the Integrations section
-      Then settings still apply to "t3code"
+      Then settings still apply to "hal-c2"
 
     @tui
     Scenario: The terminal client shows a read-only settings overview

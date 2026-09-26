@@ -1,16 +1,16 @@
-defmodule T3.Steps.Settings.Diagnostics do
+defmodule HalC2.Steps.Settings.Diagnostics do
   @moduledoc """
   Settings → Diagnostics against a node: the process list, resource history and
-  signals (`T3.Diagnostics`). The provider session is a copy of `sleep` named
+  signals (`HalC2.Diagnostics`). The provider session is a copy of `sleep` named
   `codex`, started as a port so its exit status shows the signal it got; the
-  terminal is a real `T3.Terminal` shell.
+  terminal is a real `HalC2.Terminal` shell.
   """
   use Cucumber.StepDefinition
 
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @windows %{"5 minutes" => 5 * 60_000, "1 hour" => 60 * 60_000}
   @signals %{"SIGINT" => 2, "SIGKILL" => 9}
@@ -30,7 +30,7 @@ defmodule T3.Steps.Settings.Diagnostics do
 
     shell = World.open_terminal("thread-1", home)
 
-    Node.ensure(T3.Diagnostics)
+    Node.ensure(HalC2.Diagnostics)
 
     context
     |> World.put_client("default", World.client(context))
@@ -180,7 +180,7 @@ defmodule T3.Steps.Settings.Diagnostics do
   end
 
   step "the node records them in its trace file", context do
-    [line] = File.read!(T3.Traces.path()) |> String.split("\n", trim: true)
+    [line] = File.read!(HalC2.Traces.path()) |> String.split("\n", trim: true)
 
     assert %{"type" => "otlp-span", "name" => "web.thread.render", "durationMs" => 12.0} =
              JSON.decode!(line)
@@ -201,7 +201,7 @@ defmodule T3.Steps.Settings.Diagnostics do
       "kind" => 1,
       "startTimeUnixNano" => "#{start}",
       "endTimeUnixNano" => "#{start + ms * 1_000_000}",
-      "attributes" => [%{"key" => "t3.client", "value" => %{"stringValue" => "web"}}],
+      "attributes" => [%{"key" => "halc2.client", "value" => %{"stringValue" => "web"}}],
       "events" => [],
       "links" => [],
       "status" => %{"code" => code, "message" => message}
@@ -209,12 +209,12 @@ defmodule T3.Steps.Settings.Diagnostics do
   end
 
   # Posts spans as the web client's OTLP exporter does, with a paired client's token.
-  # The node keeps client spans only while tracing is on (`T3.Traces.enabled?/0`).
+  # The node keeps client spans only while tracing is on (`HalC2.Traces.enabled?/0`).
   defp post_traces(context, spans) do
     World.put_app_env(:trace, true)
 
     {:ok, access, _expires, _scopes} =
-      T3.Auth.exchange(T3.Auth.create_pairing_token(context.node.store), %{"label" => "Web"})
+      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.node.store), %{"label" => "Web"})
 
     body =
       JSON.encode!(%{
@@ -222,10 +222,10 @@ defmodule T3.Steps.Settings.Diagnostics do
           %{
             "resource" => %{
               "attributes" => [
-                %{"key" => "service.name", "value" => %{"stringValue" => "t3-web"}}
+                %{"key" => "service.name", "value" => %{"stringValue" => "hal-c2-web"}}
               ]
             },
-            "scopeSpans" => [%{"scope" => %{"name" => "t3"}, "spans" => spans}]
+            "scopeSpans" => [%{"scope" => %{"name" => "hal_c2"}, "spans" => spans}]
           }
         ]
       })

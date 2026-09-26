@@ -2,8 +2,8 @@
 
 import { PlusIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { ProviderDriverKind, ServerProviderModel } from "@t3tools/contracts";
-import type { CustomModelDefinition } from "@t3tools/shared/model";
+import type { ProviderDriverKind, ServerProviderModel } from "@hal-c2/contracts";
+import type { CustomModelDefinition } from "@hal-c2/shared/model";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";

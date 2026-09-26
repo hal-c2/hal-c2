@@ -1,5 +1,5 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
-import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
+import { resolveThreadReferenceCopyTarget } from "@hal-c2/shared/threadReference";
 import {
   createContext,
   use,
@@ -14,7 +14,7 @@ import {
 } from "react";
 
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
-import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
+import { HalC2KeyboardCommands } from "../../native/HalC2KeyboardCommands";
 import { useThreadShell } from "../../state/entities";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
 import { GitActionProgressOverlay } from "../threads/GitActionProgressOverlay";
@@ -185,9 +185,9 @@ export function HardwareKeyboardCommandProvider({
 
   return (
     <CommandPaletteContext value={palette}>
-      <T3KeyboardCommands enabledCommands={enabledCommands} onCommand={onCommand}>
+      <HalC2KeyboardCommands enabledCommands={enabledCommands} onCommand={onCommand}>
         {children}
-      </T3KeyboardCommands>
+      </HalC2KeyboardCommands>
       <GitActionProgressOverlay progress={copyFeedback} onDismiss={dismissCopyFeedback} />
     </CommandPaletteContext>
   );

@@ -11,8 +11,8 @@ session or catalog state.
 
 ## Process and account isolation
 
-T3-managed OpenCode chat uses one server per thread. Its MCP registrations are directory-scoped, while
-T3's MCP connection is thread-scoped. Sharing a chat server between threads in one directory would
+HAL-C2-managed OpenCode chat uses one server per thread. Its MCP registrations are directory-scoped, while
+HAL-C2's MCP connection is thread-scoped. Sharing a chat server between threads in one directory would
 let them replace each other's connection. Catalog and text-generation work can share the
 [instance-owned helper](../../apps/server/src/provider/OpenCodeServerOwner.ts), which closes
 after an idle period. External OpenCode servers remain externally owned and can require an
@@ -23,7 +23,7 @@ OpenCode also stores persistent approval grants per directory. Automatic full-ac
 See the [adapter](../../apps/server/src/orchestration-v2/Adapters/OpenCodeAdapterV2.ts).
 
 Pi runs the user's own `pi` install in RPC mode and owns native extension, package, and project
-trust discovery. T3 injects only its namespaced MCP bridge, so a Pi session behaves as it does in
+trust discovery. HAL-C2 injects only its namespaced MCP bridge, so a Pi session behaves as it does in
 the Pi TUI. Pi session files back native resume, rollback, and same-instance thread forks.
 Forks use Pi's CLI in the destination directory because RPC session switching retains the source
 session's cwd. Provider switches still use portable handoff summaries.
@@ -50,7 +50,7 @@ session creation for this reason. Antigravity likewise reserves authenticated ca
 explicit setup or model refresh; background checks use initialization only.
 
 [Antigravity sign-in](../../apps/server/src/provider/AntigravityAuth.ts) belongs to the initiating
-T3 auth session. The client carries the return URL back to the environment because the provider's
+HAL-C2 auth session. The client carries the return URL back to the environment because the provider's
 loopback listener may be on another machine. Forward only the callback for the owned pending flow;
 a successful callback HTTP request is not proof that provider authentication finished. The native
 process owns token exchange and storage.
@@ -129,7 +129,7 @@ before redaction and serialization, so logging a large response does not require
 copies. These limits apply to diagnostics; provider event handling is unchanged.
 
 Codex resumes with metadata-only reads when it needs a thread's identity and update time. Its
-initialization capabilities opt out of `turn/diff/updated`: T3 derives diffs from checkpoints.
+initialization capabilities opt out of `turn/diff/updated`: HAL-C2 derives diffs from checkpoints.
 The logger filters those notifications before traversal when an older provider still sends them.
 
 Model classification has its own [manifest constraints](./model-manifest.md). Assistant-reference

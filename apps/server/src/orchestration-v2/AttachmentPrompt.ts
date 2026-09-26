@@ -5,7 +5,7 @@ import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type SnapShotAccessibility,
   type SnapShotAccessibilityNode,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Schema from "effect/Schema";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";

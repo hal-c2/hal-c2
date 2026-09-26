@@ -1,10 +1,10 @@
 # Sources:
 #   docs/internals/providers.md (route by instance, unknown drivers keep their configuration)
-#   apps/server-ex/lib/t3/settings.ex (providerInstances, provider_enabled?)
-#   apps/server-ex/lib/t3/acp.ex (instance environment, built-ins off until enabled, binary/3 binaryPath)
-#   apps/server-ex/lib/t3/background_policy.ex (providerHealthRefreshInterval)
-#   apps/server-ex/lib/t3/environment.ex (providers, refresh_providers)
-#   apps/server-ex/lib/t3/orchestration.ex (driver_for)
+#   apps/server-ex/lib/hal_c2/settings.ex (providerInstances, provider_enabled?)
+#   apps/server-ex/lib/hal_c2/acp.ex (instance environment, built-ins off until enabled, binary/3 binaryPath)
+#   apps/server-ex/lib/hal_c2/background_policy.ex (providerHealthRefreshInterval)
+#   apps/server-ex/lib/hal_c2/environment.ex (providers, refresh_providers)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (driver_for)
 #   apps/web/src/components/settings/ProviderSettingsPanel.tsx, apps/web/src/components/settings/ProviderInstanceCard.tsx
 #   apps/web/src/components/settings/AddProviderInstanceDialog.tsx, apps/web/src/components/settings/AddProviderInstanceWizardSteps.tsx
 #   apps/web/src/components/settings/ProviderAccentColorPicker.tsx, apps/web/src/components/settings/providerDriverMeta.ts

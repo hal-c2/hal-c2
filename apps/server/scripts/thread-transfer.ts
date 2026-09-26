@@ -2,7 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 
-import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
+import { fromJsonStringPretty } from "@hal-c2/shared/schemaJson";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
@@ -17,7 +17,7 @@ import {
   parseThreadSegmentFromAttachmentId,
   toSafeThreadAttachmentSegment,
 } from "../src/attachmentStore.ts";
-import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as NodeSqliteClient from "@hal-c2/shared/nodeSqliteClient";
 import { ensureDevDbNotInUse } from "./migrate-dev-db.ts";
 
 const THREAD_PROJECTION_TABLES = [
@@ -66,7 +66,7 @@ const ThreadArchiveFile = Schema.Struct({
 });
 
 export const ThreadArchive = Schema.Struct({
-  format: Schema.Literal("t3-thread-export"),
+  format: Schema.Literal("hal-c2-thread-export"),
   version: Schema.Literal(1),
   exportedAt: Schema.String,
   thread: Schema.Struct({
@@ -106,7 +106,7 @@ export class ThreadTransferError extends Schema.TaggedError<ThreadTransferError>
 }
 
 export interface ExportThreadInput {
-  /** Workspace root, T3 base directory, or direct state directory. */
+  /** Workspace root, HAL-C2 base directory, or direct state directory. */
   readonly source: string;
   readonly state?: ThreadTransferState | undefined;
   readonly threadId: string;
@@ -115,7 +115,7 @@ export interface ExportThreadInput {
 }
 
 export interface ImportThreadInput {
-  /** Workspace root, T3 base directory, or direct state directory. */
+  /** Workspace root, HAL-C2 base directory, or direct state directory. */
   readonly destination: string;
   readonly state?: ThreadTransferState | undefined;
   readonly archive: string;
@@ -123,7 +123,7 @@ export interface ImportThreadInput {
 }
 
 export interface ListThreadsInput {
-  /** Workspace root, T3 base directory, or direct state directory. */
+  /** Workspace root, HAL-C2 base directory, or direct state directory. */
   readonly source: string;
   readonly state?: ThreadTransferState | undefined;
 }
@@ -143,7 +143,7 @@ export interface ThreadTransferOptions {
   readonly sharedHome?: string | undefined;
 }
 
-interface T3Location {
+interface HalC2Location {
   readonly stateDir: string;
   readonly databasePath: string;
   readonly workspaceRoot: string | null;
@@ -202,7 +202,7 @@ function restoreSqliteValue(value: typeof SqliteValue.Type): null | string | num
   return value instanceof Array ? Uint8Array.from(value) : value;
 }
 
-const resolveT3Location = Effect.fn("resolveThreadTransferT3Location")(function* (
+const resolveHalC2Location = Effect.fn("resolveThreadTransferHalC2Location")(function* (
   input: string,
   state: ThreadTransferState = "userdata",
 ) {
@@ -215,7 +215,7 @@ const resolveT3Location = Effect.fn("resolveThreadTransferT3Location")(function*
       stateDir: root,
       databasePath: directDatabase,
       workspaceRoot: null,
-    } satisfies T3Location;
+    } satisfies HalC2Location;
   }
   const stateDir = path.join(root, state);
   const stateDatabase = path.join(stateDir, "statev2.sqlite");
@@ -224,9 +224,9 @@ const resolveT3Location = Effect.fn("resolveThreadTransferT3Location")(function*
       stateDir,
       databasePath: stateDatabase,
       workspaceRoot: null,
-    } satisfies T3Location;
+    } satisfies HalC2Location;
   }
-  const nestedBaseDir = path.join(root, ".t3");
+  const nestedBaseDir = path.join(root, ".hal-c2");
   const nestedStateDir = path.join(nestedBaseDir, state);
   const nestedDatabase = path.join(nestedStateDir, "statev2.sqlite");
   if (yield* fs.exists(nestedDatabase)) {
@@ -234,11 +234,11 @@ const resolveT3Location = Effect.fn("resolveThreadTransferT3Location")(function*
       stateDir: nestedStateDir,
       databasePath: nestedDatabase,
       workspaceRoot: root,
-    } satisfies T3Location;
+    } satisfies HalC2Location;
   }
   return yield* transferError(
     "resolve directory",
-    `No T3 ${state} database found at '${directDatabase}', '${stateDatabase}', or '${nestedDatabase}'.`,
+    `No HAL-C2 ${state} database found at '${directDatabase}', '${stateDatabase}', or '${nestedDatabase}'.`,
   );
 });
 
@@ -306,7 +306,7 @@ function isAttachmentForThread(fileName: string, threadId: string): boolean {
 }
 
 const loadAttachments = Effect.fn("loadThreadTransferAttachments")(function* (
-  location: T3Location,
+  location: HalC2Location,
   threadId: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -339,7 +339,7 @@ function isTerminalLogForThread(fileName: string, threadId: string): boolean {
 }
 
 const loadTerminalLogs = Effect.fn("loadThreadTransferTerminalLogs")(function* (
-  location: T3Location,
+  location: HalC2Location,
   threadId: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -409,7 +409,7 @@ const loadListedThreads = Effect.fn("loadListedThreads")(function* (
 });
 
 export const listThreads = Effect.fn("listThreads")(function* (input: ListThreadsInput) {
-  const location = yield* resolveT3Location(input.source, input.state);
+  const location = yield* resolveHalC2Location(input.source, input.state);
   return yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const projects = yield* sql<ProjectRow>`
@@ -461,7 +461,7 @@ const loadArchive = Effect.fn("loadThreadTransferArchive")(function* (filePath: 
     );
   return yield* decodeThreadArchive(source).pipe(
     Effect.mapError((cause) =>
-      transferError("read archive", `'${resolved}' is not a T3 thread archive.`, cause),
+      transferError("read archive", `'${resolved}' is not a HAL-C2 thread archive.`, cause),
     ),
   );
 });
@@ -469,7 +469,7 @@ const loadArchive = Effect.fn("loadThreadTransferArchive")(function* (filePath: 
 export const exportThread = Effect.fn("exportThread")(function* (input: ExportThreadInput) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const location = yield* resolveT3Location(input.source, input.state);
+  const location = yield* resolveHalC2Location(input.source, input.state);
   const output = path.resolve(input.output);
   if (yield* fs.exists(output)) {
     return yield* transferError("export thread", `Output '${output}' already exists.`);
@@ -553,7 +553,7 @@ export const exportThread = Effect.fn("exportThread")(function* (input: ExportTh
     }
     const exportedAt = DateTime.formatIso(yield* DateTime.now);
     return {
-      format: "t3-thread-export",
+      format: "hal-c2-thread-export",
       version: 1,
       exportedAt,
       thread: {
@@ -649,7 +649,7 @@ const resolveTargetProject = Effect.fn("resolveThreadTransferTargetProject")(fun
 });
 
 const writeArchiveFiles = Effect.fn("writeThreadTransferFiles")(function* (
-  location: T3Location,
+  location: HalC2Location,
   directory: ReadonlyArray<string>,
   files: ThreadArchive["attachments"],
   kind: "Attachment" | "Terminal log",
@@ -732,8 +732,8 @@ export const importThread = Effect.fn("importThread")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const location = yield* resolveT3Location(input.destination, input.state);
-  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
+  const location = yield* resolveHalC2Location(input.destination, input.state);
+  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".hal-c2"));
   const sharedDatabase = path.join(sharedHome, "userdata", "statev2.sqlite");
   const [canonicalDatabase, canonicalSharedDatabase] = yield* Effect.all([
     fs.realPath(location.databasePath).pipe(Effect.orElseSucceed(() => location.databasePath)),
@@ -742,7 +742,7 @@ export const importThread = Effect.fn("importThread")(function* (
   if (canonicalDatabase === canonicalSharedDatabase) {
     return yield* transferError(
       "import thread",
-      "Refusing to mutate the shared ~/.t3 database. Choose an isolated destination.",
+      "Refusing to mutate the shared ~/.hal-c2 database. Choose an isolated destination.",
     );
   }
   yield* ensureDevDbNotInUse(location.databasePath).pipe(

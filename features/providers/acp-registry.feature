@@ -1,11 +1,11 @@
 # Sources:
 #   docs/user/providers-acp.md
-#   apps/server-ex/lib/t3/acp.ex (acpRegistry driver, entries, probes, commandPath override)
-#   apps/server-ex/lib/t3/acp/catalog.ex (search, prepare, uninstall, cache, checksums, runners)
-#   apps/server-ex/lib/t3/acp/auth.ex (sign-in methods, terminal login, verification)
-#   apps/server-ex/lib/t3/acp/url_auth.ex (agent URL sign-in)
-#   apps/server-ex/lib/t3/acp/sessions.ex (native sessions, model providers, logout)
-#   apps/server-ex/lib/t3/acp/thread_runtime.ex (initialize, session/new, resume, permissions, cancel, rollback)
+#   apps/server-ex/lib/hal_c2/acp.ex (acpRegistry driver, entries, probes, commandPath override)
+#   apps/server-ex/lib/hal_c2/acp/catalog.ex (search, prepare, uninstall, cache, checksums, runners)
+#   apps/server-ex/lib/hal_c2/acp/auth.ex (sign-in methods, terminal login, verification)
+#   apps/server-ex/lib/hal_c2/acp/url_auth.ex (agent URL sign-in)
+#   apps/server-ex/lib/hal_c2/acp/sessions.ex (native sessions, model providers, logout)
+#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (initialize, session/new, resume, permissions, cancel, rollback)
 #   apps/web/src/components/settings/AcpRegistrySearchStep.tsx, apps/web/src/components/settings/AcpSessionManagementSection.tsx
 #   apps/web/src/components/settings/ProviderWizardAuthenticationStep.tsx
 #   packages/contracts/src/rpc.ts (server.searchAcpRegistry, server.prepareAcpRegistryAgent, server.uninstallAcpRegistryManagedBinary,
@@ -218,7 +218,7 @@ Feature: ACP registry agents
     Then the model picker offers it without a provider refresh
 
   @backlog
-  Scenario: Agent plan and build modes follow T3 Code's plan toggle
+  Scenario: Agent plan and build modes follow HAL-C2's plan toggle
     Given "acme" has its own plan mode
     When the user switches the thread to plan mode
     Then "acme" runs in its plan mode

@@ -6,7 +6,7 @@
 #     thread.interaction-mode.set, thread.interaction-mode-updated, thread.updated,
 #     thread.title.regeneration.complete, thread.created.record)
 #   packages/contracts/src/rpc.ts (orchestration.dispatchCommand)
-#   apps/server-ex/lib/t3/orchestration.ex
+#   apps/server-ex/lib/hal_c2/orchestration.ex
 #   apps/server/src/orchestration-v2/ (decider and projector for thread commands)
 #   docs/internals/glossary.md
 Feature: Thread lifecycle in the orchestration engine

@@ -1,4 +1,4 @@
-defmodule T3.Steps.Providers.UsageLimits.Hub do
+defmodule HalC2.Steps.Providers.UsageLimits.Hub do
   @moduledoc false
   # A CLIProxyAPI hub: its management API, and the upstream answers to its `api-call`
   # relays. It tells the scenario (`test`) about every request, and keeps whether a
@@ -99,7 +99,7 @@ defmodule T3.Steps.Providers.UsageLimits.Hub do
     do: conn |> put_resp_content_type("application/json") |> send_resp(200, JSON.encode!(body))
 end
 
-defmodule T3.Steps.Providers.UsageLimits.Vendor do
+defmodule HalC2.Steps.Providers.UsageLimits.Vendor do
   @moduledoc false
   # The usage endpoints of Grok, Cursor and OpenCode Go, answering the sign-in each
   # scenario stores ("vendor-token").
@@ -160,18 +160,18 @@ defmodule T3.Steps.Providers.UsageLimits.Vendor do
   end
 end
 
-defmodule T3.Steps.Providers.UsageLimits do
+defmodule HalC2.Steps.Providers.UsageLimits do
   @moduledoc """
   Steps for features/providers/usage-limits.feature: Codex and Claude subscription
-  windows read by `T3.ProviderUsageLimits` from the fake CLIs, and CLIProxyAPI hubs
-  read by `T3.UsageLimitSources` from a fake hub served in the scenario.
+  windows read by `HalC2.ProviderUsageLimits` from the fake CLIs, and CLIProxyAPI hubs
+  read by `HalC2.UsageLimitSources` from a fake hub served in the scenario.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.Providers.UsageLimits.{Hub, Vendor}
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Steps.Providers.UsageLimits.{Hub, Vendor}
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @marker "••••••"
 
@@ -180,7 +180,7 @@ defmodule T3.Steps.Providers.UsageLimits do
   step "a connected environment with Codex and Claude signed in with subscriptions", context do
     context = World.fake_providers(context)
     System.put_env("FAKE_CODEX_CONSUME_LOG", consumed(context))
-    Node.ensure(T3.BackgroundPolicy)
+    Node.ensure(HalC2.BackgroundPolicy)
     # Connected before any thread's stream messages reach this process.
     World.put_client(context, World.client(context))
   end
@@ -209,7 +209,7 @@ defmodule T3.Steps.Providers.UsageLimits do
     context = World.post_message(context, "Codex work", "rate limit", %{"dispatchMode" => nil})
     World.await_runs(context, "Codex work", ["completed"])
     # The runtime passed the update on before the turn completed.
-    :sys.get_state(T3.ProviderUsageLimits)
+    :sys.get_state(HalC2.ProviderUsageLimits)
     context
   end
 
@@ -279,7 +279,7 @@ defmodule T3.Steps.Providers.UsageLimits do
            }
 
     assert_received {:hub, "/v0/management/auth-files", _}
-    assert [%{"id" => "hub", "accounts" => [_, _]}] = T3.UsageLimitSources.current()
+    assert [%{"id" => "hub", "accounts" => [_, _]}] = HalC2.UsageLimitSources.current()
     context
   end
 
@@ -287,7 +287,7 @@ defmodule T3.Steps.Providers.UsageLimits do
 
   step "the background activity profile checks provider status every five minutes", context do
     World.merge_settings(%{"backgroundActivity" => %{"profile" => "balanced"}})
-    assert T3.ProviderUsageLimits.interval() == :timer.minutes(5)
+    assert HalC2.ProviderUsageLimits.interval() == :timer.minutes(5)
     context
   end
 
@@ -389,7 +389,7 @@ defmodule T3.Steps.Providers.UsageLimits do
 
         "a hub that is disabled" ->
           context = add_hub(context, %{"enabled" => false})
-          assert T3.UsageLimitSources.key("hub") == "hub-key"
+          assert HalC2.UsageLimitSources.key("hub") == "hub-key"
           {%{"sourceId" => "hub", "accountId" => "codex-a", "creditId" => "c1"}, context}
 
         "a hub without naming a credit" ->
@@ -437,14 +437,14 @@ defmodule T3.Steps.Providers.UsageLimits do
   end
 
   step "the settings show the key only as hidden", context do
-    {%{"settings" => settings}, context} = World.call!(context, "t3.readSettings")
+    {%{"settings" => settings}, context} = World.call!(context, "halc2.readSettings")
     assert %{"hub" => %{"managementKey" => @marker}} = settings["usageLimitSources"]
     refute File.read!(Path.join(context.node.home, "settings.json")) =~ "hub-key"
     context
   end
 
   step "the key is kept in the environment's secret store", context do
-    assert T3.UsageLimitSources.key("hub") == "hub-key"
+    assert HalC2.UsageLimitSources.key("hub") == "hub-key"
     assert File.exists?(key_path(context))
     context
   end
@@ -472,7 +472,7 @@ defmodule T3.Steps.Providers.UsageLimits do
   step "the hub still reads with its saved key", context do
     assert [%{"label" => "Team hub", "accounts" => [_, _]} = hub] = read_hubs()
     refute Map.has_key?(hub, "error")
-    assert T3.UsageLimitSources.key("hub") == "hub-key"
+    assert HalC2.UsageLimitSources.key("hub") == "hub-key"
     context
   end
 
@@ -486,7 +486,7 @@ defmodule T3.Steps.Providers.UsageLimits do
   end
 
   step "its key is removed from the secret store", context do
-    assert T3.UsageLimitSources.key("hub") == ""
+    assert HalC2.UsageLimitSources.key("hub") == ""
     refute File.exists?(key_path(context))
     context
   end
@@ -538,7 +538,7 @@ defmodule T3.Steps.Providers.UsageLimits do
 
     assert_received {:hub, "/v0/management/reset-quota", %{"auth_index" => "0"}}
 
-    [%{"accounts" => accounts}] = T3.UsageLimitSources.current()
+    [%{"accounts" => accounts}] = HalC2.UsageLimitSources.current()
     account = Enum.find(accounts, &(&1["id"] == "codex-a"))
 
     assert account["usageLimits"]["checkedAt"] !=
@@ -557,8 +557,8 @@ defmodule T3.Steps.Providers.UsageLimits do
   # Starts the node's usage-limit service (if it is not running yet) and waits for its
   # boot probe of Codex and Claude.
   defp limits(context) do
-    Node.ensure(T3.ProviderUsageLimits)
-    :ok = T3.ProviderUsageLimits.refresh([])
+    Node.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh([])
     context
   end
 
@@ -584,7 +584,7 @@ defmodule T3.Steps.Providers.UsageLimits do
   # A client's activity lease on provider status, in front or not; the state call
   # makes sure the policy has it.
   defp report_activity(context, front?) do
-    T3.BackgroundPolicy.report_client_activity(
+    HalC2.BackgroundPolicy.report_client_activity(
       "session-#{System.unique_integer([:positive])}",
       self(),
       %{
@@ -594,12 +594,12 @@ defmodule T3.Steps.Providers.UsageLimits do
         "focused" => front?,
         "recentlyInteracted" => false,
         "scopes" => [%{"type" => "provider-status"}],
-        "observedAt" => T3.Orchestration.Entities.now()
+        "observedAt" => HalC2.Orchestration.Entities.now()
       }
     )
 
-    :sys.get_state(T3.BackgroundPolicy)
-    assert T3.ProviderUsageLimits.wanted?() == front?
+    :sys.get_state(HalC2.BackgroundPolicy)
+    assert HalC2.ProviderUsageLimits.wanted?() == front?
     Map.put(context, :checks_before, checks(context))
   end
 
@@ -621,7 +621,7 @@ defmodule T3.Steps.Providers.UsageLimits do
   # a client writes.
   defp add_hub(context, extra \\ %{}) do
     context = serve_hub(context)
-    Node.ensure(T3.UsageLimitSources)
+    Node.ensure(HalC2.UsageLimitSources)
 
     source =
       Map.merge(
@@ -664,20 +664,20 @@ defmodule T3.Steps.Providers.UsageLimits do
 
   defp write_sources(context, fun) do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "t3.readSettings")
+      World.call!(context, "halc2.readSettings")
 
     settings = Map.put(settings, "usageLimitSources", fun.(settings["usageLimitSources"] || %{}))
 
     {_, context} =
-      World.call!(context, "t3.writeSettings", %{"settings" => settings, "version" => version})
+      World.call!(context, "halc2.writeSettings", %{"settings" => settings, "version" => version})
 
     context
   end
 
   # Reads every hub now and returns what clients are shown.
   defp read_hubs do
-    :ok = T3.UsageLimitSources.refresh()
-    T3.UsageLimitSources.current()
+    :ok = HalC2.UsageLimitSources.refresh()
+    HalC2.UsageLimitSources.current()
   end
 
   defp watch_config(context) do
@@ -755,7 +755,7 @@ defmodule T3.Steps.Providers.UsageLimits do
   end
 
   step "the node checks limits", context do
-    Node.ensure(T3.ProviderUsageLimits)
+    Node.ensure(HalC2.ProviderUsageLimits)
 
     {_, context} =
       World.call!(context, "server.refreshProviders", %{"instanceId" => context.vendor_instance})
@@ -813,11 +813,11 @@ defmodule T3.Steps.Providers.UsageLimits do
   # agent, with `env` on the instance and the vendor endpoints pointed at the fake.
   defp vendor_instance(context, id, env) do
     context = context |> World.fake_providers() |> serve_vendor()
-    commands = Application.get_env(:t3, :acp_commands, %{})
+    commands = Application.get_env(:hal_c2, :acp_commands, %{})
     World.put_app_env(:acp_commands, Map.put(commands, id, [context.fakes.acp]))
     World.put_app_env(:grok_billing_url, context.vendor <> "/grok/billing")
     World.put_app_env(:opencode_go_usage_url, context.vendor <> "/opencode/usage")
-    ExUnit.Callbacks.on_exit(fn -> T3.Acp.forget(id) end)
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Acp.forget(id) end)
 
     World.merge_settings(%{
       "providerInstances" => %{

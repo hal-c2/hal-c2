@@ -3,13 +3,13 @@
 #   apps/web/src/components/settings/ScopedSwitch.tsx
 #   apps/web/src/components/settings/SettingInheritance.tsx (reset buttons)
 #   packages/contracts/src/settings.ts (sidebarProjectGroupingMode, autoResumeLimitedThreads, snoozeLimitedThreads, sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays, timestampFormat, responseStreamingMode, diffIgnoreWhitespace, diffFilesCollapsed, diffLayout, proactivePanelsEnabled, sendShortcut, followUpBehavior, continueThreadsAfterServerUpdate, newWorktreesStartFromOrigin, addProjectBaseDirectory, confirmThreadUnpin, confirmThreadArchive, confirmThreadDelete, confirmQuit, textGenerationModelSelection)
-#   apps/server-ex/lib/t3/settings.ex
-#   apps/server-ex/lib/t3/orchestration/settlement.ex (sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays)
-#   apps/server-ex/lib/t3/orchestration/recovery.ex (continueThreadsAfterServerUpdate)
-#   apps/server-ex/lib/t3/orchestration/turn_writer.ex (responseStreamingMode)
-#   apps/server-ex/lib/t3/mcp/tools/projects.ex (newWorktreesStartFromOrigin)
-#   apps/server-ex/lib/t3/environment.ex (threadRestartContinuation capability)
-#   apps/server-ex/lib/t3/text_generation.ex (textGenerationModelSelection)
+#   apps/server-ex/lib/hal_c2/settings.ex
+#   apps/server-ex/lib/hal_c2/orchestration/settlement.ex (sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays)
+#   apps/server-ex/lib/hal_c2/orchestration/recovery.ex (continueThreadsAfterServerUpdate)
+#   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (responseStreamingMode)
+#   apps/server-ex/lib/hal_c2/mcp/tools/projects.ex (newWorktreesStartFromOrigin)
+#   apps/server-ex/lib/hal_c2/environment.ex (threadRestartContinuation capability)
+#   apps/server-ex/lib/hal_c2/text_generation.ex (textGenerationModelSelection)
 #   apps/mobile/src/features/settings/SettingsThreadsRouteScreen.tsx (usage limits, auto-settle, defaults differ)
 #   apps/mobile/src/features/settings/SettingsFollowUpRouteScreen.tsx
 #   apps/mobile/src/features/settings/SettingsProjectGroupingRouteScreen.tsx

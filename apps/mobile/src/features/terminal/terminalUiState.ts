@@ -1,4 +1,4 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@hal-c2/contracts";
 
 export interface TerminalGridSize {
   readonly cols: number;

@@ -1,7 +1,7 @@
-defmodule T3.Steps.Providers.Antigravity do
+defmodule HalC2.Steps.Providers.Antigravity do
   @moduledoc """
   Steps for `features/providers/antigravity.feature`. Google's runtime is played by
-  the scripted fake (`T3.Test.FakeAcp` with `googleAuth`, see
+  the scripted fake (`HalC2.Test.FakeAcp` with `googleAuth`, see
   `test/support/fake_google_auth.py`): the release the node downloads is a zip of
   the fake's wrapper and a helper script, fetched from disk through the
   `:antigravity_fetch` seam, and Google's sign-in page is the fake's loopback
@@ -14,10 +14,10 @@ defmodule T3.Steps.Providers.Antigravity do
 
   import ExUnit.Assertions
 
-  alias T3.Acp.Antigravity
-  alias T3.Acp.Antigravity.Installation
-  alias T3.Test.{FakeAcp, Node}
-  alias T3.Test.Node.World
+  alias HalC2.Acp.Antigravity
+  alias HalC2.Acp.Antigravity.Installation
+  alias HalC2.Test.{FakeAcp, Node}
+  alias HalC2.Test.Node.World
 
   @version "agy_acp_server_1.1.1"
   @old "agy_acp_server_1.1.0"
@@ -56,14 +56,14 @@ defmodule T3.Steps.Providers.Antigravity do
     FakeAcp.settings(&put_in(&1, ["providers", @instance], %{"enabled" => true}))
 
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.ProviderAuth.Registry},
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.ProviderAuth.Registry},
         id: :provider_auth_registry
       )
     )
 
     Node.ensure(
       Supervisor.child_spec(
-        {DynamicSupervisor, name: T3.ProviderAuth.Supervisor, strategy: :one_for_one},
+        {DynamicSupervisor, name: HalC2.ProviderAuth.Supervisor, strategy: :one_for_one},
         id: :provider_auth_supervisor
       )
     )
@@ -76,13 +76,13 @@ defmodule T3.Steps.Providers.Antigravity do
     ]
 
     ExUnit.Callbacks.on_exit(fn ->
-      for key <- keys, do: Application.delete_env(:t3, key)
-      :persistent_term.erase({T3.Acp, @instance, :workspaces})
+      for key <- keys, do: Application.delete_env(:hal_c2, key)
+      :persistent_term.erase({HalC2.Acp, @instance, :workspaces})
     end)
 
-    Application.put_env(:t3, :antigravity_platform, {"linux", "x64"})
+    Application.put_env(:hal_c2, :antigravity_platform, {"linux", "x64"})
     {release, archive} = build_release(context, @version)
-    Application.put_env(:t3, :antigravity_release, release)
+    Application.put_env(:hal_c2, :antigravity_release, release)
     context = Map.merge(context, %{release: release, archive: archive, instance: @instance})
     fetch(context, :copy)
     Map.put(context, :old_release, place(context, @old))
@@ -205,7 +205,7 @@ defmodule T3.Steps.Providers.Antigravity do
   end
 
   step "the Antigravity installation failed for lack of disk space", context do
-    Application.put_env(:t3, :antigravity_free_space, fn _dir -> 1024 * 1024 end)
+    Application.put_env(:hal_c2, :antigravity_free_space, fn _dir -> 1024 * 1024 end)
     context = context |> installer() |> watch_install()
     {_, context} = World.call!(context, "provider.install.start", %{"instanceId" => @instance})
     {states, context} = collect_install(context, &(&1["phase"] in ~w(succeeded failed)))
@@ -215,7 +215,7 @@ defmodule T3.Steps.Providers.Antigravity do
   end
 
   step "the user frees space and retries the installation", context do
-    Application.put_env(:t3, :antigravity_free_space, fn _dir -> 64 * 1024 * 1024 * 1024 end)
+    Application.put_env(:hal_c2, :antigravity_free_space, fn _dir -> 64 * 1024 * 1024 * 1024 end)
     {_, context} = World.call!(context, "provider.install.start", %{"instanceId" => @instance})
     {states, context} = collect_install(context, &(&1["phase"] in ~w(succeeded failed)))
     Map.put(context, :install_states, states)
@@ -296,9 +296,9 @@ defmodule T3.Steps.Providers.Antigravity do
   # --- platforms and manual installations ------------------------------------------
 
   step "the environment runs on an Intel Mac", context do
-    Application.put_env(:t3, :antigravity_platform, {"darwin", "x64"})
-    Application.delete_env(:t3, :antigravity_release)
-    T3.Acp.forget(@instance)
+    Application.put_env(:hal_c2, :antigravity_platform, {"darwin", "x64"})
+    Application.delete_env(:hal_c2, :antigravity_release)
+    HalC2.Acp.forget(@instance)
     context
   end
 
@@ -498,7 +498,7 @@ defmodule T3.Steps.Providers.Antigravity do
 
   step "five minutes pass without finishing", context do
     # The flow's five-minute timer firing now.
-    [{server, _}] = Registry.lookup(T3.ProviderAuth.Registry, @instance)
+    [{server, _}] = Registry.lookup(HalC2.ProviderAuth.Registry, @instance)
     send(server, {:expire, context.flow.id})
     await_auth(context, "failed")
   end
@@ -595,8 +595,8 @@ defmodule T3.Steps.Providers.Antigravity do
   end
 
   step "the environment has a Gemini API key in its variables", context do
-    T3.Test.Node.Terminal.put_env("GEMINI_API_KEY", "ambient-key")
-    T3.Test.Node.Terminal.put_env("GOOGLE_CLOUD_PROJECT", "ambient-project")
+    HalC2.Test.Node.Terminal.put_env("GEMINI_API_KEY", "ambient-key")
+    HalC2.Test.Node.Terminal.put_env("GOOGLE_CLOUD_PROJECT", "ambient-project")
     context
   end
 
@@ -664,7 +664,7 @@ defmodule T3.Steps.Providers.Antigravity do
   step "that instance is signed out", context do
     assert [%{"type" => "command_execution"} = item] =
              Enum.filter(
-               T3.StreamState.list(context.run_state, "turn-item"),
+               HalC2.StreamState.list(context.run_state, "turn-item"),
                &(&1["type"] == "command_execution")
              )
 
@@ -758,8 +758,8 @@ defmodule T3.Steps.Providers.Antigravity do
 
   step "Antigravity still shows the saved account", context do
     # A restarted node has read nothing from the agent yet.
-    T3.Acp.forget(@instance)
-    :persistent_term.erase({T3.Acp, @instance, :unauthenticated})
+    HalC2.Acp.forget(@instance)
+    :persistent_term.erase({HalC2.Acp, @instance, :unauthenticated})
     await_signed_in(context, @instance)
     context
   end
@@ -779,15 +779,15 @@ defmodule T3.Steps.Providers.Antigravity do
 
   step "the user tries to revert to the first turn", context do
     thread_id = World.thread_id(context, "Work")
-    scope = T3.Checkpoint.scope_id(thread_id)
+    scope = HalC2.Checkpoint.scope_id(thread_id)
 
     reply =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "checkpoint.rollback",
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
         "threadId" => thread_id,
         "scopeId" => scope,
-        "checkpointId" => T3.Checkpoint.checkpoint_id(scope, 1)
+        "checkpointId" => HalC2.Checkpoint.checkpoint_id(scope, 1)
       })
 
     Map.put(context, :reply, reply)
@@ -798,7 +798,7 @@ defmodule T3.Steps.Providers.Antigravity do
     assert message =~ "Antigravity cannot rewind its conversation"
     assert File.read!(context.notes) == "after the second turn\n"
     state = FakeAcp.await_runs(context, 2)
-    assert Enum.all?(T3.StreamState.list(state, "run"), &(&1["status"] == "completed"))
+    assert Enum.all?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "completed"))
     context
   end
 
@@ -861,7 +861,7 @@ defmodule T3.Steps.Providers.Antigravity do
       end
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "message.dispatch",
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
         "threadId" => World.thread_id(context, "Work"),
@@ -890,7 +890,7 @@ defmodule T3.Steps.Providers.Antigravity do
   step ~r/^the project has the skill "(?<name>[^"]+)" in both \.gemini\/skills and \.agents\/skills$/,
        %{args: [name]} = context do
     # The user's own skill folders are empty.
-    T3.Test.Node.Host.home(context)
+    HalC2.Test.Node.Host.home(context)
     root = World.project(context).root
 
     for {dir, from} <- [{".gemini/skills", "gemini"}, {".agents/skills", "agents"}] do
@@ -974,7 +974,7 @@ defmodule T3.Steps.Providers.Antigravity do
   end
 
   step "their activity is shown as a subagent batch", context do
-    items = T3.StreamState.list(context.run_state, "turn-item")
+    items = HalC2.StreamState.list(context.run_state, "turn-item")
     assert [item] = Enum.filter(items, &(&1["type"] == "subagent"))
     assert inspect(item) =~ "Antigravity subagent batch"
     assert inspect(item) =~ "provider_native"
@@ -1096,7 +1096,7 @@ defmodule T3.Steps.Providers.Antigravity do
     test = self()
     data = File.read!(context.archive)
 
-    Application.put_env(:t3, :antigravity_fetch, fn _url, dest, progress ->
+    Application.put_env(:hal_c2, :antigravity_fetch, fn _url, dest, progress ->
       case mode do
         :copy ->
           :ok
@@ -1228,10 +1228,10 @@ defmodule T3.Steps.Providers.Antigravity do
   # Rewrites the settings over the socket, as a client's settings page does.
   defp write_settings(context, fun) do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "t3.readSettings")
+      World.call!(context, "halc2.readSettings")
 
     {_, context} =
-      World.call!(context, "t3.writeSettings", %{
+      World.call!(context, "halc2.writeSettings", %{
         "settings" => fun.(settings),
         "version" => version
       })
@@ -1244,7 +1244,7 @@ defmodule T3.Steps.Providers.Antigravity do
     token = Antigravity.token_path(instance)
     File.mkdir_p!(Path.dirname(token))
     File.write!(token, JSON.encode!(%{"account" => "user@example.com"}))
-    Antigravity.put_account(instance, T3.Acp.session_models(%{"configOptions" => @models}))
+    Antigravity.put_account(instance, HalC2.Acp.session_models(%{"configOptions" => @models}))
     context
   end
 
@@ -1258,7 +1258,7 @@ defmodule T3.Steps.Providers.Antigravity do
   end
 
   defp runtime(context) do
-    [{pid, _}] = Registry.lookup(T3.Acp.Registry, World.thread_id(context, "Work"))
+    [{pid, _}] = Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, "Work"))
     pid
   end
 
@@ -1272,9 +1272,9 @@ defmodule T3.Steps.Providers.Antigravity do
 
   defp assert_history(context) do
     for {_title, id} <- context.threads do
-      state = T3.Streams.Server.state(T3.Streams.ensure(id))
-      assert %{"id" => ^id} = T3.StreamState.get(state, "thread")[id]
-      assert [_ | _] = T3.StreamState.list(state, "message")
+      state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
+      assert %{"id" => ^id} = HalC2.StreamState.get(state, "thread")[id]
+      assert [_ | _] = HalC2.StreamState.list(state, "message")
     end
 
     context
@@ -1282,7 +1282,7 @@ defmodule T3.Steps.Providers.Antigravity do
 
   defp last_error(state) do
     state
-    |> T3.StreamState.list("provider-session")
+    |> HalC2.StreamState.list("provider-session")
     |> Enum.find_value(& &1["lastError"])
   end
 
@@ -1360,7 +1360,7 @@ defmodule T3.Steps.Providers.Antigravity do
 
   defp current_auth(context) do
     {_name, instance, _id} = context.auth_at
-    [{server, _}] = Registry.lookup(T3.ProviderAuth.Registry, instance)
+    [{server, _}] = Registry.lookup(HalC2.ProviderAuth.Registry, instance)
     :sys.get_state(server).auth
   end
 

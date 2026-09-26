@@ -3,9 +3,9 @@
 #   docs/internals/pull-request-file-revisions.md
 #   packages/contracts/src/pullRequest.ts (PullRequestDetail, PullRequestChecks, PullRequestActivity, PullRequestThreadComments, PullRequestSubmitReviewInput, PullRequestReaction, PullRequestFilesViewed, PullRequestDiff)
 #   packages/contracts/src/rpc.ts (pullRequests.detail, pullRequests.preview, pullRequests.checks, pullRequests.activity, pullRequests.threadComments, pullRequests.diffFileContents, pullRequests.filesViewed, pullRequests.setFilesViewed, pullRequests.comment, pullRequests.updateComment, pullRequests.submitReview, pullRequests.replyToThread, pullRequests.setThreadResolution, pullRequests.setReaction, pullRequests.update)
-#   apps/server-ex/lib/t3/pull_requests.ex (detail, checks, activity, comment, submit_review, set_reaction, files_viewed, update)
-#   apps/server-ex/lib/t3/web/router.ex (POST /api/pull-requests/diff)
-#   apps/server-ex/test/t3/features_backlog_test.exs (github-media-assets)
+#   apps/server-ex/lib/hal_c2/pull_requests.ex (detail, checks, activity, comment, submit_review, set_reaction, files_viewed, update)
+#   apps/server-ex/lib/hal_c2/web/router.ex (POST /api/pull-requests/diff)
+#   apps/server-ex/test/hal_c2/features_backlog_test.exs (github-media-assets)
 #   apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx
 #   apps/web/src/components/pullRequest/PullRequestCodeTab.tsx
 #   apps/web/src/components/pullRequest/PullRequestReviewForm.tsx
@@ -155,7 +155,7 @@ Feature: Reviewing a pull request
     Given a GitLab project with the open merge request 5
     When the user marks "src/cart.ts" viewed in merge request 5
     Then the environment keeps the mark with the revision it was made against
-    And the file reads as viewed in T3 Code
+    And the file reads as viewed in HAL-C2
 
   @backlog @node
   Scenario: A file missing from the host's answer is not treated as deleted
