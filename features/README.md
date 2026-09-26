@@ -34,6 +34,7 @@ One directory per product domain, not per surface. Surfaces are tags.
 | `providers/`      | each agent provider as a plugin: install, auth, models, usage, sessions      |
 | `plugins/`        | the plugin system: UI plugins, node plugins, agent plugins                   |
 | `mobile/`         | behaviour that only exists on phones and tablets                             |
+| `desktop/`        | behaviour that only exists in the desktop client                             |
 | `tui/`            | behaviour that only exists in the terminal client                            |
 | `parity/`         | scenario outlines generated from contracts: RPC methods, commands, protocol  |
 
