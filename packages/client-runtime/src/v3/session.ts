@@ -1353,6 +1353,11 @@ export function makeV3Session(input: {
       [WS_METHODS.terminalClear]: terminalCommand(WS_METHODS.terminalClear),
       [WS_METHODS.terminalRestart]: terminalCommand(WS_METHODS.terminalRestart),
       [WS_METHODS.terminalClose]: terminalCommand(WS_METHODS.terminalClose),
+      // Its contract error is authorization only; a failure passes through as it came.
+      [WS_METHODS.terminalList]: forward(
+        WS_METHODS.terminalList,
+        (_request: TerminalRequest, _message, cause) => cause,
+      ),
       [WS_METHODS.serverGetSettings]: getSettings,
       [WS_METHODS.serverUpdateSettings]: updateSettings,
       [WS_METHODS.serverGetConfig]: () => initialConfig,
