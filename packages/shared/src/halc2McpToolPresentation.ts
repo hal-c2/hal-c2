@@ -74,7 +74,7 @@ function tool(
   return { displayName, labels, icon, summaryAction };
 }
 
-const HALC2_MCP_SERVER_ALIASES = new Set(["hal-c2", "halc2", "hal-c2"]);
+const HALC2_MCP_SERVER_ALIASES = new Set(["hal-c2", "hal_c2", "halc2"]);
 
 // Cards, activity rows, summaries, and provider identity recovery share this inventory.
 const HALC2_MCP_TOOLS: Readonly<Record<string, HalC2McpToolDefinition>> = {
@@ -327,7 +327,7 @@ function resolveHalC2McpToolName(value: string): string | null {
       : null;
   }
 
-  const namespaceMatch = /^(?<server>hal-c2|halc2|hal-c2)(?:[.:/]|\s*·\s*)(?<tool>.+)$/i.exec(
+  const namespaceMatch = /^(?<server>hal-c2|hal_c2|halc2)(?:[.:/]|\s*·\s*)(?<tool>.+)$/i.exec(
     label,
   );
   if (namespaceMatch?.groups) {
@@ -335,8 +335,13 @@ function resolveHalC2McpToolName(value: string): string | null {
   }
 
   const prefixed = /^(?:mcp[-_]{1,2})?hal[-_ ]?c2(?:__|[-_.:/ ])(?<tool>.+)$/i.exec(label);
-  const candidate = prefixed?.groups?.tool ?? label;
-  return Object.hasOwn(HALC2_MCP_TOOLS, candidate) ? candidate : null;
+  // Tool names start with `halc2_` themselves, so a bare tool name also parses
+  // as a prefixed one; accept whichever reading names a known tool.
+  const prefixedTool = prefixed?.groups?.tool;
+  if (prefixedTool !== undefined && Object.hasOwn(HALC2_MCP_TOOLS, prefixedTool)) {
+    return prefixedTool;
+  }
+  return Object.hasOwn(HALC2_MCP_TOOLS, label) ? label : null;
 }
 
 export function resolveHalC2McpToolDefinition(
