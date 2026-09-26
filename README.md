@@ -6,7 +6,7 @@ Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCod
 
 ## T3 Code Fork
 
-This is friendly fork. We are standing on the shoulders of giants, I would never have created this and have been a happy user of T3.
+This is friendly fork. We are standing on the shoulders of giants, I would never have created this and have been a happy user of T3 Code.
 I just ended up make a bit too many modifications and they are too big to make sense for T3 Code.
 
 This is still a work in progress you should still use T3 Code unless you are fine with things breaking and want to help.
@@ -26,7 +26,7 @@ We have a qml desktop app which allows for customising your app as much as you w
 
 ### Terminal UI (over SSH, no port forwarding)
 
-If you run a T3 Code server on a remote machine, you can monitor and drive its
+If you run a HAL-C2 server on a remote machine, you can monitor and drive its
 threads from a terminal UI that talks to the already-running local server — no
 port forwarding required. The TUI renders with [OpenTUI](https://opentui.com)
 and runs on [Bun](https://bun.sh), so install Bun on the box first:
@@ -68,7 +68,7 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 - [Keeping app and server in sync](./docs/user/updating.md)
 - [Source control integrations](./docs/user/source-control.md)
 - Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
-- [Run T3 Code as a background service](./docs/user/background-service.md)
+- [Run HAL-C2 as a background service](./docs/user/background-service.md)
 
 Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
 
@@ -76,7 +76,7 @@ Building from source? Start at [docs/internals/overview.md](./docs/internals/ove
 
 ### Install `vp`
 
-T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
+HAL-C2 uses Vite+ so you'll need to install the global `vp` command-line tool.
 
 #### macOS / Linux
 
