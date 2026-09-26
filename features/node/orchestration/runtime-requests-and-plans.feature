@@ -36,20 +36,21 @@ Feature: Approvals, questions and plans
     Then the request is resolved with decision accept
     And the approval item is completed
 
+  # Codex has no "always"; both servers send it acceptForSession instead.
   @node
   Scenario Outline: Every approval decision reaches the provider
     Given the provider asked for approval of a command
     When the user responds with decision "<decision>"
-    Then the provider receives decision "<decision>"
+    Then the provider receives decision "<received>"
     And the request records decision "<decision>"
 
     Examples:
-      | decision         |
-      | accept           |
-      | acceptForSession |
-      | acceptAlways     |
-      | decline          |
-      | cancel           |
+      | decision         | received         |
+      | accept           | accept           |
+      | acceptForSession | acceptForSession |
+      | acceptAlways     | acceptForSession |
+      | decline          | decline          |
+      | cancel           | cancel           |
 
   @node
   Scenario: A response without a decision declines
@@ -94,13 +95,14 @@ Feature: Approvals, questions and plans
     Then the provider is told the questions were dismissed
     And the request is no longer pending
 
+  # Both servers mark a request left pending at startup expired, not cancelled.
   @node
-  Scenario: Pending requests are cancelled when the node restarts
+  Scenario: Pending requests expire when the node restarts
     Given the provider asked for approval of a command
     When the node restarts
-    Then the request is cancelled
+    Then the request expires
 
-  @node @backlog
+  @node
   Scenario: A pending request that cannot be answered after a restart is marked not resumable
     Given the provider asked for approval of a command
     When the node restarts
@@ -131,8 +133,10 @@ Feature: Approvals, questions and plans
     When the user sends "Implement it" to "t1" referring to plan "p1"
     Then plan "p1" is completed
 
+  # The Node server completes a plan implemented from another thread of its project
+  # (the composer's "Implement in a new thread").
   @node
-  Scenario: A plan reference to another thread's plan changes nothing
+  Scenario: A plan implemented from another thread is completed
     Given thread "t2" has an active proposed plan "p2"
     When the user sends a message to "t1" referring to plan "p2" of "t2"
-    Then plan "p2" is still active
+    Then plan "p2" is completed

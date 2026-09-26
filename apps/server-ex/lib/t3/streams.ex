@@ -49,6 +49,9 @@ defmodule T3.Streams do
   def transact(stream_id, stream_kind, fun),
     do: stream_id |> ensure() |> Server.transact(stream_kind, fun)
 
+  @doc "See `T3.Streams.Server.flush_shell/1`."
+  def flush_shell(stream_id), do: stream_id |> ensure() |> Server.flush_shell()
+
   @doc "Commits changes to a stream and fans them out to its subscribers."
   @spec commit(String.t(), T3.Store.stream_kind(), [T3.Store.change()]) :: {:ok, non_neg_integer}
   def commit(stream_id, stream_kind, changes),

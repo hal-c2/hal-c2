@@ -69,10 +69,13 @@ defmodule T3.Test.Node do
   back after the core, so in-memory state (clones, setups) is lost as in a real
   restart. Turns the stop cut off are settled and, where the project asks for
   it, continued (`T3.Orchestration.Recovery`), as `T3.Application` boots.
-  Sockets are gone afterwards; steps reconnect.
+  Sockets are gone afterwards; steps reconnect. `while_stopped` runs after the
+  services stop and before they start, as an operator's offline task would
+  (`mix t3.import`).
   """
-  def restart(%{home: dir, port: port} = node) do
+  def restart(%{home: dir, port: port} = node, while_stopped \\ fn -> :ok end) do
     stop(node)
+    while_stopped.()
     ensured = Process.get({__MODULE__, :ensured}, [])
     node = start(dir, port)
     # In the application's order: cut-off turns settle before the optional
@@ -2303,7 +2306,17 @@ defmodule T3.Test.Node.World do
     end
   end
 
-  @doc "The message texts the fake Claude was sent, one per turn, oldest first."
+  @doc """
+  The message texts the fake Claude was sent, one per turn, oldest first; after
+  `log_claude_prompts/1`, every user message it received since.
+  """
+  def claude_prompts(%{claude_log: log}) do
+    case File.read(log) do
+      {:ok, text} -> for line <- String.split(text, "\n", trim: true), do: JSON.decode!(line)
+      _ -> []
+    end
+  end
+
   def claude_prompts(context) do
     case File.read(Path.join(context.node.home, "claude-prompts.log")) do
       {:ok, log} ->
@@ -2325,19 +2338,23 @@ defmodule T3.Test.Node.World do
   (`test/support/fake_codex.py`, `fake_claude.py`, `fake_acp.py`: a message
   containing "wait" keeps its turn running) and the MCP server. Each fake logs
   what it was sent under the node's home (`provider_inputs/1`,
-  `provider_prompts/2`, `codex_methods/1`, `codex_sessions/1`, `claude_starts/1`).
+  `provider_prompts/2`, `codex_methods/1`, `codex_requests/2`, `codex_sessions/1`,
+  `claude_starts/1`).
   """
   def providers(context) do
     if Application.get_env(:t3, :codex_command) == nil do
       log = "FAKE_CODEX_INPUT_LOG=" <> Path.join(context.node.home, "codex-inputs.jsonl")
       requests = "FAKE_CODEX_REQUEST_LOG=" <> Path.join(context.node.home, "codex-methods.log")
       sessions = "FAKE_CODEX_SESSION_LOG=" <> Path.join(context.node.home, "codex-sessions.jsonl")
+      # The full requests and answers, as `codex_requests/2` reads them.
+      full = "FAKE_CODEX_LOG=" <> Path.join(context.node.home, "codex-requests.log")
 
       Application.put_env(:t3, :codex_command, [
         "env",
         log,
         requests,
         sessions,
+        full,
         "python3",
         "-u",
         @fake_codex
@@ -2787,6 +2804,386 @@ defmodule T3.Test.Node.World do
     after
       0 -> Enum.reverse(lines)
     end
+  end
+
+  # --- added by W8 ---
+
+  @doc """
+  Creates a thread whose id is its name (`"t1"`), as the orchestration features
+  name threads, and makes it the scenario's current thread (`context.thread`).
+  """
+  def named_thread(context, name, project \\ nil, fields \\ %{}) do
+    context
+    |> create_thread(name, project, Map.put(fields, "threadId", name))
+    |> Map.put(:thread, name)
+  end
+
+  @doc "A thread's entities of `kind` (`\"run\"`, `\"message\"`, ...), in stream order."
+  def entities(context, title, kind), do: T3.StreamState.list(state(context, title), kind)
+
+  @doc "The latest run of a thread (highest ordinal), or nil."
+  def latest_run(context, title),
+    do: context |> entities(title, "run") |> Enum.max_by(& &1["ordinal"], fn -> nil end)
+
+  @doc "Waits until the thread's latest run has `status`; returns that run."
+  def await_latest_run(context, title, status, timeout \\ 5_000) do
+    await_state(
+      context,
+      title,
+      fn state ->
+        case Enum.max_by(T3.StreamState.list(state, "run"), & &1["ordinal"], fn -> nil end) do
+          %{"status" => ^status} -> true
+          _ -> false
+        end
+      end,
+      timeout
+    )
+
+    latest_run(context, title)
+  end
+
+  @doc "Every change in a thread's log, oldest first (`%{seq, kind, entity, patch, at}`)."
+  def events(context, title) do
+    T3.Store.path()
+    |> T3.Store.reduce_stream(thread_id(context, title), 0, [], &[&1 | &2])
+    |> Enum.reverse()
+  end
+
+  @doc """
+  Dispatches an orchestration command straight to the engine and keeps the reply
+  as `context.reply` (`{:ok, result}` or `{:error, message, nil}`), as the shared
+  refusal steps read it.
+  """
+  def command(context, command) do
+    command = Map.put_new(command, "commandId", "cmd-#{System.unique_integer([:positive])}")
+    Map.put(context, :reply, normalize_reply(T3.Orchestration.dispatch(command)))
+  end
+
+  @doc "Normalizes an engine or RPC reply to `{:ok, r}` or `{:error, message, detail}`."
+  def normalize_reply({:ok, result}), do: {:ok, result}
+  def normalize_reply({:error, message, detail}), do: {:error, message, detail}
+
+  def normalize_reply({:error, %{} = detail}),
+    do: {:error, to_string(detail["message"] || detail["cause"] || detail["_tag"]), detail}
+
+  def normalize_reply({:error, message}), do: {:error, to_string(message), nil}
+  def normalize_reply(:ok), do: {:ok, nil}
+
+  @doc "Sends a user message to a thread (`message.dispatch`); the reply is `context.reply`."
+  def dispatch_message(context, title, text, extra \\ %{}) do
+    command(
+      context,
+      Map.merge(
+        %{
+          "type" => "message.dispatch",
+          "threadId" => thread_id(context, title),
+          "messageId" => "msg-#{System.unique_integer([:positive])}",
+          "text" => text,
+          "attachments" => []
+        },
+        extra
+      )
+    )
+  end
+
+  @fake_text Path.expand("fake_text_cli.py", __DIR__)
+
+  @doc """
+  Installs the fake text writers (`test/support/fake_text_cli.py`) as the `claude`
+  and `codex` text generation CLIs named in `clis` (the others are missing), logs
+  their calls for `text_calls/1`, and starts settings. `answer` (a map) replaces
+  the writer's answers by key.
+  """
+  def text_writers(context, clis \\ [:codex, :claude], answer \\ %{}) do
+    put_env("FAKE_TEXT_LOG", Path.join(context.node.home, "text-calls.jsonl"))
+    put_env("FAKE_TEXT_ANSWER", JSON.encode!(answer))
+
+    # Steps set these while the scenario runs; they end with it.
+    ExUnit.Callbacks.on_exit(fn ->
+      for var <- ~w(FAKE_TEXT_FAIL FAKE_TEXT_HANG), do: System.delete_env(var)
+    end)
+
+    put_app_env(
+      :text_claude_command,
+      if(:claude in clis, do: @fake_text, else: "t3-test-no-claude")
+    )
+
+    put_app_env(
+      :text_codex_command,
+      if(:codex in clis, do: @fake_text, else: "t3-test-no-codex")
+    )
+
+    Node.ensure(T3.Settings)
+    Map.put(context, :text_log, true)
+  end
+
+  @doc """
+  Starts a turn that keeps running (the fake provider's "wait") in the named thread,
+  creating the thread first when the scenario has none by that name.
+  """
+  def running_turn(context, title, text \\ "wait for it") do
+    context = providers(context)
+
+    context =
+      if (context[:threads] || %{})[title], do: context, else: named_thread(context, title)
+
+    context = dispatch_message(context, title, text)
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    run = await_latest_run(context, title, "running")
+    context |> Map.delete(:reply) |> Map.put(:thread, title) |> Map.put(:running, run["id"])
+  end
+
+  @doc """
+  Sends a message that queues behind the thread's active run (`queue_after_active`,
+  as the composer's queue does); its run id is appended to `context.queued`.
+  """
+  def queue_message(context, title, text) do
+    before = MapSet.new(entities(context, title, "run"), & &1["id"])
+
+    context =
+      dispatch_message(context, title, text, %{
+        "dispatchMode" => %{"type" => "queue_after_active"}
+      })
+
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+
+    [queued] =
+      for run <- entities(context, title, "run"), not MapSet.member?(before, run["id"]), do: run
+
+    assert queued["status"] == "queued"
+
+    context
+    |> Map.delete(:reply)
+    |> Map.update(:queued, [queued["id"]], &(&1 ++ [queued["id"]]))
+  end
+
+  @doc """
+  Whether the running step is a Given (an `And`/`But` takes the keyword before it),
+  for steps whose text both arranges a state and asserts it.
+  """
+  def given?(context) do
+    context
+    |> Map.get(:step_history, [])
+    |> Enum.reverse()
+    |> Enum.map(&String.trim(&1.keyword))
+    |> Enum.find(&(&1 in ~w(Given When Then)))
+    |> Kernel.==("Given")
+  end
+
+  @doc """
+  Puts run `n` of a thread in `status` as the orchestration features number runs:
+  id `"run-<n>"`, ordinal `n`, root node `"node-run-<n>"`. Missing earlier runs are
+  added as completed first. `extra` overrides fields.
+  """
+  def numbered_run(context, title, n, status, extra \\ %{}) do
+    existing = MapSet.new(entities(context, title, "run"), & &1["id"])
+
+    context =
+      Enum.reduce(1..(n - 1)//1, context, fn i, context ->
+        if MapSet.member?(existing, "run-#{i}"),
+          do: context,
+          else: put_numbered_run(context, title, i, "completed", %{})
+      end)
+
+    put_numbered_run(context, title, n, status, extra)
+  end
+
+  defp put_numbered_run(context, title, n, status, extra) do
+    at = iso_from_now(0)
+    done? = status in ~w(completed failed interrupted cancelled rolled_back)
+
+    run =
+      Map.merge(
+        %{
+          "id" => "run-#{n}",
+          "threadId" => thread_id(context, title),
+          "ordinal" => n,
+          "providerInstanceId" => "codex",
+          "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+          "providerThreadId" => nil,
+          "userMessageId" => nil,
+          "rootNodeId" => "node-run-#{n}",
+          "activeAttemptId" => nil,
+          "status" => status,
+          "queuePosition" => nil,
+          "requestedAt" => at,
+          "startedAt" => if(status in ~w(queued starting), do: nil, else: at),
+          "completedAt" => if(done?, do: at, else: nil),
+          "checkpointId" => nil,
+          "contextHandoffId" => nil
+        },
+        extra
+      )
+
+    put_entity(context, title, "run", run["id"], %{"s" => run})
+  end
+
+  @doc """
+  Adds a turn item of `type` to a thread, in `run_id` (nil for none) on that run's
+  root node, completed unless `extra` says otherwise; returns the context.
+  """
+  def add_item(context, title, id, type, run_id, extra \\ %{}) do
+    at = iso_from_now(0)
+
+    item =
+      Map.merge(
+        %{
+          "id" => id,
+          "threadId" => thread_id(context, title),
+          "runId" => run_id,
+          "nodeId" => if(run_id, do: "node-#{run_id}"),
+          "providerTurnId" => nil,
+          "nativeItemRef" => nil,
+          "parentItemId" => nil,
+          "type" => type,
+          "status" => "completed",
+          "ordinal" => System.unique_integer([:positive, :monotonic]),
+          "startedAt" => at,
+          "completedAt" => at,
+          "updatedAt" => at
+        },
+        extra
+      )
+
+    put_entity(context, title, "turn-item", id, %{"s" => item})
+  end
+
+  @doc """
+  The turn items a client's timeline shows for a thread: the stream's snapshot as a
+  socket receives it, filtered by `T3.Projection.Timeline`. Returns `{items, context}`.
+  """
+  def timeline(context, title) do
+    shape = %{
+      "type" => "stream",
+      "node" => Atom.to_string(node()),
+      "stream" => thread_id(context, title)
+    }
+
+    id = System.unique_integer([:positive])
+    client = Node.sub(client(context), id, shape)
+    {rows, client} = snapshot_rows(client, id, [])
+    Node.unsub(client, id)
+
+    state =
+      rows
+      |> Enum.with_index(1)
+      |> Enum.reduce(T3.StreamState.new(), fn {[kind, eid, entity], seq}, state ->
+        T3.StreamState.apply_event(state, %{
+          seq: seq,
+          kind: kind,
+          entity: eid,
+          patch: %{"s" => entity}
+        })
+      end)
+
+    {T3.Projection.Timeline.local_items(state), put_client(context, client)}
+  end
+
+  defp snapshot_rows(client, id, acc) do
+    {frame, client} = Node.await(client, &(&1["t"] == "snapshot" and &1["id"] == id))
+    acc = acc ++ frame["rows"]
+    if frame["done"], do: {acc, client}, else: snapshot_rows(client, id, acc)
+  end
+
+  @doc """
+  Answers the thread's pending questions (`runtime-request.respond`): `answer` goes
+  to the first question, `extra` merges into the command. The reply is
+  `context.reply`; the request is `context.request`.
+  """
+  def answer_questions(context, title, answer, extra \\ %{}) do
+    request =
+      Enum.find(entities(context, title, "runtime-request"), fn request ->
+        request["kind"] == "user_input" and request["status"] == "pending"
+      end) || flunk("#{title} has no pending questions")
+
+    [question | _] =
+      Enum.find_value(entities(context, title, "turn-item"), fn item ->
+        item["requestId"] == request["id"] && item["questions"]
+      end)
+
+    context
+    |> Map.put(:request, request["id"])
+    |> command(
+      Map.merge(
+        %{
+          "type" => "runtime-request.respond",
+          "threadId" => thread_id(context, title),
+          "requestId" => request["id"],
+          "answers" => %{question["id"] => answer}
+        },
+        extra
+      )
+    )
+  end
+
+  @doc """
+  The thread's Codex runtime (after `providers/1` and a turn): `{pid, state}`, whose
+  state holds the app-server connection (`conn`) and the active `turn`.
+  """
+  def codex_runtime(context, title) do
+    [{pid, _}] = Registry.lookup(T3.Codex.Registry, thread_id(context, title))
+    {pid, :sys.get_state(pid)}
+  end
+
+  @doc """
+  Delivers a notification to the thread's Codex runtime as if the (fake) app-server
+  sent it, such as `"turn/completed"`; returns the context.
+  """
+  def codex_notify(context, title, method, params) do
+    {pid, state} = codex_runtime(context, title)
+    send(pid, {:json_rpc, state.conn, {:notification, method, params}})
+    context
+  end
+
+  @doc """
+  Makes the fake Claude (`test/support/fake_claude.py`) log the text of every user
+  message it receives from now on, for `claude_prompts/1`; returns the context.
+  """
+  def log_claude_prompts(context) do
+    log = Path.join(Node.tmp_dir(context.node, "claude"), "prompts.jsonl")
+    System.put_env("FAKE_CLAUDE_PROMPT_LOG", log)
+    ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_CLAUDE_PROMPT_LOG") end)
+    Map.put(context, :claude_log, log)
+  end
+
+  @doc """
+  Writes a Node server database holding only `orchestration_events`, as
+  `T3.Import.V2` reads it. Each event is `{aggregate, stream, type, payload, at_ms}`;
+  thread events are V2 (`application_event_version` 2), project events carry none.
+  """
+  def node_log(path, events) do
+    alias Exqlite.Sqlite3
+    {:ok, db} = Sqlite3.open(path)
+
+    :ok =
+      Sqlite3.execute(db, """
+      CREATE TABLE orchestration_events (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT, aggregate_kind TEXT, stream_id TEXT,
+        event_type TEXT, payload_json TEXT, occurred_at TEXT, application_event_version INTEGER)
+      """)
+
+    :ok = Sqlite3.execute(db, "BEGIN")
+
+    {:ok, stmt} =
+      Sqlite3.prepare(db, """
+      INSERT INTO orchestration_events (aggregate_kind, stream_id, event_type, payload_json,
+        occurred_at, application_event_version) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+      """)
+
+    for {aggregate, stream, type, payload, at} <- events do
+      occurred = at |> DateTime.from_unix!(:millisecond) |> DateTime.to_iso8601()
+      version = if aggregate == "project", do: nil, else: 2
+
+      :ok =
+        Sqlite3.bind(stmt, [aggregate, stream, type, JSON.encode!(payload), occurred, version])
+
+      :done = Sqlite3.step(db, stmt)
+    end
+
+    :ok = Sqlite3.release(db, stmt)
+    :ok = Sqlite3.execute(db, "COMMIT")
+    :ok = Sqlite3.close(db)
+    path
   end
 end
 

@@ -49,7 +49,10 @@ defmodule T3.Orchestration.RecoveryTest do
              StreamState.get(state, "turn-item")["i1"]
 
     assert %{"streaming" => false} = StreamState.get(state, "message")["m1"]
-    assert %{"status" => "cancelled"} = StreamState.get(state, "runtime-request")["q1"]
+
+    assert %{"status" => "expired", "responseCapability" => %{"type" => "not_resumable"}} =
+             StreamState.get(state, "runtime-request")["q1"]
+
     assert %{"status" => "idle"} = StreamState.get(state, "provider-thread")["p1"]
 
     # Settled threads are left alone.

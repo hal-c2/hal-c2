@@ -128,10 +128,16 @@ defmodule T3.Steps.Orchestration.ForksAndMergeBack do
     context
   end
 
+  # A real turn when it is the thread's next run; otherwise, as projections.feature
+  # sets up a thread with no runs, the runs are recorded (`World.numbered_run/5`).
   step "run {int} of {string} is running", %{args: [n, thread]} = context do
-    World.send_turn(context, thread, "wait for it")
-    World.await_state(context, thread, &(run(&1, n)["status"] == "running"))
-    context
+    if length(World.runs(context, thread)) == n - 1 do
+      World.send_turn(context, thread, "wait for it")
+      World.await_state(context, thread, &(run(&1, n)["status"] == "running"))
+      context
+    else
+      context |> Map.put(:thread, thread) |> World.numbered_run(thread, n, "running")
+    end
   end
 
   step "no checkpoint {string} exists", %{args: [id]} = context do

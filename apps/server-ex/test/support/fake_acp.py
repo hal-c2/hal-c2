@@ -40,7 +40,13 @@ def send(msg):
 def update(sid, u):
     send({"method": "session/update", "params": {"sessionId": sid, "update": u}})
 
+# `--instance <id>` names the provider instance this fake stands in for, in the
+# $FAKE_TEXT_LOG entries it writes for text generation title prompts.
+INSTANCE = sys.argv[sys.argv.index("--instance") + 1] if "--instance" in sys.argv else "opencode"
+
 sessions = 0
+cwds = {}           # session id -> the cwd it was opened in
+titling = None      # a title prompt waiting on its tool requests: {pid, sid, text, answers}
 model = "fake/one"  # the session's model, as set_config_option leaves it
 waiting = None      # prompt request id held until cancel
 pending = None      # (prompt id, session id) waiting on a permission answer
@@ -55,6 +61,21 @@ def finish_turn(pid, sid, allowed=True):
         update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-1", "content": {"type": "text", "text": part}})
     send({"id": pid, "result": {"stopReason": "end_turn"}})
 
+def answer_title():
+    # Text generation: log what the agent was allowed, then answer the schema's keys.
+    global titling
+    pid, sid, text, answers = titling["pid"], titling["sid"], titling["text"], titling["answers"]
+    titling = None
+    cwd = cwds.get(sid, os.getcwd())
+    with open(os.environ["FAKE_TEXT_LOG"], "a") as f:
+        f.write(json.dumps({"acp": INSTANCE, "argv": sys.argv[1:], "cwd": cwd, "listing": os.listdir(cwd),
+                            "prompt": text, "model": model, "refused": answers}) + "\n")
+    out = {"title": "%s title" % INSTANCE, "needsRefinement": False}
+    out.update(json.loads(os.environ.get("FAKE_TEXT_ANSWER") or "{}"))
+    update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-1",
+                 "content": {"type": "text", "text": json.dumps(out)}})
+    send({"id": pid, "result": {"stopReason": "end_turn"}})
+
 for line in sys.stdin:
     msg = json.loads(line)
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
@@ -62,6 +83,11 @@ for line in sys.stdin:
     if state is not None and method:
         state["calls"].append(method)
         save_state(state)
+    if method is None and titling and mid in ("tg-perm", "tg-read"):
+        titling["answers"][mid] = msg.get("result") or {"error": msg.get("error")}
+        if len(titling["answers"]) == 2:
+            answer_title()
+        continue
     if method is None and str(mid).startswith("perm-"):
         outcome = msg["result"]["outcome"]
         if os.environ.get("FAKE_ACP_LOG"):
@@ -98,6 +124,7 @@ for line in sys.stdin:
         result = {"configOptions": [{"id": "model", "currentValue": "fake/one",
                   "options": [{"value": "fake/one", "name": "Fake/One"}, {"value": "fake/two", "name": "Fake/Two"}]}]}
         if method == "session/new": result["sessionId"] = sid
+        cwds[sid] = params.get("cwd") or os.getcwd()
         send({"id": mid, "result": result})
     elif method == "session/set_config_option":
         if params.get("configId") == "model": model = params["value"]
@@ -111,7 +138,15 @@ for line in sys.stdin:
                 log.write(json.dumps(text) + "\n")
         update(sid, {"sessionUpdate": "agent_thought_chunk", "messageId": "th-1", "content": {"type": "text", "text": "Let me look."}})
         update(sid, {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "bash", "kind": "execute", "status": "pending", "rawInput": {}})
-        if "Return a JSON object with key: branch." in text:
+        if "Return JSON with keys title and needsRefinement." in text and os.environ.get("FAKE_TEXT_LOG"):
+            # A title writer that tries a command and a file read first.
+            titling = {"pid": mid, "sid": sid, "text": text, "answers": {}}
+            send({"id": "tg-perm", "method": "session/request_permission", "params": {"sessionId": sid,
+                  "toolCall": {"toolCallId": "call-1", "title": "ls", "kind": "execute", "rawInput": {"command": "ls"}},
+                  "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+                              {"optionId": "deny", "name": "Deny", "kind": "reject_once"}]}})
+            send({"id": "tg-read", "method": "fs/read_text_file", "params": {"sessionId": sid, "path": "/etc/hostname"}})
+        elif "Return a JSON object with key: branch." in text:
             # Text generation: the JSON comes wrapped in prose, in pieces.
             answer = 'Sure: {"branch": "ACP branch %s in %s"} done' % (model, os.path.basename(os.getcwd()))
             for part in [answer[:12], answer[12:]]:

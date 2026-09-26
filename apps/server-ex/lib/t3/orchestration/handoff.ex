@@ -39,12 +39,12 @@ defmodule T3.Orchestration.Handoff do
     fresh =
       provider_thread == nil or get_in(provider_thread, ["nativeThreadRef", "nativeId"]) == nil
 
-    history =
+    {history, delta_changes} =
       cond do
-        fork != nil -> nil
-        fork_context != nil -> fork_context
-        fresh -> transcript(state, ordinal)
-        true -> missed(state, provider_thread, ordinal)
+        fork != nil -> {nil, []}
+        fork_context != nil -> {fork_context, []}
+        fresh -> {transcript(state, ordinal), []}
+        true -> delta(state, provider_thread, run_id, ordinal, at)
       end
 
     {merged, merge_changes} = merge_backs(state, transfers, driver, run_id, at)
@@ -52,22 +52,62 @@ defmodule T3.Orchestration.Handoff do
     %{
       fork: fork,
       context: wrap(history, merged),
-      changes: Enum.reject(fork_changes ++ merge_changes, &is_nil/1)
+      changes: Enum.reject(fork_changes ++ delta_changes ++ merge_changes, &is_nil/1)
     }
   end
 
-  # Returning to a provider thread that sat out some runs (the user switched to
-  # another agent and back): it hears only the runs it missed.
-  defp missed(state, provider_thread, ordinal) do
-    state
-    |> StreamState.list("run")
-    |> Enum.filter(&(&1["providerThreadId"] == provider_thread["id"] and &1["ordinal"] < ordinal))
-    |> Enum.map(& &1["ordinal"])
-    |> Enum.max(fn -> nil end)
-    |> case do
-      nil -> nil
-      last -> transcript(state, ordinal, last)
+  # A provider thread the thread comes back to (the user switched to another agent
+  # and back) gets only the turns other provider threads ran since it last ran
+  # (`delta_since_target_last_seen`).
+  defp delta(state, provider_thread, run_id, ordinal, at) do
+    own = provider_thread["id"]
+    runs = StreamState.list(state, "run")
+    seen = provider_thread["lastRunOrdinal"] || last_own_run(runs, own, ordinal)
+
+    unseen =
+      runs
+      |> Enum.filter(
+        &(&1["ordinal"] > seen and &1["ordinal"] < ordinal and &1["status"] in @finished and
+            &1["providerThreadId"] not in [nil, own])
+      )
+
+    case Enum.min_max_by(unseen, & &1["ordinal"], fn -> nil end) do
+      nil ->
+        {nil, []}
+
+      {first, last} ->
+        text = transcript(state, last["ordinal"] + 1, first["ordinal"] - 1)
+        id = "context-handoff:#{run_id}"
+
+        handoff =
+          Orchestration.create("context-handoff", id, %{
+            "id" => id,
+            "transferId" => nil,
+            "threadId" => provider_thread["appThreadId"],
+            "targetRunId" => run_id,
+            "fromProviderThreadIds" =>
+              unseen |> Enum.map(& &1["providerThreadId"]) |> Enum.uniq(),
+            "toProviderThreadId" => own,
+            "coveredRunOrdinals" => %{"from" => first["ordinal"], "to" => last["ordinal"]},
+            "strategy" => "delta_since_target_last_seen",
+            "status" => "ready",
+            "summaryMessageId" => nil,
+            "summaryText" => text || "",
+            "createdByProviderInstanceId" => nil,
+            "createdAt" => at,
+            "updatedAt" => at
+          })
+
+        {text, [handoff]}
     end
+  end
+
+  # Before provider threads recorded `lastRunOrdinal`: the latest run it ran itself.
+  defp last_own_run(runs, own, ordinal) do
+    runs
+    |> Enum.filter(&(&1["providerThreadId"] == own and &1["ordinal"] < ordinal))
+    |> Enum.map(& &1["ordinal"])
+    |> Enum.max(fn -> 0 end)
   end
 
   # Same provider: the run forks the source's native thread at the fork point.

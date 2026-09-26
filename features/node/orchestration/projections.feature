@@ -86,7 +86,8 @@ Feature: What the engine projects for clients
   @node
   Scenario: A different provider session error supersedes the classification
     Given the latest run of "t1" failed and the provider session reports a different error
-    Then the shell row of "t1" shows the session's error classification
+    # A distinct session error carries no class; both servers drop the turn's classification.
+    Then the shell row of "t1" shows the session's error without the turn's classification
 
   @node
   Scenario: An error from an earlier run is not shown after a later run succeeds
@@ -145,7 +146,7 @@ Feature: What the engine projects for clients
     And it can page older history on request
     And then it receives live events after the snapshot's sequence
 
-  @node @backlog
+  @node
   Scenario: Subscribing after a known sequence replays only what was missed
     Given a client saw "t1" up to sequence 40
     When it subscribes to "t1" after sequence 40

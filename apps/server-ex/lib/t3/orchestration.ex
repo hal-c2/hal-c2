@@ -27,7 +27,8 @@ defmodule T3.Orchestration do
                      thread.snooze thread.unsnooze thread.pin thread.unpin thread.pin.reorder
                      thread.active.reorder thread.visit thread.mark-unread thread.metadata.update
                      thread.runtime-mode.set thread.interaction-mode.set thread.model-selection.set
-                     provider.switch thread.pull-request.link thread.pull-request.unlink)
+                     provider.switch thread.pull-request.link thread.pull-request.unlink
+                     thread.title.regeneration.complete)
 
   @doc "Handles one client RPC by method name; see `packages/contracts/src/orchestrationV2.ts`."
   @spec handle(String.t(), map) :: {:ok, term} | {:error, String.t()}
@@ -42,14 +43,21 @@ defmodule T3.Orchestration do
   def handle("orchestration.getWorkflowScript", input), do: T3.WorkflowScripts.read(input)
 
   def handle("provider.uploadFeedback", %{"threadId" => thread_id} = input) do
-    instance =
+    # The thread's latest provider thread says which provider ran it, as in the Node server.
+    driver =
       case T3.Shell.row(node(), thread_id) do
-        {"thread", row} -> row["providerInstanceId"]
-        _ -> nil
+        {"thread", _row} ->
+          T3.Streams.Server.state(T3.Streams.ensure(thread_id))
+          |> StreamState.list("provider-thread")
+          |> Enum.max_by(&(&1["lastRunOrdinal"] || 0), fn -> nil end)
+          |> then(&(&1 && (&1["driver"] || driver_for(&1["providerInstanceId"] || "codex"))))
+
+        _ ->
+          nil
       end
 
     result =
-      case instance && driver_for(instance) do
+      case driver do
         nil -> {:error, "No provider session has run in this thread yet."}
         "codex" -> T3.Codex.ThreadRuntime.upload_feedback(thread_id, input["reason"])
         driver -> {:error, "Provider '#{driver}' does not support feedback uploads."}
@@ -134,7 +142,10 @@ defmodule T3.Orchestration do
     # Uploads join the thread before the message names them.
     case T3.Attachments.claim(thread_id, command["attachments"] || []) do
       {:ok, attachments} ->
-        dispatch_message(thread_id, claimed(command, attachments))
+        with {:ok, _} = sent <- dispatch_message(thread_id, claimed(command, attachments)) do
+          implemented_plan(thread_id, command["sourcePlanRef"])
+          sent
+        end
 
       {:error, _} = error ->
         error
@@ -166,6 +177,68 @@ defmodule T3.Orchestration do
       end)
 
     with :ok <- created, do: {:ok, %{"sequence" => sequence(thread_id)}}
+  end
+
+  # A thread an agent created during a run shows in that run's transcript as a link.
+  def dispatch(%{"type" => "thread.created.record", "parentThreadId" => parent_id} = command) do
+    target_id = command["targetThreadId"]
+    target_state = T3.Streams.Server.state(T3.Streams.ensure(target_id))
+    target = StreamState.get(target_state, "thread")[target_id]
+    target_run = command["targetRunId"]
+
+    result =
+      T3.Streams.transact(parent_id, :thread, fn state ->
+        parent = StreamState.get(state, "thread")[parent_id]
+        run = StreamState.get(state, "run")[command["parentRunId"]]
+        node_id = command["parentNodeId"]
+
+        cond do
+          parent == nil ->
+            {[], {:error, "unknown thread #{parent_id}"}}
+
+          run == nil or run["rootNodeId"] != node_id ->
+            {[],
+             {:error, "Parent node #{node_id} is not the root of run #{command["parentRunId"]}."}}
+
+          target == nil or target["projectId"] != parent["projectId"] ->
+            {[], {:error, "Target thread #{target_id} belongs to another project."}}
+
+          target_run != nil and StreamState.get(target_state, "run")[target_run] == nil ->
+            {[], {:error, "Target run #{target_run} does not belong to thread #{target_id}."}}
+
+          true ->
+            at = Entities.now()
+            item_id = "turn-item:thread-created:#{command["commandId"]}"
+
+            ids = %{
+              thread: parent_id,
+              run: run["id"],
+              root_node: node_id,
+              provider_thread: run["providerThreadId"]
+            }
+
+            item =
+              Entities.turn_item(
+                ids,
+                item_id,
+                "thread_created",
+                next_ordinal(state),
+                "completed",
+                at,
+                %{
+                  "title" => target["title"],
+                  "targetThreadId" => target_id,
+                  "targetRunId" => target_run,
+                  "targetProviderInstanceId" => get_in(target, ["modelSelection", "instanceId"]),
+                  "targetModel" => get_in(target, ["modelSelection", "model"])
+                }
+              )
+
+            {[create("turn-item", item_id, item)], :ok}
+        end
+      end)
+
+    with :ok <- result, do: {:ok, %{"sequence" => sequence(parent_id)}}
   end
 
   # Stops the thread's provider process ("Stop session"). The next run starts it
@@ -216,13 +289,15 @@ defmodule T3.Orchestration do
           state,
           "run",
           run_id,
+          # A run that already started is not the queue's to cancel.
           &if(&1["status"] == "queued",
             do:
               Map.merge(&1, %{
                 "status" => "cancelled",
                 "queuePosition" => nil,
                 "completedAt" => at
-              })
+              }),
+            else: &1
           )
         )
       ]
@@ -232,22 +307,24 @@ defmodule T3.Orchestration do
   def dispatch(
         %{"type" => "queued-run.edit", "threadId" => thread_id, "runId" => run_id} = command
       ) do
-    queue_change(thread_id, fn state ->
-      case StreamState.get(state, "run")[run_id] do
-        %{"status" => "queued", "userMessageId" => message_id} ->
-          [
-            upsert(
-              state,
-              "message",
-              message_id,
-              &Map.merge(&1, %{"text" => command["text"] || "", "updatedAt" => Entities.now()})
-            )
-          ]
+    # Attachments, when given, replace the message's (uploads join the thread first);
+    # context, when given, replaces its context records.
+    with {:ok, command} <- edit_claims(thread_id, command) do
+      edited =
+        %{"text" => command["text"] || "", "updatedAt" => Entities.now()}
+        |> Map.merge(Map.take(command, ["attachments"]))
+        |> then(&if(command["context"], do: Map.put(&1, "context", command["context"]), else: &1))
 
-        _ ->
-          []
-      end
-    end)
+      queue_change(thread_id, fn state ->
+        case StreamState.get(state, "run")[run_id] do
+          %{"status" => "queued", "userMessageId" => message_id} ->
+            [upsert(state, "message", message_id, &Map.merge(&1, edited))]
+
+          _ ->
+            []
+        end
+      end)
+    end
   end
 
   def dispatch(
@@ -361,11 +438,12 @@ defmodule T3.Orchestration do
             {[], {:error, "unknown thread #{thread_id}"}}
 
           thread ->
-            case with(
-                   %{} = fields <- thread_fields(type, command, thread, at),
-                   %{} = recovery <- limit_recovery(state, command, thread, at),
-                   do: Map.merge(fields, recovery)
-                 ) do
+            case refusal(type, command, thread, state) ||
+                   with(
+                     %{} = fields <- thread_fields(type, command, thread, at),
+                     %{} = recovery <- limit_recovery(state, command, thread, at),
+                     do: Map.merge(fields, recovery)
+                   ) do
               {:error, _} = error ->
                 {[], error}
 
@@ -375,7 +453,11 @@ defmodule T3.Orchestration do
                   |> upsert("thread", thread_id, &Map.merge(&1, fields))
                   |> quiet_read_state(type)
 
-                {Enum.reject([change | archived_queue(type, state, at)], &is_nil/1), :ok}
+                # A deleted thread's sessions stop before the thread goes.
+                changes =
+                  deleted_thread(type, state, at) ++ [change | archived_queue(type, state, at)]
+
+                {Enum.reject(changes, &is_nil/1), :ok}
             end
         end
       end)
@@ -1196,11 +1278,24 @@ defmodule T3.Orchestration do
     end
   end
 
-  # A message's inline context records (`T3.ComposerContext`) travel with its text.
-  defp with_context(entity, %{"context" => %{} = context}),
-    do: Map.put(entity, "context", context)
+  defp edit_claims(thread_id, %{"attachments" => attachments} = command)
+       when is_list(attachments) do
+    with {:ok, claimed} <- T3.Attachments.claim(thread_id, attachments),
+         do: {:ok, claimed(command, claimed)}
+  end
 
-  defp with_context(entity, _source), do: entity
+  defp edit_claims(_thread_id, command), do: {:ok, command}
+
+  # A message's inline context records (`T3.ComposerContext`) travel with its text.
+  # A message's composer context, and the scheduled task that sent it, if any.
+  defp with_context(entity, source) do
+    entity = Map.merge(entity, Map.take(source, ["scheduledTaskId"]))
+
+    case source do
+      %{"context" => %{} = context} -> Map.put(entity, "context", context)
+      _ -> entity
+    end
+  end
 
   # A message's composer context, the thread whose agent sent it (MCP), and, for a
   # delegated task's result, which task it delivers (`T3.Orchestration.Delegation`).
@@ -1447,6 +1542,18 @@ defmodule T3.Orchestration do
     end
   end
 
+  # A regeneration finished elsewhere lands its title only while its request is still
+  # the thread's in-flight one; a stale completion changes nothing.
+  defp thread_fields("thread.title.regeneration.complete", command, thread, at) do
+    if is_map(thread["titleRegeneration"]) and
+         thread["titleRegeneration"]["requestId"] == command["requestId"],
+       do:
+         command
+         |> Map.take(~w(title))
+         |> Map.merge(%{"titleRegeneration" => nil, "updatedAt" => at}),
+       else: %{}
+  end
+
   # Choices about resuming a thread stopped on a usage limit (`T3.Orchestration.LimitRecovery`)
   # apply to the latest failed run and its reset only; snoozing to the reset sets the
   # thread's wake time, and turning it off clears a wake time it set.
@@ -1528,6 +1635,44 @@ defmodule T3.Orchestration do
     end
   end
 
+  # Commands the thread's state refuses, as the Node server guards them; nil to go ahead.
+  defp refusal("thread.archive", command, %{"archivedAt" => archived}, _state)
+       when archived != nil,
+       do: {:error, "Thread #{command["threadId"]} is already archived."}
+
+  # A snoozed thread rests until its wake time, so it must be able to: nothing may be
+  # waiting on the user and no queued run may be about to start.
+  defp refusal("thread.snooze", command, _thread, state) do
+    id = command["threadId"]
+    until = command["snoozedUntil"]
+
+    cond do
+      not future?(until) ->
+        {:error, "Thread #{id} snooze wake time #{until} is not in the future."}
+
+      Enum.any?(StreamState.list(state, "runtime-request"), &(&1["status"] == "pending")) ->
+        {:error,
+         "Thread #{id} has a pending approval or user-input request and cannot be snoozed."}
+
+      Enum.any?(StreamState.list(state, "run"), &(&1["status"] == "queued")) ->
+        {:error, "Thread #{id} has a queued run and cannot be snoozed."}
+
+      true ->
+        nil
+    end
+  end
+
+  defp refusal(_type, _command, _thread, _state), do: nil
+
+  defp future?(iso) when is_binary(iso) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, at, _} -> DateTime.compare(at, DateTime.utc_now()) == :gt
+      _ -> false
+    end
+  end
+
+  defp future?(_), do: false
+
   # An archived thread's queued messages will not run.
   defp archived_queue("thread.archive", state, at) do
     for run <- queued_runs(state) do
@@ -1541,8 +1686,7 @@ defmodule T3.Orchestration do
   end
 
   # A deleted thread stops for good: its unfinished runs, their attempts and pending
-  # requests are cancelled and its provider sessions detached (the processes are
-  # stopped once this commits).
+  # requests are cancelled (`deleted_thread/3` stops its provider sessions).
   defp archived_queue("thread.delete", state, at) do
     active =
       for run <- StreamState.list(state, "run"),
@@ -1571,14 +1715,26 @@ defmodule T3.Orchestration do
               &Map.merge(&1, %{"status" => "cancelled", "resolvedAt" => at})
             )
 
-    sessions =
-      for session <- StreamState.list(state, "provider-session"),
-          do: {"provider-session", session["id"], Patch.delete()}
-
-    runs ++ attempts ++ requests ++ sessions
+    runs ++ attempts ++ requests
   end
 
   defp archived_queue(_type, _state, _at), do: []
+
+  # A deleted thread's provider sessions stop in the commit that deletes it; the
+  # dispatcher then stops their processes.
+  defp deleted_thread("thread.delete", state, at) do
+    for session <- StreamState.list(state, "provider-session"),
+        session["status"] not in ["stopped", "error"],
+        do:
+          upsert(
+            state,
+            "provider-session",
+            session["id"],
+            &Map.merge(&1, %{"status" => "stopped", "updatedAt" => at})
+          )
+  end
+
+  defp deleted_thread(_type, _state, _at), do: []
 
   # `regenerateTitle: true` marks a title in flight; a new title, or `false` when
   # generation failed, clears the mark.
@@ -1733,15 +1889,8 @@ defmodule T3.Orchestration do
       thread == nil ->
         {[], {:error, "unknown thread #{thread_id}"}}
 
-      # No other provider stands in for one this node no longer has.
-      missing_instance(thread, command) == :none ->
-        {[],
-         {:error, "No provider is set up on this node. Add a provider before starting a thread."}}
-
-      missing = missing_instance(thread, command) ->
-        {[],
-         {:error,
-          "The provider \"#{missing}\" is not available on this node; its plugin may have been removed. Pick another provider for this thread."}}
+      error = instance_refusal(thread, command) ->
+        {[], {:error, error}}
 
       reason = model_locked(thread, command) ->
         {[], {:error, reason}}
@@ -1779,26 +1928,49 @@ defmodule T3.Orchestration do
     end
   end
 
-  defp missing_instance(thread, command) do
+  # Why a message cannot run on its thread's provider instance, or nil. No other
+  # provider stands in for one this node no longer has: an instance nothing binds
+  # (not built in, not an ACP agent, not in settings) is unknown, one whose plugin
+  # went away is unavailable.
+  defp instance_refusal(thread, command) do
     selection = command["modelSelection"] || thread["modelSelection"]
     instance = selection["instanceId"] || thread["providerInstanceId"] || "codex"
 
-    case T3.Plugins.provider(instance) do
-      {:ok, _driver, _module} ->
+    bound? =
+      instance in ["codex", "claudeAgent"] or T3.Acp.agent?(instance) or
+        Map.has_key?(T3.Settings.settings()["providerInstances"] || %{}, instance)
+
+    missing =
+      case T3.Plugins.provider(instance) do
+        {:ok, _driver, _module} ->
+          nil
+
+        {:missing, _driver} ->
+          instance
+
+        :none ->
+          :none
+
+        nil ->
+          driver = get_in(T3.Settings.settings(), ["providerInstances", instance, "driver"])
+
+          unless instance in ["codex", "claudeAgent"] or driver in ["codex", "claudeAgent"] or
+                   T3.Acp.agent?(instance),
+                 do: instance
+      end
+
+    cond do
+      missing == nil ->
         nil
 
-      {:missing, _driver} ->
-        instance
+      missing == :none ->
+        "No provider is set up on this node. Add a provider before starting a thread."
 
-      :none ->
-        :none
+      not bound? ->
+        "No provider instance bound to id '#{instance}'"
 
-      nil ->
-        driver = get_in(T3.Settings.settings(), ["providerInstances", instance, "driver"])
-
-        unless instance in ["codex", "claudeAgent"] or driver in ["codex", "claudeAgent"] or
-                 T3.Acp.agent?(instance),
-               do: instance
+      true ->
+        "The provider \"#{instance}\" is not available on this node; its plugin may have been removed. Pick another provider for this thread."
     end
   end
 
@@ -2111,7 +2283,6 @@ defmodule T3.Orchestration do
             |> with_context(command)
           )
         ]
-        |> Kernel.++([implemented_plan(state, thread_id, command["sourcePlanRef"])])
         |> Enum.reject(&is_nil/1)
       )
 
@@ -2155,18 +2326,32 @@ defmodule T3.Orchestration do
     {changes ++ handoff.changes, {:ok, turn}}
   end
 
-  # A message that implements a proposed plan of this thread completes it.
-  defp implemented_plan(state, thread_id, %{"threadId" => thread_id, "planId" => plan_id}) do
-    case StreamState.get(state, "plan")[plan_id] do
-      %{"kind" => "proposed_plan"} ->
-        upsert(state, "plan", plan_id, &Map.put(&1, "status", "completed"))
+  # A message that implements a proposed plan completes it, whether the plan is this
+  # thread's or another thread's of the same project ("Implement in a new thread"),
+  # and whether the message started, queued or steered a run.
+  defp implemented_plan(thread_id, %{"threadId" => plan_thread, "planId" => plan_id})
+       when is_binary(plan_thread) do
+    project = fn state, id -> (StreamState.get(state, "thread")[id] || %{})["projectId"] end
+    project_id = project.(T3.Streams.Server.state(T3.Streams.ensure(thread_id)), thread_id)
 
-      _ ->
-        nil
-    end
+    T3.Streams.transact(plan_thread, :thread, fn state ->
+      case StreamState.get(state, "plan")[plan_id] do
+        %{"kind" => "proposed_plan"} ->
+          if project.(state, plan_thread) == project_id,
+            do:
+              {Enum.reject(
+                 [upsert(state, "plan", plan_id, &Map.put(&1, "status", "completed"))],
+                 &is_nil/1
+               ), :ok},
+            else: {[], :ok}
+
+        _ ->
+          {[], :ok}
+      end
+    end)
   end
 
-  defp implemented_plan(_state, _thread_id, _ref), do: nil
+  defp implemented_plan(_thread_id, _ref), do: :ok
 
   @doc "The next free turn-item ordinal in a thread."
   def next_ordinal(state) do

@@ -375,11 +375,17 @@ defmodule T3.Steps.Orchestration.CheckpointsAndRollback do
   end
 
   # The outline's situations. Checkpoint ids in its messages are the names it gives.
+  # A thread of this feature (`context.run_title`, its worktree) first completes a
+  # run to rewind to; elsewhere (runs, queue-and-steering) the turn just runs.
   step "{string} has a running turn", %{args: [thread]} = context do
-    context = complete_through(context, thread, 1)
-    World.send_turn(context, thread, "wait for me")
-    World.await_runs(context, thread, ["completed", "running"])
-    context
+    if context[:run_title] do
+      context = complete_through(context, thread, 1)
+      World.send_turn(context, thread, "wait for me")
+      World.await_runs(context, thread, ["completed", "running"])
+      context
+    else
+      World.running_turn(context, thread)
+    end
   end
 
   step "the checkpoint of run {int} is missing", %{args: [n]} = context do

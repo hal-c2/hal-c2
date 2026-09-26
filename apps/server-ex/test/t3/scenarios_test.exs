@@ -261,7 +261,7 @@ defmodule T3.ScenariosTest do
        %{port: port, environment: env} do
     client =
       connect(port)
-      |> rpc(env, 1, "provider.install.start", %{})
+      |> rpc(env, 1, "server.commitDesktopUpdate", %{})
       |> rpc("no-such-environment", 2, "server.getSettings", %{})
       |> rpc(env, 3, "orchestration.dispatchCommand", %{"type" => "prepared-run.release"})
 
@@ -270,7 +270,7 @@ defmodule T3.ScenariosTest do
 
     assert %{
              "t" => "rpc.error",
-             "error" => "provider.install.start is not served by this node yet"
+             "error" => "server.commitDesktopUpdate is not served by this node yet"
            } =
              unserved
 

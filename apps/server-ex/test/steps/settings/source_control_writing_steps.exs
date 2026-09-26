@@ -47,9 +47,27 @@ defmodule T3.Steps.Settings.SourceControlWriting do
     commit(context, project)
   end
 
+  # node/orchestration/text-generation.feature, whose writers are already set up
+  # (`context.text_log`), asks for the message itself as a commit does.
   step "a commit message is generated", context do
-    context = if context.projects == %{}, do: World.create_project(context, "shop"), else: context
-    commit(context, nil)
+    case context do
+      %{text_log: _} ->
+        cwd = World.project(context).root
+        policy = T3.TextGeneration.Style.policy(cwd)
+
+        result =
+          T3.TextGeneration.commit_message(cwd, "main", "M README.md", "diff", false,
+            policy: policy
+          )
+
+        Map.put(context, :reply, World.normalize_reply(result))
+
+      _ ->
+        context =
+          if context.projects == %{}, do: World.create_project(context, "shop"), else: context
+
+        commit(context, nil)
+    end
   end
 
   step "it follows the repository's conventions", context do

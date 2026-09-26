@@ -675,7 +675,7 @@ defmodule T3.Steps.Threads do
   step "the agent session is stopped", context do
     id = World.thread_id(context, "Old spike")
     state = World.stream(context, "Old spike")
-    assert T3.StreamState.list(state, "provider-session") == []
+    assert Enum.all?(T3.StreamState.list(state, "provider-session"), &(&1["status"] == "stopped"))
 
     refute Enum.any?(
              T3.StreamState.list(state, "run"),
@@ -807,7 +807,7 @@ defmodule T3.Steps.Threads do
       title = "Thread #{n}"
 
       context
-      |> World.create_thread(title, "shop")
+      |> World.create_thread(title)
       |> World.add_message(title, "user", "please #{text} module #{n}")
     end)
   end

@@ -91,6 +91,16 @@ for line in sys.stdin:
         send({"method": "item/completed", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-1", "command": "touch x", "status": status, "aggregatedOutput": "", "exitCode": 0}}})
         send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
         continue
+    # An answer to a request a test delivered to the node as if from Codex: while a turn
+    # waits, say what was received (item "msg-received-<id>", text "received <json>").
+    if not method:
+        ctx = globals().get("waiting_ctx")
+        if ctx:
+            item = {"type": "agentMessage", "id": f"msg-received-{mid}", "text": ""}
+            send({"method": "item/started", "params": {**ctx, "item": item}})
+            text = "received " + json.dumps(msg.get("result"), sort_keys=True)
+            send({"method": "item/completed", "params": {**ctx, "item": {**item, "text": text}}})
+        continue
     if method == "initialize":
         send({"id": mid, "result": {"userAgent": "fake", "platformOs": "test"}})
     elif method == "feedback/upload":
@@ -138,8 +148,9 @@ for line in sys.stdin:
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
             continue
         if text.startswith("repeat"):
-            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-repeat", "text": ""}}})
-            send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-repeat", "text": text}}})
+            # Unique per turn, as Codex's item ids are.
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-repeat-{turns}", "text": ""}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-repeat-{turns}", "text": text}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
             continue
         if text.startswith("write "):

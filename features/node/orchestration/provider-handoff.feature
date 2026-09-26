@@ -46,7 +46,7 @@ Feature: Changing model and provider mid-thread
   Scenario: A long transcript keeps its newest part
     Given the conversation of "t1" is longer than 60,000 characters
     When a run starts a new provider thread for "t1"
-    Then the transcript is at most 60,000 characters
+    Then the transcript keeps at most 60,000 characters of history
     And it notes that earlier messages were omitted
 
   @node
@@ -67,7 +67,7 @@ Feature: Changing model and provider mid-thread
     When the user switches thread "missing" to "claudeAgent"
     Then the command fails with "unknown thread missing"
 
-  @node @backlog
+  @node
   Scenario: The delta strategy hands over only what the target provider has not seen
     Given "t1" moved from "codex" to "claudeAgent" and back to "codex"
     When the next run starts on "codex"

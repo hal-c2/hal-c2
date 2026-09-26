@@ -194,6 +194,27 @@ defmodule T3.Steps.SourceControl.PushPullAndDefaultBranch do
 
   # --- pulling at start ----------------------------------------------------------------
 
+  # The node refuses a second project for a folder, as the Node server does, but a
+  # database from before that check can hold two; this one is written as stored data.
+  defp stored_project(context, title, root) do
+    id = String.replace(title, " ", "-")
+    at = T3.Orchestration.Entities.now()
+
+    project = %{
+      "id" => id,
+      "title" => title,
+      "workspaceRoot" => root,
+      "scripts" => [],
+      "createdAt" => at,
+      "updatedAt" => at,
+      "deletedAt" => nil
+    }
+
+    {:ok, _} = T3.Streams.commit(id, :project, [{"project", id, T3.Patch.diff(nil, project)}])
+    World.await_row(id, & &1)
+    put_in(context, [:projects, title], %{id: id, root: root})
+  end
+
   defp auto_pull(context, title) do
     id = World.project(context, title).id
 
@@ -260,7 +281,7 @@ defmodule T3.Steps.SourceControl.PushPullAndDefaultBranch do
     root = World.project(context, "shop").root
 
     context
-    |> World.create_project("shop again", %{"workspaceRoot" => root})
+    |> stored_project("shop again", root)
     |> auto_pull("shop")
     |> auto_pull("shop again")
     |> behind(2)

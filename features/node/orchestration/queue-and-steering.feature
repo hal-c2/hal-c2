@@ -105,7 +105,7 @@ Feature: Queueing, steering and restarting
     When the user edits that message as if it were queued
     Then the message still reads "Started"
 
-  @node @backlog
+  @node
   Scenario: Editing a queued message can replace its attachments and context
     Given "t1" has a queued message with an attached screenshot
     When the user edits the queued message removing the screenshot and adding a file reference

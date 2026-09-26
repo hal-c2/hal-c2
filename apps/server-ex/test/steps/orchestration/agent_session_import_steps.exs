@@ -114,10 +114,21 @@ defmodule T3.Steps.Orchestration.AgentSessionImport do
     context
   end
 
+  # Shared with projects.feature, whose `~` is the scenario's `$HOME`
+  # (`T3.Test.Node.Host`) rather than the agents' home (`context.agent_home`).
   step "project {string} has the folder {string}", %{args: [title, folder]} = context do
-    path = mkdir(dir(context, folder))
-    session(context, path, source: "claude")
-    project(context, title, path)
+    if context[:agent_home] do
+      path = mkdir(dir(context, folder))
+      session(context, path, source: "claude")
+      project(context, title, path)
+    else
+      T3.Test.Node.Host.home(context)
+
+      World.create_project(context, title, %{
+        "workspaceRoot" => folder,
+        "createWorkspaceRootIfMissing" => true
+      })
+    end
   end
 
   step "candidate {string} is marked already imported with project {string}",

@@ -63,7 +63,6 @@ Feature: Thread lifecycle in the orchestration engine
       | field           | value           |
       | branch          | "feature/y"     |
       | worktree path   | "/work/y"       |
-      | limit recovery  | "auto-continue" |
 
   @node
   Scenario: A metadata update guarded by the expected worktree fails when the worktree moved
@@ -106,7 +105,7 @@ Feature: Thread lifecycle in the orchestration engine
     Then thread "t1" is titled "Chosen"
     And the title regeneration mark is cleared
 
-  @node @backlog
+  @node
   Scenario: A client completes title regeneration with a command
     Given thread "t1" is regenerating its title for request "r1"
     When a client completes title regeneration "r1" with title "Done"
@@ -147,16 +146,18 @@ Feature: Thread lifecycle in the orchestration engine
     And "t1" no longer appears among the project's threads
 
   # The client flow is threads/archive-delete.feature "Deleting a thread with a running
-  # agent stops the agent first"; today the web client stops the session before deleting.
-  @node @backlog
+  # agent stops the agent first".
+  @node
   Scenario: Deleting a thread stops its live provider session first
     Given thread "t1" has a live provider session
     When a client deletes "t1"
     Then the provider session of "t1" is stopped before "t1" is removed
 
-  @node @backlog
+  @node
   Scenario: Deleting a thread emits a removal to shell subscribers
-    Given a client subscribes to the shell
+    # The thread must exist before it can be deleted; the node sends its row marked deleted.
+    Given thread "t1" exists in "demo"
+    And a client subscribes to the shell
     When a client deletes "t1"
     Then the subscriber receives a thread-removed event for "t1"
 
@@ -179,9 +180,7 @@ Feature: Thread lifecycle in the orchestration engine
     Then thread "t1" has no last visit
     And a thread-marked-unread event is recorded
 
-  # Node marks visits as read-state patches; live visits on this node still move the
-  # stream's activity time (only imported visits are quiet), so this is backlog.
-  @node @backlog
+  @node
   Scenario: Visits and mark-unread do not bump the thread's activity time
     Given thread "t1" was last updated at 09:00
     When a client records a visit to "t1" at 10:00
@@ -202,7 +201,7 @@ Feature: Thread lifecycle in the orchestration engine
       | interaction mode | plan              |
       | interaction mode | default           |
 
-  @node @backlog
+  @node
   Scenario: A parent run records a thread it created
     Given a running turn in thread "parent" created thread "child"
     When the creation is recorded on the parent

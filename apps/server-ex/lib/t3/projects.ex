@@ -22,6 +22,9 @@ defmodule T3.Projects do
       not File.dir?(root) and m["createWorkspaceRootIfMissing"] != true ->
         {:error, "#{root} does not exist on this machine"}
 
+      owner = owner(root, id) ->
+        {:error, "Workspace #{root} already belongs to project #{owner}."}
+
       true ->
         File.mkdir_p!(root)
         at = Entities.now()
@@ -55,12 +58,34 @@ defmodule T3.Projects do
         )
       )
 
-    update(id, &Map.merge(&1, Map.put(fields, "updatedAt", Entities.now())))
+    case fields["workspaceRoot"] && owner(fields["workspaceRoot"], id) do
+      nil ->
+        # An update that changes nothing keeps the update time, so nothing is recorded.
+        update(id, fn current ->
+          next = Map.merge(current, fields)
+          if next == current, do: current, else: Map.put(next, "updatedAt", Entities.now())
+        end)
+
+      owner ->
+        {:error, "Workspace #{fields["workspaceRoot"]} already belongs to project #{owner}."}
+    end
   end
 
-  def mutate(%{"type" => "project.delete", "projectId" => id}),
-    do:
-      update(id, &Map.merge(&1, %{"deletedAt" => Entities.now(), "updatedAt" => Entities.now()}))
+  # A project with threads is deleted only with `force`, which deletes its threads first.
+  def mutate(%{"type" => "project.delete", "projectId" => id} = m) do
+    case {threads(id), m["force"] == true} do
+      {[_ | _], false} ->
+        {:error, "Project #{id} is not empty."}
+
+      {threads, _} ->
+        with :ok <- delete_threads(threads, m["commandId"] || "project.delete:#{id}"),
+             do:
+               update(
+                 id,
+                 &Map.merge(&1, %{"deletedAt" => Entities.now(), "updatedAt" => Entities.now()})
+               )
+    end
+  end
 
   def mutate(%{"type" => type}), do: {:error, "#{type} is not supported"}
 
@@ -77,6 +102,42 @@ defmodule T3.Projects do
             :unchanged -> {[], {:ok, contract(next)}}
             patch -> {[{"project", id, patch}], {:ok, contract(next)}}
           end
+      end
+    end)
+  end
+
+  # The other live project whose workspace is `root`, if any.
+  defp owner(root, id) do
+    path = T3.Store.path()
+
+    Enum.find_value(T3.Store.list_streams(path), fn
+      %{id: other, kind: "project"} when other != id ->
+        project = StreamState.get(StreamState.load(path, other), "project")[other]
+        if project && project["deletedAt"] == nil && project["workspaceRoot"] == root, do: other
+
+      _ ->
+        nil
+    end)
+  end
+
+  # The project's threads not yet deleted, archived ones included.
+  defp threads(id) do
+    for {{node, thread_id}, {"thread", row}} <- T3.Shell.rows(),
+        node == node() and row["projectId"] == id and row["deletedAt"] == nil,
+        do: thread_id
+  end
+
+  defp delete_threads(threads, command_id) do
+    Enum.reduce_while(threads, :ok, fn thread_id, :ok ->
+      command = %{
+        "type" => "thread.delete",
+        "threadId" => thread_id,
+        "commandId" => "#{command_id}:delete-thread:#{thread_id}"
+      }
+
+      case T3.Orchestration.dispatch(command) do
+        {:ok, _} -> {:cont, :ok}
+        error -> {:halt, error}
       end
     end)
   end

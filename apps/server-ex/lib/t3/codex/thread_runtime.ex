@@ -123,6 +123,12 @@ defmodule T3.Codex.ThreadRuntime do
       {:ok, state} ->
         {:reply, :ok, state}
 
+      # The app-server exited before the turn began.
+      {:error, :closed, state} ->
+        Logger.warning("codex turn failed to start: the app-server exited")
+        finish(state, "failed", "The provider stopped while starting the turn.")
+        {:reply, :ok, %{state | turn: nil}}
+
       {:error, reason, state} ->
         Logger.warning("codex turn failed to start: #{inspect(reason)}")
         finish(state, "failed", start_failure("Codex", reason))
@@ -246,7 +252,7 @@ defmodule T3.Codex.ThreadRuntime do
           {"file-change", params["reason"]}
 
         _ ->
-          {"permission", params["reason"]}
+          {permissions_kind(params["permissions"]), params["reason"]}
       end
 
     native = params["approvalId"] || params["itemId"] || "request-#{id}"
@@ -307,6 +313,18 @@ defmodule T3.Codex.ThreadRuntime do
       for {mime, data} <- T3.Attachments.native_images(attachments),
           do: %{"type" => "image", "url" => "data:#{mime};base64,#{data}"}
   end
+
+  # As the Node server reads a permissions request: file writes are a file change,
+  # file reads a file read; anything else stays a plain permission.
+  defp permissions_kind(%{"fileSystem" => %{} = fs}) do
+    cond do
+      (fs["write"] || []) != [] -> "file-change"
+      (fs["read"] || []) != [] -> "file-read"
+      true -> "permission"
+    end
+  end
+
+  defp permissions_kind(_permissions), do: "permission"
 
   defp non_empty(value, default) when is_binary(value),
     do: if(String.trim(value) == "", do: default, else: String.trim(value))
@@ -551,6 +569,17 @@ defmodule T3.Codex.ThreadRuntime do
   defp notification("item/started", %{"item" => %{"type" => "plan", "id" => native}}, state),
     do: ensure_item(state, native, :plan)
 
+  defp notification(
+         "item/started",
+         %{"item" => %{"type" => "webSearch", "id" => native} = item},
+         state
+       ),
+       do: ensure_item(state, native, :web, %{"patterns" => web_patterns(item)})
+
+  defp notification("item/started", %{"item" => %{"type" => type, "id" => native} = item}, state)
+       when type in ["mcpToolCall", "dynamicToolCall"],
+       do: ensure_item(state, native, :tool, tool_fields(item))
+
   defp notification("item/plan/delta", %{"itemId" => native, "delta" => delta}, state),
     do: state |> ensure_item(native, :plan) |> buffer(native, "markdown", delta)
 
@@ -613,6 +642,8 @@ defmodule T3.Codex.ThreadRuntime do
     state =
       Enum.reduce(Map.keys(state.requests), state, &resolve_request(&2, &1, nil, "cancelled"))
 
+    # Items the provider left running end with the turn, as with Claude and ACP.
+    state = close_open_items(state, status)
     finish(state, status, state.failure || get_in(turn, ["error", "message"]))
     %{state | turn: nil, items: %{}, requests: %{}}
   end
@@ -685,5 +716,73 @@ defmodule T3.Codex.ThreadRuntime do
     state
   end
 
+  defp complete_item(state, %{"type" => "webSearch", "id" => native} = item) do
+    fields = %{"patterns" => web_patterns(item)}
+
+    state
+    |> ensure_item(native, :web, fields)
+    |> finish_item(native, "completed", &Map.merge(&1, fields))
+  end
+
+  defp complete_item(state, %{"type" => type, "id" => native} = item)
+       when type in ["mcpToolCall", "dynamicToolCall"] do
+    fields = tool_fields(item)
+    status = if item["status"] == "failed", do: "failed", else: "completed"
+
+    state
+    |> ensure_item(native, :tool, fields)
+    |> finish_item(native, status, &Map.merge(&1, fields))
+  end
+
   defp complete_item(state, _item), do: state
+
+  # What a web search looked for, as the Node server lists it.
+  defp web_patterns(item) do
+    action = item["action"] || %{}
+
+    candidates =
+      case action["type"] do
+        "search" -> (action["queries"] || []) ++ [action["query"], item["query"]]
+        "openPage" -> [action["url"], item["query"]]
+        "findInPage" -> [action["pattern"], action["url"], item["query"]]
+        _ -> [item["query"]]
+      end
+
+    candidates
+    |> Enum.filter(&(is_binary(&1) and String.trim(&1) != ""))
+    |> Enum.uniq()
+  end
+
+  # An MCP or dynamic tool call's name, arguments, and result.
+  defp tool_fields(%{"type" => "mcpToolCall"} = item) do
+    result = item["result"] || %{}
+    output = result["structuredContent"] || result["content"]
+
+    output =
+      case item["error"] do
+        %{"message" => message} when output == nil -> %{"error" => message}
+        %{"message" => message} -> %{"error" => message, "result" => output}
+        _ -> output
+      end
+
+    tool_fields("#{item["server"]}.#{item["tool"]}", item["arguments"], output)
+  end
+
+  defp tool_fields(item) do
+    name = Enum.filter([item["namespace"], item["tool"]], &(is_binary(&1) and &1 != ""))
+
+    output =
+      cond do
+        item["contentItems"] != nil -> item["contentItems"]
+        item["success"] == false -> %{"success" => false}
+        true -> nil
+      end
+
+    tool_fields(Enum.join(name, "."), item["arguments"], output)
+  end
+
+  defp tool_fields(name, input, nil), do: %{"toolName" => name, "input" => input}
+
+  defp tool_fields(name, input, output),
+    do: %{"toolName" => name, "input" => input, "output" => output}
 end

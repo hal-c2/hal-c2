@@ -88,8 +88,24 @@ defmodule T3.Steps.Orchestration.AutoSettle do
     context |> finished(thread, -World.days(10)) |> link(thread)
   end
 
+  # Shared with threads, thread-organization and pull-request-links. As a Given it
+  # archives the thread, creating it (named as its id) when the scenario has none;
+  # otherwise it asserts.
   step "thread {string} is archived", %{args: [thread]} = context do
-    update(context, thread, "thread.archive", &(&1["archivedAt"] != nil))
+    if World.given?(context) do
+      context =
+        context
+        |> Map.put(:thread, thread)
+        |> Map.update(:threads, %{thread => thread}, &Map.put_new(&1, thread, thread))
+
+      context =
+        if World.thread(context, thread), do: context, else: World.named_thread(context, thread)
+
+      update(context, thread, "thread.archive", &(&1["archivedAt"] != nil))
+    else
+      assert World.thread(context, thread)["archivedAt"] != nil
+      context
+    end
   end
 
   step "thread {string} was settled or unsettled by the user", %{args: [thread]} = context do

@@ -449,7 +449,8 @@ defmodule T3.Steps.Common do
 
   # A file in the scenario's themes folder (`environment-themes.feature`) is removed;
   # otherwise it names a thread: as an action the thread is deleted, as an outcome
-  # it is asserted deleted.
+  # it is asserted deleted. A thread cut off mid-turn (`context.cut_off`) is deleted
+  # as stored data, as "{string} is archived" archives it.
   step "{string} is deleted", %{args: [name]} = context do
     theme = Path.join([context.node.home, "themes", name])
 
@@ -457,6 +458,9 @@ defmodule T3.Steps.Common do
       File.exists?(theme) ->
         File.rm!(theme)
         context
+
+      context[:cut_off] ->
+        World.patch_thread(context, name, %{"deletedAt" => World.iso_from_now(0)})
 
       outcome_step?(context) ->
         assert World.thread(context, name)["deletedAt"], "#{name} was not deleted"
@@ -1120,18 +1124,27 @@ defmodule T3.Steps.Common do
 
   # Shared by threads/archive-delete, node/orchestration/mcp-thread-tools and
   # projections: the thread is archived (a running turn keeps running), or,
-  # after it was archived, still is.
+  # after it was archived, still is. A thread cut off mid-turn (`context.cut_off`,
+  # recovery-and-idle-sessions.feature) is archived as stored data, leaving its run
+  # as the restart finds it.
   step "{string} is archived", %{args: [thread]} = context do
     id = World.thread_id(context, thread)
 
-    # As an outcome ("... is archived" after an archive) it only checks.
-    if World.row(context, thread)["archivedAt"] == nil do
-      {:ok, _} =
-        T3.Orchestration.dispatch(%{
-          "type" => "thread.archive",
-          "commandId" => "cmd-archive-#{System.unique_integer([:positive])}",
-          "threadId" => id
-        })
+    cond do
+      context[:cut_off] ->
+        World.patch_thread(context, thread, %{"archivedAt" => World.iso_from_now(0)})
+
+      # As an outcome ("... is archived" after an archive) it only checks.
+      World.row(context, thread)["archivedAt"] == nil ->
+        {:ok, _} =
+          T3.Orchestration.dispatch(%{
+            "type" => "thread.archive",
+            "commandId" => "cmd-archive-#{System.unique_integer([:positive])}",
+            "threadId" => id
+          })
+
+      true ->
+        :ok
     end
 
     World.await_row(id, &(&1["archivedAt"] != nil))
@@ -1185,10 +1198,7 @@ defmodule T3.Steps.Common do
   end
 
   step "a client archives {string}", %{args: [thread]} = context do
-    id = World.thread_id(context, thread)
-    {{:ok, _}, context} = World.dispatch(context, %{"type" => "thread.archive", "threadId" => id})
-    World.await_row(id, &(&1["archivedAt"] != nil))
-    context
+    client_command(context, "thread.archive", thread, &(&1["archivedAt"] != nil))
   end
 
   # A thread by that name, else a project; the reply is kept as `context.reply`.
@@ -1210,37 +1220,26 @@ defmodule T3.Steps.Common do
 
   step ~r/^a client snoozes "(?<thread>[^"]+)" until (?<until>.+)$/,
        %{args: [thread, until]} = context do
-    until = World.local_time(context, until)
+    until =
+      if until == "a past time",
+        do: World.iso_from_now(-60 * 60 * 1_000),
+        else: World.local_time(context, until)
 
-    {{:ok, _}, context} =
-      World.dispatch(context, %{
-        "type" => "thread.snooze",
-        "threadId" => World.thread_id(context, thread),
-        "snoozedUntil" => until
-      })
-
-    World.await_row(World.thread_id(context, thread), &(&1["snoozedUntil"] == until))
-    Map.put(context, :snoozed_until, until)
+    # node/orchestration/thread-organization.feature compares a refused snooze with this.
+    context
+    |> Map.put(:snooze_before, World.thread(context, thread))
+    |> client_command("thread.snooze", thread, &(&1["snoozedUntil"] == until), %{
+      "snoozedUntil" => until
+    })
+    |> Map.put(:snoozed_until, until)
   end
 
   step "a client unsnoozes {string}", %{args: [thread]} = context do
-    id = World.thread_id(context, thread)
-
-    {{:ok, _}, context} =
-      World.dispatch(context, %{"type" => "thread.unsnooze", "threadId" => id})
-
-    World.await_row(id, &(&1["snoozedUntil"] == nil))
-    context
+    client_command(context, "thread.unsnooze", thread, &(&1["snoozedUntil"] == nil))
   end
 
   step "a client marks {string} unread", %{args: [thread]} = context do
-    id = World.thread_id(context, thread)
-
-    {{:ok, _}, context} =
-      World.dispatch(context, %{"type" => "thread.mark-unread", "threadId" => id})
-
-    World.await_row(id, &(&1["lastVisitedAt"] == nil))
-    context
+    client_command(context, "thread.mark-unread", thread, &(&1["lastVisitedAt"] == nil))
   end
 
   step "{string} is active again", %{args: [thread]} = context do
@@ -1275,21 +1274,31 @@ defmodule T3.Steps.Common do
   defp delete(context, name) do
     case {(context[:threads] || %{})[name], (context[:projects] || %{})[name]} do
       {id, _} when is_binary(id) ->
-        {{:ok, _} = reply, context} =
-          World.dispatch(context, %{"type" => "thread.delete", "threadId" => id})
+        client_command(context, "thread.delete", name, &(&1["deletedAt"] != nil))
 
-        World.await_row(id, &(&1["deletedAt"] != nil))
+      # node/orchestration/projects.feature also deletes projects it never created.
+      {nil, project} ->
+        mutation = %{
+          "type" => "project.delete",
+          "projectId" => (project || %{id: name}).id,
+          "commandId" => "delete-#{name}"
+        }
+
+        {reply, context} = World.call(context, "projects.mutate", mutation)
         Map.put(context, :reply, reply)
-
-      {nil, %{id: id}} ->
-        {reply, context} =
-          World.dispatch(context, %{"type" => "project.delete", "projectId" => id})
-
-        Map.put(context, :reply, reply)
-
-      _ ->
-        flunk("no thread or project #{inspect(name)} in this scenario")
     end
+  end
+
+  # A client's command on a thread, over the socket. The reply is `context.reply` and
+  # the thread `context.thread`, as the orchestration refusal steps read them; on
+  # success it waits until the sidebar row shows `done`. A thread the scenario never
+  # created keeps its name as id ("missing").
+  defp client_command(context, type, thread, done, fields \\ %{}) do
+    id = (context[:threads] || %{})[thread] || thread
+    command = Map.merge(%{"type" => type, "threadId" => id}, fields)
+    {reply, context} = World.dispatch(context, command)
+    if match?({:ok, _}, reply), do: World.await_row(id, done)
+    context |> Map.put(:reply, reply) |> Map.put(:thread, thread)
   end
 
   # --- added by W12 ---
@@ -1391,8 +1400,9 @@ defmodule T3.Steps.Common do
     World.create_project(context, title)
   end
 
+  # The orchestration features name threads by id ("t1"): the id is the name.
   step "thread {string} exists in {string}", %{args: [thread, project]} = context do
-    World.create_thread(context, thread, project)
+    World.named_thread(context, thread, project)
   end
 
   # Shared by node/orchestration/thread-organization.feature (setup: the user settled
@@ -1409,38 +1419,46 @@ defmodule T3.Steps.Common do
   end
 
   step "a client unsettles {string}", %{args: [thread]} = context do
-    id = World.thread_id(context, thread)
-
-    {{:ok, _}, context} =
-      World.dispatch(context, %{"type" => "thread.unsettle", "threadId" => id})
-
-    World.await_row(id, &(&1["settledOverride"] == "active"))
-    Map.put(context, :settle_swept, false)
+    context
+    |> client_command("thread.unsettle", thread, &(&1["settledOverride"] == "active"))
+    |> Map.put(:settle_swept, false)
   end
 
   # Shared with other node/orchestration features; the step before it leaves the
-  # RPC reply in `context.reply` as `{:error, message, detail}`.
+  # RPC reply in `context.reply` as `{:error, message, detail}`. The message is the
+  # refusal or a part of it.
   step "it fails with {string}", %{args: [message]} = context do
-    assert {:error, ^message, _detail} = context.reply
+    assert {:error, error, _detail} = context.reply,
+           "expected a refusal, got #{inspect(context.reply)}"
+
+    assert error =~ message
     context
   end
 
   # Refusals of commands and RPCs alike: the step before it leaves the reply in
   # `context.reply`, `{:error, message, detail}` from a socket or `{:error, message}`
   # from `T3.Orchestration.dispatch/1`.
-  # Ids in the refusal are compared by the names the scenario gives them (`World.named/2`).
+  # Ids in the refusal are compared by the names the scenario gives them (`World.named/2`);
+  # the message is the refusal or a part of it.
   step "the command fails with {string}", %{args: [message]} = context do
     case context.reply do
-      {:error, actual, _detail} -> assert World.named(context, actual) == message
-      {:error, actual} -> assert World.named(context, actual) == message
+      {:error, actual, _detail} -> assert World.named(context, actual) =~ message
+      {:error, actual} -> assert World.named(context, actual) =~ message
       other -> flunk("expected a refusal, got #{inspect(other)}")
     end
 
     context
   end
 
+  # As `World.send_turn/4`, keeping the reply (`context.reply`) for the refusal steps.
   step "the user sends {string} to {string}", %{args: [text, thread]} = context do
-    context |> World.send_turn(thread, text) |> Map.put(:run_title, thread)
+    context = World.providers(context)
+    selection = (World.thread(context, thread) || %{})["modelSelection"]
+    fields = if selection, do: %{"modelSelection" => selection}, else: %{}
+
+    context
+    |> World.command(World.message_command(context, thread, text, fields))
+    |> Map.merge(%{run_title: thread, thread: thread})
   end
 
   # The transcript a client shows (`T3.Projection.Timeline`), in `context.timeline`.
@@ -1522,6 +1540,34 @@ defmodule T3.Steps.Common do
   step "that server stops", context do
     Process.unlink(context.dev_server)
     :ok = Supervisor.stop(context.dev_server)
+    context
+  end
+
+  # --- added by W8 ---
+  # Orchestration features name threads by id ("t1") and read the latest command
+  # reply from `context.reply` (see `World.command/2`).
+
+  # Runs are numbered as the orchestration features name them (`World.numbered_run/5`);
+  # "run {int} of {string} is running" is in forks_and_merge_back_steps.exs.
+  step "run {int} of {string} is waiting", %{args: [n, thread]} = context do
+    context
+    |> Map.put(:thread, thread)
+    |> World.numbered_run(thread, n, "waiting")
+  end
+
+  step "the user answers {string}", %{args: [answer]} = context do
+    context = World.answer_questions(context, context.thread, answer)
+    assert {:ok, _} = context.reply, "answering failed: #{inspect(context.reply)}"
+    context
+  end
+
+  # Five minutes on the node's clock: its five-minute timers fire, as their message
+  # arrives (the idle session check, `T3.Orchestration.IdleSessions`).
+  step "five minutes pass", context do
+    pid = Node.ensure(T3.Orchestration.IdleSessions)
+    send(pid, :check)
+    # The check has run once the server answers the next call.
+    _ = :sys.get_state(pid)
     context
   end
 end

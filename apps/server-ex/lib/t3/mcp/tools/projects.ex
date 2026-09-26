@@ -69,16 +69,10 @@ defmodule T3.Mcp.Tools.Projects do
         {:error, "invalid_request",
          "The project is not empty; force=true is required to delete it."}
       else
-        for thread <- threads,
-            do:
-              {:ok, _} =
-                Orchestration.dispatch(%{
-                  "type" => "thread.delete",
-                  "commandId" => command_id(),
-                  "threadId" => thread["id"]
-                })
-
-        project_result(T3.Projects.mutate(%{"type" => "project.delete", "projectId" => id}))
+        # `T3.Projects` deletes the threads of a forced delete first.
+        %{"type" => "project.delete", "projectId" => id, "force" => true}
+        |> T3.Projects.mutate()
+        |> project_result()
       end
     end
   end

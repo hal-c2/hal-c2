@@ -78,9 +78,8 @@ Feature: Organizing threads in the engine
     Then thread "t1" has active order key "c0"
     And a thread-active-reordered event is recorded
 
-  # The node sets the snooze fields whatever the thread is doing. The TypeScript server
-  # refuses these; the web and TUI clients also hide the action.
-  @node @backlog
+  # The web and TUI clients also hide the action.
+  @node
   Scenario Outline: The engine refuses to snooze a thread that cannot rest
     Given thread "t1" <state>
     When a client snoozes "t1" until <until>
@@ -101,11 +100,12 @@ Feature: Organizing threads in the engine
     Then the command fails because the agent is still working
     And thread "t1" is not archived
 
-  @node @backlog
+  @node
   Scenario: Archiving an archived thread is refused
     Given thread "t1" is archived
     When a client archives "t1"
-    Then the command fails with "the thread is already archived"
+    # Both servers name the thread in the refusal.
+    Then the command fails with "Thread t1 is already archived."
 
   @node
   Scenario Outline: Organization commands on an unknown thread are refused
