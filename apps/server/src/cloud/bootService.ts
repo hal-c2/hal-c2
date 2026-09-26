@@ -39,8 +39,8 @@ import {
 const BOOT_SERVICE_NAME = "hal-c2";
 const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 // `.service` suffix keeps the label distinct from the desktop app's bundle id
-// (io.github.halc2.halc2), so launchd and TCC records never collide.
-const BOOT_SERVICE_LAUNCHD_LABEL = "io.github.halc2.halc2.service";
+// (io.github.halc2.app), so launchd and TCC records never collide.
+const BOOT_SERVICE_LAUNCHD_LABEL = "io.github.halc2.service";
 const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
 const BOOT_SERVICE_UNIT_ENV = "HALC2_BOOT_SERVICE_UNIT";
 

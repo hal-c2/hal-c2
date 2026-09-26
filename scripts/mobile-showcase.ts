@@ -31,7 +31,7 @@ import {
 
 const REPO_ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 const MOBILE_ROOT = NodePath.join(REPO_ROOT, "apps/mobile");
-const ANDROID_PACKAGE = "io.github.halc2.halc2";
+const ANDROID_PACKAGE = "io.github.halc2.app";
 const APP_SCHEME = "hal-c2";
 const IOS_READY_FILENAME = "HalC2ShowcaseReadyScene";
 const SERVER_HOST = "0.0.0.0";

@@ -1,7 +1,7 @@
 # Installs the HAL-C2 CLI from a GitHub Release archive on Windows. Needs
 # only PowerShell 5.1+; no Node, npm, or compiler.
 #
-#   irm https://hal-c2.example/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/hal-c2/hal-c2/main/scripts/install.ps1 | iex
 #
 # Environment:
 #   HALC2_CHANNEL           release train to follow: stable, nightly, or preview

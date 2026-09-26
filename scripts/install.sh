@@ -2,7 +2,7 @@
 # Installs the HAL-C2 CLI from a GitHub Release archive. Needs only sh, tar,
 # sha256sum or shasum, and curl or wget; no Node, npm, or compiler.
 #
-#   curl -fsSL https://hal-c2.example/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/hal-c2/hal-c2/main/scripts/install.sh | sh
 #
 # Environment:
 #   HALC2_CHANNEL           release train to follow: stable, nightly, or preview

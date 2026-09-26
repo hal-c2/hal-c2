@@ -42,7 +42,7 @@ const config = RelayConfiguration.RelayConfiguration.of({
     teamId: "team-id",
     keyId: "key-id",
     privateKey: Redacted.make("not-a-private-key"),
-    bundleId: "io.github.halc2.halc2.dev",
+    bundleId: "io.github.halc2.app.dev",
   },
   apnsDeliveryJobSigningSecret: Redacted.make("job-signing-secret"),
   clerkSecretKey: Redacted.make("clerk-secret"),
@@ -466,7 +466,7 @@ describe("ApnsDeliveries", () => {
       yield* deliveries.sendForTarget({
         target: {
           ...target,
-          bundle_id: "io.github.halc2.halc2.preview",
+          bundle_id: "io.github.halc2.app.preview",
           aps_environment: "production",
           ended_at: "1970-01-01T00:00:05.000Z",
         },
@@ -480,7 +480,7 @@ describe("ApnsDeliveries", () => {
             kind: "live_activity_update",
             target: {
               token: "activity-token",
-              bundleId: "io.github.halc2.halc2.preview",
+              bundleId: "io.github.halc2.app.preview",
               apsEnvironment: "production",
             },
           },
@@ -497,7 +497,7 @@ describe("ApnsDeliveries", () => {
       userId: target.user_id,
       deviceId: target.device_id,
       token: "activity-token",
-      bundleId: "io.github.halc2.halc2.preview",
+      bundleId: "io.github.halc2.app.preview",
       apsEnvironment: "sandbox",
       aggregate,
       createdAt: "1970-01-01T00:00:00.000Z",
@@ -522,14 +522,14 @@ describe("ApnsDeliveries", () => {
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url).toBe("https://api.sandbox.push.apple.com/3/device/activity-token");
       expect(requests[0]?.headers["apns-topic"]).toBe(
-        "io.github.halc2.halc2.preview.push-type.liveactivity",
+        "io.github.halc2.app.preview.push-type.liveactivity",
       );
     }).pipe(
       Effect.provide(
         makeLayer({
           attempts,
           currentTargets: [
-            { ...target, bundle_id: "io.github.halc2.halc2.preview", aps_environment: "sandbox" },
+            { ...target, bundle_id: "io.github.halc2.app.preview", aps_environment: "sandbox" },
           ],
           config: signingConfig,
           execute,
@@ -2031,7 +2031,7 @@ describe("signed APNs registration metadata", () => {
           token: "unchanged-token",
           ...(changed === "legacy"
             ? {}
-            : { bundleId: "io.github.halc2.halc2.dev", apsEnvironment: "sandbox" as const }),
+            : { bundleId: "io.github.halc2.app.dev", apsEnvironment: "sandbox" as const }),
           aggregate: kind === "live_activity_update" ? aggregate : null,
           ...(kind === "push_notification"
             ? {
@@ -2061,7 +2061,7 @@ describe("signed APNs registration metadata", () => {
             `${changed === "environment" ? "https://api.push.apple.com" : "https://api.sandbox.push.apple.com"}/3/device/unchanged-token`,
           );
           expect(requests[0]?.headers["apns-topic"]).toBe(
-            `${changed === "bundle" ? "io.github.halc2.halc2.preview" : "io.github.halc2.halc2.dev"}${kind === "live_activity_update" ? ".push-type.liveactivity" : ""}`,
+            `${changed === "bundle" ? "io.github.halc2.app.preview" : "io.github.halc2.app.dev"}${kind === "live_activity_update" ? ".push-type.liveactivity" : ""}`,
           );
         }).pipe(
           Effect.provide(
@@ -2075,8 +2075,8 @@ describe("signed APNs registration metadata", () => {
                   activity_push_token: "unchanged-token",
                   bundle_id:
                     changed === "bundle"
-                      ? "io.github.halc2.halc2.preview"
-                      : "io.github.halc2.halc2.dev",
+                      ? "io.github.halc2.app.preview"
+                      : "io.github.halc2.app.dev",
                   aps_environment: changed === "environment" ? "production" : "sandbox",
                 },
               ],
