@@ -75,14 +75,14 @@ describe("RelayClient", () => {
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        const toolsDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "hal-c2-cloudflared-test-",
         });
-        const overridePath = `${baseDir}/override-cloudflared`;
+        const overridePath = `${toolsDir}/override-cloudflared`;
         yield* fileSystem.writeFileString(overridePath, "override");
         yield* fileSystem.chmod(overridePath, 0o755);
         const manager = yield* makeCloudflaredRelayClient({
-          baseDir,
+          toolsDir,
         });
 
         expect(
@@ -118,12 +118,12 @@ describe("RelayClient", () => {
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        const toolsDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "hal-c2-cloudflared-test-",
         });
         const bytes = new TextEncoder().encode("test-cloudflared-binary");
         const manager = yield* makeCloudflaredRelayClient({
-          baseDir,
+          toolsDir,
           releaseAsset: {
             url: "https://example.test/cloudflared",
             sha256: Encoding.encodeHex(sha256(bytes)),
@@ -139,7 +139,7 @@ describe("RelayClient", () => {
             }
           }),
         );
-        const managedPath = `${baseDir}/tools/cloudflared/${CLOUDFLARED_VERSION}/linux-x64/cloudflared`;
+        const managedPath = `${toolsDir}/cloudflared/${CLOUDFLARED_VERSION}/linux-x64/cloudflared`;
         expect(installed).toEqual({
           status: "available",
           executablePath: managedPath,
@@ -175,11 +175,11 @@ describe("RelayClient", () => {
   it.effect("rejects downloads whose checksum does not match the pinned manifest", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+      const toolsDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "hal-c2-cloudflared-test-",
       });
       const manager = yield* makeCloudflaredRelayClient({
-        baseDir,
+        toolsDir,
         releaseAsset: {
           url: "https://example.test/cloudflared",
           sha256: Encoding.encodeHex(sha256(new TextEncoder().encode("expected"))),
@@ -208,11 +208,11 @@ describe("RelayClient", () => {
     const bytes = new TextEncoder().encode("test-cloudflared-binary");
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+      const toolsDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "hal-c2-cloudflared-test-",
       });
       const manager = yield* makeCloudflaredRelayClient({
-        baseDir,
+        toolsDir,
         releaseAsset: {
           url: "https://example.test/cloudflared",
           sha256: Encoding.encodeHex(sha256(bytes)),
@@ -244,13 +244,13 @@ describe("RelayClient", () => {
       const env = { PATH: "" };
       return Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        const toolsDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "hal-c2-cloudflared-test-",
         });
-        const binDir = `${baseDir}/bin`;
+        const binDir = `${toolsDir}/bin`;
         const executablePath = `${binDir}/cloudflared`;
         const manager = yield* makeCloudflaredRelayClient({
-          baseDir,
+          toolsDir,
         });
 
         expect(yield* manager.resolve).toEqual({

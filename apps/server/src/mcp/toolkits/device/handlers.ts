@@ -180,7 +180,7 @@ const handlers = {
       const platform = yield* HostProcessPlatform;
       const shimDir = yield* ensureAgentDeviceShim({
         entryPath: yield* devices.agentCli,
-        stateDir: config.stateDir,
+        dataDir: config.dataDir,
       }).pipe(
         Effect.mapError(
           (error) =>

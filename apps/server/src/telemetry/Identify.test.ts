@@ -44,7 +44,7 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
       yield* fileSystem.writeFileString(config.anonymousIdPath, anonymousId);
 
       const identifier = yield* Identify.getTelemetryIdentifierForHome(
-        path.join(config.baseDir, "home"),
+        path.join(config.stateDir, "home"),
       );
 
       assert.equal(identifier, sha256(anonymousId));
@@ -65,7 +65,7 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
       const config = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const homeDirectory = path.join(config.baseDir, "home");
+      const homeDirectory = path.join(config.stateDir, "home");
       const codexAuthPath = path.join(homeDirectory, ".codex", "auth.json");
       const anonymousId = "decode-fallback-anonymous-id";
       const privateAccessToken = "private-codex-access-token";
@@ -117,7 +117,7 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
       const config = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const homeDirectory = path.join(config.baseDir, "home");
+      const homeDirectory = path.join(config.stateDir, "home");
 
       yield* fileSystem.makeDirectory(config.anonymousIdPath);
 

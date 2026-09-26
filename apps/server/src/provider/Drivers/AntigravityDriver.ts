@@ -112,10 +112,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const authConfigIssue = antigravityAuthConfigIssue(auth);
       const processEnvironment = mergeProviderInstanceEnvironment(environment);
       const userHome = resolveAntigravityUserHome(yield* HostProcessPlatform, processEnvironment);
-      const profileDirectory = resolveAntigravityProfileDirectory(
-        serverConfig.stateDir,
-        instanceId,
-      );
+      const profileDirectory = resolveAntigravityProfileDirectory(serverConfig.dataDir, instanceId);
       // No process of this instance exists yet, so every runtime temp
       // directory left under the profile is an orphan from a killed server.
       yield* removeAntigravityRuntimeTempDirs(

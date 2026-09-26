@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import { halC2DirsUnder } from "@hal-c2/shared/xdgDirs";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -157,21 +158,17 @@ it.effect("includes committed WAL data and does not publish a failed snapshot", 
   );
 });
 
-it.effect("uses statev2.sqlite for default and explicit development paths", () =>
+it.effect("keeps statev2.sqlite in the data dir and settings in the config dir", () =>
   Effect.gen(function* () {
-    for (const devUrl of [undefined, new URL("http://localhost:5173")]) {
-      for (const baseDirIsExplicit of [false, true]) {
-        const paths = yield* deriveServerPaths("/tmp/hal-c2", devUrl, { baseDirIsExplicit });
-        assert.equal(NodePath.basename(paths.dbPath), "statev2.sqlite");
-        assert.equal(paths.settingsPath, NodePath.join(paths.stateDir, "settings.json"));
-      }
-    }
+    const paths = yield* deriveServerPaths(halC2DirsUnder("/tmp/hal-c2", process.platform));
+    assert.equal(paths.dbPath, NodePath.join(paths.dataDir, "statev2.sqlite"));
+    assert.equal(paths.settingsPath, NodePath.join(paths.configDir, "settings.json"));
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("starts fresh without V1 and never imports over existing V2 state", () => {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hal-c2-v2-fresh-"));
-  const destinationPath = NodePath.join(directory, "userdata", "statev2.sqlite");
+  const destinationPath = NodePath.join(directory, "data", "statev2.sqlite");
   return Effect.gen(function* () {
     const config = yield* ServerConfig;
     const database = layerConfig.pipe(

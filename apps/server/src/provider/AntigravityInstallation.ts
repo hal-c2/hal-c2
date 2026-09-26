@@ -112,13 +112,14 @@ export class AntigravityInstallation extends Context.Service<
     AntigravityInstallation,
     Effect.gen(function* () {
       const config = yield* ServerConfig;
-      return yield* makeAntigravityInstallation({ baseDir: config.baseDir });
+      return yield* makeAntigravityInstallation({ toolsDir: config.toolsDir });
     }),
   );
 }
 
 export interface AntigravityInstallationOptions {
-  readonly baseDir: string;
+  /** Downloaded tools live here; the managed server under `antigravity-acp`. */
+  readonly toolsDir: string;
   readonly releaseAsset?: AntigravityReleaseAsset | null;
   readonly validate?: (
     executable: AntigravityExecutable,
@@ -280,12 +281,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       ? resolveAntigravityReleaseAsset(platform, arch)
       : options.releaseAsset;
   const names = executableNames(platform);
-  const managedDirectory = path.join(
-    options.baseDir,
-    "tools",
-    "antigravity-acp",
-    `${platform}-${arch}`,
-  );
+  const managedDirectory = path.join(options.toolsDir, "antigravity-acp", `${platform}-${arch}`);
   const versionsDirectory = path.join(managedDirectory, "versions");
   const activePath = path.join(managedDirectory, "active.json");
   const gate = yield* Semaphore.make(1);

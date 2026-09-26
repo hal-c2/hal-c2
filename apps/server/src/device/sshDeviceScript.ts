@@ -37,10 +37,11 @@ const os = require('node:os');
 const net = require('node:net');
 const { spawn, spawnSync } = require('node:child_process');
 const root = (() => {
-  // Devices set up before the rename keep their tool cache under ~/.t3.
-  const current = path.join(os.homedir(), '.hal-c2', 'device');
-  const legacy = path.join(os.homedir(), '.t3', 'device');
-  return !fs.existsSync(current) && fs.existsSync(legacy) ? legacy : current;
+  // HAL-C2's data dir on the remote host; an old ~/.hal-c2 or ~/.t3 device
+  // cache is left behind and its tools are downloaded again.
+  const dataHome = process.env.XDG_DATA_HOME;
+  const base = dataHome && path.isAbsolute(dataHome) ? dataHome : path.join(os.homedir(), '.local', 'share');
+  return path.join(base, 'hal-c2', 'device');
 })();
 const state = path.join(root, 'hosts', owner);
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', timeout: 30000, ...options });

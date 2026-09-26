@@ -4,7 +4,7 @@ import type { DeviceToolVersions } from "@hal-c2/contracts";
  *
  * `expo-device-hub` streams simulator and emulator screens and `agent-device`
  * drives them. Each is npm-installed separately after its matching consent
- * step into `<baseDir>/tools/<name>/<version>` and executed from there with the
+ * step into `<cache dir>/tools/<name>/<version>` and executed from there with the
  * resolved Node runtime, never `npx`: an ephemeral
  * npx cache would make every first `device_open` after a reboot depend on the
  * registry, and the pinned versions are part of the contract the injected
@@ -78,8 +78,8 @@ const AGENT_DEVICE_SPEC: ToolSpec = {
   entry: ["bin", "agent-device.mjs"],
 };
 
-const toolPaths = (path: Path.Path, baseDir: string, spec: ToolSpec): DeviceToolPaths => {
-  const installDir = path.join(baseDir, "tools", spec.name, spec.version);
+const toolPaths = (path: Path.Path, toolsDir: string, spec: ToolSpec): DeviceToolPaths => {
+  const installDir = path.join(toolsDir, spec.name, spec.version);
   return {
     installDir,
     entryPath: path.join(installDir, "node_modules", spec.name, ...spec.entry),
@@ -87,12 +87,12 @@ const toolPaths = (path: Path.Path, baseDir: string, spec: ToolSpec): DeviceTool
   };
 };
 
-const deviceToolchainPaths = (path: Path.Path, baseDir: string): DeviceToolchainPaths => ({
-  hub: toolPaths(path, baseDir, HUB_SPEC),
-  agentDevice: toolPaths(path, baseDir, AGENT_DEVICE_SPEC),
+const deviceToolchainPaths = (path: Path.Path, toolsDir: string): DeviceToolchainPaths => ({
+  hub: toolPaths(path, toolsDir, HUB_SPEC),
+  agentDevice: toolPaths(path, toolsDir, AGENT_DEVICE_SPEC),
 });
 
-/** Keep daemon state (daemon.json, sessions) in userdata, separate from tool installs. */
+/** Keep daemon state (daemon.json, sessions) in the data dir, separate from tool installs. */
 export const agentDeviceStateDir = (path: Path.Path, stateDir: string): string =>
   path.join(stateDir, "device", "agent-device");
 
@@ -191,47 +191,47 @@ const installTool = Effect.fn("DeviceToolchain.installTool")(function* (
 });
 
 const ensureTool = Effect.fn("DeviceToolchain.ensureTool")(function* (
-  baseDir: string,
+  toolsDir: string,
   spec: ToolSpec,
   select: (paths: DeviceToolchainPaths) => DeviceToolPaths,
 ) {
   const path = yield* Path.Path;
-  const paths = deviceToolchainPaths(path, baseDir);
+  const paths = deviceToolchainPaths(path, toolsDir);
   return yield* installLock.withPermit(installTool(spec, select(paths)));
 });
 
-export const ensureDeviceHub = (baseDir: string) =>
-  ensureTool(baseDir, HUB_SPEC, (paths) => paths.hub);
+export const ensureDeviceHub = (toolsDir: string) =>
+  ensureTool(toolsDir, HUB_SPEC, (paths) => paths.hub);
 
-export const ensureAgentDevice = (baseDir: string) =>
-  ensureTool(baseDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
+export const ensureAgentDevice = (toolsDir: string) =>
+  ensureTool(toolsDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
 
 const isToolInstalled = Effect.fn("DeviceToolchain.isToolInstalled")(function* (
-  baseDir: string,
+  toolsDir: string,
   spec: ToolSpec,
   select: (paths: DeviceToolchainPaths) => DeviceToolPaths,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const paths = deviceToolchainPaths(path, baseDir);
+  const paths = deviceToolchainPaths(path, toolsDir);
   return yield* isInstalled(fs, select(paths), spec.version);
 });
 
-export const isDeviceHubInstalled = (baseDir: string) =>
-  isToolInstalled(baseDir, HUB_SPEC, (paths) => paths.hub);
+export const isDeviceHubInstalled = (toolsDir: string) =>
+  isToolInstalled(toolsDir, HUB_SPEC, (paths) => paths.hub);
 
-export const isAgentDeviceInstalled = (baseDir: string) =>
-  isToolInstalled(baseDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
+export const isAgentDeviceInstalled = (toolsDir: string) =>
+  isToolInstalled(toolsDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
 
 /** Read completed installs without downloading or starting either tool. */
 export const deviceToolVersions = Effect.fn("DeviceToolchain.versions")(function* (
-  baseDir: string,
+  toolsDir: string,
   running: { hub?: string; agent?: string } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const inspect = Effect.fn("DeviceToolchain.inspect")(function* (spec: ToolSpec) {
-    const directory = path.join(baseDir, "tools", spec.name);
+    const directory = path.join(toolsDir, spec.name);
     const names = yield* fs.readDirectory(directory).pipe(
       Effect.catchIf(
         (error) => error.reason._tag === "NotFound",
@@ -241,7 +241,7 @@ export const deviceToolVersions = Effect.fn("DeviceToolchain.versions")(function
     const versions = yield* Effect.filter(names, (version) =>
       /^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$/.test(version)
         ? Effect.gen(function* () {
-            const paths = toolPaths(path, baseDir, { ...spec, version });
+            const paths = toolPaths(path, toolsDir, { ...spec, version });
             const sentinel = yield* fs.readFileString(paths.sentinelPath).pipe(
               Effect.catchIf(
                 (error) => error.reason._tag === "NotFound",

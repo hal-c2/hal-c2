@@ -27,7 +27,7 @@ import { Command, Flag } from "effect/unstable/cli";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
-import { configuredHalC2HomeFromEnv, resolveBaseDir } from "../os-jank.ts";
+import { resolveCliHalC2Location } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { baseDirFlag } from "./config.ts";
 import { resolveCliCommand } from "./invocation.ts";
@@ -164,12 +164,13 @@ export const triageCommand = Command.make("triage", {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
 
-      // Triage is a user-facing feature: always the userdata state, never dev.
+      // Triage is a user-facing feature: always the `hal-c2` profile, never dev.
       // --base-dir wins; HAL_C2_HOME is its documented env equivalent (same
       // precedence as `hal-c2 pair`).
-      const explicitBaseDir = Option.getOrUndefined(flags.baseDir);
-      const baseDir = yield* resolveBaseDir(explicitBaseDir ?? (yield* configuredHalC2HomeFromEnv));
-      const paths = yield* ServerConfig.deriveServerPaths(baseDir, undefined, {});
+      const location = yield* resolveCliHalC2Location({
+        explicitRoot: Option.getOrUndefined(flags.baseDir),
+      });
+      const paths = yield* ServerConfig.deriveServerPaths(location.dirs);
 
       const now = yield* DateTime.now;
       const scratchDir = path.join(
@@ -195,7 +196,10 @@ export const triageCommand = Command.make("triage", {
           launchedAs: yield* resolveCliCommand("triage"),
           server: yield* describeServerProcess(paths.serverRuntimeStatePath),
           paths: {
+            configDir: paths.configDir,
+            dataDir: paths.dataDir,
             stateDir: paths.stateDir,
+            cacheDir: paths.cacheDir,
             dbPath: paths.dbPath,
             settingsPath: paths.settingsPath,
             logsDir: paths.logsDir,
@@ -205,7 +209,7 @@ export const triageCommand = Command.make("triage", {
             terminalLogsDir: paths.terminalLogsDir,
             providerStatusCacheDir: paths.providerStatusCacheDir,
             secretsDir: paths.secretsDir,
-            sourceCacheDir: path.join(baseDir, "source"),
+            sourceCacheDir: path.join(paths.cacheDir, "source"),
           },
         }),
       );

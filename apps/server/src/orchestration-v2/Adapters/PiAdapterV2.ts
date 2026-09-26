@@ -420,7 +420,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
       // hook. Materialize it even when this session has no MCP credential so
       // Supervised never silently degrades to unrestricted tool execution.
       const extensionPath = yield* provideCacheFs(
-        materializePiHalC2McpExtension(options.serverConfig.providerStatusCacheDir),
+        materializePiHalC2McpExtension(`${options.serverConfig.cacheDir}/pi`),
       );
       const resolvedLaunchArgs = resolvePiLaunchArgs(options.settings.launchArgs);
       if (!resolvedLaunchArgs.ok) {

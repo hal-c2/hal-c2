@@ -149,7 +149,7 @@ describe("hal-c2 pair", () => {
       Effect.gen(function* () {
         const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hal-c2-pair-test-"));
         const port = Number(new URL(origin).port);
-        const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+        const statePath = NodePath.join(baseDir, "state", "server-runtime.json");
         yield* persistServerRuntimeState({
           path: statePath,
           state: yield* makePersistedServerRuntimeState({
@@ -201,7 +201,7 @@ describe("hal-c2 pair", () => {
       Effect.gen(function* () {
         const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hal-c2-pair-dev-test-"));
         const port = Number(new URL(origin).port);
-        const statePath = NodePath.join(baseDir, "dev", "server-runtime.json");
+        const statePath = NodePath.join(baseDir, "state", "server-runtime.json");
         yield* persistServerRuntimeState({
           path: statePath,
           state: yield* makePersistedServerRuntimeState({
@@ -238,7 +238,7 @@ describe("hal-c2 pair", () => {
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
         const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hal-c2-pair-pid-test-"));
-        const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+        const statePath = NodePath.join(baseDir, "state", "server-runtime.json");
         // The origin answers (another server reused the port), but the pid
         // that wrote this state file is dead — pairing must not mint a token
         // into the dead server's database.
@@ -267,7 +267,7 @@ describe("hal-c2 pair", () => {
   it.effect("ignores stale runtime state pointing at a dead server", () =>
     Effect.gen(function* () {
       const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hal-c2-pair-stale-test-"));
-      const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+      const statePath = NodePath.join(baseDir, "state", "server-runtime.json");
       // A port from the dynamic range with nothing listening: the probe fails
       // fast with ECONNREFUSED and discovery moves on.
       yield* persistServerRuntimeState({

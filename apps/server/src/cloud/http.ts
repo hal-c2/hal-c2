@@ -637,9 +637,9 @@ export const pendingServiceUpdateExists = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const runtimeDir = path.join(config.baseDir, "runtime");
+  const serviceStateDir = config.stateDir;
   const stateText = yield* fs
-    .readFileString(path.join(runtimeDir, SERVICE_STATE_FILE))
+    .readFileString(path.join(serviceStateDir, SERVICE_STATE_FILE))
     .pipe(Effect.option);
   return Option.isSome(stateText) && serviceStateHasPendingUpdate(stateText.value);
 });
@@ -656,9 +656,9 @@ const pendingUpdateHandoffExists = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const runtimeDir = path.join(config.baseDir, "runtime");
+  const serviceStateDir = config.stateDir;
   const stopping = yield* fs
-    .exists(path.join(runtimeDir, SERVICE_STOP_MARKER_FILE))
+    .exists(path.join(serviceStateDir, SERVICE_STOP_MARKER_FILE))
     .pipe(Effect.orElseSucceed(() => false));
   return !stopping;
 });

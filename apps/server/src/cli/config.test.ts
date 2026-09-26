@@ -19,11 +19,13 @@ import {
 import * as NetService from "@hal-c2/shared/Net";
 import { DEFAULT_SIGNAL_EXPORT } from "@hal-c2/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { halC2DirsUnder, resolveHalC2Dirs } from "@hal-c2/shared/xdgDirs";
 import { deriveServerPaths } from "../config.ts";
 import { resolveServerConfig } from "./config.ts";
 
-const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
-  deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
+/** Everything under one root: `--base-dir`, `HAL_C2_HOME` or the desktop's home. */
+const deriveRootedServerPaths = (baseDir: string) =>
+  deriveServerPaths(halC2DirsUnder(baseDir, process.platform));
 
 const encodeDesktopBootstrap = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -175,10 +177,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
       const baseDir = join(NodeOS.tmpdir(), "hal-c2-cli-config-env-base");
-      const derivedPaths = yield* deriveExplicitServerPaths(
-        baseDir,
-        new URL("http://127.0.0.1:5173"),
-      );
+      const derivedPaths = yield* deriveRootedServerPaths(baseDir);
       const resolved = yield* resolveServerConfig(
         {
           mode: Option.none(),
@@ -226,7 +225,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         mode: "desktop",
         port: 4001,
         cwd: process.cwd(),
-        baseDir,
+        homeRoot: baseDir,
         ...derivedPaths,
         host: "0.0.0.0",
         staticDir: undefined,
@@ -240,7 +239,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
-      assert.equal(resolved.stateDir, join(baseDir, "userdata"));
+      assert.equal(resolved.stateDir, join(baseDir, "state"));
     }),
   );
 
@@ -248,10 +247,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
       const baseDir = join(NodeOS.tmpdir(), "hal-c2-cli-config-flags-base");
-      const derivedPaths = yield* deriveExplicitServerPaths(
-        baseDir,
-        new URL("http://127.0.0.1:4173"),
-      );
+      const derivedPaths = yield* deriveRootedServerPaths(baseDir);
       const resolved = yield* resolveServerConfig(
         {
           mode: Option.some("web"),
@@ -297,7 +293,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         mode: "web",
         port: 8788,
         cwd: process.cwd(),
-        baseDir,
+        homeRoot: baseDir,
         ...derivedPaths,
         host: "127.0.0.1",
         staticDir: undefined,
@@ -310,7 +306,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: true,
         tailscaleServePort: 8443,
       });
-      assert.equal(resolved.dbPath, join(baseDir, "userdata", "statev2.sqlite"));
+      assert.equal(resolved.dbPath, join(baseDir, "data", "statev2.sqlite"));
     }),
   );
 
@@ -325,10 +321,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: 443,
         }),
       );
-      const derivedPaths = yield* deriveExplicitServerPaths(
-        baseDir,
-        new URL("http://127.0.0.1:4173"),
-      );
+      const derivedPaths = yield* deriveRootedServerPaths(baseDir);
 
       const resolved = yield* resolveServerConfig(
         {
@@ -370,7 +363,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         mode: "web",
         port: 8788,
         cwd: process.cwd(),
-        baseDir,
+        homeRoot: baseDir,
         ...derivedPaths,
         host: "127.0.0.1",
         staticDir: undefined,
@@ -408,7 +401,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           otlpLogsUrl: "http://localhost:4318/v1/logs",
         }),
       );
-      const derivedPaths = yield* deriveServerPaths(baseDir, undefined);
+      const derivedPaths = yield* deriveRootedServerPaths(baseDir);
 
       const resolved = yield* resolveServerConfig(
         {
@@ -450,7 +443,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         mode: "desktop",
         port: 4888,
         cwd: process.cwd(),
-        baseDir,
+        homeRoot: baseDir,
         ...derivedPaths,
         host: "127.0.0.2",
         staticDir: resolved.staticDir,
@@ -466,7 +459,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
-      assert.equal(join(baseDir, "userdata"), resolved.stateDir);
+      assert.equal(join(baseDir, "state"), resolved.stateDir);
       assert.equal(resolved.desktopTelemetryFd, 4);
       assert.equal(resolved.desktopTelemetryControlFd, 5);
     }),
@@ -536,10 +529,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: 443,
         }),
       );
-      const derivedPaths = yield* deriveExplicitServerPaths(
-        baseDir,
-        new URL("http://127.0.0.1:4173"),
-      );
+      const derivedPaths = yield* deriveRootedServerPaths(baseDir);
 
       const resolved = yield* resolveServerConfig(
         {
@@ -583,7 +573,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         mode: "web",
         port: 8788,
         cwd: process.cwd(),
-        baseDir,
+        homeRoot: baseDir,
         ...derivedPaths,
         host: "127.0.0.1",
         staticDir: undefined,
@@ -604,7 +594,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-cli-config-settings-" });
-      const derivedPaths = yield* deriveExplicitServerPaths(baseDir, undefined);
+      const derivedPaths = yield* deriveRootedServerPaths(baseDir);
       yield* fs.makeDirectory(path.dirname(derivedPaths.settingsPath), { recursive: true });
       yield* fs.writeFileString(
         derivedPaths.settingsPath,
@@ -655,7 +645,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         mode: "desktop",
         port: 4888,
         cwd: process.cwd(),
-        baseDir,
+        homeRoot: baseDir,
         ...derivedPaths,
         host: "127.0.0.1",
         staticDir: resolved.staticDir,
@@ -675,7 +665,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
       const baseDir = join(NodeOS.tmpdir(), "hal-c2-cli-config-headless-base");
-      const derivedPaths = yield* deriveExplicitServerPaths(baseDir, undefined);
+      const derivedPaths = yield* deriveRootedServerPaths(baseDir);
 
       const resolved = yield* resolveServerConfig(
         {
@@ -718,7 +708,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         mode: "web",
         port: 3773,
         cwd: process.cwd(),
-        baseDir,
+        homeRoot: baseDir,
         ...derivedPaths,
         host: undefined,
         staticDir: resolved.staticDir,
@@ -897,6 +887,128 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       );
 
       expect(resolved.otlpLogsUrl).toBe("http://collector.internal:4318/v1/logs");
+    }),
+  );
+
+  const pathFlags = (options: { readonly baseDir?: string; readonly devUrl?: URL }) => ({
+    mode: Option.some("web" as const),
+    port: Option.some(3773),
+    host: Option.none<string>(),
+    baseDir: Option.fromUndefinedOr(options.baseDir),
+    cwd: Option.none<string>(),
+    devUrl: Option.fromUndefinedOr(options.devUrl),
+    noBrowser: Option.none<boolean>(),
+    bootstrapFd: Option.none<number>(),
+    autoBootstrapProjectFromCwd: Option.none<boolean>(),
+    logWebSocketEvents: Option.none<boolean>(),
+    tailscaleServeEnabled: Option.none<boolean>(),
+    tailscaleServePort: Option.none<number>(),
+  });
+
+  const resolveWithHome = (
+    homeDir: string,
+    options: { readonly baseDir?: string; readonly devUrl?: URL },
+  ) =>
+    resolveServerConfig(pathFlags(options), Option.none()).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { HOME: homeDir } })),
+          NetService.layer,
+        ),
+      ),
+    );
+
+  it.effect("keeps each kind of file in its own XDG directory", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const paths = yield* deriveServerPaths({
+        config: "/c",
+        data: "/d",
+        state: "/s",
+        cache: "/k",
+        runtime: "/r",
+      });
+
+      expect(paths).toMatchObject({
+        settingsPath: join("/c", "settings.json"),
+        keybindingsConfigPath: join("/c", "keybindings.json"),
+        environmentThemesDir: join("/c", "themes"),
+        dbPath: join("/d", "statev2.sqlite"),
+        secretsDir: join("/d", "secrets"),
+        environmentIdPath: join("/d", "environment-id"),
+        attachmentsDir: join("/d", "attachments"),
+        acpAuthDir: join("/d", "acp-auth"),
+        worktreesDir: join("/d", "worktrees"),
+        logsDir: join("/s", "logs"),
+        terminalLogsDir: join("/s", "logs", "terminals"),
+        serverRuntimeStatePath: join("/s", "server-runtime.json"),
+        anonymousIdPath: join("/s", "anonymous-id"),
+        providerStatusCacheDir: join("/k", "provider-status"),
+        toolsDir: join("/k", "tools"),
+        runtimeDir: "/r",
+      });
+    }),
+  );
+
+  it.effect("a development server without a root uses the hal-c2-dev profile", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const homeDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-cli-profile-" });
+      const profileDirs = (profile: "hal-c2" | "hal-c2-dev") =>
+        resolveHalC2Dirs({ env: {}, homeDir, platform: process.platform, profile });
+
+      const dev = yield* resolveWithHome(homeDir, { devUrl: new URL("http://127.0.0.1:5173") });
+      const installed = yield* resolveWithHome(homeDir, {});
+
+      expect(dev.homeRoot).toBeUndefined();
+      const devDirs = profileDirs("hal-c2-dev");
+      expect([dev.configDir, dev.dataDir, dev.stateDir, dev.cacheDir]).toEqual([
+        devDirs.config,
+        devDirs.data,
+        devDirs.state,
+        devDirs.cache,
+      ]);
+      expect(installed.dataDir).toBe(profileDirs("hal-c2").data);
+    }),
+  );
+
+  it.effect("keeps one profile under an explicit root, even for a development server", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const homeDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-cli-root-" });
+      const baseDir = join(homeDir, "root");
+
+      const resolved = yield* resolveWithHome(homeDir, {
+        baseDir,
+        devUrl: new URL("http://127.0.0.1:5173"),
+      });
+
+      expect(resolved.homeRoot).toBe(baseDir);
+      expect(resolved.configDir).toBe(join(baseDir, "config"));
+      expect(resolved.dbPath).toBe(join(baseDir, "data", "statev2.sqlite"));
+      expect(resolved.logsDir).toBe(join(baseDir, "state", "logs"));
+      expect(resolved.toolsDir).toBe(join(baseDir, "cache", "tools"));
+    }),
+  );
+
+  it.effect("copies an old home before the database opens, only without a root", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const homeDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-cli-migrate-" });
+      const userdata = join(homeDir, ".t3", "userdata");
+      yield* fs.makeDirectory(userdata, { recursive: true });
+      yield* fs.writeFileString(join(userdata, "settings.json"), "{}");
+      yield* fs.writeFileString(join(userdata, "environment-id"), "env-old");
+
+      const rooted = yield* resolveWithHome(homeDir, { baseDir: join(homeDir, "root") });
+      expect(yield* fs.exists(join(rooted.dataDir, "environment-id"))).toBe(false);
+
+      const resolved = yield* resolveWithHome(homeDir, {});
+      expect(yield* fs.readFileString(resolved.environmentIdPath)).toBe("env-old");
+      expect(yield* fs.exists(resolved.settingsPath)).toBe(true);
+      expect(yield* fs.exists(join(resolved.stateDir, "migrated-from.json"))).toBe(true);
     }),
   );
 });

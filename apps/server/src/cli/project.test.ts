@@ -1,5 +1,6 @@
 import { DEFAULT_SIGNAL_EXPORT } from "@hal-c2/shared/observability";
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration uses temporary Node paths.
+import { halC2DirsUnder } from "@hal-c2/shared/xdgDirs";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -52,7 +53,9 @@ const runCli = (args: ReadonlyArray<string>) =>
 
 const makeConfig = (baseDir: string) =>
   Effect.gen(function* () {
-    const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+    const derivedPaths = yield* ServerConfig.deriveServerPaths(
+      halC2DirsUnder(baseDir, process.platform),
+    );
     return {
       logLevel: "Info",
       traceMinLevel: "Info",
@@ -71,7 +74,7 @@ const makeConfig = (baseDir: string) =>
       port: 0,
       host: "127.0.0.1",
       cwd: process.cwd(),
-      baseDir,
+      homeRoot: baseDir,
       ...derivedPaths,
       staticDir: undefined,
       devUrl: undefined,

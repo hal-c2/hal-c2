@@ -41,10 +41,10 @@ export interface UninstallPlan {
   readonly service: boolean;
   /** The `hal-c2` launcher (symlink or `.cmd` shim) that points into this home's runtime tree. */
   readonly launcher: string | undefined;
-  /** `<home>/runtime`, holding every downloaded version, when it exists. */
+  /** `<data dir>/runtime`, holding every downloaded version, when it exists. */
   readonly runtimeDir: string | undefined;
-  /** `<home>/userdata`, which is never removed; shown so the user knows where it is. */
-  readonly userdataDir: string;
+  /** The config and data directories, never removed; shown so the user knows where they are. */
+  readonly keptDirs: ReadonlyArray<string>;
 }
 
 /**
@@ -75,26 +75,26 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
   return launcherOwnsVersionsDir(path, input.versionsDir, resolved) ? input.launchedAs : undefined;
 });
 
-const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
-  readonly baseDir: string;
-}) {
+interface UninstallDirs {
+  readonly configDir: string;
+  readonly dataDir: string;
+}
+
+const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: UninstallDirs) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const service = yield* BootService.BootService;
   const status = yield* service.status;
-  const servesThisHome =
-    status.installedBaseDir !== undefined &&
-    path.resolve(status.installedBaseDir) === path.resolve(input.baseDir);
-  const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
+  const versionsDir = pinnedRuntimeVersionsDir(path, input.dataDir);
   const runtimeDir = path.dirname(versionsDir);
   const launchedAs = (yield* HostProcessIsExecutable) ? yield* resolveLauncherPath : undefined;
   const plan: UninstallPlan = {
-    service: status.supported && status.installed && servesThisHome,
+    service: status.supported && status.installed && status.servesThisHome,
     launcher: yield* findOwnedLauncher({ launchedAs, versionsDir }),
     runtimeDir: (yield* fs.exists(runtimeDir).pipe(Effect.orElseSucceed(() => false)))
       ? runtimeDir
       : undefined,
-    userdataDir: path.join(input.baseDir, "userdata"),
+    keptDirs: [input.configDir, input.dataDir],
   };
   return plan;
 });
@@ -116,25 +116,26 @@ export const uninstallCommand = Command.make("uninstall", {
     Effect.gen(function* () {
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
-      return yield* runUninstall({ baseDir: config.baseDir, assumeYes: flags.yes }).pipe(
-        Effect.provide(bootServiceLayer(config)),
-      );
+      return yield* runUninstall({
+        configDir: config.configDir,
+        dataDir: config.dataDir,
+        assumeYes: flags.yes,
+      }).pipe(Effect.provide(bootServiceLayer(config)));
     }),
   ),
 );
 
-const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
-  readonly baseDir: string;
-  readonly assumeYes: boolean;
-}) {
+const runUninstall = Effect.fn("cli.uninstall.run")(function* (
+  input: UninstallDirs & { readonly assumeYes: boolean },
+) {
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcessPlatform;
   const environment = yield* HostProcessEnvironment;
   const service = yield* BootService.BootService;
-  const plan = yield* planUninstall({ baseDir: input.baseDir });
+  const plan = yield* planUninstall(input);
 
   if (!plan.service && plan.launcher === undefined && plan.runtimeDir === undefined) {
-    yield* Console.log(`Nothing to remove: hal-c2 is not installed for ${input.baseDir}.`);
+    yield* Console.log(`Nothing to remove: hal-c2 is not installed for ${input.dataDir}.`);
     if (!(yield* HostProcessIsExecutable)) {
       yield* Console.log(
         "  This hal-c2 runs from a Node script, so it was installed by npm or built from source. Remove it the same way (`npm uninstall -g hal-c2`, or delete the checkout).",
@@ -150,7 +151,7 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     yield* Console.log(`  every downloaded version under ${plan.runtimeDir}`);
   }
   yield* Console.log(
-    `Your projects, threads, and settings under ${plan.userdataDir} are kept. Delete that directory yourself if you want them gone too.`,
+    `Your projects, threads, and settings under ${plan.keptDirs.join(" and ")} are kept. Delete those directories yourself if you want them gone too.`,
   );
 
   if (!input.assumeYes) {

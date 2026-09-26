@@ -10,7 +10,7 @@ import {
   type DesktopAppActivationPlatform,
   type DesktopAppActivationRequest,
 } from "@hal-c2/contracts";
-import { resolveDesktopAppControlAddress } from "@hal-c2/shared/desktopAppControl";
+import { HAL_C2_DEV_APP_DIR, resolveHalC2Dirs, type HalC2Dirs } from "@hal-c2/shared/xdgDirs";
 import {
   HostProcessPlatform,
   HostProcessUserId,
@@ -24,8 +24,9 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Argument, Command } from "effect/unstable/cli";
 
-import { configuredHalC2HomeFromEnv, expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { expandHomePath, resolveCliHalC2Location } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
+import { resolveDesktopAppControlSocket } from "./desktopAppControlSocket.ts";
 
 const CLI_RESPONSE_TIMEOUT_MS = 17_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
@@ -187,7 +188,6 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
   readonly workspaceRoot: Option.Option<string>;
 }) {
   const environment = yield* appEnvironment;
-  const envHalC2Home = yield* configuredHalC2HomeFromEnv;
   const hostPlatform = yield* HostProcessPlatform;
   if (Option.isSome(environment.sshConnection) || Option.isSome(environment.sshTty)) {
     return yield* new DesktopAppSshUnsupportedError({});
@@ -197,16 +197,26 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
   }
 
   const path = yield* Path.Path;
-  const configuredBaseDir = Option.getOrUndefined(flags.baseDir) ?? envHalC2Home;
-  const baseDir = yield* resolveBaseDir(configuredBaseDir);
-  const allowDevFallback = Option.isNone(flags.baseDir) && envHalC2Home === undefined;
+  const location = yield* resolveCliHalC2Location({
+    explicitRoot: Option.getOrUndefined(flags.baseDir),
+  });
+  // With no root, a desktop app started from a checkout listens in the dev profile.
+  const devDirs =
+    location.root === undefined
+      ? resolveHalC2Dirs({
+          env: location.env,
+          homeDir: location.homeDir,
+          platform: location.platform,
+          profile: HAL_C2_DEV_APP_DIR,
+        })
+      : undefined;
   const rawWorkspaceRoot =
     Option.getOrUndefined(flags.workspaceRoot) ?? (yield* HostProcessWorkingDirectory);
   const workspaceRoot = path.resolve(yield* expandHomePath(rawWorkspaceRoot));
   const userId = yield* HostProcessUserId;
-  const resolveAddress = (stateSubdirectory: "userdata" | "dev") =>
-    resolveDesktopAppControlAddress({
-      stateDir: path.join(baseDir, stateSubdirectory),
+  const resolveAddress = (dirs: HalC2Dirs) =>
+    resolveDesktopAppControlSocket({
+      dirs: { state: path.resolve(dirs.state), runtime: path.resolve(dirs.runtime) },
       platform: hostPlatform,
       tempDir: NodeOS.tmpdir(),
       userId,
@@ -219,8 +229,8 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
     workspaceRoot,
     platform: hostPlatform,
   };
-  const address = resolveAddress("userdata");
-  const fallbackAddress = allowDevFallback ? resolveAddress("dev") : undefined;
+  const address = resolveAddress(location.dirs);
+  const fallbackAddress = devDirs === undefined ? undefined : resolveAddress(devDirs);
 
   const response = yield* Effect.tryPromise({
     try: () =>

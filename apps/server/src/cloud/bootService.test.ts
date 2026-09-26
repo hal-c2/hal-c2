@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import {
   HostProcessExecutablePath,
   HostProcessPlatform,
@@ -24,11 +24,11 @@ import {
   serviceStateHasPendingUpdate,
 } from "./serviceProtocol.ts";
 
-const linuxRuntime = "/home/theo/.hal-c2/runtime/versions/1.2.3/hal-c2";
-const linuxPlan = {
+const linuxRuntime = "/home/theo/.local/share/hal-c2/runtime/versions/1.2.3/hal-c2";
+const linuxPlan: BootService.BootServicePlan = {
   program: [linuxRuntime, "__service-launcher"],
-  baseDir: "/home/theo/.hal-c2",
-  logPath: "/home/theo/.hal-c2/userdata/logs/boot-service.log",
+  environment: [],
+  logPath: "/home/theo/.local/state/hal-c2/logs/boot-service.log",
   unitPath: "/home/theo/.config/systemd/user/hal-c2.service",
 };
 
@@ -40,32 +40,79 @@ it("runs the pinned runtime's own executable as the systemd launcher", () => {
   expect(unit).not.toContain("node");
 });
 
-it("reads the served HAL-C2 home back out of a rendered unit or plist", () => {
-  const plan = (baseDir: string) => ({
-    program: [`${baseDir}/runtime/versions/1.2.3/hal-c2`, "__service-launcher"],
-    baseDir,
-    logPath: `${baseDir}/userdata/logs/boot-service.log`,
-    unitPath: "/home/theo/.config/systemd/user/hal-c2.service",
+it("reads the named home back out of a rendered unit or plist", () => {
+  const plan = (home: string): BootService.BootServicePlan => ({
+    ...linuxPlan,
+    environment: [["HAL_C2_HOME", home]],
   });
 
   expect(
-    BootService.bootServiceBaseDirOf(BootService.renderBootServiceUnit(plan("/home/theo/.hal-c2"))),
-  ).toBe("/home/theo/.hal-c2");
+    BootService.bootServiceHomeOf(BootService.renderBootServiceUnit(plan("/srv/hal-c2"))),
+  ).toEqual({ variable: "HAL_C2_HOME", value: "/srv/hal-c2" });
   // Spaces and specifiers are quoted and escaped on the way in.
   expect(
-    BootService.bootServiceBaseDirOf(
+    BootService.bootServiceHomeOf(
       BootService.renderBootServiceUnit(plan("/home/theo/HAL-C2 Data/100%")),
-    ),
+    )?.value,
   ).toBe("/home/theo/HAL-C2 Data/100%");
   expect(
-    BootService.bootServiceBaseDirOf(
+    BootService.bootServiceHomeOf(
       BootService.renderBootServicePlist(plan("/Users/theo/a&b"), {
         homeDir: "/Users/theo",
         environmentPath: "/usr/bin",
       }),
-    ),
+    )?.value,
   ).toBe("/Users/theo/a&b");
-  expect(BootService.bootServiceBaseDirOf("[Service]\nExecStart=/x\n")).toBeUndefined();
+  expect(BootService.bootServiceHomeOf("[Service]\nExecStart=/x\n")).toBeUndefined();
+});
+
+it("a new unit names no home and keeps a home the user chose", () => {
+  const xdg = BootService.renderBootServiceUnit(linuxPlan);
+  expect(xdg).not.toMatch(/HAL_C2_HOME|HALC2_HOME|T3CODE_HOME/);
+  expect(BootService.bootServiceHomeOf(xdg)).toBeUndefined();
+
+  const chosen = BootService.renderBootServiceUnit({
+    ...linuxPlan,
+    environment: [["HAL_C2_HOME", "/srv/hal-c2"]],
+  });
+  expect(chosen).toContain("Environment=HAL_C2_HOME=/srv/hal-c2");
+});
+
+describe("units installed before the XDG layout", () => {
+  const options = { homeDir: "/home/theo", platform: "linux" as const };
+  const systemdUnit = (variable: string, value: string) =>
+    `[Service]\nEnvironment=${variable}=${value}\nExecStart=/x __service-launcher\n`;
+  const launchdPlist = (variable: string, value: string) =>
+    `<dict>\n    <key>${variable}</key>\n    <string>${value}</string>\n</dict>\n`;
+
+  for (const [manager, render] of [
+    ["systemd", systemdUnit],
+    ["launchd", launchdPlist],
+  ] as const) {
+    for (const variable of ["T3CODE_HOME", "HALC2_HOME", "HAL_C2_HOME"] as const) {
+      it(`recognises a ${manager} unit that sets ${variable}`, () => {
+        const unit = render(variable, "/home/theo/.t3");
+        expect(BootService.bootServiceHomeOf(unit)).toEqual({ variable, value: "/home/theo/.t3" });
+        // An old home is a migration source: the service runs from the XDG directories.
+        expect(BootService.bootServiceRootOf(unit, options)).toBeUndefined();
+      });
+    }
+  }
+
+  it("only reads HAL_C2_HOME as a root, and never an old home", () => {
+    expect(BootService.bootServiceRootOf(systemdUnit("HAL_C2_HOME", "/srv/hal-c2"), options)).toBe(
+      "/srv/hal-c2",
+    );
+    expect(
+      BootService.bootServiceRootOf(systemdUnit("HAL_C2_HOME", "/home/theo/.hal-c2"), options),
+    ).toBeUndefined();
+    expect(
+      BootService.bootServiceRootOf(systemdUnit("HALC2_HOME", "/srv/hal-c2"), options),
+    ).toBeUndefined();
+    expect(
+      BootService.bootServiceRootOf(systemdUnit("T3CODE_HOME", "/srv/t3"), options),
+    ).toBeUndefined();
+  });
 });
 
 it("survives the kernel OOM-killing a greedy agent child", () => {
@@ -74,11 +121,11 @@ it("survives the kernel OOM-killing a greedy agent child", () => {
   expect(unit).toContain("OOMPolicy=continue");
 });
 
-const macRuntime = "/Users/theo/.hal-c2/runtime/versions/1.2.3/hal-c2";
-const macPlan = {
+const macRuntime = "/Users/theo/.local/share/hal-c2/runtime/versions/1.2.3/hal-c2";
+const macPlan: BootService.BootServicePlan = {
   program: [macRuntime, "__service-launcher"],
-  baseDir: "/Users/theo/.hal-c2",
-  logPath: "/Users/theo/.hal-c2/userdata/logs/boot-service.log",
+  environment: [],
+  logPath: "/Users/theo/.local/state/hal-c2/logs/boot-service.log",
   unitPath: "/Users/theo/Library/LaunchAgents/io.github.halc2.service.plist",
 };
 const macInstallerPath =
@@ -113,16 +160,16 @@ it("appends both stdio streams to the boot service log", () => {
   const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
 
   expect(plist).toContain(
-    "<key>StandardOutPath</key>\n  <string>/Users/theo/.hal-c2/userdata/logs/boot-service.log</string>",
+    "<key>StandardOutPath</key>\n  <string>/Users/theo/.local/state/hal-c2/logs/boot-service.log</string>",
   );
   expect(plist).toContain(
-    "<key>StandardErrorPath</key>\n  <string>/Users/theo/.hal-c2/userdata/logs/boot-service.log</string>",
+    "<key>StandardErrorPath</key>\n  <string>/Users/theo/.local/state/hal-c2/logs/boot-service.log</string>",
   );
 });
 
 it("escapes XML in host paths", () => {
   const plist = BootService.renderBootServicePlist(
-    { ...macPlan, baseDir: "/Users/theo/HAL-C2 & <Co>" },
+    { ...macPlan, environment: [["HAL_C2_HOME", "/Users/theo/HAL-C2 & <Co>"]] },
     { homeDir: "/Users/theo", environmentPath: "/Users/theo/Tools & <Scripts>:/usr/bin" },
   );
 
@@ -137,11 +184,15 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const home = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-boot-service-test-" });
-  const baseDir = path.join(home, ".hal-c2");
-  const statePath = path.join(baseDir, "runtime", "service-state.json");
+  // The XDG defaults under the temporary HOME: no root is configured.
+  const xdgDirs = {
+    dataDir: path.join(home, ".local", "share", "hal-c2"),
+    stateDir: path.join(home, ".local", "state", "hal-c2"),
+  };
+  const statePath = path.join(xdgDirs.stateDir, "service-state.json");
   // A complete pinned runtime is already present, so install only validates
   // it and never downloads a release archive.
-  const runtime = pinnedRuntimePaths(path, baseDir, "1.2.3", platform);
+  const runtime = pinnedRuntimePaths(path, xdgDirs.dataDir, "1.2.3", platform);
   yield* fs.makeDirectory(path.dirname(runtime.entryPath), { recursive: true });
   yield* fs.writeFileString(runtime.entryPath, "#!/bin/sh\n");
   yield* fs.writeFileString(runtime.sentinelPath, "1.2.3\n");
@@ -207,18 +258,24 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   const makeService = (
     environmentPath: string | undefined = installerPath,
     cliVersion = "1.2.3",
-    serviceBaseDir = baseDir,
+    /** A root the user chose; undefined for the XDG directories. */
+    serviceHome: string | undefined = undefined,
   ) =>
     Effect.gen(function* () {
       // Every version the tests install is present and verified on disk, so
       // install never downloads.
-      const paths = pinnedRuntimePaths(path, serviceBaseDir, cliVersion, platform);
+      const dirs =
+        serviceHome === undefined
+          ? xdgDirs
+          : { dataDir: path.join(serviceHome, "data"), stateDir: path.join(serviceHome, "state") };
+      const paths = pinnedRuntimePaths(path, dirs.dataDir, cliVersion, platform);
       yield* fs.makeDirectory(path.dirname(paths.entryPath), { recursive: true });
       yield* fs.writeFileString(paths.entryPath, "#!/bin/sh\n");
       yield* fs.writeFileString(paths.sentinelPath, `${cliVersion}\n`);
       return yield* BootService.make({
-        baseDir: serviceBaseDir,
-        logsDir: path.join(serviceBaseDir, "userdata", "logs"),
+        home: serviceHome,
+        ...dirs,
+        logsDir: path.join(dirs.stateDir, "logs"),
         cliVersion,
         host: { execPath: "/usr/bin/hal-c2" },
       });
@@ -595,9 +652,54 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const path = yield* Path.Path;
       const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-other-home-" });
 
-      const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".hal-c2"));
+      const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, "hal-c2"));
       expect(yield* other.restart).toBe(false);
       expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([]);
+    }),
+  );
+
+  it.effect("reports a unit from before as installed and rewrites it without a home", () =>
+    Effect.gen(function* () {
+      const { service, fs, makeService } = yield* makeHarness();
+      const path = yield* Path.Path;
+      const unitPath = (yield* service.status).unitPath;
+      yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
+      yield* fs.writeFileString(
+        unitPath,
+        "[Service]\nEnvironment=T3CODE_HOME=/home/theo/.t3\nExecStart=/old/t3 __service-launcher\n",
+      );
+
+      expect(yield* service.status).toMatchObject({
+        installed: true,
+        current: false,
+        installedHome: "/home/theo/.t3",
+        servesThisHome: true,
+      });
+      // The unit name is per user, so a CLI with a chosen root leaves it alone.
+      const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-other-home-" });
+      const chosen = yield* makeService(undefined, "1.2.3", otherHome);
+      expect((yield* chosen.status).servesThisHome).toBe(false);
+
+      yield* service.install();
+      const unit = yield* fs.readFileString(unitPath);
+      expect(unit).not.toMatch(/HAL_C2_HOME|HALC2_HOME|T3CODE_HOME/);
+      expect(yield* service.status).toMatchObject({ current: true, servesThisHome: true });
+
+      expect(yield* service.uninstall).toBe(true);
+      expect(yield* fs.exists(unitPath)).toBe(false);
+    }),
+  );
+
+  it.effect("a service for a chosen root names it in its unit", () =>
+    Effect.gen(function* () {
+      const { fs, makeService } = yield* makeHarness();
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-root-" });
+      const service = yield* makeService(undefined, "1.2.3", root);
+      const plan = yield* service.install();
+
+      expect(yield* fs.readFileString(plan.unitPath)).toContain(`Environment=HAL_C2_HOME=${root}`);
+      expect(yield* service.status).toMatchObject({ current: true, servesThisHome: true });
+      expect(yield* service.restart).toBe(true);
     }),
   );
 

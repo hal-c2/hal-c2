@@ -13,9 +13,9 @@ it.layer(NodeServices.layer)("ACP sign-in confirmation", (it) => {
   it.effect("restores explicit sign-in across driver recreation and server restart", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const cacheDir = yield* fs.makeTempDirectoryScoped();
+      const authDir = yield* fs.makeTempDirectoryScoped();
       const input = {
-        cacheDir,
+        authDir,
         instanceId: ProviderInstanceId.make("acp_devin"),
         settings,
         environment: [],
@@ -41,9 +41,9 @@ it.layer(NodeServices.layer)("ACP sign-in confirmation", (it) => {
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const cacheDir = yield* fs.makeTempDirectoryScoped();
+        const authDir = yield* fs.makeTempDirectoryScoped();
         const input = {
-          cacheDir,
+          authDir,
           instanceId: ProviderInstanceId.make("acp_devin"),
           settings,
           environment: [{ name: "DEVIN_TOKEN", value: "test-only-token", sensitive: true }],
@@ -63,8 +63,8 @@ it.layer(NodeServices.layer)("ACP sign-in confirmation", (it) => {
           const restoredConfig = yield* makeAcpRegistryAuthenticationState(input);
           assert.isFalse(yield* restoredConfig.get);
         }
-        for (const name of yield* fs.readDirectory(cacheDir)) {
-          const contents = yield* fs.readFileString(`${cacheDir}/${name}`);
+        for (const name of yield* fs.readDirectory(authDir)) {
+          const contents = yield* fs.readFileString(`${authDir}/${name}`);
           assert.isFalse(contents.includes("test-only-token"));
           assert.isFalse(contents.includes("different-token"));
         }
@@ -74,9 +74,9 @@ it.layer(NodeServices.layer)("ACP sign-in confirmation", (it) => {
   it.effect("ignores damaged confirmation and keeps another instance independent", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const cacheDir = yield* fs.makeTempDirectoryScoped();
+      const authDir = yield* fs.makeTempDirectoryScoped();
       const input = {
-        cacheDir,
+        authDir,
         instanceId: ProviderInstanceId.make("acp_devin"),
         settings,
         environment: [],
@@ -89,8 +89,8 @@ it.layer(NodeServices.layer)("ACP sign-in confirmation", (it) => {
         instanceId: ProviderInstanceId.make("acp_other"),
       });
       assert.isFalse(yield* other.get);
-      for (const name of yield* fs.readDirectory(cacheDir)) {
-        yield* fs.writeFileString(`${cacheDir}/${name}`, "invalid");
+      for (const name of yield* fs.readDirectory(authDir)) {
+        yield* fs.writeFileString(`${authDir}/${name}`, "invalid");
       }
       const restored = yield* makeAcpRegistryAuthenticationState(input);
       assert.isFalse(yield* restored.get);

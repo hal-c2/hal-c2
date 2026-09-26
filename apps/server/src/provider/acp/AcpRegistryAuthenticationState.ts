@@ -22,7 +22,7 @@ const hash = (value: unknown) =>
 /** Remember explicit sign-in success, never discovery success or the agent's credentials. */
 export const makeAcpRegistryAuthenticationState = Effect.fn("makeAcpRegistryAuthenticationState")(
   function* (input: {
-    readonly cacheDir: string;
+    readonly authDir: string;
     readonly instanceId: ProviderInstanceId;
     readonly settings: AcpRegistrySettings;
     readonly environment: ProviderInstanceEnvironment;
@@ -30,7 +30,7 @@ export const makeAcpRegistryAuthenticationState = Effect.fn("makeAcpRegistryAuth
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const filePath = path.join(input.cacheDir, `acp-auth-${hash(input.instanceId)}.json`);
+    const filePath = path.join(input.authDir, `acp-auth-${hash(input.instanceId)}.json`);
     // Cosmetic settings and model discovery can rebuild the driver without
     // changing the account. Credential overrides and profile paths cannot.
     const binding = hash({

@@ -103,7 +103,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-service-launcher-test-" });
-      const statePath = path.join(root, "runtime", "service-state.json");
+      const statePath = path.join(root, "state", "service-state.json");
       const state = {
         protocol: SERVICE_LAUNCHER_PROTOCOL,
         activeVersion: "0.0.31",
@@ -121,12 +121,12 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       const root = yield* fs.makeTempDirectoryScoped({
         prefix: "hal-c2-service-launcher-restart-",
       });
-      const statePath = path.join(root, "runtime", "service-state.json");
-      const restartPending = path.join(root, "runtime", SERVICE_RESTART_PENDING_FILE);
+      const statePath = path.join(root, "state", "service-state.json");
+      const restartPending = path.join(root, "state", SERVICE_RESTART_PENDING_FILE);
       yield* writeFakeRuntime(
         fs,
         path,
-        path.join(root, "runtime", "versions", "1.0.0"),
+        path.join(root, "data", "runtime", "versions", "1.0.0"),
         "setInterval(() => {}, 1_000);\n",
       );
       yield* Effect.promise(() =>
@@ -138,7 +138,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       const run = () =>
         Effect.gen(function* () {
           const launcher = new Launcher(
-            root,
+            { dataDir: path.join(root, "data"), stateDir: path.join(root, "state") },
             yield* Effect.promise(() => readServiceState(statePath)),
           );
           const running = launcher.run();
@@ -165,11 +165,11 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-service-launcher-stop-" });
-      const statePath = path.join(root, "runtime", "service-state.json");
+      const statePath = path.join(root, "state", "service-state.json");
       yield* writeFakeRuntime(
         fs,
         path,
-        path.join(root, "runtime", "versions", "1.0.0"),
+        path.join(root, "data", "runtime", "versions", "1.0.0"),
         "setInterval(() => {}, 1_000);\n",
       );
       yield* Effect.promise(() =>
@@ -179,13 +179,16 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
         }),
       );
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const launcher = new Launcher(
+        { dataDir: path.join(root, "data"), stateDir: path.join(root, "state") },
+        yield* Effect.promise(() => readServiceState(statePath)),
+      );
       const running = launcher.run();
       const stopping = launcher.stop("SIGTERM");
       // An explicit stop leaves the marker that tells a child shutting down
       // mid-update that no replacement server is coming. It is present as
       // soon as stop() returns its promise, before queued transitions run.
-      assert.isTrue(yield* fs.exists(path.join(root, "runtime", SERVICE_STOP_MARKER_FILE)));
+      assert.isTrue(yield* fs.exists(path.join(root, "state", SERVICE_STOP_MARKER_FILE)));
       yield* Effect.promise(() => stopping);
       yield* Effect.promise(() => running);
     }),
@@ -196,8 +199,8 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-service-launcher-flow-" });
-      const statePath = path.join(root, "runtime", "service-state.json");
-      const databasePath = path.join(root, "userdata", "state.sqlite");
+      const statePath = path.join(root, "state", "service-state.json");
+      const databasePath = path.join(root, "data", "statev2.sqlite");
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
       yield* fs.writeFileString(databasePath, "before trial");
       // @effect-diagnostics-next-line preferSchemaOverJson:off - embeds a path in fake child source.
@@ -220,7 +223,7 @@ if (context.update?.status === "pending") {
         yield* writeFakeRuntime(
           fs,
           path,
-          path.join(root, "runtime", "versions", version),
+          path.join(root, "data", "runtime", "versions", version),
           childSource,
         );
       }
@@ -231,7 +234,10 @@ if (context.update?.status === "pending") {
         }),
       );
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const launcher = new Launcher(
+        { dataDir: path.join(root, "data"), stateDir: path.join(root, "state") },
+        yield* Effect.promise(() => readServiceState(statePath)),
+      );
       yield* Effect.promise(() =>
         launcher.run().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),
@@ -252,8 +258,8 @@ if (context.update?.status === "pending") {
       const root = yield* fs.makeTempDirectoryScoped({
         prefix: "hal-c2-service-launcher-rollback-",
       });
-      const statePath = path.join(root, "runtime", "service-state.json");
-      const databasePath = path.join(root, "userdata", "state.sqlite");
+      const statePath = path.join(root, "state", "service-state.json");
+      const databasePath = path.join(root, "data", "statev2.sqlite");
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
       yield* fs.writeFileString(databasePath, "before trial");
       // @effect-diagnostics-next-line preferSchemaOverJson:off - embeds a path in fake child source.
@@ -273,7 +279,7 @@ if (context.update?.status === "pending") {
         yield* writeFakeRuntime(
           fs,
           path,
-          path.join(root, "runtime", "versions", version),
+          path.join(root, "data", "runtime", "versions", version),
           childSource,
         );
       }
@@ -284,7 +290,10 @@ if (context.update?.status === "pending") {
         }),
       );
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const launcher = new Launcher(
+        { dataDir: path.join(root, "data"), stateDir: path.join(root, "state") },
+        yield* Effect.promise(() => readServiceState(statePath)),
+      );
       yield* Effect.promise(() =>
         launcher.run().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),
@@ -307,8 +316,8 @@ if (context.update?.status === "pending") {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-service-launcher-db-" });
-      const statePath = path.join(root, "runtime", "service-state.json");
-      const databasePath = path.join(root, "userdata", "state.sqlite");
+      const statePath = path.join(root, "state", "service-state.json");
+      const databasePath = path.join(root, "data", "statev2.sqlite");
       const original = "database before migration";
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
       yield* fs.writeFileString(databasePath, original);
@@ -333,7 +342,7 @@ if (context.update?.status === "pending") {
         yield* writeFakeRuntime(
           fs,
           path,
-          path.join(root, "runtime", "versions", version),
+          path.join(root, "data", "runtime", "versions", version),
           childSource,
         );
       }
@@ -344,7 +353,10 @@ if (context.update?.status === "pending") {
         }),
       );
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const launcher = new Launcher(
+        { dataDir: path.join(root, "data"), stateDir: path.join(root, "state") },
+        yield* Effect.promise(() => readServiceState(statePath)),
+      );
       yield* Effect.promise(() =>
         launcher.run().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),
@@ -360,7 +372,7 @@ if (context.update?.status === "pending") {
       assert.isFalse(yield* fs.exists(`${databasePath}-shm`));
       const updateId = state.update?.id;
       assert.isDefined(updateId);
-      assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", updateId)));
+      assert.isFalse(yield* fs.exists(path.join(root, "data", "runtime", "db-backup", updateId)));
     }),
   );
 });

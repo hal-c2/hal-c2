@@ -27,7 +27,7 @@ const runCli = (args: ReadonlyArray<string>) =>
 
 const makeBaseDir = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hal-c2-theme-cli-"));
 
-const settingsPathFor = (baseDir: string) => NodePath.join(baseDir, "userdata", "settings.json");
+const settingsPathFor = (baseDir: string) => NodePath.join(baseDir, "config", "settings.json");
 
 const NIGHTFALL_THEME_JSON = `${JSON.stringify({
   name: "Nightfall",
@@ -99,7 +99,7 @@ describe("hal-c2 theme", () => {
 
       yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]);
 
-      const published = NodePath.join(baseDir, "userdata", "themes", "nightfall.json");
+      const published = NodePath.join(baseDir, "config", "themes", "nightfall.json");
       assert.equal(NodeFS.existsSync(published), true);
       assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
       // No rollback or staging residue after a successful set.
@@ -119,7 +119,7 @@ describe("hal-c2 theme", () => {
       yield* runCli(["theme", "set", "--id", "nightfall", themeFile, "--base-dir", baseDir]);
 
       assert.equal(
-        NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes", "nightfall.json")),
+        NodeFS.existsSync(NodePath.join(baseDir, "config", "themes", "nightfall.json")),
         true,
       );
       assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
@@ -137,7 +137,7 @@ describe("hal-c2 theme", () => {
       );
 
       assert.include(String(failure), "not a valid theme file");
-      assert.equal(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes")), false);
+      assert.equal(NodeFS.existsSync(NodePath.join(baseDir, "config", "themes")), false);
       assert.equal(NodeFS.existsSync(settingsPathFor(baseDir)), false);
     }),
   );
@@ -158,25 +158,25 @@ describe("hal-c2 theme", () => {
       );
 
       assert.include(String(failure), "not a JSON object");
-      assert.equal(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes")), false);
+      assert.equal(NodeFS.existsSync(NodePath.join(baseDir, "config", "themes")), false);
     }),
   );
 
   // set means set: a publish that rode along with a failed default write is
   // rolled back rather than left mutating the environment's theme set. The
-  // userdata directory is made read-only while themes stays writable, so the
+  // config directory is made read-only while themes stays writable, so the
   // failure lands after the publish -- the case the rollback exists for.
   it.effect.skipIf(windowsHost)("rolls back a publish when the default cannot be written", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       writeSettings(baseDir, {});
-      const userdataDir = NodePath.dirname(settingsPathFor(baseDir));
-      const themesDir = NodePath.join(userdataDir, "themes");
+      const configDir = NodePath.dirname(settingsPathFor(baseDir));
+      const themesDir = NodePath.join(configDir, "themes");
       NodeFS.mkdirSync(themesDir, { recursive: true });
       const themeFile = NodePath.join(baseDir, "nightfall.json");
       NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
 
-      NodeFS.chmodSync(userdataDir, 0o555);
+      NodeFS.chmodSync(configDir, 0o555);
       try {
         const failure = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
           Effect.flip,
@@ -184,7 +184,7 @@ describe("hal-c2 theme", () => {
         assert.include(String(failure), "Could not write");
         assert.equal(NodeFS.existsSync(NodePath.join(themesDir, "nightfall.json")), false);
       } finally {
-        NodeFS.chmodSync(userdataDir, 0o755);
+        NodeFS.chmodSync(configDir, 0o755);
       }
     }),
   );
@@ -204,7 +204,7 @@ describe("hal-c2 theme", () => {
         yield* runCli(["theme", "set", linkPath, "--base-dir", baseDir]);
 
         assert.equal(
-          NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes", "nightfall.json")),
+          NodeFS.existsSync(NodePath.join(baseDir, "config", "themes", "nightfall.json")),
           true,
         );
         assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
@@ -216,7 +216,7 @@ describe("hal-c2 theme", () => {
   it.effect.skipIf(!symlinksSupported)("never writes through a symlink at the staging path", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
-      const themesDir = NodePath.join(baseDir, "userdata", "themes");
+      const themesDir = NodePath.join(baseDir, "config", "themes");
       NodeFS.mkdirSync(themesDir, { recursive: true });
       const victim = NodePath.join(baseDir, "victim.txt");
       NodeFS.writeFileSync(victim, "precious");
@@ -240,8 +240,8 @@ describe("hal-c2 theme", () => {
       Effect.gen(function* () {
         const baseDir = makeBaseDir();
         writeSettings(baseDir, {});
-        const userdataDir = NodePath.dirname(settingsPathFor(baseDir));
-        const themesDir = NodePath.join(userdataDir, "themes");
+        const configDir = NodePath.dirname(settingsPathFor(baseDir));
+        const themesDir = NodePath.join(configDir, "themes");
         NodeFS.mkdirSync(themesDir, { recursive: true });
         const outside = NodePath.join(baseDir, "outside.json");
         NodeFS.writeFileSync(outside, NIGHTFALL_THEME_JSON);
@@ -250,12 +250,12 @@ describe("hal-c2 theme", () => {
         const themeFile = NodePath.join(baseDir, "nightfall.json");
         NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
 
-        NodeFS.chmodSync(userdataDir, 0o555);
+        NodeFS.chmodSync(configDir, 0o555);
         try {
           yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(Effect.flip);
           assert.equal(NodeFS.lstatSync(destination).isSymbolicLink(), true);
         } finally {
-          NodeFS.chmodSync(userdataDir, 0o755);
+          NodeFS.chmodSync(configDir, 0o755);
         }
       }),
   );
@@ -264,8 +264,8 @@ describe("hal-c2 theme", () => {
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       writeSettings(baseDir, {});
-      const userdataDir = NodePath.dirname(settingsPathFor(baseDir));
-      const themesDir = NodePath.join(userdataDir, "themes");
+      const configDir = NodePath.dirname(settingsPathFor(baseDir));
+      const themesDir = NodePath.join(configDir, "themes");
       NodeFS.mkdirSync(themesDir, { recursive: true });
       const publishedPath = NodePath.join(themesDir, "nightfall.json");
       const previous =
@@ -274,12 +274,12 @@ describe("hal-c2 theme", () => {
       const themeFile = NodePath.join(baseDir, "nightfall.json");
       NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
 
-      NodeFS.chmodSync(userdataDir, 0o555);
+      NodeFS.chmodSync(configDir, 0o555);
       try {
         yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(Effect.flip);
         assert.equal(NodeFS.readFileSync(publishedPath, "utf8"), previous);
       } finally {
-        NodeFS.chmodSync(userdataDir, 0o755);
+        NodeFS.chmodSync(configDir, 0o755);
       }
     }),
   );
@@ -322,7 +322,7 @@ describe("hal-c2 theme", () => {
       yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]);
 
       assert.equal(
-        NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes", "brand.json")),
+        NodeFS.existsSync(NodePath.join(baseDir, "config", "themes", "brand.json")),
         true,
       );
       assert.equal(readSettings(baseDir).defaultTheme, "brand");
@@ -406,7 +406,7 @@ describe("hal-c2 theme", () => {
   it.effect("rejects an id whose published file the watcher would skip", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
-      const themesDir = NodePath.join(baseDir, "userdata", "themes");
+      const themesDir = NodePath.join(baseDir, "config", "themes");
       NodeFS.mkdirSync(themesDir, { recursive: true });
       NodeFS.writeFileSync(NodePath.join(themesDir, "broken.json"), "{ not json\n");
 
@@ -447,7 +447,7 @@ describe("hal-c2 theme", () => {
 
       assert.equal(readSettings(baseDir).defaultTheme, "ocean");
       assert.equal(
-        NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes", "ocean.json")),
+        NodeFS.existsSync(NodePath.join(baseDir, "config", "themes", "ocean.json")),
         false,
       );
     }),

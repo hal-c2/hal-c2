@@ -56,7 +56,7 @@ describe("remote helper lifecycle", () => {
         const bin = NodePath.join(home, "bin");
         await NodeFSP.mkdir(bin);
         await NodeFSP.writeFile(NodePath.join(bin, "adb"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-        const root = NodePath.join(home, ".hal-c2/device");
+        const root = NodePath.join(home, ".local/share/hal-c2/device");
         const hubDir = NodePath.join(root, `tools/expo-device-hub@${DEVICE_HUB_VERSION}`);
         const agentDir = NodePath.join(root, `tools/agent-device@${AGENT_DEVICE_VERSION}`);
         const hub = NodePath.join(hubDir, "node_modules/expo-device-hub/dist/server/cli.mjs");
@@ -104,7 +104,12 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
                 .replace(AGENT_DEVICE_VERSION, upgraded ? nextAgentVersion : AGENT_DEVICE_VERSION),
           );
           const result = await exec(process.execPath, [file], {
-            env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
+            env: {
+              ...process.env,
+              HOME: home,
+              XDG_DATA_HOME: NodePath.join(home, ".local/share"),
+              PATH: `${bin}:${process.env.PATH}`,
+            },
           });
           return result.stdout ? JSON.parse(result.stdout) : null;
         };
@@ -206,7 +211,12 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
             originalScript.replace(AGENT_DEVICE_VERSION, "999.0.0"),
           );
           await exec(process.execPath, [upgradedStop], {
-            env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
+            env: {
+              ...process.env,
+              HOME: home,
+              XDG_DATA_HOME: NodePath.join(home, ".local/share"),
+              PATH: `${bin}:${process.env.PATH}`,
+            },
           });
           const daemon = JSON.parse(
             await NodeFSP.readFile(NodePath.join(root, "hosts/one/daemon.json"), "utf8"),

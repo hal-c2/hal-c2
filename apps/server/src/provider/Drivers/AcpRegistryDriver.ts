@@ -518,7 +518,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       };
       const confirmedAuthentication =
         yield* AcpRegistryAuthenticationState.makeAcpRegistryAuthenticationState({
-          cacheDir: serverConfig.providerStatusCacheDir,
+          authDir: serverConfig.acpAuthDir,
           instanceId,
           settings: effectiveConfig,
           environment,

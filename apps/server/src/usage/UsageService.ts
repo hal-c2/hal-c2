@@ -159,8 +159,8 @@ export const make = Effect.gen(function* () {
     return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
   };
 
-  const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
-  const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
+  const ratesCachePath = path.join(config.cacheDir, "usage-model-rates.json");
+  const scanCachePath = path.join(config.cacheDir, "usage-scan-cache.json");
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
   let ratesStatus: UsagePricing["status"] = "unavailable";

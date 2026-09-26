@@ -488,7 +488,7 @@ describe("ModelManifest service", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const config = yield* ServerConfig.ServerConfig;
-      const cachePath = path.join(config.stateDir, "model-manifest.json");
+      const cachePath = path.join(config.cacheDir, "model-manifest.json");
       // A cache of the manifest as it was before the release edited it. The
       // fetch time is irrelevant: the remote may be unreachable now, so
       // `current` must already prefer the bundle.

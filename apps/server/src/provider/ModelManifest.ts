@@ -344,7 +344,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const serviceScope = yield* Effect.scope;
 
-  const cachePath = path.join(config.stateDir, "model-manifest.json");
+  const cachePath = path.join(config.cacheDir, "model-manifest.json");
   let manifest = BUNDLED_MODEL_MANIFEST;
   let fetchedAtMs: number | null = null;
   let lastAttemptMs: number | null = null;

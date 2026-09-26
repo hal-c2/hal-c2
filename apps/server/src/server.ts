@@ -214,7 +214,7 @@ const ResourceDiagnosticsLayerLive = Layer.mergeAll(
 const RelayClientLive = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    return RelayClient.layerCloudflared({ baseDir: config.baseDir });
+    return RelayClient.layerCloudflared({ toolsDir: config.toolsDir });
   }),
 );
 

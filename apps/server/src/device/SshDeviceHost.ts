@@ -78,9 +78,9 @@ const ownerFor = Effect.fn("SshDeviceHost.ownerFor")(function* (hostId: string) 
   const server = yield* ServerConfig.ServerConfig;
   const environmentId = yield* fs
     .readFileString(server.environmentIdPath)
-    .pipe(Effect.orElseSucceed(() => server.stateDir));
+    .pipe(Effect.orElseSucceed(() => server.dataDir));
   return NodeCrypto.createHash("sha256")
-    .update(`${environmentId}\0${server.stateDir}\0${hostId}`)
+    .update(`${environmentId}\0${server.dataDir}\0${hostId}`)
     .digest("hex")
     .slice(0, 24);
 });

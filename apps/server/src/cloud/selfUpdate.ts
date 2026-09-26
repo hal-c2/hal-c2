@@ -224,7 +224,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     return yield* Effect.gen(function* () {
       yield* reportProgress("downloading");
       const paths = yield* ensurePinnedRuntimeInstalled({
-        baseDir: serverConfig.baseDir,
+        dataDir: serverConfig.dataDir,
         version: targetVersion,
         fs,
         path,

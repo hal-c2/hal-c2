@@ -15,7 +15,8 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
-import { ServerConfig } from "../../config.ts";
+import { halC2DirsUnder } from "@hal-c2/shared/xdgDirs";
+import { deriveServerPaths, ensureServerDirectories, ServerConfig } from "../../config.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
 import { makeDriverLayer as makeProviderAdapterRegistryDriverLayer } from "../ProviderAdapterRegistry.ts";
@@ -531,30 +532,11 @@ function makeReplayServerConfig(
 > {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
     const baseDir = yield* fs.makeTempDirectory({
       prefix: `hal-c2-orchestration-v2-cursor-${scenario}-`,
     });
-    const stateDir = path.join(baseDir, "userdata");
-    const logsDir = path.join(stateDir, "logs");
-    const providerLogsDir = path.join(logsDir, "provider");
-    const terminalLogsDir = path.join(logsDir, "terminals");
-    const attachmentsDir = path.join(stateDir, "attachments");
-    const environmentThemesDir = path.join(stateDir, "themes");
-    const worktreesDir = path.join(baseDir, "worktrees");
-    const providerStatusCacheDir = path.join(baseDir, "caches");
-    for (const directory of [
-      stateDir,
-      logsDir,
-      providerLogsDir,
-      terminalLogsDir,
-      attachmentsDir,
-      environmentThemesDir,
-      worktreesDir,
-      providerStatusCacheDir,
-    ]) {
-      yield* fs.makeDirectory(directory, { recursive: true });
-    }
+    const derivedPaths = yield* deriveServerPaths(halC2DirsUnder(baseDir, process.platform));
+    yield* ensureServerDirectories(derivedPaths);
     return {
       logLevel: "Error",
       traceMinLevel: "Info",
@@ -573,7 +555,7 @@ function makeReplayServerConfig(
       port: 0,
       host: undefined,
       cwd: process.cwd(),
-      baseDir,
+      homeRoot: baseDir,
       staticDir: undefined,
       devUrl: undefined,
       devAllowedOrigins: [],
@@ -584,25 +566,7 @@ function makeReplayServerConfig(
       desktopBootstrapToken: undefined,
       autoBootstrapProjectFromCwd: false,
       logWebSocketEvents: false,
-      stateDir,
-      dbPath: path.join(stateDir, "state.sqlite"),
-      keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
-      settingsPath: path.join(stateDir, "settings.json"),
-      providerStatusCacheDir,
-      worktreesDir,
-      attachmentsDir,
-      browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
-      environmentThemesDir,
-      logsDir,
-      serverLogPath: path.join(logsDir, "server.log"),
-      serverTracePath: path.join(logsDir, "server.trace.ndjson"),
-      providerLogsDir,
-      providerEventLogPath: path.join(providerLogsDir, "events.log"),
-      terminalLogsDir,
-      anonymousIdPath: path.join(stateDir, "anonymous-id"),
-      environmentIdPath: path.join(stateDir, "environment-id"),
-      serverRuntimeStatePath: path.join(stateDir, "server-runtime.json"),
-      secretsDir: path.join(stateDir, "secrets"),
+      ...derivedPaths,
     };
   });
 }

@@ -33,10 +33,10 @@ it("launch prompt stays a single argv-safe line naming the prompt file", () => {
   // The launch argument goes through cmd.exe on Windows (.cmd shims), which
   // cannot carry newlines; the playbook itself must stay on disk.
   const launch = buildTriageLaunchPrompt(
-    String.raw`C:\Users\a b\.hal-c2\userdata\triage\x\prompt.md`,
+    String.raw`C:\Users\a b\AppData\Local\hal-c2\state\triage\x\prompt.md`,
   );
   assert.notInclude(launch, "\n");
-  assert.include(launch, String.raw`C:\Users\a b\.hal-c2\userdata\triage\x\prompt.md`);
+  assert.include(launch, String.raw`C:\Users\a b\AppData\Local\hal-c2\state\triage\x\prompt.md`);
   assert.isBelow(launch.length, 1_000);
 });
 
@@ -50,24 +50,27 @@ it("context file carries every path the playbook depends on", () => {
     launchedAs: "npx hal-c2 triage",
     server: "running (pid 42, http://127.0.0.1:4501)",
     paths: {
-      stateDir: "/home/u/.hal-c2/userdata",
-      dbPath: "/home/u/.hal-c2/userdata/state.sqlite",
-      settingsPath: "/home/u/.hal-c2/userdata/settings.json",
-      logsDir: "/home/u/.hal-c2/userdata/logs",
-      serverLogPath: "/home/u/.hal-c2/userdata/logs/server.log",
-      serverTracePath: "/home/u/.hal-c2/userdata/logs/server.trace.ndjson",
-      providerEventLogPath: "/home/u/.hal-c2/userdata/logs/provider/events.log",
-      terminalLogsDir: "/home/u/.hal-c2/userdata/logs/terminals",
-      providerStatusCacheDir: "/home/u/.hal-c2/caches",
-      secretsDir: "/home/u/.hal-c2/userdata/secrets",
-      sourceCacheDir: "/home/u/.hal-c2/source",
+      configDir: "/home/u/.config/hal-c2",
+      dataDir: "/home/u/.local/share/hal-c2",
+      stateDir: "/home/u/.local/state/hal-c2",
+      cacheDir: "/home/u/.cache/hal-c2",
+      dbPath: "/home/u/.local/share/hal-c2/statev2.sqlite",
+      settingsPath: "/home/u/.config/hal-c2/settings.json",
+      logsDir: "/home/u/.local/state/hal-c2/logs",
+      serverLogPath: "/home/u/.local/state/hal-c2/logs/server.log",
+      serverTracePath: "/home/u/.local/state/hal-c2/logs/server.trace.ndjson",
+      providerEventLogPath: "/home/u/.local/state/hal-c2/logs/provider/events.log",
+      terminalLogsDir: "/home/u/.local/state/hal-c2/logs/terminals",
+      providerStatusCacheDir: "/home/u/.cache/hal-c2/provider-status",
+      secretsDir: "/home/u/.local/share/hal-c2/secrets",
+      sourceCacheDir: "/home/u/.cache/hal-c2/source",
     },
   });
-  assert.include(context, "/home/u/.hal-c2/userdata/state.sqlite");
-  assert.include(context, "/home/u/.hal-c2/userdata/logs/server.trace.ndjson");
-  assert.include(context, "/home/u/.hal-c2/userdata/logs/provider/events.log");
-  assert.include(context, "/home/u/.hal-c2/userdata/secrets");
-  assert.include(context, "/home/u/.hal-c2/source");
+  assert.include(context, "/home/u/.local/share/hal-c2/statev2.sqlite");
+  assert.include(context, "/home/u/.local/state/hal-c2/logs/server.trace.ndjson");
+  assert.include(context, "/home/u/.local/state/hal-c2/logs/provider/events.log");
+  assert.include(context, "/home/u/.local/share/hal-c2/secrets");
+  assert.include(context, "/home/u/.cache/hal-c2/source");
   assert.include(context, "npx hal-c2 triage");
   assert.include(context, "v0.0.33");
 });

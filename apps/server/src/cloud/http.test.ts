@@ -275,7 +275,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const config = yield* ServerConfigModule.ServerConfig;
-      const statePath = path.join(config.baseDir, "runtime", SERVICE_STATE_FILE);
+      const statePath = path.join(config.stateDir, SERVICE_STATE_FILE);
       yield* Effect.promise(() =>
         writeServiceState(statePath, {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
@@ -473,7 +473,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const config = yield* ServerConfigModule.ServerConfig;
-      yield* fs.writeFileString(path.join(config.baseDir, "runtime", SERVICE_STOP_MARKER_FILE), "");
+      yield* fs.writeFileString(path.join(config.stateDir, SERVICE_STOP_MARKER_FILE), "");
 
       expect(yield* pendingServiceUpdateExists).toBe(true);
       const released = yield* releaseManagedTunnelOnShutdown();

@@ -27,7 +27,8 @@ const status = {
   installed: true,
   current: true,
   unitPath: "/home/me/.config/systemd/user/hal-c2.service",
-  logPath: "/home/me/.hal-c2/userdata/logs/boot-service.log",
+  logPath: "/home/me/.local/state/hal-c2/logs/boot-service.log",
+  servesThisHome: true,
 } as const;
 
 it("reports the installed service version and host paths", () => {
@@ -37,7 +38,7 @@ it("reports the installed service version and host paths", () => {
       "HAL-C2 service",
       "  Status: installed · hal-c2@0.0.29",
       "  Unit: /home/me/.config/systemd/user/hal-c2.service",
-      "  Logs: /home/me/.hal-c2/userdata/logs/boot-service.log",
+      "  Logs: /home/me/.local/state/hal-c2/logs/boot-service.log",
     ].join("\n"),
   );
 });
@@ -110,8 +111,8 @@ function makeTestService(serviceStatus: BootService.BootServiceStatus) {
       Effect.sync(() => {
         installOptions.push(options);
         return {
-          program: ["/test/hal_c2/runtime/versions/1.0.0/hal-c2", "__service-launcher"],
-          baseDir: "/test/hal-c2",
+          program: ["/test/hal-c2/data/runtime/versions/1.0.0/hal-c2", "__service-launcher"],
+          environment: [],
           unitPath: serviceStatus.unitPath,
           logPath: serviceStatus.logPath,
         };

@@ -1,3 +1,4 @@
+import { migrateLegacyHome } from "@hal-c2/shared/legacyHomeMigration";
 import * as NetService from "@hal-c2/shared/Net";
 import {
   OtlpHeadersFromString,
@@ -7,6 +8,7 @@ import {
 import { parsePersistedServerObservabilitySettings } from "@hal-c2/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@hal-c2/contracts";
 import * as Config from "effect/Config";
+import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -21,7 +23,7 @@ import { Argument, Flag } from "effect/unstable/cli";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
-import { configuredHalC2HomeFromEnv, expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { expandHomePath, resolveCliHalC2Location } from "../os-jank.ts";
 
 const modeFlag = Flag.Literals("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -38,7 +40,7 @@ const hostFlag = Flag.String("host").pipe(
 );
 export const baseDirFlag = Flag.String("base-dir").pipe(
   Flag.withDescription(
-    "Explicit HAL-C2 data directory; runtime state is stored under userdata (equivalent to HAL_C2_HOME).",
+    "Keep every HAL-C2 file under this one directory instead of the XDG directories (equivalent to HAL_C2_HOME).",
   ),
   Flag.optional,
 );
@@ -124,6 +126,10 @@ const EnvServerConfig = Config.all({
   port: Config.Port("HAL_C2_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.String("HAL_C2_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  noMigrate: Config.String("HAL_C2_NO_MIGRATE").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   devAllowedOrigins: Config.String("HAL_C2_DEV_ALLOWED_ORIGINS").pipe(
     Config.withDefault(""),
     Config.map((value) =>
@@ -256,7 +262,6 @@ export const resolveServerConfig = (
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
     const env = yield* EnvServerConfig;
-    const envHalC2Home = yield* configuredHalC2HomeFromEnv;
     const normalizedFlags = {
       mode: flags.mode ?? Option.none(),
       port: flags.port ?? Option.none(),
@@ -309,21 +314,31 @@ export const resolveServerConfig = (
     );
     const devAuthToken =
       mode === "web" && devUrl !== undefined ? yield* DevAuthTokenConfig : undefined;
-    const explicitBaseDir = resolveOptionPrecedence(
-      normalizedFlags.baseDir,
-      Option.fromUndefinedOr(envHalC2Home),
-    ).pipe(Option.filter((value) => value.trim().length > 0));
-    const baseDir = yield* resolveBaseDir(
-      Option.getOrUndefined(
-        resolveOptionPrecedence(explicitBaseDir, Option.fromUndefinedOr(bootstrap?.halC2Home)),
-      ),
-    );
+    // `--base-dir` wins, then HAL_C2_HOME, then the desktop's bootstrap home.
+    const location = yield* resolveCliHalC2Location({
+      explicitRoot: Option.getOrUndefined(normalizedFlags.baseDir),
+      fallbackRoot: bootstrap?.halC2Home,
+      development: devUrl !== undefined,
+    });
+    if (location.root === undefined) {
+      // Before anything opens the database: the first start copies from an old home.
+      const logLines: string[] = [];
+      yield* Effect.promise(() =>
+        migrateLegacyHome({
+          dirs: location.dirs,
+          env: { ...location.env, HAL_C2_NO_MIGRATE: env.noMigrate },
+          homeDir: location.homeDir,
+          platform: location.platform,
+          profile: location.profile,
+          log: (line) => logLines.push(line),
+        }),
+      );
+      for (const line of logLines) yield* Console.error(line);
+    }
     const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
     yield* fs.makeDirectory(cwd, { recursive: true });
-    const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
-      baseDirIsExplicit: Option.isSome(explicitBaseDir),
-    });
+    const derivedPaths = yield* ServerConfig.deriveServerPaths(location.dirs);
     yield* ServerConfig.ensureServerDirectories(derivedPaths);
     const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
       derivedPaths.settingsPath,
@@ -420,7 +435,7 @@ export const resolveServerConfig = (
       mode,
       port,
       cwd,
-      baseDir,
+      homeRoot: location.root,
       ...derivedPaths,
       serverTracePath,
       host,

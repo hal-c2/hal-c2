@@ -17,6 +17,7 @@ import { HttpClient } from "effect/unstable/http";
 import * as Schema from "effect/Schema";
 
 import { CLI_RELEASE_BASE_URL_ENV } from "@hal-c2/shared/cliRelease";
+import { absoluteEnvPath, isLegacyHome } from "@hal-c2/shared/xdgDirs";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
@@ -57,12 +58,31 @@ function quoteSystemdValue(value: string): string {
 }
 
 /**
- * Reads `HAL_C2_HOME` back out of a rendered unit or plist. Only values this
- * file writes are expected, so a quoted systemd value is unquoted and
- * unescaped the same way `quoteSystemdValue` produced it.
+ * Variables a unit may name its home with, newest first. Units from before the
+ * XDG layout always named one: `T3CODE_HOME` before the rename, then
+ * `HALC2_HOME`, then `HAL_C2_HOME`.
  */
-export function bootServiceBaseDirOf(contents: string): string | undefined {
-  const systemd = /^Environment=HAL_C2_HOME=(.*)$/m.exec(contents)?.[1];
+const BOOT_SERVICE_HOME_VARIABLES = ["HAL_C2_HOME", "HALC2_HOME", "T3CODE_HOME"] as const;
+export type BootServiceHomeVariable = (typeof BOOT_SERVICE_HOME_VARIABLES)[number];
+
+/** XDG variables written into a unit that names no home, so the service and the CLI agree. */
+const BOOT_SERVICE_XDG_VARIABLES = [
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_STATE_HOME",
+  "XDG_CACHE_HOME",
+] as const;
+
+/**
+ * Reads one environment variable back out of a rendered unit or plist. Only
+ * values a unit writer produced are expected, so a quoted systemd value is
+ * unquoted and unescaped the same way `quoteSystemdValue` produced it.
+ */
+function bootServiceEnvironmentValue(
+  contents: string,
+  name: BootServiceHomeVariable,
+): string | undefined {
+  const systemd = new RegExp(`^Environment=${name}=(.*)$`, "m").exec(contents)?.[1];
   if (systemd !== undefined) {
     const raw = systemd.trim();
     const unquoted =
@@ -71,11 +91,41 @@ export function bootServiceBaseDirOf(contents: string): string | undefined {
         : raw;
     return unquoted.replaceAll("%%", "%");
   }
-  const plist = /<key>HAL_C2_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
+  const plist = new RegExp(`<key>${name}</key>\\s*<string>([^<]*)</string>`).exec(contents)?.[1];
   if (plist !== undefined) {
     return plist.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
   }
   return undefined;
+}
+
+/** The home a unit or plist names, under whichever variable its writer used. */
+export function bootServiceHomeOf(
+  contents: string,
+): { readonly variable: BootServiceHomeVariable; readonly value: string } | undefined {
+  for (const variable of BOOT_SERVICE_HOME_VARIABLES) {
+    const value = bootServiceEnvironmentValue(contents, variable);
+    if (value !== undefined) {
+      return { variable, value };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The root a unit's service actually runs from, or undefined for the XDG
+ * directories. Only `HAL_C2_HOME` is still read as a root, and never when it
+ * names `~/.hal-c2` or `~/.t3`: those services migrate on their next start.
+ */
+export function bootServiceRootOf(
+  contents: string,
+  options: { readonly homeDir: string; readonly platform: NodeJS.Platform },
+): string | undefined {
+  const home = bootServiceHomeOf(contents);
+  if (home?.variable !== "HAL_C2_HOME") {
+    return undefined;
+  }
+  const root = absoluteEnvPath(home.value, options.platform);
+  return root === undefined || isLegacyHome(root, options) ? undefined : root;
 }
 
 export interface BootServicePlan {
@@ -86,7 +136,12 @@ export interface BootServicePlan {
    * subcommand so the machine never needs Node.
    */
   readonly program: ReadonlyArray<string>;
-  readonly baseDir: string;
+  /**
+   * Variables the unit sets besides its own name: `HAL_C2_HOME` when the user
+   * chose a root, otherwise any absolute XDG base directories the installing
+   * shell had. A new unit relies on the XDG directories and names no home.
+   */
+  readonly environment: ReadonlyArray<readonly [name: string, value: string]>;
   readonly logPath: string;
   readonly unitPath: string;
 }
@@ -103,7 +158,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "[Service]",
     "Type=simple",
     "WorkingDirectory=%h",
-    `Environment=HAL_C2_HOME=${quoteSystemdValue(plan.baseDir)}`,
+    ...plan.environment.map(([name, value]) => `Environment=${name}=${quoteSystemdValue(value)}`),
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark an explicit stop before it signals the server.
@@ -162,8 +217,10 @@ export function renderBootServicePlist(
     `  <dict>`,
     `    <key>PATH</key>`,
     `    <string>${escapeXmlText(options.environmentPath)}</string>`,
-    `    <key>HAL_C2_HOME</key>`,
-    `    <string>${escapeXmlText(plan.baseDir)}</string>`,
+    ...plan.environment.flatMap(([name, value]) => [
+      `    <key>${escapeXmlText(name)}</key>`,
+      `    <string>${escapeXmlText(value)}</string>`,
+    ]),
     `    <key>${BOOT_SERVICE_UNIT_ENV}</key>`,
     `    <string>${BOOT_SERVICE_PLIST_FILE}</string>`,
     `  </dict>`,
@@ -511,12 +568,18 @@ export interface BootServiceStatus {
   readonly current: boolean;
   readonly installedVersion?: string;
   /**
-   * The HAL-C2 home the installed unit serves. The unit name is fixed per user,
-   * so a caller working against another base dir must not treat this service
-   * as its own; `hal-c2 update --base-dir` learned that by restarting the live
-   * server of the machine it ran on.
+   * The home the installed unit names, as written, for messages. Older units
+   * name one under `T3CODE_HOME` or `HALC2_HOME`; new ones only when the user
+   * chose a root.
    */
-  readonly installedBaseDir?: string;
+  readonly installedHome?: string;
+  /**
+   * Whether the installed unit runs from this CLI's directories. The unit name
+   * is fixed per user, so a caller working against another root must not treat
+   * this service as its own; `hal-c2 update --base-dir` learned that by
+   * restarting the live server of the machine it ran on.
+   */
+  readonly servesThisHome: boolean;
   readonly problems?: ReadonlyArray<BootServiceProblem>;
   readonly unitPath: string;
   readonly logPath: string;
@@ -536,7 +599,7 @@ export class BootService extends Context.Service<
     }) => Effect.Effect<BootServicePlan, BootServiceError>;
     /**
      * Stop and start the installed service on the version its unit names.
-     * Only when the unit serves this base dir: the unit name is per user, so
+     * Only when the unit serves this home: the unit name is per user, so
      * another home's service is left alone. Resolves false when nothing was
      * restarted.
      */
@@ -550,12 +613,19 @@ export interface BootServiceHost {
   readonly execPath: string;
 }
 
-export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
-  readonly baseDir: string;
+export interface BootServiceInput {
+  /** The root the user chose (`--base-dir` or `HAL_C2_HOME`); undefined for the XDG directories. */
+  readonly home: string | undefined;
+  /** Holds the pinned runtimes. */
+  readonly dataDir: string;
+  /** Holds the service state and restart marker. */
+  readonly stateDir: string;
   readonly logsDir: string;
   readonly cliVersion: string;
   readonly host?: BootServiceHost;
-}) {
+}
+
+export const make = Effect.fn("cloud.boot_service.make")(function* (input: BootServiceInput) {
   const hostExecPath = yield* HostProcessExecutablePath;
   const platform = yield* HostProcessPlatform;
   const arch = yield* HostProcessArchitecture;
@@ -566,6 +636,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   );
   const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
+  const xdgEnvironment: Array<readonly [string, string]> = [];
+  for (const name of BOOT_SERVICE_XDG_VARIABLES) {
+    const value = absoluteEnvPath(
+      yield* Config.String(name).pipe(Config.withDefault("")),
+      platform,
+    );
+    if (value !== undefined) xdgEnvironment.push([name, value]);
+  }
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
@@ -600,9 +678,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   });
   const unitPath = detectedManager?.unitPath ?? "";
   const logPath = path.join(input.logsDir, "boot-service.log");
-  const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
-  const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
-  const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
+  const statePath = path.join(input.stateDir, SERVICE_STATE_FILE);
+  const restartPendingPath = path.join(input.stateDir, SERVICE_RESTART_PENDING_FILE);
+  const runtimePaths = pinnedRuntimePaths(path, input.dataDir, input.cliVersion, platform);
+  const servesThisHome = (unit: string) => {
+    const root = bootServiceRootOf(unit, { homeDir, platform });
+    return input.home === undefined
+      ? root === undefined
+      : root !== undefined && path.resolve(root) === path.resolve(input.home);
+  };
   const writeDurably = (filePath: string, contents: string) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -626,7 +710,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   // the unit runs the pinned runtime directly.
   const plan: BootServicePlan = {
     program: [runtimePaths.entryPath, "__service-launcher"],
-    baseDir: input.baseDir,
+    environment: input.home === undefined ? xdgEnvironment : [["HAL_C2_HOME", input.home]],
     logPath,
     unitPath,
   };
@@ -760,7 +844,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
     // Prepare every immutable artifact before stopping the installed unit.
     yield* ensurePinnedRuntimeInstalled({
-      baseDir: input.baseDir,
+      dataDir: input.dataDir,
       version: input.cliVersion,
       fs,
       path,
@@ -903,11 +987,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const manager = yield* requireManager;
     const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
     if (Option.isNone(unit)) return false;
-    const installedBaseDir = bootServiceBaseDirOf(unit.value);
-    if (
-      installedBaseDir === undefined ||
-      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
-    ) {
+    if (!servesThisHome(unit.value)) {
       return false;
     }
     yield* runSteps(manager.stop);
@@ -943,10 +1023,24 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
   const status: BootService["Service"]["status"] = Effect.gen(function* () {
     if (detectedManager === undefined) {
-      return { supported: false, installed: false, current: false, unitPath, logPath };
+      return {
+        supported: false,
+        installed: false,
+        current: false,
+        servesThisHome: false,
+        unitPath,
+        logPath,
+      };
     }
     if (!(yield* fs.exists(unitPath))) {
-      return { supported: true, installed: false, current: false, unitPath, logPath };
+      return {
+        supported: true,
+        installed: false,
+        current: false,
+        servesThisHome: false,
+        unitPath,
+        logPath,
+      };
     }
     const [unit, runtimeEntryExists, runtimeSentinel, stateText] = yield* Effect.all([
       fs.readFileString(unitPath),
@@ -958,7 +1052,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const installedVersion = Option.isSome(stateText)
       ? serviceStateActiveVersion(stateText.value)
       : undefined;
-    const installedBaseDir = bootServiceBaseDirOf(unit);
+    const installedHome = bootServiceHomeOf(unit)?.value;
     const normalizeUnit = (contents: string) =>
       detectedManager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
@@ -970,7 +1064,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       supported: true,
       installed: true,
       ...(installedVersion === undefined ? {} : { installedVersion }),
-      ...(installedBaseDir === undefined ? {} : { installedBaseDir }),
+      ...(installedHome === undefined ? {} : { installedHome }),
+      servesThisHome: servesThisHome(unit),
       problems,
       current:
         problems.length === 0 &&
@@ -991,9 +1086,4 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   return BootService.of({ install, restart, uninstall, status });
 });
 
-export const layer = (input: {
-  readonly baseDir: string;
-  readonly logsDir: string;
-  readonly cliVersion: string;
-  readonly host?: BootServiceHost;
-}) => Layer.effect(BootService, make(input));
+export const layer = (input: BootServiceInput) => Layer.effect(BootService, make(input));

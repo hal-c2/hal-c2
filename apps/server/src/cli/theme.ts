@@ -41,7 +41,7 @@ import {
   readPublishedThemes,
   readThemeFileGuarded,
 } from "../environmentTheme.ts";
-import { configuredHalC2HomeFromEnv, expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { expandHomePath, resolveCliHalC2Location } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
 
 /** Settings files outlive the build that reads them, so the object is carried
@@ -179,14 +179,12 @@ export class ThemeTargetMissingError extends Schema.TaggedError<ThemeTargetMissi
 
 const resolveThemePaths = Effect.fn(function* (explicitBaseDir: Option.Option<string>) {
   // Same precedence as the rest of the CLI: --base-dir, then HAL_C2_HOME,
-  // then the default home. A provisioning script exporting HAL_C2_HOME must
+  // then the XDG directories. A provisioning script exporting HAL_C2_HOME must
   // not have this one command silently target the default install.
-  const envHome = Option.fromUndefinedOr(yield* configuredHalC2HomeFromEnv);
-  const configuredBaseDir = Option.orElse(explicitBaseDir, () => envHome);
-  const baseDir = yield* resolveBaseDir(Option.getOrUndefined(configuredBaseDir));
-  const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined, {
-    baseDirIsExplicit: Option.isSome(configuredBaseDir),
+  const location = yield* resolveCliHalC2Location({
+    explicitRoot: Option.getOrUndefined(explicitBaseDir),
   });
+  const derivedPaths = yield* ServerConfig.deriveServerPaths(location.dirs);
   return {
     settingsPath: derivedPaths.settingsPath,
     themesDir: derivedPaths.environmentThemesDir,

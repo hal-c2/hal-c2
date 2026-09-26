@@ -122,7 +122,7 @@ const makeIdentity = Effect.gen(function* () {
           ? `${serverConfig.environmentIdPath}.recovery`
           : serverConfig.environmentIdPath;
       const tempPath = yield* fileSystem.makeTempFileScoped({
-        directory: serverConfig.stateDir,
+        directory: serverConfig.dataDir,
         prefix: ".environment-id-",
       });
       yield* fileSystem.writeFileString(tempPath, `${value}\n`);

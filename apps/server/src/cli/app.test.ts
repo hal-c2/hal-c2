@@ -7,13 +7,20 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import type { DesktopAppActivationRequest } from "@hal-c2/contracts";
-import { resolveDesktopAppControlAddress } from "@hal-c2/shared/desktopAppControl";
 import {
   HostProcessPlatform,
   HostProcessUserId,
   HostProcessWorkingDirectory,
 } from "@hal-c2/shared/hostProcess";
 import * as NetService from "@hal-c2/shared/Net";
+import {
+  HAL_C2_APP_DIR,
+  HAL_C2_DEV_APP_DIR,
+  halC2DirsUnder,
+  type HalC2Dirs,
+  type HalC2Profile,
+  resolveHalC2Dirs,
+} from "@hal-c2/shared/xdgDirs";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -21,6 +28,7 @@ import { Command } from "effect/unstable/cli";
 import { afterEach, describe, expect, vi } from "vite-plus/test";
 
 import { makeCli } from "../binCli.ts";
+import { resolveDesktopAppControlSocket } from "./desktopAppControlSocket.ts";
 
 vi.mock("node:os", async (importOriginal) => {
   const os = await importOriginal<typeof import("node:os")>();
@@ -48,15 +56,19 @@ const pathExists = (path: string) =>
     ),
   );
 
+/** A profile's XDG directories for a user whose home is `homeDir`, with no XDG variables set. */
+const profileDirs = (homeDir: string, platform: NodeJS.Platform, profile: HalC2Profile) =>
+  resolveHalC2Dirs({ env: {}, homeDir, platform, profile });
+
 async function startFakeDesktop(input: {
-  readonly baseDir: string;
-  readonly stateSubdirectory?: "userdata" | "dev";
+  readonly dirs: (platform: NodeJS.Platform) => HalC2Dirs;
   readonly platform: NodeJS.Platform;
   readonly userId: number | undefined;
   readonly reply?: (request: DesktopAppActivationRequest) => unknown;
 }) {
-  const target = resolveDesktopAppControlAddress({
-    stateDir: NodePath.join(input.baseDir, input.stateSubdirectory ?? "userdata"),
+  const dirs = input.dirs(input.platform);
+  const target = resolveDesktopAppControlSocket({
+    dirs: { state: dirs.state, runtime: dirs.runtime },
     platform: input.platform,
     tempDir: NodeOS.tmpdir(),
     userId: input.userId,
@@ -193,7 +205,9 @@ describe("hal-c2 app", () => {
         const explicitPath = NodePath.join(root, "project");
         const platform = yield* HostProcessPlatform;
         const workingDirectory = yield* HostProcessWorkingDirectory;
-        const desktop = yield* fakeDesktop({ baseDir });
+        const desktop = yield* fakeDesktop({
+          dirs: (platform) => halC2DirsUnder(baseDir, platform),
+        });
 
         yield* runCli(["app"], { HAL_C2_HOME: baseDir });
         yield* runCli(["app", explicitPath, "--base-dir", baseDir]);
@@ -211,9 +225,12 @@ describe("hal-c2 app", () => {
     withTempDirectory("hal-c2-app-preferred-test-", (root) =>
       Effect.gen(function* () {
         vi.mocked(NodeOS.homedir).mockReturnValue(root);
-        const baseDir = NodePath.join(root, ".hal-c2");
-        const desktop = yield* fakeDesktop({ baseDir });
-        const development = yield* fakeDesktop({ baseDir, stateSubdirectory: "dev" });
+        const desktop = yield* fakeDesktop({
+          dirs: (platform) => profileDirs(root, platform, HAL_C2_APP_DIR),
+        });
+        const development = yield* fakeDesktop({
+          dirs: (platform) => profileDirs(root, platform, HAL_C2_DEV_APP_DIR),
+        });
 
         yield* runCli(["app"]);
 
@@ -227,24 +244,28 @@ describe("hal-c2 app", () => {
     withTempDirectory("hal-c2-app-dev-test-", (root) =>
       Effect.gen(function* () {
         vi.mocked(NodeOS.homedir).mockReturnValue(root);
-        const baseDir = NodePath.join(root, ".hal-c2");
-        const development = yield* fakeDesktop({ baseDir, stateSubdirectory: "dev" });
+        const platform = yield* HostProcessPlatform;
+        const development = yield* fakeDesktop({
+          dirs: () => profileDirs(root, platform, HAL_C2_DEV_APP_DIR),
+        });
 
         yield* runCli(["app"]);
         yield* runCli(["app"], { HAL_C2_HOME: "   " });
 
         expect(development.received).toHaveLength(2);
-        expect(yield* pathExists(baseDir)).toBe(false);
+        expect(yield* pathExists(profileDirs(root, platform, HAL_C2_APP_DIR).state)).toBe(false);
       }).pipe(Effect.scoped),
     ),
   );
 
-  it.effect("never searches a dev state directory for an explicit HAL-C2 home", () =>
+  it.effect("never searches the dev profile for an explicit HAL-C2 home", () =>
     withTempDirectory("hal-c2-app-explicit-test-", (root) =>
       Effect.gen(function* () {
         vi.mocked(NodeOS.homedir).mockReturnValue(root);
-        const baseDir = NodePath.join(root, ".hal-c2");
-        const development = yield* fakeDesktop({ baseDir, stateSubdirectory: "dev" });
+        const baseDir = NodePath.join(root, "hal-c2-home");
+        const development = yield* fakeDesktop({
+          dirs: (platform) => profileDirs(root, platform, HAL_C2_DEV_APP_DIR),
+        });
 
         const flagError = yield* runCli(["app", "--base-dir", baseDir]).pipe(Effect.flip);
         const envError = yield* runCli(["app"], { HAL_C2_HOME: baseDir }).pipe(Effect.flip);
@@ -261,9 +282,8 @@ describe("hal-c2 app", () => {
       withTempDirectory("hal-c2-app-response-test-", (root) =>
         Effect.gen(function* () {
           vi.mocked(NodeOS.homedir).mockReturnValue(root);
-          const baseDir = NodePath.join(root, ".hal-c2");
           const desktop = yield* fakeDesktop({
-            baseDir,
+            dirs: (platform) => profileDirs(root, platform, HAL_C2_APP_DIR),
             reply: (request) =>
               responseKind === "failure"
                 ? {
@@ -275,7 +295,9 @@ describe("hal-c2 app", () => {
                   }
                 : { invalid: true },
           });
-          const development = yield* fakeDesktop({ baseDir, stateSubdirectory: "dev" });
+          const development = yield* fakeDesktop({
+            dirs: (platform) => profileDirs(root, platform, HAL_C2_DEV_APP_DIR),
+          });
 
           const error = yield* runCli(["app"]).pipe(Effect.flip);
 

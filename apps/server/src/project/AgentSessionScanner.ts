@@ -627,7 +627,6 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const baseDir = path.resolve(serverConfig.baseDir);
   const worktreesDir = path.resolve(serverConfig.worktreesDir);
   // Windows filesystems are case-insensitive, so path prefix checks there
   // must case fold.
@@ -643,9 +642,20 @@ export const make = Effect.gen(function* () {
   // Codex creates one scratch directory per conversation under
   // ~/Documents/Codex/<date>/<slug>. Neither those nor anything a user
   // unpacked into Downloads is a project.
+  // HAL-C2's own directories, and the old homes it migrates from, hold
+  // attachments and scratch files, never projects.
   const excludedProjectAncestors = [
     path.join(homeDir, "Downloads"),
     path.join(homeDir, "Documents", "Codex"),
+    ...[
+      serverConfig.configDir,
+      serverConfig.dataDir,
+      serverConfig.stateDir,
+      serverConfig.cacheDir,
+      path.join(homeDir, ".hal-c2"),
+      path.join(homeDir, ".t3"),
+      ...(serverConfig.homeRoot === undefined ? [] : [serverConfig.homeRoot]),
+    ].map((directory) => path.resolve(directory)),
   ];
 
   const isExcludedProjectPath = (candidatePath: string) =>
@@ -654,9 +664,6 @@ export const make = Effect.gen(function* () {
       normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
         normalizeForWorktreeMatch(ancestor, foldWorktreeCase),
       ),
-    ) ||
-    normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
-      normalizeForWorktreeMatch(baseDir, foldWorktreeCase),
     ) ||
     isHalC2ManagedWorktree(candidatePath, worktreesDir, foldWorktreeCase);
 

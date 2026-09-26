@@ -18,6 +18,7 @@ import * as Schema from "effect/Schema";
 
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
 import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@hal-c2/shared/observability";
+import { halC2DirsUnder, type HalC2Dirs } from "@hal-c2/shared/xdgDirs";
 
 export const DEFAULT_PORT = 3773;
 
@@ -28,16 +29,31 @@ export const StartupPresentation = Schema.Literals(["browser", "headless"]);
 export type StartupPresentation = typeof StartupPresentation.Type;
 
 /**
- * ServerDerivedPaths - Derived paths from the base directory.
+ * ServerDerivedPaths - Where the server keeps each file, sorted by XDG kind
+ * (`features/node/platform/storage-layout.feature`).
+ *
+ * - config: what the user edits (settings, keybindings, themes)
+ * - data:   what cannot be got back (database, secrets, attachments, worktrees)
+ * - state:  logs and records of the running process
+ * - cache:  what can be downloaded or rebuilt again
  */
 export interface ServerDerivedPaths {
+  readonly configDir: string;
+  readonly dataDir: string;
   readonly stateDir: string;
+  readonly cacheDir: string;
+  /** The desktop control socket's directory: `$XDG_RUNTIME_DIR/hal-c2`, else the state dir. */
+  readonly runtimeDir: string;
   readonly dbPath: string;
   readonly keybindingsConfigPath: string;
   readonly settingsPath: string;
   /** Palettes this machine publishes for clients to follow, one file per theme. */
   readonly environmentThemesDir: string;
   readonly providerStatusCacheDir: string;
+  /** Downloaded tools and binaries (cloudflared, managed CLIs, device tools). */
+  readonly toolsDir: string;
+  /** ACP provider sign-ins: auth state, so data rather than cache. */
+  readonly acpAuthDir: string;
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
   /** Screenshots the agent asks the collaborative browser to keep for the user. */
@@ -52,10 +68,6 @@ export interface ServerDerivedPaths {
   readonly environmentIdPath: string;
   readonly serverRuntimeStatePath: string;
   readonly secretsDir: string;
-}
-
-export interface DeriveServerPathsOptions {
-  readonly baseDirIsExplicit?: boolean;
 }
 
 /**
@@ -86,7 +98,11 @@ export class ServerConfig extends Context.Service<
     readonly port: number;
     readonly host: string | undefined;
     readonly cwd: string;
-    readonly baseDir: string;
+    /**
+     * The one root every kind lives under (`--base-dir`, `HAL_C2_HOME`), or
+     * undefined when the server uses the XDG directories.
+     */
+    readonly homeRoot: string | undefined;
     readonly staticDir: string | undefined;
     readonly devUrl: URL | undefined;
     readonly devAuthToken?: Redacted.Redacted<string> | undefined;
@@ -126,41 +142,39 @@ export const otlpResource = (config: ServerConfig["Service"]) => ({
 
 export const layer = (config: ServerConfig["Service"]) => Layer.succeed(ServerConfig, make(config));
 
+/** The server's files within HAL-C2's directories (see `@hal-c2/shared/xdgDirs`). */
 export const deriveServerPaths = Effect.fn(function* (
-  baseDir: ServerConfig["Service"]["baseDir"],
-  devUrl: ServerConfig["Service"]["devUrl"],
-  options: DeriveServerPathsOptions = {},
+  dirs: HalC2Dirs,
 ): Effect.fn.Return<ServerDerivedPaths, never, Path.Path> {
   const { join } = yield* Path.Path;
-  const stateDir = join(
-    baseDir,
-    devUrl !== undefined && !options.baseDirIsExplicit ? "dev" : "userdata",
-  );
-  const dbPath = join(stateDir, "statev2.sqlite");
-  const attachmentsDir = join(stateDir, "attachments");
-  const logsDir = join(stateDir, "logs");
+  const logsDir = join(dirs.state, "logs");
   const providerLogsDir = join(logsDir, "provider");
-  const providerStatusCacheDir = join(baseDir, "caches");
   return {
-    stateDir,
-    dbPath,
-    keybindingsConfigPath: join(stateDir, "keybindings.json"),
-    settingsPath: join(stateDir, "settings.json"),
-    environmentThemesDir: join(stateDir, "themes"),
-    providerStatusCacheDir,
-    worktreesDir: join(baseDir, "worktrees"),
-    attachmentsDir,
-    browserArtifactsDir: join(stateDir, "browser-artifacts"),
+    configDir: dirs.config,
+    dataDir: dirs.data,
+    stateDir: dirs.state,
+    cacheDir: dirs.cache,
+    runtimeDir: dirs.runtime,
+    dbPath: join(dirs.data, "statev2.sqlite"),
+    keybindingsConfigPath: join(dirs.config, "keybindings.json"),
+    settingsPath: join(dirs.config, "settings.json"),
+    environmentThemesDir: join(dirs.config, "themes"),
+    providerStatusCacheDir: join(dirs.cache, "provider-status"),
+    toolsDir: join(dirs.cache, "tools"),
+    acpAuthDir: join(dirs.data, "acp-auth"),
+    worktreesDir: join(dirs.data, "worktrees"),
+    attachmentsDir: join(dirs.data, "attachments"),
+    browserArtifactsDir: join(dirs.data, "browser-artifacts"),
+    secretsDir: join(dirs.data, "secrets"),
+    environmentIdPath: join(dirs.data, "environment-id"),
     logsDir,
     serverLogPath: join(logsDir, "server.log"),
     serverTracePath: join(logsDir, "server.trace.ndjson"),
     providerLogsDir,
     providerEventLogPath: join(providerLogsDir, "events.log"),
     terminalLogsDir: join(logsDir, "terminals"),
-    anonymousIdPath: join(stateDir, "anonymous-id"),
-    environmentIdPath: join(stateDir, "environment-id"),
-    serverRuntimeStatePath: join(stateDir, "server-runtime.json"),
-    secretsDir: join(stateDir, "secrets"),
+    anonymousIdPath: join(dirs.state, "anonymous-id"),
+    serverRuntimeStatePath: join(dirs.state, "server-runtime.json"),
   };
 });
 
@@ -170,7 +184,10 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
 
   yield* Effect.all(
     [
-      fs.makeDirectory(derivedPaths.stateDir, { recursive: true }),
+      fs.makeDirectory(derivedPaths.configDir, { recursive: true, mode: 0o700 }),
+      fs.makeDirectory(derivedPaths.dataDir, { recursive: true, mode: 0o700 }),
+      fs.makeDirectory(derivedPaths.stateDir, { recursive: true, mode: 0o700 }),
+      fs.makeDirectory(derivedPaths.cacheDir, { recursive: true, mode: 0o700 }),
       fs.makeDirectory(derivedPaths.logsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.providerLogsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.terminalLogsDir, { recursive: true }),
@@ -204,7 +221,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     typeof baseDirOrPrefix === "string"
       ? baseDirOrPrefix
       : yield* fs.makeTempDirectoryScoped({ prefix: baseDirOrPrefix.prefix });
-  const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
+  const derivedPaths = yield* deriveServerPaths(halC2DirsUnder(baseDir, process.platform));
   yield* ensureServerDirectories(derivedPaths);
 
   return ServerConfig.of({
@@ -222,7 +239,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
     otlpServiceName: "hal-c2-server",
     cwd,
-    baseDir,
+    homeRoot: baseDir,
     ...derivedPaths,
     mode: "web",
     autoBootstrapProjectFromCwd: false,

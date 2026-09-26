@@ -22,7 +22,7 @@ import * as ProcessRunner from "../processRunner.ts";
 
 /**
  * A pinned runtime is an exact hal-c2 release archive unpacked into
- * <baseDir>/runtime/versions/<version>: the self-contained executable, the
+ * <dataDir>/runtime/versions/<version>: the self-contained executable, the
  * web client, and the native packages beside it. The boot service points its
  * unit or launch agent at the executable, and server self-update installs the
  * target version here before switching over. The runtime never depends on a
@@ -52,17 +52,17 @@ export function pinnedRuntimeCommand(paths: PinnedRuntimePaths): {
   return { command: paths.entryPath, args: [] };
 }
 
-export function pinnedRuntimeVersionsDir(path: Path.Path, baseDir: string): string {
-  return path.join(baseDir, PINNED_RUNTIME_DIR, "versions");
+export function pinnedRuntimeVersionsDir(path: Path.Path, dataDir: string): string {
+  return path.join(dataDir, PINNED_RUNTIME_DIR, "versions");
 }
 
 export function pinnedRuntimePaths(
   path: Path.Path,
-  baseDir: string,
+  dataDir: string,
   version: string,
   platform: NodeJS.Platform,
 ): PinnedRuntimePaths {
-  const versionDir = path.join(pinnedRuntimeVersionsDir(path, baseDir), version);
+  const versionDir = path.join(pinnedRuntimeVersionsDir(path, dataDir), version);
   return {
     versionDir,
     entryPath: path.join(versionDir, platform === "win32" ? "hal-c2.exe" : "hal-c2"),
@@ -113,7 +113,7 @@ export type PinnedRuntimeProgress =
  */
 
 interface PinnedRuntimeInstallInput {
-  readonly baseDir: string;
+  readonly dataDir: string;
   readonly version: string;
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
@@ -269,7 +269,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   input: PinnedRuntimeInstallInput,
 ) {
   const { fs } = input;
-  const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version, input.platform);
+  const paths = pinnedRuntimePaths(input.path, input.dataDir, input.version, input.platform);
   const [versionDirExists, entryExists, sentinel] = yield* Effect.all([
     fs.exists(paths.versionDir),
     fs.exists(paths.entryPath),

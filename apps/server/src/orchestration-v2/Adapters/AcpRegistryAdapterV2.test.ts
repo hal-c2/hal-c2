@@ -134,8 +134,8 @@ describe("AcpRegistryAdapterV2", () => {
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
       const resolver = yield* makeAcpRegistryCatalog({
-        cacheDir: serverConfig.providerStatusCacheDir,
-        toolsDir: serverConfig.baseDir + "/tools",
+        cacheDir: serverConfig.cacheDir,
+        toolsDir: serverConfig.toolsDir,
         registryUrl,
       });
       const settings = yield* decodeAcpRegistryAdapterSettings({

@@ -168,9 +168,7 @@ export const layer = Layer.unwrap(
     const path = yield* Path.Path;
     return Layer.effect(PullRequestReadCache, make).pipe(
       Layer.provide(
-        KeyValueStore.layerFileSystem(
-          path.join(config.providerStatusCacheDir, "pull-requests"),
-        ).pipe(
+        KeyValueStore.layerFileSystem(path.join(config.cacheDir, "pull-requests")).pipe(
           Layer.catch(() =>
             Layer.effectDiscard(
               Effect.logWarning("PR cache directory unavailable; using memory cache"),

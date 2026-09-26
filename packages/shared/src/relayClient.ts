@@ -119,7 +119,8 @@ const CloudflaredConfig = Config.all({
 });
 
 export interface CloudflaredRelayClientOptions {
-  readonly baseDir: string;
+  /** HAL-C2's downloaded-tools cache; cloudflared is installed under it. */
+  readonly toolsDir: string;
   readonly releaseAsset?: CloudflaredReleaseAsset;
 }
 
@@ -191,8 +192,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   const releaseAsset = options.releaseAsset ?? resolveReleaseAsset(platform, arch);
   const loadCloudflaredConfig = Effect.suspend(() => CloudflaredConfig).pipe(Effect.orDie);
   const managedPath = path.join(
-    options.baseDir,
-    "tools",
+    options.toolsDir,
     "cloudflared",
     CLOUDFLARED_VERSION,
     `${platform}-${arch}`,

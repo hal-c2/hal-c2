@@ -15,14 +15,14 @@ const SHIM_DIR = "device/bin";
 
 export const ensureAgentDeviceShim = Effect.fn("AgentDeviceShim.ensure")(function* (input: {
   readonly entryPath: string;
-  readonly stateDir: string;
+  readonly dataDir: string;
 }) {
   const { entryPath } = input;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
   const node = yield* resolveNodeExecutable("Device automation");
-  const shimDir = path.join(input.stateDir, SHIM_DIR);
+  const shimDir = path.join(input.dataDir, SHIM_DIR);
   yield* fs.makeDirectory(shimDir, { recursive: true });
   const launcherPath = path.join(shimDir, "agent-device-launcher.mjs");
   yield* fs.writeFileString(

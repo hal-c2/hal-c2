@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { halC2DirsUnder } from "@hal-c2/shared/xdgDirs";
 import { EnvironmentId } from "@hal-c2/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
@@ -66,9 +67,7 @@ const makeDiskSessionStoreLayer = Effect.fn("makeDiskSessionStoreLayer")(functio
   token?: string,
 ) {
   const devUrl = new URL("http://127.0.0.1:5173");
-  const paths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
-    baseDirIsExplicit: true,
-  });
+  const paths = yield* ServerConfig.deriveServerPaths(halC2DirsUnder(baseDir, process.platform));
   yield* ServerConfig.ensureServerDirectories(paths);
   const persistence = makeSqlitePersistenceLive(paths.dbPath);
   return SessionStore.layer.pipe(
@@ -78,7 +77,7 @@ const makeDiskSessionStoreLayer = Effect.fn("makeDiskSessionStoreLayer")(functio
     Layer.provide(
       makeServerConfigLayer({
         ...paths,
-        baseDir,
+        homeRoot: baseDir,
         mode: "web",
         devUrl,
         ...(token === undefined ? {} : { devAuthToken: Redacted.make(token) }),

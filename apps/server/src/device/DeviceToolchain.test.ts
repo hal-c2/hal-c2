@@ -40,7 +40,7 @@ it.effect("failed installation cleans staging and exposes only a safe failure me
     );
     expect(error.cause).toBe(result);
     expect(yield* isDeviceHubInstalled(baseDir)).toBe(false);
-    expect(yield* fs.readDirectory(path.join(baseDir, "tools", "expo-device-hub"))).toEqual([]);
+    expect(yield* fs.readDirectory(path.join(baseDir, "expo-device-hub"))).toEqual([]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -54,7 +54,7 @@ it.effect("inventory reports only completed versions without installing the requ
       [DEVICE_HUB_VERSION, "wrong"],
       [".staging-123", ".staging-123"],
     ]) {
-      const dir = path.join(base, "tools", "expo-device-hub", version!);
+      const dir = path.join(base, "expo-device-hub", version!);
       yield* fs.makeDirectory(path.join(dir, "node_modules/expo-device-hub/dist/server"), {
         recursive: true,
       });

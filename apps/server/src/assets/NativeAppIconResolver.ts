@@ -178,7 +178,7 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
   const cacheKey = NodeCrypto.createHash("sha256")
     .update(`${canonicalAppPath}\0${appVersion}\0${sourceIconPath}`)
     .digest("hex");
-  const cacheDirectory = path.join(config.providerStatusCacheDir, "native-app-icons");
+  const cacheDirectory = path.join(config.cacheDir, "native-app-icons");
   const cachePath = path.join(cacheDirectory, `${cacheKey}.png`);
   if (yield* existingFile(cachePath)) return cachePath;
 

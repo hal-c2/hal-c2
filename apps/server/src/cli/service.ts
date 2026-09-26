@@ -13,12 +13,16 @@ import type * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
+/** Where the background service for this CLI's directories keeps its files. */
+export const bootServiceDirs = (config: ServerConfig.ServerConfig["Service"]) => ({
+  home: config.homeRoot,
+  dataDir: config.dataDir,
+  stateDir: config.stateDir,
+  logsDir: config.logsDir,
+});
+
 export const bootServiceLayer = (config: ServerConfig.ServerConfig["Service"]) =>
-  BootService.layer({
-    baseDir: config.baseDir,
-    logsDir: config.logsDir,
-    cliVersion: packageJson.version,
-  }).pipe(
+  BootService.layer({ ...bootServiceDirs(config), cliVersion: packageJson.version }).pipe(
     Layer.provide(ProcessRunner.layer),
     // Archive-distributed versions download the release archive here.
     Layer.provide(FetchHttpClient.layer),

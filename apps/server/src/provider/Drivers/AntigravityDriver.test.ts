@@ -75,7 +75,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
   );
   const requestLog = path.join(root, "requests.jsonl");
-  const profileDirectory = resolveAntigravityProfileDirectory(config.stateDir, instanceId);
+  const profileDirectory = resolveAntigravityProfileDirectory(config.dataDir, instanceId);
   const instancePath = `${path.join(root, "instance-bin")}:${baseEnv.PATH ?? ""}`;
 
   const makeExecutable = Effect.fn("AntigravityDriverTest.makeExecutable")(function* (
@@ -501,7 +501,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
         const config = yield* ServerConfig;
         const instanceId = ProviderInstanceId.make("antigravity-orphan-sweep");
         const tempRoot = resolveAntigravityRuntimeTempDirectory(
-          resolveAntigravityProfileDirectory(config.stateDir, instanceId),
+          resolveAntigravityProfileDirectory(config.dataDir, instanceId),
         );
         const orphan = path.join(tempRoot, "run-orphan", "_MEI123", "google3");
         yield* fs.makeDirectory(orphan, { recursive: true });
@@ -515,7 +515,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
         }).pipe(
           Effect.provide(
             Layer.mock(AntigravityInstallation)({
-              managedDirectory: config.stateDir,
+              managedDirectory: config.toolsDir,
               resolve: () => Effect.die("unused"),
               acquire: () => Effect.die("unused"),
             }),

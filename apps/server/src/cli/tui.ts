@@ -70,7 +70,10 @@ function runBunTui(input: {
   readonly origin: string;
   readonly bearerToken: string;
   readonly logPath: string;
-  /** Where the user's `shell.qml` overrides the TUI's default QML shell. */
+  /**
+   * Where the user's `shell.qml` overrides the TUI's default QML shell,
+   * `<config dir>/shell/tui`. A `HAL_C2_TUI_SHELL_DIR` the user set wins.
+   */
   readonly shellDir: string;
   readonly mintSocketUrl: () => Promise<string>;
 }): Promise<void> {
@@ -95,7 +98,7 @@ function runBunTui(input: {
         HAL_C2_TUI_ORIGIN: input.origin,
         HAL_C2_TUI_BEARER: input.bearerToken,
         HAL_C2_TUI_LOG: input.logPath,
-        HAL_C2_TUI_SHELL_DIR: input.shellDir,
+        HAL_C2_TUI_SHELL_DIR: process.env.HAL_C2_TUI_SHELL_DIR || input.shellDir,
       },
     });
 
@@ -203,7 +206,7 @@ export const tuiCommand = Command.make("tui", { ...authLocationFlags }).pipe(
             origin,
             bearerToken: session.token,
             logPath: `${config.serverRuntimeStatePath}.tui.log`,
-            shellDir: NodePath.join(config.baseDir, "shell", "tui"),
+            shellDir: NodePath.join(config.configDir, "shell", "tui"),
             mintSocketUrl,
           }),
         );

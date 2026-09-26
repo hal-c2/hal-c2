@@ -69,11 +69,11 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-pinned-archive-" });
+      const dataDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-pinned-archive-" });
       const requests: string[] = [];
       const commands: string[] = [];
       const paths = yield* ensurePinnedRuntimeInstalled({
-        baseDir,
+        dataDir,
         version,
         fs,
         path,
@@ -106,7 +106,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-pinned-progress-" });
+        const dataDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-pinned-progress-" });
         const firstChunk = yield* Deferred.make<void>();
         let archiveController: ReadableStreamDefaultController<Uint8Array> | undefined;
         const checksums = yield* validChecksums;
@@ -130,7 +130,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
           ),
         );
         const install = yield* ensurePinnedRuntimeInstalled({
-          baseDir,
+          dataDir,
           version,
           fs,
           path,
@@ -171,7 +171,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({
+      const dataDir = yield* fs.makeTempDirectoryScoped({
         prefix: "hal-c2-pinned-progress-failed-",
       });
       const checksums = yield* validChecksums;
@@ -198,7 +198,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       );
       const firstChunk = yield* Deferred.make<void>();
       const install = yield* ensurePinnedRuntimeInstalled({
-        baseDir,
+        dataDir,
         version,
         fs,
         path,
@@ -218,7 +218,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.deepEqual(progress.at(-1), { stage: "download", received: 4, total: undefined });
       assert.isTrue(progress.every((event) => event.stage === "download"));
       assert.isTrue(cancelled);
-      assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
+      assert.deepEqual(yield* fs.readDirectory(path.join(dataDir, "runtime", "versions")), []);
     }),
   );
 
@@ -226,10 +226,10 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-pinned-archive-bad-" });
+      const dataDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-pinned-archive-bad-" });
       const commands: string[] = [];
       const error = yield* ensurePinnedRuntimeInstalled({
-        baseDir,
+        dataDir,
         version,
         fs,
         path,
@@ -242,7 +242,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.instanceOf(error, PinnedRuntimeInstallError);
       assert.equal(error.step, "verifying the hal-c2 release archive checksum");
       assert.deepEqual(commands, []);
-      assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
+      assert.deepEqual(yield* fs.readDirectory(path.join(dataDir, "runtime", "versions")), []);
     }),
   );
 
@@ -250,12 +250,12 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-pinned-runtime-test-" });
-      const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
+      const dataDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-pinned-runtime-test-" });
+      const finalPaths = pinnedRuntimePaths(path, dataDir, version, "linux");
       let validatedDirectory = "";
 
       const installed = yield* ensurePinnedRuntimeInstalled({
-        baseDir,
+        dataDir,
         version,
         fs,
         path,
@@ -282,11 +282,11 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-pinned-runtime-test-" });
-      const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
+      const dataDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-pinned-runtime-test-" });
+      const finalPaths = pinnedRuntimePaths(path, dataDir, version, "linux");
 
       yield* ensurePinnedRuntimeInstalled({
-        baseDir,
+        dataDir,
         version,
         fs,
         path,
@@ -312,15 +312,15 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({
+      const dataDir = yield* fs.makeTempDirectoryScoped({
         prefix: "hal-c2-pinned-runtime-repair-",
       });
-      const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
+      const finalPaths = pinnedRuntimePaths(path, dataDir, version, "linux");
       yield* fs.makeDirectory(finalPaths.versionDir, { recursive: true });
       yield* fs.writeFileString(path.join(finalPaths.versionDir, "partial"), "incomplete\n");
 
       yield* ensurePinnedRuntimeInstalled({
-        baseDir,
+        dataDir,
         version,
         fs,
         path,
@@ -340,10 +340,10 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({
+      const dataDir = yield* fs.makeTempDirectoryScoped({
         prefix: "hal-c2-pinned-runtime-repair-",
       });
-      const finalPaths = pinnedRuntimePaths(path, baseDir, version, "linux");
+      const finalPaths = pinnedRuntimePaths(path, dataDir, version, "linux");
       yield* fs.makeDirectory(path.dirname(finalPaths.entryPath), { recursive: true });
       yield* fs.writeFileString(finalPaths.entryPath, "broken\n");
       yield* fs.writeFileString(finalPaths.sentinelPath, `${version}\n`);
@@ -351,7 +351,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       let validations = 0;
       const requests: string[] = [];
       yield* ensurePinnedRuntimeInstalled({
-        baseDir,
+        dataDir,
         version,
         fs,
         path,
@@ -379,7 +379,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({
+      const dataDir = yield* fs.makeTempDirectoryScoped({
         prefix: "hal-c2-pinned-runtime-interrupt-",
       });
       const started = yield* Deferred.make<void>();
@@ -387,7 +387,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         run: () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
       });
       const install = yield* ensurePinnedRuntimeInstalled({
-        baseDir,
+        dataDir,
         version,
         fs,
         path,
@@ -400,7 +400,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
 
       yield* Deferred.await(started);
       yield* Fiber.interrupt(install);
-      const versionsDir = path.join(baseDir, "runtime", "versions");
+      const versionsDir = path.join(dataDir, "runtime", "versions");
       assert.deepEqual(yield* fs.readDirectory(versionsDir), []);
     }),
   );

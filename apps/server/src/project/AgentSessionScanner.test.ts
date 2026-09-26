@@ -987,10 +987,10 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           const configBaseDir = yield* makeTempDir("hal-c2-scanner-base-");
           const fileSystem = yield* FileSystem.FileSystem;
 
-          // worktreesDir derives as `<baseDir>/worktrees`, and the temp base
+          // worktreesDir derives as `<baseDir>/data/worktrees`, and the temp base
           // dir contains no `.hal-c2` segment — only the config-based prefix match
           // can exclude this one.
-          const worktreeCwd = path.join(configBaseDir, "worktrees", "hal-c2", "wt-2");
+          const worktreeCwd = path.join(configBaseDir, "data", "worktrees", "hal-c2", "wt-2");
           yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
           yield* writeTranscript({
             filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
@@ -1015,7 +1015,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
 
         // The recorded cwd is a symlink whose own spelling looks harmless;
         // only its realpath reveals the managed sandbox.
-        const worktreeCwd = path.join(configBaseDir, "worktrees", "hal-c2", "wt-3");
+        const worktreeCwd = path.join(configBaseDir, "data", "worktrees", "hal-c2", "wt-3");
         yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
         const symlinkCwd = path.join(linkParent, "innocent-project");
         yield* fileSystem.symlink(worktreeCwd, symlinkCwd);
@@ -2403,7 +2403,13 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const claudeHomePath = yield* makeTempDir("hal-c2-claude-home-");
         const codexHomePath = yield* makeTempDir("hal-c2-codex-home-");
         const configBaseDir = yield* makeTempDir("hal-c2-scanner-base-");
-        const workspace = path.join(configBaseDir, "worktrees", "hal-c2", "managed-worktree");
+        const workspace = path.join(
+          configBaseDir,
+          "data",
+          "worktrees",
+          "hal-c2",
+          "managed-worktree",
+        );
         yield* fileSystem.makeDirectory(workspace, { recursive: true });
 
         yield* writeTranscript({

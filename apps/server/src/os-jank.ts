@@ -6,7 +6,8 @@ import {
   readPathFromLaunchctl,
   resolveWindowsEnvironment,
 } from "@hal-c2/shared/shell";
-import { configuredHalC2Home, resolveHalC2Home } from "@hal-c2/shared/devHome";
+import { resolveHalC2Location } from "@hal-c2/shared/devHome";
+import { halC2HomeRoot, type HalC2DirsEnvironment } from "@hal-c2/shared/xdgDirs";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -108,26 +109,53 @@ export const expandHomePath = Effect.fn(function* (input: string) {
 const optionalEnv = (name: string) =>
   Config.String(name).pipe(Config.option, Config.map(Option.getOrUndefined));
 
-/**
- * The base dir the environment names: `HAL_C2_HOME`, else the deprecated
- * `T3CODE_HOME` (warned once). Undefined when neither is set.
- */
-export const configuredHalC2HomeFromEnv = Effect.gen(function* () {
-  const env = yield* Config.all({
+/** The variables `@hal-c2/shared/xdgDirs` reads, from the Effect config. */
+export const halC2DirsEnvironment: Effect.Effect<HalC2DirsEnvironment, Config.ConfigError> =
+  Config.all({
     HAL_C2_HOME: optionalEnv("HAL_C2_HOME"),
+    XDG_CONFIG_HOME: optionalEnv("XDG_CONFIG_HOME"),
+    XDG_DATA_HOME: optionalEnv("XDG_DATA_HOME"),
+    XDG_STATE_HOME: optionalEnv("XDG_STATE_HOME"),
+    XDG_CACHE_HOME: optionalEnv("XDG_CACHE_HOME"),
+    XDG_RUNTIME_DIR: optionalEnv("XDG_RUNTIME_DIR"),
+    APPDATA: optionalEnv("APPDATA"),
+    LOCALAPPDATA: optionalEnv("LOCALAPPDATA"),
     T3CODE_HOME: optionalEnv("T3CODE_HOME"),
+    T3_HOME: optionalEnv("T3_HOME"),
   });
-  return yield* configuredHalC2Home(env);
-});
 
 /**
- * An explicit base dir (flag or env, `~` expanded), or the default home:
- * `~/.hal-c2`, falling back to an existing pre-rename `~/.t3`.
+ * This process's HAL-C2 directories: an explicit root (`--base-dir`, `~`
+ * expanded), else `HAL_C2_HOME`, else `fallbackRoot` (the desktop's bootstrap
+ * home), else the XDG directories, in the `hal-c2-dev` profile for a
+ * development server. The CLI never detects worktrees; the dev runner passes a
+ * worktree's root explicitly. `HOME` is read from the config so tests can
+ * point it at a temporary directory.
  */
-export const resolveBaseDir = Effect.fn(function* (raw: string | undefined) {
-  const { resolve } = yield* Path.Path;
-  if (!raw || raw.trim().length === 0) {
-    return yield* resolveHalC2Home({ env: {}, homeDir: NodeOS.homedir() });
-  }
-  return resolve(yield* expandHomePath(raw.trim()));
+export const resolveCliHalC2Location = Effect.fn("resolveCliHalC2Location")(function* (options: {
+  readonly explicitRoot?: string | undefined;
+  readonly fallbackRoot?: string | undefined;
+  readonly development?: boolean | undefined;
+}) {
+  const env = yield* halC2DirsEnvironment;
+  const platform = yield* HostProcessPlatform;
+  const homeDir = yield* Config.String("HOME").pipe(
+    Config.map((value) => value.trim()),
+    Config.withDefault(""),
+  );
+  const resolvedHomeDir = homeDir || NodeOS.homedir();
+  const explicit = options.explicitRoot?.trim();
+  const fallback =
+    halC2HomeRoot({ env, homeDir: resolvedHomeDir, platform }) === undefined
+      ? options.fallbackRoot?.trim()
+      : undefined;
+  const raw = explicit || fallback;
+  const location = yield* resolveHalC2Location({
+    explicitRoot: raw ? yield* expandHomePath(raw) : undefined,
+    env,
+    homeDir: resolvedHomeDir,
+    platform,
+    development: options.development,
+  });
+  return { ...location, env, homeDir: resolvedHomeDir, platform };
 });

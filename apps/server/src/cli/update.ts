@@ -43,7 +43,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { createUpdateProgress } from "./updateProgress.ts";
-import { bootServiceLayer } from "./service.ts";
+import { bootServiceDirs, bootServiceLayer } from "./service.ts";
 
 export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpdateError", {
   reason: Schema.String,
@@ -100,7 +100,7 @@ const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
   return yield* new CliUpdateError({ reason: `No published ${channel} release was found.` });
 });
 
-/** Whether a launcher target lives inside `<baseDir>/runtime/versions`. */
+/** Whether a launcher target lives inside `<data dir>/runtime/versions`. */
 export function launcherOwnsVersionsDir(
   path: Path.Path,
   versionsDir: string,
@@ -120,7 +120,7 @@ export function launcherOwnsVersionsDir(
 export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function* (input: {
   /** Path the current process was started through, if known. */
   readonly launchedAs: string | undefined;
-  /** `<baseDir>/runtime/versions` of the home being updated. */
+  /** `<data dir>/runtime/versions` of the home being updated. */
   readonly versionsDir: string;
   readonly targetEntryPath: string;
 }) {
@@ -266,8 +266,7 @@ export const updateCommand = Command.make("update", {
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
       return yield* runUpdate({
-        baseDir: config.baseDir,
-        logsDir: config.logsDir,
+        serviceDirs: bootServiceDirs(config),
         serverRuntimeStatePath: config.serverRuntimeStatePath,
         channel: Option.getOrUndefined(flags.channel),
         requestedVersion: Option.getOrUndefined(flags.version),
@@ -337,8 +336,7 @@ const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(fun
 });
 
 const runUpdate = Effect.fn("cli.update.run")(function* (input: {
-  readonly baseDir: string;
-  readonly logsDir: string;
+  readonly serviceDirs: ReturnType<typeof bootServiceDirs>;
   readonly serverRuntimeStatePath: string;
   readonly channel: CliReleaseChannel | undefined;
   readonly requestedVersion: string | undefined;
@@ -405,9 +403,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   // The unit name is per user, not per HAL-C2 home. Only touch the service when it
   // serves the home this update targets; otherwise it belongs to another
   // install on this machine and restarting it would take that server down.
-  const servesThisHome =
-    status.installedBaseDir !== undefined &&
-    path.resolve(status.installedBaseDir) === path.resolve(input.baseDir);
+  const servesThisHome = status.servesThisHome;
   const serviceInstalled = status.supported && status.installed && servesThisHome;
   const foreground = yield* findForegroundServer({
     serverRuntimeStatePath: input.serverRuntimeStatePath,
@@ -450,7 +446,9 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   }
 
   const alreadyOnDisk = yield* fs
-    .readFileString(pinnedRuntimePaths(path, input.baseDir, targetVersion, platform).sentinelPath)
+    .readFileString(
+      pinnedRuntimePaths(path, input.serviceDirs.dataDir, targetVersion, platform).sentinelPath,
+    )
     .pipe(
       Effect.map((sentinel) => sentinel.trim() === targetVersion),
       Effect.orElseSucceed(() => false),
@@ -491,7 +489,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
 
   const runtime = yield* ensurePinnedRuntimeInstalled({
     onProgress: progress.report,
-    baseDir: input.baseDir,
+    dataDir: input.serviceDirs.dataDir,
     version: targetVersion,
     fs,
     path,
@@ -563,13 +561,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       Effect.flatMap((target) =>
         target.install({ allowDowngrade: input.allowDowngrade, start: restartService }),
       ),
-      Effect.provide(
-        BootService.layer({
-          baseDir: input.baseDir,
-          logsDir: input.logsDir,
-          cliVersion: targetVersion,
-        }),
-      ),
+      Effect.provide(BootService.layer({ ...input.serviceDirs, cliVersion: targetVersion })),
       Effect.mapError(
         (error) =>
           new CliUpdateError({
@@ -596,7 +588,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     );
   } else if (status.installed && !servesThisHome) {
     yield* Console.log(
-      `  The background service serves ${status.installedBaseDir ?? "another HAL-C2 home"} and was left unchanged.`,
+      `  The background service serves ${status.installedHome ?? "the XDG directories"}, not this HAL-C2 home, and was left unchanged.`,
     );
   }
   if (foreground !== undefined) {

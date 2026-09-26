@@ -5,9 +5,10 @@
  * Discovery reads the `server-runtime.json` a live server persists next to its
  * database, then confirms the process is actually answering by fetching its
  * public environment descriptor. Inside a linked git worktree the worktree's
- * own `.hal-c2` is checked first (matching dev-runner precedence); otherwise the
- * shared HAL-C2 home. `--tailscale` publishes the server over Tailscale Serve
- * HTTPS and pairs through the tailnet URL instead.
+ * own `.hal-c2` is checked first (matching dev-runner precedence); then
+ * `HAL_C2_HOME`, or else both the `hal-c2` and `hal-c2-dev` XDG profiles.
+ * `--tailscale` publishes the server over Tailscale Serve HTTPS and pairs
+ * through the tailnet URL instead.
  */
 import {
   AuthStandardClientScopes,
@@ -15,6 +16,12 @@ import {
   PortSchema,
 } from "@hal-c2/contracts";
 import { resolveWorktreeHalC2Home } from "@hal-c2/shared/devHome";
+import {
+  HAL_C2_APP_DIR,
+  HAL_C2_DEV_APP_DIR,
+  type HalC2Dirs,
+  resolveHalC2Dirs,
+} from "@hal-c2/shared/xdgDirs";
 import { DEFAULT_SIGNAL_EXPORT } from "@hal-c2/shared/observability";
 import {
   buildTailscaleHttpsBaseUrl,
@@ -35,7 +42,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
-import { configuredHalC2HomeFromEnv, resolveBaseDir } from "../os-jank.ts";
+import { resolveCliHalC2Location } from "../os-jank.ts";
 import {
   type PersistedServerRuntimeState,
   isProcessAlive,
@@ -56,12 +63,6 @@ import { type EnvironmentProbeResult, probeEnvironmentDescriptor } from "./runni
 // serve mapping, which can take a few seconds.
 const TAILSCALE_PROBE_ATTEMPTS = 5;
 const TAILSCALE_PROBE_RETRY_DELAY = Duration.seconds(1);
-
-export type PairStateVariant = "userdata" | "dev";
-
-// deriveServerPaths only checks devUrl for undefined-ness when picking the
-// dev-vs-userdata state directory; the value itself is not used.
-const DEV_VARIANT_PLACEHOLDER_URL = new URL("http://localhost");
 
 export class NoRunningServerError extends Schema.TaggedError<NoRunningServerError>()(
   "NoRunningServerError",
@@ -188,85 +189,102 @@ const formatPairOutput = (input: {
   ].join("\n");
 
 interface DiscoveredPairTarget {
-  readonly baseDir: string;
-  readonly variant: PairStateVariant;
+  /** The root the server runs under, or undefined for the XDG directories. */
+  readonly homeRoot: string | undefined;
+  readonly dirs: HalC2Dirs;
+  /** Found in the `hal-c2-dev` profile a development server uses. */
+  readonly devProfile: boolean;
   readonly state: PersistedServerRuntimeState;
   readonly descriptor: ExecutionEnvironmentDescriptor;
 }
 
+/** Where a running server may have recorded its runtime state, in probe order. */
+const pairCandidates = Effect.fn("pair.pairCandidates")(function* (
+  explicitBaseDir: string | undefined,
+) {
+  const location = yield* resolveCliHalC2Location({ explicitRoot: explicitBaseDir });
+  const { env, homeDir, platform } = location;
+  const underRoot = (root: string) => ({
+    homeRoot: root,
+    dirs: resolveHalC2Dirs({ env, homeDir, platform, root }),
+    devProfile: false,
+  });
+  if (location.rootSource === "explicit") {
+    return [underRoot(location.root!)];
+  }
+  const candidates: Array<Omit<DiscoveredPairTarget, "state" | "descriptor">> = [];
+  // Same precedence as dev-runner: inside a linked worktree its own `.hal-c2`
+  // outranks everything else, so `hal-c2 pair` in a worktree pairs with the dev
+  // server under test rather than the daily-driver install.
+  const worktreeHome = yield* resolveWorktreeHalC2Home(process.cwd());
+  if (worktreeHome !== undefined) {
+    candidates.push(underRoot(worktreeHome));
+  }
+  if (location.root !== undefined) {
+    candidates.push(underRoot(location.root));
+  } else {
+    for (const profile of [HAL_C2_APP_DIR, HAL_C2_DEV_APP_DIR] as const) {
+      candidates.push({
+        homeRoot: undefined,
+        dirs: resolveHalC2Dirs({ env, homeDir, platform, profile }),
+        devProfile: profile === HAL_C2_DEV_APP_DIR,
+      });
+    }
+  }
+  return candidates;
+});
+
 const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
   explicitBaseDir: string | undefined,
 ) {
-  const bases: Array<string> = [];
-  if (explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0) {
-    bases.push(yield* resolveBaseDir(explicitBaseDir));
-  } else {
-    // Same precedence as dev-runner: inside a linked worktree its own `.hal-c2`
-    // outranks the shared home, so `hal-c2 pair` in a worktree pairs with the dev
-    // server under test rather than the daily-driver install.
-    const worktreeHome = yield* resolveWorktreeHalC2Home(process.cwd());
-    if (worktreeHome !== undefined) {
-      bases.push(worktreeHome);
-    }
-    bases.push(yield* resolveBaseDir(yield* configuredHalC2HomeFromEnv));
-  }
-
   const checkedStatePaths: Array<string> = [];
-  for (const baseDir of new Set(bases)) {
-    for (const variant of ["userdata", "dev"] as const) {
-      const derivedPaths = yield* ServerConfig.deriveServerPaths(
-        baseDir,
-        variant === "dev" ? DEV_VARIANT_PLACEHOLDER_URL : undefined,
-        {},
-      );
-      const statePath = derivedPaths.serverRuntimeStatePath;
-      checkedStatePaths.push(statePath);
-      const state = yield* readPersistedServerRuntimeState(statePath);
-      if (Option.isNone(state)) {
-        continue;
-      }
-      // The pid check guards against a dead server's state file whose port
-      // was since reused by a different server: pairing would then mint a
-      // token in the old database while the QR code points at the new server.
-      if (!isProcessAlive(state.value.pid)) {
-        continue;
-      }
-      const probed = yield* probeEnvironmentDescriptor(state.value.origin);
-      if (probed._tag !== "descriptor") {
-        continue;
-      }
-      return {
-        baseDir,
-        variant,
-        state: state.value,
-        descriptor: probed.descriptor,
-      } satisfies DiscoveredPairTarget;
+  for (const candidate of yield* pairCandidates(explicitBaseDir)) {
+    const derivedPaths = yield* ServerConfig.deriveServerPaths(candidate.dirs);
+    const statePath = derivedPaths.serverRuntimeStatePath;
+    if (checkedStatePaths.includes(statePath)) {
+      continue;
     }
+    checkedStatePaths.push(statePath);
+    const state = yield* readPersistedServerRuntimeState(statePath);
+    if (Option.isNone(state)) {
+      continue;
+    }
+    // The pid check guards against a dead server's state file whose port
+    // was since reused by a different server: pairing would then mint a
+    // token in the old database while the QR code points at the new server.
+    if (!isProcessAlive(state.value.pid)) {
+      continue;
+    }
+    const probed = yield* probeEnvironmentDescriptor(state.value.origin);
+    if (probed._tag !== "descriptor") {
+      continue;
+    }
+    return {
+      ...candidate,
+      state: state.value,
+      descriptor: probed.descriptor,
+    } satisfies DiscoveredPairTarget;
   }
   return yield* new NoRunningServerError({ checkedStatePaths });
 });
 
 /**
- * Server config pointed at the discovered server's state directory, so the
- * minted token lands in the database the running server reads from. Built by
- * hand rather than through `resolveServerConfig` to keep the dev-vs-userdata
- * choice pinned to where the runtime state was actually found, independent of
- * ambient environment variables.
+ * Server config pointed at the discovered server's directories, so the minted
+ * token lands in the database the running server reads from. Built by hand
+ * rather than through `resolveServerConfig` to keep the directories pinned to
+ * where the runtime state was actually found, independent of ambient
+ * environment variables.
  */
 const makePairServerConfig = Effect.fn(function* (input: {
   readonly target: DiscoveredPairTarget;
   readonly logLevel: ServerConfig.ServerConfig["Service"]["logLevel"];
 }) {
-  const { baseDir, variant, state } = input.target;
-  // The state-dir variant does not imply dev-ness: a worktree dev server uses
-  // an explicit home and therefore lands in `userdata`. The recorded devUrl is
-  // what actually marks a dev server.
+  const { homeRoot, dirs, state } = input.target;
+  // The recorded devUrl is what marks a dev server: a worktree dev server runs
+  // under an explicit root rather than the `hal-c2-dev` profile.
   const devUrl = state.devUrl !== undefined ? new URL(state.devUrl) : undefined;
-  const derivedPaths = yield* ServerConfig.deriveServerPaths(
-    baseDir,
-    variant === "dev" ? DEV_VARIANT_PLACEHOLDER_URL : undefined,
-    {},
-  );
+  const derivedPaths = yield* ServerConfig.deriveServerPaths(dirs);
+  yield* ServerConfig.ensureServerDirectories(derivedPaths);
   return ServerConfig.make({
     logLevel: input.logLevel,
     traceMinLevel: "Info",
@@ -285,7 +303,7 @@ const makePairServerConfig = Effect.fn(function* (input: {
     port: state.port,
     host: state.host,
     cwd: process.cwd(),
-    baseDir,
+    homeRoot,
     ...derivedPaths,
     staticDir: undefined,
     devUrl,
@@ -465,7 +483,7 @@ export const pairCommand = Command.make("pair", {
             "This URL is only reachable from this machine. Re-run with --tailscale, or restart the server with a reachable --host.",
           );
         }
-        if (target.variant === "dev" && target.state.devUrl === undefined) {
+        if (target.devProfile && target.state.devUrl === undefined) {
           notes.push(
             "This dev server did not record its web URL; restart it so pairing can go through the web origin.",
           );

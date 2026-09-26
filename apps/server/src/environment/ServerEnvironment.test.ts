@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { halC2DirsUnder } from "@hal-c2/shared/xdgDirs";
 import { ORCHESTRATION_PROTOCOL_VERSION } from "@hal-c2/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
@@ -43,7 +44,9 @@ const emptySecretStoreLayer = Layer.succeed(
 );
 
 const makeServerConfig = Effect.fn(function* (baseDir: string) {
-  const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+  const derivedPaths = yield* ServerConfig.deriveServerPaths(
+    halC2DirsUnder(baseDir, process.platform),
+  );
 
   return {
     ...derivedPaths,
@@ -61,7 +64,7 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
     otlpServiceName: "hal-c2-server",
     cwd: process.cwd(),
-    baseDir,
+    homeRoot: baseDir,
     mode: "web",
     autoBootstrapProjectFromCwd: false,
     logWebSocketEvents: false,
@@ -91,7 +94,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         prefix: "hal-c2-server-environment-concurrent-test-",
       });
       const serverConfig = yield* makeServerConfig(baseDir);
-      yield* fileSystem.makeDirectory(serverConfig.stateDir, { recursive: true });
+      yield* fileSystem.makeDirectory(serverConfig.dataDir, { recursive: true });
       if (content !== undefined) {
         yield* fileSystem.writeFileString(serverConfig.environmentIdPath, content);
       }
@@ -237,7 +240,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         prefix: "hal-c2-server-environment-desktop-update-test-",
       });
       const serverConfig = yield* makeServerConfig(baseDir);
-      yield* fileSystem.makeDirectory(serverConfig.stateDir, { recursive: true });
+      yield* fileSystem.makeDirectory(serverConfig.dataDir, { recursive: true });
 
       const describeWith = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =>
         Effect.gen(function* () {

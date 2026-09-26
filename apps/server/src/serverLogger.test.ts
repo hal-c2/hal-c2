@@ -1,4 +1,5 @@
 import * as NodePath from "@effect/platform-node/NodePath";
+import { halC2DirsUnder } from "@hal-c2/shared/xdgDirs";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
@@ -42,7 +43,9 @@ const configLayer = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const baseDir = path.join(NodeOS.tmpdir(), "hal-c2-server-logger-test");
-      const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+      const derivedPaths = yield* ServerConfig.deriveServerPaths(
+        halC2DirsUnder(baseDir, process.platform),
+      );
       return ServerConfig.make({
         logLevel: "Info",
         traceMinLevel: "Info",
@@ -58,7 +61,7 @@ const configLayer = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =
         otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
         otlpServiceName: "hal-c2-server",
         cwd: baseDir,
-        baseDir,
+        homeRoot: baseDir,
         ...derivedPaths,
         mode: "web",
         autoBootstrapProjectFromCwd: false,

@@ -173,7 +173,7 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
         : installationFs.makeTempDirectoryScoped(settings),
   });
   const installation = yield* makeAntigravityInstallation({
-    baseDir,
+    toolsDir: path.join(baseDir, "tools"),
     releaseAsset: asset,
     ...(options.useDefaultValidation
       ? {}

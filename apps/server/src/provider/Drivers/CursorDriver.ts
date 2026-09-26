@@ -99,7 +99,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const credentials = yield* CursorCredentialStore.makeCursorCredentialStore(
         instanceId,
         path.join(
-          (yield* ServerConfig).stateDir,
+          (yield* ServerConfig).dataDir,
           "provider-auth",
           encodeURIComponent(instanceId),
           "cursor.json",

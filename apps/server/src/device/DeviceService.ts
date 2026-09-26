@@ -1001,7 +1001,7 @@ export const make = Effect.gen(function* () {
     [localHost.id, localHost],
   ]);
   const configureAgent = (hostId: DeviceHostId, ready: DeviceHost.DeviceHostAgentReady) => {
-    const file = agentDeviceConfigPath(config.stateDir, hostId, path);
+    const file = agentDeviceConfigPath(config.dataDir, hostId, path);
     return writeAgentDeviceConfig(file, ready.agentDevice).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
@@ -1040,7 +1040,7 @@ export const make = Effect.gen(function* () {
       ),
     configureAgent,
     (tool) =>
-      (tool === "hub" ? ensureDeviceHub(config.baseDir) : ensureAgentDevice(config.baseDir)).pipe(
+      (tool === "hub" ? ensureDeviceHub(config.toolsDir) : ensureAgentDevice(config.toolsDir)).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -1092,7 +1092,7 @@ export const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* Scope.close(scope, Exit.void);
             yield* fs
-              .remove(agentDeviceConfigPath(config.stateDir, id, path), { force: true })
+              .remove(agentDeviceConfigPath(config.dataDir, id, path), { force: true })
               .pipe(Effect.ignore);
           }),
         { concurrency: 4, discard: true },
@@ -1143,7 +1143,7 @@ export const make = Effect.gen(function* () {
   return {
     ...service,
     agentCli: resolveNodeExecutable("Device automation").pipe(
-      Effect.andThen(ensureAgentDevice(config.baseDir)),
+      Effect.andThen(ensureAgentDevice(config.toolsDir)),
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.provideService(ProcessRunner.ProcessRunner, runner),

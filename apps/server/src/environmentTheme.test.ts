@@ -49,7 +49,7 @@ const withEnvironmentThemes = <A, E>(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-environment-theme-" });
-    const themesDir = path.join(baseDir, "userdata", "themes");
+    const themesDir = path.join(baseDir, "config", "themes");
     yield* fs.makeDirectory(themesDir, { recursive: true });
     for (const [filename, contents] of Object.entries(seeds)) {
       yield* fs.writeFileString(path.join(themesDir, filename), contents);
@@ -235,7 +235,7 @@ describe("environment theme watching", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-theme-watch-" });
-      const themesDir = path.join(baseDir, "userdata", "themes");
+      const themesDir = path.join(baseDir, "config", "themes");
       yield* fs.makeDirectory(themesDir, { recursive: true });
 
       yield* Effect.gen(function* () {

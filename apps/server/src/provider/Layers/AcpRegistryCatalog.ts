@@ -1,6 +1,5 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 
 import { ServerConfig } from "../../config.ts";
 import { AcpRegistryCatalog } from "../acp/AcpRegistrySupport.ts";
@@ -11,10 +10,9 @@ export const AcpRegistryCatalogLive = Layer.merge(
   Layer.unwrap(
     Effect.gen(function* () {
       const config = yield* ServerConfig;
-      const path = yield* Path.Path;
       return AcpRegistryCatalog.layer({
-        cacheDir: config.providerStatusCacheDir,
-        toolsDir: path.join(config.baseDir, "tools"),
+        cacheDir: config.cacheDir,
+        toolsDir: config.toolsDir,
       });
     }),
   ),

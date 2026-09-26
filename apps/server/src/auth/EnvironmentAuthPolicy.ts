@@ -44,7 +44,7 @@ export const make = Effect.gen(function* () {
       mode: config.mode,
       port: config.port,
       host: config.host,
-      instanceKey: config.stateDir,
+      instanceKey: config.dataDir,
       environmentId: yield* serverEnvironment.getEnvironmentId,
       development: config.devUrl !== undefined,
     }),

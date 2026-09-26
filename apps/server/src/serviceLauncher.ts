@@ -8,7 +8,10 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+
+import { resolveHalC2Dirs } from "@hal-c2/shared/xdgDirs";
 
 import type {
   PendingServiceUpdate,
@@ -46,8 +49,8 @@ interface ManagedChild {
 // Mirrors pinnedRuntimePaths: a runtime is an unpacked release archive whose
 // executable runs on its own. Kept inline so this file stays on Node
 // built-ins only.
-const runtimePaths = (baseDir: string, version: string) => {
-  const versionDir = NodePath.join(baseDir, "runtime", "versions", version);
+const runtimePaths = (dataDir: string, version: string) => {
+  const versionDir = NodePath.join(dataDir, "runtime", "versions", version);
   // oxlint-disable-next-line hal-c2/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const executableName = process.platform === "win32" ? "hal-c2.exe" : "hal-c2";
   return {
@@ -66,8 +69,8 @@ const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
 const RESTORE_MARKER = ".restore-pending";
 
-const databaseBackupDir = (baseDir: string, updateId: string) =>
-  NodePath.join(baseDir, "runtime", "db-backup", updateId);
+const databaseBackupDir = (dataDir: string, updateId: string) =>
+  NodePath.join(dataDir, "runtime", "db-backup", updateId);
 
 const databaseBackupFile = (backupDir: string, suffix: (typeof DB_FILE_SUFFIXES)[number]) =>
   NodePath.join(backupDir, suffix === "" ? "database" : `database${suffix}`);
@@ -111,8 +114,8 @@ async function syncDirectory(directory: string): Promise<void> {
  * backup is never overwritten because a restarted launcher may be looking at
  * database writes from an earlier attempt by the same trial.
  */
-async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {
-  const backupDir = databaseBackupDir(baseDir, pending.id);
+async function backupDatabaseOnce(dataDir: string, pending: PendingServiceUpdate): Promise<void> {
+  const backupDir = databaseBackupDir(dataDir, pending.id);
   if (await pathExists(backupDir)) return;
 
   const stagingDir = `${backupDir}.staging`;
@@ -134,11 +137,11 @@ async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate
   }
 }
 
-const restoreMarkerPath = (baseDir: string, updateId: string) =>
-  NodePath.join(databaseBackupDir(baseDir, updateId), RESTORE_MARKER);
+const restoreMarkerPath = (dataDir: string, updateId: string) =>
+  NodePath.join(databaseBackupDir(dataDir, updateId), RESTORE_MARKER);
 
-const databaseRestorePending = (baseDir: string, pending: PendingServiceUpdate) =>
-  pathExists(restoreMarkerPath(baseDir, pending.id));
+const databaseRestorePending = (dataDir: string, pending: PendingServiceUpdate) =>
+  pathExists(restoreMarkerPath(dataDir, pending.id));
 
 /** Mark rollback before changing live files so launcher recovery cannot boot a partial restore. */
 async function markDatabaseRestorePending(backupDir: string): Promise<void> {
@@ -156,10 +159,10 @@ async function markDatabaseRestorePending(backupDir: string): Promise<void> {
 
 /** Restore is retryable after any process crash while the backup directory remains. */
 async function restoreDatabaseBackup(
-  baseDir: string,
+  dataDir: string,
   pending: PendingServiceUpdate,
 ): Promise<void> {
-  const backupDir = databaseBackupDir(baseDir, pending.id);
+  const backupDir = databaseBackupDir(dataDir, pending.id);
   if (!(await pathExists(backupDir))) return;
 
   await markDatabaseRestorePending(backupDir);
@@ -176,8 +179,8 @@ async function restoreDatabaseBackup(
   await syncDirectory(NodePath.dirname(pending.dbPath));
 }
 
-async function discardDatabaseBackup(baseDir: string, updateId: string): Promise<void> {
-  const backupDir = databaseBackupDir(baseDir, updateId);
+async function discardDatabaseBackup(dataDir: string, updateId: string): Promise<void> {
+  const backupDir = databaseBackupDir(dataDir, updateId);
   if (!(await pathExists(backupDir))) return;
   await NodeFSP.rm(backupDir, { recursive: true, force: true });
   await syncDirectory(NodePath.dirname(backupDir));
@@ -213,8 +216,8 @@ export async function writeServiceState(filePath: string, state: ServiceState): 
   }
 }
 
-async function runtimeExists(baseDir: string, version: string): Promise<boolean> {
-  const paths = runtimePaths(baseDir, version);
+async function runtimeExists(dataDir: string, version: string): Promise<boolean> {
+  const paths = runtimePaths(dataDir, version);
   try {
     const [entry, sentinel] = await Promise.all([
       NodeFSP.stat(paths.entryPath),
@@ -272,13 +275,22 @@ async function terminateChild(
   }
 }
 
-const stopMarkerPath = (baseDir: string) =>
-  NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
-const restartPendingPath = (baseDir: string) =>
-  NodePath.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
+const stopMarkerPath = (stateDir: string) => NodePath.join(stateDir, SERVICE_STOP_MARKER_FILE);
+const restartPendingPath = (stateDir: string) =>
+  NodePath.join(stateDir, SERVICE_RESTART_PENDING_FILE);
+
+/**
+ * Where the launcher keeps its files: installed runtimes and database backups
+ * in `<data>/runtime`, its state and markers directly in the state dir.
+ */
+export interface LauncherDirs {
+  readonly dataDir: string;
+  readonly stateDir: string;
+}
 
 export class Launcher {
-  readonly #baseDir: string;
+  readonly #dataDir: string;
+  readonly #stateDir: string;
   readonly #statePath: string;
   #state: ServiceState;
   #child: ManagedChild | null = null;
@@ -289,9 +301,10 @@ export class Launcher {
   #done = false;
   readonly #completion = Promise.withResolvers<void>();
 
-  constructor(baseDir: string, state: ServiceState) {
-    this.#baseDir = baseDir;
-    this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
+  constructor(dirs: LauncherDirs, state: ServiceState) {
+    this.#dataDir = dirs.dataDir;
+    this.#stateDir = dirs.stateDir;
+    this.#statePath = NodePath.join(dirs.stateDir, SERVICE_STATE_FILE);
     this.#state = state;
   }
 
@@ -336,7 +349,7 @@ export class Launcher {
     // launchd signals only the job's main process (this launcher), so the
     // marker lands before the child sees any signal on both platforms.
     try {
-      NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
+      NodeFS.writeFileSync(stopMarkerPath(this.#stateDir), "", { mode: 0o600 });
     } catch {
       // Err toward keeping the tunnel; the next link or unlink reconciles it.
     }
@@ -373,8 +386,8 @@ export class Launcher {
     // the version the marker waits for: a launcher that came up between the
     // CLI writing the marker and writing the new state still runs the old
     // version, and the marker has to outlive it.
-    await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
-    const restartPending = restartPendingPath(this.#baseDir);
+    await NodeFSP.rm(stopMarkerPath(this.#stateDir), { force: true }).catch(() => undefined);
+    const restartPending = restartPendingPath(this.#stateDir);
     const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(() => undefined);
     if (awaitedVersion?.trim() === this.#state.activeVersion) {
       await NodeFSP.rm(restartPending, { force: true }).catch(() => undefined);
@@ -382,16 +395,16 @@ export class Launcher {
     const update = this.#state.update;
     if (update?.status !== "pending") {
       if (update !== undefined) {
-        await discardDatabaseBackup(this.#baseDir, update.id).catch(() => undefined);
+        await discardDatabaseBackup(this.#dataDir, update.id).catch(() => undefined);
       }
       await this.#startChild(this.#state.activeVersion, "active", update);
       return;
     }
-    if (await databaseRestorePending(this.#baseDir, update)) {
+    if (await databaseRestorePending(this.#dataDir, update)) {
       await this.#returnToPrevious(update, "failed", "rollback-interrupted");
       return;
     }
-    if (!(await runtimeExists(this.#baseDir, update.targetVersion))) {
+    if (!(await runtimeExists(this.#dataDir, update.targetVersion))) {
       await this.#returnToPrevious(update, "failed", "target-runtime-missing");
       return;
     }
@@ -401,7 +414,7 @@ export class Launcher {
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
     // The previous child is dead here, so all three SQLite files are quiescent.
     try {
-      await backupDatabaseOnce(this.#baseDir, pending);
+      await backupDatabaseOnce(this.#dataDir, pending);
     } catch {
       await this.#returnToPrevious(pending, "failed", "db-backup-failed");
       return;
@@ -415,11 +428,11 @@ export class Launcher {
 
   async #startChild(version: string, role: ChildRole, update?: ServiceUpdateRecord): Promise<void> {
     if (this.#stopping) return;
-    if (!(await runtimeExists(this.#baseDir, version))) {
+    if (!(await runtimeExists(this.#dataDir, version))) {
       throw new Error(`Selected hal-c2@${version} runtime is missing or incomplete.`);
     }
     if (this.#stopping) return;
-    const paths = runtimePaths(this.#baseDir, version);
+    const paths = runtimePaths(this.#dataDir, version);
     const context: ServiceLauncherContext = {
       protocol: SERVICE_LAUNCHER_PROTOCOL,
       childVersion: version,
@@ -505,7 +518,7 @@ export class Launcher {
       await reject("The requested database path is not absolute.");
       return;
     }
-    if (!(await runtimeExists(this.#baseDir, message.targetVersion))) {
+    if (!(await runtimeExists(this.#dataDir, message.targetVersion))) {
       await reject("The requested target runtime is missing or incomplete.");
       return;
     }
@@ -559,7 +572,7 @@ export class Launcher {
     await writeServiceState(this.#statePath, next);
     this.#state = next;
     child.role = "active";
-    await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
+    await discardDatabaseBackup(this.#dataDir, committed.id).catch(() => undefined);
     await sendMessage(child.process, { type: "committed", updateId: committed.id });
   }
 
@@ -612,7 +625,7 @@ export class Launcher {
       this.#child = null;
       await terminateChild(child.process);
     }
-    await restoreDatabaseBackup(this.#baseDir, pending);
+    await restoreDatabaseBackup(this.#dataDir, pending);
     const outcome = terminalUpdate({ pending, status, reason });
     const next: ServiceState = {
       ...this.#state,
@@ -621,18 +634,22 @@ export class Launcher {
     };
     await writeServiceState(this.#statePath, next);
     this.#state = next;
-    await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
+    await discardDatabaseBackup(this.#dataDir, pending.id).catch(() => undefined);
     await this.#startChild(next.activeVersion, "active", outcome);
   }
 }
 
 export async function main(): Promise<void> {
-  // Units installed before the rename still export T3CODE_HOME.
-  const baseDir = process.env.HAL_C2_HOME?.trim() || process.env.T3CODE_HOME?.trim();
-  if (baseDir === undefined || baseDir === "") {
-    throw new Error("HAL_C2_HOME is required by the HAL-C2 service launcher.");
-  }
-  const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
-  const state = await readServiceState(statePath);
-  await new Launcher(baseDir, state).run();
+  // The unit names HAL_C2_HOME only when the user chose one; otherwise the
+  // launcher, like the server it starts, uses the XDG directories. Units from
+  // before that name an old home (or T3CODE_HOME) fall through to XDG too.
+  const dirs = resolveHalC2Dirs({
+    env: process.env,
+    homeDir: NodeOS.homedir(),
+    // oxlint-disable-next-line hal-c2/no-global-process-runtime -- Standalone launcher has no Effect runtime.
+    platform: process.platform,
+  });
+  const launcherDirs = { dataDir: dirs.data, stateDir: dirs.state };
+  const state = await readServiceState(NodePath.join(launcherDirs.stateDir, SERVICE_STATE_FILE));
+  await new Launcher(launcherDirs, state).run();
 }
