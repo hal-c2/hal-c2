@@ -136,14 +136,14 @@ Feature: Carrying an agent's own session to another machine
       | provider | record                                        |
       | Pi       | the working directory in the session's header |
 
-  @backlog @node
+  @node
   Scenario: A provider plugin declares how its sessions are carried
     Given a provider plugin that declares native sessions
     And it declares where a session lives and how a copy is placed for another project
     When a thread on it moves to another machine
     Then its session is carried the way the plugin declares
 
-  @backlog @node
+  @node
   Scenario: A provider plugin without native sessions hands the conversation over
     Given a provider plugin that does not declare native sessions
     When a thread on it moves to another machine

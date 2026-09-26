@@ -18,17 +18,20 @@ defmodule HalC2.PortableSessions do
       whose `session_meta` and `turn_context` records carry the cwd.
     * Pi: `<PI_CODING_AGENT_SESSION_DIR or <PI_CODING_AGENT_DIR or ~/.pi/agent>/sessions>
       /--<cwd, slashes as dashes>--/<file>.jsonl`, whose header records the cwd.
+    * A provider plugin that declares `native_sessions` says itself, with its
+      `session_files/2` and `place_session/3` (`HalC2.Plugins.ProviderAdapter`).
 
   A copy never replaces a file already there: the machine keeps the copy it had, and
   since the destination branches a new session, no two sessions share an id.
   """
 
+  require Logger
   alias HalC2.StreamState
 
   @drivers ~w(claudeAgent codex pi)
 
   @doc "Whether a provider driver's sessions can be carried."
-  def carries?(driver), do: driver in @drivers
+  def carries?(driver), do: driver in @drivers or plugin(driver) != nil
 
   @doc """
   The session a thread carries: `%{driver, instanceId, providerThreadId, nativeId,
@@ -37,13 +40,13 @@ defmodule HalC2.PortableSessions do
   """
   def export(state, thread, cwd) do
     with %{} = provider_thread <- provider_thread(state, thread),
-         driver when driver in @drivers <- provider_thread["driver"],
+         driver = provider_thread["driver"],
          instance = provider_thread["providerInstanceId"] || driver,
-         {native_id, main} when is_binary(main) <-
-           source(driver, instance, provider_thread, cwd),
+         {native_id, [{_, main} | _] = found} <-
+           session_files(driver, instance, provider_thread, cwd),
          true <- File.regular?(main) do
       files =
-        for {name, path} <- files(driver, instance, main),
+        for {name, path} <- found,
             {:ok, data} <- [File.read(path)],
             do: %{
               "fileName" => name,
@@ -68,8 +71,17 @@ defmodule HalC2.PortableSessions do
   Places a carried session (decoded, each file's bytes under `"data"`) for the
   project at `root`: `{%{providerThreadId, carriedSession} | nil, notes}`.
   """
-  def place(%{"driver" => driver, "files" => [_ | _] = files} = session, root, archive)
-      when driver in @drivers do
+  def place(%{"driver" => driver, "files" => [_ | _]} = session, root, archive) do
+    cond do
+      module = plugin(driver) -> place_plugin(module, session, root, archive)
+      driver in @drivers -> place_own(session, root, archive)
+      true -> {nil, []}
+    end
+  end
+
+  def place(_session, _root, _archive), do: {nil, []}
+
+  defp place_own(%{"driver" => driver, "files" => files} = session, root, archive) do
     instance = session["instanceId"] || driver
     from = session["cwd"]
     {base, main_name} = target(driver, instance, root, session)
@@ -108,7 +120,54 @@ defmodule HalC2.PortableSessions do
     end
   end
 
-  def place(_session, _root, _archive), do: {nil, []}
+  # The plugin places the copy itself; the next run continues from the id it answers.
+  defp place_plugin(module, %{"driver" => driver} = session, root, archive) do
+    files =
+      for %{"fileName" => name, "data" => data} <- session["files"], safe?(name), do: {name, data}
+
+    case plugin_call(fn -> module.place_session(files, session["cwd"], root) end) do
+      {:ok, native_id} when is_binary(native_id) ->
+        {%{
+           "providerThreadId" => session["providerThreadId"],
+           "carriedSession" => %{
+             "driver" => driver,
+             "instanceId" => session["instanceId"] || driver,
+             "nativeId" => native_id,
+             "path" => nil,
+             "from" => get_in(archive, ["thread", "machine"])
+           }
+         }, []}
+
+      _ ->
+        {nil, []}
+    end
+  end
+
+  # A plugin that fails leaves the session behind: the thread still moves, with the handoff.
+  defp plugin_call(fun) do
+    fun.()
+  catch
+    kind, reason ->
+      Logger.warning(
+        "a provider plugin could not carry a session: #{Exception.format_banner(kind, reason)}"
+      )
+
+      nil
+  end
+
+  # The module of the provider plugin serving `driver` when it declares native sessions
+  # and says where they live and how a copy is placed.
+  defp plugin(driver) do
+    with %{} = provider <- HalC2.Plugins.declared(driver),
+         true <- :native_sessions in List.wrap(provider[:capabilities]),
+         {:ok, _driver, module} <- HalC2.Plugins.provider(driver),
+         true <- function_exported?(module, :session_files, 2),
+         true <- function_exported?(module, :place_session, 3) do
+      module
+    else
+      _ -> nil
+    end
+  end
 
   # --- source ----------------------------------------------------------------------
 
@@ -121,6 +180,24 @@ defmodule HalC2.PortableSessions do
       |> Map.values()
       |> Enum.filter(&(&1["appThreadId"] == thread["id"]))
       |> Enum.max_by(&(&1["lastRunOrdinal"] || 0), fn -> nil end)
+  end
+
+  # `{native id, [{name, path}]}` with the main file first, or nil.
+  defp session_files(driver, instance, provider_thread, cwd) do
+    cond do
+      module = plugin(driver) ->
+        with id when is_binary(id) <-
+               get_in(provider_thread, ["nativeThreadRef", "nativeId"]) ||
+                 get_in(provider_thread, ["carriedSession", "nativeId"]),
+             do: {id, plugin_call(fn -> module.session_files(id, cwd) end)}
+
+      driver in @drivers ->
+        with {id, main} when is_binary(main) <- source(driver, instance, provider_thread, cwd),
+             do: {id, files(driver, instance, main)}
+
+      true ->
+        nil
+    end
   end
 
   # `{native id, the session's main file}`: the native session the provider thread

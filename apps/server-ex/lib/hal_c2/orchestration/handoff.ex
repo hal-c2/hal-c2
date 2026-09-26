@@ -99,9 +99,9 @@ defmodule HalC2.Orchestration.Handoff do
 
   # A session carried from another machine (`HalC2.PortableSessions`): the run
   # branches a new session from the copy. Claude and Pi find the copy by its path,
-  # Codex by its thread id and the rollout's path.
+  # Codex and provider plugins by the id it was placed under.
   defp carried(%{"carriedSession" => %{"driver" => driver} = session}, driver, true) do
-    thread = if driver == "codex", do: session["nativeId"], else: session["path"]
+    thread = if driver in ~w(claudeAgent pi), do: session["path"], else: session["nativeId"]
     %{thread: thread, turn: nil, path: session["path"], carried: true, from: session["from"]}
   end
 

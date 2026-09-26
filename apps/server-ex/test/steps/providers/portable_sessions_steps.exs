@@ -493,6 +493,88 @@ defmodule HalC2.Steps.Providers.PortableSessions do
     context
   end
 
+  # --- provider plugins -------------------------------------------------------------------
+
+  step "a provider plugin that declares native sessions", context do
+    install_plugin(context, "relay", true)
+  end
+
+  step "a provider plugin that does not declare native sessions", context do
+    install_plugin(context, "courier", false)
+  end
+
+  step "it declares where a session lives and how a copy is placed for another project",
+       context do
+    module = plugin_module(context.plugin)
+    assert :native_sessions in HalC2.Plugins.declared(context.plugin).capabilities
+    assert function_exported?(module, :session_files, 2)
+    assert function_exported?(module, :place_session, 3)
+    context
+  end
+
+  step "a thread on it moves to another machine", context do
+    title = "Alpha"
+    selection = %{"instanceId" => context.plugin, "model" => "#{context.plugin}-1"}
+    context = World.patch_thread(context, title, %{"modelSelection" => selection})
+    assert %{"status" => "completed"} = World.finish_turn(context, title, "write run-1.txt")
+    [pt] = HalC2.StreamState.list(World.state(context, title), "provider-thread")
+    native = get_in(pt, ["nativeThreadRef", "nativeId"])
+    assert is_binary(native)
+    local = local(context)
+    [to] = Map.keys(context.machines) -- [local]
+    id = World.thread_id(context, title)
+    move = Machines.on(context, local, HalC2.ThreadMove, :move, [id, to, [confirmed: true]])
+
+    Map.merge(context, %{
+      moved_title: title,
+      move: move,
+      move_to: to,
+      plugin_session: %{native: native, selection: selection}
+    })
+  end
+
+  step "its session is carried the way the plugin declares", context do
+    assert %{"sessionCarried" => true} = move_result(context)
+    %{move_to: to, plugin: plugin, plugin_session: %{native: native} = session} = context
+    from = root(context, local(context))
+    here = root(context, to)
+
+    # The plugin placed the copy where it keeps sessions for the checkout there.
+    copy = plugin_session_path(context, to, plugin, native, here)
+    original = File.read!(plugin_session_path(context, local(context), plugin, native, from))
+    assert Machines.on(context, to, File, :read!, [copy]) == moved(original, from, here)
+
+    id = World.thread_id(context, context.moved_title)
+    [pt] = Machines.on(context, to, Machines, :entities, [id, "provider-thread"])
+    assert %{"carriedSession" => %{"driver" => ^plugin, "nativeId" => ^native}} = pt
+
+    # The next message branches a new session from the copy, which stays as it arrived.
+    run = Machines.on(context, to, Machines, :send_message, [id, "Carry on", session.selection])
+    assert run["status"] == "completed"
+    [reply | _] = replies(context, to, id)
+    refute reply =~ "with the history"
+    assert [_, branch] = Regex.run(~r/session (\S+) holds 2 messages/, reply)
+    assert branch != native
+    assert Machines.on(context, to, File, :read!, [copy]) == moved(original, from, here)
+    context
+  end
+
+  step "the next message on the destination starts a new session with the handoff", context do
+    assert %{"sessionCarried" => false} = move_result(context)
+    %{move_to: to, plugin_session: session} = context
+    id = World.thread_id(context, context.moved_title)
+
+    for pt <- Machines.on(context, to, Machines, :entities, [id, "provider-thread"]),
+        do: assert(pt["carriedSession"] == nil and pt["nativeThreadRef"] == nil)
+
+    run = Machines.on(context, to, Machines, :send_message, [id, "Carry on", session.selection])
+    assert run["status"] == "completed"
+    [reply | _] = replies(context, to, id)
+    assert [_, started] = Regex.run(~r/session (\S+) holds 1 messages with the history/, reply)
+    assert started != session.native
+    context
+  end
+
   # --- helpers ---------------------------------------------------------------------------
 
   # "~/..." on a machine: under its user home.
@@ -582,6 +664,131 @@ defmodule HalC2.Steps.Providers.PortableSessions do
       :local -> Path.join([context.node.home, "tmp", "fake-acp"])
       %{home: home} -> Path.join(home, "fake-acp")
     end
+  end
+
+  # A provider plugin on every machine that keeps its own sessions, one JSON line per
+  # message under `~/.<id>/sessions/<cwd, slashes as dashes>/<id>.jsonl`; with
+  # `sessions?` it declares native sessions and how they are carried.
+  defp install_plugin(context, id, sessions?) do
+    source = plugin_source(id, sessions?)
+
+    for {label, _machine} <- context.machines do
+      if label == local(context) do
+        Node.ensure(HalC2.Settings)
+        Node.ensure(HalC2.Plugins)
+      end
+
+      dir = Path.join(Machines.home(context, label), "plugins")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "#{id}.ex"), source)
+      {:ok, _} = Machines.on(context, label, HalC2.Plugins, :handle, ["rescan", %{}])
+      {:ok, _} = Machines.on(context, label, HalC2.Plugins, :handle, ["enable", %{"id" => id}])
+    end
+
+    Map.put(context, :plugin, id)
+  end
+
+  defp plugin_module(id), do: Module.concat(HalC2PluginFixture, Macro.camelize(id))
+
+  defp plugin_session_path(context, machine, id, native, cwd),
+    do:
+      Path.join([
+        Machines.user_home(context, machine),
+        ".#{id}",
+        "sessions",
+        String.replace(cwd, "/", "-"),
+        "#{native}.jsonl"
+      ])
+
+  defp plugin_source(id, sessions?) do
+    capabilities = if sessions?, do: [:native_sessions], else: []
+
+    carrying =
+      if sessions?,
+        do: ~S"""
+          def session_files(native_id, cwd) do
+            path = path(native_id, cwd)
+            if File.regular?(path), do: [{Path.basename(path), path}], else: []
+          end
+
+          def place_session([{main, _} | _] = files, from, to) do
+            dir = Path.dirname(path("copy", to))
+            File.mkdir_p!(dir)
+
+            for {name, data} <- files, path = Path.join(dir, name), not File.exists?(path),
+                do: File.write!(path, String.replace(data, JSON.encode!(from), JSON.encode!(to)))
+
+            {:ok, Path.rootname(main)}
+          end
+        """,
+        else: ""
+
+    """
+    defmodule #{inspect(plugin_module(id))} do
+      @behaviour HalC2.Plugins.ProviderAdapter
+      alias HalC2.Orchestration.TurnWriter
+
+      @provider #{inspect(%{driver: id, name: Macro.camelize(id), capabilities: capabilities, models: [%{slug: "#{id}-1", name: "#{Macro.camelize(id)} One"}]})}
+
+      def manifest,
+        do: %{id: #{inspect(id)}, name: #{inspect(Macro.camelize(id))}, version: "1.0.0", api_version: 1, settings: [], provider: @provider}
+
+      def start_turn(thread_id, turn) do
+        {:ok, _} =
+          DynamicSupervisor.start_child(HalC2.Plugins.sessions(#{inspect(id)}), %{
+            id: :turn,
+            start: {Task, :start_link, [fn -> run(thread_id, turn) end]},
+            restart: :temporary
+          })
+
+        :ok
+      end
+
+    #{carrying}
+
+      # Continues its session, branches a new one from a carried copy, or starts one.
+      defp run(thread_id, turn) do
+        ids = Map.put(turn.ids, :provider_turn, "provider-turn:#{id}:\#{turn.ids.run}")
+        state = %{thread_id: thread_id, turn: %{turn | ids: ids}, items: %{}, buffer: %{}, flush_timer: nil}
+        TurnWriter.started(state)
+
+        {session, earlier} =
+          case turn do
+            %{fork: %{carried: true, thread: copy}} -> {fresh(), File.read!(path(copy, turn.cwd))}
+            %{native_thread_id: native} when is_binary(native) -> {native, ""}
+            _ -> {fresh(), ""}
+          end
+
+        path = path(session, turn.cwd)
+        File.mkdir_p!(Path.dirname(path))
+        File.write!(path, earlier <> JSON.encode!(%{"cwd" => turn.cwd, "user" => turn.text}) <> "\\n", [:append])
+        count = path |> File.read!() |> String.split("\\n", trim: true) |> length()
+
+        if session != turn.native_thread_id do
+          TurnWriter.commit(state, fn stream ->
+            [
+              HalC2.Orchestration.upsert(stream, "provider-thread", ids.provider_thread, fn thread ->
+                Map.put(thread, "nativeThreadRef", HalC2.Orchestration.Entities.provider_ref(session, ids.driver))
+              end)
+            ]
+          end)
+        end
+
+        history = if turn.text =~ "<conversation_history>", do: " with the history", else: ""
+        text = "session \#{session} holds \#{count} messages\#{history}"
+        state = TurnWriter.ensure_item(state, "answer", :assistant)
+        TurnWriter.finish_item(state, "answer", "completed", &Map.merge(&1, %{"text" => text, "streaming" => false}))
+        TurnWriter.finish(state, "completed", nil)
+      end
+
+      defp fresh, do: "#{id}-\#{System.unique_integer([:positive])}"
+
+      defp path(session, cwd) do
+        home = Application.get_env(:hal_c2, :agent_sessions_home) || System.user_home!()
+        Path.join([home, ".#{id}", "sessions", String.replace(cwd, "/", "-"), session <> ".jsonl"])
+      end
+    end
+    """
   end
 
   defp move_result(%{move: {:ok, %{"status" => "moved"} = result}}), do: result
