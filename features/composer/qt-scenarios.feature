@@ -1,6 +1,7 @@
 # Sources:
 #   apps/desktop-qt/tests/tst_Scenarios.qml (composer scenarios)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml
+#   apps/web/src/components/chat/ModelPickerContent.tsx, apps/web/src/components/chat/ModelPickerSidebar.tsx (the picker the native one copies)
 
 Feature: Desktop shell scenarios: composer
   Executable scenarios for the native desktop composer, driven through the shell's test
@@ -32,3 +33,75 @@ Feature: Desktop shell scenarios: composer
     Then the model picker is open
     When the page asks to toggle the model picker again
     Then the model picker is closed
+
+  @backlog @desktop
+  Scenario: The model picker has a section for each provider the page lists
+    Given the page lists models from Codex and Claude
+    When the page asks to toggle the model picker
+    Then the model picker offers a Codex section and a Claude section
+    And the Codex section lists only Codex's models
+
+  @backlog @desktop
+  Scenario: The model picker names the chosen model and its provider
+    Given the page lists models from Codex and Claude
+    And the page has chosen "Claude Opus" on Claude
+    Then the model picker shows "Claude Opus" marked as a Claude model
+
+  @backlog @desktop
+  Scenario: Choosing a model in the picker asks the page to switch
+    Given the page lists models from Codex and Claude
+    When the page asks to toggle the model picker
+    And the user chooses "Claude Opus"
+    Then the page is asked to switch to "opus" on Claude
+    And the model picker is closed
+
+  @backlog @desktop
+  Scenario: Searching the model picker matches provider and model names
+    Given the page lists models from Codex and Claude
+    When the page asks to toggle the model picker
+    And the user searches for "claude"
+    Then only Claude's models are listed
+
+  @backlog @desktop
+  Scenario: Favourite models are listed first and can be unfavourited
+    Given the page lists "Claude Opus" as a favourite
+    When the page asks to toggle the model picker
+    Then the favourites list "Claude Opus" first
+    When the user removes "Claude Opus" from the favourites
+    Then the page is asked to toggle "opus" on Claude as a favourite
+
+  @backlog @desktop
+  Scenario: A disabled model shows its reason and cannot be chosen
+    Given the page says "GPT-5.5" cannot be used because "Start a new thread to use this model."
+    When the page asks to toggle the model picker
+    Then "GPT-5.5" shows "Start a new thread to use this model."
+    When the user chooses "GPT-5.5"
+    Then the page is not asked to switch models
+
+  @backlog @desktop
+  Scenario: An unavailable provider is shown but cannot be chosen
+    Given the page lists Cursor as unavailable because "Cursor — Unavailable. Not installed."
+    When the page asks to toggle the model picker
+    Then Cursor is listed with "Cursor — Unavailable. Not installed."
+    And Cursor cannot be chosen
+
+  @backlog @desktop
+  Scenario: Arrow keys and Enter choose a model
+    Given the page lists models from Codex and Claude
+    When the page asks to toggle the model picker
+    And the user presses Down and then Enter
+    Then the page is asked to switch to the second model listed
+
+  @backlog @desktop
+  Scenario: The provider shortcuts move between providers
+    Given the page lists models from Codex and Claude
+    When the page asks to toggle the model picker
+    And the user presses the next provider shortcut
+    Then only Claude's models are listed
+
+  @backlog @desktop
+  Scenario: A jump shortcut chooses the numbered model
+    Given the page lists models from Codex and Claude
+    When the page asks to toggle the model picker
+    And the user presses the shortcut for the second model
+    Then the page is asked to switch to the second model listed

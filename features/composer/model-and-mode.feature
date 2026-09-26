@@ -6,8 +6,12 @@
 #   apps/tui/src/components/ChatView.tsx (plan toggle, access, model and effort shortcuts)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (thread.runtime-mode.set, thread.interaction-mode.set, thread.model-selection.set)
 #   apps/web/src/components/chat/TraitsPicker.tsx
-#   apps/web/src/components/chat/ModelPickerContent.tsx
-#   apps/web/src/components/chat/ModelPickerSidebar.tsx
+#   apps/web/src/components/chat/ProviderModelPicker.tsx (trigger: provider icon and model name)
+#   apps/web/src/components/chat/ModelPickerContent.tsx (search, favourites, disabled reasons, jump keys)
+#   apps/web/src/components/chat/ModelPickerSidebar.tsx (provider rail, unavailable providers)
+#   apps/web/src/components/chat/ModelListRow.tsx
+#   apps/web/src/components/chat/modelPickerSearch.ts, apps/web/src/components/chat/modelPickerKeys.ts
+#   apps/web/src/modelOrdering.ts (favourites first, user model order)
 #   apps/web/src/composerDraftStore.ts (sticky model selection per provider)
 #   packages/shared/src/keybindings.ts (modelPicker.toggle, modelPicker.previousProvider, modelPicker.nextProvider, modelPicker.jump.1-9, composer.effort, composer.mode, composer.host, composer.workspace, composer.branch, composer.previousWorktree)
 #   packages/contracts/src/settings.ts (planModeEnabled, favorites, providerModelPreferences)
@@ -33,6 +37,71 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Given the Cursor provider is not installed
     When the user looks through the models
     Then Cursor's models cannot be chosen
+
+  @backlog @desktop
+  Scenario: Models are grouped by provider
+    Given Claude and a second Codex instance "Codex Work" are enabled
+    When the user looks through the models
+    Then Codex, "Codex Work" and Claude each list only their own models
+    And a provider that is turned off in settings is not listed
+
+  @backlog @desktop
+  Scenario: The chosen model is shown with its provider
+    When the user chooses the model "gpt-5-codex"
+    Then the composer shows "gpt-5-codex" marked as a Codex model
+
+  @backlog @desktop
+  Scenario Outline: Searching the models matches provider and model names
+    Given Claude is enabled
+    When the user searches the models for "<query>"
+    Then "<found>" is listed
+    And "<missing>" is not listed
+
+    Examples:
+      | query  | found       | missing     |
+      | opus   | opus        | gpt-5-codex |
+      | claude | sonnet      | gpt-5-codex |
+      | codex  | gpt-5-codex | opus        |
+
+  @backlog @desktop
+  Scenario: A model that cannot be used says why and cannot be chosen
+    Given the model "gpt-5.5" cannot be used because "Start a new thread to use this model."
+    When the user looks through the models
+    Then "gpt-5.5" shows "Start a new thread to use this model."
+    And "gpt-5.5" cannot be chosen
+
+  @backlog @desktop
+  Scenario: Unavailable providers stay listed with the reason
+    Given the Cursor provider is not installed
+    When the user looks through the models
+    Then Cursor is listed with the reason it is unavailable
+    And Cursor's models cannot be chosen
+
+  @backlog @desktop
+  Scenario: The user chooses a model with the keyboard
+    When the user opens the model picker
+    And the user moves to the next model and confirms it
+    Then the next turn runs on that model
+
+  @backlog @desktop
+  Scenario: The user moves between providers with the keyboard
+    Given Claude is enabled
+    When the user opens the model picker
+    And the user moves to the next provider
+    Then Claude's models are listed
+
+  @backlog @desktop
+  Scenario: The user jumps to a model by its number
+    When the user opens the model picker
+    And the user presses the shortcut for the second model
+    Then the next turn runs on the second model listed
+
+  @backlog @desktop
+  Scenario: The model picker shortcut opens and closes the model picker
+    When the user presses the model picker shortcut
+    Then the model picker is open
+    When the user presses the model picker shortcut again
+    Then the model picker is closed
 
   @desktop @tui
   Scenario Outline: The user sets the reasoning effort for the next turn
