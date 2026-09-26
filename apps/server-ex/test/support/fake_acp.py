@@ -1,5 +1,7 @@
 # Fake ACP agent (like `opencode acp`) for tests. A prompt containing "wait" runs
-# until session/cancel; "approve" asks permission for a command first.
+# until session/cancel; "approve" asks permission for a command first, offering
+# "Always allow" unless the prompt says "once only". With FAKE_ACP_LOG set, every
+# permission answer is appended to that file as one JSON line.
 import json, os, sys
 
 # With FAKE_AUTH_FILE set, sessions need a sign-in, which creates that file: the
@@ -27,6 +29,7 @@ sessions = 0
 model = "fake/one"  # the session's model, as set_config_option leaves it
 waiting = None      # prompt request id held until cancel
 pending = None      # (prompt id, session id) waiting on a permission answer
+asked = 0           # permission requests so far, numbering their ids
 
 def finish_turn(pid, sid, allowed=True):
     update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "completed",
@@ -40,10 +43,13 @@ def finish_turn(pid, sid, allowed=True):
 for line in sys.stdin:
     msg = json.loads(line)
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
-    if method is None and mid == "perm-1":
+    if method is None and str(mid).startswith("perm-"):
         outcome = msg["result"]["outcome"]
+        if os.environ.get("FAKE_ACP_LOG"):
+            with open(os.environ["FAKE_ACP_LOG"], "a") as log:
+                log.write(json.dumps({"method": "response", "params": {"id": mid, "result": msg["result"]}}) + "\n")
         pid, sid = pending
-        finish_turn(pid, sid, outcome.get("optionId") == "allow")
+        finish_turn(pid, sid, outcome.get("optionId") in ("allow", "always"))
         continue
     if method is None and mid == "elic-1":
         if msg["result"]["action"] == "accept":
@@ -92,10 +98,12 @@ for line in sys.stdin:
             waiting = (mid, sid)
         elif "approve" in text:
             pending = (mid, sid)
-            send({"id": "perm-1", "method": "session/request_permission", "params": {"sessionId": sid,
+            asked += 1
+            send({"id": "perm-%d" % asked, "method": "session/request_permission", "params": {"sessionId": sid,
                   "toolCall": {"toolCallId": "call-1", "title": "ls", "kind": "execute", "rawInput": {"command": "ls"}},
-                  "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
-                              {"optionId": "deny", "name": "Deny", "kind": "reject_once"}]}})
+                  "options": ([{"optionId": "always", "name": "Always allow", "kind": "allow_always"}] if "once only" not in text else [])
+                             + [{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+                                {"optionId": "deny", "name": "Deny", "kind": "reject_once"}]}})
         else:
             finish_turn(mid, sid)
     elif method == "session/list":

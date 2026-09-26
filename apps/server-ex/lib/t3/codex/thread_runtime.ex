@@ -124,7 +124,7 @@ defmodule T3.Codex.ThreadRuntime do
 
       {:error, reason, state} ->
         Logger.warning("codex turn failed to start: #{inspect(reason)}")
-        finish(state, "failed", "Codex could not start: #{inspect(reason)}")
+        finish(state, "failed", start_failure("Codex", reason))
         {:reply, :ok, %{state | turn: nil}}
     end
   end

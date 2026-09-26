@@ -93,7 +93,7 @@ Feature: Forking threads and merging work back
     When the user switches "Plan billing" to Claude and sends a message
     Then Claude receives the conversation so far ahead of the message
 
-  @backlog @node
+  @node
   Scenario: Returning to an earlier agent only bridges what it missed
     Given "Plan billing" ran on Codex and then on Claude
     When the user switches "Plan billing" back to Codex and sends a message

@@ -20,7 +20,7 @@ defmodule T3.Claude.ThreadRuntime do
   alias T3.Orchestration
   alias T3.Orchestration.Entities
 
-  @state_version 3
+  @state_version 4
 
   # runtimeMode -> the CLI's permission mode; prompts it raises become approval
   # requests the user answers in the client.
@@ -122,7 +122,8 @@ defmodule T3.Claude.ThreadRuntime do
        blocks: %{},
        message_id: nil,
        interrupted: false,
-       # Open permission prompts: request id -> the CLI's control request id.
+       # Open prompts: request id -> `{:permission, control id, tool, suggested rules}`
+       # or `{:question, control id, input}`.
        requests: %{},
        # The session's permission mode, switched before a turn that needs another.
        permission_mode: nil,
@@ -191,7 +192,7 @@ defmodule T3.Claude.ThreadRuntime do
 
       {:error, reason} ->
         Logger.warning("claude turn failed to start: #{inspect(reason)}")
-        finish(state, "failed", "Claude could not start: #{inspect(reason)}")
+        finish(state, "failed", start_failure("Claude", reason))
         {:reply, :ok, %{state | turn: nil}}
     end
   end
@@ -239,13 +240,20 @@ defmodule T3.Claude.ThreadRuntime do
         state = resolve_request(%{state | requests: requests}, request_id, response, status)
         {:reply, :ok, state}
 
-      {control_id, requests} ->
+      {{:permission, control_id, tool, suggestions}, requests} ->
         decision = response["decision"] || "decline"
 
         answer =
-          if decision in ["accept", "acceptForSession", "acceptAlways"],
-            do: :allow,
-            else: {:deny, "The user declined."}
+          case decision do
+            "accept" ->
+              :allow
+
+            session when session in ["acceptForSession", "acceptAlways"] ->
+              {:allow_session, session_rules(tool, suggestions)}
+
+            _ ->
+              {:deny, "The user declined."}
+          end
 
         Session.answer_permission(state.session, control_id, answer)
         state = resolve_request(%{state | requests: requests}, request_id, decision)
@@ -289,7 +297,7 @@ defmodule T3.Claude.ThreadRuntime do
     {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
   end
 
-  def handle_info({:claude, _session, {:permission, id, tool, input, _context}}, state) do
+  def handle_info({:claude, _session, {:permission, id, tool, input, context}}, state) do
     {kind, prompt} =
       cond do
         tool == "Bash" -> {"command", input["command"]}
@@ -299,7 +307,8 @@ defmodule T3.Claude.ThreadRuntime do
       end
 
     {state, request_id} = open_request(flush(state), id, kind, prompt)
-    {:noreply, %{state | requests: Map.put(state.requests, request_id, id)}}
+    request = {:permission, id, tool, context["permission_suggestions"]}
+    {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
   end
 
   def handle_info({:EXIT, session, _reason}, %{session: session} = state) do
@@ -317,7 +326,35 @@ defmodule T3.Claude.ThreadRuntime do
        state
        |> Map.put_new(:permission_mode, nil)
        |> Map.put_new(:steered, false)
+       |> Map.update!(:requests, &upgrade_requests/1)
        |> Map.put(:v, @state_version)}
+
+  # Allowing for the session keeps the CLI's own suggested rules, scoped to this
+  # session, or allows the whole tool when it suggested none.
+  defp session_rules(tool, suggestions) do
+    case suggestions do
+      [_ | _] ->
+        Enum.map(suggestions, &Map.put(&1, "destination", "session"))
+
+      _ ->
+        [
+          %{
+            "type" => "addRules",
+            "rules" => [%{"toolName" => tool}],
+            "behavior" => "allow",
+            "destination" => "session"
+          }
+        ]
+    end
+  end
+
+  # Before session approvals, a pending permission held only its control id.
+  defp upgrade_requests(requests),
+    do:
+      Map.new(requests, fn
+        {id, control_id} when is_binary(control_id) -> {id, {:permission, control_id, nil, nil}}
+        other -> other
+      end)
 
   # AskUserQuestion's questions; each is keyed by its text, as Claude keys answers.
   defp claude_questions(input) do
@@ -421,7 +458,7 @@ defmodule T3.Claude.ThreadRuntime do
 
   defp message(%{"type" => "rate_limit_event", "rate_limit_info" => %{} = info}, state) do
     T3.ProviderUsageLimits.claude_event(info)
-    state
+    rate_limit(info, state)
   end
 
   defp message(_message, %{turn: nil} = state), do: state
@@ -489,11 +526,73 @@ defmodule T3.Claude.ThreadRuntime do
         true -> "completed"
       end
 
-    failure = if status == "failed", do: result["result"] || result["subtype"]
+    failure = if status == "failed", do: failure(result, state.turn)
     end_turn(state, status, failure)
   end
 
   defp message(_message, state), do: state
+
+  # A rejected window pauses Claude inside the turn; the turn's end reports it as a
+  # usage limit resetting at the latest window's reset, as the Node adapter does.
+  defp rate_limit(_info, %{turn: nil} = state), do: state
+
+  defp rate_limit(info, state) do
+    type = info["rateLimitType"] || "unknown"
+
+    overage? =
+      info["overageStatus"] in ["allowed", "allowed_warning"] or info["isUsingOverage"] == true or
+        info["overageInUse"] == true
+
+    limits = Map.get(state.turn, :limits, %{})
+
+    limits =
+      cond do
+        info["status"] == "rejected" and not overage? ->
+          Map.put(limits, type, reset_at(info["resetsAt"]))
+
+        info["status"] in ["allowed", "allowed_warning"] or overage? ->
+          Map.delete(limits, type)
+
+        true ->
+          limits
+      end
+
+    put_in(state.turn[:limits], limits)
+  end
+
+  defp reset_at(seconds) when is_number(seconds) and seconds > 0,
+    do: T3.Projection.JS.iso(trunc(seconds * 1000))
+
+  defp reset_at(_), do: nil
+
+  # A turn stopped by a usage limit fails with a structured `usage_limit` failure.
+  defp failure(result, turn) do
+    limits = Map.get(turn, :limits, %{})
+    reason = result["terminal_reason"]
+    api_status = result["api_error_status"]
+
+    limited? =
+      reason == "blocking_limit" or (result["subtype"] == "success" and api_status == 429) or
+        (limits != %{} and (result["subtype"] != "success" or api_status in [nil, 429]) and
+           reason in [nil, "api_error", "blocking_limit"])
+
+    if limited? do
+      resets = Map.values(limits)
+
+      %{
+        "class" => "usage_limit",
+        "message" =>
+          result["result"] ||
+            "Claude usage limit reached. Send the message again once the limit resets.",
+        "code" =>
+          if(api_status, do: "api_error_#{api_status}", else: reason || result["subtype"]),
+        "retryable" => nil,
+        "resetAt" => if(resets != [] and nil not in resets, do: Enum.max(resets))
+      }
+    else
+      result["result"] || result["subtype"]
+    end
+  end
 
   # Partial messages: text and thinking stream into their items as they arrive.
   defp stream_event(%{"type" => "message_start", "message" => %{"id" => id}}, state),

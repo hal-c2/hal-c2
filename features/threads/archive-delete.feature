@@ -116,7 +116,7 @@ Feature: Archiving and deleting threads
     Then no client lists "Old spike"
     And its history can no longer be read
 
-  @backlog @node
+  @node
   Scenario: Deleting a thread with a running agent stops the agent first
     Given the agent is working in "Old spike"
     When the user deletes "Old spike"

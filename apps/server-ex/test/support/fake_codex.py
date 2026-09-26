@@ -1,13 +1,48 @@
 # Fake `codex app-server` for tests: answers the handshake and plays a scripted turn.
 # A turn whose text contains "wait" stays running until turn/interrupt; "approve" asks
-# to run a command, "ask" asks a question (item/tool/requestUserInput), and "write NAME"
+# to run a command, "ask" asks a question (item/tool/requestUserInput; "ask: Q" asks Q), and "write NAME"
 # creates the file NAME. "where are we" says which native thread the turn ran on and whether
-# handed-off history or merged work came with the message.
-import json, os, sys
+# handed-off history or merged work came with the message; "exit before starting" makes
+# the process exit on turn/start. With FAKE_CODEX_LOG set, every request the node sends
+# is appended to that file as one JSON line, and every answer to our own requests as
+# {"method": "response", "params": {"id": ..., "result": ...}}; while the file FAKE_CODEX_REJECT_STEER
+# names exists, turn/steer is refused. "stream ..." turns pace themselves by gate files
+# in FAKE_CODEX_GATE (see stream_reply); "answer from gate" waits for the gate file
+# "answer" and replies with its contents, or with no message when it is empty.
+import json, os, sys, time
 
 def send(msg):
     sys.stdout.write(json.dumps(msg) + "\n")
     sys.stdout.flush()
+
+# Waits until the test creates the file NAME in FAKE_CODEX_GATE: the test's cue that it
+# saw what the reply so far wrote.
+def gate(name):
+    path = os.path.join(os.environ["FAKE_CODEX_GATE"], name)
+    while not os.path.exists(path):
+        time.sleep(0.01)
+
+# "stream paragraphs" writes three paragraphs and a code block in pieces; "stream a reply"
+# writes text while a command runs and the plan changes. Each waits at gates in between.
+def stream_reply(ctx, text):
+    if "stream paragraphs" in text:
+        parts = ["One.\n\nTw", "o.\n\n```\ncode", "\n```\n\nThree."]
+    else:
+        parts = ["Working on it.\n\nStill ", "going.\n\nDone."]
+    msg = {**ctx, "item": {"type": "agentMessage", "id": "msg-stream", "text": ""}}
+    send({"method": "item/started", "params": msg})
+    for i, part in enumerate(parts):
+        if i:
+            gate(f"go-{i}")
+        send({"method": "item/agentMessage/delta", "params": {**ctx, "itemId": "msg-stream", "delta": part}})
+        if i == 0 and "stream a reply" in text:
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-s", "command": "ls", "status": "inProgress"}}})
+            send({"method": "item/commandExecution/outputDelta", "params": {**ctx, "itemId": "cmd-s", "delta": "a.txt\n"}})
+            send({"method": "turn/plan/updated", "params": {**ctx, "plan": [{"step": "List files", "status": "inProgress"}]}})
+    if "stream a reply" in text:
+        send({"method": "item/completed", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-s", "command": "ls", "status": "completed", "aggregatedOutput": "a.txt\n", "exitCode": 0}}})
+    send({"method": "item/completed", "params": {**ctx, "item": {**msg["item"], "text": "".join(parts)}}})
+    send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
 
 thread_id = "native-thread-1"
 # Current Codex keeps paginated history, which only rewinds with thread/revert.
@@ -16,6 +51,12 @@ turns = 0
 for line in sys.stdin:
     msg = json.loads(line)
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
+    if os.environ.get("FAKE_CODEX_LOG") and method:
+        with open(os.environ["FAKE_CODEX_LOG"], "a") as log:
+            log.write(json.dumps({"method": method, "params": params}) + "\n")
+    elif os.environ.get("FAKE_CODEX_LOG") and "result" in msg:
+        with open(os.environ["FAKE_CODEX_LOG"], "a") as log:
+            log.write(json.dumps({"method": "response", "params": {"id": mid, "result": msg["result"]}}) + "\n")
     if mid is None:
         continue
     # A reply to our question: say what was answered.
@@ -46,9 +87,22 @@ for line in sys.stdin:
         turns += 1
         turn_id = f"native-turn-{turns}"
         text = params["input"][0]["text"]
+        if "exit before starting" in text:
+            sys.exit(1)
         send({"id": mid, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
         ctx = {"threadId": thread_id, "turnId": turn_id}
         send({"method": "turn/started", "params": {**ctx, "turn": {"id": turn_id, "status": "inProgress"}}})
+        if "stream paragraphs" in text or "stream a reply" in text:
+            stream_reply(ctx, text)
+            continue
+        if "answer from gate" in text:
+            gate("answer")
+            answer = open(os.path.join(os.environ["FAKE_CODEX_GATE"], "answer")).read()
+            if answer:
+                send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-gate", "text": ""}}})
+                send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-gate", "text": answer}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
+            continue
         if "wait" in text:
             waiting_ctx = ctx
             continue
@@ -89,7 +143,7 @@ for line in sys.stdin:
         if "ask" in text:
             pending_ctx = ctx
             send({"id": "input-1", "method": "item/tool/requestUserInput", "params": {**ctx, "itemId": "ask-1", "questions": [
-                {"id": "color", "header": "Color", "question": "Which color?", "options": [{"label": "Red", "description": "Warm"}]}]}})
+                {"id": "color", "header": "Color", "question": text.split("ask: ", 1)[1] if "ask: " in text else "Which color?", "options": [{"label": "Red", "description": "Warm"}]}]}})
             continue
         if "approve" in text:
             pending_ctx = ctx
@@ -106,7 +160,7 @@ for line in sys.stdin:
         send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
     elif method == "turn/steer":
         ctx = waiting_ctx
-        if params["expectedTurnId"] != ctx["turnId"]:
+        if params["expectedTurnId"] != ctx["turnId"] or os.path.exists(os.environ.get("FAKE_CODEX_REJECT_STEER", "/nonexistent")):
             send({"id": mid, "error": {"code": -32600, "message": "turn moved on"}})
             continue
         send({"id": mid, "result": {"turnId": ctx["turnId"]}})

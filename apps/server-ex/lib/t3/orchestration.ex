@@ -158,7 +158,11 @@ defmodule T3.Orchestration do
          do: {:ok, %{"sequence" => sequence(thread_id)}}
   end
 
+  # The user's stop shows in the transcript as a request, paired with the run's
+  # "Run interrupted" result once the provider stops (`TurnWriter.finish/3`).
   def dispatch(%{"type" => "run.interrupt", "threadId" => thread_id} = command) do
+    T3.Streams.transact(thread_id, :thread, &{interrupt_request(&1, command), :ok})
+
     with :ok <- interrupt_any(thread_id, command["runId"]),
          do: {:ok, %{"sequence" => sequence(thread_id)}}
   end
@@ -317,7 +321,11 @@ defmodule T3.Orchestration do
             {[], {:error, "unknown thread #{thread_id}"}}
 
           thread ->
-            case thread_fields(type, command, thread, at) do
+            case with(
+                   %{} = fields <- thread_fields(type, command, thread, at),
+                   %{} = recovery <- limit_recovery(state, command, thread, at),
+                   do: Map.merge(fields, recovery)
+                 ) do
               {:error, _} = error ->
                 {[], error}
 
@@ -331,6 +339,8 @@ defmodule T3.Orchestration do
     with :ok <- result do
       if type == "thread.metadata.update" and command["regenerateTitle"] == true,
         do: regenerate_title(thread_id)
+
+      if type == "thread.delete", do: stop_runtimes(thread_id)
 
       {:ok, %{"sequence" => sequence(thread_id)}}
     end
@@ -518,7 +528,7 @@ defmodule T3.Orchestration do
       T3.Orchestration.TurnWriter.finish(
         %{thread_id: thread_id, turn: turn},
         "failed",
-        "The provider stopped while starting the turn."
+        T3.Orchestration.TurnWriter.start_failure(nil, :closed)
       )
   end
 
@@ -534,30 +544,81 @@ defmodule T3.Orchestration do
     strategy = input["workspaceStrategy"] || %{"type" => "root"}
     at = Entities.now()
 
+    message = input["initialMessage"]
+
+    # A title asked for is in flight from the start, as a regeneration is.
+    titling =
+      if input["generateTitle"] == true and message != nil and
+           ((message["text"] || "") != "" or (message["attachments"] || []) != []),
+         do: %{"requestId" => input["commandId"] || thread_id, "startedAt" => at}
+
     thread =
       Entities.thread(Map.put(input, "threadId", thread_id), at)
       |> Map.merge(workspace_fields(strategy))
       # A delegated task's thread is a subagent of the thread that asked for it.
       |> Map.merge(Map.take(input, ["lineage"]))
+      |> then(&if(titling, do: Map.put(&1, "titleRegeneration", titling), else: &1))
 
-    {:ok, created} =
+    reuse? = input["reuseExistingThread"] == true
+
+    transacted =
       T3.Streams.transact(thread_id, :thread, fn state ->
         case StreamState.get(state, "thread")[thread_id] do
-          nil -> {[{"thread", thread_id, Patch.diff(nil, thread)}], {:ok, :created}}
-          _ -> {[], {:ok, :resumed}}
+          nil when reuse? ->
+            {[], {:error, "Thread #{thread_id} does not exist."}}
+
+          nil ->
+            {[{"thread", thread_id, Patch.diff(nil, thread)}], {:ok, :created}}
+
+          # A draft the client already created takes the launch's workspace, as
+          # the Node server's `reuseExistingThread` does, but only while empty.
+          existing when reuse? ->
+            if reusable?(state, existing, input["projectId"]) do
+              fields =
+                workspace_fields(strategy)
+                |> then(&if(titling, do: Map.put(&1, "titleRegeneration", titling), else: &1))
+
+              {Enum.reject(
+                 [upsert(state, "thread", thread_id, &Map.merge(&1, fields))],
+                 &is_nil/1
+               ), {:ok, :reused}}
+            else
+              {[],
+               {:error,
+                "Only an empty active thread in the target project can change workspace during launch."}}
+            end
+
+          _ when titling != nil ->
+            change =
+              upsert(state, "thread", thread_id, &Map.put(&1, "titleRegeneration", titling))
+
+            {[change], {:ok, :resumed}}
+
+          _ ->
+            {[], {:ok, :resumed}}
         end
       end)
 
+    with {:ok, created} <- transacted,
+         do: launch_message(thread_id, thread, strategy, input, message, titling, created)
+  end
+
+  defp reusable?(state, thread, project_id) do
+    thread["projectId"] == project_id and thread["archivedAt"] == nil and
+      thread["deletedAt"] == nil and StreamState.get(state, "message") == %{} and
+      StreamState.get(state, "run") == %{}
+  end
+
+  defp launch_message(thread_id, thread, strategy, input, message, titling, created) do
     result = %{"threadId" => thread_id, "resumed" => created == :resumed}
 
-    case input["initialMessage"] do
+    case message do
       nil ->
         {:ok, result}
 
       message ->
-        if input["generateTitle"] == true and
-             ((message["text"] || "") != "" or (message["attachments"] || []) != []),
-           do: generate_title(thread_id, message["text"] || "", message["attachments"] || [])
+        if titling,
+          do: generate_title(thread_id, message["text"] || "", message["attachments"] || [])
 
         command =
           Map.merge(message, %{
@@ -570,7 +631,7 @@ defmodule T3.Orchestration do
           })
 
         launched =
-          if strategy["type"] == "worktree" and created == :created,
+          if strategy["type"] == "worktree" and created in [:created, :reused],
             do: launch_in_worktree(thread_id, thread, strategy, command),
             else: dispatch(command)
 
@@ -609,8 +670,8 @@ defmodule T3.Orchestration do
   # Titles a thread in the background, as the Node server does: from its first
   # message's `text` and `attachments` (tried three times), or, regenerating, from
   # its user and assistant messages and its `previous` title. The thread keeps its
-  # title until a new one arrives; a regeneration that fails or keeps the title
-  # clears the thread's in-flight mark.
+  # title until a new one arrives; generation that fails or keeps the title clears
+  # the thread's in-flight mark (`titleRegeneration`).
   defp generate_title(thread_id, text, attachments, previous \\ nil) do
     Task.start(fn ->
       root =
@@ -629,7 +690,12 @@ defmodule T3.Orchestration do
               {:halt, ok}
 
             error ->
-              if attempt < attempts, do: Process.sleep(2_000 * 2 ** (attempt - 1))
+              if attempt < attempts,
+                do:
+                  Process.sleep(
+                    Application.get_env(:t3, :title_retry_ms, 2_000) * 2 ** (attempt - 1)
+                  )
+
               {:cont, error}
           end
         end)
@@ -651,7 +717,7 @@ defmodule T3.Orchestration do
           unless match?({:ok, _}, failure),
             do: Logger.warning("thread title not generated: #{inspect(failure)}")
 
-          if previous != nil, do: title_settled(thread_id)
+          title_settled(thread_id)
       end
     end)
   end
@@ -697,9 +763,28 @@ defmodule T3.Orchestration do
       {:ok, turn} ->
         :ok = T3.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
         start_turn(thread_id, turn)
+        started(thread_id, run_id)
 
       {:error, _} = error ->
         error
+    end
+  end
+
+  # An agent that cannot start fails its run before `start_turn` returns.
+  defp started(thread_id, run_id) do
+    state = T3.Streams.Server.state(T3.Streams.ensure(thread_id))
+
+    case StreamState.get(state, "run")[run_id] do
+      %{"status" => "failed"} ->
+        error =
+          state
+          |> StreamState.list("provider-session")
+          |> Enum.find_value(& &1["lastError"])
+
+        {:error, error || "the run failed"}
+
+      _ ->
+        :ok
     end
   end
 
@@ -773,6 +858,48 @@ defmodule T3.Orchestration do
   end
 
   defp sequence(thread_id), do: T3.Streams.Server.state(T3.Streams.ensure(thread_id)).seq
+
+  defp interrupt_request(state, command) do
+    runs = StreamState.get(state, "run")
+
+    run =
+      runs[command["runId"]] ||
+        runs |> Map.values() |> Enum.find(&(&1["status"] in @active_statuses))
+
+    item_id = run && "turn-item:run:#{run["id"]}:signal:interrupt-request"
+
+    if run && StreamState.get(state, "turn-item")[item_id] == nil do
+      at = Entities.now()
+
+      ids = %{
+        thread: run["threadId"],
+        run: run["id"],
+        root_node: run["rootNodeId"],
+        provider_thread: run["providerThreadId"]
+      }
+
+      [
+        create(
+          "turn-item",
+          item_id,
+          Entities.turn_item(
+            ids,
+            item_id,
+            "run_interrupt_request",
+            next_ordinal(state),
+            "completed",
+            at,
+            %{
+              "title" => "Interrupt requested",
+              "message" => command["reason"] || "Interrupt requested"
+            }
+          )
+        )
+      ]
+    else
+      []
+    end
+  end
 
   defp restart_promoted(thread_id, command) do
     queued_id = command["queuedRunId"]
@@ -1022,9 +1149,90 @@ defmodule T3.Orchestration do
 
       true ->
         command
-        |> Map.take(~w(title branch worktreePath limitRecovery linkedPullRequest))
+        |> Map.take(~w(title branch worktreePath linkedPullRequest))
         |> Map.put("updatedAt", at)
         |> Map.merge(title_regeneration(command, at))
+    end
+  end
+
+  # Choices about resuming a thread stopped on a usage limit (`T3.Orchestration.LimitRecovery`)
+  # apply to the latest failed run and its reset only; snoozing to the reset sets the
+  # thread's wake time, and turning it off clears a wake time it set.
+  defp limit_recovery(
+         state,
+         %{"type" => "thread.metadata.update", "limitRecovery" => update} = command,
+         thread,
+         at
+       ) do
+    previous = thread["limitRecovery"]
+    now = JS.epoch_ms(at)
+
+    with :ok <- valid_limit_recovery(state, update, thread, now) do
+      same? =
+        previous != nil and update != nil and previous["runId"] == update["runId"] and
+          previous["resetAt"] == update["resetAt"]
+
+      recovery =
+        update &&
+          Map.merge(update, %{
+            "autoResume" => choice(update, previous, same?, "autoResume"),
+            "snooze" => choice(update, previous, same?, "snooze"),
+            "requestId" => command["commandId"]
+          })
+
+      cond do
+        recovery && recovery["snooze"] == true && JS.epoch_ms(recovery["resetAt"]) > now ->
+          %{"snoozedUntil" => recovery["resetAt"], "snoozedAt" => at}
+
+        previous["snooze"] == true and thread["snoozedUntil"] != nil and
+            JS.epoch_ms(thread["snoozedUntil"]) == JS.epoch_ms(previous["resetAt"]) ->
+          %{"snoozedUntil" => nil, "snoozedAt" => nil}
+
+        true ->
+          %{}
+      end
+      |> Map.put("limitRecovery", recovery)
+    end
+  end
+
+  defp limit_recovery(_state, _command, _thread, _at), do: %{}
+
+  # A choice the update leaves out keeps the one made for the same run and reset.
+  defp choice(update, previous, same?, key) do
+    case update[key] do
+      nil -> same? and previous[key] == true
+      value -> value
+    end
+  end
+
+  defp valid_limit_recovery(_state, nil, _thread, _now), do: :ok
+
+  defp valid_limit_recovery(state, update, thread, now) do
+    runs = StreamState.list(state, "run")
+    run = Enum.max_by(runs, & &1["ordinal"], fn -> nil end)
+
+    failure =
+      T3.Projection.ThreadError.latest_root_provider_failure(
+        run,
+        StreamState.list(state, "turn-item")
+      )
+
+    reset = JS.epoch_ms(update["resetAt"])
+
+    cond do
+      update["snooze"] == true and reset != nil and reset <= now ->
+        {:error, "The reset time has passed. Retry the thread manually."}
+
+      reset == nil or thread["archivedAt"] != nil or thread["settledOverride"] == "settled" or
+        run == nil or run["id"] != update["runId"] or failure["class"] != "usage_limit" or
+        failure["resetAt"] != update["resetAt"] or
+        reset <= JS.epoch_ms(run["completedAt"] || run["requestedAt"]) or
+        Enum.any?(StreamState.list(state, "runtime-request"), &(&1["status"] == "pending")) or
+          Enum.any?(runs, &(&1["status"] == "queued")) ->
+        {:error, "The provider limit changed before recovery could be configured."}
+
+      true ->
+        :ok
     end
   end
 
@@ -1038,6 +1246,44 @@ defmodule T3.Orchestration do
         &Map.merge(&1, %{"status" => "cancelled", "queuePosition" => nil, "completedAt" => at})
       )
     end
+  end
+
+  # A deleted thread stops for good: its unfinished runs, their attempts and pending
+  # requests are cancelled and its provider sessions detached (the processes are
+  # stopped once this commits).
+  defp archived_queue("thread.delete", state, at) do
+    active =
+      for run <- StreamState.list(state, "run"),
+          run["status"] in ["queued" | @active_statuses],
+          do: run["id"]
+
+    done = &Map.merge(&1, %{"status" => "cancelled", "completedAt" => at})
+
+    runs =
+      for id <- active,
+          do: upsert(state, "run", id, &Map.merge(done.(&1), %{"queuePosition" => nil}))
+
+    attempts =
+      for attempt <- StreamState.list(state, "run-attempt"),
+          attempt["runId"] in active and attempt["status"] in ~w(pending running),
+          do: upsert(state, "run-attempt", attempt["id"], done)
+
+    requests =
+      for request <- StreamState.list(state, "runtime-request"),
+          request["status"] == "pending",
+          do:
+            upsert(
+              state,
+              "runtime-request",
+              request["id"],
+              &Map.merge(&1, %{"status" => "cancelled", "resolvedAt" => at})
+            )
+
+    sessions =
+      for session <- StreamState.list(state, "provider-session"),
+          do: {"provider-session", session["id"], Patch.delete()}
+
+    runs ++ attempts ++ requests ++ sessions
   end
 
   defp archived_queue(_type, _state, _at), do: []

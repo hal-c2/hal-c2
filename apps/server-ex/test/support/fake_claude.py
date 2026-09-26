@@ -1,8 +1,12 @@
 # Fake `claude -p --input-format stream-json --output-format stream-json` for tests.
 # Plays one turn per user message: thinking, a Bash tool call, and a streamed answer.
 # A message containing "wait" stays open until an interrupt control request; "approve"
-# asks permission for a command, "ask" asks a question (AskUserQuestion), and "where are we"
-# says which message the session resumed at (--resume-session-at).
+# asks permission for a command ("approve run: CMD" names it), "ask" asks a question
+# (AskUserQuestion), and "where are we" says which message the session resumed at
+# (--resume-session-at); "usage limit until EPOCH" stops on a usage limit. Rules a
+# permission answer adds for the session (updatedPermissions) let later matching
+# commands run without asking. Each turn's message text is appended to
+# $FAKE_CLAUDE_LOG when it is set.
 import json, os, sys
 
 def send(msg):
@@ -11,12 +15,16 @@ def send(msg):
 
 session = "fake-session-1"
 turn = 0
+session_rules = []  # Bash commands the session allows without asking
 resume_at = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--resume-session-at=")), None)
 for line in sys.stdin:
     msg = json.loads(line)
     if msg.get("type") == "control_response":
         reply = msg["response"]["response"]
         allowed = reply["behavior"] == "allow"
+        for update in reply.get("updatedPermissions") or []:
+            if update.get("destination") == "session" and update.get("behavior") == "allow":
+                session_rules += [r.get("ruleContent") for r in update.get("rules", []) if r.get("toolName") == "Bash"]
         answers = reply.get("updatedInput", {}).get("answers")
         text = ("answered " + json.dumps(answers, sort_keys=True)) if answers is not None else ("allowed" if allowed else "denied")
         send({"type": "assistant", "session_id": session, "message": {"id": "m-perm", "role": "assistant", "content": [{"type": "text", "text": text}]}})
@@ -51,7 +59,17 @@ for line in sys.stdin:
         continue
     turn += 1
     text = msg["message"]["content"] if isinstance(msg["message"]["content"], str) else ""
+    if os.environ.get("FAKE_CLAUDE_LOG"):
+        with open(os.environ["FAKE_CLAUDE_LOG"], "a") as f:
+            f.write(json.dumps({"text": text}) + "\n")
     send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku"})
+    # "usage limit until EPOCH": the plan's five-hour window rejects the turn until then.
+    if text.startswith("usage limit until "):
+        resets = int(text.rsplit(" ", 1)[1])
+        send({"type": "rate_limit_event", "session_id": session, "rate_limit_info": {"status": "rejected", "rateLimitType": "five_hour", "resetsAt": resets}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}l", "role": "assistant", "content": [{"type": "text", "text": "You've hit your limit"}]}})
+        send({"type": "result", "subtype": "success", "is_error": True, "result": "You've hit your limit", "session_id": session})
+        continue
     if "wait" in text:
         continue
     if "where are we" in text:
@@ -59,7 +77,13 @@ for line in sys.stdin:
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     if "approve" in text:
-        send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": "touch x"}}})
+        cmd = text.split("run: ", 1)[1] if "run: " in text else "touch x"
+        if cmd in session_rules or None in session_rules:
+            send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}r", "role": "assistant", "content": [{"type": "text", "text": f"ran {cmd} without asking"}]}})
+            send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+            continue
+        send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": cmd},
+              "permission_suggestions": [{"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": cmd}], "behavior": "allow", "destination": "localSettings"}]}})
         continue
     if "plan" in text:
         send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "ExitPlanMode", "input": {"plan": "# Plan\n- do it"}}})

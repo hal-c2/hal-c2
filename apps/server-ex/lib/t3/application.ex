@@ -39,6 +39,8 @@ defmodule T3.Application do
           T3.PullRequests.Discovery,
           T3.PullRequests.Sync,
           T3.Orchestration.Settlement,
+          # Threads stopped on a usage limit resume at the reset, where the user asked.
+          T3.Orchestration.LimitRecovery,
           T3.Usage,
           T3.Mcp,
           T3.Upgrade,

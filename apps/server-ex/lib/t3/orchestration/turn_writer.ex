@@ -16,6 +16,17 @@ defmodule T3.Orchestration.TurnWriter do
   @flush_ms 50
   @text_ms 400
 
+  @doc """
+  Why a turn could not start, for its failed run: the provider (`label`) exited
+  (`:closed`), or refused with `reason`.
+  """
+  def start_failure(_label, :closed), do: "The provider stopped while starting the turn."
+
+  def start_failure(label, reason) when is_binary(reason),
+    do: "#{label} could not start: #{reason}"
+
+  def start_failure(label, reason), do: "#{label} could not start: #{inspect(reason)}"
+
   @doc "The turn item id for a provider's native item."
   def item_id(ids, native), do: "turn-item:#{Entities.driver(ids)}:#{native}"
 
@@ -432,9 +443,11 @@ defmodule T3.Orchestration.TurnWriter do
   end
 
   @doc """
-  Ends the run: provider turn, attempt, run, root node, and provider thread. A
-  completed run also captures its workspace checkpoint (`T3.Checkpoint`). The
-  thread's next queued message then starts (`T3.Orchestration.start_next/1`).
+  Ends the run: provider turn, attempt, run, root node, and provider thread.
+  `failure` is the provider's message, or a structured failure map that also becomes
+  the run's error item. A completed run also captures its workspace checkpoint
+  (`T3.Checkpoint`). The thread's next queued message then starts
+  (`T3.Orchestration.start_next/1`).
   """
   def finish(state, status, failure) do
     ids = state.turn.ids
@@ -460,12 +473,14 @@ defmodule T3.Orchestration.TurnWriter do
           settle.("run", ids.run, run_done),
           settle.("node", ids.root_node, done),
           settle.("provider-thread", ids.provider_thread, %{"status" => "idle", "updatedAt" => at}),
+          status == "interrupted" && interrupt_result(stream, ids, at),
           failure && status == "failed" &&
             settle.(
               "provider-session",
               "provider-session:#{Entities.driver(ids)}:#{ids.thread}",
-              %{"lastError" => failure, "updatedAt" => at}
-            )
+              %{"lastError" => failure_message(failure), "updatedAt" => at}
+            ),
+          is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at)
         ]
     end)
 
@@ -480,6 +495,60 @@ defmodule T3.Orchestration.TurnWriter do
     end)
 
     :ok
+  end
+
+  defp failure_message(%{"message" => message}), do: message
+  defp failure_message(message), do: message
+
+  # A structured failure (`OrchestrationV2ProviderFailure`) is the run's error item,
+  # which the thread's `lastErrorClass` and `usageLimitResetAt` are read from.
+  defp failure_item(stream, ids, failure, at) do
+    item_id = item_id(ids, "terminal-failure:#{Map.get(ids, :provider_turn, ids.run)}")
+
+    Orchestration.create(
+      "turn-item",
+      item_id,
+      Entities.turn_item(
+        ids,
+        item_id,
+        "error",
+        Orchestration.next_ordinal(stream),
+        "failed",
+        at,
+        %{
+          "title" =>
+            if(failure["class"] == "usage_limit",
+              do: "Usage limit reached",
+              else: "Provider error"
+            ),
+          "failure" => failure
+        }
+      )
+    )
+  end
+
+  # "Run interrupted" in the transcript, under the user's request when there was one.
+  defp interrupt_result(stream, ids, at) do
+    item_id = "turn-item:run:#{ids.run}:signal:interrupt-result"
+
+    StreamState.get(stream, "turn-item")[item_id] == nil &&
+      Orchestration.create(
+        "turn-item",
+        item_id,
+        Entities.turn_item(
+          ids,
+          item_id,
+          "run_interrupt_result",
+          Orchestration.next_ordinal(stream),
+          "interrupted",
+          at,
+          %{
+            "title" => "Interrupted",
+            "parentItemId" => "turn-item:run:#{ids.run}:signal:interrupt-request",
+            "message" => "Run interrupted by user"
+          }
+        )
+      )
   end
 
   defp capture_checkpoint(%{scope_id: scope_id} = turn, at) do
