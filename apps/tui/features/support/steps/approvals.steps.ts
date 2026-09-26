@@ -3,7 +3,9 @@
 import { expect } from "bun:test";
 
 import { step } from "../../steps.ts";
-import { findObject, pressKey, snapshot, typeText } from "../world.ts";
+import { PROVIDERS } from "../fakeClient.ts";
+import { findObject, pressKey, settle as settleHost, snapshot, typeText } from "../world.ts";
+import { prepareHost, seedLocalFiles, type ComposerWorld } from "./composer.steps.ts";
 import {
   activity,
   approvalRequest,
@@ -27,11 +29,17 @@ interface AnswerWorld extends ThreadWorld {
   failAnswer?: (error: unknown) => void;
 }
 
+// One Background for the prompt, its controls and approvals: the thread world
+// (answers through `ctx.respond`) with the composer's providers, editor and images.
 step(
   "the terminal client is open on a thread with focus in the prompt",
-  async (ctx: ThreadWorld) => {
-    await openThread(ctx);
+  async (ctx: ThreadWorld & ComposerWorld) => {
+    prepareHost(ctx);
+    await openThread(ctx, undefined, { providers: PROVIDERS });
+    seedLocalFiles(ctx);
+    await settleHost(ctx);
     expect(hostState(ctx, "mode")).toBe("compose");
+    expect(findObject(ctx, "composerInput").get("focused")).toBe(true);
   },
 );
 
@@ -70,12 +78,12 @@ step("the key hints do not offer {string}", async (ctx: ThreadWorld, hint: strin
 });
 
 step("the request is approved", async (ctx: ThreadWorld) => {
-  await settle();
+  await settleHost(ctx);
   expect(recorded(ctx, "approve")).toEqual([["t1", "r1", "accept"]]);
 });
 
 step("the request is declined", async (ctx: ThreadWorld) => {
-  await settle();
+  await settleHost(ctx);
   expect(recorded(ctx, "approve")).toEqual([["t1", "r1", "decline"]]);
 });
 
@@ -350,7 +358,10 @@ step("the user is asked to pick an option or type an answer first", async (ctx: 
   expect(await snapshot(ctx)).toContain("Pick an option or type an answer first.");
 });
 
-step("nothing is sent", (ctx: ThreadWorld) => {
+// Neither a reply nor an answer reached the agent.
+step("nothing is sent", async (ctx: ThreadWorld) => {
+  await settleHost(ctx);
+  expect(recorded(ctx, "sendReply")).toEqual([]);
   expect(recorded(ctx, "respondUserInput")).toEqual([]);
 });
 

@@ -16,18 +16,6 @@ ScrollView {
         else scroller.scrollBy(scrollRequest.by)
     }
 
-    // PgUp/PgDn page through the mounted rows while the prompt has the keys.
-    Shortcut {
-        sequence: "pageup"
-        enabled: Shell.state.mode === "compose"
-        onActivated: Shell.dispatch("timeline.scroll", { by: -10 })
-    }
-    Shortcut {
-        sequence: "pagedown"
-        enabled: Shell.state.mode === "compose"
-        onActivated: Shell.dispatch("timeline.scroll", { by: 10 })
-    }
-
     stickyScroll: timeline.showingLatest
     stickyStart: "bottom"
     flexGrow: 1

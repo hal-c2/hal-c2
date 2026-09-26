@@ -159,6 +159,9 @@ export const statusText = (ctx: World) =>
 
 /** Open the source-control panel with the keys on it (Ctrl+L). */
 export async function focusPanel(ctx: World): Promise<void> {
+  // With no checkout set up (keymap.feature), the branch is behind its upstream,
+  // so the panel opens on a runnable Pull.
+  if (!(ctx as World & { scm?: Scm }).scm) setCheckout(ctx, vcsStatus({ behindCount: 1 }));
   await ready(ctx);
   if (!panelState(ctx).visible) await pressKey(ctx, "Ctrl+L");
   expect(hostMode(ctx)).toBe("panel");

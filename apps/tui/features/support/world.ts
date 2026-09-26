@@ -9,7 +9,7 @@ import * as NodePath from "node:path";
 import type { QmlObject } from "opentui-qml";
 import { testQml, type QmlTestApp } from "opentui-qml/testing";
 
-import { createHost, type Host } from "../../src/host/host.ts";
+import { createHost, type Host, type HostOptions } from "../../src/host/host.ts";
 import type { StepContext } from "../steps.ts";
 import { fakeClient } from "./fakeClient.ts";
 
@@ -38,6 +38,23 @@ export interface World extends StepContext {
   clipboardSupported?: boolean;
   /** Deliver the first snapshot right after boot (scenarios that start on an open thread). */
   connectOnBoot?: boolean;
+  /** Extra host options (editor runner, env, local files) set before boot. */
+  hostOptions?: Partial<HostOptions>;
+  /** Every action the host saw, oldest first. */
+  dispatched?: Array<{ action: string; payload: unknown }>;
+  /**
+   * Encode keys with the Kitty keyboard protocol, as modern terminals do, so
+   * Shift+Enter and Ctrl+Shift+M differ from Enter and Ctrl+M. Set before boot.
+   */
+  kittyKeyboard?: boolean;
+  /** The current step's kind (the runner sets it): Given is "Context", Then is "Outcome". */
+  stepType?: "Context" | "Action" | "Outcome" | "Unknown";
+  /**
+   * Requests a step deliberately left unanswered (a clone or branch switch in
+   * flight). While above zero, `settle` renders without waiting for the host
+   * to go idle, which it never would.
+   */
+  held?: number;
 }
 
 /** Set up the fake client before boot; later calls replace it only if not booted. */
@@ -58,7 +75,9 @@ export async function boot(
   const fake = ctx.fake ?? useClient(ctx);
   const logs: string[] = (ctx.logs ??= []);
   const clipboard: string[] = (ctx.clipboard ??= []);
+  const dispatched = (ctx.dispatched ??= []);
   const host = createHost({
+    ...ctx.hostOptions,
     client: fake.client,
     size: { columns, rows },
     log: (message) => logs.push(message),
@@ -71,6 +90,7 @@ export async function boot(
       clipboard.push(text);
       return true;
     },
+    trace: (action, payload) => dispatched.push({ action, payload }),
   });
   ctx.cleanups.push(() => host.destroy());
   await host.ready;
@@ -80,6 +100,7 @@ export async function boot(
       width: columns,
       height: rows,
       importPaths: [QML_DIR],
+      ...(ctx.kittyKeyboard ? { renderer: { kittyKeyboard: true } } : {}),
       singletons: { Shell: host.Shell, Theme: host.Theme },
     },
   );
@@ -113,17 +134,16 @@ const NAMED_KEYS: Record<string, string> = {
   tab: "TAB",
   backspace: "BACKSPACE",
   delete: "DELETE",
+  pgup: "\x1b[5~",
+  pageup: "\x1b[5~",
+  pgdn: "\x1b[6~",
+  pagedown: "\x1b[6~",
   up: "ARROW_UP",
   down: "ARROW_DOWN",
   left: "ARROW_LEFT",
   right: "ARROW_RIGHT",
   home: "HOME",
   end: "END",
-  // KeyCodes has no page keys: the raw sequences parse to pageup / pagedown.
-  pageup: "\x1b[5~",
-  pagedown: "\x1b[6~",
-  pgup: "\x1b[5~",
-  pgdn: "\x1b[6~",
   space: " ",
 };
 
@@ -156,10 +176,21 @@ export async function paste(ctx: World, text: string): Promise<void> {
   await (await boot(ctx)).paste(text);
 }
 
-/** Wait for the host's in-flight client calls and terminal writes, then render. */
+/**
+ * Wait for every request the host started (client calls, clones, terminal
+ * writes), then render. While a step holds a request open, render without
+ * waiting for the host to go idle, which it never would.
+ */
 export async function settle(ctx: World): Promise<string> {
   const app = await boot(ctx);
-  await ctx.host!.settled();
+  for (let round = 0; round < 5; round += 1) {
+    if (ctx.held) await new Promise((resolve) => setImmediate(resolve));
+    else {
+      await ctx.host!.idle();
+      await ctx.host!.settled();
+    }
+    await app.advance(0);
+  }
   return app.snapshot();
 }
 
@@ -196,4 +227,28 @@ export function geometry(object: QmlObject): Geometry {
     width: Number(object.get("layoutWidth")),
     height: Number(object.get("layoutHeight")),
   };
+}
+
+/** A bracketed text paste into whatever has focus. */
+export async function pasteText(ctx: World, text: string): Promise<void> {
+  await (await boot(ctx)).paste(text);
+  await settle(ctx);
+}
+
+/** A clipboard image paste (Kitty OSC 5522 delivers bytes with a MIME type). */
+export async function pasteBytes(ctx: World, bytes: Uint8Array, mimeType: string): Promise<void> {
+  const app = await boot(ctx);
+  app.renderer.keyInput.processPaste(bytes, { mimeType });
+  await settle(ctx);
+}
+
+/** Click the first cell of a named object. */
+export async function clickObject(ctx: World, objectName: string): Promise<void> {
+  const app = await boot(ctx);
+  await app.snapshot();
+  const renderable = (
+    findObject(ctx, objectName) as unknown as { renderable: { x: number; y: number } }
+  ).renderable;
+  await app.click(renderable.x, renderable.y);
+  await settle(ctx);
 }

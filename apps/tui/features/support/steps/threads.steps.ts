@@ -2,7 +2,7 @@
 // features/tui/threads.feature and the @tui scenarios of features/threads/.
 import { expect } from "bun:test";
 
-import type { TuiNewThreadState } from "../../../src/host/newThread.ts";
+import type { TuiNewThreadState, TuiSelectState } from "../../../src/host/composerState.ts";
 import type { TuiOverlayState } from "../../../src/host/threadActions.ts";
 import { step } from "../../steps.ts";
 import { focusPanel } from "../gitWorld.ts";
@@ -45,6 +45,7 @@ import {
   geometry,
   pressKey,
   resize,
+  settle,
   snapshot,
   typeText,
   type World,
@@ -554,6 +555,62 @@ step("the user opens the menu for {string}", async (ctx: World, title: string) =
   await openMenu(ctx, title);
 });
 
+// keymap.feature: the menu's keys, on a thread with or without a workspace folder.
+async function openTargetMenu(ctx: ThreadsWorld, workspace: boolean): Promise<void> {
+  if (!workspace) addProject(ctx, "scratch").workspaceRoot = "";
+  addThread(ctx, "Target", workspace ? {} : { project: "scratch" });
+  ctx.subject = "Target";
+  await openMenu(ctx, "Target");
+  expect(ctx.host!.state.get("mode")).toBe("contextMenu");
+}
+step("the thread context menu is open", (ctx: ThreadsWorld) => openTargetMenu(ctx, true));
+step("the thread context menu is open for a thread with no workspace", (ctx: ThreadsWorld) =>
+  openTargetMenu(ctx, false),
+);
+
+const highlighted = (ctx: World) => {
+  const menu = contextMenu(ctx)!;
+  const row = menu.rows.find((candidate) => candidate.kind === "item" && candidate.selected);
+  expect(row && row.kind === "item" ? row.label : null).toBe(menu.items[menu.selectedIndex]!.label);
+  return menu.items[menu.selectedIndex]!.label;
+};
+
+// The menu opens on "Settle thread": the next enabled item is "Rename thread",
+// and the previous one wraps to "Delete" at the bottom.
+step(/^the (next|previous) enabled item is highlighted$/, async (ctx: World, which: string) => {
+  await flush(ctx);
+  expect(highlighted(ctx)).toBe(which === "next" ? "Rename thread" : "Delete");
+});
+
+step(
+  "the user moves down past the last item",
+  async (ctx: ThreadsWorld & { highlights?: string[] }) => {
+    const last = contextMenu(ctx)!.items.length - 1;
+    ctx.highlights = [highlighted(ctx)];
+    for (let guard = 0; guard <= last && contextMenu(ctx)!.selectedIndex !== last; guard += 1) {
+      await pressKey(ctx, "Down");
+      ctx.highlights.push(highlighted(ctx));
+    }
+    expect(contextMenu(ctx)!.selectedIndex).toBe(last);
+    await pressKey(ctx, "Down");
+    ctx.highlights.push(highlighted(ctx));
+  },
+);
+
+step("the highlight wraps to the first item", (ctx: World) => {
+  expect(contextMenu(ctx)!.selectedIndex).toBe(0);
+  expect(highlighted(ctx)).toBe(contextMenu(ctx)!.items[0]!.label);
+});
+
+step(
+  "{string} is never highlighted",
+  (ctx: ThreadsWorld & { highlights?: string[] }, label: string) => {
+    expect(contextMenu(ctx)!.items.map((item) => item.label)).toContain(label);
+    expect(ctx.highlights).toContain("Delete");
+    expect(ctx.highlights).not.toContain(label);
+  },
+);
+
 step(/^"([^"]*)" is (enabled|disabled|absent)$/, async (ctx: World, label, availability) => {
   const item = contextMenu(ctx)!.items.find((candidate) => candidate.label === label);
   const screen = await snapshot(ctx);
@@ -914,7 +971,16 @@ step("the user stops the session from the command palette", (ctx: World) =>
   runCommand(ctx, "Stop session"),
 );
 
-step("the turn stops", (ctx: ThreadsWorld) => {
+// A thread from the list (the palette's "Stop session"): its session stops.
+// Otherwise (Esc twice in the composer): the open thread's turn is interrupted.
+step("the turn stops", async (ctx: ThreadsWorld) => {
+  if (ctx.subject === undefined) {
+    await settle(ctx);
+    const page = ctx.host!.state.get("page") as { threadId: string | null };
+    const interrupted = callsTo(ctx, "interrupt").map((call) => String(call.args[0]));
+    expect(interrupted).toEqual([String(page.threadId)]);
+    return;
+  }
   const thread = threadNamed(ctx, ctx.subject!);
   expect(callsTo(ctx, "stopSession").map((call) => call.args[0])).toEqual([thread.id]);
   expect(listedRow(ctx, ctx.subject!)?.thread.statusLabel).not.toBe("Working");
@@ -928,13 +994,20 @@ async function openPalette(ctx: World) {
   expect(palette(ctx).open).toBe(true);
   expect(geometry(findObject(ctx, "commandPalette")).visible).toBe(true);
 }
-step("the command palette is open", openPalette);
+// Given: open it. Then: it is open, drawn, and keys go to it.
+step("the command palette is open", async (ctx: World) => {
+  if (ctx.stepType !== "Outcome") return openPalette(ctx);
+  await settle(ctx);
+  expect(palette(ctx).open).toBe(true);
+  expect(ctx.host!.state.get("mode")).toBe("command");
+  expect(geometry(findObject(ctx, "commandPalette")).visible).toBe(true);
+});
 step("the user opens the command palette", openPalette);
 
 step(
   /^"([^"]*)" is listed (first|as a fuzzy subsequence match|through its keywords)$/,
   async (ctx: World, command, rank) => {
-    const titles = palette(ctx).items.map((item) => item.title);
+    const titles = palette(ctx).commands.map((item) => item.title);
     if (rank === "first") expect(titles[0]).toBe(command);
     else expect(titles).toContain(command);
     if (rank === "through its keywords") {
@@ -944,15 +1017,23 @@ step(
   },
 );
 
-step("{string} is offered", async (ctx: World, command: string) => {
-  expect(palette(ctx).items.map((item) => item.title)).toContain(command);
-  expect(await snapshot(ctx)).toContain(command);
+// In an open picker (model, access, effort): among its options; otherwise a palette command.
+step("{string} is offered", async (ctx: World, label: string) => {
+  const picker = ctx.host!.state.get("select") as TuiSelectState;
+  if (picker.open) {
+    await settle(ctx);
+    const options = (ctx.host!.state.get("select") as TuiSelectState).options;
+    expect(options.map((option) => option.label)).toContain(label);
+  } else {
+    expect(palette(ctx).commands.map((item) => item.title)).toContain(label);
+  }
+  expect(await snapshot(ctx)).toContain(label);
 });
 
 step("the user chooses {string} from the command palette", chooseCommand);
 
 step("the palette shows that there are no matching commands", async (ctx: World) => {
-  expect(palette(ctx).items).toEqual([]);
+  expect(palette(ctx).commands).toEqual([]);
   expect(await snapshot(ctx)).toContain("No matching commands");
 });
 

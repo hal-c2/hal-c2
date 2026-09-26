@@ -6,8 +6,6 @@ Rectangle {
     id: panel
     objectName: "approvals"
     readonly property var approvals: Shell.state.approvals
-    readonly property bool promptEmpty: Shell.state.composer ? Shell.state.composer.text === "" : true
-    readonly property bool keysLive: Shell.state.mode === "compose" && approvals.count > 0
 
     visible: approvals.count > 0
     flexDirection: "column"
@@ -35,25 +33,4 @@ Rectangle {
         }
     }
     Text { text: panel.approvals.hint; color: Theme.colors.dim }
-
-    Shortcut {
-        sequence: "ctrl+a"
-        enabled: panel.keysLive
-        onActivated: Shell.dispatch("approval.approve")
-    }
-    Shortcut {
-        sequence: "ctrl+r"
-        enabled: panel.keysLive
-        onActivated: Shell.dispatch("approval.decline")
-    }
-    Shortcut {
-        sequence: "up"
-        enabled: panel.keysLive && panel.approvals.count > 1 && panel.promptEmpty
-        onActivated: Shell.dispatch("approval.previous")
-    }
-    Shortcut {
-        sequence: "down"
-        enabled: panel.keysLive && panel.approvals.count > 1 && panel.promptEmpty
-        onActivated: Shell.dispatch("approval.next")
-    }
 }

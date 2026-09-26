@@ -13,7 +13,7 @@ function boot(rows = 40) {
   // The palette lists the terminal entries among the rest.
   const titles = () => {
     host.dispatch("palette.open");
-    const items = (host.state.get("palette") as { items: Array<{ title: string }> }).items;
+    const items = (host.state.get("palette") as { commands: Array<{ title: string }> }).commands;
     host.dispatch("palette.close");
     return items.map((item) => item.title);
   };

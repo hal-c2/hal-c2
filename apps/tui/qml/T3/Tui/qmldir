@@ -11,7 +11,9 @@ ContextMenu 1.0 ContextMenu.qml
 CommandPalette 1.0 CommandPalette.qml
 ThreadOverlay 1.0 ThreadOverlay.qml
 NewThreadForm 1.0 NewThreadForm.qml
-PromptBox 1.0 PromptBox.qml
+Composer 1.0 Composer.qml
+ComposerFooter 1.0 ComposerFooter.qml
+SelectOverlay 1.0 SelectOverlay.qml
 Timeline 1.0 Timeline.qml
 TimelineLine 1.0 TimelineLine.qml
 WorkingIndicator 1.0 WorkingIndicator.qml
@@ -28,3 +30,4 @@ TerminalDrawer 1.0 TerminalDrawer.qml
 FilesPanel 1.0 FilesPanel.qml
 FileViewer 1.0 FileViewer.qml
 AddProject 1.0 AddProject.qml
+ShellKeymap 1.0 ShellKeymap.qml

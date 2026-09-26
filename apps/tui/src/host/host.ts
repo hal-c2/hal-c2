@@ -1,3 +1,7 @@
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import { createPropertyMap, type PropertyMap } from "opentui-qml";
 
 import type { TuiClient } from "../connection.ts";
@@ -7,10 +11,13 @@ import {
   nextSidebarRefreshAt,
   SIDEBAR_SETTLED_SECTION_ID,
 } from "../components/Sidebar.logic.ts";
-import type { Command } from "../commands.ts";
+import { KEYBINDING_GROUPS, KEYMAP_LAYERS, KEYMAP_PARITY } from "../keymap.ts";
+import type { EditorCommand } from "../promptEditor.ts";
+import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore, type StatusKind, type StoreState } from "../store.ts";
 import { revertableCheckpoints } from "../timeline.ts";
 import { createAddProjectController } from "./addProjectState.ts";
+import { createComposer, type ImageDecoder } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
 import { createFilesController, FILES_PANEL } from "./filesState.ts";
 import {
@@ -19,7 +26,7 @@ import {
   type TuiMode,
   type TuiSize,
 } from "./layoutState.ts";
-import { createNewThreadFlow, type NewThreadSettings } from "./newThread.ts";
+import { createPalette, type PaletteCommand } from "./paletteState.ts";
 import { buildTuiSettingsState } from "./settingsState.ts";
 import { buildTuiSidebarState, idFromKey, projectKey, threadKey } from "./sidebarState.ts";
 import { createSourceControl, SOURCE_CONTROL_PANEL } from "./sourceControl.ts";
@@ -45,7 +52,8 @@ export type TuiPageState =
       /** The new-thread form (`Shell.state.newThread`) fills the main column. */
       readonly kind: "draft";
       readonly draftId: string;
-      readonly projectKey: string;
+      /** Null while there is no project to start the thread in. */
+      readonly projectKey: string | null;
       readonly projectTitle: string | null;
     }
   | {
@@ -58,7 +66,8 @@ export type TuiPageState =
 
 export interface TuiShellSingleton {
   readonly state: PropertyMap;
-  readonly dispatch: (action: string, payload?: unknown) => void;
+  /** True when the host handled the action (a paste the prompt must not insert). */
+  readonly dispatch: (action: string, payload?: unknown) => boolean;
 }
 
 export interface HostOptions {
@@ -72,6 +81,18 @@ export interface HostOptions {
   readonly now?: () => string;
   /** Put text on the system clipboard; false when the terminal cannot (OSC 52). */
   readonly copyToClipboard?: (text: string) => boolean;
+  /** `VISUAL` / `EDITOR` for Ctrl+G (default: the process environment). */
+  readonly env?: { readonly VISUAL?: string | undefined; readonly EDITOR?: string | undefined };
+  /** Expands `~` in pasted image paths (default: the user's home). */
+  readonly homeDir?: string;
+  /** Ctrl+G: run the editor on a file; the entry suspends the renderer around it. */
+  readonly runEditor?: (command: EditorCommand, file: string) => Promise<void>;
+  /** Read an image pasted as an absolute path on this machine. */
+  readonly readLocalImage?: (path: string) => Promise<Uint8Array>;
+  /** Decode attached images for their preview (default: `@t3tools/opentui-image`). */
+  readonly decodeImage?: ImageDecoder;
+  /** Sees every action dispatched, from QML, keymaps or the palette (tests, debugging). */
+  readonly trace?: (action: string, payload: unknown) => void;
 }
 
 /** Published under `clock`: when the sidebar's next time boundary (a snooze wake) is due. */
@@ -80,9 +101,22 @@ export interface TuiClockState {
   readonly refreshInMs: number;
 }
 
+async function readLocalImageFile(path: string): Promise<Uint8Array> {
+  const stat = await NodeFSP.stat(path).catch(() => null);
+  if (!stat?.isFile()) throw new Error("The pasted image path is not a file.");
+  if (stat.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+    throw new Error("Image exceeds the 10MB attachment limit.");
+  }
+  return new Uint8Array(await NodeFSP.readFile(path));
+}
+
 export interface Host {
   readonly state: PropertyMap;
-  readonly dispatch: (action: string, payload?: unknown) => void;
+  readonly dispatch: (action: string, payload?: unknown) => boolean;
+  /** Move keyboard focus (the input mode); overlays owned elsewhere call this. */
+  readonly setMode: (mode: TuiMode) => void;
+  /** Resolves when every request an action started has settled (tests wait on it). */
+  readonly idle: () => Promise<void>;
   /** The terminal size changed (renderer "resize"). */
   readonly resize: (size: TuiSize) => void;
   /** QML singletons: `Shell.state.<key>`, `Shell.dispatch(action, payload)`, `Theme.*`. */
@@ -98,6 +132,22 @@ export interface Host {
   readonly settled: () => Promise<void>;
   readonly destroy: () => void;
 }
+
+/**
+ * Actions that return false when they do not apply right now (an empty
+ * recall, a chord for a panel that is not open): not unknown, not logged.
+ */
+const DECLINABLE_ACTIONS = new Set([
+  "composer.history.previous",
+  "composer.history.next",
+  "approval.approve",
+  "approval.decline",
+  "approval.previous",
+  "approval.next",
+  "plan.implement",
+  "userInput.reopen",
+  "userInput.toggle",
+]);
 
 // The list pane's chrome: its border and the filter field.
 const SIDEBAR_CHROME_ROWS = 3;
@@ -126,20 +176,27 @@ export function createHost(options: HostOptions): Host {
   let rightPanel: string | null = null;
   let rightPanelFocused = false;
   let settingsOpen = false;
-  let composerText = "";
+  // The prompt's editor rows (the composer's 3–8, or as set by Ctrl+Up / Ctrl+Down).
+  let editorRows: number | undefined;
   let popoverRows = 0;
   let settlementSupported = false;
-  let settings: NewThreadSettings = {
-    defaultThreadEnvMode: null,
-    newWorktreesStartFromOrigin: false,
-  };
   let scrollTop = 0;
+  // PgUp / PgDn on a pane that scrolls itself (settings, the diff): the brick
+  // named by `pane` scrolls by `by` rows each time `seq` changes.
+  let paneScroll = { pane: "", seq: 0, by: 0 };
+  const scrollPane = (pane: string, by: number) => {
+    paneScroll = { pane, seq: paneScroll.seq + 1, by };
+    state.set("paneScroll", paneScroll);
+    return true;
+  };
 
   const state = createPropertyMap({
     mode,
     size,
     theme: TUI_THEME_STATE,
     notifications: { items: [] },
+    keybindings: { layers: KEYMAP_LAYERS, groups: KEYBINDING_GROUPS, parity: KEYMAP_PARITY },
+    paneScroll,
   });
 
   const rowsNow = (next = store.getState()) =>
@@ -175,11 +232,13 @@ export function createHost(options: HostOptions): Host {
       // The drawer slot follows the selected thread's terminal.
       drawerOpen: terminal.visible(),
       drawerRows: terminal.preferredRows(),
-      composerText,
-      popoverRows: popoverRows + threadActions.popoverRows(),
+      editorRows,
+      popoverRows: popoverRows + (palette.isOpen() ? Math.floor(size.rows * 0.5) : 0),
     });
     state.set("layout", layout);
     threadView.setPaneWidth(layout.contentWidth);
+    // The footer's compact form follows the conversation width.
+    composer?.relayout();
   };
   const publishSettings = () => {
     const current = store.getState();
@@ -204,7 +263,7 @@ export function createHost(options: HostOptions): Host {
       filter: next.filter,
       now: at,
       settlementSupported,
-      draft: newThread.draft(),
+      draft: sidebarDraft(),
       viewportRows: Math.max(1, size.rows - STATUS_ROWS - SIDEBAR_CHROME_ROWS),
       scrollTop,
     });
@@ -217,14 +276,14 @@ export function createHost(options: HostOptions): Host {
   };
   const publishPage = () => {
     const next = store.getState();
-    const draft = newThread.draft();
+    const draft = composer?.draft() ?? null;
     state.set(
       "page",
       draft
         ? {
             kind: "draft",
             draftId: draft.draftId,
-            projectKey: projectKey(draft.projectId),
+            projectKey: draft.projectId === null ? null : projectKey(draft.projectId),
             projectTitle:
               next.shell?.projects.find((project) => project.id === draft.projectId)?.title ?? null,
           }
@@ -269,16 +328,29 @@ export function createHost(options: HostOptions): Host {
     if (prev && prev.shell !== next.shell) addProject.sync();
   };
 
-  /** "compose" means the prompt has the keys, or an open question when one waits. */
+  /**
+   * "compose" means the prompt has the keys: the new-thread draft's when one
+   * is open, else an open question when one waits.
+   */
   const setMode = (requested: TuiMode) => {
-    const next = requested === "compose" ? threadView.composeMode() : requested;
+    const next =
+      requested === "compose"
+        ? composer?.draft()
+          ? "newThread"
+          : threadView.composeMode()
+        : requested;
     if (next === mode) return;
     mode = next;
     state.set("mode", mode);
     publishLayout();
   };
-  // Where keys go when a menu, prompt or palette closes.
-  const restingMode = (): TuiMode => (newThread.draft() ? "newThread" : "compose");
+  // Where keys go when a menu, prompt or palette closes (setMode resolves it).
+  const restingMode = (): TuiMode => "compose";
+  /** The draft's sidebar row: only a draft with a project is listed. */
+  const sidebarDraft = () => {
+    const draft = composer?.draft();
+    return draft?.projectId ? { draftId: draft.draftId, projectId: draft.projectId } : null;
+  };
 
   /** The mode a focused detail panel of `kind` takes. */
   const panelMode = (kind: string | null): TuiMode | null =>
@@ -387,189 +459,349 @@ export function createHost(options: HostOptions): Host {
     publish: (next) => state.set("addProject", next),
   });
   /** The files, add-project and terminal entries, as palette commands. */
-  const areaCommands = (): Command[] =>
+  const areaCommands = (): PaletteCommand[] =>
     [...addProject.commands(), ...files.commands(), ...terminal.commands()].map((command) => ({
       id: command.action,
       title: command.title,
-      run: () => dispatch(command.action),
+      action: command.action,
     }));
 
+  let composer: ReturnType<typeof createComposer> | null = null;
+  composer = createComposer({
+    client,
+    store,
+    state,
+    mode: () => mode,
+    setMode,
+    chatWidth: () => layout.chatWidth,
+    env: options.env ?? { VISUAL: process.env.VISUAL, EDITOR: process.env.EDITOR },
+    homeDir: options.homeDir ?? NodeOS.homedir(),
+    runEditor: options.runEditor ?? (() => Promise.reject(new Error("no editor runner"))),
+    readLocalImage: options.readLocalImage ?? readLocalImageFile,
+    ...(options.decodeImage ? { decodeImage: options.decodeImage } : {}),
+    onDraftChange: () => {
+      publishSidebar();
+      publishPage();
+    },
+    onRowsChange: (rows) => {
+      editorRows = rows;
+      publishLayout();
+      // A taller prompt can take rows from the drawer.
+      terminal.sync();
+    },
+  });
+  const palette = createPalette({
+    state,
+    mode: () => mode,
+    setMode,
+    context: () => {
+      const context = composer!.context();
+      const detail = store.getState().detail;
+      return {
+        ...context,
+        hasProposedPlan:
+          context.threadId !== null &&
+          detail?.id === context.threadId &&
+          latestActionableProposedPlan(detail) !== null,
+      };
+    },
+    // After the composer's own entries: thread lifecycle and scope, then the
+    // diff, source-control, settings, files, add-project and terminal entries.
+    extraCommands: () => [
+      ...threadActions.paletteCommands(),
+      ...detailCommands({
+        panelOpen: rightPanel === SOURCE_CONTROL_PANEL,
+        hasCheckpoints:
+          revertableCheckpoints(store.getState().detail?.checkpoints ?? []).length > 0,
+      }),
+      ...areaCommands(),
+    ],
+    run: (action, payload) => {
+      dispatch(action, payload);
+    },
+  });
+
   const unknownActions = new Set<string>();
-  const dispatch = (action: string, payload?: unknown) => {
-    if (threadActions.dispatch(action, payload) || newThread.dispatch(action, payload)) return;
+  const dispatch = (action: string, payload?: unknown): boolean => {
+    options.trace?.(action, payload);
+    return handle(action, payload);
+  };
+  /**
+   * Keymap aliases: the keymap names what a chord does in its mode; these are
+   * the host actions that do it. A chord whose action does not apply right
+   * now returns false, and its key falls through to the focused input.
+   */
+  const handleAlias = (action: string): boolean | null => {
+    const jump = /^thread\.jump\.([1-9])$/.exec(action);
+    if (jump) return handle("thread.jump", { index: Number(jump[1]) });
     switch (action) {
+      case "timeline.pageUp":
+        return handle("timeline.scroll", { by: -10 });
+      case "timeline.pageDown":
+        return handle("timeline.scroll", { by: 10 });
+      case "terminal.focus":
+        // Ctrl+P in the prompt reaches the terminal only while it is open.
+        if (!terminal.visible()) return false;
+        return handle("terminal.focus.toggle");
+      case "terminal.grow":
+        return handle("terminal.resize", { delta: 2 });
+      case "terminal.shrink":
+        return handle("terminal.resize", { delta: -2 });
+      case "terminal.scroll.pageUp":
+        return handle("terminal.scroll", { action: "page-up" });
+      case "terminal.scroll.pageDown":
+        return handle("terminal.scroll", { action: "page-down" });
+      case "terminal.scroll.lineUp":
+        return handle("terminal.scroll", { action: "line-up" });
+      case "terminal.scroll.lineDown":
+        return handle("terminal.scroll", { action: "line-down" });
+      case "contextMenu.previous":
+        return handle("contextMenu.move", { delta: -1 });
+      case "contextMenu.next":
+        return handle("contextMenu.move", { delta: 1 });
+      case "contextMenu.run":
+      case "contextMenu.close": {
+        const menu = state.get("contextMenu") as {
+          requestId: string;
+          items: ReadonlyArray<{ id: string }>;
+          selectedIndex: number;
+        } | null;
+        if (!menu) return true;
+        return handle("contextMenu.select", {
+          requestId: menu.requestId,
+          id: action === "contextMenu.run" ? (menu.items[menu.selectedIndex]?.id ?? null) : null,
+        });
+      }
+      case "files.previous":
+        return handle("files.move", { delta: -1 });
+      case "files.next":
+        return handle("files.move", { delta: 1 });
+      case "files.scrollUp":
+        return handle("files.page", { delta: -1 });
+      case "files.scrollDown":
+        return handle("files.page", { delta: 1 });
+      case "rightPanel.previous":
+        return handle("git.previous");
+      case "rightPanel.next":
+        return handle("git.next");
+      case "rightPanel.activate":
+        return handle("git.activate");
+      case "userInput.previous":
+        return handle("userInput.move", { delta: -1 });
+      case "userInput.next":
+        return handle("userInput.move", { delta: 1 });
+      case "checkpoint.revert.previous":
+        return handle("checkpoint.revert.move", { delta: -1 });
+      case "checkpoint.revert.next":
+        return handle("checkpoint.revert.move", { delta: 1 });
+      case "settings.scrollUp":
+      case "settings.scrollDown":
+        return scrollPane(
+          "settings",
+          (action === "settings.scrollUp" ? -1 : 1) * Math.max(1, size.rows - 4),
+        );
+      case "diff.scrollUp":
+        return scrollPane("diff", -10);
+      case "diff.scrollDown":
+        return scrollPane("diff", 10);
+      case "project.add.previous":
+        return handle("project.add.move", { delta: -1 });
+      case "project.add.next":
+        return handle("project.add.move", { delta: 1 });
+      default:
+        return null;
+    }
+  };
+  const handle = (action: string, payload?: unknown): boolean => {
+    if (action === "palette.open") threadActions.closeMenu();
+    if (palette.dispatch(action, payload)) return true;
+    // A paste the composer does not take (plain text) is inserted by the prompt.
+    if (action === "composer.paste") return composer!.dispatch(action, payload);
+    if (composer!.dispatch(action, payload)) return true;
+    if (threadActions.dispatch(action, payload)) return true;
+    // ↑/↓ walk the approvals only while the prompt is empty (then they edit it).
+    if (
+      (action === "approval.previous" || action === "approval.next") &&
+      ((state.get("composer") as { text?: string } | undefined)?.text ?? "") !== ""
+    ) {
+      return false;
+    }
+    const alias = handleAlias(action);
+    if (alias !== null) return alias;
+    switch (action) {
+      case "composer.focus":
+        palette.dispatch("palette.close");
+        composer!.dispatch("select.close");
+        setMode("compose");
+        return true;
       case "thread.open": {
         const key = payloadField(payload, "key");
-        if (typeof key !== "string") return;
-        if (newThread.draft()) newThread.dispatch("newThread.cancel");
+        if (typeof key !== "string") return true;
+        if (composer!.draft()) composer!.dispatch("newThread.cancel");
         setMode("compose");
         store.select({ kind: "thread", id: idFromKey(key) });
-        return;
+        return true;
       }
       case "thread.next":
         store.moveThreadSelection(1);
-        return;
+        return true;
       case "thread.previous":
         store.moveThreadSelection(-1);
-        return;
+        return true;
       case "thread.jump": {
         const index = Number(payloadField(payload, "index"));
         if (Number.isInteger(index) && index > 0) store.selectThreadByIndex(index);
-        return;
+        return true;
       }
       case "sidebar.toggle":
         sidebarCollapsed = !sidebarCollapsed;
         publishLayout();
-        return;
+        return true;
       case "sidebar.scope": {
         const key = payloadField(payload, "projectKey");
         store.setProjectScope(typeof key === "string" ? idFromKey(key) : null);
-        return;
+        return true;
       }
       case "sidebar.section.toggle": {
         const section = payloadField(payload, "section");
         if (section === "snoozed" || section === "settled") store.toggleSection(section);
-        return;
+        return true;
       }
       case "sidebar.more":
         store.loadMore(SIDEBAR_SETTLED_SECTION_ID);
-        return;
+        return true;
       case "sidebar.filter.focus":
         setMode("filter");
-        return;
+        return true;
       case "sidebar.filter.set": {
         const query = payloadField(payload, "query");
         store.setFilter(typeof query === "string" ? query : "");
-        return;
+        return true;
       }
       case "sidebar.filter.commit":
         setMode(restingMode());
-        return;
+        return true;
       case "sidebar.filter.cancel":
         store.setFilter("");
         setMode(restingMode());
-        return;
+        return true;
       case "clock.tick":
         publishSidebar();
-        return;
+        return true;
       case "rightPanel.toggle": {
         const kind = payloadField(payload, "kind");
         const next = typeof kind === "string" ? kind : SOURCE_CONTROL_PANEL;
         if (rightPanel === next) setRightPanel(null, false);
         else setRightPanel(next, true);
-        return;
+        return true;
       }
       case "rightPanel.open": {
         const kind = payloadField(payload, "kind");
         setRightPanel(typeof kind === "string" ? kind : SOURCE_CONTROL_PANEL, true);
-        return;
+        return true;
       }
       case "rightPanel.focus":
         setRightPanel(rightPanel ?? SOURCE_CONTROL_PANEL, true);
-        return;
+        return true;
       case "rightPanel.blur":
         // A panel standing in for the conversation closes when it gives the keys back.
         if (layout.rightPanel.asMain) setRightPanel(null, false);
         else setRightPanel(rightPanel, false);
-        return;
+        return true;
       case "rightPanel.close":
-        if (rightPanel === null) return;
+        if (rightPanel === null) return true;
         setRightPanel(null, false);
-        return;
+        return true;
       case "settings.open":
         if (mode === "diff") dispatch("diff.close");
         settingsOpen = true;
         publishSettings();
         setMode("settings");
-        return;
+        return true;
       case "settings.close":
         settingsOpen = false;
         publishSettings();
         if (mode === "settings") setMode(restingMode());
-        return;
+        return true;
       case "terminal.toggle":
         terminal.toggle();
-        return;
+        return true;
       case "terminal.open":
         terminal.open();
-        return;
+        return true;
       case "terminal.focus.toggle":
         terminal.toggleFocus();
-        return;
+        return true;
       case "terminal.new":
         terminal.newTab();
-        return;
+        return true;
       case "terminal.next":
         terminal.cycle(1);
-        return;
+        return true;
       case "terminal.previous":
         terminal.cycle(-1);
-        return;
+        return true;
       case "terminal.select": {
         const id = payloadField(payload, "id");
         if (typeof id === "string") terminal.select(id);
-        return;
+        return true;
       }
       case "terminal.close": {
         const id = payloadField(payload, "id");
         terminal.close(typeof id === "string" ? id : undefined);
-        return;
+        return true;
       }
       case "terminal.clear":
         terminal.clear();
-        return;
+        return true;
       case "terminal.restart":
         terminal.restart();
-        return;
+        return true;
       case "terminal.copy":
         terminal.copy();
-        return;
+        return true;
       case "terminal.input": {
         const data = payloadField(payload, "data");
         if (typeof data === "string") terminal.input(data);
-        return;
+        return true;
       }
       case "terminal.paste": {
         const text = payloadField(payload, "text");
         if (typeof text === "string") terminal.paste(text);
-        return;
+        return true;
       }
       case "terminal.scroll": {
         const scroll = payloadField(payload, "action");
         if (typeof scroll === "string") terminal.scroll(scroll as TerminalScrollAction);
-        return;
+        return true;
       }
       case "terminal.resize": {
         const height = payloadField(payload, "height");
         const delta = payloadField(payload, "delta");
         if (typeof height === "number") terminal.setHeight(height);
         else if (typeof delta === "number") terminal.resizeBy(delta);
-        return;
-      }
-      case "composer.text.set": {
-        const text = payloadField(payload, "text");
-        composerText = typeof text === "string" ? text : "";
-        publishLayout();
-        // A taller prompt can take rows from the drawer.
-        terminal.sync();
-        return;
+        return true;
       }
       case "layout.popover": {
         const rows = Number(payloadField(payload, "rows"));
         popoverRows = Number.isFinite(rows) ? Math.max(0, Math.floor(rows)) : 0;
         publishLayout();
-        return;
+        return true;
       }
       case "app.quit":
         options.onQuit?.();
-        return;
+        return true;
       default:
-        if (threadView.dispatch(action, payload)) return;
-        if (sourceControl.dispatch(action, payload)) return;
-        if (files.dispatch(action, payload) || addProject.dispatch(action, payload)) return;
-        if (unknownActions.has(action)) return;
-        unknownActions.add(action);
-        log(`t3 tui: unknown shell action "${action}"`);
+        if (threadView.dispatch(action, payload)) return true;
+        if (sourceControl.dispatch(action, payload)) return true;
+        if (files.dispatch(action, payload) || addProject.dispatch(action, payload)) return true;
+        // Known actions that decline when they do not apply (the key falls through).
+        if (DECLINABLE_ACTIONS.has(action)) return false;
+        if (!unknownActions.has(action)) {
+          unknownActions.add(action);
+          log(`t3 tui: unknown shell action "${action}"`);
+        }
+        return false;
     }
   };
 
@@ -582,37 +814,12 @@ export function createHost(options: HostOptions): Host {
     setMode,
     restingMode,
     settlementSupported: () => settlementSupported,
-    dispatch,
     copyToClipboard: options.copyToClipboard,
-    // The source-control panel, diff viewer and settings entries.
-    moreCommands: () => [
-      ...detailCommands({
-        panelOpen: rightPanel === SOURCE_CONTROL_PANEL,
-        hasCheckpoints:
-          revertableCheckpoints(store.getState().detail?.checkpoints ?? []).length > 0,
-        dispatch,
-      }),
-      ...areaCommands(),
-    ],
-  });
-  const newThread = createNewThreadFlow({
-    client,
-    store,
-    state,
-    settings: () => settings,
-    setMode,
-    onDraftChange: () => {
-      publishSidebar();
-      publishPage();
-    },
   });
 
+  // The composer loads the new-thread defaults itself; this is the settlement flag.
   const ready = client.getServerConfig().then(
     (config) => {
-      settings = {
-        defaultThreadEnvMode: config.settings.defaultThreadEnvMode ?? null,
-        newWorktreesStartFromOrigin: config.settings.newWorktreesStartFromOrigin,
-      };
       settlementSupported = config.environment?.capabilities?.threadSettlement === true;
       publishSidebar();
     },
@@ -623,12 +830,19 @@ export function createHost(options: HostOptions): Host {
 
   publishLayout();
   publish();
-  const unsubscribe = store.subscribe(publish);
+  composer.sync();
+  const unsubscribe = store.subscribe(() => {
+    publish();
+    composer!.sync();
+    palette.sync();
+  });
   store.start();
 
   return {
     state,
     dispatch,
+    setMode,
+    idle: () => composer!.idle(),
     resize: (next) => {
       if (next.columns === size.columns && next.rows === size.rows) return;
       size = next;

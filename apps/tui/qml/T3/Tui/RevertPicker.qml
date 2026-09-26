@@ -6,7 +6,6 @@ Rectangle {
     id: picker
     objectName: "revertPicker"
     readonly property var revert: Shell.state.revert
-    readonly property bool live: Shell.state.mode === "revert"
 
     visible: revert.open
     flexDirection: "column"
@@ -30,9 +29,4 @@ Rectangle {
         color: Theme.colors.faint
     }
     Text { text: picker.revert.hint; color: Theme.colors.dim }
-
-    Shortcut { sequence: "up"; enabled: picker.live; onActivated: Shell.dispatch("checkpoint.revert.move", { delta: -1 }) }
-    Shortcut { sequence: "down"; enabled: picker.live; onActivated: Shell.dispatch("checkpoint.revert.move", { delta: 1 }) }
-    Shortcut { sequence: "return"; enabled: picker.live; onActivated: Shell.dispatch("checkpoint.revert.confirm") }
-    Shortcut { sequence: "escape"; enabled: picker.live; onActivated: Shell.dispatch("checkpoint.revert.cancel") }
 }

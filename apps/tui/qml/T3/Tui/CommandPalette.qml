@@ -1,63 +1,61 @@
 import OpenTUI
 
-// The command palette (`Shell.state.palette`): a query field over the ranked
-// matches. Typing re-ranks (`palette.query`), Enter runs the selected command
-// (`palette.run`), a click runs that one; the shell's keys move and close it.
+// The command palette (^K): a search field over `Shell.state.palette`.
+// Typing filters (`palette.query.set`), Enter runs the highlighted command,
+// ↑/↓ and Esc come from the shell's keymap.
 Rectangle {
     id: palette
     objectName: "commandPalette"
-    readonly property var state: Shell.state.palette
-    readonly property string query: state.query
-    onQueryChanged: if (queryInput.text !== query) queryInput.text = query
+    readonly property var model: Shell.state.palette
+    // Typing breaks a `text` binding; the host resets the query on open.
+    readonly property string hostQuery: model.query
+    onHostQueryChanged: if (queryInput.text !== hostQuery) queryInput.text = hostQuery
 
-    visible: state.open
+    visible: model.open
     height: Shell.state.layout.popoverRows
-    flexShrink: 0
     border.width: 1
     border.color: Theme.colors.accent
     title: " Commands "
     titleColor: Theme.colors.dim
     color: Theme.colors.bg
     flexDirection: "column"
+    flexShrink: 0
     paddingX: 1
 
     TextInput {
         id: queryInput
         objectName: "paletteQuery"
         height: 1
-        focus: palette.state.open && Shell.state.mode === "command"
-        placeholderText: "Type a command"
+        focus: palette.model.open && Shell.state.mode === "command"
+        placeholderText: "Type a command…"
         placeholderColor: Theme.colors.faint
         color: Theme.colors.text
         focusedColor: Theme.colors.text
         backgroundColor: Theme.colors.bg
         focusedBackgroundColor: Theme.colors.bg
-        onTextEdited: Shell.dispatch("palette.query", { query: text })
+        onTextEdited: Shell.dispatch("palette.query.set", { query: text })
         onAccepted: Shell.dispatch("palette.run")
     }
 
     Repeater {
-        model: palette.state.items
+        model: palette.model.commands
         delegate: Item {
-            height: 1
             flexDirection: "row"
-            onMouseDown: (mouse) => Shell.dispatch("palette.run", { id: modelData.id })
+            height: 1
             Text {
                 flexGrow: 1
                 flexShrink: 1
                 truncate: true
-                text: (modelData.selected ? "▸ " : "  ") + modelData.title
-                color: modelData.selected ? Theme.colors.accent : Theme.colors.text
+                text: (index === palette.model.index ? "▸ " : "  ") + modelData.title
+                color: index === palette.model.index ? Theme.colors.accent : Theme.colors.text
+                onMouseDown: Shell.dispatch("palette.run", { index: index })
             }
-            Text {
-                text: modelData.hint.length > 0 ? " " + modelData.hint : ""
-                color: Theme.colors.faint
-            }
+            Text { text: modelData.hint; color: Theme.colors.faint }
         }
     }
 
     Text {
-        visible: palette.state.items.length === 0
+        visible: palette.model.commands.length === 0
         text: "No matching commands"
         color: Theme.colors.faint
     }

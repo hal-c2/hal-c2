@@ -7,7 +7,9 @@ Rectangle {
     id: viewer
     objectName: "diffViewer"
     readonly property var diff: Shell.state.diff
-    readonly property bool live: Shell.state.mode === "diff"
+    // PgUp / PgDn (keymap `diff.scrollUp` / `diff.scrollDown`) scroll the body.
+    readonly property var paneScroll: Shell.state.paneScroll
+    onPaneScrollChanged: if (paneScroll.pane === "diff") body.scrollBy(paneScroll.by)
 
     visible: diff.open
     flexDirection: "column"
@@ -60,11 +62,4 @@ Rectangle {
             }
         }
     }
-
-    Shortcut { sequence: "s"; enabled: viewer.live; onActivated: Shell.dispatch("diff.toggleView") }
-    Shortcut { sequence: "up"; enabled: viewer.live; onActivated: Shell.dispatch("diff.previous") }
-    Shortcut { sequence: "down"; enabled: viewer.live; onActivated: Shell.dispatch("diff.next") }
-    Shortcut { sequence: "pageup"; enabled: viewer.live; onActivated: body.scrollBy(-10) }
-    Shortcut { sequence: "pagedown"; enabled: viewer.live; onActivated: body.scrollBy(10) }
-    Shortcut { sequence: "escape"; enabled: viewer.live; onActivated: Shell.dispatch("diff.close") }
 }

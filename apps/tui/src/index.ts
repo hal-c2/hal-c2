@@ -1,3 +1,4 @@
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -166,6 +167,20 @@ async function main(): Promise<void> {
     copyToClipboard: (text) => {
       renderer.copyToClipboardOSC52(text);
       return renderer.isOsc52Supported();
+    },
+    // ^G: hand the terminal to the editor, then take the screen back.
+    runEditor: async ({ cmd, args }, file) => {
+      renderer.suspend();
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const child = NodeChildProcess.spawn(cmd, [...args, file], { stdio: "inherit" });
+          child.once("exit", () => resolve());
+          child.once("error", reject);
+        });
+      } finally {
+        renderer.resume();
+        renderer.requestRender();
+      }
     },
   });
 

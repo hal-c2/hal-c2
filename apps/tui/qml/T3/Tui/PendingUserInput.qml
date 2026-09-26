@@ -71,14 +71,4 @@ Rectangle {
             color: Theme.colors.dim
         }
     }
-
-    Shortcut { sequence: "up"; enabled: panel.live; onActivated: Shell.dispatch("userInput.move", { delta: -1 }) }
-    Shortcut { sequence: "down"; enabled: panel.live; onActivated: Shell.dispatch("userInput.move", { delta: 1 }) }
-    Shortcut {
-        sequence: "space"
-        enabled: panel.live && (panel.input.multiSelect ?? false)
-        onActivated: Shell.dispatch("userInput.toggle")
-    }
-    Shortcut { sequence: "return"; enabled: panel.live; onActivated: Shell.dispatch("userInput.submit") }
-    Shortcut { sequence: "escape"; enabled: panel.live; onActivated: Shell.dispatch("userInput.defer") }
 }

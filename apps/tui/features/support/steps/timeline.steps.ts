@@ -713,10 +713,13 @@ step("the diff viewer names the file {string}", async (ctx: ThreadWorld, path: s
   expect(await snapshot(ctx)).toContain(path);
 });
 
+// Boots a thread world first when nothing is running yet (keymap.feature).
 step("the diff viewer is open", async (ctx: ThreadWorld) => {
+  if (!ctx.app) await openThread(ctx);
   await turnWithDiff(ctx);
   await openTurnDiff(ctx);
   expect(findObject(ctx, "diffViewer").get("visible")).toBe(true);
+  (ctx as ThreadWorld & { diffViewBefore?: string }).diffViewBefore = hostState(ctx, "diff").view;
 });
 
 // After the diff viewer (here), the settings page (settings.steps.ts) or the

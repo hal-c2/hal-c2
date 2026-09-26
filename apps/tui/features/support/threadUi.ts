@@ -4,7 +4,8 @@
 import { expect } from "bun:test";
 import { MouseButtons } from "@opentui/core/testing";
 
-import type { TuiContextMenuState, TuiPaletteState } from "../../src/host/threadActions.ts";
+import type { TuiContextMenuState } from "../../src/host/threadActions.ts";
+import type { TuiPaletteState } from "../../src/host/paletteState.ts";
 import type { TuiSidebarRow, TuiSidebarState } from "../../src/host/sidebarState.ts";
 import { flush, ui } from "./environment.ts";
 import { pressKey, snapshot, typeText, type World } from "./world.ts";
@@ -105,7 +106,7 @@ export async function runCommand(ctx: World, name: string): Promise<void> {
   await ui(ctx);
   await pressKey(ctx, "Ctrl+K");
   await typeText(ctx, name);
-  expect(palette(ctx).items[0]?.title).toBe(name);
+  expect(palette(ctx).commands[0]?.title).toBe(name);
   await pressKey(ctx, "Enter");
   await flush(ctx);
 }
@@ -120,7 +121,7 @@ export async function chooseCommand(ctx: World, name: string): Promise<void> {
   if (ctx.host!.state.get("mode") === "terminal") await pressKey(ctx, "Ctrl+P");
   if (!palette(ctx).open) await pressKey(ctx, "Ctrl+K");
   await typeText(ctx, name);
-  const index = palette(ctx).items.findIndex((item) => item.title === name);
+  const index = palette(ctx).commands.findIndex((item) => item.title === name);
   expect(index, `no "${name}" in the palette`).toBeGreaterThanOrEqual(0);
   for (let i = 0; i < index; i += 1) await pressKey(ctx, "Down");
   await pressKey(ctx, "Enter");

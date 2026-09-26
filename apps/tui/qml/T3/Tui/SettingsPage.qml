@@ -9,6 +9,9 @@ Rectangle {
     readonly property var settings: Shell.state.settings
 
     function scroll(rows) { body.scrollBy({ x: 0, y: rows }) }
+    // PgUp / PgDn (keymap `settings.scrollUp` / `settings.scrollDown`).
+    readonly property var paneScroll: Shell.state.paneScroll
+    onPaneScrollChanged: if (paneScroll.pane === "settings") scroll(paneScroll.by)
 
     border.width: 1
     border.color: Theme.colors.accent

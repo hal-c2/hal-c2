@@ -217,6 +217,7 @@ export const settle = () => new Promise<void>((resolve) => setImmediate(resolve)
 export async function openThread(
   ctx: ThreadWorld,
   detail: OrchestrationThread = baseThread(),
+  options: Parameters<typeof useClient>[1] = {},
 ): Promise<void> {
   const respond: ClientResponses = (ctx.respond ??= {});
   ctx.thread = detail;
@@ -225,6 +226,7 @@ export async function openThread(
   // Thread fixtures are timed against the real clock (`at`), not the environment's pinned one.
   delete ctx.nowMs;
   useClient(ctx, {
+    ...options,
     detail,
     ...(projectTitle !== undefined && {
       shellSnapshot: shell(undefined, [{ ...project, title: projectTitle }] as never),

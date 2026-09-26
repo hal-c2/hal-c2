@@ -114,6 +114,8 @@ async function emit(ctx: World, terminalId: string, event: Record<string, unknow
 }
 const print = (ctx: World, data: string, terminalId = state(ctx).activeId!) =>
   emit(ctx, terminalId, { type: "output", data });
+/** The active terminal of thread t1 prints `data` (keymap.steps.ts). */
+export const printToTerminal = (ctx: World, data: string) => print(ctx, data);
 
 /** Booted, connected, with the project's first thread selected. */
 async function openThread(ctx: TerminalWorld) {
@@ -144,7 +146,7 @@ async function runCommand(ctx: World, title: string) {
 async function paletteTitles(ctx: World): Promise<string[]> {
   if (ctx.host!.state.get("mode") === "terminal") await pressKey(ctx, "Ctrl+P");
   await pressKey(ctx, "Ctrl+K");
-  const titles = palette(ctx).items.map((item) => item.title);
+  const titles = palette(ctx).commands.map((item) => item.title);
   await pressKey(ctx, "Esc");
   return titles;
 }
@@ -768,7 +770,13 @@ step("the command is not run as if typed", (ctx: World) => {
   expect(write!.endsWith("\x1b[201~")).toBe(true);
   expect(write!.split("\x1b[201~")).toEqual([expect.stringContaining("rm -rf"), ""]);
 });
-step("the user pastes {string}", (ctx: World, text: string) => pasteText(ctx, text));
+// Into whatever has focus: the terminal's program, or the prompt (which
+// remembers what it held, for composer.steps.ts' outcomes).
+step("the user pastes {string}", (ctx: World & { textBeforePaste?: string }, text: string) => {
+  const prompt = ctx.host?.state.get("composer") as { text: string } | undefined;
+  if (prompt) ctx.textBeforePaste = prompt.text;
+  return pasteText(ctx, text);
+});
 step("the program receives {string} unchanged", (ctx: World, text: string) => {
   expect(pasted(ctx)).toEqual([text]);
 });
@@ -803,18 +811,21 @@ step("the user's terminal does not support clipboard writes", noClipboard);
 function copiedScrolledBackView(ctx: World) {
   expect(ctx.clipboard).toHaveLength(1);
   const copied = ctx.clipboard![0]!;
-  // What is on screen (the scroll note takes the place of the last row).
-  expect(
-    copied.startsWith(
-      rowTexts(ctx)
-        .map((row) => row.trimEnd())
-        .join("\n"),
-    ),
-  ).toBe(true);
+  // What is on screen (the scroll note takes the place of the last row), up to
+  // its last non-blank row and without the live cursor's block.
+  const onScreen = rowTexts(ctx)
+    .map((row) => row.trimEnd().replace(/█$/, "").trimEnd())
+    .join("\n")
+    .replace(/\n+$/, "");
+  expect(onScreen.length).toBeGreaterThan(0);
+  expect(copied.startsWith(onScreen)).toBe(true);
   expect(copied).not.toContain("line-120");
   expect(copied).not.toContain("late-");
 }
-step("the visible terminal text is copied to the clipboard", copiedScrolledBackView);
+step("the visible terminal text is copied to the clipboard", async (ctx: World) => {
+  await settle(ctx);
+  copiedScrolledBackView(ctx);
+});
 step("the clipboard holds the older lines on screen, not the live tail", copiedScrolledBackView);
 step("the copied text is the scrolled-back view, not the live tail", (ctx: TerminalWorld) => {
   copiedScrolledBackView(ctx);

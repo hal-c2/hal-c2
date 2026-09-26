@@ -44,15 +44,4 @@ Rectangle {
     PendingUserInput {}
     RevertPicker {}
     ThreadHints {}
-
-    Shortcut {
-        sequence: "ctrl+y"
-        enabled: Shell.state.mode === "compose" && conversation.timeline.plan !== null
-        onActivated: Shell.dispatch("plan.implement")
-    }
-    Shortcut {
-        sequence: "ctrl+u"
-        enabled: Shell.state.mode === "compose" && Shell.state.userInput.deferred
-        onActivated: Shell.dispatch("userInput.reopen")
-    }
 }

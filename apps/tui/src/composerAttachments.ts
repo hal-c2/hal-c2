@@ -158,6 +158,25 @@ export function extractPastedImagePath(
   const completePath = resolvePastedImagePath(pastedText, workspaceRoot, homeDirectory, platform);
   if (completePath) return { imagePath: completePath, remainingText: "" };
 
+  // A quoted path (as terminals paste a dragged file with spaces) followed or
+  // preceded by prose: the quotes bound the path, so spaces inside are fine.
+  for (const quoted of pastedText.matchAll(/(^|[\s([{])(['"])([^'"\n]+)\2(?=$|[\s,;:!?)}\]])/gu)) {
+    const pathStart = (quoted.index ?? 0) + (quoted[1]?.length ?? 0);
+    const pathEnd = pathStart + quoted[3]!.length + 2;
+    const imagePath = resolvePastedImagePath(
+      pastedText.slice(pathStart, pathEnd),
+      workspaceRoot,
+      homeDirectory,
+      platform,
+    );
+    if (!imagePath) continue;
+    const before = pastedText.slice(0, pathStart);
+    let after = pastedText.slice(pathEnd);
+    if ((before.length === 0 || before.endsWith(" ")) && after.startsWith(" "))
+      after = after.slice(1);
+    return { imagePath, remainingText: `${before}${after}` };
+  }
+
   const pathStartPattern =
     platform === "win32"
       ? /(^|[\s([{])(?:[a-z]:[\\/]|\\\\)(?=\S)/giu

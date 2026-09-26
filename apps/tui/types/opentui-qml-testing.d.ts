@@ -16,6 +16,8 @@ export interface TestQmlOptions extends Omit<RunQmlOptions, "renderer" | "render
   height?: number;
   filename?: string;
   render?: boolean;
+  /** Test renderer options (e.g. `kittyKeyboard` to tell Shift+Enter from Enter). */
+  renderer?: { kittyKeyboard?: boolean; otherModifiersMode?: boolean };
 }
 
 export interface QmlTestApp {
@@ -30,6 +32,11 @@ export interface QmlTestApp {
   renderer: CliRenderer;
   warnings: string[];
   errors: unknown[];
+  renderer: {
+    keyInput: {
+      processPaste(bytes: Uint8Array, metadata?: { mimeType?: string }): void;
+    };
+  };
   renderOnce(): Promise<void>;
   captureCharFrame(): string;
   snapshot(): Promise<string>;

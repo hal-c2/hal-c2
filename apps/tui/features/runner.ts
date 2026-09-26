@@ -100,6 +100,8 @@ async function runPickle(
           : argument?.dataTable !== undefined
             ? [argument.dataTable.rows.map((row) => row.cells.map((cell) => cell.value))]
             : [];
+      // Given / When / Then (And inherits): one step text can set up or assert.
+      ctx.stepType = pickleStep.type ?? "Unknown";
       try {
         const next = await match.fn(ctx, ...match.args, ...extra);
         if (next && typeof next === "object") ctx = next;

@@ -7,9 +7,12 @@ keys and call `Shell.dispatch(action, payload)`.
 
 Keys published today: `sidebar`, `layout`, `theme`, `notifications` (the
 desktop shell's contract names, extended for the terminal), `mode`, `status`,
-`size`, `page`, `contextMenu`, `overlay`, `palette`, `newThread`, `clock`,
-`git`, `settings`, `terminal`, `files`, `addProject`, and the open thread's
-keys from `threadView.ts` (below).
+`size`, `page`, `contextMenu`, `overlay`, `composer`, `select` and
+`newThread` (`composerState.ts`), `palette` (`paletteState.ts`), `clock`,
+`git`, `settings`, `paneScroll`, `terminal`, `files`, `addProject`,
+`keybindings` (`src/keymap.ts`: the chord layers per mode, the reference
+groups and the web parity table), and the open thread's keys from
+`threadView.ts` (below).
 
 - `sidebar` adds the list viewport (`visibleRows`, `scrollTop`,
   `hiddenAbove`/`hiddenBelow`), `scopeLabel`, and a `draft` row while the
@@ -21,13 +24,18 @@ keys from `threadView.ts` (below).
   and `drawer` (`open`, `rows`; `ShellWindow.drawerComponent`), plus the
   capped content column (`contentWidth`, `contentOffset`) and the prompt's
   `editorRows` / `popoverRows`.
-- `page` has `kind: "draft"` while the new-thread form is open.
+- `page` has `kind: "draft"` while a new-thread draft with a project is open.
 - `contextMenu` (null when closed): the thread menu's `threadKey`, position,
   size, `rows` (items and separators) and highlighted index.
 - `overlay` (null when closed): `rename` or `confirmDelete` for a thread.
-- `palette`: `open`, `query`, ranked `items`, highlighted index.
-- `newThread` (null when closed): the form's project, workspace mode,
-  branch, worktree, refs and `pending`.
+- `palette`: `open`, `query`, the filtered `commands`, highlighted `index`.
+- `composer`: the prompt of the open thread or the new-thread draft (text,
+  attachments, model, effort, modes, `rows`); `select` is its one open picker.
+- `newThread` (null when closed): the draft's project, workspace mode,
+  branch, worktree, refs and `pending`. Its first message is the composer's
+  text; `composer.submit` starts the thread.
+- `paneScroll` (`{pane, seq, by}`): PgUp/PgDn for a pane that scrolls itself
+  (`settings`, `diff`); the brick scrolls when `seq` changes.
 - `clock.refreshInMs`: when the list next needs a redraw (a minute, or the
   next snooze wake); `ShellWindow` dispatches `clock.tick` then.
 
@@ -37,12 +45,15 @@ Actions, by area (payloads use `key` / `projectKey` from `sidebarState.ts`):
 | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Thread list | `thread.open`, `thread.next`, `thread.previous`, `thread.jump {index}`, `sidebar.toggle`, `sidebar.filter.focus/set/commit/cancel`, `sidebar.section.toggle {section}`, `sidebar.more`, `sidebar.scope {projectKey}`          |
 | Thread rows | `thread.menu {key, x, y}`, `thread.rename {key, title?}`, `thread.archive`, `thread.unarchive`, `thread.delete` (asks), `thread.delete.confirm`, `thread.settle`, `thread.unsettle`, `thread.copy {key, what}`, `thread.stop` |
-| Menus       | `contextMenu.move {delta}`, `contextMenu.select {index?}`, `overlay.cancel`, `palette.open/close/query/move/run`                                                                                                              |
-| New thread  | `thread.new {projectKey?}`, `newThread.workspaceMode {mode}`, `newThread.branch {name}`, `newThread.submit {message}`, `newThread.cancel`                                                                                     |
-| Layout      | `rightPanel.toggle/open {kind?}`, `rightPanel.focus/blur/close`, `terminal.*` (below), `composer.text.set {text}`, `layout.popover {rows}`, `clock.tick`, `app.quit`                                                          |
+| Menus       | `contextMenu.move {delta}`, `contextMenu.select {index?}`, `overlay.cancel`, `palette.open/close/query.set/next/previous/run {index? id?}`                                                                                    |
+| Composer    | `composer.text.set {text}`, `composer.submit`, `composer.escape`, `composer.paste`, `composer.history.previous/next`, `composer.grow/shrink`, `composer.*Picker.toggle`, `composer.editor.open`, `select.*`, `composer.focus` |
+| New thread  | `thread.new {projectKey?}`, `newThread.workspaceMode {mode}`, `newThread.branch {name}`, `newThread.submit {message?}`, `newThread.cancel`                                                                                    |
+| Layout      | `rightPanel.toggle/open {kind?}`, `rightPanel.focus/blur/close`, `terminal.*` (below), `layout.popover {rows}`, `clock.tick`, `app.quit`                                                                                      |
 
-The palette also lists "Show project <name>" / "Show all projects"
-(`sidebar.scope`), the selected thread's actions, and `detailCommands.ts`
+The palette (`paletteState.ts`) lists the composer's commands (new thread,
+plan mode, workspace, model, effort, access, editor, "Implement plan"), then
+"Show project <name>" / "Show all projects" (`sidebar.scope`), the selected
+thread's actions, and `detailCommands.ts`
 ("View all changes", "Revert to checkpoint…", "Show/Hide source-control
 panel", "Settings"), then the entries of the files, add-project and terminal
 controllers below ("Browse files", "Add project", "Show/Hide terminal", ...).
@@ -98,6 +109,27 @@ local folder or a repository and its clone destination, with the folders
 under the typed path. `invite` is true while the environment has no
 projects. Actions are `project.add` and `project.add.*` (`mode: "project"`).
 An added project opens the new-thread form for it (`thread.new {projectKey}`).
+
+## Keys and actions
+
+Chords live in one place: `KEYMAP_LAYERS` in `src/keymap.ts` maps each mode's
+chords to host actions, and `ShellKeymap.qml` binds only the current mode's
+layer. A new chord is a layer entry plus a reference entry in
+`KEYBINDING_GROUPS` (`keymap.test.ts` fails when one is missing), not a
+`Shortcut` in a brick. Keymap chords run before the focused field; an action
+that does not apply right now (↑/↓ without two approvals or with text in the
+prompt, ^A with nothing to approve, ^P with the terminal hidden) returns false
+from `dispatch`, and the key reaches the field (the prompt's ↑/↓ then recall
+earlier prompts through `composer.history.*`).
+
+Some layer actions are aliases the host resolves (`handleAlias` in
+`host.ts`): `thread.jump.N`, `timeline.pageUp/pageDown`, `terminal.focus`,
+`terminal.grow/shrink`, `terminal.scroll.*`, `contextMenu.previous/next/run/close`,
+`files.previous/next/scrollUp/scrollDown`, `rightPanel.previous/next/activate`,
+`userInput.previous/next`, `checkpoint.revert.previous/next`,
+`project.add.previous/next`, `settings.scrollUp/scrollDown` and
+`diff.scrollUp/scrollDown`. A palette command is a host action too, so running
+one is the same as pressing its chord.
 
 ## Where the rest of ChatView's state goes
 

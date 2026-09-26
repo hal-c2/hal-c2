@@ -1,9 +1,9 @@
 import OpenTUI
 
 // The new-thread form (`Shell.state.newThread`): where the thread will work
-// (a new worktree from a base branch, or the current workspace), the
-// project's branches, and the first message. Enter starts the thread
-// (`newThread.submit`), Esc cancels (shell key).
+// (a new worktree from a base branch, or the current workspace) and the
+// project's branches. The first message is typed in the composer below;
+// Enter starts the thread (`composer.submit`), Esc cancels (`composer.escape`).
 Rectangle {
     id: form
     objectName: "newThreadForm"
@@ -64,27 +64,6 @@ Rectangle {
                 + (modelData.worktreePath ? " (worktree)" : "")
             color: modelData.selected ? Theme.colors.accent : Theme.colors.text
             onMouseDown: (mouse) => Shell.dispatch("newThread.branch", { name: modelData.name })
-        }
-    }
-    Rectangle {
-        height: 3
-        border.width: 1
-        border.color: Theme.colors.accent
-        title: " First message "
-        titleColor: Theme.colors.dim
-        paddingX: 1
-        TextInput {
-            id: messageInput
-            objectName: "newThreadMessage"
-            height: 1
-            focus: form.draft !== null && Shell.state.mode === "newThread"
-            placeholderText: "What should the agent do?"
-            placeholderColor: Theme.colors.faint
-            color: Theme.colors.text
-            focusedColor: Theme.colors.text
-            backgroundColor: Theme.colors.bg
-            focusedBackgroundColor: Theme.colors.bg
-            onAccepted: Shell.dispatch("newThread.submit", { message: text })
         }
     }
 }

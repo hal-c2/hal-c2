@@ -86,7 +86,7 @@ step(
     const content = box(ctx, "content");
     expect(content.width).toBe(cap);
     expect(box(ctx, "conversation").width).toBeLessThanOrEqual(cap);
-    expect(box(ctx, "prompt").width).toBeLessThanOrEqual(cap);
+    expect(box(ctx, "composer").width).toBeLessThanOrEqual(cap);
     // Centred in the main column (within a cell of rounding).
     const left = content.x;
     const right = main.width - content.x - content.width;
@@ -138,11 +138,12 @@ step("no text is left from the previous layout", async (ctx: World) => {
 step("the prompt shows {int} editable rows", async (ctx: World, rows: number) => {
   expect(rows).toBe(COMPOSER_MIN_EDITOR_ROWS);
   expect(layout(ctx).editorRows).toBe(rows);
-  expect(box(ctx, "promptInput")).toMatchObject({ visible: true, height: rows });
+  expect(box(ctx, "composerInput")).toMatchObject({ visible: true, height: rows });
 });
 
 step("the user types a prompt longer than {int} wrapped lines", async (ctx: World, lines) => {
-  await boot(ctx);
+  // The prompt belongs to a thread (or a new-thread draft).
+  await openFirstThread(ctx);
   await typeText(ctx, longPrompt(ctx, lines));
   await flush(ctx);
 });
@@ -150,7 +151,7 @@ step("the user types a prompt longer than {int} wrapped lines", async (ctx: Worl
 step("the prompt stops growing at {int} rows", async (ctx: World, rows: number) => {
   expect(rows).toBe(COMPOSER_MAX_EDITOR_ROWS);
   expect(layout(ctx).editorRows).toBe(rows);
-  expect(box(ctx, "promptInput").height).toBe(rows);
+  expect(box(ctx, "composerInput").height).toBe(rows);
 });
 
 step("the prompt scrolls to keep the cursor visible", async (ctx: World) => {
@@ -166,14 +167,21 @@ step("the prompt scrolls to keep the cursor visible", async (ctx: World) => {
  * thread is opened first. Opening focuses the terminal; Ctrl+P hands the
  * keys back to the prompt.
  */
+async function openFirstThread(ctx: World) {
+  await boot(ctx);
+  if ((ctx.host!.state.get("page") as { kind: string }).kind === "thread") return;
+  ctx.fake!.connect();
+  await flush(ctx);
+  const first = threadRows(ctx)[0];
+  expect(first, "no thread to open").toBeDefined();
+  ctx.host!.dispatch("thread.open", { key: first!.key });
+  await ctx.host!.settled();
+}
+
 async function showDrawer(ctx: World) {
   await boot(ctx);
   if (!(ctx.host!.state.get("terminal") as { available: boolean }).available) {
-    ctx.fake!.connect();
-    await flush(ctx);
-    const first = threadRows(ctx)[0];
-    expect(first, "no thread to open a terminal on").toBeDefined();
-    ctx.host!.dispatch("thread.open", { key: first!.key });
+    await openFirstThread(ctx);
   }
   await press(ctx, "Ctrl+E");
   await ctx.host!.settled();

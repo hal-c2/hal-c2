@@ -2,7 +2,6 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import type { PropertyMap } from "opentui-qml";
 
 import type { TuiClient } from "../connection.ts";
-import { filterCommands, type Command } from "../commands.ts";
 import {
   firstContextMenuIndex,
   moveContextMenuIndex,
@@ -13,6 +12,7 @@ import type { TuiThreadShell } from "../orchestrationV2Adapter.ts";
 import type { Store } from "../store.ts";
 import { buildThreadContextMenuItems, type ThreadContextMenuAction } from "../threadMenu.logic.ts";
 import type { TuiMode, TuiSize } from "./layoutState.ts";
+import type { PaletteCommand } from "./paletteState.ts";
 import { idFromKey, projectKey, threadKey } from "./sidebarState.ts";
 
 /** One painted line of the open menu: a divider or an item (`index` into `items`). */
@@ -52,21 +52,6 @@ export type TuiOverlayState =
   | { readonly kind: "confirmDelete"; readonly threadKey: string; readonly title: string }
   | null;
 
-/** Published under `palette`: the command palette and its ranked matches. */
-export interface TuiPaletteState {
-  readonly open: boolean;
-  readonly query: string;
-  readonly selectedIndex: number;
-  readonly items: ReadonlyArray<{
-    readonly id: string;
-    readonly title: string;
-    readonly hint: string;
-    readonly selected: boolean;
-  }>;
-}
-
-const CLOSED_PALETTE: TuiPaletteState = { open: false, query: "", selectedIndex: 0, items: [] };
-
 export interface ThreadActionsContext {
   readonly client: TuiClient;
   readonly store: Store;
@@ -75,14 +60,10 @@ export interface ThreadActionsContext {
   /** The rows the sidebar shows now (for the menu's section-aware items). */
   readonly rows: () => ReadonlyArray<Row>;
   readonly setMode: (mode: TuiMode) => void;
-  /** The mode to return to when a menu, prompt or palette closes. */
+  /** The mode to return to when a menu or prompt closes. */
   readonly restingMode: () => TuiMode;
   readonly settlementSupported: () => boolean;
-  /** Host dispatch, for palette commands that belong to other areas. */
-  readonly dispatch: (action: string, payload?: unknown) => void;
   readonly copyToClipboard?: ((text: string) => boolean) | undefined;
-  /** Palette commands other areas contribute (source control, diffs, settings). */
-  readonly moreCommands?: () => Command[];
 }
 
 const field = (payload: unknown, name: string): unknown =>
@@ -95,15 +76,13 @@ const errorText = (error: unknown): string =>
 
 /**
  * Thread lifecycle from the sidebar and the palette: the row context menu,
- * rename and delete prompts, settle/archive/stop, copy, and the command
- * palette. `dispatch` returns false for actions it does not own.
+ * rename and delete prompts, settle/archive/stop and copy, plus the palette
+ * entries for them. `dispatch` returns false for actions it does not own.
  */
 export function createThreadActions(ctx: ThreadActionsContext) {
   const { client, store, state } = ctx;
   let menu: TuiContextMenuState | null = null;
   let overlay: TuiOverlayState = null;
-  let palette: TuiPaletteState = CLOSED_PALETTE;
-  let paletteCommands: Command[] = [];
   let menuRequests = 0;
 
   const shellThread = (id: string): TuiThreadShell | null =>
@@ -149,7 +128,6 @@ export function createThreadActions(ctx: ThreadActionsContext) {
     state.set("contextMenu", menu);
   };
   const publishOverlay = () => state.set("overlay", overlay);
-  const publishPalette = () => state.set("palette", palette);
 
   const closeMenu = () => {
     if (!menu) return;
@@ -253,20 +231,18 @@ export function createThreadActions(ctx: ThreadActionsContext) {
     report(client.renameThread(thread.id as never, title), "Renamed.", "Rename failed");
   };
 
-  const buildPaletteCommands = (): Command[] => {
-    const run = (action: string, payload?: unknown) => () => ctx.dispatch(action, payload);
+  /** The selected thread's lifecycle, the project scope and the filter, as palette entries. */
+  const paletteCommands = (): PaletteCommand[] => {
     const selection = store.getState().selection;
     const thread = selection?.kind === "thread" ? shellThread(selection.id) : null;
-    const list: Command[] = [
-      { id: "new", title: "New thread", hint: "^N", run: run("thread.new") },
-    ];
+    const list: PaletteCommand[] = [];
     if (thread) {
-      const key = threadKey(thread.id);
-      list.push({ id: "rename", title: "Rename thread", run: run("thread.rename", { key }) });
+      const payload = { key: threadKey(thread.id) };
+      list.push({ id: "rename", title: "Rename thread", action: "thread.rename", payload });
       list.push(
         thread.archivedAt != null
-          ? { id: "unarchive", title: "Unarchive thread", run: run("thread.unarchive", { key }) }
-          : { id: "archive", title: "Archive thread", run: run("thread.archive", { key }) },
+          ? { id: "unarchive", title: "Unarchive thread", action: "thread.unarchive", payload }
+          : { id: "archive", title: "Archive thread", action: "thread.archive", payload },
       );
       if (ctx.settlementSupported()) {
         const settled = thread.settledOverride === "settled";
@@ -274,11 +250,12 @@ export function createThreadActions(ctx: ThreadActionsContext) {
           id: "settle",
           title: settled ? "Un-settle thread" : "Settle thread",
           keywords: "park done inbox active lifecycle",
-          run: run(settled ? "thread.unsettle" : "thread.settle", { key }),
+          action: settled ? "thread.unsettle" : "thread.settle",
+          payload,
         });
       }
-      list.push({ id: "delete", title: "Delete thread", run: run("thread.delete", { key }) });
-      list.push({ id: "stop", title: "Stop session", run: run("thread.stop", { key }) });
+      list.push({ id: "delete", title: "Delete thread", action: "thread.delete", payload });
+      list.push({ id: "stop", title: "Stop session", action: "thread.stop", payload });
     }
     // The thread list's project scope (the old sidebar's project picker).
     const scopeId = store.getState().projectScopeId;
@@ -288,7 +265,8 @@ export function createThreadActions(ctx: ThreadActionsContext) {
         id: `scope:${project.id}`,
         title: `Show project ${project.title}`,
         keywords: "scope filter projects",
-        run: run("sidebar.scope", { projectKey: projectKey(project.id) }),
+        action: "sidebar.scope",
+        payload: { projectKey: projectKey(project.id) },
       });
     }
     if (scopeId !== null) {
@@ -296,7 +274,8 @@ export function createThreadActions(ctx: ThreadActionsContext) {
         id: "scope:all",
         title: "Show all projects",
         keywords: "scope filter projects",
-        run: run("sidebar.scope", { projectKey: null }),
+        action: "sidebar.scope",
+        payload: { projectKey: null },
       });
     }
     list.push({
@@ -304,38 +283,13 @@ export function createThreadActions(ctx: ThreadActionsContext) {
       title: "Filter threads",
       hint: "^F",
       keywords: "search",
-      run: run("sidebar.filter.focus"),
+      action: "sidebar.filter.focus",
     });
-    list.push(...(ctx.moreCommands?.() ?? []));
     return list;
-  };
-
-  const setPalette = (query: string, selectedIndex: number) => {
-    const matches = filterCommands(paletteCommands, query);
-    const index = Math.max(0, Math.min(selectedIndex, matches.length - 1));
-    palette = {
-      open: true,
-      query,
-      selectedIndex: index,
-      items: matches.map((command, i) => ({
-        id: command.id,
-        title: command.title,
-        hint: command.hint ?? "",
-        selected: i === index,
-      })),
-    };
-    publishPalette();
-  };
-  const closePalette = () => {
-    if (!palette.open) return;
-    palette = CLOSED_PALETTE;
-    paletteCommands = [];
-    publishPalette();
   };
 
   publishMenu();
   publishOverlay();
-  publishPalette();
 
   const dispatch = (action: string, payload?: unknown): boolean => {
     switch (action) {
@@ -433,38 +387,6 @@ export function createThreadActions(ctx: ThreadActionsContext) {
         else runMenuAction(thread, "copy-thread-id");
         return true;
       }
-      case "palette.open":
-        closeMenu();
-        paletteCommands = buildPaletteCommands();
-        setPalette("", 0);
-        ctx.setMode("command");
-        return true;
-      case "palette.query": {
-        if (!palette.open) return true;
-        const query = field(payload, "query");
-        setPalette(typeof query === "string" ? query : "", 0);
-        return true;
-      }
-      case "palette.move": {
-        if (!palette.open || palette.items.length === 0) return true;
-        const count = palette.items.length;
-        const delta = Number(field(payload, "delta")) < 0 ? -1 : 1;
-        setPalette(palette.query, (palette.selectedIndex + delta + count) % count);
-        return true;
-      }
-      case "palette.run": {
-        if (!palette.open) return true;
-        const id = field(payload, "id") ?? palette.items[palette.selectedIndex]?.id;
-        const command = paletteCommands.find((candidate) => candidate.id === id);
-        closePalette();
-        ctx.setMode(ctx.restingMode());
-        command?.run();
-        return true;
-      }
-      case "palette.close":
-        closePalette();
-        ctx.setMode(ctx.restingMode());
-        return true;
       default:
         return false;
     }
@@ -472,7 +394,8 @@ export function createThreadActions(ctx: ThreadActionsContext) {
 
   return {
     dispatch,
-    /** Rows the open palette wants above the prompt (ChatView's `commandWanted`). */
-    popoverRows: () => (palette.open ? Math.floor(ctx.size().rows * 0.5) : 0),
+    paletteCommands,
+    /** The palette opening over an open menu closes the menu. */
+    closeMenu,
   };
 }

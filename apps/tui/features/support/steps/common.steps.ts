@@ -5,12 +5,14 @@ import { expect } from "bun:test";
 import { step } from "../../steps.ts";
 import { LIST_PANE_WIDTH } from "../../../src/components/ChatView.layout.ts";
 import { addProject, flush } from "../environment.ts";
+import { openOnThread } from "./composer.steps.ts";
 import {
   boot,
   findObject,
   geometry,
   pressKey,
   resize,
+  settle,
   snapshot,
   typeText,
   type World,
@@ -120,34 +122,44 @@ async function expectStatusLine(ctx: World, text: string) {
 }
 
 // "says"/"reads" is the outcome: in-flight calls land first. "is told" reads
-// the line as it is now, so a busy message ("Clearing terminal…") is seen.
+// the line as it is now, so a busy message ("Clearing terminal…") is seen, and
+// only waits for the host when the message is not there yet (a failed request).
 step(/^the status line (?:says|reads) "([^"]*)"$/, async (ctx: World, text: string) => {
-  if (ctx.host) await ctx.host.settled();
+  await settle(ctx);
   await expectStatusLine(ctx, text);
 });
-step("the user is told {string}", expectStatusLine);
+step("the user is told {string}", async (ctx: World, text: string) => {
+  await flush(ctx);
+  if (ctx.app && findObject(ctx, "statusText").get("text") !== text) await settle(ctx);
+  await expectStatusLine(ctx, text);
+});
 
 // --- merged T1 + T2 ---
 
 // Nothing is in the prompt: T1's layout Given and T2's "keys went to the
 // approval, not the prompt" both read the prompt field and the composer key.
+// As a Given, a draft left in the prompt is cleared (Esc) first.
 step("the prompt is empty", async (ctx: World) => {
   await boot(ctx);
-  await snapshot(ctx);
-  expect(findObject(ctx, "promptInput").get("text")).toBe("");
-  const composer = ctx.host!.state.get("composer") as { text?: string } | undefined;
-  expect(composer?.text ?? "").toBe("");
+  const composer = () => ctx.host!.state.get("composer") as { text?: string } | undefined;
+  if (ctx.stepType !== "Outcome" && (composer()?.text ?? "") !== "") await pressKey(ctx, "Esc");
+  await settle(ctx);
+  const field = findObject(ctx, "composerInput");
+  expect(field.get("plainText") ?? field.get("text")).toBe("");
+  expect(composer()?.text ?? "").toBe("");
 });
 
 // --- added by T4 ---
 
-// Keys go to the prompt: not a menu, panel or the terminal drawer (T5).
+// Given: the client runs (on a thread, when nothing booted it yet). Then and
+// Given alike: keys go to the prompt, not a menu, panel or the terminal drawer.
 step("the prompt has focus", async (ctx: World) => {
-  await snapshot(ctx);
-  await ctx.host!.settled();
+  if (ctx.stepType !== "Outcome" && !ctx.host) await openOnThread(ctx);
+  await settle(ctx);
   expect(ctx.host!.state.get("mode")).toBe("compose");
   const terminal = ctx.host!.state.get("terminal") as { focused: boolean } | undefined;
   expect(terminal?.focused ?? false).toBe(false);
+  expect(findObject(ctx, "composerInput").get("focus")).toBe(true);
 });
 
 step("the user presses escape", async (ctx: World) => {

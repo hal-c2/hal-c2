@@ -622,15 +622,19 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
 
   const dispatch = (action: string, payload: unknown): boolean => {
     switch (action) {
+      // Chords the prompt shares (^A, ^R, ↑/↓, ^U, ^Y, Space) decline when
+      // there is nothing to act on, so the key reaches the focused field.
       case "approval.approve":
+        if (approvals.length === 0) return false;
         answerApproval("accept");
         return true;
       case "approval.decline":
+        if (approvals.length === 0) return false;
         answerApproval("decline");
         return true;
       case "approval.next":
       case "approval.previous": {
-        if (approvals.length === 0) return true;
+        if (approvals.length < 2) return false;
         const delta = action === "approval.next" ? 1 : -1;
         approvalIndex = (approvalIndex + delta + approvals.length) % approvals.length;
         publishApprovals();
@@ -642,6 +646,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
         return true;
       }
       case "userInput.toggle":
+        if (!activeQuestion()?.questions[question.questionIndex]?.multiSelect) return false;
         toggleOption();
         return true;
       case "userInput.answer.set": {
@@ -657,9 +662,13 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
         if (activeQuestion()) setQuestion({ deferred: true });
         return true;
       case "userInput.reopen":
-        if (activeQuestion() && answering !== question.requestId) setQuestion({ deferred: false });
+        if (!activeQuestion() || !question.deferred || answering === question.requestId) {
+          return false;
+        }
+        setQuestion({ deferred: false });
         return true;
       case "plan.implement":
+        if (!detail || !latestActionableProposedPlan(detail)) return false;
         implementPlan();
         return true;
       case "timeline.showOlder":

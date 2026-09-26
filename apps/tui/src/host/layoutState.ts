@@ -1,7 +1,6 @@
 import {
   CHAT_CONTENT_MAX_WIDTH,
   COMPOSER_MIN_EDITOR_ROWS,
-  countWrappedComposerLines,
   resolveChatColumnLayout,
   resolveChatVerticalLayout,
   type ChatColumnLayout,
@@ -60,8 +59,8 @@ export interface TuiLayoutInput {
   readonly drawerOpen?: boolean;
   /** The user's drawer height; defaults to 40% of the terminal. */
   readonly drawerRows?: number | null;
-  /** The prompt text, for the editor's wrapped height. */
-  readonly composerText?: string;
+  /** The editor rows the composer wants (its text's wrapped height, 3–8, or the user's). */
+  readonly editorRows?: number | undefined;
   /** Rows a picker or popover above the prompt wants. */
   readonly popoverRows?: number;
 }
@@ -74,18 +73,10 @@ export function buildTuiLayoutState(input: TuiLayoutInput): TuiLayoutState {
     input.sidebarCollapsed,
   );
   const contentWidth = Math.min(CHAT_CONTENT_MAX_WIDTH, columns.chatWidth);
-  // ComposerDock: the editor sits inside a bordered, padded surface.
-  const surfaceWidth = Math.max(8, Math.min(CHAT_CONTENT_MAX_WIDTH, columns.chatWidth - 2));
   const popoverRows = input.popoverRows ?? 0;
   const vertical = resolveChatVerticalLayout({
     terminalHeight: size.rows,
-    desiredEditorRows:
-      popoverRows > 0
-        ? 1
-        : Math.max(
-            COMPOSER_MIN_EDITOR_ROWS,
-            countWrappedComposerLines(input.composerText ?? "", surfaceWidth - 4),
-          ),
+    desiredEditorRows: popoverRows > 0 ? 1 : (input.editorRows ?? COMPOSER_MIN_EDITOR_ROWS),
     composerChromeRows: COMPOSER_CHROME_ROWS,
     terminalOpen: input.drawerOpen === true,
     preferredTerminalRows: input.drawerRows ?? Math.floor(size.rows * 0.4),

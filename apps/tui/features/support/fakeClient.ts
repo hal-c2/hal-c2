@@ -3,16 +3,23 @@ import {
   type GitRunStackedActionResult,
   type GitStackedAction,
   type OrchestrationThread,
+  type ServerProvider,
   type TerminalAttachStreamEvent,
   type TerminalMetadataStreamEvent,
   type VcsStatusResult,
 } from "@t3tools/contracts";
 
 import type { OrchestrationShellSnapshot, TuiClient, TuiThreadPage } from "../../src/connection.ts";
+import { flattenModelOptions } from "../../src/models.ts";
 
 // Fixtures and an in-memory TuiClient, shared by the component tests and the
 // Gherkin world. Feed it with `connect()` (the default shell snapshot),
 // `emitShell(snapshot)` and `emitThread(detail)`.
+//
+// Every request method is recorded in `calls` (subscriptions and peeks are
+// not), so steps assert on what the client was asked. `override(method, fn)`
+// swaps one method's behaviour after boot. `workspaceFiles` backs
+// `readFileBase64` unless a scenario passes its own.
 
 export const project = {
   id: "p1",
@@ -30,6 +37,56 @@ export const projectTwo = {
   workspaceRoot: "/workspace/project-two",
   defaultModelSelection: { instanceId: "codex", model: "gpt-5-mini" },
 };
+
+const reasoning = (defaultId: string) => ({
+  id: "reasoningEffort",
+  label: "Reasoning",
+  type: "select",
+  options: ["low", "medium", "high"].map((id) => ({
+    id,
+    label: id[0]!.toUpperCase() + id.slice(1),
+    ...(id === defaultId ? { isDefault: true } : {}),
+  })),
+});
+
+/**
+ * Codex (GPT-5 with effort and a fast-mode switch, GPT-5 Codex defaulting to
+ * high effort) and Claude. Pass as `providers` to serve them from `listModels`.
+ */
+export const PROVIDERS = [
+  {
+    instanceId: "codex",
+    driver: "codex",
+    displayName: "Codex",
+    enabled: true,
+    models: [
+      {
+        slug: "gpt-5",
+        name: "GPT-5",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            reasoning("medium"),
+            { id: "fastMode", label: "Fast mode", type: "boolean" },
+          ],
+        },
+      },
+      {
+        slug: "gpt-5-codex",
+        name: "GPT-5 Codex",
+        isCustom: false,
+        capabilities: { optionDescriptors: [reasoning("high")] },
+      },
+    ],
+  },
+  {
+    instanceId: "claude",
+    driver: "claude",
+    displayName: "Claude",
+    enabled: true,
+    models: [{ slug: "opus", name: "Opus", isCustom: false, capabilities: null }],
+  },
+] as unknown as ReadonlyArray<ServerProvider>;
 
 export function thread(activities: OrchestrationThread["activities"] = []): OrchestrationThread {
   return {
@@ -115,7 +172,7 @@ export function fakeClient({
   terminalRestart = async () => {},
   terminalClose = async () => {},
   approve = async () => {},
-  setInteractionMode = async () => {},
+  setInteractionMode,
   renameThread = async () => {},
   archiveThread = async () => {},
   unarchiveThread = async () => {},
@@ -127,7 +184,8 @@ export function fakeClient({
   runGitPull,
   getAttachmentUrl = async () => null,
   getAttachmentImage = async () => null,
-  readFileBase64 = async () => null,
+  readFileBase64,
+  providers,
   listRefs = async () =>
     ({
       refs: [
@@ -145,16 +203,18 @@ export function fakeClient({
     }) as never,
   switchRef = async (_cwd: string, refName: string) => ({ refName }) as never,
   getServerConfig = async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
-  listModels = async () =>
-    [
-      {
-        instanceId: "codex",
-        model: "gpt-5",
-        label: "GPT-5",
-        providerLabel: "Codex",
-        capabilities: null,
-      },
-    ] as never,
+  listModels = providers
+    ? async () => flattenModelOptions(providers)
+    : async () =>
+        [
+          {
+            instanceId: "codex",
+            model: "gpt-5",
+            label: "GPT-5",
+            providerLabel: "Codex",
+            capabilities: null,
+          },
+        ] as never,
   listTerminalIds = async () => [],
   implementPlan = async () => {},
   revertCheckpoint = async () => {},
@@ -194,6 +254,8 @@ export function fakeClient({
   readonly getAttachmentUrl?: TuiClient["getAttachmentUrl"];
   readonly getAttachmentImage?: TuiClient["getAttachmentImage"];
   readonly readFileBase64?: TuiClient["readFileBase64"];
+  /** Providers whose usable models `listModels` reports (flattened like the server). */
+  readonly providers?: ReadonlyArray<ServerProvider>;
   readonly listRefs?: TuiClient["listRefs"];
   readonly switchRef?: TuiClient["switchRef"];
   readonly getServerConfig?: TuiClient["getServerConfig"];
@@ -230,6 +292,12 @@ export function fakeClient({
   readonly diffCalls: ReadonlyArray<FakeDiffCall>;
   /** Attached terminals by `threadId:terminalId`, with what they were sent. */
   readonly terminals: Map<string, FakeTerminal>;
+  /** Replace one client method (still recorded). */
+  readonly override: <K extends keyof TuiClient>(method: K, fn: TuiClient[K]) => void;
+  /** Workspace files (relative path → bytes) served by the default `readFileBase64`. */
+  readonly workspaceFiles: Map<string, Uint8Array>;
+  /** The latest detail pushed or peeked for a thread. */
+  readonly currentThread: (threadId: string) => OrchestrationThread | null;
 } {
   const terminals = new Map<string, FakeTerminal>();
   const terminalFor = (threadId: string, terminalId: string): FakeTerminal => {
@@ -256,8 +324,24 @@ export function fakeClient({
     string,
     (thread: OrchestrationThread, page: TuiThreadPage) => void
   >();
-  // The warm cache: the detail given, then whatever was last emitted.
-  let detail = initialDetail;
+  const details = new Map<string, OrchestrationThread>();
+  if (initialDetail) details.set(initialDetail.id, initialDetail);
+  const workspaceFiles = new Map<string, Uint8Array>();
+  const currentThread = (threadId: string) => details.get(threadId) ?? null;
+  const emitThread = (
+    next: OrchestrationThread,
+    page: TuiThreadPage = { hasMore: false, loadingOlder: false },
+  ) => {
+    details.set(next.id, next);
+    threadSubscribers.get(next.id)?.(next, page);
+  };
+  // The server echoes a thread setting back through the live detail.
+  const echo =
+    (patch: (mode: never) => Partial<OrchestrationThread>) =>
+    async (threadId: string, mode: never) => {
+      const current = details.get(threadId);
+      if (current) emitThread({ ...current, ...patch(mode) });
+    };
   let currentVcsStatus: VcsStatusResult | null = vcsStatus ?? null;
   const vcsSubscribers = new Set<(status: VcsStatusResult) => void>();
   let gitOutcome: FakeGitOutcome = { kind: "succeed" };
@@ -289,7 +373,7 @@ export function fakeClient({
         if (threadSubscribers.get(threadId) === onThread) threadSubscribers.delete(threadId);
       };
     },
-    peekThread: () => detail ?? null,
+    peekThread: (threadId: string) => details.get(threadId) ?? null,
     subscribeVcsStatus: (_cwd: string, onStatus: (status: VcsStatusResult) => void) => {
       vcsSubscribers.add(onStatus);
       if (currentVcsStatus) onStatus(currentVcsStatus);
@@ -353,7 +437,10 @@ export function fakeClient({
     terminalResize: async () => {},
     terminalClear,
     terminalRestart,
-    setInteractionMode,
+    setInteractionMode:
+      setInteractionMode ?? echo((interactionMode) => ({ interactionMode }) as never),
+    setRuntimeMode: echo((runtimeMode) => ({ runtimeMode }) as never),
+    interrupt: async () => {},
     renameThread,
     archiveThread,
     unarchiveThread,
@@ -370,32 +457,42 @@ export function fakeClient({
     switchRef,
     getAttachmentUrl,
     getAttachmentImage,
-    readFileBase64,
+    readFileBase64:
+      readFileBase64 ??
+      (async (_cwd: string, relativePath: string) => {
+        const bytes = workspaceFiles.get(relativePath);
+        if (!bytes) return null;
+        return {
+          contents: Buffer.from(bytes).toString("base64"),
+          byteLength: bytes.byteLength,
+          truncated: false,
+        };
+      }),
     runGitStackedAction: () =>
       settleGit(gitOutcome.kind === "succeed" ? (gitOutcome.result ?? null) : null),
     runGitPull: (cwd: string) => (runGitPull ? runGitPull(cwd) : settleGit(undefined)),
   } as unknown as TuiClient;
   const calls: FakeClientCall[] = [];
-  const record = client as unknown as Record<string, unknown>;
-  for (const [method, value] of Object.entries(record)) {
-    if (typeof value !== "function" || UNRECORDED.has(method)) continue;
-    record[method] = (...args: unknown[]) => {
-      calls.push({ method, args });
-      return (value as (...args: unknown[]) => unknown)(...args);
+  // `impls` holds the behaviour (override swaps it); `recorded` is what the host calls.
+  const impls = client as unknown as Record<string, unknown>;
+  const recorded = { ...impls } as Record<string, unknown>;
+  for (const [method, impl] of Object.entries(impls)) {
+    if (typeof impl !== "function") continue;
+    const unrecorded = UNRECORDED.has(method);
+    recorded[method] = (...args: unknown[]) => {
+      if (!unrecorded) calls.push({ method, args });
+      return (impls[method] as (...values: unknown[]) => unknown)(...args);
     };
   }
   return {
-    client,
+    client: recorded as unknown as TuiClient,
     calls,
     connect: () => shellSubscriber?.(shellSnapshot),
     emitShell: (snapshot) => shellSubscriber?.(snapshot),
     subscribedThreadIds,
     emitTerminalMetadata: (event) => terminalMetadataSubscriber?.(event),
     terminals,
-    emitThread: (next, page = { hasMore: false, loadingOlder: false }) => {
-      detail = next;
-      threadSubscribers.get(next.id)?.(next, page);
-    },
+    emitThread,
     setVcsStatus: (status) => {
       currentVcsStatus = status;
       if (status) for (const subscriber of vcsSubscribers) subscriber(status);
@@ -428,6 +525,11 @@ export function fakeClient({
           : [],
       );
     },
+    override: (method, fn) => {
+      impls[method] = fn;
+    },
+    workspaceFiles,
+    currentThread,
   };
 }
 

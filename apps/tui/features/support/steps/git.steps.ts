@@ -131,6 +131,44 @@ step("it shows the branch's sync state and change counts", async (ctx: World) =>
   expect(screen).toContain("working tree clean");
 });
 
+// keymap.feature: the panel's keys on a fresh panel, which opens on its first action.
+step(/^the (next|previous) git action is highlighted$/, async (ctx: World, which: string) => {
+  const screen = await settle(ctx);
+  const { actions, selectedIndex } = gitState(ctx);
+  expect(actions.length).toBeGreaterThan(1);
+  expect(selectedIndex).toBe(which === "next" ? 1 : actions.length - 1);
+  expect(screen).toContain(`▸ ${actions[selectedIndex]!.label}`);
+});
+
+step("the highlighted git action runs", async (ctx: World) => {
+  await settle(ctx);
+  const action = gitState(ctx).actions[gitState(ctx).selectedIndex]!;
+  expect(action).toMatchObject({ label: "Pull", kind: "pull", disabled: false });
+  expect(ctx.fake!.gitCalls).toEqual([{ method: "runGitPull", cwd: "/workspace/shop" }]);
+});
+
+step("focus returns to the conversation", async (ctx: World) => {
+  await settle(ctx);
+  // On a narrow terminal the panel stood in for the conversation and closes;
+  // git.feature covers the wide terminal, where it stays open.
+  expect(hostMode(ctx)).toBe("compose");
+  expect(panelState(ctx).focused).toBe(false);
+  expect(geometry(findObject(ctx, "conversation")).visible).toBe(true);
+  expect(findObject(ctx, "composerInput").get("focus")).toBe(true);
+});
+
+step("the source-control panel closes", async (ctx: World) => {
+  await settle(ctx);
+  expect(panelState(ctx).visible).toBe(false);
+  expect(hostMode(ctx)).toBe("compose");
+  expect(() => findObject(ctx, "sourceControlPanel")).toThrow();
+});
+
+step("the source-control panel has focus on the pull request link", async (ctx: World) => {
+  await moveTo(ctx, "View PR");
+  expect(gitState(ctx).actions[gitState(ctx).selectedIndex]!.kind).toBe("url");
+});
+
 step("the panel closes", async (ctx: World) => {
   await settle(ctx);
   expect(panelState(ctx).visible).toBe(false);
@@ -325,6 +363,7 @@ async function expectCopied(ctx: World): Promise<void> {
 
 step("the exact pull request URL is copied to the clipboard", expectCopied);
 step("the pull request link is copied", expectCopied);
+step("the pull request link is copied to the clipboard", expectCopied);
 step("the pull request opens on its host", expectCopied);
 
 step("the status line says the PR link was copied", async (ctx: World) => {

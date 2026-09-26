@@ -76,9 +76,12 @@ const rowLabels = (ctx: World) => files(ctx).rows.map((row) => row.text.slice(2)
 const selected = (ctx: World) => files(ctx).rows.find((row) => row.selected)?.path;
 
 async function browse(ctx: FilesWorld) {
+  // keymap.feature opens the browser with nothing booted; there it starts on a file.
+  const onItsOwn = !ctx.app;
   await ensureOpen(ctx);
   await chooseCommand(ctx, "Browse files");
   await settle(ctx);
+  if (onItsOwn) await selectRow(ctx, "README.md");
 }
 
 /** Move the selection to `path` with the arrow keys. */
@@ -152,6 +155,13 @@ step("{string} in {string} is empty", (ctx: FilesWorld, path: string) => {
 // --- Browsing ----------------------------------------------------------------------
 
 step("the file browser is open", browse);
+step("the highlighted file opens", async (ctx: World) => {
+  const screen = await settle(ctx);
+  const path = selected(ctx);
+  expect(path).toBeDefined();
+  expect(files(ctx).viewer).toMatchObject({ path, status: "ready" });
+  expect(screen).toContain(path!);
+});
 step("the user is browsing files", browse);
 step("the user browses files", browse);
 

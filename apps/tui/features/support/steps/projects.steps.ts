@@ -99,7 +99,7 @@ async function start(ctx: ProjectsWorld) {
   await settle(ctx);
 }
 
-const flow = (ctx: World) => ctx.host!.state.get("addProject") as TuiAddProjectState;
+export const flow = (ctx: World) => ctx.host!.state.get("addProject") as TuiAddProjectState;
 const listed = (ctx: World) =>
   (
     ctx.host!.state.get("sidebar") as {
@@ -111,12 +111,12 @@ const listed = (ctx: World) =>
 async function paletteTitles(ctx: World): Promise<string[]> {
   const wasOpen = palette(ctx).open;
   if (!wasOpen) await pressKey(ctx, "Ctrl+K");
-  const titles = palette(ctx).items.map((item) => item.title);
+  const titles = palette(ctx).commands.map((item) => item.title);
   if (!wasOpen) await pressKey(ctx, "Esc");
   return titles;
 }
 
-async function openAddProject(ctx: ProjectsWorld) {
+export async function openAddProject(ctx: ProjectsWorld) {
   await start(ctx);
   await chooseCommand(ctx, "Add project");
   await settle(ctx);
@@ -124,7 +124,7 @@ async function openAddProject(ctx: ProjectsWorld) {
 }
 
 /** In the source list: move to the row titled `title` and press Enter. */
-async function chooseSource(ctx: World, title: string) {
+export async function chooseSource(ctx: World, title: string) {
   for (let guard = 0; guard < 10; guard += 1) {
     if (flow(ctx).rows.find((row) => row.selected)?.title === title) break;
     await pressKey(ctx, "Down");
@@ -135,14 +135,14 @@ async function chooseSource(ctx: World, title: string) {
 }
 
 /** Replace what the path field holds, as the user would: erase, then type. */
-async function fillField(ctx: World, text: string) {
+export async function fillField(ctx: World, text: string) {
   for (let left = flow(ctx).query.length; left > 0; left -= 1) await pressKey(ctx, "Backspace");
   if (text.length > 0) await typeText(ctx, text);
   await settle(ctx);
   expect(flow(ctx).query).toBe(text);
 }
 
-async function addLocalFolder(ctx: ProjectsWorld, path: string) {
+export async function addLocalFolder(ctx: ProjectsWorld, path: string) {
   await openAddProject(ctx);
   await chooseSource(ctx, "Local folder");
   await fillField(ctx, path);

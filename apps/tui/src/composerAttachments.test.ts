@@ -129,6 +129,17 @@ describe("composer image attachments", () => {
     });
   });
 
+  it("Given a quoted image path with spaces followed by prose, when extracted, then it stages the image and keeps the prose", () => {
+    expect(
+      extractPastedImagePath(
+        "'~/shots/my bug.png' look at this",
+        "/workspace/project",
+        "/home/olafura",
+        "linux",
+      ),
+    ).toEqual({ imagePath: "/home/olafura/shots/my bug.png", remainingText: "look at this" });
+  });
+
   it("Given prose where an absolute directory precedes an unrelated image word, when extracted, then nothing is treated as a path", () => {
     expect(
       extractPastedImagePath(
