@@ -863,3 +863,34 @@ step(/^the user tries to attach (.+)$/, async (ctx: ComposerWorld, image: string
       throw new Error(`unknown image "${image}"`);
   }
 });
+
+// --- Prompt recall
+
+step("the user sent {string} earlier in this thread", async (ctx: World, text: string) => {
+  const at = "2026-07-13T00:00:01.000Z";
+  const message = (id: string, role: string, body: string) => ({
+    id,
+    role,
+    text: body,
+    turnId: null,
+    streaming: false,
+    createdAt: at,
+    updatedAt: at,
+  });
+  if (!ctx.host) await openOnThread(ctx);
+  await updateThread(ctx, (detail) => ({
+    ...detail,
+    messages: [
+      message("m1", "user", "Read the README"),
+      message("m2", "assistant", "Done."),
+      message("m3", "user", text),
+      message("m4", "assistant", "All green."),
+    ] as unknown as OrchestrationThread["messages"],
+  }));
+});
+
+step("the user asks for the previous prompt in an empty prompt", async (ctx: World) => {
+  expect(composer(ctx).text).toBe("");
+  await pressKey(ctx, "Up");
+  await settle(ctx);
+});

@@ -293,6 +293,27 @@ export function createComposer(options: ComposerOptions): Composer {
     else drafts.set(key, next);
     publish();
   };
+  // Prompt recall: ↑ in an empty prompt walks back through the thread's sent
+  // prompts, ↓ walks forward and past the newest clears the prompt. Recall
+  // only continues while the prompt still holds the recalled text.
+  let recall: { readonly key: string; readonly index: number; readonly text: string } | null = null;
+  const recallPrompt = (direction: "previous" | "next"): boolean => {
+    const key = target();
+    const detail = selectedDetail();
+    if (!key || newDraft || !detail) return false;
+    const current = draftFor(key).text;
+    const recalling = recall !== null && recall.key === key && recall.text === current;
+    if (!recalling && (direction === "next" || current.length > 0)) return false;
+    const sent = detail.messages
+      .filter((message) => message.role === "user" && message.text.trim().length > 0)
+      .map((message) => message.text);
+    const index = (recalling ? recall!.index : sent.length) + (direction === "previous" ? -1 : 1);
+    if (index < 0) return recalling;
+    const text = sent[index] ?? "";
+    recall = index < sent.length ? { key, index, text } : null;
+    setDraft(key, (draft) => ({ ...draft, text }));
+    return true;
+  };
   const threadInteraction = (detail: OrchestrationThread) =>
     interactionOverrides.get(detail.id) ?? detail.interactionMode;
   const threadModel = (detail: OrchestrationThread): ModelSelection | null =>
@@ -1410,6 +1431,10 @@ export function createComposer(options: ComposerOptions): Composer {
         setDraft(target(), (draft) => ({ ...draft, text }));
         return true;
       }
+      case "composer.history.previous":
+        return recallPrompt("previous");
+      case "composer.history.next":
+        return recallPrompt("next");
       case "composer.submit":
         if (newDraft) submitNewThread();
         else sendReply();

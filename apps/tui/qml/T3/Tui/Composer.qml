@@ -49,7 +49,8 @@ Rectangle {
         focus: composer.focused
         placeholderText: composer.model.placeholder
         wrapMode: "word"
-        // Plain Enter is taken by Keys.onPressed (send); Shift+Enter and Ctrl+J add a line.
+        // Plain Enter is taken by Keys.onPressed (send), ↑/↓ recall earlier prompts
+        // when the prompt is empty; Shift+Enter and Ctrl+J add a line.
         keyBindings: [
             { name: "return", shift: true, action: "newline" },
             { name: "kpenter", shift: true, action: "newline" },
@@ -68,6 +69,9 @@ Rectangle {
             if (event.key === "return" && !event.shift && !event.ctrl && !event.alt) {
                 Shell.dispatch("composer.submit")
                 event.accepted = true
+            } else if ((event.key === "up" || event.key === "down") && !event.shift && !event.ctrl && !event.alt) {
+                // Recall earlier prompts; the host declines when there is nothing to recall.
+                event.accepted = Shell.dispatch(event.key === "up" ? "composer.history.previous" : "composer.history.next") === true
             }
         }
         Keys.onPaste: (event) => {
