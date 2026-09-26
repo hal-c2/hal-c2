@@ -135,6 +135,17 @@ defmodule T3.Settings do
     if keys_changed or settings["usageLimitSources"] != state.settings["usageLimitSources"],
       do: T3.UsageLimitSources.refresh_async()
 
+    # OpenCode read from another server (or from none) is a different inventory.
+    server =
+      &((get_in(&1, ["providers", "opencode"]) || %{})
+        |> Map.take(["serverUrl", "serverPassword"]))
+
+    if server.(settings) != server.(state.settings), do: T3.Acp.forget("opencode")
+
+    # Pi run from another binary or with other launch arguments is read again.
+    pi = &((get_in(&1, ["providers", "pi"]) || %{}) |> Map.take(["binaryPath", "launchArgs"]))
+    if pi.(settings) != pi.(state.settings), do: T3.Acp.forget("pi")
+
     for {pid, _} <- state.watchers, do: send(pid, {:t3_settings, node(), settings})
     {:reply, {:ok, version + 1}, %{state | settings: settings, version: version + 1}}
   end

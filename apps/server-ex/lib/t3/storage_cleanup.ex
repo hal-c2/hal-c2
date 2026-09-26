@@ -193,7 +193,7 @@ defmodule T3.StorageCleanup do
 
   defp session?(thread_id) do
     Enum.any?(
-      [T3.Codex.Registry, T3.Claude.Registry, T3.Acp.Registry],
+      [T3.Codex.Registry, T3.Claude.Registry, T3.Acp.Registry, T3.Pi.Registry],
       &(Process.whereis(&1) != nil and Registry.lookup(&1, thread_id) != [])
     )
   end

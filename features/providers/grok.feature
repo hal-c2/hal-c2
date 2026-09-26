@@ -69,7 +69,6 @@ Feature: Grok
     When Grok asks the user a question
     Then the question is shown and the answer is sent back to Grok
 
-  @backlog
   Scenario: Grok subagents appear as child work
     When Grok starts a subagent
     Then the subagent's work is grouped under the step that started it
@@ -88,13 +87,11 @@ Feature: Grok
     When the user looks at the first turn
     Then reverting to it is not offered
 
-  @backlog
   Scenario: Grok's billing period is shown in the limits view
     Given Grok is signed in with a Grok account
     When the user opens the limits view
     Then Grok shows how much of its billing period is used and when it resets
 
-  @backlog
   Scenario: Grok usage limits are unavailable with an API key or custom endpoint
     Given the Grok instance uses an API key
     When the user opens the limits view

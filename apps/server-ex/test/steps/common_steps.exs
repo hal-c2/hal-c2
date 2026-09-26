@@ -305,18 +305,11 @@ defmodule T3.Steps.Common do
   end
 
   # The tool went ahead: the turn finished without a pending approval, and an
-  # agent played by `T3.Test.FakeAcp` was told yes.
+  # agent played by `T3.Test.FakeAcp` ran it without asking the user.
   step "it is allowed without asking", context do
     state = T3.Test.FakeAcp.await_run(context, "completed")
     refute Enum.any?(T3.StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
-
-    if context[:fakes] do
-      assert %{"result" => %{"outcome" => %{"outcome" => "selected", "optionId" => option}}} =
-               List.last(T3.Test.FakeAcp.answers(context))
-
-      assert option in ~w(once always)
-    end
-
+    if context[:fakes], do: T3.Test.FakeAcp.assert_allowed(context)
     context
   end
 
@@ -366,5 +359,90 @@ defmodule T3.Steps.Common do
     request = T3.Test.FakeAcp.await_request(context)
     assert request["status"] == "pending"
     Map.put(context, :request, request)
+  end
+
+  # --- added by W13 ---
+
+  # The provider list after the node read every provider's quota again
+  # (`T3.ProviderUsageLimits`). Codex and Claude probe only their test fakes: a
+  # scenario that sets none has them missing, never the machine's own CLIs.
+  step "the user opens the limits view", context do
+    T3.Test.FakeAcp.services()
+
+    for key <- [:codex_command, :claude_command], Application.get_env(:t3, key) == nil do
+      Application.put_env(:t3, key, ["t3-test-no-#{key}"])
+      ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, key) end)
+    end
+
+    Node.ensure(T3.ProviderUsageLimits)
+    :ok = T3.ProviderUsageLimits.refresh()
+    {providers, context} = T3.Test.FakeAcp.open_config(context)
+    Map.put(context, :providers, providers)
+  end
+
+  # A provider's own subagent: a subagent node under the run's root node, with its
+  # turn item, and its work (the prompt, then its answer) in a child thread of this
+  # one, forked from that node. `:subagent_prompt` / `:subagent_answer` in the context,
+  # when set, are the texts the child thread must hold.
+  step "the subagent's work is grouped under the step that started it", context do
+    thread_id = World.thread_id(context, context.thread)
+
+    state =
+      World.await_stream(thread_id, fn state ->
+        if Enum.any?(T3.StreamState.list(state, "subagent"), &(&1["status"] == "completed")),
+          do: state
+      end)
+
+    [task] = T3.StreamState.list(state, "subagent")
+    run = T3.StreamState.get(state, "run")[task["runId"]]
+    node = T3.StreamState.get(state, "node")[task["id"]]
+    assert %{"kind" => "subagent", "parentNodeId" => root} = node
+    assert root == run["rootNodeId"] and task["parentNodeId"] == root
+
+    assert [%{"nodeId" => node_id, "childThreadId" => child_id}] =
+             state |> T3.StreamState.list("turn-item") |> Enum.filter(&(&1["type"] == "subagent"))
+
+    assert node_id == task["id"] and child_id == task["childThreadId"]
+
+    child = T3.Streams.Server.state(T3.Streams.ensure(child_id))
+
+    assert %{
+             "lineage" => %{"parentThreadId" => ^thread_id, "relationshipToParent" => "subagent"},
+             "forkedFrom" => %{"nodeId" => ^node_id}
+           } = T3.StreamState.get(child, "thread")[child_id]
+
+    messages =
+      child
+      |> T3.StreamState.list("message")
+      |> Enum.sort_by(& &1["createdAt"])
+      |> Enum.map(&{&1["role"], &1["text"]})
+
+    assert [{"user", prompt}, {"assistant", answer} | _] = messages
+    if context[:subagent_prompt], do: assert(prompt == context.subagent_prompt)
+    if context[:subagent_answer], do: assert(answer == context.subagent_answer)
+    assert task["result"] == answer
+
+    # The child's work is not the parent's: its answer is not in the parent thread.
+    refute Enum.any?(T3.StreamState.list(state, "message"), &(&1["text"] == answer))
+    context
+  end
+
+  # The thread works in the project root, which only an isolated worktree may reset:
+  # this rewinds the conversation, as the node offers for a shared checkout.
+  step "the user reverts to the end of the first turn", context do
+    id = World.thread_id(context, context[:current_thread] || context.thread)
+    scope = T3.Checkpoint.scope_id(id)
+
+    reply =
+      T3.Orchestration.dispatch(%{
+        "type" => "checkpoint.rollback",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => id,
+        "scopeId" => scope,
+        "checkpointId" => T3.Checkpoint.checkpoint_id(scope, 1),
+        "restoreFiles" => false
+      })
+
+    Map.put(context, :reply, reply)
   end
 end

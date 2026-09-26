@@ -1,8 +1,9 @@
 defmodule T3.Test.FakeAcp do
   @moduledoc """
   A scripted ACP agent (`test/support/fake_acp_scripted.py`) standing in for a
-  provider CLI (Grok, OpenCode, Pi's adapter) in the provider features. Provider CLIs
-  never run for real.
+  provider CLI (Grok, OpenCode) in the provider features, and a scripted Pi RPC
+  process (`test/support/fake_pi_rpc.py`, `install_pi/3`) for Pi. Provider CLIs never
+  run for real.
 
   `install/4` gives an instance its own fake: a directory with the script's
   `config.json` and `log.jsonl`, and an executable wrapper the instance's
@@ -17,6 +18,7 @@ defmodule T3.Test.FakeAcp do
   alias T3.Test.Node.World
 
   @script Path.expand("fake_acp_scripted.py", __DIR__)
+  @pi_script Path.expand("fake_pi_rpc.py", __DIR__)
   @instances ~w(grok opencode pi cursor)
 
   @run_test %{
@@ -97,13 +99,55 @@ defmodule T3.Test.FakeAcp do
              }
            )
 
+  # What the fake Pi does with the prompts the steps send (see `fake_pi_rpc.py`).
+  @pi_turns [
+    %{
+      "match" => "run a command",
+      "steps" => [
+        %{"tool" => "bash", "args" => %{"command" => "npm test"}, "output" => "ok"},
+        %{"text" => "Ran it."}
+      ]
+    },
+    %{
+      "match" => "edit a file",
+      "steps" => [
+        %{"tool" => "edit", "args" => %{"path" => "src/app.ts"}, "output" => "edited"},
+        %{"text" => "Edited it."}
+      ]
+    },
+    %{
+      "match" => "read a file",
+      "steps" => [
+        %{"tool" => "read", "args" => %{"path" => "src/app.ts"}, "output" => "export {}"},
+        %{"text" => "Read it."}
+      ]
+    },
+    %{
+      "match" => "run it twice",
+      "steps" => [
+        %{"tool" => "bash", "args" => %{"command" => "npm test"}, "output" => "ok"},
+        %{"tool" => "bash", "args" => %{"command" => "npm test"}, "output" => "ok"},
+        %{"text" => "Ran both."}
+      ]
+    },
+    %{
+      "match" => "a long task",
+      "steps" => [%{"text" => "Working on it."}, %{"waitAbort" => true}]
+    }
+  ]
+
   @doc "The fake's default turn scripts (see `@turns`), for configs that add their own."
   def turns, do: @turns
 
+  @doc "The fake Pi's default turn scripts (see `@pi_turns`)."
+  def pi_turns, do: @pi_turns
+
   @doc """
   Sets up a fake agent for `instance` with `config` (see the script). Options:
-  `:enabled` (default false) and `:binary` (the wrapper's file name, default the
-  instance id). The instance's `binaryPath` is the wrapper.
+  `:enabled` (default false), `:binary` (the wrapper's file name, default the
+  instance id), `:path` (the wrapper's full path instead), `:script` (the fake to
+  run, default the ACP agent) and `:turns` (its default turn scripts). The
+  instance's `binaryPath` is the wrapper.
   """
   def install(context, instance, config \\ %{}, opts \\ []) do
     services()
@@ -115,14 +159,15 @@ defmodule T3.Test.FakeAcp do
     config =
       if instance == "opencode", do: Map.put_new(config, "version", "1.14.19"), else: config
 
-    File.write!(Path.join(dir, "config.json"), JSON.encode!(Map.put_new(config, "turns", @turns)))
-    bin = Path.join([dir, "bin", opts[:binary] || instance])
+    turns = Keyword.get(opts, :turns, @turns)
+    File.write!(Path.join(dir, "config.json"), JSON.encode!(Map.put_new(config, "turns", turns)))
+    bin = opts[:path] || Path.join([dir, "bin", opts[:binary] || instance])
     File.mkdir_p!(Path.dirname(bin))
 
     File.write!(bin, """
     #!/bin/sh
-    export FAKE_DIR='#{dir}'
-    exec python3 -u '#{@script}' "$@"
+    export FAKE_DIR='#{dir}' FAKE_BIN="$0"
+    exec python3 -u '#{Keyword.get(opts, :script, @script)}' "$@"
     """)
 
     File.chmod!(bin, 0o755)
@@ -141,15 +186,11 @@ defmodule T3.Test.FakeAcp do
   end
 
   @doc """
-  Pi's ACP adapter is installed from the ACP Registry; this runs the fake as that
-  adapter instead (`:acp_commands`), with `pi_binary` as Pi's own binary path.
+  Sets up the fake Pi (`fake_pi_rpc.py`) as the `pi` instance's binary, with
+  `config` (see the script). Takes `install/4`'s options.
   """
-  def pi_adapter(context, pi_binary) do
-    fake = context.fakes["pi"]
-    Application.put_env(:t3, :acp_commands, %{"pi" => [fake.bin]})
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :acp_commands) end)
-    settings(&put_in(&1, ["providers", "pi", "binaryPath"], pi_binary))
-    context
+  def install_pi(context, config \\ %{}, opts \\ []) do
+    install(context, "pi", config, Keyword.merge([script: @pi_script, turns: @pi_turns], opts))
   end
 
   @doc "The services an ACP thread needs besides the node's own."
@@ -158,6 +199,10 @@ defmodule T3.Test.FakeAcp do
 
     Node.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: T3.Acp.Registry}, id: :acp_registry)
+    )
+
+    Node.ensure(
+      Supervisor.child_spec({Registry, keys: :unique, name: T3.Pi.Registry}, id: :pi_registry)
     )
 
     Node.ensure(
@@ -218,6 +263,10 @@ defmodule T3.Test.FakeAcp do
   @doc "The messages the fake received with `method` (or answers, for `nil`)."
   def received(context, method, instance \\ nil),
     do: for(%{"recv" => %{} = msg} <- log(context, instance), msg["method"] == method, do: msg)
+
+  @doc "The commands the fake Pi received with `type`."
+  def received_type(context, type, instance \\ nil),
+    do: for(%{"recv" => %{} = msg} <- log(context, instance), msg["type"] == type, do: msg)
 
   @doc "The fake's answer to its own request `method` (by the request's order)."
   def answers(context, instance \\ nil),
@@ -399,6 +448,28 @@ defmodule T3.Test.FakeAcp do
     assert [%{"result" => %{"outcome" => %{"outcome" => "cancelled"}}}] = answers(context)
     assert [%{"cwd" => cwd}] = starts(context)
     refute cwd == World.project(context).root
+    :ok
+  end
+
+  @doc """
+  Asserts the scenario's agent ran its tool without the user being asked: an ACP
+  agent was told yes (allow once or always); the fake Pi's permission gate (T3's
+  extension, set to the thread's mode) let the tool through without a dialog.
+  """
+  def assert_allowed(context) do
+    case fake(context) do
+      %{instance: "pi"} ->
+        log = log(context)
+        assert [] = for(%{"ui" => ui} <- log, do: ui)
+        assert [_ | _] = for(%{"tool" => tool} <- log, do: tool)
+
+      _ ->
+        assert %{"result" => %{"outcome" => %{"outcome" => "selected", "optionId" => option}}} =
+                 List.last(answers(context))
+
+        assert option in ~w(once always)
+    end
+
     :ok
   end
 end

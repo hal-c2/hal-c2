@@ -485,7 +485,7 @@ defmodule T3.Orchestration do
   end
 
   defp stop_runtimes(thread_id) do
-    for registry <- [T3.Codex.Registry, T3.Claude.Registry, T3.Acp.Registry],
+    for registry <- [T3.Codex.Registry, T3.Claude.Registry, T3.Acp.Registry, T3.Pi.Registry],
         Process.whereis(registry) != nil,
         {pid, _} <- Registry.lookup(registry, thread_id),
         do: DynamicSupervisor.terminate_child(T3.Codex.Supervisor, pid)
@@ -496,7 +496,12 @@ defmodule T3.Orchestration do
   defp respond(thread_id, request_id, response) do
     result =
       Enum.find_value(
-        [T3.Codex.ThreadRuntime, T3.Claude.ThreadRuntime, T3.Acp.ThreadRuntime],
+        [
+          T3.Codex.ThreadRuntime,
+          T3.Claude.ThreadRuntime,
+          T3.Acp.ThreadRuntime,
+          T3.Pi.ThreadRuntime
+        ],
         {:error, "no pending request"},
         fn runtime ->
           if runtime.respond(thread_id, request_id, response) == :ok, do: :ok
@@ -733,7 +738,11 @@ defmodule T3.Orchestration do
   def runtime("claudeAgent"), do: T3.Claude.ThreadRuntime
 
   def runtime(instance) when is_binary(instance) and instance != "codex" do
-    if T3.Acp.agent?(instance), do: T3.Acp.ThreadRuntime, else: T3.Codex.ThreadRuntime
+    cond do
+      T3.Acp.driver(instance) == "pi" -> T3.Pi.ThreadRuntime
+      T3.Acp.agent?(instance) -> T3.Acp.ThreadRuntime
+      true -> T3.Codex.ThreadRuntime
+    end
   end
 
   def runtime(_codex), do: T3.Codex.ThreadRuntime
@@ -741,7 +750,12 @@ defmodule T3.Orchestration do
   # A thread has at most one running turn; interrupt whichever runtime holds it.
   defp interrupt_any(thread_id, run_id) do
     Enum.find_value(
-      [T3.Codex.ThreadRuntime, T3.Claude.ThreadRuntime, T3.Acp.ThreadRuntime],
+      [
+        T3.Codex.ThreadRuntime,
+        T3.Claude.ThreadRuntime,
+        T3.Acp.ThreadRuntime,
+        T3.Pi.ThreadRuntime
+      ],
       {:error, "no running turn"},
       fn runtime ->
         if runtime.interrupt(thread_id, run_id) == :ok, do: :ok
@@ -1475,6 +1489,8 @@ defmodule T3.Orchestration do
       cwd: cwd,
       scope_id: scope_id,
       model: selection["model"],
+      # The model's provider options (`ProviderOptionSelection`s), such as a reasoning level.
+      options: if(is_list(selection["options"]), do: selection["options"], else: []),
       runtime_mode: thread["runtimeMode"] || "full-access",
       # How assistant text is written as it streams (`TurnWriter.flush/2`).
       streaming_mode:

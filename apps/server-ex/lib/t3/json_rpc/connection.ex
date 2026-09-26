@@ -116,7 +116,7 @@ defmodule T3.JsonRpc.Connection do
   defp migrate(state), do: Map.put(state, :v, @state_version)
 
   defp handle_line(line, state) do
-    case JsonRpc.decode(line) do
+    case JsonRpc.decode(line, state.dialect) do
       {:response, id, reply} ->
         {from, pending} = Map.pop(state.pending, id)
         if from, do: GenServer.reply(from, reply)

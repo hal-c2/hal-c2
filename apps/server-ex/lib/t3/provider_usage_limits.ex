@@ -1,11 +1,13 @@
 defmodule T3.ProviderUsageLimits do
   @moduledoc """
-  Subscription quota on this node's Codex and Claude provider entries
+  Subscription quota on this node's Codex, Claude, Grok and OpenCode provider entries
   (`ServerProvider.usageLimits`), as the Node server reports it.
 
   A probe reads the whole picture: Codex's `account/rateLimits/read` from a
   short-lived `codex app-server`, Claude's `get_usage` from a short-lived `claude`
-  session (`T3.ProviderUsageLimits.Codex`, `T3.ProviderUsageLimits.Claude`). Probes run
+  session (`T3.ProviderUsageLimits.Codex`, `T3.ProviderUsageLimits.Claude`), and the
+  billing APIs of Grok and OpenCode Go for each enabled instance of those drivers
+  (`T3.ProviderUsageLimits.Grok`, `T3.ProviderUsageLimits.OpenCode`). Probes run
   at boot, on `server.refreshProviders` (`refresh/1`), and every
   `providerHealthRefreshInterval` while a client in front shows provider status. Turns
   fill in between: the thread runtimes pass on the rate-limit updates their
@@ -24,9 +26,10 @@ defmodule T3.ProviderUsageLimits do
 
   require Logger
 
-  alias T3.ProviderUsageLimits.{Claude, Codex}
+  alias T3.ProviderUsageLimits.{Claude, Codex, Grok, OpenCode}
 
   @instances ["codex", "claudeAgent"]
+  @acp_drivers ~w(grok opencode)
   @kind_order %{"session" => 0, "weekly" => 1, "monthly" => 2, "other" => 3}
   @probe_timeout 30_000
 
@@ -77,8 +80,10 @@ defmodule T3.ProviderUsageLimits do
   end
 
   @doc "Probes the given instances now and publishes what they report."
-  def refresh(instances \\ @instances) do
-    GenServer.call(__MODULE__, {:refresh, Enum.filter(instances, &(&1 in @instances))}, 60_000)
+  def refresh(instances \\ nil) do
+    known = instances()
+    instances = if instances == nil, do: known, else: Enum.filter(instances, &(&1 in known))
+    GenServer.call(__MODULE__, {:refresh, instances}, 60_000)
   catch
     :exit, {:noproc, _} -> :ok
   end
@@ -126,6 +131,49 @@ defmodule T3.ProviderUsageLimits do
       ],
       &T3.BackgroundPolicy.run_scope_work?/1
     )
+  end
+
+  @doc """
+  `GET url` with a bearer token (or `{:basic, user, password}`, or nil for none):
+  `{:ok, status, decoded_json_or_nil}` or `{:error, reason}`.
+  """
+  def get_json(url, auth, timeout) do
+    headers =
+      case auth do
+        nil ->
+          []
+
+        {:basic, user, password} ->
+          [{~c"authorization", ~c"Basic " ++ to_charlist(Base.encode64("#{user}:#{password}"))}]
+
+        token ->
+          [{~c"authorization", to_charlist("Bearer " <> token)}]
+      end
+
+    request = {to_charlist(url), headers}
+
+    ssl = [
+      verify: :verify_peer,
+      cacerts: :public_key.cacerts_get(),
+      depth: 4,
+      customize_hostname_check: [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]
+    ]
+
+    case :httpc.request(:get, request, [timeout: timeout, connect_timeout: timeout, ssl: ssl],
+           body_format: :binary
+         ) do
+      {:ok, {{_, status, _}, _, body}} ->
+        decoded =
+          case JSON.decode(body) do
+            {:ok, json} -> json
+            _ -> nil
+          end
+
+        {:ok, status, decoded}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   # --- shaping -------------------------------------------------------------------
@@ -230,7 +278,7 @@ defmodule T3.ProviderUsageLimits do
 
   @impl true
   def handle_continue(:boot, state) do
-    state = probe(state, @instances)
+    state = probe(state, instances())
     schedule()
     {:noreply, state}
   end
@@ -296,7 +344,9 @@ defmodule T3.ProviderUsageLimits do
   @impl true
   def handle_info(:tick, state) do
     state =
-      if wanted?(@instances) and interval() != :off, do: probe(state, @instances), else: state
+      if wanted?(instances()) and interval() != :off,
+        do: probe(state, instances()),
+        else: state
 
     schedule()
     {:noreply, state}
@@ -337,11 +387,30 @@ defmodule T3.ProviderUsageLimits do
     end)
   end
 
+  # Codex and Claude, and every Grok and OpenCode instance.
+  defp instances,
+    do: @instances ++ for(id <- T3.Acp.instances(), T3.Acp.driver(id) in @acp_drivers, do: id)
+
   defp probe_instance("codex", checked_at), do: Codex.probe(checked_at)
   defp probe_instance("claudeAgent", checked_at), do: Claude.probe(checked_at)
 
+  defp probe_instance(instance, checked_at) do
+    env = T3.Acp.environment(instance)
+
+    case T3.Acp.driver(instance) do
+      "grok" -> Grok.probe(env, checked_at)
+      "opencode" -> OpenCode.probe(T3.Acp.setting(instance, "serverUrl"), env, checked_at)
+    end
+  end
+
   defp installed?("codex"), do: Codex.installed?()
   defp installed?("claudeAgent"), do: Claude.installed?()
+
+  # A Grok account is read once Grok is signed in; OpenCode's whenever it is enabled.
+  defp installed?(instance) do
+    T3.Acp.enabled?(instance) and
+      not (T3.Acp.driver(instance) == "grok" and T3.Acp.signed_out?(instance))
+  end
 
   defp publish(instance, limits) do
     if limits != get(instance) do

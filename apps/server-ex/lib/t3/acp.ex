@@ -19,7 +19,7 @@ defmodule T3.Acp do
     "grok" => %{binary: "grok", label: "Grok"},
     # The Cursor SDK behind ACP (`packages/cursor-acp`), run by Node.
     "cursor" => %{binary: "node", label: "Cursor"},
-    # Pi through the registry's pi-acp adapter, which runs `pi --mode rpc`.
+    # Pi in its own RPC mode (`T3.Pi`), not ACP: listed here for its provider entry.
     "pi" => %{binary: "pi", label: "Pi"}
   }
 
@@ -101,8 +101,8 @@ defmodule T3.Acp do
 
     case override || instance(instance) do
       [_ | _] = command ->
-        {driver, entry} = instance(instance) || {nil, %{}}
-        {:ok, command, driver_env(driver, entry) ++ instance_env(entry)}
+        {_driver, entry} = instance(instance) || {nil, %{}}
+        {:ok, command, instance_env(entry)}
 
       {@registry, entry} ->
         with {:ok, command, env} <- T3.Acp.Catalog.command(entry["config"] || %{}),
@@ -124,8 +124,7 @@ defmodule T3.Acp do
          [{"T3_CURSOR_CREDENTIALS", credentials} | node_env ++ instance_env(entry)]}
 
       {"pi", entry} ->
-        with {:ok, command, env} <- T3.Acp.Catalog.command(%{"agentId" => "pi-acp"}),
-             do: {:ok, command, driver_env("pi", entry) ++ env ++ instance_env(entry)}
+        {:ok, [binary("pi", entry, "pi"), "--mode", "rpc"], instance_env(entry)}
 
       {driver, entry} ->
         binary = binary(driver, entry, @agents[driver].binary)
@@ -156,12 +155,58 @@ defmodule T3.Acp do
     end
   end
 
-  # What an agent's adapter needs to find the agent: Pi's adapter runs the user's Pi.
-  defp driver_env("pi", entry), do: [{"PI_ACP_PI_COMMAND", binary("pi", entry, "pi")}]
-  defp driver_env(_driver, _entry), do: []
+  @doc "The executable an instance runs: its `binaryPath` setting, else its driver's binary."
+  def binary_path(id) do
+    case instance(id) do
+      {driver, entry} -> binary(driver, entry, @agents[driver][:binary] || driver)
+      nil -> nil
+    end
+  end
+
+  @doc """
+  The environment an instance's agent sees: the node's own, with the variables set
+  on the instance in settings on top.
+  """
+  def environment(id) do
+    case instance(id) do
+      {_driver, entry} -> Map.merge(System.get_env(), Map.new(instance_env(entry)))
+      nil -> System.get_env()
+    end
+  end
+
+  @doc """
+  A setting of an instance (`serverUrl`, ...): its own `config` value, else its
+  driver's `providers` entry; nil when unset or blank.
+  """
+  def setting(id, key) do
+    case instance(id) do
+      {driver, entry} ->
+        Enum.find(
+          [
+            get_in(entry, ["config", key]),
+            get_in(T3.Settings.settings(), ["providers", driver, key])
+          ],
+          &(is_binary(&1) and String.trim(&1) != "")
+        )
+
+      nil ->
+        nil
+    end
+  end
+
+  @doc "Whether the instance's agent reported it is signed out when it was last read."
+  def signed_out?(id), do: :persistent_term.get({__MODULE__, id, :unauthenticated}, false)
+
+  @doc "The variables set on an instance in settings, as `{name, value}` pairs."
+  def instance_env(id) when is_binary(id) do
+    case instance(id) do
+      {_driver, entry} -> instance_env(entry)
+      nil -> []
+    end
+  end
 
   # Variables set on the instance in settings, such as an API key.
-  defp instance_env(entry) do
+  def instance_env(entry) do
     for %{"name" => name, "value" => value} <- entry["environment"] || [],
         is_binary(name) and is_binary(value),
         do: {name, value}
@@ -432,15 +477,47 @@ defmodule T3.Acp do
   defp read_agent(id, dir) do
     {driver, entry} = instance(id)
 
+    case driver == "opencode" && setting(id, "serverUrl") do
+      url when is_binary(url) -> read_server(id, url, setting(id, "serverPassword"))
+      _ -> read_agent(id, dir, driver, entry)
+    end
+  end
+
+  # Pi's models, commands and skills come from Pi's own RPC mode (`T3.Pi`). Pi may
+  # stop at a startup prompt only a live session can answer, so a failed read still
+  # offers "Pi default"; refused launch arguments are the provider's error.
+  defp read_agent(id, dir, "pi", entry) do
+    with :ok <- check_version(id, "pi", entry),
+         {:ok, _args} <- T3.Pi.resolve_launch_args(setting(id, "launchArgs")) do
+      :persistent_term.put({__MODULE__, id, :capabilities}, %{})
+
+      case T3.Pi.discover(id, dir) do
+        {:ok, %{models: models, commands: commands, skills: skills}} ->
+          :persistent_term.put({__MODULE__, id, :models}, [@pi_default | models])
+          :persistent_term.put({__MODULE__, id, :commands}, commands)
+          :persistent_term.put({__MODULE__, id, :skills}, skills)
+          :persistent_term.put({__MODULE__, id, :pi_signed_out}, models == [])
+
+        {:error, _} ->
+          :persistent_term.put({__MODULE__, id, :models}, [@pi_default])
+
+          :persistent_term.put(
+            {__MODULE__, id, :notice},
+            "Pi is available, but T3 Code could not refresh its models and commands. The live session will retry startup."
+          )
+      end
+
+      :ok
+    end
+  end
+
+  defp read_agent(id, dir, driver, entry) do
     with :ok <- check_version(id, driver, entry) do
       with_agent(id, dir, fn conn, init ->
-        # Pi's version is Pi's own, not its adapter's.
-        if driver != "pi",
-          do:
-            :persistent_term.put(
-              {__MODULE__, id, :version},
-              get_in(init, ["agentInfo", "version"]) || "unknown"
-            )
+        :persistent_term.put(
+          {__MODULE__, id, :version},
+          get_in(init, ["agentInfo", "version"]) || "unknown"
+        )
 
         :persistent_term.put({__MODULE__, id, :capabilities}, init["agentCapabilities"] || %{})
         :persistent_term.put({__MODULE__, id, :auth_methods}, length(init["authMethods"] || []))
@@ -448,20 +525,12 @@ defmodule T3.Acp do
 
         case call_serving(conn, id, "session/new", %{"cwd" => dir, "mcpServers" => []}) do
           {:ok, session} ->
+            :persistent_term.put({__MODULE__, id, :config}, session["configOptions"] || [])
             :persistent_term.put({__MODULE__, id, :models}, models(session))
 
           # ACP's "authentication required".
           {:error, %{"code" => -32000}} ->
             {:error, :unauthenticated}
-
-          # Pi may stop at a startup prompt only a live session can answer.
-          {:error, _} when driver == "pi" ->
-            :persistent_term.put({__MODULE__, id, :models}, [@pi_default])
-
-            :persistent_term.put(
-              {__MODULE__, id, :notice},
-              "Pi is available, but T3 Code could not refresh its models and commands. The live session will retry startup."
-            )
 
           {:error, _} = error ->
             error
@@ -470,7 +539,47 @@ defmodule T3.Acp do
     end
   end
 
-  # Pi runs through its adapter, which needs Pi #{@pi_minimum} or newer (`pi --version`).
+  # An OpenCode server run elsewhere (`serverUrl`, with `serverPassword` as the
+  # `opencode` user's basic auth): its connected providers' models, as
+  # `OpenCodeProvider.ts` reads its inventory, and its failures explained.
+  defp read_server(id, url, password) do
+    auth = if password, do: {:basic, "opencode", password}
+    base = String.trim_trailing(url, "/")
+
+    case T3.ProviderUsageLimits.get_json(base <> "/provider", auth, 10_000) do
+      {:ok, 200, %{"all" => all} = list} ->
+        connected = MapSet.new(list["connected"] || [])
+
+        models =
+          for %{"id" => provider} = entry <- all,
+              MapSet.member?(connected, provider),
+              {model_id, model} <- entry["models"] || %{},
+              is_binary(model["name"]) and String.trim(model["name"]) != "" do
+            %{
+              "slug" => "#{provider}/#{model["id"] || model_id}",
+              "name" => String.trim(model["name"]),
+              "isCustom" => false,
+              "capabilities" => nil
+            }
+            |> then(&if(entry["name"], do: Map.put(&1, "subProvider", entry["name"]), else: &1))
+          end
+
+        :persistent_term.put({__MODULE__, id, :models}, Enum.sort_by(models, & &1["name"]))
+        :ok
+
+      {:ok, status, _} when status in [401, 403] ->
+        {:error, "OpenCode server rejected authentication. Check the server URL and password."}
+
+      {:ok, status, _} ->
+        {:error, "Failed to connect to the configured OpenCode server (HTTP #{status})."}
+
+      {:error, _} ->
+        {:error,
+         "Couldn't reach the configured OpenCode server at #{url}. Check that the server is running and the URL is correct."}
+    end
+  end
+
+  # T3 Code drives Pi #{@pi_minimum} or newer (`pi --version`).
   defp check_version(id, "pi", entry) do
     output =
       with path when is_binary(path) <- System.find_executable(binary("pi", entry, "pi")),
@@ -512,7 +621,38 @@ defmodule T3.Acp do
     |> Map.update!("auth", &grok_auth(&1, instance))
   end
 
-  defp driver_fields(entry, "opencode", id, _instance) do
+  defp driver_fields(entry, "opencode", id, instance) do
+    config = :persistent_term.get({__MODULE__, id, :config}, [])
+
+    entry
+    |> Map.update!("models", &opencode_options(&1, config))
+    |> opencode_version(id, instance)
+  end
+
+  defp driver_fields(entry, "pi", id, _instance) do
+    # Pi's permission gate has no classifier to run auto on.
+    entry =
+      Map.merge(entry, %{
+        "supportedRuntimeModes" => @pi_modes,
+        "slashCommands" => :persistent_term.get({__MODULE__, id, :commands}, []),
+        "skills" => :persistent_term.get({__MODULE__, id, :skills}, [])
+      })
+
+    if entry["status"] == "ready" and
+         :persistent_term.get({__MODULE__, id, :pi_signed_out}, false),
+       do:
+         Map.merge(entry, %{
+           "status" => "warning",
+           "auth" => Map.put(entry["auth"], "status", "unauthenticated"),
+           "message" =>
+             "Pi has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent."
+         }),
+       else: entry
+  end
+
+  defp driver_fields(entry, _driver, _id, _instance), do: entry
+
+  defp opencode_version(entry, id, _instance) do
     case stable_version(entry["version"]) do
       nil ->
         entry
@@ -543,22 +683,71 @@ defmodule T3.Acp do
     end
   end
 
-  defp driver_fields(entry, "pi", id, _instance) do
-    # Pi's permission gate has no classifier to run auto on.
-    entry = Map.put(entry, "supportedRuntimeModes", @pi_modes)
+  # OpenCode's reasoning variants and agents per model (`openCodeCapabilitiesForModel`):
+  # the session's `effort` choices are the current model's variants, other models get
+  # the standard levels; its `mode` choices are the primary agents.
+  defp opencode_options(models, config) do
+    option = fn id -> Enum.find(config, &(&1["id"] == id)) || %{} end
+    current = option.("model")["currentValue"]
+    variants = for %{"value" => v} <- option.("effort")["options"] || [], v != "default", do: v
+    agents = for %{"value" => v} <- option.("mode")["options"] || [], do: v
 
-    if entry["status"] == "ready" and :persistent_term.get({__MODULE__, id, :models}, nil) == [],
-      do:
-        Map.merge(entry, %{
-          "status" => "warning",
-          "auth" => Map.put(entry["auth"], "status", "unauthenticated"),
-          "message" =>
-            "Pi has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent."
-        }),
-      else: entry
+    Enum.map(models, fn model ->
+      provider = model["slug"] |> String.split("/") |> hd()
+
+      variants =
+        if model["slug"] == current and variants != [],
+          do: variants,
+          else: ~w(low medium high xhigh)
+
+      descriptors =
+        [
+          select("variant", "Reasoning", variants, default_variant(provider, variants)),
+          agents != [] &&
+            select("agent", "Agent", agents, if("build" in agents, do: "build", else: hd(agents)))
+        ]
+        |> Enum.filter(& &1)
+
+      Map.put(model, "capabilities", %{"optionDescriptors" => descriptors})
+    end)
   end
 
-  defp driver_fields(entry, _driver, _id, _instance), do: entry
+  defp select(id, label, values, default) do
+    %{
+      "id" => id,
+      "label" => label,
+      "type" => "select",
+      "options" =>
+        for value <- values do
+          %{"id" => value, "label" => title_case(value)}
+          |> then(&if(value == default, do: Map.put(&1, "isDefault", true), else: &1))
+        end
+    }
+    |> then(&if(default, do: Map.put(&1, "currentValue", default), else: &1))
+  end
+
+  defp default_variant(_provider, [only]), do: only
+
+  defp default_variant(provider, variants) do
+    cond do
+      provider == "anthropic" or String.starts_with?(provider, "google") ->
+        if "high" in variants, do: "high"
+
+      provider in ["openai", "opencode"] ->
+        Enum.find(["medium", "high"], &(&1 in variants))
+
+      true ->
+        nil
+    end
+  end
+
+  defp title_case(value) do
+    value
+    |> String.split(~r/[-_\/]+/, trim: true)
+    |> Enum.map_join(" ", fn <<first::utf8, rest::binary>> ->
+      String.upcase(<<first::utf8>>) <> rest
+    end)
+  end
 
   # An API key set on the instance signs Grok in; otherwise its own login does.
   defp grok_auth(auth, instance) do
@@ -765,7 +954,11 @@ defmodule T3.Acp do
           :error,
           :loading,
           :meta,
-          :notice
+          :notice,
+          :config,
+          :commands,
+          :skills,
+          :pi_signed_out
         ],
         do: :persistent_term.erase({__MODULE__, id, key})
 

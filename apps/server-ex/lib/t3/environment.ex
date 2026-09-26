@@ -158,7 +158,7 @@ defmodule T3.Environment do
       entry <- [T3.Codex.Provider.entry(), T3.Claude.Provider.entry()],
       entry != nil,
       do: T3.ProviderUsageLimits.put(entry)
-    ) ++ T3.Acp.entries()
+    ) ++ Enum.map(T3.Acp.entries(), &T3.ProviderUsageLimits.put/1)
   end
 
   @spec id() :: String.t()

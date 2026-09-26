@@ -8,6 +8,7 @@ defmodule T3.Steps.Providers.Opencode do
   import ExUnit.Assertions
 
   alias T3.Test.FakeAcp
+  alias T3.Test.Node.World
 
   # A supported OpenCode (1.14.19 is the oldest T3 Code runs) connected to `models`.
   defp models(models),
@@ -275,6 +276,392 @@ defmodule T3.Steps.Providers.Opencode do
   step "OpenCode does not run it", context do
     FakeAcp.await_run(context, "completed")
     assert [%{"result" => %{"outcome" => %{"optionId" => "reject"}}}] = FakeAcp.answers(context)
+    context
+  end
+
+  # --- models: variants and agents ---------------------------------------------------
+
+  # `opencode acp`'s session options: the current model's reasoning variants
+  # (`effort`, with "default" for none) and the primary agents (`mode`).
+  defp with_options(config) do
+    Map.update!(config, "configOptions", fn options ->
+      options ++
+        [
+          %{
+            "id" => "effort",
+            "name" => "Effort",
+            "category" => "thought_level",
+            "type" => "select",
+            "currentValue" => "default",
+            "options" => for(v <- ~w(default low medium high), do: %{"value" => v, "name" => v})
+          },
+          %{
+            "id" => "mode",
+            "name" => "Mode",
+            "category" => "mode",
+            "type" => "select",
+            "currentValue" => "build",
+            "options" => for(v <- ~w(build plan), do: %{"value" => v, "name" => v})
+          }
+        ]
+    end)
+  end
+
+  step "the user opens the options for an OpenCode model", context do
+    context =
+      FakeAcp.install(context, "opencode", with_options(models(@connected)), enabled: true)
+
+    {providers, context} =
+      FakeAcp.await_providers(context, fn providers ->
+        match?(%{"models" => [_ | _]}, FakeAcp.find(providers, "opencode"))
+      end)
+
+    model =
+      Enum.find(FakeAcp.find(providers, "opencode")["models"], &(&1["slug"] == "openai/gpt-5"))
+
+    Map.put(
+      context,
+      :options,
+      Map.new(model["capabilities"]["optionDescriptors"], &{&1["id"], &1})
+    )
+  end
+
+  step "the model's reasoning variants are offered", context do
+    assert %{
+             "label" => "Reasoning",
+             "type" => "select",
+             "currentValue" => "medium",
+             "options" => options
+           } =
+             context.options["variant"]
+
+    assert options == [
+             %{"id" => "low", "label" => "Low"},
+             %{"id" => "medium", "label" => "Medium", "isDefault" => true},
+             %{"id" => "high", "label" => "High"}
+           ]
+
+    context
+  end
+
+  step "OpenCode's primary agents are offered with {string} as the default",
+       %{args: [default]} = context do
+    assert %{"label" => "Agent", "currentValue" => ^default, "options" => options} =
+             context.options["agent"]
+
+    assert Enum.map(options, & &1["id"]) == ["build", "plan"]
+    assert [%{"id" => ^default, "label" => "Build"}] = Enum.filter(options, & &1["isDefault"])
+    context
+  end
+
+  # --- plan mode --------------------------------------------------------------------
+
+  step "the user switches an OpenCode thread to plan mode", context do
+    context =
+      context
+      |> FakeAcp.install("opencode", with_options(models(@connected)), enabled: true)
+      |> FakeAcp.thread()
+
+    {:ok, _} =
+      T3.Orchestration.dispatch(%{
+        "type" => "thread.interaction-mode.set",
+        "commandId" => "cmd-plan-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread),
+        "interactionMode" => "plan"
+      })
+
+    context = FakeAcp.send_message(context, "plan the checkout")
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "the turn runs with OpenCode's plan agent", context do
+    # The plan agent is chosen on the session before the prompt goes out.
+    methods =
+      for %{"recv" => %{"method" => method} = msg} <- FakeAcp.log(context),
+          method in ["session/set_config_option", "session/prompt"],
+          do: {method, msg["params"]["configId"], msg["params"]["value"]}
+
+    assert {_, [{"session/prompt", _, _} | _]} =
+             Enum.split_while(methods, &(&1 != {"session/set_config_option", "mode", "plan"}))
+             |> then(fn {before, [_ | rest]} -> {before, rest} end)
+
+    refute Enum.any?(methods, &match?({"session/set_config_option", "mode", "build"}, &1))
+    context
+  end
+
+  # --- external server --------------------------------------------------------------
+
+  # A server elsewhere, played by a small HTTP fake of OpenCode's `/provider` route,
+  # set on the instance with its password.
+  defp external(context, password, respond) do
+    {url, log} =
+      T3.Test.FakeHttp.start(%{
+        "/provider" => fn conn ->
+          expected = "Basic " <> Base.encode64("opencode:secret")
+
+          if Plug.Conn.get_req_header(conn, "authorization") == [expected],
+            do: respond.(conn),
+            else: {401, %{"error" => "unauthorized"}}
+        end
+      })
+
+    server(context, url, password) |> Map.put(:server_log, log)
+  end
+
+  defp server(context, url, password) do
+    context = FakeAcp.install(context, "opencode", models(@connected), enabled: true)
+
+    FakeAcp.settings(fn settings ->
+      update_in(
+        settings,
+        ["providers", "opencode"],
+        &Map.merge(&1, %{"serverUrl" => url, "serverPassword" => password})
+      )
+    end)
+
+    Map.put(context, :server_url, url)
+  end
+
+  defp inventory(_conn),
+    do:
+      {200,
+       %{
+         "all" => [
+           %{
+             "id" => "anthropic",
+             "name" => "Anthropic",
+             "models" => %{
+               "claude-sonnet-4" => %{"id" => "claude-sonnet-4", "name" => "Claude Sonnet 4"}
+             }
+           }
+         ],
+         "connected" => ["anthropic"],
+         "default" => %{}
+       }}
+
+  step "the OpenCode instance points at a server with the wrong password", context do
+    external(context, "wrong", &inventory/1)
+  end
+
+  step "the OpenCode instance points at a server that is not running", context do
+    # A port nothing listens on.
+    {:ok, socket} = :gen_tcp.listen(0, ip: {127, 0, 0, 1})
+    {:ok, port} = :inet.port(socket)
+    :ok = :gen_tcp.close(socket)
+    server(context, "http://127.0.0.1:#{port}", nil)
+  end
+
+  step "the OpenCode instance uses an external server", context do
+    external(context, "secret", &inventory/1)
+  end
+
+  step "the user clears the server URL", context do
+    {%{"settings" => settings, "version" => version}, context} =
+      World.call!(context, "t3.readSettings")
+
+    settings =
+      update_in(
+        settings,
+        ["providers", "opencode"],
+        &Map.drop(&1, ["serverUrl", "serverPassword"])
+      )
+
+    {_, context} =
+      World.call!(context, "t3.writeSettings", %{"settings" => settings, "version" => version})
+
+    context
+  end
+
+  step "OpenCode threads run on a local OpenCode again", context do
+    # The inventory comes from the local `opencode acp` again, not the server's.
+    {_, context} =
+      FakeAcp.await_providers(context, fn providers ->
+        slugs =
+          for model <- FakeAcp.find(providers, "opencode")["models"] || [], do: model["slug"]
+
+        Enum.sort(slugs) == ["anthropic/claude-sonnet-4", "openai/gpt-5"]
+      end)
+
+    served = length(T3.Test.FakeHttp.requests(context.server_log))
+
+    context =
+      context
+      |> Map.put(:provider, "opencode")
+      |> FakeAcp.thread("Work", "full-access", %{
+        "modelSelection" => %{"instanceId" => "opencode", "model" => "openai/gpt-5"}
+      })
+      |> FakeAcp.send_message("fix the bug")
+
+    FakeAcp.await_run(context, "completed")
+    assert [_ | _] = FakeAcp.received(context, "session/prompt", "opencode")
+    assert length(T3.Test.FakeHttp.requests(context.server_log)) == served
+    context
+  end
+
+  step "OpenCode says the server rejected authentication and to check the URL and password",
+       context do
+    opencode = FakeAcp.find(context.providers, "opencode")
+    assert opencode["status"] == "error"
+    assert opencode["installed"] == true
+
+    assert opencode["message"] ==
+             "OpenCode server rejected authentication. Check the server URL and password."
+
+    # It asked the server, as the `opencode` user with the configured password.
+    assert [%{"authorization" => auth} | _] = T3.Test.FakeHttp.requests(context.server_log)
+    assert auth == "Basic " <> Base.encode64("opencode:wrong")
+    context
+  end
+
+  step "OpenCode says it could not reach the server at that URL", context do
+    opencode = FakeAcp.find(context.providers, "opencode")
+    assert opencode["status"] == "error"
+
+    assert opencode["message"] ==
+             "Couldn't reach the configured OpenCode server at #{context.server_url}. Check that the server is running and the URL is correct."
+
+    context
+  end
+
+  # --- OpenCode Go limits -------------------------------------------------------------
+
+  step "OpenCode is signed in to OpenCode Go and runs locally", context do
+    {url, log} =
+      T3.Test.FakeHttp.start(%{
+        "/zen/go/v1/usage" =>
+          {200,
+           %{
+             "usage" => %{
+               "rolling" => %{"percent" => 12.5, "resetsAt" => "2026-09-26T15:00:00Z"},
+               "weekly" => %{"percent" => 40, "resetsAt" => "2026-09-30T00:00:00Z"},
+               "monthly" => %{"percent" => 75, "resetsAt" => "2026-10-01T00:00:00Z"}
+             }
+           }}
+      })
+
+    Application.put_env(:t3, :opencode_go_usage_url, url <> "/zen/go/v1/usage")
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :opencode_go_usage_url) end)
+    auth = JSON.encode!(%{"opencode-go" => %{"type" => "api", "key" => "go-key"}})
+
+    context
+    |> FakeAcp.install("opencode", models(@connected), enabled: true)
+    |> tap(fn _ ->
+      FakeAcp.settings(
+        &Map.put(&1, "providerInstances", %{
+          "opencode" => %{
+            "driver" => "opencode",
+            "environment" => [%{"name" => "OPENCODE_AUTH_CONTENT", "value" => auth}]
+          }
+        })
+      )
+    end)
+    |> Map.put(:usage_log, log)
+  end
+
+  step "OpenCode Go shows its session, weekly and monthly windows", context do
+    assert %{"windows" => windows} = FakeAcp.find(context.providers, "opencode")["usageLimits"]
+
+    assert windows == [
+             %{
+               "id" => "go_rolling",
+               "kind" => "session",
+               "label" => "Go · Session",
+               "usedPercent" => 12.5,
+               "resetsAt" => "2026-09-26T15:00:00.000Z",
+               "windowDurationMins" => 300
+             },
+             %{
+               "id" => "go_weekly",
+               "kind" => "weekly",
+               "label" => "Go · Weekly",
+               "usedPercent" => 40,
+               "resetsAt" => "2026-09-30T00:00:00.000Z",
+               "windowDurationMins" => 10_080
+             },
+             %{
+               "id" => "go_monthly",
+               "kind" => "monthly",
+               "label" => "Go · Monthly",
+               "usedPercent" => 75,
+               "resetsAt" => "2026-10-01T00:00:00.000Z"
+             }
+           ]
+
+    # Read with OpenCode's own Go key.
+    assert [_ | _] = requests = T3.Test.FakeHttp.requests(context.usage_log)
+    assert Enum.all?(requests, &(&1["authorization"] == "Bearer go-key"))
+    context
+  end
+
+  step "OpenCode's limits are shown as unsupported", context do
+    assert %{"windows" => [], "unavailable" => %{"reason" => "unsupported"}} =
+             FakeAcp.find(context.providers, "opencode")["usageLimits"]
+
+    context
+  end
+
+  # --- a model leaving the catalog --------------------------------------------------
+
+  @gone "openai/gpt-4o"
+
+  step "an OpenCode thread uses a model that OpenCode no longer lists", context do
+    context
+    |> FakeAcp.install("opencode", Map.put(models(@connected), "rejectUnknownModels", true),
+      enabled: true
+    )
+    |> FakeAcp.thread("Work", "full-access", %{
+      "modelSelection" => %{"instanceId" => "opencode", "model" => @gone}
+    })
+  end
+
+  step "the thread still shows its model", context do
+    {providers, context} =
+      FakeAcp.await_providers(context, fn providers ->
+        match?(%{"models" => [_ | _]}, FakeAcp.find(providers, "opencode"))
+      end)
+
+    opencode = FakeAcp.find(providers, "opencode")
+    refute Enum.any?(opencode["models"], &(&1["slug"] == @gone))
+
+    thread_id = World.thread_id(context, context.thread)
+    row = World.await_row(thread_id, & &1)
+    assert %{"instanceId" => "opencode", "model" => @gone} = row["modelSelection"]
+    context
+  end
+
+  step "if OpenCode rejects the model the user can pick another and retry", context do
+    thread_id = World.thread_id(context, context.thread)
+    context = FakeAcp.send_message(context, "fix the bug")
+    state = FakeAcp.await_run(context, "failed")
+
+    assert [%{"lastError" => error}] = T3.StreamState.list(state, "provider-session")
+    assert error =~ "the model #{@gone} is no longer offered"
+    assert error =~ "Pick another model"
+
+    {:ok, _} =
+      T3.Orchestration.dispatch(%{
+        "type" => "thread.model-selection.set",
+        "commandId" => "cmd-model-#{System.unique_integer([:positive])}",
+        "threadId" => thread_id,
+        "modelSelection" => %{"instanceId" => "opencode", "model" => "anthropic/claude-sonnet-4"}
+      })
+
+    context = FakeAcp.send_message(context, "fix the bug")
+    state = FakeAcp.await_runs(context, 2)
+
+    assert ["failed", "completed"] =
+             state
+             |> T3.StreamState.list("run")
+             |> Enum.sort_by(& &1["ordinal"])
+             |> Enum.map(& &1["status"])
+
+    assert Enum.any?(
+             FakeAcp.received(context, "session/set_config_option"),
+             &(&1["params"]["configId"] == "model" and
+                 &1["params"]["value"] == "anthropic/claude-sonnet-4")
+           )
+
     context
   end
 end
