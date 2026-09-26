@@ -4,6 +4,7 @@ import {
   ShellModelPickerState,
   type HalC2Shell,
 } from "@hal-c2/contracts/shell";
+import { compileResolvedKeybindingsConfig } from "@hal-c2/shared/keybindings";
 import * as Schema from "effect/Schema";
 import { act, useEffect, useRef, useState } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -57,7 +58,9 @@ const defaults = {
   },
   lockedProvider: null,
   lockedContinuationGroupKey: null,
-  modelPickerShortcut: "Ctrl+Shift+M",
+  keybindings: compileResolvedKeybindingsConfig([
+    { key: "mod+shift+m", command: "modelPicker.toggle" },
+  ]),
   runtimeMode: "approval-required",
   runtimeModes: [],
   interactionMode: "default",
@@ -195,7 +198,16 @@ describe("ShellComposerBridge edit acknowledgements", () => {
 
 describe("ShellComposerBridge model picker", () => {
   it("publishes the catalogue once and leaves it out of every keystroke", async () => {
-    expect(modelPickerPublishes).toEqual([{ instances: [], shortcut: "Ctrl+Shift+M" }]);
+    expect(modelPickerPublishes).toEqual([
+      {
+        instances: [],
+        locked: false,
+        shortcut: "Ctrl+Shift+M",
+        previousProvider: null,
+        nextProvider: null,
+        jump: Array.from({ length: 9 }, () => null),
+      },
+    ]);
     await act(() => {
       dispatch("composer.text.set", { target: "draft-a", text: "Typing", edit: edit(1) });
     });

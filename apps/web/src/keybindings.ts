@@ -197,7 +197,7 @@ export function shortcutConflictKey(
   ].join("|");
 }
 
-function findEffectiveShortcutForCommand(
+export function findEffectiveShortcutForCommand(
   keybindings: ResolvedKeybindingsConfig,
   command: KeybindingCommand,
   options?: ShortcutMatchOptions,

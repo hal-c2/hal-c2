@@ -150,14 +150,38 @@ export const ShellComposerInstance = Schema.Struct({
 export type ShellComposerInstance = typeof ShellComposerInstance.Type;
 
 /**
+ * A chord the open model picker handles itself, as the page resolved it for
+ * the `modelPickerOpen` context: web `KeyboardEvent` fields (`metaKey` is
+ * Command on macOS) and the label the web shows for it.
+ */
+export const ShellModelPickerKey = Schema.Struct({
+  key: Schema.String,
+  ctrlKey: Schema.Boolean,
+  metaKey: Schema.Boolean,
+  shiftKey: Schema.Boolean,
+  altKey: Schema.Boolean,
+  label: Schema.String,
+});
+export type ShellModelPickerKey = typeof ShellModelPickerKey.Type;
+
+/**
  * Published under the `modelPicker` key beside `composer`. The catalogue
  * changes rarely, so it stays out of the composer state that every keystroke
  * republishes. The selection itself is `composer.selectedInstanceId/Model`.
  */
 export const ShellModelPickerState = Schema.Struct({
   instances: Schema.Array(ShellComposerInstance),
+  /**
+   * The thread is locked to its provider (a turn already ran): the picker
+   * opens on the chosen instance and shows full model names, as the web does.
+   */
+  locked: Schema.Boolean,
   /** Label of the `modelPicker.toggle` shortcut, for the trigger's tooltip. */
   shortcut: Schema.NullOr(Schema.String),
+  previousProvider: Schema.NullOr(ShellModelPickerKey),
+  nextProvider: Schema.NullOr(ShellModelPickerKey),
+  /** `modelPicker.jump.1` … `.9`; entry N picks the Nth selectable model. */
+  jump: Schema.Array(Schema.NullOr(ShellModelPickerKey)),
 });
 export type ShellModelPickerState = typeof ShellModelPickerState.Type;
 

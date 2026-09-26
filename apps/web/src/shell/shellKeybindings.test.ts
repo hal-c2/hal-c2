@@ -6,6 +6,7 @@ import {
 
 import {
   buildShellKeybindings,
+  buildShellModelPickerKeys,
   shellKeybindingPressToForward,
   toShellKeybinding,
 } from "./shellKeybindings";
@@ -119,5 +120,49 @@ describe("shellKeybindingPressToForward", () => {
 
   it("ignores keys bound to nothing", () => {
     expect(shellKeybindingPressToForward(ctrl("z"), config, "Linux", {})).toBeNull();
+  });
+});
+
+describe("buildShellModelPickerKeys", () => {
+  it("resolves the open picker's chords with the web's labels", () => {
+    const config = compileResolvedKeybindingsConfig([
+      { key: "mod+shift+m", command: "modelPicker.toggle" },
+      {
+        key: "mod+shift+arrowup",
+        command: "modelPicker.previousProvider",
+        when: "modelPickerOpen",
+      },
+      { key: "mod+shift+arrowdown", command: "modelPicker.nextProvider", when: "modelPickerOpen" },
+      { key: "mod+1", command: "thread.jump.1" },
+      { key: "mod+1", command: "modelPicker.jump.1", when: "modelPickerOpen" },
+      { key: "mod+2", command: "modelPicker.jump.2", when: "modelPickerOpen" },
+    ]);
+    const keys = buildShellModelPickerKeys(config, "Linux x86_64");
+    expect(keys.shortcut).toBe("Ctrl+Shift+M");
+    expect(keys.nextProvider).toEqual({
+      key: "arrowdown",
+      ctrlKey: true,
+      metaKey: false,
+      shiftKey: true,
+      altKey: false,
+      label: "Ctrl+Shift+Down",
+    });
+    expect(keys.jump).toHaveLength(9);
+    expect(keys.jump.slice(0, 3).map((key) => key?.label ?? null)).toEqual([
+      "Ctrl+1",
+      "Ctrl+2",
+      null,
+    ]);
+  });
+
+  it("uses Command for mod on macOS", () => {
+    const config = compileResolvedKeybindingsConfig([
+      { key: "mod+1", command: "modelPicker.jump.1", when: "modelPickerOpen" },
+    ]);
+    expect(buildShellModelPickerKeys(config, "MacIntel").jump[0]).toMatchObject({
+      metaKey: true,
+      ctrlKey: false,
+      label: "\u23181",
+    });
   });
 });

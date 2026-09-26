@@ -1,9 +1,22 @@
-import type { KeybindingShortcut, ResolvedKeybindingsConfig } from "@hal-c2/contracts";
-import type { ShellKeybinding, ShellKeybindingsState } from "@hal-c2/contracts/shell";
+import type {
+  KeybindingCommand,
+  KeybindingShortcut,
+  ResolvedKeybindingsConfig,
+} from "@hal-c2/contracts";
+import type {
+  ShellKeybinding,
+  ShellKeybindingsState,
+  ShellModelPickerKey,
+  ShellModelPickerState,
+} from "@hal-c2/contracts/shell";
 
 import { isMacPlatform } from "../lib/utils";
 import {
+  findEffectiveShortcutForCommand,
+  formatShortcutLabel,
+  modelPickerJumpCommandForIndex,
   resolveShortcutCommand,
+  shortcutLabelForCommand,
   type ShortcutEventLike,
   type ShortcutMatchContext,
 } from "../keybindings";
@@ -113,5 +126,49 @@ export function shellKeybindingPressToForward(
     metaKey: event.metaKey,
     shiftKey: event.shiftKey,
     altKey: event.altKey,
+  };
+}
+
+const MODEL_PICKER_OPEN_CONTEXT = {
+  terminalFocus: false,
+  terminalOpen: false,
+  modelPickerOpen: true,
+} as const;
+
+/**
+ * The chords the native model picker handles while it is open, resolved as
+ * the web picker resolves them, so custom bindings carry over.
+ */
+export function buildShellModelPickerKeys(
+  config: ResolvedKeybindingsConfig,
+  platform: string,
+): Pick<ShellModelPickerState, "shortcut" | "previousProvider" | "nextProvider" | "jump"> {
+  const mac = isMacPlatform(platform);
+  const resolve = (command: KeybindingCommand): ShellModelPickerKey | null => {
+    const shortcut = findEffectiveShortcutForCommand(config, command, {
+      platform,
+      context: MODEL_PICKER_OPEN_CONTEXT,
+    });
+    if (shortcut === null) return null;
+    return {
+      key: shortcut.key,
+      ctrlKey: shortcut.ctrlKey || (shortcut.modKey && !mac),
+      metaKey: shortcut.metaKey || (shortcut.modKey && mac),
+      shiftKey: shortcut.shiftKey,
+      altKey: shortcut.altKey,
+      label: formatShortcutLabel(shortcut, platform),
+    };
+  };
+  const jump: Array<ShellModelPickerKey | null> = [];
+  for (let index = 0; ; index += 1) {
+    const command = modelPickerJumpCommandForIndex(index);
+    if (command === null) break;
+    jump.push(resolve(command));
+  }
+  return {
+    shortcut: shortcutLabelForCommand(config, "modelPicker.toggle", platform),
+    previousProvider: resolve("modelPicker.previousProvider"),
+    nextProvider: resolve("modelPicker.nextProvider"),
+    jump,
   };
 }

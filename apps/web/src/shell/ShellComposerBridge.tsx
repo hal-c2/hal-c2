@@ -5,6 +5,7 @@ import type {
   ProviderInstanceId,
   ProviderInteractionMode,
   ProviderOptionSelection,
+  ResolvedKeybindingsConfig,
   RuntimeMode,
   ScopedThreadRef,
   ServerProviderModel,
@@ -13,6 +14,7 @@ import type { UnifiedSettings } from "@hal-c2/contracts/settings";
 import { useMemo, useState } from "react";
 import type { ShellComposerState } from "@hal-c2/contracts/shell";
 
+import { buildShellModelPickerKeys } from "./shellKeybindings";
 import { useShellActions } from "./useShellActions";
 import { useShellPublish } from "./useShellPublish";
 
@@ -90,7 +92,7 @@ export interface ShellComposerBridgeProps {
   readonly lockedProvider: ProviderDriverKind | null;
   readonly lockedContinuationGroupKey: string | null;
   /** Label of the `modelPicker.toggle` shortcut, or null when unbound. */
-  readonly modelPickerShortcut: string | null;
+  readonly keybindings: ResolvedKeybindingsConfig;
   readonly runtimeMode: RuntimeMode;
   readonly runtimeModes: ReadonlyArray<{ value: RuntimeMode; label: string; description: string }>;
   readonly interactionMode: ProviderInteractionMode;
@@ -203,7 +205,8 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
         lockedProvider: props.lockedProvider,
         lockedContinuationGroupKey: props.lockedContinuationGroupKey,
       }),
-      shortcut: props.modelPickerShortcut,
+      locked: props.lockedProvider !== null,
+      ...buildShellModelPickerKeys(props.keybindings, navigator.platform),
     }),
     [
       props.favorites,
@@ -212,7 +215,7 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
       props.lockedContinuationGroupKey,
       props.lockedProvider,
       props.modelOptionsByInstance,
-      props.modelPickerShortcut,
+      props.keybindings,
       selectedInstanceId,
       selectedModel,
     ],
