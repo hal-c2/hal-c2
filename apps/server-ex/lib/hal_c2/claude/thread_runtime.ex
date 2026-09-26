@@ -4,10 +4,11 @@ defmodule HalC2.Claude.ThreadRuntime do
   writes them into the thread's log.
 
   One CLI process serves every turn of the thread: each message is another user
-  message on its stream-json input. If the process has gone, the next turn starts
-  a new one with `--resume` on the recorded session id. Text and thinking stream
-  from partial messages and are written as appends; tool calls become command,
-  file-change, web-search, or generic tool items, finished by their tool results.
+  message on its stream-json input. If the process has gone, or the turn is on
+  another model, the next turn starts a new one with `--resume` on the recorded
+  session id. Text and thinking stream from partial messages and are written as
+  appends; tool calls become command, file-change, web-search, or generic tool
+  items, finished by their tool results.
   """
 
   use GenServer, restart: :temporary
@@ -20,7 +21,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
-  @state_version 4
+  @state_version 5
 
   @signed_out "Claude could not authenticate. For subscription login, run `claude auth login` " <>
                 "on this environment's machine, then start a new thread. For API-key " <>
@@ -136,6 +137,8 @@ defmodule HalC2.Claude.ThreadRuntime do
        requests: %{},
        # The session's permission mode, switched before a turn that needs another.
        permission_mode: nil,
+       # The model the session's CLI was started on; a turn on another model restarts it.
+       model: nil,
        # A steer ends the turn's current part with an "aborted" result; that one
        # result is not the end of the turn.
        steered: false
@@ -336,6 +339,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        state
        |> Map.put_new(:permission_mode, nil)
        |> Map.put_new(:steered, false)
+       |> Map.put_new(:model, nil)
        |> Map.update!(:requests, &upgrade_requests/1)
        |> Map.put(:v, @state_version)}
 
@@ -545,6 +549,14 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp semver(_text), do: nil
 
+  # The CLI takes its model at launch, so a turn on another model resumes the
+  # conversation in a new process.
+  defp ensure_session(%{session: session} = state, turn)
+       when session != nil and state.model != turn.model do
+    GenServer.stop(session)
+    ensure_session(%{state | session: nil}, turn)
+  end
+
   defp ensure_session(%{session: session} = state, turn) when session != nil do
     mode = permission_mode(turn)
 
@@ -580,8 +592,12 @@ defmodule HalC2.Claude.ThreadRuntime do
       end
 
     case Session.start_link(opts) do
-      {:ok, session} -> {:ok, %{state | session: session, permission_mode: permission_mode(turn)}}
-      {:error, reason} -> {:error, reason}
+      {:ok, session} ->
+        {:ok,
+         %{state | session: session, permission_mode: permission_mode(turn), model: turn.model}}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

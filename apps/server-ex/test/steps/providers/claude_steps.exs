@@ -172,6 +172,35 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "a Claude thread has answered on {string}", %{args: [model]} = context do
+    # `providers/1` logs each start of the fake CLI (`claude_starts/1`).
+    context =
+      context
+      |> World.providers()
+      |> World.launch_on(@thread, "claudeAgent", "hello", %{"model" => model})
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the user sends the next message on {string}", %{args: [model]} = context do
+    selection = %{"instanceId" => "claudeAgent", "model" => model}
+    context = World.send_turn(context, @thread, "and now?", %{"modelSelection" => selection})
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "Claude answers it on {string}", %{args: [model]} = context do
+    assert [_, argv] = World.claude_starts(context)
+    assert ["--model", model] in Enum.chunk_every(argv, 2, 1, :discard)
+    Map.put(context, :argv, argv)
+  end
+
+  step "the conversation continues in the same Claude session", context do
+    assert ["--resume", "fake-session-1"] in Enum.chunk_every(context.argv, 2, 1, :discard)
+    context
+  end
+
   # --- composer ------------------------------------------------------------------------
 
   step "Claude reports the skill {string} and the command {string}",

@@ -53,6 +53,12 @@ Feature: Claude
     When the user opens the model picker for Claude
     Then that model is not offered
 
+  Scenario: A Claude thread switches model between turns
+    Given a Claude thread has answered on "claude-sonnet-5"
+    When the user sends the next message on "claude-opus-5"
+    Then Claude answers it on "claude-opus-5"
+    And the conversation continues in the same Claude session
+
   Scenario: Claude shows the signed-in account
     Given the Claude CLI is signed in with a subscription
     When Claude's usage has been checked
