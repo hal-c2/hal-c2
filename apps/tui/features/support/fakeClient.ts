@@ -132,6 +132,10 @@ export function fakeClient({
       },
     ] as never,
   listTerminalIds = async () => [],
+  implementPlan = async () => {},
+  revertCheckpoint = async () => {},
+  getTurnDiff = async () => "",
+  getFullThreadDiff = async () => "",
 }: {
   readonly detail?: OrchestrationThread;
   readonly shellSnapshot?: OrchestrationShellSnapshot;
@@ -164,6 +168,10 @@ export function fakeClient({
   readonly getServerConfig?: TuiClient["getServerConfig"];
   readonly listModels?: TuiClient["listModels"];
   readonly listTerminalIds?: TuiClient["listTerminalIds"];
+  readonly implementPlan?: TuiClient["implementPlan"];
+  readonly revertCheckpoint?: TuiClient["revertCheckpoint"];
+  readonly getTurnDiff?: TuiClient["getTurnDiff"];
+  readonly getFullThreadDiff?: TuiClient["getFullThreadDiff"];
 } = {}): {
   readonly client: TuiClient;
   readonly connect: () => void;
@@ -172,7 +180,24 @@ export function fakeClient({
   readonly emitTerminalMetadata: (event: TerminalMetadataStreamEvent) => void;
   /** Push live detail to whoever subscribed to that thread. */
   readonly emitThread: (detail: OrchestrationThread, page?: TuiThreadPage) => void;
+  /** What the client was asked to do, in order, per method. */
+  readonly calls: FakeClientCalls;
 } {
+  const calls: FakeClientCalls = {
+    approve: [],
+    respondUserInput: [],
+    implementPlan: [],
+    revertCheckpoint: [],
+    loadOlderThreadTurns: [],
+    getTurnDiff: [],
+    getFullThreadDiff: [],
+  };
+  const record =
+    <K extends keyof FakeClientCalls, F extends (...args: any[]) => any>(name: K, fn: F) =>
+    (...args: Parameters<F>): ReturnType<F> => {
+      (calls[name] as unknown[]).push(args);
+      return fn(...args);
+    };
   let shellSubscriber: ((snapshot: OrchestrationShellSnapshot) => void) | null = null;
   let terminalMetadataSubscriber: ((event: TerminalMetadataStreamEvent) => void) | null = null;
   const subscribedThreadIds: string[] = [];
@@ -214,7 +239,12 @@ export function fakeClient({
       };
     },
     sendReply,
-    respondUserInput,
+    respondUserInput: record("respondUserInput", respondUserInput),
+    implementPlan: record("implementPlan", implementPlan),
+    revertCheckpoint: record("revertCheckpoint", revertCheckpoint),
+    loadOlderThreadTurns: record("loadOlderThreadTurns", () => true),
+    getTurnDiff: record("getTurnDiff", getTurnDiff),
+    getFullThreadDiff: record("getFullThreadDiff", getFullThreadDiff),
     createProject,
     createThread,
     subscribeTerminal: () => () => {},
@@ -230,7 +260,7 @@ export function fakeClient({
     settleThread,
     unsettleThread,
     terminalClose,
-    approve,
+    approve: record("approve", approve),
     listTerminalIds,
     listModels,
     getServerConfig,
@@ -250,5 +280,17 @@ export function fakeClient({
     emitTerminalMetadata: (event) => terminalMetadataSubscriber?.(event),
     emitThread: (next, page = { hasMore: false, loadingOlder: false }) =>
       threadSubscribers.get(next.id)?.(next, page),
+    calls,
   };
+}
+
+/** Arguments of each recorded call, per client method. */
+export interface FakeClientCalls {
+  readonly approve: Array<Parameters<TuiClient["approve"]>>;
+  readonly respondUserInput: Array<Parameters<TuiClient["respondUserInput"]>>;
+  readonly implementPlan: Array<Parameters<TuiClient["implementPlan"]>>;
+  readonly revertCheckpoint: Array<Parameters<TuiClient["revertCheckpoint"]>>;
+  readonly loadOlderThreadTurns: Array<Parameters<TuiClient["loadOlderThreadTurns"]>>;
+  readonly getTurnDiff: Array<Parameters<TuiClient["getTurnDiff"]>>;
+  readonly getFullThreadDiff: Array<Parameters<TuiClient["getFullThreadDiff"]>>;
 }
