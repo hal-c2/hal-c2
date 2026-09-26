@@ -38,12 +38,12 @@ HAL-C2 is often developed from inside HAL-C2 (or upstream T3 Code), controlled r
 - **project** means an environment-local workspace record rooted at a directory.
 - **thread** means the durable conversation and work history for a project.
 - **turn** means one user-to-agent cycle, including follow-up work such as checkpointing.
-- **HAL-C2 home** means the base data directory, `$HAL_C2_HOME`, default `~/.hal-c2`. On a machine that already has `~/.t3` from T3 Code, that directory is used in place and is the live install. Node server state lives below `userdata`, the Elixir node's below `elixir`.
+- **HAL-C2 home** means where an environment keeps its files: the XDG config, data, state, and cache directories named `hal-c2` (`~/.local/share/hal-c2` and siblings), or all four under one root such as `$HAL_C2_HOME`. The Elixir node's files sit one `elixir` level down. See `docs/internals/storage.md`.
 
 ## The three ways to hurt yourself
 
 1. **Killing by pattern.** Never `pkill -f`, `pgrep | kill`, or `kill` a PID you found by matching a name, path, or worktree string. Your own agent process has this worktree's path in its argv, and this machine runs several other dev servers at once. Kill only a PID you captured at spawn, or the owner of your port from `ss -H -ltnp` after confirming `/proc/<pid>/cwd` is your worktree.
-2. **Writing to the live install.** `~/.t3` and `~/.hal-c2` are both off limits. Whichever exists is the developer's real HAL-C2 home (on a machine that ran T3 Code first, `~/.t3`), with its `userdata` and `elixir` directories in use while you work. Reading and copying from them are fine, and a good way to get real test data (see Test data). Never start a server or node against either, never open them read-write, never clean them up.
+2. **Writing to the live install.** `~/.config/hal-c2`, `~/.local/share/hal-c2`, `~/.local/state/hal-c2`, and `~/.cache/hal-c2` (and their `hal-c2-dev` siblings) are the developer's real HAL-C2 install, in use while you work. `~/.t3` and `~/.hal-c2` are just as off limits: they hold the real data HAL-C2 migrates from, and T3 Code may still run against `~/.t3`. Reading and copying from any of them are fine, and a good way to get real test data (see Test data). Never start a server or node against them, never open them read-write, never clean them up.
 3. **Baking in origins.** Never set `VITE_HTTP_URL` or `VITE_WS_URL` for dev. Dev is single-origin and Vite proxies `/api`, `/ws`, `/oauth`, and `/.well-known`. Setting them bakes localhost into the bundle and silently breaks every remote browser.
 
 ## Hit every surface
@@ -62,30 +62,30 @@ The most common defect in this repo is a change that works on the path you teste
 ## Dev servers
 
 - `vp i` installs. Worktrees get this from the `hal-c2.json` setup script (a legacy `t3.json` is still read); if module resolution looks broken, it probably did not run.
-- `vp run dev` starts server and web. In a worktree, state defaults to that worktree's gitignored `.hal-c2` (an existing `.t3` is still used), which deliberately outranks an ambient `HAL_C2_HOME` so you cannot land on shared state by accident. An explicit `--home-dir` still wins.
+- `vp run dev` starts server and web. In a worktree, state defaults to that worktree's gitignored `.hal-c2` (`config`, `data`, `state`, `cache`), which deliberately outranks an ambient `HAL_C2_HOME` so you cannot land on shared state by accident. An explicit `--home-dir` still wins. The main checkout uses the `hal-c2-dev` directories, never the installed app's.
 - Ports derive from the worktree path and are stable across restarts, but read the real ones from the `[dev-runner]` line since occupied ports shift.
 - Sharing over the tailnet is three steps: run `vp run dev --share` in the background, wait for the `pairingUrl:` line in its output, then give that full URL to an unpaired browser. Do not wire up `tailscale serve` by hand, open the URL yourself, or consume the user's pairing link. A browser with the reusable dev cookie can use the bare origin. If a normal one-time token was consumed, mint a fresh one with `node apps/server/src/bin.ts pair`. It carries standard scopes, while the startup URL carries admin scopes needed for Connections settings.
 - To reuse web dev auth across worktrees, configure one fixed `HAL_C2_DEV_AUTH_TOKEN` in the main checkout's gitignored `.env`. The `hal-c2.json` setup links that file into worktrees. Never commit or publish the token or a startup URL. See [Reusable dev credential](docs/operations/development.md#reusable-dev-credential).
-- The node runs from `apps/server-ex` through mise: `mise exec -- mix hal_c2.server`. It keeps dev state in the repo's `.hal-c2/elixir`.
+- The node runs from `apps/server-ex` through mise: `mise exec -- mix hal_c2.server`. It keeps dev state in the `elixir` level of the repo's `.hal-c2`.
 - Stop what you started, by the PID you tracked. See rule 1.
 
 ## Test data
 
 An empty database is a bad test. Seed your worktree's `.hal-c2` with a copy of real data instead of pointing at live state:
 
-- Copy from the live home's `userdata` (`~/.t3/userdata` or `~/.hal-c2/userdata`, the developer's real data and the most realistic test set) or its `dev` directory. Worktree state lives at `<worktree>/.hal-c2/userdata`.
+- Copy from `~/.local/share/hal-c2` (the developer's real data, the most realistic test set) or `~/.local/share/hal-c2-dev`. On a machine not yet migrated, `~/.t3/userdata` is still a fine source. Worktree data lives at `<worktree>/.hal-c2/data`.
 - Snapshot the database with `VACUUM INTO`, which is safe even while a server has the source open and yields one consistent file:
 
   ```bash
-  mkdir -p .hal-c2/userdata
-  rm -f .hal-c2/userdata/state.sqlite*  # VACUUM INTO refuses to overwrite
-  export LIVE=~/.t3; [ -d "$LIVE" ] || LIVE=~/.hal-c2
-  bun -e "new (require('bun:sqlite').Database)(process.env.LIVE + '/userdata/state.sqlite', { readonly: true }).run(\"VACUUM INTO '.hal-c2/userdata/state.sqlite'\")"
+  mkdir -p .hal-c2/data
+  rm -f .hal-c2/data/statev2.sqlite*  # VACUUM INTO refuses to overwrite
+  export SRC="${XDG_DATA_HOME:-$HOME/.local/share}/hal-c2/statev2.sqlite"  # not migrated yet: ~/.t3/userdata/statev2.sqlite
+  bun -e "new (require('bun:sqlite').Database)(process.env.SRC, { readonly: true }).run(\"VACUUM INTO '.hal-c2/data/statev2.sqlite'\")"
   ```
 
   A plain `cp` is only safe when no server has the source open, and must bring the `-wal` and `-shm` siblings along. A live file copy is a corrupt copy.
 
-- Bring `secrets` and `settings.json` only if the flow under test needs them.
+- Bring `secrets` (data) and `settings.json` (config) only if the flow under test needs them.
 - Copy in, never symlink. Data flows one way: into your sandbox, never back out.
 
 ## Verifying
