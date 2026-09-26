@@ -1,4 +1,5 @@
 // See opentui-qml.d.ts: the slice of `opentui-qml/testing` the TUI uses.
+import type { CliRenderer } from "@opentui/core";
 import type { KeyInput } from "@opentui/core/testing";
 import type { QmlApp, QmlEngine, QmlObject, RunQmlOptions } from "opentui-qml";
 
@@ -22,6 +23,7 @@ export interface QmlTestApp {
   engine: QmlEngine;
   root: QmlObject;
   proxy: any;
+  renderer: CliRenderer;
   warnings: string[];
   errors: unknown[];
   renderOnce(): Promise<void>;

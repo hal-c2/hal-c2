@@ -1,6 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   type OrchestrationThread,
+  type TerminalAttachStreamEvent,
   type TerminalMetadataStreamEvent,
   type VcsStatusResult,
 } from "@t3tools/contracts";
@@ -132,6 +133,11 @@ export function fakeClient({
       },
     ] as never,
   listTerminalIds = async () => [],
+  listEntries = async () => [],
+  readFile = async () => null,
+  hostPlatform = "linux",
+  terminalHistory = () => "",
+  onTerminalWrite,
 }: {
   readonly detail?: OrchestrationThread;
   readonly shellSnapshot?: OrchestrationShellSnapshot;
@@ -164,6 +170,13 @@ export function fakeClient({
   readonly getServerConfig?: TuiClient["getServerConfig"];
   readonly listModels?: TuiClient["listModels"];
   readonly listTerminalIds?: TuiClient["listTerminalIds"];
+  readonly listEntries?: TuiClient["listEntries"];
+  readonly readFile?: TuiClient["readFile"];
+  readonly hostPlatform?: NodeJS.Platform;
+  /** History replayed in the snapshot a terminal sends when it is attached. */
+  readonly terminalHistory?: (threadId: string, terminalId: string) => string;
+  /** Plays the program behind a terminal: sees each write after it is recorded. */
+  readonly onTerminalWrite?: (terminal: FakeTerminal, data: string) => void;
 } = {}): {
   readonly client: TuiClient;
   readonly connect: () => void;
@@ -172,7 +185,35 @@ export function fakeClient({
   readonly emitTerminalMetadata: (event: TerminalMetadataStreamEvent) => void;
   /** Push live detail to whoever subscribed to that thread. */
   readonly emitThread: (detail: OrchestrationThread, page?: TuiThreadPage) => void;
+  /** Attached terminals by `threadId:terminalId`, with what they were sent. */
+  readonly terminals: Map<string, FakeTerminal>;
+  /** Client calls in order, by method name. */
+  readonly calls: Record<string, unknown[][]>;
 } {
+  const calls: Record<string, unknown[][]> = {};
+  const record = <A extends unknown[], R>(name: string, fn: (...args: A) => R) =>
+    ((...args: A) => {
+      (calls[name] ??= []).push(args);
+      return fn(...args);
+    }) as (...args: A) => R;
+  const terminals = new Map<string, FakeTerminal>();
+  const terminalFor = (threadId: string, terminalId: string): FakeTerminal => {
+    const key = `${threadId}:${terminalId}`;
+    let terminal = terminals.get(key);
+    if (!terminal) {
+      terminal = {
+        threadId,
+        terminalId,
+        attach: null,
+        attachCount: 0,
+        writes: [],
+        listener: null,
+        emit: (event) => terminal!.listener?.(event),
+      };
+      terminals.set(key, terminal);
+    }
+    return terminal;
+  };
   let shellSubscriber: ((snapshot: OrchestrationShellSnapshot) => void) | null = null;
   let terminalMetadataSubscriber: ((event: TerminalMetadataStreamEvent) => void) | null = null;
   const subscribedThreadIds: string[] = [];
@@ -181,11 +222,13 @@ export function fakeClient({
     (thread: OrchestrationThread, page: TuiThreadPage) => void
   >();
   const client = {
-    hostPlatform: "linux",
-    browseFilesystem,
+    hostPlatform,
+    listEntries: record("listEntries", listEntries),
+    readFile: record("readFile", readFile),
+    browseFilesystem: record("browseFilesystem", browseFilesystem),
     discoverSourceControl,
-    lookupRepository,
-    cloneRepository,
+    lookupRepository: record("lookupRepository", lookupRepository),
+    cloneRepository: record("cloneRepository", cloneRepository),
     subscribeShell: (onSnapshot: (snapshot: OrchestrationShellSnapshot) => void) => {
       shellSubscriber = onSnapshot;
       return () => {
@@ -215,13 +258,50 @@ export function fakeClient({
     },
     sendReply,
     respondUserInput,
-    createProject,
-    createThread,
-    subscribeTerminal: () => () => {},
-    terminalWrite: async () => {},
-    terminalResize: async () => {},
-    terminalClear,
-    terminalRestart,
+    createProject: record("createProject", createProject),
+    createThread: record("createThread", createThread),
+    subscribeTerminal: (
+      input: Parameters<TuiClient["subscribeTerminal"]>[0],
+      onEvent: (event: TerminalAttachStreamEvent) => void,
+    ) => {
+      const terminal = terminalFor(input.threadId, input.terminalId);
+      terminal.attach = input;
+      terminal.attachCount += 1;
+      terminal.listener = onEvent;
+      // The server answers an attach with the session's snapshot.
+      onEvent({
+        type: "snapshot",
+        threadId: input.threadId,
+        terminalId: input.terminalId,
+        createdAt: "2026-07-13T00:00:00.000Z",
+        snapshot: {
+          threadId: input.threadId,
+          terminalId: input.terminalId,
+          cwd: input.cwd,
+          worktreePath: input.worktreePath,
+          status: "running",
+          pid: 1,
+          history: terminalHistory(input.threadId, input.terminalId),
+          exitCode: null,
+          exitSignal: null,
+          updatedAt: "2026-07-13T00:00:00.000Z",
+        },
+      } as unknown as TerminalAttachStreamEvent);
+      return () => {
+        if (terminal.listener === onEvent) terminal.listener = null;
+      };
+    },
+    terminalWrite: record(
+      "terminalWrite",
+      async (threadId: string, terminalId: string, data: string) => {
+        const terminal = terminalFor(threadId, terminalId);
+        terminal.writes.push(data);
+        onTerminalWrite?.(terminal, data);
+      },
+    ),
+    terminalResize: record("terminalResize", async () => {}),
+    terminalClear: record("terminalClear", terminalClear),
+    terminalRestart: record("terminalRestart", terminalRestart),
     setInteractionMode,
     renameThread,
     archiveThread,
@@ -229,9 +309,9 @@ export function fakeClient({
     deleteThread,
     settleThread,
     unsettleThread,
-    terminalClose,
+    terminalClose: record("terminalClose", terminalClose),
     approve,
-    listTerminalIds,
+    listTerminalIds: record("listTerminalIds", listTerminalIds),
     listModels,
     getServerConfig,
     listRefs,
@@ -250,5 +330,20 @@ export function fakeClient({
     emitTerminalMetadata: (event) => terminalMetadataSubscriber?.(event),
     emitThread: (next, page = { hasMore: false, loadingOlder: false }) =>
       threadSubscribers.get(next.id)?.(next, page),
+    terminals,
+    calls,
   };
+}
+
+/** One attached terminal session in the fake: what it was attached with and sent. */
+export interface FakeTerminal {
+  readonly threadId: string;
+  readonly terminalId: string;
+  attach: Parameters<TuiClient["subscribeTerminal"]>[0] | null;
+  attachCount: number;
+  /** Bytes written to the PTY (keys and pastes). */
+  readonly writes: string[];
+  listener: ((event: TerminalAttachStreamEvent) => void) | null;
+  /** Push a stream event to the attached client, if any. */
+  readonly emit: (event: TerminalAttachStreamEvent) => void;
 }

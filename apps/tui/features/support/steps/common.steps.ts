@@ -4,7 +4,16 @@ import { expect } from "bun:test";
 
 import { step } from "../../steps.ts";
 import { LIST_PANE_WIDTH } from "../../../src/components/ChatView.layout.ts";
-import { boot, findObject, geometry, pressKey, resize, snapshot, type World } from "../world.ts";
+import {
+  boot,
+  findObject,
+  geometry,
+  pressKey,
+  resize,
+  snapshot,
+  typeText,
+  type World,
+} from "../world.ts";
 
 const NARROW_COLUMNS = 70;
 const STATUS_ROWS = 1;
@@ -84,3 +93,38 @@ step(
     expect(await app.snapshot()).not.toContain(text);
   },
 );
+
+// --- added by T5 ---
+// Status line and command palette steps shared by the files and terminal areas.
+
+async function expectStatus(ctx: World, text: string) {
+  await ctx.host!.settled();
+  const frame = await snapshot(ctx);
+  expect((ctx.host!.state.get("status") as { text: string }).text).toBe(text);
+  expect(frame).toContain(text);
+}
+
+step("the status line says {string}", expectStatus);
+
+// Checks without waiting on in-flight calls, so a busy message can be seen.
+step("the user is told {string}", async (ctx: World, text: string) => {
+  const frame = await snapshot(ctx);
+  expect((ctx.host!.state.get("status") as { text: string }).text).toBe(text);
+  expect(frame).toContain(text);
+});
+
+step("the user types {string}", async (ctx: World, text: string) => {
+  await typeText(ctx, text);
+  await ctx.host!.settled();
+});
+
+/** Runs a palette command as the palette would: by its title from `host.commands()`. */
+step("the user chooses {string} from the command palette", async (ctx: World, title: string) => {
+  const command = ctx.host!.commands().find((candidate) => candidate.title === title);
+  if (!command) {
+    const offered = ctx.host!.commands().map((candidate) => candidate.title);
+    throw new Error(`"${title}" is not offered: ${offered.join(", ")}`);
+  }
+  ctx.host!.dispatch(command.action, command.payload);
+  await ctx.host!.settled();
+});

@@ -30,6 +30,10 @@ export interface World extends StepContext {
   /** What the host logged (unknown actions). */
   logs?: string[];
   quitRequested?: boolean;
+  /** What the app put on the clipboard (OSC 52). */
+  clipboard?: string[];
+  /** Set false before boot for a host terminal without OSC 52. */
+  clipboardSupported?: boolean;
 }
 
 /** Set up the fake client before boot; later calls replace it only if not booted. */
@@ -55,6 +59,11 @@ export async function boot(
     log: (message) => logs.push(message),
     onQuit: () => {
       ctx.quitRequested = true;
+    },
+    copyToClipboard: (text) => {
+      if (ctx.clipboardSupported === false) return false;
+      (ctx.clipboard ??= []).push(text);
+      return true;
     },
   });
   ctx.cleanups.push(() => host.destroy());
@@ -103,6 +112,10 @@ const NAMED_KEYS: Record<string, string> = {
   home: "HOME",
   end: "END",
   space: " ",
+  pgup: "\x1b[5~",
+  pageup: "\x1b[5~",
+  pgdn: "\x1b[6~",
+  pagedown: "\x1b[6~",
 };
 
 /** Press a key as the feature files spell it: "Ctrl+F", "Esc", "Alt+Up", "Shift+Tab". */
@@ -128,6 +141,17 @@ export async function pressKey(ctx: World, spelled: string): Promise<void> {
 
 export async function typeText(ctx: World, text: string): Promise<void> {
   await (await boot(ctx)).typeText(text);
+}
+
+export async function paste(ctx: World, text: string): Promise<void> {
+  await (await boot(ctx)).paste(text);
+}
+
+/** Wait for the host's in-flight client calls and terminal writes, then render. */
+export async function settle(ctx: World): Promise<string> {
+  const app = await boot(ctx);
+  await ctx.host!.settled();
+  return app.snapshot();
 }
 
 export async function advance(ctx: World, ms: number): Promise<void> {
