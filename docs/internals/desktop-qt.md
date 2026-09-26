@@ -185,8 +185,9 @@ Standalone: run the binary with no `--url`; the host serves the built web app
 and starts the node for the shell's home.
 
 CLI: `--url`, `--home-dir`, `--config-dir`, `--qml-dir`, `--host-entry`, `--node`, `--screenshot <png>`
-(grab the window after the page loads, then quit — PR evidence without a
-screen-recording permission), `--action name[=json]` (repeatable; dispatch shell
+(grab the window after the page loads, or with the error when the start fails, then quit with
+0, or 2 on a failure; PR evidence without a screen-recording permission, and with
+`QT_QPA_PLATFORM=offscreen` without a window at all), `--action name[=json]` (repeatable; dispatch shell
 actions after the page loads, e.g. `--action rightPanel.toggle`), `--key <chord>`
 (repeatable; press a key chord after the page loads, e.g. `--key Ctrl+1`, portable
 `QKeySequence` names — `--action` and `--key` run in command-line order, 1.5 s
