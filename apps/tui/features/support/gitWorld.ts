@@ -2,7 +2,12 @@
 // workspace is a git checkout, the checkout states the features name, and the
 // keyboard paths through the source-control panel.
 import { expect } from "bun:test";
-import type { OrchestrationThread, VcsStatusResult } from "@t3tools/contracts";
+import type {
+  GitRunStackedActionResult,
+  GitStackedAction,
+  OrchestrationThread,
+  VcsStatusResult,
+} from "@t3tools/contracts";
 
 import type { TuiGitState } from "../../src/host/gitState.ts";
 import { shell, thread } from "./fakeClient.ts";
@@ -83,6 +88,8 @@ interface Scm {
   detail: OrchestrationThread;
   /** Diff text by "all" or turn count; an Error fails the fetch. */
   diffs: Map<string, string | Error>;
+  /** Runs when a pull succeeds (the server's status stream catching up). */
+  onPull?: () => void;
 }
 
 /** The scenario's thread and checkout; the first call may name the thread. */
@@ -107,6 +114,9 @@ export function scm(ctx: World, options: { title?: string } = {}): Scm {
       shellSnapshot: shell(listed.threads.map((row) => ({ ...row, title }))),
       getFullThreadDiff: () => diff("all"),
       getTurnDiff: (_thread, turn) => diff(String(turn)),
+      runGitPull: async () => {
+        state.onPull?.();
+      },
     }).setVcsStatus(state.status);
   }
   return world.scm;
@@ -172,4 +182,58 @@ export async function runFromPanel(ctx: World, label: string): Promise<void> {
   await moveTo(ctx, label);
   await pressKey(ctx, "Enter");
   await settle(ctx);
+}
+
+/**
+ * Run an action by name: through the panel when it offers the action, or
+ * straight at the host (as the palette does) when the checkout means the panel
+ * would not list it as runnable.
+ */
+export async function runAction(ctx: World, label: string): Promise<void> {
+  await ready(ctx);
+  const row = gitState(ctx).actions.find((action) => action.label === label && !action.disabled);
+  if (row) {
+    await runFromPanel(ctx, label);
+    return;
+  }
+  const ACTIONS: Record<string, string> = {
+    Commit: "commit",
+    "Commit & push": "commit_push",
+    "Commit, push & PR": "commit_push_pr",
+    Push: "push",
+    "Create PR": "create_pr",
+  };
+  const action = ACTIONS[label];
+  if (!action) throw new Error(`no runnable "${label}" for this checkout`);
+  ctx.host!.dispatch("git.run", { action, label });
+  await settle(ctx);
+}
+
+/** A finished run as the server reports it (toast titles as GitManager words them). */
+export function serverResult(
+  action: GitStackedAction,
+  commit?: { subject: string },
+): GitRunStackedActionResult {
+  const sha = "1a2b3c4d5e6f7a8b9c0d";
+  const committed = commit !== undefined;
+  const pushed = action !== "commit";
+  const shortSha = committed ? ` ${sha.slice(0, 7)}` : "";
+  const title =
+    action === "create_pr" || action === "commit_push_pr"
+      ? "Created PR #43"
+      : pushed
+        ? `Pushed${shortSha} to origin/feature/tax`
+        : `Committed${shortSha}`;
+  return {
+    action,
+    branch: { status: "skipped_not_requested" },
+    commit: committed
+      ? { status: "created", commitSha: sha, subject: commit.subject }
+      : { status: "skipped_not_requested" },
+    push: pushed
+      ? { status: "pushed", branch: "feature/tax", upstreamBranch: "origin/feature/tax" }
+      : { status: "skipped_not_requested" },
+    pr: { status: "skipped_not_requested" },
+    toast: { title, cta: { kind: "none" } },
+  } as unknown as GitRunStackedActionResult;
 }

@@ -6,8 +6,9 @@ import type { OrchestrationThread } from "@t3tools/contracts";
 
 import { step } from "../../steps.ts";
 import { ready, scm, setCheckout, setDetail, settle, vcsStatus } from "../gitWorld.ts";
+import type { QmlObject } from "opentui-qml";
+
 import { findObject, pressKey, type World } from "../world.ts";
-import type { QmlObject } from "opentui-qml/testing";
 
 const OLD_LINE = "const tax = 0;";
 const NEW_LINE = "const tax = rate * total;";
@@ -37,7 +38,7 @@ function checkpoint(turn: number, paths: string[]): OrchestrationThread["checkpo
     files: paths.map((path) => ({ path, kind: "modified", additions: 1, deletions: 1 })),
     assistantMessageId: null,
     completedAt: `2026-07-13T00:0${turn}:00.000Z`,
-  } as OrchestrationThread["checkpoints"][number];
+  } as unknown as OrchestrationThread["checkpoints"][number];
 }
 
 /** Checkpoints for turns 1..count, each editing its own file. */

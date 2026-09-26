@@ -14,6 +14,7 @@ import {
   moveTo,
   panelState,
   ready,
+  runAction,
   runFromPanel,
   scm,
   setCheckout,
@@ -248,32 +249,7 @@ step(
 
 // --- running actions ---
 
-/**
- * Run an action by name: through the panel when it offers the action, or
- * straight at the host (as the palette does) when the checkout means the panel
- * would not list it as runnable.
- */
-async function run(ctx: World, label: string): Promise<void> {
-  await ready(ctx);
-  const row = gitState(ctx).actions.find((action) => action.label === label && !action.disabled);
-  if (row) {
-    await runFromPanel(ctx, label);
-    return;
-  }
-  const ACTIONS: Record<string, string> = {
-    Commit: "commit",
-    "Commit & push": "commit_push",
-    "Commit, push & PR": "commit_push_pr",
-    Push: "push",
-    "Create PR": "create_pr",
-  };
-  const action = ACTIONS[label];
-  if (!action) throw new Error(`no runnable "${label}" for this checkout`);
-  ctx.host!.dispatch("git.run", { action, label });
-  await settle(ctx);
-}
-
-step("the user runs {string}", run);
+step("the user runs {string}", runAction);
 step("the user runs {string} from the keyboard", (ctx: World, label: string) =>
   runFromPanel(ctx, label),
 );
@@ -282,7 +258,7 @@ step(
   (ctx: World, label: string) => runFromPanel(ctx, label),
 );
 step("the user chooses to view the pull request", (ctx: World) => runFromPanel(ctx, "View PR"));
-step("the user runs a commit-and-push action", (ctx: World) => run(ctx, "Commit & push"));
+step("the user runs a commit-and-push action", (ctx: World) => runAction(ctx, "Commit & push"));
 
 step("the prompt asks for a commit message", async (ctx: World) => {
   const screen = await settle(ctx);
