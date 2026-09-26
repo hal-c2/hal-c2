@@ -546,7 +546,7 @@ const resolveElixirNodeRelease = Effect.gen(function* () {
   if (Option.isSome(environment.elixirNodeRelease)) return environment.elixirNodeRelease;
   if (!environment.isPackaged || environment.platform === "win32") return Option.none<string>();
   const fileSystem = yield* FileSystem.FileSystem;
-  const bundled = environment.path.join(environment.resourcesPath, "hal-c2-node", "bin", "hal-c2");
+  const bundled = environment.path.join(environment.resourcesPath, "hal-c2-node", "bin", "hal_c2");
   const exists = yield* fileSystem.exists(bundled).pipe(Effect.orElseSucceed(() => false));
   return exists ? Option.some(bundled) : Option.none<string>();
 });
