@@ -1,7 +1,7 @@
 # Sources:
 #   packages/contracts/src/terminal.ts (TerminalCwdError, TerminalSessionLookupError, TerminalNotRunningError, TerminalHistoryError)
 #   apps/server-ex/lib/t3/terminal.ex (check_cwd, lookup_error, not_running_error, start_shell failures, closed-race handling)
-#   apps/server-ex/lib/t3/rpc.ex (terminal.* routing; terminal.list is not routed)
+#   apps/server-ex/lib/t3/rpc.ex (terminal.* routing, including terminal.list)
 #   apps/server-ex/test/t3/terminal_test.exs
 #   apps/server-ex/test/t3/features_backlog_test.exs (terminal-list)
 #   apps/tui/src/components/ChatView.tsx (status messages for list, clear and restart failures)
@@ -77,7 +77,7 @@ Feature: Terminal failures
       When another client closes the same terminal at the same moment
       Then both requests succeed
 
-    @backlog @node
+    @node
     Scenario: Listing a thread's terminals works on the node
       Given a thread with saved terminals 1 and 2
       When a client lists the thread's terminals

@@ -29,6 +29,8 @@ defmodule T3.Test.Node do
     start_supervised!(T3.Streams)
     start_supervised!(T3.Shell)
     {:ok, {_ip, port}} = ThousandIsland.listener_info(start_supervised!(T3.Web))
+    # The port it really listens on, as a node started on a fixed port knows it.
+    Application.put_env(:t3, :port, port)
     [{_node, %{"environmentId" => environment}}] = T3.Shell.environments()
     :ok = T3.Shell.subscribe(self())
     %{port: port, environment: environment, home: dir, store: Path.join(dir, "t3.sqlite")}
@@ -39,19 +41,42 @@ defmodule T3.Test.Node do
   restart does. Sockets are gone afterwards; steps reconnect.
   """
   def restart(%{home: dir}) do
+    # Services a step added with `ensure/1` stop first and come back after the
+    # core, so in-memory state (clones, setups) is lost as in a real restart.
+    ensured = Process.get({__MODULE__, :ensured}, [])
+
+    for child <- Enum.reverse(ensured),
+        do: ExUnit.Callbacks.stop_supervised(Supervisor.child_spec(child, []).id)
+
     for child <- [T3.Web, T3.Shell, T3.Streams, T3.Auth, T3.Store],
         do: ExUnit.Callbacks.stop_supervised(child)
 
-    start(dir)
+    node = start(dir)
+    Enum.each(ensured, &ensure/1)
+    # The boot task the application runs once its services are up.
+    :ok = T3.Projects.auto_pull()
+    node
   end
 
-  @doc "Starts a service under the test supervisor if it is not running yet."
+  @doc """
+  Starts a service under the test supervisor if it is not running yet; `restart/1`
+  starts it again.
+  """
   def ensure(child) do
     case start_supervised(child) do
-      {:ok, pid} -> pid
-      {:error, {{:already_started, pid}, _}} -> pid
-      {:error, {:already_started, pid}} -> pid
-      {:error, reason} -> raise "could not start #{inspect(child)}: #{inspect(reason)}"
+      {:ok, pid} ->
+        ensured = Process.get({__MODULE__, :ensured}, [])
+        Process.put({__MODULE__, :ensured}, Enum.uniq(ensured ++ [child]))
+        pid
+
+      {:error, {{:already_started, pid}, _}} ->
+        pid
+
+      {:error, {:already_started, pid}} ->
+        pid
+
+      {:error, reason} ->
+        raise "could not start #{inspect(child)}: #{inspect(reason)}"
     end
   end
 
@@ -141,6 +166,10 @@ defmodule T3.Test.Node do
       {frame, _, _} -> flunk("unexpected frame: #{inspect(frame)}")
       _ -> client
     end
+  rescue
+    # `WsClient.recv/2` raises when nothing arrives in time, which is the pass.
+    error in RuntimeError ->
+      if error.message =~ "no frame within", do: client, else: reraise(error, __STACKTRACE__)
   catch
     :exit, _ -> client
   end
@@ -152,6 +181,38 @@ defmodule T3.Test.Node do
     client = sub(client, id, %{"type" => "config", "node" => Atom.to_string(node())})
     {_, client} = await(client, &(&1["t"] == "config.usageLimitSources" and &1["id"] == id))
     client
+  end
+
+  # --- added by W4 (terminal) ---
+
+  @doc """
+  Starts a second node joined to this one: a `:peer` VM running the whole app in
+  its own home under the scenario's `node.home`. This VM becomes distributed on
+  first use. Returns the peer's node name; the peer stops when the scenario ends.
+  """
+  def start_peer(node) do
+    unless :erlang.is_alive() do
+      {_, 0} = System.cmd("epmd", ["-daemon"])
+      name = :"t3features#{System.unique_integer([:positive])}@127.0.0.1"
+      {:ok, _} = :net_kernel.start(name, %{name_domain: :longnames})
+    end
+
+    {:ok, peer, name} =
+      :peer.start(%{
+        name: :"t3peer#{System.unique_integer([:positive])}",
+        host: ~c"127.0.0.1",
+        longnames: true,
+        args: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
+      })
+
+    ExUnit.Callbacks.on_exit(fn -> :peer.stop(peer) end)
+
+    # A peer node does not read Mix config, so it gets the node settings directly.
+    for {key, value} <- [start_node: true, home: Path.join(node.home, "peer"), port: 0],
+        do: :ok = :erpc.call(name, Application, :put_env, [:t3, key, value])
+
+    {:ok, _} = :erpc.call(name, Application, :ensure_all_started, [:t3])
+    name
   end
 end
 
@@ -402,4 +463,321 @@ defmodule T3.Test.Node.World do
   def days(n), do: n * 24 * 60 * 60 * 1_000
 
   def slug(title), do: title |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
+end
+
+# --- added by W4 (terminal) ---
+
+defmodule T3.Test.Node.Terminal do
+  @moduledoc """
+  Terminals as `features/terminal/` drives them: over the socket, the way a client
+  does. The scenario's terminal is `context.terminal` (a `TerminalOpenInput` map);
+  each client attaches to one terminal at a time, under `context.terminal_subs`
+  (client name → subscription id). Folders the feature names (`/work/app`) live
+  under the scenario's home (`folder/2`).
+  """
+
+  import ExUnit.Assertions
+
+  alias T3.Test.{Node, WsClient}
+  alias T3.Test.Node.World
+
+  @doc """
+  Starts the node's terminal services and makes `/bin/sh` the user's shell for
+  the scenario (quick, and it reads no rc files).
+  """
+  def ensure(%{terminals_ready: true} = context), do: context
+
+  def ensure(context) do
+    Node.ensure({Registry, keys: :unique, name: T3.Terminal.Registry})
+    Node.ensure({DynamicSupervisor, name: T3.Terminal.Supervisor, strategy: :one_for_one})
+    Node.ensure(T3.Terminal.Hub)
+    put_env("SHELL", "/bin/sh")
+    Map.put(context, :terminals_ready, true)
+  end
+
+  @doc "Sets (or with `nil` unsets) an OS environment variable until the scenario ends."
+  def put_env(key, value) do
+    previous = System.get_env(key)
+    if value, do: System.put_env(key, value), else: System.delete_env(key)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous, do: System.put_env(key, previous), else: System.delete_env(key)
+    end)
+  end
+
+  @doc "Where a folder named in the feature lives for this scenario (not created)."
+  def folder(context, path), do: Path.join(context.node.home, "fs" <> path)
+
+  @doc "`folder/2`, created."
+  def mkdir(context, path) do
+    dir = folder(context, path)
+    File.mkdir_p!(dir)
+    dir
+  end
+
+  @doc "The scenario's terminal input, with `overrides`; defaults to `term-1` in `/work/app`."
+  def input(context, overrides \\ %{}) do
+    (context[:terminal] ||
+       %{
+         "threadId" => "th-terminal",
+         "terminalId" => "term-1",
+         "cwd" => mkdir(context, "/work/app")
+       })
+    |> Map.merge(overrides)
+  end
+
+  def put_input(context, input), do: Map.put(context, :terminal, input)
+
+  @doc "`terminal.open` on the named client; stores the input and returns `{reply, context}`."
+  def open(context, overrides \\ %{}, name \\ "default") do
+    context = ensure(context)
+    input = input(context, overrides)
+    {reply, context} = World.call(context, "terminal.open", input, name)
+    {reply, put_input(context, input)}
+  end
+
+  @doc "Like `open/3`, asserting success; returns `{snapshot, context}`."
+  def open!(context, overrides \\ %{}, name \\ "default") do
+    case open(context, overrides, name) do
+      {{:ok, snapshot}, context} -> {snapshot, context}
+      {other, _} -> flunk("terminal.open failed: #{inspect(other)}")
+    end
+  end
+
+  @doc """
+  Attaches the named client to a terminal (`input`, default the scenario's) and
+  returns `{first frame, context}`: `%{"t" => "terminal"}` with the snapshot, or an
+  `%{"t" => "error"}`.
+  """
+  def attach(context, name, input \\ nil, node \\ Atom.to_string(node())) do
+    context = ensure(context)
+    input = input || input(context)
+    id = System.unique_integer([:positive])
+    client = World.client(context, name)
+    shape = %{"type" => "terminal", "node" => node, "input" => input}
+    client = Node.sub(client, id, shape)
+    {frame, client} = Node.await(client, &(&1["id"] == id or &1["t"] == "error"), 5_000)
+
+    context =
+      context
+      |> World.put_client(name, client)
+      |> Map.update(:terminal_subs, %{name => id}, &Map.put(&1, name, id))
+
+    {frame, context}
+  end
+
+  @doc "Like `attach/3`, asserting a snapshot; returns `{snapshot, context}`."
+  def attach!(context, name, input \\ nil) do
+    case attach(context, name, input) do
+      {%{"t" => "terminal", "event" => %{"type" => "snapshot", "snapshot" => s}}, context} ->
+        {s, context}
+
+      {frame, _} ->
+        flunk("attach failed: #{inspect(frame)}")
+    end
+  end
+
+  @doc """
+  The next terminal event on the named client's subscription matching `fun`;
+  earlier events are skipped. Returns `{event, context}`.
+  """
+  def await_event(context, name, fun, timeout \\ 5_000) do
+    id = Map.fetch!(context.terminal_subs, name)
+
+    {%{"event" => event}, client} =
+      Node.await(
+        World.client(context, name),
+        &(&1["t"] == "terminal" and &1["id"] == id and fun.(&1["event"])),
+        timeout
+      )
+
+    {event, World.put_client(context, name, client)}
+  end
+
+  @doc """
+  Output on the named client until it matches `pattern` (a string or regex);
+  returns `{output so far, events seen, context}`.
+  """
+  def await_output(context, name, pattern, timeout \\ 5_000) do
+    id = Map.fetch!(context.terminal_subs, name)
+    collect(World.client(context, name), id, pattern, timeout, "", [], context, name)
+  end
+
+  defp collect(client, id, pattern, timeout, acc, events, context, name) do
+    {frame, client} = WsClient.recv(client, timeout)
+
+    case frame do
+      %{"t" => "terminal", "id" => ^id, "event" => %{"type" => "output", "data" => data} = e} ->
+        acc = acc <> data
+
+        if acc =~ pattern,
+          do: {acc, Enum.reverse([e | events]), World.put_client(context, name, client)},
+          else: collect(client, id, pattern, timeout, acc, [e | events], context, name)
+
+      %{"t" => "terminal", "id" => ^id, "event" => e} ->
+        collect(client, id, pattern, timeout, acc, [e | events], context, name)
+
+      _ ->
+        collect(client, id, pattern, timeout, acc, events, context, name)
+    end
+  rescue
+    error in RuntimeError ->
+      flunk("#{Exception.message(error)}; no #{inspect(pattern)} in #{inspect(acc)}")
+  end
+
+  @doc "Sends keystrokes to the scenario's terminal from the named client, not waiting for the reply."
+  def write(context, name, data, input \\ nil) do
+    input = input || input(context)
+    id = System.unique_integer([:positive])
+
+    client =
+      Node.rpc(World.client(context, name), context.node.environment, id, "terminal.write", %{
+        "threadId" => input["threadId"],
+        "terminalId" => input["terminalId"],
+        "data" => data
+      })
+
+    World.put_client(context, name, client)
+  end
+
+  @doc """
+  Runs `command` in the terminal the named client is attached to and waits until
+  it finished; returns `{output, context}`.
+  """
+  def run(context, name, command, input \\ nil) do
+    n = System.unique_integer([:positive])
+    context = write(context, name, "#{command}; echo __done''_#{n}__\n", input)
+    {output, _events, context} = await_output(context, name, "__done_#{n}__")
+    {output, context}
+  end
+
+  @doc "Waits until an OS process has ended (a shell ignores SIGTERM, so up to a second)."
+  def await_exit(os_pid) do
+    {_, status} =
+      System.cmd("timeout", ["5", "tail", "--pid=#{os_pid}", "-s", "0.05", "-f", "/dev/null"])
+
+    assert status == 0, "process #{os_pid} still runs"
+  end
+
+  @doc "The OS process's command name."
+  def comm(os_pid), do: "/proc/#{os_pid}/comm" |> File.read!() |> String.trim()
+
+  @doc "The running terminal process for `input`."
+  def session(input) do
+    [{pid, _}] = Registry.lookup(T3.Terminal.Registry, {input["threadId"], input["terminalId"]})
+    pid
+  end
+
+  @doc """
+  The scenario's terminal after its shell printed `text` and exited; the "default"
+  client is attached and has seen the exit.
+  """
+  def exited(context, text) do
+    {_, context} = open!(context)
+    {_, context} = attach!(context, "default", Map.delete(context.terminal, "cwd"))
+    context = write(context, "default", "echo #{text}; exit 0\n")
+    {_, context} = await_event(context, "default", &(&1["type"] == "exited"))
+    context
+  end
+
+  @doc "Where the node saves `input`'s scrollback."
+  def history_file(context, input) do
+    name =
+      "terminal_#{Base.url_encode64(input["threadId"], padding: false)}_" <>
+        "#{Base.url_encode64(input["terminalId"], padding: false)}.log"
+
+    Path.join([context.node.home, "terminals", name])
+  end
+
+  @doc """
+  Waits until the running terminal for `input` has saved scrollback containing
+  `text`, following its `:persist` timer rather than polling the file.
+  """
+  def await_persisted(context, input, text, timeout \\ 3_000) do
+    pid = session(input)
+    test = self()
+    ref = make_ref()
+
+    tracer =
+      spawn_link(fn ->
+        receive do
+          :go -> :ok
+        end
+
+        Stream.repeatedly(fn ->
+          receive do
+            {:trace, ^pid, :receive, :persist} -> send(test, {ref, :persist})
+            _ -> :ok
+          end
+        end)
+        |> Stream.run()
+      end)
+
+    :erlang.trace(pid, true, [:receive, {:tracer, tracer}])
+    send(tracer, :go)
+    file = history_file(context, input)
+
+    try do
+      await_saved(pid, ref, file, text, System.monotonic_time(:millisecond) + timeout)
+    after
+      :erlang.trace(pid, false, [:receive])
+      Process.unlink(tracer)
+      Process.exit(tracer, :kill)
+    end
+  end
+
+  defp await_saved(pid, ref, file, text, deadline) do
+    # A save that already happened counts; `get_state` waits out one in progress.
+    :sys.get_state(pid)
+
+    case File.read(file) do
+      {:ok, saved} ->
+        if saved =~ text, do: saved, else: await_next_save(pid, ref, file, text, deadline)
+
+      {:error, :enoent} ->
+        await_next_save(pid, ref, file, text, deadline)
+    end
+  end
+
+  defp await_next_save(pid, ref, file, text, deadline) do
+    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+
+    receive do
+      {^ref, :persist} -> await_saved(pid, ref, file, text, deadline)
+    after
+      remaining -> flunk("#{inspect(text)} was not saved to #{file}")
+    end
+  end
+end
+
+# --- added by W4 (files) ---
+
+defmodule T3.Test.Node.Host do
+  @moduledoc """
+  The machine a scenario's node runs on, as features name it: absolute paths such
+  as `/home/sam/shop` live under the scenario's home, and `~` is `/home/sam`
+  there, made the node's `$HOME` for the scenario on first use.
+  """
+
+  @doc "Where a feature's path (`/home/sam/shop`, `~/code`) really is in this scenario."
+  def path(context, "/" <> _ = path), do: Path.join(context.node.home, "fs") <> path
+  def path(context, "~" <> rest), do: home(context) <> rest
+  def path(_context, path), do: path
+
+  @doc "The scenario's `$HOME` (`/home/sam`), set for the node on first call."
+  def home(context) do
+    case Process.get({__MODULE__, :home}) do
+      nil ->
+        real = path(context, "/home/sam")
+        File.mkdir_p!(real)
+        previous = System.get_env("HOME")
+        System.put_env("HOME", real)
+        ExUnit.Callbacks.on_exit(fn -> System.put_env("HOME", previous) end)
+        Process.put({__MODULE__, :home}, real)
+        real
+
+      real ->
+        real
+    end
+  end
 end

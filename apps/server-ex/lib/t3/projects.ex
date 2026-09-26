@@ -177,7 +177,7 @@ defmodule T3.Projects do
   """
   @spec browse(map) :: {:ok, map} | {:error, String.t()}
   def browse(%{"partialPath" => partial} = input) do
-    resolved = partial |> expand() |> Path.expand(input["cwd"] || System.user_home!())
+    resolved = partial |> expand() |> Path.expand(input["cwd"] || home())
     whole_dir? = String.ends_with?(partial, "/") or partial == "~"
     parent = if whole_dir?, do: resolved, else: Path.dirname(resolved)
     prefix = if whole_dir?, do: "", else: Path.basename(resolved)
@@ -202,7 +202,10 @@ defmodule T3.Projects do
     end
   end
 
-  defp expand("~"), do: System.user_home!()
-  defp expand("~/" <> rest), do: Path.join(System.user_home!(), rest)
+  defp expand("~"), do: home()
+  defp expand("~/" <> rest), do: Path.join(home(), rest)
   defp expand(path), do: path
+
+  # `$HOME` as the process sees it now, like Node's `os.homedir()`.
+  defp home, do: System.get_env("HOME") || System.user_home!()
 end

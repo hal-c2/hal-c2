@@ -55,9 +55,11 @@ Feature: Searching project files
       Then 50 entries are returned
       And the result is marked as truncated
 
-    @backlog @node
-    Scenario: An empty file search lists the files the user used most recently first
-      Given the user recently opened "docs/shopping-cart.md"
+    # Neither server records which files were opened; both rank an empty search by
+    # how recently files changed (the TS index's modification frecency).
+    @node
+    Scenario: An empty file search lists the files that changed most recently first
+      Given "docs/shopping-cart.md" changed most recently
       When a client searches "shop" for files with an empty query
       Then "docs/shopping-cart.md" is listed first
 

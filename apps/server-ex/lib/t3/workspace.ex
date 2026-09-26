@@ -7,8 +7,8 @@ defmodule T3.Workspace do
   Entries come from git where the root is a repository (tracked and untracked files
   that are not ignored), else from a bounded walk; at most 25,000, kept a few seconds
   (`invalidate/1` drops them when a turn ends). Content search runs ripgrep, or git
-  grep where ripgrep is missing. Reads and writes stay inside the workspace root,
-  symlinks included.
+  grep where ripgrep is missing. Writes, and reads by a relative path, stay inside
+  the workspace root, symlinks included.
   """
 
   use GenServer
@@ -17,6 +17,8 @@ defmodule T3.Workspace do
   @max_entries 25_000
   @ttl_ms 10_000
   @read_max_bytes 1_048_576
+  @image_read_max_bytes 10 * 1_048_576
+  @chat_image_extensions ~w(.avif .bmp .gif .jpeg .jpg .png .svg .tif .tiff .webp)
   @image_extensions ~w(.png .jpg .jpeg .gif .webp .svg .bmp .ico .avif .tiff)
   @walk_skip ~w(.git node_modules .hg .svn _build deps target dist .next)
 
@@ -55,7 +57,7 @@ defmodule T3.Workspace do
         entries
         |> Enum.filter(&(input["kind"] in [nil, &1["kind"]]))
         |> Enum.filter(&(input["imageOnly"] != true or image?(&1["path"])))
-        |> rank(String.downcase(query))
+        |> rank(root, String.downcase(query))
 
       {:ok, %{"entries" => Enum.take(matches, limit), "truncated" => length(matches) > limit}}
     end
@@ -75,30 +77,58 @@ defmodule T3.Workspace do
     end
   end
 
-  @doc "`projects.readFile`: up to 1 MB of a text file inside the root."
+  @doc """
+  `projects.readFile`: up to 1 MB of a text file inside the root, or up to 10 MB of
+  an image as base64 (`encoding: "base64"`, for attaching it). An absolute path
+  reads a file on the host in place (one an agent left elsewhere); it comes back
+  under that path, which clients cannot write back.
+  """
   def read_file(%{"cwd" => cwd, "relativePath" => relative} = input) do
     error = &file_error("ProjectReadFileError", input, &1, &2)
+    base64? = input["encoding"] == "base64"
+    max = if base64?, do: @image_read_max_bytes, else: @read_max_bytes
 
     with {:ok, root} <- root(cwd, "ProjectReadFileError"),
-         {:ok, path} <- inside(root, relative, error),
+         {:ok, path, shown} <- read_target(root, relative, error),
          {:ok, %File.Stat{type: :regular, size: size}} <- stat(path, error),
-         {:ok, contents} <- read_head(path, error) do
-      if String.valid?(contents) and not String.contains?(contents, <<0>>) do
-        {:ok,
-         %{
-           "relativePath" => normalize(relative),
-           "contents" => contents,
-           "byteLength" => size,
-           "truncated" => size > @read_max_bytes
-         }}
-      else
-        error.("binary_file", "'#{relative}' is not a text file.")
+         :ok <- if(base64? and not chat_image?(path), do: :binary, else: :ok),
+         # An image too large to attach comes back without its bytes.
+         {:ok, contents} <- read_head(path, if(base64? and size > max, do: 0, else: max), error) do
+      cond do
+        base64? ->
+          {:ok, result(shown, Base.encode64(contents), size, size > max)}
+
+        String.valid?(contents) and not String.contains?(contents, <<0>>) ->
+          {:ok, result(shown, contents, size, size > max)}
+
+        true ->
+          error.("binary_file", "'#{relative}' is not a text file.")
       end
     else
+      :binary -> error.("binary_file", "'#{relative}' is not a text file.")
       {:ok, %File.Stat{}} -> error.("path_not_file", "'#{relative}' is not a file.")
       {:error, _} = failure -> failure
     end
   end
+
+  defp read_target(root, relative, error) do
+    if Path.type(relative) == :absolute do
+      {:ok, real(relative), relative}
+    else
+      with {:ok, path} <- inside(root, relative, error), do: {:ok, path, normalize(relative)}
+    end
+  end
+
+  defp result(path, contents, size, truncated),
+    do: %{
+      "relativePath" => path,
+      "contents" => contents,
+      "byteLength" => size,
+      "truncated" => truncated
+    }
+
+  defp chat_image?(path),
+    do: String.downcase(Path.extname(path)) in @chat_image_extensions
 
   @doc "`projects.writeFile`: writes a file inside the root, creating its folders."
   def write_file(%{"cwd" => cwd, "relativePath" => relative, "contents" => contents} = input) do
@@ -224,9 +254,22 @@ defmodule T3.Workspace do
 
   # Fuzzy ranking: a name that starts with the query, then one that contains it, then
   # a path containing it, then the query's letters in order; shorter paths first.
-  defp rank(entries, ""), do: entries
+  # An empty query browses: the most recently changed entries first, as the Node
+  # server's index orders them by modification frecency.
+  defp rank(entries, root, "") do
+    Enum.sort_by(
+      entries,
+      fn entry ->
+        case File.stat(Path.join(root, entry["path"]), time: :posix) do
+          {:ok, %File.Stat{mtime: mtime}} -> mtime
+          {:error, _} -> 0
+        end
+      end,
+      :desc
+    )
+  end
 
-  defp rank(entries, query) do
+  defp rank(entries, _root, query) do
     entries
     |> Enum.flat_map(fn entry ->
       path = String.downcase(entry["path"])
@@ -379,9 +422,23 @@ defmodule T3.Workspace do
       {:ok, %{status: status, out: out}} when status in [0, 1] ->
         pattern = match_pattern(query, regex, input)
 
+        lines =
+          for line <- String.split(out, "\n", trim: true),
+              [path, number, content] <- [String.split(line, ":", parts: 3)],
+              do: {path, number, content}
+
+        # Files over 1 MB are skipped, as ripgrep's `--max-filesize` does.
+        small =
+          for {path, _, _} <- Enum.uniq_by(lines, &elem(&1, 0)),
+              match?(
+                {:ok, %File.Stat{size: size}} when size <= 1_048_576,
+                File.stat(Path.join(root, path))
+              ),
+              into: MapSet.new(),
+              do: path
+
         {:ok,
-         for line <- String.split(out, "\n", trim: true),
-             [path, number, content] <- [String.split(line, ":", parts: 3)] do
+         for {path, number, content} <- lines, path in small do
            ranges =
              for [{start, length}] <- Regex.scan(pattern, content, return: :index),
                  do: %{
@@ -508,8 +565,10 @@ defmodule T3.Workspace do
     end
   end
 
-  defp read_head(path, error) do
-    case File.open(path, [:read, :binary], &IO.binread(&1, @read_max_bytes)) do
+  defp read_head(_path, 0, _error), do: {:ok, ""}
+
+  defp read_head(path, max, error) do
+    case File.open(path, [:read, :binary], &IO.binread(&1, max)) do
       {:ok, data} when is_binary(data) -> {:ok, data}
       {:ok, :eof} -> {:ok, ""}
       _ -> error.("operation_failed", "Could not read '#{path}'.")

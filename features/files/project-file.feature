@@ -89,7 +89,7 @@ Feature: The t3.json project file
     When the user looks at the actions of "shop"
     Then "Dev" is offered to import from t3.json
 
-  @backlog @node
+  @node
   Scenario: The icon named in t3.json is used before the usual icon locations
     Given the checkout's t3.json names "branding/mark.svg" as its icon
     And the checkout also has "public/favicon.ico"

@@ -27,6 +27,7 @@ defmodule T3.Terminal do
   @default_rows 30
   @output_ms 8
   @persist_ms 500
+  @fallback_shells ~w(/bin/zsh /bin/bash /bin/sh)
   @excluded_env ~w(PORT ELECTRON_RENDERER_PORT ELECTRON_RUN_AS_NODE BINDIR ROOTDIR EMU PROGNAME)
   @excluded_env_prefixes ~w(T3CODE_ VITE_ T3_ RELEASE_ ERL_)
 
@@ -92,6 +93,36 @@ defmodule T3.Terminal do
     end
 
     {:ok, nil}
+  end
+
+  @doc """
+  `terminal.list`: the thread's terminals, running or with saved scrollback, in
+  tab order (`term-N` by number, then others by name).
+  """
+  def list(%{"threadId" => thread_id}) do
+    running = Registry.select(@registry, [{{{thread_id, :"$1"}, :_, :_}, [], [:"$1"]}])
+    prefix = "terminal_#{Base.url_encode64(thread_id, padding: false)}_"
+
+    saved =
+      for path <- Path.wildcard(history_path(thread_id, "*")),
+          name = Path.basename(path, ".log"),
+          String.starts_with?(name, prefix),
+          {:ok, id} <- [
+            Base.url_decode64(String.replace_prefix(name, prefix, ""), padding: false)
+          ],
+          do: id
+
+    ids =
+      (running ++ saved)
+      |> Enum.uniq()
+      |> Enum.sort_by(fn id ->
+        case Regex.run(~r/^term-(\d+)$/, id) do
+          [_, n] -> {0, String.to_integer(n), id}
+          nil -> {1, 0, id}
+        end
+      end)
+
+    {:ok, %{"terminalIds" => ids}}
   end
 
   def start_link({thread_id, terminal_id}),
@@ -210,7 +241,8 @@ defmodule T3.Terminal do
        child_label: nil,
        seq: 0,
        updated_at: now(),
-       subscribers: %{}
+       subscribers: %{},
+       error: nil
      }}
   end
 
@@ -221,20 +253,22 @@ defmodule T3.Terminal do
   end
 
   def handle_call({:attach, input, subscriber}, _from, state) do
+    open? =
+      (state.cwd == nil and input["cwd"] != nil) or
+        (state.os_pid == nil and input["cwd"] != nil and input["restartIfNotRunning"] == true)
+
     state =
-      cond do
-        state.cwd == nil and input["cwd"] ->
-          open_session(state, input)
-
-        (state.os_pid == nil and input["cwd"]) && input["restartIfNotRunning"] == true ->
-          open_session(state, input)
-
-        true ->
-          resize_to(state, input["cols"] || state.cols, input["rows"] || state.rows)
-      end
+      if open?,
+        do: open_session(state, input),
+        else: resize_to(state, input["cols"] || state.cols, input["rows"] || state.rows)
 
     subscribers =
       Map.put_new_lazy(state.subscribers, subscriber, fn -> Process.monitor(subscriber) end)
+
+    # A shell that failed to start while attaching is explained to the attaching
+    # client too; its snapshot alone only says "error".
+    if open? and state.status == "error",
+      do: send(subscriber, {:t3_terminal, {state.thread_id, state.terminal_id}, state.error})
 
     {:reply, {:ok, snapshot(state)}, %{state | subscribers: subscribers}}
   end
@@ -432,6 +466,9 @@ defmodule T3.Terminal do
     options = [
       :stdin,
       :stdout,
+      # stderr on the pty too: bash is interactive only when fd 2 is a terminal;
+      # otherwise it prints no prompt and Ctrl-C ends the shell itself.
+      {:stderr, :stdout},
       :pty,
       :monitor,
       {:winsz, {state.rows, state.cols}},
@@ -470,7 +507,20 @@ defmodule T3.Terminal do
 
   defp failed(state, message) do
     Logger.warning("terminal #{state.terminal_id}: #{message}")
-    emit(%{state | status: "error", os_pid: nil}, %{"type" => "error", "message" => message})
+
+    state =
+      emit(%{state | status: "error", os_pid: nil}, %{"type" => "error", "message" => message})
+
+    %{
+      state
+      | error: %{
+          "type" => "error",
+          "message" => message,
+          "threadId" => state.thread_id,
+          "terminalId" => state.terminal_id,
+          "sequence" => state.seq
+        }
+    }
   end
 
   defp stop_shell(%{os_pid: nil} = state), do: state
@@ -558,12 +608,13 @@ defmodule T3.Terminal do
 
   # --- shell and env --------------------------------------------------------------
 
-  # The user's shell first, then common ones. zsh must not print its partial-line
+  # The user's shell first, then common ones (`:terminal_shells` replaces the
+  # common ones, for tests of a machine without them). zsh must not print its partial-line
   # marker into a fresh terminal.
   defp shells do
     requested = System.get_env("SHELL", "") |> String.split() |> List.first()
 
-    [requested, "/bin/zsh", "/bin/bash", "/bin/sh"]
+    [requested | Application.get_env(:t3, :terminal_shells, @fallback_shells)]
     |> Enum.filter(&is_binary/1)
     |> Enum.uniq()
     |> Enum.map(fn shell ->

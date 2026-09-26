@@ -22,13 +22,13 @@ Feature: Project and environment identity
 
   Rule: Project icons
 
-    @backlog @node
+    @node
     Scenario: A project's own favicon is served as its icon
       Given the checkout of "shop" has "public/favicon.svg"
       When a client asks for the icon of "shop"
       Then the favicon is served
 
-    @backlog @node
+    @node
     Scenario: A project without a favicon has no icon to serve
       Given the checkout of "shop" has no favicon
       When a client asks for the icon of "shop"

@@ -250,6 +250,7 @@ defmodule T3.Attachments do
   @doc "Reads a signed asset on this node: `{:ok, bytes, mime, file_name, disposition}`."
   def read(token) do
     with {:ok, %{"kind" => "asset", "path" => path} = claims} <- verify(token),
+         true <- path != nil || {:error, :enoent},
          {:ok, bytes} <- File.read(path) do
       {:ok, bytes, claims["mimeType"], claims["fileName"], claims["disposition"]}
     else
@@ -292,6 +293,34 @@ defmodule T3.Attachments do
 
       true ->
         {:ok, full, MIME.from_path(full), Path.basename(full)}
+    end
+  end
+
+  # A project's icon; without one the URL is still issued and answers 404, as the
+  # Node server's does.
+  defp resolve(%{"_tag" => "project-favicon", "cwd" => cwd} = resource) do
+    root = Path.expand(cwd)
+
+    project =
+      Enum.find_value(T3.Shell.rows(), fn
+        {{node, _id}, {"project", %{"workspaceRoot" => ^root} = row}} when node == node() ->
+          if row["deletedAt"] == nil, do: row
+
+        _ ->
+          nil
+      end)
+
+    with %{} <- project,
+         full when is_binary(full) <- T3.ProjectFavicon.resolve(root, project["faviconPath"]) do
+      if String.downcase(Path.extname(full)) in @media_extensions,
+        do: {:ok, full, MIME.from_path(full), Path.basename(full)},
+        else: error("AssetPreviewTypeValidationError", resource, "Only media files are served.")
+    else
+      nil when project == nil ->
+        error("AssetWorkspaceContextNotFoundError", resource, "Workspace context was not found.")
+
+      nil ->
+        {:ok, nil, nil, "favicon"}
     end
   end
 

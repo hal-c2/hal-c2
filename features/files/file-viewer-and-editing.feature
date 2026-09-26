@@ -56,13 +56,13 @@ Feature: Viewing and editing files
         | assets/logo.db | is not a text file  |
         | src            | is not a file       |
 
-    @backlog @node
+    @node
     Scenario: A binary file can be read as base64
       Given "assets/logo.png" is an image in "shop"
       When a client reads "assets/logo.png" from "shop" as base64
       Then the image bytes are returned
 
-    @backlog @node
+    @node
     Scenario: A file on the host outside the project can be read by its full path
       Given the host has the file "/home/sam/notes/todo.txt"
       When a client reads "/home/sam/notes/todo.txt" from "shop"

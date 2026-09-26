@@ -52,7 +52,7 @@ defmodule T3.Web.Socket do
       do: handle_in(frame, migrate(state))
 
   def handle_in({frame, [opcode: :text]}, state) do
-    case Protocol.decode(frame, [node() | Node.list()]) do
+    case Protocol.decode(frame, known_nodes()) do
       {:ok, :ping} ->
         {:push, Protocol.encode(%{"t" => "pong"}), state}
 
@@ -784,6 +784,13 @@ defmodule T3.Web.Socket do
 
   # Calls a node without ever taking this socket down: an unreachable node, or one
   # without the feature (an older version), fails only the one subscription.
+  # Connected nodes plus members the shell has seen that are offline now, so a
+  # subscription to a node that went away fails as unavailable, not unknown.
+  defp known_nodes do
+    shell = if Process.whereis(T3.Shell), do: T3.Shell.environments(), else: []
+    Enum.uniq([node() | Node.list()] ++ Enum.map(shell, &elem(&1, 0)))
+  end
+
   defp remote(node, module, fun, args) do
     {:ok, :erpc.call(node, module, fun, args, 15_000)}
   catch

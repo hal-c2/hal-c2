@@ -282,7 +282,7 @@ Feature: Adding projects
       Then GitLab is marked as needing setup
       And the user is pointed to source control settings
 
-    @backlog @node
+    @node
     Scenario Outline: Repositories on other hosts can be looked up
       Given the user is signed in to <host> on "laptop"
       When the user looks up the repository "acme/shop" on <host>

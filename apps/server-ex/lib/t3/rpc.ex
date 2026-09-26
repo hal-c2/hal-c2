@@ -173,5 +173,6 @@ defmodule T3.Rpc do
   def handle("terminal.clear", input), do: T3.Terminal.clear(input)
   def handle("terminal.restart", input), do: T3.Terminal.restart(input)
   def handle("terminal.close", input), do: T3.Terminal.close(input)
+  def handle("terminal.list", input), do: T3.Terminal.list(input)
   def handle(method, _payload), do: {:error, "#{method} is not served by this node yet"}
 end

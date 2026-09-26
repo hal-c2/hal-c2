@@ -43,14 +43,21 @@ defmodule T3.Test.WsClient do
 
     # Only this connection's socket messages; several clients may share a test process.
     receive do
-      {tag, ^socket, _} = message when tag in [:tcp, :ssl] ->
-        {:ok, conn, [{:data, _, data}]} = Mint.WebSocket.stream(client.conn, message)
-        {:ok, ws, frames} = Mint.WebSocket.decode(client.ws, data)
-        decoded = for {:text, text} <- frames, do: JSON.decode!(text)
-        recv(%{client | conn: conn, ws: ws, inbox: client.inbox ++ decoded}, timeout)
+      {tag, ^socket, _} = message when tag in [:tcp, :ssl] -> recv(feed(client, message), timeout)
     after
       timeout -> raise "no frame within #{timeout} ms"
     end
+  end
+
+  @doc """
+  Decodes one of this connection's socket messages into its inbox, for a test
+  process that receives from several sockets (and other processes) at once.
+  """
+  def feed(client, message) do
+    {:ok, conn, [{:data, _, data}]} = Mint.WebSocket.stream(client.conn, message)
+    {:ok, ws, frames} = Mint.WebSocket.decode(client.ws, data)
+    decoded = for {:text, text} <- frames, do: JSON.decode!(text)
+    %{client | conn: conn, ws: ws, inbox: client.inbox ++ decoded}
   end
 
   @doc "Receives frames until one matches `fun`, returning it and the frames skipped."
@@ -63,8 +70,12 @@ defmodule T3.Test.WsClient do
   end
 
   defp recv_http(conn, acc) do
+    socket = Mint.HTTP.get_socket(conn)
+
+    # Only this connection's socket messages; the test process gets others too.
     receive do
-      message ->
+      message
+      when is_tuple(message) and tuple_size(message) >= 2 and elem(message, 1) == socket ->
         {:ok, conn, responses} = Mint.WebSocket.stream(conn, message)
         acc = acc ++ responses
         if Enum.any?(acc, &match?({:done, _}, &1)), do: {conn, acc}, else: recv_http(conn, acc)
