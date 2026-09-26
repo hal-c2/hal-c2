@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -31,6 +32,9 @@ export class DesktopUserDataInitializationError extends Schema.TaggedError<Deskt
   }
 }
 
+// Profiles written before the rename to HAL-C2, newest first.
+const LEGACY_PROFILE_NAMES = ["t3code-v2", "T3 Code (Alpha)", "t3code"];
+
 /** Select Electron's profile independently of the server's HAL-C2 home. */
 export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPath")(
   function* (input: {
@@ -40,11 +44,10 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const names = input.isDevelopment
-      ? { current: "hal-c2-dev", legacy: "HAL-C2 (Dev)" }
-      : { current: "hal-c2-v2", legacy: "HAL-C2 (Alpha)" };
-    const destinationPath = path.join(input.appDataDirectory, names.current);
-    const legacyPath = path.join(input.appDataDirectory, names.legacy);
+    const destinationPath = path.join(
+      input.appDataDirectory,
+      input.isDevelopment ? "hal-c2-dev" : "hal-c2",
+    );
     const inspect = (resourcePath: string) =>
       fs
         .exists(resourcePath)
@@ -53,18 +56,16 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
             DesktopUserDataInitializationError.fromFileSystem(cause, "inspect", resourcePath),
           ),
         );
-    if (input.isDevelopment) {
-      return (yield* inspect(legacyPath)) ? legacyPath : destinationPath;
-    }
     // Chromium databases require their own profile for each running version.
-    if (input.platform !== "win32") return destinationPath;
+    if (input.isDevelopment || input.platform !== "win32") return destinationPath;
     const destinationState = path.join(destinationPath, "Local State");
     if (yield* inspect(destinationState)) return destinationPath;
-    const legacyState = path.join(legacyPath, "Local State");
-    const sourceState = (yield* inspect(legacyState))
-      ? legacyState
-      : path.join(input.appDataDirectory, "hal-c2", "Local State");
-    if (!(yield* inspect(sourceState))) return destinationPath;
+    const legacyState = yield* Effect.findFirst(
+      LEGACY_PROFILE_NAMES.map((name) => path.join(input.appDataDirectory, name, "Local State")),
+      (candidate) => inspect(candidate),
+    );
+    if (Option.isNone(legacyState)) return destinationPath;
+    const sourceState = legacyState.value;
     // Windows safeStorage keys live here. Copy only these preferences, never locked databases.
     const state = yield* fs
       .readFileString(sourceState)

@@ -478,10 +478,18 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
       "dataStandalone",
     ],
   },
+  // The t3- schemes are what messages written before the rename to HAL-C2 carry.
   protocols: {
     ...defaultSchema.protocols,
-    href: [...(defaultSchema.protocols?.href ?? []), "file", "hal-c2-citation", "hal-c2-context"],
-    src: [...(defaultSchema.protocols?.src ?? []), "file", "hal-c2-context"],
+    href: [
+      ...(defaultSchema.protocols?.href ?? []),
+      "file",
+      "hal-c2-citation",
+      "hal-c2-context",
+      "t3-citation",
+      "t3-context",
+    ],
+    src: [...(defaultSchema.protocols?.src ?? []), "file", "hal-c2-context", "t3-context"],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 

@@ -237,7 +237,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "io.github.halc2.halc2.dev" : "io.github.halc2.halc2",
+      isDevelopment ? "io.github.halc2.app.dev" : "io.github.halc2.app",
     ),
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
     linuxWmClass: isDevelopment ? "hal-c2-dev" : "hal-c2",

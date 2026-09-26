@@ -190,8 +190,8 @@ describe("index.html boot script", () => {
       prefersDark: true,
     },
     {
-      name: "a legacy hal-c2-grove preference resolves through the alias",
-      storage: { [THEME_STORAGE_KEY]: "hal-c2-grove", [THEME_FOLLOW_SYSTEM_STORAGE_KEY]: "true" },
+      name: "a legacy t3-grove preference resolves through the alias",
+      storage: { [THEME_STORAGE_KEY]: "t3-grove", [THEME_FOLLOW_SYSTEM_STORAGE_KEY]: "true" },
       prefersDark: true,
     },
     {
@@ -431,7 +431,7 @@ describe("index.html boot script", () => {
       storage: {
         [THEME_STORAGE_KEY]: "t3-chat",
         [THEME_APPEARANCE_MODE_STORAGE_KEY]: "system",
-        "hal-c2:theme-halves:v1": JSON.stringify({ dark: "hal-c2-grove" }),
+        "hal-c2:theme-halves:v1": JSON.stringify({ dark: "t3-grove" }),
       },
       prefersDark: true,
     });

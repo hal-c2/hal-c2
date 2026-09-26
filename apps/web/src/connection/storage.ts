@@ -39,6 +39,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
+import { resolveDatabaseName } from "../legacyStorage";
 
 const DATABASE_NAME = "hal-c2:connection-runtime";
 const DATABASE_VERSION = 4;
@@ -112,6 +113,7 @@ function persistenceError(
 }
 
 const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* () {
+  const name = yield* Effect.promise(() => resolveDatabaseName(DATABASE_NAME));
   return yield* Effect.callback<IDBDatabase, ConnectionTransientError>((resume) => {
     if (typeof indexedDB === "undefined") {
       resume(
@@ -119,7 +121,7 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
       );
       return;
     }
-    const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+    const request = indexedDB.open(name, DATABASE_VERSION);
     request.addEventListener("upgradeneeded", () => {
       if (!request.result.objectStoreNames.contains(CATALOG_STORE_NAME)) {
         request.result.createObjectStore(CATALOG_STORE_NAME);

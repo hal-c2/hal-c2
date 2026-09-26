@@ -22,10 +22,10 @@ export const RESERVED_THEME_IDS: ReadonlySet<string> = new Set([
   "dark",
   ...BUILT_IN_THEME_IDS,
   "t3-chat-dark",
-  "hal-c2-grove",
-  "hal-c2-ocean",
-  "hal-c2-ember",
-  "hal-c2-iris",
+  "t3-grove",
+  "t3-ocean",
+  "t3-ember",
+  "t3-iris",
 ]);
 
 /**
