@@ -213,6 +213,119 @@ Feature: Thread list and thread actions in the terminal
     When the user types "zzzz"
     Then the palette shows that there are no matching commands
 
+  # The OpenTUI client's thread list (Sidebar.tsx): a rounded faint frame, the
+  # "HAL-C2 Code" header, a search box, the project row and the "Threads" heading
+  # over the list. Active threads are three-line cards; shelved ones are one line.
+
+  @tui @backlog
+  Scenario: The thread list reads like the OpenTUI client
+    Then the top of the thread list reads:
+      """
+      HAL-C2 Code
+
+      ╭────────────────────────────╮
+      │ ⌕ Search threads…          │
+      ╰────────────────────────────╯
+
+      Project All projects       ▾ +
+
+      Threads
+      """
+    And the thread list has a rounded border in the faint colour
+    And "HAL-C2" is bold in the text colour
+    And " Code" is in the dim colour
+    And "⌕ Search threads…" is in the dim colour
+    And "All projects" is in the text colour
+    And "+" is in the accent colour
+    And "Threads" is in the accent colour
+
+  @tui @backlog
+  Scenario: Searching lights up the search box
+    When the user presses "Ctrl+F"
+    Then the search box's border and "⌕" are in the accent colour
+    And the search field's placeholder reads "Search threads…" in the dim colour
+
+  @tui @backlog
+  Scenario: Clicking the search box starts a search
+    When the user clicks "Search threads…"
+    Then the search field has the keys
+
+  @tui @backlog
+  Scenario: The project row scopes the list
+    When the user clicks "All projects"
+    Then a "project" picker offers "All projects", "shop" and "docs"
+    And "All projects" is described as "Show threads from every project."
+    When the user chooses "shop" in the picker
+    Then only threads in "shop" are listed
+    And the project row reads "Project shop" with "shop" in the accent colour
+    And the status line says "Project → shop"
+
+  @tui @backlog
+  Scenario: The project row goes back to every project
+    Given the thread list is scoped to "shop"
+    When the user clicks "Project"
+    And the user chooses "All projects" in the picker
+    Then every thread is listed
+    And the status line says "Showing all projects."
+
+  @tui @backlog
+  Scenario: The "+" on the project row adds a project
+    When the user clicks the "+" on the project row
+    Then the add project page opens
+
+  @tui @backlog
+  Scenario: An active thread is a card with its project, age, title and branch
+    Given the thread "Alpha" was last active 5 minutes ago
+    And the thread "Beta" is selected
+    Then the card for "Alpha" reads:
+      """
+      ○ shop                  5m
+        Alpha
+        feature/alpha
+      """
+    And a blank line follows the card for "Alpha"
+    And on the card for "Alpha" "shop" and "5m" are in the dim colour
+    And on the card for "Alpha" "Alpha" is bold in the text colour
+    And on the card for "Alpha" "feature/alpha" is in the dim colour
+
+  @tui @backlog
+  Scenario: The selected thread's card is highlighted
+    Given the thread "Beta" is selected
+    Then the card for "Beta" starts with "▌" in the accent colour
+    And the card for "Beta" has the selection background across the list
+    And the card for "Alpha" has no background
+
+  @tui @backlog
+  Scenario: A card names a busy thread's status in place of its age
+    Given the agent is working in "Alpha"
+    Then the first line of the card for "Alpha" ends with "Working" in green
+
+  @tui @backlog
+  Scenario: Shelved threads are one line with their age
+    Given the thread "Gamma" is settled
+    Then the row for "Gamma" is one line with its dot, its title and its age in the dim colour
+    And the settled shelf's header reads "▾ Settled ─" in the dim colour
+
+  @tui @backlog
+  Scenario: A collapsed shelf counts its threads
+    Given a thread snoozed until 10:00
+    Then the snoozed shelf's header reads "▸ Snoozed (1) ─" in the accent colour
+
+  @tui @backlog
+  Scenario: A long settled shelf offers to show more
+    Given more settled threads than the shelf shows at first
+    Then the list ends with "+ Show 5 more" in the dim colour
+
+  @tui @backlog
+  Scenario: A long title is clipped with an ellipsis
+    Given a thread titled "Investigate the flaky checkout test on the release branch"
+    Then its card shows "Investigate the flaky che…"
+
+  @tui @backlog
+  Scenario: An empty list says how to start a thread
+    When the user filters threads by "zzzz"
+    Then the list reads "No threads here. Press ^N." in the dim colour
+
   @backlog @tui
   Scenario: The user browses archived threads with search and sort
     When the user opens archived threads
