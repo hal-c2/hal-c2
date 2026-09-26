@@ -22,6 +22,21 @@ Feature: Browsing workspace files and projects in the terminal
     When the user chooses "Browse files" from the command palette
     Then the workspace name is shown above a tree of folders and files
 
+  @backlog @tui
+  Scenario: The file browser takes the conversation pane's place
+    Given the terminal is 150 columns wide
+    When the user browses files
+    Then the file browser covers the conversation pane inside a rounded border in the accent colour
+    And the prompt is still shown under it
+    And the browser's first row reads "files · ~/code/shop  ·  ↑/↓ select · Enter open/expand · Esc close"
+
+  @backlog @tui
+  Scenario: The highlighted row stands out from the rest of the tree
+    Given the file browser is open
+    Then the highlighted row "▸ ▸ src/" has the selection background
+    And its markers are in the accent colour and its name in the text colour
+    And the name "README.md" is in the dim colour and its "◦" in the colour of its file type
+
   @tui
   Scenario: Opening a folder shows what is inside it
     Given the file browser is open
@@ -40,6 +55,12 @@ Feature: Browsing workspace files and projects in the terminal
     When the user opens "src/app.ts"
     Then the file's name is shown above its contents
     And the contents are highlighted as TypeScript
+
+  @backlog @tui
+  Scenario: An open file's header names it and how to scroll
+    Given the terminal is 150 columns wide
+    And the user is reading "src/app.ts" in the file browser
+    Then the browser's first row reads "file · src/app.ts  ·  PgUp/PgDn scroll · Esc back"
 
   @tui
   Scenario: Esc steps back out of a file and then out of the browser
@@ -65,6 +86,17 @@ Feature: Browsing workspace files and projects in the terminal
     Given "secret.bin" cannot be read
     When the user opens "secret.bin"
     Then the browser shows the read error
+
+  @backlog @tui
+  Scenario Outline: A browser error is one short line in the error colour
+    Given <failure>
+    When <action>
+    Then the browser reads "<message>" in the error colour
+
+    Examples:
+      | failure                        | action                      | message              |
+      | the workspace cannot be listed | the user browses files      | failed to list files |
+      | "secret.bin" cannot be read    | the user opens "secret.bin" | failed to read file  |
 
   @backlog @tui
   Scenario: The user attaches an image by picking it from the workspace

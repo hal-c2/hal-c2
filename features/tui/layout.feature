@@ -5,7 +5,7 @@
 #   apps/tui/src/components/ChatView.layout.test.ts
 #   apps/tui/src/components/Sidebar.tsx, Sidebar.logic.ts
 #   apps/tui/src/components/RightPanel.tsx
-#   apps/tui/src/components/MessagesTimeline.tsx (the empty conversation pane)
+#   apps/tui/src/components/MessagesTimeline.tsx (the conversation pane and its centred timeline column)
 #   apps/tui/src/components/ComposerDock.tsx, ComposerDock.test.tsx (centred, bounded prompt)
 #   apps/tui/src/format.ts (clip and pad by display width)
 #   Shared domain: navigation/ owns layout on the other surfaces.
@@ -59,6 +59,14 @@ Feature: Terminal layout at every size
   Scenario: The conversation column is capped on very wide terminals
     Given the terminal is 300 columns wide
     Then the conversation and prompt are no wider than 96 columns and centred
+
+  @backlog @tui
+  Scenario: On a wide terminal the conversation pane fills the chat column
+    Given the terminal client is open on a thread with focus in the prompt
+    And the terminal is 200 columns wide
+    Then the conversation pane runs from the thread list to the right edge
+    And the thread title is on the pane's first row and its status ends that row
+    And the timeline column is 96 cells wide in the middle of the pane
 
   @tui
   Scenario: Resizing the terminal re-lays out without leaving stale rows

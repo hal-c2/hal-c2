@@ -6,6 +6,7 @@
 #   apps/tui/src/terminalGraphics.ts, terminalGraphics.test.ts
 #   apps/tui/src/attachmentImages.ts, attachmentImages.test.ts
 #   apps/tui/src/components/ImageLightbox.tsx, ImageLightbox.test.tsx
+#   apps/tui/src/components/ChatView.tsx (the image preview takes the conversation pane's place)
 #   apps/tui/src/components/MessagesTimeline.tsx (attachment link lines)
 #   apps/tui/src/components/Sidebar.tsx (right-click, tap, long press)
 #   apps/tui/src/index.tsx (colour capability log, mouse configuration)
@@ -215,6 +216,22 @@ Feature: Colour, icons, mouse and images in the terminal
     When the user presses "Esc"
     Then the image closes
     And the timeline is at the same scroll position as before
+
+  @backlog @tui
+  Scenario: A full-size image takes the conversation pane's place
+    Given an inline image in the timeline
+    And the terminal is 120 columns wide
+    When the user clicks the image
+    Then the image preview covers the conversation pane inside a rounded border in the accent colour
+    And the thread list and the prompt are still shown
+    And the key hints read "image preview · Esc or click to close · ^C quit" in the dim colour
+
+  @backlog @tui
+  Scenario: The image preview names the image and how to close it
+    Given an inline image in the timeline
+    And the terminal is 120 columns wide
+    When the user clicks the image
+    Then the preview's top row shows "screenshot.png · 48 KB" on the left and "Esc / click to close" on the right in the dim colour
 
   @backlog @tui
   Scenario: Sixel terminals show inline images

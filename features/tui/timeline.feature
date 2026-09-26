@@ -7,6 +7,7 @@
 #   apps/tui/src/components/WorkingIndicator.tsx, WorkingIndicator.test.tsx
 #   apps/tui/src/components/DiffViewer.tsx, DiffViewer.test.tsx
 #   apps/tui/src/diffSplit.ts, diffSplit.test.ts
+#   apps/tui/src/components/ChatView.tsx (the diff viewer takes the conversation pane's place)
 #   apps/tui/src/components/ThreadOverlays.tsx (revert picker)
 #   apps/tui/src/fileTree.ts, fileTree.test.ts (changed-files tree)
 #   apps/tui/src/theme.ts (createTuiSyntaxStyle for Markdown)
@@ -249,6 +250,18 @@ Feature: Reading a thread in the terminal
     Given the diff viewer is open
     When the user presses "Esc"
     Then the conversation is shown again
+
+  @backlog @tui
+  Scenario: The diff viewer takes the conversation pane's place in the chat column
+    Given the terminal is 200 columns wide
+    When the user views all changes from the command palette
+    Then the diff viewer covers the conversation pane inside a rounded border in the accent colour
+    And the prompt is still shown under it
+
+  @backlog @tui
+  Scenario: A diff that fails to load says so in one line
+    Given the diff is failed to load
+    Then the diff viewer reads "failed to load diff" in the error colour
 
   @tui
   Scenario: The user reverts the thread to a checkpoint
