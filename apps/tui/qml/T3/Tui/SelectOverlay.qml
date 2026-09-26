@@ -49,11 +49,19 @@ Rectangle {
             flexDirection: "row"
             height: 1
             Text {
+                flexShrink: 0
+                wrapMode: "none"
                 text: (index === overlay.model.index ? "▸ " : "  ") + modelData.label
                 color: index === overlay.model.index ? Theme.colors.accent : Theme.colors.text
                 onMouseDown: Shell.dispatch("select.choose", { index: index })
             }
-            Text { text: "  " + modelData.description; color: Theme.colors.faint }
+            Text {
+                flexShrink: 1
+                wrapMode: "none"
+                truncate: true
+                text: "  " + modelData.description
+                color: Theme.colors.faint
+            }
         }
     }
 }

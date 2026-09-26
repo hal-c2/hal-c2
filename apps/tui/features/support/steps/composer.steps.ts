@@ -9,7 +9,7 @@ import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS, type OrchestrationThread } from "@t
 import { step } from "../../steps.ts";
 import type { TuiComposerState } from "../../../src/host/composerState.ts";
 import type { EditorCommand } from "../../../src/promptEditor.ts";
-import { thread } from "../fakeClient.ts";
+import { PROVIDERS, thread } from "../fakeClient.ts";
 import {
   boot,
   findObject,
@@ -85,7 +85,7 @@ export async function openOnThread(
   options: Parameters<typeof useClient>[1] = {},
 ): Promise<void> {
   prepareHost(ctx);
-  if (!ctx.fake) useClient(ctx, { detail, ...options });
+  if (!ctx.fake) useClient(ctx, { detail, providers: PROVIDERS, ...options });
   ctx.fake!.workspaceFiles.set("assets/logo.png", PNG);
   ctx.fake!.workspaceFiles.set("logo.png", PNG);
   ctx.localImages!.set(`${HOME}/Pictures/bug.png`, PNG);

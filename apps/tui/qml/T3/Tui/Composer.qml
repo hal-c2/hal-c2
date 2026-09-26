@@ -27,7 +27,8 @@ Rectangle {
         objectName: "composerWorkspace"
         visible: composer.model.newThread !== null
         text: composer.model.newThread !== null
-            ? composer.model.newThread.workspaceLabel + " · " + (composer.model.newThread.workspaceMode === "new-worktree" ? "base " : "branch ")
+            ? (composer.model.newThread.projectTitle !== null ? composer.model.newThread.projectTitle : "no project")
+                + " · " + composer.model.newThread.workspaceLabel + " · " + (composer.model.newThread.workspaceMode === "new-worktree" ? "base " : "branch ")
                 + (composer.model.newThread.branch !== null ? composer.model.newThread.branch : "—")
                 + (composer.model.newThread.switching ? " (switching…)" : "")
             : ""

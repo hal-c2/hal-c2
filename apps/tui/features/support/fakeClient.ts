@@ -40,6 +40,56 @@ export const projectTwo = {
   defaultModelSelection: { instanceId: "codex", model: "gpt-5-mini" },
 };
 
+const reasoning = (defaultId: string) => ({
+  id: "reasoningEffort",
+  label: "Reasoning",
+  type: "select",
+  options: ["low", "medium", "high"].map((id) => ({
+    id,
+    label: id[0]!.toUpperCase() + id.slice(1),
+    ...(id === defaultId ? { isDefault: true } : {}),
+  })),
+});
+
+/**
+ * Codex (GPT-5 with effort and a fast-mode switch, GPT-5 Codex defaulting to
+ * high effort) and Claude. Pass as `providers` to serve them from `listModels`.
+ */
+export const PROVIDERS = [
+  {
+    instanceId: "codex",
+    driver: "codex",
+    displayName: "Codex",
+    enabled: true,
+    models: [
+      {
+        slug: "gpt-5",
+        name: "GPT-5",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            reasoning("medium"),
+            { id: "fastMode", label: "Fast mode", type: "boolean" },
+          ],
+        },
+      },
+      {
+        slug: "gpt-5-codex",
+        name: "GPT-5 Codex",
+        isCustom: false,
+        capabilities: { optionDescriptors: [reasoning("high")] },
+      },
+    ],
+  },
+  {
+    instanceId: "claude",
+    driver: "claude",
+    displayName: "Claude",
+    enabled: true,
+    models: [{ slug: "opus", name: "Opus", isCustom: false, capabilities: null }],
+  },
+] as unknown as ReadonlyArray<ServerProvider>;
+
 export function thread(activities: OrchestrationThread["activities"] = []): OrchestrationThread {
   return {
     id: "t1",

@@ -4,7 +4,16 @@ import { expect } from "bun:test";
 
 import { step } from "../../steps.ts";
 import { LIST_PANE_WIDTH } from "../../../src/components/ChatView.layout.ts";
-import { boot, findObject, geometry, pressKey, resize, snapshot, type World } from "../world.ts";
+import {
+  boot,
+  findObject,
+  geometry,
+  pressKey,
+  resize,
+  settle,
+  snapshot,
+  type World,
+} from "../world.ts";
 
 const NARROW_COLUMNS = 70;
 const STATUS_ROWS = 1;
@@ -89,10 +98,6 @@ step(
 
 /** The status line reads (or contains) this text. */
 step("the status line says {string}", async (ctx: World, text: string) => {
-  const app = await boot(ctx);
-  for (let round = 0; round < 5; round += 1) {
-    await ctx.host!.idle();
-    await app.advance(0);
-  }
+  await settle(ctx);
   expect(String(findObject(ctx, "statusText").get("text"))).toContain(text);
 });

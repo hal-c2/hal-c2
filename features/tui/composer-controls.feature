@@ -178,7 +178,7 @@ Feature: Composer controls and new-thread drafts in the terminal
     When the user picks a model from a provider the thread cannot switch to
     Then the client explains that a new thread is needed
 
-  @backlog @tui
+  @tui
   Scenario: Provider configuration refreshes live
     When a provider's models change on the server
     Then the model picker lists the new models without restarting the client

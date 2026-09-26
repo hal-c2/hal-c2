@@ -41,6 +41,12 @@ export interface World extends StepContext {
   kittyKeyboard?: boolean;
   /** The current step's kind (the runner sets it): Given is "Context", Then is "Outcome". */
   stepType?: "Context" | "Action" | "Outcome" | "Unknown";
+  /**
+   * Requests a step deliberately left unanswered (a clone or branch switch in
+   * flight). While above zero, `settle` renders without waiting for the host
+   * to go idle, which it never would.
+   */
+  held?: number;
 }
 
 /** Set up the fake client before boot; later calls replace it only if not booted. */
@@ -188,7 +194,8 @@ export function geometry(object: QmlObject): Geometry {
 export async function settle(ctx: World): Promise<void> {
   const app = await boot(ctx);
   for (let round = 0; round < 5; round += 1) {
-    await ctx.host!.idle();
+    if (ctx.held) await new Promise((resolve) => setImmediate(resolve));
+    else await ctx.host!.idle();
     await app.advance(0);
   }
 }
