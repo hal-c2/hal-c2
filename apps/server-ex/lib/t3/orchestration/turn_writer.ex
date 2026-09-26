@@ -107,6 +107,7 @@ defmodule T3.Orchestration.TurnWriter do
   defp shape(:file, _, fields), do: {"tool_call", "file_change", fields}
   defp shape(:web, _, fields), do: {"tool_call", "web_search", fields}
   defp shape(:tool, _, fields), do: {"tool_call", "dynamic_tool", fields}
+  defp shape(:subagent, _, fields), do: {"subagent", "subagent", fields}
   defp shape(:plan, _, _), do: {"plan", "proposed_plan", %{"markdown" => "", "streaming" => true}}
 
   defp plan(ids, plan_id, node_id, kind, status, fields) do

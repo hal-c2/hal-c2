@@ -1071,17 +1071,21 @@ defmodule T3.Steps.Common do
   # The provider list a client receives when it subscribes to the node's config.
   # Starts the thread a Given described (`context.pending_launch`: `instance`, and
   # `fields` such as "runtimeMode") with a message, and waits for its turn to end.
+  # Without one, sends "Hello" to the scenario's existing FakeAcp thread.
   step "the user sends a message", context do
-    assert %{instance: instance, fields: fields} = context[:pending_launch],
-           "no thread was described to send a message to"
+    case context[:pending_launch] do
+      %{instance: instance, fields: fields} ->
+        ctx =
+          context
+          |> Map.delete(:pending_launch)
+          |> T3.Test.AcpFixtures.launch("Work", instance, "hello", mode: fields["runtimeMode"])
 
-    ctx =
-      context
-      |> Map.delete(:pending_launch)
-      |> T3.Test.AcpFixtures.launch("Work", instance, "hello", mode: fields["runtimeMode"])
+        T3.Test.AcpFixtures.await_runs(ctx.threads["Work"], 1)
+        Map.put(ctx, :thread, "Work")
 
-    T3.Test.AcpFixtures.await_runs(ctx.threads["Work"], 1)
-    Map.put(ctx, :thread, "Work")
+      nil ->
+        T3.Test.FakeAcp.send_message(context, "Hello")
+    end
   end
 
   # --- added by W1 ---
@@ -1291,5 +1295,40 @@ defmodule T3.Steps.Common do
       _ ->
         flunk("no thread or project #{inspect(name)} in this scenario")
     end
+  end
+
+  # --- added by W12 ---
+
+  # Cancels the provider's running install (`provider.install.cancel`); keeps the reply.
+  step "the user cancels the installation", context do
+    %{"operationId" => op} = T3.Acp.Antigravity.Installation.state()
+    assert is_binary(op)
+
+    {reply, context} =
+      World.call(context, "provider.install.cancel", %{
+        "instanceId" => context.provider,
+        "operationId" => op
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  # Every thread of the scenario still has its messages.
+  step "thread history is kept", context do
+    for {_title, id} <- context.threads do
+      state = T3.Streams.Server.state(T3.Streams.ensure(id))
+      assert %{^id => _} = T3.StreamState.get(state, "thread")
+      assert [_ | _] = T3.StreamState.list(state, "message")
+    end
+
+    context
+  end
+
+  # `provider.auth.logout` for the provider under test; keeps the reply.
+  step "the user signs out", context do
+    {reply, context} =
+      World.call(context, "provider.auth.logout", %{"instanceId" => context.provider})
+
+    Map.put(context, :reply, reply)
   end
 end

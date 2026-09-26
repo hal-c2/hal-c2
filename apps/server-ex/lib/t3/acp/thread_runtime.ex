@@ -21,8 +21,9 @@ defmodule T3.Acp.ThreadRuntime do
   alias T3.JsonRpc.Connection
   alias T3.Orchestration
   alias T3.Orchestration.Entities
+  alias T3.Acp.Antigravity.Session, as: Antigravity
 
-  @state_version 4
+  @state_version 5
   @registry T3.Acp.Registry
 
   # Grok's own requests (`x.ai/...`), bare or wrapped in `{method, params}`.
@@ -106,6 +107,8 @@ defmodule T3.Acp.ThreadRuntime do
        capabilities: %{},
        session_id: nil,
        model: nil,
+       # The models the session's `model` option lists.
+       options: [],
        turn: nil,
        prompt: nil,
        items: %{},
@@ -132,7 +135,9 @@ defmodule T3.Acp.ThreadRuntime do
     turn = %{turn | ids: ids}
     state = %{state | turn: turn, items: %{}, interrupted: false}
 
-    with {:ok, state} <- ensure_session(state, turn),
+    with :ok <- Antigravity.check_turn(turn),
+         {:ok, state} <- ensure_session(state, turn),
+         {:ok, state} <- check_model(state, driver, turn.model),
          state = set_model(state, turn.model) do
       started(state)
       conn = state.conn
@@ -152,7 +157,15 @@ defmodule T3.Acp.ThreadRuntime do
 
       {:reply, :ok, %{state | prompt: task.ref}}
     else
+      :logout ->
+        {:reply, :ok, sign_out(state)}
+
+      {:error, message} when is_binary(message) ->
+        finish(state, "failed", message)
+        {:reply, :ok, %{state | turn: nil}}
+
       {:error, reason, state} ->
+        reason = Antigravity.failure(driver, reason)
         Logger.warning("#{driver} turn failed to start: #{inspect(reason)}")
         failure = if reason == :closed, do: reason, else: format(reason)
         finish(state, "failed", start_failure(T3.Acp.label(driver), failure))
@@ -167,6 +180,14 @@ defmodule T3.Acp.ThreadRuntime do
   end
 
   def handle_call(:interrupt, _from, state), do: {:reply, {:error, "no running turn"}, state}
+
+  # The instance's sessions stop (sign-out, a new sign-in method): a running turn
+  # ends, and the thread's next message starts the agent again.
+  def handle_call(:close, _from, state) do
+    state = if state.turn, do: end_turn(%{state | prompt: nil}, "interrupted", nil), else: state
+    if state.conn, do: Connection.stop(state.conn)
+    {:reply, :ok, released(%{state | conn: nil, session_id: nil, prompt: nil})}
+  end
 
   def handle_call(:rollback, _from, %{turn: nil} = state),
     do: {:reply, :ok, %{state | session_id: nil}}
@@ -298,7 +319,7 @@ defmodule T3.Acp.ThreadRuntime do
         do: end_turn(state, "failed", "#{T3.Acp.label(state.agent)} exited unexpectedly"),
         else: state
 
-    {:noreply, %{state | conn: nil, session_id: nil, prompt: nil}}
+    {:noreply, released(%{state | conn: nil, session_id: nil, prompt: nil})}
   end
 
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
@@ -317,7 +338,10 @@ defmodule T3.Acp.ThreadRuntime do
     do: state |> Map.put_new(:announce, false) |> Map.put(:v, 3) |> migrate()
 
   defp migrate(%{v: 3} = state),
-    do: state |> Map.put_new(:allowed, MapSet.new()) |> Map.put(:v, 4)
+    do: state |> Map.put_new(:allowed, MapSet.new()) |> Map.put(:v, 4) |> migrate()
+
+  defp migrate(%{v: 4} = state),
+    do: state |> Map.put_new(:options, []) |> Map.put(:v, 5)
 
   # --- session -------------------------------------------------------------------
 
@@ -357,8 +381,10 @@ defmodule T3.Acp.ThreadRuntime do
              mode: turn.runtime_mode,
              capabilities: init["agentCapabilities"] || %{}
          },
+         :ok <- Antigravity.authenticate(conn, driver),
          {:ok, session_id, state} <- open_session(state, turn) do
       if session_id != turn.native_thread_id, do: record_session(state, session_id)
+      Antigravity.opened(conn, session_id, driver, turn.runtime_mode, state.options)
       {:ok, %{state | session_id: session_id, announce: mcp_servers(state, turn) != []}}
     else
       {:error, reason} -> {:error, reason, state}
@@ -427,9 +453,22 @@ defmodule T3.Acp.ThreadRuntime do
   end
 
   defp remember_model(state, result) do
+    state =
+      case T3.Acp.session_models(result) do
+        [] -> state
+        models -> Map.put(state, :options, models)
+      end
+
     case Enum.find(result["configOptions"] || [], &(&1["id"] == "model")) do
       %{"currentValue" => model} -> %{state | model: model}
       _ -> state
+    end
+  end
+
+  defp check_model(state, driver, model) do
+    case Antigravity.check_model(driver, model, state.options) do
+      :ok -> {:ok, state}
+      {:error, message} -> {:error, message, state}
     end
   end
 
@@ -670,6 +709,24 @@ defmodule T3.Acp.ThreadRuntime do
   end
 
   defp tool_shape(call) do
+    if T3.Acp.Antigravity.subagent?(call), do: subagent_shape(call), else: tool_kind(call)
+  end
+
+  # Antigravity's `start_subagent` tool starts a batch of subagents.
+  defp subagent_shape(call) do
+    prompt = content_text(call["content"]) || call["title"] || "Antigravity subagent batch"
+
+    {:subagent,
+     %{
+       "subagentId" => call["toolCallId"],
+       "origin" => "provider_native",
+       "title" => "Antigravity subagent batch",
+       "prompt" => prompt,
+       "result" => nil
+     }}
+  end
+
+  defp tool_kind(call) do
     input = call["rawInput"] || %{}
     path = get_in(call, ["locations", Access.at(0), "path"])
 
@@ -881,14 +938,45 @@ defmodule T3.Acp.ThreadRuntime do
 
     text = [%{"type" => "text", "text" => message}]
 
-    if get_in(capabilities || %{}, ["promptCapabilities", "image"]) == true,
-      do:
+    cond do
+      Antigravity.antigravity?(turn.ids.driver) ->
+        text ++ T3.Acp.Antigravity.attachment_blocks(attachments)
+
+      get_in(capabilities || %{}, ["promptCapabilities", "image"]) == true ->
         text ++
           for(
             {mime, data} <- T3.Attachments.native_images(attachments),
             do: %{"type" => "image", "mimeType" => mime, "data" => data}
-          ),
-      else: text
+          )
+
+      true ->
+        text
+    end
+  end
+
+  # The thread no longer holds an agent session (`T3.Acp.Antigravity.sessions/1`).
+  defp released(state) do
+    Registry.update_value(@registry, state.thread_id, fn _ -> nil end)
+    state
+  end
+
+  # `/logout` alone in an Antigravity thread signs its instance out.
+  defp sign_out(state) do
+    instance = state.turn.ids.driver
+    if state.conn, do: Connection.stop(state.conn)
+    state = released(%{state | conn: nil, session_id: nil, prompt: nil})
+    started(state)
+
+    case T3.ProviderAuth.logout_from(instance, self()) do
+      {:ok, _} ->
+        state
+        |> ensure_item("logout", :command, %{"input" => "/logout", "output" => ""})
+        |> finish_item("logout", "completed", &Map.put(&1, "output", "Provider signed out"))
+        |> end_turn("completed", nil)
+
+      {:error, %{"detail" => detail}} ->
+        end_turn(state, "failed", detail)
+    end
   end
 
   # --- Grok's own requests --------------------------------------------------------

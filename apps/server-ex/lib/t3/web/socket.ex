@@ -333,6 +333,17 @@ defmodule T3.Web.Socket do
     end
   end
 
+  def handle_info({:t3_provider_install, instance, install}, state) do
+    case state.by_terminal do
+      %{{:provider_install, ^instance} => id} ->
+        {:push, Protocol.encode(%{"t" => "providerInstall", "id" => id, "state" => install}),
+         state}
+
+      _ ->
+        {:ok, state}
+    end
+  end
+
   def handle_info({:t3_provider_auth, instance, auth}, state) do
     case state.by_terminal do
       %{{:provider_auth, ^instance} => id} ->
@@ -787,6 +798,27 @@ defmodule T3.Web.Socket do
     end
   end
 
+  defp subscribe(state, id, {:provider_install, node, instance} = shape, _offset) do
+    case remote(node, T3.Acp.Antigravity.Installation, :subscribe, [instance, self()]) do
+      {:ok, {:ok, install}} ->
+        {:push, Protocol.encode(%{"t" => "providerInstall", "id" => id, "state" => install}),
+         %{
+           state
+           | subs: Map.put(state.subs, id, shape),
+             by_terminal: Map.put(state.by_terminal, {:provider_install, instance}, id)
+         }}
+
+      {:ok, {:error, detail}} ->
+        frame =
+          Map.put(error_frame(id, detail["message"]), "detail", Map.delete(detail, "message"))
+
+        {:push, Protocol.encode(frame), state}
+
+      {:error, reason} ->
+        {:push, Protocol.encode(error_frame(id, reason)), state}
+    end
+  end
+
   # Runs on the checkout's node; its events come straight here.
   defp subscribe(state, id, {:server_update, node, input} = shape, _) do
     case remote(node, T3.Upgrade, :start, [input, self()]) do
@@ -994,6 +1026,15 @@ defmodule T3.Web.Socket do
           state
           | subs: subs,
             by_terminal: Map.delete(state.by_terminal, {:worktree_setup, thread_id})
+        }
+
+      {{:provider_install, node, instance}, subs} ->
+        :erpc.cast(node, T3.Acp.Antigravity.Installation, :unsubscribe, [instance, self()])
+
+        %{
+          state
+          | subs: subs,
+            by_terminal: Map.delete(state.by_terminal, {:provider_install, instance})
         }
 
       {{:provider_auth, node, instance}, subs} ->

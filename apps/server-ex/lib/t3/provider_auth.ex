@@ -40,9 +40,31 @@ defmodule T3.ProviderAuth do
   @doc "`provider.auth.logout`."
   def logout(%{"instanceId" => instance}), do: call(instance, :logout)
 
-  @doc "`provider.auth.complete`: no agent here takes a pasted redirect URL."
-  def complete(%{"instanceId" => instance}),
-    do: error(instance, "complete", "This provider does not accept a pasted redirect URL.")
+  @doc """
+  `provider.auth.complete`: the redirect URL of a browser sign-in, pasted from
+  another device (Antigravity only).
+  """
+  def complete(%{"instanceId" => instance} = input) do
+    if antigravity?(instance),
+      do: call(instance, {:complete, input["flowId"], input["callbackUrl"]}),
+      else: error(instance, "complete", "This provider does not accept a pasted redirect URL.")
+  end
+
+  @doc """
+  Signs an instance out from one of its own thread sessions (`/logout`): its other
+  sessions stop, `session` stays for its caller to close.
+  """
+  def logout_from(instance, session), do: call(instance, {:logout, session})
+
+  @doc "Whether a sign-in is running for an instance."
+  def signing_in?(instance) do
+    case Registry.lookup(@registry, instance) do
+      [{server, _}] -> GenServer.call(server, :signing_in?, 5_000)
+      [] -> false
+    end
+  catch
+    :exit, _ -> false
+  end
 
   @doc "Adds `pid` as a subscriber; it gets `{:t3_provider_auth, instance, state}`."
   def subscribe(instance, pid), do: call(instance, {:subscribe, pid})
@@ -79,7 +101,7 @@ defmodule T3.ProviderAuth do
   def init(instance) do
     Process.flag(:trap_exit, true)
     server = self()
-    Task.start(fn -> send(server, {:methods, T3.Acp.Auth.methods(instance)}) end)
+    Task.start(fn -> send(server, {:methods, auth_module(instance).methods(instance)}) end)
 
     {:ok,
      %{
@@ -110,12 +132,19 @@ defmodule T3.ProviderAuth do
     {:reply, {:ok, state.auth}, %{state | watchers: watchers}}
   end
 
+  def handle_call(:signing_in?, _from, state), do: {:reply, state.flow != nil, state}
+
   def handle_call({:start, _method}, _from, %{flow: %{}} = state),
     do: {:reply, {:ok, state.auth}, state}
 
   def handle_call({:start, method_id}, _from, state) do
     methods = state.methods || []
-    method_id = method_id || default_method(state.instance, methods)
+
+    method_id =
+      if antigravity?(state.instance),
+        do: T3.Acp.Antigravity.config(state.instance)["authMethod"],
+        else: method_id || default_method(state.instance, methods)
+
     refusal = T3.Acp.sign_in_refusal(state.instance)
 
     if refusal do
@@ -146,14 +175,82 @@ defmodule T3.ProviderAuth do
   end
 
   def handle_call({:cancel, flow_id}, _from, %{flow: %{id: flow_id}} = state) do
-    state = end_flow(state, "cancelled", "Sign-in cancelled.")
+    state = end_flow(state, "cancelled", text(state.instance, :cancelled))
     {:reply, {:ok, state.auth}, state}
   end
 
   def handle_call({:cancel, _}, _from, state),
     do: {:reply, error(state.instance, "cancel", "This sign-in is no longer active."), state}
 
-  def handle_call(:logout, _from, state) do
+  def handle_call({:complete, flow_id, url}, _from, state) do
+    interaction = state.auth["interaction"]
+
+    result =
+      case state.flow do
+        %{id: ^flow_id} when not is_map(interaction) ->
+          {:error, "Wait for the Google sign-in link before you send a redirect URL."}
+
+        %{id: ^flow_id, callback: true} ->
+          {:error, "The sign-in response was already sent. Wait for Google to finish."}
+
+        %{id: ^flow_id} ->
+          with {:ok, pending} <- authorization(interaction["url"]),
+               {:ok, uri} <-
+                 T3.Acp.Antigravity.Auth.validate_callback(pending, to_string(url || "")),
+               :ok <- T3.Acp.Antigravity.Auth.forward_callback(uri),
+               do: :ok
+
+        _ ->
+          {:error, "This sign-in is no longer active in this client."}
+      end
+
+    case result do
+      :ok ->
+        state =
+          publish(put_in(state.flow[:callback], true), %{
+            "phase" => "verifying",
+            "interaction" => nil,
+            "authorizationUrl" => nil,
+            "message" => "Waiting for Google to finish sign-in."
+          })
+
+        {:reply, {:ok, state.auth}, state}
+
+      {:error, detail} ->
+        {:reply, error(state.instance, "complete", detail), state}
+    end
+  end
+
+  def handle_call(:logout, from, state) do
+    if antigravity?(state.instance),
+      do: handle_call({:logout, nil}, from, state),
+      else: generic_logout(state)
+  end
+
+  def handle_call({:logout, session}, _from, state) do
+    state =
+      if state.flow,
+        do: end_flow(state, "idle", "Google sign-in was cancelled by sign-out."),
+        else: state
+
+    case T3.Acp.Antigravity.Auth.logout(state.instance, session) do
+      :ok ->
+        state =
+          %{
+            state
+            | auth: Map.merge(idle(state.instance, "Signed out of Google."), methods(state))
+          }
+
+        broadcast(state)
+        {:reply, {:ok, state.auth}, state}
+
+      {:error, detail} ->
+        state = finish(state, "failed", "Antigravity sign-out failed. Try again.")
+        {:reply, error(state.instance, "logout", detail), state}
+    end
+  end
+
+  defp generic_logout(state) do
     state = if state.flow, do: end_flow(state, "idle", nil), else: state
 
     case T3.Acp.Sessions.logout(%{"instanceId" => state.instance}) do
@@ -200,7 +297,7 @@ defmodule T3.ProviderAuth do
        "phase" => "waiting",
        "interaction" => interaction,
        "authorizationUrl" => url,
-       "message" => "Complete sign-in to continue."
+       "message" => text(state.instance, :waiting)
      })}
   end
 
@@ -212,12 +309,12 @@ defmodule T3.ProviderAuth do
        "phase" => "verifying",
        "interaction" => nil,
        "authorizationUrl" => nil,
-       "message" => "Checking provider sign-in."
+       "message" => text(state.instance, :verifying)
      })}
   end
 
   def handle_info({:expire, flow_id}, %{flow: %{id: flow_id}} = state),
-    do: {:noreply, end_flow(state, "failed", "Sign-in expired. Start again.")}
+    do: {:noreply, end_flow(state, "failed", text(state.instance, :expired))}
 
   def handle_info({:EXIT, worker, reason}, %{flow: %{worker: worker}} = state) do
     state = %{state | flow: nil}
@@ -228,7 +325,7 @@ defmodule T3.ProviderAuth do
           # The agent reads its new credentials when it is next started.
           T3.Acp.forget(state.instance)
           T3.Settings.notify_providers()
-          finish(state, "succeeded", "Sign-in complete.")
+          finish(state, "succeeded", text(state.instance, :succeeded))
 
         {:shutdown, {:failed, message}} ->
           finish(state, "failed", message)
@@ -259,7 +356,7 @@ defmodule T3.ProviderAuth do
       instance = state.instance
 
       worker =
-        spawn_link(fn -> T3.Acp.Auth.login(instance, method_id, server, flow_id) end)
+        spawn_link(fn -> auth_module(instance).login(instance, method_id, server, flow_id) end)
 
       Process.send_after(self(), {:expire, flow_id}, @timeout_ms)
 
@@ -270,7 +367,7 @@ defmodule T3.ProviderAuth do
             "phase" => "starting",
             "flowId" => flow_id,
             "expiresAt" => iso(expires),
-            "message" => "Starting sign-in.",
+            "message" => text(state.instance, :starting),
             "interaction" => nil,
             "authorizationUrl" => nil
           }
@@ -326,6 +423,62 @@ defmodule T3.ProviderAuth do
 
     if(is_binary(configured) and configured != "", do: configured) ||
       (List.first(methods) || %{})["id"]
+  end
+
+  defp antigravity?(instance), do: T3.Acp.driver(instance) == "antigravity"
+
+  defp auth_module(instance),
+    do: if(antigravity?(instance), do: T3.Acp.Antigravity.Auth, else: T3.Acp.Auth)
+
+  defp authorization(url) when is_binary(url) do
+    case T3.Acp.Antigravity.Auth.authorization(url) do
+      {:ok, pending} -> {:ok, pending}
+      :error -> {:error, "This sign-in is no longer active in this client."}
+    end
+  end
+
+  defp authorization(_url), do: {:error, "This sign-in is no longer active in this client."}
+
+  # What a flow says at each step: Antigravity names Google, others are generic.
+  defp text(instance, key) do
+    if antigravity?(instance) do
+      browser? = T3.Acp.Antigravity.browser?(T3.Acp.Antigravity.config(instance)["authMethod"])
+
+      case key do
+        :starting when browser? ->
+          "Starting Google sign-in."
+
+        :starting ->
+          "Checking credentials."
+
+        :waiting ->
+          "Open the Google sign-in link. If you are remote, paste the redirect URL here."
+
+        :verifying ->
+          "Checking Antigravity access and models."
+
+        :succeeded when browser? ->
+          "Signed in with Google."
+
+        :succeeded ->
+          "Connected to Antigravity."
+
+        :expired ->
+          "Google sign-in expired. Start sign-in again."
+
+        :cancelled ->
+          "Google sign-in was cancelled."
+      end
+    else
+      case key do
+        :starting -> "Starting sign-in."
+        :waiting -> "Complete sign-in to continue."
+        :verifying -> "Checking provider sign-in."
+        :succeeded -> "Sign-in complete."
+        :expired -> "Sign-in expired. Start again."
+        :cancelled -> "Sign-in cancelled."
+      end
+    end
   end
 
   defp iso(ms), do: ms |> DateTime.from_unix!(:millisecond) |> DateTime.to_iso8601()
