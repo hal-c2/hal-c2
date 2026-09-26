@@ -62,7 +62,7 @@ QString resolveDefaultHostEntry() {
 
 QString resolveDefaultNodeExecutable() {
   const QString fromEnv =
-      QProcessEnvironment::systemEnvironment().value(QStringLiteral("HALC2_NODE"));
+      QProcessEnvironment::systemEnvironment().value(QStringLiteral("HALC2_NODE_BIN"));
   if (!fromEnv.isEmpty()) {
     return fromEnv;
   }
