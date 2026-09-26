@@ -160,7 +160,7 @@ actions after the page loads, e.g. `--action rightPanel.toggle`), `--key <chord>
 (repeatable; press a key chord after the page loads, e.g. `--key Ctrl+1`, portable
 `QKeySequence` names — `--action` and `--key` run in command-line order, 1.5 s
 apart, so a key test can open a thread first); env `HALC2_HOME`,
-`HALC2_QML_DIR`, `HALC2_NODE`, `HALC2_SERVER_ENTRY`.
+`HALC2_QML_DIR`, `HALC2_NODE_BIN`, `HALC2_SERVER_ENTRY`.
 
 ## Ricing contract
 
