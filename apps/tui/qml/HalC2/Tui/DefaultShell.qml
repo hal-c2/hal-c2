@@ -31,14 +31,21 @@ ShellWindow {
         TerminalDrawer { flexGrow: 1 }
     }
 
-    // Adding a project (and, with none yet, the invitation to) is a page in
-    // the conversation's place.
-    readonly property bool addingProject: Shell.state.addProject.open || Shell.state.addProject.invite
+    // With no projects yet, the invitation to add one is a page in the
+    // conversation's place (until the add-project box opens).
+    readonly property bool inviting: Shell.state.addProject.invite && !Shell.state.addProject.open
 
     // The conversation (empty for a new-thread draft), or the settings page in its place.
     Conversation {
         id: conversationView
-        visible: !Shell.state.settings.active && !shell.addingProject
+        visible: !Shell.state.settings.active && !shell.inviting && !Shell.state.layout.rightPanel.asMain
+        flexGrow: 1
+        flexShrink: 1
+    }
+    // A panel too wide to share covers the pane (ShellWindow); nothing peeks out
+    // under it when the prompt and popovers leave a row spare.
+    Item {
+        visible: Shell.state.layout.rightPanel.asMain && !Shell.state.settings.active
         flexGrow: 1
         flexShrink: 1
     }
@@ -48,21 +55,17 @@ ShellWindow {
         SettingsPage { flexGrow: 1 }
     }
     Loader {
-        objectName: "addProjectLoader"
-        active: shell.addingProject
-        sourceComponent: AddProject { flexGrow: 1 }
+        objectName: "addProjectInviteLoader"
+        active: shell.inviting && !Shell.state.settings.active
+        sourceComponent: AddProjectInvite { flexGrow: 1 }
     }
-    CommandPalette { id: paletteView }
+    // Popovers float above the prompt, which stays in place (ChatView).
+    AddProject {}
     SelectOverlay { id: selectView }
-    ThreadOverlay {
-        height: Shell.state.layout.composerRows
-    }
+    CommandPalette { id: paletteView }
+    RevertPicker {}
+    ThreadOverlay {}
     // The prompt: a reply, or the first message of a new-thread draft.
-    Composer {
-        id: composerView
-        visible: Shell.state.overlay === null
-            && !Shell.state.settings.active
-            && !shell.addingProject
-    }
+    Composer { id: composerView }
     ShellKeymap {}
 }

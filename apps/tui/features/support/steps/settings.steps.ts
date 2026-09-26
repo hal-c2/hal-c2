@@ -6,6 +6,7 @@ import { step } from "../../steps.ts";
 import type { TuiSettingsState } from "../../../src/host/settingsState.ts";
 import { KEYBINDING_GROUPS } from "../../../src/keymap.ts";
 import { changes, ready, scm, setCheckout, settle, vcsStatus } from "../gitWorld.ts";
+import { objectRows } from "../design.ts";
 import { findObject, geometry, type World } from "../world.ts";
 
 const settingsState = (ctx: World) => ctx.host!.state.get("settings") as TuiSettingsState;
@@ -64,7 +65,8 @@ step("the overlay shows providers, source control and keybindings", async (ctx: 
 step("the overlay scrolls down", async (ctx: World) => {
   await settle(ctx);
   expect(Number(findObject(ctx, "settingsBody").get("contentY"))).toBeGreaterThan(0);
-  expect(await settle(ctx)).not.toContain(" model ");
+  // The prompt under the page names the model too; only the page scrolled.
+  expect((await objectRows(ctx, "settingsPage")).join("\n")).not.toContain(" model ");
 });
 
 step("the current model, reasoning, mode and runtime access are shown", async (ctx: World) => {

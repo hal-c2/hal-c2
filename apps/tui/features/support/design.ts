@@ -44,6 +44,17 @@ export async function objectRows(ctx: World, objectName: string): Promise<string
   return regionRows(ctx, rectOf(ctx, objectName));
 }
 
+/** The cells of a screen region, row by row. */
+export async function regionCells(
+  ctx: World,
+  rect: Rect,
+): Promise<Array<Array<{ text: string; span: CapturedSpan }>>> {
+  const rows = await cells(ctx);
+  return rows
+    .slice(rect.y, rect.y + rect.height)
+    .map((row) => row.slice(rect.x, rect.x + rect.width));
+}
+
 /** The rows of a screen region, cut to its columns. */
 export async function regionRows(ctx: World, rect: Rect): Promise<string[]> {
   const rows = await cells(ctx);

@@ -275,7 +275,7 @@ Feature: Reading a thread in the terminal
     When the user presses "Esc"
     Then the workspace is unchanged
 
-  @tui @backlog
+  @tui
   Scenario: The revert picker sits above the prompt in the error colour
     Given the revert picker is open
     Then a box with a rounded border in the error colour sits above the prompt

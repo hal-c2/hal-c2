@@ -100,6 +100,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "s", description: "Diff: toggle split / stacked", chords: ["s"] },
       { keys: "y / n", description: "Delete a thread: confirm / keep", chords: ["y", "n"] },
       {
+        keys: "Tab · ^Enter",
+        description: "Add project: browse ⇄ edit · run the action",
+        chords: ["tab", "ctrl+return"],
+      },
+      {
         keys: "j/k · ↑/↓ · Esc",
         description: "Thread list: next / previous · back to the prompt",
         chords: ["j", "k", "up", "down", "escape"],
@@ -242,6 +247,9 @@ export const KEYMAP_LAYERS = {
   project: {
     up: "project.add.previous",
     down: "project.add.next",
+    tab: "project.add.toggleFocus",
+    return: "project.add.activate",
+    "ctrl+return": "project.add.action",
     escape: "project.add.back",
   },
   filter: {

@@ -521,23 +521,40 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
 
   // --- revert picker -------------------------------------------------------
 
+  /** The revert picker as RevertMenu draws it: eight turns at most, the window ending at the selection. */
   const publishRevert = () => {
     const list = checkpoints();
     const open = options.mode() === "revert";
     const index = Math.min(revertIndex, Math.max(0, list.length - 1));
+    const windowSize = 8;
+    const windowStart = Math.min(
+      Math.max(0, index - windowSize + 1),
+      Math.max(0, list.length - windowSize),
+    );
     state.set("revert", {
       open,
       index,
-      title: "revert ▸ pick a checkpoint — discards changes made after it",
+      title: styled(
+        chunk("revert ▸ ", { fg: palette.error }),
+        chunk("pick a checkpoint — discards changes made after it", { fg: palette.dim }),
+      ),
       hint: "↑/↓ select · Enter revert · Esc cancel",
       emptyText: "No checkpoints to revert to yet.",
-      rows: list.map((checkpoint, i) => ({
-        turnCount: checkpoint.checkpointTurnCount,
-        active: i === index,
-        text: `${i === index ? "▸" : " "} turn ${checkpoint.checkpointTurnCount} · ${checkpoint.files.length} file${
-          checkpoint.files.length === 1 ? "" : "s"
-        } · ${relativeTime(checkpoint.completedAt)}`,
-      })),
+      rows: list.slice(windowStart, windowStart + windowSize).map((checkpoint, offset) => {
+        const active = windowStart + offset === index;
+        const fileCount = checkpoint.files.length;
+        return {
+          turnCount: checkpoint.checkpointTurnCount,
+          active,
+          text: styled(
+            chunk(active ? "▸ " : "  ", { fg: active ? palette.accent : palette.dim }),
+            chunk(
+              `turn ${checkpoint.checkpointTurnCount} · ${fileCount} file${fileCount === 1 ? "" : "s"} · ${relativeTime(checkpoint.completedAt)}`,
+              { fg: active ? palette.text : palette.dim },
+            ),
+          ),
+        };
+      }),
     });
   };
 

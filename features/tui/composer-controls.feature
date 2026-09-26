@@ -258,7 +258,7 @@ Feature: Composer controls and new-thread drafts in the terminal
   # The OpenTUI client's pickers (SelectOverlay.tsx) and add-project flow
   # (AddProjectOverlay.tsx) float above the prompt, which stays in place.
 
-  @tui @backlog
+  @tui
   Scenario: A picker is a rounded box above the prompt, headed by its title and keys
     When the user opens the runtime access picker
     Then the picker has a rounded border in the accent colour
@@ -283,7 +283,7 @@ Feature: Composer controls and new-thread drafts in the terminal
     And the description of "Full access" is in the background colour
     And "Supervised" and its description are in the dim colour
 
-  @tui @backlog
+  @tui
   Scenario Outline: A picker with nothing to show says why
     Given the model list <condition>
     When the user presses "Ctrl+Shift+M"
@@ -304,13 +304,13 @@ Feature: Composer controls and new-thread drafts in the terminal
     And the add-project box's second row reads "New project · Source ▸ ↑/↓ navigate · Enter select · Tab edit · Esc back"
     And the add-project box's next rows read "▸ Local folder" and "    Browse a folder on disk"
 
-  @tui @backlog
+  @tui
   Scenario: A source that needs setup says so in the warning colour
     When the user chooses "Add project" from the command palette
     Then "GitHub repository" is followed by "  setup required" in the warning colour
     And "GitHub repository" is in the faint colour
 
-  @tui @backlog
+  @tui
   Scenario: Tab moves between the add-project field and its list
     Given the user chose "Add project" from the command palette
     When the user presses "Tab"

@@ -566,7 +566,7 @@ step(/^the user opens (?:its context menu|the thread's menu)$/, async (ctx: Thre
   await openMenu(ctx, ctx.subject!);
 });
 
-step("the user opens the menu for {string}", async (ctx: World, title: string) => {
+step(/^the user (?:opens|opened) the menu for "([^"]*)"$/, async (ctx: World, title: string) => {
   await openMenu(ctx, title);
 });
 
@@ -1054,7 +1054,7 @@ step("the user chooses {string} from the command palette", chooseCommand);
 
 step("the palette shows that there are no matching commands", async (ctx: World) => {
   expect(palette(ctx).commands).toEqual([]);
-  expect(await snapshot(ctx)).toContain("No matching commands");
+  expect(await snapshot(ctx)).toContain("no matching command");
 });
 
 // --- Status -----------------------------------------------------------------

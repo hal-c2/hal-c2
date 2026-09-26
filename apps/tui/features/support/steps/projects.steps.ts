@@ -241,10 +241,10 @@ step(
   async (ctx: World, first: string, second: string) => {
     const frame = await settle(ctx);
     const titles = flow(ctx).rows.map((row) => row.title);
-    expect(titles).toContain(`${first}/`);
-    expect(titles).toContain(`${second}/`);
-    expect(frame).toContain(`${first}/`);
-    expect(frame).toContain(`${second}/`);
+    expect(titles).toContain(first);
+    expect(titles).toContain(second);
+    expect(frame).toContain(first);
+    expect(frame).toContain(second);
   },
 );
 // While adding a project: not among the rows; otherwise: not a palette command.
@@ -299,7 +299,7 @@ step(
 step("the user is asked where to clone the repository", async (ctx: World) => {
   const frame = await settle(ctx);
   expect(flow(ctx).step).toBe("destination");
-  expect(frame).toContain("Clone into");
+  expect(frame).toContain("New project · Clone destination");
   expect((ctx.host!.state.get("status") as { text: string }).text).toBe(
     "Choose where to clone the repository.",
   );
@@ -313,7 +313,8 @@ step("the user adds a project from a repository", openAddProject);
 step("GitLab is marked as needing setup", async (ctx: World) => {
   const row = flow(ctx).rows.find((candidate) => candidate.title === "GitLab repository");
   expect(row?.disabled).toBe(true);
-  expect(await settle(ctx)).toContain("GitLab repository · needs setup");
+  const frame = (await settle(ctx)).split("\n");
+  expect(frame.find((line) => line.includes("GitLab repository"))).toContain("  setup required");
 });
 step("the user is pointed to source control settings", async (ctx: World) => {
   await chooseSource(ctx, "GitLab repository");

@@ -1,8 +1,11 @@
 import OpenTUI
 
 // The read-only settings overview (`Shell.state.settings.groups`) in place
-// of the conversation: the thread's provider and git state, then the
-// keybinding reference by context. PgUp/PgDn scroll (`scroll`), Esc closes.
+// of the conversation, like SettingsView: the thread's provider and git
+// state, then the keybinding reference by context, each group after the
+// first parted by a blank row. The host draws each row (`line`: the label
+// padded to 16, the value clipped to the pane). PgUp/PgDn scroll (`scroll`),
+// Esc closes.
 Rectangle {
     id: page
     objectName: "settingsPage"
@@ -14,6 +17,7 @@ Rectangle {
     onPaneScrollChanged: if (paneScroll.pane === "settings") scroll(paneScroll.by)
 
     border.width: 1
+    border.style: "rounded"
     border.color: Theme.colors.accent
     color: Theme.colors.bg
     flexDirection: "column"
@@ -31,23 +35,18 @@ Rectangle {
         id: body
         objectName: "settingsBody"
         flexGrow: 1
+        flexShrink: 1
+        flexBasis: 0
         Repeater {
             model: page.settings.groups
             delegate: Item {
                 flexDirection: "column"
                 flexShrink: 0
-                marginBottom: 1
+                marginTop: index > 0 ? 1 : 0
                 Text { text: modelData.title; color: Theme.colors.accent }
                 Repeater {
                     model: modelData.rows
-                    delegate: Item {
-                        height: 1
-                        Text {
-                            text: "  " + modelData.label.padEnd(16)
-                            color: modelData.keys ? Theme.colors.accent : Theme.colors.dim
-                            Span { text: modelData.value; color: Theme.colors.text }
-                        }
-                    }
+                    delegate: Text { height: 1; text: modelData.line }
                 }
             }
         }

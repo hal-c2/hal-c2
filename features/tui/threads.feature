@@ -218,7 +218,7 @@ Feature: Thread list and thread actions in the terminal
   # thread context menu (ContextMenu.tsx), the rename prompt (ChatComposer.tsx's
   # rename mode) and the delete confirmation (ThreadOverlays.tsx).
 
-  @tui @backlog
+  @tui
   Scenario: The command palette is a rounded box over the prompt
     When the user opens the command palette
     Then the palette has a rounded border in the accent colour
@@ -227,7 +227,7 @@ Feature: Thread list and thread actions in the terminal
     And the palette's last row reads "↑/↓ select · Enter run · Esc close" in the dim colour
     And the prompt is still shown under the palette
 
-  @tui @backlog
+  @tui
   Scenario: The highlighted command is marked and shows its shortcut
     When the user opens the command palette
     Then the palette's second row reads "▸ New thread  ^N"
@@ -235,13 +235,13 @@ Feature: Thread list and thread actions in the terminal
     And its "▸" is in the accent colour, "New thread" in the text colour and "^N" in the background colour
     And the palette's third row is in the dim colour
 
-  @tui @backlog
+  @tui
   Scenario: A palette with no matches says so in the dim colour
     Given the command palette is open
     When the user types "zzzz"
     Then the palette's second row reads "no matching command" in the dim colour
 
-  @tui @backlog
+  @tui
   Scenario: A long command list is windowed around the highlighted command
     Given the terminal is 100 columns wide and 24 rows tall
     And the command palette is open
@@ -249,7 +249,7 @@ Feature: Thread list and thread actions in the terminal
     Then the last command is highlighted and shown in the palette
     And "New thread" is not shown in the palette
 
-  @tui @backlog
+  @tui
   Scenario: The context menu is a rounded box whose items are dim until highlighted
     When the user opens the menu for "Alpha"
     Then the context menu has a rounded border in the faint colour
@@ -258,13 +258,13 @@ Feature: Thread list and thread actions in the terminal
     And "Delete" is in the error colour
     And every separator is a faint line as wide as the items
 
-  @tui @backlog
+  @tui
   Scenario: Pointing at a context menu item highlights it
     Given the user opened the menu for "Alpha"
     When the pointer moves over "Copy thread ID"
     Then "Copy thread ID" is highlighted
 
-  @tui @backlog
+  @tui
   Scenario: The rename prompt takes the prompt's place
     Given the user is renaming the thread "Alpha"
     Then the prompt has a rounded border in the accent colour
@@ -272,7 +272,7 @@ Feature: Thread list and thread actions in the terminal
     And "rename ▸ " is in the accent colour
     And the prompt's second row reads "Enter rename · Esc cancel" in the dim colour
 
-  @tui @backlog
+  @tui
   Scenario: The delete confirmation sits above the prompt
     Given the client is asking to confirm deleting "Alpha"
     Then a box with a rounded border in the error colour sits above the prompt

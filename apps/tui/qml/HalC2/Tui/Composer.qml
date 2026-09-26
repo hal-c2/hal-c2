@@ -10,6 +10,8 @@ import OpenTUI
 // Shift+Enter adds a line; a paste that is an image (bytes or a path) becomes
 // an attachment (`composer.paste` returns true and the text is not inserted).
 // The editor is as tall as the host's layout says (`layout.editorRows`).
+// Renaming a thread or writing a commit message swaps the box for a one-line
+// prompt in the accent colour (ChatComposer's rename and commit modes).
 Item {
     id: dock
     objectName: "composerDock"
@@ -22,6 +24,16 @@ Item {
     property alias footer: footerView
     // How plugins' "composer.actions" contributions sit next to the built-in controls.
     property alias actionsMode: footerView.actionsMode
+    // "rename", "commit" or "" (the prompt itself).
+    readonly property string auxMode: Shell.state.mode === "rename" && Shell.state.overlay !== null
+        ? "rename"
+        : Shell.state.mode === "commit" && Shell.state.git.commitPrompt !== null ? "commit" : ""
+    // Prefill the title each time a rename opens, and start each commit message
+    // empty (typing breaks a `text` binding).
+    onAuxModeChanged: {
+        if (auxMode === "rename") renameInput.text = Shell.state.overlay.title
+        if (auxMode === "commit") commitInput.text = ""
+    }
 
     width: model.surfaceWidth
     alignSelf: "center"
@@ -29,8 +41,67 @@ Item {
     flexShrink: 0
 
     Rectangle {
+        objectName: "composerAux"
+        visible: dock.auxMode !== ""
+        border.width: 1
+        border.style: "rounded"
+        border.color: Theme.colors.accent
+        color: Theme.colors.bg
+        flexDirection: "column"
+        flexShrink: 0
+        paddingX: 1
+
+        Item {
+            flexDirection: "row"
+            height: 1
+            Text {
+                flexShrink: 0
+                text: dock.auxMode === "commit" ? "commit ▸ " : "rename ▸ "
+                color: Theme.colors.accent
+            }
+            TextInput {
+                id: renameInput
+                objectName: "renameInput"
+                visible: dock.auxMode === "rename"
+                flexGrow: 1
+                height: 1
+                focus: dock.auxMode === "rename"
+                placeholderText: "New thread title…"
+                placeholderColor: Theme.colors.dim
+                cursorColor: Theme.colors.accent
+                color: Theme.colors.text
+                focusedColor: Theme.colors.text
+                backgroundColor: Theme.colors.bg
+                focusedBackgroundColor: Theme.colors.bg
+                onAccepted: Shell.dispatch("thread.rename", { key: Shell.state.overlay.threadKey, title: text })
+            }
+            TextInput {
+                id: commitInput
+                objectName: "commitMessage"
+                visible: dock.auxMode === "commit"
+                flexGrow: 1
+                height: 1
+                focus: dock.auxMode === "commit"
+                placeholderText: "Commit message…"
+                placeholderColor: Theme.colors.dim
+                cursorColor: Theme.colors.accent
+                color: Theme.colors.text
+                focusedColor: Theme.colors.text
+                backgroundColor: Theme.colors.bg
+                focusedBackgroundColor: Theme.colors.bg
+                onAccepted: Shell.dispatch("git.commit", { message: text })
+            }
+        }
+        Text {
+            text: dock.auxMode === "commit" ? "Enter commit · Esc cancel" : "Enter rename · Esc cancel"
+            color: Theme.colors.dim
+        }
+    }
+
+    Rectangle {
         id: frame
         objectName: "composer"
+        visible: dock.auxMode === ""
         border.width: 1
         border.style: "rounded"
         border.color: Theme.colors.faint

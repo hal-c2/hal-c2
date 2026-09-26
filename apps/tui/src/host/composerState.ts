@@ -107,6 +107,8 @@ export interface ComposerOptions {
   readonly onDraftChange?: () => void;
   /** The editor's rows or the composer's other rows changed: the layout follows. */
   readonly onRowsChange?: (rows: number) => void;
+  /** The popover's inner width and content rows; an open picker windows to them. */
+  readonly popover?: () => { readonly width: number; readonly maxRows: number };
   /** The agent's open question (not set aside), which the composer answers. */
   readonly question?: () => { readonly visibleOptions: number } | null;
   /** Attachment chips carry an 8×3 preview (the terminal draws inline images). */
@@ -224,6 +226,17 @@ export interface TuiSelectState {
   readonly status: "loading" | "ready" | "empty" | "error";
   readonly options: ReadonlyArray<{ readonly label: string; readonly description: string }>;
   readonly index: number;
+  /**
+   * The options in view, as SelectOverlay draws them: a window around the
+   * highlighted one, each its marked name over its description (when that
+   * says more than the name).
+   */
+  readonly rows: ReadonlyArray<{
+    readonly index: number;
+    readonly active: boolean;
+    readonly name: StyledText;
+    readonly description: StyledText | null;
+  }>;
 }
 
 interface Draft {
@@ -290,8 +303,17 @@ export interface Composer {
   readonly sync: () => void;
   /** Re-derive after a layout change (compact footer). */
   readonly relayout: () => void;
-  /** The composer's rows besides the editor, for the layout's row split. */
-  readonly chromeRows: () => number;
+  /**
+   * The composer's rows besides the editor, for the layout's row split. A
+   * one-line prompt (rename, commit, filter) drops the question, the
+   * attachments and the compact footer; a popover drops the question.
+   */
+  readonly chromeRows: (overlay: {
+    readonly oneLine: boolean;
+    readonly popover: boolean;
+  }) => number;
+  /** The rows an open picker asks for above the prompt (ChatView's pickerWanted). */
+  readonly pickerRows: () => number;
   /** Resolves when every request the composer started has settled. */
   readonly idle: () => Promise<void>;
   /** For the palette: what the composer can offer right now. */
@@ -316,6 +338,8 @@ export function createComposer(options: ComposerOptions): Composer {
   let settings: ServerSettings = DEFAULT_SERVER_SETTINGS;
   let newDraft: NewDraft | null = null;
   let picker: Picker | null = null;
+  /** The chrome rows by source, so a one-line prompt or a popover can drop some (ChatView). */
+  let chromeParts = { question: 0, attachments: 0, compact: 0, context: 0 };
   /** Set by Ctrl+Up / Ctrl+Down; null follows the text. */
   let rowsOverride: number | null = null;
   let replyPending = false;
@@ -473,12 +497,18 @@ export function createComposer(options: ComposerOptions): Composer {
     const hiddenCount = Math.max(0, attachments.length - visibleCount);
     const hasText = draft.text.length > 0 || draft.images.length > 0;
     const context = composerContext(detail);
+    chromeParts = {
+      question: question ? question.visibleOptions + 4 : 0,
+      attachments: attachments.length === 0 ? 0 : options.inlineImages ? 4 : 1,
+      compact: compact ? 1 : 0,
+      context: context ? 1 : 0,
+    };
     const chromeRows =
       4 +
-      (question ? question.visibleOptions + 4 : 0) +
-      (attachments.length === 0 ? 0 : options.inlineImages ? 4 : 1) +
-      (compact ? 1 : 0) +
-      (context ? 1 : 0);
+      chromeParts.question +
+      chromeParts.attachments +
+      chromeParts.compact +
+      chromeParts.context;
     const footerWidth = Math.max(1, surfaceWidth - 2);
     const showOptions = footerWidth >= 24;
     return {
@@ -623,6 +653,39 @@ export function createComposer(options: ComposerOptions): Composer {
     };
   };
 
+  /** SelectOverlay's window: as many two-row options as the popover holds, around the highlighted one. */
+  const selectRows = (current: Picker): TuiSelectState["rows"] => {
+    if (current.status !== "ready") return [];
+    const viewport = options.popover?.() ?? { width: 80, maxRows: 10 };
+    const labelRoom = Math.max(8, viewport.width - 6);
+    const window = Math.max(1, Math.floor(viewport.maxRows / 2));
+    const start = Math.min(
+      Math.max(0, current.index - Math.floor(window / 2)),
+      Math.max(0, current.options.length - window),
+    );
+    return current.options.slice(start, start + window).map((option, offset) => {
+      const index = start + offset;
+      const active = index === current.index;
+      const description =
+        option.description && option.description !== option.label ? option.description : null;
+      return {
+        index,
+        active,
+        name: styled(
+          chunk(active ? "▸ " : "  ", { fg: active ? palette.accent : palette.dim }),
+          chunk(clip(option.label, labelRoom), { fg: active ? palette.text : palette.dim }),
+        ),
+        description: description
+          ? styled(
+              chunk(`    ${clip(description, labelRoom)}`, {
+                fg: active ? palette.bg : palette.dim,
+              }),
+            )
+          : null,
+      };
+    });
+  };
+
   const selectState = (): TuiSelectState =>
     picker
       ? {
@@ -632,6 +695,7 @@ export function createComposer(options: ComposerOptions): Composer {
           status: picker.status,
           options: picker.options.map(({ label, description }) => ({ label, description })),
           index: picker.index,
+          rows: selectRows(picker),
         }
       : {
           open: false,
@@ -640,13 +704,16 @@ export function createComposer(options: ComposerOptions): Composer {
           status: "empty",
           options: [],
           index: 0,
+          rows: [],
         };
+  const pickerRows = () => (picker ? Math.max(picker.options.length, 1) * 2 + 3 : 0);
 
   let lastComposer = "";
   let lastNewThread = "";
   let lastRows = 0;
   let lastChrome = 0;
   let lastSelect = "";
+  let lastPickerRows = 0;
   const publish = () => {
     const composer = composerState();
     // Previews compare by size: stringifying their bytes on every keystroke is costly.
@@ -673,6 +740,11 @@ export function createComposer(options: ComposerOptions): Composer {
     if (selectJson !== lastSelect) {
       lastSelect = selectJson;
       state.set("select", select);
+    }
+    // A picker's options arrived or changed: the layout gives it its rows.
+    if (pickerRows() !== lastPickerRows) {
+      lastPickerRows = pickerRows();
+      options.onRowsChange?.(composer.rows);
     }
   };
 
@@ -1709,7 +1781,13 @@ export function createComposer(options: ComposerOptions): Composer {
     draft: () => (newDraft ? { draftId: newDraft.draftId, projectId: newDraft.projectId } : null),
     sync,
     relayout: publish,
-    chromeRows: () => lastChrome || 4,
+    chromeRows: (overlay) =>
+      4 +
+      (overlay.oneLine || overlay.popover ? 0 : chromeParts.question) +
+      (overlay.oneLine ? 0 : chromeParts.attachments) +
+      (overlay.oneLine ? 0 : chromeParts.compact) +
+      chromeParts.context,
+    pickerRows,
     idle: async () => {
       while (inflight.size > 0) await Promise.allSettled([...inflight]);
     },

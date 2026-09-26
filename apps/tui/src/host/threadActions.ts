@@ -4,20 +4,28 @@ import type { PropertyMap } from "opentui-qml";
 import type { TuiClient } from "../connection.ts";
 import {
   firstContextMenuIndex,
+  isSelectable,
   moveContextMenuIndex,
   resolveContextMenuLayout,
 } from "../components/ContextMenu.logic.ts";
+import { clip } from "../format.ts";
 import type { Row } from "../components/Sidebar.logic.ts";
 import type { TuiThreadShell } from "../orchestrationV2Adapter.ts";
 import type { Store } from "../store.ts";
+import { THEME } from "../theme.ts";
 import { buildThreadContextMenuItems, type ThreadContextMenuAction } from "../threadMenu.logic.ts";
 import type { TuiMode, TuiSize } from "./layoutState.ts";
 import type { PaletteCommand } from "./paletteState.ts";
 import { idFromKey, projectKey, threadKey } from "./sidebarState.ts";
+import { chunk, styled, type StyledText } from "./styledText.ts";
 
-/** One painted line of the open menu: a divider or an item (`index` into `items`). */
+/**
+ * One painted line of the open menu: a divider or an item (`index` into
+ * `items`), with its text as ContextMenu.tsx draws it; an active item sits on
+ * the selected background.
+ */
 export type TuiContextMenuRow =
-  | { readonly kind: "separator"; readonly key: string }
+  | { readonly kind: "separator"; readonly key: string; readonly text: StyledText }
   | {
       readonly kind: "item";
       readonly key: string;
@@ -27,6 +35,8 @@ export type TuiContextMenuRow =
       readonly disabled: boolean;
       readonly destructive: boolean;
       readonly selected: boolean;
+      readonly active: boolean;
+      readonly text: StyledText;
     };
 
 /**
@@ -46,10 +56,18 @@ export interface TuiContextMenuState {
   readonly rows: ReadonlyArray<TuiContextMenuRow>;
 }
 
-/** Published under `overlay`: the rename prompt or the delete confirmation. */
+/**
+ * Published under `overlay`: the rename prompt or the delete confirmation; the
+ * confirmation's `line` is ConfirmDeleteMenu's first row.
+ */
 export type TuiOverlayState =
   | { readonly kind: "rename"; readonly threadKey: string; readonly title: string }
-  | { readonly kind: "confirmDelete"; readonly threadKey: string; readonly title: string }
+  | {
+      readonly kind: "confirmDelete";
+      readonly threadKey: string;
+      readonly title: string;
+      readonly line: StyledText;
+    }
   | null;
 
 export interface ThreadActionsContext {
@@ -110,8 +128,24 @@ export function createThreadActions(ctx: ThreadActionsContext) {
     if (menu) {
       let separators = 0;
       const rows: TuiContextMenuRow[] = [];
+      // Inside the border and a cell of padding on each side.
+      const labelWidth = Math.max(1, menu.width - 4);
       menu.items.forEach((item, index) => {
-        if (item.separatorBefore) rows.push({ kind: "separator", key: `sep:${separators++}` });
+        if (item.separatorBefore) {
+          rows.push({
+            kind: "separator",
+            key: `sep:${separators++}`,
+            text: styled(chunk("─".repeat(labelWidth), { fg: THEME.faint })),
+          });
+        }
+        const active = index === menu!.selectedIndex && isSelectable(item);
+        const colour = item.destructive
+          ? THEME.error
+          : item.disabled || item.header
+            ? THEME.faint
+            : active
+              ? THEME.text
+              : THEME.dim;
         rows.push({
           kind: "item",
           key: item.id,
@@ -121,6 +155,11 @@ export function createThreadActions(ctx: ThreadActionsContext) {
           disabled: item.disabled === true || item.header === true,
           destructive: item.destructive === true,
           selected: index === menu!.selectedIndex,
+          active,
+          text: styled(
+            chunk(active ? "▸ " : "  ", { fg: active ? THEME.accent : THEME.faint }),
+            chunk(clip(item.label, labelWidth - 2), { fg: colour }),
+          ),
         });
       });
       menu = { ...menu, rows };
@@ -212,6 +251,11 @@ export function createThreadActions(ctx: ThreadActionsContext) {
           kind: "confirmDelete",
           threadKey: threadKey(thread.id),
           title: thread.title,
+          line: styled(
+            chunk("delete ", { fg: THEME.error }),
+            chunk(clip(thread.title, 48), { fg: THEME.text }),
+            chunk(" — this can't be undone", { fg: THEME.dim }),
+          ),
         });
     }
   };
@@ -308,6 +352,14 @@ export function createThreadActions(ctx: ThreadActionsContext) {
           ...menu,
           selectedIndex: moveContextMenuIndex(menu.items, menu.selectedIndex, delta),
         };
+        publishMenu();
+        return true;
+      }
+      case "contextMenu.hover": {
+        // The pointer over an item selects it (ContextMenu.tsx's onMouseMove).
+        const index = Number(field(payload, "index"));
+        if (!menu || index === menu.selectedIndex || !isSelectable(menu.items[index])) return true;
+        menu = { ...menu, selectedIndex: index };
         publishMenu();
         return true;
       }

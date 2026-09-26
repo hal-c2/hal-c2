@@ -3,15 +3,12 @@ import OpenTUI
 // The source-control panel (RightPanel.tsx): where the branch stands
 // (`Shell.state.git`, clipped to the panel by the host) and the actions that
 // move it forward. Keys come from the shell's panel-mode
-// shortcuts; a commit asks for its message at the bottom (commit mode).
+// shortcuts; a commit asks for its message in the prompt's place (Composer).
 Rectangle {
     id: panel
     objectName: "sourceControlPanel"
     readonly property var git: Shell.state.git
     readonly property bool focused: Shell.state.layout.rightPanel.focused
-    readonly property var prompt: git.commitPrompt
-    // Typing breaks a `text` binding: start each prompt empty by hand.
-    onPromptChanged: commitInput.text = ""
 
     border.width: 1
     border.style: "rounded"
@@ -67,29 +64,4 @@ Rectangle {
     }
 
     GitActions { marginTop: 1; focused: panel.focused }
-
-    Item {
-        objectName: "commitPrompt"
-        visible: panel.prompt !== null
-        flexDirection: "column"
-        marginTop: 1
-        Text {
-            text: "Commit message for " + (panel.prompt ? panel.prompt.label : "") + " · Enter commit · Esc cancel"
-            color: Theme.colors.accent
-            wrapMode: Text.Wrap
-        }
-        TextInput {
-            id: commitInput
-            objectName: "commitMessage"
-            height: 1
-            focus: Shell.state.mode === "commit"
-            placeholderText: "Commit message"
-            placeholderColor: Theme.colors.faint
-            color: Theme.colors.text
-            focusedColor: Theme.colors.text
-            backgroundColor: Theme.colors.bg
-            focusedBackgroundColor: Theme.colors.bg
-            onAccepted: Shell.dispatch("git.commit", { message: text })
-        }
-    }
 }

@@ -1,6 +1,7 @@
 import OpenTUI
 
-// Pick a checkpoint to revert the thread to (Shell.state.revert), newest first.
+// Pick a checkpoint to revert the thread to (Shell.state.revert, RevertMenu in
+// ThreadOverlays.tsx): a rounded error box above the prompt, newest first.
 // Open in the host's "revert" mode: ↑/↓ select, Enter reverts, Esc cancels.
 Rectangle {
     id: picker
@@ -13,15 +14,13 @@ Rectangle {
     border.width: 1
     border.style: "rounded"
     border.color: Theme.colors.error
+    color: Theme.colors.bg
     paddingX: 1
 
-    Text { text: picker.revert.title; color: Theme.colors.error }
+    Text { text: picker.revert.title }
     Repeater {
         model: picker.revert.rows
-        delegate: Text {
-            text: modelData.text
-            color: modelData.active ? Theme.colors.text : Theme.colors.dim
-        }
+        delegate: Text { height: 1; wrapMode: "none"; text: modelData.text }
     }
     Text {
         visible: picker.revert.rows.length === 0

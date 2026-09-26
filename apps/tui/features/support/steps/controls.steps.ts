@@ -931,8 +931,9 @@ step("Codex and Claude models are listed with their provider names", async (ctx:
     ["Opus", "Claude"],
   ]);
   const text = await snapshot(ctx);
-  expect(text).toMatch(/GPT-5 Codex\s+Codex/);
-  expect(text).toMatch(/Opus\s+Claude/);
+  // Each option is its name over its description, as in the OpenTUI picker.
+  expect(text).toMatch(/GPT-5 Codex[\s│]+Codex/);
+  expect(text).toMatch(/Opus[\s│]+Claude/);
 });
 
 step("no Grok model is listed", async (ctx: World) => {

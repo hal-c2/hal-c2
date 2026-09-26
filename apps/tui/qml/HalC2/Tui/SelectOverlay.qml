@@ -1,8 +1,9 @@
 import OpenTUI
 
-// The one open picker from `Shell.state.select`: model, effort, access,
-// workspace or branch. ↑/↓, Enter and Esc come from the shell's keymap; rows
-// are clickable.
+// The one open picker from `Shell.state.select` (SelectOverlay.tsx): model,
+// effort, access, workspace or branch, in a rounded accent box above the
+// prompt. ↑/↓, Enter and Esc come from the shell's keymap; options are
+// clickable. The host windows and paints the rows.
 Rectangle {
     id: overlay
     objectName: "selectOverlay"
@@ -10,40 +11,40 @@ Rectangle {
 
     visible: model.open
     border.width: 1
+    border.style: "rounded"
     border.color: Theme.colors.accent
-    title: " " + model.title + " "
-    titleColor: Theme.colors.dim
     color: Theme.colors.bg
     flexDirection: "column"
     flexShrink: 0
     paddingX: 1
 
     Text {
-        visible: overlay.model.status !== "ready"
+        Span { text: overlay.model.title + " ▸ "; color: Theme.colors.accent }
+        Span { text: "↑/↓ or click · Enter apply · Esc cancel"; color: Theme.colors.dim }
+    }
+
+    Text {
+        objectName: "selectStatus"
+        visible: overlay.model.rows.length === 0
         text: overlay.model.status === "loading"
-            ? "Loading…"
-            : overlay.model.status === "error" ? "Could not load the options." : "Nothing to choose from."
-        color: Theme.colors.faint
+            ? "loading…"
+            : overlay.model.status === "error" ? "failed to load" : "nothing to choose"
+        color: overlay.model.status === "error" ? Theme.colors.error : Theme.colors.dim
     }
 
     Repeater {
-        model: overlay.model.options
-        delegate: Item {
-            flexDirection: "row"
-            height: 1
+        model: overlay.model.rows
+        delegate: Rectangle {
+            flexDirection: "column"
+            flexShrink: 0
+            color: modelData.active ? Theme.colors.selectedBg : Theme.colors.bg
+            onMouseDown: Shell.dispatch("select.choose", { index: modelData.index })
+            Text { height: 1; wrapMode: "none"; text: modelData.name }
             Text {
-                flexShrink: 0
+                visible: modelData.description !== null
+                height: 1
                 wrapMode: "none"
-                text: (index === overlay.model.index ? "▸ " : "  ") + modelData.label
-                color: index === overlay.model.index ? Theme.colors.accent : Theme.colors.text
-                onMouseDown: Shell.dispatch("select.choose", { index: index })
-            }
-            Text {
-                flexShrink: 1
-                wrapMode: "none"
-                truncate: true
-                text: "  " + modelData.description
-                color: Theme.colors.faint
+                text: modelData.description !== null ? modelData.description : ""
             }
         }
     }

@@ -36,7 +36,7 @@ Feature: Settings in the terminal client
   # The OpenTUI client's SettingsView: it takes the conversation pane's place
   # only; the prompt stays, and the detail panel steps aside while it is open.
 
-  @tui @backlog
+  @tui
   Scenario: Settings takes the conversation's place and keeps the prompt
     When the user chooses "Settings" from the command palette
     Then the settings pane has a rounded border in the accent colour
@@ -44,7 +44,7 @@ Feature: Settings in the terminal client
     And "settings" is in the accent colour and "  ·  PgUp/PgDn scroll · Esc close" in the dim colour
     And the prompt is still shown under the settings pane
 
-  @tui @backlog
+  @tui
   Scenario: Settings lines up its labels and parts its groups with a blank row
     When the user chooses "Settings" from the command palette
     Then the settings pane's rows start:
@@ -60,7 +60,7 @@ Feature: Settings in the terminal client
     And the labels are in the dim colour and the values in the text colour
     And every key binding's keys are padded to 16 cells in the accent colour
 
-  @tui @backlog
+  @tui
   Scenario: The source-control panel steps aside while settings are open
     Given the terminal is 150 columns wide
     And the source-control panel is open beside the conversation

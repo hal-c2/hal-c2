@@ -1,9 +1,10 @@
 import OpenTUI
 
 // The open context menu (`Shell.state.contextMenu`, null when closed): a
-// bordered box at the host-clamped position over everything else. Clicking
-// an item selects it, clicking anywhere else dismisses the menu; the shell's
-// keys move and choose (`contextMenu.move`, `contextMenu.select`).
+// rounded faint box at the host-clamped position over everything else
+// (ContextMenu.tsx). The pointer over an item highlights it, clicking runs it,
+// clicking anywhere else dismisses the menu; the shell's keys move and choose
+// (`contextMenu.move`, `contextMenu.select`).
 Item {
     id: layer
     objectName: "contextMenuLayer"
@@ -29,16 +30,22 @@ Item {
         width: layer.menu ? layer.menu.width : 0
         height: layer.menu ? layer.menu.height : 0
         border.width: 1
-        border.color: Theme.colors.accent
+        border.style: "rounded"
+        border.color: Theme.colors.faint
         color: Theme.colors.bg
         flexDirection: "column"
+        paddingX: 1
+        overflow: "hidden"
         onMouseDown: (mouse) => { mouse.accepted = true }
 
+        // Painted by the host (threadActions): the marker and label, or a divider.
         Repeater {
             model: layer.menu ? layer.menu.rows : []
-            delegate: Item {
+            delegate: Rectangle {
                 height: 1
-                flexDirection: "row"
+                flexShrink: 0
+                color: modelData.kind === "item" && modelData.active ? Theme.colors.selectedBg : Theme.colors.bg
+                onMouseMove: if (modelData.kind === "item") Shell.dispatch("contextMenu.hover", { index: modelData.index })
                 onMouseDown: (mouse) => {
                     mouse.accepted = true
                     if (modelData.kind === "item" && !modelData.disabled)
@@ -46,13 +53,8 @@ Item {
                 }
                 Text {
                     flexGrow: 1
-                    text: modelData.kind === "separator"
-                        ? "─".repeat(Math.max(0, box.width - 2))
-                        : (modelData.selected ? "▸ " : "  ") + modelData.label
-                    color: modelData.kind === "separator" || modelData.disabled
-                        ? Theme.colors.faint
-                        : modelData.destructive ? Theme.colors.error
-                        : modelData.selected ? Theme.colors.accent : Theme.colors.text
+                    wrapMode: "none"
+                    text: modelData.text
                 }
             }
         }

@@ -154,7 +154,7 @@ Feature: Source control from the terminal
     When the user presses "Esc"
     Then no commit is made
 
-  @tui @backlog
+  @tui
   Scenario: The commit prompt takes the prompt's place
     Given the prompt is asking for a commit message
     Then the prompt has a rounded border in the accent colour

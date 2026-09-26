@@ -1,7 +1,10 @@
 import type { PropertyMap } from "opentui-qml";
 
 import { filterCommands, type Command } from "../commands.ts";
+import { clip } from "../format.ts";
+import { THEME } from "../theme.ts";
 import type { TuiMode } from "./layoutState.ts";
+import { chunk, styled, type StyledText } from "./styledText.ts";
 
 // The command palette (^K): a query over the commands the current context
 // offers. Each command is a host action, so running one is the same as
@@ -28,6 +31,15 @@ export interface TuiPaletteState {
     readonly hint: string;
   }>;
   readonly index: number;
+  /**
+   * The commands in view, as CommandPalette draws them: a window around the
+   * highlighted one, each row marked, clipped and followed by its shortcut.
+   */
+  readonly rows: ReadonlyArray<{
+    readonly index: number;
+    readonly active: boolean;
+    readonly text: StyledText;
+  }>;
 }
 
 export interface PaletteContext {
@@ -123,6 +135,8 @@ export interface PaletteOptions {
   readonly extraCommands?: () => ReadonlyArray<PaletteCommand>;
   /** Run a command's action through the host. */
   readonly run: (action: string, payload?: unknown) => void;
+  /** The palette's inner width and the rows its list may take. */
+  readonly viewport?: () => { readonly width: number; readonly maxRows: number };
 }
 
 export interface Palette {
@@ -133,7 +147,35 @@ export interface Palette {
   readonly isOpen: () => boolean;
 }
 
-const CLOSED: TuiPaletteState = { open: false, query: "", commands: [], index: 0 };
+const CLOSED: TuiPaletteState = { open: false, query: "", commands: [], index: 0, rows: [] };
+
+/** CommandPalette's rows: a window of `maxRows` around the highlighted command. */
+export function paletteRows(
+  commands: ReadonlyArray<{ readonly title: string; readonly hint?: string | undefined }>,
+  selectedIndex: number,
+  width: number,
+  maxRows: number,
+): TuiPaletteState["rows"] {
+  const labelRoom = Math.max(8, width - 12);
+  const window = Math.max(1, maxRows);
+  const start = Math.min(
+    Math.max(0, selectedIndex - Math.floor(window / 2)),
+    Math.max(0, commands.length - window),
+  );
+  return commands.slice(start, start + window).map((command, offset) => {
+    const index = start + offset;
+    const active = index === selectedIndex;
+    return {
+      index,
+      active,
+      text: styled(
+        chunk(active ? "▸ " : "  ", { fg: active ? THEME.accent : THEME.dim }),
+        chunk(clip(command.title, labelRoom), { fg: active ? THEME.text : THEME.dim }),
+        command.hint ? chunk(`  ${command.hint}`, { fg: active ? THEME.bg : THEME.dim }) : null,
+      ),
+    };
+  });
+}
 
 export function createPalette(options: PaletteOptions): Palette {
   let open = false;
@@ -159,6 +201,7 @@ export function createPalette(options: PaletteOptions): Palette {
     }
     listed = filtered();
     index = listed.length === 0 ? 0 : Math.min(index, listed.length - 1);
+    const viewport = options.viewport?.() ?? { width: 80, maxRows: 10 };
     options.state.set("palette", {
       open: true,
       query,
@@ -168,6 +211,13 @@ export function createPalette(options: PaletteOptions): Palette {
         hint: command.hint ?? "",
       })),
       index,
+      rows: paletteRows(
+        listed,
+        index,
+        viewport.width,
+        // The list's rows less the hint (ChatView's pickerContentRows - 1).
+        Math.max(1, viewport.maxRows - 1),
+      ),
     } satisfies TuiPaletteState);
   };
 

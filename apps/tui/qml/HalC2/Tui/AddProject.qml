@@ -1,8 +1,9 @@
 import OpenTUI
 
-// Adding a project, from `Shell.state.addProject`: the source list, then a
-// folder path (with the folders under it) or a repository to clone. With no
-// projects yet and the flow closed, it is the invitation to add one instead.
+// Adding a project, from `Shell.state.addProject` (AddProjectOverlay.tsx): a
+// rounded accent box above the prompt with the field and its action, the
+// step's title and keys, the repository being cloned, and the source or
+// folder rows. Tab moves the keys between the field and the list.
 Rectangle {
     id: panel
     objectName: "addProject"
@@ -12,36 +13,16 @@ Rectangle {
     readonly property string query: flow.query
     onQueryChanged: if (input.text !== query) input.text = query
 
-    border.width: panel.flow.open ? 1 : 0
+    visible: flow.open
+    border.width: 1
+    border.style: "rounded"
     border.color: Theme.colors.accent
     color: Theme.colors.bg
     flexDirection: "column"
+    flexShrink: 0
     paddingX: 1
 
-    Item {
-        visible: !panel.flow.open
-        flexDirection: "column"
-        paddingY: 1
-        Text {
-            objectName: "addProjectInviteTitle"
-            text: "What should we work on?"
-            color: Theme.colors.text
-            font.bold: true
-        }
-        Text {
-            text: "Add a project to start your first thread."
-            color: Theme.colors.dim
-        }
-        Text {
-            objectName: "addProjectInviteAction"
-            text: "[ Add project ]"
-            color: Theme.colors.accent
-            onMouseDown: Shell.dispatch("project.add")
-        }
-    }
-
     Row {
-        visible: panel.flow.open
         height: 1
         Text {
             flexShrink: 0
@@ -51,79 +32,68 @@ Rectangle {
         TextInput {
             id: input
             objectName: "addProjectInput"
+            visible: !panel.flow.listFocused
             flexGrow: 1
             height: 1
-            focus: panel.flow.open && Shell.state.mode === "project"
+            focus: panel.flow.open && !panel.flow.listFocused && Shell.state.mode === "project"
             placeholderText: panel.flow.placeholder
+            placeholderColor: Theme.colors.dim
+            cursorColor: Theme.colors.accent
             color: Theme.colors.text
             focusedColor: Theme.colors.text
             backgroundColor: Theme.colors.bg
             focusedBackgroundColor: Theme.colors.bg
             onTextEdited: Shell.dispatch("project.add.input", { text: text })
+            // A focused field keeps Enter from the shell's keys, so it acts itself.
             onAccepted: Shell.dispatch("project.add.activate")
         }
-    }
-    Row {
-        visible: panel.flow.open
-        height: 1
         Text {
-            objectName: "addProjectTitle"
+            objectName: "addProjectField"
+            visible: panel.flow.listFocused
+            flexGrow: 1
+            wrapMode: "none"
+            text: panel.flow.field
+            onMouseDown: Shell.dispatch("project.add.focusInput")
+        }
+        Text {
+            objectName: "addProjectAction"
             flexShrink: 0
-            text: panel.flow.title + " ▸ "
-            color: Theme.colors.accent
-        }
-        Text {
-            flexShrink: 1
-            truncate: true
             wrapMode: "none"
-            text: panel.flow.pending ? "working…" : panel.flow.hint
-            color: Theme.colors.dim
-        }
-    }
-    Item {
-        visible: panel.flow.open && panel.flow.repository !== null
-        flexDirection: "column"
-        paddingLeft: 2
-        Text { text: "Repository"; color: Theme.colors.dim }
-        Text {
-            text: panel.flow.repository ? panel.flow.repository.title : ""
-            color: Theme.colors.text
-            truncate: true
-            wrapMode: "none"
-        }
-        Text {
-            text: panel.flow.repository ? panel.flow.repository.description : ""
-            color: Theme.colors.dim
-            truncate: true
-            wrapMode: "none"
+            onMouseDown: Shell.dispatch("project.add.action")
+            Span { text: "  "; color: Theme.colors.dim }
+            Span { text: panel.flow.actionLabel; color: Theme.colors.accent }
         }
     }
     Text {
+        objectName: "addProjectTitle"
+        text: panel.flow.header
+    }
+    Item {
+        visible: panel.flow.context !== null
+        flexDirection: "column"
+        paddingLeft: 2
+        Text { text: "Repository"; color: Theme.colors.dim }
+        Text { wrapMode: "none"; text: panel.flow.context ? panel.flow.context.title : "" }
+        Text { wrapMode: "none"; text: panel.flow.context ? panel.flow.context.description : "" }
+    }
+    Text {
         objectName: "addProjectMessage"
-        visible: panel.flow.open && panel.flow.rows.length === 0 && panel.flow.message !== ""
-        text: panel.flow.message
-        color: panel.flow.status === "error" ? Theme.colors.error : Theme.colors.dim
+        visible: panel.flow.messageLine !== null
+        text: panel.flow.messageLine ?? ""
     }
     Repeater {
-        model: panel.flow.open ? panel.flow.rows : []
-        delegate: Row {
-            height: 1
-            onMouseDown: Shell.dispatch("project.add.select", { index: modelData.index })
+        model: panel.flow.rows
+        delegate: Rectangle {
+            flexDirection: "column"
+            flexShrink: 0
+            color: modelData.selected ? Theme.colors.selectedBg : Theme.colors.bg
+            onMouseDown: if (!modelData.disabled) Shell.dispatch("project.add.select", { index: modelData.index })
+            Text { height: 1; wrapMode: "none"; text: modelData.line }
             Text {
-                flexShrink: 0
-                text: (modelData.selected ? "▸ " : "  ") + modelData.title
-                    + (modelData.disabled ? " · needs setup" : "")
-                color: modelData.disabled
-                    ? Theme.colors.faint
-                    : modelData.selected ? Theme.colors.text : Theme.colors.dim
-                font.bold: modelData.selected
-            }
-            Text {
-                flexShrink: 1
-                truncate: true
+                visible: modelData.detail !== null
+                height: 1
                 wrapMode: "none"
-                text: modelData.description !== "" ? "  " + modelData.description : ""
-                color: Theme.colors.faint
+                text: modelData.detail ?? ""
             }
         }
     }

@@ -29,4 +29,5 @@ TerminalDrawer 1.0 TerminalDrawer.qml
 FilesPanel 1.0 FilesPanel.qml
 FileViewer 1.0 FileViewer.qml
 AddProject 1.0 AddProject.qml
+AddProjectInvite 1.0 AddProjectInvite.qml
 ShellKeymap 1.0 ShellKeymap.qml

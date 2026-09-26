@@ -262,11 +262,7 @@ step("the changed files are not listed one by one", async (ctx: World) => {
   for (const file of scm(ctx).status!.workingTree.files) expect(rows).not.toContain(file.path);
 });
 
-step('"◰ PR #42" is in the success colour and "open ↗" in the dim colour', async (ctx: World) => {
-  const inner = panelInner(ctx);
-  expectColour((await textWithin(ctx, inner, "◰ PR #42")).span.fg, THEME.success);
-  expectColour((await textWithin(ctx, inner, "open ↗")).span.fg, THEME.dim);
-});
+// "◰ PR #42" is in the success colour and "open ↗" in the dim colour: overlays.steps.ts.
 
 step("the branch is named {string}", (ctx: World, name: string) => {
   setCheckout(ctx, vcsStatus({ refName: name }));
@@ -387,7 +383,7 @@ step("the prompt asks for a commit message", async (ctx: World) => {
   expect(hostMode(ctx)).toBe("commit");
   expect(gitState(ctx).commitPrompt).not.toBeNull();
   expect(findObject(ctx, "commitMessage").get("focused")).toBe(true);
-  expect(screen).toContain("Commit message for");
+  expect(screen).toContain("commit ▸ ");
   expect(ctx.fake!.gitCalls).toEqual([]);
 });
 
@@ -420,7 +416,7 @@ step("no commit is made", async (ctx: World) => {
   expect(ctx.fake!.gitCalls).toEqual([]);
   expect(gitState(ctx).commitPrompt).toBeNull();
   expect(hostMode(ctx)).not.toBe("commit");
-  expect(screen).not.toContain("Commit message for");
+  expect(screen).not.toContain("commit ▸ ");
 });
 
 step("the branch is pushed without asking for a commit message", async (ctx: World) => {

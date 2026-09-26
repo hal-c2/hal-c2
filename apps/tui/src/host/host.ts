@@ -5,7 +5,7 @@ import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@hal-c2/contracts";
 import { createComputed, createPropertyMap, createRoot, type PropertyMap } from "opentui-qml";
 
 import type { TuiClient, TuiConnectionPhase } from "../connection.ts";
-import { resolveSidebarListViewport, STATUS_ROWS } from "../components/ChatView.layout.ts";
+import { resolveSidebarListViewport } from "../components/ChatView.layout.ts";
 import {
   buildRows,
   nextSidebarRefreshAt,
@@ -300,22 +300,35 @@ export function createHost(options: HostOptions): Host {
     onQuestionChange: () => composer?.sync(),
   });
   let layout: TuiLayoutState;
+  // The rows each popover above the prompt asks for, as ChatView sums them.
+  const wantedPopoverRows = () =>
+    (addProject.isOpen() ? Math.floor(size.rows * 0.55) : 0) +
+    (composer?.pickerRows() ?? 0) +
+    (palette.isOpen() ? Math.floor(size.rows * 0.5) : 0) +
+    (mode === "revert"
+      ? Math.min(revertableCheckpoints(store.getState().detail?.checkpoints ?? []).length, 8) + 3
+      : 0) +
+    (mode === "confirmDelete" ? 4 : 0);
   const publishLayout = () => {
     const previous = layout;
+    const popoverOpen = wantedPopoverRows() > 0 || mode === "contextMenu";
+    // ChatView's rename, commit and filter focus: the prompt is one line.
+    const oneLineComposer = mode === "rename" || mode === "commit" || mode === "filter";
     layout = buildTuiLayoutState({
       size,
       sidebarCollapsed,
-      // Like ChatView, the panel hides (without closing) while the files,
-      // diff or image view has the conversation pane.
-      rightPanel: filesOpen || threadView.paneReplaced() ? null : rightPanel,
+      // Like ChatView, the panel hides (without closing) while settings, the
+      // files, diff or image view has the conversation pane.
+      rightPanel: filesOpen || settingsOpen || threadView.paneReplaced() ? null : rightPanel,
       rightPanelFocused,
       mode,
       // The drawer slot follows the selected thread's terminal.
       drawerOpen: terminal.visible(),
       drawerRows: terminal.preferredRows(),
-      editorRows,
-      popoverRows: popoverRows + (palette.isOpen() ? Math.floor(size.rows * 0.5) : 0),
-      composerChromeRows: composer?.chromeRows(),
+      editorRows: oneLineComposer ? 1 : editorRows,
+      popoverRows: popoverRows + wantedPopoverRows(),
+      oneLineEditor: popoverOpen || oneLineComposer,
+      composerChromeRows: composer?.chromeRows({ oneLine: oneLineComposer, popover: popoverOpen }),
     });
     state.set("layout", layout);
     // The list's rows are drawn to its width and windowed to its height.
@@ -328,6 +341,21 @@ export function createHost(options: HostOptions): Host {
     sourceControl.resize();
     // The footer's compact form follows the conversation width.
     composer?.relayout();
+    // The palette and the add-project list window to the rows they were given.
+    if (previous?.chatWidth !== layout.chatWidth || previous?.popoverRows !== layout.popoverRows) {
+      palette.sync();
+      addProject.relayout();
+    }
+    if (settingsOpen && previous?.chatWidth !== layout.chatWidth) publishSettings();
+  };
+  /** The popover's inner width and content rows (ChatView's mainWidth - 4 and pickerContentRows). */
+  const popoverViewport = () => {
+    // Before the first layout (while the host is built) nothing is open.
+    const current = layout as TuiLayoutState | undefined;
+    return {
+      width: Math.max(1, (current?.chatWidth ?? size.columns) - 4),
+      maxRows: Math.max(2, (current?.popoverRows ?? 0) - 3),
+    };
   };
   const publishSettings = () => {
     const current = store.getState();
@@ -337,6 +365,8 @@ export function createHost(options: HostOptions): Host {
         active: settingsOpen,
         detail: current.detail,
         vcsStatus: current.vcsStatus,
+        // Before the first layout the pane is the whole terminal.
+        width: (layout as TuiLayoutState | undefined)?.chatWidth ?? size.columns,
       }),
     );
   };
@@ -552,7 +582,10 @@ export function createHost(options: HostOptions): Host {
     },
     // Pending the settings key: new paths start in the home folder.
     baseDirectory: () => null,
-    height: () => size.rows - STATUS_ROWS,
+    viewport: () => {
+      const { width, maxRows } = popoverViewport();
+      return { width, maxRows: Math.max(4, maxRows) };
+    },
     setOpen: (open) => setMode(open ? "project" : restingMode()),
     // The new project opens on a new-thread draft.
     openDraft: (projectId) => dispatch("thread.new", { projectKey: projectKey(projectId) }),
@@ -574,6 +607,7 @@ export function createHost(options: HostOptions): Host {
     mode: () => mode,
     setMode,
     chatWidth: () => layout.chatWidth,
+    popover: () => popoverViewport(),
     question: () => threadView.question(),
     inlineImages: (options.inlineImages ?? null) !== null,
     env: options.env ?? { VISUAL: process.env.VISUAL, EDITOR: process.env.EDITOR },
@@ -594,6 +628,7 @@ export function createHost(options: HostOptions): Host {
   });
   const palette = createPalette({
     state,
+    viewport: () => popoverViewport(),
     mode: () => mode,
     setMode,
     context: () => {
@@ -698,10 +733,8 @@ export function createHost(options: HostOptions): Host {
         return handle("checkpoint.revert.move", { delta: 1 });
       case "settings.scrollUp":
       case "settings.scrollDown":
-        return scrollPane(
-          "settings",
-          (action === "settings.scrollUp" ? -1 : 1) * Math.max(1, size.rows - 4),
-        );
+        // ChatView scrolls the settings pane by its SCROLL_STEP of 8 rows.
+        return scrollPane("settings", action === "settings.scrollUp" ? -8 : 8);
       case "diff.scrollUp":
         return scrollPane("diff", -10);
       case "diff.scrollDown":
@@ -833,6 +866,8 @@ export function createHost(options: HostOptions): Host {
         settingsOpen = false;
         publishSettings();
         if (mode === "settings") setMode(restingMode());
+        // The detail panel comes back.
+        publishLayout();
         return true;
       case "terminal.toggle":
         terminal.toggle();

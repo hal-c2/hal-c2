@@ -1,11 +1,10 @@
 // Adding a project (palette → Add project), host side: pick a source, then a
 // local folder to register, or a repository and the folder to clone it into.
-// Port of ChatView's add-project flow; the AddProject brick paints
-// `addProject` and dispatches `project.add.*`.
+// Port of ChatView's add-project flow and AddProjectOverlay.tsx's rows; the
+// AddProject brick paints `addProject` and dispatches `project.add.*`.
 import type { FilesystemBrowseResult, SourceControlDiscoveryResult } from "@hal-c2/contracts";
 import {
   addProjectRemoteSourceLabel,
-  addProjectRemoteSourcePathHint,
   buildAddProjectRemoteSourceReadiness,
   getAddProjectInitialQuery,
   getCloneDestinationPath,
@@ -27,7 +26,10 @@ import {
 } from "@hal-c2/client-runtime/state/projects";
 
 import type { TuiClient } from "../connection.ts";
+import { clip } from "../format.ts";
 import type { Store } from "../store.ts";
+import { THEME } from "../theme.ts";
+import { chunk, styled, type StyledText } from "./styledText.ts";
 
 type Step = "source" | "local" | "repository" | "destination";
 
@@ -39,6 +41,10 @@ export interface TuiAddProjectRow {
   /** A source that needs setup first; choosing it says what to do. */
   readonly disabled: boolean;
   readonly selected: boolean;
+  /** The marker and title (and "setup required"), as AddProjectOverlay draws them. */
+  readonly line: StyledText;
+  /** The indented description row, when there is one. */
+  readonly detail: StyledText | null;
 }
 
 /** Published under `addProject`. */
@@ -51,12 +57,24 @@ export interface TuiAddProjectState {
   readonly query: string;
   readonly placeholder: string;
   readonly hint: string;
+  /** The list has the keys (↑/↓, Enter); otherwise the field does. Tab switches. */
+  readonly listFocused: boolean;
+  /** The field's text while the list has the keys: the query, else the placeholder. */
+  readonly field: StyledText;
+  /** What Enter does to the typed text: Select, Continue, Lookup, Add, Clone… */
+  readonly actionLabel: string;
+  /** "<title> ▸ <hint>" */
+  readonly header: StyledText;
   readonly rows: ReadonlyArray<TuiAddProjectRow>;
   readonly status: "ready" | "loading" | "empty" | "error";
   /** The body line when there are no rows. */
   readonly message: string;
-  /** The looked-up repository while choosing where to clone it. */
-  readonly repository: { readonly title: string; readonly description: string } | null;
+  readonly messageLine: StyledText | null;
+  /** The repository being cloned, while choosing where to clone it. */
+  readonly context: {
+    readonly title: StyledText;
+    readonly description: StyledText;
+  } | null;
   readonly pending: boolean;
 }
 
@@ -91,8 +109,8 @@ export interface AddProjectControllerOptions {
   readonly currentProjectCwd: () => string | null;
   /** Folder new paths start in (the add-project base directory setting). */
   readonly baseDirectory: () => string | null;
-  /** Rows the overlay may take. */
-  readonly height: () => number;
+  /** The popover's inner width and the rows its content may take. */
+  readonly viewport: () => { readonly width: number; readonly maxRows: number };
   readonly setOpen: (open: boolean) => void;
   /** Start a draft thread in the project that was just added or found. */
   readonly openDraft: (projectId: string) => void;
@@ -106,6 +124,7 @@ export function createAddProjectController(options: AddProjectControllerOptions)
   let flow: Flow | null = null;
   let query = "";
   let index = 0;
+  let listFocused = true;
   let discovery: SourceControlDiscoveryResult | null = null;
   let browse: {
     readonly directoryPath: string;
@@ -152,7 +171,7 @@ export function createAddProjectController(options: AddProjectControllerOptions)
         source,
         title: `${addProjectRemoteSourceLabel(source)} repository`,
         description: readiness[source].ready
-          ? `Clone ${addProjectRemoteSourceLabel(source)} ${addProjectRemoteSourcePathHint(source)}`
+          ? `Clone ${addProjectRemoteSourceLabel(source)} owner/repository`
           : (readiness[source].hint ?? "Provider setup required"),
         disabled: !readiness[source].ready,
       })),
@@ -180,7 +199,7 @@ export function createAddProjectController(options: AddProjectControllerOptions)
       ...filtered().visibleEntries.map((entry) => ({
         kind: "directory" as const,
         name: entry.name,
-        title: `${entry.name}/`,
+        title: entry.name,
         description: entry.fullPath,
         disabled: false,
       })),
@@ -196,6 +215,17 @@ export function createAddProjectController(options: AddProjectControllerOptions)
 
   const invite = () => store.getState().shell !== null && projects().length === 0;
 
+  /** The highlighted row, or -1 (the typed text) when there is none. */
+  const safeIndex = (count: number) =>
+    count === 0 ? -1 : Math.min(Math.max(-1, index), count - 1);
+
+  /** A folder that does not exist yet: Enter creates it (ChatView's projectWillCreatePath). */
+  const willCreatePath = () =>
+    isBrowseStep() &&
+    browse.status !== "loading" &&
+    query.trim().length > 0 &&
+    (hasTrailingPathSeparator(query) ? browse.result === null : filtered().exactEntry === null);
+
   const publish = () => {
     const current = flow;
     const list = rows();
@@ -203,64 +233,144 @@ export function createAddProjectController(options: AddProjectControllerOptions)
     const source =
       current?.step === "repository" || current?.step === "destination" ? current.source : "url";
     const label = addProjectRemoteSourceLabel(source);
-    const loading = isBrowseStep() && browse.status === "loading";
-    // Border, input, header and hint take four rows; a repository card three.
-    const windowSize = Math.max(1, options.height() - 4 - (step === "destination" ? 3 : 0));
-    const start = Math.max(
-      0,
-      Math.min(index - Math.floor(windowSize / 2), list.length - windowSize),
+    const palette = THEME;
+    const viewport = options.viewport();
+    const labelRoom = Math.max(8, viewport.width - 8);
+    const selected = safeIndex(list.length);
+    const title =
+      step === "source"
+        ? "New project · Source"
+        : step === "local"
+          ? "New project · Local folder"
+          : step === "repository"
+            ? `New project · ${label}`
+            : "New project · Clone destination";
+    const placeholder =
+      step === "source"
+        ? "Search project sources…"
+        : step === "local"
+          ? "Enter or browse a project directory"
+          : step === "repository"
+            ? source === "url"
+              ? "Enter Git clone URL"
+              : `Enter ${label} owner/repository`
+            : "Enter or browse the clone destination";
+    const createsPath = willCreatePath();
+    const actionLabel =
+      step === "source"
+        ? "Select"
+        : step === "repository"
+          ? source === "url"
+            ? "Continue"
+            : "Lookup"
+          : step === "destination"
+            ? createsPath
+              ? "Create & Clone"
+              : "Clone"
+            : createsPath
+              ? "Create & Add"
+              : "Add";
+    const status: TuiAddProjectState["status"] =
+      step === "source"
+        ? list.length > 0
+          ? "ready"
+          : "empty"
+        : step === "repository"
+          ? "empty"
+          : browse.status;
+    const emptyMessage =
+      step === "source"
+        ? "No matching project source."
+        : step === "repository"
+          ? source === "url"
+            ? "Enter a Git clone URL and press Enter to continue."
+            : "Enter a repository path and press Enter to look it up."
+          : createsPath
+            ? "Press Enter to create this folder and continue."
+            : "No matching folders.";
+    const message =
+      status === "loading"
+        ? "loading…"
+        : status === "error"
+          ? "failed to load"
+          : status === "empty" || list.length === 0
+            ? emptyMessage
+            : "";
+    const context =
+      current?.step === "destination"
+        ? {
+            title: current.repository?.title ?? current.repositoryInput,
+            description: current.repository?.description ?? current.remoteUrl,
+          }
+        : null;
+    const hint = listFocused
+      ? "↑/↓ navigate · Enter select · Tab edit · Esc back"
+      : "Enter action · Tab browse · Esc back";
+    // Two rows per entry, under the field, the header and (cloning) the repository.
+    const windowSize = Math.max(1, Math.floor((viewport.maxRows - (context ? 3 : 0) - 3) / 2));
+    const start = Math.min(
+      Math.max(0, selected - Math.floor(windowSize / 2)),
+      Math.max(0, list.length - windowSize),
     );
     options.publish({
       open: current !== null,
       invite: invite(),
       step,
-      title:
-        step === "source"
-          ? "Add project"
-          : step === "local"
-            ? "Add project · Local folder"
-            : step === "repository"
-              ? `Add project · ${label}`
-              : "Clone into",
+      title,
       query,
-      placeholder:
-        step === "source"
-          ? "Search sources"
-          : step === "repository"
-            ? source === "url"
-              ? "Paste a Git URL"
-              : `Enter ${label} ${addProjectRemoteSourcePathHint(source)}`
-            : "Type a folder path",
-      hint:
-        step === "source"
-          ? "↑/↓ choose · Enter select · Esc close"
-          : step === "repository"
-            ? "Enter look up · Esc back"
-            : `↑/↓ folders · Enter ${step === "local" ? "add" : "clone"} · Esc back`,
-      rows: list.slice(start, start + windowSize).map((row, offset) => ({
-        index: start + offset,
-        title: row.title,
-        description: row.description,
-        disabled: row.disabled,
-        selected: start + offset === index,
-      })),
-      status: loading
-        ? "loading"
-        : isBrowseStep() && browse.status === "error"
-          ? "error"
-          : list.length > 0
-            ? "ready"
-            : "empty",
-      message: loading
-        ? "loading…"
-        : isBrowseStep() && browse.status === "error"
-          ? "failed to list folders"
-          : step === "repository"
-            ? ""
-            : step === "source"
-              ? "no matching sources"
-              : "no folders",
-      repository: current?.step === "destination" ? current.repository : null,
+      placeholder,
+      hint,
+      listFocused,
+      field: styled(
+        chunk(clip(query.length > 0 ? query : placeholder, labelRoom), {
+          fg: query.length > 0 ? palette.text : palette.dim,
+        }),
+      ),
+      actionLabel,
+      header: styled(
+        chunk(`${title} ▸ `, { fg: palette.accent }),
+        chunk(hint, { fg: palette.dim }),
+      ),
+      rows:
+        message !== ""
+          ? []
+          : list.slice(start, start + windowSize).map((row, offset) => {
+              const rowIndex = start + offset;
+              const active = rowIndex === selected;
+              return {
+                index: rowIndex,
+                title: row.title,
+                description: row.description,
+                disabled: row.disabled,
+                selected: active,
+                line: styled(
+                  chunk(active ? "▸ " : "  ", { fg: active ? palette.accent : palette.dim }),
+                  chunk(clip(row.title, labelRoom), {
+                    fg: row.disabled ? palette.faint : active ? palette.text : palette.dim,
+                  }),
+                  ...(row.disabled ? [chunk("  setup required", { fg: palette.warning })] : []),
+                ),
+                detail: row.description
+                  ? styled(
+                      chunk(`    ${clip(row.description, labelRoom)}`, {
+                        fg: active ? palette.bg : palette.dim,
+                      }),
+                    )
+                  : null,
+              };
+            }),
+      status,
+      message,
+      messageLine:
+        message === ""
+          ? null
+          : styled(chunk(message, { fg: status === "error" ? palette.error : palette.dim })),
+      context: context
+        ? {
+            title: styled(chunk(clip(context.title, labelRoom), { fg: palette.text })),
+            description: styled(chunk(clip(context.description, labelRoom), { fg: palette.dim })),
+          }
+        : null,
       pending,
     });
   };
@@ -298,16 +408,18 @@ export function createAddProjectController(options: AddProjectControllerOptions)
     refreshBrowse();
     publish();
   };
+  /** A new step: the source list takes the keys, the others start in the field. */
   const go = (next: Flow, nextQuery: string) => {
     flow = next;
+    listFocused = next.step === "source";
     setQuery(nextQuery, next.step === "source" ? 0 : -1);
   };
 
   const open = () => {
     if (flow) return;
-    options.setOpen(true);
     discovery = null;
     go({ step: "source" }, "");
+    options.setOpen(true);
     const token = generation;
     track(
       client.discoverSourceControl().then(
@@ -451,11 +563,12 @@ export function createAddProjectController(options: AddProjectControllerOptions)
     );
   };
 
-  /** Enter: choose the selected row, or act on the typed text. */
-  const activateRow = () => {
+  /** Enter: choose the selected row, or act on the typed text (always, when forced). */
+  const activateRow = (forceAction = false) => {
     const current = flow;
     if (!current || pending) return;
-    const row = rows()[index];
+    const list = rows();
+    const row = list[safeIndex(list.length)];
     if (current.step === "source") {
       if (row?.kind !== "source") return;
       if (row.disabled) {
@@ -473,8 +586,12 @@ export function createAddProjectController(options: AddProjectControllerOptions)
       submitRepository(current);
       return;
     }
-    if (row?.kind === "up") return setQuery(row.path, -1);
-    if (row?.kind === "directory") return setQuery(appendBrowsePathSegment(query, row.name), -1);
+    if (!forceAction && row && row.kind !== "source") {
+      // Into the folder, with the list keeping the keys.
+      listFocused = true;
+      setQuery(row.kind === "up" ? row.path : appendBrowsePathSegment(query, row.name), 0);
+      return;
+    }
     if (current.step === "destination") submitDestination(current);
     else register(resolvedPath());
   };
@@ -509,14 +626,36 @@ export function createAddProjectController(options: AddProjectControllerOptions)
           return true;
         }
         case "project.add.move": {
+          // ↑/↓ walk the list while it has the keys, wrapping at either end.
           const delta = field("delta");
-          if (!flow || typeof delta !== "number") return true;
+          if (!flow || typeof delta !== "number" || !listFocused) return true;
           const count = rows().length;
-          const min = flow.step === "source" ? 0 : -1;
-          index = Math.max(min, Math.min(count - 1, index + delta));
+          index =
+            count === 0
+              ? 0
+              : index < 0
+                ? delta < 0
+                  ? count - 1
+                  : 0
+                : (index + (delta < 0 ? -1 : 1) + count) % count;
           publish();
           return true;
         }
+        case "project.add.toggleFocus":
+          if (!flow || flow.step === "repository") return true;
+          listFocused = !listFocused;
+          index = listFocused && rows().length > 0 ? 0 : -1;
+          publish();
+          return true;
+        case "project.add.focusInput":
+          if (!flow) return true;
+          listFocused = false;
+          index = flow.step === "source" ? 0 : -1;
+          publish();
+          return true;
+        case "project.add.action":
+          activateRow(true);
+          return true;
         case "project.add.select": {
           const rowIndex = field("index");
           if (!flow || typeof rowIndex !== "number") return true;
@@ -538,6 +677,8 @@ export function createAddProjectController(options: AddProjectControllerOptions)
       }
     },
     isOpen: () => flow !== null,
+    /** The popover's size changed: re-window the rows. */
+    relayout: () => publish(),
     /** The shell changed: the invite follows it, and a new project is picked up. */
     sync: () => {
       if (pendingProjectId !== null && activate(pendingProjectId)) return;

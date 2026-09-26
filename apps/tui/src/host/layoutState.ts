@@ -68,6 +68,11 @@ export interface TuiLayoutInput {
   readonly editorRows?: number | undefined;
   /** Rows a picker or popover above the prompt wants. */
   readonly popoverRows?: number;
+  /**
+   * A popover or context menu is open, or the prompt is a one-line rename,
+   * commit or filter field: the editor takes one row (ChatView).
+   */
+  readonly oneLineEditor?: boolean;
   /** The composer's rows besides the editor (question, attachments, compact footer, context). */
   readonly composerChromeRows?: number | undefined;
 }
@@ -83,7 +88,10 @@ export function buildTuiLayoutState(input: TuiLayoutInput): TuiLayoutState {
   const popoverRows = input.popoverRows ?? 0;
   const vertical = resolveChatVerticalLayout({
     terminalHeight: size.rows,
-    desiredEditorRows: popoverRows > 0 ? 1 : (input.editorRows ?? COMPOSER_MIN_EDITOR_ROWS),
+    desiredEditorRows:
+      popoverRows > 0 || input.oneLineEditor === true
+        ? 1
+        : (input.editorRows ?? COMPOSER_MIN_EDITOR_ROWS),
     composerChromeRows: input.composerChromeRows ?? COMPOSER_CHROME_ROWS,
     terminalOpen: input.drawerOpen === true,
     preferredTerminalRows: input.drawerRows ?? Math.floor(size.rows * 0.4),

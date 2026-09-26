@@ -66,6 +66,4 @@ Rectangle {
     FileViewer {}
     DiffViewer { visible: conversation.diffOpen; flexShrink: 1 }
     ImageViewer { visible: conversation.imageOpen }
-
-    RevertPicker {}
 }
