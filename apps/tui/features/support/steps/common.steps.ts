@@ -4,7 +4,17 @@ import { expect } from "bun:test";
 
 import { step } from "../../steps.ts";
 import { LIST_PANE_WIDTH } from "../../../src/components/ChatView.layout.ts";
-import { boot, findObject, geometry, pressKey, resize, snapshot, type World } from "../world.ts";
+import { addProject, flush } from "../environment.ts";
+import {
+  boot,
+  findObject,
+  geometry,
+  pressKey,
+  resize,
+  snapshot,
+  typeText,
+  type World,
+} from "../world.ts";
 
 const NARROW_COLUMNS = 70;
 const STATUS_ROWS = 1;
@@ -84,3 +94,22 @@ step(
     expect(await app.snapshot()).not.toContain(text);
   },
 );
+
+// --- added by T1 ---
+
+// A connected environment holding one project (and nothing else yet).
+step("a connected environment with the project {string}", (ctx: World, title: string) => {
+  addProject(ctx, title);
+});
+
+step("the user types {string}", async (ctx: World, text: string) => {
+  await boot(ctx);
+  await typeText(ctx, text);
+  await flush(ctx);
+});
+
+step(/^the status line (?:says|reads) "([^"]*)"$/, async (ctx: World, text: string) => {
+  await flush(ctx);
+  expect(findObject(ctx, "statusText").get("text")).toBe(text);
+  expect(await snapshot(ctx)).toContain(text);
+});

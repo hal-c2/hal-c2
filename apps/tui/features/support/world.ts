@@ -30,6 +30,12 @@ export interface World extends StepContext {
   /** What the host logged (unknown actions). */
   logs?: string[];
   quitRequested?: boolean;
+  /** Pinned wall clock (epoch ms) for snooze and age; the real clock when unset. */
+  nowMs?: number;
+  /** What the client put on the clipboard, newest last. */
+  clipboard?: string[];
+  /** False makes the terminal refuse the clipboard (OSC 52 unsupported). */
+  clipboardSupported?: boolean;
 }
 
 /** Set up the fake client before boot; later calls replace it only if not booted. */
@@ -49,6 +55,7 @@ export async function boot(
   const rows = size.rows ?? ctx.rows ?? DEFAULT_ROWS;
   const fake = ctx.fake ?? useClient(ctx);
   const logs: string[] = (ctx.logs ??= []);
+  const clipboard: string[] = (ctx.clipboard ??= []);
   const host = createHost({
     client: fake.client,
     size: { columns, rows },
@@ -56,8 +63,15 @@ export async function boot(
     onQuit: () => {
       ctx.quitRequested = true;
     },
+    now: () => new Date(ctx.nowMs ?? Date.now()).toISOString(),
+    copyToClipboard: (text) => {
+      if (ctx.clipboardSupported === false) return false;
+      clipboard.push(text);
+      return true;
+    },
   });
   ctx.cleanups.push(() => host.destroy());
+  await host.ready;
   const app = await testQml(
     { file: DEFAULT_SHELL },
     {

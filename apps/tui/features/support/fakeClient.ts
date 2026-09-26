@@ -69,6 +69,25 @@ export function shell(
   } as unknown as OrchestrationShellSnapshot;
 }
 
+/** One recorded client command: `{ method: "archiveThread", args: ["t1"] }`. */
+export interface FakeClientCall {
+  readonly method: string;
+  readonly args: ReadonlyArray<unknown>;
+}
+
+// Streams and cache reads are plumbing, not commands a step asserts on.
+const UNRECORDED = new Set([
+  "subscribeShell",
+  "subscribeThread",
+  "peekThread",
+  "subscribeVcsStatus",
+  "subscribeTerminalMetadata",
+  "subscribeTerminal",
+  "getServerConfig",
+  "listModels",
+  "listTerminalIds",
+]);
+
 export function fakeClient({
   detail,
   shellSnapshot = shell(),
@@ -99,6 +118,7 @@ export function fakeClient({
   deleteThread = async () => {},
   settleThread = async () => {},
   unsettleThread = async () => {},
+  stopSession = async () => {},
   vcsStatus,
   runGitPull = async () => {},
   getAttachmentUrl = async () => null,
@@ -154,6 +174,7 @@ export function fakeClient({
   readonly deleteThread?: TuiClient["deleteThread"];
   readonly settleThread?: TuiClient["settleThread"];
   readonly unsettleThread?: TuiClient["unsettleThread"];
+  readonly stopSession?: TuiClient["stopSession"];
   readonly vcsStatus?: VcsStatusResult;
   readonly runGitPull?: TuiClient["runGitPull"];
   readonly getAttachmentUrl?: TuiClient["getAttachmentUrl"];
@@ -169,6 +190,8 @@ export function fakeClient({
   readonly connect: () => void;
   readonly emitShell: (snapshot: OrchestrationShellSnapshot) => void;
   readonly subscribedThreadIds: string[];
+  /** Every command the client was asked to run, in order (subscriptions and reads excluded). */
+  readonly calls: FakeClientCall[];
   readonly emitTerminalMetadata: (event: TerminalMetadataStreamEvent) => void;
   /** Push live detail to whoever subscribed to that thread. */
   readonly emitThread: (detail: OrchestrationThread, page?: TuiThreadPage) => void;
@@ -229,6 +252,7 @@ export function fakeClient({
     deleteThread,
     settleThread,
     unsettleThread,
+    stopSession,
     terminalClose,
     approve,
     listTerminalIds,
@@ -242,8 +266,18 @@ export function fakeClient({
     runGitStackedAction: async () => {},
     runGitPull,
   } as unknown as TuiClient;
+  const calls: FakeClientCall[] = [];
+  const record = client as unknown as Record<string, unknown>;
+  for (const [method, value] of Object.entries(record)) {
+    if (typeof value !== "function" || UNRECORDED.has(method)) continue;
+    record[method] = (...args: unknown[]) => {
+      calls.push({ method, args });
+      return (value as (...args: unknown[]) => unknown)(...args);
+    };
+  }
   return {
     client,
+    calls,
     connect: () => shellSubscriber?.(shellSnapshot),
     emitShell: (snapshot) => shellSubscriber?.(snapshot),
     subscribedThreadIds,
