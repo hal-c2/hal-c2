@@ -13,7 +13,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useShellActions } from "./useShellActions";
 import { useShellPublish } from "./useShellPublish";
 
-import type { EnvMode } from "../components/BranchToolbar.logic";
+import {
+  type EnvMode,
+  type EnvironmentOption,
+  environmentOptionKey,
+  environmentOptionLabel,
+  findActiveEnvironmentOption,
+} from "../components/BranchToolbar.logic";
 import { type DraftId } from "../composerDraftStore";
 import { resolveAndPersistPreferredEditor, usePreferredEditor } from "../editorPreferences";
 import { useRenameThread } from "../hooks/useRenameThread";
@@ -52,7 +58,7 @@ export interface ShellWorkspaceBridgeProps {
   readonly availableEditors: ReadonlyArray<EditorId>;
   readonly scripts: ReadonlyArray<ProjectScript>;
   readonly preferredScriptId: string | null;
-  readonly environments: ReadonlyArray<{ environmentId: EnvironmentId; label: string }>;
+  readonly environments: ReadonlyArray<EnvironmentOption>;
   readonly environmentChangeable: boolean;
   readonly onNewThread: () => void;
   readonly onToggleTerminal: () => void;
@@ -63,7 +69,7 @@ export interface ShellWorkspaceBridgeProps {
   readonly onOpenPullRequest: ((number: number) => void) | undefined;
   /** Set on draft threads: a PR number or URL in the branch picker checks it out. */
   readonly onCheckoutPullRequestRequest: ((reference: string) => void) | undefined;
-  readonly onEnvironmentChange: (environmentId: EnvironmentId) => void;
+  readonly onEnvironmentChange: (option: EnvironmentOption) => void;
   readonly renameRequestId: number;
   readonly onTitleMenu: (x: number, y: number) => void;
   readonly onRenameRequested: () => void;
@@ -140,7 +146,11 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
         preferredEditorId,
         scripts: props.scripts,
         preferredScriptId: props.preferredScriptId,
-        environments: props.environments,
+        environments: props.environments.map((option) => ({
+          environmentId: option.environmentId,
+          key: environmentOptionKey(option),
+          label: environmentOptionLabel(option),
+        })),
         activeEnvironmentId: props.threadRef.environmentId,
         environmentChangeable: props.environmentChangeable,
         renameRequestId: props.renameRequestId,
@@ -232,11 +242,13 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
         return;
       }
       case "workspace.environment.set": {
-        const target = props.environments.find(
-          (environment) => environment.environmentId === action.environmentId,
-        );
+        // An older shell names only the machine: that is its checkout of this project.
+        const target =
+          action.key === undefined
+            ? findActiveEnvironmentOption(props.environments, action.environmentId as EnvironmentId)
+            : props.environments.find((option) => environmentOptionKey(option) === action.key);
         if (target && props.environmentChangeable) {
-          props.onEnvironmentChange(target.environmentId);
+          props.onEnvironmentChange(target);
         }
         return;
       }

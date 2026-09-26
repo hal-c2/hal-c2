@@ -2,6 +2,7 @@
 #   docs/user/composer.md (custom models, remembered model defaults)
 #   docs/user/permission-modes.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (model, effort, permissions, Build and Plan, context strip)
+#   apps/web/src/components/BranchToolbar.logic.ts (Run on: every connected machine's projects)
 #   apps/tui/src/models.ts (flattened model list, unavailable providers skipped)
 #   apps/tui/src/components/ChatView.tsx (plan toggle, access, model and effort shortcuts)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (thread.runtime-mode.set, thread.interaction-mode.set, thread.model-selection.set)
@@ -191,6 +192,14 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And no base branch is chosen
     When the user tries to send the first message
     Then the user is asked to select a base branch
+
+  @backlog @desktop
+  Scenario: A new thread can run on a machine that has other projects
+    Given "laptop" has the project "shop" and the connected machine "server" has only "scratch"
+    And the user has typed a prompt for a new thread in "shop"
+    When the user chooses "server · scratch" as the machine the thread runs on
+    Then the new thread is in "scratch" on "server"
+    And the prompt is still there
 
   @backlog @desktop
   Scenario: The user lets a new thread's machine be picked automatically

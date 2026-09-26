@@ -34,7 +34,7 @@ export interface ShellWorkspaceStateInput {
   readonly preferredEditorId: EditorId | null;
   readonly scripts: ReadonlyArray<ProjectScript>;
   readonly preferredScriptId: string | null;
-  readonly environments: ReadonlyArray<{ environmentId: string; label: string }>;
+  readonly environments: ReadonlyArray<{ environmentId: string; key: string; label: string }>;
   readonly activeEnvironmentId: string;
   readonly environmentChangeable: boolean;
   readonly renameRequestId: number;

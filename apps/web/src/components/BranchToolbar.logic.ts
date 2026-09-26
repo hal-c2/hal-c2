@@ -12,12 +12,78 @@ export {
   resolveBranchSelectionTarget,
 } from "@hal-c2/shared/git";
 
+/**
+ * A "Run on" choice: a machine's checkout of the thread's project, or, for a new
+ * thread, another project on a machine without one (`otherProjectTitle`).
+ */
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   label: string;
   isPrimary: boolean;
   machine: EnvironmentMachineKind;
+  otherProjectTitle?: string;
+}
+
+/** Tells choices apart: one machine can offer several of its projects. */
+export function environmentOptionKey(
+  option: Pick<EnvironmentOption, "environmentId" | "projectId">,
+): string {
+  return `${option.environmentId}:${option.projectId}`;
+}
+
+export function environmentOptionLabel(
+  option: Pick<EnvironmentOption, "label" | "otherProjectTitle">,
+): string {
+  return option.otherProjectTitle === undefined
+    ? option.label
+    : `${option.label} · ${option.otherProjectTitle}`;
+}
+
+/** The choice for the machine the thread is on: its checkout of the thread's project. */
+export function findActiveEnvironmentOption<T extends EnvironmentOption>(
+  options: readonly T[] | undefined,
+  environmentId: EnvironmentId,
+): T | null {
+  return (
+    options?.find(
+      (option) => option.environmentId === environmentId && option.otherProjectTitle === undefined,
+    ) ?? null
+  );
+}
+
+/**
+ * Choices for the connected machines without a checkout of the thread's project:
+ * each of their projects, so a new thread can go to any machine, into a project it
+ * has. The primary machine comes first, then machines and projects by name.
+ */
+export function buildOtherProjectEnvironmentOptions(input: {
+  readonly checkouts: readonly EnvironmentOption[];
+  readonly machines: ReadonlyArray<
+    Pick<EnvironmentOption, "environmentId" | "label" | "isPrimary" | "machine">
+  >;
+  readonly projects: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly id: ProjectId;
+    readonly title: string;
+  }>;
+}): EnvironmentOption[] {
+  const covered = new Set(input.checkouts.map((option) => option.environmentId));
+  const machines = input.machines
+    .filter((machine) => !covered.has(machine.environmentId))
+    .toSorted((a, b) =>
+      a.isPrimary !== b.isPrimary ? (a.isPrimary ? -1 : 1) : a.label.localeCompare(b.label),
+    );
+  return machines.flatMap((machine) =>
+    input.projects
+      .filter((project) => project.environmentId === machine.environmentId)
+      .toSorted((a, b) => a.title.localeCompare(b.title))
+      .map((project) => ({
+        ...machine,
+        projectId: project.id,
+        otherProjectTitle: project.title,
+      })),
+  );
 }
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);

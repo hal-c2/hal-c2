@@ -27,6 +27,9 @@ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import {
   type EnvMode,
   type EnvironmentOption,
+  environmentOptionKey,
+  environmentOptionLabel,
+  findActiveEnvironmentOption,
   resolveContextStripLabelsCompact,
   resolveCurrentWorkspaceLabel,
   resolveEnvModeLabel,
@@ -88,7 +91,7 @@ interface BranchToolbarProps {
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
   availableEnvironments?: readonly EnvironmentOption[];
-  onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  onEnvironmentChange?: (option: EnvironmentOption) => void;
   composerControlsHostRef?: (element: HTMLDivElement | null) => void;
   contextStripVisible?: boolean;
 }
@@ -103,7 +106,7 @@ interface MobileRunContextSelectorProps {
   availableEnvironments: readonly EnvironmentOption[] | undefined;
   showEnvironmentPicker: boolean;
   showEnvironmentIndicator: boolean;
-  onEnvironmentChange: ((environmentId: EnvironmentId) => void) | undefined;
+  onEnvironmentChange: ((option: EnvironmentOption) => void) | undefined;
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
@@ -130,7 +133,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
 }: MobileRunContextSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment = useMemo(
-    () => availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null,
+    () => findActiveEnvironmentOption(availableEnvironments, environmentId),
     [availableEnvironments, environmentId],
   );
   const WorkspaceIcon =
@@ -218,12 +221,20 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
             <MenuGroup>
               <MenuGroupLabel>Run on</MenuGroupLabel>
               <MenuRadioGroup
-                value={autoEnvironmentLabel ? "auto" : environmentId}
-                onValueChange={(value) =>
-                  value === "auto"
-                    ? onAutoEnvironment?.()
-                    : onEnvironmentChange(value as EnvironmentId)
+                value={
+                  autoEnvironmentLabel
+                    ? "auto"
+                    : activeEnvironment
+                      ? environmentOptionKey(activeEnvironment)
+                      : environmentId
                 }
+                onValueChange={(value) => {
+                  if (value === "auto") return onAutoEnvironment?.();
+                  const option = availableEnvironments.find(
+                    (env) => environmentOptionKey(env) === value,
+                  );
+                  if (option) onEnvironmentChange(option);
+                }}
               >
                 {onAutoEnvironment && (
                   <MenuRadioItem
@@ -244,14 +255,14 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                 )}
                 {availableEnvironments.map((env) => (
                   <MenuRadioItem
-                    key={env.environmentId}
+                    key={environmentOptionKey(env)}
                     disabled={envLocked}
-                    value={env.environmentId}
+                    value={environmentOptionKey(env)}
                     closeOnClick
                   >
                     <span className="flex min-w-0 items-center gap-1.5">
                       <EnvironmentMachineIcon kind={env.machine} className="size-3" />
-                      <span className="min-w-0 truncate">{env.label}</span>
+                      <span className="min-w-0 truncate">{environmentOptionLabel(env)}</span>
                     </span>
                   </MenuRadioItem>
                 ))}
@@ -587,8 +598,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   const showEnvironmentPicker = Boolean(
     availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange,
   );
-  const activeEnvironmentOption =
-    availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
+  const activeEnvironmentOption = findActiveEnvironmentOption(availableEnvironments, environmentId);
   const showEnvironmentIndicator = shouldShowEnvironmentIndicator({
     activeEnvironment: activeEnvironmentOption,
     canPickEnvironment: showEnvironmentPicker,

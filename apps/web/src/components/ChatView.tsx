@@ -21,6 +21,7 @@ import {
   rememberCheckoutIsRepo,
 } from "./ChatView.logic";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
+import { useRetargetDraftProject } from "../hooks/useRetargetDraftProject";
 import { visibleThreadPullRequests } from "@hal-c2/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@hal-c2/contracts";
 import {
@@ -412,7 +413,9 @@ import { ThreadDetailsPanel, type ThreadDetailsPanelProps } from "./chat/ThreadD
 import GitActionsControl from "./GitActionsControl";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
+  buildOtherProjectEnvironmentOptions,
   type EnvironmentOption,
+  findActiveEnvironmentOption,
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
   shouldShowComposerContextStrip,
@@ -1126,6 +1129,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const retargetDraftProject = useRetargetDraftProject();
   const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
     (store) => store.getDraftSessionByLogicalProjectKey,
   );
@@ -1900,14 +1904,6 @@ export default function ChatView(props: ChatViewProps) {
     return envs;
   }, [activeProject, allProjects, projectGroupingSettings, primaryEnvironmentId, environmentById]);
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
-  const activeEnvironmentOption =
-    logicalProjectEnvironments.find(
-      (environment) => environment.environmentId === activeThread?.environmentId,
-    ) ?? null;
-  const showComposerEnvironmentIndicator = shouldShowEnvironmentIndicator({
-    activeEnvironment: activeEnvironmentOption,
-    canPickEnvironment: hasMultipleEnvironments,
-  });
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
       if (!canCheckoutPullRequestIntoThread) {
@@ -2112,6 +2108,45 @@ export default function ChatView(props: ChatViewProps) {
       ? null
       : clampFileAttachmentUploadBytes(advertisedFileAttachmentBytes);
   const envLocked = Boolean(activeThread && (activeMessageCount > 0 || activeRuntime !== null));
+  // A new thread can run on any connected machine: on its checkout of this project,
+  // or in another project on a machine that has none.
+  const runOnOptions = useMemo(() => {
+    if (!draftId || envLocked) return logicalProjectEnvironments;
+    const machines = environments.flatMap((environment) =>
+      environment.connection.phase === "connected"
+        ? [
+            {
+              environmentId: environment.environmentId,
+              label: environment.label,
+              isPrimary: environment.environmentId === primaryEnvironmentId,
+              machine: resolveEnvironmentMachineKind(environment.serverConfig ?? null),
+            },
+          ]
+        : [],
+    );
+    return [
+      ...logicalProjectEnvironments,
+      ...buildOtherProjectEnvironmentOptions({
+        checkouts: logicalProjectEnvironments,
+        machines,
+        projects: allProjects,
+      }),
+    ];
+  }, [
+    allProjects,
+    draftId,
+    envLocked,
+    environments,
+    logicalProjectEnvironments,
+    primaryEnvironmentId,
+  ]);
+  const canPickRunOn = runOnOptions.length > 1;
+  const showComposerEnvironmentIndicator = shouldShowEnvironmentIndicator({
+    activeEnvironment: activeThread
+      ? findActiveEnvironmentOption(runOnOptions, activeThread.environmentId)
+      : null,
+    canPickEnvironment: canPickRunOn,
+  });
 
   const loadBalancingSettings = useClientSettings();
   const automaticEnvironment = Boolean(
@@ -3462,23 +3497,39 @@ export default function ChatView(props: ChatViewProps) {
           : "Auto balance"
     : undefined;
 
-  // Handle environment change for draft threads.  When the user picks a
-  // different environment we update the draft context to point at the physical
-  // project in that environment while keeping the same logical project.
+  // A draft's "Run on" choice: another machine's checkout of this project keeps
+  // the logical project; another project on a machine without one moves the
+  // draft there, as picking it in the draft heading does.
   const onEnvironmentChange = useCallback(
-    (nextEnvironmentId: EnvironmentId) => {
+    (target: EnvironmentOption) => {
       if (envLocked || !draftId) return;
-      const target = logicalProjectEnvironments.find(
-        (env) => env.environmentId === nextEnvironmentId,
-      );
-      if (!target) return;
+      if (target.otherProjectTitle !== undefined) {
+        const project = allProjects.find(
+          (candidate) =>
+            candidate.environmentId === target.environmentId && candidate.id === target.projectId,
+        );
+        if (!project) return;
+        retargetDraftProject(
+          draftId,
+          deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
+          project,
+        );
+        return;
+      }
       setDraftThreadContext(draftId, {
         projectRef: scopeProjectRef(target.environmentId, target.projectId),
         environmentSelection: "manual",
         loadBalancedEnvironmentId: null,
       });
     },
-    [draftId, envLocked, logicalProjectEnvironments, setDraftThreadContext],
+    [
+      allProjects,
+      draftId,
+      envLocked,
+      projectGroupingSettings,
+      retargetDraftProject,
+      setDraftThreadContext,
+    ],
   );
 
   const setThreadError = useCallback(
@@ -8959,7 +9010,7 @@ export default function ChatView(props: ChatViewProps) {
     gitCwd,
     isGitRepo,
     envLocked,
-    availableEnvironments: logicalProjectEnvironments,
+    availableEnvironments: runOnOptions,
     autoEnvironmentLabel,
     onAutoEnvironment:
       draftId && !envLocked && hasMultipleEnvironments && loadBalancingSettings.loadBalancingEnabled
@@ -9158,7 +9209,7 @@ export default function ChatView(props: ChatViewProps) {
           preferredScriptId={
             activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
           }
-          environments={logicalProjectEnvironments}
+          environments={runOnOptions}
           environmentChangeable={!envLocked && draftId !== undefined && draftId !== null}
           renameRequestId={shellRenameRequestId}
           onTitleMenu={(x, y) =>
@@ -9706,7 +9757,7 @@ export default function ChatView(props: ChatViewProps) {
                                 {...(canCheckoutPullRequestIntoThread
                                   ? { onCheckoutPullRequestRequest: openPullRequestDialog }
                                   : {})}
-                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+                                {...(canPickRunOn ? { onEnvironmentChange } : {})}
                                 autoEnvironmentLabel={autoEnvironmentLabel}
                                 onAutoEnvironment={
                                   draftId &&
@@ -9716,7 +9767,7 @@ export default function ChatView(props: ChatViewProps) {
                                     ? onAutoEnvironment
                                     : undefined
                                 }
-                                availableEnvironments={logicalProjectEnvironments}
+                                availableEnvironments={runOnOptions}
                                 composerControlsHostRef={setRestingComposerControlsHost}
                                 contextStripVisible={showComposerContextStrip}
                               />

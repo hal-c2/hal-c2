@@ -5,7 +5,12 @@ import type { EnvironmentId } from "@hal-c2/contracts";
 import { ScaleIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
-import type { EnvironmentOption } from "./BranchToolbar.logic";
+import {
+  type EnvironmentOption,
+  environmentOptionKey,
+  environmentOptionLabel,
+  findActiveEnvironmentOption,
+} from "./BranchToolbar.logic";
 import { cn } from "../lib/utils";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
@@ -29,7 +34,7 @@ interface BranchToolbarEnvironmentSelectorProps {
   envLocked: boolean;
   environmentId: EnvironmentId;
   availableEnvironments: readonly EnvironmentOption[];
-  onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  onEnvironmentChange?: (option: EnvironmentOption) => void;
   displayMode?: "toolbar" | "panel";
 }
 
@@ -43,9 +48,10 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   displayMode = "toolbar",
 }: BranchToolbarEnvironmentSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
-  const activeEnvironment = useMemo(() => {
-    return availableEnvironments.find((env) => env.environmentId === environmentId) ?? null;
-  }, [availableEnvironments, environmentId]);
+  const activeEnvironment = useMemo(
+    () => findActiveEnvironmentOption(availableEnvironments, environmentId),
+    [availableEnvironments, environmentId],
+  );
 
   const environmentItems = useMemo(
     () => [
@@ -53,8 +59,8 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         ? [{ value: "auto", label: autoEnvironmentLabel ?? "Auto balance" }]
         : []),
       ...availableEnvironments.map((env) => ({
-        value: env.environmentId,
-        label: env.label,
+        value: environmentOptionKey(env),
+        label: environmentOptionLabel(env),
       })),
     ],
     [availableEnvironments, autoEnvironmentLabel, onAutoEnvironment],
@@ -94,10 +100,18 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   return (
     <Select
       modal={false}
-      value={autoEnvironmentLabel ? "auto" : environmentId}
-      onValueChange={(value) =>
-        value === "auto" ? onAutoEnvironment?.() : onEnvironmentChange(value as EnvironmentId)
+      value={
+        autoEnvironmentLabel
+          ? "auto"
+          : activeEnvironment
+            ? environmentOptionKey(activeEnvironment)
+            : environmentId
       }
+      onValueChange={(value) => {
+        if (value === "auto") return onAutoEnvironment?.();
+        const option = availableEnvironments.find((env) => environmentOptionKey(env) === value);
+        if (option) onEnvironmentChange(option);
+      }}
       items={environmentItems}
     >
       <Tooltip>
@@ -158,10 +172,10 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             </SelectItem>
           )}
           {availableEnvironments.map((env) => (
-            <SelectItem key={env.environmentId} value={env.environmentId}>
+            <SelectItem key={environmentOptionKey(env)} value={environmentOptionKey(env)}>
               <span className="inline-flex items-center gap-1.5">
                 <EnvironmentMachineIcon kind={env.machine} className="size-3" />
-                {env.label}
+                {environmentOptionLabel(env)}
               </span>
             </SelectItem>
           ))}

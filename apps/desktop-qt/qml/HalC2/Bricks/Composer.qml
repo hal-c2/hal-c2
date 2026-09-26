@@ -670,7 +670,8 @@ Rectangle {
                     currentIndex: contextStrip.wsReady ? contextStrip.ws.environments.findIndex(env => env.environmentId === contextStrip.ws.activeEnvironmentId) : -1
                     Accessible.name: qsTr("Environment")
                     onActivated: index => Shell.dispatch("workspace.environment.set", {
-                            environmentId: contextStrip.ws.environments[index].environmentId
+                            environmentId: contextStrip.ws.environments[index].environmentId,
+                            key: contextStrip.ws.environments[index].key
                         })
                 }
 

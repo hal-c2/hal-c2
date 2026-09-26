@@ -1,7 +1,11 @@
-import { EnvironmentId, type VcsRef } from "@hal-c2/contracts";
+import { EnvironmentId, ProjectId, type VcsRef } from "@hal-c2/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  buildOtherProjectEnvironmentOptions,
   dedupeRemoteBranchesWithLocalMatches,
+  environmentOptionKey,
+  environmentOptionLabel,
+  findActiveEnvironmentOption,
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
@@ -383,6 +387,73 @@ describe("resolveEnvironmentOptionLabel", () => {
         savedLabel: "Build box",
       }),
     ).toBe("Build box");
+  });
+});
+
+describe("buildOtherProjectEnvironmentOptions", () => {
+  const laptop = EnvironmentId.make("laptop");
+  const beast = EnvironmentId.make("beast");
+  const box = EnvironmentId.make("box");
+  const machine = (environmentId: EnvironmentId, label: string, isPrimary = false) => ({
+    environmentId,
+    label,
+    isPrimary,
+    machine: "desktop" as const,
+  });
+  const project = (environmentId: EnvironmentId, id: string, title: string) => ({
+    environmentId,
+    id: ProjectId.make(id),
+    title,
+  });
+
+  it("offers every project on the machines without a checkout of this project", () => {
+    const options = buildOtherProjectEnvironmentOptions({
+      checkouts: [{ ...machine(laptop, "laptop", true), projectId: ProjectId.make("shop") }],
+      machines: [machine(laptop, "laptop", true), machine(box, "box"), machine(beast, "ai-beast")],
+      projects: [
+        project(laptop, "shop", "shop"),
+        project(laptop, "blog", "blog"),
+        project(beast, "scratch", "scratch"),
+        project(beast, "api", "api"),
+        project(box, "infra", "infra"),
+      ],
+    });
+
+    expect(options.map(environmentOptionLabel)).toEqual([
+      "ai-beast · api",
+      "ai-beast · scratch",
+      "box · infra",
+    ]);
+    expect(options.map(environmentOptionKey)).toEqual(["beast:api", "beast:scratch", "box:infra"]);
+  });
+
+  it("offers nothing for a machine without projects", () => {
+    expect(
+      buildOtherProjectEnvironmentOptions({
+        checkouts: [],
+        machines: [machine(beast, "ai-beast")],
+        projects: [],
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("findActiveEnvironmentOption", () => {
+  it("is the machine's checkout of this project, not another project there", () => {
+    const beast = EnvironmentId.make("beast");
+    const checkout = {
+      environmentId: beast,
+      projectId: ProjectId.make("shop"),
+      label: "ai-beast",
+      isPrimary: false,
+      machine: "desktop" as const,
+    };
+    const other = {
+      ...checkout,
+      projectId: ProjectId.make("scratch"),
+      otherProjectTitle: "scratch",
+    };
+    expect(findActiveEnvironmentOption([other, checkout], beast)).toBe(checkout);
   });
 });
 

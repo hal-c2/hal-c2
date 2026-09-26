@@ -360,7 +360,10 @@ export const ShellWorkspaceState = Schema.Struct({
     Schema.Struct({ id: Schema.String, name: Schema.String, command: Schema.String }),
   ),
   preferredScriptId: Schema.NullOr(Schema.String),
-  environments: Schema.Array(Schema.Struct({ environmentId: Schema.String, label: Schema.String })),
+  /** "Run on" choices; `key` tells apart several projects on one machine. */
+  environments: Schema.Array(
+    Schema.Struct({ environmentId: Schema.String, key: Schema.String, label: Schema.String }),
+  ),
   activeEnvironmentId: Schema.String,
   environmentChangeable: Schema.Boolean,
   /** Bumped when the page asks the shell to start renaming the thread. */
@@ -659,6 +662,7 @@ export const ShellAction = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("workspace.environment.set"),
     environmentId: Schema.String,
+    key: Schema.optionalKey(Schema.String),
   }),
   Schema.Struct({ type: Schema.Literal("workspace.branch.search"), query: Schema.String }),
   Schema.Struct({ type: Schema.Literal("workspace.branch.select"), name: Schema.String }),

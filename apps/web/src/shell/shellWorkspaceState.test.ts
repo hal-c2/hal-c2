@@ -40,7 +40,7 @@ function baseInput() {
     preferredEditorId: "zed" as EditorId,
     scripts: [script],
     preferredScriptId: "dev",
-    environments: [{ environmentId: "env", label: "Local" }],
+    environments: [{ environmentId: "env", key: "env:project", label: "Local" }],
     activeEnvironmentId: "env",
     environmentChangeable: false,
     renameRequestId: 0,
