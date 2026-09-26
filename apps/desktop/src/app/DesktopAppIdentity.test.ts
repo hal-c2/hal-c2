@@ -131,9 +131,7 @@ const withIdentity = <A, E, R>(
             exists: (path) =>
               input.legacyPathProbeError
                 ? Effect.fail(input.legacyPathProbeError)
-                : Effect.succeed(
-                    input.legacyPathExists === true && /HAL-C2 \((Alpha|Dev)\)/.test(path),
-                  ),
+                : Effect.succeed(input.legacyPathExists === true && /t3code|T3 Code/.test(path)),
             readFileString: () =>
               Effect.succeed(input.packageJson ?? '{"halc2CommitHash":"abcdef1234567890"}'),
           }),
@@ -147,25 +145,25 @@ const withIdentity = <A, E, R>(
 };
 
 describe("DesktopAppIdentity", () => {
-  it.effect("isolates the V2 profile even when the legacy V1 profile exists", () =>
+  it.effect("gives the packaged app its own profile even when a pre-rename profile exists", () =>
     withIdentity(
       Effect.gen(function* () {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         const userDataPath = yield* identity.resolveUserDataPath;
 
-        assert.equal(userDataPath, "/Users/alice/Library/Application Support/hal-c2-v2");
+        assert.equal(userDataPath, "/Users/alice/Library/Application Support/hal-c2");
       }),
       { legacyPathExists: true },
     ),
   );
 
-  it.effect("keeps using the legacy development profile", () =>
+  it.effect("gives development its own profile", () =>
     withIdentity(
       Effect.gen(function* () {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         assert.equal(
           yield* identity.resolveUserDataPath,
-          "/Users/alice/Library/Application Support/HAL-C2 (Dev)",
+          "/Users/alice/Library/Application Support/hal-c2-dev",
         );
       }),
       {
@@ -175,8 +173,8 @@ describe("DesktopAppIdentity", () => {
     ),
   );
 
-  it.effect("preserves failures while inspecting the legacy userData path", () => {
-    const legacyPath = "/Users/alice/Library/Application Support/HAL-C2 (Dev)";
+  it.effect("preserves failures while inspecting the Windows profile", () => {
+    const legacyPath = "/Users/alice/AppData/Roaming/hal-c2/Local State";
     const cause = PlatformError.systemError({
       _tag: "PermissionDenied",
       module: "FileSystem",
@@ -200,7 +198,7 @@ describe("DesktopAppIdentity", () => {
       }),
       {
         legacyPathProbeError: cause,
-        environment: { env: { VITE_DEV_SERVER_URL: "http://localhost:5173" } },
+        environment: { platform: "win32" },
       },
     );
   });
