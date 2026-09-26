@@ -18,23 +18,12 @@ Rectangle {
     flexDirection: "column"
     paddingX: 1
 
-    Row {
+    Text {
+        objectName: "terminalHeader"
         height: 1
-        Text {
-            flexShrink: 0
-            text: "Terminal · " + drawer.terminal.title
-            color: drawer.focused ? Theme.colors.accent : Theme.colors.warning
-        }
-        Text {
-            flexGrow: 1
-            flexShrink: 1
-            truncate: true
-            wrapMode: "none"
-            text: drawer.focused
-                ? " · ^P prompt · ^E close · ^↑/^↓ resize · ^O copy · paste ✓"
-                : " · ^P focus · ^E close"
-            color: Theme.colors.dim
-        }
+        flexShrink: 0
+        wrapMode: "none"
+        text: drawer.terminal.header
     }
 
     Row {
@@ -45,9 +34,15 @@ Rectangle {
             delegate: Row {
                 marginRight: 1
                 Text {
-                    text: (modelData.active ? "▸ " : "  ") + modelData.number
-                    color: modelData.active ? Theme.colors.text : Theme.colors.dim
                     onMouseDown: Shell.dispatch("terminal.select", { id: modelData.id })
+                    Span {
+                        text: modelData.active ? "▸" : " "
+                        color: modelData.active ? Theme.colors.accent : Theme.colors.dim
+                    }
+                    Span {
+                        text: " " + modelData.number
+                        color: modelData.active ? Theme.colors.text : Theme.colors.dim
+                    }
                 }
                 Text {
                     visible: modelData.active

@@ -10,7 +10,9 @@ import type { TerminalAttachStreamEvent } from "@hal-c2/contracts";
 import { step } from "../../steps.ts";
 import type { TuiTerminalState } from "../../../src/host/terminalState.ts";
 import { threadKey } from "../../../src/host/sidebarState.ts";
+import type { Palette } from "../../../src/theme.ts";
 import { THEME } from "../../../src/theme.ts";
+import { expectColour, rectOf, regionRows, textWithin, type Rect } from "../design.ts";
 import { shell } from "../fakeClient.ts";
 import { recorded } from "../threadWorld.ts";
 import { chooseCommand, palette } from "../threadUi.ts";
@@ -1055,4 +1057,63 @@ step("the shell prints a single line longer than 64 KiB with an address", (ctx: 
 );
 step("no link is created for it", (ctx: World) => {
   expect(linked(ctx)).toEqual([]);
+});
+
+// The drawer's look (ThreadTerminalDrawer): the rows inside its border.
+async function drawerInner(ctx: World): Promise<Rect> {
+  await settle(ctx);
+  const { x, y, width, height } = rectOf(ctx, "terminalDrawer");
+  return { x: x + 2, y: y + 1, width: width - 4, height: height - 2 };
+}
+
+step("the thread is titled {string}", async (ctx: TerminalWorld, title: string) => {
+  const threads = shell().threads.map((thread) =>
+    thread.id === THREAD_ID ? { ...thread, title } : thread,
+  );
+  ctx.fake!.emitShell(shell(threads as never));
+  const detail = ctx.fake!.currentThread(THREAD_ID);
+  if (detail) ctx.fake!.emitThread({ ...detail, title });
+  await settle(ctx);
+});
+
+step(
+  /^the drawer's (first|second) row reads "(.*)"$/,
+  async (ctx: World, ordinal: string, text: string) => {
+    const rows = await regionRows(ctx, await drawerInner(ctx));
+    expect(rows[ordinal === "first" ? 0 : 1]!.trimEnd()).toBe(text);
+  },
+);
+
+step(
+  /^"(.*)" is in the (accent|warning) colour and the rest in the dim colour$/,
+  async (ctx: World, label: string, colour: keyof Palette) => {
+    const inner = await drawerInner(ctx);
+    const header = { ...inner, height: 1 };
+    const found = await textWithin(ctx, header, label);
+    expectColour(found.span.fg, THEME[colour]);
+    const rest = await textWithin(ctx, header, " · ^");
+    expect(rest.x).toBe(found.x + label.length);
+    expectColour(rest.span.fg, THEME.dim);
+  },
+);
+
+step(
+  "the tab marker {string} is in the accent colour and its number in the text colour",
+  async (ctx: World, marker: string) => {
+    const tabs = { ...(await drawerInner(ctx)), height: 2 };
+    const found = await textWithin(ctx, tabs, `${marker} `);
+    expectColour(found.span.fg, THEME.accent);
+    const active = state(ctx).tabs.find((tab) => tab.active)!;
+    const number = await textWithin(ctx, { ...tabs, x: found.x + 1 }, ` ${active.number}`);
+    expect(number.x).toBe(found.x + 1);
+    expectColour(number.span.fg, THEME.text);
+  },
+);
+
+step("the other tab's number is in the dim colour", async (ctx: World) => {
+  const inner = await drawerInner(ctx);
+  const tabRow = { ...inner, y: inner.y + 1, height: 1 };
+  const other = state(ctx).tabs.find((tab) => !tab.active)!;
+  const number = await textWithin(ctx, tabRow, `  ${other.number}`);
+  expectColour(number.span.fg, THEME.dim);
 });

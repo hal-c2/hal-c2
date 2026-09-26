@@ -200,14 +200,14 @@ Feature: Terminal drawer in the terminal client
     Then ANSI colours use the user's terminal palette
     And truecolor text keeps its exact colour
 
-  @backlog @tui
+  @tui
   Scenario: The focused drawer's header names the terminal and its keys
     Given the terminal is 120 columns wide
     And the terminal drawer has focus
     Then the drawer's first row reads "Terminal · Thread one · ^P prompt · ^E close · ^↑/^↓ resize · ^O copy · paste ✓"
     And "Terminal · Thread one" is in the accent colour and the rest in the dim colour
 
-  @backlog @tui
+  @tui
   Scenario: An unfocused drawer's header is in the warning colour
     Given the terminal is 120 columns wide
     And the terminal drawer has focus
@@ -215,20 +215,20 @@ Feature: Terminal drawer in the terminal client
     Then the drawer's first row reads "Terminal · Thread one · ^P focus · ^E close"
     And "Terminal · Thread one" is in the warning colour and the rest in the dim colour
 
-  @backlog @tui
+  @tui
   Scenario: A narrow drawer cuts its key hint short
     Given the terminal is 60 columns wide
     And the terminal drawer has focus
     Then the drawer's first row reads "Terminal · Thread one · ^P prompt · ^E close · ^↑/^↓ re…"
 
-  @backlog @tui
+  @tui
   Scenario: A long thread title is cut to the drawer's width
     Given the thread is titled "Fix the flaky checkout test in the payments service"
     And the terminal is 60 columns wide
     And the terminal drawer has focus
     Then the drawer's first row reads "Terminal · Fix the flaky checkout test in the payments …"
 
-  @backlog @tui
+  @tui
   Scenario: The active terminal tab is marked in the accent colour
     Given the thread has two terminals with the first active
     Then the drawer's second row reads "▸ 1 ✕   2 + new"

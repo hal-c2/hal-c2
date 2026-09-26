@@ -21,7 +21,9 @@ import {
   type TermColor,
   type TermSegment,
 } from "../terminalView.ts";
+import { clip } from "../format.ts";
 import { THEME } from "../theme.ts";
+import { chunk, styled, type StyledText as HostStyledText } from "./styledText.ts";
 
 // The thread terminal drawer's model (ported from ThreadTerminalDrawer and the
 // terminal half of ChatView). Each open tab owns a headless xterm fed by its
@@ -56,6 +58,8 @@ export interface TuiTerminalState {
   readonly open: boolean;
   readonly focused: boolean;
   readonly title: string;
+  /** `Terminal · <title>` and the key hint, clipped to the drawer like ThreadTerminalDrawer. */
+  readonly header: HostStyledText;
   readonly tabs: ReadonlyArray<TuiTerminalTab>;
   readonly activeId: string | null;
   /** Drawer height in rows, chrome included. */
@@ -171,6 +175,19 @@ function segmentChunk(segment: TermSegment, focused: boolean): TextChunk {
   if (attributes) chunk.attributes = attributes;
   if (segment.href) chunk.link = { url: segment.href };
   return chunk;
+}
+
+/** The drawer's header row: the label, then as much of the key hint as fits in `cols`. */
+export function terminalHeader(title: string, cols: number, focused: boolean): HostStyledText {
+  const hint = focused
+    ? " · ^P prompt · ^E close · ^↑/^↓ resize · ^O copy · paste ✓"
+    : " · ^P focus · ^E close";
+  const label = clip(`Terminal · ${title}`, Math.max(1, cols));
+  const visibleHint = clip(hint, Math.max(0, cols - Bun.stringWidth(label)));
+  return styled(
+    chunk(label, { fg: focused ? THEME.accent : THEME.warning }),
+    visibleHint !== "" && chunk(visibleHint, { fg: THEME.dim }),
+  );
 }
 
 export function terminalRowText(
@@ -377,6 +394,7 @@ export function createTerminalController(options: TerminalControllerOptions): Te
       open: isOpen,
       focused,
       title: thread?.title ?? "",
+      header: terminalHeader(thread?.title ?? "", size.cols, focused),
       tabs: (tabs?.ids ?? []).map((id, index) => ({
         id,
         number: terminalNumber(id, index),
