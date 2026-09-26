@@ -42,7 +42,7 @@ defmodule HalC2.ProjectFavicon do
   end
 
   defp icon_path(root) do
-    with {:ok, text} <- File.read(Path.join(root, "hal-c2.json")),
+    with {:ok, text} <- HalC2.ProjectFile.read(root),
          {:ok, %{"iconPath" => path}} when is_binary(path) <- JSON.decode(text),
          do: path,
          else: (_ -> nil)

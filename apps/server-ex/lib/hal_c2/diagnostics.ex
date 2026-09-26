@@ -573,7 +573,9 @@ defmodule HalC2.Diagnostics do
   # Storage bytes from `/proc/<pid>/io` (Linux), or nil where there is none to read.
   defp proc_io(pid) do
     with {:ok, text} <-
-           File.read(Path.join([Application.get_env(:hal_c2, :proc_dir, "/proc"), "#{pid}", "io"])),
+           File.read(
+             Path.join([Application.get_env(:hal_c2, :proc_dir, "/proc"), "#{pid}", "io"])
+           ),
          [_, read] <- Regex.run(~r/^read_bytes:\s*(\d+)/m, text),
          [_, write] <- Regex.run(~r/^write_bytes:\s*(\d+)/m, text) do
       {String.to_integer(read), String.to_integer(write)}

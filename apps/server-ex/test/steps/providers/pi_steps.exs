@@ -278,7 +278,10 @@ defmodule HalC2.Steps.Providers.Pi do
     # ...and HAL-C2's extension in Pi holds an edit for the user.
     context = FakeAcp.send_message(context, "please edit a file")
     assert %{"status" => "pending", "kind" => "file-change"} = FakeAcp.await_request(context)
-    assert [%{"env" => %{"HALC2_PI_RUNTIME_MODE" => "approval-required"}}] = thread_starts(context)
+
+    assert [%{"env" => %{"HALC2_PI_RUNTIME_MODE" => "approval-required"}}] =
+             thread_starts(context)
+
     context
   end
 

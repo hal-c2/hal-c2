@@ -51,7 +51,11 @@ defmodule HalC2.StorageCleanupTest do
   # A thread on its own new worktree, branched from main.
   defp thread(repo, id, extra \\ %{}) do
     {:ok, %{"worktree" => %{"path" => path}}} =
-      HalC2.Vcs.create_worktree(%{"cwd" => repo, "refName" => "main", "newRefName" => "hal-c2/#{id}"})
+      HalC2.Vcs.create_worktree(%{
+        "cwd" => repo,
+        "refName" => "main",
+        "newRefName" => "hal-c2/#{id}"
+      })
 
     :ok = HalC2.Shell.subscribe(self())
 

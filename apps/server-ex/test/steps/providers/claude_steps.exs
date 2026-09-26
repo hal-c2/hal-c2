@@ -325,7 +325,10 @@ defmodule HalC2.Steps.Providers.Claude do
   step "the project allows the HAL-C2 tools", context do
     context = World.fake_providers(context)
     Node.ensure(HalC2.Mcp)
-    refute HalC2.Settings.for_project(World.project(context).id)["enableAgentBrowserAccess"] == false
+
+    refute HalC2.Settings.for_project(World.project(context).id)["enableAgentBrowserAccess"] ==
+             false
+
     context
   end
 

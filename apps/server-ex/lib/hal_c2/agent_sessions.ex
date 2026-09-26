@@ -160,7 +160,7 @@ defmodule HalC2.AgentSessions do
   defp cwd(_), do: nil
 
   # The user's home, temp folders, downloads, Codex scratch folders, and HAL-C2's own
-  # worktrees are never projects.
+  # worktrees (under `.t3` before the rename) are never projects.
   defp excluded?(path) do
     home = user_home()
     halc2_home = Path.expand(Application.get_env(:hal_c2, :home, Path.join(home, ".hal-c2")))
@@ -169,7 +169,7 @@ defmodule HalC2.AgentSessions do
       Enum.any?(
         [Path.join(home, "Downloads"), Path.join([home, "Documents", "Codex"]), halc2_home],
         &(path == &1 or String.starts_with?(path, &1 <> "/"))
-      ) or String.contains?(path <> "/", "/.hal-c2/worktrees/")
+      ) or String.contains?(path <> "/", ["/.hal-c2/worktrees/", "/.t3/worktrees/"])
   end
 
   # `{:ok, git}` with the origin's normalized key, or `{:ok, nil}` outside a

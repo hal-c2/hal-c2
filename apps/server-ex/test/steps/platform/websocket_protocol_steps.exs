@@ -518,7 +518,10 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     settings = Node.ensure(HalC2.Settings)
     :ok = :sys.suspend(settings)
     ExUnit.Callbacks.on_exit(fn -> resume(settings) end)
-    client = Node.rpc(World.client(context), context.node.environment, 99, "halc2.readSettings", %{})
+
+    client =
+      Node.rpc(World.client(context), context.node.environment, 99, "halc2.readSettings", %{})
+
     context |> Map.put(:settings_pid, settings) |> World.put_client(client)
   end
 
@@ -557,7 +560,10 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     b = context.peer
     server = :erpc.call(b, HalC2.Streams, :ensure, [context.thread])
     assert node(server) == b
-    thread = HalC2.StreamState.get(:erpc.call(b, HalC2.Streams.Server, :state, [server]), "thread")
+
+    thread =
+      HalC2.StreamState.get(:erpc.call(b, HalC2.Streams.Server, :state, [server]), "thread")
+
     assert %{"title" => "On the second node"} = thread[context.thread]
     # Nothing of it ran here.
     assert Registry.lookup(HalC2.Streams.Registry, context.thread) == []
@@ -579,7 +585,10 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     settings = Node.ensure(HalC2.Settings)
     :ok = :sys.suspend(settings)
     ExUnit.Callbacks.on_exit(fn -> resume(settings) end)
-    client = Node.rpc(World.client(context), context.node.environment, 7, "halc2.readSettings", %{})
+
+    client =
+      Node.rpc(World.client(context), context.node.environment, 7, "halc2.readSettings", %{})
+
     context |> Map.put(:settings_pid, settings) |> World.put_client(client)
   end
 

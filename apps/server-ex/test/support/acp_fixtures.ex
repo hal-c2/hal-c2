@@ -81,10 +81,14 @@ defmodule HalC2.Test.AcpFixtures do
     )
 
     HalC2.Test.Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Acp.Registry}, id: :acp_registry)
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Acp.Registry},
+        id: :acp_registry
+      )
     )
 
-    HalC2.Test.Node.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+    HalC2.Test.Node.ensure(
+      {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one}
+    )
 
     HalC2.Test.Node.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.ProviderAuth.Registry},

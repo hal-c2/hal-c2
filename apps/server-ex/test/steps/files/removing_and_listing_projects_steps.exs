@@ -171,7 +171,9 @@ defmodule HalC2.Steps.Files.RemovingAndListingProjects do
     overrides =
       Map.put(settings["projectSettingsOverrides"] || %{}, id, %{"defaultAutoPull" => on})
 
-    {:ok, _} = HalC2.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
+    {:ok, _} =
+      HalC2.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
+
     context
   end
 

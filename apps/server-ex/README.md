@@ -17,16 +17,22 @@ mix hal_c2.server                                    # prints ws://127.0.0.1:378
 mix hal_c2.pair                                      # one-time pairing URL for Settings → Connections
 ```
 
-State lives in the repo's `.hal-c2/elixir` during development; set `HALC2_HOME` elsewhere.
-The node listens on loopback port 3780; `HALC2_NODE_PORT` and `HALC2_HOST` (a LAN or tailnet
-address, for pairing other devices) change that.
+State lives in the repo's `.hal-c2/elixir` during development; set `HALC2_NODE_HOME` to put
+it elsewhere. The node listens on loopback port 3780; `HALC2_NODE_PORT` and
+`HALC2_NODE_HOST` (a LAN or tailnet address, for pairing other devices; `HALC2_HOST` also
+works) change that.
 
 ## Release
 
 ```sh
 MIX_ENV=prod mix release        # _build/prod/rel/hal_c2, about 80 MB with ERTS
-_build/prod/rel/hal_c2/bin/hal_c2 start # foreground; state in $HALC2_HOME (default ~/.hal-c2/elixir)
+_build/prod/rel/hal_c2/bin/hal_c2 start # foreground; state in ~/.hal-c2/elixir
 ```
+
+A release keeps its state in the `elixir` directory of the HAL-C2 home it shares with
+the Node server (`HALC2_HOME`, default `~/.hal-c2`), or in `HALC2_NODE_HOME` when that is
+set. An install from before the rename keeps using `~/.t3/elixir`, and `T3_HOME` and
+`T3CODE_HOME` are still read (`rel/env.sh.eex`).
 
 The release carries the Cursor sidecar (`packages/cursor-acp`, bundled with its
 dependencies for the build machine's platform), so building one needs `pnpm`, and
@@ -34,7 +40,7 @@ running Cursor needs Node 22+ on the machine. The desktop app runs it on its own
 Electron binary instead (`HALC2_NODE_COMMAND`).
 
 A machine that has joined a cluster boots clustered: joining writes
-`$HALC2_HOME/cluster/vm.args`, which the release reads at start.
+`cluster/vm.args` in its state directory, which the release reads at start.
 
 Run it as a service with `bin/hal-c2-service` (under launchd, systemd, or a terminal): it
 is `bin/hal_c2 start`, started again when the node restarts to finish an update.

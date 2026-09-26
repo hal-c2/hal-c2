@@ -90,7 +90,10 @@ defmodule HalC2.Acp do
   """
   def setting(id, key) do
     with {driver, entry} <- instance(id) do
-      [get_in(entry, ["config", key]), get_in(HalC2.Settings.settings(), ["providers", driver, key])]
+      [
+        get_in(entry, ["config", key]),
+        get_in(HalC2.Settings.settings(), ["providers", driver, key])
+      ]
       |> Enum.find(&(&1 not in [nil, ""] and not (is_binary(&1) and String.trim(&1) == "")))
     end
   end
@@ -444,7 +447,8 @@ defmodule HalC2.Acp do
         true
 
       true ->
-        id == driver and get_in(HalC2.Settings.settings(), ["providers", driver, "enabled"]) == true
+        id == driver and
+          get_in(HalC2.Settings.settings(), ["providers", driver, "enabled"]) == true
     end
   end
 

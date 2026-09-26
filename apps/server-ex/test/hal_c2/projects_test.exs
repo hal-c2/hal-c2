@@ -42,7 +42,8 @@ defmodule HalC2.ProjectsTest do
                "title" => "Renamed"
              })
 
-    assert_receive {:halc2_shell, {:rows, _, [{"p1", {"project", %{"title" => "Renamed"}}}]}}, 1_000
+    assert_receive {:halc2_shell, {:rows, _, [{"p1", {"project", %{"title" => "Renamed"}}}]}},
+                   1_000
 
     assert {:ok, %{"deletedAt" => deleted}} =
              Projects.mutate(%{"type" => "project.delete", "projectId" => "p1"})

@@ -452,7 +452,9 @@ defmodule HalC2.Steps.Platform.Upgrades do
     System.delete_env("RELEASE_ROOT")
     assert Upgrade.release_root() == nil
     # A build directory holding a recompiled plain module and a recompiled supervisor.
-    ebin = Path.join([Node.tmp_dir(context.node, "_build"), "_build", "dev", "lib", "hal_c2", "ebin"])
+    ebin =
+      Path.join([Node.tmp_dir(context.node, "_build"), "_build", "dev", "lib", "hal_c2", "ebin"])
+
     File.mkdir_p!(ebin)
 
     Code.ensure_loaded!(HalC2.Patch)
@@ -529,7 +531,11 @@ defmodule HalC2.Steps.Platform.Upgrades do
   end
 
   step "a client reads the descriptor of a node running from a release", context do
-    Map.put(context, :response, Node.request(context.node, :get, "/.well-known/hal-c2/environment"))
+    Map.put(
+      context,
+      :response,
+      Node.request(context.node, :get, "/.well-known/hal-c2/environment")
+    )
   end
 
   step "it offers in-place self-update", context do

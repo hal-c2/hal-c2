@@ -227,7 +227,10 @@ defmodule HalC2.Acp.Antigravity.Installation do
             "message" => nil
           })
 
-        for id <- HalC2.Acp.instances(), HalC2.Acp.driver(id) == "antigravity", do: HalC2.Acp.forget(id)
+        for id <- HalC2.Acp.instances(),
+            HalC2.Acp.driver(id) == "antigravity",
+            do: HalC2.Acp.forget(id)
+
         HalC2.Settings.notify_providers()
         {:reply, {:ok, state.state}, state}
     end
@@ -251,7 +254,10 @@ defmodule HalC2.Acp.Antigravity.Installation do
     state =
       case result do
         {:ok, version} ->
-          for id <- HalC2.Acp.instances(), HalC2.Acp.driver(id) == "antigravity", do: HalC2.Acp.forget(id)
+          for id <- HalC2.Acp.instances(),
+              HalC2.Acp.driver(id) == "antigravity",
+              do: HalC2.Acp.forget(id)
+
           HalC2.Settings.notify_providers()
 
           publish(state, %{

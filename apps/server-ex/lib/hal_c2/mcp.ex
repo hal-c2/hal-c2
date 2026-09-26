@@ -164,7 +164,9 @@ defmodule HalC2.Mcp do
     answer =
       if Enum.any?(HalC2.Mcp.Tools.list(), &(&1["name"] == name)),
         do: HalC2.Mcp.Tools.call(name, arguments, caller),
-        else: HalC2.Plugins.call_tool(name, arguments) || HalC2.Mcp.Tools.call(name, arguments, caller)
+        else:
+          HalC2.Plugins.call_tool(name, arguments) ||
+            HalC2.Mcp.Tools.call(name, arguments, caller)
 
     case answer do
       {:ok, value} ->

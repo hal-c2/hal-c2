@@ -23,7 +23,9 @@ defmodule HalC2.Desktop do
 
   @doc false
   def apply_bootstrap(bootstrap) do
-    if home = bootstrap["halc2Home"], do: Application.put_env(:hal_c2, :home, Path.join(home, "elixir"))
+    if home = bootstrap["halc2Home"],
+      do: Application.put_env(:hal_c2, :home, Path.join(home, "elixir"))
+
     if port = bootstrap["port"], do: Application.put_env(:hal_c2, :port, port)
     if host = bootstrap["host"], do: Application.put_env(:hal_c2, :host, host)
 

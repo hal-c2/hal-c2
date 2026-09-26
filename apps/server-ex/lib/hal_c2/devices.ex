@@ -891,7 +891,8 @@ defmodule HalC2.Devices do
     {:ok, file}
   end
 
-  defp session_name(thread, host, device), do: "hal-c2-" <> key(JSON.encode!([thread, host, device]))
+  defp session_name(thread, host, device),
+    do: "hal-c2-" <> key(JSON.encode!([thread, host, device]))
 
   defp key(value),
     do: :crypto.hash(:sha256, value) |> Base.encode16(case: :lower) |> binary_part(0, 24)

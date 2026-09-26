@@ -292,7 +292,9 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
 
     for {id, _} <- threads,
         do:
-          assert(HalC2.Streams.Server.state(HalC2.Streams.ensure(id)).seq == context.imported_seqs[id])
+          assert(
+            HalC2.Streams.Server.state(HalC2.Streams.ensure(id)).seq == context.imported_seqs[id]
+          )
 
     context
   end

@@ -56,7 +56,10 @@ defmodule HalC2.Steps.Orchestration.Migration do
 
   step "every project and thread stream of the snapshot exists on the node", context do
     expected = for {aggregate, id, _, _, _} <- context.snapshot, uniq: true, do: {aggregate, id}
-    streams = for %{id: id, kind: kind} <- HalC2.Store.list_streams(HalC2.Store.path()), do: {kind, id}
+
+    streams =
+      for %{id: id, kind: kind} <- HalC2.Store.list_streams(HalC2.Store.path()), do: {kind, id}
+
     assert Enum.sort(streams) == Enum.sort(expected)
     for {kind, id} <- expected, do: assert({^kind, _} = HalC2.Shell.row(node(), id))
     context

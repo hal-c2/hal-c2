@@ -155,8 +155,12 @@ defmodule HalC2.Rpc do
   def handle("provider.auth.logout", input), do: HalC2.ProviderAuth.logout(input)
   def handle("provider.auth.complete", input), do: HalC2.ProviderAuth.complete(input)
   def handle("provider.install.start", input), do: HalC2.Acp.Antigravity.Installation.start(input)
-  def handle("provider.install.cancel", input), do: HalC2.Acp.Antigravity.Installation.cancel(input)
-  def handle("provider.install.remove", input), do: HalC2.Acp.Antigravity.Installation.remove(input)
+
+  def handle("provider.install.cancel", input),
+    do: HalC2.Acp.Antigravity.Installation.cancel(input)
+
+  def handle("provider.install.remove", input),
+    do: HalC2.Acp.Antigravity.Installation.remove(input)
 
   def handle("agentSessions.scan", input), do: HalC2.AgentSessions.scan(input)
   def handle("agentSessions.import", input), do: HalC2.AgentSessions.import_project(input)
@@ -165,7 +169,10 @@ defmodule HalC2.Rpc do
   def handle("pullRequests." <> method, input), do: HalC2.PullRequests.handle(method, input)
   def handle("plugins." <> method, input), do: HalC2.Plugins.handle(method, input)
   def handle("git.resolvePullRequest", input), do: HalC2.PullRequests.Checkout.resolve(input)
-  def handle("git.preparePullRequestThread", input), do: HalC2.PullRequests.Checkout.prepare(input)
+
+  def handle("git.preparePullRequestThread", input),
+    do: HalC2.PullRequests.Checkout.prepare(input)
+
   def handle("vcs.refreshStatus", input), do: HalC2.Vcs.refresh_status(input)
   def handle("vcs.listRefs", input), do: HalC2.Vcs.list_refs(input)
   def handle("vcs.switchRef", input), do: HalC2.Vcs.switch_ref(input)

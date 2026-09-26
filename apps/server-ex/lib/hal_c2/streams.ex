@@ -53,7 +53,8 @@ defmodule HalC2.Streams do
   def flush_shell(stream_id), do: stream_id |> ensure() |> Server.flush_shell()
 
   @doc "Commits changes to a stream and fans them out to its subscribers."
-  @spec commit(String.t(), HalC2.Store.stream_kind(), [HalC2.Store.change()]) :: {:ok, non_neg_integer}
+  @spec commit(String.t(), HalC2.Store.stream_kind(), [HalC2.Store.change()]) ::
+          {:ok, non_neg_integer}
   def commit(stream_id, stream_kind, changes),
     do: stream_id |> ensure() |> Server.commit(stream_kind, changes)
 end

@@ -22,7 +22,9 @@ defmodule HalC2.ProviderUpdates do
 
   @doc "The `versionAdvisory` for a provider whose executable is at `path`."
   def advisory(driver, path, current) do
-    latest = if HalC2.Settings.settings()["enableProviderUpdateChecks"] != false, do: latest(driver)
+    latest =
+      if HalC2.Settings.settings()["enableProviderUpdateChecks"] != false, do: latest(driver)
+
     update = update_command(driver, path)
     # What the user was shown; an update checks the installation still matches it.
     if :persistent_term.get({__MODULE__, driver, :offered}, nil) != update,
@@ -210,7 +212,10 @@ defmodule HalC2.ProviderUpdates do
   end
 
   defp executable("codex"), do: find(Application.get_env(:hal_c2, :codex_command, ["codex"]))
-  defp executable("claudeAgent"), do: find(Application.get_env(:hal_c2, :claude_command, ["claude"]))
+
+  defp executable("claudeAgent"),
+    do: find(Application.get_env(:hal_c2, :claude_command, ["claude"]))
+
   defp executable(_), do: nil
 
   defp find([command | _]), do: System.find_executable(command)
@@ -218,7 +223,10 @@ defmodule HalC2.ProviderUpdates do
 
   # Provider entries cache their version; an update makes it stale.
   defp forget_version("codex"), do: :persistent_term.erase({HalC2.Codex.Provider, :version})
-  defp forget_version("claudeAgent"), do: :persistent_term.erase({HalC2.Claude.Provider, :version})
+
+  defp forget_version("claudeAgent"),
+    do: :persistent_term.erase({HalC2.Claude.Provider, :version})
+
   defp forget_version(_), do: :ok
 
   # The latest release as last read, starting a read when it is missing or stale.

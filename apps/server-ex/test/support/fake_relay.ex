@@ -148,7 +148,8 @@ defmodule HalC2.Test.FakeRelay do
     {path, typ, own} =
       case kind do
         :health ->
-          {"/api/hal-c2-connect/health", "hal-c2-cloud-health+jwt", %{"scope" => ["environment:status"]}}
+          {"/api/hal-c2-connect/health", "hal-c2-cloud-health+jwt",
+           %{"scope" => ["environment:status"]}}
 
         {:mint, jkt} ->
           {"/api/hal-c2-connect/mint-credential", "hal-c2-cloud-mint+jwt",
@@ -257,7 +258,13 @@ defmodule HalC2.Test.FakeRelay do
          true <- challenge == s[:challenge],
          {:ok, public} <- HalC2.Connect.Jwt.raw_public(pem),
          {:ok, _} <-
-           HalC2.Connect.Jwt.verify(proof, "hal-c2-env-link+jwt", public, "hal-c2-env:" <> env, s_url(conn)) do
+           HalC2.Connect.Jwt.verify(
+             proof,
+             "hal-c2-env-link+jwt",
+             public,
+             "hal-c2-env:" <> env,
+             s_url(conn)
+           ) do
       # One tunnel per environment, kept across links, as the relay reuses its address.
       # A deregistered environment that links again gets a new credential.
       credential =

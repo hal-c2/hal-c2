@@ -18,6 +18,8 @@ defmodule Mix.Tasks.HalC2.Server do
 
   @doc "Prints the running node's WebSocket URL with its access token."
   def announce do
-    Mix.shell().info("HAL-C2 node #{node()} #{HalC2.Web.base_url("ws")}/ws?token=#{HalC2.Web.token()}")
+    Mix.shell().info(
+      "HAL-C2 node #{node()} #{HalC2.Web.base_url("ws")}/ws?token=#{HalC2.Web.token()}"
+    )
   end
 end

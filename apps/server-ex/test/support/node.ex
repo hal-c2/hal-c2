@@ -1161,7 +1161,9 @@ defmodule HalC2.Test.Node.World do
   """
   def worktree_thread(context, title, project \\ nil, fields \\ %{}) do
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Vcs.Registry}, id: HalC2.Vcs.Registry)
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Vcs.Registry},
+        id: HalC2.Vcs.Registry
+      )
     )
 
     # A project named but not yet made, or the scenario's first ("api"), is created.
@@ -1184,7 +1186,11 @@ defmodule HalC2.Test.Node.World do
       fields["worktreePath"] ||
         (
           {:ok, %{"worktree" => %{"path" => path}}} =
-            HalC2.Vcs.create_worktree(%{"cwd" => root, "refName" => "main", "newRefName" => branch})
+            HalC2.Vcs.create_worktree(%{
+              "cwd" => root,
+              "refName" => "main",
+              "newRefName" => branch
+            })
 
           path
         )
@@ -1205,7 +1211,12 @@ defmodule HalC2.Test.Node.World do
     unless Process.whereis(HalC2.StorageCleanup), do: put_app_env(:storage_cleanup_first_ms, nil)
     Node.ensure(HalC2.Settings)
 
-    for name <- [HalC2.Codex.Registry, HalC2.Claude.Registry, HalC2.Acp.Registry, HalC2.Vcs.Registry],
+    for name <- [
+          HalC2.Codex.Registry,
+          HalC2.Claude.Registry,
+          HalC2.Acp.Registry,
+          HalC2.Vcs.Registry
+        ],
         do: Node.ensure(Supervisor.child_spec({Registry, keys: :unique, name: name}, id: name))
 
     Node.ensure(HalC2.StorageCleanup)
@@ -3258,7 +3269,9 @@ defmodule HalC2.Test.Node.World do
     )
 
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Acp.Registry}, id: :acp_registry)
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Acp.Registry},
+        id: :acp_registry
+      )
     )
 
     Node.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
@@ -3555,7 +3568,10 @@ defmodule HalC2.Test.Node.World do
   @doc "Waits until the thread's last run is `running` (its provider has the turn)."
   def await_running(context, title) do
     await_value(context, title, fn state ->
-      case state |> HalC2.StreamState.list("run") |> Enum.sort_by(& &1["ordinal"]) |> List.last() do
+      case state
+           |> HalC2.StreamState.list("run")
+           |> Enum.sort_by(& &1["ordinal"])
+           |> List.last() do
         %{"status" => "running"} = run -> run
         _ -> nil
       end
@@ -3961,7 +3977,9 @@ defmodule HalC2.Test.Node.Terminal do
 
   @doc "The running terminal process for `input`."
   def session(input) do
-    [{pid, _}] = Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], input["terminalId"]})
+    [{pid, _}] =
+      Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], input["terminalId"]})
+
     pid
   end
 

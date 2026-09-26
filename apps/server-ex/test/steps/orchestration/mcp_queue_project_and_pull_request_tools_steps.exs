@@ -38,7 +38,8 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
   end
 
   step("the agent of {string} lists the queue of {string}", %{args: [caller, thread]} = context,
-    do: tool(context, caller, "halc2_queue_list", %{"threadId" => World.thread_id(context, thread)})
+    do:
+      tool(context, caller, "halc2_queue_list", %{"threadId" => World.thread_id(context, thread)})
   )
 
   step "it receives the two queued messages in the order they will start", context do
@@ -172,7 +173,9 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
   step "the agent of {string} lists the pending requests of {string}",
        %{args: [caller, thread]} = context do
     context
-    |> tool(caller, "halc2_pending_request_list", %{"threadId" => World.thread_id(context, thread)})
+    |> tool(caller, "halc2_pending_request_list", %{
+      "threadId" => World.thread_id(context, thread)
+    })
     |> Map.put(:reader, caller)
   end
 
@@ -271,10 +274,14 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
   step "reading project {string} fails with {string}", %{args: [project, message]} = context do
     assert {:error, "invalid_request", ^message} =
-             World.mcp_tool(context, context.reader, "halc2_project_read", %{"projectId" => project})
+             World.mcp_tool(context, context.reader, "halc2_project_read", %{
+               "projectId" => project
+             })
 
     assert {:ok, %{"project" => _}} =
-             World.mcp_tool(context, context.reader, "halc2_project_read", %{"projectId" => "demo"})
+             World.mcp_tool(context, context.reader, "halc2_project_read", %{
+               "projectId" => "demo"
+             })
 
     context
   end
@@ -361,7 +368,10 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
     destination = Path.join(HalC2.Test.Node.tmp_dir(context.node, "clones"), "upstream")
 
     context
-    |> tool(caller, "halc2_project_clone", %{"remoteUrl" => source, "destinationPath" => destination})
+    |> tool(caller, "halc2_project_clone", %{
+      "remoteUrl" => source,
+      "destinationPath" => destination
+    })
     |> Map.merge(%{clone: destination, cloner: caller})
   end
 

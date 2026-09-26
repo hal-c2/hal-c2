@@ -11,7 +11,8 @@ defmodule HalC2.ClusterTest do
     unless Node.alive?() do
       {_, 0} = System.cmd("epmd", ["-daemon"])
       # Unique names, so the test never collides with nodes running on this machine.
-      {:ok, _} = Node.start(:"halc2test#{System.unique_integer([:positive])}@127.0.0.1", :longnames)
+      {:ok, _} =
+        Node.start(:"halc2test#{System.unique_integer([:positive])}@127.0.0.1", :longnames)
     end
 
     Application.put_env(:hal_c2, :home, Path.join(dir, "a"))

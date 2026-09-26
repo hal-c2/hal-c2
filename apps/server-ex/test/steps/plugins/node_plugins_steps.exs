@@ -759,7 +759,9 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
         "enableAgentBrowserAccess" => false
       })
 
-    {:ok, _} = HalC2.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
+    {:ok, _} =
+      HalC2.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
+
     context
   end
 

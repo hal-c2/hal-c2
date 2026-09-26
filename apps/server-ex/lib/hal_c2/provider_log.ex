@@ -42,7 +42,12 @@ defmodule HalC2.ProviderLog do
         segment -> segment
       end
 
-    Path.join([Application.fetch_env!(:hal_c2, :home), "logs", "provider", "events.#{segment}.log"])
+    Path.join([
+      Application.fetch_env!(:hal_c2, :home),
+      "logs",
+      "provider",
+      "events.#{segment}.log"
+    ])
   end
 
   @doc "Logs one raw line a provider sent for `thread_id`, when logging is on."

@@ -125,7 +125,10 @@ defmodule HalC2.Review do
         index = Path.expand(String.trim(index), root)
 
         scratch =
-          Path.join(System.tmp_dir!(), "hal-c2-review-index-#{System.unique_integer([:positive])}")
+          Path.join(
+            System.tmp_dir!(),
+            "hal-c2-review-index-#{System.unique_integer([:positive])}"
+          )
 
         env = [{"GIT_INDEX_FILE", scratch}]
         config = ~w(-c core.splitIndex=false -c splitIndex.sharedIndexExpire=never)

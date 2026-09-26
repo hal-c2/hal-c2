@@ -138,7 +138,8 @@ defmodule HalC2.AgentSessionsTest do
       "deletedAt" => nil
     }
 
-    {:ok, _} = HalC2.Streams.commit("p2", :project, [{"project", "p2", HalC2.Patch.diff(nil, p2)}])
+    {:ok, _} =
+      HalC2.Streams.commit("p2", :project, [{"project", "p2", HalC2.Patch.diff(nil, p2)}])
 
     assert {:ok, %{"importedCount" => 0, "skippedCount" => 2}} =
              AgentSessions.import_project(%{"projectId" => "p2"})

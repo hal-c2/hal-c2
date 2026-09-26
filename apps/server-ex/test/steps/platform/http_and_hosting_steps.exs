@@ -68,7 +68,11 @@ defmodule HalC2.Steps.Platform.HttpAndHosting do
   end
 
   step "anyone asks the node's well-known environment route", context do
-    Map.put(context, :response, Node.request(context.node, :get, "/.well-known/hal-c2/environment"))
+    Map.put(
+      context,
+      :response,
+      Node.request(context.node, :get, "/.well-known/hal-c2/environment")
+    )
   end
 
   step "it answers with the environment descriptor and node name", context do

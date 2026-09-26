@@ -127,7 +127,15 @@ defmodule HalC2.AuthTest do
   end
 
   test "a desktop bootstrap line sets where the node listens and keeps its state" do
-    on_exit(fn -> Application.delete_env(:hal_c2, :host) end)
+    previous = for key <- [:home, :port, :host], do: {key, Application.fetch_env(:hal_c2, key)}
+
+    on_exit(fn ->
+      for {key, value} <- previous do
+        with {:ok, value} <- value,
+             do: Application.put_env(:hal_c2, key, value),
+             else: (:error -> Application.delete_env(:hal_c2, key))
+      end
+    end)
 
     :ok =
       HalC2.Desktop.apply_bootstrap(%{

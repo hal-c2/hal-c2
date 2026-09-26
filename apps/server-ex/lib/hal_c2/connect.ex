@@ -377,10 +377,17 @@ defmodule HalC2.Connect do
         {:error, status, message, _} -> {:error, kind(status), message}
       end
     else
-      {:token, _} -> {:error, :permanent, "Run `hal-c2 connect link` to authorize this environment."}
-      {:url, _} -> {:error, :permanent, "No HAL-C2 Connect relay is configured."}
-      {:error, status, message} -> {:error, kind(status), message}
-      {:error, message} -> {:error, :transient, message}
+      {:token, _} ->
+        {:error, :permanent, "Run `hal-c2 connect link` to authorize this environment."}
+
+      {:url, _} ->
+        {:error, :permanent, "No HAL-C2 Connect relay is configured."}
+
+      {:error, status, message} ->
+        {:error, kind(status), message}
+
+      {:error, message} ->
+        {:error, :transient, message}
     end
   end
 

@@ -42,7 +42,9 @@ defmodule HalC2.PreviewAutomationTest do
     host("desk")
 
     call =
-      Task.async(fn -> HalC2.Mcp.Preview.call("preview_click", %{"locator" => "#go"}, @caller) end)
+      Task.async(fn ->
+        HalC2.Mcp.Preview.call("preview_click", %{"locator" => "#go"}, @caller)
+      end)
 
     {connection_id, request} = next_request("desk")
 
@@ -84,7 +86,11 @@ defmodule HalC2.PreviewAutomationTest do
     host("desk")
 
     assert {:error, "PreviewAutomationTimeoutError", _} =
-             HalC2.Mcp.Preview.call("preview_wait_for", %{"text" => "x", "timeoutMs" => 50}, @caller)
+             HalC2.Mcp.Preview.call(
+               "preview_wait_for",
+               %{"text" => "x", "timeoutMs" => 50},
+               @caller
+             )
 
     assert_receive {:halc2_preview_automation, _, "desk", :end}
 

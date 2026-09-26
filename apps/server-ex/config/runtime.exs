@@ -1,10 +1,29 @@
 import Config
 
-if home = System.get_env("HALC2_HOME"), do: config(:hal_c2, home: home)
-if port = System.get_env("HALC2_NODE_PORT"), do: config(:hal_c2, port: String.to_integer(port))
+# The node's state directory. `HALC2_NODE_HOME` names it outright (rel/env.sh.eex and
+# service units set it); `HALC2_HOME` is the HAL-C2 home shared with the Node server,
+# whose state is under `userdata/`, and the node keeps its own under `elixir/`.
+# `T3_HOME` and `T3CODE_HOME` are those two from before the rename. A checkout ignores
+# the shared home a dev server or agent may have exported, like the Node dev runner:
+# its own `.hal-c2` wins (config.exs).
+present = fn name -> if (value = System.get_env(name)) not in [nil, ""], do: value end
+shared = config_env() == :prod
+
+home =
+  cond do
+    dir = present.("HALC2_NODE_HOME") -> dir
+    base = shared && present.("HALC2_HOME") -> Path.join(base, "elixir")
+    dir = present.("T3_HOME") -> dir
+    base = shared && present.("T3CODE_HOME") -> Path.join(base, "elixir")
+    true -> nil
+  end
+
+if home, do: config(:hal_c2, home: home)
+if port = present.("HALC2_NODE_PORT"), do: config(:hal_c2, port: String.to_integer(port))
 # The address to bind, loopback by default; a LAN or tailnet address lets other devices pair.
-# `HALC2_HOST` is the Node server's name for it; `HALC2_NODE_HOST` is kept alongside `HALC2_NODE_PORT`.
-if host = System.get_env("HALC2_HOST") || System.get_env("HALC2_NODE_HOST"),
+# `HALC2_NODE_HOST` sits alongside `HALC2_NODE_PORT`; `HALC2_HOST`, the Node server's name
+# for it, is the fallback.
+if host = present.("HALC2_NODE_HOST") || present.("HALC2_HOST"),
   do: config(:hal_c2, host: host)
 
 # Local trace file and the collector client spans are forwarded to (`HalC2.Traces`).

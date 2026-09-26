@@ -34,7 +34,8 @@ defmodule HalC2.ComposerContext do
         |> Enum.uniq_by(& &1.id)
         |> Enum.map(&entry(kind(records[&1.id], &1.kind), &1.id, records[&1.id]))
 
-      body <> "\n\n<halc2_context version=\"1\">\n" <> Enum.join(entries, "\n") <> "\n</halc2_context>"
+      body <>
+        "\n\n<halc2_context version=\"1\">\n" <> Enum.join(entries, "\n") <> "\n</halc2_context>"
     end
   end
 

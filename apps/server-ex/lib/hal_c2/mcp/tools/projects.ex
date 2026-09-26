@@ -239,7 +239,8 @@ defmodule HalC2.Mcp.Tools.Projects do
   defp start_point(_root, base_ref, false), do: {:ok, base_ref}
 
   defp start_point(root, base_ref, true) do
-    with {:ok, _} <- HalC2.Git.ok(root, ["fetch", "origin"]) |> operation("Unable to fetch origin"),
+    with {:ok, _} <-
+           HalC2.Git.ok(root, ["fetch", "origin"]) |> operation("Unable to fetch origin"),
          {:ok, sha} <-
            HalC2.Git.ok(root, ["rev-parse", "--verify", "origin/#{base_ref}^{commit}"])
            |> operation("Unable to resolve the remote-tracking commit of '#{base_ref}'"),
@@ -281,7 +282,8 @@ defmodule HalC2.Mcp.Tools.Projects do
         terminal = %{"threadId" => thread_id, "terminalId" => "setup", "cwd" => path}
 
         with {:ok, _} <- HalC2.Terminal.open(terminal),
-             {:ok, _} <- HalC2.Terminal.write(Map.put(terminal, "data", script["command"] <> "\r")) do
+             {:ok, _} <-
+               HalC2.Terminal.write(Map.put(terminal, "data", script["command"] <> "\r")) do
           %{"status" => "started", "scriptName" => script["name"], "terminalId" => "setup"}
         else
           error -> %{"status" => "failed", "detail" => inspect(error)}

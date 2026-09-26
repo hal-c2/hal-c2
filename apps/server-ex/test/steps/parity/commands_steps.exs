@@ -24,7 +24,9 @@ defmodule HalC2.Steps.Parity.Commands do
     fake_providers()
 
     {:ok, access, _expires, _scopes} =
-      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.node.store), %{"label" => "Phone"})
+      HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.node.store), %{
+        "label" => "Phone"
+      })
 
     {:ok, ticket, _} = HalC2.Auth.issue_ticket(access)
 
@@ -632,7 +634,9 @@ defmodule HalC2.Steps.Parity.Commands do
 
   defp setup!(context, type, fields \\ %{}) do
     {:ok, _} =
-      HalC2.Orchestration.dispatch(Map.merge(fields, %{"type" => type, "threadId" => main(context)}))
+      HalC2.Orchestration.dispatch(
+        Map.merge(fields, %{"type" => type, "threadId" => main(context)})
+      )
   end
 
   defp link(number),
@@ -644,7 +648,8 @@ defmodule HalC2.Steps.Parity.Commands do
       "source" => "manual"
     }
 
-  defp numbers(thread), do: thread |> HalC2.Projection.PullRequests.of() |> Enum.map(& &1["number"])
+  defp numbers(thread),
+    do: thread |> HalC2.Projection.PullRequests.of() |> Enum.map(& &1["number"])
 
   defp fork_command(source, target, run_id),
     do: %{
@@ -1190,7 +1195,10 @@ defmodule HalC2.Steps.Parity.Commands do
         numbers(thread) == []
 
       "thread.pull-request-synced" ->
-        match?([%{"snapshot" => %{"state" => "merged"}}], HalC2.Projection.PullRequests.of(thread))
+        match?(
+          [%{"snapshot" => %{"state" => "merged"}}],
+          HalC2.Projection.PullRequests.of(thread)
+        )
 
       "thread.runtime-mode-set" ->
         thread["runtimeMode"] == "approval-required"

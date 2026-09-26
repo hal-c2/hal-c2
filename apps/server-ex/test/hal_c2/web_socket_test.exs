@@ -52,7 +52,9 @@ defmodule HalC2.Web.SocketTest do
            } = shell
 
     {:ok, _} =
-      HalC2.Streams.commit("th-1", :thread, [{"thread", "th-1", %{"s" => %{"title" => "Renamed"}}}])
+      HalC2.Streams.commit("th-1", :thread, [
+        {"thread", "th-1", %{"s" => %{"title" => "Renamed"}}}
+      ])
 
     assert {%{"t" => "shell.rows", "rows" => [["th-1", "thread", %{"title" => "Renamed"}]]}, _} =
              WsClient.recv(client, 1_000)
@@ -93,7 +95,8 @@ defmodule HalC2.Web.SocketTest do
           [_seq, "turn-item", "i1", patch, _at] <- events,
           do: patch
 
-    assert Enum.reduce(patches, %{"text" => ""}, &HalC2.Patch.apply(&2, &1))["text"] == "Hello,world"
+    assert Enum.reduce(patches, %{"text" => ""}, &HalC2.Patch.apply(&2, &1))["text"] ==
+             "Hello,world"
 
     # A new connection resuming from the first offset gets only what it missed, merged.
     resumed =
@@ -160,7 +163,11 @@ defmodule HalC2.Web.SocketTest do
     tmp_dir: dir
   } do
     start_supervised!({Registry, keys: :unique, name: HalC2.Terminal.Registry})
-    start_supervised!({DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one})
+
+    start_supervised!(
+      {DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one}
+    )
+
     start_supervised!(HalC2.Terminal.Hub)
     [{_node, %{"environmentId" => environment}}] = HalC2.Shell.environments()
     me = Atom.to_string(node())

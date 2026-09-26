@@ -54,7 +54,7 @@ defmodule HalC2.MixProject do
   defp stage_cursor_acp(release) do
     root = Path.expand("../..", __DIR__)
     package = Path.join(root, "packages/cursor-acp")
-    target = Path.join([release.path, "lib", "hal-c2-#{release.version}", "priv", "cursor-acp"])
+    target = Path.join([release.path, "lib", "hal_c2-#{release.version}", "priv", "cursor-acp"])
     File.rm_rf!(target)
     File.mkdir_p!(target)
 

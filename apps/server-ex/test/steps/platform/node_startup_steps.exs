@@ -45,12 +45,21 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   end
 
   step "HALC2_NODE_PORT is {int} and HALC2_HOME is {string}", %{args: [port, home]} = context do
+    clear_home_env()
     World.put_os_env("HALC2_NODE_PORT", to_string(port))
     World.put_os_env("HALC2_HOME", home)
     Map.put(context, :boot_env, :prod)
   end
 
+  step "the home directory is set with its name from before the rename, T3CODE_HOME={string}",
+       %{args: [home]} = context do
+    clear_home_env()
+    World.put_os_env("T3CODE_HOME", home)
+    Map.put(context, :boot_env, :prod)
+  end
+
   step "the bind host is set to {string} in the environment", %{args: [host]} = context do
+    World.put_os_env("HALC2_NODE_HOST", nil)
     World.put_os_env("HALC2_HOST", host)
     Map.put(context, :boot_env, :prod)
   end
@@ -85,18 +94,32 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   end
 
   step "no home directory is configured", context do
-    World.put_os_env("HALC2_HOME", nil)
+    clear_home_env()
     context
   end
 
   step "its state lives in the checkout's {string} directory", %{args: [dir]} = context do
     {top, 0} = System.cmd("git", ["rev-parse", "--show-toplevel"], cd: project_dir())
-    assert context.boot[:home] == Path.join(String.trim(top), dir)
+    top = String.trim(top)
+    expected = Path.join(top, dir)
+    # A checkout that only has the sandbox from before the rename keeps it.
+    legacy = Path.join(top, ".t3/elixir")
+
+    if File.dir?(expected) or not File.dir?(legacy),
+      do: assert(context.boot[:home] == expected),
+      else: assert(context.boot[:home] == legacy)
+
     context
   end
 
-  step "a user starts the node from a release", context do
+  step "the user's home holds the node state of an install from before the rename", context do
     user_home = Node.tmp_dir(context.node, "user-home")
+    File.mkdir_p!(Path.join(user_home, ".t3/elixir"))
+    Map.put(context, :user_home, user_home)
+  end
+
+  step "a user starts the node from a release", context do
+    user_home = context[:user_home] || Node.tmp_dir(context.node, "user-home")
     Map.merge(context, %{user_home: user_home, boot: release_boot(user_home)})
   end
 
@@ -107,6 +130,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
 
   step "the node starts from a checkout or a release", context do
     World.put_os_env("HALC2_HOST", nil)
+    World.put_os_env("HALC2_NODE_HOST", nil)
     boots = [boot_config(:dev), release_boot(Node.tmp_dir(context.node, "user-home"))]
     Map.put(context, :boots, boots)
   end
@@ -220,7 +244,9 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   end
 
   step "a client reads the node's environment descriptor", context do
-    assert {200, _, descriptor} = Node.request(context.node, :get, "/.well-known/hal-c2/environment")
+    assert {200, _, descriptor} =
+             Node.request(context.node, :get, "/.well-known/hal-c2/environment")
+
     Map.put(context, :descriptor, descriptor)
   end
 
@@ -313,7 +339,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     unit = File.read!(context.service["unitPath"])
     release = System.get_env("RELEASE_ROOT")
     assert unit =~ "ExecStart=#{release}/bin/hal-c2-service"
-    assert unit =~ "Environment=HALC2_HOME=#{context.node.home}"
+    assert unit =~ "Environment=HALC2_NODE_HOME=#{context.node.home}"
     assert context.service["installed"] and context.service["current"]
     assert "--user daemon-reload" in calls(context)
     assert "--user restart hal-c2.service" in calls(context)
@@ -348,7 +374,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     root = Node.tmp_dir(context.node, "rel")
     version = HalC2.Upgrade.version()
 
-    for dir <- ["bin", "lib/hal-c2-#{version}/ebin", "releases/#{version}", "erts-17.0.5/bin"],
+    for dir <- ["bin", "lib/hal_c2-#{version}/ebin", "releases/#{version}", "erts-17.0.5/bin"],
         do: File.mkdir_p!(Path.join(root, dir))
 
     File.write!(Path.join(root, "releases/start_erl.data"), "17.0.5 #{version}\n")
@@ -393,9 +419,11 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   end
 
   step "the node needs the Cursor provider", context do
-    # The release's own layout (`lib/hal-c2-<version>/priv`, where mix.exs stages the
+    # The release's own layout (`lib/hal_c2-<version>/priv`, where mix.exs stages the
     # sidecar), put first on the code path so the application resolves to it.
-    lib = Path.join([Node.tmp_dir(context.node, "rel"), "lib", "hal-c2-#{HalC2.Upgrade.version()}"])
+    lib =
+      Path.join([Node.tmp_dir(context.node, "rel"), "lib", "hal_c2-#{HalC2.Upgrade.version()}"])
+
     sidecar = Path.join(lib, "priv/cursor-acp/main.mjs")
     File.mkdir_p!(Path.dirname(sidecar))
     File.write!(sidecar, "")
@@ -483,7 +511,13 @@ defmodule HalC2.Steps.Platform.NodeStartup do
 
     :persistent_term.erase({HalC2.Web, :token})
 
-    for child <- [{HalC2.Store, path: HalC2.Store.home_path()}, HalC2.Auth, HalC2.Streams, HalC2.Shell, HalC2.Web],
+    for child <- [
+          {HalC2.Store, path: HalC2.Store.home_path()},
+          HalC2.Auth,
+          HalC2.Streams,
+          HalC2.Shell,
+          HalC2.Web
+        ],
         do: Node.ensure(child)
 
     Map.merge(context, %{desktop: %{port: port, halc2_home: halc2_home, token: token}})
@@ -501,7 +535,8 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     context
   end
 
-  step "keeps its state under the {string} directory of that HAL-C2 home", %{args: [dir]} = context do
+  step "keeps its state under the {string} directory of that HAL-C2 home",
+       %{args: [dir]} = context do
     home = Path.join(context.desktop.halc2_home, dir)
     assert Application.fetch_env!(:hal_c2, :home) == home
     assert HalC2.Store.home_path() == Path.join(home, "hal-c2.sqlite")
@@ -631,21 +666,29 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     Config.Reader.merge(base, runtime)[:hal_c2]
   end
 
-  # A release boots with the HALC2_HOME its env.sh settles on for this user.
+  # Every variable that names the node's home, now and from before the rename.
+  @home_env ~w(HALC2_NODE_HOME HALC2_HOME T3_HOME T3CODE_HOME)
+
+  defp clear_home_env, do: for(name <- @home_env, do: World.put_os_env(name, nil))
+
+  # A release boots with the HALC2_NODE_HOME its env.sh settles on for this user.
   defp release_boot(user_home) do
-    home = release_env(nil, [{"HOME", user_home}])["HALC2_HOME"]
-    previous = System.get_env("HALC2_HOME")
-    System.put_env("HALC2_HOME", home)
+    home = release_env(nil, [{"HOME", user_home}])["HALC2_NODE_HOME"]
+    previous = System.get_env("HALC2_NODE_HOME")
+    System.put_env("HALC2_NODE_HOME", home)
 
     try do
       boot_config(:prod)
     after
-      if previous, do: System.put_env("HALC2_HOME", previous), else: System.delete_env("HALC2_HOME")
+      if previous,
+        do: System.put_env("HALC2_NODE_HOME", previous),
+        else: System.delete_env("HALC2_NODE_HOME")
     end
   end
 
-  # What rel/env.sh.eex exports, sourced the way the release script does.
-  defp release_env(halc2_home, env \\ []) do
+  # What rel/env.sh.eex exports, sourced the way the release script does, with
+  # `node_home` as the node's state directory (nil: the script resolves it).
+  defp release_env(node_home, env \\ []) do
     script = Path.join(project_dir(), "rel/env.sh.eex")
 
     {out, 0} =
@@ -653,19 +696,19 @@ defmodule HalC2.Steps.Platform.NodeStartup do
         "sh",
         [
           "-c",
-          ~s(. "$0"; printf '%s\\n' "$HALC2_HOME" "$RELEASE_DISTRIBUTION" "${ELIXIR_ERL_OPTIONS:-}"),
+          ~s(. "$0"; printf '%s\\n' "$HALC2_NODE_HOME" "$RELEASE_DISTRIBUTION" "${ELIXIR_ERL_OPTIONS:-}"),
           script
         ],
         env:
           [
-            {"HALC2_HOME", halc2_home},
+            {"HALC2_NODE_HOME", node_home},
             {"RELEASE_DISTRIBUTION", nil},
             {"ELIXIR_ERL_OPTIONS", nil}
-          ] ++ env
+          ] ++ for(name <- @home_env -- ["HALC2_NODE_HOME"], do: {name, nil}) ++ env
       )
 
     [home, dist, opts] = String.split(out, "\n") |> Enum.take(3)
-    %{"HALC2_HOME" => home, "RELEASE_DISTRIBUTION" => dist, "ELIXIR_ERL_OPTIONS" => opts}
+    %{"HALC2_NODE_HOME" => home, "RELEASE_DISTRIBUTION" => dist, "ELIXIR_ERL_OPTIONS" => opts}
   end
 
   # `{ip, port}` of the listener `HalC2.Web` would start under `boot`.

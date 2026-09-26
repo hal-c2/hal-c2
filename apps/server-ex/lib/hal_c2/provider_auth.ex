@@ -405,7 +405,8 @@ defmodule HalC2.ProviderAuth do
   end
 
   defp broadcast(state) do
-    for {pid, _} <- state.watchers, do: send(pid, {:halc2_provider_auth, state.instance, state.auth})
+    for {pid, _} <- state.watchers,
+        do: send(pid, {:halc2_provider_auth, state.instance, state.auth})
   end
 
   defp methods(%{methods: nil}), do: %{}
@@ -442,7 +443,8 @@ defmodule HalC2.ProviderAuth do
   # What a flow says at each step: Antigravity names Google, others are generic.
   defp text(instance, key) do
     if antigravity?(instance) do
-      browser? = HalC2.Acp.Antigravity.browser?(HalC2.Acp.Antigravity.config(instance)["authMethod"])
+      browser? =
+        HalC2.Acp.Antigravity.browser?(HalC2.Acp.Antigravity.config(instance)["authMethod"])
 
       case key do
         :starting when browser? ->

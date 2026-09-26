@@ -117,7 +117,9 @@ defmodule HalC2.Steps.Orchestration.ComposerContext do
   end
 
   step "a message holds a context link with an unknown version or an invalid id", context do
-    text = "Keep [a](hal-c2-context://v2/mention/m1) and [b](hal-c2-context://v1/mention/bad.id) as is"
+    text =
+      "Keep [a](hal-c2-context://v2/mention/m1) and [b](hal-c2-context://v1/mention/bad.id) as is"
+
     context |> Map.put(:sent, text) |> send_message("t1", text, [])
   end
 
@@ -204,9 +206,15 @@ defmodule HalC2.Steps.Orchestration.ComposerContext do
     }
 
     context =
-      send_message(context, thread, "Use ![shot.png](hal-c2-context://v1/image/img1)", [record], %{
-        "attachments" => [attachment]
-      })
+      send_message(
+        context,
+        thread,
+        "Use ![shot.png](hal-c2-context://v1/image/img1)",
+        [record],
+        %{
+          "attachments" => [attachment]
+        }
+      )
 
     Map.put(context, :thread, thread)
   end
@@ -238,7 +246,10 @@ defmodule HalC2.Steps.Orchestration.ComposerContext do
       World.dispatch(context, World.message_command(context, thread, text, fields))
 
     World.await_state(context, thread, fn state ->
-      Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] not in ["starting", "queued"]))
+      Enum.any?(
+        HalC2.StreamState.list(state, "run"),
+        &(&1["status"] not in ["starting", "queued"])
+      )
     end)
 
     inputs = World.provider_inputs(context)

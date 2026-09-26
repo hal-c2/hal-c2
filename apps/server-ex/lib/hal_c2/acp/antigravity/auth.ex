@@ -45,7 +45,8 @@ defmodule HalC2.Acp.Antigravity.Auth do
     with {:ok, command, env} <- Antigravity.command(instance),
          {:ok, conn} <-
            Connection.start_link(cmd: command, handler: self(), cd: cwd, env: env, dialect: :v2),
-         {:ok, _init} <- Connection.call(conn, "initialize", HalC2.Acp.initialize_params(), 60_000) do
+         {:ok, _init} <-
+           Connection.call(conn, "initialize", HalC2.Acp.initialize_params(), 60_000) do
       task =
         Task.async(fn ->
           Connection.call(conn, "authenticate", %{"methodId" => method}, @login_timeout)

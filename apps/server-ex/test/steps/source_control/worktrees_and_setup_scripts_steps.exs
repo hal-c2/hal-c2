@@ -713,7 +713,8 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
   end
 
   defp follow_thread(id, fun) do
-    thread = HalC2.StreamState.get(HalC2.Streams.Server.state(HalC2.Streams.ensure(id)), "thread")[id]
+    thread =
+      HalC2.StreamState.get(HalC2.Streams.Server.state(HalC2.Streams.ensure(id)), "thread")[id]
 
     if thread && fun.(thread) do
       thread

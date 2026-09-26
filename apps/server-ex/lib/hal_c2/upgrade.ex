@@ -36,7 +36,8 @@ defmodule HalC2.Upgrade do
 
   @doc "The version this node runs, including one loaded in place."
   def version do
-    :persistent_term.get({__MODULE__, :version}, nil) || to_string(Application.spec(:hal_c2, :vsn))
+    :persistent_term.get({__MODULE__, :version}, nil) ||
+      to_string(Application.spec(:hal_c2, :vsn))
   end
 
   @doc "The release this node runs from, or nil when it runs from a checkout."

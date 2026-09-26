@@ -147,7 +147,8 @@ defmodule HalC2.Connect.OAuth do
 
   defp poll(config, device_code, interval, deadline) do
     if System.monotonic_time(:millisecond) + interval > deadline do
-      {:error, "HAL-C2 Connect authorization expired before it was approved. Run the command again."}
+      {:error,
+       "HAL-C2 Connect authorization expired before it was approved. Run the command again."}
     else
       receive do
       after
@@ -191,9 +192,14 @@ defmodule HalC2.Connect.OAuth do
 
   defp redeem(config, params) do
     case post(config.token_endpoint, params) do
-      {:ok, body} -> store(body)
-      {:error, _status, body} -> {:error, "HAL-C2 Connect authorization failed: #{describe(body)}"}
-      {:error, :transport} -> {:error, "Could not reach the HAL-C2 Connect sign-in service."}
+      {:ok, body} ->
+        store(body)
+
+      {:error, _status, body} ->
+        {:error, "HAL-C2 Connect authorization failed: #{describe(body)}"}
+
+      {:error, :transport} ->
+        {:error, "Could not reach the HAL-C2 Connect sign-in service."}
     end
   end
 
