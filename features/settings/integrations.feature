@@ -1,0 +1,144 @@
+# Sources:
+#   apps/web/src/components/settings/IntegrationsSettings.tsx
+#   apps/web/src/components/settings/IntegrationsSettings.logic.test.ts
+#   docs/user/devices.md (Settings → Integrations → Devices, device tool updates, auto-show floating preview)
+#   apps/server-ex/lib/t3/devices.ex (device.configure, device.list updateTool and inspectOnly)
+#   apps/server-ex/lib/t3/rpc.ex (device.configure, device.list)
+#   Ownership: this file is the only settings file for "Open links in", browser profiles and
+#   auto-show floating preview (browser-import.feature covers importing cookies into a profile).
+#   Terminal font and theme belong to the Appearance page in navigation/appearance.feature
+#   (Fonts and text) and terminal/links-and-graphics.feature; no settings/ file repeats them.
+
+Feature: Integrations settings
+  The Integrations page holds the built-in browser's defaults for this device and the device
+  hub that lets the user and agents use simulators and emulators on an environment.
+
+  Background:
+    Given the user has opened the Integrations settings
+
+  Rule: Browser defaults belong to this device
+
+    @backlog @desktop
+    Scenario Outline: A browser default applies to new browser tabs
+      When the user sets the default <setting> to <value>
+      Then new browser tabs open with <setting> <value>
+      When the user resets the <setting>
+      Then new browser tabs use the built-in <setting>
+
+      Examples:
+        | setting    | value           |
+        | viewport   | 390 by 844      |
+        | zoom       | 125%            |
+        | appearance | Dark            |
+
+    @backlog @desktop
+    Scenario Outline: Recording defaults apply to new recordings
+      When the user sets <setting>
+      Then new browser recordings <effect>
+
+      Examples:
+        | setting                              | effect                                       |
+        | the frame rate to 30 fps             | record at most 30 frames per second          |
+        | key presses to be shown              | show pressed keys except in password fields  |
+        | mouse presses to be shown            | highlight mouse presses and held buttons     |
+
+    @backlog @desktop
+    Scenario: Links can open in T3 Code or in the default browser
+      When the user chooses to open links in T3 Code
+      Then links in the chat and terminal open in T3 Code's browser
+      When the user chooses the default browser
+      Then links open in the default browser
+
+    @backlog @desktop
+    Scenario: The floating preview can stay hidden when an agent opens a browser
+      When the user turns off auto-show floating preview
+      Then an agent opening a browser does not show the floating preview
+
+    @backlog @desktop
+    Scenario: Browser defaults are unavailable in a web browser
+      Given the user is using T3 Code in a web browser
+      Then the browser defaults cannot be changed
+      And the user is told they are only available in the desktop app
+
+    @backlog @desktop
+    Scenario: Creating, renaming and removing a browser profile
+      When the user creates a browser profile named "Work"
+      Then "Work" is listed as a browser profile
+      When the user renames "Work" to "Client"
+      Then "Client" is listed instead of "Work"
+      When the user removes "Client" and confirms
+      Then "Client" is no longer listed
+
+    @backlog @desktop
+    Scenario: Clearing a profile's data keeps the profile
+      Given the browser profile "Work" has cookies
+      When the user clears the data of "Work"
+      Then the user is told the cookies and cache of "Work" were cleared
+      And "Work" is still listed
+
+    @backlog @desktop
+    Scenario: The profile limit stops new profiles
+      Given the user has reached the browser profile limit
+      When the user tries to create a browser profile
+      Then the user is told the browser profile limit is reached
+
+  Rule: The device hub
+
+    @node
+    Scenario: Turning on the device hub stores it and lists devices
+      When the user turns on the device hub for this node
+      Then device support is stored as on
+      And the node lists the simulators and emulators on its machine
+
+    @node
+    Scenario: Turning off the device hub stores it with agent device access off
+      Given the device hub and agent device access are on
+      When a client turns off the device hub and agent device access together
+      Then device support is stored as off
+      And agent device access is stored as off
+
+    @node
+    Scenario: Checking device tool versions installs nothing
+      When the user checks device tool versions on this node
+      Then the installed and required versions are reported
+      And no tool is installed and no device is started
+
+    @node
+    Scenario: Updating a device tool installs its required version
+      Given the device hub tool is older than the required version
+      When the user updates the device hub tool
+      Then the required version is installed
+
+    @node
+    Scenario: A device tool update without network access fails
+      Given this node has no network access
+      When the user updates the device hub tool
+      Then the update fails with a device tool error
+
+    @backlog @desktop
+    Scenario: Agent device access can be granted and taken away
+      Given the device hub is on
+      When the user turns on agent device access
+      Then agents started from then on can use the device tools
+      When the user turns off agent device access
+      Then agents started from then on cannot use the device tools
+
+    @backlog @desktop
+    Scenario: Device settings change on every selected environment
+      Given the user is editing settings across all environments
+      And saving on "Build box" fails
+      When the user turns on the device hub
+      Then the user is told device settings were not saved on all environments and could not update "Build box"
+
+    @backlog @desktop
+    Scenario: A failed tool update explains what to check
+      Given the device hub tool update fails
+      When the user updates the device hub tool
+      Then the user is told to check this host's network connection and try again
+
+    @backlog @desktop
+    Scenario: Several environments show one environment's device status at a time
+      Given the user is editing settings across "Laptop" and "Build box"
+      When the user looks at simulator support
+      Then the iOS and Android status of "Laptop" is shown
+      And the user is told to select an environment to inspect its simulator support

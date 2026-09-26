@@ -1,0 +1,129 @@
+# Sources:
+#   docs/user/composer.md (follow-up behaviour, queued messages, editing a queued message)
+#   apps/server-ex/lib/t3/orchestration.ex (queued runs, steer, restart dispatch, queue hold)
+#   apps/web/src/components/chat/QueuedRunsControl.tsx
+#   apps/web/src/components/chat/ComposerPrimaryActions.tsx (queue, steer, stop)
+#   apps/desktop-qt/qml/T3/Bricks/Composer.qml (stop while running)
+#   apps/tui/src/components/ChatView.tsx (Esc interrupts)
+#   packages/shared/src/keybindings.ts (composer.sendAlternate, thread.steerQueuedMessage, thread.editQueuedMessage)
+#   packages/contracts/src/orchestrationV2.ts (queued-run.cancel, queued-run.edit, queued-run.reorder, queued-message.promote-to-steer, queue.resume, run.interrupt)
+#   packages/contracts/src/settings.ts (followUpBehavior)
+
+Feature: Follow-ups while the agent is working
+  A message sent while a turn is running either waits in the queue or steers
+  the running turn. Queued messages can be reordered, edited, promoted and
+  removed, and the user can always stop the running turn.
+
+  Background:
+    Given a thread whose agent is working on a turn
+
+  @node
+  Scenario: A message sent to the queue during a turn waits for the thread to be idle
+    When the user queues "also update the docs"
+    Then "also update the docs" is queued behind the running turn
+    And it starts once the thread is idle
+
+  @node
+  Scenario Outline: Steering joins the running turn only where the provider can take it
+    Given the thread runs on <provider>
+    When the user steers the running turn with "use the new API"
+    Then <outcome>
+
+    Examples:
+      | provider | outcome                                                                  |
+      | Codex    | the running turn receives "use the new API"                              |
+      | Claude   | the running turn receives "use the new API"                              |
+      | OpenCode | the running turn is interrupted and "use the new API" runs next          |
+
+  @node
+  Scenario: A steer the provider rejects falls back to the queue
+    Given the provider rejects the steer
+    When the user steers the running turn with "stop and summarize"
+    Then "stop and summarize" is queued to run after the active turn
+    And the message is not lost
+
+  @node
+  Scenario: Restarting with a message interrupts the turn and runs the message next
+    Given "later" is queued
+    When the user restarts the turn with "start over with tests first"
+    Then the running turn is interrupted
+    And "start over with tests first" runs before "later"
+
+  @backlog @desktop @mobile
+  Scenario Outline: The follow-up setting decides what sending during a turn does
+    Given the follow-up behaviour setting is "<setting>"
+    When the user <action> "<message>"
+    Then "<message>" <outcome>
+
+    Examples:
+      | setting | action                    | message | outcome                     |
+      | queue   | sends                     | tweak   | is queued                   |
+      | queue   | sends the opposite way    | tweak   | steers the running turn     |
+      | steer   | sends                     | tweak   | steers the running turn     |
+      | steer   | sends the opposite way    | tweak   | is queued                   |
+
+  @node
+  Scenario: Reordering the queue changes what runs next
+    Given "a", "b" and "c" are queued in that order
+    When the user moves "c" before "a"
+    Then the queue order is "c", "a", "b"
+
+  @node
+  Scenario: Editing a queued message replaces its text before it runs
+    Given "fix typo" is queued
+    When the user edits it to "fix all typos"
+    Then the queued message reads "fix all typos"
+    And it keeps its place in the queue
+
+  @backlog @desktop
+  Scenario: Editing the last queued message from the composer and cancelling restores the prior draft
+    Given "fix typo" is queued
+    And the user has typed "unrelated draft"
+    When the user starts editing the last queued message from the start of the composer
+    Then the composer holds "fix typo"
+    When the user cancels the edit
+    Then the composer holds "unrelated draft" again
+    And the queued message still reads "fix typo"
+
+  @node
+  Scenario Outline: Promoting a queued message steers the running turn
+    Given the thread runs on <provider>
+    And "check the logs" is queued
+    When the user promotes it to a steer
+    Then <outcome>
+    And "check the logs" is no longer waiting in the queue
+
+    Examples:
+      | provider | outcome                                                          |
+      | Codex    | the running turn receives "check the logs"                       |
+      | Claude   | the running turn receives "check the logs"                       |
+      | OpenCode | the running turn is interrupted and "check the logs" runs next   |
+
+  @node
+  Scenario: Removing a queued message cancels it
+    Given "never mind" is queued
+    When the user removes it from the queue
+    Then "never mind" never runs
+
+  @node
+  Scenario: The queue is held after a node restart until the user resumes it
+    Given "later" was queued when the node restarted
+    When the node comes back
+    Then the queue is held and "later" does not start on its own
+    When the user resumes the queue
+    Then "later" starts
+
+  @desktop
+  Scenario: Stopping the running turn from an empty composer
+    Given the composer is empty
+    When the user chooses to stop
+    Then the running turn is interrupted
+
+  @tui
+  Scenario: Escape clears the draft first, then stops the turn
+    Given the user has typed "wait"
+    When the user presses Escape
+    Then the draft is empty
+    And the turn is still running
+    When the user presses Escape again
+    Then the running turn is interrupted

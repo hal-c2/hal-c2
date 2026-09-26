@@ -79,8 +79,8 @@ cluster's CA.
 CLIs; `--include parity` compares sidebar rows with the Node server's
 (see `test/t3/projection/shell_parity_test.exs`).
 
-`test/t3/node_parity_test.exs` holds a row for every RPC method and orchestration
-command in the contracts, parsed on each run, with how this node serves it or why
-it does not. What it cannot serve yet is in `test/t3/features_backlog_test.exs` as
-skipped Given/when/then scenarios; `test/t3/scenarios_test.exs` drives the
-behavior a client sees over the socket.
+What this node serves, what it still lacks, and why anything was dropped is written as
+Gherkin under the repository's `features/` tree: `features/parity/rpc.feature` and
+`features/parity/commands.feature` hold a row per RPC method and orchestration command,
+and `features/node/` describes the behaviour a client sees over the socket.
+`test/t3/scenarios_test.exs` drives the subset of those scenarios that run today.

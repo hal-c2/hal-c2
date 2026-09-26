@@ -728,13 +728,12 @@ becomes another `WebEngineView` loading an embed route with its own server
 connection (the right panel and the terminal drawer are the precedents); the
 primary view stays the brain.
 
-What the shell still lacks next to web and mobile is tracked as specs, not
-prose. `apps/desktop-qt/parity/features.backlog.test.ts` is a source-backed
-catalog of missing capabilities whose Given/When/Then scenarios run as skipped
-tests, and `apps/desktop-qt/parity/web-parity.test.ts` records which web
-keybindings work in the shell. Add a new gap or keymap difference there, and
-turn a skipped scenario into a real test (`tests/tst_Scenarios.qml` for brick
-behavior) when the feature lands.
+What the shell still lacks next to web and mobile is tracked as Gherkin, not
+prose. The repository's `features/` tree tags every scenario with the surface it
+must hold on and `@backlog` where the native shell does not deliver it yet;
+`features/navigation/keybindings.feature` records which web keybindings work in
+the shell. Add a new gap there, and turn a backlog scenario into a real test
+(`tests/tst_Scenarios.qml` for brick behavior) when the feature lands.
 
 ## Release targets
 

@@ -1,0 +1,301 @@
+# Sources:
+#   apps/web/src/components/settings/ProviderSettingsPanel.tsx
+#   apps/web/src/components/settings/ProviderSettingsPanel.logic.ts
+#   apps/web/src/components/settings/ProviderInstanceCard.tsx
+#   apps/web/src/components/settings/AddProviderInstanceDialog.tsx
+#   apps/web/src/components/settings/AddProviderInstanceDialog.logic.ts
+#   apps/web/src/components/settings/AddProviderInstanceWizardSteps.tsx
+#   apps/web/src/components/settings/AcpRegistrySearchStep.tsx
+#   apps/web/src/components/settings/AcpSessionManagementSection.tsx
+#   apps/web/src/components/settings/CustomModelEditor.tsx
+#   apps/web/src/components/settings/customModelEditor.logic.ts
+#   apps/web/src/components/settings/RedactedSensitiveText.tsx
+#   apps/web/src/components/settings/providerStatus.ts (version advisory titles, Update now, Install <version>)
+#   apps/server-ex/lib/t3/provider_updates.ex (versionAdvisory, updateCommand, canUpdate)
+#   apps/server-ex/lib/t3/rpc.ex (server.refreshProviders, server.updateProvider, server.searchAcpRegistry,
+#     server.prepareAcpRegistryAgent, server.uninstallAcpRegistryManagedBinary, server.listAcpRegistrySessions,
+#     server.importAcpRegistrySession, server.deleteAcpRegistrySession, server.listAcpRegistryProviders,
+#     server.setAcpRegistryProvider, server.disableAcpRegistryProvider, server.logoutAcpRegistry)
+#   apps/server-ex/lib/t3/acp/catalog.ex
+#   apps/server-ex/lib/t3/acp/sessions.ex
+#   apps/server-ex/lib/t3/environment.ex (refresh_providers)
+#   apps/server-ex/lib/t3/web/socket.ex (config.providers)
+#   apps/tui/src/features.backlog.test.ts (editable-settings, provider maintenance)
+
+Feature: Providers settings panel
+  The Providers page lists the agent providers configured on one environment. The user adds
+  instances, edits their settings, models and variables, keeps them updated, and manages ACP
+  agents from the registry. Provider behaviour itself is specified in the providers domain.
+
+  Background:
+    Given the user has opened the Providers settings for the environment "Laptop"
+
+  Rule: Choosing the environment and refreshing
+
+    @backlog @desktop
+    Scenario: This machine is listed first among environments
+      Given the user has environments "Laptop", "Build box" and this machine
+      When the user chooses which environment's providers to show
+      Then this machine is listed first and the others follow by name
+
+    @backlog @desktop
+    Scenario: A session that may only view providers cannot change them
+      Given the user's session may view but not operate "Build box"
+      When the user shows the providers of "Build box"
+      Then the providers are shown read-only
+      And the user is told this session can view the providers but not change their settings
+
+    @backlog @desktop
+    Scenario: A disconnected environment cannot be configured
+      Given "Build box" is disconnected
+      When the user shows the providers of "Build box"
+      Then the user is told to reconnect the device to set up its provider
+
+    @node
+    Scenario: Refreshing providers reads their status and models again
+      When the user refreshes provider status
+      Then the node reads each provider's installation, sign-in and models again
+      And every connected client receives the new provider list
+
+    # The node already honours the interval (providers/provider-instances.feature and
+    # settings/background-service.feature); only this settings row is backlog.
+    @backlog @desktop
+    Scenario Outline: The health check interval controls background refreshes
+      When the user sets the provider health check interval to <seconds> seconds
+      Then providers are refreshed in the background <frequency>
+
+      Examples:
+        | seconds | frequency           |
+        | 300     | every five minutes  |
+        | 0       | never               |
+
+  # Instance ids are derived as "<driver>_<label slug>" (AddProviderInstanceDialog.tsx
+  # deriveInstanceId); Claude's driver is "claudeAgent". The node side of instances, and the
+  # same id rules, are in providers/provider-instances.feature; both are @backlog.
+  Rule: Adding a provider instance
+
+    @backlog @desktop
+    Scenario: Adding a second instance of a provider
+      When the user adds a "Claude" provider labelled "Work"
+      Then an instance with the id "claudeAgent_work" is listed
+      And the user is told the instance was added
+
+    @backlog @desktop
+    Scenario: A taken instance id gets a number
+      Given an instance "claudeAgent_work" exists
+      When the user adds a "Claude" provider labelled "Work"
+      Then the suggested instance id is "claudeAgent_work_2"
+
+    @backlog @desktop
+    Scenario Outline: The instance id must be valid before the user moves on
+      When the user enters the instance id "<id>" and continues
+      Then the user stays on the identity step and is told "<message>"
+
+      Examples:
+        | id          | message                                                                          |
+        |             | Instance ID is required.                                                          |
+        | 9lives      | Instance ID must start with a letter and use only letters, digits, '-', or '_'.   |
+        | claudeAgent_work | An instance named 'claudeAgent_work' already exists.                         |
+
+    @backlog @desktop
+    Scenario: Going back in the wizard is always allowed
+      Given the user is on the configuration step of adding a provider
+      When the user goes back to choosing a driver
+      Then the choices already made are kept
+
+    @backlog @desktop
+    Scenario: An instance that cannot be saved is reported
+      Given saving settings on "Laptop" fails
+      When the user adds a provider instance
+      Then the user is told the provider instance could not be added
+
+  Rule: Adding an agent from the ACP Registry
+
+    @node
+    Scenario: Searching the ACP Registry lists compatible agents best first
+      When the user searches the ACP Registry for "gemini"
+      Then the compatible agents matching "gemini" are listed best first
+
+    @backlog @desktop
+    Scenario: A search with no compatible agent suggests a broader search
+      When the user searches the ACP Registry for "zzzz"
+      Then the user is told no compatible agents were found and to try a broader search
+
+    @node
+    Scenario: Choosing a registry agent installs its current version
+      When the user adds the registry agent "gemini-cli"
+      Then the node prepares the agent's current version for this machine
+
+    @backlog @desktop
+    Scenario: An agent already added is marked instead of offered again
+      Given "gemini-cli" is already configured
+      When the user searches the ACP Registry for "gemini"
+      Then "gemini-cli" is marked as already added
+
+    @node
+    Scenario: A registry agent still in use cannot be uninstalled
+      Given a provider instance uses the registry agent "gemini-cli"
+      When the node is asked to uninstall "gemini-cli"
+      Then the uninstall is refused
+
+  Rule: Native ACP sessions and model providers
+
+    @node
+    Scenario: Importing a native session continues it as a thread
+      Given the agent "gemini" has a native session for the project "t3code"
+      When the user imports that session
+      Then a thread continuing the session is created in "t3code"
+
+    @node
+    Scenario: An imported session cannot be deleted before its thread
+      Given a native session was imported as a thread
+      When the user deletes the native session
+      Then the user is told to delete the imported thread first
+
+    @node
+    Scenario: Deleting a native session that was not imported
+      Given the agent "gemini" has a native session that was not imported
+      When the user deletes it and confirms
+      Then the session is deleted by the agent
+
+    @node
+    Scenario: Pointing an agent's model provider at an API and disabling it
+      When the user sets the agent's model provider to "https://api.example.com" with an authorization header
+      Then the agent uses that base URL
+      When the user disables that model provider
+      Then the agent no longer uses it
+
+    @backlog @desktop
+    Scenario Outline: Model provider headers must be a JSON object of strings
+      When the user saves the headers "<headers>"
+      Then the user is told "<message>"
+
+      Examples:
+        | headers             | message                                          |
+        | {not json           | Headers must be valid JSON.                      |
+        | {"Authorization": 1} | Headers must be a JSON object with string values. |
+
+    @node
+    Scenario: Logging out of an ACP agent
+      When the user logs out of the agent "gemini"
+      Then the agent is signed out and its status is read again
+
+  Rule: Editing an instance
+
+    @backlog @desktop
+    Scenario: Turning an instance off and on
+      When the user turns off the "Claude Work" instance
+      Then its models are not offered in new threads
+      When the user turns it back on
+      Then its models are offered again
+
+    @backlog @desktop
+    Scenario: Renaming an instance changes how it is shown
+      When the user renames "Claude Work" to "Claude Client"
+      Then the instance is shown as "Claude Client" in the model picker
+
+    @backlog @desktop
+    Scenario: Sensitive environment variables are stored separately
+      When the user adds the environment variable "API_KEY" and marks it sensitive
+      Then its value is stored as a secret
+      And the page shows it as a stored secret that a new value replaces
+
+    @backlog @desktop
+    Scenario: Removing an environment variable
+      Given the instance has the environment variable "API_KEY"
+      When the user removes "API_KEY"
+      Then the instance no longer sets "API_KEY"
+
+    @backlog @desktop
+    Scenario: Deleting an instance
+      When the user deletes the "Claude Work" instance
+      Then it is no longer listed
+
+    @backlog @desktop
+    Scenario: Deleting an instance whose managed files remain is reported
+      Given cleaning up the instance's managed binary fails
+      When the user deletes the instance
+      Then the user is told the provider was deleted but managed files remain
+
+    @backlog @desktop
+    Scenario: The signed-in account email stays hidden until asked
+      Given "Claude Work" is signed in as "ada@example.com"
+      Then the account email is shown scrambled
+      When the user reveals the email
+      Then "ada@example.com" is shown
+      When the user hides it again
+      Then it is scrambled again
+
+  # Node behaviour of provider updates and version advisories is owned by settings/updates.feature
+  # and providers/provider-setup.feature; this rule holds what the panel adds.
+  Rule: Updates
+
+    @node
+    Scenario: Updating a provider runs its updater and reports providers again
+      Given "Codex" has an update available
+      When the user updates "Codex"
+      Then the node runs the Codex updater
+      And the provider list is reported again
+
+    @backlog @desktop
+    Scenario: An update that cannot run offers the command to copy
+      Given the update command for "Codex" cannot be started here
+      When the user copies the update command
+      Then the command is on the clipboard
+      And the user is told to run it in a terminal when ready
+
+    @backlog @desktop
+    Scenario: A provider behind its latest release offers to update now
+      Given "Codex" is behind its latest release
+      When the user opens the version details of "Codex"
+      Then the user is told an update is available with the latest version
+      And the user can update now or copy the update command
+
+    @backlog @desktop
+    Scenario Outline: A provider version outside the supported range is flagged in the panel
+      Given the installed "OpenCode" is <status> for this T3 Code release
+      When the user opens the version details of "OpenCode"
+      Then the user is warned "<title>" with the version to use for full support
+
+      Examples:
+        | status              | title                |
+        | of limited support  | Limited support      |
+        | unsupported         | Unsupported version  |
+        | known to be broken  | Known broken version |
+
+    @backlog @desktop
+    Scenario: A recommended version is installed instead of the latest
+      Given the installed "OpenCode" is known to be broken
+      And "1.14.19" is the recommended version
+      When the user opens the version details of "OpenCode"
+      Then the user is offered to install "v1.14.19" rather than update to the latest
+
+  Rule: Custom models
+
+    @backlog @desktop
+    Scenario: Adding a custom model with its own options
+      When the user adds the custom model "my-model" with a reasoning option offering low and high
+      Then "my-model" is offered in the model picker
+      And the composer offers low and high reasoning for it
+
+    @backlog @desktop
+    Scenario: Copying options from a built-in model
+      When the user adds a custom model and copies the options of a built-in model
+      Then the custom model starts with the same options
+
+    @backlog @desktop
+    Scenario Outline: A custom option must be complete before saving
+      When the user saves a custom option with <problem>
+      Then the user is told the option <message>
+
+      Examples:
+        | problem                       | message                    |
+        | no id                         | needs an id                |
+        | no label                      | needs a label              |
+        | a choice list with no choices | needs at least one choice  |
+        | the same choice twice         | uses a choice twice        |
+
+    @backlog @desktop
+    Scenario: A custom model without options uses the provider's defaults
+      When the user adds a custom model with no options
+      Then the composer uses the provider's default options for it

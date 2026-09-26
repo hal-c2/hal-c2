@@ -1,0 +1,201 @@
+# Sources:
+#   docs/internals/connection-runtime.md (one retry owner, HTTP authorization, freshness)
+#   docs/internals/environment-auth.md
+#   packages/client-runtime/src/connection/supervisor.ts, registry.ts
+#   packages/client-runtime/src/authorization/service.ts
+#   packages/client-runtime/src/rpc/session.ts, rpc/client.ts
+#   packages/client-runtime/src/state/threads.ts (five idle minutes of thread cache)
+#   packages/client-runtime/src/connection/compatibility.ts (ConnectionBlockedError)
+#   apps/web/src/versionSkew.ts (server older than the client, nightly comparison, dismissals)
+#   apps/server-ex/lib/t3/environment.ex (serverVersion in the descriptor)
+#   packages/client-runtime/src/v3/clusterSocket.ts, v3/clusterMembers.ts, v3/session.ts
+#   apps/web/src/components/settings/ConnectionsSettings.tsx ("Reconnecting: <reason>", Copy trace ID)
+#   apps/mobile/src/features/connection/ConnectionStatusDot.tsx, connectionTone.ts,
+#     EnvironmentConnectionNotice.tsx, ConnectionTraceId.tsx
+#   apps/tui/src/connection.ts
+#   apps/tui/src/features.backlog.test.ts (environment-connections)
+#   Shared domain: tui/reconnect.feature holds the terminal client's reconnects;
+#   mobile/offline-and-lifecycle.feature holds the phone's foreground and offline journeys;
+#   node/platform/websocket-protocol.feature holds resuming streams on the node.
+
+Feature: Connection health
+  Each environment has one connection owner in a client. It retries transport failures with
+  backoff, waits out offline and authorization problems, and keeps cached data readable
+  without pretending to be live.
+
+  Background:
+    Given a client paired with an environment
+
+  @backlog @desktop @mobile
+  Scenario: A dropped connection retries with growing delays
+    Given the environment stops answering
+    When the connection drops
+    Then the client retries with delays that grow up to a cap
+    And reconnects when the environment answers again
+
+  @backlog @desktop @mobile
+  Scenario: An offline device waits instead of retrying
+    Given the device has no network
+    When the connection drops
+    Then the client waits for the network to return before trying again
+
+  @backlog @desktop @mobile
+  Scenario: A refused credential waits for the user
+    Given the environment refuses the client's credential
+    When the client connects
+    Then the client stops retrying
+    And asks the user to pair again
+
+  @backlog @desktop @mobile
+  Scenario: Only the environment with the bad credential stops
+    Given two paired environments
+    And one of them revoked this client
+    When the client connects to both
+    Then the other environment stays connected
+
+  @backlog @desktop @mobile
+  Scenario: Foregrounding wakes a waiting retry
+    Given the client is waiting to retry
+    When the app comes to the foreground
+    Then it tries again at once
+
+  @backlog @desktop @mobile
+  Scenario: Foregrounding probes a healthy connection instead of replacing it
+    Given an established connection
+    When the app comes to the foreground after a moment
+    Then the client checks the connection
+    And keeps it when it answers
+
+  @backlog @mobile
+  Scenario: A long background suspension replaces the connection
+    Given the app was suspended for a long time
+    When it comes to the foreground
+    Then the client opens a new connection without waiting for the old one to fail
+
+  @backlog @desktop @mobile
+  Scenario: A connection is ready only after the environment describes itself
+    When the socket opens
+    Then the client reports connecting until the environment's configuration arrives
+
+  @backlog @desktop @mobile
+  Scenario: A failed shell subscription is not shown as reconnecting
+    Given a connected environment
+    When its shell subscription fails
+    Then the client reports the data problem
+    And does not claim to be reconnecting
+
+  @backlog @desktop @mobile
+  Scenario: The environment's status names why it is reconnecting
+    Given the connection dropped because of a timeout
+    Then the environment reads "Reconnecting: timeout"
+
+  @backlog @desktop @mobile
+  Scenario: The user copies a connection's trace id for a bug report
+    Given a connection that failed
+    When the user copies its trace id
+    Then the trace id is on the clipboard
+
+  @backlog @desktop @mobile
+  Scenario: Cached data stays readable offline without looking live
+    Given threads were loaded before the connection dropped
+    When the user opens one offline
+    Then the thread shows its cached content
+    And the client does not claim a live connection
+
+  @backlog @desktop @mobile
+  Scenario: Cached data never overwrites newer live data
+    Given the client reconnects while cached data loads
+    When live data arrives first
+    Then the older cached data is not applied over it
+
+  @backlog @desktop @mobile
+  Scenario: A thread left for under five minutes resumes without a snapshot
+    Given the user left a thread
+    When the user returns within five minutes
+    Then the client resumes the thread from where it stopped
+
+  @backlog @desktop @mobile
+  Scenario: A thread left for longer loads a fresh snapshot
+    Given the user left a thread more than five minutes ago
+    When the user returns
+    Then the client loads the thread again
+
+  @backlog @desktop @mobile
+  Scenario: Subscriptions follow a replaced connection
+    Given a client subscribed to a thread
+    When the connection is replaced
+    Then the subscription continues on the new connection
+
+  @backlog @desktop @mobile
+  Scenario: Reconnecting does not repeat the user's actions
+    Given the user sent a command just before the connection dropped
+    When the client reconnects
+    Then the command is not sent again automatically
+
+  @backlog @desktop @mobile
+  Scenario: An expiring credential does not close a healthy connection
+    Given a connected client whose credential is about to expire
+    When the client renews it for an HTTP request
+    Then the connection stays open
+
+  @backlog @desktop @mobile
+  Scenario: A failed renewal affects only its request
+    Given a connected client
+    When renewing its credential fails for an HTTP request
+    Then only that request fails
+    And the connection stays open
+
+  @backlog @desktop @mobile
+  Scenario: Removing an environment clears everything the client kept for it
+    Given a saved environment with cached threads and drafts
+    When the user removes it
+    Then its credential, cached data and drafts are cleared
+
+  @backlog @desktop @mobile
+  Scenario: Signing out of T3 Connect keeps directly paired environments
+    Given one relayed and one directly paired environment
+    When the user signs out of T3 Connect
+    Then the directly paired environment stays
+
+  @backlog @shared
+  Scenario Outline: A protocol mismatch blocks the connection with advice
+    Given an environment whose node speaks <protocol>
+    When the client connects
+    Then the connection is blocked
+    And the client says <advice>
+
+    Examples:
+      | protocol                       | advice                                   |
+      | a newer protocol than the client | update T3 Code on this device          |
+      | an older protocol than the client | update T3 Code on that environment    |
+
+  # A different app version does not block the connection; only a server behind the client
+  # warns. settings/updates.feature holds updating the server from that warning and keeping
+  # a dismissed notice dismissed for its version.
+  @backlog @shared
+  Scenario Outline: A server on another T3 Code version warns only when it is behind
+    Given this client runs T3 Code <client>
+    And the environment's node runs T3 Code <server>
+    When the client connects
+    Then the connection is used as normal
+    And the client <warning>
+
+    Examples:
+      | client                 | server                 | warning                     |
+      | 1.4.0                  | 1.3.2                  | warns of a version mismatch |
+      | 1.3.2                  | 1.4.0                  | does not warn               |
+      | 1.4.0                  | 1.4.0-nightly.20260901 | does not warn               |
+      | 1.4.0-nightly.20260902 | 1.4.0-nightly.20260901 | warns of a version mismatch |
+
+  @backlog @shared
+  Scenario: One connection serves every node of a cluster
+    Given a client connected to a cluster of three nodes
+    Then the client keeps one connection for the cluster
+    And streams from every node arrive over it
+
+  @backlog @shared
+  Scenario: A cluster connection resumes each stream from where it stopped
+    Given a client following threads on two cluster members
+    When the cluster connection drops and returns
+    Then each thread stream resumes from its last offset
+    And the shell is sent again whole

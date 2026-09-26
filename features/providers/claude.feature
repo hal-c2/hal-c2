@@ -1,0 +1,195 @@
+# Sources:
+#   docs/user/providers-claude.md
+#   docs/internals/providers.md (Claude homes, update ownership)
+#   apps/server-ex/lib/t3/claude/provider.ex, apps/server-ex/lib/t3/claude/thread_runtime.ex, apps/server-ex/lib/t3/claude/session.ex
+#   apps/server-ex/lib/t3/provider_updates.ex (claudeAgent advisory, claude update)
+#   apps/server-ex/lib/t3/provider_usage_limits/claude.ex (get_usage)
+#   apps/server-ex/lib/t3/text_generation.ex (claude -p)
+#   apps/server/src/provider/Layers/ClaudeProvider.ts, apps/server/src/provider/ClaudeModelCatalog.ts, apps/server/src/provider/ClaudeModelManifest.ts
+#   apps/server/src/provider/Drivers/ClaudeDriver.ts, apps/server/src/provider/Drivers/ClaudeHome.ts
+#   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts
+#   apps/server/src/provider/Layers/claudeUsageLimits.ts
+
+@plugin:claude @node
+Feature: Claude
+  Claude Code runs as a bundled provider plugin. The node drives the local claude CLI,
+  so sign-in, subscription and API keys stay with the CLI on the machine that runs it.
+
+  Background:
+    Given a connected environment with the project "shop"
+
+  Scenario: Claude is offered when the claude command is on the node's path
+    Given the claude command is installed on the node
+    When the user opens the provider list
+    Then Claude is listed as ready with its installed version
+
+  Scenario: Claude is not offered when the claude command is missing
+    Given the claude command is not installed on the node
+    When the user opens the provider list
+    Then Claude is not offered as a provider
+
+  Scenario: An outdated Claude shows that an update is available
+    Given the installed Claude is older than the latest published version
+    When the user opens the provider list
+    Then Claude shows that an update is available and how it will be installed
+
+  Scenario: Updating Claude uses the installer that owns it
+    Given Claude was installed by its own native installer and is outdated
+    When the user updates Claude
+    Then Claude updates itself and the new version is shown
+
+  Scenario: Claude that no installer owns can only be updated by hand
+    Given Claude was installed in a way the node cannot identify
+    When the user opens the update details for Claude
+    Then the user is told to update Claude by hand
+
+  Scenario: Claude offers its model aliases
+    When the user opens the model picker for Claude
+    Then Sonnet, Opus and Haiku are offered
+    And Sonnet is the default
+
+  Scenario: Claude shows the signed-in account
+    Given the Claude CLI is signed in with a subscription
+    When Claude's usage has been checked
+    Then Claude shows the account's email and plan
+
+  Scenario: A Claude turn streams its answer and its thinking
+    When the user sends a message to Claude
+    Then the answer appears as it is written
+    And Claude's thinking is shown separately
+
+  Scenario Outline: Claude tool calls are shown by kind
+    When Claude uses the <tool> tool
+    Then the timeline shows a <kind> step
+
+    Examples:
+      | tool      | kind           |
+      | Edit      | file change    |
+      | Write     | file change    |
+      | Bash      | command        |
+      | WebSearch | web            |
+      | WebFetch  | web            |
+
+  Scenario: A Claude turn can be steered while it runs
+    Given a Claude turn is running
+    When the user sends a follow-up message
+    Then Claude receives the message during the running turn
+
+  Scenario: Claude's proposed plan becomes a plan the user can implement
+    Given the thread is in plan mode on Claude
+    When Claude finishes planning
+    Then the plan is shown as a proposed plan
+    And the user can implement it
+
+  Scenario: Claude's questions are asked in T3 Code
+    When Claude asks the user a multiple choice question
+    Then the question is shown with its choices
+    And the user's answer is sent back to Claude
+
+  Scenario: Claude can use the T3 Code tools
+    Given the project allows the T3 Code tools
+    When a Claude turn starts
+    Then Claude can call the T3 Code tools for this thread
+
+  Scenario: Reverting a Claude turn restores the conversation to that point
+    Given a Claude thread with three turns
+    When the user reverts to the end of the first turn
+    Then Claude continues from the first turn as if the later turns never happened
+
+  Scenario: Forking a Claude thread continues from the fork point in a new thread
+    Given a Claude thread with three turns
+    When the user forks from the second turn
+    Then a new thread continues Claude's session from the second turn
+
+  Scenario: Claude writes thread titles and commit messages
+    Given Claude is picked for text generation
+    When a new thread needs a title
+    Then Claude writes the title without using any tools
+
+  Scenario: Claude's rate-limit notices update the limits view
+    When Claude reports that a usage window is nearly used up during a turn
+    Then the limits view shows the new usage for that window
+
+  @backlog
+  Scenario: Several Claude accounts can run side by side
+    Given the user adds a second Claude instance with its own config directory
+    When the user signs in to the CLI with that config directory
+    Then each instance uses its own account and history
+
+  @backlog
+  Scenario: Claude models come from the model manifest
+    When the model manifest lists a new Claude model
+    Then the new model is offered after the next refresh
+    And models the manifest marks as legacy are labelled legacy
+
+  @backlog
+  Scenario: A Claude model that needs a newer CLI is explained
+    Given the installed Claude is older than a model requires
+    When the user picks that model
+    Then the user is told which Claude version the model needs
+
+  @backlog
+  Scenario Outline: Claude model options
+    When the user opens the options for a Claude model that supports <option>
+    Then the user can choose <choices>
+
+    Examples:
+      | option         | choices                                                   |
+      | reasoning      | low, medium, high, extra high, max, ultracode, ultrathink |
+      | fast mode      | on or off                                                 |
+      | context window | 200k or 1M                                                |
+
+  @backlog
+  Scenario: Claude compacts the conversation after the configured size
+    Given the Claude instance compacts after 200000 tokens
+    When the conversation grows past that size
+    Then Claude compacts the conversation and the timeline says so
+
+  @backlog
+  Scenario: Resuming a long Claude conversation offers to compact first
+    Given a Claude thread whose history is close to the context limit
+    When the user resumes it
+    Then the user can compact and continue, keep the full history, or never be asked again
+
+  @backlog
+  Scenario: Claude subagents appear as child work in the timeline
+    When Claude starts a subagent
+    Then the subagent's work is grouped under the step that started it
+
+  @backlog
+  Scenario: Claude skills and slash commands are offered in the composer
+    Given Claude reports the skill "review" and the command "/init"
+    When the user types a slash in the composer
+    Then "review" and "/init" are offered
+
+  @backlog
+  Scenario: Reverting a Claude thread is refused while a turn runs
+    Given a Claude turn is running
+    When the user tries to revert to an earlier turn
+    Then the revert is refused until the turn ends
+
+  @backlog
+  Scenario: A signed-out Claude CLI explains how to sign in
+    Given the Claude CLI on the node is not signed in
+    When the user sends a message to Claude
+    Then the turn fails saying to run the Claude sign-in command on that machine
+
+  @backlog
+  Scenario: Claude can be disabled and enabled again
+    When the user disables Claude
+    Then Claude is not offered in the model picker
+    When the user enables Claude
+    Then Claude is offered again
+
+  @backlog
+  Scenario: A Claude instance can route through OpenRouter or another router
+    Given a Claude instance with its own config directory and a router's endpoint and token in its environment
+    And the router's model id is added as a custom model
+    When the user sends a message with that model
+    Then the turn runs through the router with that model
+
+  @backlog
+  Scenario: Claude usage windows include a per-model weekly window
+    Given Claude is signed in with a subscription
+    When the user opens the limits view
+    Then Claude shows its session and weekly windows and a weekly window for the limited model
