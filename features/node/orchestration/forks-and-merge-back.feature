@@ -46,11 +46,13 @@ Feature: Forking a thread and merging work back
     When the user forks "t1" as "f1"
     Then "f1" is not pinned, settled, snoozed, archived or visited
 
+  # Queued runs are numbered after the running one, so a fork of a finished run never
+  # copies them: the fork starts with an empty queue instead of cancelled copies.
   @node
-  Scenario: Messages that were queued in the source are cancelled in the fork
+  Scenario: Messages that were queued in the source stay in the source
     Given "t1" has a queued message after run 2
     When the user forks "t1" at run 2 as "f1"
-    Then the fork's copy of the queued message is cancelled
+    Then the fork has no queued message
 
   @node
   Scenario: Forking at the latest stable point uses the latest completed run
@@ -90,7 +92,8 @@ Feature: Forking a thread and merging work back
   @node
   Scenario: A fork keeps its history if the source is deleted
     Given "f1" is a fork of "t1" at run 2
-    When the user deletes "t1"
+    # "a client deletes" is the thread step; "the user deletes" names a file elsewhere.
+    When a client deletes "t1"
     Then "f1" still shows the copied history and its diffs
 
   @node
@@ -164,7 +167,7 @@ Feature: Forking a thread and merging work back
     When the user merges "f1" back into "t1" at run 3
     Then the command fails saying only finished runs can be used
 
-  @node @backlog
+  @node
   Scenario: A merge-back only carries what the parent has not seen yet
     Given "f1" was merged back into "t1" once already
     When the user merges "f1" back again after more work

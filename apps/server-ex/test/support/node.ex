@@ -39,10 +39,19 @@ defmodule T3.Test.Node do
   restart does. Sockets are gone afterwards; steps reconnect.
   """
   def restart(%{home: dir}) do
-    for child <- [T3.Web, T3.Shell, T3.Streams, T3.Auth, T3.Store],
+    # Worktree setups live in memory: a restart forgets them.
+    setups = Process.whereis(T3.WorktreeSetup) != nil
+
+    for child <- [T3.WorktreeSetup, T3.Web, T3.Shell, T3.Streams, T3.Auth, T3.Store],
         do: ExUnit.Callbacks.stop_supervised(child)
 
-    start(dir)
+    node = start(dir)
+    if setups, do: ensure(T3.WorktreeSetup)
+    # Boot settles the turns the restart cut off, and continues what it can once
+    # turns can start, as `T3.Application` does.
+    T3.Orchestration.Recovery.run()
+    if Process.whereis(T3.Codex.Supervisor), do: T3.Orchestration.Recovery.continue()
+    node
   end
 
   @doc "Starts a service under the test supervisor if it is not running yet."
@@ -402,4 +411,351 @@ defmodule T3.Test.Node.World do
   def days(n), do: n * 24 * 60 * 60 * 1_000
 
   def slug(title), do: title |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
+
+  # --- added by W7 ---
+
+  @fake_codex Path.expand("fake_codex.py", __DIR__)
+  @fake_claude Path.expand("fake_claude.py", __DIR__)
+  @fake_acp Path.expand("fake_acp.py", __DIR__)
+
+  @doc """
+  Starts what real turns need, once per scenario: settings, the provider
+  runtimes on the fake Codex, Claude and OpenCode (ACP) CLIs
+  (`test/support/fake_codex.py`, `fake_claude.py`, `fake_acp.py`: a message
+  containing "wait" keeps its turn running) and the MCP server. Each fake logs
+  what it was sent under the node's home (`provider_inputs/1`,
+  `provider_prompts/2`, `codex_requests/1`, `codex_sessions/1`, `claude_starts/1`).
+  """
+  def providers(context) do
+    if Application.get_env(:t3, :codex_command) == nil do
+      log = "FAKE_CODEX_INPUT_LOG=" <> Path.join(context.node.home, "codex-inputs.jsonl")
+      requests = "FAKE_CODEX_REQUEST_LOG=" <> Path.join(context.node.home, "codex-requests.log")
+      sessions = "FAKE_CODEX_SESSION_LOG=" <> Path.join(context.node.home, "codex-sessions.jsonl")
+
+      Application.put_env(:t3, :codex_command, [
+        "env",
+        log,
+        requests,
+        sessions,
+        "python3",
+        "-u",
+        @fake_codex
+      ])
+
+      ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :codex_command) end)
+    end
+
+    if Application.get_env(:t3, :claude_command) == nil do
+      log = "FAKE_CLAUDE_ARGV_LOG=" <> Path.join(context.node.home, "claude-argv.jsonl")
+      input = "FAKE_CLAUDE_INPUT_LOG=" <> Path.join(context.node.home, "claude-inputs.jsonl")
+
+      Application.put_env(:t3, :claude_command, [
+        "env",
+        log,
+        input,
+        "python3",
+        "-u",
+        @fake_claude
+      ])
+
+      ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :claude_command) end)
+    end
+
+    if Application.get_env(:t3, :acp_commands) == nil do
+      log = "FAKE_ACP_INPUT_LOG=" <> Path.join(context.node.home, "acp-inputs.jsonl")
+
+      Application.put_env(:t3, :acp_commands, %{
+        "opencode" => ["env", log, "python3", "-u", @fake_acp]
+      })
+
+      ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :acp_commands) end)
+    end
+
+    for child <- [
+          T3.Settings,
+          registry(T3.Codex.Registry),
+          registry(T3.Claude.Registry),
+          registry(T3.Acp.Registry),
+          Supervisor.child_spec(
+            {DynamicSupervisor, name: T3.Codex.Supervisor, strategy: :one_for_one},
+            id: T3.Codex.Supervisor
+          ),
+          T3.Mcp
+        ],
+        do: Node.ensure(child)
+
+    context
+  end
+
+  defp registry(name),
+    do: Supervisor.child_spec({Registry, keys: :unique, name: name}, id: name)
+
+  @doc """
+  Launches `title` in `project` (nil for the only one) with a first message, as
+  `orchestration.launchThread` does, on the fake Codex CLI in full-access mode.
+  `fields` override the launch input. Returns once the thread has its row.
+  """
+  def launch_thread(context, title, project, text, fields \\ %{}) do
+    context = providers(context)
+    id = fields["threadId"] || "th-#{slug(title)}-#{System.unique_integer([:positive])}"
+    :ok = T3.Streams.subscribe(id, self(), nil)
+
+    {:ok, _} =
+      T3.Orchestration.launch_thread(
+        Map.merge(
+          %{
+            "commandId" => "cmd-#{id}",
+            "threadId" => id,
+            "projectId" => project(context, project).id,
+            "title" => title,
+            "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+            "runtimeMode" => "full-access",
+            "interactionMode" => "default",
+            "workspaceStrategy" => %{"type" => "root"},
+            "initialMessage" => %{
+              "messageId" => "msg-#{id}",
+              "text" => text,
+              "attachments" => []
+            }
+          },
+          fields
+        )
+      )
+
+    await_row(id, & &1)
+    put_in(context, [:threads, title], id)
+  end
+
+  @doc "A thread's stream state (see `T3.StreamState`)."
+  def state(context, title),
+    do: T3.Streams.Server.state(T3.Streams.ensure(thread_id(context, title)))
+
+  @doc "A thread's runs, oldest first."
+  def runs(context, title),
+    do: context |> state(title) |> T3.StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+
+  @doc """
+  Waits until a thread's stream state satisfies `fun` and returns that state.
+  """
+  def await_state(context, title, fun, timeout \\ 5_000) do
+    id = thread_id(context, title)
+    :ok = T3.Streams.subscribe(id, self(), nil)
+    deadline = System.monotonic_time(:millisecond) + timeout
+    await_state_loop(id, fun, deadline)
+  end
+
+  defp await_state_loop(id, fun, deadline) do
+    state = T3.Streams.Server.state(T3.Streams.ensure(id))
+
+    if fun.(state) do
+      state
+    else
+      receive do
+        {:t3_stream, ^id, _} -> await_state_loop(id, fun, deadline)
+      after
+        max(deadline - System.monotonic_time(:millisecond), 0) ->
+          flunk("#{id} never reached the expected state")
+      end
+    end
+  end
+
+  @doc "Waits until a thread's runs, oldest first, have exactly `statuses`."
+  def await_runs(context, title, statuses, timeout \\ 5_000) do
+    await_state(
+      context,
+      title,
+      fn state ->
+        state
+        |> T3.StreamState.list("run")
+        |> Enum.sort_by(& &1["ordinal"])
+        |> Enum.map(& &1["status"]) == statuses
+      end,
+      timeout
+    )
+  end
+
+  @doc """
+  Sends one JSON-RPC request to the MCP server as the agent of `caller` (a
+  thread title) on `instance`; returns `{status, body}` as `T3.Mcp.handle/2` does.
+  Once the MCP server runs, it can be called from any process (a waiting call in
+  a `Task`, say).
+  """
+  def mcp(context, caller, method, params \\ %{}, instance \\ "codex") do
+    context = if Process.whereis(T3.Mcp), do: context, else: providers(context)
+    %{authorization: auth} = T3.Mcp.server(thread_id(context, caller), instance)
+    request = %{"jsonrpc" => "2.0", "id" => 1, "method" => method, "params" => params}
+    T3.Mcp.handle(auth, JSON.encode!(request))
+  end
+
+  @doc """
+  Calls an MCP tool as the agent of `caller`: `{:ok, structuredContent}` or
+  `{:error, code, message}` from the tool's error result.
+  """
+  def mcp_tool(context, caller, name, arguments \\ %{}, instance \\ "codex") do
+    case mcp(context, caller, "tools/call", %{"name" => name, "arguments" => arguments}, instance) do
+      {200, %{"result" => %{"isError" => true, "content" => [%{"text" => text} | _]}}} ->
+        %{"code" => code, "message" => message} = JSON.decode!(text)
+        {:error, code, message}
+
+      {200, %{"result" => %{"structuredContent" => result}}} ->
+        {:ok, result}
+
+      other ->
+        flunk("#{name} answered #{inspect(other)}")
+    end
+  end
+
+  @doc """
+  The `message.dispatch` command a client sends for `text` in a thread, starting
+  immediately (queued behind an active run otherwise); `fields` override.
+  """
+  def message_command(context, title, text, fields \\ %{}) do
+    id = System.unique_integer([:positive])
+
+    Map.merge(
+      %{
+        "type" => "message.dispatch",
+        "commandId" => "cmd-message-#{id}",
+        "threadId" => thread_id(context, title),
+        "messageId" => "msg-#{id}",
+        "text" => text,
+        "attachments" => [],
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "dispatchMode" => %{"type" => "start_immediately"},
+        "createdBy" => "user",
+        "creationSource" => "web"
+      },
+      fields
+    )
+  end
+
+  @doc """
+  What the fake Codex CLI was given as each turn's input, oldest first: one list
+  of input items (`%{"type" => "text", "text" => ...}`, ...) per turn.
+  """
+  def provider_inputs(context) do
+    case File.read(Path.join(context.node.home, "codex-inputs.jsonl")) do
+      {:ok, lines} -> lines |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+      {:error, :enoent} -> []
+    end
+  end
+
+  @doc "The arguments of each fake Claude CLI start in this scenario, oldest first."
+  def claude_starts(context) do
+    case File.read(Path.join(context.node.home, "claude-argv.jsonl")) do
+      {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+      {:error, :enoent} -> []
+    end
+  end
+
+  @doc "The method of every request the fake Codex CLI got in this scenario, oldest first."
+  def codex_requests(context) do
+    case File.read(Path.join(context.node.home, "codex-requests.log")) do
+      {:ok, text} -> String.split(text, "\n", trim: true)
+      {:error, :enoent} -> []
+    end
+  end
+
+  @doc """
+  Sends `text` to a thread as the user, on the thread's own model selection (the
+  fake Codex CLI unless the thread says otherwise), starting at once or queued
+  behind an active run.
+  """
+  def send_turn(context, title, text, fields \\ %{}) do
+    context = providers(context)
+    selection = (thread(context, title) || %{})["modelSelection"]
+    fields = if selection, do: Map.put_new(fields, "modelSelection", selection), else: fields
+    {:ok, _} = T3.Orchestration.dispatch(message_command(context, title, text, fields))
+    context
+  end
+
+  @doc """
+  Sends `text` to a thread and waits until the run it starts has finished
+  (completed, failed or interrupted); returns that run.
+  """
+  def finish_turn(context, title, text, timeout \\ 10_000) do
+    ordinal = length(runs(context, title)) + 1
+    context = send_turn(context, title, text)
+
+    state =
+      await_state(
+        context,
+        title,
+        fn state ->
+          Enum.any?(
+            T3.StreamState.list(state, "run"),
+            &(&1["ordinal"] == ordinal and &1["status"] in ~w(completed failed interrupted))
+          )
+        end,
+        timeout
+      )
+
+    Enum.find(T3.StreamState.list(state, "run"), &(&1["ordinal"] == ordinal))
+  end
+
+  @doc """
+  The text of each message a fake provider CLI was given in this scenario, oldest
+  first: `"codex"`, `"claudeAgent"` or `"opencode"` (the fake ACP agent).
+  """
+  def provider_prompts(context, driver) do
+    case driver do
+      "codex" ->
+        for input <- provider_inputs(context),
+            do: Enum.map_join(input, "\n", &(&1["text"] || ""))
+
+      driver ->
+        file = if driver == "claudeAgent", do: "claude-inputs.jsonl", else: "acp-inputs.jsonl"
+
+        case File.read(Path.join(context.node.home, file)) do
+          {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+          {:error, :enoent} -> []
+        end
+    end
+  end
+
+  @doc """
+  `text` with the scenario's thread ids and their run ids replaced by the names a
+  feature gives them (`"t1"`, `"run-3"`), so refusals can be compared as written.
+  """
+  def named(context, text) do
+    Enum.reduce(context[:threads] || %{}, text, fn {name, id}, text ->
+      runs = T3.Streams.Server.state(T3.Streams.ensure(id)) |> T3.StreamState.list("run")
+
+      Enum.reduce(runs, String.replace(text, id, name), fn run, text ->
+        String.replace(text, run["id"], "run-#{run["ordinal"]}")
+      end)
+    end)
+  end
+
+  @doc """
+  Starts what preparing a new worktree needs (`T3.WorktreeSetup` and the terminals
+  its setup script runs in), with the fake providers, as `T3.Application` does.
+  """
+  def worktree_setup(context) do
+    context = providers(context)
+
+    for child <- [
+          registry(T3.Terminal.Registry),
+          Supervisor.child_spec(
+            {DynamicSupervisor, name: T3.Terminal.Supervisor, strategy: :one_for_one},
+            id: T3.Terminal.Supervisor
+          ),
+          T3.Terminal.Hub,
+          T3.WorktreeSetup
+        ],
+        do: Node.ensure(child)
+
+    context
+  end
+
+  @doc """
+  Each thread/start and thread/resume the fake Codex CLI got in this scenario,
+  oldest first, as `%{"method" => ..., "params" => ...}`.
+  """
+  def codex_sessions(context) do
+    case File.read(Path.join(context.node.home, "codex-sessions.jsonl")) do
+      {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+      {:error, :enoent} -> []
+    end
+  end
 end

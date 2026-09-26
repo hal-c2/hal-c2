@@ -62,9 +62,12 @@ defmodule T3.Test.WsClient do
       else: recv_until(client, fun, timeout, [frame | skipped])
   end
 
+  # Only this connection's packets: a test process also gets stream and shell messages.
   defp recv_http(conn, acc) do
+    socket = Mint.HTTP.get_socket(conn)
+
     receive do
-      message ->
+      {tag, ^socket, _} = message when tag in [:tcp, :ssl, :tcp_error, :ssl_error] ->
         {:ok, conn, responses} = Mint.WebSocket.stream(conn, message)
         acc = acc ++ responses
         if Enum.any?(acc, &match?({:done, _}, &1)), do: {conn, acc}, else: recv_http(conn, acc)

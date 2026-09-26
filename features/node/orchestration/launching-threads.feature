@@ -115,14 +115,14 @@ Feature: Launching a thread with its first message
     Then "shot.png" belongs to the new thread
     And the first message carries the attachment
 
-  @node @backlog
+  @node
   Scenario: Clients drive prepared runs with commands
     Given a launched thread's first run is preparing its worktree
     When a client reports progress for the worktree phase and then the setup phase
     And a client releases the prepared run
     Then the run records each phase and then starts
 
-  @node @backlog
+  @node
   Scenario: A client fails a prepared run with a provider failure
     Given a launched thread's first run is preparing its worktree
     When a client fails the prepared run with a failure description

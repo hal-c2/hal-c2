@@ -441,6 +441,7 @@ defmodule T3.Orchestration.TurnWriter do
     at = Entities.now()
     done = %{"status" => status, "completedAt" => at}
     checkpoint = if status == "completed", do: capture_checkpoint(state.turn, at)
+    baselines = if checkpoint, do: baselines(state.turn, at), else: []
     # The turn may have changed the checkout; clients watching it see the result.
     T3.Vcs.Watch.refresh(state.turn.cwd)
     T3.Workspace.invalidate(state.turn.cwd)
@@ -453,7 +454,8 @@ defmodule T3.Orchestration.TurnWriter do
           Orchestration.upsert(stream, kind, id, &Map.merge(&1, changes))
       end
 
-      checkpoint_changes(stream, state.turn, checkpoint, at) ++
+      baseline_changes(stream, baselines) ++
+        checkpoint_changes(stream, state.turn, checkpoint, at) ++
         [
           Map.has_key?(ids, :provider_turn) && settle.("provider-turn", ids.provider_turn, done),
           settle.("run-attempt", ids.attempt, done),
@@ -495,6 +497,33 @@ defmodule T3.Orchestration.TurnWriter do
   end
 
   defp capture_checkpoint(_turn, _at), do: nil
+
+  defp baselines(turn, at) do
+    T3.Checkpoint.baselines(
+      turn.cwd,
+      turn.scope_id,
+      turn.run_ordinal,
+      turn.ids.root_node,
+      turn.ids.thread,
+      at
+    )
+  end
+
+  # Baselines not yet recorded as ready, which the previous run's own capture usually is.
+  defp baseline_changes(stream, baselines) do
+    Enum.flat_map(baselines, fn baseline ->
+      case StreamState.get(stream, "checkpoint")[baseline["id"]] do
+        nil ->
+          [Orchestration.create("checkpoint", baseline["id"], baseline)]
+
+        %{"status" => "ready"} ->
+          []
+
+        _ ->
+          [Orchestration.upsert(stream, "checkpoint", baseline["id"], &Map.merge(&1, baseline))]
+      end
+    end)
+  end
 
   # The checkpoint and the turn item that shows its changed files.
   defp checkpoint_changes(_stream, _turn, nil, _at), do: []

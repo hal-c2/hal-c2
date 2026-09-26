@@ -44,7 +44,7 @@ defmodule T3.OrchestrationTest do
 
     {:ok, %{"threadId" => ^thread_id}} =
       Orchestration.launch_thread(%{
-        "commandId" => "cmd-1",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
         "threadId" => thread_id,
         "projectId" => "project-1",
         "title" => "Try codex",
@@ -1002,8 +1002,11 @@ defmodule T3.OrchestrationTest do
       assert [%{"id" => ^scope_id, "kind" => "root_run", "cwd" => ^dir}] =
                StreamState.list(state, "checkpoint-scope")
 
-      assert [%{"status" => "ready", "appRunOrdinal" => 1, "files" => files} = checkpoint] =
-               StreamState.list(state, "checkpoint")
+      # The scope's baseline (ordinal 0) comes first, then the run's checkpoint.
+      assert [
+               %{"ordinalWithinScope" => 0, "appRunOrdinal" => nil},
+               %{"status" => "ready", "appRunOrdinal" => 1, "files" => files} = checkpoint
+             ] = StreamState.list(state, "checkpoint") |> Enum.sort_by(& &1["ordinalWithinScope"])
 
       # The baseline was taken before the turn, so only the turn's own file shows.
       assert [%{"path" => "x", "additions" => 1}] = files
@@ -1039,7 +1042,7 @@ defmodule T3.OrchestrationTest do
 
       {:ok, _} =
         Orchestration.launch_thread(%{
-          "commandId" => "cmd-1",
+          "commandId" => "cmd-#{System.unique_integer([:positive])}",
           "threadId" => thread_id,
           "projectId" => "project-1",
           "title" => "Rewind",

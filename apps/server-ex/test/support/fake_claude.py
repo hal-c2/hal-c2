@@ -10,6 +10,10 @@ def send(msg):
     sys.stdout.flush()
 
 session = "fake-session-1"
+# FAKE_CLAUDE_ARGV_LOG names a file each start appends its arguments to, as one JSON list.
+if os.environ.get("FAKE_CLAUDE_ARGV_LOG"):
+    with open(os.environ["FAKE_CLAUDE_ARGV_LOG"], "a") as log:
+        log.write(json.dumps(sys.argv[1:]) + "\n")
 turn = 0
 resume_at = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--resume-session-at=")), None)
 for line in sys.stdin:
@@ -51,6 +55,10 @@ for line in sys.stdin:
         continue
     turn += 1
     text = msg["message"]["content"] if isinstance(msg["message"]["content"], str) else ""
+    # FAKE_CLAUDE_INPUT_LOG names a file each user message's text is appended to, as JSON.
+    if os.environ.get("FAKE_CLAUDE_INPUT_LOG"):
+        with open(os.environ["FAKE_CLAUDE_INPUT_LOG"], "a") as log:
+            log.write(json.dumps(text) + "\n")
     send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku"})
     if "wait" in text:
         continue

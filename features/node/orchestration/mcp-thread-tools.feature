@@ -184,8 +184,7 @@ Feature: Agents working with threads through MCP tools
       | no title and a 100-character prompt | the first 77 characters followed by "..." |
       | no title and no prompt, 2nd in batch | the caller's title followed by " thread 2" |
 
-  # The limit is advertised in the tool's input schema; the node does not enforce it yet.
-  @node @backlog
+  @node
   Scenario: A batch holds at most 20 threads
     When the agent of "caller" asks for 21 threads in one batch
     Then the request is rejected

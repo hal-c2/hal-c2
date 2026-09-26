@@ -42,20 +42,20 @@ Feature: How the engine accepts commands
     When a client dispatches a command of type "thread.teleport"
     Then it fails and nothing changes
 
-  @node @backlog
+  @node
   Scenario: Repeating a command id returns the first outcome
     Given a client dispatched message "hello" to "t1" with command id "c1"
     When it dispatches the same command again with command id "c1" after a reconnect
     Then no second message or run is created
     And the answer is the sequence of the first dispatch
 
-  @node @backlog
+  @node
   Scenario: A rejected command id stays rejected
     Given a command with id "c2" was rejected
     When it is dispatched again with id "c2"
     Then it is rejected again without being re-evaluated
 
-  @node @backlog
+  @node
   Scenario: Side effects of an accepted command survive a restart
     Given a command was accepted and its provider work was not yet started
     When the node restarts

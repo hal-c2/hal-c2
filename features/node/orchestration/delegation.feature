@@ -144,26 +144,26 @@ Feature: Delegating tasks to subagents
     When the agent cancels the task
     Then the tool fails with code "task_not_cancellable"
 
-  @node @backlog
+  @node
   Scenario: A client or agent changes a task's wake policy after starting it
     Given the agent in "parent" delegated a task and is waiting
     When the wake policy is changed to always
     Then the result is delivered as a message when the task ends
 
-  @node @backlog
+  @node
   Scenario: The caller acknowledges or disposes a task's completion delivery
     Given a delegated task of "parent" finished with a delivered result
     When the caller acknowledges the delivery naming the run that saw it
     Then the task records which run observed its result
     And disposing a delivery stops it from being delivered again
 
-  @node @backlog
+  @node
   Scenario: The provider confirms it accepted a mailbox delivery
     Given a delegated task result was delivered into "parent" as a message
     When the provider accepts the delivery
     Then the message is recorded as accepted, separately from the agent reading it
 
-  @node @backlog
+  @node
   Scenario: Delegated tasks can be requested with a command outside MCP
     When a client requests a delegated task for the active run of "parent"
     Then a subagent thread starts as if the agent had delegated it

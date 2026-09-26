@@ -40,45 +40,136 @@ defmodule T3.Orchestration.Delegation do
          {:ok, runtime} <- mode(thread["runtimeMode"], input["runtimeMode"], :runtime),
          {:ok, interaction} <-
            mode(thread["interactionMode"], input["interactionMode"], :interaction) do
-      child_id = T3.Environment.uuid4()
-      task_id = "node:subagent:" <> T3.Environment.uuid4()
-      wake = if input["mode"] == "wait", do: "settled_only", else: "always"
-      title = input["title"] || input["task"] |> String.split("\n") |> hd() |> String.slice(0, 80)
-
-      {:ok, _} =
-        Orchestration.launch_thread(%{
-          "commandId" => "command:delegate:#{task_id}",
-          "threadId" => child_id,
-          "projectId" => thread["projectId"],
-          "title" => title,
+      task_id =
+        start(thread, run, %{
+          "task" => input["task"],
+          "title" => input["title"],
           "modelSelection" => selection,
           "runtimeMode" => runtime,
           "interactionMode" => interaction,
+          "completionWake" => if(input["mode"] == "wait", do: "settled_only", else: "always"),
           "createdBy" => "agent",
-          "creationSource" => "mcp",
-          "workspaceStrategy" => workspace(thread),
-          "lineage" => %{
-            "parentThreadId" => thread["id"],
-            "relationshipToParent" => "subagent",
-            "rootThreadId" => get_in(thread, ["lineage", "rootThreadId"]) || thread["id"]
-          },
-          "initialMessage" => %{
-            "messageId" => "message:delegate:" <> T3.Environment.uuid4(),
-            "text" => input["task"],
-            "attachments" => []
-          }
+          "creationSource" => "mcp"
         })
 
-      record(thread, run, task_id, child_id, selection, title, input["task"], wake)
-
       if input["mode"] == "wait" do
-        timeout = min(max(number(input["timeoutMs"], 600_000), 1), 3_600_000)
-        wait(thread["id"], task_id, timeout)
+        wait(thread["id"], task_id, wait_budget(input["timeoutMs"]))
       else
         {:ok, status(thread["id"], task_id)}
       end
     end
   end
+
+  @doc """
+  `delegated_task.request`: starts a task for the parent's active run as
+  `delegate_task` does, for a client or the engine. Without `completionWake` the
+  result only wakes the parent once its own run is over (`settled_only`).
+  """
+  def request(%{"parentThreadId" => parent_id, "parentRunId" => run_id} = command) do
+    parent = stream(parent_id)
+    thread = StreamState.get(parent, "thread")[parent_id]
+    run = StreamState.get(parent, "run")[run_id]
+
+    with %{} <- thread || {:error, "Thread #{parent_id} was not found."},
+         :ok <- if(run && run["status"] in @active, do: :ok, else: not_active()),
+         {:ok, runtime} <- mode(thread["runtimeMode"], command["runtimeMode"], :runtime),
+         {:ok, interaction} <-
+           mode(thread["interactionMode"], command["interactionMode"], :interaction) do
+      start(thread, run, %{
+        "task" => command["task"],
+        "title" => command["title"],
+        "modelSelection" => command["modelSelection"] || thread["modelSelection"],
+        "runtimeMode" => runtime,
+        "interactionMode" => interaction,
+        "completionWake" => command["completionWake"] || "settled_only",
+        "createdBy" => command["createdBy"] || "user",
+        "creationSource" => command["creationSource"] || "web"
+      })
+
+      :ok
+    else
+      {:error, _code, message} -> {:error, message}
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc """
+  `delegated_task.wake-policy`: whether the task's result wakes the parent while
+  it is busy (`always`) or only once it is idle (`settled_only`). The policy is
+  read when the child's run ends.
+  """
+  def wake_policy(%{"parentThreadId" => parent_id, "taskId" => task_id, "completionWake" => wake}) do
+    case subagent(parent_id, task_id) do
+      %{"origin" => "app_owned", "completionWake" => ^wake} ->
+        {:error,
+         "Delegated task #{task_id} already wakes the parent with completionWake #{wake}."}
+
+      %{"origin" => "app_owned"} ->
+        update(parent_id, task_id, %{"completionWake" => wake})
+
+      _ ->
+        not_app_owned(parent_id, task_id)
+    end
+  end
+
+  @doc """
+  `delegated_task.completion-delivery.acknowledge` / `.dispose`: the caller saw the
+  task's result (naming the run that read it), or no longer wants it. Either way a
+  result message still queued behind the caller's run is cancelled, so the result
+  is not delivered again. Repeating either is a no-op.
+  """
+  def resolve_delivery(
+        %{"type" => type, "parentThreadId" => parent_id, "taskId" => task_id} = command
+      ) do
+    state = if type =~ "acknowledge", do: "acknowledged", else: "disposed"
+
+    case subagent(parent_id, task_id) do
+      %{"origin" => "app_owned", "completionDelivery" => %{"state" => current}}
+      when current == state or (current == "disposed" and state == "acknowledged") ->
+        :ok
+
+      %{"origin" => "app_owned"} ->
+        observed = if state == "acknowledged", do: command["observedByRunId"]
+
+        :ok =
+          update(parent_id, task_id, %{
+            "completionDelivery" => %{"state" => state, "observedByRunId" => observed}
+          })
+
+        cancel_delivery(parent_id, task_id)
+
+      _ ->
+        not_app_owned(parent_id, task_id)
+    end
+  end
+
+  @doc """
+  `notification.delivery.accept`: the provider took a delegated task result
+  message into its turn. Recorded on the message (`delegatedCompletion.acceptedAt`),
+  apart from the task's own delivery state, which says whether the agent read it.
+  """
+  def accept_delivery(%{"threadId" => thread_id, "messageId" => message_id}) do
+    T3.Streams.transact(thread_id, :thread, fn state ->
+      case StreamState.get(state, "message")[message_id] do
+        %{"delegatedCompletion" => %{"acceptedAt" => nil}} ->
+          at = Entities.now()
+
+          {[
+             Orchestration.upsert(state, "message", message_id, fn message ->
+               message
+               |> put_in(["delegatedCompletion", "acceptedAt"], at)
+               |> Map.put("updatedAt", at)
+             end)
+           ], :ok}
+
+        _ ->
+          {[], :ok}
+      end
+    end)
+  end
+
+  @doc "How long a `mode: \"wait\"` call waits for `timeout_ms`: 1 ms to an hour, 10 minutes by default."
+  def wait_budget(timeout_ms), do: min(max(number(timeout_ms, 600_000), 1), 3_600_000)
 
   @doc "`task_status`: a task of the caller thread `thread_id`."
   def task_status(thread_id, task_id) do
@@ -119,9 +210,11 @@ defmodule T3.Orchestration.Delegation do
       result = answer(child, run_id)
 
       delivery =
-        if task["completionWake"] == "always" or idle?(parent_id),
-          do: "delivered",
-          else: "acknowledged"
+        cond do
+          task["completionDelivery"]["state"] == "disposed" -> "disposed"
+          task["completionWake"] == "always" or idle?(parent_id) -> "delivered"
+          true -> "acknowledged"
+        end
 
       settle(parent_id, task, status, result, delivery)
       if delivery == "delivered", do: wake(parent_id, task, status, result)
@@ -131,6 +224,83 @@ defmodule T3.Orchestration.Delegation do
   end
 
   # --- tasks -------------------------------------------------------------------------
+
+  # Records the task in the parent, then launches the child thread; returns its id.
+  # The record comes first: a child turn that ends at once reports to it.
+  defp start(thread, run, spec) do
+    child_id = T3.Environment.uuid4()
+    task_id = "node:subagent:" <> T3.Environment.uuid4()
+    selection = spec["modelSelection"]
+
+    title =
+      spec["title"] || spec["task"] |> String.split("\n") |> hd() |> String.slice(0, 80)
+
+    record(thread, run, task_id, child_id, selection, title, spec["task"], spec["completionWake"])
+
+    {:ok, _} =
+      Orchestration.launch_thread(%{
+        "commandId" => "command:delegate:#{task_id}",
+        "threadId" => child_id,
+        "projectId" => thread["projectId"],
+        "title" => title,
+        "modelSelection" => selection,
+        "runtimeMode" => spec["runtimeMode"],
+        "interactionMode" => spec["interactionMode"],
+        "createdBy" => spec["createdBy"],
+        "creationSource" => spec["creationSource"],
+        "workspaceStrategy" => workspace(thread),
+        "lineage" => %{
+          "parentThreadId" => thread["id"],
+          "relationshipToParent" => "subagent",
+          "rootThreadId" => get_in(thread, ["lineage", "rootThreadId"]) || thread["id"]
+        },
+        "initialMessage" => %{
+          "messageId" => "message:delegate:" <> T3.Environment.uuid4(),
+          "text" => spec["task"],
+          "attachments" => []
+        }
+      })
+
+    task_id
+  end
+
+  defp update(parent_id, task_id, fields) do
+    T3.Streams.transact(parent_id, :thread, fn state ->
+      {[
+         Orchestration.upsert(state, "subagent", task_id, fn task ->
+           Map.merge(task, Map.put(fields, "updatedAt", Entities.now()))
+         end)
+       ], :ok}
+    end)
+  end
+
+  # The task's result message, while it still waits behind the caller's run.
+  defp cancel_delivery(parent_id, task_id) do
+    message_id = result_message_id(task_id)
+
+    case Enum.find(
+           StreamState.list(stream(parent_id), "run"),
+           &(&1["userMessageId"] == message_id and &1["status"] == "queued")
+         ) do
+      nil ->
+        :ok
+
+      run ->
+        {:ok, _} =
+          Orchestration.dispatch(%{
+            "type" => "queued-run.cancel",
+            "threadId" => parent_id,
+            "runId" => run["id"]
+          })
+
+        :ok
+    end
+  end
+
+  defp result_message_id(task_id), do: "message:delegate-result:" <> task_id
+
+  defp not_app_owned(parent_id, task_id),
+    do: {:error, "Delegated task #{task_id} is not an app-owned task of thread #{parent_id}."}
 
   defp record(thread, run, task_id, child_id, selection, title, prompt, wake) do
     at = Entities.now()
@@ -252,7 +422,9 @@ defmodule T3.Orchestration.Delegation do
     end)
   end
 
-  # The parent hears the result as a message that runs once it is free.
+  # The parent hears the result as a message that runs once it is free. The
+  # message carries which task it delivers (`delegatedCompletion`), so the
+  # provider's acceptance and a later dispose can find it.
   defp wake(parent_id, task, status, result) do
     text = """
     <delegated_task_result taskId="#{task["id"]}" title="#{task["title"]}" status="#{status}" childThreadId="#{task["childThreadId"]}">
@@ -264,12 +436,17 @@ defmodule T3.Orchestration.Delegation do
       "type" => "message.dispatch",
       "commandId" => "command:delegate-result:#{task["id"]}",
       "threadId" => parent_id,
-      "messageId" => "message:delegate-result:" <> T3.Environment.uuid4(),
+      "messageId" => result_message_id(task["id"]),
       "text" => String.trim(text),
       "attachments" => [],
       "createdBy" => "system",
       "creationSource" => "server",
-      "dispatchMode" => %{"type" => "queue_after_active"}
+      "dispatchMode" => %{"type" => "queue_after_active"},
+      "delegatedCompletion" => %{
+        "parentRunId" => task["runId"],
+        "taskIds" => [task["id"]],
+        "acceptedAt" => nil
+      }
     })
   end
 
@@ -319,7 +496,11 @@ defmodule T3.Orchestration.Delegation do
       task["status"] in @terminal ->
         {:ok, task}
 
+      # A child that ends after the caller stopped waiting still wakes it.
       left <= 0 ->
+        if task["status"] not in @terminal,
+          do: update(thread_id, task_id, %{"completionWake" => "always"})
+
         {:ok, Map.put(task, "waitTimedOut", true)}
 
       true ->
