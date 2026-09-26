@@ -35,6 +35,8 @@ export interface QmlTestApp {
   pressArrow(direction: "up" | "down" | "left" | "right", modifiers?: KeyModifiers): Promise<void>;
   paste(text: string): Promise<void>;
   click(x: number, y: number): Promise<void>;
+  /** Raw mouse driver (right-click, press/hold/release); call renderOnce() after. */
+  mockMouse: ReturnType<typeof import("@opentui/core/testing").createMockMouse>;
   resize(width: number, height: number): Promise<void>;
   advance(ms: number): Promise<void>;
   destroy(): void;

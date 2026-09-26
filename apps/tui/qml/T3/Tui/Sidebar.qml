@@ -3,6 +3,9 @@ import OpenTUI
 // The thread list: a filter field over the rows of `Shell.state.sidebar`.
 // Typing filters (`sidebar.filter.set`), Enter keeps the filter
 // (`sidebar.filter.commit`); the shell's Esc clears it.
+//
+// The host windows the rows (`visibleRows`) to the pane's height and scrolls
+// them to keep the selection in view, so every row here is one line.
 Rectangle {
     id: bar
     property alias filter: filterInput
@@ -17,7 +20,7 @@ Rectangle {
 
     border.width: 1
     border.color: filterFocused ? Theme.colors.accent : Theme.colors.faint
-    title: " Threads "
+    title: sidebar.scopeProjectKey === null ? " Threads " : " Threads · " + sidebar.scopeLabel + " "
     titleColor: Theme.colors.dim
     color: Theme.colors.bg
     flexDirection: "column"
@@ -38,9 +41,10 @@ Rectangle {
     }
 
     Repeater {
-        model: bar.sidebar.rows
+        model: bar.sidebar.visibleRows
         delegate: Item {
             flexDirection: "column"
+            height: 1
             SidebarThreadRow {
                 visible: modelData.kind === "thread"
                 item: modelData.kind === "thread" ? modelData.thread : null
@@ -48,14 +52,27 @@ Rectangle {
                 section: modelData.kind === "thread" ? modelData.thread.section : ""
             }
             Text {
+                visible: modelData.kind === "draft"
+                text: modelData.kind === "draft"
+                    ? "▌+ " + modelData.draft.label + " · " + modelData.projectName
+                    : ""
+                color: Theme.colors.accent
+                truncate: true
+            }
+            Text {
                 visible: modelData.kind === "section"
-                text: (modelData.expanded ? "▾ " : "▸ ") + modelData.title + " (" + modelData.count + ")"
-                color: Theme.colors.dim
+                text: modelData.kind === "section"
+                    ? "  " + (modelData.expanded ? "▾ " : "▸ ") + modelData.title
+                        + (modelData.expanded ? "" : " (" + modelData.count + ")") + " ─"
+                    : ""
+                color: modelData.section === "snoozed" ? Theme.colors.accent : Theme.colors.dim
+                onMouseDown: (mouse) => Shell.dispatch("sidebar.section.toggle", { section: modelData.section })
             }
             Text {
                 visible: modelData.kind === "more"
-                text: "  " + modelData.hiddenCount + " more…"
-                color: Theme.colors.faint
+                text: modelData.kind === "more" ? "  + Show " + Math.min(modelData.hiddenCount, 25) + " more" : ""
+                color: Theme.colors.dim
+                onMouseDown: (mouse) => Shell.dispatch("sidebar.more")
             }
         }
     }
