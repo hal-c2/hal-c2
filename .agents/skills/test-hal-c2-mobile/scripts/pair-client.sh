@@ -44,7 +44,7 @@ process.stdout.write(`hal-c2-dev://connections/new?${query}`);
 NODE
 )"
 
-if ! "$agent_device_command" open io.github.halc2.halc2.dev "$deep_link" "$@" \
+if ! "$agent_device_command" open io.github.halc2.app.dev "$deep_link" "$@" \
   >/dev/null 2>&1; then
   echo "AgentDevice could not open the pairing route. Check the Device panel and retry with a fresh credential." >&2
   exit 1
