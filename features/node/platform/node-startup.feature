@@ -8,6 +8,8 @@
 #   apps/server-ex/rel/overlays/bin/hal-c2-service (restart loop on exit 75), lib/hal_c2/service.ex
 #   apps/server-ex/lib/hal_c2/desktop.ex (HAL_C2_BOOTSTRAP_STDIN), acp.ex (HAL_C2_NODE_COMMAND, HAL_C2_NODE_ELECTRON)
 #   apps/server-ex/lib/hal_c2/web.ex (access-token), environment.ex (environment-id, HAL_C2_LABEL, descriptor)
+#   apps/server-ex/lib/hal_c2/runtime_record.ex (server-runtime.json)
+#   apps/server/src/serverRuntimeState.ts (the record's fields, as the Node server writes them)
 #   apps/server-ex/lib/hal_c2/import/v2.ex
 #   packages/contracts/src/desktopBootstrap.ts
 #   packages/contracts/src/environment.ts (ExecutionEnvironmentDescriptor)
@@ -123,6 +125,18 @@ Feature: Starting the node
     When the node starts for the first time
     Then it writes an access token file readable only by its owner
     And local tools connect with that token
+
+  @backlog @node
+  Scenario: A running node records where local tools can find it
+    When the node is serving clients
+    Then its state directory holds a runtime record naming its process, port, origin and start time
+    And that origin serves the node's environment descriptor
+
+  @backlog @node
+  Scenario: A node that stops removes its runtime record
+    Given the node is serving clients
+    When the node stops
+    Then its state directory holds no runtime record
 
   @node
   Scenario: The environment id survives restarts

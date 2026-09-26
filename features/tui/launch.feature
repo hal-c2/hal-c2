@@ -5,11 +5,20 @@
 #   apps/tui/src/connection.ts (initial "Connecting…" status)
 #   apps/tui/src/features.backlog.test.ts (environment-connections, environment-access-management)
 #   apps/server-ex/test/hal_c2/features_backlog_test.exs (TUI launch against the Elixir node)
+#   apps/tui/src/nodeDiscovery.ts (runtime record, access token, pairing link, saved credentials)
+#   apps/tui/src/socketTicket.ts (socket tickets over HTTP without a launcher)
+#   apps/server-ex/lib/hal_c2/runtime_record.ex, lib/hal_c2/auth.ex (access token as bearer)
+#   mise-tasks/tui/_default (mise run tui)
 #   Shared domain: connections/ owns pairing and remote access; this file holds the terminal twist.
 
 Feature: Launching and leaving the terminal client
   The terminal client is started from the command line next to a running HAL-C2 server.
   It takes over the terminal while open and gives it back intact when it leaves.
+
+  On its own ("mise run tui", or the client's entry with --base-dir) it finds the Elixir
+  node on this machine through the node's runtime record and signs in with the node's
+  access token; with --url it pairs with a remote node instead. "hal-c2 tui" is the Node
+  server's launcher, which hands the client an origin, a bearer and socket tickets.
 
   @tui
   Scenario: The terminal client opens against the running local server
@@ -48,7 +57,9 @@ Feature: Launching and leaving the terminal client
     Then the server lists a client session labelled "HAL-C2 TUI"
     And the session expires after 30 days if never closed
 
-  @tui
+  # Started directly, the client finds the node itself (the scenarios on the Elixir node
+  # below); an origin and bearer only come from the Node server's launcher.
+  @dropped @tui
   Scenario: The terminal client refuses to start without an origin and credential
     Given the terminal client is started directly without an origin or bearer credential
     Then it exits with an error naming the missing value
@@ -146,16 +157,47 @@ Feature: Launching and leaving the terminal client
     Then the running turns keep going on the server
     And re-attaching later opens the same thread with the same focus
 
-  # `hal-c2 tui` finds servers through the Node server's runtime file; the Elixir node
-  # does not write one yet.
   @backlog @tui
   Scenario: The terminal client launches against an Elixir node
     Given an Elixir node is running on this machine
-    When the user runs "hal-c2 tui"
+    When the user starts the terminal client
     Then the terminal client connects to that node
+    And it signs in with the node's access token
 
-  # The TUI reaches only the server that launched it: the host has no environment
-  # list, pairing or access management (`connection.environments` is that one server).
+  @backlog @tui
+  Scenario: Starting the terminal client with no node running explains how to start one
+    Given no Elixir node is running on this machine
+    When the user starts the terminal client
+    Then it exits saying "No running HAL-C2 node was found. Start one with `mise run node` first."
+
+  @backlog @tui
+  Scenario: Starting the terminal client against a node that has since stopped says so
+    Given the recorded Elixir node is no longer running
+    When the user starts the terminal client
+    Then it exits saying the recorded node is no longer running
+
+  @backlog @tui
+  Scenario: Starting the terminal client against a node that does not answer says so
+    Given the recorded Elixir node does not answer
+    When the user starts the terminal client
+    Then it exits saying the node at the recorded address could not be reached
+
+  @backlog @tui
+  Scenario: Without a launcher the client buys its socket tickets over HTTP
+    Given an Elixir node is running on this machine
+    When the user starts the terminal client
+    Then the client buys a socket ticket from the node over HTTP
+    And the socket URL carries only that ticket
+
+  @backlog @tui
+  Scenario: Without a launcher a dropped connection reconnects with a fresh ticket
+    Given the terminal client is connected to an Elixir node
+    When the node drops the connection
+    Then the client buys a new socket ticket over HTTP
+    And it reconnects without the user doing anything
+
+  # --url <pairing link>. The session is saved for the environment's origin rather than
+  # revoked on exit: a node does not let a session revoke itself, and a link works once.
   @backlog @tui
   Scenario: The user pairs the terminal client with a remote environment
     Given a pairing link from a remote HAL-C2 environment
@@ -163,13 +205,25 @@ Feature: Launching and leaving the terminal client
     Then the client connects to the remote environment
     And later launches reuse the paired credential
 
-  # The TUI reaches only the server that launched it: the host has no environment
-  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: Pairing with an invalid or expired credential explains the failure
     Given a pairing credential that has expired
     When the user starts the terminal client with it
     Then the client says the credential expired and does not connect
+
+  @backlog @tui
+  Scenario: Leaving keeps a paired remote session until the environment revokes it
+    Given the terminal client paired with a remote environment
+    When the user leaves the terminal client
+    Then the environment still lists the "HAL-C2 TUI" session
+
+  @backlog @tui
+  Scenario: A saved session the environment revoked asks for a new pairing link
+    Given the terminal client paired with a remote environment
+    And the environment revoked that session
+    When the user starts the terminal client for that environment again
+    Then the client says its access was revoked and asks for a new pairing link
+    And it forgets the saved credential
 
   # The TUI reaches only the server that launched it: the host has no environment
   # list, pairing or access management (`connection.environments` is that one server).

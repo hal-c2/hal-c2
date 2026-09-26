@@ -2,6 +2,7 @@
 #   apps/server-ex/lib/hal_c2/auth.ex (pairing tokens, sessions, tickets, desktop bootstrap, access stream)
 #   apps/server-ex/lib/hal_c2/web/router.ex (/oauth/token, /api/auth/*, with_scope)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (authAccess shape, current session)
+#   apps/server-ex/lib/hal_c2/web.ex (the node's access token)
 #   apps/server-ex/lib/mix/tasks/hal_c2.pair.ex
 #   apps/server-ex/test/hal_c2/scenarios_test.exs (access scenarios)
 #   packages/contracts/src/auth.ts, environmentHttp.ts (AuthAccessStreamEvent, scope errors)
@@ -73,6 +74,22 @@ Feature: Node authentication and scopes
     When it asks for a socket ticket
     Then it receives a ticket valid for five minutes
     And the long-lived token never appears in the socket URL
+
+  # The node's access token (<data>/access-token) is readable only by the user the node
+  # runs as, so on HTTP it carries the same trust `?token=` has on the socket.
+  @backlog @node
+  Scenario: Local tools authenticate over HTTP with the node's access token
+    Given a local tool that read the node's access token
+    When it asks the node about its session with that token as a bearer
+    Then the node says it is authenticated with the administrative scopes
+    And the tool can buy a socket ticket with that token
+    And a socket opened with that ticket may do anything the node's own token may
+
+  @backlog @node
+  Scenario: The node's access token is not a paired client
+    Given a local tool bought a socket ticket with the node's access token
+    When an administrator lists the authorized clients
+    Then the node's access token is not among them
 
   @node
   Scenario: A ticket request without a valid session is refused
