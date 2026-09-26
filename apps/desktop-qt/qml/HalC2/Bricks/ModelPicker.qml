@@ -41,7 +41,14 @@ AbstractButton {
     readonly property color overlay: Theme.palette.color("surfaceOverlay", "#18181b")
     readonly property color mutedSurface: Theme.palette.color("muted", "#27272a")
     readonly property color highlight: Theme.palette.color("accentSurface", "#27272a")
-    readonly property color divider: Qt.alpha(Theme.palette.color("border", "#27272a"), 0.7)
+    // Scales a theme colour's own alpha, like Tailwind's `bg-muted/40`: dark
+    // themes publish translucent roles, and Qt.alpha would replace their alpha.
+    function fade(value, factor) {
+        const base = Qt.color(value);
+        return Qt.alpha(base, base.a * factor);
+    }
+
+    readonly property color divider: control.fade(Theme.palette.color("border", "#27272a"), 0.7)
     readonly property string fontFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
 
     function open() {
@@ -294,7 +301,7 @@ AbstractButton {
         background: Rectangle {
             radius: Math.min(Theme.radius, 10)
             color: control.overlay
-            border.color: Qt.alpha(control.foreground, 0.1)
+            border.color: control.fade(control.foreground, 0.1)
             border.width: 1
         }
 
@@ -341,7 +348,7 @@ AbstractButton {
                 visible: control.showRail
                 width: 44
                 height: parent.height
-                color: Qt.alpha(control.mutedSurface, 0.3)
+                color: control.fade(control.mutedSurface, 0.3)
                 radius: Math.min(Theme.radius, 10)
 
                 Flickable {
@@ -442,7 +449,7 @@ AbstractButton {
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                color: Qt.alpha(control.mutedSurface, 0.4)
+                color: control.fade(control.mutedSurface, 0.4)
                 radius: rail.visible ? 0 : Math.min(Theme.radius, 10)
 
                 Rectangle {
@@ -466,7 +473,7 @@ AbstractButton {
                             y: 14
                             name: "search"
                             size: 16
-                            color: Qt.alpha(control.muted, 0.55)
+                            color: control.fade(control.muted, 0.55)
                         }
 
                         TextField {
@@ -477,7 +484,7 @@ AbstractButton {
                             y: 8
                             width: parent.width - 24
                             height: 26
-                            leftPadding: 20
+                            leftPadding: 26
                             rightPadding: 0
                             topPadding: 0
                             bottomPadding: 0
@@ -596,7 +603,7 @@ AbstractButton {
             implicitHeight: 46
             radius: 4
             opacity: disabledReason.length > 0 ? 0.64 : 1
-            color: highlighted || (rowHover.hovered && disabledReason.length === 0) ? control.highlight : isSelected ? Qt.alpha(control.foreground, 0.08) : "transparent"
+            color: highlighted || (rowHover.hovered && disabledReason.length === 0) ? control.highlight : isSelected ? control.fade(control.foreground, 0.08) : "transparent"
             Accessible.role: Accessible.ListItem
             Accessible.name: model ? Picker.displayName(model, !control.locked) : ""
 
@@ -646,8 +653,8 @@ AbstractButton {
                             implicitWidth: newText.implicitWidth + 6
                             implicitHeight: newText.implicitHeight + 2
                             radius: 3
-                            color: Qt.alpha(Theme.palette.color("update", "#3b82f6"), 0.15)
-                            border.color: Qt.alpha(Theme.palette.color("update", "#3b82f6"), 0.35)
+                            color: control.fade(Theme.palette.color("update", "#3b82f6"), 0.15)
+                            border.color: control.fade(Theme.palette.color("update", "#3b82f6"), 0.35)
 
                             Text {
                                 id: newText
@@ -686,7 +693,7 @@ AbstractButton {
                         Text {
                             Layout.fillWidth: true
                             text: row.model && row.instance ? Picker.providerLabel(row.model, row.instance) : ""
-                            color: Qt.alpha(control.muted, 0.7)
+                            color: control.fade(control.muted, 0.7)
                             font.family: control.fontFamily
                             font.pixelSize: 12
                             elide: Text.ElideRight
@@ -742,7 +749,7 @@ AbstractButton {
                             name: "star"
                             filled: star.favorite
                             size: 12
-                            color: star.favorite ? "#eab308" : Qt.alpha(control.muted, star.hovered ? 1 : 0.72)
+                            color: star.favorite ? "#eab308" : control.fade(control.muted, star.hovered ? 1 : 0.72)
                         }
                     }
                 }
@@ -794,7 +801,7 @@ AbstractButton {
 
                     Text {
                         text: legacy.entry ? qsTr("%1 models").arg(legacy.entry.count) : ""
-                        color: Qt.alpha(control.muted, 0.7)
+                        color: control.fade(control.muted, 0.7)
                         font.family: control.fontFamily
                         font.pixelSize: 12
                     }
@@ -849,7 +856,7 @@ AbstractButton {
             anchors.fill: parent
             radius: 6
             opacity: railButton.available ? 1 : 0.5
-            color: railButton.available && (railHover.hovered || railButton.activeFocus) ? Qt.tint(control.overlay, Qt.alpha(control.foreground, 0.1)) : "transparent"
+            color: railButton.available && (railHover.hovered || railButton.activeFocus) ? Qt.tint(control.overlay, control.fade(control.foreground, 0.1)) : "transparent"
         }
 
         TapHandler {
