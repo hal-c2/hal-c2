@@ -21,6 +21,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   GitCommandError,
   HALC2_PROJECT_FILE_NAME,
+  LEGACY_PROJECT_FILE_NAME,
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewInput,
   type ReviewDiffFileStat,
@@ -3123,6 +3124,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             : yield* fileSystem
                 .readFileString(path.join(worktreePath, HALC2_PROJECT_FILE_NAME))
                 .pipe(
+                  // A checkout from before the rename only has t3.json.
+                  Effect.catchReason("PlatformError", "NotFound", () =>
+                    fileSystem.readFileString(path.join(worktreePath, LEGACY_PROJECT_FILE_NAME)),
+                  ),
                   Effect.flatMap((contents) => {
                     const file = parseHalC2ProjectFile(contents);
                     return file === null
