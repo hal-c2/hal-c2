@@ -70,7 +70,11 @@ defmodule HalC2.Application do
           # Turns the restart cut off go on, where the user asked for that.
           Supervisor.child_spec({Task, &HalC2.Orchestration.Recovery.continue/0}, id: :continue),
           # Projects that ask for it are brought up to date.
-          Supervisor.child_spec({Task, &HalC2.Projects.auto_pull/0}, id: :auto_pull)
+          Supervisor.child_spec({Task, &HalC2.Projects.auto_pull/0}, id: :auto_pull),
+          # Projects learn which repository their checkout is, for grouping across machines.
+          Supervisor.child_spec({Task, &HalC2.Projects.identify_repositories/0},
+            id: :identify_repositories
+          )
         ] ++ discovery(HalC2.Paths.data_dir())
       else
         []

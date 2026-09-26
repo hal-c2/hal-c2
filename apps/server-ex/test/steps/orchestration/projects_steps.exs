@@ -379,6 +379,61 @@ defmodule HalC2.Steps.Orchestration.Projects do
     context
   end
 
+  # --- repository identity ----------------------------------------------------------
+
+  step "the folder {string} is a checkout whose origin is {string}",
+       %{args: [folder, url]} = context do
+    context = home(context)
+    File.mkdir_p!(path(context, folder))
+    checkout(path(context, folder), url)
+    context
+  end
+
+  step "project {string} is a checkout of {string}", %{args: [id, url]} = context do
+    root = context |> World.git_repo(id) |> checkout(url)
+    World.create_project(context, id, %{"projectId" => id, "workspaceRoot" => root})
+  end
+
+  step "a client moves {string} to a checkout of {string}", %{args: [id, url]} = context do
+    root = context |> World.git_repo("#{id}-moved") |> checkout(url)
+    mutate(context, %{"type" => "project.update", "projectId" => id, "workspaceRoot" => root})
+  end
+
+  step "project {string} was added before its checkout had the origin {string}",
+       %{args: [id, url]} = context do
+    context = World.create_project(context, id, %{"projectId" => id})
+    assert stored(id)["repositoryIdentity"] == nil
+    checkout(World.project(context, id).root, url)
+    context
+  end
+
+  step "project {string} is a checkout of {string} named {string} owned by {string}",
+       %{args: [id, key, name, owner]} = context do
+    identity = shell_row(context, id)["repositoryIdentity"]
+
+    assert %{"canonicalKey" => ^key, "name" => ^name, "owner" => ^owner} = identity
+    assert identity["locator"]["remoteName"] == "origin"
+    Map.put(context, :identity, identity)
+  end
+
+  step "its remote is {string}", %{args: [url]} = context do
+    assert context.identity["locator"]["remoteUrl"] == url
+    context
+  end
+
+  step "project {string} is not a checkout of any repository", %{args: [id]} = context do
+    assert {:ok, project} = context.reply
+    refute Map.has_key?(project, "repositoryIdentity")
+    refute Map.has_key?(shell_row(context, id), "repositoryIdentity")
+    context
+  end
+
+  defp checkout(root, url) do
+    System.cmd("git", ~w(init -q), cd: root)
+    {_, 0} = System.cmd("git", ["remote", "add", "origin", url], cd: root)
+    root
+  end
+
   # --- helpers ----------------------------------------------------------------------
 
   @updates %{

@@ -1,6 +1,8 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/projects.ex (projects.mutate: project.create, project.update,
-#     project.delete; which project a folder belongs to)
+#     project.delete; which project a folder belongs to; repository identity)
+#   apps/server/src/project/RepositoryIdentityResolver.ts,
+#     packages/client-runtime/src/state/projectGrouping.ts (grouping by canonicalKey)
 #   packages/contracts/src/project.ts (ProjectMutation, ProjectMutationError, Project)
 #   packages/contracts/src/orchestrationV2.ts (project.updated, project.removed)
 #   apps/server/src/orchestration/decider.ts (project.create, project.meta-update,
@@ -94,6 +96,40 @@ Feature: Projects on a node
     Given project "outer" has "~/code" and project "inner" has "~/code/app"
     Then "~/code/app/src" belongs to project "inner"
     And "~/code/other" belongs to project "outer"
+
+  Rule: A project knows the repository its folder is a checkout of, so clients can
+    group checkouts of one repository on different machines
+
+    @node
+    Scenario: A project in a checkout carries its repository
+      Given the folder "~/code/app" is a checkout whose origin is "git@github.com:Acme/Shop.git"
+      When a client creates project "p1" for "~/code/app"
+      Then project "p1" is a checkout of "github.com/acme/shop" named "shop" owned by "acme"
+
+    @node
+    Scenario: A project outside a repository has none
+      Given the folder "~/code/app" exists
+      When a client creates project "p1" for "~/code/app"
+      Then project "p1" is not a checkout of any repository
+
+    @node
+    Scenario: Credentials in an origin stay on the machine
+      Given the folder "~/code/app" is a checkout whose origin is "https://bot:secret@github.com/acme/shop.git"
+      When a client creates project "p1" for "~/code/app"
+      Then project "p1" is a checkout of "github.com/acme/shop" named "shop" owned by "acme"
+      And its remote is "https://github.com/acme/shop.git"
+
+    @node
+    Scenario: A project moved to another checkout takes on its repository
+      Given project "p1" is a checkout of "https://github.com/acme/shop"
+      When a client moves "p1" to a checkout of "git@github.com:acme/other.git"
+      Then project "p1" is a checkout of "github.com/acme/other" named "other" owned by "acme"
+
+    @node
+    Scenario: A project learns its repository when the node starts
+      Given project "p1" was added before its checkout had the origin "git@github.com:acme/shop.git"
+      When the node restarts
+      Then project "p1" is a checkout of "github.com/acme/shop" named "shop" owned by "acme"
 
   @node
   Scenario: Projects imported from the Node server read like native ones

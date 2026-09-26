@@ -6,6 +6,10 @@ defmodule HalC2.Projects do
   A project is its own stream holding one `project` entity in the shape of the
   contracts' `Project`; its sidebar row follows from it (`HalC2.Projection`).
   Deleting sets `deletedAt`, which removes it from clients' sidebars.
+
+  A project in a git checkout carries the contracts' `RepositoryIdentity`, keyed by
+  its origin. Clients group projects on different machines by its `canonicalKey`,
+  which is how a new thread's composer offers every machine with a checkout.
   """
 
   alias HalC2.{Patch, StreamState}
@@ -40,6 +44,12 @@ defmodule HalC2.Projects do
           "deletedAt" => nil
         }
 
+        project =
+          case repository_identity(root) do
+            nil -> project
+            identity -> Map.put(project, "repositoryIdentity", identity)
+          end
+
         {:ok, _} = HalC2.Streams.commit(id, :project, [{"project", id, Patch.diff(nil, project)}])
         {:ok, contract(project)}
     end
@@ -60,9 +70,16 @@ defmodule HalC2.Projects do
 
     case fields["workspaceRoot"] && owner(fields["workspaceRoot"], id) do
       nil ->
+        # A moved project belongs to the repository of its new folder, if any.
+        identify =
+          case fields["workspaceRoot"] do
+            nil -> & &1
+            root -> identify(repository_identity(root))
+          end
+
         # An update that changes nothing keeps the update time, so nothing is recorded.
         update(id, fn current ->
-          next = Map.merge(current, fields)
+          next = current |> Map.merge(fields) |> identify.()
           if next == current, do: current, else: Map.put(next, "updatedAt", Entities.now())
         end)
 
@@ -104,6 +121,70 @@ defmodule HalC2.Projects do
           end
       end
     end)
+  end
+
+  defp identify(nil), do: &Map.delete(&1, "repositoryIdentity")
+  defp identify(identity), do: &Map.put(&1, "repositoryIdentity", identity)
+
+  @doc """
+  The repository a checkout belongs to, as the contracts' `RepositoryIdentity`: its
+  origin, normalized like the Node server's (`HalC2.AgentSessions.remote_key/1`). Nil
+  outside a repository or without an origin.
+  """
+  def repository_identity(root) do
+    with true <- is_binary(root) and File.dir?(root),
+         {:ok, url} <- HalC2.Git.ok(root, ~w(config --get remote.origin.url)),
+         url when url != "" <- String.trim(url),
+         {:ok, top} <- HalC2.Git.ok(root, ~w(rev-parse --show-toplevel)) do
+      key = HalC2.AgentSessions.remote_key(url)
+      # `host/owner/.../name`, as the Node server splits it.
+      path = key |> String.split("/") |> Enum.drop(1) |> Enum.join("/")
+      segments = String.split(path, "/", trim: true)
+
+      %{
+        "canonicalKey" => key,
+        "locator" => %{
+          "source" => "git-remote",
+          "remoteName" => "origin",
+          "remoteUrl" => without_credentials(url)
+        },
+        "rootPath" => String.trim(top),
+        "displayName" => path,
+        "owner" => List.first(segments),
+        "name" => List.last(segments)
+      }
+      |> Map.reject(fn {_field, value} -> value in [nil, ""] end)
+    else
+      _ -> nil
+    end
+  end
+
+  # Clients see the remote, so a token embedded in an HTTPS origin stays behind.
+  defp without_credentials(url) do
+    case URI.parse(url) do
+      %URI{scheme: scheme, userinfo: info} = uri
+      when scheme in ["http", "https"] and is_binary(info) ->
+        URI.to_string(%{uri | userinfo: nil})
+
+      _ ->
+        url
+    end
+  end
+
+  @doc """
+  Gives this node's projects the repository identity of their checkout at boot:
+  projects added before the node recorded one, ones imported from the Node server,
+  and checkouts whose origin changed. A folder that is gone or has no origin keeps
+  what it had. Not a user edit, so the update time stays.
+  """
+  def identify_repositories do
+    for {{node, id}, {"project", project}} <- HalC2.Shell.rows(),
+        node == node() and project["deletedAt"] == nil,
+        (identity = repository_identity(project["workspaceRoot"])) != nil,
+        identity["canonicalKey"] != get_in(project, ["repositoryIdentity", "canonicalKey"]),
+        do: update(id, identify(identity))
+
+    :ok
   end
 
   # The other live project whose workspace is `root`, if any.

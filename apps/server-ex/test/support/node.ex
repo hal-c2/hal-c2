@@ -121,6 +121,7 @@ defmodule HalC2.Test.Node do
     # Threads from before the search index are indexed, as at boot.
     HalC2.Search.backfill()
     :ok = HalC2.Projects.auto_pull()
+    :ok = HalC2.Projects.identify_repositories()
     node
   end
 

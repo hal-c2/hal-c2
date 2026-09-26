@@ -21,7 +21,8 @@ defmodule HalC2.Environment do
       # Commands are resolved against the thread on the node, so clients need not
       # read the projection before sending.
       "capabilities" => %{
-        "repositoryIdentity" => false,
+        # Projects carry their checkout's repository (`HalC2.Projects.repository_identity/1`).
+        "repositoryIdentity" => true,
         "serverResolvedCommandContext" => true,
         # GitHub pull requests through `gh` (`HalC2.PullRequests`), diff over HTTP.
         "pullRequests" => true,
