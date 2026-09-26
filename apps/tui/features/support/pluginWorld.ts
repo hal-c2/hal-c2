@@ -12,6 +12,7 @@ import { createPropertyMap, type PropertyMap } from "opentui-qml";
 import type { TuiProblem } from "../../src/host/host.ts";
 import type { TuiPluginInfo } from "../../src/host/plugins.ts";
 import { readUserConfig } from "../../src/host/userConfig.ts";
+import { shownText } from "./threadWorld.ts";
 import { boot, findObject, snapshot, type World } from "./world.ts";
 
 export type SlotName = "statusbar" | "composer.actions" | "sidebar.footer";
@@ -166,7 +167,9 @@ export async function start(ctx: PluginWorld, extra: StartOptions = {}) {
   if (ctx.app) return ctx.app;
   ctx.startOptions = extra;
   planShell(ctx);
-  const app = await boot(ctx);
+  // Wide enough for the composer footer plus plugin controls: the OpenTUI
+  // client's footer alone already fills a 100-column terminal.
+  const app = await boot(ctx, { columns: ctx.columns ?? 160 });
   for (const [slot, objectName] of Object.entries(SLOT_OBJECTS)) {
     expect(findObject(ctx, objectName).get("name")).toBe(slot);
   }
@@ -234,7 +237,7 @@ export async function slotLine(ctx: PluginWorld, slot: SlotName): Promise<string
 
 export const BUILT_IN_MARKERS: Record<SlotName, ((ctx: PluginWorld) => string) | null> = {
   statusbar: (ctx) => (ctx.host!.state.get("status") as { text: string }).text,
-  "composer.actions": (ctx) => String(findObject(ctx, "composerModel").get("text")),
+  "composer.actions": (ctx) => shownText(findObject(ctx, "composerModel").get("text")),
   "sidebar.footer": null,
 };
 

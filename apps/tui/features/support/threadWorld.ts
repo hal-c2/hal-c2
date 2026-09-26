@@ -273,6 +273,10 @@ export const plain = (
   text: { chunks: ReadonlyArray<{ text: string }> } | null | undefined,
 ): string => (text ? text.chunks.map((part) => part.text).join("") : "");
 
+/** An object's `text` as plain text, whether a string or StyledText. */
+export const shownText = (value: unknown): string =>
+  typeof value === "string" ? value : plain(value as Parameters<typeof plain>[0]);
+
 /** Every timeline line as plain text, in order (right parts after a tab). */
 export function timelineText(ctx: World): string[] {
   const timeline = hostState(ctx, "timeline");

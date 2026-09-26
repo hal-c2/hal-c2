@@ -6,6 +6,7 @@ import type { TuiClient } from "../connection.ts";
 import { splitUnifiedDiff } from "../diffSplit.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import type { Store, StoreState } from "../store.ts";
+import { clip } from "../format.ts";
 import { relativeTime, THEME, type Palette } from "../theme.ts";
 import { revertableCheckpoints } from "../timeline.ts";
 import {
@@ -16,6 +17,7 @@ import {
 import { createAttachmentPreviews } from "./attachmentPreviews.ts";
 import { buildImageViewerState, type TuiImageViewerState } from "./imageViewer.ts";
 import type { TuiMode, TuiSize } from "./layoutState.ts";
+import { chunk, styled } from "./styledText.ts";
 import {
   nextThreadAlerts,
   OPEN_THREAD_ACTION,
@@ -55,6 +57,10 @@ export interface ThreadViewOptions {
   readonly cellPixels?: () => CellPixels | null;
   /** The terminal size (the image viewer fills it). */
   readonly size: () => TuiSize;
+  /** The composer's width (the question panel inside it clips to it). */
+  readonly composerWidth?: () => number;
+  /** The open question appeared, moved, or was set aside or answered. */
+  readonly onQuestionChange?: () => void;
 }
 
 export interface ThreadView {
@@ -70,6 +76,8 @@ export interface ThreadView {
   readonly resize: () => void;
   /** Resolves once attachment links and previews asked for so far have landed. */
   readonly settled: () => Promise<void>;
+  /** The question the composer shows (open, not set aside): how many options it lists. */
+  readonly question: () => { readonly visibleOptions: number } | null;
 }
 
 interface QuestionState {
@@ -135,6 +143,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   let detail: OrchestrationThread | null = null;
   let page: StoreState["threadPage"] = null;
   let paneWidth = 1;
+  let composerWidth = 0;
   /** The selected project's title while a project row (not a thread) is selected. */
   let projectHint: string | null = null;
   let view: TimelineView = EMPTY_TIMELINE_VIEW;
@@ -310,6 +319,10 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   };
 
   const publishUserInput = () => {
+    publishQuestion();
+    options.onQuestionChange?.();
+  };
+  const publishQuestion = () => {
     const pending = activeQuestion();
     const current = pending?.questions[question.questionIndex] ?? null;
     if (!pending || !current) {
@@ -323,6 +336,8 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       Math.max(0, count - USER_INPUT_OPTION_WINDOW),
     );
     const total = pending.questions.length;
+    // ComposerPendingUserInputPanel: labels clip to the composer, less its frame and marker.
+    const labelRoom = Math.max(8, (options.composerWidth?.() ?? 64) - 8);
     state.set("userInput", {
       pending: true,
       active: !question.deferred,
@@ -355,12 +370,26 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
             highlighted,
             selected: isSelected,
             text: `${highlighted ? "▸" : " "} ${box} ${option.label}`,
+            line: styled(
+              chunk(highlighted ? "▸ " : "  ", { fg: highlighted ? palette.accent : palette.dim }),
+              chunk(`${box} `, { fg: isSelected ? palette.accent : palette.dim }),
+              chunk(clip(option.label, labelRoom), {
+                fg: highlighted ? palette.text : palette.dim,
+              }),
+            ),
           };
         }),
       customAnswer: question.customAnswer,
+      headerLine: styled(
+        chunk(`${current.header}  `, { fg: palette.accent }),
+        total > 1
+          ? chunk(`(${question.questionIndex + 1} of ${total})`, { fg: palette.dim })
+          : null,
+      ),
+      questionLine: clip(current.question, labelRoom),
       hint: current.multiSelect
         ? "↑/↓ move · Space toggle · Enter submit · Esc defer"
-        : "↑/↓ select · type an answer · Enter submit · Esc defer",
+        : "↑/↓ select · Enter submit · Esc defer",
       primaryActionLabel: "Submit answer",
     });
   };
@@ -855,6 +884,11 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   return {
     sync,
     setPaneWidth: (width) => {
+      const nextComposerWidth = options.composerWidth?.() ?? 0;
+      if (nextComposerWidth !== composerWidth) {
+        composerWidth = nextComposerWidth;
+        publishQuestion();
+      }
       if (width === paneWidth) return;
       paneWidth = width;
       publishTimeline();
@@ -865,5 +899,11 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       if (imageViewer) viewImage(imageViewer.id);
     },
     settled: attachments.settled,
+    question: () => {
+      const current = activeQuestion()?.questions[question.questionIndex];
+      return current && !question.deferred
+        ? { visibleOptions: Math.min(current.options.length, USER_INPUT_OPTION_WINDOW) }
+        : null;
+    },
   };
 }

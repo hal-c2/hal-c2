@@ -3,13 +3,15 @@ import OpenTUI
 // The main column's conversation. Like MessagesTimeline, the thread sits in a
 // rounded faint pane: the header, the context meter, the timeline and the
 // pending approvals. The diff viewer takes the pane's place while open; the
-// agent's question, the revert picker and the thread's key hints follow.
+// revert picker and the thread's key hints follow. A new-thread draft shows
+// the pane empty (the composer below holds the draft).
 Rectangle {
     id: conversation
     objectName: "conversation"
     readonly property var page: Shell.state.page
     readonly property var timeline: Shell.state.timeline
-    readonly property var header: timeline.header
+    readonly property var header: draft ? null : timeline.header
+    readonly property bool draft: page.kind === "draft"
 
     color: Theme.colors.bg
     flexDirection: "column"
@@ -29,7 +31,7 @@ Rectangle {
 
         Text {
             objectName: "conversationEmpty"
-            visible: conversation.timeline.kind === "none"
+            visible: conversation.timeline.kind === "none" && !conversation.draft
             text: conversation.timeline.emptyHint
             color: Theme.colors.dim
         }
@@ -50,15 +52,14 @@ Rectangle {
         }
         Text {
             objectName: "contextWindow"
-            visible: conversation.timeline.context !== null
+            visible: conversation.timeline.context !== null && !conversation.draft
             text: conversation.timeline.context ?? ""
         }
-        Timeline { visible: conversation.timeline.kind !== "none" }
-        Approvals {}
+        Timeline { visible: conversation.timeline.kind !== "none" && !conversation.draft }
+        Approvals { visible: !conversation.draft && Shell.state.approvals.count > 0 }
     }
     DiffViewer {}
 
-    PendingUserInput {}
     RevertPicker {}
     ThreadHints {}
 }

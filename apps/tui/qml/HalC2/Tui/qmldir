@@ -11,7 +11,6 @@ ContextMenu 1.0 ContextMenu.qml
 ImageViewer 1.0 ImageViewer.qml
 CommandPalette 1.0 CommandPalette.qml
 ThreadOverlay 1.0 ThreadOverlay.qml
-NewThreadForm 1.0 NewThreadForm.qml
 Composer 1.0 Composer.qml
 ComposerFooter 1.0 ComposerFooter.qml
 SelectOverlay 1.0 SelectOverlay.qml

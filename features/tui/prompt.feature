@@ -16,11 +16,11 @@ Feature: Writing a prompt in the terminal
   Background:
     Given the terminal client is open on a thread with focus in the prompt
 
-  @tui @backlog
+  @tui
   Scenario: The prompt says what it can do
     Then the prompt placeholder reads "Ask anything, @tag files/folders, $use skills, or / for commands"
 
-  @tui @backlog
+  @tui
   Scenario: The prompt is a caption while the terminal has the keys
     Given the terminal drawer has focus
     Then the composer reads "^P prompt · " in the accent colour, then the placeholder in the dim colour
@@ -174,16 +174,17 @@ Feature: Writing a prompt in the terminal
     When the user removes the last attachment
     Then "logo.png" is no longer attached
 
-  @tui @backlog
+  @tui
   Scenario: Attached images are removable chips
     Given "logo.png" is attached
     Then the composer shows "× logo.png" with the "×" in the accent colour
     When the user clicks "× logo.png"
     Then "logo.png" is no longer attached
 
-  @tui @backlog
+  @tui
   Scenario: Attachments beyond the composer's width are counted
-    Given five images are attached
+    Given the terminal is 140 columns wide
+    And five images are attached
     Then the composer shows four of them and "+1 more" in the dim colour
 
   @tui

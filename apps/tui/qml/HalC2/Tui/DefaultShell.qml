@@ -56,10 +56,10 @@ ShellWindow {
     // the conversation's place.
     readonly property bool addingProject: Shell.state.addProject.open || Shell.state.addProject.invite
 
-    // The conversation, or the settings page in its place.
+    // The conversation (empty for a new-thread draft), or the settings page in its place.
     Conversation {
         id: conversationView
-        visible: Shell.state.page.kind !== "draft" && !Shell.state.settings.active && !shell.addingProject
+        visible: !Shell.state.settings.active && !shell.addingProject
         flexGrow: 1
         flexShrink: 1
     }
@@ -72,11 +72,6 @@ ShellWindow {
         objectName: "addProjectLoader"
         active: shell.addingProject
         sourceComponent: AddProject { flexGrow: 1 }
-    }
-    NewThreadForm {
-        flexGrow: 1
-        flexShrink: 1
-        visible: draft !== null && !shell.addingProject
     }
     CommandPalette { id: paletteView }
     SelectOverlay { id: selectView }

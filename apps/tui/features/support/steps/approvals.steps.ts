@@ -4,7 +4,7 @@ import { expect } from "bun:test";
 
 import { THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
-import { cellOn, expectColour, rectOf } from "../design.ts";
+import { cellAt, cellOn, expectColour, rectOf, textAt } from "../design.ts";
 import { PROVIDERS } from "../fakeClient.ts";
 import { findObject, pressKey, settle as settleHost, snapshot, typeText } from "../world.ts";
 import { prepareHost, seedLocalFiles, type ComposerWorld } from "./composer.steps.ts";
@@ -189,7 +189,7 @@ async function ask(ctx: ThreadWorld, questions: ReadonlyArray<QuestionFixture>) 
 
 const DATABASE = (multiSelect = false): QuestionFixture => ({
   id: "q1",
-  header: "Database",
+  header: "Question",
   question: "Which database?",
   options: ["Postgres", "SQLite"],
   multiSelect,
@@ -205,7 +205,7 @@ step(
 step(
   "the agent asks {string} allowing several of {string}, {string} and {string}",
   async (ctx: ThreadWorld, question: string, ...options: string[]) => {
-    await ask(ctx, [{ id: "q1", header: "Checks", question, options, multiSelect: true }]);
+    await ask(ctx, [{ id: "q1", header: "Question", question, options, multiSelect: true }]);
   },
 );
 
@@ -377,7 +377,8 @@ step("the composer shows the question with its options", async (ctx: ThreadWorld
 });
 
 step("the primary action is {string}", async (ctx: ThreadWorld, label: string) => {
-  expect(await snapshot(ctx)).toContain(`[ ${label} ]`);
+  expect(plain(hostState(ctx, "composer").footer.primary)).toBe(`▸ ${label} ⏎`);
+  expect(await snapshot(ctx)).toContain(`▸ ${label}`);
 });
 
 step("the custom answer keeps its spaces", async (ctx: AnswerWorld) => {
@@ -456,7 +457,7 @@ step("the user reopens the pending question", (ctx: ThreadWorld) => pressKey(ctx
 const expectQuestionOpen = async (ctx: ThreadWorld) => {
   expect(hostState(ctx, "mode")).toBe("userInput");
   expect(findObject(ctx, "pendingUserInput").get("visible")).toBe(true);
-  expect(await snapshot(ctx)).toContain("[ Submit answer ]");
+  expect(await snapshot(ctx)).toContain("▸ Submit answer");
 };
 
 step("the question panel opens again", expectQuestionOpen);
@@ -624,3 +625,25 @@ step("the user clicks the plan card's caption", async (ctx: ThreadWorld) => {
 step("the plan is not handed to the agent", (ctx: ThreadWorld) => {
   expect(recorded(ctx, "implementPlan")).toEqual([]);
 });
+
+// --- The question's look (ComposerPendingUserInputPanel) -----------------------
+
+step(
+  'the question\'s header and the "▸" marker are in the accent colour',
+  async (ctx: ThreadWorld) => {
+    await settleHost(ctx);
+    const header = await textAt(ctx, "Question");
+    expectColour((await cellAt(ctx, header.x, header.y)).span.fg, THEME.accent);
+    expectColour((await cellOn(ctx, "( ) Postgres", "▸")).span.fg, THEME.accent);
+  },
+);
+
+step(
+  "the question's header is followed by {string} in the dim colour",
+  async (ctx: ThreadWorld, count: string) => {
+    await settleHost(ctx);
+    const at = await textAt(ctx, `Question  ${count}`);
+    const counter = { x: at.x + "Question  ".length, y: at.y };
+    expectColour((await cellAt(ctx, counter.x, counter.y)).span.fg, THEME.dim);
+  },
+);

@@ -8,7 +8,7 @@ import {
 } from "../components/ChatView.layout.ts";
 import type { KeyBindingMode } from "../hooks/useKeyBindings.ts";
 
-/** Key-routing modes: the old TUI's focus modes, the new-thread form, and `list` (the thread list
+/** Key-routing modes: the old TUI's focus modes, the new-thread draft, and `list` (the thread list
  * has the keys; its "list" keymap is live). */
 export type TuiMode = KeyBindingMode | "newThread" | "list";
 
@@ -19,6 +19,10 @@ export interface TuiSize {
 
 /** Composer borders, footer and dock spacing around the editor rows (ChatView's measure). */
 const COMPOSER_CHROME_ROWS = 4;
+
+/** ChatView's composer surface: the conversation column less a cell each side, 8 to 96 wide. */
+export const composerSurfaceWidth = (chatWidth: number): number =>
+  Math.max(8, Math.min(CHAT_CONTENT_MAX_WIDTH, chatWidth - 2));
 
 /**
  * Published under `layout`: the contract's collapse flag, the column split,
@@ -64,6 +68,8 @@ export interface TuiLayoutInput {
   readonly editorRows?: number | undefined;
   /** Rows a picker or popover above the prompt wants. */
   readonly popoverRows?: number;
+  /** The composer's rows besides the editor (question, attachments, compact footer, context). */
+  readonly composerChromeRows?: number | undefined;
 }
 
 export function buildTuiLayoutState(input: TuiLayoutInput): TuiLayoutState {
@@ -78,7 +84,7 @@ export function buildTuiLayoutState(input: TuiLayoutInput): TuiLayoutState {
   const vertical = resolveChatVerticalLayout({
     terminalHeight: size.rows,
     desiredEditorRows: popoverRows > 0 ? 1 : (input.editorRows ?? COMPOSER_MIN_EDITOR_ROWS),
-    composerChromeRows: COMPOSER_CHROME_ROWS,
+    composerChromeRows: input.composerChromeRows ?? COMPOSER_CHROME_ROWS,
     terminalOpen: input.drawerOpen === true,
     preferredTerminalRows: input.drawerRows ?? Math.floor(size.rows * 0.4),
     wantedPopoverRows: popoverRows,

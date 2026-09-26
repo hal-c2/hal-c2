@@ -1,69 +1,89 @@
 import OpenTUI
 
-// The controls under the prompt, in reading order: model, effort, plan or
-// build, access, then the primary action. A compact composer keeps the model
-// and the primary action; the rest live in the palette (^K). Clicking a
-// control opens its picker; clicking it again closes it. Plugins add their
-// own controls through the "composer.actions" slot, after the built-in ones
+// The controls under the prompt, like ComposerFooter: model │ effort │ access
+// │ mode on the left and the primary action on the right, each styled by the
+// host (`composer.footer`). A compact composer shows the model and "^K
+// options" on one row and the primary action under it. Clicking a control
+// opens its picker; clicking it again closes it. Plugins add their own
+// controls through the "composer.actions" slot, after the built-in ones
 // (`actionsMode: "replace"` swaps them out).
 Item {
     id: footer
-    property var composer: Shell.state.composer
+    readonly property var composer: Shell.state.composer
+    readonly property bool compact: composer.compact
     property alias actionsMode: actionsSlot.mode
-    flexDirection: "row"
-    height: 1
+    flexDirection: compact ? "column" : "row"
+    marginTop: 1
+    flexShrink: 0
 
-    Slot {
-        id: actionsSlot
-        objectName: "composerActionsSlot"
-        name: "composer.actions"
-        mode: "append"
-        height: 1
+    Item {
         flexDirection: "row"
+        height: 1
+        flexGrow: footer.compact ? 0 : 1
         flexShrink: 1
+        overflow: "hidden"
 
-        Text {
-            objectName: "composerModel"
-            text: "model " + (footer.composer.selectedModel !== null ? footer.composer.selectedModel : "—") + " ▾"
-            color: Theme.colors.text
-            onMouseDown: Shell.dispatch("composer.modelPicker.toggle")
+        Slot {
+            id: actionsSlot
+            objectName: "composerActionsSlot"
+            name: "composer.actions"
+            mode: "append"
+            height: 1
+            flexDirection: "row"
+            flexShrink: 0
+
+            Text {
+                objectName: "composerModel"
+                flexShrink: 0
+                text: footer.compact ? footer.composer.footer.compactModel : footer.composer.footer.model
+                onMouseDown: Shell.dispatch("composer.modelPicker.toggle")
+            }
+            Text { visible: !footer.compact; flexShrink: 0; text: " │ "; color: Theme.colors.faint }
+            Text {
+                objectName: "composerEffort"
+                visible: !footer.compact
+                flexShrink: 0
+                text: footer.composer.footer.effort
+                onMouseDown: Shell.dispatch("composer.effortPicker.toggle")
+            }
+            Text { visible: !footer.compact; flexShrink: 0; text: " │ "; color: Theme.colors.faint }
+            Text {
+                objectName: "composerAccess"
+                visible: !footer.compact
+                flexShrink: 0
+                text: footer.composer.footer.access
+                onMouseDown: Shell.dispatch("composer.runtimePicker.toggle")
+            }
+            Text { visible: !footer.compact; flexShrink: 0; text: " │ "; color: Theme.colors.faint }
+            Text {
+                objectName: "composerMode"
+                visible: !footer.compact
+                flexShrink: 0
+                text: footer.composer.footer.mode
+                onMouseDown: Shell.dispatch("composer.interactionMode.toggle")
+            }
         }
-        Text {
-            objectName: "composerEffort"
-            visible: !footer.composer.compact && footer.composer.effort !== null
-            text: "  effort " + (footer.composer.effort !== null ? footer.composer.effort : "") + " ▾"
-            color: Theme.colors.dim
-            onMouseDown: Shell.dispatch("composer.effortPicker.toggle")
-        }
-        Text {
-            objectName: "composerMode"
-            visible: !footer.composer.compact
-            text: "  ^B " + footer.composer.interactionModeLabel
-            color: footer.composer.interactionMode === "plan" ? Theme.colors.accent : Theme.colors.dim
-            onMouseDown: Shell.dispatch("composer.interactionMode.toggle")
-        }
-        Text {
-            objectName: "composerAccess"
-            visible: !footer.composer.compact
-            text: "  ^O " + footer.composer.runtimeModeLabel
-            color: Theme.colors.dim
-            onMouseDown: Shell.dispatch("composer.runtimePicker.toggle")
-        }
+        Item { flexGrow: 1 }
         Text {
             objectName: "composerOptions"
-            visible: footer.composer.compact
-            text: "  ^K options"
-            color: Theme.colors.faint
-            onMouseDown: Shell.dispatch("palette.open")
+            visible: footer.compact && footer.composer.footer.showOptions
+            flexShrink: 0
+            text: "^K options"
+            color: Theme.colors.dim
         }
     }
-    Item { flexGrow: 1 }
-    Text {
-        objectName: "composerPrimaryAction"
-        text: footer.composer.primaryAction === "Stop"
-            ? "■ Stop Esc"
-            : footer.composer.primaryAction === "Submit answer" ? "▸ Submit answer ⏎" : "▸ Send ⏎"
-        color: footer.composer.primaryAction === "Stop" ? Theme.colors.error : Theme.colors.accent
-        onMouseDown: Shell.dispatch(footer.composer.primaryAction === "Stop" ? "composer.interrupt" : "composer.submit")
+    Item {
+        flexDirection: "row"
+        height: 1
+        flexShrink: 0
+        Item { flexGrow: 1 }
+        Text {
+            objectName: "composerPrimaryAction"
+            flexShrink: 0
+            text: footer.composer.footer.primary
+            onMouseDown: Shell.dispatch(footer.composer.primaryAction === "Stop"
+                ? "composer.interrupt"
+                : footer.composer.primaryAction === "Submit answer" ? "userInput.submit" : "composer.submit")
+        }
     }
 }

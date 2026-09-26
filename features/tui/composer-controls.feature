@@ -18,33 +18,34 @@ Feature: Composer controls and new-thread drafts in the terminal
   Background:
     Given the terminal client is open on a thread with focus in the prompt
 
-  @tui @backlog
+  @tui
   Scenario: Controls read model, effort, access and mode in that order
     Then the composer shows the model, then the effort, then the access level, then plan or build
 
-  @tui @backlog
+  @tui
   Scenario: The composer is a rounded box centred under the conversation
     Then the composer is framed by a rounded border in the faint colour
     And the composer is centred under the conversation, one column in from each side
 
-  @tui @backlog
+  @tui
   Scenario: The footer reads like the OpenTUI client
     Given the terminal is 140 columns wide
     Then the composer footer reads "model gpt-5 ▾ │ effort medium ▾ │ ^O Full access ▾ │ ^B Build" with "▸ Send ⏎" at the right
     And the footer's separators are faint, its captions dim and its values in the text colour
 
-  @tui @backlog
+  @tui
   Scenario: Plan mode lights up its control
-    Given the thread is in plan mode
+    Given the terminal is 140 columns wide
+    And the thread is in plan mode
     Then "^B Plan" is in the accent colour
 
-  @tui @backlog
+  @tui
   Scenario: Send lights up once there is something to send
     Then "▸ Send" is in the dim colour
     When the user types "hello"
     Then "▸ Send" is in the accent colour
 
-  @tui @backlog
+  @tui
   Scenario: A running turn offers Stop in the error colour
     Given the agent is working
     Then the primary action reads "■ Stop Esc"
@@ -56,7 +57,7 @@ Feature: Composer controls and new-thread drafts in the terminal
     Then only the primary controls are shown in the composer
     And the rest are reachable from the command palette
 
-  @tui @backlog
+  @tui
   Scenario: A compact composer puts the primary action under the model
     Given the conversation column is narrow
     Then the composer footer's first row reads "model gpt-5 ▾" with "^K options" at the right
@@ -230,26 +231,26 @@ Feature: Composer controls and new-thread drafts in the terminal
     Given the terminal is narrow
     Then provider traits are reachable from one compact menu
 
-  @tui @backlog
+  @tui
   Scenario: A new thread's workspace and branch sit under the composer
     When the user presses "Ctrl+N"
     Then the prompt placeholder reads "What should we build in Project one?"
     And under the composer "Project workspace ▾" is on the left and "branch main ▾" on the right in the dim colour
     And no new-thread form is shown
 
-  @tui @backlog
+  @tui
   Scenario: Clicking the workspace under the composer picks where the thread works
     When the user presses "Ctrl+N"
     And the user clicks "Project workspace ▾"
     Then the picker offers "Current checkout" and "New worktree"
 
-  @tui @backlog
+  @tui
   Scenario: Clicking the branch under the composer picks the base branch
     When the user presses "Ctrl+N"
     And the user clicks "branch main ▾"
     Then the branch picker opens
 
-  @tui @backlog
+  @tui
   Scenario: A thread in a repository names its checkout under the composer
     Given the thread works in the project's checkout on "main"
     Then under the composer "Local checkout" is on the left and "branch main" on the right in the dim colour

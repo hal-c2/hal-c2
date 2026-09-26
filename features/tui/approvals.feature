@@ -81,9 +81,10 @@ Feature: Approvals, questions and plans from the keyboard
     Then the composer shows the question with its options
     And the primary action is "Submit answer"
 
-  @tui @backlog
+  @tui
   Scenario: A question reads like the OpenTUI client inside the composer
-    Given the agent asks "Which database?" with the options "Postgres" and "SQLite"
+    Given the terminal is 140 columns wide
+    And the agent asks "Which database?" with the options "Postgres" and "SQLite"
     Then the composer reads:
       """
       Question
@@ -97,7 +98,7 @@ Feature: Approvals, questions and plans from the keyboard
     And the question's header and the "▸" marker are in the accent colour
     And the primary action reads "▸ Submit answer ⏎"
 
-  @tui @backlog
+  @tui
   Scenario: A multiple-choice question asks for a pick instead of a typed answer
     Given the agent asks "Which checks?" allowing several of "lint", "test" and "build"
     Then the composer reads:
@@ -112,7 +113,7 @@ Feature: Approvals, questions and plans from the keyboard
       pick an option above, then Enter to submit
       """
 
-  @tui @backlog
+  @tui
   Scenario: Several questions show which one is being answered
     Given the agent asks two questions in one request
     Then the question's header is followed by "(1 of 2)" in the dim colour

@@ -10,8 +10,14 @@ import { step } from "../../steps.ts";
 import type { TuiComposerState, TuiNewThreadState } from "../../../src/host/composerState.ts";
 import { projectKey } from "../../../src/host/sidebarState.ts";
 import type { EditorCommand } from "../../../src/promptEditor.ts";
+import { clip } from "../../../src/format.ts";
 import type { Environment } from "../environment.ts";
 import { PROVIDERS, project, shell, thread } from "../fakeClient.ts";
+import { THEME } from "../../../src/theme.ts";
+import { block, cellAt, cellOn, expectColour, objectRows, rectOf, textAt } from "../design.ts";
+import { vcsStatus } from "../gitWorld.ts";
+import { clickText } from "../threadUi.ts";
+import { shownText } from "../threadWorld.ts";
 import {
   boot,
   findObject,
@@ -185,6 +191,8 @@ export async function typeIntoPrompt(ctx: World, text: string): Promise<void> {
 }
 
 const attachmentNames = (ctx: World) => composer(ctx).attachments.map((image) => image.name);
+const attachmentLabel = (ctx: World, name: string) =>
+  composer(ctx).attachments.find((image) => image.name === name)?.label ?? name;
 
 // --- Background ------------------------------------------------------------
 
@@ -299,7 +307,7 @@ async function expectPrimaryAction(ctx: World, label: string): Promise<void> {
   await settle(ctx);
   expect(composer(ctx).primaryAction as string).toBe(label);
   await snapshot(ctx);
-  expect(String(findObject(ctx, "composerPrimaryAction").get("text"))).toContain(label);
+  expect(shownText(findObject(ctx, "composerPrimaryAction").get("text"))).toContain(label);
 }
 
 step(
@@ -414,10 +422,7 @@ step("the user pastes into the prompt", async (ctx: ComposerWorld) => {
 step("the image is attached", async (ctx: World) => {
   await settle(ctx);
   expect(composer(ctx).attachments).toHaveLength(1);
-  await snapshot(ctx);
-  expect(String(findObject(ctx, "composerAttachments").get("text"))).toContain(
-    composer(ctx).attachments[0]!.name,
-  );
+  expect(await snapshot(ctx)).toContain(`× ${composer(ctx).attachments[0]!.label}`);
 });
 
 step("the draft text is unchanged", async (ctx: ComposerWorld) => {
@@ -459,8 +464,7 @@ step("{string} is attached", async (ctx: World, name: string) => {
   if (ctx.stepType === "Outcome") await settle(ctx);
   else await attach(ctx, name);
   expect(attachmentNames(ctx)).toContain(name);
-  await snapshot(ctx);
-  expect(String(findObject(ctx, "composerAttachments").get("text"))).toContain(name);
+  expect(await snapshot(ctx)).toContain(`× ${attachmentLabel(ctx, name)}`);
 });
 
 step("the user attaches {string} again", async (ctx: World, name: string) => {
@@ -511,8 +515,7 @@ step("the user removes the last attachment", async (ctx: World) => {
 step("{string} is no longer attached", async (ctx: World, name: string) => {
   await settle(ctx);
   expect(attachmentNames(ctx)).not.toContain(name);
-  await snapshot(ctx);
-  expect(String(findObject(ctx, "composerAttachments").get("text"))).not.toContain(name);
+  expect(await snapshot(ctx)).not.toContain(`× ${clip(name, 12)}`);
 });
 
 step(
@@ -889,3 +892,243 @@ step("the user asks for the previous prompt in an empty prompt", async (ctx: Wor
   await pressKey(ctx, "Up");
   await settle(ctx);
 });
+
+// --- The OpenTUI client's look ----------------------------------------------
+// ChatComposer, ComposerDock and ComposerFooter: a rounded faint box, the
+// footer's chips and primary action, the checkout under the box.
+
+type Colour = "accent" | "dim" | "text" | "faint" | "error";
+const colour = (name: string) => THEME[name as Colour];
+
+/** The composer's rows inside its border and padding, cut before the footer. */
+async function composerBody(ctx: World): Promise<string[]> {
+  const rows = await objectRows(ctx, "composer");
+  const frame = rectOf(ctx, "composer");
+  const footer = rectOf(ctx, "composerFooter");
+  return rows.slice(1, footer.y - frame.y).map((row) => [...row].slice(2, -2).join(""));
+}
+
+/** The composer's inner rows (inside the border and padding), footer included. */
+async function composerInner(ctx: World): Promise<string[]> {
+  const rows = await objectRows(ctx, "composer");
+  return rows.slice(1, -1).map((row) => [...row].slice(2, -2).join(""));
+}
+
+/** An inner row that starts with `left` and ends with `right` at the inner right edge. */
+function expectSpread(row: string | undefined, left: string, right: string): void {
+  expect(row).toBeDefined();
+  expect(row!.startsWith(left)).toBe(true);
+  expect(row!.endsWith(right)).toBe(true);
+}
+
+step("the composer reads:", async (ctx: World, expected: string) => {
+  expect(block(await composerBody(ctx))).toBe(block(expected.split("\n")));
+});
+
+step("the composer is framed by a rounded border in the faint colour", async (ctx: World) => {
+  const { x, y, width, height } = rectOf(ctx, "composer");
+  for (const [cx, cy, glyph] of [
+    [x, y, "╭"],
+    [x + width - 1, y, "╮"],
+    [x, y + height - 1, "╰"],
+    [x + width - 1, y + height - 1, "╯"],
+  ] as const) {
+    const cell = await cellAt(ctx, cx, cy);
+    expect(cell.text).toBe(glyph);
+    expectColour(cell.span.fg, THEME.faint);
+  }
+});
+
+step(
+  "the composer is centred under the conversation, one column in from each side",
+  async (ctx: World) => {
+    const pane = rectOf(ctx, "conversationPane");
+    const frame = rectOf(ctx, "composer");
+    expect(frame.x).toBe(pane.x + 1);
+    expect(frame.x + frame.width).toBe(pane.x + pane.width - 1);
+    expect(frame.y).toBeGreaterThanOrEqual(pane.y + pane.height);
+  },
+);
+
+step(
+  "the composer shows the model, then the effort, then the access level, then plan or build",
+  async (ctx: World) => {
+    await snapshot(ctx);
+    const [model, effort, access, mode] = [
+      "composerModel",
+      "composerEffort",
+      "composerAccess",
+      "composerMode",
+    ].map((name) => rectOf(ctx, name));
+    expect(new Set([model!.y, effort!.y, access!.y, mode!.y]).size).toBe(1);
+    expect(model!.x).toBeLessThan(effort!.x);
+    expect(effort!.x).toBeLessThan(access!.x);
+    expect(access!.x).toBeLessThan(mode!.x);
+  },
+);
+
+step(
+  "the composer footer reads {string} with {string} at the right",
+  async (ctx: World, left: string, right: string) => {
+    const inner = await composerInner(ctx);
+    expectSpread(
+      inner.find((row) => row.includes(right)),
+      left,
+      right,
+    );
+  },
+);
+
+step(
+  "the footer's separators are faint, its captions dim and its values in the text colour",
+  async (ctx: World) => {
+    const row = "effort medium";
+    expectColour((await cellOn(ctx, row, "│")).span.fg, THEME.faint);
+    for (const caption of ["model", "effort", "^O", "^B"]) {
+      const at = await textAt(ctx, `${caption} `);
+      expectColour((await cellAt(ctx, at.x, at.y)).span.fg, THEME.dim);
+    }
+    for (const value of ["gpt-5", "medium", "Full access", "Build"]) {
+      const at = await textAt(ctx, value);
+      expectColour((await cellAt(ctx, at.x, at.y)).span.fg, THEME.text);
+    }
+  },
+);
+
+step("{string} is in the {word} colour", async (ctx: World, text: string, name: string) => {
+  const at = await textAt(ctx, text);
+  expectColour((await cellAt(ctx, at.x, at.y)).span.fg, colour(name));
+});
+
+step("the primary action reads {string}", async (ctx: World, text: string) => {
+  await settle(ctx);
+  expect(shownText(composer(ctx).footer.primary)).toBe(text);
+  expect((await composerInner(ctx)).some((row) => row.trimEnd().endsWith(text))).toBe(true);
+});
+
+step(
+  "the composer footer's first row reads {string} with {string} at the right",
+  async (ctx: World, left: string, right: string) => {
+    const inner = await composerInner(ctx);
+    expectSpread(
+      inner.find((row) => row.startsWith(left)),
+      left,
+      right,
+    );
+  },
+);
+
+step("its second row has {string} at the right", async (ctx: World, right: string) => {
+  const inner = await composerInner(ctx);
+  const first = inner.findIndex((row) => row.startsWith("model "));
+  expect(inner[first + 1]!.endsWith(right)).toBe(true);
+});
+
+step("the prompt placeholder reads {string}", async (ctx: World, text: string) => {
+  await settle(ctx);
+  expect(composer(ctx).placeholder).toBe(text);
+  expect(findObject(ctx, "composerInput").get("placeholderText")).toBe(text);
+  const words = text.split(" ").slice(0, 3).join(" ");
+  expect((await composerBody(ctx)).join("\n")).toContain(words);
+});
+
+step(
+  "under the composer {string} is on the left and {string} on the right in the dim colour",
+  async (ctx: World, left: string, right: string) => {
+    await settle(ctx);
+    const frame = rectOf(ctx, "composer");
+    const [row] = await objectRows(ctx, "composerContext");
+    const context = rectOf(ctx, "composerContext");
+    expect(context.y).toBe(frame.y + frame.height);
+    const inner = [...row!].slice(1, -1).join("");
+    expectSpread(inner, left, right);
+    for (const text of [left, right]) {
+      const at = await textAt(ctx, text);
+      expect(at.y).toBe(context.y);
+      expectColour((await cellAt(ctx, at.x, at.y)).span.fg, THEME.dim);
+    }
+  },
+);
+
+step("no new-thread form is shown", async (ctx: World) => {
+  expect(() => findObject(ctx, "newThreadForm")).toThrow();
+  expect(await snapshot(ctx)).not.toContain("─ New thread");
+});
+
+step("the user clicks {string}", async (ctx: World, text: string) => {
+  await clickText(ctx, text);
+  await settle(ctx);
+});
+
+step(
+  "the picker offers {string} and {string}",
+  async (ctx: World, first: string, second: string) => {
+    await settle(ctx);
+    const picker = ctx.host!.state.get("select") as {
+      kind: string;
+      options: Array<{ label: string }>;
+    };
+    expect(picker.kind).toBe("workspace");
+    expect(picker.options.map((option) => option.label)).toEqual([first, second]);
+    const screen = await snapshot(ctx);
+    expect(screen).toContain(first);
+    expect(screen).toContain(second);
+  },
+);
+
+step("the branch picker opens", async (ctx: World) => {
+  await settle(ctx);
+  expect((ctx.host!.state.get("select") as { kind: string }).kind).toBe("branch");
+});
+
+step(
+  "the thread works in the project's checkout on {string}",
+  async (ctx: World, branch: string) => {
+    ctx.fake!.setVcsStatus(vcsStatus({ refName: branch }));
+    await settle(ctx);
+  },
+);
+
+step(
+  "the composer reads {string} in the accent colour, then the placeholder in the dim colour",
+  async (ctx: World, caption: string) => {
+    await settle(ctx);
+    const row = rectOf(ctx, "composerCaption");
+    const at = await textAt(ctx, caption.trimEnd());
+    expect(at.y).toBe(row.y);
+    expectColour((await cellAt(ctx, at.x, at.y)).span.fg, THEME.accent);
+    const placeholder = composer(ctx).placeholder;
+    const rest = await textAt(ctx, placeholder.slice(0, 12));
+    expect(rest).toEqual({ x: at.x + [...caption].length, y: at.y });
+    expectColour((await cellAt(ctx, rest.x, rest.y)).span.fg, THEME.dim);
+  },
+);
+
+step(
+  "the composer shows {string} with the {string} in the accent colour",
+  async (ctx: World, chip: string, glyph: string) => {
+    expect(await snapshot(ctx)).toContain(chip);
+    expectColour((await cellOn(ctx, chip, glyph)).span.fg, THEME.accent);
+  },
+);
+
+step("five images are attached", async (ctx: ComposerWorld) => {
+  for (const name of ["one", "two", "three", "four", "five"]) {
+    ctx.fake!.workspaceFiles.set(`${name}.png`, PNG);
+    await attach(ctx, `${name}.png`);
+  }
+  expect(attachmentNames(ctx)).toHaveLength(5);
+});
+
+step(
+  "the composer shows four of them and {string} in the dim colour",
+  async (ctx: World, more: string) => {
+    const screen = await snapshot(ctx);
+    const shown = ["one", "two", "three", "four", "five"].filter((name) =>
+      screen.includes(`× ${name}.png`),
+    );
+    expect(shown).toEqual(["one", "two", "three", "four"]);
+    const at = await textAt(ctx, more);
+    expectColour((await cellAt(ctx, at.x, at.y)).span.fg, THEME.dim);
+  },
+);

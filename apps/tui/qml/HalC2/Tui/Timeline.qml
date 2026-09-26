@@ -19,8 +19,12 @@ ScrollView {
 
     stickyScroll: timeline.showingLatest
     stickyStart: "bottom"
+    // Like the OpenTUI client's fixed body height: the timeline takes what the
+    // composer leaves. A content-sized basis keeps a resize's old height and
+    // pushes the composer off screen.
     flexGrow: 1
     flexShrink: 1
+    flexBasis: 0
 
     Item {
         id: column

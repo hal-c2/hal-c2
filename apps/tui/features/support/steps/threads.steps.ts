@@ -1111,12 +1111,12 @@ step("the current thread is on the branch {string}", (ctx: ThreadsWorld, branch:
 
 step("a new worktree is preselected", async (ctx: World) => {
   expect(draft(ctx)?.workspaceMode).toBe("new-worktree");
-  expect(await snapshot(ctx)).toContain("(•) New worktree");
+  expect(await snapshot(ctx)).toContain("New worktree ▾");
 });
 
 step("{string} is offered as the base branch", async (ctx: World, branch: string) => {
   expect(draft(ctx)?.branch).toBe(branch);
-  expect(await snapshot(ctx)).toContain(`Base branch: ${branch}`);
+  expect(await snapshot(ctx)).toContain(`branch ${branch} ▾`);
 });
 
 const worktreeFor = (branch: string) => `/work/shop/.worktrees/${branch.replace(/\//g, "-")}`;
@@ -1137,7 +1137,9 @@ step("the form targets the worktree for {string}", async (ctx: World, branch: st
     branch,
     worktreePath: worktreeFor(branch),
   });
-  expect(await snapshot(ctx)).toContain(`Branch: ${branch} · ${worktreeFor(branch)}`);
+  const screen = await snapshot(ctx);
+  expect(screen).toContain("Current worktree ▾");
+  expect(screen).toContain(`branch ${branch} ▾`);
 });
 
 step("the branch {string} already has a worktree", (ctx: World, branch: string) => {
@@ -1162,8 +1164,11 @@ async function startThreadOn(ctx: World, branch: string): Promise<void> {
   await ui(ctx);
   await pressKey(ctx, "Ctrl+N");
   await flush(ctx);
-  // Work in the current checkout (the project root here), on that branch.
-  await click(ctx, await positionOf(ctx, "newThreadCurrent"));
+  // Work in the current checkout (the project root here), on that branch,
+  // picked from the workspace and branch under the composer.
+  await click(ctx, await positionOf(ctx, "composerWorkspace"));
+  await clickText(ctx, "Current checkout");
+  await click(ctx, await positionOf(ctx, "composerBranch"));
   await clickText(ctx, `  ${branch}`);
   expect(draft(ctx)?.branch).toBe(branch);
   await typeText(ctx, `Continue on ${branch}`);
@@ -1204,7 +1209,8 @@ step("the user chose a new worktree without a base branch", async (ctx: ThreadsW
   await ui(ctx);
   await pressKey(ctx, "Ctrl+N");
   await flush(ctx);
-  await click(ctx, await positionOf(ctx, "newThreadNewWorktree"));
+  await click(ctx, await positionOf(ctx, "composerWorkspace"));
+  await clickText(ctx, "New worktree");
   expect(draft(ctx)).toMatchObject({ workspaceMode: "new-worktree", branch: null });
 });
 

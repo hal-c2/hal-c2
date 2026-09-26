@@ -16,6 +16,7 @@ import {
 } from "../../../src/keymap.ts";
 import type { TuiPaletteState } from "../../../src/host/paletteState.ts";
 import { shell, thread } from "../fakeClient.ts";
+import { shownText } from "../threadWorld.ts";
 import { findObject, geometry, pressKey, settle, snapshot, type World } from "../world.ts";
 import {
   callsTo,
@@ -407,7 +408,7 @@ step("the highlighted model is applied", async (ctx: World) => {
   // The picker opens on the thread's model, gpt-5.
   expect(composer(ctx).selectedModel).toBe("gpt-5");
   expect(ctx.dispatched!.map((entry) => entry.action)).toContain("select.confirm");
-  expect(String(findObject(ctx, "composerModel").get("text"))).toContain("gpt-5");
+  expect(shownText(findObject(ctx, "composerModel").get("text"))).toContain("gpt-5");
 });
 
 // --- tmux wheel ---------------------------------------------------------------

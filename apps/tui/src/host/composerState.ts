@@ -29,12 +29,12 @@ import {
   type ComposerImageAttachment,
 } from "../composerAttachments.ts";
 import {
-  CHAT_CONTENT_MAX_WIDTH,
   COMPOSER_MAX_EDITOR_ROWS,
   COMPOSER_MIN_EDITOR_ROWS,
   countWrappedComposerLines,
 } from "../components/ChatView.layout.ts";
 import type { TuiClient } from "../connection.ts";
+import { clip } from "../format.ts";
 import {
   interactionModeLabel,
   RUNTIME_MODE_META,
@@ -66,10 +66,12 @@ import {
 } from "../promptEditor.ts";
 import type { Selection } from "../components/Sidebar.logic.ts";
 import type { Store } from "../store.ts";
+import { THEME, type Palette } from "../theme.ts";
 import { isWorking } from "../timeline.ts";
 import { derivePendingUserInputs } from "../userInput.ts";
-import type { TuiMode } from "./layoutState.ts";
+import { composerSurfaceWidth, type TuiMode } from "./layoutState.ts";
 import { idFromKey, projectKey } from "./sidebarState.ts";
+import { chunk, styled, type StyledText } from "./styledText.ts";
 
 // The composer, its pickers and the new-thread flow. Owns the drafts (per
 // target), the per-thread control overrides and the one select overlay, and
@@ -79,8 +81,10 @@ import { idFromKey, projectKey } from "./sidebarState.ts";
 export const IMAGE_ONLY_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 
-/** Below this conversation width the footer keeps only the model and the primary action. */
-const COMPACT_CHAT_WIDTH = 66;
+/** Below this composer width the footer keeps only the model and the primary action. */
+const COMPACT_SURFACE_WIDTH = 64;
+/** ChatComposer's attachment chip width (plus one cell between chips). */
+const ATTACHMENT_CHIP_WIDTH = 14;
 
 export type ImageDecoder = (encoded: Uint8Array) => Promise<ImagePreview>;
 
@@ -101,14 +105,30 @@ export interface ComposerOptions {
   readonly decodeImage?: ImageDecoder;
   /** A new-thread draft opened or closed: the sidebar row and the page follow it. */
   readonly onDraftChange?: () => void;
-  /** The editor's rows changed: the layout gives the prompt that height. */
+  /** The editor's rows or the composer's other rows changed: the layout follows. */
   readonly onRowsChange?: (rows: number) => void;
+  /** The agent's open question (not set aside), which the composer answers. */
+  readonly question?: () => { readonly visibleOptions: number } | null;
+  /** Attachment chips carry an 8×3 preview (the terminal draws inline images). */
+  readonly inlineImages?: boolean;
+  readonly palette?: Palette;
 }
 
 /** One attachment chip: `id` is the path the image came from, `name` its file name. */
 export interface TuiComposerAttachment {
   readonly id: string;
   readonly name: string;
+  /** The chip's caption, clipped to the chip. */
+  readonly label: string;
+  /** The chip's preview when the terminal draws inline images. */
+  readonly image: { readonly source: Uint8Array } | null;
+}
+
+/** The checkout under the composer (ComposerDock); `pickable` opens the pickers on click. */
+export interface TuiComposerContext {
+  readonly workspace: string;
+  readonly branch: string;
+  readonly pickable: boolean;
 }
 
 /** Published under `newThread` (null when no draft is open): the draft's project and workspace. */
@@ -160,6 +180,30 @@ export interface TuiComposerState {
   readonly runtimeModes: ReadonlyArray<{ value: string; label: string; description: string }>;
   /** The footer shows only the model and the primary action. */
   readonly compact: boolean;
+  /** The composer box's width, centred in the conversation column. */
+  readonly surfaceWidth: number;
+  /** The editor has the keys; otherwise its row reads as `caption`. */
+  readonly inputFocused: boolean;
+  /** An open question sits in the composer and the primary action submits it. */
+  readonly answering: boolean;
+  /** The editor row while the editor does not have the keys. */
+  readonly caption: StyledText;
+  /** The chips that fit, and "+N more" for the rest (or ""). */
+  readonly visibleAttachments: ReadonlyArray<TuiComposerAttachment>;
+  readonly moreAttachments: string;
+  /** The footer's controls and primary action, styled like ComposerFooter's chips. */
+  readonly footer: {
+    readonly model: StyledText;
+    readonly effort: StyledText;
+    readonly access: StyledText;
+    readonly mode: StyledText;
+    readonly compactModel: StyledText;
+    readonly showOptions: boolean;
+    readonly primary: StyledText;
+  };
+  readonly context: TuiComposerContext | null;
+  /** Rows besides the editor: borders, footer, question, attachments, context row. */
+  readonly chromeRows: number;
   /** Editor height in rows: grows with the text from 3 to 8, or as set by Ctrl+Up / Ctrl+Down. */
   readonly rows: number;
 }
@@ -238,6 +282,8 @@ export interface Composer {
   readonly sync: () => void;
   /** Re-derive after a layout change (compact footer). */
   readonly relayout: () => void;
+  /** The composer's rows besides the editor, for the layout's row split. */
+  readonly chromeRows: () => number;
   /** Resolves when every request the composer started has settled. */
   readonly idle: () => Promise<void>;
   /** For the palette: what the composer can offer right now. */
@@ -252,6 +298,7 @@ export interface Composer {
 
 export function createComposer(options: ComposerOptions): Composer {
   const { client, store, state } = options;
+  const palette = options.palette ?? THEME;
   const decode = options.decodeImage;
 
   const drafts = new Map<string, Draft>();
@@ -362,7 +409,7 @@ export function createComposer(options: ComposerOptions): Composer {
   // ── Publishing ───────────────────────────────────────────────────────────
 
   const autoRows = (text: string) => {
-    const surface = Math.max(8, Math.min(CHAT_CONTENT_MAX_WIDTH, options.chatWidth() - 2));
+    const surface = composerSurfaceWidth(options.chatWidth());
     return Math.min(
       COMPOSER_MAX_EDITOR_ROWS,
       Math.max(COMPOSER_MIN_EDITOR_ROWS, countWrappedComposerLines(text, Math.max(1, surface - 4))),
@@ -387,22 +434,52 @@ export function createComposer(options: ComposerOptions): Composer {
       ? newDraft.runtimeMode
       : (detail?.runtimeMode ?? "full-access");
     const project = newProject();
+    const placeholder = newDraft
+      ? project
+        ? `What should we build in ${project.title}?`
+        : "What should we build?"
+      : detail
+        ? "Ask anything, @tag files/folders, $use skills, or / for commands"
+        : store.getState().selection?.kind === "project"
+          ? "Enter to expand · Alt+↑/↓ to pick a thread"
+          : "Select a thread with Alt+↑/↓ or click";
+    const surfaceWidth = composerSurfaceWidth(options.chatWidth());
+    const compact = surfaceWidth < COMPACT_SURFACE_WIDTH;
+    const question = newDraft ? null : (options.question?.() ?? null);
+    const answering = question !== null;
+    const mode = options.mode();
+    // The OpenTUI client also drops the editor while a send is pending, which
+    // loses what the user types meanwhile; only a checkout switch does here.
+    const inputFocused =
+      (mode === "compose" || mode === "newThread" || mode === "userInput") && !switchPending;
+    const attachments = draft.images.map((image): TuiComposerAttachment => ({
+      id: image.relativePath,
+      name: image.upload.name,
+      label: clip(image.upload.name, ATTACHMENT_CHIP_WIDTH - 2),
+      image: options.inlineImages ? { source: image.preview.source } : null,
+    }));
+    const visibleCount = Math.max(
+      1,
+      Math.min(4, Math.floor(surfaceWidth / (ATTACHMENT_CHIP_WIDTH + 1))),
+    );
+    const hiddenCount = Math.max(0, attachments.length - visibleCount);
+    const hasText = draft.text.length > 0 || draft.images.length > 0;
+    const context = composerContext(detail);
+    const chromeRows =
+      4 +
+      (question ? question.visibleOptions + 4 : 0) +
+      (attachments.length === 0 ? 0 : options.inlineImages ? 4 : 1) +
+      (compact ? 1 : 0) +
+      (context ? 1 : 0);
+    const footerWidth = Math.max(1, surfaceWidth - 2);
+    const showOptions = footerWidth >= 24;
     return {
       target: key,
       routeKind: newDraft ? "draft" : "server",
       text: draft.text,
       cursor: draft.text.length,
-      attachments: draft.images.map((image) => ({
-        id: image.relativePath,
-        name: image.upload.name,
-      })),
-      placeholder: newDraft
-        ? project
-          ? `What should we build in ${project.title}?`
-          : "Add a project first (Ctrl+K → Add project)"
-        : detail
-          ? "Reply to the agent…"
-          : "Select a thread (Alt+↑/↓) to reply",
+      attachments,
+      placeholder,
       canSend:
         (newDraft !== null || detail !== null) &&
         !replyPending &&
@@ -412,7 +489,10 @@ export function createComposer(options: ComposerOptions): Composer {
       isSendBusy: replyPending || createPending,
       pendingApprovalCount,
       pendingUserInputCount,
-      primaryAction: working ? "Stop" : pendingUserInputCount > 0 ? "Submit answer" : "Send",
+      // The legacy footer lets Stop win, which hides Submit answer behind a
+      // running turn (a question always arrives mid-turn) and labels Esc as
+      // stop while Esc defers the question; the open question wins here.
+      primaryAction: answering ? "Submit answer" : working ? "Stop" : "Send",
       selectedInstanceId: model?.instanceId ?? null,
       selectedModel: model?.model ?? null,
       effort,
@@ -426,10 +506,92 @@ export function createComposer(options: ComposerOptions): Composer {
         label: RUNTIME_MODE_META[mode].label,
         description: RUNTIME_MODE_META[mode].description,
       })),
-      compact: options.chatWidth() < COMPACT_CHAT_WIDTH,
+      compact,
       rows: rowsOverride ?? autoRows(draft.text),
+      surfaceWidth,
+      inputFocused,
+      answering,
+      caption: answering
+        ? styled(chunk("pick an option above, then Enter to submit", { fg: palette.dim }))
+        : styled(
+            chunk("^P prompt · ", { fg: palette.accent }),
+            draft.text.length > 0
+              ? chunk(draft.text, { fg: palette.text })
+              : chunk(placeholder, { fg: palette.dim }),
+          ),
+      visibleAttachments: attachments.slice(0, visibleCount),
+      moreAttachments: hiddenCount > 0 ? `+${hiddenCount} more` : "",
+      footer: {
+        model: footerChip("model", model?.model ?? "—", { muted: !model, dropdown: true }),
+        effort: footerChip("effort", effort ?? "—", { muted: !effort, dropdown: true }),
+        access: footerChip("^O", runtimeModeLabel(runtimeMode), { dropdown: true }),
+        mode: footerChip("^B", interactionModeLabel(interactionMode), {
+          active: interactionMode === "plan",
+        }),
+        compactModel: styled(
+          chunk("model ", { fg: palette.dim }),
+          chunk(clip(model?.model ?? "—", Math.max(1, footerWidth - (showOptions ? 18 : 8))), {
+            fg: model ? palette.text : palette.dim,
+          }),
+          chunk(" ▾", { fg: palette.dim }),
+        ),
+        showOptions,
+        primary: answering
+          ? styled(
+              chunk("▸ Submit answer", { fg: palette.accent }),
+              chunk(" ⏎", { fg: palette.dim }),
+            )
+          : working
+            ? styled(chunk("■ Stop", { fg: palette.error }), chunk(" Esc", { fg: palette.dim }))
+            : styled(
+                chunk("▸ Send", { fg: hasText ? palette.accent : palette.dim }),
+                chunk(" ⏎", { fg: palette.dim }),
+              ),
+      },
+      context,
+      chromeRows,
     };
   };
+
+  /** ComposerFooter's Chip: a dim (accent when active) key hint, then the label. */
+  const footerChip = (
+    keyHint: string,
+    label: string,
+    flags: { readonly active?: boolean; readonly muted?: boolean; readonly dropdown?: boolean },
+  ): StyledText =>
+    styled(
+      chunk(`${keyHint} `, { fg: flags.active ? palette.accent : palette.dim }),
+      chunk(`${label}${flags.dropdown ? " ▾" : ""}`, {
+        fg: flags.active ? palette.accent : flags.muted ? palette.dim : palette.text,
+      }),
+    );
+
+  /** ComposerDock's context: the draft's workspace and base, or the thread's checkout. */
+  const composerContext = (detail: OrchestrationThread | null): TuiComposerContext | null => {
+    const room = Math.max(1, Math.floor((composerSurfaceWidth(options.chatWidth()) - 1) / 2));
+    const row = (workspace: string, branch: string, pickable: boolean): TuiComposerContext => ({
+      workspace: clip(`${workspace}${pickable ? " ▾" : ""}`, room),
+      branch: clip(`branch ${branch}${pickable ? " ▾" : ""}`, room),
+      pickable,
+    });
+    if (newDraft) {
+      return row(workspaceLabelFor(newDraft), newDraft.branch ?? "(current)", true);
+    }
+    const vcsStatus = store.getState().vcsStatus;
+    if (!detail || !vcsStatus?.isRepo) return null;
+    return row(
+      detail.worktreePath ? "Worktree checkout" : "Local checkout",
+      vcsStatus.refName ?? detail.branch ?? "(detached)",
+      false,
+    );
+  };
+
+  const workspaceLabelFor = (current: NewDraft) =>
+    current.workspaceMode === "new-worktree"
+      ? "New worktree"
+      : current.worktreePath
+        ? "Current worktree"
+        : "Project workspace";
 
   const newThreadState = (): TuiNewThreadState | null => {
     if (!newDraft) return null;
@@ -439,12 +601,7 @@ export function createComposer(options: ComposerOptions): Composer {
       projectKey: current.projectId ? projectKey(current.projectId) : null,
       projectName: newProject()?.title ?? current.projectId,
       workspaceMode: current.workspaceMode,
-      workspaceLabel:
-        current.workspaceMode === "new-worktree"
-          ? "New worktree"
-          : current.worktreePath
-            ? "Current worktree"
-            : "Project workspace",
+      workspaceLabel: workspaceLabelFor(current),
       branch: current.branch,
       worktreePath: current.worktreePath,
       refsStatus: current.refsStatus,
@@ -480,16 +637,21 @@ export function createComposer(options: ComposerOptions): Composer {
   let lastComposer = "";
   let lastNewThread = "";
   let lastRows = 0;
+  let lastChrome = 0;
   let lastSelect = "";
   const publish = () => {
     const composer = composerState();
-    const composerJson = JSON.stringify(composer);
+    // Previews compare by size: stringifying their bytes on every keystroke is costly.
+    const composerJson = JSON.stringify(composer, (_key, value: unknown) =>
+      value instanceof Uint8Array ? value.byteLength : value,
+    );
     if (composerJson !== lastComposer) {
       lastComposer = composerJson;
       state.set("composer", composer);
     }
-    if (composer.rows !== lastRows) {
+    if (composer.rows !== lastRows || composer.chromeRows !== lastChrome) {
       lastRows = composer.rows;
+      lastChrome = composer.chromeRows;
       options.onRowsChange?.(composer.rows);
     }
     const newThread = newThreadState();
@@ -1491,6 +1653,7 @@ export function createComposer(options: ComposerOptions): Composer {
     draft: () => (newDraft ? { draftId: newDraft.draftId, projectId: newDraft.projectId } : null),
     sync,
     relayout: publish,
+    chromeRows: () => lastChrome || 4,
     idle: async () => {
       while (inflight.size > 0) await Promise.allSettled([...inflight]);
     },

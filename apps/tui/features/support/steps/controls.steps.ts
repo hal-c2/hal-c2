@@ -17,6 +17,7 @@ import { flattenModelOptions } from "../../../src/models.ts";
 import type { TuiNewThreadState, TuiSelectState } from "../../../src/host/composerState.ts";
 import type { TuiPaletteState } from "../../../src/host/paletteState.ts";
 import { PROVIDERS, project, shell, thread } from "../fakeClient.ts";
+import { shownText } from "../threadWorld.ts";
 import {
   clickObject,
   findObject,
@@ -126,7 +127,7 @@ async function openNewThread(ctx: World): Promise<void> {
   expect(newThread(ctx)).not.toBeNull();
 }
 
-const footerText = (ctx: World, name: string) => String(findObject(ctx, name).get("text"));
+const footerText = (ctx: World, name: string) => shownText(findObject(ctx, name).get("text"));
 
 // --- Footer ----------------------------------------------------------------
 
@@ -423,7 +424,9 @@ step(
       branch: "feature/x",
       worktreePath: "/work/shop-x",
     });
-    expect(footerText(ctx, "composerWorkspace")).toContain("shop");
+    expect(footerText(ctx, "composerWorkspace")).toContain("Current worktree");
+    expect(footerText(ctx, "composerBranch")).toContain("feature/x");
+    expect(shownText(findObject(ctx, "composerInput").get("placeholderText"))).toContain("shop");
   },
 );
 

@@ -209,7 +209,7 @@ step("the project {string} is listed for {string}", async (ctx: World, name: str
   await settle(ctx);
   expect(listed(ctx).map((entry) => entry.displayName)).toContain(name);
 });
-// "a draft thread opens in {string}" (threads.steps.ts) checks the new-thread form.
+// "a draft thread opens in {string}" (threads.steps.ts) checks the new-thread draft.
 step("no second project is created", async (ctx: ProjectsWorld) => {
   await settle(ctx);
   expect(recorded(ctx, "createProject")).toEqual([]);

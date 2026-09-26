@@ -16,8 +16,8 @@ groups and the web parity table), `plugins`, `problems`, `connection` (see
 from `threadView.ts` (below).
 
 - `sidebar` adds the list viewport (`visibleRows`, `scrollTop`,
-  `hiddenAbove`/`hiddenBelow`), `scopeLabel`, and a `draft` row while the
-  new-thread form is open. Section rows toggle their shelf; the "more" row
+  `hiddenAbove`/`hiddenBelow`), `scopeLabel`, and a `draft` row while a
+  new-thread draft is open. Section rows toggle their shelf; the "more" row
   pages the settled shelf.
 - `layout` adds the extension slots a shell fills: `rightPanel`
   (`visible`, `focused`, `kind`, `asMain`, `width`;
@@ -129,7 +129,7 @@ panel kind or another thread closes it. Actions are `files.*`
 local folder or a repository and its clone destination, with the folders
 under the typed path. `invite` is true while the environment has no
 projects. Actions are `project.add` and `project.add.*` (`mode: "project"`).
-An added project opens the new-thread form for it (`thread.new {projectKey}`).
+An added project opens a new-thread draft for it (`thread.new {projectKey}`).
 
 ## Keys and actions
 

@@ -22,6 +22,7 @@ import { detailCommands } from "./detailCommands.ts";
 import { createFilesController, FILES_PANEL } from "./filesState.ts";
 import {
   buildTuiLayoutState,
+  composerSurfaceWidth,
   type TuiLayoutState,
   type TuiMode,
   type TuiSize,
@@ -52,7 +53,7 @@ export interface TuiStatusState {
 export type TuiPageState =
   | { readonly kind: "none" }
   | {
-      /** The new-thread form (`Shell.state.newThread`) fills the main column. */
+      /** A new-thread draft: the conversation pane is empty and the composer holds the draft. */
       readonly kind: "draft";
       readonly draftId: string;
       /** Null while there is no project to start the thread in. */
@@ -293,6 +294,8 @@ export function createHost(options: HostOptions): Host {
     inlineImages: (options.inlineImages ?? null) !== null,
     ...(options.cellPixels ? { cellPixels: options.cellPixels } : {}),
     size: () => size,
+    composerWidth: () => composerSurfaceWidth(layout.chatWidth),
+    onQuestionChange: () => composer?.sync(),
   });
   let layout: TuiLayoutState;
   const publishLayout = () => {
@@ -307,6 +310,7 @@ export function createHost(options: HostOptions): Host {
       drawerRows: terminal.preferredRows(),
       editorRows,
       popoverRows: popoverRows + (palette.isOpen() ? Math.floor(size.rows * 0.5) : 0),
+      composerChromeRows: composer?.chromeRows(),
     });
     state.set("layout", layout);
     threadView.setPaneWidth(layout.contentWidth);
@@ -547,6 +551,8 @@ export function createHost(options: HostOptions): Host {
     mode: () => mode,
     setMode,
     chatWidth: () => layout.chatWidth,
+    question: () => threadView.question(),
+    inlineImages: (options.inlineImages ?? null) !== null,
     env: options.env ?? { VISUAL: process.env.VISUAL, EDITOR: process.env.EDITOR },
     homeDir: options.homeDir ?? NodeOS.homedir(),
     runEditor: options.runEditor ?? (() => Promise.reject(new Error("no editor runner"))),

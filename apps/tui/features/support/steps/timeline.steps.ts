@@ -738,7 +738,11 @@ step("the conversation is shown again", async (ctx: ThreadWorld) => {
   expect(() => findObject(ctx, "settingsPage")).toThrow();
   expect(findObject(ctx, "diffViewer").get("visible")).toBe(false);
   expect(geometry(findObject(ctx, "conversation")).visible).toBe(true);
-  expect(findObject(ctx, "timeline").get("visible")).toBe(true);
+  expect(findObject(ctx, "conversationPane").get("visible")).toBe(true);
+  // The timeline itself shows once the thread is loaded; the pane holds a hint till then.
+  expect(findObject(ctx, "timeline").get("visible")).toBe(
+    hostState(ctx, "timeline").kind !== "none",
+  );
   if (ctx.thread) expect(screen).toContain("Done.");
   expect(screen).not.toContain("diff · ");
 });
