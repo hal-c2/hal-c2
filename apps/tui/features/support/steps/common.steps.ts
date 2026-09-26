@@ -97,7 +97,8 @@ step(
 
 // --- added by T1 ---
 
-// A connected environment holding one project (and nothing else yet).
+// A connected environment holding one project (and nothing else yet). T2's
+// thread world (threadWorld.ts `openThread`) boots on this project too.
 step("a connected environment with the project {string}", (ctx: World, title: string) => {
   addProject(ctx, title);
 });
@@ -108,8 +109,24 @@ step("the user types {string}", async (ctx: World, text: string) => {
   await flush(ctx);
 });
 
-step(/^the status line (?:says|reads) "([^"]*)"$/, async (ctx: World, text: string) => {
+// The status message: the status line shows it (T2's "the user is told" too).
+async function expectStatusLine(ctx: World, text: string) {
   await flush(ctx);
   expect(findObject(ctx, "statusText").get("text")).toBe(text);
   expect(await snapshot(ctx)).toContain(text);
+}
+
+step(/^the status line (?:says|reads) "([^"]*)"$/, expectStatusLine);
+step("the user is told {string}", expectStatusLine);
+
+// --- merged T1 + T2 ---
+
+// Nothing is in the prompt: T1's layout Given and T2's "keys went to the
+// approval, not the prompt" both read the prompt field and the composer key.
+step("the prompt is empty", async (ctx: World) => {
+  await boot(ctx);
+  await snapshot(ctx);
+  expect(findObject(ctx, "promptInput").get("text")).toBe("");
+  const composer = ctx.host!.state.get("composer") as { text?: string } | undefined;
+  expect(composer?.text ?? "").toBe("");
 });

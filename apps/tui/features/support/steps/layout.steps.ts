@@ -132,12 +132,6 @@ step("no text is left from the previous layout", async (ctx: World) => {
 
 // --- Prompt height ----------------------------------------------------------
 
-step("the prompt is empty", async (ctx: World) => {
-  await boot(ctx);
-  await snapshot(ctx);
-  expect(findObject(ctx, "promptInput").get("text")).toBe("");
-});
-
 step("the prompt shows {int} editable rows", async (ctx: World, rows: number) => {
   expect(rows).toBe(COMPOSER_MIN_EDITOR_ROWS);
   expect(layout(ctx).editorRows).toBe(rows);

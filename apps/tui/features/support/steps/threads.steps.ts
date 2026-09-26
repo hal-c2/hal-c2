@@ -725,11 +725,6 @@ step(/^the (?:thread is still called|title stays) "([^"]*)"$/, async (ctx: World
   await expectListed(ctx, title);
 });
 
-step("the user is told {string}", async (ctx: World, text: string) => {
-  expect(statusText(ctx)).toBe(text);
-  expect(await snapshot(ctx)).toContain(text);
-});
-
 // --- Settle -----------------------------------------------------------------
 
 step("the server supports settling threads", (ctx: World) => {

@@ -116,6 +116,8 @@ const NAMED_KEYS: Record<string, string> = {
   right: "ARROW_RIGHT",
   home: "HOME",
   end: "END",
+  pageup: "\x1b[5~",
+  pagedown: "\x1b[6~",
   space: " ",
 };
 

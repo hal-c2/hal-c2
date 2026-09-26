@@ -152,6 +152,10 @@ export function fakeClient({
       },
     ] as never,
   listTerminalIds = async () => [],
+  implementPlan = async () => {},
+  revertCheckpoint = async () => {},
+  getTurnDiff = async () => "",
+  getFullThreadDiff = async () => "",
 }: {
   readonly detail?: OrchestrationThread;
   readonly shellSnapshot?: OrchestrationShellSnapshot;
@@ -185,6 +189,10 @@ export function fakeClient({
   readonly getServerConfig?: TuiClient["getServerConfig"];
   readonly listModels?: TuiClient["listModels"];
   readonly listTerminalIds?: TuiClient["listTerminalIds"];
+  readonly implementPlan?: TuiClient["implementPlan"];
+  readonly revertCheckpoint?: TuiClient["revertCheckpoint"];
+  readonly getTurnDiff?: TuiClient["getTurnDiff"];
+  readonly getFullThreadDiff?: TuiClient["getFullThreadDiff"];
 } = {}): {
   readonly client: TuiClient;
   readonly connect: () => void;
@@ -238,6 +246,11 @@ export function fakeClient({
     },
     sendReply,
     respondUserInput,
+    implementPlan,
+    revertCheckpoint,
+    loadOlderThreadTurns: () => true,
+    getTurnDiff,
+    getFullThreadDiff,
     createProject,
     createThread,
     subscribeTerminal: () => () => {},
