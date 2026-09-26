@@ -4,6 +4,7 @@
 #   packages/shared/src/keybindings.ts (DEFAULT_KEYBINDINGS)
 #   apps/desktop-qt/parity/web-parity.test.ts (all 35 keymap rows)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts forwarded as keybinding.press)
+#   apps/desktop-qt/qml/HalC2/Bricks/ModelPicker.qml (modelPicker.previousProvider, nextProvider and jump.1-9 while the picker is open)
 #   Keybinding ids: sidebar.toggle, navigation.back, navigation.forward, terminal.toggle,
 #   terminal.split, terminal.splitVertical, terminal.new, terminal.close, rightPanel.toggle,
 #   threadPanel.toggle, rightPanel.toggleMaximized, rightPanel.close, pullRequest.copyNumber,
@@ -31,27 +32,38 @@ Feature: Keybindings
       Then the command "<command>" runs
 
       Examples: Forwarded by the desktop shell today
-        | command               | key         | context            | status  |
-        | sidebar.toggle        | mod+b       | anywhere           | aligned |
-        | navigation.back       | mod+[       | outside a terminal | aligned |
-        | navigation.forward    | mod+]       | outside a terminal | aligned |
-        | terminal.toggle       | mod+j       | anywhere           | aligned |
-        | rightPanel.toggle     | mod+alt+b   | anywhere           | aligned |
-        | terminal.split        | mod+d       | in a terminal      | aligned |
-        | diff.toggle           | mod+d       | outside a terminal | aligned |
-        | commandPalette.toggle | mod+k       | outside a terminal | aligned |
-        | filePicker.toggle     | mod+p       | outside a terminal | aligned |
-        | projectSearch.toggle  | mod+shift+f | outside a terminal | aligned |
-        | theme.select          | mod+alt+a   | outside a terminal | aligned |
-        | chat.new              | mod+n       | outside a terminal | aligned |
-        | chat.newLocal         | mod+shift+n | outside a terminal | aligned |
-        | modelPicker.toggle    | mod+shift+m | outside a terminal | aligned |
-        | editor.openFavorite   | mod+o       | anywhere           | aligned |
-        | thread.previous       | mod+shift+[ | anywhere           | aligned |
-        | thread.next           | mod+shift+] | anywhere           | aligned |
-        | thread.copyReference  | mod+shift+c | outside a terminal | aligned |
-        | thread.settle         | mod+shift+s | outside a terminal | aligned |
-        | thread.pin            | mod+shift+p | outside a terminal | aligned |
+        | command                      | key                 | context                    | status  |
+        | sidebar.toggle               | mod+b               | anywhere                   | aligned |
+        | navigation.back              | mod+[               | outside a terminal         | aligned |
+        | navigation.forward           | mod+]               | outside a terminal         | aligned |
+        | terminal.toggle              | mod+j               | anywhere                   | aligned |
+        | rightPanel.toggle            | mod+alt+b           | anywhere                   | aligned |
+        | terminal.split               | mod+d               | in a terminal              | aligned |
+        | diff.toggle                  | mod+d               | outside a terminal         | aligned |
+        | commandPalette.toggle        | mod+k               | outside a terminal         | aligned |
+        | filePicker.toggle            | mod+p               | outside a terminal         | aligned |
+        | projectSearch.toggle         | mod+shift+f         | outside a terminal         | aligned |
+        | theme.select                 | mod+alt+a           | outside a terminal         | aligned |
+        | chat.new                     | mod+n               | outside a terminal         | aligned |
+        | chat.newLocal                | mod+shift+n         | outside a terminal         | aligned |
+        | modelPicker.toggle           | mod+shift+m         | outside a terminal         | aligned |
+        | editor.openFavorite          | mod+o               | anywhere                   | aligned |
+        | thread.previous              | mod+shift+[         | anywhere                   | aligned |
+        | thread.next                  | mod+shift+]         | anywhere                   | aligned |
+        | thread.copyReference         | mod+shift+c         | outside a terminal         | aligned |
+        | thread.settle                | mod+shift+s         | outside a terminal         | aligned |
+        | thread.pin                   | mod+shift+p         | outside a terminal         | aligned |
+        | modelPicker.previousProvider | mod+shift+arrowup   | with the model picker open | aligned |
+        | modelPicker.nextProvider     | mod+shift+arrowdown | with the model picker open | aligned |
+        | modelPicker.jump.1           | mod+1               | with the model picker open | aligned |
+        | modelPicker.jump.2           | mod+2               | with the model picker open | aligned |
+        | modelPicker.jump.3           | mod+3               | with the model picker open | aligned |
+        | modelPicker.jump.4           | mod+4               | with the model picker open | aligned |
+        | modelPicker.jump.5           | mod+5               | with the model picker open | aligned |
+        | modelPicker.jump.6           | mod+6               | with the model picker open | aligned |
+        | modelPicker.jump.7           | mod+7               | with the model picker open | aligned |
+        | modelPicker.jump.8           | mod+8               | with the model picker open | aligned |
+        | modelPicker.jump.9           | mod+9               | with the model picker open | aligned |
 
       @backlog
       Examples: Not yet honoured by the native client
@@ -92,21 +104,6 @@ Feature: Keybindings
         | thread.jump.7             | mod+7           | anywhere                          | backlog |
         | thread.jump.8             | mod+8           | anywhere                          | backlog |
         | thread.jump.9             | mod+9           | anywhere                          | backlog |
-        | modelPicker.jump.1        | mod+1           | with the model picker open        | backlog |
-        | modelPicker.jump.2        | mod+2           | with the model picker open        | backlog |
-        | modelPicker.jump.3        | mod+3           | with the model picker open        | backlog |
-        | modelPicker.jump.4        | mod+4           | with the model picker open        | backlog |
-        | modelPicker.jump.5        | mod+5           | with the model picker open        | backlog |
-        | modelPicker.jump.6        | mod+6           | with the model picker open        | backlog |
-        | modelPicker.jump.7        | mod+7           | with the model picker open        | backlog |
-        | modelPicker.jump.8        | mod+8           | with the model picker open        | backlog |
-        | modelPicker.jump.9        | mod+9           | with the model picker open        | backlog |
-
-      @dropped
-      Examples: Handled by the native model picker's own arrow keys
-        | command                      | key                 | context                    | status |
-        | modelPicker.previousProvider | mod+shift+arrowup   | with the model picker open | n/a    |
-        | modelPicker.nextProvider     | mod+shift+arrowdown | with the model picker open | n/a    |
 
     @backlog @desktop
     Scenario Outline: A command with no default binding can still be bound
