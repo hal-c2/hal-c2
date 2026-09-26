@@ -197,9 +197,8 @@ describe("cloud onboarding discovery", () => {
         },
       }),
     });
-    discovery.listEnvironments.mockResolvedValue(
-      new Map([[newMachineId, entry(ORCHESTRATION_PROTOCOL_VERSION + 1)]]),
-    );
+    // A future protocol; the next version up is the accepted shape protocol.
+    discovery.listEnvironments.mockResolvedValue(new Map([[newMachineId, entry(99)]]));
     const onSelectionChange = vi.fn();
     const autoSelectedComputers = new Set<EnvironmentId>();
     function Setup() {
