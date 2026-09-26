@@ -151,6 +151,9 @@ defmodule T3.Rpc do
   def handle("provider.auth.cancel", input), do: T3.ProviderAuth.cancel(input)
   def handle("provider.auth.logout", input), do: T3.ProviderAuth.logout(input)
   def handle("provider.auth.complete", input), do: T3.ProviderAuth.complete(input)
+  def handle("provider.install.start", input), do: T3.Acp.Antigravity.Installation.start(input)
+  def handle("provider.install.cancel", input), do: T3.Acp.Antigravity.Installation.cancel(input)
+  def handle("provider.install.remove", input), do: T3.Acp.Antigravity.Installation.remove(input)
 
   def handle("agentSessions.scan", input), do: T3.AgentSessions.scan(input)
   def handle("agentSessions.import", input), do: T3.AgentSessions.import_project(input)

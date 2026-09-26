@@ -4,6 +4,7 @@
 # selected environment), then every message received.
 #
 # config.json:
+#   agentName          agentInfo.name (default "Fake")
 #   version            agentInfo.version (default "1.0.0")
 #   initMeta           initialize result `_meta`
 #   capabilities       merged into agentCapabilities
@@ -13,6 +14,7 @@
 #   configOptions      session/new's configOptions (default: one model "fake/one")
 #   modes              session/new's modes
 #   turns              [{"match": substring, "steps": [...]}], first match wins
+#   googleAuth         Antigravity's Google sign-in (see fake_google_auth.py)
 #
 # Turn steps: {"text": s}, {"thought": s}, {"update": sessionUpdate}, {"request": {method,
 # params}} (waits for the answer), {"permission": toolCall} (session/request_permission
@@ -23,7 +25,8 @@ import json, os, sys
 DIR = os.environ["FAKE_DIR"]
 LOG = os.path.join(DIR, "log.jsonl")
 CONFIG = os.path.join(DIR, "config.json")
-ENV_PREFIXES = ("PI_", "XAI_", "GROK_", "OPENCODE_", "FAKE_", "GEMINI_", "GOOGLE_")
+ENV_PREFIXES = ("PI_", "XAI_", "GROK_", "OPENCODE_", "FAKE_", "GEMINI_", "GOOGLE_",
+                "ANTIGRAVITY_", "AGY_")
 
 
 def log(entry):
@@ -155,12 +158,19 @@ while True:
     msg = read()
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
     cfg = config()
+    if cfg.get("googleAuth"):
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        sys.dont_write_bytecode = True  # no __pycache__ in the source tree
+        import fake_google_auth
+        if fake_google_auth.handle(msg, cfg, send):
+            continue
     if method == "initialize":
         caps = {"loadSession": True, "sessionCapabilities": {"resume": {}},
                 "promptCapabilities": {"image": False}}
         caps.update(cfg.get("capabilities") or {})
         result = {"protocolVersion": 1,
-                  "agentInfo": {"name": "Fake", "version": cfg.get("version", "1.0.0")},
+                  "agentInfo": {"name": cfg.get("agentName", "Fake"),
+                                "version": cfg.get("version", "1.0.0")},
                   "authMethods": cfg.get("authMethods", []), "agentCapabilities": caps}
         if cfg.get("initMeta") is not None:
             result["_meta"] = cfg["initMeta"]

@@ -10,7 +10,7 @@
 #   packages/contracts/src/rpc.ts (provider.install.start, provider.install.cancel, provider.install.remove, provider.install.subscribe, provider.auth.complete)
 #   packages/contracts/src/providerSetup.ts (ProviderInstallState)
 
-@plugin-antigravity @node @backlog
+@plugin-antigravity @node
 Feature: Antigravity
   Antigravity runs Google's official Antigravity ACP agent. The node downloads and
   verifies the runtime itself, keeps a private Google profile for each instance, and

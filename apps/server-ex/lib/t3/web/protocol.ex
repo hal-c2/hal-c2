@@ -39,6 +39,8 @@ defmodule T3.Web.Protocol do
       refresh revision, then each new one (`pullRequests.subscribeRefreshes`)
     * `{"type": "providerAuth", "node": n, "instanceId": id}`: that provider
       instance's sign-in state (`ProviderAuthState`), then changes
+    * `{"type": "providerInstall", "node": n, "instanceId": id}`: that provider
+      instance's managed runtime installation (`ProviderInstallState`), then changes
     * `{"type": "gitAction", "node": n, "input": GitRunStackedActionInput}`: runs the
       action once and streams its progress, ending with action_finished or
       action_failed
@@ -79,6 +81,7 @@ defmodule T3.Web.Protocol do
       {"t": "vcs", "id", "event"}        (VcsStatusStreamEvent)
       {"t": "gitAction", "id", "event"}  (GitActionProgressEvent)
       {"t": "providerAuth", "id", "state"} (ProviderAuthState)
+      {"t": "providerInstall", "id", "state"} (ProviderInstallState)
       {"t": "worktreeSetup", "id", "event"} (WorktreeSetupStreamEvent)
       {"t": "scheduledTasks", "id", "tasks"} (ScheduledTask[])
       {"t": "projectClones", "id", "clones"} (ProjectCloneSnapshot[])
@@ -226,6 +229,11 @@ defmodule T3.Web.Protocol do
   defp decode_shape(%{"type" => "providerAuth", "node" => node, "instanceId" => id}, nodes)
        when is_binary(id) do
     with {:ok, node} <- known_node(node, nodes), do: {:ok, {:provider_auth, node, id}}
+  end
+
+  defp decode_shape(%{"type" => "providerInstall", "node" => node, "instanceId" => id}, nodes)
+       when is_binary(id) do
+    with {:ok, node} <- known_node(node, nodes), do: {:ok, {:provider_install, node, id}}
   end
 
   defp decode_shape(%{"type" => "terminals", "node" => node}, nodes) do

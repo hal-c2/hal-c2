@@ -367,4 +367,43 @@ defmodule T3.Steps.Common do
     assert request["status"] == "pending"
     Map.put(context, :request, request)
   end
+
+  # --- added by W12 ---
+
+  # Cancels the provider's running install (`provider.install.cancel`); keeps the reply.
+  step "the user cancels the installation", context do
+    %{"operationId" => op} = T3.Acp.Antigravity.Installation.state()
+    assert is_binary(op)
+
+    {reply, context} =
+      World.call(context, "provider.install.cancel", %{
+        "instanceId" => context.provider,
+        "operationId" => op
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  # Every thread of the scenario still has its messages.
+  step "thread history is kept", context do
+    for {_title, id} <- context.threads do
+      state = T3.Streams.Server.state(T3.Streams.ensure(id))
+      assert %{^id => _} = T3.StreamState.get(state, "thread")
+      assert [_ | _] = T3.StreamState.list(state, "message")
+    end
+
+    context
+  end
+
+  step "the user sends a message", context do
+    T3.Test.FakeAcp.send_message(context, "Hello")
+  end
+
+  # `provider.auth.logout` for the provider under test; keeps the reply.
+  step "the user signs out", context do
+    {reply, context} =
+      World.call(context, "provider.auth.logout", %{"instanceId" => context.provider})
+
+    Map.put(context, :reply, reply)
+  end
 end

@@ -56,6 +56,11 @@ defmodule T3.Orchestration.Rollback do
       provider_thread == nil ->
         {:error, "No active provider thread exists for rollback."}
 
+      # Antigravity keeps no way to rewind its conversation; refused before any file moves.
+      T3.Acp.driver(provider_thread["providerInstanceId"]) == "antigravity" ->
+        {:error,
+         "Antigravity cannot rewind its conversation, so this checkpoint cannot be restored on this thread."}
+
       restore and not isolated?(thread, scope) ->
         {:error, @shared_workspace}
 

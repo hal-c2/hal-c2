@@ -86,6 +86,10 @@ defmodule T3.Environment do
   """
   def refresh_providers(input) do
     case input do
+      # Antigravity's skills come from the workspace's folders (`T3.Acp.Antigravity.skills/2`).
+      %{"cwd" => cwd, "instanceId" => id} when is_binary(cwd) and is_binary(id) ->
+        if T3.Acp.driver(id) == "antigravity", do: T3.Acp.Antigravity.refresh_workspace(id, cwd)
+
       %{"cwd" => cwd} when is_binary(cwd) ->
         :ok
 

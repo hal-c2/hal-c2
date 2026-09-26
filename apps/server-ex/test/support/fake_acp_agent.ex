@@ -17,7 +17,7 @@ defmodule T3.Test.FakeAcp do
   alias T3.Test.Node.World
 
   @script Path.expand("fake_acp_scripted.py", __DIR__)
-  @instances ~w(grok opencode pi cursor)
+  @instances ~w(grok opencode pi cursor antigravity)
 
   @run_test %{
     "permission" => %{

@@ -20,7 +20,9 @@ defmodule T3.Acp do
     # The Cursor SDK behind ACP (`packages/cursor-acp`), run by Node.
     "cursor" => %{binary: "node", label: "Cursor"},
     # Pi through the registry's pi-acp adapter, which runs `pi --mode rpc`.
-    "pi" => %{binary: "pi", label: "Pi"}
+    "pi" => %{binary: "pi", label: "Pi"},
+    # Google's Antigravity agent, from the node's managed runtime (`T3.Acp.Antigravity`).
+    "antigravity" => %{binary: "agy_acp_server.par", label: "Antigravity"}
   }
 
   # The Cursor sidecar: bundled under priv/ in a release, from packages/ in a checkout.
@@ -126,6 +128,9 @@ defmodule T3.Acp do
       {"pi", entry} ->
         with {:ok, command, env} <- T3.Acp.Catalog.command(%{"agentId" => "pi-acp"}),
              do: {:ok, command, driver_env("pi", entry) ++ env ++ instance_env(entry)}
+
+      {"antigravity", _entry} ->
+        T3.Acp.Antigravity.command(instance)
 
       {driver, entry} ->
         binary = binary(driver, entry, @agents[driver].binary)
@@ -261,6 +266,11 @@ defmodule T3.Acp do
   # Pi is offered where Pi is installed; its adapter installs when first used.
   defp base_entry(_id, "pi", instance) do
     if System.find_executable(binary("pi", instance, "pi")), do: {:ok, %{}}, else: :error
+  end
+
+  # Antigravity is always listed: its entry says how to install or sign in.
+  defp base_entry(_id, "antigravity", instance) do
+    {:ok, if(instance["displayName"], do: %{"displayName" => instance["displayName"]}, else: %{})}
   end
 
   defp base_entry(id, _driver, instance) do
@@ -446,7 +456,12 @@ defmodule T3.Acp do
         :persistent_term.put({__MODULE__, id, :auth_methods}, length(init["authMethods"] || []))
         :persistent_term.put({__MODULE__, id, :meta}, init["_meta"] || %{})
 
-        case call_serving(conn, id, "session/new", %{"cwd" => dir, "mcpServers" => []}) do
+        # Antigravity's models come from its sign-in and sessions
+        # (`T3.Acp.Antigravity.account/1`); a probe session would need a Google login.
+        case if(driver == "antigravity",
+               do: {:ok, %{}},
+               else: call_serving(conn, id, "session/new", %{"cwd" => dir, "mcpServers" => []})
+             ) do
           {:ok, session} ->
             :persistent_term.put({__MODULE__, id, :models}, models(session))
 
@@ -557,6 +572,9 @@ defmodule T3.Acp do
         }),
       else: entry
   end
+
+  defp driver_fields(entry, "antigravity", id, _instance),
+    do: T3.Acp.Antigravity.entry_fields(entry, id)
 
   defp driver_fields(entry, _driver, _id, _instance), do: entry
 
@@ -771,6 +789,9 @@ defmodule T3.Acp do
 
     :ok
   end
+
+  @doc "The models a session's `model` config option lists, as provider models."
+  def session_models(session), do: models(session)
 
   # "Hugging Face/DeepSeek V3" is the model "DeepSeek V3" of the provider "Hugging Face".
   defp models(session) do
