@@ -500,7 +500,7 @@ const testLayer = (
           DesktopEnvironment.DesktopEnvironment,
           DesktopEnvironment.DesktopEnvironment.of({
             platform,
-            stateDir: "/state",
+            dirs: { data: "/state" },
             linuxDesktopEntryName: "io.github.halc2.HalC2.desktop",
             appRoot: "/repo",
             linuxApplicationsDir: "/test-data/applications",

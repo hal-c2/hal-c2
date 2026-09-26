@@ -65,6 +65,7 @@ function makeEnvironmentLayer(
     readonly otlpMetricsUrl?: string;
     readonly otlpLogsUrl?: string;
     readonly elixirNodeRelease?: string;
+    readonly withoutHalC2Home?: boolean;
   },
 ) {
   return DesktopEnvironment.layer({
@@ -82,7 +83,7 @@ function makeEnvironmentLayer(
       Layer.mergeAll(
         NodeServices.layer,
         DesktopConfig.layerTest({
-          HAL_C2_HOME: baseDir,
+          HAL_C2_HOME: options?.withoutHalC2Home ? undefined : baseDir,
           HAL_C2_PORT: "9999",
           HAL_C2_MODE: "desktop",
           HAL_C2_DESKTOP_LAN_HOST: "192.168.1.50",
@@ -228,6 +229,31 @@ const withPackagedWslHarness = <A, E, R>(
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 describe("DesktopBackendConfiguration", () => {
+  it.effect("resolvePrimary hands the server a base dir only for an explicit root", () =>
+    Effect.gen(function* () {
+      const explicit = yield* withHarness(
+        Effect.gen(function* () {
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          const config = yield* configuration.resolvePrimary;
+          return { root: environment.halC2Root, halC2Home: config.bootstrap.halC2Home };
+        }),
+      );
+      const xdg = yield* withHarness(
+        Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          const config = yield* configuration.resolvePrimary;
+          return "halC2Home" in config.bootstrap;
+        }),
+        { withoutHalC2Home: true },
+      );
+
+      assert.isTrue(Option.isSome(explicit.root));
+      assert.equal(explicit.halC2Home, Option.getOrUndefined(explicit.root));
+      assert.isFalse(xdg);
+    }),
+  );
+
   it.effect("resolvePrimary produces a stable scoped bootstrap token", () =>
     withHarness(
       Effect.gen(function* () {
@@ -250,7 +276,7 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(first.bootstrap.noBrowser, true);
         assert.equal(first.bootstrap.port, 4888);
         assert.equal(first.bootstrap.host, "0.0.0.0");
-        assert.equal(first.bootstrap.halC2Home, environment.baseDir);
+        assert.equal(first.bootstrap.halC2Home, Option.getOrUndefined(environment.halC2Root));
         assert.equal(first.bootstrap.tailscaleServeEnabled, true);
         assert.equal(first.bootstrap.tailscaleServePort, 8443);
         assert.match(first.bootstrap.desktopBootstrapToken, /^[0-9a-f]{48}$/i);
@@ -428,7 +454,7 @@ describe("DesktopBackendConfiguration", () => {
     }> = [];
     const observedProbeRoots: string[] = [];
     let legacyCleanupCount = 0;
-    const linuxAppRoot = "/home/test/.hal-c2/wsl-runtime/1.2.3-x64";
+    const linuxAppRoot = "/home/test/.local/state/hal-c2/wsl-runtime/1.2.3-x64";
     const resolvedPath = "/home/test/.local/bin:/usr/bin:/bin";
 
     return withPackagedWslHarness(
@@ -565,7 +591,7 @@ describe("DesktopBackendConfiguration", () => {
 
   it.effect("resolveWsl retires a staged runtime whose executable does not start", () => {
     const archiveHash = "c".repeat(64);
-    const stagedAppRoot = `/home/test/.hal-c2/wsl-runtime/sha256-${archiveHash}`;
+    const stagedAppRoot = `/home/test/.local/state/hal-c2/wsl-runtime/sha256-${archiveHash}`;
     const observedProbeRoots: string[] = [];
     const observedNodePtyRoots: string[] = [];
     const invalidatedRuntimeIds: string[] = [];
@@ -607,7 +633,7 @@ describe("DesktopBackendConfiguration", () => {
   });
 
   it.effect("resolveWsl keeps the staged runtime when the mounted tree fails too", () => {
-    const stagedAppRoot = "/home/test/.hal-c2/wsl-runtime/cache";
+    const stagedAppRoot = "/home/test/.local/state/hal-c2/wsl-runtime/cache";
     const invalidatedRuntimeIds: string[] = [];
     return withPackagedWslHarness(
       {
@@ -643,7 +669,7 @@ describe("DesktopBackendConfiguration", () => {
   });
 
   it.effect("resolveWsl keeps WSL retryable when the mounted fallback fails transiently", () => {
-    const stagedAppRoot = "/home/test/.hal-c2/wsl-runtime/cache";
+    const stagedAppRoot = "/home/test/.local/state/hal-c2/wsl-runtime/cache";
     const invalidatedRuntimeIds: string[] = [];
     return withPackagedWslHarness(
       {
@@ -907,7 +933,7 @@ describe("DesktopBackendConfiguration", () => {
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "hal-c2-desktop-backend-config-test-",
       });
-      const settingsPath = path.join(baseDir, "userdata", "settings.json");
+      const settingsPath = path.join(baseDir, "config", "settings.json");
       const cause = PlatformError.systemError({
         _tag: "PermissionDenied",
         module: "FileSystem",
@@ -1082,7 +1108,7 @@ describe("DesktopBackendConfiguration", () => {
           // not spawn wsl.exe (which would loop on preflight failures while the
           // Connections backend control is hidden). Resolve the Windows primary.
           assert.equal(config.executablePath, process.execPath);
-          assert.equal(config.bootstrap.halC2Home, environment.baseDir);
+          assert.equal(config.bootstrap.halC2Home, Option.getOrUndefined(environment.halC2Root));
           assert.isTrue(Option.isNone(config.preflightFailure));
         }).pipe(
           Effect.provide(

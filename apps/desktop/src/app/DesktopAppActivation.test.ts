@@ -10,7 +10,7 @@ import {
   type DesktopAppActivationRequest,
   type DesktopAppActivationResponse,
 } from "@hal-c2/contracts";
-import { resolveDesktopAppControlAddress } from "@hal-c2/shared/desktopAppControl";
+import { resolveDesktopAppControlSocket } from "@hal-c2/shared/desktopAppControlSocket";
 import { HostProcessPlatform, HostProcessUserId } from "@hal-c2/shared/hostProcess";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -24,9 +24,9 @@ afterEach(async () => {
   await Promise.all(openServers.splice(0).map((server) => server.close()));
 });
 
-function makeTarget(stateDir: string, platform: NodeJS.Platform, userId: number | undefined) {
-  return resolveDesktopAppControlAddress({
-    stateDir,
+function makeTarget(root: string, platform: NodeJS.Platform, userId: number | undefined) {
+  return resolveDesktopAppControlSocket({
+    dirs: { state: NodePath.join(root, "state"), runtime: NodePath.join(root, "runtime") },
     platform,
     tempDir: NodeOS.tmpdir(),
     userId,
@@ -70,7 +70,7 @@ describe("desktop app control server", () => {
         const root = await NodeFSP.mkdtemp(
           NodePath.join(NodeOS.tmpdir(), "hal-c2-app-control-test-"),
         );
-        const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
+        const target = makeTarget(root, platform, userId);
         const received: DesktopAppActivationRequest[] = [];
         const server = await startDesktopAppControlServer({
           ...target,
@@ -89,6 +89,9 @@ describe("desktop app control server", () => {
         });
         openServers.push(server);
 
+        if (platform !== "win32") {
+          expect(target.directory).toBe(NodePath.join(root, "runtime"));
+        }
         const response = await exchange(target.address, request("request-1", platform));
 
         expect(received).toHaveLength(1);
@@ -111,7 +114,7 @@ describe("desktop app control server", () => {
         const root = await NodeFSP.mkdtemp(
           NodePath.join(NodeOS.tmpdir(), "hal-c2-app-cancel-test-"),
         );
-        const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
+        const target = makeTarget(root, platform, userId);
         let resolveCanceled: (requestId: string) => void = () => undefined;
         const canceled = new Promise<string>((resolve) => {
           resolveCanceled = resolve;

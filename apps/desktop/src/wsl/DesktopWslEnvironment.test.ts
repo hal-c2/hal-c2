@@ -55,6 +55,11 @@ const posixShellRunner = (() => {
   );
 })();
 
+const hostEnvWithoutXdgState = () => {
+  const { XDG_STATE_HOME: _stateHome, ...env } = process.env;
+  return env;
+};
+
 const runShell = (script: string) => {
   if (posixShellRunner === null) throw new Error("no POSIX shell runner available");
   // The install script arrives on stdin in production too, which is what lets
@@ -62,7 +67,8 @@ const runShell = (script: string) => {
   const result = NodeChildProcess.spawnSync(
     posixShellRunner.file,
     [...posixShellRunner.args, "-s"],
-    { input: script, encoding: "utf8" },
+    // The scripts honour XDG_STATE_HOME; drop the host's so fixtures stay under their HOME.
+    { input: script, encoding: "utf8", env: hostEnvWithoutXdgState() },
   );
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 };
@@ -165,7 +171,7 @@ describe("WSL runtime cache", () => {
       "b".repeat(64),
     );
 
-    expect(script).toContain('runtime_parent="$HOME/.hal-c2/wsl-runtime"');
+    expect(script).toContain('runtime_parent="$state_home/hal-c2/wsl-runtime"');
     expect(script).toContain('  [ -f "$ready_marker" ] &&');
     expect(script).toContain('    runtime_entry_runs "$runtime_root" &&');
     expect(script).toContain("if runtime_is_ready; then");
@@ -327,9 +333,9 @@ describe("WSL runtime cache", () => {
   });
 
   it("parses only absolute Linux runtime paths", () => {
-    expect(parseWslRuntimeRoot("runtimeRoot:/home/josh/.hal-c2/wsl-runtime/1.2.3-x64\n")).toBe(
-      "/home/josh/.hal-c2/wsl-runtime/1.2.3-x64",
-    );
+    expect(
+      parseWslRuntimeRoot("runtimeRoot:/home/josh/.local/state/hal-c2/wsl-runtime/1.2.3-x64\n"),
+    ).toBe("/home/josh/.local/state/hal-c2/wsl-runtime/1.2.3-x64");
     expect(parseWslRuntimeRoot("runtimeRoot:relative/path\n")).toBeNull();
     expect(parseWslRuntimeRoot("noise\n")).toBeNull();
   });
@@ -383,9 +389,7 @@ describe("WSL runtime cache", () => {
 
     // Readiness is a presence check, so a tree whose pty.node is present but
     // unloadable stays ready forever unless the probe can revoke the marker.
-    expect(script).toContain(
-      'rm -f "$HOME/.hal-c2/wsl-runtime/1.2.3_x64/.hal-c2-wsl-runtime-ready"',
-    );
+    expect(script).toContain('rm -f "$runtime_parent/1.2.3_x64/.hal-c2-wsl-runtime-ready"');
     // Deleting the tree here would pull it out from under any backend still
     // running from it; the next install moves an unready root aside instead.
     expect(script).not.toContain("rm -rf");
@@ -397,6 +401,33 @@ describe("WSL runtime cache", () => {
 // reused, so these run the real script against a real archive in a throwaway
 // HOME and check the outcome.
 describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed)", () => {
+  it("keeps the runtime in the distro's XDG state directory", () => {
+    const readyIn = (stateHome: string) =>
+      `"${stateHome}/hal-c2/wsl-runtime/r1/.hal-c2-wsl-runtime-ready"`;
+    const invalidate = ["(", buildWslRuntimeInvalidateScript("r1"), ")"].join("\n");
+    const result = runShell(
+      [
+        "set -eu",
+        "work=$(mktemp -d)",
+        'HOME="$work/home"',
+        'XDG_STATE_HOME="$work/state"',
+        "export HOME XDG_STATE_HOME",
+        `mkdir -p "$(dirname ${readyIn("$work/state")})" "$(dirname ${readyIn("$HOME/.local/state")})"`,
+        `touch ${readyIn("$work/state")} ${readyIn("$HOME/.local/state")}`,
+        invalidate,
+        `test ! -e ${readyIn("$work/state")}`,
+        `test -e ${readyIn("$HOME/.local/state")}`,
+        // A relative XDG_STATE_HOME is ignored in favour of ~/.local/state.
+        "XDG_STATE_HOME=relative/state",
+        invalidate,
+        `test ! -e ${readyIn("$HOME/.local/state")}`,
+        'rm -rf "$work"',
+      ].join("\n"),
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  });
+
   const fixtures: Array<string> = [];
 
   afterAll(() => {
@@ -441,9 +472,9 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       archivePath,
       archiveSha,
       runtimeId,
-      runtimeParent: `${work}/home/.hal-c2/wsl-runtime`,
-      runtimeRoot: `${work}/home/.hal-c2/wsl-runtime/${runtimeId}`,
-      serverEntry: `${work}/home/.hal-c2/wsl-runtime/${runtimeId}/hal-c2`,
+      runtimeParent: `${work}/home/.local/state/hal-c2/wsl-runtime`,
+      runtimeRoot: `${work}/home/.local/state/hal-c2/wsl-runtime/${runtimeId}`,
+      serverEntry: `${work}/home/.local/state/hal-c2/wsl-runtime/${runtimeId}/hal-c2`,
       installScript,
       install: (archive?: string, sha?: string) => runShell(installScript(archive, sha)),
     };
@@ -739,7 +770,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         "set -eu",
         "work=$(mktemp -d)",
         'home="$work/home"',
-        'runtime_parent="$home/.hal-c2/wsl-runtime"',
+        'runtime_parent="$home/.local/state/hal-c2/wsl-runtime"',
         'mkdir -p "$runtime_parent"',
         'make_ready() { mkdir -p "$runtime_parent/$1"; printf ready > "$runtime_parent/$1/.hal-c2-wsl-runtime-ready"; }',
         "make_ready sha256-current",

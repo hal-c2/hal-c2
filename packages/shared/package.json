@@ -315,6 +315,14 @@
       "types": "./src/xdgDirs.ts",
       "import": "./src/xdgDirs.ts"
     },
+    "./legacyHomeMigration": {
+      "types": "./src/legacyHomeMigration.ts",
+      "import": "./src/legacyHomeMigration.ts"
+    },
+    "./desktopAppControlSocket": {
+      "types": "./src/desktopAppControlSocket.ts",
+      "import": "./src/desktopAppControlSocket.ts"
+    },
     "./devProxy": {
       "types": "./src/devProxy.ts",
       "import": "./src/devProxy.ts"

@@ -286,6 +286,13 @@ const WSL_RUNTIME_SELECTION_GRACE_MINUTES = 5;
 
 const sanitizeWslRuntimeId = (value: string): string => value.replace(/[^A-Za-z0-9._-]/g, "_");
 
+// The runtime is per-machine state inside the distro, so it lives in the distro
+// user's XDG state directory. A relative XDG_STATE_HOME is ignored, as the spec says.
+const WSL_RUNTIME_PARENT_LINES = [
+  'case "${XDG_STATE_HOME:-}" in /*) state_home="$XDG_STATE_HOME" ;; *) state_home="$HOME/.local/state" ;; esac',
+  'runtime_parent="$state_home/hal-c2/wsl-runtime"',
+] as const;
+
 // `archiveSha256` is the digest the build recorded alongside the archive. The
 // install verifies the bytes before extracting, so an archive can never be
 // promoted under an identity that does not describe it.
@@ -297,7 +304,7 @@ export const buildWslRuntimeInstallScript = (
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
     "set -eu",
-    'runtime_parent="$HOME/.hal-c2/wsl-runtime"',
+    ...WSL_RUNTIME_PARENT_LINES,
     `runtime_root="$runtime_parent/${safeRuntimeId}"`,
     `ready_marker="$runtime_root/${WSL_RUNTIME_READY_MARKER}"`,
     // The runtime is a self-contained `hal-c2` executable with Node inside, so the
@@ -422,7 +429,7 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
     "set -eu",
-    'runtime_parent="$HOME/.hal-c2/wsl-runtime"',
+    ...WSL_RUNTIME_PARENT_LINES,
     `current_runtime="$runtime_parent/${safeRuntimeId}"`,
     '[ -d "$runtime_parent" ] || exit 0',
     // Serialize the whole retention decision so two backends cannot select
@@ -486,7 +493,8 @@ export const buildWslRuntimeInvalidateScript = (runtimeId: string): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
     "set -eu",
-    `rm -f "$HOME/.hal-c2/wsl-runtime/${safeRuntimeId}/${WSL_RUNTIME_READY_MARKER}"`,
+    ...WSL_RUNTIME_PARENT_LINES,
+    `rm -f "$runtime_parent/${safeRuntimeId}/${WSL_RUNTIME_READY_MARKER}"`,
   ].join("\n");
 };
 

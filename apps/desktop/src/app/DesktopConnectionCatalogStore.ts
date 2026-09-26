@@ -384,7 +384,7 @@ export const make = Effect.gen(function* () {
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const crypto = yield* Crypto.Crypto;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
-  const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+  const catalogPath = path.join(environment.dirs.data, "connection-catalog.json");
   const encryptionAvailable = safeStorage.isEncryptionAvailable.pipe(
     Effect.mapError(
       (cause) =>

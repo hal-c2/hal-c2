@@ -14,9 +14,10 @@ import * as Path from "effect/Path";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
-import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
+import { resolveDesktopStorage } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 import type { OtlpProtocol } from "@hal-c2/shared/observability";
+import type { HalC2Dirs, HalC2Profile } from "@hal-c2/shared/xdgDirs";
 
 export interface MakeDesktopEnvironmentInput {
   readonly dirname: string;
@@ -44,8 +45,12 @@ export class DesktopEnvironment extends Context.Service<
     readonly resourcesPath: string;
     readonly homeDirectory: string;
     readonly appDataDirectory: string;
-    readonly baseDir: string;
-    readonly stateDir: string;
+    // Config, data, state, cache and runtime directories, shared with the hosted server.
+    readonly dirs: HalC2Dirs;
+    // The explicit HAL_C2_HOME root. Only then does the hosted server get a base dir;
+    // otherwise it resolves the same XDG directories itself.
+    readonly halC2Root: Option.Option<string>;
+    readonly storageProfile: HalC2Profile;
     readonly desktopSettingsPath: string;
     readonly clientSettingsPath: string;
     readonly savedEnvironmentRegistryPath: string;
@@ -165,11 +170,22 @@ const make = Effect.fn("desktop.environment.make")(function* (
       : input.platform === "darwin"
         ? path.join(homeDirectory, "Library", "Application Support")
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
-  const baseDir = resolveDesktopBaseDir({
+  const storage = resolveDesktopStorage({
+    env: {
+      HAL_C2_HOME: Option.getOrUndefined(config.halC2Home),
+      XDG_CONFIG_HOME: Option.getOrUndefined(config.xdgConfigHome),
+      XDG_DATA_HOME: Option.getOrUndefined(config.xdgDataHome),
+      XDG_STATE_HOME: Option.getOrUndefined(config.xdgStateHome),
+      XDG_CACHE_HOME: Option.getOrUndefined(config.xdgCacheHome),
+      XDG_RUNTIME_DIR: Option.getOrUndefined(config.xdgRuntimeDir),
+      APPDATA: Option.getOrUndefined(config.appDataDirectory),
+      LOCALAPPDATA: Option.getOrUndefined(config.localAppDataDirectory),
+    },
     homeDirectory,
-    joinPath: path.join,
-    halC2Home: config.halC2Home,
+    platform: input.platform,
+    isDevelopment,
   });
+  const { dirs } = storage;
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
   const serverRoot =
@@ -181,12 +197,6 @@ const make = Effect.fn("desktop.environment.make")(function* (
     appVersion: input.appVersion,
   });
   const displayName = branding.displayName;
-  const stateDir = resolveDesktopStateDir({
-    baseDir,
-    isDevelopment,
-    joinPath: path.join,
-    halC2Home: config.halC2Home,
-  });
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",
@@ -205,14 +215,15 @@ const make = Effect.fn("desktop.environment.make")(function* (
     resourcesPath,
     homeDirectory,
     appDataDirectory,
-    baseDir,
-    stateDir,
-    desktopSettingsPath: path.join(stateDir, "desktop-settings.json"),
-    clientSettingsPath: path.join(stateDir, "client-settings.json"),
-    savedEnvironmentRegistryPath: path.join(stateDir, "saved-environments.json"),
-    serverSettingsPath: path.join(stateDir, "settings.json"),
-    logDir: path.join(stateDir, "logs"),
-    browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
+    dirs,
+    halC2Root: Option.fromUndefinedOr(storage.root),
+    storageProfile: storage.profile,
+    desktopSettingsPath: path.join(dirs.config, "desktop-settings.json"),
+    clientSettingsPath: path.join(dirs.config, "client-settings.json"),
+    savedEnvironmentRegistryPath: path.join(dirs.data, "saved-environments.json"),
+    serverSettingsPath: path.join(dirs.config, "settings.json"),
+    logDir: path.join(dirs.state, "logs"),
+    browserArtifactsDir: path.join(dirs.data, "browser-artifacts"),
     rootDir,
     appRoot,
     serverRoot,

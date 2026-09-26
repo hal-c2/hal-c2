@@ -1,5 +1,4 @@
 import { fromLenientJson } from "@hal-c2/shared/schemaJson";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
@@ -9,16 +8,11 @@ import {
   type LinuxPasswordStoreSwitch,
   type LinuxPasswordStorePreference,
 } from "../linuxSecretStorage.ts";
-import {
-  resolveDesktopBaseDir,
-  resolveDesktopStateDir,
-  type JoinPath,
-} from "./DesktopStatePaths.ts";
+import { resolveDesktopStorage } from "./DesktopStatePaths.ts";
 
 interface EarlyDesktopSettingsInput {
   readonly env: NodeJS.ProcessEnv;
   readonly homeDirectory: string;
-  readonly joinPath: JoinPath;
   readonly readFileString: (path: string) => string;
 }
 
@@ -49,24 +43,18 @@ const decodeEarlyDesktopSettingsJson = Schema.decodeSync(EarlyDesktopSettingsJso
 const isDevelopmentEnvironment = (env: NodeJS.ProcessEnv): boolean =>
   trimNonEmpty(env.VITE_DEV_SERVER_URL) !== null;
 
+// Pre-ready settings are only read on Linux, before Electron can report its platform.
 function resolveEarlyDesktopSettingsPath(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly homeDirectory: string;
-  readonly joinPath: JoinPath;
 }): string {
-  const halC2Home = Option.fromUndefinedOr(input.env.HAL_C2_HOME);
-  const baseDir = resolveDesktopBaseDir({
+  const { dirs } = resolveDesktopStorage({
+    env: input.env,
     homeDirectory: input.homeDirectory,
-    joinPath: input.joinPath,
-    halC2Home,
-  });
-  const stateDir = resolveDesktopStateDir({
-    baseDir,
+    platform: "linux",
     isDevelopment: isDevelopmentEnvironment(input.env),
-    joinPath: input.joinPath,
-    halC2Home,
   });
-  return input.joinPath(stateDir, "desktop-settings.json");
+  return `${dirs.config}/desktop-settings.json`;
 }
 
 export function resolveEarlyLinuxPasswordStorePreference(

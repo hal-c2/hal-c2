@@ -570,7 +570,11 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       mode: "desktop" as const,
       noBrowser: true,
       port: backendExposure.port,
-      halC2Home: environment.baseDir,
+      // Without an explicit root the server resolves the same XDG directories itself.
+      ...Option.match(environment.halC2Root, {
+        onNone: () => ({}),
+        onSome: (halC2Home) => ({ halC2Home }),
+      }),
       host: backendExposure.bindHost,
       desktopBootstrapToken: input.bootstrapToken,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
@@ -647,8 +651,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     mode: "desktop" as const,
     noBrowser: true,
     port: input.port,
-    // Omit halC2Home so the Linux backend uses its own home dir instead of
-    // the Windows-side baseDir (which would be a /mnt/c path and share
+    // Omit halC2Home so the Linux backend resolves its own XDG directories
+    // instead of a Windows-side root (which would be a /mnt/c path and share
     // the SQLite file with the primary).
     host: wslBindHost,
     desktopBootstrapToken: input.bootstrapToken,
@@ -745,8 +749,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   }
 
   // Build an explicit copy of process.env minus HAL_C2_HOME (dev-runner
-  // exports the Windows-side base dir for the primary; if it leaks into
-  // the WSL backend the Linux side ends up sharing C:\Users\...\.hal-c2 via
+  // exports the Windows-side root for the primary; if it leaks into
+  // the WSL backend the Linux side ends up sharing that root via
   // /mnt/c, which means both backends read/write the same database and
   // their env-ids collide).
   const parentEnvWithoutHalC2Home: Record<string, string | undefined> = {};
@@ -778,7 +782,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   };
 
   // Forward the dev-server URL as an explicit CLI flag so the WSL backend's
-  // config resolution lands in dev/ instead of userdata/. Inheriting through
+  // config resolution uses the hal-c2-dev profile. Inheriting through
   // WSLENV is unreliable in practice (URL-shaped values with colons /
   // slashes get translated unpredictably depending on flags), and the
   // packaged build leaves devServerUrl as None anyway.

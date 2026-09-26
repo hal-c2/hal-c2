@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off - tests use POSIX path joining to match the Linux startup boundary.
-import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 
 import {
@@ -8,15 +6,12 @@ import {
 } from "./DesktopEarlyElectronStartup.ts";
 
 describe("DesktopEarlyElectronStartup", () => {
-  const joinPath = NodePath.posix.join;
-
   it("reads the persisted linux password-store preference before Electron is ready", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
       env: { HAL_C2_HOME: "/home/user/.hal-c2-test" },
       homeDirectory: "/home/user",
-      joinPath,
       readFileString: (path) => {
-        assert.equal(path, "/home/user/.hal-c2-test/userdata/desktop-settings.json");
+        assert.equal(path, "/home/user/.hal-c2-test/config/desktop-settings.json");
         return JSON.stringify({ linuxPasswordStore: "kwallet6" });
       },
     });
@@ -28,7 +23,6 @@ describe("DesktopEarlyElectronStartup", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
       env: { HAL_C2_HOME: "/home/user/.hal-c2-test" },
       homeDirectory: "/home/user",
-      joinPath,
       readFileString: () => `{
         // manually edited setting
         "linuxPasswordStore": "gnome-libsecret",
@@ -42,7 +36,6 @@ describe("DesktopEarlyElectronStartup", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
       env: {},
       homeDirectory: "/home/user",
-      joinPath,
       readFileString: () => {
         throw new Error("missing");
       },
@@ -55,9 +48,42 @@ describe("DesktopEarlyElectronStartup", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
       env: { HAL_C2_HOME: "/" },
       homeDirectory: "/home/user",
-      joinPath,
       readFileString: (path) => {
-        assert.equal(path, "/userdata/desktop-settings.json");
+        assert.equal(path, "/config/desktop-settings.json");
+        return JSON.stringify({ linuxPasswordStore: "kwallet6" });
+      },
+    });
+
+    assert.equal(preference, "kwallet6");
+  });
+
+  it("reads desktop settings from XDG_CONFIG_HOME when it is absolute", () => {
+    const paths: string[] = [];
+    const read = (XDG_CONFIG_HOME: string) =>
+      resolveEarlyLinuxPasswordStorePreference({
+        env: { XDG_CONFIG_HOME },
+        homeDirectory: "/home/user",
+        readFileString: (path) => {
+          paths.push(path);
+          return "{}";
+        },
+      });
+
+    read("/xdg/config");
+    read("relative/config");
+
+    assert.deepEqual(paths, [
+      "/xdg/config/hal-c2/desktop-settings.json",
+      "/home/user/.config/hal-c2/desktop-settings.json",
+    ]);
+  });
+
+  it("never reads desktop settings from a legacy HAL_C2_HOME", () => {
+    const preference = resolveEarlyLinuxPasswordStorePreference({
+      env: { HAL_C2_HOME: "/home/user/.hal-c2" },
+      homeDirectory: "/home/user",
+      readFileString: (path) => {
+        assert.equal(path, "/home/user/.config/hal-c2/desktop-settings.json");
         return JSON.stringify({ linuxPasswordStore: "kwallet6" });
       },
     });
@@ -73,9 +99,8 @@ describe("DesktopEarlyElectronStartup", () => {
         VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
       },
       homeDirectory: "/home/user",
-      joinPath,
       readFileString: (path) => {
-        assert.equal(path, "/home/user/.hal-c2-test/userdata/desktop-settings.json");
+        assert.equal(path, "/home/user/.hal-c2-test/config/desktop-settings.json");
         return JSON.stringify({ linuxPasswordStore: "auto" });
       },
     });
@@ -88,15 +113,14 @@ describe("DesktopEarlyElectronStartup", () => {
     });
   });
 
-  it("keeps implicit development state under ~/.hal-c2/dev when HAL_C2_HOME is unset", () => {
+  it("keeps implicit development settings in the hal-c2-dev config dir when HAL_C2_HOME is unset", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
       env: {
         VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
       },
       homeDirectory: "/home/user",
-      joinPath,
       readFileString: (path) => {
-        assert.equal(path, "/home/user/.hal-c2/dev/desktop-settings.json");
+        assert.equal(path, "/home/user/.config/hal-c2-dev/desktop-settings.json");
         return JSON.stringify({ linuxPasswordStore: "kwallet" });
       },
     });
@@ -111,9 +135,8 @@ describe("DesktopEarlyElectronStartup", () => {
         VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
       },
       homeDirectory: "/home/user",
-      joinPath,
       readFileString: (path) => {
-        assert.equal(path, "/home/user/.hal-c2/dev/desktop-settings.json");
+        assert.equal(path, "/home/user/.config/hal-c2-dev/desktop-settings.json");
         return JSON.stringify({ linuxPasswordStore: "gnome-libsecret" });
       },
     });

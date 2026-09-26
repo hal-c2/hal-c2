@@ -85,7 +85,7 @@ function writeSettingsPatch(patch: typeof DesktopSettingsPatch.Type) {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const fileSystem = yield* FileSystem.FileSystem;
     const encoded = yield* encodeDesktopSettingsPatch(patch);
-    yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+    yield* fileSystem.makeDirectory(environment.dirs.config, { recursive: true });
     yield* fileSystem.writeFileString(environment.desktopSettingsPath, `${encoded}\n`);
   });
 }
@@ -234,7 +234,7 @@ describe("DesktopSettings", () => {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.makeDirectory(environment.dirs.config, { recursive: true });
         yield* fileSystem.writeFileString(environment.desktopSettingsPath, "{not-json");
 
         assert.deepEqual(yield* settings.load, DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS);
@@ -248,7 +248,7 @@ describe("DesktopSettings", () => {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.makeDirectory(environment.dirs.config, { recursive: true });
         yield* fileSystem.writeFileString(
           environment.desktopSettingsPath,
           `{
@@ -304,7 +304,7 @@ describe("DesktopSettings", () => {
           const environment = yield* DesktopEnvironment.DesktopEnvironment;
           const fileSystem = yield* FileSystem.FileSystem;
           const settings = yield* DesktopAppSettings.DesktopAppSettings;
-          yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+          yield* fileSystem.makeDirectory(environment.dirs.config, { recursive: true });
           yield* fileSystem.writeFileString(
             environment.desktopSettingsPath,
             `{

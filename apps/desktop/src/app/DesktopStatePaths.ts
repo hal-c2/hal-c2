@@ -1,32 +1,46 @@
-import * as Option from "effect/Option";
+import {
+  HAL_C2_APP_DIR,
+  HAL_C2_DEV_APP_DIR,
+  halC2HomeRoot,
+  resolveHalC2Dirs,
+  type HalC2Dirs,
+  type HalC2DirsEnvironment,
+  type HalC2Profile,
+} from "@hal-c2/shared/xdgDirs";
 
-export type JoinPath = (first: string, ...segments: string[]) => string;
-
-function normalizeConfiguredBaseDir(halC2Home: Option.Option<string>): Option.Option<string> {
-  if (Option.isNone(halC2Home)) {
-    return Option.none();
-  }
-  const trimmed = halC2Home.value.trim();
-  return trimmed.length > 0 ? Option.some(trimmed) : Option.none();
+export interface DesktopStorage {
+  /** Where each kind of file lives: config, data, state, cache and runtime. */
+  readonly dirs: HalC2Dirs;
+  /**
+   * The explicit `HAL_C2_HOME` root, or undefined when the desktop follows XDG.
+   * Only an explicit root is handed to the hosted server as its `--base-dir`.
+   */
+  readonly root: string | undefined;
+  /** `hal-c2-dev` for a development build without a root, so dev never shares state. */
+  readonly profile: HalC2Profile;
 }
 
-export function resolveDesktopBaseDir(input: {
+/** Resolves the desktop app's storage the same way the hosted server does. */
+export function resolveDesktopStorage(input: {
+  readonly env: HalC2DirsEnvironment;
   readonly homeDirectory: string;
-  readonly joinPath: JoinPath;
-  readonly halC2Home: Option.Option<string>;
-}): string {
-  return Option.getOrElse(normalizeConfiguredBaseDir(input.halC2Home), () =>
-    input.joinPath(input.homeDirectory, ".hal-c2"),
-  );
-}
-
-export function resolveDesktopStateDir(input: {
-  readonly baseDir: string;
+  readonly platform: NodeJS.Platform;
   readonly isDevelopment: boolean;
-  readonly joinPath: JoinPath;
-  readonly halC2Home: Option.Option<string>;
-}): string {
-  const useDevSubdir =
-    input.isDevelopment && Option.isNone(normalizeConfiguredBaseDir(input.halC2Home));
-  return input.joinPath(input.baseDir, useDevSubdir ? "dev" : "userdata");
+}): DesktopStorage {
+  const root = halC2HomeRoot({
+    env: input.env,
+    homeDir: input.homeDirectory,
+    platform: input.platform,
+  });
+  const profile = input.isDevelopment && root === undefined ? HAL_C2_DEV_APP_DIR : HAL_C2_APP_DIR;
+  return {
+    dirs: resolveHalC2Dirs({
+      env: input.env,
+      homeDir: input.homeDirectory,
+      platform: input.platform,
+      profile,
+    }),
+    root,
+    profile,
+  };
 }

@@ -36,7 +36,6 @@ export const resolveEarlyLinuxElectronOptionsFromProcess =
     DesktopEarlyElectronStartup.resolveEarlyLinuxElectronOptions({
       env: process.env,
       homeDirectory: NodeOS.homedir(),
-      joinPath: NodePath.posix.join,
       readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
     });
 

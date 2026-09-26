@@ -32,7 +32,7 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const makeDesktopClerkLayer = (isDevelopment = true, events: string[] = []) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
-    stateDir: "/tmp/hal-c2-state",
+    dirs: { data: "/tmp/hal-c2-state" },
     isDevelopment,
     appDataDirectory: "/tmp/app-data",
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);

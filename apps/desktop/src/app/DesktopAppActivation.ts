@@ -8,7 +8,7 @@ import {
   DesktopAppActivationRequest,
   type DesktopAppActivationResponse,
 } from "@hal-c2/contracts";
-import { resolveDesktopAppControlAddress } from "@hal-c2/shared/desktopAppControl";
+import { resolveDesktopAppControlSocket } from "@hal-c2/shared/desktopAppControlSocket";
 import { HostProcessUserId } from "@hal-c2/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -221,8 +221,11 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const userId = yield* HostProcessUserId;
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
-  const address = resolveDesktopAppControlAddress({
-    stateDir: path.resolve(desktopEnvironment.stateDir),
+  const address = resolveDesktopAppControlSocket({
+    dirs: {
+      state: path.resolve(desktopEnvironment.dirs.state),
+      runtime: path.resolve(desktopEnvironment.dirs.runtime),
+    },
     platform: desktopEnvironment.platform,
     tempDir: NodeOS.tmpdir(),
     userId,

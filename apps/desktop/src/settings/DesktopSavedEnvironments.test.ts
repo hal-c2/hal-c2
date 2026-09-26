@@ -47,7 +47,7 @@ const encodeSavedEnvironmentRegistryDocumentProbe = Schema.encodeEffect(
 const seedSavedEnvironmentRegistry = Effect.fn(function* (encryptedBearerToken?: string) {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
-  yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+  yield* fileSystem.makeDirectory(environment.dirs.data, { recursive: true });
   const encoded = yield* encodeSavedEnvironmentRegistryDocumentProbe({
     version: 1,
     records: [
@@ -172,7 +172,7 @@ describe("DesktopSavedEnvironments", () => {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
-        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.makeDirectory(environment.dirs.data, { recursive: true });
         yield* fileSystem.writeFileString(
           environment.savedEnvironmentRegistryPath,
           `{
@@ -300,7 +300,7 @@ describe("DesktopSavedEnvironments", () => {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
-        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.makeDirectory(environment.dirs.data, { recursive: true });
         yield* fileSystem.writeFileString(environment.savedEnvironmentRegistryPath, "{}\n");
 
         assert.deepEqual(yield* savedEnvironments.getRegistry, []);
@@ -317,7 +317,7 @@ describe("DesktopSavedEnvironments", () => {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
-        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.makeDirectory(environment.dirs.data, { recursive: true });
         yield* fileSystem.writeFileString(environment.savedEnvironmentRegistryPath, "{not-json");
 
         const registryError = yield* savedEnvironments.getRegistry.pipe(Effect.flip);
@@ -345,7 +345,7 @@ describe("DesktopSavedEnvironments", () => {
       const baseDir = yield* baseFileSystem.makeTempDirectoryScoped({
         prefix: "hal-c2-desktop-saved-environments-test-",
       });
-      const registryPath = path.join(baseDir, "userdata", "saved-environments.json");
+      const registryPath = path.join(baseDir, "data", "saved-environments.json");
       const permissionError = PlatformError.systemError({
         _tag: "PermissionDenied",
         module: "FileSystem",

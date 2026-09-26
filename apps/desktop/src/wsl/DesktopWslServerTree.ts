@@ -124,7 +124,7 @@ export const make = Effect.gen(function* () {
 
   const serverRoot = environment.serverRoot;
   const needsExtraction = environment.isPackaged && environment.platform === "win32";
-  const treeRoot = join(environment.stateDir, "wsl-server-tree");
+  const treeRoot = join(environment.dirs.cache, "wsl-server-tree");
   const version = environment.appVersion;
   const versionDir = join(treeRoot, version);
 

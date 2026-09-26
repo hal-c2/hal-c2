@@ -230,7 +230,7 @@ describe("DesktopClientSettings", () => {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopClientSettings.DesktopClientSettings;
-        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.makeDirectory(environment.dirs.config, { recursive: true });
         yield* fileSystem.writeFileString(
           environment.clientSettingsPath,
           `{
@@ -254,7 +254,7 @@ describe("DesktopClientSettings", () => {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopClientSettings.DesktopClientSettings;
-        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.makeDirectory(environment.dirs.config, { recursive: true });
         yield* fileSystem.writeFileString(
           environment.clientSettingsPath,
           `{
@@ -279,7 +279,7 @@ describe("DesktopClientSettings", () => {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopClientSettings.DesktopClientSettings;
-        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.makeDirectory(environment.dirs.config, { recursive: true });
         yield* fileSystem.writeFileString(environment.clientSettingsPath, "{}\n");
 
         assert.deepEqual(yield* settings.get, Option.some(yield* decodeClientSettingsJson("{}")));
@@ -298,7 +298,7 @@ describe("DesktopClientSettings", () => {
           const environment = yield* DesktopEnvironment.DesktopEnvironment;
           const fileSystem = yield* FileSystem.FileSystem;
           const settings = yield* DesktopClientSettings.DesktopClientSettings;
-          yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+          yield* fileSystem.makeDirectory(environment.dirs.config, { recursive: true });
           yield* fileSystem.writeFileString(environment.clientSettingsPath, document.contents);
 
           const error = yield* settings.get.pipe(Effect.flip);

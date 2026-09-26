@@ -52,6 +52,7 @@ import * as DesktopClientSettings from "./settings/DesktopClientSettings.ts";
 import * as DesktopSavedEnvironments from "./settings/DesktopSavedEnvironments.ts";
 import * as DesktopSnapShot from "./snapShot/DesktopSnapShot.ts";
 import * as DesktopAppSettings from "./settings/DesktopAppSettings.ts";
+import * as DesktopLegacyHomeMigration from "./app/DesktopLegacyHomeMigration.ts";
 import * as DesktopPreReadyPlatform from "./app/DesktopPreReadyPlatform.ts";
 import * as DesktopShellEnvironment from "./shell/DesktopShellEnvironment.ts";
 import * as DesktopSshEnvironment from "./ssh/DesktopSshEnvironment.ts";
@@ -218,10 +219,17 @@ const desktopApplicationRuntimeLayer = desktopApplicationLayer.pipe(
 );
 
 // Acquire strict pre-ready setup before Clerk, whose userData resolution can
-// yield and let Electron emit ready.
+// yield and let Electron emit ready. A legacy home is migrated once Clerk holds
+// the single-instance lock and before any application service reads settings;
+// startup re-reads the Linux password store after it.
 const desktopRuntimeLayer = desktopClerkLayer.pipe(
   Layer.flatMap((clerkContext) =>
-    desktopApplicationRuntimeLayer.pipe(Layer.provideMerge(Layer.succeedContext(clerkContext))),
+    desktopApplicationRuntimeLayer.pipe(
+      Layer.provideMerge(Layer.succeedContext(clerkContext)),
+      Layer.provide(
+        DesktopLegacyHomeMigration.layer.pipe(Layer.provide(Layer.succeedContext(clerkContext))),
+      ),
+    ),
   ),
   Layer.provideMerge(DesktopPreReadyPlatform.layer),
 );

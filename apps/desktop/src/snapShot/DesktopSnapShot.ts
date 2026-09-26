@@ -725,7 +725,7 @@ export const make = Effect.gen(function* () {
     DesktopEnvironment.DesktopEnvironment | DesktopWindow.DesktopWindow
   >();
   const runPromise = Effect.runPromiseWith(context);
-  const captureDirectory = path.join(environment.stateDir, "snap-shots");
+  const captureDirectory = path.join(environment.dirs.data, "snap-shots");
   const linuxAppId = environment.linuxDesktopEntryName.replace(/\.desktop$/, "");
   let shortcutVerified = false;
   const gnomeSetupPaths = {

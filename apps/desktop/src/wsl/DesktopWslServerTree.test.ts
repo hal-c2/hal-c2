@@ -22,17 +22,28 @@ const environmentLayer = (input: {
   readonly appVersion?: string;
   readonly isPackaged?: boolean;
 }) =>
-  DesktopEnvironment.layer({
-    dirname: "/repo/apps/desktop/src",
-    homeDirectory: input.baseDir,
-    platform: "win32",
-    processArch: "x64",
-    appVersion: input.appVersion ?? "1.2.3",
-    appPath: "/repo",
-    isPackaged: input.isPackaged ?? true,
-    resourcesPath: input.resourcesPath,
-    runningUnderArm64Translation: false,
-  }).pipe(
+  Layer.effect(
+    DesktopEnvironment.DesktopEnvironment,
+    // The service only extracts on Windows, but these tests run on the host's
+    // filesystem, so keep the Windows-resolved cache dir as a host path.
+    Effect.map(Effect.service(DesktopEnvironment.DesktopEnvironment), (environment) => ({
+      ...environment,
+      dirs: { ...environment.dirs, cache: environment.path.join(input.baseDir, "cache") },
+    })),
+  ).pipe(
+    Layer.provide(
+      DesktopEnvironment.layer({
+        dirname: "/repo/apps/desktop/src",
+        homeDirectory: input.baseDir,
+        platform: "win32",
+        processArch: "x64",
+        appVersion: input.appVersion ?? "1.2.3",
+        appPath: "/repo",
+        isPackaged: input.isPackaged ?? true,
+        resourcesPath: input.resourcesPath,
+        runningUnderArm64Translation: false,
+      }),
+    ),
     Layer.provide(
       Layer.mergeAll(
         NodeServices.layer,
@@ -243,9 +254,8 @@ describe("DesktopWslServerTree", () => {
         });
         yield* fileSystem.writeFileString(path.join(serverRoot, "apps/server/dist/bin.mjs"), "x");
 
-        // HAL_C2_HOME is set to tempDir, so the desktop state dir resolves to
-        // <tempDir>/userdata (no .hal-c2 segment).
-        const treeRoot = path.join(tempDir, "userdata", "wsl-server-tree");
+        // HAL_C2_HOME is set to tempDir, so the tree lives in <tempDir>/cache.
+        const treeRoot = path.join(tempDir, "cache", "wsl-server-tree");
         yield* fileSystem.makeDirectory(path.join(treeRoot, "1.0.0"), { recursive: true });
         yield* fileSystem.makeDirectory(path.join(treeRoot, "1.2.3.partial"), { recursive: true });
 
@@ -303,7 +313,7 @@ describe("DesktopWslServerTree", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const resourcesPath = path.join(tempDir, "resources");
-        const treeRoot = path.join(tempDir, "userdata", "wsl-server-tree");
+        const treeRoot = path.join(tempDir, "cache", "wsl-server-tree");
         yield* fileSystem.makeDirectory(path.join(treeRoot, "1.2.3"), { recursive: true });
         yield* fileSystem.writeFileString(path.join(treeRoot, "1.2.3", "legacy"), "old");
 
@@ -399,7 +409,7 @@ describe("DesktopWslServerTree", () => {
           assert.include(result.reason, "could not be extracted");
           assert.isFalse(result.fatal);
         }
-        const treeRoot = path.join(tempDir, "userdata", "wsl-server-tree");
+        const treeRoot = path.join(tempDir, "cache", "wsl-server-tree");
         const leftovers = yield* fileSystem
           .readDirectory(treeRoot)
           .pipe(Effect.orElseSucceed(() => []));
