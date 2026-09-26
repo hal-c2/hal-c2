@@ -1040,6 +1040,33 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     context
   end
 
+  step "{string} runs on an agent whose provider cannot carry its session",
+       %{args: [title]} = context do
+    HalC2.Steps.Providers.PortableSessions.run_handed_over(context, title, "Grok")
+  end
+
+  step "a new agent session starts on {string}", %{args: [machine]} = context do
+    dir = HalC2.Steps.Providers.PortableSessions.acp_dir(context, machine)
+
+    methods =
+      for line <-
+            dir |> Path.join("acp-trace.jsonl") |> File.read!() |> String.split("\n", trim: true),
+          %{"in" => %{"method" => method}} <- [JSON.decode!(line)],
+          do: method
+
+    assert "session/new" in methods
+    refute Enum.any?(methods, &(&1 in ~w(session/load session/resume)))
+    context
+  end
+
+  step "the agent receives the trimmed account of the conversation that a handoff gives",
+       context do
+    assert context.remote_prompt =~ @history_start
+    assert context.remote_prompt =~ "write run-1.txt"
+    assert context.remote_prompt =~ "Carry on"
+    context
+  end
+
   step "the user sends a message in {string}", %{args: [title]} = context do
     prompt =
       remote_turn(context, context.move_to, World.thread_id(context, title), "Carry on")
@@ -1855,8 +1882,22 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
   end
 
   # Sends a message to a thread on a cluster member and returns what its agent was given.
+  # Sends `text` on `machine` with the thread's agent (Codex unless it runs on a fake
+  # ACP agent) and returns the prompt that agent was given.
   defp remote_turn(context, machine, id, text) do
     node = Machines.node_of(context, machine)
+
+    {selection, inputs} =
+      case context[:handoff] do
+        %{selection: selection} ->
+          dir = HalC2.Steps.Providers.PortableSessions.acp_dir(context, machine)
+          {selection, Path.join(dir, "acp-inputs.jsonl")}
+
+        nil ->
+          {%{"instanceId" => "codex", "model" => "gpt-5.4"},
+           Path.join(Machines.home(context, machine), "codex-inputs.jsonl")}
+      end
+
     :ok = :erpc.call(node, HalC2.Streams, :subscribe, [id, self(), nil])
     finished = length(finished_runs(context, machine, id))
 
@@ -1869,7 +1910,7 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
           "messageId" => "msg-#{System.unique_integer([:positive])}",
           "text" => text,
           "attachments" => [],
-          "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+          "modelSelection" => selection,
           "dispatchMode" => %{"type" => "start_immediately"},
           "createdBy" => "user",
           "creationSource" => "web"
@@ -1877,9 +1918,12 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
       ])
 
     await_remote_run(context, machine, id, finished)
-    inputs = Path.join(Machines.home(context, machine), "codex-inputs.jsonl")
     [input | _] = inputs |> File.read!() |> String.split("\n", trim: true) |> Enum.reverse()
-    input |> JSON.decode!() |> Enum.map_join("\n", &(&1["text"] || ""))
+
+    case JSON.decode!(input) do
+      text when is_binary(text) -> text
+      parts -> Enum.map_join(parts, "\n", &(&1["text"] || ""))
+    end
   end
 
   defp finished_runs(context, machine, id) do

@@ -209,7 +209,7 @@ Feature: Moving a thread and its agent to another machine
       Then the agent on "desktop" continues its own session from "laptop"
       And it receives no transcript of the earlier conversation
 
-    @backlog @node
+    @node
     Scenario: An agent whose session cannot be carried gets the conversation handed over
       Given "Alpha" runs on an agent whose provider cannot carry its session
       When "Alpha" moves to "desktop"

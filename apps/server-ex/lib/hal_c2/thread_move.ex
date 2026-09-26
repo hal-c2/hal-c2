@@ -744,6 +744,7 @@ defmodule HalC2.ThreadMove do
   @doc "A provider instance's name, as the user knows it."
   def provider_name(instance) do
     @names[instance] ||
+      if(HalC2.Acp.agent?(instance), do: HalC2.Acp.label(instance)) ||
       Enum.find_value(HalC2.Environment.providers(), instance, fn entry ->
         if entry["instanceId"] == instance, do: entry["displayName"] || @names[entry["driver"]]
       end)

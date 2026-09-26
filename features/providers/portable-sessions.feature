@@ -91,7 +91,7 @@ Feature: Carrying an agent's own session to another machine
       | provider    | where it lives                                                     | where the copy goes                                           | resumes                              |
       | Antigravity | the profile HAL-C2 keeps for that Antigravity instance on "laptop" | the profile of the matching Antigravity instance on "desktop" | resumes the copy by the session's id |
 
-  @backlog @node
+  @node
   Scenario Outline: A provider whose session cannot be carried hands the conversation over
     Given "Alpha" runs on <provider> with a native session on "laptop"
     When "Alpha" moves to "desktop"

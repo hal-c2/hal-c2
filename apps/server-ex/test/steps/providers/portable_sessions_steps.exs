@@ -16,6 +16,12 @@ defmodule HalC2.Steps.Providers.PortableSessions do
   @repository "acme/shop"
   @history "<conversation_history>"
   @drivers %{"Claude" => "claudeAgent", "Codex" => "codex", "Pi" => "pi"}
+  # Agents whose sessions are not carried: `{instance, registry agent id}`.
+  @handoffs %{
+    "Cursor" => {"cursor", nil},
+    "Grok" => {"grok", nil},
+    "a registry ACP agent" => {"acme-agent", "acme-agent"}
+  }
   @selections %{
     "claudeAgent" => %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-6"},
     "codex" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
@@ -62,10 +68,13 @@ defmodule HalC2.Steps.Providers.PortableSessions do
     run_natively(context, title, "Codex")
   end
 
-  step ~r/^"(?<title>[^"]+)" runs on (?<provider>Claude|Codex|Pi) with a native session on "(?<machine>[^"]+)"(?: in the default home)?$/,
+  step ~r/^"(?<title>[^"]+)" runs on (?<provider>Claude|Codex|Pi|Cursor|Grok|a registry ACP agent) with a native session on "(?<machine>[^"]+)"(?: in the default home)?$/,
        %{args: [title, provider, machine]} = context do
     assert Machines.machine(context, machine) == :local
-    run_natively(context, title, provider)
+
+    if Map.has_key?(@handoffs, provider),
+      do: run_handed_over(context, title, provider),
+      else: run_natively(context, title, provider)
   end
 
   step ~r/^(?<provider>Claude|Codex|Pi) keeps that session in (?<where>.+)$/,
@@ -122,6 +131,60 @@ defmodule HalC2.Steps.Providers.PortableSessions do
   end
 
   # --- recorded working directories --------------------------------------------------
+
+  step "no session is copied to {string}", %{args: [machine]} = context do
+    assert %{"sessionCarried" => false} = move_result(context)
+    id = World.thread_id(context, context.moved_title)
+
+    for pt <- Machines.on(context, machine, Machines, :entities, [id, "provider-thread"]),
+        do: assert(pt["carriedSession"] == nil and pt["nativeThreadRef"] == nil)
+
+    context
+  end
+
+  step ~r/^on the next message a new (?<provider>.+) session starts on "(?<machine>[^"]+)" with the handoff$/,
+       %{args: [_provider, machine]} = context do
+    %{instance: instance, selection: selection} = context.handoff
+    id = World.thread_id(context, context.moved_title)
+    dir = acp_dir(context, machine)
+
+    assert %{"status" => "completed"} =
+             Machines.on(context, machine, Machines, :send_message, [id, "Carry on", selection])
+
+    [prompt | _] =
+      Path.join(dir, "acp-inputs.jsonl")
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.reverse()
+
+    prompt = JSON.decode!(prompt)
+    assert prompt =~ @history
+    assert prompt =~ "write run-1.txt"
+    assert prompt =~ "Carry on"
+
+    methods =
+      for line <-
+            Path.join(dir, "acp-trace.jsonl") |> File.read!() |> String.split("\n", trim: true),
+          %{"in" => %{"method" => method}} <- [JSON.decode!(line)],
+          do: method
+
+    assert "session/new" in methods, "#{instance} on #{machine} started no session"
+    refute Enum.any?(methods, &(&1 in ~w(session/load session/resume)))
+    context
+  end
+
+  step ~r/^the user was told before the move that (?<provider>.+) will get a summary of the conversation$/,
+       %{args: [provider]} = context do
+    name = if provider == "a registry ACP agent", do: "acme-agent", else: provider
+
+    assert Enum.any?(
+             context[:confirmation] || [],
+             &(&1 =~ name and &1 =~ "will get a summary of the conversation")
+           ),
+           "not told: #{inspect(context[:confirmation])}"
+
+    context
+  end
 
   step ~r/^"(?<title>[^"]+)" runs on (?<provider>Claude|Codex|Pi) and its session records "(?<path>[^"]+)" as (?<record>.+)$/,
        %{args: [title, provider, path, _record]} = context do
@@ -402,6 +465,45 @@ defmodule HalC2.Steps.Providers.PortableSessions do
       }
     })
   end
+
+  @doc """
+  Runs a turn on an agent whose session stays where it is: the fake ACP agent is that
+  agent on every machine, logging under `acp_dir/2`.
+  """
+  def run_handed_over(context, title, provider) do
+    {instance, agent_id} = @handoffs[provider]
+    HalC2.Test.FakeAcp.services()
+    World.put_app_env(:acp_commands, Application.get_env(:hal_c2, :acp_commands, %{}))
+
+    ExUnit.Callbacks.on_exit(fn ->
+      HalC2.Acp.forget(instance)
+      if agent_id, do: :persistent_term.erase({HalC2.Acp.Catalog, :index})
+    end)
+
+    for {label, _machine} <- context.machines,
+        do:
+          Machines.on(context, label, Machines, :install_acp, [
+            acp_dir(context, label),
+            instance,
+            agent_id
+          ])
+
+    selection = %{"instanceId" => instance, "model" => "fake/one"}
+    context = World.patch_thread(context, title, %{"modelSelection" => selection})
+    assert %{"status" => "completed"} = World.finish_turn(context, title, "write run-1.txt")
+
+    Map.merge(context, %{moved_title: title, handoff: %{instance: instance, selection: selection}})
+  end
+
+  def acp_dir(context, machine) do
+    case Machines.machine(context, machine) do
+      :local -> Path.join([context.node.home, "tmp", "fake-acp"])
+      %{home: home} -> Path.join(home, "fake-acp")
+    end
+  end
+
+  defp move_result(%{move: {:ok, %{"status" => "moved"} = result}}), do: result
+  defp move_result(context), do: flunk("not moved: #{inspect(context[:move])}")
 
   # Pi is the scripted fake Pi on every machine; Claude and Codex are always there.
   defp setup_provider(context, "pi") do

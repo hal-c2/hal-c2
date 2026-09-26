@@ -290,6 +290,53 @@ defmodule HalC2.Test.Machines do
     end)
   end
 
+  @doc """
+  Makes the fake ACP agent (`fake_acp.py`) this node's `instance`, enabled, with each
+  prompt it is sent logged to `acp-inputs.jsonl` and every message to
+  `acp-trace.jsonl` in `dir`. With `agent_id` the
+  instance is an ACP registry agent's.
+  """
+  def install_acp(dir, instance, agent_id \\ nil) do
+    File.mkdir_p!(dir)
+
+    command = [
+      "env",
+      "FAKE_ACP_INPUT_LOG=" <> Path.join(dir, "acp-inputs.jsonl"),
+      "FAKE_ACP_TRACE=" <> Path.join(dir, "acp-trace.jsonl"),
+      "python3",
+      "-u",
+      Path.join(@support, "fake_acp.py")
+    ]
+
+    commands = Application.get_env(:hal_c2, :acp_commands, %{})
+    Application.put_env(:hal_c2, :acp_commands, Map.put(commands, instance, command))
+    HalC2.Acp.forget(instance)
+
+    # The registry lists the agent, as if it had been fetched just now.
+    if agent_id do
+      agent = %{"id" => agent_id, "name" => agent_id, "version" => "1.0.0", "distribution" => %{}}
+      now = System.system_time(:millisecond)
+      :persistent_term.put({HalC2.Acp.Catalog, :index}, {now, [agent]})
+    end
+
+    put_settings(fn settings ->
+      if agent_id do
+        entry = %{
+          "driver" => "acpRegistry",
+          "enabled" => true,
+          "config" => %{"agentId" => agent_id}
+        }
+
+        instances = Map.put(settings["providerInstances"] || %{}, instance, entry)
+        Map.put(settings, "providerInstances", instances)
+      else
+        put_in(settings, [Access.key("providers", %{}), Access.key(instance, %{})], %{
+          "enabled" => true
+        })
+      end
+    end)
+  end
+
   @doc "Sets the variable `name` on the provider instance `instance` (a built-in one) here."
   def put_instance_env(instance, name, value) do
     put_settings(fn settings ->
