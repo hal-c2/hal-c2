@@ -68,7 +68,12 @@ defmodule HalC2.Shell do
     stored = HalC2.Store.list_shell(path)
     :ets.insert(@table, for({id, kind, row} <- stored, do: {{node(), id}, {kind, row}}))
     :ets.insert(@nodes, {node(), HalC2.Environment.descriptor()})
-    for peer <- Node.list(), do: push_all(peer)
+    # Peers already connected (this shell restarted) send theirs back, as on nodeup.
+    for peer <- Node.list() do
+      push_all(peer)
+      GenServer.cast({__MODULE__, peer}, {:peer_hello, node()})
+    end
+
     backfill(path, MapSet.new(stored, &elem(&1, 0)))
     {:ok, %{subscribers: %{}, online: MapSet.new([node() | Node.list()])}}
   end
@@ -99,6 +104,11 @@ defmodule HalC2.Shell do
   def handle_cast({:peer_environment, peer, descriptor}, state) do
     :ets.insert(@nodes, {peer, descriptor})
     notify(state, {:environment, peer, descriptor})
+    {:noreply, state}
+  end
+
+  def handle_cast({:peer_hello, peer}, state) do
+    push_all(peer)
     {:noreply, state}
   end
 
