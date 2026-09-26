@@ -7,7 +7,7 @@ group = 'io.github.halc2.agentnotifications'
 version = '0.0.0'
 
 android {
-  namespace 'expo.modules.halc2agentnotifications'
+  namespace 'expo.modules.hal_c2_agentnotifications'
   defaultConfig {
     versionCode 1
     versionName '0.0.0'

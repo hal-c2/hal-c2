@@ -4,7 +4,7 @@ import {
   hasSpecificPierreIconForFileName,
   resolvePierreIconForEntry,
   syntheticFileNameForLanguageId,
-  HALC2_PIERRE_ICONS,
+  HAL_C2_PIERRE_ICONS,
 } from "./pierre-icons";
 
 describe("Pierre file icons", () => {
@@ -41,10 +41,10 @@ describe("Pierre file icons", () => {
 
   it("ships every custom icon referenced by the extended resolver", () => {
     const customIconNames = new Set(
-      Object.values(HALC2_PIERRE_ICONS.byFileName).filter((name) => name.startsWith("hal-c2-")),
+      Object.values(HAL_C2_PIERRE_ICONS.byFileName).filter((name) => name.startsWith("hal-c2-")),
     );
     for (const iconName of customIconNames) {
-      assert.include(HALC2_PIERRE_ICONS.spriteSheet, `id="${iconName}"`);
+      assert.include(HAL_C2_PIERRE_ICONS.spriteSheet, `id="${iconName}"`);
     }
   });
 

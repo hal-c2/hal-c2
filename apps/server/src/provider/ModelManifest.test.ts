@@ -556,7 +556,7 @@ it.effect("caches valid compatibility policies and keeps them after a malformed 
     compatibility: [
       {
         driver: "codex",
-        halc2Range: ">=0.0.42",
+        halC2Range: ">=0.0.42",
         recommendedVersion: "2.0.0",
         ranges: [{ range: "=2.0.0", status: "supported" }],
       },

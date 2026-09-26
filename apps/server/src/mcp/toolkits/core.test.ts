@@ -33,7 +33,7 @@ import {
   resolveHalC2McpToolDefinition,
   resolveHalC2McpToolPresentation,
   resolveHalC2McpToolSummaryAction,
-} from "@hal-c2/shared/halc2McpToolPresentation";
+} from "@hal-c2/shared/halC2McpToolPresentation";
 
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 
@@ -71,8 +71,8 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
       }
     }
   }
-  expect(names.has("halc2_thread_launch")).toBe(true);
-  expect(names.has("halc2_thread_start")).toBe(false);
+  expect(names.has("hal_c2_thread_launch")).toBe(true);
+  expect(names.has("hal_c2_thread_start")).toBe(false);
 });
 
 const threadId = ThreadId.make("mcp-core-thread");
@@ -100,9 +100,9 @@ const client = McpSchema.McpServerClient.of({
 it.effect("checks capability before accessing services through the production registration", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    expect(server.tools.some(({ tool }) => tool.name === "halc2_thread_organize")).toBe(true);
+    expect(server.tools.some(({ tool }) => tool.name === "hal_c2_thread_organize")).toBe(true);
     const result = yield* server
-      .callTool({ name: "halc2_thread_organize", arguments: { action: "pin" } })
+      .callTool({ name: "hal_c2_thread_organize", arguments: { action: "pin" } })
       .pipe(
         Effect.provideService(McpInvocationContext, { ...scope, capabilities: new Set<never>() }),
         Effect.provideService(McpSchema.McpServerClient, client),
@@ -123,7 +123,7 @@ it.effect("returns a bounded public failure without serializing storage causes",
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     const result = yield* server
-      .callTool({ name: "halc2_thread_organize", arguments: { action: "pin" } })
+      .callTool({ name: "hal_c2_thread_organize", arguments: { action: "pin" } })
       .pipe(
         Effect.provideService(McpInvocationContext, scope),
         Effect.provideService(McpSchema.McpServerClient, client),

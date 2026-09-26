@@ -13,7 +13,7 @@ afterEach(() => {
 it("leaves ordinary browsers and coordinated primary/embed clients on existing keys", () => {
   expect(appViewStorageKey("hal-c2:composer-drafts:v1")).toBe("hal-c2:composer-drafts:v1");
   for (const surfaceId of ["primary", "panel"]) {
-    vi.stubGlobal("window", { halc2Shell: { surfaceId } });
+    vi.stubGlobal("window", { halC2Shell: { surfaceId } });
     expect(appViewStorageKey("hal-c2:composer-drafts:v1")).toBe("hal-c2:composer-drafts:v1");
   }
 });
@@ -30,7 +30,7 @@ it("restores each independent client's actual draft and panel stores without ove
       "window",
       Object.assign(new EventTarget(), {
         localStorage: storage,
-        __halc2AppViewStorageId: id,
+        __halC2AppViewStorageId: id,
       }),
     );
     vi.stubGlobal("localStorage", storage);

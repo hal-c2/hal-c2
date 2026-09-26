@@ -36,7 +36,7 @@ export function ShellEmbedRouteBridge({
 }) {
   const navigate = useNavigate();
   useEffect(() => {
-    const shell = window.halc2Shell;
+    const shell = window.halC2Shell;
     if (!shell) return;
     let disposed = false;
     let unsubscribe: (() => void) | null = null;
@@ -71,7 +71,7 @@ export function ShellEmbedRouteBridge({
 
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   useEffect(() => {
-    const shell = window.halc2Shell;
+    const shell = window.halC2Shell;
     if (!shell) return;
     // Bubble phase: this document's own handlers (ChatView's, the terminal's)
     // have had the key by now and prevented what they consumed.

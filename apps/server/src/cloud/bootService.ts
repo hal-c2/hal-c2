@@ -42,7 +42,7 @@ const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 // (io.github.halc2.app), so launchd and TCC records never collide.
 const BOOT_SERVICE_LAUNCHD_LABEL = "io.github.halc2.service";
 const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
-const BOOT_SERVICE_UNIT_ENV = "HALC2_BOOT_SERVICE_UNIT";
+const BOOT_SERVICE_UNIT_ENV = "HAL_C2_BOOT_SERVICE_UNIT";
 
 /** systemd expands `%` specifiers, including in unquoted append-log paths. */
 function escapeSystemdSpecifiers(value: string): string {
@@ -57,12 +57,12 @@ function quoteSystemdValue(value: string): string {
 }
 
 /**
- * Reads `HALC2_HOME` back out of a rendered unit or plist. Only values this
+ * Reads `HAL_C2_HOME` back out of a rendered unit or plist. Only values this
  * file writes are expected, so a quoted systemd value is unquoted and
  * unescaped the same way `quoteSystemdValue` produced it.
  */
 export function bootServiceBaseDirOf(contents: string): string | undefined {
-  const systemd = /^Environment=HALC2_HOME=(.*)$/m.exec(contents)?.[1];
+  const systemd = /^Environment=HAL_C2_HOME=(.*)$/m.exec(contents)?.[1];
   if (systemd !== undefined) {
     const raw = systemd.trim();
     const unquoted =
@@ -71,7 +71,7 @@ export function bootServiceBaseDirOf(contents: string): string | undefined {
         : raw;
     return unquoted.replaceAll("%%", "%");
   }
-  const plist = /<key>HALC2_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
+  const plist = /<key>HAL_C2_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
   if (plist !== undefined) {
     return plist.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
   }
@@ -103,7 +103,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "[Service]",
     "Type=simple",
     "WorkingDirectory=%h",
-    `Environment=HALC2_HOME=${quoteSystemdValue(plan.baseDir)}`,
+    `Environment=HAL_C2_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark an explicit stop before it signals the server.
@@ -162,7 +162,7 @@ export function renderBootServicePlist(
     `  <dict>`,
     `    <key>PATH</key>`,
     `    <string>${escapeXmlText(options.environmentPath)}</string>`,
-    `    <key>HALC2_HOME</key>`,
+    `    <key>HAL_C2_HOME</key>`,
     `    <string>${escapeXmlText(plan.baseDir)}</string>`,
     `    <key>${BOOT_SERVICE_UNIT_ENV}</key>`,
     `    <string>${BOOT_SERVICE_PLIST_FILE}</string>`,

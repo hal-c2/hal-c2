@@ -1031,7 +1031,7 @@ export function makeV3Session(input: {
       readonly providerInstanceMutation?: ProviderInstanceMutation;
     }) =>
       Effect.gen(function* () {
-        const current = (yield* nodeCall("halc2.readSettings", {})) as {
+        const current = (yield* nodeCall("hal-c2.readSettings", {})) as {
           readonly settings: unknown;
           readonly version: number;
         };
@@ -1049,7 +1049,7 @@ export function makeV3Session(input: {
         }
         const patched = applyServerSettingsPatch(settings, request.patch);
         const next = mutation === undefined ? patched : withProviderInstance(patched, mutation);
-        yield* nodeCall("halc2.writeSettings", {
+        yield* nodeCall("hal-c2.writeSettings", {
           settings: yield* encodeSettings(next),
           version: current.version,
         });
@@ -1066,7 +1066,7 @@ export function makeV3Session(input: {
     const threadProjection = (request: { readonly threadId: ThreadId }) => {
       const failure = (message: string, cause?: unknown) =>
         new OrchestrationV2GetThreadProjectionError({ threadId: request.threadId, message, cause });
-      return nodeCall("halc2.threadRows", { threadId: request.threadId }).pipe(
+      return nodeCall("hal-c2.threadRows", { threadId: request.threadId }).pipe(
         Effect.mapError((cause) => failure(cause.message, cause)),
         Effect.flatMap((result) => {
           const { rows, offset, at } = result as {
@@ -1103,8 +1103,8 @@ export function makeV3Session(input: {
       [WS_METHODS.providerUploadFeedback]: uploadFeedback,
       [WS_METHODS.serverUpdateServer]: updateServer,
       [WS_METHODS.serverUpdateServerWithProgress]: updateServerWithProgress,
-      [WS_METHODS.serverUpsertKeybinding]: keybindingCommand("halc2.upsertKeybinding"),
-      [WS_METHODS.serverRemoveKeybinding]: keybindingCommand("halc2.removeKeybinding"),
+      [WS_METHODS.serverUpsertKeybinding]: keybindingCommand("hal-c2.upsertKeybinding"),
+      [WS_METHODS.serverRemoveKeybinding]: keybindingCommand("hal-c2.removeKeybinding"),
       [WS_METHODS.shellOpenInEditor]: openInEditor,
       [WS_METHODS.scheduledTasksSubscribe]: scheduledTasks,
       [WS_METHODS.serverDiscoverSourceControl]: forward(

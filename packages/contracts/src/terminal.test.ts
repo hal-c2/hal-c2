@@ -119,13 +119,13 @@ describe("TerminalOpenInput", () => {
       cols: 100,
       rows: 24,
       env: {
-        HALC2_PROJECT_ROOT: "/tmp/project",
+        HAL_C2_PROJECT_ROOT: "/tmp/project",
         CUSTOM_FLAG: "1",
       },
       providerInstanceId: "codex_work",
     });
     expect(parsed.env).toMatchObject({
-      HALC2_PROJECT_ROOT: "/tmp/project",
+      HAL_C2_PROJECT_ROOT: "/tmp/project",
       CUSTOM_FLAG: "1",
     });
     expect(parsed.worktreePath).toBe("/tmp/project/.hal-c2/worktrees/feature-a");

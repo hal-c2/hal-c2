@@ -86,7 +86,7 @@ defmodule HalC2.PullRequests.Sync do
 
   # A link that appears unsynced is read at once; one that stays unsynced waits for
   # the sweep, so a pull request the host cannot answer for is not asked every row.
-  def handle_info({:halc2_shell, {:rows, node, rows}}, state) when node == node() do
+  def handle_info({:hal_c2_shell, {:rows, node, rows}}, state) when node == node() do
     {unsynced, keys} =
       for {id, {"thread", row}} <- rows, reduce: {state.unsynced, []} do
         {unsynced, keys} ->

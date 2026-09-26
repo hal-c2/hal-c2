@@ -740,7 +740,7 @@ defmodule HalC2.Steps.Parity.Commands do
       state
     else
       receive do
-        {:halc2_stream, ^tid, _} -> await_state(tid, fun, deadline)
+        {:hal_c2_stream, ^tid, _} -> await_state(tid, fun, deadline)
       after
         max(deadline - System.monotonic_time(:millisecond), 0) ->
           flunk("#{tid} never got there: #{inspect(Enum.map(runs(state), & &1["status"]))}")

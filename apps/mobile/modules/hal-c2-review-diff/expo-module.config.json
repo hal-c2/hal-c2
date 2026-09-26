@@ -5,6 +5,6 @@
     "podspecPath": "HalC2ReviewDiffNative.podspec"
   },
   "android": {
-    "modules": ["expo.modules.halc2reviewdiff.HalC2ReviewDiffModule"]
+    "modules": ["expo.modules.hal_c2_reviewdiff.HalC2ReviewDiffModule"]
   }
 }

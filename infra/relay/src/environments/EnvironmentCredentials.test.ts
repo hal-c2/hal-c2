@@ -57,7 +57,7 @@ describe("EnvironmentCredentials", () => {
 
   it.effect("does not retain credential tokens when lookup persistence fails", () => {
     const cause = new Error("database unavailable");
-    const token = "halc2env_sensitive-credential-token";
+    const token = "hal_c2_env_sensitive-credential-token";
     const whereConditions: Array<unknown> = [];
     const fakeDb = {
       select: () => ({
@@ -148,9 +148,9 @@ describe("EnvironmentCredentials", () => {
           environmentId: "env_test",
           environmentPublicKey: "environment-public-key",
         });
-        const [, credentialId, secret] = token.split("_");
+        const [credentialId, secret] = token.slice("hal_c2_env_".length).split("_");
 
-        expect(token).toMatch(/^halc2env_[0-9a-f]{64}_[0-9a-f]{96}$/);
+        expect(token).toMatch(/^hal_c2_env_[0-9a-f]{64}_[0-9a-f]{96}$/);
         expect(credentialId).toHaveLength(64);
         expect(secret).toHaveLength(96);
         expect(insertedValues).toHaveLength(1);

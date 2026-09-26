@@ -49,7 +49,7 @@ const watchedDirectories = [
 const forcedShutdownTimeoutMs = 1_500;
 const restartDebounceMs = 120;
 const childTreeGracePeriodMs = 1_200;
-const remoteDebuggingPort = process.env.HALC2_DESKTOP_REMOTE_DEBUGGING_PORT?.trim();
+const remoteDebuggingPort = process.env.HAL_C2_DESKTOP_REMOTE_DEBUGGING_PORT?.trim();
 // oxlint-disable-next-line hal-c2/no-global-process-runtime -- Standalone dev script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
 
@@ -70,8 +70,8 @@ const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
 const devProtocolClient = resolveDevProtocolClient();
 if (devProtocolClient) {
-  childEnv.HALC2_DESKTOP_APP_USER_MODEL_ID = devProtocolClient.appBundleId;
-  childEnv.HALC2_DESKTOP_PROTOCOL_REGISTRATION_MANAGED = "1";
+  childEnv.HAL_C2_DESKTOP_APP_USER_MODEL_ID = devProtocolClient.appBundleId;
+  childEnv.HAL_C2_DESKTOP_PROTOCOL_REGISTRATION_MANAGED = "1";
 }
 
 let shuttingDown = false;

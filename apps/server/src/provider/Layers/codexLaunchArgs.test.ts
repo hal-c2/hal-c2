@@ -9,22 +9,22 @@ import {
 } from "./codexLaunchArgs.ts";
 
 describe("resolveCodexLaunchArgs", () => {
-  it("uses HALC2_CODEX_LAUNCH_ARGS before configured settings", () => {
+  it("uses HAL_C2_CODEX_LAUNCH_ARGS before configured settings", () => {
     NodeAssert.equal(
-      resolveCodexLaunchArgs(" --strict-config ", { HALC2_CODEX_LAUNCH_ARGS: "--enable foo" }),
+      resolveCodexLaunchArgs(" --strict-config ", { HAL_C2_CODEX_LAUNCH_ARGS: "--enable foo" }),
       "--enable foo",
     );
   });
 
-  it("uses configured settings when HALC2_CODEX_LAUNCH_ARGS is empty", () => {
+  it("uses configured settings when HAL_C2_CODEX_LAUNCH_ARGS is empty", () => {
     NodeAssert.equal(
-      resolveCodexLaunchArgs(" --strict-config ", { HALC2_CODEX_LAUNCH_ARGS: "   " }),
+      resolveCodexLaunchArgs(" --strict-config ", { HAL_C2_CODEX_LAUNCH_ARGS: "   " }),
       "--strict-config",
     );
   });
 
   it("ignores whitespace-only environment values", () => {
-    NodeAssert.equal(resolveCodexLaunchArgs("", { HALC2_CODEX_LAUNCH_ARGS: "   " }), "");
+    NodeAssert.equal(resolveCodexLaunchArgs("", { HAL_C2_CODEX_LAUNCH_ARGS: "   " }), "");
   });
 });
 

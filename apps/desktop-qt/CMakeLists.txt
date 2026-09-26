@@ -16,40 +16,40 @@ qt_policy(SET QTP0001 NEW)
 
 # Where the QML bricks live on disk. Non-release builds load them from here so
 # edits hot-reload without a rebuild; release builds only use the compiled-in
-# copies. HALC2_QML_SOURCE_DIR="" disables disk loading for any build type.
-if(NOT DEFINED HALC2_QML_SOURCE_DIR)
-  set(HALC2_QML_SOURCE_DIR "$<IF:$<CONFIG:Release>,,${CMAKE_CURRENT_SOURCE_DIR}/qml>")
+# copies. HAL_C2_QML_SOURCE_DIR="" disables disk loading for any build type.
+if(NOT DEFINED HAL_C2_QML_SOURCE_DIR)
+  set(HAL_C2_QML_SOURCE_DIR "$<IF:$<CONFIG:Release>,,${CMAKE_CURRENT_SOURCE_DIR}/qml>")
 endif()
 
 # The Node desktop host entry. In-repo builds point at the TypeScript source.
 # Release builds resolve an installed path relative to the executable.
-if(NOT DEFINED HALC2_HOST_ENTRY)
+if(NOT DEFINED HAL_C2_HOST_ENTRY)
   if(APPLE)
-    set(_halc2_installed_host "../Resources/hal-c2/host/main.ts")
+    set(_hal_c2_installed_host "../Resources/hal-c2/host/main.ts")
   else()
-    set(_halc2_installed_host "../share/hal-c2/host/main.ts")
+    set(_hal_c2_installed_host "../share/hal-c2/host/main.ts")
   endif()
-  set(HALC2_HOST_ENTRY "$<IF:$<CONFIG:Release>,${_halc2_installed_host},${CMAKE_CURRENT_SOURCE_DIR}/host/main.ts>")
+  set(HAL_C2_HOST_ENTRY "$<IF:$<CONFIG:Release>,${_hal_c2_installed_host},${CMAKE_CURRENT_SOURCE_DIR}/host/main.ts>")
 endif()
 
 # Release packages carry the same Node executable that installed their native
 # dependencies. Development builds keep using the command from PATH.
-if(NOT DEFINED HALC2_NODE_ENTRY)
+if(NOT DEFINED HAL_C2_NODE_ENTRY)
   if(APPLE)
-    set(_halc2_installed_node "../Resources/hal-c2/bin/node")
+    set(_hal_c2_installed_node "../Resources/hal-c2/bin/node")
   elseif(WIN32)
-    set(_halc2_installed_node "../share/hal-c2/bin/node.exe")
+    set(_hal_c2_installed_node "../share/hal-c2/bin/node.exe")
   else()
-    set(_halc2_installed_node "../share/hal-c2/bin/node")
+    set(_hal_c2_installed_node "../share/hal-c2/bin/node")
   endif()
-  set(HALC2_NODE_ENTRY "$<IF:$<CONFIG:Release>,${_halc2_installed_node},node>")
+  set(HAL_C2_NODE_ENTRY "$<IF:$<CONFIG:Release>,${_hal_c2_installed_node},node>")
 endif()
 
 # qwebchannel.js is the browser half of Qt WebChannel. Qt installs it as data
 # (share/qt6/webchannel); bundling it makes the injected script independent of
 # whether the runtime Qt exposes it as a qrc resource.
 get_filename_component(_qt_prefix "${QT6_INSTALL_PREFIX}" ABSOLUTE)
-find_file(HALC2_QWEBCHANNEL_JS qwebchannel.js
+find_file(HAL_C2_QWEBCHANNEL_JS qwebchannel.js
   HINTS
     "${_qt_prefix}/${QT6_INSTALL_DATA}/webchannel"
     "${_qt_prefix}/share/qt6/webchannel"
@@ -81,27 +81,27 @@ qt_add_executable(hal-c2-qt
 if(UNIX AND NOT APPLE)
   find_package(Qt6 6.9 REQUIRED COMPONENTS DBus)
   target_link_libraries(hal-c2-qt PRIVATE Qt6::DBus)
-  target_compile_definitions(hal-c2-qt PRIVATE HALC2_HAS_DBUS)
+  target_compile_definitions(hal-c2-qt PRIVATE HAL_C2_HAS_DBUS)
 endif()
 
-if(HALC2_QWEBCHANNEL_JS)
-  set_source_files_properties("${HALC2_QWEBCHANNEL_JS}" PROPERTIES QT_RESOURCE_ALIAS "qwebchannel.js")
-  qt_add_resources(hal-c2-qt "halc2_webchannel" PREFIX "/hal-c2" FILES "${HALC2_QWEBCHANNEL_JS}")
-  target_compile_definitions(hal-c2-qt PRIVATE HALC2_WEBCHANNEL_SCRIPT_URL="qrc:/hal-c2/qwebchannel.js")
+if(HAL_C2_QWEBCHANNEL_JS)
+  set_source_files_properties("${HAL_C2_QWEBCHANNEL_JS}" PROPERTIES QT_RESOURCE_ALIAS "qwebchannel.js")
+  qt_add_resources(hal-c2-qt "hal_c2_webchannel" PREFIX "/hal-c2" FILES "${HAL_C2_QWEBCHANNEL_JS}")
+  target_compile_definitions(hal-c2-qt PRIVATE HAL_C2_WEBCHANNEL_SCRIPT_URL="qrc:/hal-c2/qwebchannel.js")
 else()
   message(STATUS "qwebchannel.js not found next to Qt; relying on qrc:///qtwebchannel/qwebchannel.js at runtime")
-  target_compile_definitions(hal-c2-qt PRIVATE HALC2_WEBCHANNEL_SCRIPT_URL="qrc:///qtwebchannel/qwebchannel.js")
+  target_compile_definitions(hal-c2-qt PRIVATE HAL_C2_WEBCHANNEL_SCRIPT_URL="qrc:///qtwebchannel/qwebchannel.js")
 endif()
 
 target_compile_definitions(hal-c2-qt PRIVATE
-  HALC2_QML_SOURCE_DIR="${HALC2_QML_SOURCE_DIR}"
-  HALC2_HOST_ENTRY="${HALC2_HOST_ENTRY}"
-  HALC2_NODE_ENTRY="${HALC2_NODE_ENTRY}"
-  HALC2_APP_VERSION="${PROJECT_VERSION}"
+  HAL_C2_QML_SOURCE_DIR="${HAL_C2_QML_SOURCE_DIR}"
+  HAL_C2_HOST_ENTRY="${HAL_C2_HOST_ENTRY}"
+  HAL_C2_NODE_ENTRY="${HAL_C2_NODE_ENTRY}"
+  HAL_C2_APP_VERSION="${PROJECT_VERSION}"
 )
 
 include(cmake/PlatformWindow.cmake)
-halc2_target_platform_window(hal-c2-qt)
+hal_c2_target_platform_window(hal-c2-qt)
 
 add_subdirectory(qml/HalC2/Bricks)
 
@@ -112,7 +112,7 @@ target_link_libraries(hal-c2-qt PRIVATE
   Qt6::Quick
   Qt6::WebEngineQuick
   Qt6::WebChannel
-  halc2bricksplugin
+  hal_c2_bricksplugin
 )
 
 set_target_properties(hal-c2-qt PROPERTIES

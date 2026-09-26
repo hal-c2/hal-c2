@@ -37,7 +37,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
 
   defp await_policy_change(fun, timeout, last) do
     receive do
-      {:halc2_background_policy, _node, snapshot} ->
+      {:hal_c2_background_policy, _node, snapshot} ->
         if fun.(snapshot), do: snapshot, else: await_policy_change(fun, timeout, snapshot)
     after
       timeout -> flunk("the background policy did not change as expected: #{inspect(last)}")
@@ -287,7 +287,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
     assert Process.read_timer(timer) > 0
     pushed = push_upstream(context)
     fire_fetch(context)
-    assert_receive {:halc2_vcs, ^path, %{"_tag" => "remoteUpdated", "remote" => remote}}
+    assert_receive {:hal_c2_vcs, ^path, %{"_tag" => "remoteUpdated", "remote" => remote}}
     assert remote["behindCount"] == 1
     assert World.git!(path, ~w(rev-parse origin/main)) == pushed
     context
@@ -305,7 +305,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
     push_upstream(context)
     fire_fetch(context)
     assert World.git!(path, ~w(rev-parse origin/main)) == before
-    refute_received {:halc2_vcs, ^path, %{"_tag" => "remoteUpdated"}}
+    refute_received {:hal_c2_vcs, ^path, %{"_tag" => "remoteUpdated"}}
     context
   end
 

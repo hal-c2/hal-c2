@@ -129,7 +129,7 @@ defmodule HalC2.Acp.CatalogTest do
     assert %{"driver" => "acpRegistry", "displayName" => "My Fake", "enabled" => true} =
              HalC2.Acp.entry("acpRegistry_fake")
 
-    assert_receive {:halc2_providers_changed, _}, 5_000
+    assert_receive {:hal_c2_providers_changed, _}, 5_000
 
     assert %{"version" => "9.9", "models" => [%{"slug" => "fake/one"}, _]} =
              HalC2.Acp.entry("acpRegistry_fake")

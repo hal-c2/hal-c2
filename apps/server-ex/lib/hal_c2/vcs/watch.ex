@@ -3,7 +3,7 @@ defmodule HalC2.Vcs.Watch do
   One checkout's status for the clients watching it (`subscribeVcsStatus`).
 
   A watcher starts with its first subscriber and stops with its last. Subscribers
-  get `{:halc2_vcs, cwd, event}` messages shaped as `VcsStatusStreamEvent`, only when
+  get `{:hal_c2_vcs, cwd, event}` messages shaped as `VcsStatusStreamEvent`, only when
   something changed. Local status is read again when told (`refresh/1`: a turn
   ended, a git action ran); remote status is fetched on the background activity
   settings' `automaticGitFetchInterval` (never at 0) while a client in front shows
@@ -129,7 +129,7 @@ defmodule HalC2.Vcs.Watch do
   end
 
   defp broadcast(state, event) do
-    for {pid, _} <- state.subscribers, do: send(pid, {:halc2_vcs, state.cwd, event})
+    for {pid, _} <- state.subscribers, do: send(pid, {:hal_c2_vcs, state.cwd, event})
   end
 
   defp stop_if_idle(%{subscribers: subscribers} = state) when map_size(subscribers) == 0,

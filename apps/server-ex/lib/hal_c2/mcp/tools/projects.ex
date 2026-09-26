@@ -17,12 +17,12 @@ defmodule HalC2.Mcp.Tools.Projects do
 
   alias HalC2.Orchestration
 
-  @tools ~w(halc2_project_create halc2_project_update halc2_project_delete halc2_project_clone
-            halc2_worktree_list halc2_worktree_status halc2_worktree_handoff)
+  @tools ~w(hal_c2_project_create hal_c2_project_update hal_c2_project_delete hal_c2_project_clone
+            hal_c2_worktree_list hal_c2_worktree_status hal_c2_worktree_handoff)
 
   def tools, do: @tools
 
-  def run("halc2_project_create", args, caller) do
+  def run("hal_c2_project_create", args, caller) do
     root = Path.expand(args["workspaceRoot"] || "")
 
     with :ok <- mutation(caller),
@@ -43,7 +43,7 @@ defmodule HalC2.Mcp.Tools.Projects do
     end
   end
 
-  def run("halc2_project_update", %{"projectId" => id} = args, caller) do
+  def run("hal_c2_project_update", %{"projectId" => id} = args, caller) do
     with :ok <- mutation(caller),
          %{} <- project_row(id) || not_found() do
       args
@@ -60,7 +60,7 @@ defmodule HalC2.Mcp.Tools.Projects do
   end
 
   # A project with threads goes only when forced, and takes its threads with it.
-  def run("halc2_project_delete", %{"projectId" => id} = args, caller) do
+  def run("hal_c2_project_delete", %{"projectId" => id} = args, caller) do
     with :ok <- mutation(caller),
          %{} <- project_row(id) || not_found() do
       threads = project_threads(id)
@@ -77,7 +77,7 @@ defmodule HalC2.Mcp.Tools.Projects do
     end
   end
 
-  def run("halc2_project_clone", args, caller) do
+  def run("hal_c2_project_clone", args, caller) do
     with :ok <- mutation(caller) do
       case HalC2.SourceControl.clone(args) do
         {:ok, result} -> {:ok, result}
@@ -87,13 +87,13 @@ defmodule HalC2.Mcp.Tools.Projects do
     end
   end
 
-  def run("halc2_worktree_list", args, %{row: me}) do
+  def run("hal_c2_worktree_list", args, %{row: me}) do
     with %{} = project <- project_row(me["projectId"]) || not_found() do
       HalC2.Vcs.list_refs(Map.put(args, "cwd", me["worktreePath"] || project["workspaceRoot"]))
     end
   end
 
-  def run("halc2_worktree_status", _args, %{row: me}) do
+  def run("hal_c2_worktree_status", _args, %{row: me}) do
     thread = thread(me["id"]) || me
 
     with %{} = project <- project_row(me["projectId"]) || project_not_found(me) do
@@ -108,7 +108,7 @@ defmodule HalC2.Mcp.Tools.Projects do
     end
   end
 
-  def run("halc2_worktree_handoff", %{"branch" => branch} = args, %{row: me}) do
+  def run("hal_c2_worktree_handoff", %{"branch" => branch} = args, %{row: me}) do
     thread = thread(me["id"]) || me
 
     with :ok <- unbound(thread),

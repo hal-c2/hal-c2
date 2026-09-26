@@ -11,7 +11,7 @@ defmodule HalC2.PreviewTest do
     {:ok, %{"tabId" => tab, "navStatus" => %{"_tag" => "Loading"}}} =
       HalC2.Preview.open(%{"threadId" => "t1", "url" => "http://localhost:5173/"})
 
-    assert_receive {:halc2_preview, _, %{"type" => "opened", "revision" => 1}}
+    assert_receive {:hal_c2_preview, _, %{"type" => "opened", "revision" => 1}}
 
     {:ok, snapshot} =
       HalC2.Preview.navigate(%{
@@ -21,7 +21,7 @@ defmodule HalC2.PreviewTest do
       })
 
     assert %{"navStatus" => %{"_tag" => "Success", "url" => "http://localhost:5173/a"}} = snapshot
-    assert_receive {:halc2_preview, _, %{"type" => "navigated", "revision" => 2}}
+    assert_receive {:hal_c2_preview, _, %{"type" => "navigated", "revision" => 2}}
 
     failed = %{
       "_tag" => "LoadFailed",
@@ -40,13 +40,13 @@ defmodule HalC2.PreviewTest do
         "canGoForward" => false
       })
 
-    assert_receive {:halc2_preview, _, %{"type" => "failed", "code" => -102}}
+    assert_receive {:hal_c2_preview, _, %{"type" => "failed", "code" => -102}}
 
     assert {:ok, %{"sessions" => [%{"canGoBack" => true}], "revision" => 3}} =
              HalC2.Preview.list(%{"threadId" => "t1"})
 
     {:ok, nil} = HalC2.Preview.close(%{"threadId" => "t1"})
-    assert_receive {:halc2_preview, _, %{"type" => "closed", "tabId" => ^tab}}
+    assert_receive {:hal_c2_preview, _, %{"type" => "closed", "tabId" => ^tab}}
     assert {:ok, %{"sessions" => []}} = HalC2.Preview.list(%{"threadId" => "t1"})
   end
 

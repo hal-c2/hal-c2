@@ -440,7 +440,7 @@ defmodule HalC2.Codex.ThreadRuntime do
          {:ok, _} <-
            Connection.call(conn, "initialize", %{
              "clientInfo" => %{
-               "name" => "halc2_elixir",
+               "name" => "hal_c2_elixir",
                "title" => "HAL-C2",
                "version" => "0.1.0"
              },

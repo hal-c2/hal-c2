@@ -2,7 +2,7 @@ defmodule HalC2.Projection.ShellParityTest do
   @moduledoc """
   Compares `thread_shell/1` with shells the Node server produced for the same log.
 
-      HALC2_PARITY_DB=node-state.sqlite HALC2_PARITY_GOLDEN=shells.json \\
+      HAL_C2_PARITY_DB=node-state.sqlite HAL_C2_PARITY_GOLDEN=shells.json \\
         mix test --include parity test/hal_c2/projection/shell_parity_test.exs
 
   The golden file maps thread id to the encoded `OrchestrationV2ThreadShell`. Both
@@ -19,9 +19,9 @@ defmodule HalC2.Projection.ShellParityTest do
   alias HalC2.Projection.Shell
 
   test "shells match the Node server's", %{tmp_dir: dir} do
-    db = System.fetch_env!("HALC2_PARITY_DB")
+    db = System.fetch_env!("HAL_C2_PARITY_DB")
 
-    golden = JSON.decode!(File.read!(System.fetch_env!("HALC2_PARITY_GOLDEN")))
+    golden = JSON.decode!(File.read!(System.fetch_env!("HAL_C2_PARITY_GOLDEN")))
 
     store = start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite"), name: nil})
     {:ok, _report} = HalC2.Import.V2.run(db, store, only: Map.keys(golden))

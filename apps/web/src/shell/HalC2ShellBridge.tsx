@@ -42,7 +42,7 @@ import { resolveShellLocalEnvironmentId } from "./shellLocalProjects";
 import { requestShellProjectRemoval } from "./shellProjectRemovalRequest";
 
 /**
- * Feeds the native shell (window.halc2Shell) the sidebar view model and turns
+ * Feeds the native shell (window.halC2Shell) the sidebar view model and turns
  * its actions into navigation. Mounted only when hosted by the shell; the
  * HTML sidebar hides itself in that case (AppSidebarLayout). Everything here
  * is derived with the same logic the HTML sidebar uses, so the two never

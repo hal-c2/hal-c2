@@ -10,8 +10,8 @@ import {
   IRIS_THEME,
   OCEAN_THEME,
   T3_CHAT_THEME,
-  HALC2_LIGHT_THEME_COLORS,
-  HALC2_DARK_THEME_COLORS,
+  HAL_C2_LIGHT_THEME_COLORS,
+  HAL_C2_DARK_THEME_COLORS,
   RESERVED_THEME_IDS,
   THEME_COLOR_ROLES,
   type ThemeAppearance,
@@ -337,9 +337,9 @@ function legacyThemeMode(theme: ThemePreference): ThemeAppearance | null {
  */
 export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors {
   if (appearance === "dark") {
-    return (standardDarkThemeColors ??= decodeThemeColors(HALC2_DARK_THEME_COLORS));
+    return (standardDarkThemeColors ??= decodeThemeColors(HAL_C2_DARK_THEME_COLORS));
   }
-  return (standardLightThemeColors ??= decodeThemeColors(HALC2_LIGHT_THEME_COLORS));
+  return (standardLightThemeColors ??= decodeThemeColors(HAL_C2_LIGHT_THEME_COLORS));
 }
 
 type ThemeRgbColor = {

@@ -212,7 +212,7 @@ defmodule HalC2.Steps.Files.ProjectScriptsAndActions do
     case Enum.find(context.setup_snapshots, pred) do
       nil ->
         receive do
-          {:halc2_worktree_setup, ^thread_id, snapshot} ->
+          {:hal_c2_worktree_setup, ^thread_id, snapshot} ->
             context
             |> Map.update!(:setup_snapshots, &(&1 ++ [snapshot]))
             |> await_snapshot(pred)
@@ -234,7 +234,7 @@ defmodule HalC2.Steps.Files.ProjectScriptsAndActions do
       context
     else
       receive do
-        {:halc2_stream, ^thread_id, _} -> agent_ran(context)
+        {:hal_c2_stream, ^thread_id, _} -> agent_ran(context)
       after
         15_000 ->
           flunk("the agent's run never completed: #{inspect(StreamState.list(state, "run"))}")

@@ -22,7 +22,7 @@ public final class HalC2KeyboardCommandsView: ExpoView {
 
   public override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
     if action == #selector(openCommandPalette) || action == #selector(paletteNext) || action == #selector(palettePrevious) || action == #selector(paletteDismiss),
-       let input = window?.halc2FirstResponder as? UITextInput,
+       let input = window?.halC2FirstResponder as? UITextInput,
        input.markedTextRange != nil {
       return false
     }
@@ -157,17 +157,17 @@ public final class HalC2KeyboardCommandsView: ExpoView {
 
   @objc private func reclaimFirstResponderIfAvailable() {
     DispatchQueue.main.async { [weak self] in
-      guard let self, self.window?.halc2FirstResponder == nil else { return }
+      guard let self, self.window?.halC2FirstResponder == nil else { return }
       self.becomeFirstResponder()
     }
   }
 }
 
 private extension UIView {
-  var halc2FirstResponder: UIResponder? {
+  var halC2FirstResponder: UIResponder? {
     if isFirstResponder { return self }
     for subview in subviews {
-      if let responder = subview.halc2FirstResponder { return responder }
+      if let responder = subview.halC2FirstResponder { return responder }
     }
     return nil
   }

@@ -11,12 +11,12 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 
-declare const __HALC2_BUILD_RELAY_URL__: string | undefined;
-declare const __HALC2_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
-declare const __HALC2_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__: string | undefined;
-declare const __HALC2_BUILD_RELAY_CLIENT_OTLP_TRACES_URL__: string | undefined;
-declare const __HALC2_BUILD_RELAY_CLIENT_OTLP_TRACES_DATASET__: string | undefined;
-declare const __HALC2_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__: string | undefined;
+declare const __HAL_C2_BUILD_RELAY_URL__: string | undefined;
+declare const __HAL_C2_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
+declare const __HAL_C2_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__: string | undefined;
+declare const __HAL_C2_BUILD_RELAY_CLIENT_OTLP_TRACES_URL__: string | undefined;
+declare const __HAL_C2_BUILD_RELAY_CLIENT_OTLP_TRACES_DATASET__: string | undefined;
+declare const __HAL_C2_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__: string | undefined;
 
 const CLOUD_CLI_OAUTH_LOOPBACK_PORT = 34338;
 const CLOUD_CLI_OAUTH_SCOPES = CONNECT_OAUTH_SCOPES;
@@ -50,34 +50,34 @@ function normalizeSecureUrl(value: string): string | null {
 }
 
 const buildTimeRelayUrl =
-  typeof __HALC2_BUILD_RELAY_URL__ === "undefined"
+  typeof __HAL_C2_BUILD_RELAY_URL__ === "undefined"
     ? ""
-    : (normalizeSecureRelayUrl(__HALC2_BUILD_RELAY_URL__) ?? "");
+    : (normalizeSecureRelayUrl(__HAL_C2_BUILD_RELAY_URL__) ?? "");
 const buildTimeClerkPublishableKey = readBuildTimeValue(
-  typeof __HALC2_BUILD_CLERK_PUBLISHABLE_KEY__ === "undefined"
+  typeof __HAL_C2_BUILD_CLERK_PUBLISHABLE_KEY__ === "undefined"
     ? undefined
-    : __HALC2_BUILD_CLERK_PUBLISHABLE_KEY__,
+    : __HAL_C2_BUILD_CLERK_PUBLISHABLE_KEY__,
 );
 const buildTimeClerkCliOAuthClientId = readBuildTimeValue(
-  typeof __HALC2_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__ === "undefined"
+  typeof __HAL_C2_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__ === "undefined"
     ? undefined
-    : __HALC2_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__,
+    : __HAL_C2_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__,
 );
 const buildTimeRelayClientTracing = {
   tracesUrl: readBuildTimeValue(
-    typeof __HALC2_BUILD_RELAY_CLIENT_OTLP_TRACES_URL__ === "undefined"
+    typeof __HAL_C2_BUILD_RELAY_CLIENT_OTLP_TRACES_URL__ === "undefined"
       ? undefined
-      : __HALC2_BUILD_RELAY_CLIENT_OTLP_TRACES_URL__,
+      : __HAL_C2_BUILD_RELAY_CLIENT_OTLP_TRACES_URL__,
   ),
   tracesDataset: readBuildTimeValue(
-    typeof __HALC2_BUILD_RELAY_CLIENT_OTLP_TRACES_DATASET__ === "undefined"
+    typeof __HAL_C2_BUILD_RELAY_CLIENT_OTLP_TRACES_DATASET__ === "undefined"
       ? undefined
-      : __HALC2_BUILD_RELAY_CLIENT_OTLP_TRACES_DATASET__,
+      : __HAL_C2_BUILD_RELAY_CLIENT_OTLP_TRACES_DATASET__,
   ),
   tracesToken: readBuildTimeValue(
-    typeof __HALC2_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__ === "undefined"
+    typeof __HAL_C2_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__ === "undefined"
       ? undefined
-      : __HALC2_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__,
+      : __HAL_C2_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__,
   ),
 } as const;
 
@@ -85,10 +85,10 @@ export function resolveRelayClientTracingConfig(
   env: Readonly<Record<string, string | undefined>> = process.env,
   fallback = buildTimeRelayClientTracing,
 ) {
-  const tracesUrl = env.HALC2_RELAY_CLIENT_OTLP_TRACES_URL?.trim() || fallback.tracesUrl;
+  const tracesUrl = env.HAL_C2_RELAY_CLIENT_OTLP_TRACES_URL?.trim() || fallback.tracesUrl;
   const tracesDataset =
-    env.HALC2_RELAY_CLIENT_OTLP_TRACES_DATASET?.trim() || fallback.tracesDataset;
-  const tracesToken = env.HALC2_RELAY_CLIENT_OTLP_TRACES_TOKEN?.trim() || fallback.tracesToken;
+    env.HAL_C2_RELAY_CLIENT_OTLP_TRACES_DATASET?.trim() || fallback.tracesDataset;
+  const tracesToken = env.HAL_C2_RELAY_CLIENT_OTLP_TRACES_TOKEN?.trim() || fallback.tracesToken;
   const normalizedTracesUrl = normalizeSecureUrl(tracesUrl);
   return normalizedTracesUrl && tracesDataset && tracesToken
     ? { tracesUrl: normalizedTracesUrl, tracesDataset, tracesToken }
@@ -96,7 +96,7 @@ export function resolveRelayClientTracingConfig(
 }
 
 export function makeRelayUrlConfig(fallback = buildTimeRelayUrl) {
-  const runtimeConfig = Config.NonEmptyString("HALC2_RELAY_URL");
+  const runtimeConfig = Config.NonEmptyString("HAL_C2_RELAY_URL");
   return (fallback ? runtimeConfig.pipe(Config.withDefault(fallback)) : runtimeConfig).pipe(
     Config.mapEffect(validateRelayUrl),
   );
@@ -110,7 +110,7 @@ export const relayUrlConfig = makeRelayUrlConfig();
  * matching hosted deployment.
  */
 export const hostedAppUrlConfig = makePublicValueConfig(
-  "HALC2_HOSTED_APP_URL",
+  "HAL_C2_HOSTED_APP_URL",
   DEFAULT_HOSTED_APP_URL,
 ).pipe(Config.mapEffect(validateHostedAppUrl));
 
@@ -174,11 +174,11 @@ export function makeCloudCliOAuthConfig({
 } = {}) {
   return Config.all({
     clerkPublishableKey: makePublicValueConfig(
-      "HALC2_CLERK_PUBLISHABLE_KEY",
+      "HAL_C2_CLERK_PUBLISHABLE_KEY",
       clerkPublishableKeyFallback,
     ),
     clientId: makePublicValueConfig(
-      "HALC2_CLERK_CLI_OAUTH_CLIENT_ID",
+      "HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID",
       clerkCliOAuthClientIdFallback,
     ),
   }).pipe(
@@ -212,7 +212,7 @@ export function makeCloudCliOAuthConfig({
 export const cloudCliOAuthConfig = makeCloudCliOAuthConfig();
 
 export const hasCloudPublicConfig = Boolean(
-  (normalizeSecureRelayUrl(process.env.HALC2_RELAY_URL ?? "") ?? buildTimeRelayUrl) &&
-  (process.env.HALC2_CLERK_PUBLISHABLE_KEY?.trim() || buildTimeClerkPublishableKey) &&
-  (process.env.HALC2_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || buildTimeClerkCliOAuthClientId),
+  (normalizeSecureRelayUrl(process.env.HAL_C2_RELAY_URL ?? "") ?? buildTimeRelayUrl) &&
+  (process.env.HAL_C2_CLERK_PUBLISHABLE_KEY?.trim() || buildTimeClerkPublishableKey) &&
+  (process.env.HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || buildTimeClerkCliOAuthClientId),
 );

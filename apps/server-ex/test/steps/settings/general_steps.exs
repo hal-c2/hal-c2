@@ -209,7 +209,7 @@ defmodule HalC2.Steps.Settings.General do
     World.git!(upstream, ~w(push -q origin main))
 
     {:ok, result} =
-      HalC2.Mcp.Tools.call("halc2_worktree_handoff", %{"branch" => "hal-c2/ship-checkout"}, %{
+      HalC2.Mcp.Tools.call("hal_c2_worktree_handoff", %{"branch" => "hal-c2/ship-checkout"}, %{
         thread_id: World.thread_id(context, @thread),
         instance: "codex"
       })

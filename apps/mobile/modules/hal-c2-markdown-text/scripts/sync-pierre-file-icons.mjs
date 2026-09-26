@@ -14,7 +14,7 @@ const webIconSource = NodeFS.readFileSync(
   NodePath.join(repositoryRoot, "apps/web/src/pierre-icons.ts"),
   "utf8",
 );
-const customSprite = webIconSource.match(/const HALC2_FILE_ICON_SPRITE = `([\s\S]*?)`;/)?.[1];
+const customSprite = webIconSource.match(/const HAL_C2_FILE_ICON_SPRITE = `([\s\S]*?)`;/)?.[1];
 
 if (!customSprite) {
   throw new Error("Could not read the HAL-C2 Pierre icon sprite from apps/web/src/pierre-icons.ts");

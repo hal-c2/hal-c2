@@ -26,7 +26,7 @@ const VersionRange = TrimmedNonEmptyString.pipe(
 );
 const Policy = Schema.Struct({
   driver: TrimmedNonEmptyString,
-  halc2Range: VersionRange,
+  halC2Range: VersionRange,
   recommendedRange: Schema.optionalKey(VersionRange),
   recommendedVersion: Schema.optionalKey(StableVersion),
   ranges: Schema.Array(
@@ -60,10 +60,10 @@ export function resolveProviderCompatibility(
   policies: ReadonlyArray<ProviderCompatibilityPolicy> | undefined,
   driver: ProviderDriverKind,
   version: string | null,
-  halc2Version = packageJson.version,
+  halC2Version = packageJson.version,
 ): ServerProviderCompatibilityAdvisory | undefined {
   const policy = policies?.find(
-    (entry) => entry.driver === driver && satisfiesSemverRange(halc2Version, entry.halc2Range),
+    (entry) => entry.driver === driver && satisfiesSemverRange(halC2Version, entry.halC2Range),
   );
   if (!policy) return undefined;
   const stable = version?.replace(/^v/, "");

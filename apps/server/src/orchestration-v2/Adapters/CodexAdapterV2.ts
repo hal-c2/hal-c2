@@ -215,7 +215,7 @@ const decodeCodexBackgroundTerminalsListResponse = Schema.decodeUnknownEffect(
   CodexBackgroundTerminalsListResponse,
 );
 const CODEX_CLIENT_INFO = {
-  name: "halc2_desktop",
+  name: "hal_c2_desktop",
   title: "HAL-C2 Desktop",
   version: "0.1.0",
 } as const;

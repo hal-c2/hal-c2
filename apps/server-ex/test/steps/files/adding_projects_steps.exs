@@ -512,8 +512,8 @@ defmodule HalC2.Steps.Files.AddingProjects do
       )
 
     env = [
-      {"HALC2_BITBUCKET_API_BASE_URL", "http://127.0.0.1:#{port}/2.0"},
-      {"HALC2_BITBUCKET_ACCESS_TOKEN", "bb-token"}
+      {"HAL_C2_BITBUCKET_API_BASE_URL", "http://127.0.0.1:#{port}/2.0"},
+      {"HAL_C2_BITBUCKET_ACCESS_TOKEN", "bb-token"}
     ]
 
     System.put_env(env)

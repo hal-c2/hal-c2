@@ -252,7 +252,7 @@ defmodule HalC2.Steps.SourceControl.CheckpointDiffs do
 
     unless running? do
       receive do
-        {:halc2_stream, ^id, _} -> await_running(id, ordinal)
+        {:hal_c2_stream, ^id, _} -> await_running(id, ordinal)
       after
         10_000 -> flunk("turn #{ordinal} never started")
       end

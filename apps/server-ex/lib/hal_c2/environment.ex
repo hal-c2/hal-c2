@@ -137,7 +137,7 @@ defmodule HalC2.Environment do
         "policy" => "loopback-browser",
         "bootstrapMethods" => ["one-time-token"],
         "sessionMethods" => ["bearer-access-token"],
-        "sessionCookieName" => "halc2_session"
+        "sessionCookieName" => "hal_c2_session"
       },
       "cwd" => File.cwd!(),
       "keybindingsConfigPath" => Path.join(home, "keybindings.json"),
@@ -247,9 +247,9 @@ defmodule HalC2.Environment do
     end
   end
 
-  # The machine's host name, unless HALC2_LABEL names it.
+  # The machine's host name, unless HAL_C2_LABEL names it.
   defp label do
-    case System.get_env("HALC2_LABEL") do
+    case System.get_env("HAL_C2_LABEL") do
       nil ->
         {:ok, host} = :inet.gethostname()
         List.to_string(host)

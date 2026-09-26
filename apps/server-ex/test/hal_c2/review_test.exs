@@ -30,7 +30,7 @@ defmodule HalC2.ReviewTest do
         "workspaceRoot" => repo
       })
 
-    assert_receive {:halc2_shell, {:rows, _, [{"p1", _}]}}, 1_000
+    assert_receive {:hal_c2_shell, {:rows, _, [{"p1", _}]}}, 1_000
     %{repo: repo}
   end
 

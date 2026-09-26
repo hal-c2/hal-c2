@@ -13,7 +13,7 @@ case "${1:-}" in
 esac
 
 releases="$here/../releases"
-export HALC2_SERVICE=1
+export HAL_C2_SERVICE=1
 while :; do
   "$here/hal_c2" start "$@"
   status=$?

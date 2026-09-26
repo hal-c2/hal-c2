@@ -63,7 +63,7 @@ defmodule HalC2.StorageCleanup do
   end
 
   # A changed policy is applied at once; other settings changes are not a reason to sweep.
-  def handle_info({:halc2_settings, _node, settings}, state) do
+  def handle_info({:hal_c2_settings, _node, settings}, state) do
     policy = policy(settings)
     if state.policy != nil and policy != state.policy, do: run()
     {:noreply, %{state | policy: policy}}

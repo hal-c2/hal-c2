@@ -28,7 +28,7 @@ export function ComposerQueuedEditBanner(props: {
         hitSlop={8}
         className="min-h-8 justify-center px-1 active:opacity-70 disabled:opacity-40"
       >
-        <Text className="font-halc2-medium text-xs text-primary">Cancel</Text>
+        <Text className="font-hal-c2-medium text-xs text-primary">Cancel</Text>
       </Pressable>
     </View>
   );

@@ -82,15 +82,15 @@ function makeEnvironmentLayer(
       Layer.mergeAll(
         NodeServices.layer,
         DesktopConfig.layerTest({
-          HALC2_HOME: baseDir,
-          HALC2_PORT: "9999",
-          HALC2_MODE: "desktop",
-          HALC2_DESKTOP_LAN_HOST: "192.168.1.50",
+          HAL_C2_HOME: baseDir,
+          HAL_C2_PORT: "9999",
+          HAL_C2_MODE: "desktop",
+          HAL_C2_DESKTOP_LAN_HOST: "192.168.1.50",
           VITE_DEV_SERVER_URL: options?.devServerUrl,
-          HALC2_OTLP_TRACES_URL: options?.otlpTracesUrl,
-          HALC2_OTLP_METRICS_URL: options?.otlpMetricsUrl,
-          HALC2_OTLP_LOGS_URL: options?.otlpLogsUrl,
-          HALC2_DESKTOP_ELIXIR_RELEASE: options?.elixirNodeRelease,
+          HAL_C2_OTLP_TRACES_URL: options?.otlpTracesUrl,
+          HAL_C2_OTLP_METRICS_URL: options?.otlpMetricsUrl,
+          HAL_C2_OTLP_LOGS_URL: options?.otlpLogsUrl,
+          HAL_C2_DESKTOP_ELIXIR_RELEASE: options?.elixirNodeRelease,
         }),
       ),
     ),
@@ -242,15 +242,15 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(first.cwd, environment.backendCwd);
         assert.equal(first.captureOutput, true);
         assert.equal(first.env.ELECTRON_RUN_AS_NODE, "1");
-        assert.isUndefined(first.env.HALC2_PORT);
-        assert.isUndefined(first.env.HALC2_MODE);
-        assert.isUndefined(first.env.HALC2_DESKTOP_LAN_HOST);
+        assert.isUndefined(first.env.HAL_C2_PORT);
+        assert.isUndefined(first.env.HAL_C2_MODE);
+        assert.isUndefined(first.env.HAL_C2_DESKTOP_LAN_HOST);
 
         assert.equal(first.bootstrap.mode, "desktop");
         assert.equal(first.bootstrap.noBrowser, true);
         assert.equal(first.bootstrap.port, 4888);
         assert.equal(first.bootstrap.host, "0.0.0.0");
-        assert.equal(first.bootstrap.halc2Home, environment.baseDir);
+        assert.equal(first.bootstrap.halC2Home, environment.baseDir);
         assert.equal(first.bootstrap.tailscaleServeEnabled, true);
         assert.equal(first.bootstrap.tailscaleServePort, 8443);
         assert.match(first.bootstrap.desktopBootstrapToken, /^[0-9a-f]{48}$/i);
@@ -268,10 +268,10 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(config.executablePath, "/rel/hal_c2/bin/hal_c2");
         assert.deepEqual(config.args, ["start"]);
         assert.equal(config.bootstrapDelivery, "stdin");
-        assert.equal(config.env.HALC2_BOOTSTRAP_STDIN, "1");
+        assert.equal(config.env.HAL_C2_BOOTSTRAP_STDIN, "1");
         // Node sidecars run on this Electron binary.
-        assert.equal(config.env.HALC2_NODE_COMMAND, process.execPath);
-        assert.equal(config.env.HALC2_NODE_ELECTRON, "1");
+        assert.equal(config.env.HAL_C2_NODE_COMMAND, process.execPath);
+        assert.equal(config.env.HAL_C2_NODE_ELECTRON, "1");
         assert.equal(config.bootstrap.port, 4888);
         assert.match(config.bootstrap.desktopBootstrapToken, /^[0-9a-f]{48}$/i);
         // The node has no telemetry fds to write to.
@@ -825,7 +825,7 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(config.bootstrap.otlpTracesUrl, "http://127.0.0.1:4318/v1/traces");
         assert.equal(config.bootstrap.otlpMetricsUrl, "http://127.0.0.1:4318/v1/metrics");
         assert.equal(config.bootstrap.otlpLogsUrl, "http://127.0.0.1:4318/v1/logs");
-        assert.notInclude(config.env.WSLENV ?? "", "HALC2_OTLP_LOGS_URL");
+        assert.notInclude(config.env.WSLENV ?? "", "HAL_C2_OTLP_LOGS_URL");
       }).pipe(
         Effect.provide(
           DesktopBackendConfiguration.layer.pipe(
@@ -1001,14 +1001,14 @@ describe("DesktopBackendConfiguration", () => {
       const previousWslEnv = process.env.WSLENV;
       const previousOpenAiKey = process.env.OPENAI_API_KEY;
       const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
-      const previousOtlpHeaders = process.env.HALC2_OTLP_HEADERS;
-      const previousOtlpProtocol = process.env.HALC2_OTLP_PROTOCOL;
+      const previousOtlpHeaders = process.env.HAL_C2_OTLP_HEADERS;
+      const previousOtlpProtocol = process.env.HAL_C2_OTLP_PROTOCOL;
       try {
         process.env.WSLENV = "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u";
         process.env.OPENAI_API_KEY = "openai-key";
         process.env.ANTHROPIC_API_KEY = "anthropic-key";
-        process.env.HALC2_OTLP_HEADERS = 'authorization="Bearer%20my-token"';
-        process.env.HALC2_OTLP_PROTOCOL = "http/protobuf";
+        process.env.HAL_C2_OTLP_HEADERS = 'authorization="Bearer%20my-token"';
+        process.env.HAL_C2_OTLP_PROTOCOL = "http/protobuf";
 
         yield* Effect.gen(function* () {
           const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
@@ -1028,14 +1028,14 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(config.httpBaseUrl.href, "http://172.27.0.99:5050/");
           assert.equal(config.env.OPENAI_API_KEY, "openai-key");
           assert.equal(config.env.ANTHROPIC_API_KEY, "anthropic-key");
-          assert.equal(config.env.HALC2_OTLP_PROTOCOL, "http/protobuf");
+          assert.equal(config.env.HAL_C2_OTLP_PROTOCOL, "http/protobuf");
           // The existing WSLENV is preserved byte-for-byte (note the empty
           // "::" segment survives — WSL ignores it, so we don't normalize
           // it away) and ANTHROPIC_API_KEY is appended. OPENAI_API_KEY is
           // already declared, so it isn't forwarded twice.
           assert.equal(
             config.env.WSLENV,
-            "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:ANTHROPIC_API_KEY:HALC2_OTLP_HEADERS:HALC2_OTLP_PROTOCOL",
+            "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u:ANTHROPIC_API_KEY:HAL_C2_OTLP_HEADERS:HAL_C2_OTLP_PROTOCOL",
           );
         }).pipe(
           Effect.provide(
@@ -1058,8 +1058,8 @@ describe("DesktopBackendConfiguration", () => {
         restoreEnv("WSLENV", previousWslEnv);
         restoreEnv("OPENAI_API_KEY", previousOpenAiKey);
         restoreEnv("ANTHROPIC_API_KEY", previousAnthropicKey);
-        restoreEnv("HALC2_OTLP_HEADERS", previousOtlpHeaders);
-        restoreEnv("HALC2_OTLP_PROTOCOL", previousOtlpProtocol);
+        restoreEnv("HAL_C2_OTLP_HEADERS", previousOtlpHeaders);
+        restoreEnv("HAL_C2_OTLP_PROTOCOL", previousOtlpProtocol);
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -1082,7 +1082,7 @@ describe("DesktopBackendConfiguration", () => {
           // not spawn wsl.exe (which would loop on preflight failures while the
           // Connections backend control is hidden). Resolve the Windows primary.
           assert.equal(config.executablePath, process.execPath);
-          assert.equal(config.bootstrap.halc2Home, environment.baseDir);
+          assert.equal(config.bootstrap.halC2Home, environment.baseDir);
           assert.isTrue(Option.isNone(config.preflightFailure));
         }).pipe(
           Effect.provide(

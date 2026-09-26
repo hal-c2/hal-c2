@@ -141,11 +141,11 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
         >
           <View className="android:gap-2 android:rounded-[20px] android:bg-card android:p-3 ios:items-center ios:gap-1 ios:px-5 ios:pb-3 ios:pt-4">
             {Platform.OS !== "android" ? (
-              <Text className="text-xs font-halc2-bold tracking-[1px] uppercase text-foreground-muted">
+              <Text className="text-xs font-hal-c2-bold tracking-[1px] uppercase text-foreground-muted">
                 Confirm
               </Text>
             ) : null}
-            <Text className="android:text-xl android:font-halc2-medium ios:text-center ios:text-3xl ios:font-halc2-bold">
+            <Text className="android:text-xl android:font-hal-c2-medium ios:text-center ios:text-3xl ios:font-hal-c2-bold">
               {copy?.title ?? "Run action on default branch?"}
             </Text>
             <Text className="text-foreground-secondary leading-normal android:text-base ios:text-center ios:text-sm ios:font-medium">

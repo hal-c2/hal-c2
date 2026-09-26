@@ -857,11 +857,11 @@ defmodule HalC2.Steps.Common do
           # A peer the shell knows by its environment, but no longer reachable.
           gone = :"gone@127.0.0.1"
           GenServer.cast(HalC2.Shell, {:peer_environment, gone, %{"environmentId" => "env-gone"}})
-          assert_receive {:halc2_shell, {:environment, ^gone, _}}, 1_000
-          Node.rpc(client, "env-gone", 46, "halc2.readSettings", %{})
+          assert_receive {:hal_c2_shell, {:environment, ^gone, _}}, 1_000
+          Node.rpc(client, "env-gone", 46, "hal-c2.readSettings", %{})
 
         _unknown_environment ->
-          Node.rpc(client, "env-missing", 45, "halc2.readSettings", %{})
+          Node.rpc(client, "env-missing", 45, "hal-c2.readSettings", %{})
       end
 
     {frame, client} = Node.await(client, &(&1["t"] in ["error", "rpc.error"]))

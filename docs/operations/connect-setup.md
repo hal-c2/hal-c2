@@ -17,10 +17,10 @@ cp .env.example .env
 For your own deployment, set these values in the repository-root `.env` or `.env.local`:
 
 ```dotenv
-HALC2_CLERK_PUBLISHABLE_KEY=<publishable key>
-HALC2_CLERK_JWT_TEMPLATE=<JWT template name>
-HALC2_CLERK_CLI_OAUTH_CLIENT_ID=<public OAuth application client ID>
-HALC2_RELAY_URL=https://relay.example.com
+HAL_C2_CLERK_PUBLISHABLE_KEY=<publishable key>
+HAL_C2_CLERK_JWT_TEMPLATE=<JWT template name>
+HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID=<public OAuth application client ID>
+HAL_C2_RELAY_URL=https://relay.example.com
 ```
 
 Process variables take precedence over `.env.local`, then `.env`. Use these canonical names;
@@ -45,7 +45,7 @@ In Clerk's OAuth applications settings:
 4. Enable **Device authorization grant** on the application. Headless and SSH authorization use
    it, and Clerk only advertises the device endpoint once it is on. The feature is in beta and
    Clerk enables it per account on request.
-5. Set `HALC2_CLERK_CLI_OAUTH_CLIENT_ID` to the generated public client ID in local and release
+5. Set `HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID` to the generated public client ID in local and release
    build environments.
 
 ## JWT template
@@ -56,7 +56,7 @@ Create a Clerk JWT template named `hal-c2-relay` with claims:
 { "aud": "hal-c2-relay" }
 ```
 
-Set `HALC2_CLERK_JWT_TEMPLATE=hal-c2-relay` for clients and
+Set `HAL_C2_CLERK_JWT_TEMPLATE=hal-c2-relay` for clients and
 `CLERK_JWT_AUDIENCE=hal-c2-relay` for the relay. The production relay deployment environment
 also defines `CLERK_JWT_TEMPLATE`. The audience stays the same across relay stages; the relay
 URL selects the deployment.
@@ -80,8 +80,8 @@ persistence and system-browser callback delivery.
 
 Clerk's native Android SDK uses `clerk://<applicationId>.callback`. In the Clerk instance selected by the app's publishable key, add each supported package to **Native applications > Allowlist for mobile SSO redirect**:
 
-| Variant     | Callback                                         |
-| ----------- | ------------------------------------------------ |
+| Variant     | Callback                                       |
+| ----------- | ---------------------------------------------- |
 | Development | `clerk://io.github.halc2.app.dev.callback`     |
 | Preview     | `clerk://io.github.halc2.app.preview.callback` |
 | Production  | `clerk://io.github.halc2.app.callback`         |
@@ -103,10 +103,10 @@ For a production macOS app with bundle ID `io.github.halc2.app`:
 Local signed builds additionally use:
 
 ```dotenv
-HALC2_APPLE_TEAM_ID=ABC1234567
-HALC2_MACOS_PROVISIONING_PROFILE=/absolute/path/to/hal-c2.provisionprofile
+HAL_C2_APPLE_TEAM_ID=ABC1234567
+HAL_C2_MACOS_PROVISIONING_PROFILE=/absolute/path/to/hal-c2.provisionprofile
 # Override only when the RP domain differs from the Clerk Frontend API hostname.
-HALC2_CLERK_PASSKEY_RP_DOMAINS=example.clerk.accounts.dev,clerk.example.com
+HAL_C2_CLERK_PASSKEY_RP_DOMAINS=example.clerk.accounts.dev,clerk.example.com
 ```
 
 Without the override, the build derives the RP domain from the Clerk publishable key.
@@ -119,7 +119,7 @@ actual web and server ports. For example, with the default ports:
 
 ```sh
 VITE_DEV_SERVER_URL=http://127.0.0.1:5733 \
-HALC2_PORT=13773 \
+HAL_C2_PORT=13773 \
   "/Applications/HAL-C2 (Alpha).app/Contents/MacOS/HAL-C2 (Alpha)"
 ```
 

@@ -46,7 +46,7 @@ describe("readPathFromLoginShell", () => {
         args: ReadonlyArray<string>,
         options: { encoding: "utf8"; timeout: number },
       ) => string
-    >(() => "__HALC2_ENV_PATH_START__\n/a:/b\n__HALC2_ENV_PATH_END__\n");
+    >(() => "__HAL_C2_ENV_PATH_START__\n/a:/b\n__HAL_C2_ENV_PATH_END__\n");
 
     expect(readPathFromLoginShell("/opt/homebrew/bin/fish", execFile)).toBe("/a:/b");
     expect(execFile).toHaveBeenCalledTimes(1);
@@ -64,8 +64,8 @@ describe("readPathFromLoginShell", () => {
     expect(args).toHaveLength(2);
     expect(args?.[0]).toBe("-ilc");
     expect(args?.[1]).toContain("printenv PATH || true");
-    expect(args?.[1]).toContain("__HALC2_ENV_PATH_START__");
-    expect(args?.[1]).toContain("__HALC2_ENV_PATH_END__");
+    expect(args?.[1]).toContain("__HAL_C2_ENV_PATH_START__");
+    expect(args?.[1]).toContain("__HAL_C2_ENV_PATH_END__");
     expect(options).toEqual({ encoding: "utf8", timeout: 5000 });
   });
 });
@@ -112,12 +112,12 @@ describe("readEnvironmentFromLoginShell", () => {
       ) => string
     >(() =>
       [
-        "__HALC2_ENV_PATH_START__",
+        "__HAL_C2_ENV_PATH_START__",
         "/a:/b",
-        "__HALC2_ENV_PATH_END__",
-        "__HALC2_ENV_SSH_AUTH_SOCK_START__",
+        "__HAL_C2_ENV_PATH_END__",
+        "__HAL_C2_ENV_SSH_AUTH_SOCK_START__",
         "/tmp/secretive.sock",
-        "__HALC2_ENV_SSH_AUTH_SOCK_END__",
+        "__HAL_C2_ENV_SSH_AUTH_SOCK_END__",
       ].join("\n"),
     );
 
@@ -137,11 +137,11 @@ describe("readEnvironmentFromLoginShell", () => {
       ) => string
     >(() =>
       [
-        "__HALC2_ENV_PATH_START__",
+        "__HAL_C2_ENV_PATH_START__",
         "/a:/b",
-        "__HALC2_ENV_PATH_END__",
-        "__HALC2_ENV_SSH_AUTH_SOCK_START__",
-        "__HALC2_ENV_SSH_AUTH_SOCK_END__",
+        "__HAL_C2_ENV_PATH_END__",
+        "__HAL_C2_ENV_SSH_AUTH_SOCK_START__",
+        "__HAL_C2_ENV_SSH_AUTH_SOCK_END__",
       ].join("\n"),
     );
 
@@ -158,7 +158,7 @@ describe("readEnvironmentFromLoginShell", () => {
         options: { encoding: "utf8"; timeout: number },
       ) => string
     >(() =>
-      ["__HALC2_ENV_CUSTOM_VAR_START__", "  padded value  ", "__HALC2_ENV_CUSTOM_VAR_END__"].join(
+      ["__HAL_C2_ENV_CUSTOM_VAR_START__", "  padded value  ", "__HAL_C2_ENV_CUSTOM_VAR_END__"].join(
         "\n",
       ),
     );
@@ -206,7 +206,7 @@ describe("readEnvironmentFromWindowsShell", () => {
       ) => string
     >(
       () =>
-        "__HALC2_ENV_PATH_START__\nC:\\Users\\testuser\\AppData\\Roaming\\npm\n__HALC2_ENV_PATH_END__\n",
+        "__HAL_C2_ENV_PATH_START__\nC:\\Users\\testuser\\AppData\\Roaming\\npm\n__HAL_C2_ENV_PATH_END__\n",
     );
 
     expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({
@@ -228,7 +228,7 @@ describe("readEnvironmentFromWindowsShell", () => {
       ) => string
     >(
       () =>
-        "__HALC2_ENV_FNM_DIR_START__\r\nC:\\Users\\testuser\\AppData\\Roaming\\fnm\r\n__HALC2_ENV_FNM_DIR_END__\r\n",
+        "__HAL_C2_ENV_FNM_DIR_START__\r\nC:\\Users\\testuser\\AppData\\Roaming\\fnm\r\n__HAL_C2_ENV_FNM_DIR_END__\r\n",
     );
 
     expect(readEnvironmentFromWindowsShell(["FNM_DIR"], execFile)).toEqual({
@@ -243,7 +243,7 @@ describe("readEnvironmentFromWindowsShell", () => {
         args: ReadonlyArray<string>,
         options: { encoding: "utf8"; timeout: number },
       ) => string
-    >(() => "__HALC2_ENV_PATH_START__\nC:\\Tools\n__HALC2_ENV_PATH_END__\n");
+    >(() => "__HAL_C2_ENV_PATH_START__\nC:\\Tools\n__HAL_C2_ENV_PATH_END__\n");
 
     expect(readEnvironmentFromWindowsShell(["PATH"], { loadProfile: true }, execFile)).toEqual({
       PATH: "C:\\Tools",
@@ -267,7 +267,7 @@ describe("readEnvironmentFromWindowsShell", () => {
       if (file === "pwsh.exe") {
         throw new Error("spawn pwsh.exe ENOENT");
       }
-      return "__HALC2_ENV_PATH_START__\nC:\\Tools\n__HALC2_ENV_PATH_END__\n";
+      return "__HAL_C2_ENV_PATH_START__\nC:\\Tools\n__HAL_C2_ENV_PATH_END__\n";
     });
 
     expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({

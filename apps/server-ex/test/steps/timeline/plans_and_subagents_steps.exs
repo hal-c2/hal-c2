@@ -220,7 +220,7 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
 
   defp await_next(id, fun) do
     receive do
-      {:halc2_stream, ^id, _} ->
+      {:hal_c2_stream, ^id, _} ->
         state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
         if fun.(state), do: state, else: await_next(id, fun)
     after
@@ -231,7 +231,7 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
   # The states a stream passed through after `seq`, from the commits already in the mailbox.
   defp events(id, seq, state) do
     receive do
-      {:halc2_stream, ^id, {:events, events}} ->
+      {:hal_c2_stream, ^id, {:events, events}} ->
         next =
           Enum.reduce(
             Enum.filter(events, &(&1.seq > seq)),

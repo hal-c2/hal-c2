@@ -694,10 +694,10 @@ describe("orchestrator MCP toolkit", () => {
             const invoke = (name: string, args: Record<string, unknown>) =>
               invokeAs(invocation, name, args);
 
-            const pinned = yield* invoke("halc2_thread_organize", { action: "pin" });
+            const pinned = yield* invoke("hal_c2_thread_organize", { action: "pin" });
             expect(pinned.structuredContent).toHaveProperty("sequence");
             expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).not.toBeNull();
-            yield* invoke("halc2_thread_organize", { action: "unpin" });
+            yield* invoke("hal_c2_thread_organize", { action: "unpin" });
             expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).toBeNull();
 
             if (parentRun === undefined || parentRun.rootNodeId === null) {
@@ -955,7 +955,7 @@ describe("orchestrator MCP toolkit", () => {
               return yield* Effect.die(new Error("Direct-read child thread missing."));
             }
             const directChildThreadId = directRead.task.childThreadId;
-            const directChildWaitCall = yield* invoke("halc2_thread_wait", {
+            const directChildWaitCall = yield* invoke("hal_c2_thread_wait", {
               threadId: directChildThreadId,
               timeoutMs: 10_000,
             });
@@ -976,7 +976,7 @@ describe("orchestrator MCP toolkit", () => {
               pendingAfterWait.runs.find((run) => run.id === directRead.queuedRun.id)?.status,
             ).toBe("queued");
 
-            const childPromptReadCall = yield* invoke("halc2_thread_read", {
+            const childPromptReadCall = yield* invoke("hal_c2_thread_read", {
               threadId: directChildThreadId,
               limit: 1,
             });
@@ -993,7 +993,7 @@ describe("orchestrator MCP toolkit", () => {
               )?.completionDelivery?.state,
             ).toBe("claimed");
 
-            const truncatedResultReadCall = yield* invoke("halc2_thread_read", {
+            const truncatedResultReadCall = yield* invoke("hal_c2_thread_read", {
               threadId: directChildThreadId,
               afterPosition: childPromptRead.nextPosition,
               limit: 1,
@@ -1013,7 +1013,7 @@ describe("orchestrator MCP toolkit", () => {
 
             const firstChunk = truncatedResultRead.items[0]!;
             expect(firstChunk.nextTextOffset).toBe(1);
-            const remainderCall = yield* invoke("halc2_thread_read", {
+            const remainderCall = yield* invoke("hal_c2_thread_read", {
               threadId: directChildThreadId,
               itemId: firstChunk.itemId,
               textOffset: firstChunk.nextTextOffset,
@@ -1033,7 +1033,7 @@ describe("orchestrator MCP toolkit", () => {
               )?.completionDelivery?.state,
             ).toBe("claimed");
 
-            const terminalResultReadCall = yield* invoke("halc2_thread_read", {
+            const terminalResultReadCall = yield* invoke("hal_c2_thread_read", {
               threadId: directChildThreadId,
               afterPosition: childPromptRead.nextPosition,
               limit: 1,
@@ -1075,7 +1075,7 @@ describe("orchestrator MCP toolkit", () => {
             let recovered = "";
             let textOffset: number | null = 0;
             while (textOffset !== null) {
-              const pageCall = yield* invoke("halc2_thread_read", {
+              const pageCall = yield* invoke("hal_c2_thread_read", {
                 threadId: directChildThreadId,
                 itemId: oversizedItem.id,
                 textOffset,
@@ -1139,23 +1139,23 @@ describe("orchestrator MCP toolkit", () => {
             if (queuedUserRun === undefined) {
               return yield* Effect.die(new Error("Queued user follow-up missing."));
             }
-            const queueFirstPage = yield* invoke("halc2_queue_list", { limit: 1 });
+            const queueFirstPage = yield* invoke("hal_c2_queue_list", { limit: 1 });
             expect(queueFirstPage.structuredContent).toMatchObject({
               items: [{ queuedRunId: queueRace.queuedRun.id }],
               nextCursor: 1,
             });
-            const queueSecondPage = yield* invoke("halc2_queue_list", { cursor: 1, limit: 1 });
+            const queueSecondPage = yield* invoke("hal_c2_queue_list", { cursor: 1, limit: 1 });
             expect(queueSecondPage.structuredContent).toEqual({
               items: [{ queuedRunId: queuedUserRun.id, text: "🙂".repeat(1000), truncated: true }],
               nextCursor: null,
             });
-            const queueRead = yield* invoke("halc2_queue_read", { queuedRunId: queuedUserRun.id });
+            const queueRead = yield* invoke("hal_c2_queue_read", { queuedRunId: queuedUserRun.id });
             expect(queueRead.structuredContent).toEqual({
               queuedRunId: queuedUserRun.id,
               text: "🙂".repeat(16000),
               truncated: true,
             });
-            const missingQueueRead = yield* invoke("halc2_queue_read", {
+            const missingQueueRead = yield* invoke("hal_c2_queue_read", {
               queuedRunId: parentRun.id,
             });
             expect(missingQueueRead.structuredContent).toMatchObject({ code: "invalid_request" });
@@ -1290,16 +1290,16 @@ describe("orchestrator MCP toolkit", () => {
             );
             expect(createThreadsTool?.tool.annotations?.destructiveHint).toBe(true);
             const threadListTool = server.tools.find(
-              ({ tool }) => tool.name === "halc2_thread_list",
+              ({ tool }) => tool.name === "hal_c2_thread_list",
             );
             expect(threadListTool?.tool.annotations?.readOnlyHint).toBe(true);
             expect(threadListTool?.tool.annotations?.idempotentHint).toBe(true);
             const threadReadTool = server.tools.find(
-              ({ tool }) => tool.name === "halc2_thread_read",
+              ({ tool }) => tool.name === "hal_c2_thread_read",
             );
             expect(threadReadTool?.tool.annotations?.readOnlyHint).toBe(false);
             const threadUpdateTool = server.tools.find(
-              ({ tool }) => tool.name === "halc2_thread_update",
+              ({ tool }) => tool.name === "hal_c2_thread_update",
             );
             expect(threadUpdateTool?.tool.annotations?.destructiveHint).toBe(true);
             expect(threadUpdateTool?.tool.annotations?.idempotentHint).toBe(false);
@@ -1313,7 +1313,7 @@ describe("orchestrator MCP toolkit", () => {
             });
             const deniedThreadUpdate = yield* invokeAs(
               { ...invocation, capabilities: new Set() },
-              "halc2_thread_update",
+              "hal_c2_thread_update",
               { action: "rename", title: "Denied title" },
             );
             expect(deniedThreadUpdate.structuredContent).toMatchObject({
@@ -1321,15 +1321,15 @@ describe("orchestrator MCP toolkit", () => {
               code: "capability_denied",
             });
             const threadSendTool = server.tools.find(
-              ({ tool }) => tool.name === "halc2_thread_send",
+              ({ tool }) => tool.name === "hal_c2_thread_send",
             );
             expect(threadSendTool?.tool.annotations?.destructiveHint).toBe(true);
             const threadWaitTool = server.tools.find(
-              ({ tool }) => tool.name === "halc2_thread_wait",
+              ({ tool }) => tool.name === "hal_c2_thread_wait",
             );
             expect(threadWaitTool?.tool.annotations?.readOnlyHint).toBe(true);
             const threadInterruptTool = server.tools.find(
-              ({ tool }) => tool.name === "halc2_thread_interrupt",
+              ({ tool }) => tool.name === "hal_c2_thread_interrupt",
             );
             expect(threadInterruptTool?.tool.annotations?.destructiveHint).toBe(true);
 
@@ -1560,7 +1560,7 @@ describe("orchestrator MCP toolkit", () => {
             expect(delegatedStatus.resultContextTransferId).not.toBeNull();
             expect(delegatedStatus.latestTerminalResultContextTransferId).not.toBeNull();
 
-            const childFollowupCall = yield* invoke("halc2_thread_send", {
+            const childFollowupCall = yield* invoke("hal_c2_thread_send", {
               threadId: delegated.childThreadId,
               message: "Confirm the delegated API boundary remains inspected.",
               clientRequestId: "delegated-child-followup-1",
@@ -1568,7 +1568,7 @@ describe("orchestrator MCP toolkit", () => {
             const childFollowup = yield* decodeThreadSendResult(
               childFollowupCall.structuredContent,
             ).pipe(Effect.orDie);
-            const childFollowupWaitCall = yield* invoke("halc2_thread_wait", {
+            const childFollowupWaitCall = yield* invoke("hal_c2_thread_wait", {
               threadId: delegated.childThreadId,
               runId: childFollowup.runId,
               timeoutMs: 10_000,
@@ -1597,7 +1597,7 @@ describe("orchestrator MCP toolkit", () => {
             });
             expect(delegatedStatusAfterFollowup.latestTerminalSummary).not.toBeNull();
 
-            const activeChildFollowupCall = yield* invoke("halc2_thread_send", {
+            const activeChildFollowupCall = yield* invoke("hal_c2_thread_send", {
               threadId: delegated.childThreadId,
               message: cancellationPrompt,
               clientRequestId: "delegated-child-active-followup-1",
@@ -1664,7 +1664,7 @@ describe("orchestrator MCP toolkit", () => {
                 (run) => run.id === activeChildFollowup.runId,
               )?.status,
             ).toBe("running");
-            const activeChildCleanupCall = yield* invoke("halc2_thread_interrupt", {
+            const activeChildCleanupCall = yield* invoke("hal_c2_thread_interrupt", {
               threadId: delegated.childThreadId,
               runId: activeChildFollowup.runId,
               reason: "Clean up the active follow-up after verifying task cancellation isolation.",
@@ -1890,7 +1890,7 @@ describe("orchestrator MCP toolkit", () => {
             expect(emptyProjection.thread.forkedFrom).toBeNull();
             expect(emptyProjection.runs).toEqual([]);
 
-            const defaultRenameCall = yield* invoke("halc2_thread_update", {
+            const defaultRenameCall = yield* invoke("hal_c2_thread_update", {
               action: "rename",
               title: "MCP parent metadata",
               clientRequestId: "metadata-default-thread-1",
@@ -1904,7 +1904,7 @@ describe("orchestrator MCP toolkit", () => {
               title: "MCP parent metadata",
             });
 
-            const renameCall = yield* invoke("halc2_thread_update", {
+            const renameCall = yield* invoke("hal_c2_thread_update", {
               threadId: emptyThread.threadId,
               action: "rename",
               title: "Metadata-managed thread",
@@ -1919,7 +1919,7 @@ describe("orchestrator MCP toolkit", () => {
               title: "Metadata-managed thread",
               linkedPullRequest: null,
             });
-            const repeatedRenameCall = yield* invoke("halc2_thread_update", {
+            const repeatedRenameCall = yield* invoke("hal_c2_thread_update", {
               threadId: emptyThread.threadId,
               action: "rename",
               title: "Metadata-managed thread",
@@ -1931,7 +1931,7 @@ describe("orchestrator MCP toolkit", () => {
             expect(repeatedRename.commandId).toBe(renamed.commandId);
             expect(repeatedRename.sequence).toBe(renamed.sequence);
 
-            const linkedCall = yield* invoke("halc2_thread_update", {
+            const linkedCall = yield* invoke("hal_c2_thread_update", {
               threadId: emptyThread.threadId,
               action: "link_pull_request",
               pullRequest: {
@@ -1950,7 +1950,7 @@ describe("orchestrator MCP toolkit", () => {
               number: 8689,
               url: "https://github.com/hal-c2/hal-c2/pull/8689",
             });
-            const metadataReadCall = yield* invoke("halc2_thread_read", {
+            const metadataReadCall = yield* invoke("hal_c2_thread_read", {
               threadId: emptyThread.threadId,
             });
             const metadataRead = yield* decodeThreadReadResult(
@@ -1960,7 +1960,7 @@ describe("orchestrator MCP toolkit", () => {
               title: "Metadata-managed thread",
               linkedPullRequest: linked.linkedPullRequest,
             });
-            const metadataListCall = yield* invoke("halc2_thread_list", { limit: 100 });
+            const metadataListCall = yield* invoke("hal_c2_thread_list", { limit: 100 });
             const metadataList = yield* decodeThreadListResult(
               metadataListCall.structuredContent,
             ).pipe(Effect.orDie);
@@ -1971,7 +1971,7 @@ describe("orchestrator MCP toolkit", () => {
               linkedPullRequest: linked.linkedPullRequest,
             });
 
-            const unlinkedCall = yield* invoke("halc2_thread_update", {
+            const unlinkedCall = yield* invoke("hal_c2_thread_update", {
               threadId: emptyThread.threadId,
               action: "unlink_pull_request",
               clientRequestId: "metadata-unlink-1",
@@ -1981,7 +1981,7 @@ describe("orchestrator MCP toolkit", () => {
             );
             expect(unlinked.linkedPullRequest).toBeNull();
 
-            const regenerateCall = yield* invoke("halc2_thread_update", {
+            const regenerateCall = yield* invoke("hal_c2_thread_update", {
               threadId: emptyThread.threadId,
               action: "regenerate_title",
               clientRequestId: "metadata-regenerate-title-1",
@@ -2052,7 +2052,7 @@ describe("orchestrator MCP toolkit", () => {
               ),
             ).toHaveLength(2);
 
-            const promptedReadCall = yield* invoke("halc2_thread_read", {
+            const promptedReadCall = yield* invoke("hal_c2_thread_read", {
               threadId: promptedThread.threadId,
               limit: 1,
             });
@@ -2070,7 +2070,7 @@ describe("orchestrator MCP toolkit", () => {
               creationSource: "mcp",
             });
             expect(promptedRead.hasMore).toBe(true);
-            const promptedReadNextCall = yield* invoke("halc2_thread_read", {
+            const promptedReadNextCall = yield* invoke("hal_c2_thread_read", {
               threadId: promptedThread.threadId,
               afterPosition: promptedRead.nextPosition,
               limit: 1,
@@ -2104,7 +2104,7 @@ describe("orchestrator MCP toolkit", () => {
               ),
             ).toBe(true);
 
-            const forkedReadCall = yield* invoke("halc2_thread_read", {
+            const forkedReadCall = yield* invoke("hal_c2_thread_read", {
               threadId: forkedThreadId,
             });
             const forkedRead = yield* decodeThreadReadResult(forkedReadCall.structuredContent).pipe(
@@ -2119,7 +2119,7 @@ describe("orchestrator MCP toolkit", () => {
             });
 
             const ordinaryLoopPrompt = "Run an ordinary thread loop iteration.";
-            const sendCall = yield* invoke("halc2_thread_send", {
+            const sendCall = yield* invoke("hal_c2_thread_send", {
               threadId: emptyThread.threadId,
               message: ordinaryLoopPrompt,
               clientRequestId: "ordinary-loop-send-1",
@@ -2141,7 +2141,7 @@ describe("orchestrator MCP toolkit", () => {
               senderThreadId: parentThreadId,
             });
             expect(sent.delivery).toBe("started");
-            const waitCall = yield* invoke("halc2_thread_wait", {
+            const waitCall = yield* invoke("hal_c2_thread_wait", {
               threadId: emptyThread.threadId,
               runId: sent.runId,
               timeoutMs: 10_000,
@@ -2154,7 +2154,7 @@ describe("orchestrator MCP toolkit", () => {
               status: "completed",
               timedOut: false,
             });
-            const repeatedSendCall = yield* invoke("halc2_thread_send", {
+            const repeatedSendCall = yield* invoke("hal_c2_thread_send", {
               threadId: emptyThread.threadId,
               message: ordinaryLoopPrompt,
               clientRequestId: "ordinary-loop-send-1",
@@ -2198,7 +2198,7 @@ describe("orchestrator MCP toolkit", () => {
                 projection.providerTurns.some((turn) => turn.status === "running"),
             );
             const activeRun = activeProjection.runs[0]!;
-            const activeTimeoutCall = yield* invoke("halc2_thread_wait", {
+            const activeTimeoutCall = yield* invoke("hal_c2_thread_wait", {
               threadId: activeThread.threadId,
               runId: activeRun.id,
               timeoutMs: 1,
@@ -2211,7 +2211,7 @@ describe("orchestrator MCP toolkit", () => {
               status: "running",
               timedOut: true,
             });
-            const steerCall = yield* invoke("halc2_thread_send", {
+            const steerCall = yield* invoke("hal_c2_thread_send", {
               threadId: activeThread.threadId,
               message: "Include the latest parent guidance before finishing.",
               mode: "steer",
@@ -2237,7 +2237,7 @@ describe("orchestrator MCP toolkit", () => {
             ).toMatchObject({
               senderThreadId: parentThreadId,
             });
-            const interruptCall = yield* invoke("halc2_thread_interrupt", {
+            const interruptCall = yield* invoke("hal_c2_thread_interrupt", {
               threadId: activeThread.threadId,
               reason: "The orchestration loop has enough evidence.",
               clientRequestId: "managed-active-interrupt-1",
@@ -2249,7 +2249,7 @@ describe("orchestrator MCP toolkit", () => {
               runId: activeRun.id,
               status: "interrupt_requested",
             });
-            const interruptedWaitCall = yield* invoke("halc2_thread_wait", {
+            const interruptedWaitCall = yield* invoke("hal_c2_thread_wait", {
               threadId: activeThread.threadId,
               runId: activeRun.id,
               timeoutMs: 10_000,
@@ -2258,7 +2258,7 @@ describe("orchestrator MCP toolkit", () => {
               interruptedWaitCall.structuredContent,
             ).pipe(Effect.orDie);
             expect(interruptedWait.status).toBe("interrupted");
-            const repeatedInterruptCall = yield* invoke("halc2_thread_interrupt", {
+            const repeatedInterruptCall = yield* invoke("hal_c2_thread_interrupt", {
               threadId: activeThread.threadId,
               runId: activeRun.id,
             });
@@ -2282,7 +2282,7 @@ describe("orchestrator MCP toolkit", () => {
               branch: null,
               worktreePath: cwd,
             });
-            const foreignOrganizeCall = yield* invoke("halc2_thread_organize", {
+            const foreignOrganizeCall = yield* invoke("hal_c2_thread_organize", {
               threadId: foreignThreadId,
               action: "pin",
             });
@@ -2291,14 +2291,14 @@ describe("orchestrator MCP toolkit", () => {
             });
             expect((yield* orchestrator.getThreadShell(foreignThreadId))?.pinnedAt).toBeNull();
 
-            const foreignReadCall = yield* invoke("halc2_thread_read", {
+            const foreignReadCall = yield* invoke("hal_c2_thread_read", {
               threadId: foreignThreadId,
             });
             expect(foreignReadCall.structuredContent).toMatchObject({
               _tag: "OrchestratorMcpFailure",
               code: "thread_not_found",
             });
-            const foreignUpdateCall = yield* invoke("halc2_thread_update", {
+            const foreignUpdateCall = yield* invoke("hal_c2_thread_update", {
               threadId: foreignThreadId,
               action: "rename",
               title: "Should stay foreign",
@@ -2307,7 +2307,7 @@ describe("orchestrator MCP toolkit", () => {
               _tag: "OrchestratorMcpFailure",
               code: "thread_not_found",
             });
-            const listCall = yield* invoke("halc2_thread_list", {
+            const listCall = yield* invoke("hal_c2_thread_list", {
               includeSubagents: false,
               limit: 100,
             });
@@ -3225,7 +3225,7 @@ describe("orchestrator MCP toolkit", () => {
           const followupStartSequence = yield* orchestrator.getThreadEventSequence(
             delegated.childThreadId,
           );
-          const runningFollowupCall = yield* invoke("halc2_thread_send", {
+          const runningFollowupCall = yield* invoke("hal_c2_thread_send", {
             threadId: delegated.childThreadId,
             message: cancellationPrompt,
             clientRequestId: "delegated-child-replay-running-1",
@@ -3253,7 +3253,7 @@ describe("orchestrator MCP toolkit", () => {
               ),
             );
 
-          const queuedFollowupCall = yield* invoke("halc2_thread_send", {
+          const queuedFollowupCall = yield* invoke("hal_c2_thread_send", {
             threadId: delegated.childThreadId,
             message: queuedFollowupPrompt,
             mode: "queue",
@@ -3304,7 +3304,7 @@ describe("orchestrator MCP toolkit", () => {
           });
 
           const finalSequence = yield* orchestrator.getThreadEventSequence(delegated.childThreadId);
-          const interruptCall = yield* invoke("halc2_thread_interrupt", {
+          const interruptCall = yield* invoke("hal_c2_thread_interrupt", {
             threadId: delegated.childThreadId,
             runId: runningFollowup.runId,
             reason: "Allow the queued replay follow-up to run.",

@@ -3,7 +3,7 @@ defmodule HalC2.LocalServers do
   Web servers listening on this host (`subscribeDiscoveredLocalServers`), for the
   preview panel's suggestions. While anyone watches, `lsof` lists listening TCP
   ports every few seconds and each new one is asked for a page; those answering
-  with HTML are the list. Watchers get `{:halc2_local_servers, node, list}` when it
+  with HTML are the list. Watchers get `{:hal_c2_local_servers, node, list}` when it
   changes.
   """
 
@@ -58,7 +58,7 @@ defmodule HalC2.LocalServers do
         do:
           for(
             {pid, _} <- state.watchers,
-            do: send(pid, {:halc2_local_servers, node(), state.list})
+            do: send(pid, {:hal_c2_local_servers, node(), state.list})
           )
 
       {:noreply, schedule(state)}

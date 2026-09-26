@@ -130,7 +130,7 @@ export function ThreadSubagentGroup(props: {
             ) : null}
           </View>
           <View className="min-w-0 flex-1 gap-0.5">
-            <Text numberOfLines={1} className="font-halc2-medium text-sm text-foreground">
+            <Text numberOfLines={1} className="font-hal-c2-medium text-sm text-foreground">
               {label}
             </Text>
             <Text
@@ -192,7 +192,7 @@ export function ThreadSubagentGroup(props: {
                   <View className="flex-row items-baseline gap-2">
                     <Text
                       numberOfLines={1}
-                      className="min-w-0 shrink font-halc2-medium text-sm text-foreground"
+                      className="min-w-0 shrink font-hal-c2-medium text-sm text-foreground"
                     >
                       {presentation.title}
                     </Text>

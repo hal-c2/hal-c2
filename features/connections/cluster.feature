@@ -67,7 +67,7 @@ Feature: Clustering one person's machines
 
   @node
   Scenario: Members can be listed statically
-    Given HALC2_PEERS names a member's node
+    Given HAL_C2_PEERS names a member's node
     When the node starts
     Then it connects to that member without tailnet discovery
 

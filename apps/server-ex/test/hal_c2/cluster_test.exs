@@ -12,7 +12,7 @@ defmodule HalC2.ClusterTest do
       {_, 0} = System.cmd("epmd", ["-daemon"])
       # Unique names, so the test never collides with nodes running on this machine.
       {:ok, _} =
-        Node.start(:"halc2test#{System.unique_integer([:positive])}@127.0.0.1", :longnames)
+        Node.start(:"hal_c2_test#{System.unique_integer([:positive])}@127.0.0.1", :longnames)
     end
 
     Application.put_env(:hal_c2, :home, Path.join(dir, "a"))
@@ -25,7 +25,7 @@ defmodule HalC2.ClusterTest do
 
     {:ok, peer, b} =
       :peer.start_link(%{
-        name: :"halc2peer#{System.unique_integer([:positive])}",
+        name: :"hal_c2_peer#{System.unique_integer([:positive])}",
         host: ~c"127.0.0.1",
         longnames: true,
         args: code_path_args()

@@ -93,7 +93,7 @@ export function ConfirmDialogHost() {
       {presented === null ? null : (
         <View className="flex-1 items-center justify-center bg-backdrop px-8">
           <View className="w-full rounded-[24px] bg-card px-6 pb-4 pt-5">
-            <AppText className="text-lg font-halc2-medium">{presented.request.title}</AppText>
+            <AppText className="text-lg font-hal-c2-medium">{presented.request.title}</AppText>
             {presented.kind === "confirm" && presented.request.message !== undefined ? (
               <AppText className="mt-2 text-sm text-foreground-secondary">
                 {presented.request.message}
@@ -118,7 +118,7 @@ export function ConfirmDialogHost() {
                   className="min-h-10 items-center justify-center px-4 active:bg-subtle"
                   onPress={handleCancel}
                 >
-                  <AppText className="text-base font-halc2-medium">
+                  <AppText className="text-base font-hal-c2-medium">
                     {presented.request.cancelText ?? "Cancel"}
                   </AppText>
                 </Pressable>
@@ -132,7 +132,7 @@ export function ConfirmDialogHost() {
                 >
                   <AppText
                     className={cn(
-                      "text-base font-halc2-medium",
+                      "text-base font-hal-c2-medium",
                       presented.kind === "confirm" &&
                         presented.request.destructive &&
                         "text-danger-foreground",

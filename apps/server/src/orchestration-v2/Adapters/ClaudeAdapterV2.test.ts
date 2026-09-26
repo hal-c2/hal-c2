@@ -65,8 +65,8 @@ import {
   CLAUDE_DEFAULT_INSTANCE_ID,
   CLAUDE_PROVIDER,
   CLAUDE_READ_ONLY_ALLOWED_TOOLS,
-  CLAUDE_READ_ONLY_HALC2_MCP_ALLOWED_TOOLS,
-  CLAUDE_HALC2_MCP_TOOL_WILDCARD,
+  CLAUDE_READ_ONLY_HAL_C2_MCP_ALLOWED_TOOLS,
+  CLAUDE_HAL_C2_MCP_TOOL_WILDCARD,
   ClaudeProviderCapabilitiesV2,
   ClaudeAgentSdkQueryRunnerError,
   claudeEffectiveQueryPolicyKey,
@@ -480,7 +480,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 });
 
 describe("ClaudeAdapterV2 MCP query overrides", () => {
-  const HALC2_MCP_SERVERS = {
+  const HAL_C2_MCP_SERVERS = {
     "hal-c2": {
       type: "http",
       url: "http://127.0.0.1:43123/mcp",
@@ -532,8 +532,8 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       const overrides = claudeMcpQueryOverrides({ threadId, readOnlySandbox: false });
 
       assert.deepEqual(overrides, {
-        allowedTools: [CLAUDE_HALC2_MCP_TOOL_WILDCARD],
-        mcpServers: HALC2_MCP_SERVERS,
+        allowedTools: [CLAUDE_HAL_C2_MCP_TOOL_WILDCARD],
+        mcpServers: HAL_C2_MCP_SERVERS,
       });
     });
   });
@@ -549,7 +549,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
 
       assert.deepEqual(overrides, {
         allowedTools: ["Read", "mcp__hal-c2__*"],
-        mcpServers: HALC2_MCP_SERVERS,
+        mcpServers: HAL_C2_MCP_SERVERS,
       });
     });
   });
@@ -566,11 +566,11 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       assert.deepEqual(overrides, {
         allowedTools: [
           ...CLAUDE_READ_ONLY_ALLOWED_TOOLS,
-          ...CLAUDE_READ_ONLY_HALC2_MCP_ALLOWED_TOOLS,
+          ...CLAUDE_READ_ONLY_HAL_C2_MCP_ALLOWED_TOOLS,
         ],
-        mcpServers: HALC2_MCP_SERVERS,
+        mcpServers: HAL_C2_MCP_SERVERS,
       });
-      assert.isFalse(overrides.allowedTools?.includes(CLAUDE_HALC2_MCP_TOOL_WILDCARD));
+      assert.isFalse(overrides.allowedTools?.includes(CLAUDE_HAL_C2_MCP_TOOL_WILDCARD));
     });
   });
 
@@ -579,7 +579,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     withMcpSession(threadId, () => {
       const overrides = claudeMcpQueryOverrides({ threadId, readOnlySandbox: true });
 
-      assert.deepEqual(overrides.allowedTools, [...CLAUDE_READ_ONLY_HALC2_MCP_ALLOWED_TOOLS]);
+      assert.deepEqual(overrides.allowedTools, [...CLAUDE_READ_ONLY_HAL_C2_MCP_ALLOWED_TOOLS]);
     });
   });
 
@@ -661,7 +661,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       .map((tool) => `mcp__hal-c2__${tool.name}`)
       .sort();
 
-    assert.deepEqual([...CLAUDE_READ_ONLY_HALC2_MCP_ALLOWED_TOOLS].sort(), readOnlyToolNames);
+    assert.deepEqual([...CLAUDE_READ_ONLY_HAL_C2_MCP_ALLOWED_TOOLS].sort(), readOnlyToolNames);
   });
 });
 
@@ -907,7 +907,7 @@ describe("ClaudeAdapterV2 session permissions", () => {
 
   it("adds a whole-tool session rule when Claude offers no suggestion", () => {
     const result = permissionResultFromDecision({
-      toolName: "mcp__halc2__custom_tool",
+      toolName: "mcp__hal_c2__custom_tool",
       decision: "acceptForSession",
       toolInput: {},
       toolUseID: "tool-2",
@@ -920,7 +920,7 @@ describe("ClaudeAdapterV2 session permissions", () => {
     assert.deepEqual(result.updatedPermissions, [
       {
         type: "addRules",
-        rules: [{ toolName: "mcp__halc2__custom_tool" }],
+        rules: [{ toolName: "mcp__hal_c2__custom_tool" }],
         behavior: "allow",
         destination: "session",
       },

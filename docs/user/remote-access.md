@@ -9,8 +9,8 @@ HAL-C2 Connect makes an environment available to your other devices without sett
 up router forwarding. It runs through a relay you host yourself; there is no
 public HAL-C2 relay. Deploy one as described in
 [HAL-C2 Connect setup](../operations/connect-setup.md), then point the server at it
-with `HALC2_RELAY_URL` (for example `https://relay.hal-c2.example`, a placeholder for
-your own domain) and set `HALC2_HOSTED_APP_URL` to the web app that completes
+with `HAL_C2_RELAY_URL` (for example `https://relay.hal-c2.example`, a placeholder for
+your own domain) and set `HAL_C2_HOSTED_APP_URL` to the web app that completes
 sign-in for headless hosts (placeholder `https://app.hal-c2.example`).
 
 In the desktop app on the host, open **Settings →

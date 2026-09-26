@@ -74,7 +74,7 @@ function runBunTui(input: {
   readonly shellDir: string;
   readonly mintSocketUrl: () => Promise<string>;
 }): Promise<void> {
-  const bunCommand = process.env.HALC2_TUI_BUN ?? "bun";
+  const bunCommand = process.env.HAL_C2_TUI_BUN ?? "bun";
   const bundledEntry = NodeURL.fileURLToPath(new URL("./tui/index.js", import.meta.url));
   const unpackedEntry = bundledEntry.replace(/(?:app|server)\.asar([\\/])/, "app.asar.unpacked$1");
   const workspaceEntry = NodeURL.fileURLToPath(
@@ -92,10 +92,10 @@ function runBunTui(input: {
       env: {
         ...process.env,
         ...colorCapabilityEnv(process.env),
-        HALC2_TUI_ORIGIN: input.origin,
-        HALC2_TUI_BEARER: input.bearerToken,
-        HALC2_TUI_LOG: input.logPath,
-        HALC2_TUI_SHELL_DIR: input.shellDir,
+        HAL_C2_TUI_ORIGIN: input.origin,
+        HAL_C2_TUI_BEARER: input.bearerToken,
+        HAL_C2_TUI_LOG: input.logPath,
+        HAL_C2_TUI_SHELL_DIR: input.shellDir,
       },
     });
 
@@ -118,7 +118,7 @@ function runBunTui(input: {
       if (error.code === "ENOENT") {
         process.stderr.write(
           "`hal-c2 tui` needs Bun to run its terminal UI. Install it from https://bun.sh " +
-            "(or set HALC2_TUI_BUN to a bun binary).\n",
+            "(or set HAL_C2_TUI_BUN to a bun binary).\n",
         );
       } else {
         process.stderr.write(`hal-c2 tui: failed to start Bun: ${error.message}\n`);

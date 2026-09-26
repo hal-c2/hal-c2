@@ -79,7 +79,7 @@ defmodule HalC2.ScenariosTest do
     writer = connect(port) |> config(1)
     reader = connect(port) |> config(1)
 
-    writer = rpc(writer, env, 2, "halc2.readSettings", %{})
+    writer = rpc(writer, env, 2, "hal-c2.readSettings", %{})
 
     {%{"t" => "rpc.result", "result" => %{"settings" => %{}, "version" => version}}, writer} =
       await(writer, reply?(2))
@@ -87,7 +87,7 @@ defmodule HalC2.ScenariosTest do
     doc = %{"enableAssistantStreaming" => false}
 
     writer =
-      rpc(writer, env, 3, "halc2.writeSettings", %{"settings" => doc, "version" => version})
+      rpc(writer, env, 3, "hal-c2.writeSettings", %{"settings" => doc, "version" => version})
 
     {%{"t" => "rpc.result", "result" => %{"version" => next}}, writer} = await(writer, reply?(3))
     assert next == version + 1
@@ -97,7 +97,7 @@ defmodule HalC2.ScenariosTest do
 
     # The same starting point a second time is a lost update.
     writer =
-      rpc(writer, env, 4, "halc2.writeSettings", %{"settings" => %{}, "version" => version})
+      rpc(writer, env, 4, "hal-c2.writeSettings", %{"settings" => %{}, "version" => version})
 
     assert {%{
               "t" => "rpc.error",
@@ -112,14 +112,14 @@ defmodule HalC2.ScenariosTest do
     client = connect(port) |> config(1)
     rule = %{"key" => "mod+j", "command" => "terminal.toggle"}
 
-    client = rpc(client, env, 2, "halc2.upsertKeybinding", rule)
+    client = rpc(client, env, 2, "hal-c2.upsertKeybinding", rule)
 
     {[%{"t" => "rpc.result", "result" => %{"rules" => [^rule]}}, pushed], client} =
       await_all(client, [reply?(2), &(&1["t"] == "config.keybindings")])
 
     assert %{"id" => 1, "rules" => [^rule]} = pushed
 
-    client = rpc(client, env, 3, "halc2.removeKeybinding", rule)
+    client = rpc(client, env, 3, "hal-c2.removeKeybinding", rule)
 
     assert {[%{"t" => "rpc.result"}, %{"t" => "config.keybindings", "rules" => []}], _} =
              await_all(client, [reply?(3), &(&1["t"] == "config.keybindings")])

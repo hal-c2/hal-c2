@@ -13,10 +13,10 @@ const repoEnv = loadRepoEnv();
 // bundle that already carries its own copy of the same libraries.
 const isMainProcessExternal = (id: string) =>
   id === "electron" || id.startsWith("electron/") || isDesktopRuntimeExternalDependency(id);
-const shouldLaunchElectronAfterPack = process.env.HALC2_DESKTOP_DEV === "1";
+const shouldLaunchElectronAfterPack = process.env.HAL_C2_DESKTOP_DEV === "1";
 const publicConfigDefine = {
-  __HALC2_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
-    repoEnv.HALC2_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
+  __HAL_C2_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
+    repoEnv.HAL_C2_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
   ),
 };
 
@@ -31,7 +31,7 @@ export default defineConfig({
       },
       dev: {
         command:
-          "node scripts/build-browser-secret.mjs && node scripts/build-preview-annotation-css.mjs && cross-env HALC2_DESKTOP_DEV=1 vp pack --watch",
+          "node scripts/build-browser-secret.mjs && node scripts/build-preview-annotation-css.mjs && cross-env HAL_C2_DESKTOP_DEV=1 vp pack --watch",
         dependsOn: ["hal-c2#build"],
         cache: false,
       },

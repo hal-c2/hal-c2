@@ -10,7 +10,7 @@ defmodule HalC2.GitActions do
   title and body that follow the repository's pull request template.
 
   `start/2` runs an action in its own process and sends each event to the
-  subscriber as `{:halc2_git_action, action_id, event}`.
+  subscriber as `{:hal_c2_git_action, action_id, event}`.
   """
 
   alias HalC2.{Git, TextGeneration, Vcs}
@@ -23,7 +23,7 @@ defmodule HalC2.GitActions do
     {:ok, _} =
       Task.start(fn ->
         emit = fn event ->
-          send(subscriber, {:halc2_git_action, action_id, event_base(input) |> Map.merge(event)})
+          send(subscriber, {:hal_c2_git_action, action_id, event_base(input) |> Map.merge(event)})
         end
 
         run(input, emit)

@@ -48,7 +48,7 @@ defmodule HalC2.Steps.Orchestration.McpServer do
 
     # The credential acts as that thread.
     assert {200, %{"result" => %{"structuredContent" => %{"thread" => %{"threadId" => id}}}}} =
-             HalC2.Mcp.handle(auth, tool_request("halc2_thread_read", %{}))
+             HalC2.Mcp.handle(auth, tool_request("hal_c2_thread_read", %{}))
 
     assert id == World.thread_id(context, thread)
     Map.put(context, :credential, auth)
@@ -206,7 +206,7 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     listed = Enum.map(tools, & &1["name"])
     assert Enum.sort(listed) == Enum.sort(exported)
 
-    for prefix <- ~w(halc2_thread_ halc2_queue_ halc2_project_ halc2_worktree_ preview_ device_),
+    for prefix <- ~w(hal_c2_thread_ hal_c2_queue_ hal_c2_project_ hal_c2_worktree_ preview_ device_),
         do: assert(Enum.any?(listed, &String.starts_with?(&1, prefix)), prefix)
 
     for name <- ~w(link_pull_request schedule_task delegate_task), do: assert(name in listed)
@@ -219,7 +219,7 @@ defmodule HalC2.Steps.Orchestration.McpServer do
   step "the agent of {string} reads a thread that does not exist", %{args: [caller]} = context do
     response =
       World.mcp(context, caller, "tools/call", %{
-        "name" => "halc2_thread_read",
+        "name" => "hal_c2_thread_read",
         "arguments" => %{"threadId" => "thread-that-does-not-exist"}
       })
 
@@ -264,7 +264,7 @@ defmodule HalC2.Steps.Orchestration.McpServer do
   end
 
   step "its agent calls any tool", context do
-    {200, body} = HalC2.Mcp.handle(context.credential, tool_request("halc2_thread_list", %{}))
+    {200, body} = HalC2.Mcp.handle(context.credential, tool_request("hal_c2_thread_list", %{}))
     %{"result" => %{"isError" => true, "content" => [%{"text" => text}]}} = body
     %{"code" => code, "message" => message} = JSON.decode!(text)
     Map.put(context, :mcp_result, {:error, code, message})
@@ -281,7 +281,7 @@ defmodule HalC2.Steps.Orchestration.McpServer do
 
   step "the agent of {string} reads {string}", %{args: [caller, thread]} = context do
     result =
-      World.mcp_tool(context, caller, "halc2_thread_read", %{
+      World.mcp_tool(context, caller, "hal_c2_thread_read", %{
         "threadId" => World.thread_id(context, thread)
       })
 
@@ -311,7 +311,7 @@ defmodule HalC2.Steps.Orchestration.McpServer do
       World.mcp_tool(
         context,
         caller,
-        "halc2_thread_send",
+        "hal_c2_thread_send",
         %{"threadId" => World.thread_id(context, "other"), "message" => "say hi"},
         context[:mcp_instance] || "codex"
       )
@@ -322,7 +322,7 @@ defmodule HalC2.Steps.Orchestration.McpServer do
   step "the agent of {string} lists the threads of {string}",
        %{args: [caller, project]} = context do
     context = Map.put(context, :listed_project, World.project(context, project).id)
-    Map.put(context, :mcp_result, World.mcp_tool(context, caller, "halc2_thread_list"))
+    Map.put(context, :mcp_result, World.mcp_tool(context, caller, "hal_c2_thread_list"))
   end
 
   step "it receives them", context do
@@ -355,7 +355,7 @@ defmodule HalC2.Steps.Orchestration.McpServer do
 
   step "the agent of {string} changes {string}", %{args: [caller, thread]} = context do
     result =
-      World.mcp_tool(context, caller, "halc2_thread_send", %{
+      World.mcp_tool(context, caller, "hal_c2_thread_send", %{
         "threadId" => World.thread_id(context, thread),
         "message" => "say changed"
       })
@@ -383,14 +383,14 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     {tool, arguments} =
       case change do
         "creates a project" ->
-          {"halc2_project_create",
+          {"hal_c2_project_create",
            %{"workspaceRoot" => HalC2.Test.Node.tmp_dir(context.node, "new-project")}}
 
         "launches a thread" ->
-          {"halc2_thread_launch", %{"title" => "Child", "message" => "say hi"}}
+          {"hal_c2_thread_launch", %{"title" => "Child", "message" => "say hi"}}
 
         "updates the environment preferences" ->
-          {"halc2_environment_preferences_update", %{"defaultThreadEnvMode" => "worktree"}}
+          {"hal_c2_environment_preferences_update", %{"defaultThreadEnvMode" => "worktree"}}
       end
 
     Map.put(context, :mcp_result, World.mcp_tool(context, caller, tool, arguments))
@@ -416,7 +416,7 @@ defmodule HalC2.Steps.Orchestration.McpServer do
   end
 
   step ~r/^(?:it calls a tool|the old agent calls a tool with its credential)$/, context do
-    response = HalC2.Mcp.handle(context.credential, tool_request("halc2_thread_list", %{}))
+    response = HalC2.Mcp.handle(context.credential, tool_request("hal_c2_thread_list", %{}))
     Map.put(context, :mcp_response, response)
   end
 

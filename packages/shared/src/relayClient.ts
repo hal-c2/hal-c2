@@ -20,7 +20,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
 
 export const CLOUDFLARED_VERSION = "2026.5.2";
-const CLOUDFLARED_PATH_ENV_NAME = "HALC2_CLOUDFLARED_PATH";
+const CLOUDFLARED_PATH_ENV_NAME = "HAL_C2_CLOUDFLARED_PATH";
 
 export type RelayClientExecutableSource = "override" | "managed" | "path";
 

@@ -293,7 +293,7 @@ defmodule HalC2.Steps.Providers.Codex do
         "jsonrpc" => "2.0",
         "id" => 1,
         "method" => "tools/call",
-        "params" => %{"name" => "halc2_thread_list", "arguments" => %{}}
+        "params" => %{"name" => "hal_c2_thread_list", "arguments" => %{}}
       })
 
     # The tools find the calling thread through its sidebar row.

@@ -1,9 +1,9 @@
 export type LoopbackAuthorizationStage = "dev" | "nightly" | "latest";
 
-declare const __HALC2_BUILD_CHANNEL__: "nightly" | "latest" | undefined;
+declare const __HAL_C2_BUILD_CHANNEL__: "nightly" | "latest" | undefined;
 
 function resolveLoopbackAuthorizationStage(): LoopbackAuthorizationStage {
-  return typeof __HALC2_BUILD_CHANNEL__ === "undefined" ? "dev" : __HALC2_BUILD_CHANNEL__;
+  return typeof __HAL_C2_BUILD_CHANNEL__ === "undefined" ? "dev" : __HAL_C2_BUILD_CHANNEL__;
 }
 
 const stageBrands = {

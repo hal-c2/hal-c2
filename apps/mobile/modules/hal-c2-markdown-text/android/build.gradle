@@ -5,7 +5,7 @@ group = 'io.github.halc2.markdowntext'
 version = '0.0.0'
 
 android {
-  namespace 'expo.modules.halc2markdowntext'
+  namespace 'expo.modules.hal_c2_markdowntext'
   compileSdk rootProject.ext.compileSdkVersion
 
   testOptions {

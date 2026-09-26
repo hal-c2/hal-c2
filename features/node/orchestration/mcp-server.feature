@@ -82,8 +82,8 @@ Feature: The HAL-C2 MCP server agents receive
 
   @node
   Scenario: A tool the node does not implement is refused by name
-    When the agent of "caller" calls a tool "halc2_teleport"
-    Then it fails with code "capability_denied" and "halc2_teleport is not available on this node."
+    When the agent of "caller" calls a tool "hal_c2_teleport"
+    Then it fails with code "capability_denied" and "hal_c2_teleport is not available on this node."
 
   @node
   Scenario: A deleted thread's credential no longer acts

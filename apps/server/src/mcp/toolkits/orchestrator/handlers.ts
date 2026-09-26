@@ -60,37 +60,37 @@ const handlers = {
       const service = yield* OrchestratorMcpService;
       return yield* service.createThreads(scope, input);
     }),
-  halc2_thread_list: (input) =>
+  hal_c2_thread_list: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;
       const service = yield* OrchestratorMcpService;
       return yield* service.listThreads(scope, input);
     }),
-  halc2_thread_read: (input) =>
+  hal_c2_thread_read: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;
       const service = yield* OrchestratorMcpService;
       return yield* service.readThread(scope, input);
     }),
-  halc2_thread_update: (input) =>
+  hal_c2_thread_update: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;
       const service = yield* ThreadMetadataMcpService;
       return yield* service.update(scope, input);
     }),
-  halc2_thread_send: (input) =>
+  hal_c2_thread_send: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;
       const service = yield* OrchestratorMcpService;
       return yield* service.sendToThread(scope, input);
     }),
-  halc2_thread_wait: (input) =>
+  hal_c2_thread_wait: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;
       const service = yield* OrchestratorMcpService;
       return yield* service.waitForThread(scope, input);
     }),
-  halc2_thread_interrupt: (input) =>
+  hal_c2_thread_interrupt: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;
       const service = yield* OrchestratorMcpService;

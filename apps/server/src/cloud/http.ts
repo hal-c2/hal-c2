@@ -118,7 +118,7 @@ const requireRelayUrl = relayUrlConfig.pipe(
   Effect.mapError(
     () =>
       new EnvironmentHttpInternalServerError({
-        message: "HALC2_RELAY_URL must be configured as a secure absolute HTTPS origin.",
+        message: "HAL_C2_RELAY_URL must be configured as a secure absolute HTTPS origin.",
       }),
   ),
 );
@@ -703,7 +703,7 @@ export const releaseManagedTunnelOnShutdown = Effect.fn(
     return false;
   }
   // The link belongs to the relay it was installed against, so target the
-  // persisted URL: HALC2_RELAY_URL may have changed since the link was made.
+  // persisted URL: HAL_C2_RELAY_URL may have changed since the link was made.
   const relayUrl = yield* dependencies.secrets.get(RELAY_URL_SECRET);
   if (Option.isNone(relayUrl)) {
     return false;
@@ -1076,7 +1076,7 @@ export const connectHttpApiLayer = HttpApiBuilder.group(
       .handle("preferences", ({ payload }) => cloudPreferencesHandler(dependencies, payload))
       .handle("health", ({ payload }) => cloudEnvironmentHealthHandler(dependencies, payload))
       .handle("mintCredential", ({ payload }) => cloudMintCredentialHandler(dependencies, payload))
-      .handle("halc2MintCredential", ({ payload }) =>
+      .handle("halC2MintCredential", ({ payload }) =>
         traceRelayRequest(cloudMintCredentialHandler(dependencies, payload)),
       );
   }),

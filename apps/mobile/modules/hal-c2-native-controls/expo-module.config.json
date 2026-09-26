@@ -5,8 +5,8 @@
   },
   "android": {
     "modules": [
-      "expo.modules.halc2nativecontrols.HalC2NativeControlsModule",
-      "expo.modules.halc2nativecontrols.HalC2KeyboardCommandsModule"
+      "expo.modules.hal_c2_nativecontrols.HalC2NativeControlsModule",
+      "expo.modules.hal_c2_nativecontrols.HalC2KeyboardCommandsModule"
     ]
   }
 }

@@ -45,7 +45,7 @@
       "distribution": "store",
       "channel": "v2-preview",
       "env": {
-        "HALC2_MOBILE_UPDATES_ENABLED": "0"
+        "HAL_C2_MOBILE_UPDATES_ENABLED": "0"
       }
     },
     "production": {

@@ -55,10 +55,10 @@ import { codexReplayRecordingOutputRecords } from "./codexReplayRecordingRecords
 import { makeReplayRecorderDeferredRegistry } from "./replayRecorderDeferredRegistry.ts";
 
 const CODEX_REPLAY_PLAN_MODE_DEVELOPER_INSTRUCTIONS =
-  process.env.HALC2_CODEX_REPLAY_PLAN_DEVELOPER_INSTRUCTIONS ??
+  process.env.HAL_C2_CODEX_REPLAY_PLAN_DEVELOPER_INSTRUCTIONS ??
   "You are in Plan mode. Prefer request_user_input for clarifying questions. When presenting a complete plan, wrap it in <proposed_plan> and </proposed_plan>.";
 const CODEX_CLIENT_INFO = {
-  name: "halc2_desktop",
+  name: "hal_c2_desktop",
   title: "HAL-C2 Desktop",
   version: "0.1.0",
 } as const;
@@ -185,7 +185,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function parseScenarios(): ReadonlyArray<ScenarioName> {
   const rawValues = [
     ...readArgValues("--scenario"),
-    ...(process.env.HALC2_CODEX_REPLAY_SCENARIOS ? [process.env.HALC2_CODEX_REPLAY_SCENARIOS] : []),
+    ...(process.env.HAL_C2_CODEX_REPLAY_SCENARIOS
+      ? [process.env.HAL_C2_CODEX_REPLAY_SCENARIOS]
+      : []),
   ];
   const requested = rawValues.length > 0 ? rawValues : ["simple"];
   const names = requested.flatMap((value) =>
@@ -952,7 +954,7 @@ function makeCodexLayer({ recorder }: { readonly recorder: Recorder }) {
     Effect.gen(function* () {
       const environment = yield* HostProcessEnvironment;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const commandName = environment.HALC2_CODEX_BIN ?? environment.CODEX_BIN ?? "codex";
+      const commandName = environment.HAL_C2_CODEX_BIN ?? environment.CODEX_BIN ?? "codex";
       const spawnCommand = yield* resolveSpawnCommand(commandName, ["app-server"], {
         env: environment,
       });
@@ -1281,15 +1283,17 @@ const program = Effect.gen(function* () {
   const path = yield* Path.Path;
   const requestedScenarios = parseScenarios();
   const allScenarios = scenarios();
-  const outDir = readArgValue("--out-dir") ?? process.env.HALC2_CODEX_REPLAY_OUT_DIR;
-  const singleOutPath = readArgValue("--out") ?? process.env.HALC2_CODEX_REPLAY_OUT;
+  const outDir = readArgValue("--out-dir") ?? process.env.HAL_C2_CODEX_REPLAY_OUT_DIR;
+  const singleOutPath = readArgValue("--out") ?? process.env.HAL_C2_CODEX_REPLAY_OUT;
   const selected = allScenarios.filter((scenario) => requestedScenarios.includes(scenario.name));
 
   if (selected.length === 0) {
     throw new Error("No replay scenarios selected.");
   }
   if (singleOutPath && selected.length !== 1) {
-    throw new Error("--out / HALC2_CODEX_REPLAY_OUT can only be used with exactly one --scenario.");
+    throw new Error(
+      "--out / HAL_C2_CODEX_REPLAY_OUT can only be used with exactly one --scenario.",
+    );
   }
 
   yield* Effect.forEach(

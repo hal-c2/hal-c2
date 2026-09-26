@@ -4,7 +4,7 @@
   "compatibility": [
     {
       "driver": "opencode",
-      "halc2Range": ">=0.0.42",
+      "halC2Range": ">=0.0.42",
       "recommendedRange": ">=1.14.19",
       "ranges": [{ "range": "<1.14.19", "status": "broken" }]
     }

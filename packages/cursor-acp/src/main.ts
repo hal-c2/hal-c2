@@ -2,7 +2,7 @@
 // @effect-diagnostics globalConsole:off - a plain stdio process; stderr is its log.
 // Cursor over ACP on stdio, for HAL-C2 nodes (`HalC2.Acp`). Usage: main.ts [--mode <runtime mode>]
 //
-// HALC2_CURSOR_CREDENTIALS is where the Cursor sign-in is kept; CURSOR_API_KEY replaces it.
+// HAL_C2_CURSOR_CREDENTIALS is where the Cursor sign-in is kept; CURSOR_API_KEY replaces it.
 import * as NodeReadline from "node:readline";
 
 import {
@@ -27,7 +27,7 @@ const acp = makeCursorAcp({
   write: (message) => process.stdout.write(`${JSON.stringify(message)}\n`),
   sdk: {
     version: "1.0.31",
-    store: new FileCredentialStore(process.env.HALC2_CURSOR_CREDENTIALS || undefined),
+    store: new FileCredentialStore(process.env.HAL_C2_CURSOR_CREDENTIALS || undefined),
     envApiKey: process.env.CURSOR_API_KEY?.trim() || undefined,
     createAgent: (options) => Agent.create(options),
     resumeAgent: (agentId, options) => Agent.resume(agentId, options),

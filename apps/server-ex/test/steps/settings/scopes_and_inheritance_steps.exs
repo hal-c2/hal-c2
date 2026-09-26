@@ -1,7 +1,7 @@
 defmodule HalC2.Steps.Settings.ScopesAndInheritance do
   @moduledoc """
-  How a node stores its settings document (versioned `halc2.readSettings` /
-  `halc2.writeSettings`, pushed to `config` subscribers) and how a project's
+  How a node stores its settings document (versioned `hal-c2.readSettings` /
+  `hal-c2.writeSettings`, pushed to `config` subscribers) and how a project's
   overrides resolve over it (`HalC2.Settings.for_project/1`). The scenario's node
   is the first environment the Background names.
   """
@@ -163,7 +163,7 @@ defmodule HalC2.Steps.Settings.ScopesAndInheritance do
   end
 
   defp read(context, client) do
-    {{:ok, read}, context} = World.call(context, "halc2.readSettings", %{}, client)
+    {{:ok, read}, context} = World.call(context, "hal-c2.readSettings", %{}, client)
     Map.update(context, :read, %{client => read}, &Map.put(&1, client, read))
   end
 
@@ -174,7 +174,7 @@ defmodule HalC2.Steps.Settings.ScopesAndInheritance do
     {reply, context} =
       World.call(
         context,
-        "halc2.writeSettings",
+        "hal-c2.writeSettings",
         %{"settings" => document, "version" => version},
         client
       )

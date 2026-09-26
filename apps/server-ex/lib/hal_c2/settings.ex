@@ -7,8 +7,8 @@ defmodule HalC2.Settings do
   `server.updateSettings` patch with the shared `applyServerSettingsPatch` to the
   version it read and writes the whole result back with `put/2`, which refuses a
   stale version so concurrent editors retry instead of overwriting each other.
-  Watchers (client sockets) get `{:halc2_settings, node, settings}` on every change,
-  and `{:halc2_providers_changed, node}` when something else changes the node's
+  Watchers (client sockets) get `{:hal_c2_settings, node, settings}` on every change,
+  and `{:hal_c2_providers_changed, node}` when something else changes the node's
   provider list (`notify_providers/0`).
 
   Another process may edit the file too (`mix hal_c2.theme`), so it is checked every
@@ -202,27 +202,27 @@ defmodule HalC2.Settings do
 
   @impl true
   def handle_cast(:providers_changed, state) do
-    for {pid, _} <- state.watchers, do: send(pid, {:halc2_providers_changed, node()})
+    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_providers_changed, node()})
     {:noreply, state}
   end
 
   def handle_cast({:keybindings_changed, rules}, state) do
-    for {pid, _} <- state.watchers, do: send(pid, {:halc2_keybindings, node(), rules})
+    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_keybindings, node(), rules})
     {:noreply, state}
   end
 
   def handle_cast({:usage_limit_sources_changed, sources}, state) do
-    for {pid, _} <- state.watchers, do: send(pid, {:halc2_usage_limit_sources, node(), sources})
+    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_usage_limit_sources, node(), sources})
     {:noreply, state}
   end
 
   def handle_cast({:upgraded, outcome}, state) do
-    for {pid, _} <- state.watchers, do: send(pid, {:halc2_upgraded, node(), outcome})
+    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_upgraded, node(), outcome})
     {:noreply, state}
   end
 
   def handle_cast({:themes_changed, themes}, state) do
-    for {pid, _} <- state.watchers, do: send(pid, {:halc2_themes, node(), themes})
+    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_themes, node(), themes})
     {:noreply, state}
   end
 
@@ -267,7 +267,7 @@ defmodule HalC2.Settings do
     pi = &((get_in(&1, ["providers", "pi"]) || %{}) |> Map.take(["binaryPath", "launchArgs"]))
     if pi.(settings) != pi.(state.settings), do: HalC2.Acp.forget("pi")
 
-    for {pid, _} <- state.watchers, do: send(pid, {:halc2_settings, node(), settings})
+    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_settings, node(), settings})
 
     %{
       state

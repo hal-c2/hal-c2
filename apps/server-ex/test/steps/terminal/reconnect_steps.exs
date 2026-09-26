@@ -557,11 +557,11 @@ defmodule HalC2.Steps.Terminal.Reconnect do
 
   defp await_peer_output(pattern, acc) do
     receive do
-      {:halc2_terminal, _key, %{"type" => "output", "data" => data}} ->
+      {:hal_c2_terminal, _key, %{"type" => "output", "data" => data}} ->
         acc = acc <> data
         if acc =~ pattern, do: acc, else: await_peer_output(pattern, acc)
 
-      {:halc2_terminal, _key, _event} ->
+      {:hal_c2_terminal, _key, _event} ->
         await_peer_output(pattern, acc)
     after
       5_000 -> flunk("no #{inspect(pattern)} from the peer in #{inspect(acc)}")

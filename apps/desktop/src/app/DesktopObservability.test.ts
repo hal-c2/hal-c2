@@ -61,7 +61,7 @@ const makeEnvironmentLayer = (
       Layer.mergeAll(
         NodeServices.layer,
         DesktopConfig.layerTest({
-          HALC2_HOME: baseDir,
+          HAL_C2_HOME: baseDir,
           VITE_DEV_SERVER_URL: isDevelopment ? "http://127.0.0.1:5733" : undefined,
           ...env,
         }),
@@ -389,8 +389,8 @@ describe("DesktopObservability", () => {
         prefix: "hal-c2-desktop-observability-test-",
       });
       const environmentLayer = makeEnvironmentLayer(baseDir, true, {
-        HALC2_OTLP_LOGS_URL: "https://collector.example.com/v1/logs",
-        HALC2_OTLP_HEADERS: "x-scope=desktop",
+        HAL_C2_OTLP_LOGS_URL: "https://collector.example.com/v1/logs",
+        HAL_C2_OTLP_HEADERS: "x-scope=desktop",
       });
       const tracePath = yield* Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;

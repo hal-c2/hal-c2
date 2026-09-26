@@ -89,7 +89,7 @@ export function buildHostedPairingUrl(input: {
 export function buildHostedChannelSelectionUrl(input: {
   readonly channel: HostedAppChannel;
 }): string {
-  const url = new URL("/__halc2/channel", configuredHostedAppUrl());
+  const url = new URL("/__hal-c2/channel", configuredHostedAppUrl());
   url.searchParams.set("channel", input.channel);
   return url.toString();
 }

@@ -74,12 +74,12 @@ function joinSshAskpassPath(
 const ASKPASS_POSIX_SCRIPT = `#!/bin/sh
 # Invoked by ssh via SSH_ASKPASS when HAL-C2 re-runs ssh with a cached password
 # from the renderer's in-app prompt. We never expose a native dialog here - if
-# HALC2_SSH_AUTH_SECRET is missing, that's a caller bug and we fail loudly.
-if [ "\${HALC2_SSH_AUTH_SECRET+x}" = "x" ]; then
-  printf "%s\\n" "$HALC2_SSH_AUTH_SECRET"
+# HAL_C2_SSH_AUTH_SECRET is missing, that's a caller bug and we fail loudly.
+if [ "\${HAL_C2_SSH_AUTH_SECRET+x}" = "x" ]; then
+  printf "%s\\n" "$HAL_C2_SSH_AUTH_SECRET"
   exit 0
 fi
-printf 'HAL-C2 ssh-askpass invoked without HALC2_SSH_AUTH_SECRET.\\n' >&2
+printf 'HAL-C2 ssh-askpass invoked without HAL_C2_SSH_AUTH_SECRET.\\n' >&2
 exit 1
 `;
 
@@ -89,13 +89,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0ssh-askpass.ps1" %*\r
 
 const ASKPASS_WINDOWS_SCRIPT = `# Invoked by ssh via SSH_ASKPASS (through ssh-askpass.cmd) when HAL-C2 re-runs\r
 # ssh with a cached password from the renderer's in-app prompt. We never expose\r
-# a native dialog here - if HALC2_SSH_AUTH_SECRET is missing, that's a caller bug\r
+# a native dialog here - if HAL_C2_SSH_AUTH_SECRET is missing, that's a caller bug\r
 # and we fail loudly.\r
-if ($null -ne $env:HALC2_SSH_AUTH_SECRET) {\r
-  [Console]::Out.WriteLine($env:HALC2_SSH_AUTH_SECRET)\r
+if ($null -ne $env:HAL_C2_SSH_AUTH_SECRET) {\r
+  [Console]::Out.WriteLine($env:HAL_C2_SSH_AUTH_SECRET)\r
   exit 0\r
 }\r
-[Console]::Error.WriteLine("HAL-C2 ssh-askpass invoked without HALC2_SSH_AUTH_SECRET.")\r
+[Console]::Error.WriteLine("HAL-C2 ssh-askpass invoked without HAL_C2_SSH_AUTH_SECRET.")\r
 exit 1\r
 `;
 
@@ -197,7 +197,7 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
     ...baseEnv,
     SSH_ASKPASS: sshAskpass,
     SSH_ASKPASS_REQUIRE: "force",
-    ...(input.authSecret === undefined ? {} : { HALC2_SSH_AUTH_SECRET: input.authSecret ?? "" }),
+    ...(input.authSecret === undefined ? {} : { HAL_C2_SSH_AUTH_SECRET: input.authSecret ?? "" }),
     ...(platform === "win32" || baseEnv.DISPLAY || hostDisplay ? {} : { DISPLAY: "hal-c2" }),
   };
 });

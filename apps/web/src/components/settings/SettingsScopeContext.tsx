@@ -1,5 +1,5 @@
-import { HALC2_PROJECT_FILE_NAME, type HalC2ProjectFile } from "@hal-c2/contracts";
-import { parseHalC2ProjectFile } from "@hal-c2/shared/halc2ProjectFile";
+import { HAL_C2_PROJECT_FILE_NAME, type HalC2ProjectFile } from "@hal-c2/contracts";
+import { parseHalC2ProjectFile } from "@hal-c2/shared/halC2ProjectFile";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -28,7 +28,7 @@ function useMemberProjectFiles(scope: ReturnType<typeof resolveSettingsScope>) {
               getProjectFileQueryAtom(
                 member.environmentId,
                 member.workspaceRoot,
-                HALC2_PROJECT_FILE_NAME,
+                HAL_C2_PROJECT_FILE_NAME,
               ),
             );
             if (result.waiting) continue;
@@ -38,7 +38,7 @@ function useMemberProjectFiles(scope: ReturnType<typeof resolveSettingsScope>) {
                 optimisticFileAtom(
                   member.environmentId,
                   member.workspaceRoot,
-                  HALC2_PROJECT_FILE_NAME,
+                  HAL_C2_PROJECT_FILE_NAME,
                 ),
               )?.data ?? Option.getOrNull(AsyncResult.value(result));
             files.set(

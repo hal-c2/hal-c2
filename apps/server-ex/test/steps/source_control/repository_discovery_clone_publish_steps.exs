@@ -234,14 +234,14 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
     context
   end
 
-  # The host answers with an address whose transport (`git-remote-halc2hang`) never
+  # The host answers with an address whose transport (`git-remote-hal_c2_hang`) never
   # replies, so the clone stays connecting until it is cancelled.
   step "a clone of {string} is in progress", %{args: [repository]} = context do
     context = World.fake_cli(context, ["gh"])
-    helper = Path.join(context.cli.bin, "git-remote-halc2hang")
+    helper = Path.join(context.cli.bin, "git-remote-hal_c2_hang")
     File.write!(helper, "#!/bin/sh\nexec cat > /dev/null\n")
     File.chmod!(helper, 0o755)
-    url = "halc2hang::#{repository}"
+    url = "hal_c2_hang::#{repository}"
 
     context
     |> World.cli_rules(lookup_rule(repository, %{"url" => url, "sshUrl" => url}))
@@ -483,7 +483,7 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
   # seen is kept in the process dictionary.
   defp await_clones(fun) do
     receive do
-      {:halc2_project_clones, _node, list} ->
+      {:hal_c2_project_clones, _node, list} ->
         Process.put(:clone_snapshots, Process.get(:clone_snapshots, []) ++ [list])
         if fun.(list), do: list, else: await_clones(fun)
     after
@@ -496,7 +496,7 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
 
   defp flush_clones do
     receive do
-      {:halc2_project_clones, _node, _list} -> flush_clones()
+      {:hal_c2_project_clones, _node, _list} -> flush_clones()
     after
       0 -> :ok
     end

@@ -25,8 +25,8 @@ interface ImportMeta {
 declare global {
   interface Window {
     desktopBridge?: DesktopBridge;
-    halc2Shell?: HalC2Shell;
-    __halc2ShellTheme?: ShellThemeBootstrap;
-    __halc2AppViewStorageId?: string;
+    halC2Shell?: HalC2Shell;
+    __halC2ShellTheme?: ShellThemeBootstrap;
+    __halC2AppViewStorageId?: string;
   }
 }

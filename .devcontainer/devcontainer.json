@@ -23,7 +23,7 @@
   "containerEnv": {
     // Keep all runtime state inside the (gitignored) workspace .hal-c2, matching
     // the worktree default. An explicit --home-dir still wins.
-    "HALC2_HOME": "${containerWorkspaceFolder}/.hal-c2"
+    "HAL_C2_HOME": "${containerWorkspaceFolder}/.hal-c2"
   },
   "mounts": [
     // vp keeps the pnpm content-addressable store and metadata cache under

@@ -3,7 +3,7 @@ defmodule HalC2.ProviderLog do
   Native provider event logs, for debugging a provider's protocol
   (`apps/server/src/provider/Layers/EventNdjsonLogger.ts`).
 
-  While on (`config :hal_c2, provider_event_log: true`, `HALC2_PROVIDER_EVENT_LOG=1`),
+  While on (`config :hal_c2, provider_event_log: true`, `HAL_C2_PROVIDER_EVENT_LOG=1`),
   every line a provider process sends is appended to
   `<home>/logs/provider/events.<thread>.log` as `[<iso time>] NTIVE: <json>`.
   Streaming deltas are left out; lifecycle events, responses and failures stay.

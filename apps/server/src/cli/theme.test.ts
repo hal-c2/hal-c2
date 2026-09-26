@@ -343,12 +343,12 @@ describe("hal-c2 theme", () => {
     }),
   );
 
-  it.effect("honors HALC2_HOME like the rest of the CLI", () =>
+  it.effect("honors HAL_C2_HOME like the rest of the CLI", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       yield* runCli(["theme", "set", "ocean"]).pipe(
         Effect.provide(
-          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { HALC2_HOME: baseDir } })),
+          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { HAL_C2_HOME: baseDir } })),
         ),
       );
       assert.equal(readSettings(baseDir).defaultTheme, "ocean");

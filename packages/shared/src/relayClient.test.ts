@@ -90,7 +90,7 @@ describe("RelayClient", () => {
             Effect.provideService(
               ConfigProvider.ConfigProvider,
               ConfigProvider.fromEnv({
-                env: { PATH: "", HALC2_CLOUDFLARED_PATH: overridePath },
+                env: { PATH: "", HAL_C2_CLOUDFLARED_PATH: overridePath },
               }),
             ),
           ),

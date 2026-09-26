@@ -65,7 +65,7 @@ defmodule HalC2.OrchestrationTest do
   # Waits on the thread's own event stream until its run reaches a terminal status.
   defp await_run(thread_id, status) do
     receive do
-      {:halc2_stream, ^thread_id, _} ->
+      {:hal_c2_stream, ^thread_id, _} ->
         state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
 
         case StreamState.list(state, "run") do
@@ -260,8 +260,8 @@ defmodule HalC2.OrchestrationTest do
     assert Enum.any?(
              StreamState.list(state, "turn-item"),
              &(&1["text"] ==
-                 "repeat with [Skill: $pinchtab; ref=ctx_s]\n\n<halc2_context version=\"1\">\n" <>
-                   ~s(<context kind="skill" id="ctx_s">\nname: pinchtab\n</context>\n</halc2_context>))
+                 "repeat with [Skill: $pinchtab; ref=ctx_s]\n\n<hal_c2_context version=\"1\">\n" <>
+                   ~s(<context kind="skill" id="ctx_s">\nname: pinchtab\n</context>\n</hal_c2_context>))
            )
 
     assert %{"context" => %{"records" => [^skill]}} = StreamState.get(state, "message")["m1"]
@@ -467,7 +467,7 @@ defmodule HalC2.OrchestrationTest do
 
     # Search lists active threads from the sidebar rows.
     unless HalC2.Shell.row(node(), thread_id) do
-      assert_receive {:halc2_shell, _}, 2_000
+      assert_receive {:hal_c2_shell, _}, 2_000
     end
 
     assert {:ok, %{"matches" => [%{"threadId" => ^thread_id, "source" => "assistant"} = match]}} =
@@ -523,7 +523,7 @@ defmodule HalC2.OrchestrationTest do
     :ok = HalC2.Shell.subscribe(self())
 
     unless HalC2.Shell.row(node(), thread_id) do
-      assert_receive {:halc2_shell, _}, 2_000
+      assert_receive {:hal_c2_shell, _}, 2_000
     end
 
     %{authorization: auth} = HalC2.Mcp.server(thread_id, "codex")
@@ -541,13 +541,13 @@ defmodule HalC2.OrchestrationTest do
 
     assert Enum.any?(
              tools,
-             &(&1["name"] == "halc2_thread_list" and &1["inputSchema"]["type"] == "object")
+             &(&1["name"] == "hal_c2_thread_list" and &1["inputSchema"]["type"] == "object")
            )
 
     {200, %{"result" => %{"structuredContent" => listed}}} =
       rpc.(%{
         "method" => "tools/call",
-        "params" => %{"name" => "halc2_thread_list", "arguments" => %{}}
+        "params" => %{"name" => "hal_c2_thread_list", "arguments" => %{}}
       })
 
     assert %{"currentThreadId" => ^thread_id, "threads" => [%{"threadId" => ^thread_id}]} = listed
@@ -555,7 +555,7 @@ defmodule HalC2.OrchestrationTest do
     {200, %{"result" => %{"structuredContent" => read}}} =
       rpc.(%{
         "method" => "tools/call",
-        "params" => %{"name" => "halc2_thread_read", "arguments" => %{"threadId" => thread_id}}
+        "params" => %{"name" => "hal_c2_thread_read", "arguments" => %{"threadId" => thread_id}}
       })
 
     assert Enum.map(read["items"], & &1["type"]) == ["user_message", "assistant_message"]
@@ -565,7 +565,7 @@ defmodule HalC2.OrchestrationTest do
       rpc.(%{
         "method" => "tools/call",
         "params" => %{
-          "name" => "halc2_thread_send",
+          "name" => "hal_c2_thread_send",
           "arguments" => %{"threadId" => thread_id, "message" => "hi"}
         }
       })
@@ -581,7 +581,7 @@ defmodule HalC2.OrchestrationTest do
     :ok = HalC2.Shell.subscribe(self())
 
     unless HalC2.Shell.row(node(), parent_id) do
-      assert_receive {:halc2_shell, _}, 2_000
+      assert_receive {:hal_c2_shell, _}, 2_000
     end
 
     %{authorization: auth} = HalC2.Mcp.server(parent_id, "codex")
@@ -1461,7 +1461,7 @@ defmodule HalC2.OrchestrationTest do
 
   defp await_shell_message(thread_id, done?) do
     receive do
-      {:halc2_shell, {:rows, _, _}} -> await_shell_row(thread_id, done?)
+      {:hal_c2_shell, {:rows, _, _}} -> await_shell_row(thread_id, done?)
     after
       5_000 -> flunk("the sidebar row never got there")
     end
@@ -1472,7 +1472,7 @@ defmodule HalC2.OrchestrationTest do
       :ok
     else
       receive do
-        {:halc2_stream, ^thread_id, _} -> await_thread(thread_id, done?)
+        {:hal_c2_stream, ^thread_id, _} -> await_thread(thread_id, done?)
       after
         5_000 -> flunk("the thread never got there")
       end
@@ -1481,7 +1481,7 @@ defmodule HalC2.OrchestrationTest do
 
   defp await_runs(thread_id, count) do
     receive do
-      {:halc2_stream, ^thread_id, _} ->
+      {:hal_c2_stream, ^thread_id, _} ->
         state = current(thread_id)
         runs = StreamState.list(state, "run")
 
@@ -1495,7 +1495,7 @@ defmodule HalC2.OrchestrationTest do
 
   defp await_item(thread_id, type) do
     receive do
-      {:halc2_stream, ^thread_id, _} ->
+      {:hal_c2_stream, ^thread_id, _} ->
         if Enum.any?(StreamState.list(current(thread_id), "turn-item"), &(&1["type"] == type)),
           do: :ok,
           else: await_item(thread_id, type)
@@ -1538,7 +1538,7 @@ defmodule HalC2.OrchestrationTest do
       state
     else
       receive do
-        {:halc2_stream, ^thread_id, _} -> await_statuses(thread_id, statuses)
+        {:hal_c2_stream, ^thread_id, _} -> await_statuses(thread_id, statuses)
       after
         5_000 ->
           flunk(
@@ -1550,7 +1550,7 @@ defmodule HalC2.OrchestrationTest do
 
   defp await_request(thread_id) do
     receive do
-      {:halc2_stream, ^thread_id, _} ->
+      {:hal_c2_stream, ^thread_id, _} ->
         case thread_id |> current() |> StreamState.list("runtime-request") do
           [%{"status" => "pending"} = request] -> request
           _ -> await_request(thread_id)

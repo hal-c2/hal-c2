@@ -135,7 +135,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
   # once Codex's update waits for it.
   defp watch_updates(test, hold) do
     receive do
-      {:halc2_providers_changed, _} ->
+      {:hal_c2_providers_changed, _} ->
         for driver <- ["codex", "claudeAgent"],
             state = :persistent_term.get({HalC2.ProviderUpdates, driver, :state}, nil) do
           send(test, {:update_state, driver, state})

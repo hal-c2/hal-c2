@@ -186,7 +186,7 @@ const command = Effect.fn("nativeClient.command")(function* (
         ...environment,
         APP_VARIANT: "development",
         MOBILE_VERSION_POLICY: "appVersion",
-        HALC2_IOS_PERSONAL_TEAM: "0",
+        HAL_C2_IOS_PERSONAL_TEAM: "0",
         CI: "1",
         EXPO_NO_GIT_STATUS: "1",
       },
@@ -209,12 +209,12 @@ const command = Effect.fn("nativeClient.command")(function* (
 const fingerprint = Effect.fn("nativeClient.fingerprint")(function* (platform: NativePlatform) {
   const output = yield* command(yield* HostProcessExecutablePath, [
     "--eval",
-    `require('expo/fingerprint').createFingerprintAsync(process.cwd(), { platforms: [process.argv[1]], silent: true }).then(fp => console.log('HALC2_NATIVE_FINGERPRINT=' + fp.hash)).catch(e => { console.error(e); process.exitCode = 1; });`,
+    `require('expo/fingerprint').createFingerprintAsync(process.cwd(), { platforms: [process.argv[1]], silent: true }).then(fp => console.log('HAL_C2_NATIVE_FINGERPRINT=' + fp.hash)).catch(e => { console.error(e); process.exitCode = 1; });`,
     platform,
   ]);
   const hash = output
     .split("\n")
-    .find((line) => line.startsWith("HALC2_NATIVE_FINGERPRINT="))
+    .find((line) => line.startsWith("HAL_C2_NATIVE_FINGERPRINT="))
     ?.split("=")[1];
   if (!hash || !/^[a-f0-9]{40,64}$/.test(hash))
     return yield* new NativeClientError({ message: "Expo did not return a native fingerprint." });

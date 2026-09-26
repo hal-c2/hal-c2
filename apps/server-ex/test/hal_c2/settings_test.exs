@@ -17,7 +17,7 @@ defmodule HalC2.SettingsTest do
 
     doc = %{"enableAssistantStreaming" => false}
     assert {:ok, 1} = Settings.put(doc, 0)
-    assert_receive {:halc2_settings, _, ^doc}
+    assert_receive {:hal_c2_settings, _, ^doc}
 
     # Another client's write from the same starting point is refused.
     assert {:error, :stale} = Settings.put(%{"other" => true}, 0)

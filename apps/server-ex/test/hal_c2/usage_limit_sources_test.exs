@@ -139,7 +139,7 @@ defmodule HalC2.UsageLimitSourcesTest do
     port: port
   } do
     put_sources(%{"hub" => source(url, "hub-key")})
-    assert_receive {:halc2_usage_limit_sources, _, [snapshot]}, 5_000
+    assert_receive {:hal_c2_usage_limit_sources, _, [snapshot]}, 5_000
     assert UsageLimitSources.current() == [snapshot]
 
     host = "127.0.0.1:#{port}"
@@ -192,12 +192,12 @@ defmodule HalC2.UsageLimitSourcesTest do
     # A labelled source keeps its label; removing a source removes its row.
     put_sources(%{"hub" => source(url, @marker, %{"label" => "Team hub"})})
 
-    assert_receive {:halc2_usage_limit_sources, _,
+    assert_receive {:hal_c2_usage_limit_sources, _,
                     [%{"label" => "Team hub", "accounts" => [_, _]}]},
                    5_000
 
     put_sources(%{})
-    assert_receive {:halc2_usage_limit_sources, _, []}, 5_000
+    assert_receive {:hal_c2_usage_limit_sources, _, []}, 5_000
   end
 
   test "a source that cannot be read keeps its row with the reason", %{url: url} do
@@ -208,7 +208,7 @@ defmodule HalC2.UsageLimitSourcesTest do
       "d-off" => source(url, "hub-key", %{"enabled" => false})
     })
 
-    assert_receive {:halc2_usage_limit_sources, _, sources}, 5_000
+    assert_receive {:hal_c2_usage_limit_sources, _, sources}, 5_000
 
     assert [
              %{"id" => "a-no-key", "accounts" => [], "error" => "No management key configured."},
@@ -228,7 +228,7 @@ defmodule HalC2.UsageLimitSourcesTest do
   test "the management key lives in the secret store, never in settings", %{url: url, dir: dir} do
     put_sources(%{"hub" => source(url, "hub-key")})
 
-    assert_receive {:halc2_settings, _,
+    assert_receive {:hal_c2_settings, _,
                     %{"usageLimitSources" => %{"hub" => %{"managementKey" => @marker}}}}
 
     path =
@@ -274,7 +274,7 @@ defmodule HalC2.UsageLimitSourcesTest do
     url: url
   } do
     put_sources(%{"hub" => source(url, "hub-key")})
-    assert_receive {:halc2_usage_limit_sources, _, [_]}, 5_000
+    assert_receive {:hal_c2_usage_limit_sources, _, [_]}, 5_000
 
     input = %{"sourceId" => "hub", "accountId" => "codex-a", "creditId" => "c1"}
     assert {:ok, %{"outcome" => "reset"}} = UsageLimitSources.consume_reset_credit(input)
@@ -291,7 +291,7 @@ defmodule HalC2.UsageLimitSourcesTest do
 
     assert JSON.decode!(data) == %{"redeem_request_id" => request_id, "credit_id" => "c1"}
     assert_received {:hub, "/v0/management/reset-quota", %{"auth_index" => "0"}}
-    assert_receive {:halc2_usage_limit_sources, _, [_]}, 5_000
+    assert_receive {:hal_c2_usage_limit_sources, _, [_]}, 5_000
 
     # A cooldown the hub would not clear is a warning on a redemption that happened.
     :persistent_term.put({Hub, :cooldown_fails}, true)

@@ -1,7 +1,7 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/preview_automation.ex (host registration, routing, timeouts, current tab, error messages)
 #   apps/server-ex/lib/hal_c2/mcp/preview.ex (preview_* MCP tools, timed tools, snapshot bounds, screenshots, recordings, tool icon)
-#   apps/server-ex/lib/hal_c2/mcp/tools.ex (halc2_preview_list, halc2_preview_close)
+#   apps/server-ex/lib/hal_c2/mcp/tools.ex (hal_c2_preview_list, hal_c2_preview_close)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (previewAutomation shape, previewAutomation.respond, previewAutomation.focusHost)
 #   apps/server-ex/test/hal_c2/preview_automation_test.exs
 #   packages/contracts/src/previewAutomation.ts

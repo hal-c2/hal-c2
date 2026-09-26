@@ -132,7 +132,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
           USERPROFILE: home,
           TMPDIR: scratch,
           TEMP: scratch,
-          HALC2_HOME: home,
+          HAL_C2_HOME: home,
         },
         extendEnv: false,
       },

@@ -126,7 +126,7 @@ defmodule HalC2.UpgradeTest do
     }
 
     assert {:push, [{:text, frame}], state} =
-             HalC2.Web.Socket.handle_info({:halc2_keybindings, node(), []}, old)
+             HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, old)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
     assert state.v == 2

@@ -8,7 +8,7 @@ defmodule HalC2.UsageLimitSources do
   untargeted `server.refreshProviders`, and every `providerHealthRefreshInterval`
   while a client watches this node's config. Clients get the snapshots
   (`UsageLimitSourceSnapshot[]`) after the config snapshot and whenever they change,
-  as `{:halc2_usage_limit_sources, node, sources}` through `HalC2.Settings` watchers. A
+  as `{:hal_c2_usage_limit_sources, node, sources}` through `HalC2.Settings` watchers. A
   source that cannot be read keeps its row with `error` set. Nothing is persisted.
 
   Reads and redemptions run one at a time in this process, so a slow read started

@@ -7,7 +7,7 @@ defmodule HalC2.Acp.Antigravity.Installation do
   and SHA-256 check, extraction of exactly the executable and its helper, a
   check that the result starts and identifies as the expected Google release,
   then activation (`active.json`). A cancelled or failed install leaves the
-  previous runtime active. Subscribers get `{:halc2_provider_install, state}`
+  previous runtime active. Subscribers get `{:hal_c2_provider_install, state}`
   (`ProviderInstallState`) on every change; the install goes on without them.
 
   The runtime can be removed only while no Antigravity session or sign-in uses it,
@@ -51,7 +51,7 @@ defmodule HalC2.Acp.Antigravity.Installation do
          do: GenServer.call(__MODULE__, {:remove, instance}, 60_000)
   end
 
-  @doc "Adds `pid` as a subscriber; it gets `{:halc2_provider_install, instance, state}`."
+  @doc "Adds `pid` as a subscriber; it gets `{:hal_c2_provider_install, instance, state}`."
   def subscribe(instance, pid) do
     with :ok <- require_instance(instance, "observe-install", false),
          do: GenServer.call(__MODULE__, {:subscribe, instance, pid})
@@ -286,7 +286,7 @@ defmodule HalC2.Acp.Antigravity.Installation do
      })}
   end
 
-  def handle_info({:halc2_settings, _node, settings}, state) do
+  def handle_info({:hal_c2_settings, _node, settings}, state) do
     seen = seen(settings)
 
     changed =
@@ -592,7 +592,7 @@ defmodule HalC2.Acp.Antigravity.Installation do
     state = %{state | state: Map.merge(state.state, patch)}
 
     for {{pid, instance}, _} <- state.watchers,
-        do: send(pid, {:halc2_provider_install, instance, state.state})
+        do: send(pid, {:hal_c2_provider_install, instance, state.state})
 
     state
   end

@@ -13,7 +13,7 @@ defmodule HalC2.BackgroundPolicy do
   activity settings (locked, low power, on battery, hot).
 
   Watchers (`subscribe/1`, `subscribeBackgroundPolicy`) get
-  `{:halc2_background_policy, node, snapshot}` whenever the policy changes. Until a
+  `{:hal_c2_background_policy, node, snapshot}` whenever the policy changes. Until a
   desktop reports host power, a Linux node reads whether it is on battery from
   `/sys/class/power_supply` every 30 seconds.
   """
@@ -261,7 +261,7 @@ defmodule HalC2.BackgroundPolicy do
         do:
           for(
             {pid, _} <- next.watchers,
-            do: send(pid, {:halc2_background_policy, node(), snapshot})
+            do: send(pid, {:hal_c2_background_policy, node(), snapshot})
           )
     end
 

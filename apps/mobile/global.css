@@ -40,19 +40,19 @@
 }
 
 /* ─── Custom utilities ──────────────────────────────────────────────── */
-@utility font-halc2-medium {
+@utility font-hal-c2-medium {
   font-family: var(--font-medium);
 }
 
-@utility font-halc2-semibold {
+@utility font-hal-c2-semibold {
   font-family: var(--font-bold);
 }
 
-@utility font-halc2-bold {
+@utility font-hal-c2-bold {
   font-family: var(--font-bold);
 }
 
-@utility font-halc2-extrabold {
+@utility font-hal-c2-extrabold {
   font-family: var(--font-bold);
   font-weight: 800;
 }

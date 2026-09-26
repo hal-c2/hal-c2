@@ -24,8 +24,8 @@ export function SettingsSection(props: {
             <Text
               className={
                 Platform.OS === "android"
-                  ? "shrink text-sm font-halc2-medium text-primary-text"
-                  : "shrink text-sm font-halc2-medium text-foreground-muted"
+                  ? "shrink text-sm font-hal-c2-medium text-primary-text"
+                  : "shrink text-sm font-hal-c2-medium text-foreground-muted"
               }
             >
               {props.title}

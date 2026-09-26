@@ -19,9 +19,9 @@ describe("electron development launcher", () => {
   it("uses captured values only as fallbacks for a live runner environment", () => {
     const environmentScript = makeDevelopmentEnvironmentScript({
       VITE_DEV_SERVER_URL: "http://127.0.0.1:8526",
-      HALC2_PORT: "16566",
-      HALC2_HOME: "/tmp/hal-c2",
-      HALC2_OTLP_PROTOCOL: "http/protobuf",
+      HAL_C2_PORT: "16566",
+      HAL_C2_HOME: "/tmp/hal-c2",
+      HAL_C2_OTLP_PROTOCOL: "http/protobuf",
     });
 
     assert.include(
@@ -30,7 +30,7 @@ describe("electron development launcher", () => {
     );
     assert.include(
       environmentScript,
-      "if [ -z \"${HALC2_OTLP_PROTOCOL:-}\" ]; then export HALC2_OTLP_PROTOCOL='http/protobuf'; fi",
+      "if [ -z \"${HAL_C2_OTLP_PROTOCOL:-}\" ]; then export HAL_C2_OTLP_PROTOCOL='http/protobuf'; fi",
     );
     assert.notInclude(environmentScript, "\nexport VITE_DEV_SERVER_URL=");
   });

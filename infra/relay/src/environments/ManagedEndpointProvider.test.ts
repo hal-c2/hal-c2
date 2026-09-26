@@ -300,7 +300,7 @@ function expectedManagedTunnelName(environmentId: string, userId = "user_ABC"): 
     .update(`dev_julius:${userId}:${environmentId}`)
     .digest("hex")
     .slice(0, 16);
-  return `halc2relay-managedendpoint-dev-julius-${hash}`;
+  return `hal-c2-relay-managedendpoint-dev-julius-${hash}`;
 }
 
 describe("ManagedEndpointProvider", () => {
@@ -501,7 +501,7 @@ describe("ManagedEndpointProvider", () => {
           | { readonly name?: string }
           | undefined
       )?.name;
-      expect(requestedName).toMatch(/^halc2relay-managedendpoint-dev-julius-[a-f0-9]{16}$/);
+      expect(requestedName).toMatch(/^hal-c2-relay-managedendpoint-dev-julius-[a-f0-9]{16}$/);
       const configBody = (
         tunnelCalls.find((call) => call.operation === "putConfiguration")?.input as
           | { readonly tunnelConfig?: unknown }

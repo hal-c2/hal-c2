@@ -40,14 +40,14 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   # --- port, home and bind host -----------------------------------------------------------
 
   step "no port is configured", context do
-    World.put_os_env("HALC2_NODE_PORT", nil)
+    World.put_os_env("HAL_C2_NODE_PORT", nil)
     Map.put(context, :boot_env, :dev)
   end
 
-  step "HALC2_NODE_PORT is {int} and HALC2_HOME is {string}", %{args: [port, home]} = context do
+  step "HAL_C2_NODE_PORT is {int} and HAL_C2_HOME is {string}", %{args: [port, home]} = context do
     clear_home_env()
-    World.put_os_env("HALC2_NODE_PORT", to_string(port))
-    World.put_os_env("HALC2_HOME", home)
+    World.put_os_env("HAL_C2_NODE_PORT", to_string(port))
+    World.put_os_env("HAL_C2_HOME", home)
     Map.put(context, :boot_env, :prod)
   end
 
@@ -59,8 +59,8 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   end
 
   step "the bind host is set to {string} in the environment", %{args: [host]} = context do
-    World.put_os_env("HALC2_NODE_HOST", nil)
-    World.put_os_env("HALC2_HOST", host)
+    World.put_os_env("HAL_C2_NODE_HOST", nil)
+    World.put_os_env("HAL_C2_HOST", host)
     Map.put(context, :boot_env, :prod)
   end
 
@@ -129,8 +129,8 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   end
 
   step "the node starts from a checkout or a release", context do
-    World.put_os_env("HALC2_HOST", nil)
-    World.put_os_env("HALC2_NODE_HOST", nil)
+    World.put_os_env("HAL_C2_HOST", nil)
+    World.put_os_env("HAL_C2_NODE_HOST", nil)
     boots = [boot_config(:dev), release_boot(Node.tmp_dir(context.node, "user-home"))]
     Map.put(context, :boots, boots)
   end
@@ -234,12 +234,12 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   end
 
   step "no label is configured", context do
-    World.put_os_env("HALC2_LABEL", nil)
+    World.put_os_env("HAL_C2_LABEL", nil)
     context
   end
 
-  step "HALC2_LABEL is {string}", %{args: [label]} = context do
-    World.put_os_env("HALC2_LABEL", label)
+  step "HAL_C2_LABEL is {string}", %{args: [label]} = context do
+    World.put_os_env("HAL_C2_LABEL", label)
     context
   end
 
@@ -299,7 +299,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     # `HalC2.Upgrade` stops with), the second with an ordinary failure.
     File.write!(Path.join(bin, "hal_c2"), """
     #!/bin/sh
-    echo "$* service=$HALC2_SERVICE" >> "#{log}"
+    echo "$* service=$HAL_C2_SERVICE" >> "#{log}"
     [ "$(wc -l < "#{log}")" -eq 1 ] && exit 75
     exit 3
     """)
@@ -309,7 +309,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   end
 
   step "the node exits asking for a restart", context do
-    {_, status} = System.cmd(context.wrapper.path, ["--flag"], env: [{"HALC2_SERVICE", nil}])
+    {_, status} = System.cmd(context.wrapper.path, ["--flag"], env: [{"HAL_C2_SERVICE", nil}])
     Map.put(context, :wrapper_status, status)
   end
 
@@ -339,7 +339,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     unit = File.read!(context.service["unitPath"])
     release = System.get_env("RELEASE_ROOT")
     assert unit =~ "ExecStart=#{release}/bin/hal-c2-service"
-    assert unit =~ "Environment=HALC2_NODE_HOME=#{context.node.home}"
+    assert unit =~ "Environment=HAL_C2_NODE_HOME=#{context.node.home}"
     assert context.service["installed"] and context.service["current"]
     assert "--user daemon-reload" in calls(context)
     assert "--user restart hal-c2.service" in calls(context)
@@ -413,7 +413,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     node = System.find_executable("node") || flunk("node is not installed")
     {"v" <> version, 0} = System.cmd(node, ["--version"])
     assert version |> String.split(".") |> hd() |> String.to_integer() >= major
-    World.put_os_env("HALC2_NODE_COMMAND", nil)
+    World.put_os_env("HAL_C2_NODE_COMMAND", nil)
     Node.ensure(HalC2.Settings)
     context
   end
@@ -449,8 +449,8 @@ defmodule HalC2.Steps.Platform.NodeStartup do
 
   step "the desktop app names its Electron binary for the node", context do
     electron = "/Applications/HAL-C2.app/Contents/MacOS/HAL-C2"
-    World.put_os_env("HALC2_NODE_COMMAND", electron)
-    World.put_os_env("HALC2_NODE_ELECTRON", "1")
+    World.put_os_env("HAL_C2_NODE_COMMAND", electron)
+    World.put_os_env("HAL_C2_NODE_ELECTRON", "1")
     Node.ensure(HalC2.Settings)
     Map.put(context, :electron, electron)
   end
@@ -471,7 +471,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   # --- the desktop bootstrap --------------------------------------------------------------
 
   step "the desktop app launches the node in bootstrap mode", context do
-    World.put_os_env("HALC2_BOOTSTRAP_STDIN", "1")
+    World.put_os_env("HAL_C2_BOOTSTRAP_STDIN", "1")
     # Everything the bootstrap sets comes back when the scenario ends.
     for key <- [:home, :port, :host, :desktop_token],
         do: World.put_app_env(key, Application.get_env(:hal_c2, key))
@@ -484,14 +484,14 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     {:ok, socket} = :gen_tcp.listen(0, ip: {127, 0, 0, 1})
     {:ok, port} = :inet.port(socket)
     :gen_tcp.close(socket)
-    halc2_home = Node.tmp_dir(context.node, "desktop-hal-c2")
+    hal_c2_home = Node.tmp_dir(context.node, "desktop-hal-c2")
     token = "desktop-#{System.unique_integer([:positive])}"
 
     line =
       JSON.encode!(%{
         "port" => port,
         "host" => "127.0.0.1",
-        "halc2Home" => halc2_home,
+        "halC2Home" => hal_c2_home,
         "desktopBootstrapToken" => token
       })
 
@@ -520,7 +520,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
         ],
         do: Node.ensure(child)
 
-    Map.merge(context, %{desktop: %{port: port, halc2_home: halc2_home, token: token}})
+    Map.merge(context, %{desktop: %{port: port, hal_c2_home: hal_c2_home, token: token}})
   end
 
   step "the node listens on that host and port", context do
@@ -537,7 +537,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
 
   step "keeps its state under the {string} directory of that HAL-C2 home",
        %{args: [dir]} = context do
-    home = Path.join(context.desktop.halc2_home, dir)
+    home = Path.join(context.desktop.hal_c2_home, dir)
     assert Application.fetch_env!(:hal_c2, :home) == home
     assert HalC2.Store.home_path() == Path.join(home, "hal-c2.sqlite")
     assert File.exists?(Path.join(home, "access-token"))
@@ -667,22 +667,22 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   end
 
   # Every variable that names the node's home, now and from before the rename.
-  @home_env ~w(HALC2_NODE_HOME HALC2_HOME T3_HOME T3CODE_HOME)
+  @home_env ~w(HAL_C2_NODE_HOME HAL_C2_HOME T3_HOME T3CODE_HOME)
 
   defp clear_home_env, do: for(name <- @home_env, do: World.put_os_env(name, nil))
 
-  # A release boots with the HALC2_NODE_HOME its env.sh settles on for this user.
+  # A release boots with the HAL_C2_NODE_HOME its env.sh settles on for this user.
   defp release_boot(user_home) do
-    home = release_env(nil, [{"HOME", user_home}])["HALC2_NODE_HOME"]
-    previous = System.get_env("HALC2_NODE_HOME")
-    System.put_env("HALC2_NODE_HOME", home)
+    home = release_env(nil, [{"HOME", user_home}])["HAL_C2_NODE_HOME"]
+    previous = System.get_env("HAL_C2_NODE_HOME")
+    System.put_env("HAL_C2_NODE_HOME", home)
 
     try do
       boot_config(:prod)
     after
       if previous,
-        do: System.put_env("HALC2_NODE_HOME", previous),
-        else: System.delete_env("HALC2_NODE_HOME")
+        do: System.put_env("HAL_C2_NODE_HOME", previous),
+        else: System.delete_env("HAL_C2_NODE_HOME")
     end
   end
 
@@ -696,19 +696,19 @@ defmodule HalC2.Steps.Platform.NodeStartup do
         "sh",
         [
           "-c",
-          ~s(. "$0"; printf '%s\\n' "$HALC2_NODE_HOME" "$RELEASE_DISTRIBUTION" "${ELIXIR_ERL_OPTIONS:-}"),
+          ~s(. "$0"; printf '%s\\n' "$HAL_C2_NODE_HOME" "$RELEASE_DISTRIBUTION" "${ELIXIR_ERL_OPTIONS:-}"),
           script
         ],
         env:
           [
-            {"HALC2_NODE_HOME", node_home},
+            {"HAL_C2_NODE_HOME", node_home},
             {"RELEASE_DISTRIBUTION", nil},
             {"ELIXIR_ERL_OPTIONS", nil}
-          ] ++ for(name <- @home_env -- ["HALC2_NODE_HOME"], do: {name, nil}) ++ env
+          ] ++ for(name <- @home_env -- ["HAL_C2_NODE_HOME"], do: {name, nil}) ++ env
       )
 
     [home, dist, opts] = String.split(out, "\n") |> Enum.take(3)
-    %{"HALC2_NODE_HOME" => home, "RELEASE_DISTRIBUTION" => dist, "ELIXIR_ERL_OPTIONS" => opts}
+    %{"HAL_C2_NODE_HOME" => home, "RELEASE_DISTRIBUTION" => dist, "ELIXIR_ERL_OPTIONS" => opts}
   end
 
   # `{ip, port}` of the listener `HalC2.Web` would start under `boot`.

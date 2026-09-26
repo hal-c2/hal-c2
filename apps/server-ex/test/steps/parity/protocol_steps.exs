@@ -56,7 +56,7 @@ defmodule HalC2.Steps.Parity.Protocol do
       "rpc" ->
         # The payload is optional: this one has none.
         message = %{"t" => "rpc", "id" => 7, "environment" => context.node.environment}
-        message = Map.put(message, "method", "halc2.readSettings")
+        message = Map.put(message, "method", "hal-c2.readSettings")
         client = WsClient.send_json(client, message)
         context |> World.put_client(client) |> Map.put(:sent, %{id: 7})
     end
@@ -206,10 +206,10 @@ defmodule HalC2.Steps.Parity.Protocol do
           {frame, World.put_client(context, client)}
 
         "rpc.result" ->
-          reply(context, 32, "halc2.readSettings", %{})
+          reply(context, 32, "hal-c2.readSettings", %{})
 
         "rpc.error" ->
-          reply(context, 33, "halc2.writeSettings", %{"settings" => %{}, "version" => -1})
+          reply(context, 33, "hal-c2.writeSettings", %{"settings" => %{}, "version" => -1})
 
         opening when opening in ~w(shell snapshot config) ->
           context = Shapes.subscribe(context, Shapes.shape_for(opening))
@@ -352,13 +352,13 @@ defmodule HalC2.Steps.Parity.Protocol do
     late =
       case type do
         "gitAction" ->
-          {:halc2_git_action, "parity-action", %{"kind" => "phase_started"}}
+          {:hal_c2_git_action, "parity-action", %{"kind" => "phase_started"}}
 
         "serverUpdate" ->
-          {:halc2_server_update, node(), %{"type" => "progress"}}
+          {:hal_c2_server_update, node(), %{"type" => "progress"}}
 
         "previewAutomation" ->
-          {:halc2_preview_automation, node(), "parity-host", %{"type" => "x"}}
+          {:hal_c2_preview_automation, node(), "parity-host", %{"type" => "x"}}
       end
 
     send(socket, late)
@@ -966,7 +966,7 @@ defmodule HalC2.Steps.Parity.Shapes do
     def init(test), do: test
 
     def call(conn, test) do
-      send(test, {:halc2_parity_download, self(), conn.request_path})
+      send(test, {:hal_c2_parity_download, self(), conn.request_path})
 
       receive do
         {:serve, status, body} -> Plug.Conn.send_resp(conn, status, body)
@@ -986,7 +986,7 @@ defmodule HalC2.Steps.Parity.Shapes do
 
     World.put_app_env(:restart_exit, fn _status -> :ok end)
     World.put_env("RELEASE_ROOT", root)
-    World.put_env("HALC2_SERVICE", "1")
+    World.put_env("HAL_C2_SERVICE", "1")
 
     gate =
       Node.ensure(
@@ -996,7 +996,7 @@ defmodule HalC2.Steps.Parity.Shapes do
       )
 
     {:ok, {_, port}} = ThousandIsland.listener_info(gate)
-    World.put_env("HALC2_UPGRADE_URL", "http://127.0.0.1:#{port}/{version}/{platform}.tar.gz")
+    World.put_env("HAL_C2_UPGRADE_URL", "http://127.0.0.1:#{port}/{version}/{platform}.tar.gz")
 
     Node.ensure(HalC2.Upgrade)
 
@@ -1010,19 +1010,19 @@ defmodule HalC2.Steps.Parity.Shapes do
 
   @doc "Answers the pending bundle download with a bundle for the target and its checksum."
   def serve_bundle do
-    assert_receive {:halc2_parity_download, gate, path}, 5_000
+    assert_receive {:hal_c2_parity_download, gate, path}, 5_000
     assert path =~ @target
     archive = bundle()
     send(gate, {:serve, 200, archive})
 
-    assert_receive {:halc2_parity_download, gate, sum_path}, 5_000
+    assert_receive {:hal_c2_parity_download, gate, sum_path}, 5_000
     assert String.ends_with?(sum_path, ".sha256")
     send(gate, {:serve, 200, Base.encode16(:crypto.hash(:sha256, archive), case: :lower)})
   end
 
   @doc "Answers the pending bundle download with a 404."
   def refuse_bundle do
-    assert_receive {:halc2_parity_download, gate, _path}, 5_000
+    assert_receive {:hal_c2_parity_download, gate, _path}, 5_000
     send(gate, {:serve, 404, ""})
   end
 

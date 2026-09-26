@@ -47,7 +47,7 @@ defmodule HalC2.ProjectClonesTest do
                "destinationPath" => dest
              })
 
-    assert_receive {:halc2_project_clones, _, [%{"phase" => "done", "percent" => 100}]}, 10_000
+    assert_receive {:hal_c2_project_clones, _, [%{"phase" => "done", "percent" => 100}]}, 10_000
     assert File.read!(Path.join(dest, "README.md")) == "hello\n"
 
     project = HalC2.Streams.Server.state(HalC2.Streams.ensure("project-9"))
@@ -66,7 +66,7 @@ defmodule HalC2.ProjectClonesTest do
         "destinationPath" => Path.join(dir, "missing")
       })
 
-    assert_receive {:halc2_project_clones, _, [%{"phase" => "failed", "error" => error}]}, 10_000
+    assert_receive {:hal_c2_project_clones, _, [%{"phase" => "failed", "error" => error}]}, 10_000
     assert error =~ "nowhere"
     assert {:ok, %{"applied" => true}} = HalC2.ProjectClones.retry(%{"projectId" => "project-10"})
   end

@@ -453,7 +453,7 @@ defmodule HalC2.Steps.SourceControl.Shared do
 
   @doc """
   A fake Bitbucket API (`HalC2.Steps.SourceControl.FakeBitbucket`) the node reaches
-  through `HALC2_BITBUCKET_API_BASE_URL`, with `HALC2_BITBUCKET_ACCESS_TOKEN` set
+  through `HAL_C2_BITBUCKET_API_BASE_URL`, with `HAL_C2_BITBUCKET_ACCESS_TOKEN` set
   to the token it knows as octocat's, until the scenario ends.
   """
   def fake_bitbucket(context) do
@@ -461,8 +461,8 @@ defmodule HalC2.Steps.SourceControl.Shared do
       Node.ensure({Bandit, plug: HalC2.Steps.SourceControl.FakeBitbucket, port: 0, ip: :loopback})
 
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
-    put_env("HALC2_BITBUCKET_API_BASE_URL", "http://127.0.0.1:#{port}/2.0")
-    put_env("HALC2_BITBUCKET_ACCESS_TOKEN", HalC2.Steps.SourceControl.FakeBitbucket.token())
+    put_env("HAL_C2_BITBUCKET_API_BASE_URL", "http://127.0.0.1:#{port}/2.0")
+    put_env("HAL_C2_BITBUCKET_ACCESS_TOKEN", HalC2.Steps.SourceControl.FakeBitbucket.token())
     context
   end
 

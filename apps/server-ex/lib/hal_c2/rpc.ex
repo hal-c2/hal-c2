@@ -17,12 +17,12 @@ defmodule HalC2.Rpc do
 
   # A client applies settings patches itself and writes the whole document back
   # with the version it read (see `HalC2.Settings`).
-  def handle("halc2.readSettings", _input) do
+  def handle("hal-c2.readSettings", _input) do
     {settings, version} = HalC2.Settings.get()
     {:ok, %{"settings" => settings, "version" => version}}
   end
 
-  def handle("halc2.writeSettings", %{"settings" => %{} = settings, "version" => version}) do
+  def handle("hal-c2.writeSettings", %{"settings" => %{} = settings, "version" => version}) do
     case HalC2.Settings.put(settings, version) do
       {:ok, version} -> {:ok, %{"version" => version}}
       {:error, :stale} -> {:error, %{"_tag" => "StaleSettings", "message" => "settings changed"}}
@@ -31,7 +31,7 @@ defmodule HalC2.Rpc do
 
   # One thread's entities at once, for a client that needs its projection without
   # subscribing (a socket holds one subscription per stream).
-  def handle("halc2.threadRows", %{"threadId" => thread_id}) do
+  def handle("hal-c2.threadRows", %{"threadId" => thread_id}) do
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
 
     {:ok,
@@ -118,8 +118,8 @@ defmodule HalC2.Rpc do
   def handle("provider.consumeResetCredit", input),
     do: HalC2.ProviderUsageLimits.consume_reset_credit(input)
 
-  def handle("halc2.upsertKeybinding", input), do: HalC2.Keybindings.upsert(input)
-  def handle("halc2.removeKeybinding", input), do: HalC2.Keybindings.remove(input)
+  def handle("hal-c2.upsertKeybinding", input), do: HalC2.Keybindings.upsert(input)
+  def handle("hal-c2.removeKeybinding", input), do: HalC2.Keybindings.remove(input)
   # The contract names take the same payload; the client adapter resolves `rules`.
   def handle("server.upsertKeybinding", input), do: HalC2.Keybindings.upsert(input)
   def handle("server.removeKeybinding", input), do: HalC2.Keybindings.remove(input)
@@ -196,7 +196,7 @@ defmodule HalC2.Rpc do
   @reads ~w(
     orchestration.getWorkflowScript orchestration.getTurnDiff orchestration.getFullThreadDiff
     orchestration.searchThreads orchestration.getArchivedShellSnapshot
-    orchestration.getThreadProjection server.getSettings halc2.readSettings halc2.threadRows
+    orchestration.getThreadProjection server.getSettings hal-c2.readSettings hal-c2.threadRows
     server.getConfig server.probe server.discoverSourceControl server.getTraceDiagnostics
     server.getProcessDiagnostics server.getHostResources server.getProcessResourceHistory
     server.getResourceTelemetryHistory server.getUsageSummary server.refreshUsageRates

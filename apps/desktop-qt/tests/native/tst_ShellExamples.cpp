@@ -44,7 +44,7 @@ private slots:
     profile = std::make_unique<WebProfile>(directory.filePath("web"));
     qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", profile->profile());
     runtime = std::make_unique<ShellRuntime>(
-        ShellRuntime::Options{directory.path(), QStringLiteral(HALC2_TEST_SOURCE_DIR "/qml")},
+        ShellRuntime::Options{directory.path(), QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/qml")},
         &bridge, theme.get());
     bridge.setPageUrl(QUrl("about:blank"));
     const auto state = QJsonDocument::fromJson(R"({
@@ -88,7 +88,7 @@ private slots:
   void layoutsFit() {
     QFETCH(QString, example);
     QFETCH(int, width);
-    const QDir source(QStringLiteral(HALC2_TEST_SOURCE_DIR "/examples/") + example);
+    const QDir source(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/examples/") + example);
     for (const auto& file : source.entryList(QDir::Files)) {
       const QString target = directory.filePath(file);
       if (QFile::exists(target)) QVERIFY(QFile::remove(target));
@@ -322,7 +322,7 @@ private slots:
   }
 
   void dashboardDimmerPreservesRoundedCorners() {
-    const QDir source(QStringLiteral(HALC2_TEST_SOURCE_DIR "/examples/dashboard"));
+    const QDir source(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/examples/dashboard"));
     for (const auto& file : source.entryList(QDir::Files)) {
       const QString target = directory.filePath(file);
       if (QFile::exists(target)) QVERIFY(QFile::remove(target));

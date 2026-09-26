@@ -1527,7 +1527,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           Effect.matchEffect({
             onSuccess: (data) =>
               Queue.offer(connection.events, {
-                type: "halc2.settle_probe",
+                type: "hal-c2.settle_probe",
                 providerTurnId,
                 settleAfterAgentActivity,
                 settleProbeGeneration,
@@ -1539,7 +1539,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
             // agent events for one.
             onFailure: () =>
               Queue.offer(connection.events, {
-                type: "halc2.settle_probe",
+                type: "hal-c2.settle_probe",
                 providerTurnId,
                 settleAfterAgentActivity,
                 settleProbeGeneration,
@@ -1875,7 +1875,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
             }
             return;
           }
-          case "halc2.flush_extension_errors": {
+          case "hal-c2.flush_extension_errors": {
             // Startup extension failures are informational and do not block
             // Pi, so attach them to the next real turn instead of creating a
             // standalone failed run.
@@ -1884,7 +1884,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
             }
             return;
           }
-          case "halc2.settle_probe": {
+          case "hal-c2.settle_probe": {
             // New work increments the generation before the pump can consume
             // a stale idle snapshot, so only a current snapshot may settle.
             const data = event["data"];
@@ -2386,7 +2386,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
               });
               yield* updateProviderSession("running", null);
               if (outOfTurnExtensionErrors.length > 0) {
-                yield* Queue.offer(connection.events, { type: "halc2.flush_extension_errors" });
+                yield* Queue.offer(connection.events, { type: "hal-c2.flush_extension_errors" });
               }
             }).pipe(
               sessionEventPermit.withPermits(1),

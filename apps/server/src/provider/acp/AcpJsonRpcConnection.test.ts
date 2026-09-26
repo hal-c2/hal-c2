@@ -45,7 +45,7 @@ describe("AcpSessionRuntime", () => {
             ? {
                 spawn: {
                   ...mockRuntimeOptions.spawn,
-                  env: { HALC2_ACP_SESSION_LIFECYCLE: "1" },
+                  env: { HAL_C2_ACP_SESSION_LIFECYCLE: "1" },
                 },
                 resumeSessionId: "mock-session-1",
                 resumeMethod: "resume" as const,
@@ -116,7 +116,7 @@ describe("AcpSessionRuntime", () => {
         ...mockRuntimeOptions,
         spawn: {
           ...mockRuntimeOptions.spawn,
-          env: { HALC2_ACP_WAIT_FOR_RESUME_RELEASE: "1", HALC2_ACP_SESSION_LIFECYCLE: "1" },
+          env: { HAL_C2_ACP_WAIT_FOR_RESUME_RELEASE: "1", HAL_C2_ACP_SESSION_LIFECYCLE: "1" },
         },
         resumeSessionId: "mock-session-1",
         resumeMethod: "resume",
@@ -154,7 +154,7 @@ describe("AcpSessionRuntime", () => {
         ...mockRuntimeOptions,
         spawn: {
           ...mockRuntimeOptions.spawn,
-          env: { HALC2_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1" },
+          env: { HAL_C2_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1" },
         },
         cancelBehavior: "wait-for-prompt",
         requestLogger: (event) =>
@@ -237,7 +237,7 @@ describe("AcpSessionRuntime", () => {
         ...mockRuntimeOptions,
         spawn: {
           ...mockRuntimeOptions.spawn,
-          env: { HALC2_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1" },
+          env: { HAL_C2_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1" },
         },
         cancelBehavior: "wait-for-prompt",
         cancelTimeout: "1 second",
@@ -321,7 +321,7 @@ describe("AcpSessionRuntime", () => {
         ...mockRuntimeOptions,
         spawn: {
           ...mockRuntimeOptions.spawn,
-          env: { HALC2_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1" },
+          env: { HAL_C2_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1" },
         },
         cancelBehavior: "wait-for-prompt",
       });
@@ -362,7 +362,7 @@ describe("AcpSessionRuntime", () => {
       });
       const runtime = yield* AcpSessionRuntime.make({
         ...mockRuntimeOptions,
-        spawn: { ...mockRuntimeOptions.spawn, env: { HALC2_ACP_FLOOD_STDERR: "1" } },
+        spawn: { ...mockRuntimeOptions.spawn, env: { HAL_C2_ACP_FLOOD_STDERR: "1" } },
         onStderr: () => Effect.fail(failure),
       });
       expect(yield* runtime.start().pipe(Effect.flip)).toBe(failure);
@@ -403,7 +403,7 @@ describe("AcpSessionRuntime", () => {
         yield* Effect.gen(function* () {
           const runtime = yield* AcpSessionRuntime.make({
             ...mockRuntimeOptions,
-            spawn: { ...mockRuntimeOptions.spawn, env: { HALC2_ACP_FLOOD_STDERR: "1" } },
+            spawn: { ...mockRuntimeOptions.spawn, env: { HAL_C2_ACP_FLOOD_STDERR: "1" } },
             ...(logStderr
               ? {
                   onStderr: (text: string) =>
@@ -460,7 +460,7 @@ describe("AcpSessionRuntime", () => {
         ...mockRuntimeOptions,
         spawn: {
           ...mockRuntimeOptions.spawn,
-          env: { HALC2_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1" },
+          env: { HAL_C2_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1" },
         },
         cancelBehavior: "wait-for-prompt",
         cancelTimeout: "1 second",
@@ -497,14 +497,14 @@ describe("AcpSessionRuntime", () => {
     Effect.gen(function* () {
       yield* Effect.acquireRelease(
         Effect.sync(() => {
-          const previous = process.env.HALC2_ACP_RUNTIME_AMBIENT;
-          process.env.HALC2_ACP_RUNTIME_AMBIENT = "sentinel";
+          const previous = process.env.HAL_C2_ACP_RUNTIME_AMBIENT;
+          process.env.HAL_C2_ACP_RUNTIME_AMBIENT = "sentinel";
           return previous;
         }),
         (previous) =>
           Effect.sync(() => {
-            if (previous === undefined) delete process.env.HALC2_ACP_RUNTIME_AMBIENT;
-            else process.env.HALC2_ACP_RUNTIME_AMBIENT = previous;
+            if (previous === undefined) delete process.env.HAL_C2_ACP_RUNTIME_AMBIENT;
+            else process.env.HAL_C2_ACP_RUNTIME_AMBIENT = previous;
           }),
       );
       const runtime = yield* AcpSessionRuntime.make({
@@ -513,7 +513,7 @@ describe("AcpSessionRuntime", () => {
           command: process.execPath,
           args: mockAgentArgs,
           extendEnv: false,
-          env: { HALC2_ACP_RUNTIME_EXPLICIT: "kept" },
+          env: { HAL_C2_ACP_RUNTIME_EXPLICIT: "kept" },
         },
       });
       yield* runtime.initialize();
@@ -596,7 +596,7 @@ describe("AcpSessionRuntime", () => {
           spawn: {
             command: mockAgentCommand,
             args: mockAgentArgs,
-            env: { HALC2_ACP_MCP_ACP: "1" },
+            env: { HAL_C2_ACP_MCP_ACP: "1" },
           },
           cwd: process.cwd(),
           clientInfo: { name: "hal-c2-test", version: "0.0.0" },
@@ -685,7 +685,7 @@ describe("AcpSessionRuntime", () => {
           spawn: {
             command: mockAgentCommand,
             args: mockAgentArgs,
-            env: { HALC2_ACP_V2_MANAGEMENT: "1" },
+            env: { HAL_C2_ACP_V2_MANAGEMENT: "1" },
           },
           cwd: process.cwd(),
           clientInfo: { name: "hal-c2-test", version: "0.0.0" },
@@ -717,7 +717,7 @@ describe("AcpSessionRuntime", () => {
           spawn: {
             command: mockAgentCommand,
             args: mockAgentArgs,
-            env: { HALC2_ACP_AUTH_METHOD_ID: "test" },
+            env: { HAL_C2_ACP_AUTH_METHOD_ID: "test" },
           },
           cwd: process.cwd(),
           clientInfo: { name: "hal-c2-test", version: "0.0.0" },
@@ -759,8 +759,8 @@ describe("AcpSessionRuntime", () => {
             command: mockAgentCommand,
             args: mockAgentArgs,
             env: {
-              HALC2_ACP_AUTH_METHOD_ID: "test",
-              HALC2_ACP_REQUIRE_AUTH: "1",
+              HAL_C2_ACP_AUTH_METHOD_ID: "test",
+              HAL_C2_ACP_REQUIRE_AUTH: "1",
             },
           },
           cwd: process.cwd(),
@@ -797,8 +797,8 @@ describe("AcpSessionRuntime", () => {
             command: mockAgentCommand,
             args: mockAgentArgs,
             env: {
-              HALC2_ACP_AUTH_METHOD_ID: "test",
-              HALC2_ACP_REQUIRE_AUTH: "1",
+              HAL_C2_ACP_AUTH_METHOD_ID: "test",
+              HAL_C2_ACP_REQUIRE_AUTH: "1",
             },
           },
           cwd: process.cwd(),
@@ -943,7 +943,7 @@ describe("AcpSessionRuntime", () => {
             command: mockAgentCommand,
             args: mockAgentArgs,
             env: {
-              HALC2_ACP_EMIT_FOREIGN_SESSION_UPDATES: "1",
+              HAL_C2_ACP_EMIT_FOREIGN_SESSION_UPDATES: "1",
             },
           },
           cwd: process.cwd(),
@@ -1029,7 +1029,7 @@ describe("AcpSessionRuntime", () => {
             command: mockAgentCommand,
             args: mockAgentArgs,
             env: {
-              HALC2_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
+              HAL_C2_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
             },
           },
           cwd: process.cwd(),
@@ -1098,7 +1098,7 @@ describe("AcpSessionRuntime", () => {
             command: mockAgentCommand,
             args: mockAgentArgs,
             env: {
-              HALC2_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS: "1",
+              HAL_C2_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS: "1",
             },
           },
           cwd: process.cwd(),
@@ -1145,7 +1145,7 @@ describe("AcpSessionRuntime", () => {
             command: mockAgentCommand,
             args: mockAgentArgs,
             env: {
-              HALC2_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1",
+              HAL_C2_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1",
             },
           },
           cwd: process.cwd(),
@@ -1259,7 +1259,7 @@ describe("AcpSessionRuntime", () => {
             command: mockAgentCommand,
             args: mockAgentArgs,
             env: {
-              HALC2_ACP_SESSION_LIFECYCLE: "1",
+              HAL_C2_ACP_SESSION_LIFECYCLE: "1",
             },
           },
           cwd: process.cwd(),
@@ -1291,7 +1291,7 @@ describe("AcpSessionRuntime", () => {
           spawn: {
             command: mockAgentCommand,
             args: mockAgentArgs,
-            env: { HALC2_ACP_SESSION_LIFECYCLE: "1" },
+            env: { HAL_C2_ACP_SESSION_LIFECYCLE: "1" },
           },
           cwd: process.cwd(),
           clientInfo: { name: "hal-c2-test", version: "0.0.0" },
@@ -1341,8 +1341,8 @@ describe("AcpSessionRuntime", () => {
             command: mockAgentCommand,
             args: mockAgentArgs,
             env: {
-              HALC2_ACP_REQUIRE_AUTH: "1",
-              HALC2_ACP_SESSION_LIFECYCLE: "1",
+              HAL_C2_ACP_REQUIRE_AUTH: "1",
+              HAL_C2_ACP_SESSION_LIFECYCLE: "1",
             },
           },
           cwd: process.cwd(),
@@ -1451,7 +1451,7 @@ describe("AcpSessionRuntime", () => {
             command: mockAgentCommand,
             args: mockAgentArgs,
             env: {
-              HALC2_ACP_FAIL_LOAD_SESSION: "1",
+              HAL_C2_ACP_FAIL_LOAD_SESSION: "1",
             },
           },
           cwd: process.cwd(),
@@ -1483,7 +1483,7 @@ describe("AcpSessionRuntime", () => {
             command: mockAgentCommand,
             args: mockAgentArgs,
             env: {
-              HALC2_ACP_FAIL_LOAD_SESSION_AFTER_CONFIG_REPLAY: "1",
+              HAL_C2_ACP_FAIL_LOAD_SESSION_AFTER_CONFIG_REPLAY: "1",
             },
           },
           cwd: process.cwd(),
@@ -1519,7 +1519,7 @@ describe("AcpSessionRuntime", () => {
             command: mockAgentCommand,
             args: mockAgentArgs,
             env: {
-              HALC2_ACP_EMIT_LOAD_REPLAY: "1",
+              HAL_C2_ACP_EMIT_LOAD_REPLAY: "1",
             },
           },
           cwd: process.cwd(),
@@ -1541,8 +1541,8 @@ describe("AcpSessionRuntime", () => {
           command: mockAgentCommand,
           args: mockAgentArgs,
           env: {
-            HALC2_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
-            HALC2_ACP_LOAD_SESSION_DELAY_MS: "250",
+            HAL_C2_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+            HAL_C2_ACP_LOAD_SESSION_DELAY_MS: "250",
           },
         },
         cwd: process.cwd(),
@@ -1589,7 +1589,7 @@ describe("AcpSessionRuntime", () => {
 
       expect(started.sessionId).toBe("mock-session-1");
       expect(started.sessionSetupResult._meta).toMatchObject({
-        halc2SessionLoadReady: "replay_idle",
+        halC2SessionLoadReady: "replay_idle",
       });
 
       const unexpectedReplayEvent = yield* Stream.runHead(runtime.getEvents()).pipe(
@@ -1604,8 +1604,8 @@ describe("AcpSessionRuntime", () => {
             command: mockAgentCommand,
             args: mockAgentArgs,
             env: {
-              HALC2_ACP_HANG_LOAD_SESSION_AFTER_REPLAY: "1",
-              HALC2_ACP_LOAD_SESSION_DELAY_MS: "10000",
+              HAL_C2_ACP_HANG_LOAD_SESSION_AFTER_REPLAY: "1",
+              HAL_C2_ACP_LOAD_SESSION_DELAY_MS: "10000",
             },
           },
           cwd: process.cwd(),
@@ -1629,7 +1629,7 @@ describe("AcpSessionRuntime", () => {
 
       expect(loaded.sessionId).toBe("mock-session-1");
       expect(loaded.sessionSetupResult._meta).toMatchObject({
-        halc2SessionLoadReady: "replay_idle",
+        halC2SessionLoadReady: "replay_idle",
       });
     }).pipe(
       Effect.provide(
@@ -1639,8 +1639,8 @@ describe("AcpSessionRuntime", () => {
             command: mockAgentCommand,
             args: mockAgentArgs,
             env: {
-              HALC2_ACP_HANG_LOAD_SESSION_AFTER_REPLAY: "1",
-              HALC2_ACP_LOAD_SESSION_DELAY_MS: "10000",
+              HAL_C2_ACP_HANG_LOAD_SESSION_AFTER_REPLAY: "1",
+              HAL_C2_ACP_LOAD_SESSION_DELAY_MS: "10000",
             },
           },
           cwd: process.cwd(),
@@ -1692,7 +1692,7 @@ describe("AcpSessionRuntime", () => {
             command: mockAgentCommand,
             args: mockAgentArgs,
             env: {
-              HALC2_ACP_REQUEST_LOG_PATH: requestLogPath,
+              HAL_C2_ACP_REQUEST_LOG_PATH: requestLogPath,
             },
           },
           cwd: process.cwd(),

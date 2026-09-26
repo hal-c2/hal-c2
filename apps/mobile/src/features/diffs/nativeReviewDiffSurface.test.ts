@@ -84,7 +84,7 @@ describe("isPendingNativeViewRegistration", () => {
     expect(
       isPendingNativeViewRegistration(
         new Error(
-          "Unable to find the class expo.modules.halc2reviewdiff.HalC2ReviewDiffView view with tag 1150",
+          "Unable to find the class expo.modules.hal_c2_reviewdiff.HalC2ReviewDiffView view with tag 1150",
         ),
       ),
     ).toBe(true);

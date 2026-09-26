@@ -10,7 +10,7 @@ export function useShellDesktopNotifications(threads: ReadonlyArray<EnvironmentT
     tracker.current ??= createDesktopNotificationTracker();
     const events = tracker.current(threads);
     if (events.length > 0) {
-      void window.halc2Shell?.publish("desktopNotifications", events);
+      void window.halC2Shell?.publish("desktopNotifications", events);
     }
   }, [threads]);
 }

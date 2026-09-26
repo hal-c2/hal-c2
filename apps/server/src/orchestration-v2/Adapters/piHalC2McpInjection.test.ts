@@ -5,10 +5,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 import {
-  PI_HALC2_MCP_EXTENSION_FILENAME,
-  HALC2_MCP_BEARER_ENV,
-  HALC2_MCP_URL_ENV,
-  HALC2_PI_RUNTIME_MODE_ENV,
+  PI_HAL_C2_MCP_EXTENSION_FILENAME,
+  HAL_C2_MCP_BEARER_ENV,
+  HAL_C2_MCP_URL_ENV,
+  HAL_C2_PI_RUNTIME_MODE_ENV,
 } from "./piHalC2McpExtensionSource.ts";
 import {
   buildPiRpcLaunch,
@@ -62,15 +62,15 @@ describe("pi HAL-C2 MCP injection", () => {
       "/tmp/cache/pi-hal-c2-mcp-extension.ts",
     ]);
     assert.notInclude(launch.args, "--no-extensions");
-    assert.equal(launch.env[HALC2_MCP_URL_ENV], "http://127.0.0.1:43123/mcp");
-    assert.equal(launch.env[HALC2_MCP_BEARER_ENV], "secret-pi-token");
-    assert.equal(launch.env[HALC2_PI_RUNTIME_MODE_ENV], "approval-required");
+    assert.equal(launch.env[HAL_C2_MCP_URL_ENV], "http://127.0.0.1:43123/mcp");
+    assert.equal(launch.env[HAL_C2_MCP_BEARER_ENV], "secret-pi-token");
+    assert.equal(launch.env[HAL_C2_PI_RUNTIME_MODE_ENV], "approval-required");
 
     const permissionOnly = buildPiRpcLaunch({
       launchArgs: [],
       environment: {
-        [HALC2_MCP_URL_ENV]: "http://127.0.0.1:9999/stale",
-        [HALC2_MCP_BEARER_ENV]: "stale-token",
+        [HAL_C2_MCP_URL_ENV]: "http://127.0.0.1:9999/stale",
+        [HAL_C2_MCP_BEARER_ENV]: "stale-token",
       },
       mcpSession: undefined,
       extensionPath: "/tmp/cache/pi-hal-c2-mcp-extension.ts",
@@ -83,9 +83,9 @@ describe("pi HAL-C2 MCP injection", () => {
       "/tmp/cache/pi-hal-c2-mcp-extension.ts",
     ]);
     assert.isFalse(permissionOnly.hasHalC2Mcp);
-    assert.isUndefined(permissionOnly.env[HALC2_MCP_URL_ENV]);
-    assert.isUndefined(permissionOnly.env[HALC2_MCP_BEARER_ENV]);
-    assert.equal(permissionOnly.env[HALC2_PI_RUNTIME_MODE_ENV], "auto-accept-edits");
+    assert.isUndefined(permissionOnly.env[HAL_C2_MCP_URL_ENV]);
+    assert.isUndefined(permissionOnly.env[HAL_C2_MCP_BEARER_ENV]);
+    assert.equal(permissionOnly.env[HAL_C2_PI_RUNTIME_MODE_ENV], "auto-accept-edits");
   });
 
   it("falls back to Pi's first supported mode for legacy auto threads", () => {
@@ -97,7 +97,7 @@ describe("pi HAL-C2 MCP injection", () => {
       runtimeMode: "auto",
     });
 
-    assert.equal(launch.env[HALC2_PI_RUNTIME_MODE_ENV], "approval-required");
+    assert.equal(launch.env[HAL_C2_PI_RUNTIME_MODE_ENV], "approval-required");
   });
 
   it("forces tools and user extensions off for unattended text generation", () => {
@@ -142,9 +142,9 @@ describe("pi HAL-C2 MCP injection", () => {
       const fs = yield* FileSystem.FileSystem;
       const cacheDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-pi-extensions-" });
       const mcpDest = yield* materializePiHalC2McpExtension(cacheDir);
-      assert.isTrue(mcpDest.endsWith(PI_HALC2_MCP_EXTENSION_FILENAME));
+      assert.isTrue(mcpDest.endsWith(PI_HAL_C2_MCP_EXTENSION_FILENAME));
       const mcpSource = yield* fs.readFileString(mcpDest);
-      assert.include(mcpSource, "export default async function halc2McpExtension");
+      assert.include(mcpSource, "export default async function halC2McpExtension");
       assert.include(mcpSource, "before_agent_start");
       assert.include(mcpSource, 'pi.on("tool_call"');
       assert.include(mcpSource, "Allow ${event.toolName}?");

@@ -178,8 +178,8 @@ export class ThemeTargetMissingError extends Schema.TaggedError<ThemeTargetMissi
 }
 
 const resolveThemePaths = Effect.fn(function* (explicitBaseDir: Option.Option<string>) {
-  // Same precedence as the rest of the CLI: --base-dir, then HALC2_HOME,
-  // then the default home. A provisioning script exporting HALC2_HOME must
+  // Same precedence as the rest of the CLI: --base-dir, then HAL_C2_HOME,
+  // then the default home. A provisioning script exporting HAL_C2_HOME must
   // not have this one command silently target the default install.
   const envHome = Option.fromUndefinedOr(yield* configuredHalC2HomeFromEnv);
   const configuredBaseDir = Option.orElse(explicitBaseDir, () => envHome);

@@ -169,7 +169,7 @@ function ThemeCard(props: {
         {choice("dark", props.darkSelected)}
       </View>
       <Text
-        className="min-w-0 flex-1 px-1 text-lg font-halc2-medium"
+        className="min-w-0 flex-1 px-1 text-lg font-hal-c2-medium"
         numberOfLines={1}
         pointerEvents="none"
       >
@@ -270,7 +270,7 @@ function ModeCard(props: {
       <Text
         className={
           props.selected
-            ? "text-center text-base font-halc2-bold text-foreground"
+            ? "text-center text-base font-hal-c2-bold text-foreground"
             : "text-center text-base text-foreground-muted"
         }
       >
@@ -281,7 +281,7 @@ function ModeCard(props: {
 }
 
 function SectionLabel({ children }: { readonly children: string }) {
-  return <Text className="px-2 text-sm font-halc2-medium text-foreground-muted">{children}</Text>;
+  return <Text className="px-2 text-sm font-hal-c2-medium text-foreground-muted">{children}</Text>;
 }
 
 export function ThemeAppearanceSection() {

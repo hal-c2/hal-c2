@@ -54,17 +54,17 @@ function resolveEarlyDesktopSettingsPath(input: {
   readonly homeDirectory: string;
   readonly joinPath: JoinPath;
 }): string {
-  const halc2Home = Option.fromUndefinedOr(input.env.HALC2_HOME);
+  const halC2Home = Option.fromUndefinedOr(input.env.HAL_C2_HOME);
   const baseDir = resolveDesktopBaseDir({
     homeDirectory: input.homeDirectory,
     joinPath: input.joinPath,
-    halc2Home,
+    halC2Home,
   });
   const stateDir = resolveDesktopStateDir({
     baseDir,
     isDevelopment: isDevelopmentEnvironment(input.env),
     joinPath: input.joinPath,
-    halc2Home,
+    halC2Home,
   });
   return input.joinPath(stateDir, "desktop-settings.json");
 }

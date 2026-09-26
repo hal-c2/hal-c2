@@ -38,7 +38,7 @@ export { normalizeProviderAccentColor, shouldShowInstanceBadge };
  * send until a live provider replaces it.
  */
 export const NO_PROVIDER_MODEL_SELECTION: ModelSelection = {
-  instanceId: ProviderInstanceId.make("halc2_no_provider"),
+  instanceId: ProviderInstanceId.make("hal_c2_no_provider"),
   model: "",
 };
 

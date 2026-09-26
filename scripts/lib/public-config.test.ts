@@ -18,24 +18,24 @@ describe("loadRepoEnv", () => {
   it("does not project cloud configuration for an unconfigured clone", () => {
     const env = loadRepoEnv({ baseEnv: {}, repoRoot: makeTemporaryDirectory() });
 
-    expect(env.HALC2_CLERK_PUBLISHABLE_KEY).toBeUndefined();
-    expect(env.HALC2_CLERK_CLI_OAUTH_CLIENT_ID).toBeUndefined();
+    expect(env.HAL_C2_CLERK_PUBLISHABLE_KEY).toBeUndefined();
+    expect(env.HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID).toBeUndefined();
     expect(env.VITE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
     expect(env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY).toBeUndefined();
-    expect(env.HALC2_CLERK_JWT_TEMPLATE).toBeUndefined();
+    expect(env.HAL_C2_CLERK_JWT_TEMPLATE).toBeUndefined();
     expect(env.VITE_CLERK_JWT_TEMPLATE).toBeUndefined();
     expect(env.EXPO_PUBLIC_CLERK_JWT_TEMPLATE).toBeUndefined();
-    expect(env.HALC2_RELAY_URL).toBeUndefined();
-    expect(env.VITE_HALC2_RELAY_URL).toBeUndefined();
-    expect(env.HALC2_MOBILE_OTLP_TRACES_URL).toBeUndefined();
-    expect(env.HALC2_MOBILE_OTLP_TRACES_DATASET).toBeUndefined();
-    expect(env.HALC2_MOBILE_OTLP_TRACES_TOKEN).toBeUndefined();
+    expect(env.HAL_C2_RELAY_URL).toBeUndefined();
+    expect(env.VITE_HAL_C2_RELAY_URL).toBeUndefined();
+    expect(env.HAL_C2_MOBILE_OTLP_TRACES_URL).toBeUndefined();
+    expect(env.HAL_C2_MOBILE_OTLP_TRACES_DATASET).toBeUndefined();
+    expect(env.HAL_C2_MOBILE_OTLP_TRACES_TOKEN).toBeUndefined();
     expect(env.EXPO_PUBLIC_OTLP_TRACES_URL).toBeUndefined();
     expect(env.EXPO_PUBLIC_OTLP_TRACES_DATASET).toBeUndefined();
     expect(env.EXPO_PUBLIC_OTLP_TRACES_TOKEN).toBeUndefined();
-    expect(env.HALC2_RELAY_CLIENT_OTLP_TRACES_URL).toBeUndefined();
-    expect(env.HALC2_RELAY_CLIENT_OTLP_TRACES_DATASET).toBeUndefined();
-    expect(env.HALC2_RELAY_CLIENT_OTLP_TRACES_TOKEN).toBeUndefined();
+    expect(env.HAL_C2_RELAY_CLIENT_OTLP_TRACES_URL).toBeUndefined();
+    expect(env.HAL_C2_RELAY_CLIENT_OTLP_TRACES_DATASET).toBeUndefined();
+    expect(env.HAL_C2_RELAY_CLIENT_OTLP_TRACES_TOKEN).toBeUndefined();
     expect(env.VITE_RELAY_OTLP_TRACES_URL).toBeUndefined();
     expect(env.VITE_RELAY_OTLP_TRACES_DATASET).toBeUndefined();
     expect(env.VITE_RELAY_OTLP_TRACES_TOKEN).toBeUndefined();
@@ -45,36 +45,36 @@ describe("loadRepoEnv", () => {
     const repoRoot = makeTemporaryDirectory();
     NodeFS.writeFileSync(
       NodePath.join(repoRoot, ".env"),
-      "HALC2_CLERK_PUBLISHABLE_KEY=pk_root\nHALC2_CLERK_JWT_TEMPLATE=template_root\nHALC2_CLERK_CLI_OAUTH_CLIENT_ID=oauth_root\nHALC2_RELAY_URL=https://root.example.test\n",
+      "HAL_C2_CLERK_PUBLISHABLE_KEY=pk_root\nHAL_C2_CLERK_JWT_TEMPLATE=template_root\nHAL_C2_CLERK_CLI_OAUTH_CLIENT_ID=oauth_root\nHAL_C2_RELAY_URL=https://root.example.test\n",
     );
     NodeFS.writeFileSync(
       NodePath.join(repoRoot, ".env.local"),
-      "HALC2_CLERK_PUBLISHABLE_KEY=pk_local\nHALC2_CLERK_JWT_TEMPLATE=template_local\nHALC2_CLERK_CLI_OAUTH_CLIENT_ID=oauth_local\nHALC2_RELAY_URL=https://local.example.test\n",
+      "HAL_C2_CLERK_PUBLISHABLE_KEY=pk_local\nHAL_C2_CLERK_JWT_TEMPLATE=template_local\nHAL_C2_CLERK_CLI_OAUTH_CLIENT_ID=oauth_local\nHAL_C2_RELAY_URL=https://local.example.test\n",
     );
 
-    expect(loadRepoEnv({ baseEnv: {}, repoRoot }).HALC2_RELAY_URL).toBe(
+    expect(loadRepoEnv({ baseEnv: {}, repoRoot }).HAL_C2_RELAY_URL).toBe(
       "https://local.example.test",
     );
     expect(
       loadRepoEnv({
         baseEnv: {
-          HALC2_CLERK_PUBLISHABLE_KEY: "pk_ci",
-          HALC2_CLERK_JWT_TEMPLATE: "template_ci",
-          HALC2_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_ci",
-          HALC2_RELAY_URL: "https://ci.example.test",
+          HAL_C2_CLERK_PUBLISHABLE_KEY: "pk_ci",
+          HAL_C2_CLERK_JWT_TEMPLATE: "template_ci",
+          HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_ci",
+          HAL_C2_RELAY_URL: "https://ci.example.test",
         },
         repoRoot,
       }),
     ).toMatchObject({
-      HALC2_CLERK_PUBLISHABLE_KEY: "pk_ci",
-      HALC2_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_ci",
+      HAL_C2_CLERK_PUBLISHABLE_KEY: "pk_ci",
+      HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_ci",
       VITE_CLERK_PUBLISHABLE_KEY: "pk_ci",
       EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_ci",
-      HALC2_CLERK_JWT_TEMPLATE: "template_ci",
+      HAL_C2_CLERK_JWT_TEMPLATE: "template_ci",
       VITE_CLERK_JWT_TEMPLATE: "template_ci",
       EXPO_PUBLIC_CLERK_JWT_TEMPLATE: "template_ci",
-      HALC2_RELAY_URL: "https://ci.example.test",
-      VITE_HALC2_RELAY_URL: "https://ci.example.test",
+      HAL_C2_RELAY_URL: "https://ci.example.test",
+      VITE_HAL_C2_RELAY_URL: "https://ci.example.test",
     });
   });
 
@@ -83,8 +83,8 @@ describe("loadRepoEnv", () => {
       resolvePublicConfig({
         VITE_CLERK_PUBLISHABLE_KEY: "pk_legacy",
         VITE_CLERK_JWT_TEMPLATE: "template_legacy",
-        HALC2_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_canonical",
-        VITE_HALC2_RELAY_URL: "https://legacy.example.test",
+        HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_canonical",
+        VITE_HAL_C2_RELAY_URL: "https://legacy.example.test",
         EXPO_PUBLIC_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
         EXPO_PUBLIC_OTLP_TRACES_DATASET: "mobile-traces",
         EXPO_PUBLIC_OTLP_TRACES_TOKEN: "mobile-token",
@@ -107,16 +107,16 @@ describe("loadRepoEnv", () => {
     expect(
       loadRepoEnv({
         baseEnv: {
-          HALC2_RELAY_CLIENT_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
-          HALC2_RELAY_CLIENT_OTLP_TRACES_DATASET: "relay-client-traces",
-          HALC2_RELAY_CLIENT_OTLP_TRACES_TOKEN: "relay-client-token",
+          HAL_C2_RELAY_CLIENT_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
+          HAL_C2_RELAY_CLIENT_OTLP_TRACES_DATASET: "relay-client-traces",
+          HAL_C2_RELAY_CLIENT_OTLP_TRACES_TOKEN: "relay-client-token",
         },
         repoRoot: makeTemporaryDirectory(),
       }),
     ).toEqual({
-      HALC2_RELAY_CLIENT_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
-      HALC2_RELAY_CLIENT_OTLP_TRACES_DATASET: "relay-client-traces",
-      HALC2_RELAY_CLIENT_OTLP_TRACES_TOKEN: "relay-client-token",
+      HAL_C2_RELAY_CLIENT_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
+      HAL_C2_RELAY_CLIENT_OTLP_TRACES_DATASET: "relay-client-traces",
+      HAL_C2_RELAY_CLIENT_OTLP_TRACES_TOKEN: "relay-client-token",
       VITE_RELAY_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
       VITE_RELAY_OTLP_TRACES_DATASET: "relay-client-traces",
       VITE_RELAY_OTLP_TRACES_TOKEN: "relay-client-token",
@@ -127,19 +127,19 @@ describe("loadRepoEnv", () => {
     expect(
       loadRepoEnv({
         baseEnv: {
-          HALC2_RELAY_URL: "https://relay.example.test",
-          HALC2_MOBILE_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
-          HALC2_MOBILE_OTLP_TRACES_DATASET: "mobile-traces",
-          HALC2_MOBILE_OTLP_TRACES_TOKEN: "mobile-token",
+          HAL_C2_RELAY_URL: "https://relay.example.test",
+          HAL_C2_MOBILE_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
+          HAL_C2_MOBILE_OTLP_TRACES_DATASET: "mobile-traces",
+          HAL_C2_MOBILE_OTLP_TRACES_TOKEN: "mobile-token",
         },
         repoRoot: makeTemporaryDirectory(),
       }),
     ).toEqual({
-      HALC2_RELAY_URL: "https://relay.example.test",
-      VITE_HALC2_RELAY_URL: "https://relay.example.test",
-      HALC2_MOBILE_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
-      HALC2_MOBILE_OTLP_TRACES_DATASET: "mobile-traces",
-      HALC2_MOBILE_OTLP_TRACES_TOKEN: "mobile-token",
+      HAL_C2_RELAY_URL: "https://relay.example.test",
+      VITE_HAL_C2_RELAY_URL: "https://relay.example.test",
+      HAL_C2_MOBILE_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
+      HAL_C2_MOBILE_OTLP_TRACES_DATASET: "mobile-traces",
+      HAL_C2_MOBILE_OTLP_TRACES_TOKEN: "mobile-token",
       EXPO_PUBLIC_OTLP_TRACES_URL: "https://api.axiom.co/v1/traces",
       EXPO_PUBLIC_OTLP_TRACES_DATASET: "mobile-traces",
       EXPO_PUBLIC_OTLP_TRACES_TOKEN: "mobile-token",

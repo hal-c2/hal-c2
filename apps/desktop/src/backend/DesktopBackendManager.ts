@@ -90,7 +90,7 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly env: Record<string, string | undefined>;
   // When true the spawner merges the desktop process.env on top of `env`;
   // when false `env` is passed verbatim. WSL mode opts out so a leaking
-  // HALC2_HOME can't pin the WSL backend to /mnt/c/...\.hal-c2.
+  // HAL_C2_HOME can't pin the WSL backend to /mnt/c/...\.hal-c2.
   readonly extendEnv: boolean;
   readonly bootstrap: DesktopBackendBootstrapValue;
   readonly bootstrapDelivery: DesktopBackendBootstrapDelivery;

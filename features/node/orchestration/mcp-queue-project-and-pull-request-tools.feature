@@ -1,11 +1,11 @@
 # Sources:
-#   apps/server-ex/lib/hal_c2/mcp/tools/queue.ex (halc2_queue_list, halc2_queue_read, halc2_queue_edit,
-#     halc2_queue_cancel, halc2_queue_reorder, halc2_queue_promote_to_steer, halc2_pending_request_list,
-#     halc2_pending_request_read, halc2_pending_request_respond)
-#   apps/server-ex/lib/hal_c2/mcp/tools/projects.ex (halc2_project_create, halc2_project_update,
-#     halc2_project_delete, halc2_project_clone, halc2_worktree_list, halc2_worktree_status,
-#     halc2_worktree_handoff)
-#   apps/server-ex/lib/hal_c2/mcp/tools.ex (halc2_project_list, halc2_project_read)
+#   apps/server-ex/lib/hal_c2/mcp/tools/queue.ex (hal_c2_queue_list, hal_c2_queue_read, hal_c2_queue_edit,
+#     hal_c2_queue_cancel, hal_c2_queue_reorder, hal_c2_queue_promote_to_steer, hal_c2_pending_request_list,
+#     hal_c2_pending_request_read, hal_c2_pending_request_respond)
+#   apps/server-ex/lib/hal_c2/mcp/tools/projects.ex (hal_c2_project_create, hal_c2_project_update,
+#     hal_c2_project_delete, hal_c2_project_clone, hal_c2_worktree_list, hal_c2_worktree_status,
+#     hal_c2_worktree_handoff)
+#   apps/server-ex/lib/hal_c2/mcp/tools.ex (hal_c2_project_list, hal_c2_project_read)
 #   apps/server-ex/lib/hal_c2/mcp/tools/pull_requests.ex (link_pull_request,
 #     unlink_pull_request, list_thread_pull_requests)
 #   V2 commands issued: queued-run.edit, queued-run.cancel, queued-run.reorder,
@@ -106,7 +106,7 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
   @node
   Scenario: Cloning a repository as a project
     When the agent of "caller" clones a repository
-    # halc2_project_clone only clones, in both servers; registering is a halc2_project_create call.
+    # hal_c2_project_clone only clones, in both servers; registering is a hal_c2_project_create call.
     Then the repository is cloned and can be registered as a project
 
   @node

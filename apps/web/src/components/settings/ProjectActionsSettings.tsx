@@ -88,13 +88,13 @@ export function ProjectActionsSettings() {
   // A project's hal-c2.json can declare actions to import. Read it from the
   // representative checkout; the imported action still fans out.
   const representativeMember = target?.projectId ? memberById.get(target.projectId) : undefined;
-  const halc2File = useHalC2ProjectFileState(
+  const halC2File = useHalC2ProjectFileState(
     representativeMember?.environmentId ?? EnvironmentId.make("none"),
     representativeMember?.workspaceRoot ?? null,
   );
   const importableScripts = useMemo(
     () =>
-      halc2File.scripts.filter(
+      halC2File.scripts.filter(
         (fileScript) =>
           !scripts.some(
             (script) =>
@@ -102,7 +102,7 @@ export function ProjectActionsSettings() {
               script.name.toLowerCase() === fileScript.name.toLowerCase(),
           ),
       ),
-    [scripts, halc2File.scripts],
+    [scripts, halC2File.scripts],
   );
   const importFileScript = useCallback(
     async (fileScript: HalC2ProjectFileScript) => {
@@ -206,7 +206,7 @@ export function ProjectActionsSettings() {
           onEdit={(script) => setRequest(editorRequestForScript(script, keybindings))}
         />
       )}
-      {halc2File.status === "invalid" ? (
+      {halC2File.status === "invalid" ? (
         <SettingsRow
           title="hal-c2.json is invalid"
           description="A hal-c2.json exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values."

@@ -46,7 +46,7 @@ defmodule HalC2.WorktreeSetupTest do
         "workspaceRoot" => repo
       })
 
-    assert_receive {:halc2_shell, {:rows, _, [{"p1", _}]}}, 1_000
+    assert_receive {:hal_c2_shell, {:rows, _, [{"p1", _}]}}, 1_000
 
     if scripts != [] do
       {:ok, _} =
@@ -56,7 +56,7 @@ defmodule HalC2.WorktreeSetupTest do
           "scripts" => scripts
         })
 
-      assert_receive {:halc2_shell, {:rows, _, [{"p1", {"project", %{"scripts" => [_ | _]}}}]}},
+      assert_receive {:hal_c2_shell, {:rows, _, [{"p1", {"project", %{"scripts" => [_ | _]}}}]}},
                      1_000
     end
   end
@@ -84,8 +84,8 @@ defmodule HalC2.WorktreeSetupTest do
 
   defp await_phase(thread_id, phase) do
     receive do
-      {:halc2_worktree_setup, ^thread_id, %{"phase" => ^phase} = snapshot} -> snapshot
-      {:halc2_worktree_setup, ^thread_id, _} -> await_phase(thread_id, phase)
+      {:hal_c2_worktree_setup, ^thread_id, %{"phase" => ^phase} = snapshot} -> snapshot
+      {:hal_c2_worktree_setup, ^thread_id, _} -> await_phase(thread_id, phase)
     after
       15_000 -> flunk("setup never reached #{phase}")
     end
@@ -162,8 +162,8 @@ defmodule HalC2.WorktreeSetupTest do
 
   defp await_running_script(thread_id) do
     receive do
-      {:halc2_worktree_setup, ^thread_id, %{"setupScript" => %{}} = snapshot} -> snapshot
-      {:halc2_worktree_setup, ^thread_id, _} -> await_running_script(thread_id)
+      {:hal_c2_worktree_setup, ^thread_id, %{"setupScript" => %{}} = snapshot} -> snapshot
+      {:hal_c2_worktree_setup, ^thread_id, _} -> await_running_script(thread_id)
     after
       15_000 -> flunk("the setup script never started")
     end
@@ -176,7 +176,7 @@ defmodule HalC2.WorktreeSetupTest do
       state
     else
       receive do
-        {:halc2_stream, ^thread_id, _} -> await_completed(thread_id)
+        {:hal_c2_stream, ^thread_id, _} -> await_completed(thread_id)
       after
         15_000 -> flunk("the run never completed")
       end

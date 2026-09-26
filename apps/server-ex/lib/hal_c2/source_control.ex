@@ -56,7 +56,7 @@ defmodule HalC2.SourceControl do
      }}
   end
 
-  @bitbucket_hint "Set HALC2_BITBUCKET_EMAIL and HALC2_BITBUCKET_API_TOKEN on the server (use a Bitbucket API token with pull request, repository, and user read scopes)."
+  @bitbucket_hint "Set HAL_C2_BITBUCKET_EMAIL and HAL_C2_BITBUCKET_API_TOKEN on the server (use a Bitbucket API token with pull request, repository, and user read scopes)."
 
   # Bitbucket has no CLI: it is always offered, signed in through the server's
   # environment (an access token, or an email with an API token), which `/user` checks.
@@ -80,7 +80,7 @@ defmodule HalC2.SourceControl do
             "unauthenticated",
             nil,
             "bitbucket.org",
-            "Set HALC2_BITBUCKET_EMAIL and HALC2_BITBUCKET_API_TOKEN, or HALC2_BITBUCKET_ACCESS_TOKEN."
+            "Set HAL_C2_BITBUCKET_EMAIL and HAL_C2_BITBUCKET_API_TOKEN, or HAL_C2_BITBUCKET_ACCESS_TOKEN."
           )
       end
 
@@ -99,9 +99,9 @@ defmodule HalC2.SourceControl do
     env =
       &(System.get_env(&1, "") |> String.trim() |> then(fn v -> if v == "", do: nil, else: v end))
 
-    token = env.("HALC2_BITBUCKET_ACCESS_TOKEN")
-    email = env.("HALC2_BITBUCKET_EMAIL")
-    api_token = env.("HALC2_BITBUCKET_API_TOKEN")
+    token = env.("HAL_C2_BITBUCKET_ACCESS_TOKEN")
+    email = env.("HAL_C2_BITBUCKET_EMAIL")
+    api_token = env.("HAL_C2_BITBUCKET_API_TOKEN")
 
     authorization =
       cond do
@@ -111,7 +111,7 @@ defmodule HalC2.SourceControl do
       end
 
     %{
-      base: env.("HALC2_BITBUCKET_API_BASE_URL") || "https://api.bitbucket.org/2.0",
+      base: env.("HAL_C2_BITBUCKET_API_BASE_URL") || "https://api.bitbucket.org/2.0",
       token: token,
       email: email,
       authorization: authorization

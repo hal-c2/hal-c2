@@ -77,16 +77,16 @@ const emptyBackendObservabilitySettings: BackendObservabilitySettings = {
 };
 
 const DESKTOP_BACKEND_ENV_NAMES = [
-  "HALC2_PORT",
-  "HALC2_MODE",
-  "HALC2_NO_BROWSER",
-  "HALC2_HOST",
-  "HALC2_DESKTOP_WS_URL",
-  "HALC2_DESKTOP_LAN_ACCESS",
-  "HALC2_DESKTOP_LAN_HOST",
-  "HALC2_DESKTOP_HTTPS_ENDPOINTS",
-  "HALC2_TAILSCALE_SERVE",
-  "HALC2_TAILSCALE_SERVE_PORT",
+  "HAL_C2_PORT",
+  "HAL_C2_MODE",
+  "HAL_C2_NO_BROWSER",
+  "HAL_C2_HOST",
+  "HAL_C2_DESKTOP_WS_URL",
+  "HAL_C2_DESKTOP_LAN_ACCESS",
+  "HAL_C2_DESKTOP_LAN_HOST",
+  "HAL_C2_DESKTOP_HTTPS_ENDPOINTS",
+  "HAL_C2_TAILSCALE_SERVE",
+  "HAL_C2_TAILSCALE_SERVE_PORT",
 ] as const;
 
 // Env vars that the WSL backend needs but Windows process.env won't forward
@@ -96,8 +96,8 @@ const DESKTOP_BACKEND_ENV_NAMES = [
 const WSL_FORWARDED_ENV_NAMES = [
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
-  "HALC2_OTLP_HEADERS",
-  "HALC2_OTLP_PROTOCOL",
+  "HAL_C2_OTLP_HEADERS",
+  "HAL_C2_OTLP_PROTOCOL",
 ] as const;
 
 const WSL_SERVER_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -514,7 +514,7 @@ const buildObservabilityFragment = (observabilitySettings: BackendObservabilityS
 });
 
 // An Elixir node release reads the same bootstrap as one JSON line on stdin; it
-// has no telemetry fds. It keeps its state under `<halc2Home>/elixir`.
+// has no telemetry fds. It keeps its state under `<halC2Home>/elixir`.
 const elixirNodeStartConfig = (
   releaseBin: string,
   bootstrap: DesktopBackendManager.DesktopBackendStartConfig["bootstrap"],
@@ -527,9 +527,9 @@ const elixirNodeStartConfig = (
   // Its Node sidecars (Cursor) run on this Electron binary as Node.
   env: {
     ...backendChildEnvPatch(),
-    HALC2_BOOTSTRAP_STDIN: "1",
-    HALC2_NODE_COMMAND: process.execPath,
-    HALC2_NODE_ELECTRON: "1",
+    HAL_C2_BOOTSTRAP_STDIN: "1",
+    HAL_C2_NODE_COMMAND: process.execPath,
+    HAL_C2_NODE_ELECTRON: "1",
   },
   extendEnv: true,
   bootstrap,
@@ -570,7 +570,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       mode: "desktop" as const,
       noBrowser: true,
       port: backendExposure.port,
-      halc2Home: environment.baseDir,
+      halC2Home: environment.baseDir,
       host: backendExposure.bindHost,
       desktopBootstrapToken: input.bootstrapToken,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
@@ -602,7 +602,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
       },
-      // Primary wants process.env (PATH, dev-runner's HALC2_HOME, etc.).
+      // Primary wants process.env (PATH, dev-runner's HAL_C2_HOME, etc.).
       extendEnv: true,
       bootstrap,
       bootstrapDelivery: "fd3",
@@ -647,7 +647,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     mode: "desktop" as const,
     noBrowser: true,
     port: input.port,
-    // Omit halc2Home so the Linux backend uses its own home dir instead of
+    // Omit halC2Home so the Linux backend uses its own home dir instead of
     // the Windows-side baseDir (which would be a /mnt/c path and share
     // the SQLite file with the primary).
     host: wslBindHost,
@@ -744,14 +744,14 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     }
   }
 
-  // Build an explicit copy of process.env minus HALC2_HOME (dev-runner
+  // Build an explicit copy of process.env minus HAL_C2_HOME (dev-runner
   // exports the Windows-side base dir for the primary; if it leaks into
   // the WSL backend the Linux side ends up sharing C:\Users\...\.hal-c2 via
   // /mnt/c, which means both backends read/write the same database and
   // their env-ids collide).
   const parentEnvWithoutHalC2Home: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (key === "HALC2_HOME") continue;
+    if (key === "HAL_C2_HOME") continue;
     parentEnvWithoutHalC2Home[key] = value;
   }
   const wslEnv = mergeWslEnv(parentEnvWithoutHalC2Home.WSLENV, forwardedEnvNames);
@@ -767,7 +767,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       ...forwardedEnv,
       ...(wslEnv !== undefined ? { WSLENV: wslEnv } : {}),
     },
-    // env is already a complete process.env minus HALC2_HOME; pass it
+    // env is already a complete process.env minus HAL_C2_HOME; pass it
     // verbatim instead of letting the spawner re-merge process.env on top.
     extendEnv: false,
     bootstrap,

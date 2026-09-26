@@ -54,7 +54,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 // This document has neither a composer nor the conversation's private error banner.
 const ignore = () => undefined;
 const addTerminalContext = (selection: TerminalContextSelection) => {
-  void window.halc2Shell?.dispatch("composer.terminalContext.add", selection);
+  void window.halC2Shell?.dispatch("composer.terminalContext.add", selection);
 };
 function reportThreadCommandFailure(result: AtomCommandResult<unknown, unknown>, title: string) {
   if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;

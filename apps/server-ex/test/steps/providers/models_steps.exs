@@ -245,7 +245,7 @@ defmodule HalC2.Steps.Providers.Models do
   # Saves a custom model the way the settings panel does: read, add, write back.
   defp add_custom_model(context, setting) do
     {{:ok, %{"settings" => settings, "version" => version}}, context} =
-      World.call(context, "halc2.readSettings")
+      World.call(context, "hal-c2.readSettings")
 
     settings =
       update_in(
@@ -259,7 +259,7 @@ defmodule HalC2.Steps.Providers.Models do
       )
 
     {{:ok, _}, context} =
-      World.call(context, "halc2.writeSettings", %{"settings" => settings, "version" => version})
+      World.call(context, "hal-c2.writeSettings", %{"settings" => settings, "version" => version})
 
     Map.put(context, :custom_model, setting)
   end

@@ -848,7 +848,7 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
       task
     else
       receive do
-        {:halc2_scheduled_tasks, _, _} -> await_changed(context, name, fun)
+        {:hal_c2_scheduled_tasks, _, _} -> await_changed(context, name, fun)
       after
         5_000 -> flunk("task #{name} never got there: #{inspect(task)}")
       end
@@ -903,7 +903,7 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
     case find.() do
       nil ->
         receive do
-          {:halc2_shell, _} -> await_launched(find)
+          {:hal_c2_shell, _} -> await_launched(find)
         after
           5_000 -> flunk("no thread was launched")
         end

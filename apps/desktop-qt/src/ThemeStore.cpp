@@ -220,7 +220,7 @@ QString ThemeStore::injectionScript() const {
              "  const theme = %1;"
              "  const run = () => {"
              "    const root = document.documentElement;"
-             "    const state = (window.__halc2ShellTheme ||= {});"
+             "    const state = (window.__halC2ShellTheme ||= {});"
              "    if (state.observer) { state.observer.disconnect(); state.observer = null; }"
              "    state.override = theme;"
              "    if (state.applyOverride) { state.applyOverride(theme); return; }"

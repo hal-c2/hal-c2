@@ -644,7 +644,7 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   )
   .add(
-    HttpApiEndpoint.post("halc2MintCredential", "/api/hal-c2-connect/mint-credential", {
+    HttpApiEndpoint.post("halC2MintCredential", "/api/hal-c2-connect/mint-credential", {
       payload: RelayCloudMintCredentialRequest,
       success: RelayEnvironmentMintResponse,
       error: EnvironmentHttpCloudErrors,

@@ -6,7 +6,7 @@ defmodule HalC2.ProjectClones do
   finished clone is dropped after a short while, a failed one stays until it is
   retried, and a restart forgets them (the project keeps its folder).
 
-  Watchers (client sockets) get `{:halc2_project_clones, node, snapshots}` on changes.
+  Watchers (client sockets) get `{:hal_c2_project_clones, node, snapshots}` on changes.
   """
 
   use GenServer
@@ -256,7 +256,7 @@ defmodule HalC2.ProjectClones do
 
   defp changed(state) do
     list = snapshots(state)
-    for {pid, _} <- state.watchers, do: send(pid, {:halc2_project_clones, node(), list})
+    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_project_clones, node(), list})
     state
   end
 

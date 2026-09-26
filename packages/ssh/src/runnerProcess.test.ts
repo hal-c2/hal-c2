@@ -44,7 +44,7 @@ const server = net.createServer((socket) => {
 process.on("SIGTERM", () => server.close(() => {
   process.stdout.write("graceful shutdown\\n");
 }));
-server.listen(Number(process.env.HALC2_TEST_PORT ?? 0), "127.0.0.1", () => {
+server.listen(Number(process.env.HAL_C2_TEST_PORT ?? 0), "127.0.0.1", () => {
   process.stdout.write(JSON.stringify({
     pid: process.pid,
     port: server.address().port,
@@ -62,7 +62,7 @@ server.listen(Number(process.env.HALC2_TEST_PORT ?? 0), "127.0.0.1", () => {
                 cwd: fixture,
                 env: {
                   PATH: bin,
-                  HALC2_TEST_PORT: String(port),
+                  HAL_C2_TEST_PORT: String(port),
                 },
                 detached: false,
                 stdin: Stream.make(
@@ -197,14 +197,14 @@ server.listen(0, "127.0.0.1", () => {
           // Redirect only the state directory. Never use the developer's SSH state.
           const isolatedScript = script.replace(
             /^STATE_DIR=.*$/mu,
-            'STATE_DIR="$HALC2_TEST_STATE_DIR"',
+            'STATE_DIR="$HAL_C2_TEST_STATE_DIR"',
           );
           assert.notEqual(isolatedScript, script);
           const runStop = Effect.fn("test.remoteStop")(function* () {
             const stop = yield* spawner.spawn(
               ChildProcess.make("/bin/sh", ["-s"], {
                 cwd: fixture,
-                env: { HALC2_TEST_STATE_DIR: fixture },
+                env: { HAL_C2_TEST_STATE_DIR: fixture },
                 stdin: Stream.make(new TextEncoder().encode(isolatedScript)),
               }),
             );

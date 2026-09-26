@@ -129,7 +129,7 @@ defmodule HalC2.Acp do
         {node, node_env} = node_command()
 
         {:ok, [node, cursor_script(), "--mode", runtime_mode || "approval-required"],
-         [{"HALC2_CURSOR_CREDENTIALS", credentials} | node_env ++ instance_env(entry)]}
+         [{"HAL_C2_CURSOR_CREDENTIALS", credentials} | node_env ++ instance_env(entry)]}
 
       {"pi", entry} ->
         {:ok, [binary("pi", entry, "pi"), "--mode", "rpc"], instance_env(entry)}
@@ -154,13 +154,13 @@ defmodule HalC2.Acp do
   # The desktop app names its own Electron binary, which runs as Node with
   # ELECTRON_RUN_AS_NODE (set for the sidecar only, never the node's terminals).
   defp node_command do
-    case System.get_env("HALC2_NODE_COMMAND") do
+    case System.get_env("HAL_C2_NODE_COMMAND") do
       command when command in [nil, ""] ->
         {"node", []}
 
       command ->
         electron =
-          if System.get_env("HALC2_NODE_ELECTRON") == "1", do: [{"ELECTRON_RUN_AS_NODE", "1"}]
+          if System.get_env("HAL_C2_NODE_ELECTRON") == "1", do: [{"ELECTRON_RUN_AS_NODE", "1"}]
 
         {command, electron || []}
     end

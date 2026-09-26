@@ -540,7 +540,7 @@ describe("deriveMessagesTimelineRows", () => {
         id: TurnItemId.make("list"),
         status: "completed",
         title: "Custom provider title",
-        toolName: "HAL-C2.halc2_project_list",
+        toolName: "HAL-C2.hal_c2_project_list",
         input: {},
         output: { projects: [] },
       },
@@ -550,7 +550,7 @@ describe("deriveMessagesTimelineRows", () => {
         id: TurnItemId.make("clone"),
         status: "completed",
         title: "Custom provider title",
-        toolName: "mcp__hal_c2__halc2_project_clone",
+        toolName: "mcp__hal_c2__hal_c2_project_clone",
         input: {},
         output: { cwd: "/tmp/repo" },
       },
@@ -560,7 +560,7 @@ describe("deriveMessagesTimelineRows", () => {
         id: TurnItemId.make("failed-clone"),
         status: "completed",
         title: "Custom provider title",
-        toolName: "halc2_project_clone",
+        toolName: "hal_c2_project_clone",
         input: {},
         output: { isError: true },
       },
@@ -2909,7 +2909,7 @@ describe("computeStableMessagesTimelineRows", () => {
 
 describe("resolveTimelineToolPresentation", () => {
   it("pretty prints Claude and Cursor HAL-C2 MCP tool names", () => {
-    expect(resolveTimelineToolPresentation("mcp__hal-c2__halc2_thread_read")).toEqual({
+    expect(resolveTimelineToolPresentation("mcp__hal-c2__hal_c2_thread_read")).toEqual({
       displayName: "Read a HAL-C2 thread",
       logo: "hal-c2",
     });

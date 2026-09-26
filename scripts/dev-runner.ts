@@ -74,7 +74,7 @@ export function isProxiableBindHost(host: string): boolean {
 }
 
 /** `~/.hal-c2`, or an existing pre-rename `~/.t3` (see @hal-c2/shared/devHome). */
-export const DEFAULT_HALC2_HOME = resolveHalC2Home({ env: {}, homeDir: NodeOS.homedir() });
+export const DEFAULT_HAL_C2_HOME = resolveHalC2Home({ env: {}, homeDir: NodeOS.homedir() });
 
 const MODE_ARGS = {
   dev: [
@@ -92,7 +92,7 @@ const MODE_ARGS = {
 
 type DevMode = keyof typeof MODE_ARGS;
 /**
- * `role` matters because only the backend honours `--host`/`HALC2_HOST`; the
+ * `role` matters because only the backend honours `--host`/`HAL_C2_HOST`; the
  * web port is always loopback. Passed explicitly rather than inferred from the
  * port number, which stops distinguishing them under a large port offset.
  */
@@ -126,7 +126,7 @@ export class DevRunnerConfigurationError extends Schema.TaggedError<DevRunnerCon
 export class DevRunnerInvalidPortOffsetError extends Schema.TaggedError<DevRunnerInvalidPortOffsetError>()(
   "DevRunnerInvalidPortOffsetError",
   {
-    configKey: Schema.Literal("HALC2_PORT_OFFSET"),
+    configKey: Schema.Literal("HAL_C2_PORT_OFFSET"),
     portOffset: Schema.Number,
     minimum: Schema.Number,
   },
@@ -216,8 +216,8 @@ const optionalIntegerConfig = (name: string): Config.Config<number | undefined> 
     Config.map((value) => Option.getOrUndefined(value)),
   );
 const OffsetConfig = Config.all({
-  portOffset: optionalIntegerConfig("HALC2_PORT_OFFSET"),
-  devInstance: optionalStringConfig("HALC2_DEV_INSTANCE"),
+  portOffset: optionalIntegerConfig("HAL_C2_PORT_OFFSET"),
+  devInstance: optionalStringConfig("HAL_C2_DEV_INSTANCE"),
 });
 
 export function resolveOffset(config: {
@@ -232,7 +232,7 @@ export function resolveOffset(config: {
     if (config.portOffset < 0) {
       return Effect.fail(
         new DevRunnerInvalidPortOffsetError({
-          configKey: "HALC2_PORT_OFFSET",
+          configKey: "HAL_C2_PORT_OFFSET",
           portOffset: config.portOffset,
           minimum: 0,
         }),
@@ -240,7 +240,7 @@ export function resolveOffset(config: {
     }
     return Effect.succeed({
       offset: config.portOffset,
-      source: `HALC2_PORT_OFFSET=${config.portOffset}`,
+      source: `HAL_C2_PORT_OFFSET=${config.portOffset}`,
     });
   }
 
@@ -249,12 +249,12 @@ export function resolveOffset(config: {
     if (/^\d+$/.test(seed)) {
       return Effect.succeed({
         offset: Number(seed),
-        source: `numeric HALC2_DEV_INSTANCE=${seed}`,
+        source: `numeric HAL_C2_DEV_INSTANCE=${seed}`,
       });
     }
 
     const offset = ((Hash.string(seed) >>> 0) % MAX_HASH_OFFSET) + 1;
-    return Effect.succeed({ offset, source: `hashed HALC2_DEV_INSTANCE=${seed}` });
+    return Effect.succeed({ offset, source: `hashed HAL_C2_DEV_INSTANCE=${seed}` });
   }
 
   // Worktrees get ports derived from their path so each one is stable across
@@ -282,7 +282,7 @@ function resolveBaseDir(
       return path.resolve(configured);
     }
 
-    return yield* DEFAULT_HALC2_HOME;
+    return yield* DEFAULT_HAL_C2_HOME;
   });
 }
 
@@ -291,7 +291,7 @@ interface CreateDevRunnerEnvInput {
   readonly baseEnv: NodeJS.ProcessEnv;
   readonly serverOffset: number;
   readonly webOffset: number;
-  readonly halc2Home: string | undefined;
+  readonly halC2Home: string | undefined;
   readonly browser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
   readonly logWebSocketEvents: boolean | undefined;
@@ -305,7 +305,7 @@ export function createDevRunnerEnv({
   baseEnv,
   serverOffset,
   webOffset,
-  halc2Home,
+  halC2Home,
   browser,
   autoBootstrapProjectFromCwd,
   logWebSocketEvents,
@@ -320,9 +320,9 @@ export function createDevRunnerEnv({
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
-    // Precedence (--home-dir > worktree .hal-c2 > ambient HALC2_HOME) is resolved
-    // by the caller; an unset halc2Home here genuinely means "use the default".
-    const configuredBaseDir = halc2Home?.trim() || undefined;
+    // Precedence (--home-dir > worktree .hal-c2 > ambient HAL_C2_HOME) is resolved
+    // by the caller; an unset halC2Home here genuinely means "use the default".
+    const configuredBaseDir = halC2Home?.trim() || undefined;
     const resolvedBaseDir = yield* resolveBaseDir(configuredBaseDir);
     const isDesktopMode = mode === "dev:desktop";
 
@@ -335,11 +335,11 @@ export function createDevRunnerEnv({
     };
 
     if (configuredBaseDir !== undefined) {
-      output.HALC2_HOME = resolvedBaseDir;
+      output.HAL_C2_HOME = resolvedBaseDir;
     } else {
-      delete output.HALC2_HOME;
+      delete output.HAL_C2_HOME;
     }
-    // The caller already folded a legacy T3CODE_HOME into halc2Home.
+    // The caller already folded a legacy T3CODE_HOME into halC2Home.
     delete output.T3CODE_HOME;
 
     // A dev-runner server is never launcher-managed. When the shell that runs
@@ -347,11 +347,11 @@ export function createDevRunnerEnv({
     // agent working inside HAL-C2), these leak through and the child server
     // fails startup with "The service launcher started a different hal-c2 version"
     // (serviceLauncherClient.ts resolveStartup).
-    delete output.HALC2_SERVICE_LAUNCHER_CONTEXT;
-    delete output.HALC2_BOOT_SERVICE_UNIT;
+    delete output.HAL_C2_SERVICE_LAUNCHER_CONTEXT;
+    delete output.HAL_C2_BOOT_SERVICE_UNIT;
 
     if (!isDesktopMode) {
-      output.HALC2_PORT = String(serverPort);
+      output.HAL_C2_PORT = String(serverPort);
       // HOST is Vite's own bind address, and the desktop branch below is the
       // only place we set it. An inherited one (an exported HOST, a container,
       // a `HOST=0.0.0.0 npm start` habit) would otherwise reach Vite and pin
@@ -374,58 +374,58 @@ export function createDevRunnerEnv({
         // with either URL in their `.env` would get it back and silently lose
         // single-origin mode. This states the intent positively so Vite can
         // ignore those values rather than infer from their absence.
-        output.HALC2_SINGLE_ORIGIN_DEV = "1";
+        output.HAL_C2_SINGLE_ORIGIN_DEV = "1";
       } else {
         output.VITE_HTTP_URL = `http://localhost:${serverPort}`;
         output.VITE_WS_URL = `ws://localhost:${serverPort}`;
-        delete output.HALC2_SINGLE_ORIGIN_DEV;
+        delete output.HAL_C2_SINGLE_ORIGIN_DEV;
       }
     } else {
-      output.HALC2_PORT = String(serverPort);
+      output.HAL_C2_PORT = String(serverPort);
       output.VITE_HTTP_URL = `http://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
       output.VITE_WS_URL = `ws://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
       // Desktop pins the renderer to loopback on purpose; an ambient marker
       // must not make Vite drop those URLs.
-      delete output.HALC2_SINGLE_ORIGIN_DEV;
-      delete output.HALC2_MODE;
-      delete output.HALC2_NO_BROWSER;
-      delete output.HALC2_HOST;
-      delete output.HALC2_DEV_AUTH_TOKEN;
+      delete output.HAL_C2_SINGLE_ORIGIN_DEV;
+      delete output.HAL_C2_MODE;
+      delete output.HAL_C2_NO_BROWSER;
+      delete output.HAL_C2_HOST;
+      delete output.HAL_C2_DEV_AUTH_TOKEN;
     }
 
     if (!isDesktopMode && host !== undefined) {
-      output.HALC2_HOST = host;
+      output.HAL_C2_HOST = host;
     }
 
     if (!isDesktopMode) {
-      output.HALC2_NO_BROWSER = browser === true ? "0" : "1";
+      output.HAL_C2_NO_BROWSER = browser === true ? "0" : "1";
     }
 
     if (autoBootstrapProjectFromCwd !== undefined) {
-      output.HALC2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD = autoBootstrapProjectFromCwd ? "1" : "0";
+      output.HAL_C2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD = autoBootstrapProjectFromCwd ? "1" : "0";
     } else {
-      delete output.HALC2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD;
+      delete output.HAL_C2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD;
     }
 
     if (logWebSocketEvents !== undefined) {
-      output.HALC2_LOG_WS_EVENTS = logWebSocketEvents ? "1" : "0";
+      output.HAL_C2_LOG_WS_EVENTS = logWebSocketEvents ? "1" : "0";
     } else {
-      delete output.HALC2_LOG_WS_EVENTS;
+      delete output.HAL_C2_LOG_WS_EVENTS;
     }
 
     if (mode === "dev") {
-      output.HALC2_MODE = "web";
-      delete output.HALC2_DESKTOP_WS_URL;
+      output.HAL_C2_MODE = "web";
+      delete output.HAL_C2_DESKTOP_WS_URL;
     }
 
     if (mode === "dev:server" || mode === "dev:web") {
-      output.HALC2_MODE = "web";
-      delete output.HALC2_DESKTOP_WS_URL;
+      output.HAL_C2_MODE = "web";
+      delete output.HAL_C2_DESKTOP_WS_URL;
     }
 
     if (isDesktopMode) {
       output.HOST = DESKTOP_DEV_LOOPBACK_HOST;
-      delete output.HALC2_DESKTOP_WS_URL;
+      delete output.HAL_C2_DESKTOP_WS_URL;
     }
 
     return output;
@@ -462,7 +462,7 @@ export function checkPortAvailabilityOnHosts<R>(
  * Hosts to probe for a dev server bound to `configuredHost`.
  *
  * Loopback is always checked because the web server and the desktop renderer
- * target reach it there. When `--host`/`HALC2_HOST` moves the backend onto
+ * target reach it there. When `--host`/`HAL_C2_HOST` moves the backend onto
  * another interface, that interface decides whether the bind actually
  * succeeds — probing only loopback would hand back a port that is free here
  * and taken there, and the server would fail to start.
@@ -621,7 +621,7 @@ export function resolveModePortOffsets<R = NetService.NetService>({
 
 interface DevRunnerCliInput {
   readonly mode: DevMode;
-  readonly halc2Home: string | undefined;
+  readonly halC2Home: string | undefined;
   readonly browser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
   readonly logWebSocketEvents: boolean | undefined;
@@ -639,7 +639,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       Effect.mapError(
         (cause) =>
           new DevRunnerConfigurationError({
-            configKeys: ["HALC2_PORT_OFFSET", "HALC2_DEV_INSTANCE"],
+            configKeys: ["HAL_C2_PORT_OFFSET", "HAL_C2_DEV_INSTANCE"],
             cause,
           }),
       ),
@@ -679,13 +679,13 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     const hostEnvironment = yield* HostProcessEnvironment;
     // A dev server started inside a worktree defaults to that worktree's own
     // (gitignored) `.hal-c2` — see @hal-c2/shared/devHome for why this must
-    // outrank an ambient HALC2_HOME. `--home-dir` still wins.
+    // outrank an ambient HAL_C2_HOME. `--home-dir` still wins.
     const worktreeHome = yield* resolveWorktreeHalC2Home(yield* HostProcessWorkingDirectory);
     // Trim before choosing: `--home-dir ""` is not a selection, and treating it
     // as one would skip the worktree default and land on the shared home —
     // exactly the outcome this precedence exists to prevent.
     const resolvedHalC2Home =
-      (input.halc2Home?.trim() || undefined) ??
+      (input.halC2Home?.trim() || undefined) ??
       worktreeHome ??
       (yield* configuredHalC2Home(hostEnvironment));
     const env = yield* createDevRunnerEnv({
@@ -693,7 +693,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       baseEnv: hostEnvironment,
       serverOffset,
       webOffset,
-      halc2Home: resolvedHalC2Home,
+      halC2Home: resolvedHalC2Home,
       browser: input.browser,
       autoBootstrapProjectFromCwd: input.autoBootstrapProjectFromCwd,
       logWebSocketEvents: input.logWebSocketEvents,
@@ -706,10 +706,10 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       serverOffset !== offset || webOffset !== offset
         ? ` selectedOffset(server=${serverOffset},web=${webOffset})`
         : "";
-    const baseDir = env.HALC2_HOME ?? (yield* DEFAULT_HALC2_HOME);
+    const baseDir = env.HAL_C2_HOME ?? (yield* DEFAULT_HAL_C2_HOME);
 
     yield* Effect.logInfo(
-      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.HALC2_PORT)} webPort=${String(env.PORT)} baseDir=${baseDir}`,
+      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.HAL_C2_PORT)} webPort=${String(env.PORT)} baseDir=${baseDir}`,
     );
 
     // Before the share block: --dry-run only resolves and prints. Sharing would
@@ -779,8 +779,8 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
           // The app is reached from the tailnet origin. Vite already allows
           // *.ts.net hosts; the backend needs the origin for credentialed
           // requests that bypass the proxy (desktop renderer, direct calls).
-          env.HALC2_DEV_ALLOWED_ORIGINS = [
-            env.HALC2_DEV_ALLOWED_ORIGINS,
+          env.HAL_C2_DEV_ALLOWED_ORIGINS = [
+            env.HAL_C2_DEV_ALLOWED_ORIGINS,
             new URL(shared.url).origin,
           ]
             .filter((entry) => entry && entry.length > 0)
@@ -794,10 +794,10 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
           // A shared origin serves a remote browser, where unbundled dev's
           // per-module requests each pay a tailnet round trip — a cold module
           // graph takes minutes to first paint. Bundled dev collapses that to
-          // a few chunk requests. Only defaulted, so HALC2_BUNDLED_DEV=0
+          // a few chunk requests. Only defaulted, so HAL_C2_BUNDLED_DEV=0
           // still opts a --share run back out.
-          if (env.HALC2_BUNDLED_DEV === undefined) {
-            env.HALC2_BUNDLED_DEV = "1";
+          if (env.HAL_C2_BUNDLED_DEV === undefined) {
+            env.HAL_C2_BUNDLED_DEV = "1";
           }
           yield* Effect.logInfo(`[dev-runner] shared on tailnet: ${shared.url}`);
         }
@@ -861,9 +861,9 @@ const devRunnerCli = Command.make("dev-runner", {
   mode: Argument.Literals("mode", DEV_RUNNER_MODES).pipe(
     Argument.withDescription("Development mode to run."),
   ),
-  halc2Home: Flag.String("home-dir").pipe(
+  halC2Home: Flag.String("home-dir").pipe(
     Flag.withDescription(
-      "Explicit HAL-C2 data directory; runtime state is stored under userdata (equivalent to HALC2_HOME). Inside a git worktree this defaults to that worktree's own .hal-c2 so dev state stays off the shared home.",
+      "Explicit HAL-C2 data directory; runtime state is stored under userdata (equivalent to HAL_C2_HOME). Inside a git worktree this defaults to that worktree's own .hal-c2 so dev state stays off the shared home.",
     ),
     Flag.optional,
     Flag.map(Option.getOrUndefined),
@@ -874,23 +874,23 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   autoBootstrapProjectFromCwd: Flag.Boolean("auto-bootstrap-project-from-cwd").pipe(
     Flag.withDescription(
-      "Auto-bootstrap toggle (equivalent to HALC2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD).",
+      "Auto-bootstrap toggle (equivalent to HAL_C2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD).",
     ),
-    Flag.withFallbackConfig(optionalBooleanConfig("HALC2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD")),
+    Flag.withFallbackConfig(optionalBooleanConfig("HAL_C2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD")),
   ),
   logWebSocketEvents: Flag.Boolean("log-websocket-events").pipe(
-    Flag.withDescription("WebSocket event logging toggle (equivalent to HALC2_LOG_WS_EVENTS)."),
+    Flag.withDescription("WebSocket event logging toggle (equivalent to HAL_C2_LOG_WS_EVENTS)."),
     Flag.withAlias("log-ws-events"),
-    Flag.withFallbackConfig(optionalBooleanConfig("HALC2_LOG_WS_EVENTS")),
+    Flag.withFallbackConfig(optionalBooleanConfig("HAL_C2_LOG_WS_EVENTS")),
   ),
   host: Flag.String("host").pipe(
-    Flag.withDescription("Server host/interface override (forwards to HALC2_HOST)."),
-    Flag.withFallbackConfig(optionalStringConfig("HALC2_HOST")),
+    Flag.withDescription("Server host/interface override (forwards to HAL_C2_HOST)."),
+    Flag.withFallbackConfig(optionalStringConfig("HAL_C2_HOST")),
   ),
   port: Flag.Int("port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
-    Flag.withDescription("Server port override (forwards to HALC2_PORT)."),
-    Flag.withFallbackConfig(optionalPortConfig("HALC2_PORT")),
+    Flag.withDescription("Server port override (forwards to HAL_C2_PORT)."),
+    Flag.withFallbackConfig(optionalPortConfig("HAL_C2_PORT")),
   ),
   devUrl: Flag.String("dev-url").pipe(
     Flag.withSchema(Schema.URLFromString),

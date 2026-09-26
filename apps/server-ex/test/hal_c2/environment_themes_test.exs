@@ -81,6 +81,6 @@ defmodule HalC2.EnvironmentThemesTest do
 
     send(HalC2.EnvironmentThemes, :check)
 
-    assert_receive {:halc2_themes, _, [%{"id" => "desk"}]}, 1_000
+    assert_receive {:hal_c2_themes, _, [%{"id" => "desk"}]}, 1_000
   end
 end

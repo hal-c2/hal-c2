@@ -78,19 +78,19 @@ defmodule HalC2.TerminalTest do
       assert snapshot["history"] =~ "hi-3"
 
       {:ok, nil} = Terminal.clear(input)
-      assert_receive {:halc2_terminal, {"thread-1", "term-1"}, %{"type" => "cleared"}}
+      assert_receive {:hal_c2_terminal, {"thread-1", "term-1"}, %{"type" => "cleared"}}
       assert {:ok, %{"history" => ""}} = Terminal.open(input)
 
       {:ok, nil} = Terminal.write(Map.put(input, "data", "exit 3\n"))
 
-      assert_receive {:halc2_terminal, _, %{"type" => "exited", "exitCode" => 3}}, 5_000
+      assert_receive {:hal_c2_terminal, _, %{"type" => "exited", "exitCode" => 3}}, 5_000
 
       assert {:error, %{"_tag" => "TerminalNotRunningError"}} =
                Terminal.write(Map.put(input, "data", "x"))
 
       # Opening an exited terminal starts a fresh shell.
       assert {:ok, %{"status" => "running"}} = Terminal.open(input)
-      assert_receive {:halc2_terminal, _, %{"type" => "snapshot"}}
+      assert_receive {:hal_c2_terminal, _, %{"type" => "snapshot"}}
     end
 
     test "scrollback survives the terminal closing, unless deleted", %{input: input} do
@@ -99,7 +99,7 @@ defmodule HalC2.TerminalTest do
       await_output("kept")
 
       {:ok, nil} = Terminal.close(input)
-      assert_receive {:halc2_terminal, _, %{"type" => "closed"}}
+      assert_receive {:hal_c2_terminal, _, %{"type" => "closed"}}
 
       assert {:error, %{"_tag" => "TerminalSessionLookupError"}} =
                Terminal.attach(Map.delete(input, "cwd"), self())
@@ -120,28 +120,28 @@ defmodule HalC2.TerminalTest do
       assert [] = HalC2.Terminal.Hub.watch(self())
       {:ok, _} = Terminal.attach(input, self())
 
-      assert_receive {:halc2_terminals, _,
+      assert_receive {:hal_c2_terminals, _,
                       %{"type" => "upsert", "terminal" => %{"status" => "running"}}}
 
       {:ok, nil} = Terminal.write(Map.put(input, "data", "sleep 30\n"))
 
-      assert_receive {:halc2_terminals, _,
+      assert_receive {:hal_c2_terminals, _,
                       %{
                         "type" => "upsert",
                         "terminal" => %{"hasRunningSubprocess" => true, "label" => "sleep"}
                       }},
                      5_000
 
-      assert_receive {:halc2_terminal, _, %{"type" => "activity", "label" => "sleep"}}
+      assert_receive {:hal_c2_terminal, _, %{"type" => "activity", "label" => "sleep"}}
 
       {:ok, nil} = Terminal.close(input)
-      assert_receive {:halc2_terminals, _, %{"type" => "remove", "terminalId" => "term-1"}}
+      assert_receive {:hal_c2_terminals, _, %{"type" => "remove", "terminalId" => "term-1"}}
     end
   end
 
   defp await_output(needle, acc \\ "") do
     receive do
-      {:halc2_terminal, _, %{"type" => "output", "data" => data}} ->
+      {:hal_c2_terminal, _, %{"type" => "output", "data" => data}} ->
         acc = acc <> data
         if acc =~ needle, do: acc, else: await_output(needle, acc)
     after

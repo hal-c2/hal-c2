@@ -1945,7 +1945,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           "GIT_TERMINAL_PROMPT",
           "SSH_ASKPASS",
           "SSH_ASKPASS_REQUIRE",
-          "HALC2_TEST_SSH_ASKPASS_LOG",
+          "HAL_C2_TEST_SSH_ASKPASS_LOG",
         ] as const;
         const previousEnv = new Map(envKeys.map((key) => [key, process.env[key]]));
 
@@ -1953,11 +1953,11 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           sshWrapperPath,
           [
             "#!/bin/sh",
-            'printf "GCM_INTERACTIVE=%s\\n" "${GCM_INTERACTIVE:-}" > "$HALC2_TEST_SSH_ASKPASS_LOG"',
-            'printf "GIT_ASKPASS=%s\\n" "${GIT_ASKPASS:-}" >> "$HALC2_TEST_SSH_ASKPASS_LOG"',
-            'printf "GIT_TERMINAL_PROMPT=%s\\n" "${GIT_TERMINAL_PROMPT:-}" >> "$HALC2_TEST_SSH_ASKPASS_LOG"',
-            'printf "SSH_ASKPASS=%s\\n" "${SSH_ASKPASS:-}" >> "$HALC2_TEST_SSH_ASKPASS_LOG"',
-            'printf "SSH_ASKPASS_REQUIRE=%s\\n" "${SSH_ASKPASS_REQUIRE:-}" >> "$HALC2_TEST_SSH_ASKPASS_LOG"',
+            'printf "GCM_INTERACTIVE=%s\\n" "${GCM_INTERACTIVE:-}" > "$HAL_C2_TEST_SSH_ASKPASS_LOG"',
+            'printf "GIT_ASKPASS=%s\\n" "${GIT_ASKPASS:-}" >> "$HAL_C2_TEST_SSH_ASKPASS_LOG"',
+            'printf "GIT_TERMINAL_PROMPT=%s\\n" "${GIT_TERMINAL_PROMPT:-}" >> "$HAL_C2_TEST_SSH_ASKPASS_LOG"',
+            'printf "SSH_ASKPASS=%s\\n" "${SSH_ASKPASS:-}" >> "$HAL_C2_TEST_SSH_ASKPASS_LOG"',
+            'printf "SSH_ASKPASS_REQUIRE=%s\\n" "${SSH_ASKPASS_REQUIRE:-}" >> "$HAL_C2_TEST_SSH_ASKPASS_LOG"',
             "exit 1",
             "",
           ].join("\n"),
@@ -1974,7 +1974,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           process.env.GIT_TERMINAL_PROMPT = "1";
           process.env.SSH_ASKPASS = "ssh-askpass";
           process.env.SSH_ASKPASS_REQUIRE = "force";
-          process.env.HALC2_TEST_SSH_ASKPASS_LOG = sshLogPath;
+          process.env.HAL_C2_TEST_SSH_ASKPASS_LOG = sshLogPath;
 
           yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
 

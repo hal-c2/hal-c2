@@ -505,7 +505,7 @@ defmodule HalC2.Orchestration.Delegation do
 
       true ->
         receive do
-          {:halc2_stream, ^thread_id, _} -> wait_loop(thread_id, task_id, deadline)
+          {:hal_c2_stream, ^thread_id, _} -> wait_loop(thread_id, task_id, deadline)
         after
           min(left, 5_000) -> wait_loop(thread_id, task_id, deadline)
         end

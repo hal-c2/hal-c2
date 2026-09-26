@@ -3,7 +3,7 @@ defmodule HalC2.EnvironmentThemes do
   Palettes this machine publishes for clients to follow, as the Node server's
   EnvironmentThemeService does: a desktop that retints its apps writes
   `<home>/themes/<id>.json`, and every client watching this node's config gets
-  the whole set when it changes (`{:halc2_themes, node, themes}` through
+  the whole set when it changes (`{:hal_c2_themes, node, themes}` through
   `HalC2.Settings` watchers). The filename is the theme's id.
 
   Theming is cosmetic, so a file that is missing, too big, a symlink, malformed or

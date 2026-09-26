@@ -260,7 +260,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("uses HALC2_CODEX_LAUNCH_ARGS for codex exec over settings", () =>
+  it.effect("uses HAL_C2_CODEX_LAUNCH_ARGS for codex exec over settings", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -268,7 +268,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
           body: "",
         }),
         launchArgs: "--enable settings-feature",
-        environment: { ...process.env, HALC2_CODEX_LAUNCH_ARGS: " --strict-config --listen off " },
+        environment: { ...process.env, HAL_C2_CODEX_LAUNCH_ARGS: " --strict-config --listen off " },
         requireArg: "--strict-config",
         forbidArg: "settings-feature",
       },

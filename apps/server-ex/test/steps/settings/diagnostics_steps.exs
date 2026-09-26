@@ -201,7 +201,7 @@ defmodule HalC2.Steps.Settings.Diagnostics do
       "kind" => 1,
       "startTimeUnixNano" => "#{start}",
       "endTimeUnixNano" => "#{start + ms * 1_000_000}",
-      "attributes" => [%{"key" => "halc2.client", "value" => %{"stringValue" => "web"}}],
+      "attributes" => [%{"key" => "hal-c2.client", "value" => %{"stringValue" => "web"}}],
       "events" => [],
       "links" => [],
       "status" => %{"code" => code, "message" => message}

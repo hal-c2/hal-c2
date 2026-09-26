@@ -13,7 +13,7 @@ defmodule HalC2.Connect do
       never holds a session itself.
 
   Everything is kept in `HalC2.Connect.Secrets`, under the Node server's names. The
-  relay is `HALC2_RELAY_URL` (app env `:connect_relay_url`) until a link names one.
+  relay is `HAL_C2_RELAY_URL` (app env `:connect_relay_url`) until a link names one.
   Failures are `{:error, status, message}`.
   """
 
@@ -317,7 +317,7 @@ defmodule HalC2.Connect do
   @doc "The relay this node links through: the stored one, else the configured one."
   def relay_url do
     Secrets.get(@relay_url) || Application.get_env(:hal_c2, :connect_relay_url) ||
-      System.get_env("HALC2_RELAY_URL")
+      System.get_env("HAL_C2_RELAY_URL")
   end
 
   @doc """

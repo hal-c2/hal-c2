@@ -12,9 +12,9 @@ defmodule HalC2.Shell do
   Each node's environment descriptor (`HalC2.Environment.descriptor/0`) travels with its
   rows, so clients can list and label every machine, online or not.
 
-  Subscribers receive `{:halc2_shell, {:rows, node, [{id, {kind, row}}]}}`,
-  `{:halc2_shell, {:environment, node, descriptor}}` and
-  `{:halc2_shell, {:node, node, :up | :down}}`.
+  Subscribers receive `{:hal_c2_shell, {:rows, node, [{id, {kind, row}}]}}`,
+  `{:hal_c2_shell, {:environment, node, descriptor}}` and
+  `{:hal_c2_shell, {:node, node, :up | :down}}`.
   """
 
   use GenServer
@@ -141,7 +141,7 @@ defmodule HalC2.Shell do
   end
 
   defp notify(state, message),
-    do: for({pid, _} <- state.subscribers, do: send(pid, {:halc2_shell, message}))
+    do: for({pid, _} <- state.subscribers, do: send(pid, {:hal_c2_shell, message}))
 
   # Streams without a stored row (a store from before rows were kept) get one in the
   # background; boot does not wait for it.

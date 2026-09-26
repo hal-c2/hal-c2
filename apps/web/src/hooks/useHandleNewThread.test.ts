@@ -143,7 +143,7 @@ vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
   hasExplicitComposerModelSelection: () => false,
   resolveNewThreadModelSelectionOverride: () => null,
 }));
-vi.mock("../lib/halc2ProjectFileDefaults", () => ({
+vi.mock("../lib/halC2ProjectFileDefaults", () => ({
   readHalC2ProjectFile: () => testState.projectFileRead,
 }));
 vi.mock("../lib/utils", () => ({

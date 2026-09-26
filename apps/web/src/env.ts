@@ -7,14 +7,14 @@ export const isElectron = typeof window !== "undefined" && window.desktopBridge 
 
 /**
  * True when hosted by the Qt shell (apps/desktop-qt), which injects
- * window.halc2Shell at document creation. The shell renders parts of the chrome
+ * window.halC2Shell at document creation. The shell renders parts of the chrome
  * itself; the app publishes what they need and hides its own copies.
  */
-export const isHalC2Shell = typeof window !== "undefined" && window.halc2Shell !== undefined;
+export const isHalC2Shell = typeof window !== "undefined" && window.halC2Shell !== undefined;
 
 /**
  * True in the shell's secondary (embed) document. It shares localStorage with
  * the primary document and only mirrors its state, so it must never persist a
  * copy of its own or it overwrites what the primary wrote.
  */
-export const isHalC2ShellEmbed = isHalC2Shell && window.halc2Shell?.surfaceId !== "primary";
+export const isHalC2ShellEmbed = isHalC2Shell && window.halC2Shell?.surfaceId !== "primary";

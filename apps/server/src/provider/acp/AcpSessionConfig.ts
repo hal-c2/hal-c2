@@ -15,7 +15,7 @@ import type { AcpSessionModeState } from "./AcpRuntimeModel.ts";
  */
 
 /** Synthetic descriptor ID for agents that expose modes outside config options. */
-export const ACP_SESSION_MODE_OPTION_ID = "_halc2/session-mode";
+export const ACP_SESSION_MODE_OPTION_ID = "_hal_c2/session-mode";
 
 const MAX_OPTION_DESCRIPTORS = 16;
 const MAX_OPTION_CHOICES = 64;

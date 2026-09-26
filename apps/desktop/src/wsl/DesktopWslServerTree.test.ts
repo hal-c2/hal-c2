@@ -37,8 +37,8 @@ const environmentLayer = (input: {
       Layer.mergeAll(
         NodeServices.layer,
         DesktopConfig.layerTest({
-          HALC2_HOME: input.baseDir,
-          HALC2_MODE: "desktop",
+          HAL_C2_HOME: input.baseDir,
+          HAL_C2_MODE: "desktop",
         }),
       ),
     ),
@@ -243,7 +243,7 @@ describe("DesktopWslServerTree", () => {
         });
         yield* fileSystem.writeFileString(path.join(serverRoot, "apps/server/dist/bin.mjs"), "x");
 
-        // HALC2_HOME is set to tempDir, so the desktop state dir resolves to
+        // HAL_C2_HOME is set to tempDir, so the desktop state dir resolves to
         // <tempDir>/userdata (no .hal-c2 segment).
         const treeRoot = path.join(tempDir, "userdata", "wsl-server-tree");
         yield* fileSystem.makeDirectory(path.join(treeRoot, "1.0.0"), { recursive: true });

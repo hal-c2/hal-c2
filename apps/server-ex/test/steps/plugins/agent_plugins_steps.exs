@@ -106,7 +106,7 @@ defmodule HalC2.Steps.Plugins.AcpRegistry do
   """
   def add_instance(context, instance_id, agent_id) do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "halc2.readSettings")
+      World.call!(context, "hal-c2.readSettings")
 
     instance = %{
       "driver" => "acpRegistry",
@@ -117,7 +117,7 @@ defmodule HalC2.Steps.Plugins.AcpRegistry do
     instances = Map.put(settings["providerInstances"] || %{}, instance_id, instance)
 
     {_, context} =
-      World.call!(context, "halc2.writeSettings", %{
+      World.call!(context, "hal-c2.writeSettings", %{
         "settings" => Map.put(settings, "providerInstances", instances),
         "version" => version
       })
@@ -255,7 +255,7 @@ defmodule HalC2.Steps.Plugins.Fixtures do
   Node plugins for scenarios, written as source files into the node's plugins
   directory (`HalC2.Plugins`). Each fixture implements the behaviour its id stands for
   and runs a process registered under its module name, which answers `:version`,
-  crashes on `:crash`, and tells a process registered as `:halc2_plugin_probe` that
+  crashes on `:crash`, and tells a process registered as `:hal_c2_plugin_probe` that
   it started.
   """
 
@@ -355,10 +355,10 @@ defmodule HalC2.Steps.Plugins.Fixtures do
     context
   end
 
-  @doc "Makes the test process `:halc2_plugin_probe`, which fixtures tell when they start."
+  @doc "Makes the test process `:hal_c2_plugin_probe`, which fixtures tell when they start."
   def probe do
-    if Process.whereis(:halc2_plugin_probe) != self(),
-      do: Process.register(self(), :halc2_plugin_probe)
+    if Process.whereis(:hal_c2_plugin_probe) != self(),
+      do: Process.register(self(), :hal_c2_plugin_probe)
 
     :ok
   end
@@ -390,7 +390,7 @@ defmodule HalC2.Steps.Plugins.Fixtures do
       def start_link(settings), do: GenServer.start_link(__MODULE__, settings, name: __MODULE__)
 
       def init(settings) do
-        if probe = Process.whereis(:halc2_plugin_probe), do: send(probe, {:plugin_started, #{inspect(id)}, self()})
+        if probe = Process.whereis(:hal_c2_plugin_probe), do: send(probe, {:plugin_started, #{inspect(id)}, self()})
         {:ok, settings}
       end
 
@@ -462,7 +462,7 @@ defmodule HalC2.Steps.Plugins.Fixtures do
   defp callbacks("ntfy") do
     ~S"""
       def notify(notification, settings) do
-        if probe = Process.whereis(:halc2_plugin_probe), do: send(probe, {:notified, "ntfy", notification, settings})
+        if probe = Process.whereis(:hal_c2_plugin_probe), do: send(probe, {:notified, "ntfy", notification, settings})
         :ok
       end
     """
@@ -554,7 +554,7 @@ defmodule HalC2.Steps.Plugins.Fixtures do
       def start_link(settings), do: GenServer.start_link(__MODULE__, settings, name: __MODULE__)
 
       def init(_settings) do
-        if probe = Process.whereis(:halc2_plugin_probe), do: send(probe, {:plugin_started, #{inspect(id)}, self()})
+        if probe = Process.whereis(:hal_c2_plugin_probe), do: send(probe, {:plugin_started, #{inspect(id)}, self()})
         {:ok, %{}}
       end
 
@@ -1515,7 +1515,7 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
       def manifest, do: %{HalC2.Plugins.Bundled.Claude.manifest() | version: "2.0.0"}
 
       def start_turn(thread_id, turn) do
-        if probe = Process.whereis(:halc2_plugin_probe), do: send(probe, {:plugin_turn, "claude", "2.0.0"})
+        if probe = Process.whereis(:hal_c2_plugin_probe), do: send(probe, {:plugin_turn, "claude", "2.0.0"})
         ThreadRuntime.start_turn(thread_id, turn)
       end
 

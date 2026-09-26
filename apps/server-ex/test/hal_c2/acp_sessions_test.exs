@@ -31,7 +31,7 @@ defmodule HalC2.Acp.SessionsTest do
         "workspaceRoot" => app
       })
 
-    assert_receive {:halc2_shell, {:rows, _, [{"p1", _}]}}, 1_000
+    assert_receive {:hal_c2_shell, {:rows, _, [{"p1", _}]}}, 1_000
     :ok
   end
 
@@ -52,7 +52,7 @@ defmodule HalC2.Acp.SessionsTest do
 
     assert {:ok, %{"threadId" => ^thread_id, "imported" => false}} = Sessions.import(import)
 
-    assert_receive {:halc2_shell,
+    assert_receive {:hal_c2_shell,
                     {:rows, _, [{^thread_id, {"thread", %{"title" => "Earlier work"}}}]}},
                    1_000
 
@@ -111,7 +111,7 @@ defmodule HalC2.Acp.SessionsTest do
 
   defp await_run(thread_id) do
     receive do
-      {:halc2_stream, ^thread_id, _} ->
+      {:hal_c2_stream, ^thread_id, _} ->
         state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
 
         case StreamState.list(state, "run") do

@@ -45,17 +45,17 @@ describe("DesktopEnvironment", () => {
       const environment = yield* makeEnvironment(
         {},
         {
-          HALC2_HOME: " /tmp/hal-c2 ",
-          HALC2_COMMIT_HASH: " 0123456789abcdef ",
-          HALC2_PORT: "4949",
+          HAL_C2_HOME: " /tmp/hal-c2 ",
+          HAL_C2_COMMIT_HASH: " 0123456789abcdef ",
+          HAL_C2_PORT: "4949",
           VITE_DEV_SERVER_URL: "http://localhost:5173",
-          HALC2_DEV_REMOTE_HALC2_SERVER_ENTRY_PATH: " /remote/server.mjs ",
-          HALC2_OTLP_TRACES_URL: " http://127.0.0.1:4318/v1/traces ",
-          HALC2_OTLP_METRICS_URL: " http://127.0.0.1:4318/v1/metrics ",
-          HALC2_OTLP_LOGS_URL: " http://127.0.0.1:4318/v1/logs ",
-          HALC2_OTLP_EXPORT_INTERVAL_MS: "2500",
-          HALC2_OTLP_HEADERS: "authorization=Basic%20abc%3D%3D,x-tenant=hal-c2",
-          HALC2_OTLP_PROTOCOL: "http/protobuf",
+          HAL_C2_DEV_REMOTE_HAL_C2_SERVER_ENTRY_PATH: " /remote/server.mjs ",
+          HAL_C2_OTLP_TRACES_URL: " http://127.0.0.1:4318/v1/traces ",
+          HAL_C2_OTLP_METRICS_URL: " http://127.0.0.1:4318/v1/metrics ",
+          HAL_C2_OTLP_LOGS_URL: " http://127.0.0.1:4318/v1/logs ",
+          HAL_C2_OTLP_EXPORT_INTERVAL_MS: "2500",
+          HAL_C2_OTLP_HEADERS: "authorization=Basic%20abc%3D%3D,x-tenant=hal-c2",
+          HAL_C2_OTLP_PROTOCOL: "http/protobuf",
         },
       );
 
@@ -110,7 +110,7 @@ describe("DesktopEnvironment", () => {
       const environment = yield* makeEnvironment(
         {},
         {
-          HALC2_HOME: "/tmp/hal-c2",
+          HAL_C2_HOME: "/tmp/hal-c2",
         },
       );
 
@@ -150,8 +150,8 @@ describe("DesktopEnvironment", () => {
       const environment = yield* makeEnvironment({
         platform: "linux",
         isPackaged: true,
-        appPath: "/tmp/.mount_halc2/resources/app.asar",
-        resourcesPath: "/tmp/.mount_halc2/resources",
+        appPath: "/tmp/.mount_hal-c2/resources/app.asar",
+        resourcesPath: "/tmp/.mount_hal-c2/resources",
       });
 
       assert.equal(environment.linuxDesktopEntryName, "io.github.halc2.HalC2.desktop");
@@ -176,7 +176,7 @@ describe("DesktopEnvironment", () => {
       const environment = yield* makeEnvironment(
         {},
         {
-          HALC2_DESKTOP_APP_USER_MODEL_ID: " io.github.halc2.app.dev.local ",
+          HAL_C2_DESKTOP_APP_USER_MODEL_ID: " io.github.halc2.app.dev.local ",
           VITE_DEV_SERVER_URL: "http://localhost:5173",
         },
       );

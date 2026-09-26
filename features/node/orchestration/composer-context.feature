@@ -1,5 +1,5 @@
 # Sources:
-#   apps/server-ex/lib/hal_c2/composer_context.ex (context links, markers, halc2_context envelope,
+#   apps/server-ex/lib/hal_c2/composer_context.ex (context links, markers, hal_c2_context envelope,
 #     attachment remapping)
 #   packages/shared/src/composerContextReferences.ts (the shared format)
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch context records)
@@ -22,7 +22,7 @@ Feature: Inline context in messages
   Scenario: A context link becomes a marker and its payload is appended
     When a message referencing mention "src/app.ts" with id "m1" is sent to "t1"
     Then the provider reads the marker "[Mention: src/app.ts; ref=m1]" where the link was
-    And the message ends with a halc2_context envelope holding the mention's path
+    And the message ends with a hal_c2_context envelope holding the mention's path
 
   @node
   Scenario: A payload referenced twice is appended once
@@ -58,7 +58,7 @@ Feature: Inline context in messages
 
   @node
   Scenario: Captured text cannot close the envelope
-    When a terminal selection containing a closing halc2_context tag is referenced
+    When a terminal selection containing a closing hal_c2_context tag is referenced
     Then the tag is escaped in the payload
 
   @node

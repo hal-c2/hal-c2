@@ -12,7 +12,7 @@ describe("DesktopEarlyElectronStartup", () => {
 
   it("reads the persisted linux password-store preference before Electron is ready", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
-      env: { HALC2_HOME: "/home/user/.hal-c2-test" },
+      env: { HAL_C2_HOME: "/home/user/.hal-c2-test" },
       homeDirectory: "/home/user",
       joinPath,
       readFileString: (path) => {
@@ -26,7 +26,7 @@ describe("DesktopEarlyElectronStartup", () => {
 
   it("accepts JSONC in the early desktop settings file", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
-      env: { HALC2_HOME: "/home/user/.hal-c2-test" },
+      env: { HAL_C2_HOME: "/home/user/.hal-c2-test" },
       homeDirectory: "/home/user",
       joinPath,
       readFileString: () => `{
@@ -53,7 +53,7 @@ describe("DesktopEarlyElectronStartup", () => {
 
   it("preserves absolute root paths when resolving early settings", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
-      env: { HALC2_HOME: "/" },
+      env: { HAL_C2_HOME: "/" },
       homeDirectory: "/home/user",
       joinPath,
       readFileString: (path) => {
@@ -68,7 +68,7 @@ describe("DesktopEarlyElectronStartup", () => {
   it("resolves the early linux Electron switches", () => {
     const options = resolveEarlyLinuxElectronOptions({
       env: {
-        HALC2_HOME: "/home/user/.hal-c2-test",
+        HAL_C2_HOME: "/home/user/.hal-c2-test",
         XDG_CURRENT_DESKTOP: "niri",
         VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
       },
@@ -88,7 +88,7 @@ describe("DesktopEarlyElectronStartup", () => {
     });
   });
 
-  it("keeps implicit development state under ~/.hal-c2/dev when HALC2_HOME is unset", () => {
+  it("keeps implicit development state under ~/.hal-c2/dev when HAL_C2_HOME is unset", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
       env: {
         VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
@@ -104,10 +104,10 @@ describe("DesktopEarlyElectronStartup", () => {
     assert.equal(preference, "kwallet");
   });
 
-  it("treats whitespace-only HALC2_HOME as unconfigured in development", () => {
+  it("treats whitespace-only HAL_C2_HOME as unconfigured in development", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
       env: {
-        HALC2_HOME: "   ",
+        HAL_C2_HOME: "   ",
         VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
       },
       homeDirectory: "/home/user",

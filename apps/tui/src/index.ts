@@ -50,9 +50,9 @@ function resolveQmlDir(): string {
 /** Where a user's `shell.qml` (and extra `qml/` modules) override the default shell. */
 function resolveShellConfigDir(): string {
   return (
-    process.env.HALC2_TUI_SHELL_DIR ??
+    process.env.HAL_C2_TUI_SHELL_DIR ??
     NodePath.join(
-      process.env.HALC2_HOME ?? NodePath.join(NodeOS.homedir(), ".hal-c2"),
+      process.env.HAL_C2_HOME ?? NodePath.join(NodeOS.homedir(), ".hal-c2"),
       "shell",
       "tui",
     )
@@ -60,11 +60,11 @@ function resolveShellConfigDir(): string {
 }
 
 async function main(): Promise<void> {
-  const origin = process.env.HALC2_TUI_ORIGIN;
-  const bearerToken = process.env.HALC2_TUI_BEARER;
-  const logPath = process.env.HALC2_TUI_LOG ?? "/tmp/hal-c2-tui.log";
+  const origin = process.env.HAL_C2_TUI_ORIGIN;
+  const bearerToken = process.env.HAL_C2_TUI_BEARER;
+  const logPath = process.env.HAL_C2_TUI_LOG ?? "/tmp/hal-c2-tui.log";
   if (!origin || !bearerToken) {
-    process.stderr.write("hal-c2 tui: missing HALC2_TUI_ORIGIN / HALC2_TUI_BEARER\n");
+    process.stderr.write("hal-c2 tui: missing HAL_C2_TUI_ORIGIN / HAL_C2_TUI_BEARER\n");
     process.exitCode = 1;
     return;
   }
@@ -83,7 +83,7 @@ async function main(): Promise<void> {
   const configWarnings: string[] = [];
   const userConfig = readUserConfig({
     configDir,
-    pluginPaths: process.env.HALC2_TUI_PLUGINS,
+    pluginPaths: process.env.HAL_C2_TUI_PLUGINS,
     warn: (message) => configWarnings.push(message),
   });
 
@@ -181,7 +181,7 @@ async function main(): Promise<void> {
       pluginDirs: [...userConfig.pluginDirs],
       ...(userConfig.keymap ? { keymap: userConfig.keymap } : {}),
       singletons: { Shell: host.Shell, Theme: host.Theme },
-      watch: process.env.HALC2_TUI_DEV === "1",
+      watch: process.env.HAL_C2_TUI_DEV === "1",
       onWarning: host.reportWarning,
       onError: host.reportError,
     });

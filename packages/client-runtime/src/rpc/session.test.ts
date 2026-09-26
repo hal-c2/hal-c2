@@ -136,7 +136,7 @@ const SERVER_CONFIG: ServerConfigType = {
     policy: "loopback-browser",
     bootstrapMethods: ["one-time-token"],
     sessionMethods: ["browser-session-cookie", "bearer-access-token"],
-    sessionCookieName: "halc2_session",
+    sessionCookieName: "hal_c2_session",
   },
   cwd: "/tmp/workspace",
   keybindingsConfigPath: "/tmp/workspace/keybindings.json",

@@ -32,7 +32,7 @@ function makeLayer(fileSystemLayer: Layer.Layer<FileSystem.FileSystem>) {
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ HALC2_HOME: baseDir })),
+      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ HAL_C2_HOME: baseDir })),
     ),
   );
 

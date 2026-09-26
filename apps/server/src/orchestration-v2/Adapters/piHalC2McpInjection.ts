@@ -4,11 +4,11 @@ import * as FileSystem from "effect/FileSystem";
 
 import type { McpProviderSessionConfig } from "../../mcp/McpProviderSession.ts";
 import {
-  PI_HALC2_MCP_EXTENSION_FILENAME,
-  PI_HALC2_MCP_EXTENSION_SOURCE,
-  HALC2_MCP_BEARER_ENV,
-  HALC2_MCP_URL_ENV,
-  HALC2_PI_RUNTIME_MODE_ENV,
+  PI_HAL_C2_MCP_EXTENSION_FILENAME,
+  PI_HAL_C2_MCP_EXTENSION_SOURCE,
+  HAL_C2_MCP_BEARER_ENV,
+  HAL_C2_MCP_URL_ENV,
+  HAL_C2_PI_RUNTIME_MODE_ENV,
 } from "./piHalC2McpExtensionSource.ts";
 
 const RESERVED_PI_LAUNCH_ARGUMENTS = new Set([
@@ -221,7 +221,7 @@ function withoutToolSelectionArgs(args: ReadonlyArray<string>): ReadonlyArray<st
 }
 
 function piHalC2McpExtensionDestPath(cacheDir: string): string {
-  return `${cacheDir.replace(/\\/g, "/")}/${PI_HALC2_MCP_EXTENSION_FILENAME}`;
+  return `${cacheDir.replace(/\\/g, "/")}/${PI_HAL_C2_MCP_EXTENSION_FILENAME}`;
 }
 
 export const materializePiHalC2McpExtension = Effect.fn("materializePiHalC2McpExtension")(
@@ -230,8 +230,8 @@ export const materializePiHalC2McpExtension = Effect.fn("materializePiHalC2McpEx
     yield* fs.makeDirectory(cacheDir, { recursive: true });
     const dest = piHalC2McpExtensionDestPath(cacheDir);
     const existing = yield* fs.readFileString(dest).pipe(Effect.orElseSucceed(() => ""));
-    if (existing !== PI_HALC2_MCP_EXTENSION_SOURCE) {
-      yield* fs.writeFileString(dest, PI_HALC2_MCP_EXTENSION_SOURCE);
+    if (existing !== PI_HAL_C2_MCP_EXTENSION_SOURCE) {
+      yield* fs.writeFileString(dest, PI_HAL_C2_MCP_EXTENSION_SOURCE);
     }
     return dest;
   },
@@ -279,8 +279,8 @@ export function buildPiRpcLaunch(input: {
   const environment = { ...input.environment };
   // These values belong to the current HAL-C2 session. Never let a Pi child reuse
   // credentials inherited from the server or a parent provider process.
-  delete environment[HALC2_MCP_URL_ENV];
-  delete environment[HALC2_MCP_BEARER_ENV];
+  delete environment[HAL_C2_MCP_URL_ENV];
+  delete environment[HAL_C2_MCP_BEARER_ENV];
 
   return {
     args,
@@ -288,14 +288,14 @@ export function buildPiRpcLaunch(input: {
       ...environment,
       ...(hasHalC2Extension && input.runtimeMode !== undefined
         ? {
-            [HALC2_PI_RUNTIME_MODE_ENV]:
+            [HAL_C2_PI_RUNTIME_MODE_ENV]:
               input.runtimeMode === "auto" ? "approval-required" : input.runtimeMode,
           }
         : {}),
       ...(hasHalC2Mcp && input.mcpSession !== undefined
         ? {
-            [HALC2_MCP_URL_ENV]: input.mcpSession.endpoint,
-            [HALC2_MCP_BEARER_ENV]: bearerTokenFromAuthorizationHeader(
+            [HAL_C2_MCP_URL_ENV]: input.mcpSession.endpoint,
+            [HAL_C2_MCP_BEARER_ENV]: bearerTokenFromAuthorizationHeader(
               input.mcpSession.authorizationHeader,
             ),
           }

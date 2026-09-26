@@ -22,7 +22,7 @@ defmodule HalC2.StreamsTest do
     {:ok, _} = Streams.commit("th-1", :thread, thread("th-1"))
     :ok = Streams.subscribe("th-1", self(), nil)
 
-    assert_receive {:halc2_stream, "th-1",
+    assert_receive {:hal_c2_stream, "th-1",
                     {:snapshot, seq, _at, [{"thread", "th-1", %{"title" => "t"}}], :done}}
 
     {:ok, next} =
@@ -30,7 +30,7 @@ defmodule HalC2.StreamsTest do
 
     assert next == seq + 1
 
-    assert_receive {:halc2_stream, "th-1",
+    assert_receive {:hal_c2_stream, "th-1",
                     {:events,
                      [%{seq: ^next, kind: "turn-item", patch: %{"s" => %{"text" => "Hel"}}}]}}
   end
@@ -45,7 +45,7 @@ defmodule HalC2.StreamsTest do
     {:ok, last} = Streams.commit("th-2", :thread, append(", world"))
 
     :ok = Streams.subscribe("th-2", self(), offset)
-    assert_receive {:halc2_stream, "th-2", {:events, events}}
+    assert_receive {:hal_c2_stream, "th-2", {:events, events}}
 
     assert [
              %{patch: %{"a" => %{"text" => "lo"}}},
@@ -101,10 +101,10 @@ defmodule HalC2.StreamsTest do
 
   defp collect_snapshot(id, acc) do
     receive do
-      {:halc2_stream, ^id, {:snapshot, _seq, _at, rows, :more}} ->
+      {:hal_c2_stream, ^id, {:snapshot, _seq, _at, rows, :more}} ->
         collect_snapshot(id, [rows | acc])
 
-      {:halc2_stream, ^id, {:snapshot, _seq, _at, rows, :done}} ->
+      {:hal_c2_stream, ^id, {:snapshot, _seq, _at, rows, :done}} ->
         Enum.reverse([rows | acc])
     after
       1_000 -> flunk("snapshot incomplete")
@@ -116,14 +116,14 @@ defmodule HalC2.StreamsTest do
     {:ok, _} = Streams.commit("th-4", :thread, thread("th-4", %{"projectId" => "p"}))
 
     # Rows are recomputed shortly after a commit, not on every one.
-    assert_receive {:halc2_shell, {:rows, node, [{"th-4", {"thread", row}}]}}, 1_000
+    assert_receive {:hal_c2_shell, {:rows, node, [{"th-4", {"thread", row}}]}}, 1_000
     assert node == node()
     assert %{"id" => "th-4", "title" => "t", "projectId" => "p", "status" => "idle"} = row
 
     {:ok, _} =
       Streams.commit("th-4", :thread, [{"thread", "th-4", %{"s" => %{"title" => "Renamed"}}}])
 
-    assert_receive {:halc2_shell, {:rows, _, [{"th-4", {"thread", %{"title" => "Renamed"}}}]}},
+    assert_receive {:hal_c2_shell, {:rows, _, [{"th-4", {"thread", %{"title" => "Renamed"}}}]}},
                    1_000
 
     assert [{"thread", %{"title" => "Renamed"}}] =

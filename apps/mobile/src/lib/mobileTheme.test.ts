@@ -3,8 +3,8 @@ import {
   BUILT_IN_THEME_IDS,
   BUILT_IN_THEMES,
   T3_CHAT_THEME,
-  HALC2_LIGHT_THEME_COLORS,
-  HALC2_DARK_THEME_COLORS,
+  HAL_C2_LIGHT_THEME_COLORS,
+  HAL_C2_DARK_THEME_COLORS,
   MOBILE_THEME_IDS,
   getThemeColorsForAppearance,
 } from "@hal-c2/shared/themePalettes";
@@ -82,8 +82,8 @@ describe("mobile themes", () => {
       const colors = theme
         ? getThemeColorsForAppearance(theme, appearance)!
         : appearance === "dark"
-          ? HALC2_DARK_THEME_COLORS
-          : HALC2_LIGHT_THEME_COLORS;
+          ? HAL_C2_DARK_THEME_COLORS
+          : HAL_C2_LIGHT_THEME_COLORS;
       const variables =
         themeId === DEFAULT_MOBILE_THEME_ID
           ? readDefaultMobileThemeVariables(appearance)
@@ -201,7 +201,7 @@ describe("mobile themes", () => {
     "slightly strengthens default %s messages and separates fallback materials",
     (appearance) => {
       const variables = getMobileThemeVariables("hal-c2", appearance);
-      const desktop = appearance === "dark" ? HALC2_DARK_THEME_COLORS : HALC2_LIGHT_THEME_COLORS;
+      const desktop = appearance === "dark" ? HAL_C2_DARK_THEME_COLORS : HAL_C2_LIGHT_THEME_COLORS;
       const bubbleContrast = contrastRatio(
         variables["--color-user-bubble"],
         variables["--color-screen"],

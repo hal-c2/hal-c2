@@ -347,8 +347,8 @@ it.live(
       const fs = yield* FileSystem.FileSystem;
       const report = formatTransferBudgetReport(runs);
       for (const [path, contents] of [
-        [process.env.HALC2_TRANSFER_BUDGET_REPORT_PATH, report],
-        [process.env.HALC2_TRANSFER_BUDGET_RESULT_PATH, formatTransferBudgetResult(runs)],
+        [process.env.HAL_C2_TRANSFER_BUDGET_REPORT_PATH, report],
+        [process.env.HAL_C2_TRANSFER_BUDGET_RESULT_PATH, formatTransferBudgetResult(runs)],
       ])
         if (path && contents) yield* fs.writeFileString(path, contents);
       yield* Effect.log(report);

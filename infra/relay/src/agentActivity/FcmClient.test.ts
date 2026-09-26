@@ -51,7 +51,7 @@ const config = {
 const input = {
   token: "device-token",
   packageName: "io.github.halc2.app.dev",
-  data: { halc2_kind: "agent_activity", active: "true" },
+  data: { hal_c2_kind: "agent_activity", active: "true" },
   alert: false,
 };
 

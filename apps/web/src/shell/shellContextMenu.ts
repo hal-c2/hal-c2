@@ -8,9 +8,9 @@ const pending = new Map<string, (id: string | null) => void>();
 let listening = false;
 
 function ensureListener(): void {
-  if (listening || !window.halc2Shell) return;
+  if (listening || !window.halC2Shell) return;
   listening = true;
-  void window.halc2Shell.onAction((type, payload) => {
+  void window.halC2Shell.onAction((type, payload) => {
     const action = decodeShellAction(type, payload);
     if (action === null || action.type !== "contextMenu.select") return;
     const resolve = pending.get(action.requestId);
@@ -55,7 +55,7 @@ export function showShellContextMenu<T extends string>(
   items: readonly ContextMenuItem<T>[],
   position?: { x: number; y: number; surface?: string },
 ): Promise<T | null> {
-  const shell = window.halc2Shell;
+  const shell = window.halC2Shell;
   if (!shell) return Promise.resolve(null);
   ensureListener();
   closeShellContextMenu();

@@ -26,9 +26,9 @@ WebEngineView ◄─── WebChannel ───► QML bricks
   newline-delimited JSON (`{"type":"ready","url":...}`); the shell closes the
   host's stdin when it exits, which is the host's cue to shut the server down.
 - **QML gets everything from the web view over WebChannel**, nothing else.
-  State flows web → QML (`halc2Shell.publish(key, value)` → `Shell.state[key]`);
+  State flows web → QML (`halC2Shell.publish(key, value)` → `Shell.state[key]`);
   actions flow QML → web (`Shell.dispatch(action, payload)` →
-  `halc2Shell.onAction(listener)`).
+  `halC2Shell.onAction(listener)`).
 - The UI-owned parts of `desktopBridge` (open external, window commands,
   colour scheme, dialogs/context menus later) are served by the shell over the
   same channel; the TypeScript-owned parts stay on the Node side.
@@ -41,7 +41,7 @@ running dev server; this is what `vp run dev:qt` uses.
 - **One profile.** `src/WebProfile.cpp` configures Qt WebEngine's default
   profile and registers it as the `WebProfile` singleton: storage and a 64 MiB
   disk HTTP cache under `<HAL-C2 home>/userdata/shell-web` (`--home-dir`, then
-  `HALC2_HOME`, then `~/.hal-c2` or an existing `~/.t3`), cookies forced persistent, permissions stored.
+  `HAL_C2_HOME`, then `~/.hal-c2` or an existing `~/.t3`), cookies forced persistent, permissions stored.
   Every `WebSurface` shares it, so the embed surfaces reuse the primary's
   session and the bundle comes from cache on the next start. Chromium cannot
   share a profile directory between processes: a second shell on the same
@@ -140,9 +140,9 @@ vp run dev:qt     # terminal 2: cmake configure/build, `hal-c2 pair`, launch wit
 ```
 
 `dev:qt` resolves the data directory the way `vp run dev` does (`--home-dir`,
-else the worktree's own `.hal-c2`, else `HALC2_HOME`, else `~/.hal-c2` or an existing `~/.t3`), pairs with
+else the worktree's own `.hal-c2`, else `HAL_C2_HOME`, else `~/.hal-c2` or an existing `~/.t3`), pairs with
 the server running there, and launches the shell with that directory as its
-`HALC2_HOME` so it rices from the matching `shell/`. Pass the same
+`HAL_C2_HOME` so it rices from the matching `shell/`. Pass the same
 `--home-dir` to both commands if you set one. Its other flags are `--url` (skip
 pairing), `--release` (no disk QML loading) and `--configure-only` (build, do
 not launch); everything else is forwarded to the binary, so
@@ -159,12 +159,12 @@ screen-recording permission), `--action name[=json]` (repeatable; dispatch shell
 actions after the page loads, e.g. `--action rightPanel.toggle`), `--key <chord>`
 (repeatable; press a key chord after the page loads, e.g. `--key Ctrl+1`, portable
 `QKeySequence` names — `--action` and `--key` run in command-line order, 1.5 s
-apart, so a key test can open a thread first); env `HALC2_HOME`,
-`HALC2_QML_DIR`, `HALC2_NODE_BIN`, `HALC2_SERVER_ENTRY`.
+apart, so a key test can open a thread first); env `HAL_C2_HOME`,
+`HAL_C2_QML_DIR`, `HAL_C2_NODE_BIN`, `HAL_C2_SERVER_ENTRY`.
 
 ## Ricing contract
 
-Config dir: `$HALC2_HOME/shell/`, so `~/.hal-c2/shell/` by default on every
+Config dir: `$HAL_C2_HOME/shell/`, so `~/.hal-c2/shell/` by default on every
 platform and `<worktree>/.hal-c2/shell/` for a sandboxed dev run; `--config-dir`
 overrides it.
 
@@ -198,7 +198,7 @@ the Settings → Theme editor exports it) plus a shell-only `window` section:
   `ThemeColorRole` list in `packages/shared/src/themePalettes.ts`).
   `variants.<appearance>` overrides `colors` for that appearance.
 - The native document-creation script applies the first-paint colors, then
-  hands its override to the web theme module through `window.__halc2ShellTheme`.
+  hands its override to the web theme module through `window.__halC2ShellTheme`.
   The web module applies the override after stored palettes and editor previews,
   without changing saved preferences. Native reinjections deliver data only.
   Embedded documents claim their own override without publishing native colors.
@@ -361,7 +361,7 @@ QmlLive was evaluated and rejected: unmaintained since 2019, Qt 5 only.
 time) and `js/shell-connect.js` at document creation, which exposes:
 
 ```ts
-window.halc2Shell: {
+window.halC2Shell: {
   protocolVersion: number;                           // 1
   surfaceId: string;                                 // "primary" | "rightPanel"
   ready: Promise<ShellObject>;                       // raw WebChannel proxy
@@ -373,7 +373,7 @@ window.halc2Shell: {
 }
 ```
 
-`window.halc2Shell` is undefined in a browser tab; the web app must keep working
+`window.halC2Shell` is undefined in a browser tab; the web app must keep working
 without it. `apps/web/src/env.ts` exports `isHalC2Shell` (module-load-time, like
 `isElectron`). The contract — what gets published under which key and which
 actions exist — lives in `packages/contracts/src/shell.ts` and is imported as
@@ -658,7 +658,7 @@ renders the rest.
 
 `localApi.contextMenu.show` routes to the shell when hosted: the items are
 published under `contextMenu` with the surface they belong to (every web
-surface tags its document with `window.halc2Shell.surfaceId`; `"shell"` means
+surface tags its document with `window.halC2Shell.surfaceId`; `"shell"` means
 window coordinates from native chrome) and the choice returns as
 `contextMenu.select {requestId, id}`. `ContextMenuHost` lives in each
 `WebSurface` and once at the window level. This makes every context menu in
@@ -695,7 +695,7 @@ selector, the checkout-mode picker, the PR badge and the branch button
 files into the composer's drop pipeline (the brick reads dropped or picked
 files through `Shell.readImageFiles`, 10 MB cap, images only).
 `composer.terminalContext.add {…selection}` adds a terminal selection; the
-embed document's terminal forwards its selections with `halc2Shell.dispatch`, so
+embed document's terminal forwards its selections with `halC2Shell.dispatch`, so
 they land in the primary's draft. Attached images and terminal contexts are
 published as removable chips (`composer.attachment.remove`,
 `composer.terminalContext.remove`).

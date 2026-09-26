@@ -224,7 +224,7 @@ function startServer() {
       mode: "desktop",
       noBrowser: true,
       port,
-      halc2Home: home,
+      halC2Home: home,
       host: "127.0.0.1",
       desktopBootstrapToken: bootstrap,
       tailscaleServeEnabled: false,

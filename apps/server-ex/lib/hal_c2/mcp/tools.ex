@@ -12,11 +12,11 @@ defmodule HalC2.Mcp.Tools do
 
   alias HalC2.{Orchestration, StreamState}
 
-  @implemented ~w(halc2_thread_list halc2_thread_read halc2_thread_send halc2_thread_wait halc2_thread_interrupt
-                  halc2_thread_search halc2_environment_read halc2_environment_preferences_update
-                  halc2_project_list halc2_project_read list_scheduled_tasks schedule_task
+  @implemented ~w(hal_c2_thread_list hal_c2_thread_read hal_c2_thread_send hal_c2_thread_wait hal_c2_thread_interrupt
+                  hal_c2_thread_search hal_c2_environment_read hal_c2_environment_preferences_update
+                  hal_c2_project_list hal_c2_project_read list_scheduled_tasks schedule_task
                   update_scheduled_task delete_scheduled_task run_scheduled_task_now
-                  halc2_preview_list halc2_preview_close)
+                  hal_c2_preview_list hal_c2_preview_close)
 
   @areas [
     HalC2.Mcp.Tools.Threads,
@@ -93,7 +93,7 @@ defmodule HalC2.Mcp.Tools do
   # --- threads ---------------------------------------------------------------------
 
   @doc """
-  How long `halc2_thread_wait` waits for a requested `timeoutMs`: 10 minutes when none
+  How long `hal_c2_thread_wait` waits for a requested `timeoutMs`: 10 minutes when none
   is given, at least 1 millisecond and at most 1 hour.
   """
   def wait_timeout(requested), do: min(max(parse_number(requested, 600_000), 1), 3_600_000)
@@ -101,7 +101,7 @@ defmodule HalC2.Mcp.Tools do
   @doc false
   def run(name, args, caller)
 
-  def run("halc2_thread_list", args, %{row: me}) do
+  def run("hal_c2_thread_list", args, %{row: me}) do
     statuses = args["statuses"]
     title = args["titleContains"] && String.downcase(args["titleContains"])
 
@@ -131,7 +131,7 @@ defmodule HalC2.Mcp.Tools do
      }}
   end
 
-  def run("halc2_thread_read", args, %{row: me}) do
+  def run("hal_c2_thread_read", args, %{row: me}) do
     with {:ok, row} <- project_thread(me, args["threadId"]) do
       state = stream(row["id"])
       view = args["view"] || "messages"
@@ -177,7 +177,7 @@ defmodule HalC2.Mcp.Tools do
     end
   end
 
-  def run("halc2_thread_send", args, %{row: me} = caller) do
+  def run("hal_c2_thread_send", args, %{row: me} = caller) do
     with {:ok, row} <- project_thread(me, args["threadId"]),
          :ok <- live(caller),
          :ok <- no_escalation(me, row),
@@ -231,7 +231,7 @@ defmodule HalC2.Mcp.Tools do
     end
   end
 
-  def run("halc2_thread_wait", args, %{row: me}) do
+  def run("hal_c2_thread_wait", args, %{row: me}) do
     with {:ok, row} <- project_thread(me, args["threadId"]) do
       timeout = wait_timeout(args["timeoutMs"])
       {run, timed_out} = wait(row["id"], args["runId"], timeout)
@@ -246,7 +246,7 @@ defmodule HalC2.Mcp.Tools do
     end
   end
 
-  def run("halc2_thread_interrupt", args, %{row: me} = caller) do
+  def run("hal_c2_thread_interrupt", args, %{row: me} = caller) do
     with {:ok, row} <- project_thread(me, args["threadId"]),
          :ok <- live(caller),
          {:ok, _} <-
@@ -268,7 +268,7 @@ defmodule HalC2.Mcp.Tools do
     end
   end
 
-  def run("halc2_thread_search", args, %{row: me}) do
+  def run("hal_c2_thread_search", args, %{row: me}) do
     case HalC2.Search.threads(Map.take(args, ["query", "limit"])) do
       {:ok, %{"matches" => matches}} ->
         {:ok, %{"matches" => Enum.filter(matches, &(&1["projectId"] == me["projectId"]))}}
@@ -280,7 +280,7 @@ defmodule HalC2.Mcp.Tools do
 
   # --- environment and projects ------------------------------------------------------
 
-  def run("halc2_environment_read", _args, %{row: me}) do
+  def run("hal_c2_environment_read", _args, %{row: me}) do
     environment = HalC2.Environment.descriptor()
 
     {:ok,
@@ -302,7 +302,7 @@ defmodule HalC2.Mcp.Tools do
      }}
   end
 
-  def run("halc2_environment_preferences_update", args, caller) do
+  def run("hal_c2_environment_preferences_update", args, caller) do
     with :ok <- live(caller),
          :ok <-
            unrestricted(caller, "Preference updates require a live full-access/default thread.") do
@@ -316,7 +316,7 @@ defmodule HalC2.Mcp.Tools do
     end
   end
 
-  def run("halc2_project_list", args, _caller) do
+  def run("hal_c2_project_list", args, _caller) do
     projects =
       for {{node, _}, {"project", row}} <- HalC2.Shell.rows(),
           node == node() and row["deletedAt"] == nil,
@@ -333,7 +333,7 @@ defmodule HalC2.Mcp.Tools do
      }}
   end
 
-  def run("halc2_project_read", %{"projectId" => id}, _caller) do
+  def run("hal_c2_project_read", %{"projectId" => id}, _caller) do
     case project_row(id) do
       nil -> {:error, "invalid_request", "The project was not found."}
       row -> {:ok, %{"project" => project(row)}}
@@ -435,7 +435,7 @@ defmodule HalC2.Mcp.Tools do
 
   # --- preview tabs ----------------------------------------------------------------------
 
-  def run("halc2_preview_list", args, %{row: me}) do
+  def run("hal_c2_preview_list", args, %{row: me}) do
     {:ok, result} = HalC2.Preview.list(%{"threadId" => me["id"]})
     cursor = args["cursor"] || 0
     stop = cursor + (args["limit"] || 20)
@@ -447,7 +447,7 @@ defmodule HalC2.Mcp.Tools do
      })}
   end
 
-  def run("halc2_preview_close", %{"tabId" => tab}, %{row: me}) do
+  def run("hal_c2_preview_close", %{"tabId" => tab}, %{row: me}) do
     {:ok, _} = HalC2.Preview.close(%{"threadId" => me["id"], "tabId" => tab})
     {:ok, %{}}
   end
@@ -585,7 +585,7 @@ defmodule HalC2.Mcp.Tools do
     |> Enum.sort_by(&(&1["updatedAt"] || ""), :desc)
   end
 
-  @doc "A thread as `halc2_thread_list` lists it."
+  @doc "A thread as `hal_c2_thread_list` lists it."
   def list_item(row) do
     %{
       "threadId" => row["id"],
@@ -679,7 +679,7 @@ defmodule HalC2.Mcp.Tools do
 
       true ->
         receive do
-          {:halc2_stream, ^thread_id, _} -> wait_loop(thread_id, run_id, deadline)
+          {:hal_c2_stream, ^thread_id, _} -> wait_loop(thread_id, run_id, deadline)
         after
           min(left, 5_000) -> wait_loop(thread_id, run_id, deadline)
         end

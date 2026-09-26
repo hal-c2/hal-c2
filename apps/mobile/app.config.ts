@@ -9,16 +9,16 @@ const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
-const isIosPersonalTeamBuild = repoEnv.HALC2_IOS_PERSONAL_TEAM === "1";
+const isIosPersonalTeamBuild = repoEnv.HAL_C2_IOS_PERSONAL_TEAM === "1";
 const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
 
-// HAL-C2 ships without an EAS project. Setting HALC2_EAS_PROJECT_ID links the
+// HAL-C2 ships without an EAS project. Setting HAL_C2_EAS_PROJECT_ID links the
 // app to one for EAS builds and turns on OTA updates from that project only.
-const easProjectId = repoEnv.HALC2_EAS_PROJECT_ID?.trim() || undefined;
+const easProjectId = repoEnv.HAL_C2_EAS_PROJECT_ID?.trim() || undefined;
 
-const personalTeamBundleIdentifier = repoEnv.HALC2_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
+const personalTeamBundleIdentifier = repoEnv.HAL_C2_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
@@ -32,7 +32,7 @@ if (
     !IOS_BUNDLE_IDENTIFIER_PATTERN.test(personalTeamBundleIdentifier))
 ) {
   throw new Error(
-    "HALC2_IOS_PERSONAL_TEAM_BUNDLE_ID must be a reverse-DNS identifier such as com.example.hal-c2 when HALC2_IOS_PERSONAL_TEAM=1.",
+    "HAL_C2_IOS_PERSONAL_TEAM_BUNDLE_ID must be a reverse-DNS identifier such as com.example.hal-c2 when HAL_C2_IOS_PERSONAL_TEAM=1.",
   );
 }
 
@@ -230,7 +230,7 @@ const config: ExpoConfig = {
   userInterfaceStyle: "automatic",
   updates: easProjectId
     ? {
-        enabled: repoEnv.HALC2_MOBILE_UPDATES_ENABLED !== "0",
+        enabled: repoEnv.HAL_C2_MOBILE_UPDATES_ENABLED !== "0",
         url: `https://u.expo.dev/${easProjectId}`,
         checkAutomatically: "ON_LOAD",
         fallbackToCacheTimeout: 0,
@@ -241,7 +241,7 @@ const config: ExpoConfig = {
     supportsTablet: true,
     // Multitasking-capable iPad apps cannot rotate programmatically, so the
     // showcase capture build requires full screen (see infoPlist below).
-    requireFullScreen: process.env.HALC2_SHOWCASE_CAPTURE_BUILD === "1",
+    requireFullScreen: process.env.HAL_C2_SHOWCASE_CAPTURE_BUILD === "1",
     bundleIdentifier: iosBundleIdentifier,
     // Pin code signing to one team so non-interactive `expo run:ios` does not
     // fall back to a personal team (which cannot sign app groups, Sign in with
@@ -268,7 +268,7 @@ const config: ExpoConfig = {
       // Simulator menu scripting needs), and iPadOS ignores programmatic
       // orientation requests for multitasking-capable apps — so the capture
       // build opts out of multitasking and declares landscape support.
-      ...(process.env.HALC2_SHOWCASE_CAPTURE_BUILD === "1"
+      ...(process.env.HAL_C2_SHOWCASE_CAPTURE_BUILD === "1"
         ? {
             "UISupportedInterfaceOrientations~ipad": [
               "UIInterfaceOrientationPortrait",
@@ -283,8 +283,8 @@ const config: ExpoConfig = {
   android: {
     icon: variant.assets.appIcon,
     package: variant.androidPackage,
-    ...(repoEnv.HALC2_ANDROID_GOOGLE_SERVICES_FILE
-      ? { googleServicesFile: repoEnv.HALC2_ANDROID_GOOGLE_SERVICES_FILE }
+    ...(repoEnv.HAL_C2_ANDROID_GOOGLE_SERVICES_FILE
+      ? { googleServicesFile: repoEnv.HAL_C2_ANDROID_GOOGLE_SERVICES_FILE }
       : {}),
     adaptiveIcon: {
       backgroundColor: variant.assets.androidAdaptiveBackgroundColor,
@@ -440,7 +440,7 @@ const config: ExpoConfig = {
     appVariant: APP_VARIANT,
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
     relay: {
-      url: repoEnv.HALC2_RELAY_URL ?? null,
+      url: repoEnv.HAL_C2_RELAY_URL ?? null,
     },
     clerk: {
       publishableKey: repoEnv.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null,

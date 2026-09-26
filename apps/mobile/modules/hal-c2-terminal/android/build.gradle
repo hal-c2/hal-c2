@@ -5,7 +5,7 @@ group = 'io.github.halc2.terminal'
 version = '0.0.0'
 
 android {
-  namespace 'expo.modules.halc2terminal'
+  namespace 'expo.modules.hal_c2_terminal'
   ndkVersion rootProject.ext.ndkVersion
   compileSdk rootProject.ext.compileSdkVersion
 

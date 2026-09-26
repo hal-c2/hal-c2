@@ -140,7 +140,7 @@ function bodyText(body: BodyInit | null | undefined): string {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.stubEnv("VITE_HALC2_RELAY_URL", "https://relay.example.test");
+  vi.stubEnv("VITE_HAL_C2_RELAY_URL", "https://relay.example.test");
   relayClientInstallDialog.requestConfirmation.mockResolvedValue(true);
 });
 

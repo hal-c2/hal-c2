@@ -155,8 +155,8 @@ jobs:
       # job, which covers @hal-c2/desktop, needs the download.
       - name: Test
         env:
-          HALC2_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/hal-c2-transfer-budget.md
-          HALC2_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
+          HAL_C2_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/hal-c2-transfer-budget.md
+          HAL_C2_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
         run: vp run --filter hal-c2 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
       # integration/transferBudgetV2.integration.test.ts writes the report; exactly one shard

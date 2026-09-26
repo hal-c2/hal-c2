@@ -7,8 +7,8 @@
  * Flags the script consumes:
  *   --home-dir <dir>   HAL-C2 data directory of the dev server to pair with (same
  *                      as `vp run dev --home-dir`). Also becomes the shell's
- *                      HALC2_HOME so it rices from <dir>/shell. Defaults to the
- *                      worktree's own .hal-c2, then HALC2_HOME, then ~/.hal-c2 — the
+ *                      HAL_C2_HOME so it rices from <dir>/shell. Defaults to the
+ *                      worktree's own .hal-c2, then HAL_C2_HOME, then ~/.hal-c2 — the
  *                      precedence `vp run dev` and `hal-c2 pair` use.
  *   --url <url>        skip pairing and load this URL
  *   --release          build with CMAKE_BUILD_TYPE=Release (no disk QML loading)
@@ -144,13 +144,13 @@ function resolveWorktreeHome() {
   return isLinkedWorktree ? NodePath.join(topLevel, ".hal-c2") : undefined;
 }
 
-/** `--home-dir` > worktree `.hal-c2` > `HALC2_HOME` > `~/.hal-c2`, as `vp run dev` and `hal-c2 pair` resolve it. */
+/** `--home-dir` > worktree `.hal-c2` > `HAL_C2_HOME` > `~/.hal-c2`, as `vp run dev` and `hal-c2 pair` resolve it. */
 function resolveHomeDir() {
   const explicit = options.homeDir ?? "";
   if (explicit.trim().length > 0) return NodePath.resolve(expandHome(explicit));
   const worktreeHome = resolveWorktreeHome();
   if (worktreeHome !== undefined) return worktreeHome;
-  const fromEnv = process.env.HALC2_HOME ?? "";
+  const fromEnv = process.env.HAL_C2_HOME ?? "";
   if (fromEnv.trim().length > 0) return NodePath.resolve(expandHome(fromEnv));
   const shared = NodePath.join(NodeOS.homedir(), ".hal-c2");
   refuseLiveInstall(shared);
@@ -236,7 +236,7 @@ process.stderr.write(`[dev-qt] launching ${binary} ${binaryArgs.join(" ")}\n`);
 const child = NodeChildProcess.spawn(binary, binaryArgs, {
   stdio: "inherit",
   cwd: appDir,
-  env: { ...process.env, HALC2_HOME: homeDir },
+  env: { ...process.env, HAL_C2_HOME: homeDir },
 });
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => child.kill(signal));

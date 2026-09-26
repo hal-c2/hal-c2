@@ -25,7 +25,7 @@ interface RecordedBatchRequest {
         readonly serverArch?: string;
         readonly serverAppVersion?: string;
         readonly serverMode?: string;
-        readonly halc2Version?: string;
+        readonly halC2Version?: string;
       };
     }>;
   } | null;
@@ -41,7 +41,7 @@ interface RecordedBatchBody {
       readonly serverArch?: string;
       readonly serverAppVersion?: string;
       readonly serverMode?: string;
-      readonly halc2Version?: string;
+      readonly halC2Version?: string;
     };
   }>;
 }
@@ -57,10 +57,10 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       const telemetryLayer = AnalyticsService.layer.pipe(Layer.provideMerge(serverConfigLayer));
       const configLayer = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
-          HALC2_TELEMETRY_ENABLED: true,
-          HALC2_POSTHOG_KEY: "phc_test_key",
-          HALC2_POSTHOG_HOST: "http://localhost",
-          HALC2_TELEMETRY_FLUSH_BATCH_SIZE: 20,
+          HAL_C2_TELEMETRY_ENABLED: true,
+          HAL_C2_POSTHOG_KEY: "phc_test_key",
+          HAL_C2_POSTHOG_HOST: "http://localhost",
+          HAL_C2_TELEMETRY_FLUSH_BATCH_SIZE: 20,
         }),
       );
       const batchServerLayer = HttpServer.serve(
@@ -140,7 +140,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
             (event) =>
               event.properties?.serverOs === "Linux" &&
               event.properties.serverArch === "arm64" &&
-              event.properties.serverAppVersion === event.properties.halc2Version &&
+              event.properties.serverAppVersion === event.properties.halC2Version &&
               event.properties.serverMode === "web",
           ),
         ),
@@ -152,9 +152,9 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
   for (const [name, env] of [
     [
       "telemetry is disabled",
-      { HALC2_TELEMETRY_ENABLED: false, HALC2_POSTHOG_KEY: "phc_test_key" },
+      { HAL_C2_TELEMETRY_ENABLED: false, HAL_C2_POSTHOG_KEY: "phc_test_key" },
     ],
-    ["no PostHog key is configured", { HALC2_TELEMETRY_ENABLED: true }],
+    ["no PostHog key is configured", { HAL_C2_TELEMETRY_ENABLED: true }],
   ] as const) {
     it.effect(`does not send batch requests when ${name}`, () =>
       Effect.gen(function* () {
@@ -166,7 +166,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         const configLayer = ConfigProvider.layer(
           ConfigProvider.fromUnknown({
             ...env,
-            HALC2_POSTHOG_HOST: "http://localhost",
+            HAL_C2_POSTHOG_HOST: "http://localhost",
           }),
         );
         const batchServerLayer = HttpServer.serve(

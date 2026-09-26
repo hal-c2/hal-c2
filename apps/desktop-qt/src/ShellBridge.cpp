@@ -68,7 +68,7 @@ bool ShellBridge::isAppOrigin(const QUrl& url) const {
 }
 
 QUrl ShellBridge::webChannelScriptUrl() const {
-  return QUrl(QStringLiteral(HALC2_WEBCHANNEL_SCRIPT_URL));
+  return QUrl(QStringLiteral(HAL_C2_WEBCHANNEL_SCRIPT_URL));
 }
 
 void ShellBridge::publish(const QString& key, const QVariant& value) {

@@ -119,7 +119,7 @@ function CloudEnvironmentRowsContent(
     <View collapsable={false} className={cn("gap-3", showHeader && "mt-5")}>
       {showHeader ? (
         <View className="px-1">
-          <Text className="text-sm font-halc2-bold uppercase text-foreground-muted">
+          <Text className="text-sm font-hal-c2-bold uppercase text-foreground-muted">
             HAL-C2 Connect
           </Text>
         </View>
@@ -173,7 +173,7 @@ function CloudEnvironmentRowsContent(
       controller.relayDiscovery.error &&
       !controller.relayDiscovery.isRefreshing ? (
         <View collapsable={false} className="gap-3 rounded-[24px] bg-card p-5">
-          <Text className="text-base font-halc2-bold text-foreground">
+          <Text className="text-base font-hal-c2-bold text-foreground">
             Could not load HAL-C2 Connect environments
           </Text>
           <Text className="text-sm text-foreground-muted">{controller.relayDiscovery.error}</Text>
@@ -187,7 +187,7 @@ function CloudEnvironmentRowsContent(
             }}
             className="self-start rounded-full bg-subtle px-3.5 py-2 active:opacity-70"
           >
-            <Text className="text-xs font-halc2-bold text-foreground">Try again</Text>
+            <Text className="text-xs font-hal-c2-bold text-foreground">Try again</Text>
           </Pressable>
         </View>
       ) : null}
@@ -358,7 +358,7 @@ function CloudEnvironmentRowShell(props: {
             tintColorClassName="accent-foreground-muted"
           />
           <Text
-            className="min-w-0 flex-shrink text-base font-halc2-bold leading-snug text-foreground"
+            className="min-w-0 flex-shrink text-base font-hal-c2-bold leading-snug text-foreground"
             numberOfLines={1}
           >
             {props.label}
@@ -434,7 +434,7 @@ function CopyTraceIdButton(props: { readonly traceId: string }) {
         tintColorClassName={"accent-icon"}
         type="monochrome"
       />
-      <Text className="text-xs font-halc2-bold text-foreground">Copy trace ID</Text>
+      <Text className="text-xs font-hal-c2-bold text-foreground">Copy trace ID</Text>
     </Pressable>
   );
 }

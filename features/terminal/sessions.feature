@@ -71,8 +71,7 @@ Feature: Terminal sessions
         | PORT                                |
         | ELECTRON_RENDERER_PORT              |
         | ELECTRON_RUN_AS_NODE                |
-        | any variable starting with HALC2_  |
-        | any variable starting with HALC2_      |
+        | any variable starting with HAL_C2_  |
         | any variable starting with VITE_    |
         | any variable starting with RELEASE_ |
         | any variable starting with ERL_     |

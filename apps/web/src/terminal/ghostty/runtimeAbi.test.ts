@@ -216,7 +216,7 @@ describe("vendored libghostty-vt WebAssembly", () => {
       decodeWasmDataUrl(writePtyWasmDataUrl).buffer as ArrayBuffer,
       {
         env: {
-          halc2_write_pty: (
+          hal_c2_write_pty: (
             _terminal: number,
             _userdata: number,
             pointer: number,

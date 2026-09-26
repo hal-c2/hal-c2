@@ -53,7 +53,7 @@ describe("hostedPairing", () => {
     );
 
     expect(url.origin).toBe("https://app.hal-c2.example");
-    expect(url.pathname).toBe("/__halc2/channel");
+    expect(url.pathname).toBe("/__hal-c2/channel");
     expect(url.searchParams.get("channel")).toBe("nightly");
     expect(url.searchParams.has("next")).toBe(false);
   });

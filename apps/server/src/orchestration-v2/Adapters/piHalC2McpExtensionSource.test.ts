@@ -2,7 +2,7 @@ import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 
-import { PI_HALC2_MCP_EXTENSION_SOURCE } from "./piHalC2McpExtensionSource.ts";
+import { PI_HAL_C2_MCP_EXTENSION_SOURCE } from "./piHalC2McpExtensionSource.ts";
 
 type RequestHook = (
   event: { payload: unknown },
@@ -13,12 +13,12 @@ async function loadRequestHook(): Promise<RequestHook> {
   const handlers = new Map<string, RequestHook>();
   // Execute the shipped extension with MCP disabled; this path needs no Typebox.
   const source = NodeModule.stripTypeScriptTypes(
-    PI_HALC2_MCP_EXTENSION_SOURCE.replace('import { Type } from "typebox";', "").replace(
+    PI_HAL_C2_MCP_EXTENSION_SOURCE.replace('import { Type } from "typebox";', "").replace(
       "export default async function",
       "async function",
     ),
   );
-  await NodeVM.runInNewContext(`${source}\nhalc2McpExtension(pi)`, {
+  await NodeVM.runInNewContext(`${source}\nhalC2McpExtension(pi)`, {
     process: { env: {} },
     pi: { on: (name: string, handler: RequestHook) => handlers.set(name, handler) },
   });

@@ -5,6 +5,6 @@
     "podspecPath": "HalC2TerminalNative.podspec"
   },
   "android": {
-    "modules": ["expo.modules.halc2terminal.HalC2TerminalModule"]
+    "modules": ["expo.modules.hal_c2_terminal.HalC2TerminalModule"]
   }
 }

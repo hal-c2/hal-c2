@@ -272,20 +272,20 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
-  step "HALC2_PEERS names a member's node", context do
+  step "HAL_C2_PEERS names a member's node", context do
     distribute()
 
     {:ok, peer, member} =
       :peer.start_link(%{
-        name: :"halc2member#{System.unique_integer([:positive])}",
+        name: :"hal_c2_member#{System.unique_integer([:positive])}",
         host: ~c"127.0.0.1",
         longnames: true,
         connection: :standard_io,
         args: [~c"-setcookie", Atom.to_charlist(:erlang.get_cookie())] ++ code_path_args()
       })
 
-    System.put_env("HALC2_PEERS", Atom.to_string(member))
-    ExUnit.Callbacks.on_exit(fn -> System.delete_env("HALC2_PEERS") end)
+    System.put_env("HAL_C2_PEERS", Atom.to_string(member))
+    ExUnit.Callbacks.on_exit(fn -> System.delete_env("HAL_C2_PEERS") end)
     :ok = :net_kernel.monitor_nodes(true)
     context |> Map.put(:member, member) |> Map.put(:member_peer, peer)
   end
@@ -467,7 +467,7 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   step "a client asks for something only the second member can serve", context do
     {reply, client} =
-      Node.call(Node.connect(context.node), context.second.environment, "halc2.readSettings")
+      Node.call(Node.connect(context.node), context.second.environment, "hal-c2.readSettings")
 
     context |> World.put_client(client) |> Map.put(:reply, reply)
   end
@@ -656,7 +656,7 @@ defmodule HalC2.Steps.Connections.Cluster do
       {_, 0} = System.cmd("epmd", ["-daemon"])
 
       {:ok, _} =
-        :net_kernel.start(:"halc2feature#{System.unique_integer([:positive])}@127.0.0.1", %{
+        :net_kernel.start(:"hal_c2_feature#{System.unique_integer([:positive])}@127.0.0.1", %{
           name_domain: :longnames
         })
 
@@ -673,7 +673,7 @@ defmodule HalC2.Steps.Connections.Cluster do
   defp second_member(context, home, env) do
     distribute()
     context = %{context | node: Node.restart(context.node)}
-    name = :"halc2member#{System.unique_integer([:positive])}"
+    name = :"hal_c2_member#{System.unique_integer([:positive])}"
     start_second(context, name, home || Node.tmp_dir(context.node, "second"), env)
   end
 
@@ -686,7 +686,7 @@ defmodule HalC2.Steps.Connections.Cluster do
         host: ~c"127.0.0.1",
         longnames: true,
         args: code_path_args(),
-        env: [{~c"HALC2_LABEL", ~c"garden-box"} | env]
+        env: [{~c"HAL_C2_LABEL", ~c"garden-box"} | env]
       })
 
     for {key, value} <- [start_node: true, home: home, port: 0],
@@ -694,7 +694,7 @@ defmodule HalC2.Steps.Connections.Cluster do
 
     {:ok, _} = :erpc.call(node, Application, :ensure_all_started, [:hal_c2], 30_000)
 
-    assert_receive {:halc2_shell, {:environment, ^node, %{"environmentId" => environment}}},
+    assert_receive {:hal_c2_shell, {:environment, ^node, %{"environmentId" => environment}}},
                    10_000
 
     Map.put(context, :second, %{
@@ -709,7 +709,7 @@ defmodule HalC2.Steps.Connections.Cluster do
   defp sleep_second(context) do
     node = context.second.node
     :peer.stop(context.second.peer)
-    assert_receive {:halc2_shell, {:node, ^node, :down}}, 5_000
+    assert_receive {:hal_c2_shell, {:node, ^node, :down}}, 5_000
     context
   end
 

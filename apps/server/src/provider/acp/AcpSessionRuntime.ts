@@ -275,7 +275,7 @@ export function wrapCommandForLinuxCgroup(
         '  case "$line" in 0::*) [ -z "$actual" ] || exit 126; actual=${line#0::};; esac',
         "done < /proc/self/cgroup || exit 125",
         '[ "$actual" = "$expected" ] || exit 126',
-        "unset ELECTRON_RUN_AS_NODE HALC2_ACP_CGROUP_WRAPPER",
+        "unset ELECTRON_RUN_AS_NODE HAL_C2_ACP_CGROUP_WRAPPER",
         "trap 'exit 125' 0",
         'exec "$@"',
       ].join("\n"),
@@ -1565,7 +1565,7 @@ export const make = (
         : {
             ...options.spawn.env,
             ELECTRON_RUN_AS_NODE: "1",
-            HALC2_ACP_CGROUP_WRAPPER: "1",
+            HAL_C2_ACP_CGROUP_WRAPPER: "1",
           };
     const child = yield* spawner
       .spawn(
@@ -1991,7 +1991,7 @@ export const make = (
           meta !== null &&
           typeof meta === "object" &&
           !Array.isArray(meta) &&
-          (meta as { readonly halc2SessionLoadReady?: unknown }).halc2SessionLoadReady ===
+          (meta as { readonly halC2SessionLoadReady?: unknown }).halC2SessionLoadReady ===
             "replay_idle";
         const extractedModelConfigId = extractModelConfigId(sessionSetupResult);
         const nextModelConfigId =

@@ -263,7 +263,7 @@ defmodule HalC2.PullRequestSyncTest do
 
   defp await_next_row(id, fun) do
     receive do
-      {:halc2_shell, {:rows, _, rows}} ->
+      {:hal_c2_shell, {:rows, _, rows}} ->
         case List.keyfind(rows, id, 0) do
           {^id, {_kind, row}} -> if fun.(row), do: row, else: await_next_row(id, fun)
           nil -> await_next_row(id, fun)

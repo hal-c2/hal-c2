@@ -21,7 +21,11 @@ const isDesktopShellEnvironmentCommandError = Schema.is(
 
 function envOutput(values: Readonly<Record<string, string>>): string {
   return Object.entries(values)
-    .flatMap(([name, value]) => [`__HALC2_ENV_${name}_START__`, value, `__HALC2_ENV_${name}_END__`])
+    .flatMap(([name, value]) => [
+      `__HAL_C2_ENV_${name}_START__`,
+      value,
+      `__HAL_C2_ENV_${name}_END__`,
+    ])
     .join("\n");
 }
 

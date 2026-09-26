@@ -25,6 +25,6 @@ describe("DesktopApp errors", () => {
   it("reports the required development port", () => {
     const error = new DesktopDevelopmentBackendPortRequiredError();
 
-    assert.equal(error.message, "HALC2_PORT is required in desktop development.");
+    assert.equal(error.message, "HAL_C2_PORT is required in desktop development.");
   });
 });

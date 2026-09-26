@@ -1,6 +1,6 @@
 # Sources:
 #   docs/user/cursor.md (including Replay And Live Testing, dropped)
-#   apps/server-ex/lib/hal_c2/acp.ex (cursor agent: node + cursor-acp, HALC2_CURSOR_CREDENTIALS, --mode)
+#   apps/server-ex/lib/hal_c2/acp.ex (cursor agent: node + cursor-acp, HAL_C2_CURSOR_CREDENTIALS, --mode)
 #   apps/server-ex/lib/hal_c2/acp/auth.ex, apps/server-ex/lib/hal_c2/acp/url_auth.ex (server.acceptAcpRegistryUrlAuth)
 #   apps/server-ex/lib/hal_c2/provider_auth.ex (provider.auth.start, provider.auth.cancel, provider.auth.logout)
 #   packages/cursor-acp/src/agent.ts, packages/cursor-acp/src/main.ts

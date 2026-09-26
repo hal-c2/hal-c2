@@ -36,7 +36,7 @@ describe("retained shell embed navigation", () => {
       vi.stubGlobal("window", {
         addEventListener: () => {},
         removeEventListener: () => {},
-        halc2Shell: {
+        halC2Shell: {
           onState: async (listener: typeof publish) => {
             publish = listener;
             return () => {};

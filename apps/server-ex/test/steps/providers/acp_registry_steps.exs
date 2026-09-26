@@ -285,7 +285,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
   # The client marks a result as added when one of its instances runs that agent.
   step "{string} is shown as already added", %{args: [id]} = context do
     assert id in ids(context.reply)
-    {%{"settings" => settings}, ctx} = World.call!(context, "halc2.readSettings", %{})
+    {%{"settings" => settings}, ctx} = World.call!(context, "hal-c2.readSettings", %{})
 
     assert Enum.any?(
              settings["providerInstances"],

@@ -20,7 +20,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   GitCommandError,
-  HALC2_PROJECT_FILE_NAME,
+  HAL_C2_PROJECT_FILE_NAME,
   LEGACY_PROJECT_FILE_NAME,
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewInput,
@@ -32,7 +32,7 @@ import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@ha
 import { HostProcessPlatform } from "@hal-c2/shared/hostProcess";
 import { compactTraceAttributes } from "@hal-c2/shared/observability";
 import { decodeJsonResult } from "@hal-c2/shared/schemaJson";
-import { parseHalC2ProjectFile } from "@hal-c2/shared/halc2ProjectFile";
+import { parseHalC2ProjectFile } from "@hal-c2/shared/halC2ProjectFile";
 import { resolveProjectFileBackedSetting } from "@hal-c2/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
@@ -3122,7 +3122,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           options?.submodules != null
             ? null
             : yield* fileSystem
-                .readFileString(path.join(worktreePath, HALC2_PROJECT_FILE_NAME))
+                .readFileString(path.join(worktreePath, HAL_C2_PROJECT_FILE_NAME))
                 .pipe(
                   // A checkout from before the rename only has t3.json.
                   Effect.catchReason("PlatformError", "NotFound", () =>

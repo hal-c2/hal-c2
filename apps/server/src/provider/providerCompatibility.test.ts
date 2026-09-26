@@ -25,7 +25,7 @@ import {
 const driver = ProviderDriverKind.make("codex");
 const policy: ProviderCompatibilityPolicy = {
   driver,
-  halc2Range: ">=0.0.42 <0.1.0",
+  halC2Range: ">=0.0.42 <0.1.0",
   recommendedVersion: "2.0.0",
   recommendedRange: ">=2.0.0 <3.0.0",
   ranges: [
@@ -96,7 +96,7 @@ describe("provider compatibility", () => {
     assert.strictEqual(supported.status, "error");
     assert.strictEqual(supported.message, "Authentication failed");
     assert.strictEqual(
-      applyProviderCompatibility(supported, [{ ...policy, halc2Range: ">=9.0.0" }], [policy])
+      applyProviderCompatibility(supported, [{ ...policy, halC2Range: ">=9.0.0" }], [policy])
         .compatibilityAdvisory?.status,
       "broken",
     );
@@ -118,7 +118,7 @@ describe("provider compatibility", () => {
     assert.doesNotThrow(() => decode(policy));
     const prefixed = decode({
       ...policy,
-      halc2Range: ">=v0.0.42 <v0.1",
+      halC2Range: ">=v0.0.42 <v0.1",
       recommendedRange: "^v2",
       ranges: [{ range: ">=v2.0 <v3", status: "supported" }],
     });
@@ -131,7 +131,7 @@ describe("provider compatibility", () => {
       "unknown",
     );
     for (const invalid of [
-      { ...policy, halc2Range: "*" },
+      { ...policy, halC2Range: "*" },
       { ...policy, recommendedVersion: "3.0.0" },
       { ...policy, ranges: [{ range: ">=2.0.0 garbage", status: "supported" }] },
       { ...policy, recommendedVersion: "2.0.0; echo unsafe" },

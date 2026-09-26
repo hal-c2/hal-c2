@@ -111,14 +111,14 @@ function shellSingleQuote(value) {
 export function makeDevelopmentEnvironmentScript(environment) {
   const envEntries = [
     ["VITE_DEV_SERVER_URL", environment.VITE_DEV_SERVER_URL],
-    ["HALC2_PORT", environment.HALC2_PORT],
-    ["HALC2_HOME", environment.HALC2_HOME],
-    ["HALC2_COMMIT_HASH", environment.HALC2_COMMIT_HASH],
-    ["HALC2_OTLP_TRACES_URL", environment.HALC2_OTLP_TRACES_URL],
-    ["HALC2_OTLP_EXPORT_INTERVAL_MS", environment.HALC2_OTLP_EXPORT_INTERVAL_MS],
-    ["HALC2_OTLP_HEADERS", environment.HALC2_OTLP_HEADERS],
-    ["HALC2_OTLP_PROTOCOL", environment.HALC2_OTLP_PROTOCOL],
-    ["HALC2_DESKTOP_APP_USER_MODEL_ID", APP_BUNDLE_ID],
+    ["HAL_C2_PORT", environment.HAL_C2_PORT],
+    ["HAL_C2_HOME", environment.HAL_C2_HOME],
+    ["HAL_C2_COMMIT_HASH", environment.HAL_C2_COMMIT_HASH],
+    ["HAL_C2_OTLP_TRACES_URL", environment.HAL_C2_OTLP_TRACES_URL],
+    ["HAL_C2_OTLP_EXPORT_INTERVAL_MS", environment.HAL_C2_OTLP_EXPORT_INTERVAL_MS],
+    ["HAL_C2_OTLP_HEADERS", environment.HAL_C2_OTLP_HEADERS],
+    ["HAL_C2_OTLP_PROTOCOL", environment.HAL_C2_OTLP_PROTOCOL],
+    ["HAL_C2_DESKTOP_APP_USER_MODEL_ID", APP_BUNDLE_ID],
   ].filter((entry) => typeof entry[1] === "string" && entry[1].trim().length > 0);
   return [
     ...envEntries.map(

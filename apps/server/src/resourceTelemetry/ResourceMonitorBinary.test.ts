@@ -37,7 +37,7 @@ describe("ResourceMonitorBinary", () => {
         Effect.provideService(HostProcessPlatform, "win32"),
         Effect.provideService(HostProcessArchitecture, "arm64"),
         Effect.provideService(HostProcessEnvironment, {
-          HALC2_RESOURCE_MONITOR_PATH: binaryPath,
+          HAL_C2_RESOURCE_MONITOR_PATH: binaryPath,
         }),
       );
 
@@ -62,7 +62,7 @@ describe("ResourceMonitorBinary", () => {
         Effect.provideService(HostProcessArchitecture, "x64"),
         Effect.provideService(ResourceMonitorBinary.ResourceMonitorHostLinuxLibc, "musl"),
         Effect.provideService(HostProcessEnvironment, {
-          HALC2_RESOURCE_MONITOR_PATH: binaryPath,
+          HAL_C2_RESOURCE_MONITOR_PATH: binaryPath,
         }),
       );
 
@@ -85,7 +85,7 @@ describe("ResourceMonitorBinary", () => {
         Effect.provideService(HostProcessPlatform, "freebsd"),
         Effect.provideService(HostProcessArchitecture, "ia32"),
         Effect.provideService(HostProcessEnvironment, {
-          HALC2_RESOURCE_MONITOR_PATH: binaryPath,
+          HAL_C2_RESOURCE_MONITOR_PATH: binaryPath,
         }),
       );
 
@@ -109,7 +109,7 @@ describe("ResourceMonitorBinary", () => {
         Effect.provideService(HostProcessArchitecture, "x64"),
         Effect.provideService(ResourceMonitorBinary.ResourceMonitorHostLinuxLibc, "gnu"),
         Effect.provideService(HostProcessEnvironment, {
-          HALC2_RESOURCE_MONITOR_PATH: binaryPath,
+          HAL_C2_RESOURCE_MONITOR_PATH: binaryPath,
         }),
       );
       const error = yield* Effect.flip(service.resolve);

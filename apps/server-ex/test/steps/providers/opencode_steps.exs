@@ -462,7 +462,7 @@ defmodule HalC2.Steps.Providers.Opencode do
 
   step "the user clears the server URL", context do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "halc2.readSettings")
+      World.call!(context, "hal-c2.readSettings")
 
     settings =
       update_in(
@@ -472,7 +472,7 @@ defmodule HalC2.Steps.Providers.Opencode do
       )
 
     {_, context} =
-      World.call!(context, "halc2.writeSettings", %{"settings" => settings, "version" => version})
+      World.call!(context, "hal-c2.writeSettings", %{"settings" => settings, "version" => version})
 
     context
   end

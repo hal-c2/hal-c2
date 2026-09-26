@@ -195,7 +195,7 @@ describe("AcpRuntimeModel", () => {
     } as EffectAcpSchema.InitializeResponse);
 
     expect(response.modes).toBeUndefined();
-    expect(response._meta).toMatchObject({ halc2SessionLoadReady: "replay_idle" });
+    expect(response._meta).toMatchObject({ halC2SessionLoadReady: "replay_idle" });
   });
 
   it("builds a synthetic load response with initialize mode state", () => {
@@ -1085,7 +1085,7 @@ describe("AcpRuntimeModel", () => {
   it("turns future ACP content and session updates into explicit placeholders", () => {
     expect(
       acpContentBlockDisplayText({
-        type: "_halc2_unknown",
+        type: "_hal_c2_unknown",
         originalType: "chart",
         raw: { type: "chart", points: [] },
       }),
@@ -1095,7 +1095,7 @@ describe("AcpRuntimeModel", () => {
       parseSessionUpdateEvent({
         sessionId: "session-1",
         update: {
-          sessionUpdate: "_halc2_unknown",
+          sessionUpdate: "_hal_c2_unknown",
           originalSessionUpdate: "timeline_update",
           raw: { sessionUpdate: "timeline_update", entries: [] },
         },
@@ -1361,7 +1361,7 @@ describe("extractMcpToolCallIdentity", () => {
       toolCallId: "call_JdxnvzjHHrbvyASTLVekLYWV|fc_08f5a805a7159aa6016a7ec4afad548191",
       kind: "execute",
       title:
-        '"$HALC2_ACP_MCP_NODE" "$HALC2_ACP_MCP_ENTRYPOINT" acp-mcp-call orchestrator_capabilities \'{}\'',
+        '"$HAL_C2_ACP_MCP_NODE" "$HAL_C2_ACP_MCP_ENTRYPOINT" acp-mcp-call orchestrator_capabilities \'{}\'',
       status: "in_progress",
       rawInput: null,
       content: [
@@ -1408,8 +1408,8 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
-  it("recovers halc2_ tool names that the server-prefix pattern would otherwise strip", () => {
-    for (const title of ["halc2_thread_list", "hal-c2_halc2_thread_list"]) {
+  it("recovers hal_c2_ tool names that the server-prefix pattern would otherwise strip", () => {
+    for (const title of ["hal_c2_thread_list", "hal-c2_hal_c2_thread_list"]) {
       const toolCall = toolCallFromUpdate({
         sessionUpdate: "tool_call",
         toolCallId: `bare-${title}`,
@@ -1419,7 +1419,7 @@ describe("extractMcpToolCallIdentity", () => {
       });
       expect(extractMcpToolCallIdentity(toolCall), title).toEqual({
         server: "hal-c2",
-        tool: "halc2_thread_list",
+        tool: "hal_c2_thread_list",
       });
     }
   });
@@ -1513,12 +1513,12 @@ describe("extractMcpToolCallIdentity", () => {
       kind: "other",
       title: "unrelated display title",
       status: "pending",
-      _meta: { toolName: "mcp::hal-c2::halc2_thread_send", serverId: "hal-c2", provenance: "mcp" },
+      _meta: { toolName: "mcp::hal-c2::hal_c2_thread_send", serverId: "hal-c2", provenance: "mcp" },
     });
 
     expect(extractMcpToolCallIdentity(toolCall)).toEqual({
       server: "hal-c2",
-      tool: "halc2_thread_send",
+      tool: "hal_c2_thread_send",
     });
   });
 

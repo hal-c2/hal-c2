@@ -52,7 +52,7 @@ function makeEnvironmentLayer(baseDir: string, appVersion = "0.0.17") {
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ HALC2_HOME: baseDir })),
+      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ HAL_C2_HOME: baseDir })),
     ),
   );
 }

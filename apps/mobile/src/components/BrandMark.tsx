@@ -3,7 +3,7 @@ import { Image } from "expo-image";
 import { View } from "react-native";
 
 import { AppText as Text } from "./AppText";
-import { HALC2_BRAND_MARK_SOURCE } from "./brandAssets";
+import { HAL_C2_BRAND_MARK_SOURCE } from "./brandAssets";
 
 const appVariant = Constants.expoConfig?.extra?.appVariant;
 const DEFAULT_STAGE_LABEL =
@@ -17,7 +17,7 @@ export function BrandMark(props: { readonly compact?: boolean; readonly stageLab
   return (
     <View className="flex-row items-center gap-3">
       <Image
-        source={HALC2_BRAND_MARK_SOURCE}
+        source={HAL_C2_BRAND_MARK_SOURCE}
         accessibilityIgnoresInvertColors
         style={{
           width: iconSize,
@@ -27,9 +27,9 @@ export function BrandMark(props: { readonly compact?: boolean; readonly stageLab
       />
       <View className="gap-1">
         <View className="flex-row items-center gap-2">
-          <Text className="text-lg font-halc2-bold tracking-[-0.4px] text-foreground">HAL-C2</Text>
+          <Text className="text-lg font-hal-c2-bold tracking-[-0.4px] text-foreground">HAL-C2</Text>
           <View className="rounded-full bg-subtle px-2 py-1">
-            <Text className="text-3xs font-halc2-bold tracking-[1.1px] uppercase text-foreground-muted">
+            <Text className="text-3xs font-hal-c2-bold tracking-[1.1px] uppercase text-foreground-muted">
               {stageLabel}
             </Text>
           </View>

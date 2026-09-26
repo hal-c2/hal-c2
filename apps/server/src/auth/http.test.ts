@@ -94,11 +94,11 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
           );
           expect(devResponse.status).toBe(200);
           const devCookies = devResponse.headers.getSetCookie();
-          const devCookie = devCookies.find((cookie) => cookie.startsWith("halc2_dev_session_"));
+          const devCookie = devCookies.find((cookie) => cookie.startsWith("hal_c2_dev_session_"));
           expect(devCookie).toContain("HttpOnly");
           expect(devCookie).toContain(`=${DEV_TOKEN};`);
           expect(devCookies).toContainEqual(
-            expect.stringMatching(/^halc2_session_[^=]*=;.*Max-Age=0/),
+            expect.stringMatching(/^hal_c2_session_[^=]*=;.*Max-Age=0/),
           );
           const devCookieHeader = devCookie?.split(";", 1)[0] ?? "";
           const environmentBSession = await environmentB.handler(
@@ -127,8 +127,8 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
           expect(restrictedResponse.status).toBe(200);
           const restrictedCookies = restrictedResponse.headers.getSetCookie();
           expect(restrictedCookies).toHaveLength(1);
-          expect(restrictedCookies[0]).toMatch(/^halc2_session_/);
-          expect(restrictedCookies[0]).not.toContain("halc2_dev_session_");
+          expect(restrictedCookies[0]).toMatch(/^hal_c2_session_/);
+          expect(restrictedCookies[0]).not.toContain("hal_c2_dev_session_");
         }),
       ([environmentA, environmentB]) =>
         Effect.promise(() => Promise.all([environmentA.dispose(), environmentB.dispose()])),

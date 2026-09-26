@@ -31,7 +31,7 @@ function lastPublished<T>(): T {
   return publish.mock.calls.at(-1)?.[1] as T;
 }
 
-vi.stubGlobal("window", { halc2Shell: shell });
+vi.stubGlobal("window", { halC2Shell: shell });
 
 const items: ContextMenuItem<"rename" | "delete">[] = [
   { id: "rename", label: "Rename" },
@@ -41,7 +41,7 @@ const items: ContextMenuItem<"rename" | "delete">[] = [
 afterEach(() => {
   closeShellContextMenu();
   publish.mockClear();
-  vi.stubGlobal("window", { halc2Shell: shell });
+  vi.stubGlobal("window", { halC2Shell: shell });
 });
 
 describe("showShellContextMenu", () => {
@@ -111,7 +111,7 @@ describe("showShellContextMenu", () => {
 
   it("namespaces request ids by the calling document", async () => {
     vi.stubGlobal("window", {
-      halc2Shell: {
+      halC2Shell: {
         ...shell,
         surfaceId: "rightPanel",
       } satisfies HalC2Shell,

@@ -920,7 +920,7 @@ function TaskForm({
         onPress={() => void save()}
         className="min-h-12 items-center justify-center rounded-[14px] bg-primary px-4 disabled:opacity-50"
       >
-        <Text className="text-base font-halc2-medium text-primary-foreground">
+        <Text className="text-base font-hal-c2-medium text-primary-foreground">
           {saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
         </Text>
       </Pressable>
@@ -1013,7 +1013,7 @@ function EnvironmentTasks({
               }}
               className="min-w-0 flex-1 gap-1 active:opacity-70"
             >
-              <Text className="text-lg font-halc2-medium text-foreground" numberOfLines={1}>
+              <Text className="text-lg font-hal-c2-medium text-foreground" numberOfLines={1}>
                 {task.title}
               </Text>
               <Text className="text-sm text-foreground-muted" numberOfLines={2}>

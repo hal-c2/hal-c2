@@ -437,7 +437,7 @@ defmodule HalC2.Steps.Providers.UsageLimits do
   end
 
   step "the settings show the key only as hidden", context do
-    {%{"settings" => settings}, context} = World.call!(context, "halc2.readSettings")
+    {%{"settings" => settings}, context} = World.call!(context, "hal-c2.readSettings")
     assert %{"hub" => %{"managementKey" => @marker}} = settings["usageLimitSources"]
     refute File.read!(Path.join(context.node.home, "settings.json")) =~ "hub-key"
     context
@@ -664,12 +664,12 @@ defmodule HalC2.Steps.Providers.UsageLimits do
 
   defp write_sources(context, fun) do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "halc2.readSettings")
+      World.call!(context, "hal-c2.readSettings")
 
     settings = Map.put(settings, "usageLimitSources", fun.(settings["usageLimitSources"] || %{}))
 
     {_, context} =
-      World.call!(context, "halc2.writeSettings", %{"settings" => settings, "version" => version})
+      World.call!(context, "hal-c2.writeSettings", %{"settings" => settings, "version" => version})
 
     context
   end

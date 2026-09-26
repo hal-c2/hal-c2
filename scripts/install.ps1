@@ -4,34 +4,34 @@
 #   irm https://raw.githubusercontent.com/hal-c2/hal-c2/main/scripts/install.ps1 | iex
 #
 # Environment:
-#   HALC2_CHANNEL           release train to follow: stable, nightly, or preview
+#   HAL_C2_CHANNEL           release train to follow: stable, nightly, or preview
 #                            (default: stable; preview is a maintainers' test train)
-#   HALC2_VERSION           exact version to install (overrides HALC2_CHANNEL)
-#   HALC2_HOME              HAL-C2 home directory (default: ~\.hal-c2, or an
+#   HAL_C2_VERSION           exact version to install (overrides HAL_C2_CHANNEL)
+#   HAL_C2_HOME              HAL-C2 home directory (default: ~\.hal-c2, or an
 #                            existing ~\.t3 from before the rename; the legacy
 #                            T3CODE_HOME is still honoured)
-#   HALC2_INSTALL_BIN_DIR   where hal-c2.exe is linked (default: ~\.local\bin)
-#   HALC2_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
+#   HAL_C2_INSTALL_BIN_DIR   where hal-c2.exe is linked (default: ~\.local\bin)
+#   HAL_C2_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
-# The archive is unpacked into $HALC2_HOME\runtime\versions\<version>, the
+# The archive is unpacked into $HAL_C2_HOME\runtime\versions\<version>, the
 # same layout `hal-c2 service install` uses, so the service reuses this download.
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $repo = "hal-c2/hal-c2"
-$baseUrl = if ($env:HALC2_RELEASE_BASE_URL) { $env:HALC2_RELEASE_BASE_URL.TrimEnd("/") } else { "https://github.com/$repo/releases/download" }
+$baseUrl = if ($env:HAL_C2_RELEASE_BASE_URL) { $env:HAL_C2_RELEASE_BASE_URL.TrimEnd("/") } else { "https://github.com/$repo/releases/download" }
 # Same order as @hal-c2/shared/devHome: an existing pre-rename ~\.t3 is used in place.
-$halc2Home = if ($env:HALC2_HOME) {
-  $env:HALC2_HOME
+$halC2Home = if ($env:HAL_C2_HOME) {
+  $env:HAL_C2_HOME
 } elseif ($env:T3CODE_HOME) {
-  Write-Warning "hal-c2 install: T3CODE_HOME is deprecated; set HALC2_HOME instead."
+  Write-Warning "hal-c2 install: T3CODE_HOME is deprecated; set HAL_C2_HOME instead."
   $env:T3CODE_HOME
 } elseif ((Test-Path (Join-Path $HOME ".hal-c2") -PathType Container) -or -not (Test-Path (Join-Path $HOME ".t3") -PathType Container)) {
   Join-Path $HOME ".hal-c2"
 } else {
   Join-Path $HOME ".t3"
 }
-$binDir = if ($env:HALC2_INSTALL_BIN_DIR) { $env:HALC2_INSTALL_BIN_DIR } else { Join-Path $HOME ".local\bin" }
+$binDir = if ($env:HAL_C2_INSTALL_BIN_DIR) { $env:HAL_C2_INSTALL_BIN_DIR } else { Join-Path $HOME ".local\bin" }
 
 function Fail([string] $message) {
   Write-Error "hal-c2 install: $message"
@@ -139,8 +139,8 @@ $arch = switch ($rawArch) {
   default { Fail "unsupported architecture $rawArch" }
 }
 
-$channel = if ($env:HALC2_CHANNEL) { $env:HALC2_CHANNEL } else { "stable" }
-$version = $env:HALC2_VERSION
+$channel = if ($env:HAL_C2_CHANNEL) { $env:HAL_C2_CHANNEL } else { "stable" }
+$version = $env:HAL_C2_VERSION
 if (-not $version) {
   # Tags are v<semver>; the channel is the prerelease identifier, or none for
   # stable. Only tags of the requested train are considered, so a stable
@@ -149,23 +149,23 @@ if (-not $version) {
     "stable" { '^v\d+\.\d+\.\d+$' }
     "nightly" { '^v\d+\.\d+\.\d+-nightly\.\d+\.\d+$' }
     "preview" { '^v\d+\.\d+\.\d+-preview\.\d+\.\d+$' }
-    default { Fail "HALC2_CHANNEL must be stable, nightly, or preview" }
+    default { Fail "HAL_C2_CHANNEL must be stable, nightly, or preview" }
   }
   $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases?per_page=100" -Headers @{ "User-Agent" = "hal-c2-install" }
   $tag = ($releases | Where-Object { -not $_.draft -and $_.tag_name -match $tagPattern } | Select-Object -First 1).tag_name
-  if (-not $tag) { Fail "could not find a $channel release; set HALC2_VERSION" }
+  if (-not $tag) { Fail "could not find a $channel release; set HAL_C2_VERSION" }
   $version = $tag.Substring(1)
 }
 if ($version -match '-preview\.') {
-  Write-Warning "hal-c2 $version is a preview build. Preview builds are cut by maintainers from unreleased branches to exercise the release pipeline. They can be broken, receive no fixes, and are never offered as updates. Set HALC2_CHANNEL=stable (the default) for a supported build."
-  if ($channel -ne "preview" -and -not $env:HALC2_VERSION) {
+  Write-Warning "hal-c2 $version is a preview build. Preview builds are cut by maintainers from unreleased branches to exercise the release pipeline. They can be broken, receive no fixes, and are never offered as updates. Set HAL_C2_CHANNEL=stable (the default) for a supported build."
+  if ($channel -ne "preview" -and -not $env:HAL_C2_VERSION) {
     Fail "refusing a preview build that was not explicitly requested"
   }
 }
 
 $stem = "hal-c2-$version-win32-$arch"
 $archive = "$stem.zip"
-$versionsDir = Join-Path $halc2Home "runtime\versions"
+$versionsDir = Join-Path $halC2Home "runtime\versions"
 $targetDir = Join-Path $versionsDir $version
 $marker = Join-Path $targetDir ".install-complete"
 

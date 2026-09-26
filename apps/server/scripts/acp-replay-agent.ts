@@ -34,9 +34,9 @@ interface JsonRpcMessage {
   readonly headers?: ReadonlyArray<unknown>;
 }
 
-const encodedTranscript = process.env.HALC2_ACP_REPLAY_TRANSCRIPT;
-const statusPath = process.env.HALC2_ACP_REPLAY_STATUS_PATH;
-const replayWorkspace = process.env.HALC2_ACP_REPLAY_WORKSPACE ?? process.cwd();
+const encodedTranscript = process.env.HAL_C2_ACP_REPLAY_TRANSCRIPT;
+const statusPath = process.env.HAL_C2_ACP_REPLAY_STATUS_PATH;
+const replayWorkspace = process.env.HAL_C2_ACP_REPLAY_WORKSPACE ?? process.cwd();
 
 if (encodedTranscript === undefined || statusPath === undefined) {
   process.stderr.write("ACP replay requires transcript and status environment variables.\n");

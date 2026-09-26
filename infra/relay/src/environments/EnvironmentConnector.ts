@@ -622,7 +622,7 @@ const make = Effect.gen(function* () {
       );
       const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
       const decoded = yield* environmentClient.connect
-        .halc2MintCredential({ payload: { proof } })
+        .halC2MintCredential({ payload: { proof } })
         .pipe(
           withoutRedirects,
           Effect.mapError(

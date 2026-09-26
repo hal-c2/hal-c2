@@ -1130,7 +1130,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     message =
       if announce,
         do:
-          "<halc2_orchestration_instructions>#{HalC2.Mcp.instructions()}</halc2_orchestration_instructions>\n\n<user_request>\n#{message}\n</user_request>",
+          "<hal_c2_orchestration_instructions>#{HalC2.Mcp.instructions()}</hal_c2_orchestration_instructions>\n\n<user_request>\n#{message}\n</user_request>",
         else: message
 
     text = [%{"type" => "text", "text" => message}]

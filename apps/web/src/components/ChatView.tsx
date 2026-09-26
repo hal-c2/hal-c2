@@ -3685,8 +3685,8 @@ export default function ChatView(props: ChatViewProps) {
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
       // The embed documents have no composer; the primary's bridge adds it.
-      if (presentation === "rightPanel" && window.halc2Shell) {
-        void window.halc2Shell.dispatch("composer.terminalContext.add", selection);
+      if (presentation === "rightPanel" && window.halC2Shell) {
+        void window.halC2Shell.dispatch("composer.terminalContext.add", selection);
         return;
       }
       composerRef.current?.addTerminalContext(selection);
@@ -6135,7 +6135,7 @@ export default function ChatView(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         if (event.repeat) return;
-        if (shellHostsChrome) void window.halc2Shell?.dispatch("composer.modelPicker.toggle");
+        if (shellHostsChrome) void window.halC2Shell?.dispatch("composer.modelPicker.toggle");
         else composerRef.current?.toggleModelPicker();
         return;
       }

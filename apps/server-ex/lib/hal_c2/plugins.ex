@@ -27,7 +27,7 @@ defmodule HalC2.Plugins do
   A plugin's manifest may ask for `permissions` (`[%{id, label}]`); enabling it
   grants them, recorded under `plugins.<id>.granted` and shown in the listing.
 
-  Watchers (`subscribe/1`) get `{:halc2_plugins, node, list}` whenever the list changes.
+  Watchers (`subscribe/1`) get `{:hal_c2_plugins, node, list}` whenever the list changes.
   """
 
   use GenServer
@@ -66,7 +66,7 @@ defmodule HalC2.Plugins do
 
   def handle(method, _input), do: {:error, "plugins.#{method} is not served by this node yet"}
 
-  @doc "Sends `{:halc2_plugins, node, list}` to `pid` on every change; returns the list."
+  @doc "Sends `{:hal_c2_plugins, node, list}` to `pid` on every change; returns the list."
   def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
 
   # --- contributions ------------------------------------------------------------------
@@ -455,7 +455,7 @@ defmodule HalC2.Plugins do
 
   @impl true
   # A client may turn plugins on or off by writing the settings document itself.
-  def handle_info({:halc2_settings, _node, _settings}, state),
+  def handle_info({:hal_c2_settings, _node, _settings}, state),
     do: {:noreply, state |> reconcile() |> push()}
 
   def handle_info({:DOWN, ref, :process, pid, reason}, state) do
@@ -957,7 +957,7 @@ defmodule HalC2.Plugins do
 
   defp push(state) do
     list = list(state)
-    for {pid, _} <- state.watchers, do: send(pid, {:halc2_plugins, node(), list})
+    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_plugins, node(), list})
     state
   end
 end

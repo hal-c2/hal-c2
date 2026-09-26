@@ -1336,7 +1336,7 @@ function codexReplayPreamble(input: {
         id: 1,
         method: "initialize",
         params: {
-          clientInfo: { name: "halc2_desktop", title: "HAL-C2 Desktop", version: "0.1.0" },
+          clientInfo: { name: "hal_c2_desktop", title: "HAL-C2 Desktop", version: "0.1.0" },
           capabilities: {
             experimentalApi: true,
             optOutNotificationMethods: ["turn/diff/updated"],
@@ -1350,7 +1350,7 @@ function codexReplayPreamble(input: {
       frame: {
         id: 1,
         result: {
-          userAgent: "halc2_desktop/0.144.0",
+          userAgent: "hal_c2_desktop/0.144.0",
           codexHome: "/tmp/codex-home",
           platformFamily: "unix",
           platformOs: "macos",
@@ -5226,7 +5226,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               type: "mcpToolCall",
               id: COMPLETED_WAIT_ITEM,
               server: "hal-c2",
-              tool: "halc2_thread_wait",
+              tool: "hal_c2_thread_wait",
               status: "inProgress",
               arguments: { threadId: "thread:completed-wait", timeoutMs: 30000 },
             },
@@ -5246,7 +5246,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               type: "mcpToolCall",
               id: COMPLETED_WAIT_ITEM,
               server: "hal-c2",
-              tool: "halc2_thread_wait",
+              tool: "hal_c2_thread_wait",
               status: "completed",
               arguments: { threadId: "thread:completed-wait", timeoutMs: 30000 },
               result: { content: [{ type: "text", text: "idle" }] },
@@ -5267,7 +5267,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               type: "mcpToolCall",
               id: ORPHAN_WAIT_ITEM,
               server: "hal-c2",
-              tool: "halc2_thread_wait",
+              tool: "hal_c2_thread_wait",
               status: "inProgress",
               arguments: {
                 threadId:

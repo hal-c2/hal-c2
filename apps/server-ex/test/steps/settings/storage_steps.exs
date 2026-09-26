@@ -204,13 +204,13 @@ defmodule HalC2.Steps.Settings.Storage do
   end
 
   step "the user turns on a rule that covers it", context do
-    {{:ok, read}, context} = World.call(context, "halc2.readSettings")
+    {{:ok, read}, context} = World.call(context, "hal-c2.readSettings")
 
     settings =
       World.deep_merge(read["settings"], %{"storageCleanup" => %{"worktreeAfterDays" => 7}})
 
     {reply, context} =
-      World.call(context, "halc2.writeSettings", %{
+      World.call(context, "hal-c2.writeSettings", %{
         "settings" => settings,
         "version" => read["version"]
       })

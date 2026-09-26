@@ -5,7 +5,7 @@
 #   apps/web/src/components/settings/useProjectScriptSettings.ts
 #   apps/web/src/components/projectScriptEditor.tsx
 #   apps/server-ex/lib/hal_c2/settings.ex (defaultProjectScripts, projectSettingsOverrides)
-#   packages/contracts/src/rpc.ts (halc2.readSettings, halc2.writeSettings, halc2.upsertKeybinding, halc2.removeKeybinding)
+#   packages/contracts/src/rpc.ts (hal-c2.readSettings, hal-c2.writeSettings, hal-c2.upsertKeybinding, hal-c2.removeKeybinding)
 
 Feature: Project actions settings panel
   The Actions panel lists the actions every project on an environment starts with, and a

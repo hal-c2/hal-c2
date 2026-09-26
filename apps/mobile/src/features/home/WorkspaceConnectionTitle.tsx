@@ -141,8 +141,8 @@ export function WorkspaceConnectionTitle(props: {
         <Text
           className={
             size === "pageTitle"
-              ? "text-[20px] font-halc2-bold text-foreground-muted"
-              : "text-[16px] font-halc2-bold text-foreground-muted"
+              ? "text-[20px] font-hal-c2-bold text-foreground-muted"
+              : "text-[16px] font-hal-c2-bold text-foreground-muted"
           }
           numberOfLines={1}
           style={{ flexShrink: 1 }}

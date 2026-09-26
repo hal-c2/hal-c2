@@ -41,7 +41,7 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
       // Packaged desktop has no devUrl, but still needs the port scope: it
       // scans upward from 3773 for a free port and binds 127.0.0.1, so a second
       // instance shares this one's hostname on a different port.
-      expect(descriptor.sessionCookieName).toBe("halc2_session_3773");
+      expect(descriptor.sessionCookieName).toBe("hal_c2_session_3773");
     }).pipe(
       Effect.provide(
         makeEnvironmentAuthPolicyLayer({
@@ -57,7 +57,7 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
       const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
       const descriptor = yield* policy.getDescriptor();
 
-      expect(descriptor.sessionCookieName).toBe("halc2_session_3774");
+      expect(descriptor.sessionCookieName).toBe("hal_c2_session_3774");
     }).pipe(
       Effect.provide(
         makeEnvironmentAuthPolicyLayer({
@@ -92,7 +92,7 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
 
       expect(descriptor.policy).toBe("loopback-browser");
       expect(descriptor.bootstrapMethods).toEqual(["one-time-token"]);
-      expect(descriptor.sessionCookieName).toMatch(/^halc2_session_3773_[a-f0-9]{12}$/);
+      expect(descriptor.sessionCookieName).toMatch(/^hal_c2_session_3773_[a-f0-9]{12}$/);
     }).pipe(
       Effect.provide(
         makeEnvironmentAuthPolicyLayer({
@@ -111,7 +111,7 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
 
       expect(descriptor.policy).toBe("remote-reachable");
       expect(descriptor.bootstrapMethods).toEqual(["one-time-token"]);
-      expect(descriptor.sessionCookieName).toMatch(/^halc2_session_[a-f0-9]{12}$/);
+      expect(descriptor.sessionCookieName).toMatch(/^hal_c2_session_[a-f0-9]{12}$/);
     }).pipe(
       Effect.provide(
         makeEnvironmentAuthPolicyLayer({
@@ -128,7 +128,7 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
       const descriptor = yield* policy.getDescriptor();
 
       expect(descriptor.policy).toBe("remote-reachable");
-      expect(descriptor.sessionCookieName).toMatch(/^halc2_session_5775_[a-f0-9]{12}$/);
+      expect(descriptor.sessionCookieName).toMatch(/^hal_c2_session_5775_[a-f0-9]{12}$/);
     }).pipe(
       Effect.provide(
         makeEnvironmentAuthPolicyLayer({
@@ -147,7 +147,7 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
       const descriptor = yield* policy.getDescriptor();
 
       expect(descriptor.policy).toBe("remote-reachable");
-      expect(descriptor.sessionCookieName).toMatch(/^halc2_session_[a-f0-9]{12}$/);
+      expect(descriptor.sessionCookieName).toMatch(/^hal_c2_session_[a-f0-9]{12}$/);
     }).pipe(
       Effect.provide(
         makeEnvironmentAuthPolicyLayer({

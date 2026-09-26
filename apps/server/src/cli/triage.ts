@@ -165,7 +165,7 @@ export const triageCommand = Command.make("triage", {
       const path = yield* Path.Path;
 
       // Triage is a user-facing feature: always the userdata state, never dev.
-      // --base-dir wins; HALC2_HOME is its documented env equivalent (same
+      // --base-dir wins; HAL_C2_HOME is its documented env equivalent (same
       // precedence as `hal-c2 pair`).
       const explicitBaseDir = Option.getOrUndefined(flags.baseDir);
       const baseDir = yield* resolveBaseDir(explicitBaseDir ?? (yield* configuredHalC2HomeFromEnv));

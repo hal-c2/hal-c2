@@ -75,8 +75,8 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
 
     return withFakeAcpGrok(
       {
-        HALC2_ACP_REQUEST_LOG_PATH: requestLogPath,
-        HALC2_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+        HAL_C2_ACP_REQUEST_LOG_PATH: requestLogPath,
+        HAL_C2_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
           subject: "Add Grok provider",
           body: "Wire up the ACP runtime and headless text generation path.",
         }),
@@ -115,7 +115,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
   it.effect("extracts the JSON object when Grok wraps it in conversational text", () =>
     withFakeAcpGrok(
       {
-        HALC2_ACP_PROMPT_RESPONSE_TEXT:
+        HAL_C2_ACP_PROMPT_RESPONSE_TEXT:
           "Sure! Here's a thread title:\n\n" +
           JSON.stringify({ title: "Investigate failing CI" }) +
           "\n\nLet me know if you need anything else.",
@@ -135,7 +135,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
   it.effect("surfaces ACP request failures as text generation errors", () =>
     withFakeAcpGrok(
       {
-        HALC2_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ branch: "unreachable" }),
+        HAL_C2_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ branch: "unreachable" }),
       },
       (textGeneration) =>
         Effect.gen(function* () {
@@ -158,7 +158,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
   it.effect("fails with TextGenerationError when output is empty", () =>
     withFakeAcpGrok(
       {
-        HALC2_ACP_PROMPT_RESPONSE_TEXT: "   \n  ",
+        HAL_C2_ACP_PROMPT_RESPONSE_TEXT: "   \n  ",
       },
       (textGeneration) =>
         Effect.gen(function* () {
@@ -178,7 +178,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
   it.effect("decodes a structured PR title + body", () =>
     withFakeAcpGrok(
       {
-        HALC2_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+        HAL_C2_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
           title: "feat(grok): wire up session/set_model",
           body: "## Summary\n- Replace `-m` spawn flag with the typed ACP `session/set_model`.\n- Translate `MODEL_SWITCH_INCOMPATIBLE_AGENT` into a validation error.",
         }),
@@ -204,7 +204,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
   it.effect("fails with TextGenerationError when output is unparseable JSON", () =>
     withFakeAcpGrok(
       {
-        HALC2_ACP_PROMPT_RESPONSE_TEXT: "totally not json output from a confused model",
+        HAL_C2_ACP_PROMPT_RESPONSE_TEXT: "totally not json output from a confused model",
       },
       (textGeneration) =>
         Effect.gen(function* () {

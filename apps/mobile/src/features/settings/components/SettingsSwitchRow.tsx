@@ -26,7 +26,7 @@ export function SettingsSwitchRow(
           className="rounded-full bg-subtle px-3 py-2 active:opacity-70"
           onPress={() => props.onValueChange(true)}
         >
-          <Text className="text-sm font-halc2-medium text-foreground">Mixed · Set on</Text>
+          <Text className="text-sm font-hal-c2-medium text-foreground">Mixed · Set on</Text>
         </Pressable>
       ) : (
         <ThemedSwitch

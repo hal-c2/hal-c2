@@ -75,12 +75,12 @@ defmodule HalC2.Application do
     Supervisor.start_link(children, strategy: :one_for_one, name: HalC2.Supervisor)
   end
 
-  # Named nodes find peers listed in HALC2_PEERS (node names such as hal_c2@192.168.1.20);
+  # Named nodes find peers listed in HAL_C2_PEERS (node names such as hal_c2@192.168.1.20);
   # nodes with cluster certificates also search the tailnet.
   @doc false
   def discovery(home) do
     static =
-      case System.get_env("HALC2_PEERS") do
+      case System.get_env("HAL_C2_PEERS") do
         nil -> []
         peers -> [static: [strategy: Cluster.Strategy.Epmd, config: [hosts: parse_peers(peers)]]]
       end

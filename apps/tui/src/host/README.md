@@ -187,7 +187,7 @@ effort, mode and access controls, `append`) and `sidebar.footer` (Sidebar,
 User config lives in the TUI config dir (`userConfig.ts`), read before the
 terminal is taken over so a `keymap.json` that is not valid JSON stops the
 launch with a readable error: `plugins/` is loaded as a plugin directory,
-`HALC2_TUI_PLUGINS` adds files or directories (a path list), and `keymap.json`
+`HAL_C2_TUI_PLUGINS` adds files or directories (a path list), and `keymap.json`
 overrides keymaps (see "Keys and actions").
 
 ## Where the rest of ChatView's state goes

@@ -595,10 +595,10 @@ describe("link proof provider kinds", () => {
     origin: { localHttpHost: "127.0.0.1", localHttpPort: 7331 },
   });
 
-  it("accepts managed and manual endpoints but not halc2_relay", () => {
+  it("accepts managed and manual endpoints but not hal_c2_relay", () => {
     expect(isSupportedLinkProviderKind(proofRequest("cloudflare_tunnel"))).toBe(true);
     expect(isSupportedLinkProviderKind(proofRequest("manual"))).toBe(true);
-    expect(isSupportedLinkProviderKind(proofRequest("halc2_relay"))).toBe(false);
+    expect(isSupportedLinkProviderKind(proofRequest("hal_c2_relay"))).toBe(false);
   });
 
   it("only claims the managed-tunnel scope for tunnel links", () => {

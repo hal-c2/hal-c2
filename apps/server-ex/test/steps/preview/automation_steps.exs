@@ -594,7 +594,7 @@ defmodule HalC2.Steps.Preview.Automation do
   end
 
   step "an agent lists the thread's preview tabs", context do
-    Map.put(context, :result, HalC2.Mcp.Tools.call("halc2_preview_list", %{}, caller(context)))
+    Map.put(context, :result, HalC2.Mcp.Tools.call("hal_c2_preview_list", %{}, caller(context)))
   end
 
   step "it receives the first 20 tabs and a cursor for the rest", context do
@@ -606,7 +606,7 @@ defmodule HalC2.Steps.Preview.Automation do
 
   step "listing again from that cursor returns the last 5 with no further cursor", context do
     assert {:ok, %{"sessions" => sessions, "nextCursor" => nil}} =
-             HalC2.Mcp.Tools.call("halc2_preview_list", %{"cursor" => 20}, caller(context))
+             HalC2.Mcp.Tools.call("hal_c2_preview_list", %{"cursor" => 20}, caller(context))
 
     assert sessions == Enum.drop(context.all_tabs, 20)
     assert length(sessions) == 5
@@ -638,7 +638,7 @@ defmodule HalC2.Steps.Preview.Automation do
 
   step "the agent closes that tab", context do
     result =
-      HalC2.Mcp.Tools.call("halc2_preview_close", %{"tabId" => context.tab}, caller(context))
+      HalC2.Mcp.Tools.call("hal_c2_preview_close", %{"tabId" => context.tab}, caller(context))
 
     Map.put(context, :result, result)
   end

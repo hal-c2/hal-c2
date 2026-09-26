@@ -33,7 +33,7 @@ defmodule HalC2.AutoPullTest do
         "workspaceRoot" => repo
       })
 
-    assert_receive {:halc2_shell, {:rows, _, [{"p1", _}]}}, 2_000
+    assert_receive {:hal_c2_shell, {:rows, _, [{"p1", _}]}}, 2_000
     %{repo: repo}
   end
 

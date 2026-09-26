@@ -60,11 +60,11 @@ export function projectScriptRuntimeEnv(
 ): Record<string, string> {
   // The T3CODE_ names are what scripts written before the rename use.
   const env: Record<string, string> = {
-    HALC2_PROJECT_ROOT: input.project.cwd,
+    HAL_C2_PROJECT_ROOT: input.project.cwd,
     T3CODE_PROJECT_ROOT: input.project.cwd,
   };
   if (input.worktreePath) {
-    env.HALC2_WORKTREE_PATH = input.worktreePath;
+    env.HAL_C2_WORKTREE_PATH = input.worktreePath;
     env.T3CODE_WORKTREE_PATH = input.worktreePath;
   }
   if (input.extraEnv) {

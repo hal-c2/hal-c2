@@ -349,7 +349,7 @@ function normalizeContentBlock(content: AcpSchemaV2.ContentBlock): AcpSchema.Con
     case "resource":
       return content as AcpSchema.ContentBlock;
     default:
-      return { type: "_halc2_unknown", originalType: content.type, raw: content };
+      return { type: "_hal_c2_unknown", originalType: content.type, raw: content };
   }
 }
 
@@ -362,7 +362,7 @@ function normalizeToolCallContent(content: AcpSchemaV2.ToolCallContent): AcpSche
     return content as Extract<AcpSchemaV2.ToolCallContent, { readonly type: "terminal" }>;
   }
   if (content.type !== "diff") {
-    return { type: "_halc2_unknown", originalType: content.type, raw: content };
+    return { type: "_hal_c2_unknown", originalType: content.type, raw: content };
   }
 
   return content as Extract<AcpSchemaV2.ToolCallContent, { readonly type: "diff" }>;
@@ -556,7 +556,7 @@ function normalizeSessionUpdate(
       return {
         ...base,
         update: {
-          sessionUpdate: "_halc2_unknown",
+          sessionUpdate: "_hal_c2_unknown",
           originalSessionUpdate: update.sessionUpdate,
           raw: update,
         },

@@ -31,7 +31,7 @@ private slots:
     qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Theme", theme.get());
     qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
     engine = std::make_unique<QQmlEngine>();
-    engine->addImportPath(QStringLiteral(HALC2_TEST_SOURCE_DIR "/qml"));
+    engine->addImportPath(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/qml"));
   }
 
   void dialogsOperateOnRealFoldersAndCancellationPreservesThem() {

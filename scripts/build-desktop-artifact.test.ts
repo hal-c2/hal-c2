@@ -287,7 +287,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           ConfigProvider.layer(
             ConfigProvider.fromEnv({
               env: {
-                HALC2_DESKTOP_UPDATE_REPOSITORY: "hal-c2/hal-c2",
+                HAL_C2_DESKTOP_UPDATE_REPOSITORY: "hal-c2/hal-c2",
               },
             }),
           ),
@@ -934,7 +934,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           Effect.provide(
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
-                env: { HALC2_DESKTOP_REUSE_RESOURCE_MONITOR: "true" },
+                env: { HAL_C2_DESKTOP_REUSE_RESOURCE_MONITOR: "true" },
               }),
             ),
           ),
@@ -1096,7 +1096,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
                 ConfigProvider.fromEnv({
                   env: {
                     npm_config_python: pythonPath,
-                    HALC2_DESKTOP_REUSE_RESOURCE_MONITOR: "true",
+                    HAL_C2_DESKTOP_REUSE_RESOURCE_MONITOR: "true",
                   },
                 }),
               ),
@@ -1142,7 +1142,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
               spawner,
               ConfigProvider.layer(
                 ConfigProvider.fromEnv({
-                  env: { HALC2_DESKTOP_REUSE_RESOURCE_MONITOR: "true" },
+                  env: { HAL_C2_DESKTOP_REUSE_RESOURCE_MONITOR: "true" },
                 }),
               ),
             ),
@@ -1824,9 +1824,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it("derives macOS passkey signing configuration from the Clerk publishable key", () => {
     const configuration = resolveMacPasskeySigningConfiguration({
-      HALC2_APPLE_TEAM_ID: "abc1234567",
-      HALC2_MACOS_PROVISIONING_PROFILE: "/tmp/hal-c2.provisionprofile",
-      HALC2_CLERK_PUBLISHABLE_KEY: `pk_test_${btoa("example.clerk.accounts.dev$")}`,
+      HAL_C2_APPLE_TEAM_ID: "abc1234567",
+      HAL_C2_MACOS_PROVISIONING_PROFILE: "/tmp/hal-c2.provisionprofile",
+      HAL_C2_CLERK_PUBLISHABLE_KEY: `pk_test_${btoa("example.clerk.accounts.dev$")}`,
     });
 
     assert.deepStrictEqual(configuration, {
@@ -1839,9 +1839,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it("normalizes explicit macOS passkey RP domains and renders required entitlements", () => {
     const configuration = resolveMacPasskeySigningConfiguration({
-      HALC2_APPLE_TEAM_ID: "ABC1234567",
-      HALC2_MACOS_PROVISIONING_PROFILE: "/tmp/hal-c2.provisionprofile",
-      HALC2_CLERK_PASSKEY_RP_DOMAINS:
+      HAL_C2_APPLE_TEAM_ID: "ABC1234567",
+      HAL_C2_MACOS_PROVISIONING_PROFILE: "/tmp/hal-c2.provisionprofile",
+      HAL_C2_CLERK_PASSKEY_RP_DOMAINS:
         " Clerk.Example.com,example.clerk.accounts.dev,clerk.example.com ",
     });
     const entitlements = renderMacPasskeyEntitlements(configuration);
@@ -1867,21 +1867,21 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     };
 
     const missingProfileError = captureError({
-      HALC2_APPLE_TEAM_ID: "ABC1234567",
-      HALC2_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev",
+      HAL_C2_APPLE_TEAM_ID: "ABC1234567",
+      HAL_C2_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev",
     });
     assert.instanceOf(missingProfileError, MissingMacPasskeyProvisioningProfileError);
     assert.equal(
       missingProfileError.message,
-      "HALC2_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.",
+      "HAL_C2_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.",
     );
 
     const unsafeDomain =
       "https://domain-user:domain-secret@example.clerk.accounts.dev/path?token=query-secret";
     const invalidDomainError = captureError({
-      HALC2_APPLE_TEAM_ID: "ABC1234567",
-      HALC2_MACOS_PROVISIONING_PROFILE: "/tmp/hal-c2.provisionprofile",
-      HALC2_CLERK_PASSKEY_RP_DOMAINS: unsafeDomain,
+      HAL_C2_APPLE_TEAM_ID: "ABC1234567",
+      HAL_C2_MACOS_PROVISIONING_PROFILE: "/tmp/hal-c2.provisionprofile",
+      HAL_C2_CLERK_PASSKEY_RP_DOMAINS: unsafeDomain,
     });
     assert.instanceOf(invalidDomainError, InvalidMacPasskeyRpDomainError);
     assert.equal(invalidDomainError.reason, "scheme-not-allowed");
@@ -1897,20 +1897,20 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.throws(
       () =>
         resolveMacPasskeySigningConfiguration({
-          HALC2_APPLE_TEAM_ID: "ABC1234567",
-          HALC2_MACOS_PROVISIONING_PROFILE: "/tmp/hal-c2.provisionprofile",
-          HALC2_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev:8443",
+          HAL_C2_APPLE_TEAM_ID: "ABC1234567",
+          HAL_C2_MACOS_PROVISIONING_PROFILE: "/tmp/hal-c2.provisionprofile",
+          HAL_C2_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev:8443",
         }),
       /Invalid passkey RP domain/u,
     );
     const invalidPublishableKeyError = captureError({
-      HALC2_APPLE_TEAM_ID: "ABC1234567",
-      HALC2_MACOS_PROVISIONING_PROFILE: "/tmp/hal-c2.provisionprofile",
-      HALC2_CLERK_PUBLISHABLE_KEY: "pk_test_%",
+      HAL_C2_APPLE_TEAM_ID: "ABC1234567",
+      HAL_C2_MACOS_PROVISIONING_PROFILE: "/tmp/hal-c2.provisionprofile",
+      HAL_C2_CLERK_PUBLISHABLE_KEY: "pk_test_%",
     });
     assert.instanceOf(invalidPublishableKeyError, InvalidMacPasskeyPublishableKeyError);
     assert.ok(invalidPublishableKeyError.cause);
-    assert.equal(invalidPublishableKeyError.message, "HALC2_CLERK_PUBLISHABLE_KEY is invalid.");
+    assert.equal(invalidPublishableKeyError.message, "HAL_C2_CLERK_PUBLISHABLE_KEY is invalid.");
     assert.notProperty(invalidPublishableKeyError, "publishableKey");
     assert.notInclude(invalidPublishableKeyError.message, "pk_test_%");
   });
@@ -2273,11 +2273,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           ConfigProvider.layer(
             ConfigProvider.fromEnv({
               env: {
-                HALC2_DESKTOP_SKIP_BUILD: "true",
-                HALC2_DESKTOP_KEEP_STAGE: "true",
-                HALC2_DESKTOP_SIGNED: "true",
-                HALC2_DESKTOP_VERBOSE: "true",
-                HALC2_DESKTOP_MOCK_UPDATES: "true",
+                HAL_C2_DESKTOP_SKIP_BUILD: "true",
+                HAL_C2_DESKTOP_KEEP_STAGE: "true",
+                HAL_C2_DESKTOP_SIGNED: "true",
+                HAL_C2_DESKTOP_VERBOSE: "true",
+                HAL_C2_DESKTOP_MOCK_UPDATES: "true",
               },
             }),
           ),

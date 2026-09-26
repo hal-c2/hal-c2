@@ -302,7 +302,7 @@ defmodule HalC2.Steps.Preview.Remote do
         descriptor
 
       nil ->
-        assert_receive {:halc2_shell, {:environment, ^peer, descriptor}}, 10_000
+        assert_receive {:hal_c2_shell, {:environment, ^peer, descriptor}}, 10_000
         descriptor
     end
   end
@@ -312,13 +312,13 @@ defmodule HalC2.Steps.Preview.Remote do
   defp start_peer(context) do
     unless :erlang.is_alive() do
       {_, 0} = System.cmd("epmd", ["-daemon"])
-      name = :"halc2features#{System.unique_integer([:positive])}@127.0.0.1"
+      name = :"hal_c2_features#{System.unique_integer([:positive])}@127.0.0.1"
       {:ok, _} = :net_kernel.start(name, %{name_domain: :longnames})
     end
 
     {:ok, peer, name} =
       :peer.start(%{
-        name: :"halc2peer#{System.unique_integer([:positive])}",
+        name: :"hal_c2_peer#{System.unique_integer([:positive])}",
         host: ~c"127.0.0.1",
         longnames: true,
         peer_down: :continue,

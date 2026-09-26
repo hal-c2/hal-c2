@@ -26,7 +26,7 @@ DIR = os.environ["FAKE_DIR"]
 LOG = os.path.join(DIR, "log.jsonl")
 CONFIG = os.path.join(DIR, "config.json")
 SESSIONS = os.path.join(DIR, "sessions")
-ENV_PREFIXES = ("PI_", "HALC2_", "FAKE_")
+ENV_PREFIXES = ("PI_", "HAL_C2_", "FAKE_")
 READ_ONLY = ("read", "grep", "find", "ls")
 FILE_CHANGES = ("edit", "write")
 
@@ -187,7 +187,7 @@ def dialog(method, fields):
 
 # HAL-C2's extension (`priv/pi/hal-c2-mcp-extension.ts`) asks before tools the mode does not allow.
 def allowed(tool, args):
-    mode = os.environ.get("HALC2_PI_RUNTIME_MODE", "full-access")
+    mode = os.environ.get("HAL_C2_PI_RUNTIME_MODE", "full-access")
     if mode == "full-access" or tool in READ_ONLY:
         return True
     if mode == "auto-accept-edits" and tool in FILE_CHANGES:
@@ -256,9 +256,9 @@ def run_turn(text):
         elif "mcp" in step:
             body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                                "params": step["mcp"]}).encode()
-            req = urllib.request.Request(os.environ["HALC2_MCP_URL"], data=body, headers={
+            req = urllib.request.Request(os.environ["HAL_C2_MCP_URL"], data=body, headers={
                 "Content-Type": "application/json", "Accept": "application/json",
-                "Authorization": "Bearer " + os.environ["HALC2_MCP_BEARER_TOKEN"]})
+                "Authorization": "Bearer " + os.environ["HAL_C2_MCP_BEARER_TOKEN"]})
             with urllib.request.urlopen(req, timeout=60) as res:
                 log({"mcp": json.loads(res.read())})
         elif "waitAbort" in step:

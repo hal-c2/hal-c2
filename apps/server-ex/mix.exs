@@ -5,7 +5,7 @@ defmodule HalC2.MixProject do
     [
       app: :hal_c2,
       # Nodes carry the HAL-C2 version, so clients compare them like any server.
-      version: halc2_version(),
+      version: hal_c2_version(),
       elixir: "~> 1.20",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: if(Mix.env() == :test, do: ["lib", "test/support"], else: ["lib"]),
@@ -80,15 +80,15 @@ defmodule HalC2.MixProject do
   # and default to every file; see test/support/features.ex.
   defp features(args) do
     {globs, rest} = Enum.split_while(args, &(&1 != "--"))
-    if globs != [], do: System.put_env("HALC2_FEATURES", Enum.join(globs, ","))
-    System.put_env("HALC2_FEATURES", System.get_env("HALC2_FEATURES") || "**/*.feature")
+    if globs != [], do: System.put_env("HAL_C2_FEATURES", Enum.join(globs, ","))
+    System.put_env("HAL_C2_FEATURES", System.get_env("HAL_C2_FEATURES") || "**/*.feature")
     Mix.env(:test)
     Mix.Task.run("test", ["--only", "cucumber" | Enum.drop(rest, 1)])
   end
 
-  # `HALC2_NODE_VERSION` names a build apart from the package's release (nightlies, local builds).
-  defp halc2_version do
-    System.get_env("HALC2_NODE_VERSION") || package_version()
+  # `HAL_C2_NODE_VERSION` names a build apart from the package's release (nightlies, local builds).
+  defp hal_c2_version do
+    System.get_env("HAL_C2_NODE_VERSION") || package_version()
   end
 
   defp package_version do

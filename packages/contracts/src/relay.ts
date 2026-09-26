@@ -158,7 +158,7 @@ export type RelayAgentActivityAggregateState = typeof RelayAgentActivityAggregat
 export const RelayManagedEndpointProviderKind = Schema.Literals([
   "manual",
   "cloudflare_tunnel",
-  "halc2_relay",
+  "hal_c2_relay",
 ]);
 export type RelayManagedEndpointProviderKind = typeof RelayManagedEndpointProviderKind.Type;
 

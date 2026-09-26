@@ -27,13 +27,13 @@ Add `--browser` to open a browser automatically.
 ### State and ports
 
 Linked worktrees default to their own `.hal-c2/userdata` (an existing `.t3` is still used), even
-when `HALC2_HOME` is set. The main checkout defaults to `dev/userdata` under HAL-C2 home
+when `HAL_C2_HOME` is set. The main checkout defaults to `dev/userdata` under HAL-C2 home
 (`~/.hal-c2`, or `~/.t3` where it already exists). An explicit `--home-dir` wins in both cases.
 Never run a development server against the live `~/.t3/userdata` or `~/.hal-c2/userdata`.
 See [test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
 
 Read ports from the `[dev-runner]` output. Worktrees derive stable preferences from their paths,
-but occupied ports can shift them. `HALC2_PORT_OFFSET` or `HALC2_DEV_INSTANCE` can select a
+but occupied ports can shift them. `HAL_C2_PORT_OFFSET` or `HAL_C2_DEV_INSTANCE` can select a
 different preference when needed.
 
 ### Moving a thread between state directories
@@ -56,7 +56,7 @@ Leave `VITE_HTTP_URL` and `VITE_WS_URL` unset. Vite proxies the backend through 
 origin so the same build works over localhost and remote connections.
 
 Shared runs enable bundled dev to avoid a network round trip for each import level.
-`HALC2_BUNDLED_DEV=0` opts out when debugging bundler differences. Two reload traps matter
+`HAL_C2_BUNDLED_DEV=0` opts out when debugging bundler differences. Two reload traps matter
 when changing this setup:
 
 - The web entry must dynamically import the app so React refresh initializes before application
@@ -84,7 +84,7 @@ openssl rand -hex 32
 Put that value in the main checkout's gitignored `.env`:
 
 ```dotenv
-HALC2_DEV_AUTH_TOKEN=<the value generated above>
+HAL_C2_DEV_AUTH_TOKEN=<the value generated above>
 ```
 
 The `hal-c2.json` Setup Worktree commands on Unix and Windows link that file to each worktree's
@@ -94,7 +94,7 @@ environment values override `.env`, so no per-worktree export is needed after se
 For a manual worktree or launcher without that link, export the same fixed value instead:
 
 ```sh
-export HALC2_DEV_AUTH_TOKEN="<the value generated above>"
+export HAL_C2_DEV_AUTH_TOKEN="<the value generated above>"
 ```
 
 Do not generate a new value at startup. Start or restart `vp run dev --share` after configuration,

@@ -199,7 +199,7 @@ defmodule HalC2.Service do
         "[Service]",
         "Type=simple",
         "WorkingDirectory=#{quote_value(cwd)}",
-        "Environment=HALC2_NODE_HOME=#{quote_value(Application.fetch_env!(:hal_c2, :home))}",
+        "Environment=HAL_C2_NODE_HOME=#{quote_value(Application.fetch_env!(:hal_c2, :home))}",
         "Environment=PATH=#{quote_value(System.get_env("PATH", ""))}",
         "ExecStart=#{Enum.map_join(argv, " ", &quote_value/1)}",
         "KillMode=mixed",
@@ -243,7 +243,7 @@ defmodule HalC2.Service do
       <dict>
         <key>PATH</key>
         <string>#{x.(System.get_env("PATH", ""))}</string>
-        <key>HALC2_NODE_HOME</key>
+        <key>HAL_C2_NODE_HOME</key>
         <string>#{x.(Application.fetch_env!(:hal_c2, :home))}</string>
       </dict>
       <key>WorkingDirectory</key>

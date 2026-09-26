@@ -10,7 +10,7 @@ const access = Effect.gen(function* () {
   return { scope, manager: yield* Preview.PreviewManager };
 });
 export const PreviewControlsHandlersLive = PreviewControlsToolkit.toLayer({
-  halc2_preview_list: (input) =>
+  hal_c2_preview_list: (input) =>
     Effect.gen(function* () {
       const { scope, manager } = yield* access;
       const result = yield* manager.list({ threadId: scope.threadId });
@@ -22,7 +22,7 @@ export const PreviewControlsHandlersLive = PreviewControlsToolkit.toLayer({
         nextCursor: end < result.sessions.length ? end : null,
       };
     }),
-  halc2_preview_close: (input) =>
+  hal_c2_preview_close: (input) =>
     Effect.gen(function* () {
       const { scope, manager } = yield* access;
       yield* manager

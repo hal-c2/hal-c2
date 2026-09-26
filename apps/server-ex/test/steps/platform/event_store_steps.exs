@@ -595,7 +595,7 @@ defmodule HalC2.Steps.Platform.EventStore do
 
   defp flush_rows do
     receive do
-      {:halc2_shell, _} -> flush_rows()
+      {:hal_c2_shell, _} -> flush_rows()
     after
       0 -> :ok
     end
@@ -620,7 +620,7 @@ defmodule HalC2.Steps.Platform.EventStore do
 
   defp await_update(id) do
     receive do
-      {:halc2_shell, {:rows, _, rows}} ->
+      {:hal_c2_shell, {:rows, _, rows}} ->
         case List.keyfind(rows, id, 0) do
           {^id, {"thread", row}} -> row
           nil -> await_update(id)

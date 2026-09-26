@@ -23,7 +23,7 @@ export function useShellActions(handler: (action: ShellAction) => void): void {
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
   useEffect(() => {
-    const shell = window.halc2Shell;
+    const shell = window.halC2Shell;
     if (!shell) return;
     let disposed = false;
     let unsubscribe: (() => void) | null = null;

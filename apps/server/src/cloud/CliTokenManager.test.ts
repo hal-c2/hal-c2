@@ -19,9 +19,9 @@ import * as CliTokenManager from "./CliTokenManager.ts";
 
 // pk_test_<base64 of "clerk.example.test$">
 const TEST_ENV = {
-  HALC2_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA==",
-  HALC2_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_client_test",
-  HALC2_HOSTED_APP_URL: "https://hosted.example.test",
+  HAL_C2_CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA==",
+  HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_client_test",
+  HAL_C2_HOSTED_APP_URL: "https://hosted.example.test",
 };
 
 interface RecordedTokenRequest {

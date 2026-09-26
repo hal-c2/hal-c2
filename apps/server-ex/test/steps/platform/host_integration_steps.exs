@@ -36,7 +36,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
     File.write!(path, """
     #!/usr/bin/env bash
-    exec 3<>/dev/tcp/127.0.0.1/$HALC2_TEST_LAUNCH_PORT
+    exec 3<>/dev/tcp/127.0.0.1/$HAL_C2_TEST_LAUNCH_PORT
     printf '%s\\x1f' "#{name}" "$@" >&3
     printf '\\n' >&3
     read -r -u 3 _
@@ -53,7 +53,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
       :gen_tcp.listen(0, [:binary, packet: :line, active: false, ip: {127, 0, 0, 1}])
 
     {:ok, port} = :inet.port(socket)
-    World.put_os_env("HALC2_TEST_LAUNCH_PORT", Integer.to_string(port))
+    World.put_os_env("HAL_C2_TEST_LAUNCH_PORT", Integer.to_string(port))
     Map.put(context, :launches, socket)
   end
 

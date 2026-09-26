@@ -39,12 +39,12 @@ const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 
 const BitbucketApiEnvConfig = Config.all({
-  baseUrl: Config.String("HALC2_BITBUCKET_API_BASE_URL").pipe(
+  baseUrl: Config.String("HAL_C2_BITBUCKET_API_BASE_URL").pipe(
     Config.withDefault(DEFAULT_API_BASE_URL),
   ),
-  accessToken: Config.String("HALC2_BITBUCKET_ACCESS_TOKEN").pipe(Config.option),
-  email: Config.String("HALC2_BITBUCKET_EMAIL").pipe(Config.option),
-  apiToken: Config.String("HALC2_BITBUCKET_API_TOKEN").pipe(Config.option),
+  accessToken: Config.String("HAL_C2_BITBUCKET_ACCESS_TOKEN").pipe(Config.option),
+  email: Config.String("HAL_C2_BITBUCKET_EMAIL").pipe(Config.option),
+  apiToken: Config.String("HAL_C2_BITBUCKET_API_TOKEN").pipe(Config.option),
 });
 
 const BitbucketApiOperation = Schema.Literals([
@@ -563,7 +563,7 @@ function authFromConfig(
     account: Option.none(),
     host: Option.some("bitbucket.org"),
     detail: Option.some(
-      "Set HALC2_BITBUCKET_EMAIL and HALC2_BITBUCKET_API_TOKEN, or HALC2_BITBUCKET_ACCESS_TOKEN.",
+      "Set HAL_C2_BITBUCKET_EMAIL and HAL_C2_BITBUCKET_API_TOKEN, or HAL_C2_BITBUCKET_ACCESS_TOKEN.",
     ),
   };
 }

@@ -91,7 +91,7 @@ beforeEach(async () => {
   submitted = [];
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", {
-    halc2Shell: {
+    halC2Shell: {
       publish: async (key, state) => {
         if (key === "composer" && state !== null) {
           published.push(decodeComposer(state));

@@ -176,9 +176,9 @@ export function makeAcpReplayRuntime(input: {
             cwd: runtimeInput.cwd,
             env: {
               ...process.env,
-              HALC2_ACP_REPLAY_TRANSCRIPT: encodedTranscript,
-              HALC2_ACP_REPLAY_STATUS_PATH: input.statusPath,
-              HALC2_ACP_REPLAY_WORKSPACE: runtimeInput.cwd,
+              HAL_C2_ACP_REPLAY_TRANSCRIPT: encodedTranscript,
+              HAL_C2_ACP_REPLAY_STATUS_PATH: input.statusPath,
+              HAL_C2_ACP_REPLAY_WORKSPACE: runtimeInput.cwd,
             },
           },
           authMethodId: "replay",

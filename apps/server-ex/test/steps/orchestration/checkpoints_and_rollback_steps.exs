@@ -495,7 +495,7 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
     cwd = cwd(context, context.run_title)
     local = HalC2.Vcs.local_status(cwd)
     refute Enum.any?(local["workingTree"]["files"], &(&1["path"] == "run-2.txt"))
-    assert_receive {:halc2_vcs, ^cwd, %{"_tag" => "localUpdated", "local" => ^local}}, 5_000
+    assert_receive {:hal_c2_vcs, ^cwd, %{"_tag" => "localUpdated", "local" => ^local}}, 5_000
     context
   end
 

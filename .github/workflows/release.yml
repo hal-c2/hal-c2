@@ -332,9 +332,9 @@ jobs:
           token="$(field clientTracingToken)"
           echo "::add-mask::$token"
           {
-            echo "HALC2_RELAY_CLIENT_OTLP_TRACES_URL=$url"
-            echo "HALC2_RELAY_CLIENT_OTLP_TRACES_DATASET=$dataset"
-            echo "HALC2_RELAY_CLIENT_OTLP_TRACES_TOKEN=$token"
+            echo "HAL_C2_RELAY_CLIENT_OTLP_TRACES_URL=$url"
+            echo "HAL_C2_RELAY_CLIENT_OTLP_TRACES_DATASET=$dataset"
+            echo "HAL_C2_RELAY_CLIENT_OTLP_TRACES_TOKEN=$token"
           } > "$RUNNER_TEMP/relay-client-tracing.env"
 
       - name: Upload relay client tracing config
@@ -390,10 +390,10 @@ jobs:
     runs-on: blacksmith-32vcpu-ubuntu-2404
     timeout-minutes: 30
     env:
-      HALC2_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      HALC2_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      HALC2_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      HALC2_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
+      HAL_C2_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      HAL_C2_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      HAL_C2_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -435,7 +435,7 @@ jobs:
         shell: bash
         run: |
           config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
-          tracing_token="$(sed -n 's/^HALC2_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
+          tracing_token="$(sed -n 's/^HAL_C2_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
           echo "::add-mask::$tracing_token"
           cat "$config_path" >> "$GITHUB_ENV"
 
@@ -886,16 +886,16 @@ jobs:
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
-      HALC2_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      HALC2_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      HALC2_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      HALC2_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
+      HAL_C2_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      HAL_C2_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      HAL_C2_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-      HALC2_WEB_ROUTER_URL: ${{ vars.HALC2_WEB_ROUTER_URL }}
-      HALC2_WEB_LATEST_DOMAIN: ${{ vars.HALC2_WEB_LATEST_DOMAIN }}
-      HALC2_WEB_NIGHTLY_DOMAIN: ${{ vars.HALC2_WEB_NIGHTLY_DOMAIN }}
+      HAL_C2_WEB_ROUTER_URL: ${{ vars.HAL_C2_WEB_ROUTER_URL }}
+      HAL_C2_WEB_LATEST_DOMAIN: ${{ vars.HAL_C2_WEB_LATEST_DOMAIN }}
+      HAL_C2_WEB_NIGHTLY_DOMAIN: ${{ vars.HAL_C2_WEB_NIGHTLY_DOMAIN }}
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
       - name: Checkout
@@ -927,7 +927,7 @@ jobs:
         shell: bash
         run: |
           config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
-          tracing_token="$(sed -n 's/^HALC2_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
+          tracing_token="$(sed -n 's/^HAL_C2_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
           echo "::add-mask::$tracing_token"
           cat "$config_path" >> "$GITHUB_ENV"
 
@@ -947,9 +947,9 @@ jobs:
             exit 1
           fi
 
-          router_url="${HALC2_WEB_ROUTER_URL:-https://app.hal-c2.example}"
-          latest_domain="${HALC2_WEB_LATEST_DOMAIN:-latest.app.hal-c2.example}"
-          nightly_domain="${HALC2_WEB_NIGHTLY_DOMAIN:-nightly.app.hal-c2.example}"
+          router_url="${HAL_C2_WEB_ROUTER_URL:-https://app.hal-c2.example}"
+          latest_domain="${HAL_C2_WEB_LATEST_DOMAIN:-latest.app.hal-c2.example}"
+          nightly_domain="${HAL_C2_WEB_NIGHTLY_DOMAIN:-nightly.app.hal-c2.example}"
           router_domain="${router_url#http://}"
           router_domain="${router_domain#https://}"
           router_domain="${router_domain%%/*}"
@@ -975,13 +975,13 @@ jobs:
               --token "$VERCEL_TOKEN" \
               "${vercel_scope_args[@]}" \
               --build-env "APP_VERSION=${{ needs.preflight.outputs.version }}" \
-              --build-env "HALC2_CLERK_PUBLISHABLE_KEY=${HALC2_CLERK_PUBLISHABLE_KEY:-}" \
-              --build-env "HALC2_CLERK_JWT_TEMPLATE=${HALC2_CLERK_JWT_TEMPLATE:-}" \
-              --build-env "HALC2_CLERK_CLI_OAUTH_CLIENT_ID=${HALC2_CLERK_CLI_OAUTH_CLIENT_ID:-}" \
-              --build-env "HALC2_RELAY_URL=${HALC2_RELAY_URL:-}" \
-              --build-env "HALC2_RELAY_CLIENT_OTLP_TRACES_URL=${HALC2_RELAY_CLIENT_OTLP_TRACES_URL:-}" \
-              --build-env "HALC2_RELAY_CLIENT_OTLP_TRACES_DATASET=${HALC2_RELAY_CLIENT_OTLP_TRACES_DATASET:-}" \
-              --build-env "HALC2_RELAY_CLIENT_OTLP_TRACES_TOKEN=${HALC2_RELAY_CLIENT_OTLP_TRACES_TOKEN:-}" \
+              --build-env "HAL_C2_CLERK_PUBLISHABLE_KEY=${HAL_C2_CLERK_PUBLISHABLE_KEY:-}" \
+              --build-env "HAL_C2_CLERK_JWT_TEMPLATE=${HAL_C2_CLERK_JWT_TEMPLATE:-}" \
+              --build-env "HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID=${HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID:-}" \
+              --build-env "HAL_C2_RELAY_URL=${HAL_C2_RELAY_URL:-}" \
+              --build-env "HAL_C2_RELAY_CLIENT_OTLP_TRACES_URL=${HAL_C2_RELAY_CLIENT_OTLP_TRACES_URL:-}" \
+              --build-env "HAL_C2_RELAY_CLIENT_OTLP_TRACES_DATASET=${HAL_C2_RELAY_CLIENT_OTLP_TRACES_DATASET:-}" \
+              --build-env "HAL_C2_RELAY_CLIENT_OTLP_TRACES_TOKEN=${HAL_C2_RELAY_CLIENT_OTLP_TRACES_TOKEN:-}" \
               --build-env "VITE_HOSTED_APP_URL=$router_url" \
               --build-env "VITE_HOSTED_APP_CHANNEL=$channel_name"
           )"

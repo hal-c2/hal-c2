@@ -4,7 +4,7 @@ defmodule HalC2.Connect.RelayClient do
   where it is (`cloud.getRelayClientStatus`) and installing the pinned release
   into the HAL-C2 home (`cloud.installRelayClient`), as `packages/shared/src/relayClient.ts`.
 
-  It is found, in order, at `HALC2_CLOUDFLARED_PATH`, at the node's managed
+  It is found, in order, at `HAL_C2_CLOUDFLARED_PATH`, at the node's managed
   install, then on the `PATH`. Installs from several clients, or several nodes on
   one home, take turns through a lock file next to the managed binary.
 
@@ -15,7 +15,7 @@ defmodule HalC2.Connect.RelayClient do
   """
 
   @version "2026.5.2"
-  @override_env "HALC2_CLOUDFLARED_PATH"
+  @override_env "HAL_C2_CLOUDFLARED_PATH"
   @stale_lock_ms 5 * 60 * 1_000
 
   @assets %{
@@ -121,18 +121,18 @@ defmodule HalC2.Connect.RelayClient do
   end
 
   @doc """
-  `cloud.installRelayClient` off the caller: sends `pid` `{:halc2_relay_client_install, node, event}`
+  `cloud.installRelayClient` off the caller: sends `pid` `{:hal_c2_relay_client_install, node, event}`
   for each progress event, then `complete` with the status, or `{:error, detail}`.
   """
   def start_install(pid) do
     Task.start(fn ->
       event =
-        case install(&send(pid, {:halc2_relay_client_install, node(), &1})) do
+        case install(&send(pid, {:hal_c2_relay_client_install, node(), &1})) do
           {:ok, status} -> %{"type" => "complete", "status" => status}
           {:error, detail} -> {:error, detail}
         end
 
-      send(pid, {:halc2_relay_client_install, node(), event})
+      send(pid, {:hal_c2_relay_client_install, node(), event})
     end)
 
     :ok

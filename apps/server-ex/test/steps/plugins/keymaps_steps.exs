@@ -26,7 +26,7 @@ defmodule HalC2.Steps.Plugins.Keymaps do
     {_, context} =
       World.call!(
         context,
-        "halc2.upsertKeybinding",
+        "hal-c2.upsertKeybinding",
         %{"key" => key, "command" => command},
         "first"
       )
@@ -42,14 +42,14 @@ defmodule HalC2.Steps.Plugins.Keymaps do
 
   step "the user bound {string} to {string}", %{args: [key, command]} = context do
     rule = %{"key" => key, "command" => command}
-    {%{"rules" => rules}, context} = World.call!(context, "halc2.upsertKeybinding", rule)
+    {%{"rules" => rules}, context} = World.call!(context, "hal-c2.upsertKeybinding", rule)
     assert rule in rules
     Map.put(context, :rule, rule)
   end
 
   step "the user removes that rule", context do
     context = watch(context, "watcher")
-    {_, context} = World.call!(context, "halc2.removeKeybinding", context.rule)
+    {_, context} = World.call!(context, "hal-c2.removeKeybinding", context.rule)
     context
   end
 

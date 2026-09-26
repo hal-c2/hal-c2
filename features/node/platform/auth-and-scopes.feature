@@ -9,7 +9,7 @@
 #   docs/user/remote-access.md (Manage or revoke access)
 #   docs/internals/environment-auth.md
 #   docs/operations/development.md (Reusable dev credential)
-#   AGENTS.md (npx hal-c2 pair, HALC2_DEV_AUTH_TOKEN)
+#   AGENTS.md (npx hal-c2 pair, HAL_C2_DEV_AUTH_TOKEN)
 
 Feature: Node authentication and scopes
   A node issues its own sessions. Pairing hands out a session with a set of scopes, a

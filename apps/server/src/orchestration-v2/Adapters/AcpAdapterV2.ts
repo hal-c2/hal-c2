@@ -95,7 +95,7 @@ import {
 import { ACP_SESSION_MODE_OPTION_ID } from "../../provider/acp/AcpSessionConfig.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import {
-  halc2AcpPromptWithInstructions,
+  halC2AcpPromptWithInstructions,
   type HalC2AcpInstructionState,
 } from "../../provider/HalC2OrchestrationInstructions.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
@@ -639,8 +639,8 @@ function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpC
         args: [...selfInvocationArgs(self, ["acp-mcp-bridge"])],
         env: [
           { name: "ELECTRON_RUN_AS_NODE", value: "1" },
-          { name: "HALC2_ACP_MCP_ENDPOINT", value: session.endpoint },
-          { name: "HALC2_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
+          { name: "HAL_C2_ACP_MCP_ENDPOINT", value: session.endpoint },
+          { name: "HAL_C2_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
         ],
       },
     ],
@@ -648,10 +648,10 @@ function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpC
     endpoint: session.endpoint,
     authorization: session.authorizationHeader,
     processEnvironment: {
-      HALC2_ACP_MCP_ENDPOINT: session.endpoint,
-      HALC2_ACP_MCP_AUTHORIZATION: session.authorizationHeader,
-      HALC2_ACP_MCP_NODE: self.command,
-      ...(self.entrypoint === undefined ? {} : { HALC2_ACP_MCP_ENTRYPOINT: self.entrypoint }),
+      HAL_C2_ACP_MCP_ENDPOINT: session.endpoint,
+      HAL_C2_ACP_MCP_AUTHORIZATION: session.authorizationHeader,
+      HAL_C2_ACP_MCP_NODE: self.command,
+      ...(self.entrypoint === undefined ? {} : { HAL_C2_ACP_MCP_ENTRYPOINT: self.entrypoint }),
     },
   };
 }
@@ -6369,7 +6369,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             attachments: turnInput.message.attachments,
             attachmentsDir: serverConfig.attachmentsDir,
           });
-          const text = halc2AcpPromptWithInstructions({
+          const text = halC2AcpPromptWithInstructions({
             prompt: messageText,
             state: instructionState,
             ...(previousInstructionState === undefined

@@ -51,7 +51,7 @@ import {
   rewriteCursorSkillMentions,
 } from "../../provider/Drivers/CursorSkills.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
-import { halc2OrchestrationPromptForFirstRun } from "../../provider/HalC2OrchestrationInstructions.ts";
+import { halC2OrchestrationPromptForFirstRun } from "../../provider/HalC2OrchestrationInstructions.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
@@ -2107,7 +2107,7 @@ export function makeCursorAdapterV2(
                 .map((skill) => skill.name),
             );
           }
-          const userText = halc2OrchestrationPromptForFirstRun({
+          const userText = halC2OrchestrationPromptForFirstRun({
             prompt: providerMessageTextWithAttachmentPaths({
               text:
                 cursorSkillNames === undefined

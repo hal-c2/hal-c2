@@ -15,11 +15,11 @@ import {
   DEFAULT_RUNTIME_MODE,
   DEFAULT_SERVER_SETTINGS,
   MessageId,
-  HALC2_PROJECT_FILE_NAME,
+  HAL_C2_PROJECT_FILE_NAME,
   ThreadId,
 } from "@hal-c2/contracts";
 import { resolveProjectSettings } from "@hal-c2/shared/projectSettings";
-import { parseHalC2ProjectFile } from "@hal-c2/shared/halc2ProjectFile";
+import { parseHalC2ProjectFile } from "@hal-c2/shared/halC2ProjectFile";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
@@ -423,21 +423,21 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // Default mode until the user picks one explicitly — same resolution web
   // uses for new draft threads: per-project setting, then the repo's
   // checked-in hal-c2.json, then the server's configured default.
-  const halc2ProjectFileQuery = useEnvironmentQuery(
+  const halC2ProjectFileQuery = useEnvironmentQuery(
     selectedProject !== null && selectedProject.workspaceRoot !== ""
       ? projectEnvironment.readFile({
           environmentId: selectedProject.environmentId,
-          input: { cwd: selectedProject.workspaceRoot, relativePath: HALC2_PROJECT_FILE_NAME },
+          input: { cwd: selectedProject.workspaceRoot, relativePath: HAL_C2_PROJECT_FILE_NAME },
         })
       : null,
   );
-  const halc2ProjectFileData = halc2ProjectFileQuery.data as ProjectReadFileResult | null;
-  const halc2ProjectFile = useMemo(
+  const halC2ProjectFileData = halC2ProjectFileQuery.data as ProjectReadFileResult | null;
+  const halC2ProjectFile = useMemo(
     () =>
-      halc2ProjectFileData === null || halc2ProjectFileData.truncated
+      halC2ProjectFileData === null || halC2ProjectFileData.truncated
         ? null
-        : parseHalC2ProjectFile(halc2ProjectFileData.contents),
-    [halc2ProjectFileData],
+        : parseHalC2ProjectFile(halC2ProjectFileData.contents),
+    [halC2ProjectFileData],
   );
   // Environment settings with the project's overrides and its hal-c2.json
   // applied; the aggregate's own legacy fields still count until the server
@@ -448,9 +448,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         selectedEnvironmentServerConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
         selectedProject?.id ?? null,
         selectedProject,
-        halc2ProjectFile,
+        halC2ProjectFile,
       ),
-    [selectedEnvironmentServerConfig?.settings, selectedProject, halc2ProjectFile],
+    [selectedEnvironmentServerConfig?.settings, selectedProject, halC2ProjectFile],
   );
   const defaultWorkspaceMode: WorkspaceMode = projectSettings.settings.defaultThreadEnvMode;
   // While the file read is pending and nothing above it decided, the
@@ -460,7 +460,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const defaultWorkspaceModeSettled =
     selectedProjectDraft.workspaceSelection?.mode !== undefined ||
     projectSettings.sources.defaultThreadEnvMode !== "environment" ||
-    !halc2ProjectFileQuery.isPending;
+    !halC2ProjectFileQuery.isPending;
   const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
   const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;

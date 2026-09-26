@@ -198,7 +198,7 @@ defmodule HalC2.WorktreeSetup do
     snapshot = state.setups[thread_id].snapshot
 
     for pid <- Map.get(state.watchers, thread_id, []),
-        do: send(pid, {:halc2_worktree_setup, thread_id, snapshot})
+        do: send(pid, {:hal_c2_worktree_setup, thread_id, snapshot})
   end
 
   defp drop_watcher(watchers, thread_id, pid),
@@ -364,7 +364,7 @@ defmodule HalC2.WorktreeSetup do
              %{
                "threadId" => thread_id,
                "terminalId" => "setup",
-               "data" => "#{script["command"]}; printf '\\n__halc2_setup_#{token}_%s\\n' $?\r"
+               "data" => "#{script["command"]}; printf '\\n__hal_c2_setup_#{token}_%s\\n' $?\r"
              }
            ]) do
       set.(
@@ -389,7 +389,7 @@ defmodule HalC2.WorktreeSetup do
   end
 
   defp await_script({thread_id, token}, status, set, opts) do
-    case collect({thread_id, "setup"}, Regex.compile!("__halc2_setup_#{token}_(\\d+)"), "", set) do
+    case collect({thread_id, "setup"}, Regex.compile!("__hal_c2_setup_#{token}_(\\d+)"), "", set) do
       {0, tail} ->
         status.("setup-script", "done", %{"detail" => "exited with 0", "tail" => tail})
 
@@ -402,7 +402,7 @@ defmodule HalC2.WorktreeSetup do
   # Reads the terminal until the marker, keeping the last lines as the stage's tail.
   defp collect(key, marker, buffer, set) do
     receive do
-      {:halc2_terminal, ^key, %{"type" => "output", "data" => data}} ->
+      {:hal_c2_terminal, ^key, %{"type" => "output", "data" => data}} ->
         buffer = String.slice(buffer <> strip_ansi(data), -8_000..-1//1)
 
         case Regex.run(marker, buffer) do
@@ -414,10 +414,10 @@ defmodule HalC2.WorktreeSetup do
             collect(key, marker, buffer, set)
         end
 
-      {:halc2_terminal, ^key, %{"type" => "exited"}} ->
+      {:hal_c2_terminal, ^key, %{"type" => "exited"}} ->
         {1, tail(buffer)}
 
-      {:halc2_terminal, ^key, _event} ->
+      {:hal_c2_terminal, ^key, _event} ->
         collect(key, marker, buffer, set)
     end
   end
@@ -426,7 +426,7 @@ defmodule HalC2.WorktreeSetup do
   defp tail(buffer) do
     buffer
     |> String.split(~r/\r?\n/, trim: true)
-    |> Enum.reject(&String.contains?(&1, "__halc2_setup_"))
+    |> Enum.reject(&String.contains?(&1, "__hal_c2_setup_"))
     |> Enum.take(-@tail_lines)
     |> Enum.map(&String.slice(&1, 0, 200))
   end

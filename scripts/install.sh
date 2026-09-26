@@ -5,34 +5,34 @@
 #   curl -fsSL https://raw.githubusercontent.com/hal-c2/hal-c2/main/scripts/install.sh | sh
 #
 # Environment:
-#   HALC2_CHANNEL           release train to follow: stable, nightly, or preview
+#   HAL_C2_CHANNEL           release train to follow: stable, nightly, or preview
 #                            (default: stable; preview is a maintainers' test train)
-#   HALC2_VERSION           exact version to install (overrides HALC2_CHANNEL)
-#   HALC2_HOME              HAL-C2 home directory (default: ~/.hal-c2, or an
+#   HAL_C2_VERSION           exact version to install (overrides HAL_C2_CHANNEL)
+#   HAL_C2_HOME              HAL-C2 home directory (default: ~/.hal-c2, or an
 #                            existing ~/.t3 from before the rename; the legacy
 #                            T3CODE_HOME is still honoured)
-#   HALC2_INSTALL_BIN_DIR   where the `hal-c2` symlink goes (default: ~/.local/bin)
-#   HALC2_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
+#   HAL_C2_INSTALL_BIN_DIR   where the `hal-c2` symlink goes (default: ~/.local/bin)
+#   HAL_C2_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
-# The archive is unpacked into $HALC2_HOME/runtime/versions/<version>, the
+# The archive is unpacked into $HAL_C2_HOME/runtime/versions/<version>, the
 # same layout `hal-c2 service install` uses, so the service reuses this download
 # instead of fetching the release again.
 set -eu
 
 repo="hal-c2/hal-c2"
-base_url="${HALC2_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
+base_url="${HAL_C2_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
 # Same order as @hal-c2/shared/devHome: an existing pre-rename ~/.t3 is used in place.
-if [ -n "${HALC2_HOME:-}" ]; then
-  halc2_home="$HALC2_HOME"
+if [ -n "${HAL_C2_HOME:-}" ]; then
+  hal_c2_home="$HAL_C2_HOME"
 elif [ -n "${T3CODE_HOME:-}" ]; then
-  printf 'hal-c2 install: T3CODE_HOME is deprecated; set HALC2_HOME instead.\n' >&2
-  halc2_home="$T3CODE_HOME"
+  printf 'hal-c2 install: T3CODE_HOME is deprecated; set HAL_C2_HOME instead.\n' >&2
+  hal_c2_home="$T3CODE_HOME"
 elif [ -d "$HOME/.hal-c2" ] || [ ! -d "$HOME/.t3" ]; then
-  halc2_home="$HOME/.hal-c2"
+  hal_c2_home="$HOME/.hal-c2"
 else
-  halc2_home="$HOME/.t3"
+  hal_c2_home="$HOME/.t3"
 fi
-bin_dir="${HALC2_INSTALL_BIN_DIR:-$HOME/.local/bin}"
+bin_dir="${HAL_C2_INSTALL_BIN_DIR:-$HOME/.local/bin}"
 
 fail() {
   printf '\nhal-c2 install: %s\n' "$1" >&2
@@ -148,8 +148,8 @@ else
   fail "sha256sum or shasum is required"
 fi
 
-channel="${HALC2_CHANNEL:-stable}"
-version="${HALC2_VERSION:-}"
+channel="${HAL_C2_CHANNEL:-stable}"
+version="${HAL_C2_VERSION:-}"
 if [ -z "$version" ]; then
   # Tags are v<semver>; the channel is the prerelease identifier, or none for
   # stable. Only tags of the requested train are considered, so a stable
@@ -157,13 +157,13 @@ if [ -z "$version" ]; then
   case "$channel" in
     stable) tag_pattern='v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)' ;;
     nightly | preview) tag_pattern="v\([0-9][^\"]*-${channel}\.[0-9]*\.[0-9]*\)" ;;
-    *) fail "HALC2_CHANNEL must be stable, nightly, or preview" ;;
+    *) fail "HAL_C2_CHANNEL must be stable, nightly, or preview" ;;
   esac
   tmp_index="$(mktemp)"
   fetch "https://api.github.com/repos/${repo}/releases?per_page=100" "$tmp_index"
   version="$(sed -n "s/.*\"tag_name\": *\"${tag_pattern}\".*/\1/p" "$tmp_index" | head -n 1)"
   rm -f "$tmp_index"
-  [ -n "$version" ] || fail "could not find a ${channel} release; set HALC2_VERSION"
+  [ -n "$version" ] || fail "could not find a ${channel} release; set HAL_C2_VERSION"
 fi
 case "$version" in
   *-preview.*)
@@ -171,8 +171,8 @@ case "$version" in
       "hal-c2 ${version} is a preview build." \
       "  Preview builds are cut by maintainers from unreleased branches to exercise the release" \
       "  pipeline. They can be broken, receive no fixes, and are never offered as updates." \
-      "  Set HALC2_CHANNEL=stable (the default) for a supported build." >&2
-    if [ "$channel" != "preview" ] && [ -z "${HALC2_VERSION:-}" ]; then
+      "  Set HAL_C2_CHANNEL=stable (the default) for a supported build." >&2
+    if [ "$channel" != "preview" ] && [ -z "${HAL_C2_VERSION:-}" ]; then
       fail "refusing a preview build that was not explicitly requested"
     fi
     ;;
@@ -180,7 +180,7 @@ esac
 
 stem="hal-c2-${version}-${platform}-${arch}"
 archive="${stem}.tar.gz"
-versions_dir="${halc2_home}/runtime/versions"
+versions_dir="${hal_c2_home}/runtime/versions"
 target_dir="${versions_dir}/${version}"
 
 if [ -f "${target_dir}/.install-complete" ] && [ "$(cat "${target_dir}/.install-complete")" = "$version" ]; then

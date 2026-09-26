@@ -104,7 +104,7 @@ defmodule HalC2.Steps.Timeline.Streaming do
       if Map.keys(acc) == [:seen], do: acc.seen, else: acc
     else
       receive do
-        {:halc2_stream, ^id, _} ->
+        {:hal_c2_stream, ^id, _} ->
           loop(id, HalC2.Streams.Server.state(HalC2.Streams.ensure(id)), fun, acc)
       after
         5_000 -> flunk("the reply stopped at #{inspect(acc)}")

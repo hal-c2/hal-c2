@@ -157,8 +157,8 @@ describe("AcpRegistryAdapterV2", () => {
         instanceId,
         settings,
         environment: {
-          HALC2_ACP_SESSION_LIFECYCLE: "1",
-          HALC2_ACP_COMMAND_ADVERTISEMENT_DELAY_MS: "750",
+          HAL_C2_ACP_SESSION_LIFECYCLE: "1",
+          HAL_C2_ACP_COMMAND_ADVERTISEMENT_DELAY_MS: "750",
         },
         childProcessSpawner,
         fileSystem,

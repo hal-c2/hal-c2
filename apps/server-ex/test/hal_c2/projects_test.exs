@@ -32,7 +32,7 @@ defmodule HalC2.ProjectsTest do
              })
 
     assert File.dir?(root)
-    assert_receive {:halc2_shell, {:rows, _, [{"p1", {"project", %{"title" => "app"}}}]}}, 1_000
+    assert_receive {:hal_c2_shell, {:rows, _, [{"p1", {"project", %{"title" => "app"}}}]}}, 1_000
 
     # Results are complete `Project`s, null fields included.
     assert {:ok, %{"title" => "Renamed", "deletedAt" => nil, "scripts" => []}} =
@@ -42,7 +42,7 @@ defmodule HalC2.ProjectsTest do
                "title" => "Renamed"
              })
 
-    assert_receive {:halc2_shell, {:rows, _, [{"p1", {"project", %{"title" => "Renamed"}}}]}},
+    assert_receive {:hal_c2_shell, {:rows, _, [{"p1", {"project", %{"title" => "Renamed"}}}]}},
                    1_000
 
     assert {:ok, %{"deletedAt" => deleted}} =
@@ -50,7 +50,7 @@ defmodule HalC2.ProjectsTest do
 
     assert deleted
 
-    assert_receive {:halc2_shell, {:rows, _, [{"p1", {"project", %{"deletedAt" => ^deleted}}}]}},
+    assert_receive {:hal_c2_shell, {:rows, _, [{"p1", {"project", %{"deletedAt" => ^deleted}}}]}},
                    1_000
   end
 

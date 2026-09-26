@@ -928,7 +928,7 @@ it.effect(
           providerThreadId,
           type: "dynamic_tool",
           status: "running",
-          toolName: "hal-c2.halc2_thread_wait",
+          toolName: "hal-c2.hal_c2_thread_wait",
           input: {
             threadId:
               "thread:delegated-task:command%3Amcp%3Aaafffab1-e811-458a-ae83-558e542c61ff%3Adelegate-task%3Areview-mobile-reconnect-opus-20260815",

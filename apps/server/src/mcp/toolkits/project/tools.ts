@@ -34,7 +34,7 @@ const shared = {
   failureMode: "return" as const,
   dependencies: [McpInvocationContext, ThreadManagementService, ProjectService, Crypto.Crypto],
 };
-const ProjectListTool = Tool.make("halc2_project_list", {
+const ProjectListTool = Tool.make("hal_c2_project_list", {
   ...shared,
   description:
     "List registered projects in this environment. Pages use the current project snapshot and may shift between calls.",
@@ -49,7 +49,7 @@ const ProjectListTool = Tool.make("halc2_project_list", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
-const ProjectReadTool = Tool.make("halc2_project_read", {
+const ProjectReadTool = Tool.make("hal_c2_project_read", {
   ...shared,
   description:
     "Read a registered project in this environment, including its workspace and saved scripts.",
@@ -57,38 +57,38 @@ const ProjectReadTool = Tool.make("halc2_project_read", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
-const ProjectCreateTool = Tool.make("halc2_project_create", {
+const ProjectCreateTool = Tool.make("hal_c2_project_create", {
   ...shared,
   description:
-    "Register a project directory through the existing project service. Set createWorkspaceRootIfMissing to create a directory. Each call creates a new request; an existing registered workspace is rejected. Clone separately with halc2_project_clone when needed.",
+    "Register a project directory through the existing project service. Set createWorkspaceRootIfMissing to create a directory. Each call creates a new request; an existing registered workspace is rejected. Clone separately with hal_c2_project_clone when needed.",
   parameters: ProjectCreatePayload,
 }).annotate(Tool.Destructive, true);
-const ProjectUpdateTool = Tool.make("halc2_project_update", {
+const ProjectUpdateTool = Tool.make("hal_c2_project_update", {
   ...shared,
   description:
     "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app.",
   parameters: Schema.Struct({ projectId: ProjectId, ...ProjectUpdatePayload.fields }),
 }).annotate(Tool.Destructive, true);
-const ProjectDeleteTool = Tool.make("halc2_project_delete", {
+const ProjectDeleteTool = Tool.make("hal_c2_project_delete", {
   ...shared,
   description:
     "Delete a project using the existing project deletion lifecycle. Nonempty projects require force=true. This does not delete the repository directory or promise a deleted-thread count.",
   parameters: Schema.Struct({ projectId: ProjectId, force: Schema.optionalKey(Schema.Boolean) }),
 }).annotate(Tool.Destructive, true);
-const ProjectCloneTool = Tool.make("halc2_project_clone", {
+const ProjectCloneTool = Tool.make("hal_c2_project_clone", {
   ...shared,
   description:
-    "Clone a repository using the app's source-control service. This only clones; register the returned cwd with halc2_project_create. An existing destination is not adopted or removed on failure.",
+    "Clone a repository using the app's source-control service. This only clones; register the returned cwd with hal_c2_project_create. An existing destination is not adopted or removed on failure.",
   parameters: SourceControlCloneRepositoryInput,
   success: SourceControlCloneRepositoryResult,
   dependencies: [...shared.dependencies, SourceControlRepositoryService],
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
-const ThreadLaunchTool = Tool.make("halc2_thread_launch", {
+const ThreadLaunchTool = Tool.make("hal_c2_thread_launch", {
   ...shared,
   description:
-    'Create an ordinary TOP-LEVEL thread with an explicit workspace binding before its agent starts. Use this when the user requests independent work, a new thread, or a PR stack in its own worktree; use delegate_task for child subagents. Set workspaceStrategy to {type:"worktree",baseRef:"parent-branch",branch:"new-branch",startFromOrigin:false} for a new worktree based on local commits, or {type:"existing_worktree",worktreePath:"/absolute/path",branch:"existing-branch"} to use an existing checkout. For upstream commits, set startFromOrigin:true. Omitted workspaceStrategy means the project root, NOT the caller\'s worktree. Omit projectId/modelSelection/modes to inherit those settings. Put the task in message. Do not ask the agent to create its own worktree via shell: that does not update the thread binding. Each call creates a new launch with no retry key; retain threadId and use halc2_thread_read/halc2_thread_wait to follow preparation. After errors or lost responses, inspect halc2_thread_list before retrying. Attachments must be pending uploads. Requires a full-access/default caller.',
+    'Create an ordinary TOP-LEVEL thread with an explicit workspace binding before its agent starts. Use this when the user requests independent work, a new thread, or a PR stack in its own worktree; use delegate_task for child subagents. Set workspaceStrategy to {type:"worktree",baseRef:"parent-branch",branch:"new-branch",startFromOrigin:false} for a new worktree based on local commits, or {type:"existing_worktree",worktreePath:"/absolute/path",branch:"existing-branch"} to use an existing checkout. For upstream commits, set startFromOrigin:true. Omitted workspaceStrategy means the project root, NOT the caller\'s worktree. Omit projectId/modelSelection/modes to inherit those settings. Put the task in message. Do not ask the agent to create its own worktree via shell: that does not update the thread binding. Each call creates a new launch with no retry key; retain threadId and use hal_c2_thread_read/hal_c2_thread_wait to follow preparation. After errors or lost responses, inspect hal_c2_thread_list before retrying. Attachments must be pending uploads. Requires a full-access/default caller.',
   parameters: Schema.Struct({
     projectId: Schema.optional(ProjectId),
     title: TrimmedNonEmptyString,

@@ -1,8 +1,8 @@
 import {
   BUILT_IN_THEMES,
   T3_CHAT_THEME,
-  HALC2_LIGHT_THEME_COLORS,
-  HALC2_DARK_THEME_COLORS,
+  HAL_C2_LIGHT_THEME_COLORS,
+  HAL_C2_DARK_THEME_COLORS,
   getThemeColorsForAppearance,
   MOBILE_DEFAULT_THEME_ID,
   MOBILE_THEME_IDS as SHARED_MOBILE_THEME_IDS,
@@ -355,7 +355,7 @@ export function getMobileThemeColors(
   appearance: MobileThemeAppearance,
 ): ThemeColors {
   if (themeId === DEFAULT_MOBILE_THEME_ID) {
-    return appearance === "dark" ? HALC2_DARK_THEME_COLORS : HALC2_LIGHT_THEME_COLORS;
+    return appearance === "dark" ? HAL_C2_DARK_THEME_COLORS : HAL_C2_LIGHT_THEME_COLORS;
   }
   const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? T3_CHAT_THEME;
   return getThemeColorsForAppearance(theme, appearance) ?? theme.colors;

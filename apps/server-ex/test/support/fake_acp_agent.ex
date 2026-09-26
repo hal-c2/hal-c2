@@ -425,7 +425,7 @@ defmodule HalC2.Test.FakeAcp do
   @doc "Turns an instance on the way a client does: rewriting the settings over the socket."
   def enable(context, instance, enabled \\ true) do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "halc2.readSettings")
+      World.call!(context, "hal-c2.readSettings")
 
     settings =
       put_in(
@@ -435,7 +435,7 @@ defmodule HalC2.Test.FakeAcp do
       )
 
     {_, context} =
-      World.call!(context, "halc2.writeSettings", %{"settings" => settings, "version" => version})
+      World.call!(context, "hal-c2.writeSettings", %{"settings" => settings, "version" => version})
 
     context
   end

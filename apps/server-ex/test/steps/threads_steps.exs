@@ -948,7 +948,7 @@ defmodule HalC2.Steps.Threads do
           "id" => 1,
           "method" => "tools/call",
           "params" => %{
-            "name" => "halc2_thread_update",
+            "name" => "hal_c2_thread_update",
             "arguments" => %{"action" => "rename", "title" => title}
           }
         })
@@ -2413,7 +2413,7 @@ defmodule HalC2.Steps.Threads do
         id = World.thread_id(context, World.current(context))
 
         receive do
-          {:halc2_worktree_setup, ^id, snapshot} ->
+          {:hal_c2_worktree_setup, ^id, snapshot} ->
             await_setup(%{context | snapshots: context.snapshots ++ [snapshot]}, done)
         after
           15_000 -> flunk("the setup never got there: #{inspect(List.last(context.snapshots))}")
@@ -2919,7 +2919,7 @@ defmodule HalC2.Steps.Threads do
       seen
     else
       receive do
-        {:halc2_stream, ^id, {:events, events}} ->
+        {:hal_c2_stream, ^id, {:events, events}} ->
           changes = for event <- events, do: {event.kind, event.entity, event.patch["s"] || %{}}
           history(context, done, seen ++ changes)
       after

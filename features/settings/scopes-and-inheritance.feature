@@ -13,7 +13,7 @@
 #   apps/web/src/components/settings/useSettingsProjectGroups.ts
 #   packages/contracts/src/settings.ts (ServerSettings, ProjectSettingsOverrides, ServerSettingsPatch)
 #   apps/server-ex/lib/hal_c2/settings.ex (versioned put, project resolution, watchers)
-#   apps/server-ex/lib/hal_c2/rpc.ex (halc2.readSettings, halc2.writeSettings)
+#   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.readSettings, hal-c2.writeSettings)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (config.settings)
 
 Feature: Settings scopes and inheritance

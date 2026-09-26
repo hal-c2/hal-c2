@@ -1228,10 +1228,10 @@ defmodule HalC2.Steps.Providers.Antigravity do
   # Rewrites the settings over the socket, as a client's settings page does.
   defp write_settings(context, fun) do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "halc2.readSettings")
+      World.call!(context, "hal-c2.readSettings")
 
     {_, context} =
-      World.call!(context, "halc2.writeSettings", %{
+      World.call!(context, "hal-c2.writeSettings", %{
         "settings" => fun.(settings),
         "version" => version
       })

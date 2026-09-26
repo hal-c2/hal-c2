@@ -10,7 +10,7 @@ defmodule HalC2.Devices do
   agents access. Nothing is installed or started until device support is enabled.
 
   The node keeps which thread has which device open, so the Device panel and the
-  agent tools agree. Watchers get `{:halc2_devices, node, DeviceServiceState}` on every
+  agent tools agree. Watchers get `{:hal_c2_devices, node, DeviceServiceState}` on every
   change. Every machine is its own host: SSH hosts configured for the Node server
   are reported unavailable, since in a cluster a remote machine runs its own node.
   Long work (installs, boots, hub requests) runs in the caller; the server only
@@ -1245,7 +1245,7 @@ defmodule HalC2.Devices do
        publish(state, &%{&1 | "bootingDevices" => without(&1["bootingDevices"], device)})}
 
   @impl true
-  def handle_info({:halc2_settings, _node, settings}, state),
+  def handle_info({:hal_c2_settings, _node, settings}, state),
     do: {:noreply, apply_settings(state, read_settings(settings))}
 
   def handle_info({:subprocess_lines, _reader, _lines}, %{hub_process: sub} = state)
@@ -1473,7 +1473,7 @@ defmodule HalC2.Devices do
 
   defp publish(state, fun) do
     view = state.view |> fun.() |> Map.put("revision", state.view["revision"] + 1)
-    for {pid, _} <- state.watchers, do: send(pid, {:halc2_devices, node(), view})
+    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_devices, node(), view})
     %{state | view: view}
   end
 

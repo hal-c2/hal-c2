@@ -141,7 +141,7 @@ defmodule HalC2.AuthTest do
       HalC2.Desktop.apply_bootstrap(%{
         "port" => 4123,
         "host" => "0.0.0.0",
-        "halc2Home" => "/home/me/.hal-c2",
+        "halC2Home" => "/home/me/.hal-c2",
         "noBrowser" => true
       })
 

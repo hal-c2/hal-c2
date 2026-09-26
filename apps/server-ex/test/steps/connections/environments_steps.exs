@@ -29,7 +29,7 @@ defmodule HalC2.Steps.Connections.Environments do
     descriptor = context.descriptor
     assert descriptor["environmentId"] == context.node.environment
     {:ok, host} = :inet.gethostname()
-    assert descriptor["label"] == (System.get_env("HALC2_LABEL") || List.to_string(host))
+    assert descriptor["label"] == (System.get_env("HAL_C2_LABEL") || List.to_string(host))
     assert %{"os" => os, "arch" => arch} = descriptor["platform"]
     assert is_binary(os) and is_binary(arch)
     assert descriptor["platform"]["machine"] == HalC2.Environment.Machine.kind()
@@ -81,7 +81,7 @@ defmodule HalC2.Steps.Connections.Environments do
 
   defp read_settings(context) do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "halc2.readSettings")
+      World.call!(context, "hal-c2.readSettings")
 
     {settings, Map.put(context, :settings_version, version)}
   end
@@ -90,7 +90,7 @@ defmodule HalC2.Steps.Connections.Environments do
     {settings, context} = read_settings(context)
 
     {%{"version" => _}, context} =
-      World.call!(context, "halc2.writeSettings", %{
+      World.call!(context, "hal-c2.writeSettings", %{
         "settings" => Map.put(settings, "environmentIcon", icon),
         "version" => context.settings_version
       })

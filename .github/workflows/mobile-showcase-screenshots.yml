@@ -99,7 +99,7 @@ jobs:
     # one native build is shared between them.
     timeout-minutes: ${{ inputs.theme == 'all' && 300 || 60 }}
     env:
-      HALC2_SHOWCASE_ANDROID_ABI: x86_64
+      HAL_C2_SHOWCASE_ANDROID_ABI: x86_64
     steps:
       - name: Checkout
         uses: actions/checkout@v6

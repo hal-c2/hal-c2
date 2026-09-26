@@ -198,7 +198,7 @@ const desktopEnvironmentLayer = DesktopEnvironment.layer(environmentInput).pipe(
     Layer.mergeAll(
       NodeServices.layer,
       DesktopConfig.layerTest({
-        HALC2_PORT: "3773",
+        HAL_C2_PORT: "3773",
         VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
       }),
     ),

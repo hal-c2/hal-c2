@@ -45,12 +45,12 @@ describe("ssh auth", () => {
       const askpassPath = path.join(directory, "ssh-askpass.sh");
       assert.equal(env.SSH_ASKPASS, askpassPath);
       assert.equal(env.SSH_ASKPASS_REQUIRE, "force");
-      assert.equal(env.HALC2_SSH_AUTH_SECRET, "super-secret");
+      assert.equal(env.HAL_C2_SSH_AUTH_SECRET, "super-secret");
       assert.equal(env.DISPLAY, "hal-c2");
       assert.equal(yield* fs.exists(askpassPath), true);
       assert.include(
         yield* fs.readFileString(askpassPath),
-        'printf "%s\\n" "$HALC2_SSH_AUTH_SECRET"',
+        'printf "%s\\n" "$HAL_C2_SSH_AUTH_SECRET"',
       );
     }).pipe(
       Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcessPlatform, "linux"))),

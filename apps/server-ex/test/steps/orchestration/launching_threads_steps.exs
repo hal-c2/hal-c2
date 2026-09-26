@@ -520,7 +520,7 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
 
   defp await_setup(thread_id, fun) do
     receive do
-      {:halc2_worktree_setup, ^thread_id, snapshot} ->
+      {:hal_c2_worktree_setup, ^thread_id, snapshot} ->
         if fun.(snapshot), do: snapshot, else: await_setup(thread_id, fun)
     after
       10_000 -> flunk("the worktree setup never got there")

@@ -8,7 +8,7 @@
 #   packages/shared/src/projectScripts.ts
 #   apps/tui/src/features.backlog.test.ts (project-scripts)
 #   packages/contracts/src/project.ts (ProjectScript, ProjectScriptIcon)
-#   packages/contracts/src/rpc.ts (projects.mutate, halc2.upsertKeybinding, halc2.removeKeybinding)
+#   packages/contracts/src/rpc.ts (projects.mutate, hal-c2.upsertKeybinding, hal-c2.removeKeybinding)
 
 Feature: Project actions
   An action is a named command for a project, such as starting the dev server or running

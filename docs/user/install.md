@@ -25,8 +25,8 @@ irm https://raw.githubusercontent.com/hal-c2/hal-c2/main/scripts/install.ps1 | i
 
 This puts `hal-c2` in `~/.local/bin`. If your shell reports `command not found`
 afterwards, that directory is not on your `PATH` yet; the installer prints the
-line to add. Set `HALC2_CHANNEL=nightly` to install the nightly train, or
-`HALC2_VERSION` to pin an exact version.
+line to add. Set `HAL_C2_CHANNEL=nightly` to install the nightly train, or
+`HAL_C2_VERSION` to pin an exact version.
 
 | Task                                             | Command                                                       |
 | ------------------------------------------------ | ------------------------------------------------------------- |
@@ -60,7 +60,7 @@ update it with `git pull` and a rebuild.
 
 If `~/.t3` exists from T3 Code, HAL-C2 uses it as its home in place of
 `~/.hal-c2`, keeping your projects, threads, and settings. Wherever these guides
-say `~/.hal-c2`, read `~/.t3`. Set `HALC2_HOME` to choose another directory.
+say `~/.hal-c2`, read `~/.t3`. Set `HAL_C2_HOME` to choose another directory.
 
 ## Desktop app
 

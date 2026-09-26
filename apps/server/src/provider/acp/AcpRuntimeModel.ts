@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import { deriveToolActivityPresentation } from "@hal-c2/shared/toolActivity";
-import { HALC2_MCP_TOOL_NAMES } from "@hal-c2/shared/halc2McpToolPresentation";
+import { HAL_C2_MCP_TOOL_NAMES } from "@hal-c2/shared/halC2McpToolPresentation";
 import type {
   OrchestrationV2ProviderThreadNativeMetadata,
   ThreadTokenUsageSnapshot,
@@ -358,7 +358,7 @@ export function acpContentBlockDisplayText(
       const mimeType = boundedContentMetadata(content.mimeType, 256) || "unknown type";
       return `[ACP audio (${mimeType})]`;
     }
-    case "_halc2_unknown":
+    case "_hal_c2_unknown":
       return `[Unsupported ACP content: ${boundedContentMetadata(content.originalType, 128) || "unknown"}]`;
   }
 }
@@ -392,9 +392,9 @@ function sanitizeAcpToolCallContent(
         };
       case "terminal":
         return { type: "terminal", terminalId: entry.terminalId };
-      case "_halc2_unknown":
+      case "_hal_c2_unknown":
         return {
-          type: "_halc2_unknown",
+          type: "_hal_c2_unknown",
           originalType: boundedContentMetadata(entry.originalType, 128) || "unknown",
           raw: null,
         };
@@ -1013,7 +1013,7 @@ function acpMcpFallbackInput(value: string | undefined): Record<string, unknown>
  * its server as "hal-c2", and matches are additionally gated on the known
  * HAL-C2 tool inventory, so the separator match can stay loose.
  */
-const HALC2_MCP_TITLE_CALL =
+const HAL_C2_MCP_TITLE_CALL =
   /^(?:mcp[-_]{1,2})?hal[-_ ]?c2[-_.:/ ]{1,3}(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*)(?::.*)?$/i;
 
 /**
@@ -1021,7 +1021,7 @@ const HALC2_MCP_TITLE_CALL =
  * qwen-code appends ": <args json>" to the same template; Auggie namespaces
  * tool-first as "<tool>_hal-c2".
  */
-const HALC2_MCP_TITLE_SUFFIX_CALL =
+const HAL_C2_MCP_TITLE_SUFFIX_CALL =
   /^(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*?)(?: \(hal[-_ ]?c2 MCP Server\)(?::|$)|[-_.]hal[-_ ]?c2$)/i;
 
 /**
@@ -1029,7 +1029,7 @@ const HALC2_MCP_TITLE_SUFFIX_CALL =
  * names; Kimi additionally appends ": <raw args json>". Safe only because the
  * match is gated on the known HAL-C2 tool inventory.
  */
-const HALC2_MCP_BARE_TITLE_CALL = /^(?<tool>[A-Za-z0-9_]+)(?::\s|$)/;
+const HAL_C2_MCP_BARE_TITLE_CALL = /^(?<tool>[A-Za-z0-9_]+)(?::\s|$)/;
 
 /**
  * Best-effort recovery of MCP identity from a generic ACP tool call.
@@ -1073,7 +1073,7 @@ export function extractMcpToolCallIdentity(
   const metaServerId = typeof meta?.serverId === "string" ? meta.serverId.trim() : "";
   const metaToolName = typeof meta?.toolName === "string" ? meta.toolName.trim() : "";
   if (/^hal[-_ ]?c2$/i.test(metaServerId) && metaToolName.length > 0) {
-    for (const knownTool of HALC2_MCP_TOOL_NAMES) {
+    for (const knownTool of HAL_C2_MCP_TOOL_NAMES) {
       const boundary = metaToolName.length - knownTool.length - 1;
       if (
         metaToolName === knownTool ||
@@ -1103,15 +1103,15 @@ export function extractMcpToolCallIdentity(
   ].filter((value): value is string => typeof value === "string");
   for (const candidate of candidates) {
     const trimmed = candidate.trim();
-    // Tool names start with `halc2_`, which the server-prefix pattern would
+    // Tool names start with `hal_c2_`, which the server-prefix pattern would
     // also strip, so take the first pattern that yields a known tool.
     const candidateTool = [
-      HALC2_MCP_TITLE_CALL,
-      HALC2_MCP_TITLE_SUFFIX_CALL,
-      HALC2_MCP_BARE_TITLE_CALL,
+      HAL_C2_MCP_TITLE_CALL,
+      HAL_C2_MCP_TITLE_SUFFIX_CALL,
+      HAL_C2_MCP_BARE_TITLE_CALL,
     ]
       .map((pattern) => pattern.exec(trimmed)?.groups?.tool)
-      .find((tool) => tool !== undefined && HALC2_MCP_TOOL_NAMES.has(tool));
+      .find((tool) => tool !== undefined && HAL_C2_MCP_TOOL_NAMES.has(tool));
     if (candidateTool !== undefined) {
       return { server: "hal-c2", tool: candidateTool };
     }
@@ -1278,7 +1278,7 @@ export function syntheticLoadSessionResponseFromInitialize(
   return {
     ...(modes ? { modes } : {}),
     _meta: {
-      halc2SessionLoadReady: "replay_idle",
+      halC2SessionLoadReady: "replay_idle",
     },
   };
 }
@@ -1553,7 +1553,7 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       });
       break;
     }
-    case "_halc2_unknown": {
+    case "_hal_c2_unknown": {
       events.push({
         _tag: "UnknownUpdate",
         updateType: boundedContentMetadata(upd.originalSessionUpdate, 128) || "unknown",

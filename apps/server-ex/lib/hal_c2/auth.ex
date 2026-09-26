@@ -16,7 +16,7 @@ defmodule HalC2.Auth do
       request carries `Authorization: DPoP <token>` and a fresh proof
       (`authenticate/1`); a bound token is never accepted as a bearer. A HAL-C2 Connect
       device renews through the relay; open sockets are unaffected.
-    * With a reusable development credential (`HALC2_DEV_AUTH_TOKEN`, dev builds
+    * With a reusable development credential (`HAL_C2_DEV_AUTH_TOKEN`, dev builds
       only), that credential is itself an administrative session in every node's
       own store, so one browser signs in to every worktree on a host.
 
@@ -24,7 +24,7 @@ defmodule HalC2.Auth do
   `mix hal_c2.pair` run next to a running node can mint a pairing token too. Tickets
   live in ETS. Sockets register their session (`connected/1`) so Connections can
   show which clients are online; watchers of the access list get
-  `{:halc2_auth_access, event}` (`AuthAccessStreamEvent`, with `current` left false
+  `{:hal_c2_auth_access, event}` (`AuthAccessStreamEvent`, with `current` left false
   for each socket to set).
   """
 
@@ -601,7 +601,7 @@ defmodule HalC2.Auth do
 
   # A revoked session's open sockets close (`HalC2.Web.Socket`) rather than outlive it.
   defp close_sockets(state, ids) do
-    for {socket, id} <- state.sockets, id in ids, do: send(socket, {:halc2_session_revoked, id})
+    for {socket, id} <- state.sockets, id in ids, do: send(socket, {:hal_c2_session_revoked, id})
   end
 
   defp removed_clients(ids), do: for(id <- ids, do: event("clientRemoved", %{"sessionId" => id}))
@@ -639,7 +639,7 @@ defmodule HalC2.Auth do
     Enum.reduce(events, state, fn {type, payload}, state ->
       revision = state.revision + 1
       message = %{"version" => 1, "revision" => revision, "type" => type, "payload" => payload}
-      for {pid, _} <- state.watchers, do: send(pid, {:halc2_auth_access, message})
+      for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_auth_access, message})
       %{state | revision: revision}
     end)
   end

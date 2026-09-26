@@ -24,7 +24,7 @@ export function resolveReusableDevAuth(
   return {
     credential: Redacted.value(token),
     sessionId: AuthSessionId.make(`${REUSABLE_DEV_SESSION_PREFIX}${tokenId}`),
-    cookieName: `halc2_dev_session_${tokenId}`,
+    cookieName: `hal_c2_dev_session_${tokenId}`,
     matches: (credential: string) =>
       NodeCrypto.timingSafeEqual(hash, NodeCrypto.createHash("sha256").update(credential).digest()),
   };

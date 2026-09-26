@@ -567,15 +567,15 @@ describe("MessagesTimeline", () => {
         {...buildProps()}
         timelineEntries={[
           buildUserTimelineEntry(
-            '<script>globalThis.__halc2Xss = 1</script><img src="x" onerror="globalThis.__halc2Xss = 2">',
+            '<script>globalThis.__halC2Xss = 1</script><img src="x" onerror="globalThis.__halC2Xss = 2">',
           ),
         ]}
       />,
     );
 
-    expect(markup).toContain("&lt;script&gt;globalThis.__halc2Xss = 1&lt;/script&gt;");
+    expect(markup).toContain("&lt;script&gt;globalThis.__halC2Xss = 1&lt;/script&gt;");
     expect(markup).toContain(
-      "&lt;img src=&quot;x&quot; onerror=&quot;globalThis.__halc2Xss = 2&quot;&gt;",
+      "&lt;img src=&quot;x&quot; onerror=&quot;globalThis.__halC2Xss = 2&quot;&gt;",
     );
     expect(markup).not.toMatch(/<script(?:\s|>)/i);
     expect(markup).not.toMatch(/<img(?:\s|>)/i);
@@ -605,11 +605,11 @@ describe("MessagesTimeline", () => {
         timelineEntries={[
           buildAssistantTimelineEntry(
             [
-              '<details open onclick="globalThis.__halc2Xss = 1">',
+              '<details open onclick="globalThis.__halC2Xss = 1">',
               "<summary>Safe details</summary>",
-              "<script>globalThis.__halc2Xss = 2</script>",
-              '<img src="x" onerror="globalThis.__halc2Xss = 3">',
-              '<a href="javascript:globalThis.__halc2Xss = 4">Unsafe link</a>',
+              "<script>globalThis.__halC2Xss = 2</script>",
+              '<img src="x" onerror="globalThis.__halC2Xss = 3">',
+              '<a href="javascript:globalThis.__halC2Xss = 4">Unsafe link</a>',
               "</details>",
             ].join(""),
           ),
@@ -623,7 +623,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("onclick=");
     expect(markup).not.toContain("onerror=");
     expect(markup).not.toContain("javascript:");
-    expect(markup).not.toContain("globalThis.__halc2Xss");
+    expect(markup).not.toContain("globalThis.__halC2Xss");
   });
   it("renders progressive history controls ahead of the bounded timeline", () => {
     const markup = renderToStaticMarkup(
@@ -2106,7 +2106,7 @@ describe("MessagesTimeline", () => {
       completedAt: null,
       updatedAt: {},
       type: "dynamic_tool",
-      toolName: "mcp__hal-c2__halc2_thread_read",
+      toolName: "mcp__hal-c2__hal_c2_thread_read",
       input: { threadId: "thread-child" },
       output: { messages: [] },
     } as const;
@@ -2159,7 +2159,7 @@ describe("MessagesTimeline", () => {
     // The HAL-C2 wordmark replaces the generic tool icon for HAL-C2 MCP calls.
     expect(markup).toContain('viewBox="15.5309 37 94.3941 56.96"');
     expect(markup).toContain("Read a HAL-C2 thread");
-    expect(markup).not.toContain("mcp__hal-c2__halc2_thread_read");
+    expect(markup).not.toContain("mcp__hal-c2__hal_c2_thread_read");
   });
 
   it("formats changed file paths from the workspace root", async () => {

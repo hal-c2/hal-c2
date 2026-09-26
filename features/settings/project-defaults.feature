@@ -3,7 +3,7 @@
 #   apps/web/src/components/settings/ProjectDefaultsSettings.tsx
 #   apps/server-ex/lib/hal_c2/settings.ex (project-scoped keys, for_project)
 #   packages/contracts/src/project.ts (defaultModelSelection, defaultThreadEnvMode, autoPull)
-#   packages/contracts/src/rpc.ts (halc2.readSettings, halc2.writeSettings)
+#   packages/contracts/src/rpc.ts (hal-c2.readSettings, hal-c2.writeSettings)
 #   Cross-domain: these rows are the ones ProjectDefaultsSettings.tsx embeds in the General,
 #   Source Control and Integrations panels; no other settings/ file repeats them. How overrides
 #   resolve, mixed values across environments and models missing on one environment are owned

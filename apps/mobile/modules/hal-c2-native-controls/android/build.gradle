@@ -5,7 +5,7 @@ group = 'io.github.halc2.nativecontrols'
 version = '0.0.0'
 
 android {
-  namespace 'expo.modules.halc2nativecontrols'
+  namespace 'expo.modules.hal_c2_nativecontrols'
   compileSdk rootProject.ext.compileSdkVersion
 
   defaultConfig {

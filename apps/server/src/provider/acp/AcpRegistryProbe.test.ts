@@ -345,7 +345,7 @@ describe("ACP Registry probe", () => {
                 args: [mockAgentPath],
                 env: {
                   ...process.env,
-                  HALC2_ACP_COMMAND_ADVERTISEMENT_DELAY_MS: "25",
+                  HAL_C2_ACP_COMMAND_ADVERTISEMENT_DELAY_MS: "25",
                 },
               },
             }),
@@ -409,8 +409,8 @@ describe("ACP Registry probe", () => {
             args: [mockAgentPath],
             env: {
               ...process.env,
-              HALC2_ACP_SESSION_LIFECYCLE: "1",
-              HALC2_ACP_AUTH_METHOD_ID: "mock-login",
+              HAL_C2_ACP_SESSION_LIFECYCLE: "1",
+              HAL_C2_ACP_AUTH_METHOD_ID: "mock-login",
             },
           },
         }),
@@ -463,7 +463,7 @@ describe("ACP Registry probe", () => {
           spawn: {
             command: "node",
             args: [mockAgentPath],
-            env: { ...process.env, HALC2_ACP_OMIT_SESSION_LIST_HANDLER: "1" },
+            env: { ...process.env, HAL_C2_ACP_OMIT_SESSION_LIST_HANDLER: "1" },
           },
         }),
     });

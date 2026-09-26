@@ -109,12 +109,12 @@ const optionalEnv = (name: string) =>
   Config.String(name).pipe(Config.option, Config.map(Option.getOrUndefined));
 
 /**
- * The base dir the environment names: `HALC2_HOME`, else the deprecated
+ * The base dir the environment names: `HAL_C2_HOME`, else the deprecated
  * `T3CODE_HOME` (warned once). Undefined when neither is set.
  */
 export const configuredHalC2HomeFromEnv = Effect.gen(function* () {
   const env = yield* Config.all({
-    HALC2_HOME: optionalEnv("HALC2_HOME"),
+    HAL_C2_HOME: optionalEnv("HAL_C2_HOME"),
     T3CODE_HOME: optionalEnv("T3CODE_HOME"),
   });
   return yield* configuredHalC2Home(env);

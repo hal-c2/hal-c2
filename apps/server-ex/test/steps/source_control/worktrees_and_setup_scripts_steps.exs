@@ -520,7 +520,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
   end
 
   step "the agent asks for its worktree status", context do
-    Map.put(context, :handoff, tool(context, "halc2_worktree_status", %{}))
+    Map.put(context, :handoff, tool(context, "hal_c2_worktree_status", %{}))
   end
 
   step "it learns it is attached, with the worktree path, branch and project root", context do
@@ -682,7 +682,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
   end
 
   defp handoff(context, args),
-    do: Map.put(context, :handoff, tool(context, "halc2_worktree_handoff", args))
+    do: Map.put(context, :handoff, tool(context, "hal_c2_worktree_handoff", args))
 
   # Calls one of the agent's tools as the agent of the thread "Work".
   defp tool(context, name, arguments) do
@@ -720,7 +720,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
       thread
     else
       receive do
-        {:halc2_stream, ^id, _} -> follow_thread(id, fun)
+        {:hal_c2_stream, ^id, _} -> follow_thread(id, fun)
       after
         10_000 -> flunk("the thread never got there: #{inspect(thread)}")
       end
@@ -739,7 +739,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     case Enum.find(runs, &(&1["status"] == status)) do
       nil ->
         receive do
-          {:halc2_stream, ^id, _} -> follow_run(id, status)
+          {:hal_c2_stream, ^id, _} -> follow_run(id, status)
         after
           15_000 -> flunk("no #{status} run: #{inspect(runs)}")
         end
@@ -752,7 +752,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
   defp await_output(key, text, buffer) do
     unless String.contains?(buffer, text) do
       receive do
-        {:halc2_terminal, ^key, %{"type" => "output", "data" => data}} ->
+        {:hal_c2_terminal, ^key, %{"type" => "output", "data" => data}} ->
           await_output(key, text, buffer <> data)
       after
         10_000 -> flunk("the terminal never printed #{text}: #{inspect(buffer)}")

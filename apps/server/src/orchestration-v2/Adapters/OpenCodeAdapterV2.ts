@@ -64,7 +64,7 @@ import {
   summarizeNativeProtocolPayload,
 } from "../../provider/NativeProtocolLogging.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
-import { halc2OrchestrationSystemPrompt } from "../../provider/HalC2OrchestrationInstructions.ts";
+import { halC2OrchestrationSystemPrompt } from "../../provider/HalC2OrchestrationInstructions.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import {
   OpenCodeRuntime,
@@ -1013,7 +1013,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
 
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
         const hasHalC2Mcp = mcpSession !== undefined && !connection.external;
-        const orchestrationSystemPrompt = halc2OrchestrationSystemPrompt(hasHalC2Mcp);
+        const orchestrationSystemPrompt = halC2OrchestrationSystemPrompt(hasHalC2Mcp);
         if (hasHalC2Mcp) {
           yield* runOpenCodeSdk("mcp.add", () =>
             client.mcp.add({

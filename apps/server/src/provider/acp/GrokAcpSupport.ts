@@ -15,7 +15,7 @@ import { makeXAiPromptCompletionRuntime } from "./XAiAcpExtension.ts";
 
 const GROK_API_KEY_ENV = "XAI_API_KEY";
 const GROK_OAUTH2_REFERRER_ENV = "GROK_OAUTH2_REFERRER";
-const HALC2_OAUTH_REFERRER = "hal-c2";
+const HAL_C2_OAUTH_REFERRER = "hal-c2";
 const GROK_AUTH_METHOD_API_KEY = "xai.api_key";
 const GROK_AUTH_METHOD_CACHED_TOKEN = "cached_token";
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
@@ -59,7 +59,7 @@ export function buildGrokAcpSpawnInput(
     cwd,
     env: {
       ...environment,
-      [GROK_OAUTH2_REFERRER_ENV]: HALC2_OAUTH_REFERRER,
+      [GROK_OAUTH2_REFERRER_ENV]: HAL_C2_OAUTH_REFERRER,
     },
   };
 }

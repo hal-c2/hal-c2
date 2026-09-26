@@ -418,12 +418,12 @@ defmodule HalC2.Steps.Providers.Usage do
 
   step "the user resets {string} to automatic", %{args: [model]} = context do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "halc2.readSettings")
+      World.call!(context, "hal-c2.readSettings")
 
     settings = update_in(settings, ["usagePriceOverrides"], &Map.delete(&1, model))
 
     {_, context} =
-      World.call!(context, "halc2.writeSettings", %{"settings" => settings, "version" => version})
+      World.call!(context, "hal-c2.writeSettings", %{"settings" => settings, "version" => version})
 
     context
   end
@@ -604,12 +604,12 @@ defmodule HalC2.Steps.Providers.Usage do
 
   defp save_prices(context, prices) do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "halc2.readSettings")
+      World.call!(context, "hal-c2.readSettings")
 
     settings = Map.update(settings, "usagePriceOverrides", prices, &Map.merge(&1, prices))
 
     {_, context} =
-      World.call!(context, "halc2.writeSettings", %{"settings" => settings, "version" => version})
+      World.call!(context, "hal-c2.writeSettings", %{"settings" => settings, "version" => version})
 
     context
   end

@@ -3,7 +3,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
   Steps for `features/node/platform/upgrades.feature`. The node runs from a release
   laid out in its home (`HalC2.Test.Node.release/2`); bundles are built from variants of
   loaded modules (`HalC2.Test.Node.bundle/4`), and a restart arrives as
-  `{:halc2_restart, status}` instead of stopping the VM.
+  `{:hal_c2_restart, status}` instead of stopping the VM.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
@@ -49,8 +49,8 @@ defmodule HalC2.Steps.Platform.Upgrades do
   step "the node loads the changed modules in place", context do
     assert {:ok, %{"method" => "hot-upgrade", "targetVersion" => target}} = context.reply
     assert target == context.target
-    assert function_exported?(HalC2.JsonRpc.Connection, :__halc2_variant__, 0)
-    refute_received {:halc2_restart, _}
+    assert function_exported?(HalC2.JsonRpc.Connection, :__hal_c2_variant__, 0)
+    refute_received {:hal_c2_restart, _}
     context
   end
 
@@ -124,7 +124,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
         bundle(context, %{"applications" => %{"hal_c2" => "x", "more" => "1"}})
 
       "a native library" ->
-        bundle(context, %{"nifs" => %{"hal_c2" => "halc2_nif.so"}})
+        bundle(context, %{"nifs" => %{"hal_c2" => "hal_c2_nif.so"}})
 
       "the configuration" ->
         bundle(context, %{"config" => "d"})
@@ -138,14 +138,14 @@ defmodule HalC2.Steps.Platform.Upgrades do
     assert {:ok, %{"targetVersion" => target}} = context.reply
     assert target == context.target
     assert File.dir?(Path.join([context.root, "releases", target]))
-    assert File.dir?(Path.join([context.root, "lib", "halc2_bundle-#{target}"]))
+    assert File.dir?(Path.join([context.root, "lib", "hal_c2_bundle-#{target}"]))
     context
   end
 
   step "exits asking its service wrapper to start it again", context do
-    assert_receive {:halc2_restart, 75}, 3_000
+    assert_receive {:hal_c2_restart, 75}, 3_000
     # Nothing was loaded in place.
-    refute function_exported?(HalC2.Streams, :__halc2_variant__, 0)
+    refute function_exported?(HalC2.Streams, :__hal_c2_variant__, 0)
     context
   end
 
@@ -158,7 +158,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
   end
 
   step "a node started directly from a release", context do
-    System.delete_env("HALC2_SERVICE")
+    System.delete_env("HAL_C2_SERVICE")
     assert Upgrade.release_root() == context.root
     context
   end
@@ -170,7 +170,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
   step "the update fails saying the node was not started by the service wrapper", context do
     assert {:error, _, %{"_tag" => "ServerSelfUpdateError", "reason" => reason}} = context.reply
     assert reason =~ "not started by bin/hal-c2-service"
-    refute_received {:halc2_restart, _}
+    refute_received {:hal_c2_restart, _}
     context
   end
 
@@ -181,7 +181,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
 
   step "the node restarts into the new version instead", context do
     assert {:ok, %{"targetVersion" => target}} = context.reply
-    assert_receive {:halc2_restart, 75}, 3_000
+    assert_receive {:hal_c2_restart, 75}, 3_000
     assert start_version(context) == target
 
     assert %{"status" => "restarting", "targetVersion" => ^target} =
@@ -388,11 +388,11 @@ defmodule HalC2.Steps.Platform.Upgrades do
 
   step "the running version is unchanged", context do
     assert Upgrade.version() == context.version
-    refute_received {:halc2_restart, _}
+    refute_received {:hal_c2_restart, _}
     context
   end
 
-  step "HALC2_UPGRADE_URL points to a private mirror", context do
+  step "HAL_C2_UPGRADE_URL points to a private mirror", context do
     context = context |> bundle(%{}, [], false) |> serve()
     dir = Path.join([context.served, "mirror", context.target])
     File.mkdir_p!(dir)
@@ -475,13 +475,13 @@ defmodule HalC2.Steps.Platform.Upgrades do
 
   step "only modules whose code changed are loaded", context do
     assert {:ok, %{changed: [HalC2.Patch]}} = context.report
-    assert function_exported?(HalC2.Patch, :__halc2_variant__, 0)
+    assert function_exported?(HalC2.Patch, :__hal_c2_variant__, 0)
     context
   end
 
   step "the report lists modules that need a restart", context do
     assert {:ok, %{needs_restart: [HalC2.Streams]}} = context.report
-    refute function_exported?(HalC2.Streams, :__halc2_variant__, 0)
+    refute function_exported?(HalC2.Streams, :__hal_c2_variant__, 0)
     context
   end
 
@@ -608,8 +608,8 @@ defmodule HalC2.Steps.Platform.Upgrades do
   defp config_shape, do: %{"type" => "config", "node" => Atom.to_string(node())}
 
   defp upgrade_url(url) do
-    System.put_env("HALC2_UPGRADE_URL", url)
-    ExUnit.Callbacks.on_exit(fn -> System.delete_env("HALC2_UPGRADE_URL") end)
+    System.put_env("HAL_C2_UPGRADE_URL", url)
+    ExUnit.Callbacks.on_exit(fn -> System.delete_env("HAL_C2_UPGRADE_URL") end)
   end
 
   defp links(peer) do
@@ -636,7 +636,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
     {:ok, pid} =
       :inets.start(:httpd,
         port: 0,
-        server_name: ~c"halc2test",
+        server_name: ~c"hal_c2_test",
         server_root: String.to_charlist(dir),
         document_root: String.to_charlist(dir),
         bind_address: {127, 0, 0, 1}
@@ -650,7 +650,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
   # a newer version is loaded over it, so the blocked process holds old code and the
   # next load cannot purge it. Returns `{module, pid}`.
   defp blocker(context, which) do
-    mod = :"halc2_steps_blocker_#{System.unique_integer([:positive])}"
+    mod = :"hal_c2_steps_blocker_#{System.unique_integer([:positive])}"
     {:module, ^mod} = :code.load_binary(mod, ~c"#{mod}.beam", blocker_beam(context, mod, 1))
     test = self()
     # Started through a fun, so the updater does not take it for a process of `mod`.
@@ -702,7 +702,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
 
     File.write!(Path.join([root, "releases", "start_erl.data"]), "17.0.5 #{version}\n")
 
-    for {key, value} <- [{"RELEASE_ROOT", root}, {"HALC2_UPGRADE_URL", @unreachable}],
+    for {key, value} <- [{"RELEASE_ROOT", root}, {"HAL_C2_UPGRADE_URL", @unreachable}],
         do: :ok = :erpc.call(name, System, :put_env, [key, value])
   end
 end

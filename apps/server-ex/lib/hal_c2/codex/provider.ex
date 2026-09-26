@@ -70,7 +70,7 @@ defmodule HalC2.Codex.Provider do
          {:ok, conn} <- Connection.start_link(cmd: cmd, handler: self()),
          {:ok, _} <-
            Connection.call(conn, "initialize", %{
-             "clientInfo" => %{"name" => "halc2_elixir", "version" => "0.1.0"}
+             "clientInfo" => %{"name" => "hal_c2_elixir", "version" => "0.1.0"}
            }),
          :ok <- Connection.notify(conn, "initialized", nil),
          {:ok, %{"data" => [_ | _] = models}} <- Connection.call(conn, "model/list", %{}) do

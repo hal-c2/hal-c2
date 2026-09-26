@@ -29,7 +29,7 @@ defmodule HalC2.Test.Node do
     start_supervised!(HalC2.Streams)
     start_supervised!(HalC2.Shell)
     web = start_supervised!(Supervisor.child_spec(HalC2.Web, id: HalC2.Web))
-    # A named node finds its peers as it would at boot (HALC2_PEERS, the tailnet).
+    # A named node finds its peers as it would at boot (HAL_C2_PEERS, the tailnet).
     for spec <- HalC2.Application.discovery(dir),
         do: start_supervised!(Supervisor.child_spec(spec, id: :discovery))
 
@@ -224,13 +224,13 @@ defmodule HalC2.Test.Node do
   def start_peer(node) do
     unless :erlang.is_alive() do
       {_, 0} = System.cmd("epmd", ["-daemon"])
-      name = :"halc2features#{System.unique_integer([:positive])}@127.0.0.1"
+      name = :"hal_c2_features#{System.unique_integer([:positive])}@127.0.0.1"
       {:ok, _} = :net_kernel.start(name, %{name_domain: :longnames})
     end
 
     {:ok, peer, name} =
       :peer.start(%{
-        name: :"halc2peer#{System.unique_integer([:positive])}",
+        name: :"hal_c2_peer#{System.unique_integer([:positive])}",
         host: ~c"127.0.0.1",
         longnames: true,
         args: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
@@ -367,7 +367,7 @@ defmodule HalC2.Test.Node do
 
       nil ->
         receive do
-          {:halc2_shell, {:environment, ^peer, %{"environmentId" => environment}}} -> environment
+          {:hal_c2_shell, {:environment, ^peer, %{"environmentId" => environment}}} -> environment
         after
           10_000 -> ExUnit.Assertions.flunk("#{peer} never announced its environment")
         end
@@ -486,7 +486,7 @@ defmodule HalC2.Test.Node do
         {_, 0} = System.cmd("epmd", ["-daemon"])
         # Unique names, so the test never collides with nodes running on this machine.
         {:ok, _} =
-          Node.start(:"halc2test#{System.unique_integer([:positive])}@127.0.0.1", :longnames)
+          Node.start(:"hal_c2_test#{System.unique_integer([:positive])}@127.0.0.1", :longnames)
 
         restart(node)
       end
@@ -495,7 +495,7 @@ defmodule HalC2.Test.Node do
 
     {:ok, pid, name} =
       :peer.start(%{
-        name: :"halc2peer#{System.unique_integer([:positive])}",
+        name: :"hal_c2_peer#{System.unique_integer([:positive])}",
         host: ~c"127.0.0.1",
         longnames: true,
         args: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
@@ -522,7 +522,7 @@ defmodule HalC2.Test.Node do
   defp await_environment(name, timeout) do
     unless Enum.any?(HalC2.Shell.environments(), &(elem(&1, 0) == name)) do
       receive do
-        {:halc2_shell, _} -> await_environment(name, timeout)
+        {:hal_c2_shell, _} -> await_environment(name, timeout)
       after
         timeout -> flunk("#{name} never joined the shell")
       end
@@ -548,10 +548,10 @@ defmodule HalC2.Test.Node do
     {body, eof} = Enum.split_with(rest, &(not match?({:eof, _}, &1)))
 
     mark =
-      {:function, 1, :__halc2_variant__, 0,
+      {:function, 1, :__hal_c2_variant__, 0,
        [{:clause, 1, [], [], [{:integer, 1, System.unique_integer([:positive])}]}]}
 
-    export = {:attribute, 1, :export, [{:__halc2_variant__, 0}]}
+    export = {:attribute, 1, :export, [{:__hal_c2_variant__, 0}]}
 
     {:ok, ^mod, beam} =
       :compile.forms(head ++ [module, export | body] ++ [mark | eof], [:binary, :debug_info])
@@ -561,8 +561,8 @@ defmodule HalC2.Test.Node do
 
   @doc """
   Makes the node run from a release at `<home>/release` (`RELEASE_ROOT`), under the
-  service wrapper (`HALC2_SERVICE=1`) unless `service: false`. A restart the node asks
-  for is sent to the test process as `{:halc2_restart, status}` instead of stopping the
+  service wrapper (`HAL_C2_SERVICE=1`) unless `service: false`. A restart the node asks
+  for is sent to the test process as `{:hal_c2_restart, status}` instead of stopping the
   VM. Environment, code paths, loaded versions and modules replaced by `bundle/4`
   are put back when the scenario ends. Returns the release root.
   """
@@ -582,11 +582,11 @@ defmodule HalC2.Test.Node do
     System.put_env("RELEASE_ROOT", root)
 
     if Keyword.get(opts, :service, true),
-      do: System.put_env("HALC2_SERVICE", "1"),
-      else: System.delete_env("HALC2_SERVICE")
+      do: System.put_env("HAL_C2_SERVICE", "1"),
+      else: System.delete_env("HAL_C2_SERVICE")
 
     test = self()
-    Application.put_env(:hal_c2, :restart_exit, &send(test, {:halc2_restart, &1}))
+    Application.put_env(:hal_c2, :restart_exit, &send(test, {:hal_c2_restart, &1}))
 
     unless :persistent_term.get({__MODULE__, :release}, false) do
       :persistent_term.put({__MODULE__, :release}, true)
@@ -594,7 +594,7 @@ defmodule HalC2.Test.Node do
 
       ExUnit.Callbacks.on_exit(fn ->
         System.delete_env("RELEASE_ROOT")
-        System.delete_env("HALC2_SERVICE")
+        System.delete_env("HAL_C2_SERVICE")
         Application.delete_env(:hal_c2, :restart_exit)
         :persistent_term.erase({HalC2.Upgrade, :version})
         :persistent_term.erase({HalC2.Upgrade, :outcome})
@@ -630,7 +630,7 @@ defmodule HalC2.Test.Node do
     rel = Path.join([dir, "releases", version])
     # Not `hal-c2-<version>`: code paths move to that directory, which must not hide the
     # rest of the application's modules from the test VM.
-    ebin = Path.join([dir, "lib", "halc2_bundle-#{version}", "ebin"])
+    ebin = Path.join([dir, "lib", "hal_c2_bundle-#{version}", "ebin"])
     File.mkdir_p!(rel)
     File.mkdir_p!(ebin)
 
@@ -868,7 +868,7 @@ defmodule HalC2.Test.Node.World do
 
   defp await_next_row(id, fun, timeout) do
     receive do
-      {:halc2_shell, {:rows, _, rows}} ->
+      {:hal_c2_shell, {:rows, _, rows}} ->
         case List.keyfind(rows, id, 0) do
           {^id, {_kind, row}} -> if fun.(row), do: row, else: await_next_row(id, fun, timeout)
           nil -> await_next_row(id, fun, timeout)
@@ -948,7 +948,7 @@ defmodule HalC2.Test.Node.World do
     case fun.(HalC2.Streams.Server.state(HalC2.Streams.ensure(id))) do
       done when done in [nil, false] ->
         receive do
-          {:halc2_stream, ^id, _} -> check_stream(id, fun, deadline)
+          {:hal_c2_stream, ^id, _} -> check_stream(id, fun, deadline)
         after
           max(deadline - System.monotonic_time(:millisecond), 0) ->
             flunk("#{id}'s stream never reached the expected state")
@@ -1429,17 +1429,17 @@ defmodule HalC2.Test.Node.World do
 
     File.write!(
       ssh,
-      ~s(#!/bin/sh\nfor last; do :; done\ncd "$HALC2_FAKE_REMOTES" && exec sh -c "$last"\n)
+      ~s(#!/bin/sh\nfor last; do :; done\ncd "$HAL_C2_FAKE_REMOTES" && exec sh -c "$last"\n)
     )
 
     File.chmod!(ssh, 0o755)
-    previous = {System.get_env("GIT_SSH_COMMAND"), System.get_env("HALC2_FAKE_REMOTES")}
+    previous = {System.get_env("GIT_SSH_COMMAND"), System.get_env("HAL_C2_FAKE_REMOTES")}
     System.put_env("GIT_SSH_COMMAND", ssh)
-    System.put_env("HALC2_FAKE_REMOTES", dir)
+    System.put_env("HAL_C2_FAKE_REMOTES", dir)
 
     ExUnit.Callbacks.on_exit(fn ->
       restore_env("GIT_SSH_COMMAND", elem(previous, 0))
-      restore_env("HALC2_FAKE_REMOTES", elem(previous, 1))
+      restore_env("HAL_C2_FAKE_REMOTES", elem(previous, 1))
     end)
 
     dir
@@ -1554,7 +1554,7 @@ defmodule HalC2.Test.Node.World do
   """
   def capture_log(context) do
     path = Path.join(Node.tmp_dir(context.node, "log"), "node.log")
-    id = :"halc2_test_log_#{System.unique_integer([:positive])}"
+    id = :"hal_c2_test_log_#{System.unique_integer([:positive])}"
     :ok = :logger.add_handler(id, :logger_std_h, %{config: %{file: String.to_charlist(path)}})
     ExUnit.Callbacks.on_exit(fn -> :logger.remove_handler(id) end)
     Map.put(context, :log, {id, path})
@@ -1617,7 +1617,7 @@ defmodule HalC2.Test.Node.World do
 
   defp await_completed_run(id, before) do
     receive do
-      {:halc2_stream, ^id, _} ->
+      {:hal_c2_stream, ^id, _} ->
         case completed_runs(id) do
           runs when length(runs) > before -> Enum.max_by(runs, & &1["ordinal"])
           _ -> await_completed_run(id, before)
@@ -1741,7 +1741,7 @@ defmodule HalC2.Test.Node.World do
     case Enum.find(context.setup_snapshots, pred) do
       nil ->
         receive do
-          {:halc2_worktree_setup, ^thread_id, snapshot} ->
+          {:hal_c2_worktree_setup, ^thread_id, snapshot} ->
             context
             |> Map.update!(:setup_snapshots, &(&1 ++ [snapshot]))
             |> await_setup(pred, timeout)
@@ -1890,7 +1890,7 @@ defmodule HalC2.Test.Node.World do
 
   defp await_stream_next(id, fun, timeout, last) do
     receive do
-      {:halc2_stream, ^id, _} ->
+      {:hal_c2_stream, ^id, _} ->
         state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
         if fun.(state), do: state, else: await_stream_next(id, fun, timeout, state)
     after
@@ -2310,8 +2310,8 @@ defmodule HalC2.Test.Node.World do
 
   defp await_setup_end(id, timeout) do
     receive do
-      {:halc2_worktree_setup, ^id, %{"phase" => "running"}} -> await_setup_end(id, timeout)
-      {:halc2_worktree_setup, ^id, snapshot} -> snapshot
+      {:hal_c2_worktree_setup, ^id, %{"phase" => "running"}} -> await_setup_end(id, timeout)
+      {:hal_c2_worktree_setup, ^id, snapshot} -> snapshot
     after
       timeout -> flunk("the worktree setup of #{id} never ended")
     end
@@ -2738,7 +2738,7 @@ defmodule HalC2.Test.Node.World do
         if failed && not fun.(failed), do: flunk("the run failed: #{inspect(failed)}")
 
         receive do
-          {:halc2_stream, ^id, _} -> await_run_loop(id, fun)
+          {:hal_c2_stream, ^id, _} -> await_run_loop(id, fun)
         after
           10_000 -> flunk("no run matched in #{id}: #{inspect(runs)}")
         end
@@ -3241,7 +3241,7 @@ defmodule HalC2.Test.Node.World do
       "FAKE_CODEX_TRACE" => logs["codex"],
       "FAKE_ACP_TRACE" => logs["acp"],
       # Cursor's sidecar runs under this Node binary.
-      "HALC2_NODE_COMMAND" => acp
+      "HAL_C2_NODE_COMMAND" => acp
     }
 
     for {name, value} <- env, do: put_env(name, value)
@@ -3490,7 +3490,7 @@ defmodule HalC2.Test.Node.World do
         wait = max(deadline - System.monotonic_time(:millisecond), 0)
 
         receive do
-          {:halc2_stream, ^id, _} -> await_value_loop(context, title, id, fun, deadline)
+          {:hal_c2_stream, ^id, _} -> await_value_loop(context, title, id, fun, deadline)
         after
           wait ->
             flunk(

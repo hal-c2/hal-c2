@@ -38,7 +38,7 @@ Feature: Launching and leaving the terminal client
 
   @tui
   Scenario: The user chooses which Bun runs the terminal client
-    Given the environment variable "HALC2_TUI_BUN" names a Bun binary
+    Given the environment variable "HAL_C2_TUI_BUN" names a Bun binary
     When the user runs "hal-c2 tui"
     Then the terminal client runs on that Bun binary
 

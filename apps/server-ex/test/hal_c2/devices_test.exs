@@ -245,7 +245,7 @@ defmodule HalC2.DevicesTest do
   # Receives device states until one matches.
   defp next_state(fun) do
     receive do
-      {:halc2_devices, _, state} -> if fun.(state), do: state, else: next_state(fun)
+      {:hal_c2_devices, _, state} -> if fun.(state), do: state, else: next_state(fun)
     after
       5_000 -> flunk("no matching device state")
     end
@@ -253,7 +253,7 @@ defmodule HalC2.DevicesTest do
 
   defp flush_states do
     receive do
-      {:halc2_devices, _, _} -> flush_states()
+      {:hal_c2_devices, _, _} -> flush_states()
     after
       0 -> :ok
     end

@@ -4,6 +4,6 @@
     "modules": ["HalC2ComposerEditorModule"]
   },
   "android": {
-    "modules": ["expo.modules.halc2composereditor.HalC2ComposerEditorModule"]
+    "modules": ["expo.modules.hal_c2_composereditor.HalC2ComposerEditorModule"]
   }
 }

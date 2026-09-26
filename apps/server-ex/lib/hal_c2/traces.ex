@@ -2,12 +2,12 @@ defmodule HalC2.Traces do
   @moduledoc """
   The node's local trace file and the client spans it accepts (Settings → Diagnostics).
 
-  While tracing is on (`config :hal_c2, trace: true`, `HALC2_TRACE=1`), `span/3` appends
+  While tracing is on (`config :hal_c2, trace: true`, `HAL_C2_TRACE=1`), `span/3` appends
   one `effect-span` record per finished span to `<home>/logs/server.trace.ndjson`,
   rotating at 10 MiB into `.1` … `.10`, in the record shape of
   `packages/shared/src/observability.ts`. Clients post OTLP JSON to
   `/api/observability/v1/traces`; `accept/1` keeps those spans as `otlp-span`
-  records and, when `HALC2_OTLP_TRACES_URL` names a collector, forwards the
+  records and, when `HAL_C2_OTLP_TRACES_URL` names a collector, forwards the
   payload there. `diagnostics/0` reads the files back into
   `ServerTraceDiagnosticsResult` (`server.getTraceDiagnostics`).
   """

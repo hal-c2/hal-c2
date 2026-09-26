@@ -135,9 +135,9 @@
       "types": "./src/projectSettings.ts",
       "import": "./src/projectSettings.ts"
     },
-    "./halc2ProjectFile": {
-      "types": "./src/halc2ProjectFile.ts",
-      "import": "./src/halc2ProjectFile.ts"
+    "./halC2ProjectFile": {
+      "types": "./src/halC2ProjectFile.ts",
+      "import": "./src/halC2ProjectFile.ts"
     },
     "./orchestrationTiming": {
       "types": "./src/orchestrationTiming.ts",
@@ -347,9 +347,9 @@
       "types": "./src/orchestrationV2Timeline.ts",
       "import": "./src/orchestrationV2Timeline.ts"
     },
-    "./halc2McpToolPresentation": {
-      "types": "./src/halc2McpToolPresentation.ts",
-      "import": "./src/halc2McpToolPresentation.ts"
+    "./halC2McpToolPresentation": {
+      "types": "./src/halC2McpToolPresentation.ts",
+      "import": "./src/halC2McpToolPresentation.ts"
     },
     "./Array": {
       "types": "./src/Array.ts",

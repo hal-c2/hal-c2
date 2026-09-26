@@ -63,7 +63,7 @@ defmodule HalC2.Upgrade do
 
   @doc """
   `server.updateServer`: moves this node to `targetVersion`. `progress` gets
-  `{:halc2_server_update, node, %{"type" => "progress", "stage" => stage}}` as it goes. `{:ok, ServerSelfUpdateResult}` once
+  `{:hal_c2_server_update, node, %{"type" => "progress", "stage" => stage}}` as it goes. `{:ok, ServerSelfUpdateResult}` once
   the new version runs (hot) or is about to (restart).
   """
   def update(input, progress \\ nil) do
@@ -74,7 +74,7 @@ defmodule HalC2.Upgrade do
 
   @doc """
   `server.updateServerWithProgress`: runs `update/2` off the caller and sends `pid`
-  `{:halc2_server_update, node, event}` with `ServerSelfUpdateProgressEvent`s, ending
+  `{:hal_c2_server_update, node, event}` with `ServerSelfUpdateProgressEvent`s, ending
   with `complete`, or `{:error, ServerSelfUpdateError}`.
   """
   def start(input, pid) do
@@ -87,7 +87,7 @@ defmodule HalC2.Upgrade do
           {:error, error} -> {:error, error}
         end
 
-      send(pid, {:halc2_server_update, node(), event})
+      send(pid, {:hal_c2_server_update, node(), event})
     end)
 
     :ok
@@ -270,7 +270,7 @@ defmodule HalC2.Upgrade do
     do: restart(root, target, outcome, result, Enum.join(reasons, "; "))
 
   defp restart(root, target, outcome, result, why) do
-    if System.get_env("HALC2_SERVICE") == "1" do
+    if System.get_env("HAL_C2_SERVICE") == "1" do
       File.cp!(start_data(root), previous_start(root))
       set_start_version(root, target)
       record(Map.put(outcome, "status", "restarting"))
@@ -470,7 +470,7 @@ defmodule HalC2.Upgrade do
   defp notify(nil, _stage), do: :ok
 
   defp notify(pid, stage),
-    do: send(pid, {:halc2_server_update, node(), %{"type" => "progress", "stage" => stage}})
+    do: send(pid, {:hal_c2_server_update, node(), %{"type" => "progress", "stage" => stage}})
 
   defp failure(reason), do: {:error, %{"_tag" => "ServerSelfUpdateError", "reason" => reason}}
 end

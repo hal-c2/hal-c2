@@ -34,7 +34,7 @@ defmodule HalC2.Web.SocketTest do
         {"thread", "th-1", %{"s" => %{"id" => "th-1", "title" => "First"}}}
       ])
 
-    assert_receive {:halc2_shell, {:rows, _, [{"th-1", _}]}}, 1_000
+    assert_receive {:hal_c2_shell, {:rows, _, [{"th-1", _}]}}, 1_000
 
     client =
       connect(port)

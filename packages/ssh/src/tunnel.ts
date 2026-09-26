@@ -343,12 +343,12 @@ const REMOTE_NODE_ENV_SCRIPT = `prepend_path_if_dir() {
 }
 
 remote_node_satisfies_engine() {
-  HALC2_NODE_ENGINE_RANGE=@@HALC2_NODE_ENGINE_RANGE@@
-  if [ -z "$HALC2_NODE_ENGINE_RANGE" ]; then
+  HAL_C2_NODE_ENGINE_RANGE=@@HAL_C2_NODE_ENGINE_RANGE@@
+  if [ -z "$HAL_C2_NODE_ENGINE_RANGE" ]; then
     return 0
   fi
-  node - "$HALC2_NODE_ENGINE_RANGE" <<'NODE'
-@@HALC2_NODE_ENGINE_CHECK_SCRIPT@@
+  node - "$HAL_C2_NODE_ENGINE_RANGE" <<'NODE'
+@@HAL_C2_NODE_ENGINE_CHECK_SCRIPT@@
 NODE
 }
 
@@ -415,9 +415,9 @@ ensure_remote_node_path() {
   fi
 
   if ! command -v node >/dev/null 2>&1 && [ -d "$NVM_DIR/versions/node" ]; then
-    for HALC2_NODE_BIN in "$NVM_DIR"/versions/node/*/bin; do
-      if [ -x "$HALC2_NODE_BIN/node" ]; then
-        PATH="$HALC2_NODE_BIN:$PATH"
+    for HAL_C2_NODE_BIN in "$NVM_DIR"/versions/node/*/bin; do
+      if [ -x "$HAL_C2_NODE_BIN/node" ]; then
+        PATH="$HAL_C2_NODE_BIN:$PATH"
         export PATH
       fi
     done
@@ -429,9 +429,9 @@ ensure_remote_node_path() {
 
 const REMOTE_RUNNER_SCRIPT = `#!/bin/sh
 set -eu
-@@HALC2_NODE_ENV_SCRIPT@@
-HALC2_NODE_SCRIPT_PATH=@@HALC2_NODE_SCRIPT_PATH@@
-if [ -n "$HALC2_NODE_SCRIPT_PATH" ]; then
+@@HAL_C2_NODE_ENV_SCRIPT@@
+HAL_C2_NODE_SCRIPT_PATH=@@HAL_C2_NODE_SCRIPT_PATH@@
+if [ -n "$HAL_C2_NODE_SCRIPT_PATH" ]; then
   # Dev mode: a source checkout on the remote. This is the only path that
   # needs Node, so Node discovery runs here and nowhere else.
   ensure_remote_node_path || true
@@ -439,26 +439,26 @@ if [ -n "$HALC2_NODE_SCRIPT_PATH" ]; then
     printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
     exit 1
   fi
-  exec node "$HALC2_NODE_SCRIPT_PATH" "$@"
+  exec node "$HAL_C2_NODE_SCRIPT_PATH" "$@"
 fi
-HALC2_ARCHIVE_VERSION=@@HALC2_ARCHIVE_VERSION@@
-if [ -z "$HALC2_ARCHIVE_VERSION" ]; then
+HAL_C2_ARCHIVE_VERSION=@@HAL_C2_ARCHIVE_VERSION@@
+if [ -z "$HAL_C2_ARCHIVE_VERSION" ]; then
   printf 'No hal-c2 release version was provided for the remote runtime.\\n' >&2
   exit 1
 fi
 # Self-contained release archive: no Node, npm, or compiler on the remote.
 # Unpacked into the pinned-runtime layout so \`hal-c2 service install\` reuses it.
-HALC2_RELEASE_BASE_URL=@@HALC2_RELEASE_BASE_URL@@
-HALC2_RUNTIME_DIR="$HOME/.hal-c2/runtime/versions/$HALC2_ARCHIVE_VERSION"
-halc2_runtime_ready() {
-  [ -x "$HALC2_RUNTIME_DIR/hal-c2" ] && [ "$(cat "$HALC2_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$HALC2_ARCHIVE_VERSION" ]
+HAL_C2_RELEASE_BASE_URL=@@HAL_C2_RELEASE_BASE_URL@@
+HAL_C2_RUNTIME_DIR="$HOME/.hal-c2/runtime/versions/$HAL_C2_ARCHIVE_VERSION"
+hal_c2_runtime_ready() {
+  [ -x "$HAL_C2_RUNTIME_DIR/hal-c2" ] && [ "$(cat "$HAL_C2_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$HAL_C2_ARCHIVE_VERSION" ]
 }
-if ! halc2_runtime_ready; then
+if ! hal_c2_runtime_ready; then
   mkdir -p "$HOME/.hal-c2/runtime/versions"
   # Concurrent launches (two clients, a retry racing a slow first run) must
   # not both install: mkdir is the atomic lock and the ready check repeats
   # under it.
-  HALC2_LOCK="$HOME/.hal-c2/runtime/versions/.$HALC2_ARCHIVE_VERSION.install.lock"
+  HAL_C2_LOCK="$HOME/.hal-c2/runtime/versions/.$HAL_C2_ARCHIVE_VERSION.install.lock"
   # mkdir is the only portable atomic exclusive create (mv would silently
   # nest a candidate inside an existing lock). The owner publishes its pid
   # right after, so a lock with a live owner is never reclaimed however
@@ -466,84 +466,84 @@ if ! halc2_runtime_ready; then
   # once. A lock with no pid at all is a crash between mkdir and the pid
   # write; it is reclaimed after a short grace so a live owner has time to
   # publish.
-  HALC2_LOCK_WAITED=0
-  HALC2_LOCK_UNOWNED=0
-  while ! mkdir "$HALC2_LOCK" 2>/dev/null; do
-    HALC2_LOCK_OWNER="$(cat "$HALC2_LOCK/pid" 2>/dev/null || true)"
-    if [ -n "$HALC2_LOCK_OWNER" ]; then
-      HALC2_LOCK_UNOWNED=0
-      if ! kill -0 "$HALC2_LOCK_OWNER" 2>/dev/null; then
-        rm -rf "$HALC2_LOCK"
+  HAL_C2_LOCK_WAITED=0
+  HAL_C2_LOCK_UNOWNED=0
+  while ! mkdir "$HAL_C2_LOCK" 2>/dev/null; do
+    HAL_C2_LOCK_OWNER="$(cat "$HAL_C2_LOCK/pid" 2>/dev/null || true)"
+    if [ -n "$HAL_C2_LOCK_OWNER" ]; then
+      HAL_C2_LOCK_UNOWNED=0
+      if ! kill -0 "$HAL_C2_LOCK_OWNER" 2>/dev/null; then
+        rm -rf "$HAL_C2_LOCK"
         continue
       fi
     else
-      HALC2_LOCK_UNOWNED=$((HALC2_LOCK_UNOWNED + 1))
-      if [ "$HALC2_LOCK_UNOWNED" -ge 5 ]; then
-        rm -rf "$HALC2_LOCK"
+      HAL_C2_LOCK_UNOWNED=$((HAL_C2_LOCK_UNOWNED + 1))
+      if [ "$HAL_C2_LOCK_UNOWNED" -ge 5 ]; then
+        rm -rf "$HAL_C2_LOCK"
         continue
       fi
     fi
-    if [ "$HALC2_LOCK_WAITED" -ge @@HALC2_ARCHIVE_LOCK_WAIT_SECONDS@@ ]; then
-      printf 'Another hal-c2 %s installation has held %s for too long.\\n' "$HALC2_ARCHIVE_VERSION" "$HALC2_LOCK" >&2
+    if [ "$HAL_C2_LOCK_WAITED" -ge @@HAL_C2_ARCHIVE_LOCK_WAIT_SECONDS@@ ]; then
+      printf 'Another hal-c2 %s installation has held %s for too long.\\n' "$HAL_C2_ARCHIVE_VERSION" "$HAL_C2_LOCK" >&2
       exit 1
     fi
     sleep 1
-    HALC2_LOCK_WAITED=$((HALC2_LOCK_WAITED + 1))
+    HAL_C2_LOCK_WAITED=$((HAL_C2_LOCK_WAITED + 1))
   done
-  printf '%s\\n' "$$" > "$HALC2_LOCK/pid.tmp" && mv "$HALC2_LOCK/pid.tmp" "$HALC2_LOCK/pid"
-  trap 'rm -rf "$HALC2_LOCK"' EXIT
+  printf '%s\\n' "$$" > "$HAL_C2_LOCK/pid.tmp" && mv "$HAL_C2_LOCK/pid.tmp" "$HAL_C2_LOCK/pid"
+  trap 'rm -rf "$HAL_C2_LOCK"' EXIT
 fi
-if ! halc2_runtime_ready; then
+if ! hal_c2_runtime_ready; then
   case "$(uname -s)" in
-    Darwin) HALC2_PLATFORM="darwin" ;;
-    Linux) HALC2_PLATFORM="linux" ;;
+    Darwin) HAL_C2_PLATFORM="darwin" ;;
+    Linux) HAL_C2_PLATFORM="linux" ;;
     *) printf 'Remote host %s has no hal-c2 release archive.\\n' "$(uname -s)" >&2; exit 1 ;;
   esac
   case "$(uname -m)" in
-    arm64 | aarch64) HALC2_ARCH="arm64" ;;
-    x86_64 | amd64) HALC2_ARCH="x64" ;;
+    arm64 | aarch64) HAL_C2_ARCH="arm64" ;;
+    x86_64 | amd64) HAL_C2_ARCH="x64" ;;
     *) printf 'Remote host %s has no hal-c2 release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
   esac
-  HALC2_ARCHIVE="hal-c2-$HALC2_ARCHIVE_VERSION-$HALC2_PLATFORM-$HALC2_ARCH.tar.gz"
-  HALC2_STAGING="$(mktemp -d "$HOME/.hal-c2/runtime/versions/.staging-XXXXXX")"
-  trap 'rm -rf "$HALC2_STAGING" "$HALC2_LOCK"' EXIT
-  halc2_fetch() {
+  HAL_C2_ARCHIVE="hal-c2-$HAL_C2_ARCHIVE_VERSION-$HAL_C2_PLATFORM-$HAL_C2_ARCH.tar.gz"
+  HAL_C2_STAGING="$(mktemp -d "$HOME/.hal-c2/runtime/versions/.staging-XXXXXX")"
+  trap 'rm -rf "$HAL_C2_STAGING" "$HAL_C2_LOCK"' EXIT
+  hal_c2_fetch() {
     if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
     elif command -v wget >/dev/null 2>&1; then wget -q --timeout=30 --tries=1 "$1" -O "$2"
-    else printf 'Remote host needs curl or wget to download %s.\\n' "$HALC2_ARCHIVE" >&2; exit 1
+    else printf 'Remote host needs curl or wget to download %s.\\n' "$HAL_C2_ARCHIVE" >&2; exit 1
     fi
   }
-  halc2_fetch "$HALC2_RELEASE_BASE_URL/v$HALC2_ARCHIVE_VERSION/SHA256SUMS" "$HALC2_STAGING/SHA256SUMS" @@HALC2_ARCHIVE_CHECKSUMS_SECONDS@@
-  halc2_fetch "$HALC2_RELEASE_BASE_URL/v$HALC2_ARCHIVE_VERSION/$HALC2_ARCHIVE" "$HALC2_STAGING/$HALC2_ARCHIVE" @@HALC2_ARCHIVE_DOWNLOAD_SECONDS@@
-  HALC2_EXPECTED="$(grep " \\*\\{0,1\\}$HALC2_ARCHIVE$" "$HALC2_STAGING/SHA256SUMS" | cut -d' ' -f1)"
+  hal_c2_fetch "$HAL_C2_RELEASE_BASE_URL/v$HAL_C2_ARCHIVE_VERSION/SHA256SUMS" "$HAL_C2_STAGING/SHA256SUMS" @@HAL_C2_ARCHIVE_CHECKSUMS_SECONDS@@
+  hal_c2_fetch "$HAL_C2_RELEASE_BASE_URL/v$HAL_C2_ARCHIVE_VERSION/$HAL_C2_ARCHIVE" "$HAL_C2_STAGING/$HAL_C2_ARCHIVE" @@HAL_C2_ARCHIVE_DOWNLOAD_SECONDS@@
+  HAL_C2_EXPECTED="$(grep " \\*\\{0,1\\}$HAL_C2_ARCHIVE$" "$HAL_C2_STAGING/SHA256SUMS" | cut -d' ' -f1)"
   if command -v sha256sum >/dev/null 2>&1; then
-    HALC2_ACTUAL="$(sha256sum "$HALC2_STAGING/$HALC2_ARCHIVE" | cut -d' ' -f1)"
+    HAL_C2_ACTUAL="$(sha256sum "$HAL_C2_STAGING/$HAL_C2_ARCHIVE" | cut -d' ' -f1)"
   else
-    HALC2_ACTUAL="$(shasum -a 256 "$HALC2_STAGING/$HALC2_ARCHIVE" | cut -d' ' -f1)"
+    HAL_C2_ACTUAL="$(shasum -a 256 "$HAL_C2_STAGING/$HAL_C2_ARCHIVE" | cut -d' ' -f1)"
   fi
-  if [ -z "$HALC2_EXPECTED" ] || [ "$HALC2_ACTUAL" != "$HALC2_EXPECTED" ]; then
-    printf 'Checksum mismatch for %s.\\n' "$HALC2_ARCHIVE" >&2; exit 1
+  if [ -z "$HAL_C2_EXPECTED" ] || [ "$HAL_C2_ACTUAL" != "$HAL_C2_EXPECTED" ]; then
+    printf 'Checksum mismatch for %s.\\n' "$HAL_C2_ARCHIVE" >&2; exit 1
   fi
-  tar -xzf "$HALC2_STAGING/$HALC2_ARCHIVE" -C "$HALC2_STAGING" --strip-components=1
-  rm -f "$HALC2_STAGING/$HALC2_ARCHIVE" "$HALC2_STAGING/SHA256SUMS"
+  tar -xzf "$HAL_C2_STAGING/$HAL_C2_ARCHIVE" -C "$HAL_C2_STAGING" --strip-components=1
+  rm -f "$HAL_C2_STAGING/$HAL_C2_ARCHIVE" "$HAL_C2_STAGING/SHA256SUMS"
   # Prove the binary runs here (libc, arch) before marking it ready, or every
   # later launch would exec a broken install instead of retrying.
-  if ! "$HALC2_STAGING/hal-c2" --version >/dev/null 2>&1; then
-    printf 'The hal-c2 %s executable does not run on this host.\\n' "$HALC2_ARCHIVE_VERSION" >&2; exit 1
+  if ! "$HAL_C2_STAGING/hal-c2" --version >/dev/null 2>&1; then
+    printf 'The hal-c2 %s executable does not run on this host.\\n' "$HAL_C2_ARCHIVE_VERSION" >&2; exit 1
   fi
-  printf '%s\\n' "$HALC2_ARCHIVE_VERSION" > "$HALC2_STAGING/.install-complete"
-  rm -rf "$HALC2_RUNTIME_DIR"
-  mv "$HALC2_STAGING" "$HALC2_RUNTIME_DIR"
+  printf '%s\\n' "$HAL_C2_ARCHIVE_VERSION" > "$HAL_C2_STAGING/.install-complete"
+  rm -rf "$HAL_C2_RUNTIME_DIR"
+  mv "$HAL_C2_STAGING" "$HAL_C2_RUNTIME_DIR"
 fi
-if [ -n "\${HALC2_LOCK:-}" ]; then
-  rm -rf "$HALC2_LOCK"
+if [ -n "\${HAL_C2_LOCK:-}" ]; then
+  rm -rf "$HAL_C2_LOCK"
   trap - EXIT
 fi
-exec "$HALC2_RUNTIME_DIR/hal-c2" "$@"
+exec "$HAL_C2_RUNTIME_DIR/hal-c2" "$@"
 `;
 
 const REMOTE_LAUNCH_SCRIPT = `set -eu
-@@HALC2_NODE_ENV_SCRIPT@@
+@@HAL_C2_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
 STATE_DIR="$HOME/.hal-c2/ssh-launch/$STATE_KEY"
 DEFAULT_SERVER_HOME="$HOME/.hal-c2"
@@ -560,7 +560,7 @@ cleanup_runner_next() {
 }
 trap cleanup_runner_next EXIT
 cat >"$RUNNER_NEXT" <<'SH'
-@@HALC2_RUNNER_SCRIPT@@
+@@HAL_C2_RUNNER_SCRIPT@@
 SH
 RUNNER_CHANGED=0
 if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
@@ -568,8 +568,8 @@ if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
 fi
 mv "$RUNNER_NEXT" "$RUNNER_FILE"
 chmod 700 "$RUNNER_FILE"
-HALC2_ARCHIVE_MODE=@@HALC2_ARCHIVE_MODE@@
-if [ "$HALC2_ARCHIVE_MODE" = "1" ]; then
+HAL_C2_ARCHIVE_MODE=@@HAL_C2_ARCHIVE_MODE@@
+if [ "$HAL_C2_ARCHIVE_MODE" = "1" ]; then
   # The archive ships the helpers below inside the executable; the remote
   # needs no Node at all. Resolving the runner once here also downloads the
   # archive before the port and readiness probes rely on it.
@@ -579,21 +579,21 @@ elif ! ensure_remote_node_path; then
   exit 1
 fi
 pick_port() {
-  if [ "$HALC2_ARCHIVE_MODE" = "1" ]; then
-    "$RUNNER_FILE" __ssh-helper pick-port "$PORT_FILE" "@@HALC2_DEFAULT_REMOTE_PORT@@" "@@HALC2_REMOTE_PORT_SCAN_WINDOW@@"
+  if [ "$HAL_C2_ARCHIVE_MODE" = "1" ]; then
+    "$RUNNER_FILE" __ssh-helper pick-port "$PORT_FILE" "@@HAL_C2_DEFAULT_REMOTE_PORT@@" "@@HAL_C2_REMOTE_PORT_SCAN_WINDOW@@"
     return
   fi
-  node - "$PORT_FILE" "@@HALC2_DEFAULT_REMOTE_PORT@@" "@@HALC2_REMOTE_PORT_SCAN_WINDOW@@" <<'NODE'
-@@HALC2_PICK_PORT_SCRIPT@@
+  node - "$PORT_FILE" "@@HAL_C2_DEFAULT_REMOTE_PORT@@" "@@HAL_C2_REMOTE_PORT_SCAN_WINDOW@@" <<'NODE'
+@@HAL_C2_PICK_PORT_SCRIPT@@
 NODE
 }
 wait_ready() {
-  if [ "$HALC2_ARCHIVE_MODE" = "1" ]; then
-    "$RUNNER_FILE" __ssh-helper wait-ready "$REMOTE_PORT" "$1" "@@HALC2_READY_PROBE_TIMEOUT_MS@@"
+  if [ "$HAL_C2_ARCHIVE_MODE" = "1" ]; then
+    "$RUNNER_FILE" __ssh-helper wait-ready "$REMOTE_PORT" "$1" "@@HAL_C2_READY_PROBE_TIMEOUT_MS@@"
     return
   fi
-  node - "$REMOTE_PORT" "$1" "@@HALC2_READY_PROBE_TIMEOUT_MS@@" <<'NODE'
-@@HALC2_WAIT_READY_SCRIPT@@
+  node - "$REMOTE_PORT" "$1" "@@HAL_C2_READY_PROBE_TIMEOUT_MS@@" <<'NODE'
+@@HAL_C2_WAIT_READY_SCRIPT@@
 NODE
 }
 wait_for_pid_exit() {
@@ -605,7 +605,7 @@ wait_for_pid_exit() {
   done
 }
 resolve_default_runtime_port() {
-  if [ "$HALC2_ARCHIVE_MODE" = "1" ]; then
+  if [ "$HAL_C2_ARCHIVE_MODE" = "1" ]; then
     "$RUNNER_FILE" __ssh-helper runtime-port "$DEFAULT_RUNTIME_FILE"
     return
   fi
@@ -642,7 +642,7 @@ if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
 fi
 if [ -n "$DEFAULT_REMOTE_PORT" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
-  if wait_ready "@@HALC2_REUSE_READY_TIMEOUT_MS@@"; then
+  if wait_ready "@@HAL_C2_REUSE_READY_TIMEOUT_MS@@"; then
     if [ "$REMOTE_MANAGED" = "managed" ]; then
       PID_TO_STOP="\${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"
       if [ -n "$PID_TO_STOP" ] && kill -0 "$PID_TO_STOP" 2>/dev/null; then
@@ -668,7 +668,7 @@ if [ -n "$DEFAULT_REMOTE_PORT" ]; then
   fi
 fi
 if [ "$REMOTE_MANAGED" = "external" ]; then
-  if [ -z "$REMOTE_PORT" ] || ! wait_ready "@@HALC2_REUSE_READY_TIMEOUT_MS@@"; then
+  if [ -z "$REMOTE_PORT" ] || ! wait_ready "@@HAL_C2_REUSE_READY_TIMEOUT_MS@@"; then
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""
@@ -680,7 +680,7 @@ elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/d
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""
-  elif ! wait_ready "@@HALC2_REUSE_READY_TIMEOUT_MS@@"; then
+  elif ! wait_ready "@@HAL_C2_REUSE_READY_TIMEOUT_MS@@"; then
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
     REMOTE_PID=""
@@ -695,19 +695,19 @@ fi
 if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
   if [ -z "$REMOTE_PORT" ]; then
-    if [ "$HALC2_ARCHIVE_MODE" = "1" ]; then
+    if [ "$HAL_C2_ARCHIVE_MODE" = "1" ]; then
       printf 'Failed to find an available port on the remote host.\\n' >&2
     else
       printf 'Failed to find an available port on the remote host. Ensure node is available on PATH.\\n' >&2
     fi
     exit 1
   fi
-  nohup env HALC2_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  nohup env HAL_C2_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
-  if ! wait_ready "@@HALC2_READY_TIMEOUT_MS@@"; then
+  if ! wait_ready "@@HAL_C2_READY_TIMEOUT_MS@@"; then
     printf 'Remote HAL-C2 server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
     if [ -s "$LOG_FILE" ]; then
       tail -n 80 "$LOG_FILE" >&2 2>/dev/null || true
@@ -724,12 +724,12 @@ printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGE
 `;
 
 const REMOTE_PAIRING_SCRIPT = `set -eu
-STATE_DIR="$HOME/.hal-c2/ssh-launch/@@HALC2_STATE_KEY@@"
+STATE_DIR="$HOME/.hal-c2/ssh-launch/@@HAL_C2_STATE_KEY@@"
 DEFAULT_SERVER_HOME="$HOME/.hal-c2"
 RUNNER_FILE="$STATE_DIR/run-hal-c2.sh"
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
-@@HALC2_RUNNER_SCRIPT@@
+@@HAL_C2_RUNNER_SCRIPT@@
 SH
 chmod 700 "$RUNNER_FILE"
 PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
@@ -737,7 +737,7 @@ PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
 `;
 
 const REMOTE_STOP_SCRIPT = `set -eu
-STATE_DIR="$HOME/.hal-c2/ssh-launch/@@HALC2_STATE_KEY@@"
+STATE_DIR="$HOME/.hal-c2/ssh-launch/@@HAL_C2_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
@@ -760,7 +760,7 @@ printf '{"stopped":true}\\n'
 `;
 
 const REMOTE_LOG_TAIL_SCRIPT = `set -eu
-STATE_DIR="$HOME/.hal-c2/ssh-launch/@@HALC2_STATE_KEY@@"
+STATE_DIR="$HOME/.hal-c2/ssh-launch/@@HAL_C2_STATE_KEY@@"
 LOG_FILE="$STATE_DIR/server.log"
 if [ -f "$LOG_FILE" ]; then
   tail -n 80 "$LOG_FILE" 2>/dev/null || true
@@ -807,13 +807,13 @@ export function buildRemoteHalC2RunnerScript(input?: RemoteHalC2RunnerOptions): 
   );
   return stripTrailingNewlines(
     applyScriptPlaceholders(REMOTE_RUNNER_SCRIPT, {
-      HALC2_NODE_SCRIPT_PATH: shellSingleQuote(nodeScriptPath),
-      HALC2_ARCHIVE_VERSION: shellSingleQuote(archiveVersion),
-      HALC2_RELEASE_BASE_URL: shellSingleQuote(releaseBaseUrl),
-      HALC2_ARCHIVE_LOCK_WAIT_SECONDS: String(REMOTE_ARCHIVE_LOCK_WAIT_SECONDS),
-      HALC2_ARCHIVE_DOWNLOAD_SECONDS: String(REMOTE_ARCHIVE_DOWNLOAD_SECONDS),
-      HALC2_ARCHIVE_CHECKSUMS_SECONDS: String(REMOTE_ARCHIVE_CHECKSUMS_SECONDS),
-      HALC2_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
+      HAL_C2_NODE_SCRIPT_PATH: shellSingleQuote(nodeScriptPath),
+      HAL_C2_ARCHIVE_VERSION: shellSingleQuote(archiveVersion),
+      HAL_C2_RELEASE_BASE_URL: shellSingleQuote(releaseBaseUrl),
+      HAL_C2_ARCHIVE_LOCK_WAIT_SECONDS: String(REMOTE_ARCHIVE_LOCK_WAIT_SECONDS),
+      HAL_C2_ARCHIVE_DOWNLOAD_SECONDS: String(REMOTE_ARCHIVE_DOWNLOAD_SECONDS),
+      HAL_C2_ARCHIVE_CHECKSUMS_SECONDS: String(REMOTE_ARCHIVE_CHECKSUMS_SECONDS),
+      HAL_C2_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     }),
   );
 }
@@ -821,24 +821,24 @@ export function buildRemoteHalC2RunnerScript(input?: RemoteHalC2RunnerOptions): 
 export function buildRemoteNodeEnvScript(input?: RemoteHalC2RunnerOptions): string {
   return stripTrailingNewlines(
     applyScriptPlaceholders(REMOTE_NODE_ENV_SCRIPT, {
-      HALC2_NODE_ENGINE_RANGE: shellSingleQuote(input?.nodeEngineRange?.trim() || ""),
-      HALC2_NODE_ENGINE_CHECK_SCRIPT: stripTrailingNewlines(buildRemoteNodeEngineCheckScript()),
+      HAL_C2_NODE_ENGINE_RANGE: shellSingleQuote(input?.nodeEngineRange?.trim() || ""),
+      HAL_C2_NODE_ENGINE_CHECK_SCRIPT: stripTrailingNewlines(buildRemoteNodeEngineCheckScript()),
     }),
   );
 }
 
 export function buildRemoteLaunchScript(input?: RemoteHalC2RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
-    HALC2_ARCHIVE_MODE: isNodeScriptRunner(input) ? "0" : "1",
-    HALC2_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
-    HALC2_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteHalC2RunnerScript(input)),
-    HALC2_PICK_PORT_SCRIPT: stripTrailingNewlines(REMOTE_PICK_PORT_SCRIPT),
-    HALC2_WAIT_READY_SCRIPT: stripTrailingNewlines(REMOTE_WAIT_READY_SCRIPT),
-    HALC2_DEFAULT_REMOTE_PORT: String(DEFAULT_REMOTE_PORT),
-    HALC2_REMOTE_PORT_SCAN_WINDOW: String(REMOTE_PORT_SCAN_WINDOW),
-    HALC2_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
-    HALC2_REUSE_READY_TIMEOUT_MS: String(REMOTE_REUSE_READY_TIMEOUT_MS),
-    HALC2_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
+    HAL_C2_ARCHIVE_MODE: isNodeScriptRunner(input) ? "0" : "1",
+    HAL_C2_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
+    HAL_C2_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteHalC2RunnerScript(input)),
+    HAL_C2_PICK_PORT_SCRIPT: stripTrailingNewlines(REMOTE_PICK_PORT_SCRIPT),
+    HAL_C2_WAIT_READY_SCRIPT: stripTrailingNewlines(REMOTE_WAIT_READY_SCRIPT),
+    HAL_C2_DEFAULT_REMOTE_PORT: String(DEFAULT_REMOTE_PORT),
+    HAL_C2_REMOTE_PORT_SCAN_WINDOW: String(REMOTE_PORT_SCAN_WINDOW),
+    HAL_C2_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
+    HAL_C2_REUSE_READY_TIMEOUT_MS: String(REMOTE_REUSE_READY_TIMEOUT_MS),
+    HAL_C2_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
   });
 }
 
@@ -847,20 +847,20 @@ export function buildRemotePairingScript(
   input?: RemoteHalC2RunnerOptions,
 ): string {
   return applyScriptPlaceholders(REMOTE_PAIRING_SCRIPT, {
-    HALC2_STATE_KEY: remoteStateKey(target),
-    HALC2_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteHalC2RunnerScript(input)),
+    HAL_C2_STATE_KEY: remoteStateKey(target),
+    HAL_C2_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteHalC2RunnerScript(input)),
   });
 }
 
 export function buildRemoteStopScript(target: DesktopSshEnvironmentTarget): string {
   return applyScriptPlaceholders(REMOTE_STOP_SCRIPT, {
-    HALC2_STATE_KEY: remoteStateKey(target),
+    HAL_C2_STATE_KEY: remoteStateKey(target),
   });
 }
 
 function buildRemoteLogTailScript(target: DesktopSshEnvironmentTarget): string {
   return applyScriptPlaceholders(REMOTE_LOG_TAIL_SCRIPT, {
-    HALC2_STATE_KEY: remoteStateKey(target),
+    HAL_C2_STATE_KEY: remoteStateKey(target),
   });
 }
 

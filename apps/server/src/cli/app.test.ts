@@ -186,7 +186,7 @@ describe("hal-c2 app", () => {
     ),
   );
 
-  it.effect("uses HALC2_HOME or --base-dir and sends the default or explicit path", () =>
+  it.effect("uses HAL_C2_HOME or --base-dir and sends the default or explicit path", () =>
     withTempDirectory("hal-c2-app-command-test-", (root) =>
       Effect.gen(function* () {
         const baseDir = NodePath.join(root, "hal-c2-home");
@@ -195,7 +195,7 @@ describe("hal-c2 app", () => {
         const workingDirectory = yield* HostProcessWorkingDirectory;
         const desktop = yield* fakeDesktop({ baseDir });
 
-        yield* runCli(["app"], { HALC2_HOME: baseDir });
+        yield* runCli(["app"], { HAL_C2_HOME: baseDir });
         yield* runCli(["app", explicitPath, "--base-dir", baseDir]);
 
         expect(desktop.received.map((request) => request.workspaceRoot)).toEqual([
@@ -231,7 +231,7 @@ describe("hal-c2 app", () => {
         const development = yield* fakeDesktop({ baseDir, stateSubdirectory: "dev" });
 
         yield* runCli(["app"]);
-        yield* runCli(["app"], { HALC2_HOME: "   " });
+        yield* runCli(["app"], { HAL_C2_HOME: "   " });
 
         expect(development.received).toHaveLength(2);
         expect(yield* pathExists(baseDir)).toBe(false);
@@ -247,7 +247,7 @@ describe("hal-c2 app", () => {
         const development = yield* fakeDesktop({ baseDir, stateSubdirectory: "dev" });
 
         const flagError = yield* runCli(["app", "--base-dir", baseDir]).pipe(Effect.flip);
-        const envError = yield* runCli(["app"], { HALC2_HOME: baseDir }).pipe(Effect.flip);
+        const envError = yield* runCli(["app"], { HAL_C2_HOME: baseDir }).pipe(Effect.flip);
 
         expect(flagError).toMatchObject({ _tag: "DesktopAppUnreachableError" });
         expect(envError).toMatchObject({ _tag: "DesktopAppUnreachableError" });

@@ -32,10 +32,10 @@ export function RequestActionButton({
         className={cn(
           "text-sm",
           tone === "primary"
-            ? "font-halc2-extrabold text-primary-foreground"
+            ? "font-hal-c2-extrabold text-primary-foreground"
             : tone === "danger"
-              ? "font-halc2-bold text-danger-foreground"
-              : "font-halc2-bold text-foreground",
+              ? "font-hal-c2-bold text-danger-foreground"
+              : "font-hal-c2-bold text-foreground",
         )}
       >
         {label}

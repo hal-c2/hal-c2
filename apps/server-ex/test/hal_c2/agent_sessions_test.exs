@@ -7,7 +7,7 @@ defmodule HalC2.AgentSessionsTest do
   @claude_session "0b8f5c1e-4a7d-4c2b-9e1f-2d3c4b5a6f70"
 
   setup %{tmp_dir: dir} do
-    Application.put_env(:hal_c2, :home, Path.join(dir, "halc2home"))
+    Application.put_env(:hal_c2, :home, Path.join(dir, "hal_c2_home"))
     start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
     start_supervised!(HalC2.Streams)
     start_supervised!(HalC2.Shell)
@@ -115,7 +115,7 @@ defmodule HalC2.AgentSessionsTest do
         "workspaceRoot" => app
       })
 
-    assert_receive {:halc2_shell, {:rows, _, [{"p1", _}]}}, 1_000
+    assert_receive {:hal_c2_shell, {:rows, _, [{"p1", _}]}}, 1_000
 
     assert {:ok, %{"candidates" => [%{"alreadyImported" => true, "projectId" => "p1"}]}} =
              AgentSessions.scan()

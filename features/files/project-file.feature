@@ -1,10 +1,10 @@
 # Sources:
 #   docs/user/project-settings.md (Import actions, Submodules)
-#   packages/contracts/src/halc2ProjectFile.ts
-#   packages/shared/src/halc2ProjectFile.ts (parseHalC2ProjectFile)
+#   packages/contracts/src/halC2ProjectFile.ts
+#   packages/shared/src/halC2ProjectFile.ts (parseHalC2ProjectFile)
 #   packages/shared/src/projectSettings.ts
 #   apps/web/src/hooks/useHalC2ProjectFileScripts.ts
-#   apps/web/src/lib/halc2ProjectFileDefaults.ts
+#   apps/web/src/lib/halC2ProjectFileDefaults.ts
 #   apps/web/src/hooks/useHandleNewThread.ts (defaultThreadEnvMode)
 #   apps/server-ex/lib/hal_c2/vcs.ex (submodules)
 #   apps/server/src/project/HalC2ProjectFileLoader.ts

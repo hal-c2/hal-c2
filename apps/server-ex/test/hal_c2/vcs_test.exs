@@ -145,13 +145,13 @@ defmodule HalC2.VcsTest do
     File.write!(Path.join(repo, "a.txt"), "changed\n")
     :ok = HalC2.Vcs.Watch.refresh(repo)
 
-    assert_receive {:halc2_vcs, ^repo,
+    assert_receive {:hal_c2_vcs, ^repo,
                     %{"_tag" => "localUpdated", "local" => %{"hasWorkingTreeChanges" => true}}},
                    2_000
 
     # Nothing changed, so nothing is sent.
     :ok = HalC2.Vcs.Watch.refresh(repo)
-    refute_receive {:halc2_vcs, _, _}, 200
+    refute_receive {:hal_c2_vcs, _, _}, 200
   end
 
   defp commit!(repo, message),

@@ -1,11 +1,11 @@
 # Sources:
-#   apps/server-ex/config/runtime.exs (HALC2_NODE_HOME, HALC2_HOME, HALC2_NODE_PORT, HALC2_NODE_HOST, HALC2_HOST)
-#   apps/server/src/cli/config.ts (HALC2_HOST)
+#   apps/server-ex/config/runtime.exs (HAL_C2_NODE_HOME, HAL_C2_HOME, HAL_C2_NODE_PORT, HAL_C2_NODE_HOST, HAL_C2_HOST)
+#   apps/server/src/cli/config.ts (HAL_C2_HOST)
 #   apps/server-ex/lib/mix/tasks/hal_c2.server.ex, hal_c2.import.ex, hal_c2.bundle.ex
 #   apps/server-ex/rel/env.sh.eex (RELEASE_DISTRIBUTION, cluster vm.args)
 #   apps/server-ex/rel/overlays/bin/hal-c2-service (restart loop on exit 75), lib/hal_c2/service.ex
-#   apps/server-ex/lib/hal_c2/desktop.ex (HALC2_BOOTSTRAP_STDIN), acp.ex (HALC2_NODE_COMMAND, HALC2_NODE_ELECTRON)
-#   apps/server-ex/lib/hal_c2/web.ex (access-token), environment.ex (environment-id, HALC2_LABEL, descriptor)
+#   apps/server-ex/lib/hal_c2/desktop.ex (HAL_C2_BOOTSTRAP_STDIN), acp.ex (HAL_C2_NODE_COMMAND, HAL_C2_NODE_ELECTRON)
+#   apps/server-ex/lib/hal_c2/web.ex (access-token), environment.ex (environment-id, HAL_C2_LABEL, descriptor)
 #   apps/server-ex/lib/hal_c2/import/v2.ex
 #   packages/contracts/src/desktopBootstrap.ts
 #   packages/contracts/src/environment.ts (ExecutionEnvironmentDescriptor)
@@ -33,7 +33,7 @@ Feature: Starting the node
 
   @node
   Scenario: The port and home directory come from the environment
-    Given HALC2_NODE_PORT is 4100 and HALC2_HOME is "/srv/hal-c2"
+    Given HAL_C2_NODE_PORT is 4100 and HAL_C2_HOME is "/srv/hal-c2"
     When the node starts
     Then it serves clients on port 4100
     And its database, logs and worktrees live under "/srv/hal-c2/elixir"
@@ -100,7 +100,7 @@ Feature: Starting the node
 
   @node
   Scenario: A configured label names the environment
-    Given HALC2_LABEL is "Build box"
+    Given HAL_C2_LABEL is "Build box"
     When a client reads the node's environment descriptor
     Then the label is "Build box"
 
@@ -177,8 +177,8 @@ Feature: Starting the node
     Then it starts with cluster distribution over mutual TLS
     And without them it starts with distribution off
 
-  # The TypeScript server's --home-dir, --port and --mode flags. A node reads HALC2_HOME and
-  # HALC2_NODE_PORT and has one mode; the desktop bootstrap covers the desktop case.
+  # The TypeScript server's --home-dir, --port and --mode flags. A node reads HAL_C2_HOME and
+  # HAL_C2_NODE_PORT and has one mode; the desktop bootstrap covers the desktop case.
   @dropped @node
   Scenario: The server takes its home and mode as command-line flags
     When a user starts the server with a home directory flag

@@ -3,7 +3,7 @@ import QtWebChannel
 import QtWebEngine
 import HalC2.Shell
 
-// The web app, as-is. Wires the WebChannel (`window.halc2Shell` on the page side)
+// The web app, as-is. Wires the WebChannel (`window.halC2Shell` on the page side)
 // and pushes theme.json into the page as CSS custom properties: as a user
 // script at document creation, so the first paint is already themed, and
 // into the live document when the theme changes.
@@ -14,7 +14,7 @@ WebEngineView {
     // keybindings step aside while a page owns the keyboard).
     objectName: "HalC2WebSurface"
 
-    // Names this surface for the page (window.halc2Shell.surfaceId), so menus it
+    // Names this surface for the page (window.halC2Shell.surfaceId), so menus it
     // opens come back to this view.
     property string surfaceId: "primary"
 
@@ -130,7 +130,7 @@ WebEngineView {
         if (!view.shellIntegration) {
             const identity = WebEngine.script();
             identity.name = "hal-c2-app-view-storage";
-            identity.sourceCode = "window.__halc2AppViewStorageId = " + JSON.stringify(view.independentStorageId) + ";";
+            identity.sourceCode = "window.__halC2AppViewStorageId = " + JSON.stringify(view.independentStorageId) + ";";
             identity.injectionPoint = WebEngineScript.DocumentCreation;
             identity.worldId = WebEngineScript.MainWorld;
             view.userScripts.insert(identity);
@@ -140,7 +140,7 @@ WebEngineView {
 
         const tag = WebEngine.script();
         tag.name = "hal-c2-surface-id";
-        tag.sourceCode = "window.__halc2ShellSurfaceId = " + JSON.stringify(view.surfaceId) + ";";
+        tag.sourceCode = "window.__halC2ShellSurfaceId = " + JSON.stringify(view.surfaceId) + ";";
         tag.injectionPoint = WebEngineScript.DocumentCreation;
         tag.worldId = WebEngineScript.MainWorld;
         view.userScripts.insert(tag);

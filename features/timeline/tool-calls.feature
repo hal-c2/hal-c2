@@ -1,6 +1,6 @@
 # Sources:
 #   docs/user/activity-log.md
-#   packages/client-runtime/src/halc2ToolSummary.test.ts (summary counting rules)
+#   packages/client-runtime/src/halC2ToolSummary.test.ts (summary counting rules)
 #   apps/web/src/components/chat/MessagesTimeline.tsx (Tool calls group, Tool call failed, tool statuses)
 #   apps/web/src/components/chat/V2ItemInspector.tsx (call details, file changes, Open diff)
 #   apps/web/src/components/chat/ChangedFilesTree.tsx

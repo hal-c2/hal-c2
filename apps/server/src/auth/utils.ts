@@ -8,7 +8,7 @@ import * as NodeCrypto from "node:crypto";
 import * as Encoding from "effect/Encoding";
 import * as Result from "effect/Result";
 
-const SESSION_COOKIE_NAME = "halc2_session";
+const SESSION_COOKIE_NAME = "hal_c2_session";
 
 /**
  * Cookies are scoped by host but *not* by port, so any two servers that can be

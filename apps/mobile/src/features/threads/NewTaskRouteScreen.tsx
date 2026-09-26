@@ -257,7 +257,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               {projectEmptyState.loading ? (
                 <ActivityIndicator colorClassName="accent-icon-muted" />
               ) : null}
-              <Text className="text-center text-lg font-halc2-bold text-foreground">
+              <Text className="text-center text-lg font-hal-c2-bold text-foreground">
                 {projectEmptyState.title}
               </Text>
               <Text className="text-center text-sm leading-normal text-foreground-muted">
@@ -278,7 +278,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                   className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
                   onPress={() => navigation.navigate("ConnectionsNew")}
                 >
-                  <Text className="text-sm font-halc2-bold text-primary-foreground">
+                  <Text className="text-sm font-hal-c2-bold text-primary-foreground">
                     Add environment
                   </Text>
                 </Pressable>
@@ -287,7 +287,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                   className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
                   onPress={() => navigation.dispatch(StackActions.push("AddProject"))}
                 >
-                  <Text className="text-sm font-halc2-bold text-primary-foreground">
+                  <Text className="text-sm font-hal-c2-bold text-primary-foreground">
                     Add new project
                   </Text>
                 </Pressable>
@@ -295,7 +295,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
             </View>
           ) : visibleScopes.length === 0 ? (
             <View className="items-center gap-2 px-6 py-8">
-              <Text className="text-center text-lg font-halc2-bold text-foreground">
+              <Text className="text-center text-lg font-hal-c2-bold text-foreground">
                 No matching projects
               </Text>
               <Text className="text-center text-sm leading-normal text-foreground-muted">
@@ -363,7 +363,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                         />
                       </View>
                       <View className="min-w-0 flex-1">
-                        <Text className={cn("text-base leading-snug", "font-halc2-bold")}>
+                        <Text className={cn("text-base leading-snug", "font-hal-c2-bold")}>
                           {scope.title}
                         </Text>
                         <Text

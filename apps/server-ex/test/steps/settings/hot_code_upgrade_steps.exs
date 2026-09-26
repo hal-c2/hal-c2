@@ -26,7 +26,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
   # Stands in for the release's bin/hal_c2: logs the version start_erl.data names, then
   # fails if that version is marked broken, or runs until the node stops (a line
   # with the exit status on the `running` fifo), or stops at once.
-  @fake_halc2 """
+  @fake_hal_c2 """
   #!/bin/sh
   root="$(cd "$(dirname "$0")/.." && pwd)"
   vsn="$(cut -d' ' -f2 "$root/releases/start_erl.data")"
@@ -56,7 +56,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     release_root(root, version)
     File.mkdir_p!(Path.join(root, "bin"))
     File.cp!(@service, Path.join([root, "bin", "hal-c2-service"]))
-    File.write!(Path.join([root, "bin", "hal_c2"]), @fake_halc2)
+    File.write!(Path.join([root, "bin", "hal_c2"]), @fake_hal_c2)
     File.chmod!(Path.join([root, "bin", "hal_c2"]), 0o755)
     World.put_env("RELEASE_ROOT", root)
 
@@ -89,7 +89,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
   def bundle(context, version, kind) do
     context = running_release(context)
     dir = Node.tmp_dir(context.node, "bundle")
-    ebin = Path.join([dir, "lib", "halc2_probe-#{version}", "ebin"])
+    ebin = Path.join([dir, "lib", "hal_c2_probe-#{version}", "ebin"])
     File.mkdir_p!(ebin)
     [{mod, bin}] = compile_probe(version)
     File.write!(Path.join(ebin, "#{mod}.beam"), bin)
@@ -130,7 +130,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     root = context.release.root
     fifo = Path.join(root, "running")
     {_, 0} = System.cmd("mkfifo", [fifo])
-    World.put_env("HALC2_SERVICE", "1")
+    World.put_env("HAL_C2_SERVICE", "1")
     World.put_app_env(:restart_exit, &stop_boot(fifo, &1))
 
     port =
@@ -251,7 +251,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
 
   step "the node installs {string} and restarts", %{args: [version]} = context do
     assert {:ok, %{"targetVersion" => ^version}} = context.reply
-    assert File.dir?(Path.join([context.release.root, "lib", "halc2_probe-#{version}", "ebin"]))
+    assert File.dir?(Path.join([context.release.root, "lib", "hal_c2_probe-#{version}", "ebin"]))
     assert await_service(context) == 0
     assert boots(context) == [context.release.version, version]
     assert start_version(context) == version
@@ -344,7 +344,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     {context, archive} = bundle(context, version, :hot)
     peer = start_peer(context, "peer")
     :ok = :erpc.call(peer, Source, :put, [version, Upgrade.platform(), archive])
-    World.put_env("HALC2_UPGRADE_URL", @unreachable)
+    World.put_env("HAL_C2_UPGRADE_URL", @unreachable)
     Map.merge(context, %{peers: [peer], build: archive})
   end
 
@@ -372,7 +372,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
       )
 
     World.put_env(
-      "HALC2_UPGRADE_URL",
+      "HAL_C2_UPGRADE_URL",
       "http://127.0.0.1:#{port}/hal-c2-node-{version}-{platform}.tar.gz"
     )
 
@@ -384,7 +384,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     assert reason =~ "does not match its checksum"
     assert Upgrade.version() == version
     assert apply(@probe, :version, []) == version
-    refute File.exists?(Path.join([context.release.root, "lib", "halc2_probe-1.4.0"]))
+    refute File.exists?(Path.join([context.release.root, "lib", "hal_c2_probe-1.4.0"]))
     context
   end
 
@@ -403,7 +403,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
 
   # The bundle needs a restart, and nothing started the node that would do one.
   step "the node was not started by its service", context do
-    World.put_env("HALC2_SERVICE", "0")
+    World.put_env("HAL_C2_SERVICE", "0")
     cached_bundle(context, "1.4.0", :native)
   end
 
@@ -496,8 +496,8 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
         "otpRelease" => System.otp_release(),
         "erts" => to_string(:erlang.system_info(:version)),
         "platform" => Upgrade.platform(),
-        "applications" => %{"halc2_probe" => version},
-        "nifs" => %{"halc2_probe" => nifs},
+        "applications" => %{"hal_c2_probe" => version},
+        "nifs" => %{"hal_c2_probe" => nifs},
         "config" => "same"
       })
     )
@@ -579,7 +579,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
       {_, 0} = System.cmd("epmd", ["-daemon"])
 
       {:ok, _} =
-        Elixir.Node.start(:"halc2test#{System.unique_integer([:positive])}@127.0.0.1", :longnames)
+        Elixir.Node.start(:"hal_c2_test#{System.unique_integer([:positive])}@127.0.0.1", :longnames)
 
       ExUnit.Callbacks.on_exit(fn -> Elixir.Node.stop() end)
     end
@@ -604,7 +604,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     {:ok, {_ip, port}} = :erpc.call(peer, ThousandIsland, :listener_info, [web])
     :ok = :erpc.call(peer, Application, :put_env, [:hal_c2, :port, port])
     :ok = :erpc.call(peer, System, :put_env, ["RELEASE_ROOT", root])
-    :ok = :erpc.call(peer, System, :put_env, ["HALC2_UPGRADE_URL", @unreachable])
+    :ok = :erpc.call(peer, System, :put_env, ["HAL_C2_UPGRADE_URL", @unreachable])
     :ok = :erpc.call(peer, :persistent_term, :put, [{Upgrade, :version}, "1.3.0"])
 
     # The peer runs the probe at 1.3.0 too.

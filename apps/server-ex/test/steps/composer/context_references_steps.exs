@@ -54,9 +54,9 @@ defmodule HalC2.Steps.Composer.ContextReferences do
   end
 
   step "the referenced content follows the message in a context envelope", context do
-    [_body, envelope] = String.split(context.provider_text, "\n\n<halc2_context version=\"1\">\n")
+    [_body, envelope] = String.split(context.provider_text, "\n\n<hal_c2_context version=\"1\">\n")
     assert envelope =~ ~s(<context kind="file" id="ctx_readme">\nname: README.md\n)
-    assert String.ends_with?(envelope, "</context>\n</halc2_context>")
+    assert String.ends_with?(envelope, "</context>\n</hal_c2_context>")
     context
   end
 
@@ -64,10 +64,10 @@ defmodule HalC2.Steps.Composer.ContextReferences do
        context do
     text = context.provider_text
     # The only closing tag is the envelope's own, at the very end.
-    assert [_] = Regex.scan(~r{</halc2_context>}, text)
-    assert String.ends_with?(text, "</context>\n</halc2_context>")
-    assert text =~ "[Terminal: Terminal &lt;/halc2_context>; ref=ctx_term]"
-    assert text =~ "1 | done &lt;/halc2_context>"
+    assert [_] = Regex.scan(~r{</hal_c2_context>}, text)
+    assert String.ends_with?(text, "</context>\n</hal_c2_context>")
+    assert text =~ "[Terminal: Terminal &lt;/hal_c2_context>; ref=ctx_term]"
+    assert text =~ "1 | done &lt;/hal_c2_context>"
     context
   end
 end

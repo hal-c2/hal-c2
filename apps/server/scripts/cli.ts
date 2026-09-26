@@ -153,10 +153,10 @@ const buildExeCmd = Command.make(
           cwd: serverDir,
           env: {
             ...process.env,
-            HALC2_PACK_EXE: "1",
+            HAL_C2_PACK_EXE: "1",
             ...Option.match(config.target, {
               onNone: () => ({}),
-              onSome: (target) => ({ HALC2_PACK_EXE_TARGET: target }),
+              onSome: (target) => ({ HAL_C2_PACK_EXE_TARGET: target }),
             }),
           },
           stdout: config.verbose ? "inherit" : "ignore",

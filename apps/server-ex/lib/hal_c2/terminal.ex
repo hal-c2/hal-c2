@@ -11,7 +11,7 @@ defmodule HalC2.Terminal do
   `HalC2.Terminal.Hub` lists every terminal for the metadata stream and polls which
   command each shell is running.
 
-  Attached processes receive `{:halc2_terminal, {thread_id, terminal_id}, event}`, with
+  Attached processes receive `{:hal_c2_terminal, {thread_id, terminal_id}, event}`, with
   events shaped as `TerminalAttachStreamEvent`.
   """
 
@@ -29,7 +29,7 @@ defmodule HalC2.Terminal do
   @persist_ms 500
   @fallback_shells ~w(/bin/zsh /bin/bash /bin/sh)
   @excluded_env ~w(PORT ELECTRON_RENDERER_PORT ELECTRON_RUN_AS_NODE BINDIR ROOTDIR EMU PROGNAME)
-  @excluded_env_prefixes ~w(HALC2_ VITE_ HALC2_ RELEASE_ ERL_)
+  @excluded_env_prefixes ~w(HAL_C2_ VITE_ RELEASE_ ERL_)
 
   # --- API ------------------------------------------------------------------------
 
@@ -268,7 +268,7 @@ defmodule HalC2.Terminal do
     # A shell that failed to start while attaching is explained to the attaching
     # client too; its snapshot alone only says "error".
     if open? and state.status == "error",
-      do: send(subscriber, {:halc2_terminal, {state.thread_id, state.terminal_id}, state.error})
+      do: send(subscriber, {:hal_c2_terminal, {state.thread_id, state.terminal_id}, state.error})
 
     {:reply, {:ok, snapshot(state)}, %{state | subscribers: subscribers}}
   end
@@ -564,7 +564,7 @@ defmodule HalC2.Terminal do
         else: event
 
     key = {state.thread_id, state.terminal_id}
-    for {pid, _} <- state.subscribers, do: send(pid, {:halc2_terminal, key, attach_event})
+    for {pid, _} <- state.subscribers, do: send(pid, {:hal_c2_terminal, key, attach_event})
 
     if event["type"] in ~w(started restarted exited error activity),
       do: Hub.upsert(summary(state), self())

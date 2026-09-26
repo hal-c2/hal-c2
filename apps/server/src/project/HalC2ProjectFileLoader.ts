@@ -20,11 +20,11 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import {
-  HALC2_PROJECT_FILE_NAME,
-  HALC2_PROJECT_FILE_NAMES,
+  HAL_C2_PROJECT_FILE_NAME,
+  HAL_C2_PROJECT_FILE_NAMES,
   type HalC2ProjectFile,
 } from "@hal-c2/contracts";
-import { HalC2ProjectFileFromJson } from "@hal-c2/shared/halc2ProjectFile";
+import { HalC2ProjectFileFromJson } from "@hal-c2/shared/halC2ProjectFile";
 
 const decodeHalC2ProjectFileJson = Schema.decodeEffect(HalC2ProjectFileFromJson);
 
@@ -73,9 +73,9 @@ export const make = Effect.gen(function* () {
 
   const load: HalC2ProjectFileLoader["Service"]["load"] = Effect.fn("HalC2ProjectFileLoader.load")(
     function* (workspaceRoot) {
-      let filePath = path.join(workspaceRoot, HALC2_PROJECT_FILE_NAME);
+      let filePath = path.join(workspaceRoot, HAL_C2_PROJECT_FILE_NAME);
       let raw = Option.none<string>();
-      for (const fileName of HALC2_PROJECT_FILE_NAMES) {
+      for (const fileName of HAL_C2_PROJECT_FILE_NAMES) {
         filePath = path.join(workspaceRoot, fileName);
         const read = yield* fileSystem.readFileString(filePath).pipe(
           Effect.map((contents) => ({ found: true as const, contents: Option.some(contents) })),

@@ -11,13 +11,13 @@ defmodule HalC2.Mcp.Tools.Queue do
 
   alias HalC2.{Orchestration, StreamState}
 
-  @tools ~w(halc2_queue_list halc2_queue_read halc2_queue_cancel halc2_queue_edit halc2_queue_reorder
-            halc2_queue_promote_to_steer halc2_pending_request_list halc2_pending_request_read
-            halc2_pending_request_respond)
+  @tools ~w(hal_c2_queue_list hal_c2_queue_read hal_c2_queue_cancel hal_c2_queue_edit hal_c2_queue_reorder
+            hal_c2_queue_promote_to_steer hal_c2_pending_request_list hal_c2_pending_request_read
+            hal_c2_pending_request_respond)
 
   def tools, do: @tools
 
-  def run("halc2_queue_list", args, %{row: me}) do
+  def run("hal_c2_queue_list", args, %{row: me}) do
     with {:ok, row} <- project_thread(me, args["threadId"]) do
       state = stream(row["id"])
       queued = queued(state)
@@ -37,13 +37,13 @@ defmodule HalC2.Mcp.Tools.Queue do
     end
   end
 
-  def run("halc2_queue_read", %{"queuedRunId" => run_id} = args, %{row: me}) do
+  def run("hal_c2_queue_read", %{"queuedRunId" => run_id} = args, %{row: me}) do
     with {:ok, row} <- project_thread(me, args["threadId"]),
          %{} = entry <- entry(stream(row["id"]), run_id, 16_000) || not_queued(),
          do: {:ok, entry}
   end
 
-  def run("halc2_queue_edit", %{"queuedRunId" => run_id} = args, caller),
+  def run("hal_c2_queue_edit", %{"queuedRunId" => run_id} = args, caller),
     do:
       queue_command(caller, args, %{
         "type" => "queued-run.edit",
@@ -51,10 +51,10 @@ defmodule HalC2.Mcp.Tools.Queue do
         "text" => args["text"]
       })
 
-  def run("halc2_queue_cancel", %{"queuedRunId" => run_id} = args, caller),
+  def run("hal_c2_queue_cancel", %{"queuedRunId" => run_id} = args, caller),
     do: queue_command(caller, args, %{"type" => "queued-run.cancel", "runId" => run_id})
 
-  def run("halc2_queue_reorder", %{"queuedRunId" => run_id} = args, caller),
+  def run("hal_c2_queue_reorder", %{"queuedRunId" => run_id} = args, caller),
     do:
       queue_command(caller, args, %{
         "type" => "queued-run.reorder",
@@ -62,7 +62,7 @@ defmodule HalC2.Mcp.Tools.Queue do
         "beforeRunId" => args["beforeRunId"]
       })
 
-  def run("halc2_queue_promote_to_steer", %{"queuedRunId" => run_id} = args, caller),
+  def run("hal_c2_queue_promote_to_steer", %{"queuedRunId" => run_id} = args, caller),
     do:
       queue_command(caller, args, %{
         "type" => "queued-message.promote-to-steer",
@@ -70,7 +70,7 @@ defmodule HalC2.Mcp.Tools.Queue do
         "targetRunId" => args["targetRunId"]
       })
 
-  def run("halc2_pending_request_list", args, %{row: me}) do
+  def run("hal_c2_pending_request_list", args, %{row: me}) do
     with {:ok, row} <- project_thread(me, args["threadId"]) do
       {:ok,
        %{
@@ -84,13 +84,13 @@ defmodule HalC2.Mcp.Tools.Queue do
     end
   end
 
-  def run("halc2_pending_request_read", %{"requestId" => id} = args, %{row: me}) do
+  def run("hal_c2_pending_request_read", %{"requestId" => id} = args, %{row: me}) do
     with {:ok, row} <- project_thread(me, args["threadId"]),
          {:ok, item} <- question(row["id"], id),
          do: {:ok, %{"requestId" => id, "questions" => item["questions"]}}
   end
 
-  def run("halc2_pending_request_respond", %{"requestId" => id} = args, caller) do
+  def run("hal_c2_pending_request_respond", %{"requestId" => id} = args, caller) do
     with {:ok, row} <- writable(caller, args["threadId"]),
          {:ok, _} <- question(row["id"], id),
          {:ok, %{"sequence" => sequence}} <-

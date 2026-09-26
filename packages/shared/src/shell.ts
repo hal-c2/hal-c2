@@ -223,11 +223,11 @@ export function mergePathEntries(
 }
 
 function envCaptureStart(name: string): string {
-  return `__HALC2_ENV_${name}_START__`;
+  return `__HAL_C2_ENV_${name}_START__`;
 }
 
 function envCaptureEnd(name: string): string {
-  return `__HALC2_ENV_${name}_END__`;
+  return `__HAL_C2_ENV_${name}_END__`;
 }
 
 function buildEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {

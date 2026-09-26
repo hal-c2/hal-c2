@@ -35,7 +35,7 @@ export function MaterialButton(props: MaterialButtonProps) {
     >
       <AppText
         className={cn(
-          "text-center font-halc2-medium",
+          "text-center font-hal-c2-medium",
           disabled ? "text-foreground-muted" : labelClassName,
         )}
       >

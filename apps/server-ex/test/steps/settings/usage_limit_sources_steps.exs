@@ -179,7 +179,7 @@ defmodule HalC2.Steps.Settings.UsageLimitSources do
 
   step "a client reads the settings", context do
     {{:ok, %{"settings" => settings, "version" => version}}, context} =
-      World.call(context, "halc2.readSettings")
+      World.call(context, "hal-c2.readSettings")
 
     Map.merge(context, %{settings: settings, version: version})
   end
@@ -194,7 +194,7 @@ defmodule HalC2.Steps.Settings.UsageLimitSources do
     settings = put_in(context.settings, ["usageLimitSources", "hub", "label"], "Team hub")
 
     {{:ok, _}, context} =
-      World.call(context, "halc2.writeSettings", %{
+      World.call(context, "hal-c2.writeSettings", %{
         "settings" => settings,
         "version" => context.version
       })

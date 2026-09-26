@@ -50,9 +50,9 @@ NodeFs.writeFileSync(NodePath.join(priv, "mcp_tools.json"), JSON.stringify(tools
 
 // What agents are told about the tools. Node's ACP terminal fallback names a Node
 // entrypoint nodes do not have, so that paragraph stays out.
-const { HALC2_ORCHESTRATION_INSTRUCTIONS } =
+const { HAL_C2_ORCHESTRATION_INSTRUCTIONS } =
   await import("../../server/src/provider/HalC2OrchestrationInstructions.ts");
-const instructions = (HALC2_ORCHESTRATION_INSTRUCTIONS as string)
+const instructions = (HAL_C2_ORCHESTRATION_INSTRUCTIONS as string)
   .split("\n\n")
   .filter((paragraph) => !paragraph.startsWith("ACP fallback:"))
   .join("\n\n")

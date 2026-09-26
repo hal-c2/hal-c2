@@ -1,9 +1,9 @@
 // Injected at document creation into every page the shell hosts. Defines
-// `window.halc2Shell` synchronously so the web app can detect the shell at module
+// `window.halC2Shell` synchronously so the web app can detect the shell at module
 // load (like `desktopBridge`); the channel itself connects once qwebchannel.js
 // (injected alongside, order not guaranteed) has defined QWebChannel.
 (() => {
-  if (window.halc2Shell !== undefined) {
+  if (window.halC2Shell !== undefined) {
     return;
   }
   const transport = window.qt && window.qt.webChannelTransport;
@@ -58,10 +58,10 @@
     );
     return stateReady;
   };
-  window.halc2Shell = Object.freeze({
+  window.halC2Shell = Object.freeze({
     protocolVersion: 1,
     surfaceId:
-      typeof window.__halc2ShellSurfaceId === "string" ? window.__halc2ShellSurfaceId : "primary",
+      typeof window.__halC2ShellSurfaceId === "string" ? window.__halC2ShellSurfaceId : "primary",
     ready,
     publish: (key, value) => ready.then((shell) => shell.publish(key, value)),
     onAction: (listener) =>

@@ -28,12 +28,12 @@ export function DevicePreviewButton(props: {
         type="monochrome"
       />
       {!compact ? (
-        <AppText className="font-halc2-medium text-xs text-foreground">
+        <AppText className="font-hal-c2-medium text-xs text-foreground">
           {props.count === 1 ? "One device open" : `${props.count} devices open`}
         </AppText>
       ) : props.count > 1 ? (
         <View className="absolute right-0.5 top-0.5 min-w-4 items-center rounded-full bg-primary px-1">
-          <AppText className="text-2xs font-halc2-bold text-primary-foreground">
+          <AppText className="text-2xs font-hal-c2-bold text-primary-foreground">
             {props.count}
           </AppText>
         </View>

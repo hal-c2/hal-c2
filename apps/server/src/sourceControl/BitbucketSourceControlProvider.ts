@@ -193,7 +193,7 @@ export const makeDiscovery = Effect.gen(function* () {
     kind: "bitbucket",
     label: "Bitbucket",
     installHint:
-      "Set HALC2_BITBUCKET_EMAIL and HALC2_BITBUCKET_API_TOKEN on the server (use a Bitbucket API token with pull request, repository, and user read scopes).",
+      "Set HAL_C2_BITBUCKET_EMAIL and HAL_C2_BITBUCKET_API_TOKEN on the server (use a Bitbucket API token with pull request, repository, and user read scopes).",
     probeAuth: bitbucket.probeAuth,
   } satisfies SourceControlApiDiscoverySpec;
 });

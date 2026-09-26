@@ -157,9 +157,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       Layer.mergeAll(
         NodeServices.layer,
         DesktopConfig.layerTest({
-          HALC2_HOME: `/tmp/hal-c2-desktop-updates-test-${process.pid}`,
-          HALC2_DESKTOP_MOCK_UPDATES: "true",
-          HALC2_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
+          HAL_C2_HOME: `/tmp/hal-c2-desktop-updates-test-${process.pid}`,
+          HAL_C2_DESKTOP_MOCK_UPDATES: "true",
+          HAL_C2_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
           ...options.env,
         }),
       ),
@@ -211,9 +211,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     Layer.provideMerge(settingsLayer),
     Layer.provideMerge(
       DesktopConfig.layerTest({
-        HALC2_HOME: `/tmp/hal-c2-desktop-updates-test-${process.pid}`,
-        HALC2_DESKTOP_MOCK_UPDATES: "true",
-        HALC2_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
+        HAL_C2_HOME: `/tmp/hal-c2-desktop-updates-test-${process.pid}`,
+        HAL_C2_DESKTOP_MOCK_UPDATES: "true",
+        HAL_C2_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
         ...options.env,
       }),
     ),

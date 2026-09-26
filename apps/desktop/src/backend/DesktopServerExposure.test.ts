@@ -81,7 +81,7 @@ function makeEnvironmentLayer(baseDir: string, env: Record<string, string | unde
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ HALC2_HOME: baseDir, ...env })),
+      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ HAL_C2_HOME: baseDir, ...env })),
     ),
   );
 }
@@ -93,7 +93,7 @@ function makeLayer(input: {
   readonly spawnerLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
   readonly desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>;
 }) {
-  const env = { HALC2_HOME: input.baseDir, ...input.env };
+  const env = { HAL_C2_HOME: input.baseDir, ...input.env };
   const environmentLayer = makeEnvironmentLayer(input.baseDir, env);
   const networkLayer = Layer.succeed(DesktopNetworkInterfaces.DesktopNetworkInterfaces, {
     read: Effect.succeed(input.networkInterfaces ?? emptyNetworkInterfaces),
@@ -387,8 +387,8 @@ describe("DesktopServerExposure", () => {
         );
       }),
       {
-        HALC2_DESKTOP_LAN_HOST: "100.90.1.2",
-        HALC2_DESKTOP_HTTPS_ENDPOINTS: "https://public.example.test",
+        HAL_C2_DESKTOP_LAN_HOST: "100.90.1.2",
+        HAL_C2_DESKTOP_HTTPS_ENDPOINTS: "https://public.example.test",
       },
     ),
   );
@@ -487,7 +487,7 @@ describe("DesktopServerExposure", () => {
         ]);
       }),
       {
-        HALC2_DESKTOP_HTTPS_ENDPOINTS:
+        HAL_C2_DESKTOP_HTTPS_ENDPOINTS:
           "https://desktop.example.ts.net,http://desktop.example.test:3773,not-a-url",
       },
     ),

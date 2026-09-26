@@ -8,7 +8,7 @@
 #   packages/client-runtime/src/v3/session.ts (unserved methods fail as unsupported)
 #   packages/client-runtime/src/connection/compatibility.ts (protocol negotiation)
 #   packages/contracts/src/rpc.ts (server.upsertKeybinding, server.removeKeybinding)
-#   apps/server-ex/lib/hal_c2/rpc.ex (halc2.upsertKeybinding, halc2.removeKeybinding)
+#   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.upsertKeybinding, hal-c2.removeKeybinding)
 #   docs/user/updating.md (When versions don't match)
 #   docs/internals/connection-runtime.md (transport health and data freshness)
 

@@ -39,7 +39,7 @@ export * from "./applicationEvent.ts";
 export * from "./orchestratorMcp.ts";
 export * from "./threadMetadataMcp.ts";
 export * from "./orchestration.ts";
-export * from "./halc2ProjectFile.ts";
+export * from "./halC2ProjectFile.ts";
 export * from "./editor.ts";
 export * from "./project.ts";
 export * from "./filesystem.ts";

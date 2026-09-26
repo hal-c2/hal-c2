@@ -208,7 +208,7 @@ export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(functio
   const path = yield* Path.Path;
   const environment = yield* HostProcessEnvironment;
   const candidates = [
-    ...(environment["HALC2_INSTALL_BIN_DIR"] ? [environment["HALC2_INSTALL_BIN_DIR"]] : []),
+    ...(environment["HAL_C2_INSTALL_BIN_DIR"] ? [environment["HAL_C2_INSTALL_BIN_DIR"]] : []),
     ...(environment["PATH"] ?? environment["Path"] ?? "").split(";"),
   ].filter((entry) => entry.trim().length > 0);
   for (const directory of candidates) {

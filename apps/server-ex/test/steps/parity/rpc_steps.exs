@@ -105,7 +105,7 @@ defmodule HalC2.Steps.Parity.Rpc do
 
     # Writing again from the version read before is stale now.
     {reply, context} =
-      World.call(context, "halc2.writeSettings", %{
+      World.call(context, "hal-c2.writeSettings", %{
         "settings" => %{},
         "version" => context.fixtures.settings_version
       })
@@ -228,22 +228,22 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "server.updateServer" ->
         {%{}, context}
 
-      "halc2.readSettings" ->
+      "hal-c2.readSettings" ->
         {%{}, context}
 
-      "halc2.writeSettings" ->
+      "hal-c2.writeSettings" ->
         {%{"settings" => HalC2.Settings.settings(), "version" => f.settings_version}, context}
 
-      "halc2.threadRows" ->
+      "hal-c2.threadRows" ->
         {%{"threadId" => f.thread}, context}
 
-      "halc2.upsertKeybinding" ->
+      "hal-c2.upsertKeybinding" ->
         {keybinding(), context}
 
       "server.upsertKeybinding" ->
         {keybinding(), context}
 
-      "halc2.removeKeybinding" ->
+      "hal-c2.removeKeybinding" ->
         {keybinding(), with_keybinding(context)}
 
       "server.removeKeybinding" ->

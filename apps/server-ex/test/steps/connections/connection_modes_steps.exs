@@ -1,7 +1,7 @@
 defmodule HalC2.Steps.Connections.ConnectionModes do
   @moduledoc """
   Steps for `features/connections/connection-modes.feature`: where the node
-  listens (loopback, a LAN host from `HALC2_NODE_HOST`) and pairing over Tailscale Serve
+  listens (loopback, a LAN host from `HAL_C2_NODE_HOST`) and pairing over Tailscale Serve
   HTTPS with `mix hal_c2.pair --tailscale`, against `test/support/fake_tailscale.py`.
   """
   use Cucumber.StepDefinition
@@ -37,10 +37,10 @@ defmodule HalC2.Steps.Connections.ConnectionModes do
 
   step "an operator starts the node with a LAN host", context do
     host = Node.lan_address()
-    System.put_env("HALC2_NODE_HOST", host)
+    System.put_env("HAL_C2_NODE_HOST", host)
 
     ExUnit.Callbacks.on_exit(fn ->
-      System.delete_env("HALC2_NODE_HOST")
+      System.delete_env("HAL_C2_NODE_HOST")
       Application.delete_env(:hal_c2, :host)
     end)
 

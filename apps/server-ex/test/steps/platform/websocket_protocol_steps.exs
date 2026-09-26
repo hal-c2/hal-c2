@@ -274,13 +274,13 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   end
 
   step "the first client writes settings at the version it read", context do
-    {%{"version" => version}, context} = World.call!(context, "halc2.readSettings", %{}, "first")
+    {%{"version" => version}, context} = World.call!(context, "hal-c2.readSettings", %{}, "first")
     doc = %{"enableAssistantStreaming" => false}
 
     {%{"version" => next}, context} =
       World.call!(
         context,
-        "halc2.writeSettings",
+        "hal-c2.writeSettings",
         %{"settings" => doc, "version" => version},
         "first"
       )
@@ -299,7 +299,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
 
   step "a write from the second client at the old version is refused as stale", context do
     payload = %{"settings" => %{}, "version" => context.version}
-    {reply, context} = World.call(context, "halc2.writeSettings", payload, "second")
+    {reply, context} = World.call(context, "hal-c2.writeSettings", payload, "second")
     assert {:error, "settings changed", %{"_tag" => "StaleSettings"}} = reply
     context
   end
@@ -311,8 +311,8 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
 
   step "it adds a keybinding and then removes it", context do
     rule = %{"key" => "mod+j", "command" => "terminal.toggle"}
-    {added, context} = keybinding(context, "halc2.upsertKeybinding", rule)
-    {removed, context} = keybinding(context, "halc2.removeKeybinding", rule)
+    {added, context} = keybinding(context, "hal-c2.upsertKeybinding", rule)
+    {removed, context} = keybinding(context, "hal-c2.removeKeybinding", rule)
     Map.merge(context, %{rule: rule, changes: [added, removed]})
   end
 
@@ -333,7 +333,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
 
     context =
       if method == "server.removeKeybinding",
-        do: context |> keybinding("halc2.upsertKeybinding", rule) |> elem(1),
+        do: context |> keybinding("hal-c2.upsertKeybinding", rule) |> elem(1),
         else: context
 
     {change, context} = keybinding(context, method, rule)
@@ -464,7 +464,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   end
 
   step "the socket stays open for other calls", context do
-    {result, context} = World.call!(context, "halc2.readSettings")
+    {result, context} = World.call!(context, "hal-c2.readSettings")
     assert %{"settings" => _, "version" => _} = result
     context
   end
@@ -477,7 +477,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   end
 
   step "a client sends any node name it likes", context do
-    name = "halc2made#{System.unique_integer([:positive])}@nowhere"
+    name = "hal_c2_made#{System.unique_integer([:positive])}@nowhere"
     assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
 
     client =
@@ -520,7 +520,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     ExUnit.Callbacks.on_exit(fn -> resume(settings) end)
 
     client =
-      Node.rpc(World.client(context), context.node.environment, 99, "halc2.readSettings", %{})
+      Node.rpc(World.client(context), context.node.environment, 99, "hal-c2.readSettings", %{})
 
     context |> Map.put(:settings_pid, settings) |> World.put_client(client)
   end
@@ -573,7 +573,7 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   step "the answer comes back over the client's one socket", context do
     assert {:ok, %{} = _result} = context.reply
     # The same socket still serves this node.
-    {_, context} = World.call!(context, "halc2.readSettings")
+    {_, context} = World.call!(context, "hal-c2.readSettings")
     context
   end
 
@@ -587,14 +587,14 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     ExUnit.Callbacks.on_exit(fn -> resume(settings) end)
 
     client =
-      Node.rpc(World.client(context), context.node.environment, 7, "halc2.readSettings", %{})
+      Node.rpc(World.client(context), context.node.environment, 7, "hal-c2.readSettings", %{})
 
     context |> Map.put(:settings_pid, settings) |> World.put_client(client)
   end
 
   step "it fails after ten minutes", context do
     {reply, client} = Node.await(World.client(context), Node.reply?(7))
-    assert %{"t" => "rpc.error", "error" => "halc2.readSettings timed out"} = reply
+    assert %{"t" => "rpc.error", "error" => "hal-c2.readSettings timed out"} = reply
     :ok = :sys.resume(context.settings_pid)
     World.put_client(context, client)
   end
@@ -661,9 +661,9 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     assert {:ok, %{"method" => "hot-upgrade", "targetVersion" => ^target}} =
              HalC2.Upgrade.update(%{"targetVersion" => target})
 
-    refute_received {:halc2_restart, _}
-    assert function_exported?(HalC2.Web.Socket, :__halc2_variant__, 0)
-    assert function_exported?(HalC2.Streams.Server, :__halc2_variant__, 0)
+    refute_received {:hal_c2_restart, _}
+    assert function_exported?(HalC2.Web.Socket, :__hal_c2_variant__, 0)
+    assert function_exported?(HalC2.Streams.Server, :__hal_c2_variant__, 0)
     assert HalC2.Upgrade.version() == target
     Map.put(context, :target, target)
   end

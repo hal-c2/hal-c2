@@ -3,7 +3,7 @@ import * as NodePath from "node:path";
 
 /** What the user's shell config directory adds to the QML shell at start. */
 export interface TuiUserConfig {
-  /** Extra plugin files (`HALC2_TUI_PLUGINS` entries ending in `.qml`). */
+  /** Extra plugin files (`HAL_C2_TUI_PLUGINS` entries ending in `.qml`). */
   readonly plugins: ReadonlyArray<string>;
   readonly pluginDirs: ReadonlyArray<string>;
   /** `keymap.json`: overrides merged into the shell's `Keymap`s. */
@@ -16,7 +16,7 @@ export const PLUGINS_DIR = "plugins";
 /**
  * Read `<configDir>/keymap.json` and the plugin locations: `<configDir>/plugins`
  * when it exists, plus `pluginPaths` (a path-list of `.qml` files and
- * directories, from `HALC2_TUI_PLUGINS`). A named directory that does not exist
+ * directories, from `HAL_C2_TUI_PLUGINS`). A named directory that does not exist
  * is skipped with a warning; a keymap file that is not valid JSON throws, so
  * the client stops before it takes over the terminal.
  */

@@ -6,7 +6,7 @@ defmodule HalC2.Preview do
   memory: `serverEpoch` changes on restart and `revision` orders every change.
   Clients normalize URLs (`normalizePreviewUrl`) before sending them.
 
-  Watchers (client sockets) get `{:halc2_preview, node, PreviewEvent}`.
+  Watchers (client sockets) get `{:hal_c2_preview, node, PreviewEvent}`.
   """
 
   use GenServer
@@ -186,7 +186,7 @@ defmodule HalC2.Preview do
         "revision" => revision
       })
 
-    for {pid, _} <- state.watchers, do: send(pid, {:halc2_preview, node(), event})
+    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_preview, node(), event})
     %{state | revision: revision}
   end
 

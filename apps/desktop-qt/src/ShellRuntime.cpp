@@ -70,7 +70,7 @@ QString ShellRuntime::userShellPath() const {
 }
 
 QString ShellRuntime::appVersion() const {
-  return QStringLiteral(HALC2_APP_VERSION);
+  return QStringLiteral(HAL_C2_APP_VERSION);
 }
 
 QUrl ShellRuntime::defaultShellUrl() const {

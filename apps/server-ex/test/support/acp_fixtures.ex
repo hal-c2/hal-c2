@@ -31,7 +31,7 @@ defmodule HalC2.Test.AcpFixtures do
     :text_claude_command,
     :provider_update_checks
   ]
-  @os_keys ["HALC2_NODE_COMMAND", "HALC2_NODE_ELECTRON", "PATH", "FAKE_TEXT_LOG"]
+  @os_keys ["HAL_C2_NODE_COMMAND", "HAL_C2_NODE_ELECTRON", "PATH", "FAKE_TEXT_LOG"]
 
   @doc "Starts the provider services with fake Codex and Claude; idempotent."
   def ready(%{acp: _} = ctx), do: ctx
@@ -69,7 +69,7 @@ defmodule HalC2.Test.AcpFixtures do
     Application.put_env(:hal_c2, :text_codex_command, @fake_text)
     Application.put_env(:hal_c2, :text_claude_command, @fake_text)
     System.put_env("FAKE_TEXT_LOG", Path.join(dir, "text.log"))
-    System.delete_env("HALC2_NODE_ELECTRON")
+    System.delete_env("HAL_C2_NODE_ELECTRON")
 
     HalC2.Test.Node.ensure(HalC2.Settings)
     HalC2.Test.Node.ensure({Registry, keys: :unique, name: HalC2.Codex.Registry})
@@ -123,13 +123,13 @@ defmodule HalC2.Test.AcpFixtures do
         do: :persistent_term.erase(key)
   end
 
-  # Cursor's sidecar runs `$HALC2_NODE_COMMAND <main.ts> --mode <mode>`; this node
+  # Cursor's sidecar runs `$HAL_C2_NODE_COMMAND <main.ts> --mode <mode>`; this node
   # command drops main.ts and runs the fake SDK's agent instead.
   defp cursor_node(dir) do
     path = Path.join(dir, "cursor-node")
     File.write!(path, "#!/bin/sh\nshift\nexec node #{@fake_cursor} --control #{dir} \"$@\"\n")
     File.chmod!(path, 0o755)
-    System.put_env("HALC2_NODE_COMMAND", path)
+    System.put_env("HAL_C2_NODE_COMMAND", path)
   end
 
   @doc "The fake agents' directory."
@@ -214,17 +214,17 @@ defmodule HalC2.Test.AcpFixtures do
   end
 
   @doc """
-  Writes the settings through a client (`halc2.readSettings`, then
-  `halc2.writeSettings`), as the settings UI does.
+  Writes the settings through a client (`hal-c2.readSettings`, then
+  `hal-c2.writeSettings`), as the settings UI does.
   """
   def write_settings(ctx, fun, name \\ "default") do
     {%{"settings" => settings, "version" => version}, ctx} =
-      HalC2.Test.Node.World.call!(ctx, "halc2.readSettings", %{}, name)
+      HalC2.Test.Node.World.call!(ctx, "hal-c2.readSettings", %{}, name)
 
     {_, ctx} =
       HalC2.Test.Node.World.call!(
         ctx,
-        "halc2.writeSettings",
+        "hal-c2.writeSettings",
         %{"settings" => fun.(settings), "version" => version},
         name
       )
@@ -439,7 +439,7 @@ defmodule HalC2.Test.AcpFixtures do
 
       _ ->
         receive do
-          {:halc2_stream, ^thread_id, _} -> await_stream(thread_id, fun, timeout)
+          {:hal_c2_stream, ^thread_id, _} -> await_stream(thread_id, fun, timeout)
         after
           timeout -> flunk("the thread never got there: #{inspect(summary(thread_id))}")
         end

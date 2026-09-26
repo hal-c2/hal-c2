@@ -2,11 +2,11 @@
 #   docs/user/source-control.md
 #   packages/contracts/src/vcs.ts (VcsCreateWorktreeInput, VcsRemoveWorktreeInput)
 #   packages/contracts/src/worktreeSetup.ts (WorktreeSetupSnapshot, stages, phases)
-#   packages/contracts/src/worktreeMcp.ts (halc2_worktree_handoff, halc2_worktree_status, halc2_worktree_list)
+#   packages/contracts/src/worktreeMcp.ts (hal_c2_worktree_handoff, hal_c2_worktree_status, hal_c2_worktree_list)
 #   packages/contracts/src/rpc.ts (vcs.createWorktree, vcs.removeWorktree, subscribeWorktreeSetup, worktreeSetup.cancel)
 #   apps/server-ex/lib/hal_c2/vcs.ex (create_worktree, remove_worktree)
 #   apps/server-ex/lib/hal_c2/worktree_setup.ex
-#   apps/server-ex/lib/hal_c2/mcp/tools/projects.ex (halc2_worktree_handoff, halc2_worktree_status, halc2_worktree_list)
+#   apps/server-ex/lib/hal_c2/mcp/tools/projects.ex (hal_c2_worktree_handoff, hal_c2_worktree_status, hal_c2_worktree_list)
 #   apps/web/src/components/BranchToolbarEnvModeSelector.tsx
 #   apps/web/src/components/BranchToolbar.logic.ts (Previous worktree, worktree submodules)
 #   apps/web/src/components/WorktreeBaseBranchPicker.tsx

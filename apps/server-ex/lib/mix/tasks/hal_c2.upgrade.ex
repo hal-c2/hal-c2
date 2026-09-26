@@ -28,7 +28,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   def run(args) do
     {opts, nodes} = OptionParser.parse!(args, strict: [dev: :boolean, cookie: :string])
     nodes = Enum.map(nodes, &String.to_atom/1)
-    nodes != [] || Mix.raise("Name the nodes to upgrade, e.g. halc2a@my-mac")
+    nodes != [] || Mix.raise("Name the nodes to upgrade, e.g. hal_c2_a@my-mac")
 
     if opts[:dev], do: Mix.Task.run("compile"), else: build()
     connect(nodes, opts[:cookie])
@@ -116,7 +116,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
 
   defp connect(nodes, cookie) do
     unless Node.alive?() do
-      name = :"halc2upgrade#{System.unique_integer([:positive])}"
+      name = :"hal_c2_upgrade#{System.unique_integer([:positive])}"
       {:ok, _} = Node.start(name, name_domain: :shortnames, hidden: true)
     end
 

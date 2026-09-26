@@ -12,8 +12,8 @@ defmodule HalC2.Connect.OAuth do
 
   Endpoints come from app env `:connect_oauth` (`token_endpoint`,
   `device_authorization_endpoint`, `client_id`, `hosted_app_url`, `loopback_port`),
-  else from `HALC2_CLERK_PUBLISHABLE_KEY`, `HALC2_CLERK_CLI_OAUTH_CLIENT_ID` and
-  `HALC2_HOSTED_APP_URL`, as the Node server reads them.
+  else from `HAL_C2_CLERK_PUBLISHABLE_KEY`, `HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID` and
+  `HAL_C2_HOSTED_APP_URL`, as the Node server reads them.
   """
 
   alias HalC2.Connect.Secrets
@@ -29,7 +29,7 @@ defmodule HalC2.Connect.OAuth do
     env = Map.new(Application.get_env(:hal_c2, :connect_oauth, []))
 
     frontend =
-      case System.get_env("HALC2_CLERK_PUBLISHABLE_KEY", "") |> String.trim() do
+      case System.get_env("HAL_C2_CLERK_PUBLISHABLE_KEY", "") |> String.trim() do
         "pk_" <> _ = key -> clerk_frontend(key)
         _ -> nil
       end
@@ -39,9 +39,9 @@ defmodule HalC2.Connect.OAuth do
       device_authorization_endpoint:
         env[:device_authorization_endpoint] ||
           (frontend && frontend <> "/oauth/device_authorization"),
-      client_id: env[:client_id] || blank(System.get_env("HALC2_CLERK_CLI_OAUTH_CLIENT_ID")),
+      client_id: env[:client_id] || blank(System.get_env("HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID")),
       hosted_app_url:
-        env[:hosted_app_url] || blank(System.get_env("HALC2_HOSTED_APP_URL")) ||
+        env[:hosted_app_url] || blank(System.get_env("HAL_C2_HOSTED_APP_URL")) ||
           "https://app.hal-c2.example",
       loopback_port: Map.get(env, :loopback_port, 34338)
     }
@@ -50,7 +50,7 @@ defmodule HalC2.Connect.OAuth do
       do: {:ok, config},
       else:
         {:error,
-         "HAL-C2 Connect sign-in is not configured for this build. Set HALC2_CLERK_PUBLISHABLE_KEY and HALC2_CLERK_CLI_OAUTH_CLIENT_ID."}
+         "HAL-C2 Connect sign-in is not configured for this build. Set HAL_C2_CLERK_PUBLISHABLE_KEY and HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID."}
   end
 
   @doc "Whether this looks like a session without a local browser (SSH)."

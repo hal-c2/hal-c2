@@ -28,7 +28,7 @@ import {
   resolveHalC2McpToolPresentation,
   type HalC2McpToolLogo,
   type HalC2McpToolPresentation,
-} from "@hal-c2/shared/halc2McpToolPresentation";
+} from "@hal-c2/shared/halC2McpToolPresentation";
 import type {
   ChatAttachment,
   MessageId,

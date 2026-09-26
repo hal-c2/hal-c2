@@ -266,7 +266,7 @@ defmodule HalC2.PullRequestsTest do
     assert {:ok, nil} = PullRequests.comment(Map.put(@ref, "body", "  looks *good*\n"))
     assert [%{"stdin" => "  looks *good*\n", "args" => args}] = calls(dir, "pr comment")
     refute Enum.any?(args, &String.contains?(&1, "looks"))
-    assert_receive {:halc2_pull_request_refreshes, _, ^next}
+    assert_receive {:hal_c2_pull_request_refreshes, _, ^next}
 
     assert {:error,
             %{"_tag" => "PullRequestOperationError", "detail" => "A comment cannot be empty."}} =
@@ -724,7 +724,7 @@ defmodule HalC2.PullRequestsTest do
         "workspaceRoot" => repo
       })
 
-    assert_receive {:halc2_shell, {:rows, _, [{^id, _}]}}, 1_000
+    assert_receive {:hal_c2_shell, {:rows, _, [{^id, _}]}}, 1_000
   end
 
   defp rules!(dir, rules), do: File.write!(Path.join(dir, "rules.json"), JSON.encode!(rules))

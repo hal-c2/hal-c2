@@ -151,9 +151,9 @@ function makeLayer(input: {
       ConfigProvider.layer(
         ConfigProvider.fromEnv({
           env: {
-            HALC2_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0",
-            HALC2_BITBUCKET_EMAIL: "user@example.com",
-            HALC2_BITBUCKET_API_TOKEN: "token",
+            HAL_C2_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0",
+            HAL_C2_BITBUCKET_EMAIL: "user@example.com",
+            HAL_C2_BITBUCKET_API_TOKEN: "token",
           },
         }),
       ),

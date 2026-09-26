@@ -47,7 +47,7 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
     mode: "desktop",
     noBrowser: true,
     port: 3773,
-    halc2Home: "/tmp/hal-c2",
+    halC2Home: "/tmp/hal-c2",
     host: "127.0.0.1",
     desktopBootstrapToken: "token",
     tailscaleServeEnabled: false,

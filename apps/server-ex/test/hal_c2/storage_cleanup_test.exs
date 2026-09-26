@@ -78,7 +78,7 @@ defmodule HalC2.StorageCleanupTest do
          }}
       ])
 
-    assert_receive {:halc2_shell, {:rows, _, [{^id, _}]}}, 2_000
+    assert_receive {:hal_c2_shell, {:rows, _, [{^id, _}]}}, 2_000
     path
   end
 

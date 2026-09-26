@@ -34,7 +34,7 @@ const makeDesktopBootstrap = (
   mode: "desktop",
   noBrowser: true,
   port: 4888,
-  halc2Home: "/tmp/hal-c2-bootstrap-home",
+  halC2Home: "/tmp/hal-c2-bootstrap-home",
   host: "127.0.0.1",
   desktopBootstrapToken: "desktop-bootstrap-token",
   tailscaleServeEnabled: false,
@@ -104,7 +104,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       const configLayer = ConfigProvider.layer(
         ConfigProvider.fromEnv({
           env: {
-            HALC2_DEV_AUTH_TOKEN: "  reusable-dev-auth-token-that-is-long-enough  ",
+            HAL_C2_DEV_AUTH_TOKEN: "  reusable-dev-auth-token-that-is-long-enough  ",
           },
         }),
       );
@@ -148,7 +148,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServePort: Option.none<number>(),
       };
       const configLayer = ConfigProvider.layer(
-        ConfigProvider.fromEnv({ env: { HALC2_DEV_AUTH_TOKEN: secret } }),
+        ConfigProvider.fromEnv({ env: { HAL_C2_DEV_AUTH_TOKEN: secret } }),
       );
       const error = yield* resolveServerConfig(flags, Option.none()).pipe(
         Effect.provide(Layer.mergeAll(configLayer, NetService.layer)),
@@ -201,17 +201,17 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  HALC2_LOG_LEVEL: "Warn",
-                  HALC2_MODE: "desktop",
-                  HALC2_PORT: "4001",
-                  HALC2_HOST: "0.0.0.0",
-                  HALC2_HOME: baseDir,
+                  HAL_C2_LOG_LEVEL: "Warn",
+                  HAL_C2_MODE: "desktop",
+                  HAL_C2_PORT: "4001",
+                  HAL_C2_HOST: "0.0.0.0",
+                  HAL_C2_HOME: baseDir,
                   VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
-                  HALC2_DEV_ALLOWED_ORIGINS:
+                  HAL_C2_DEV_ALLOWED_ORIGINS:
                     "https://host.example.ts.net, https://phone.example.ts.net ",
-                  HALC2_NO_BROWSER: "true",
-                  HALC2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
-                  HALC2_LOG_WS_EVENTS: "true",
+                  HAL_C2_NO_BROWSER: "true",
+                  HAL_C2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
+                  HAL_C2_LOG_WS_EVENTS: "true",
                 },
               }),
             ),
@@ -274,15 +274,15 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  HALC2_LOG_LEVEL: "Warn",
-                  HALC2_MODE: "desktop",
-                  HALC2_PORT: "4001",
-                  HALC2_HOST: "0.0.0.0",
-                  HALC2_HOME: join(NodeOS.tmpdir(), "ignored-base"),
+                  HAL_C2_LOG_LEVEL: "Warn",
+                  HAL_C2_MODE: "desktop",
+                  HAL_C2_PORT: "4001",
+                  HAL_C2_HOST: "0.0.0.0",
+                  HAL_C2_HOME: join(NodeOS.tmpdir(), "ignored-base"),
                   VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
-                  HALC2_NO_BROWSER: "false",
-                  HALC2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
-                  HALC2_LOG_WS_EVENTS: "false",
+                  HAL_C2_NO_BROWSER: "false",
+                  HAL_C2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
+                  HAL_C2_LOG_WS_EVENTS: "false",
                 },
               }),
             ),
@@ -352,10 +352,10 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  HALC2_BOOTSTRAP_FD: String(fd),
-                  HALC2_NO_BROWSER: "true",
-                  HALC2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
-                  HALC2_LOG_WS_EVENTS: "true",
+                  HAL_C2_BOOTSTRAP_FD: String(fd),
+                  HAL_C2_NO_BROWSER: "true",
+                  HAL_C2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
+                  HAL_C2_LOG_WS_EVENTS: "true",
                 },
               }),
             ),
@@ -396,7 +396,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         makeDesktopBootstrap({
           port: 4888,
           host: "127.0.0.2",
-          halc2Home: "/tmp/hal-c2-bootstrap-home",
+          halC2Home: "/tmp/hal-c2-bootstrap-home",
           noBrowser: true,
           desktopBootstrapToken: "desktop-token",
           desktopTelemetryFd: 4,
@@ -432,7 +432,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  HALC2_BOOTSTRAP_FD: String(fd),
+                  HAL_C2_BOOTSTRAP_FD: String(fd),
                 },
               }),
             ),
@@ -529,7 +529,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         makeDesktopBootstrap({
           port: 4888,
           host: "127.0.0.2",
-          halc2Home: "/tmp/hal-c2-bootstrap-home",
+          halC2Home: "/tmp/hal-c2-bootstrap-home",
           noBrowser: false,
           desktopBootstrapToken: "desktop-token",
           tailscaleServeEnabled: false,
@@ -563,12 +563,12 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  HALC2_MODE: "web",
-                  HALC2_BOOTSTRAP_FD: String(fd),
-                  HALC2_HOME: baseDir,
-                  HALC2_NO_BROWSER: "true",
-                  HALC2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
-                  HALC2_LOG_WS_EVENTS: "true",
+                  HAL_C2_MODE: "web",
+                  HAL_C2_BOOTSTRAP_FD: String(fd),
+                  HAL_C2_HOME: baseDir,
+                  HAL_C2_NO_BROWSER: "true",
+                  HAL_C2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
+                  HAL_C2_LOG_WS_EVENTS: "true",
                 },
               }),
             ),
@@ -702,8 +702,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  HALC2_NO_BROWSER: "false",
-                  HALC2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
+                  HAL_C2_NO_BROWSER: "false",
+                  HAL_C2_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
                 },
               }),
             ),
@@ -761,7 +761,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  HALC2_OTLP_HEADERS: "authorization=Basic%20abc%3D%3D,x-tenant=hal-c2",
+                  HAL_C2_OTLP_HEADERS: "authorization=Basic%20abc%3D%3D,x-tenant=hal-c2",
                 },
               }),
             ),
@@ -804,8 +804,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  HALC2_OTLP_HEADERS: "authorization=Bearer abc==, x-tenant=hal-c2",
-                  HALC2_OTLP_TRACES_URL: "http://collector.internal:4318",
+                  HAL_C2_OTLP_HEADERS: "authorization=Bearer abc==, x-tenant=hal-c2",
+                  HAL_C2_OTLP_TRACES_URL: "http://collector.internal:4318",
                 },
               }),
             ),
@@ -847,7 +847,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         Effect.provide(
           Layer.mergeAll(
             ConfigProvider.layer(
-              ConfigProvider.fromEnv({ env: { HALC2_OTLP_PROTOCOL: "http/protobuf" } }),
+              ConfigProvider.fromEnv({ env: { HAL_C2_OTLP_PROTOCOL: "http/protobuf" } }),
             ),
             NetService.layer,
           ),
@@ -888,7 +888,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           Layer.mergeAll(
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
-                env: { HALC2_OTLP_LOGS_URL: "http://collector.internal:4318/v1/logs" },
+                env: { HAL_C2_OTLP_LOGS_URL: "http://collector.internal:4318/v1/logs" },
               }),
             ),
             NetService.layer,

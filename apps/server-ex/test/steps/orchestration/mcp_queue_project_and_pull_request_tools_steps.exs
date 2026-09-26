@@ -39,7 +39,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
   step("the agent of {string} lists the queue of {string}", %{args: [caller, thread]} = context,
     do:
-      tool(context, caller, "halc2_queue_list", %{"threadId" => World.thread_id(context, thread)})
+      tool(context, caller, "hal_c2_queue_list", %{"threadId" => World.thread_id(context, thread)})
   )
 
   step "it receives the two queued messages in the order they will start", context do
@@ -57,7 +57,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
   step "the agent of {string} reads a queued message of {string}",
        %{args: [caller, thread]} = context do
-    tool(context, caller, "halc2_queue_read", %{
+    tool(context, caller, "hal_c2_queue_read", %{
       "threadId" => World.thread_id(context, thread),
       "queuedRunId" => context.queued.first
     })
@@ -77,16 +77,16 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
     {name, arguments} =
       case change do
         "edits the text of" ->
-          {"halc2_queue_edit", %{"text" => "edited by an agent"}}
+          {"hal_c2_queue_edit", %{"text" => "edited by an agent"}}
 
         "cancels" ->
-          {"halc2_queue_cancel", %{}}
+          {"hal_c2_queue_cancel", %{}}
 
         "moves before the other" ->
-          {"halc2_queue_reorder", %{"beforeRunId" => context.queued.first}}
+          {"hal_c2_queue_reorder", %{"beforeRunId" => context.queued.first}}
 
         "promotes to a steer of the turn" ->
-          {"halc2_queue_promote_to_steer", %{"targetRunId" => context.queued.active}}
+          {"hal_c2_queue_promote_to_steer", %{"targetRunId" => context.queued.active}}
       end
 
     context
@@ -117,7 +117,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
     if expected do
       assert {:ok, %{"items" => items}} =
-               World.mcp_tool(context, caller, "halc2_queue_list", %{
+               World.mcp_tool(context, caller, "hal_c2_queue_list", %{
                  "threadId" => World.thread_id(context, thread)
                })
 
@@ -146,7 +146,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
   end
 
   step "the agent of {string} cancels it", %{args: [caller]} = context do
-    tool(context, caller, "halc2_queue_cancel", %{
+    tool(context, caller, "hal_c2_queue_cancel", %{
       "threadId" => World.thread_id(context, "t2"),
       "queuedRunId" => context.queued.first
     })
@@ -173,7 +173,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
   step "the agent of {string} lists the pending requests of {string}",
        %{args: [caller, thread]} = context do
     context
-    |> tool(caller, "halc2_pending_request_list", %{
+    |> tool(caller, "hal_c2_pending_request_list", %{
       "threadId" => World.thread_id(context, thread)
     })
     |> Map.put(:reader, caller)
@@ -195,7 +195,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
               "requestId" => id,
               "questions" => [%{"id" => "color", "question" => "Which color?"}]
             }} =
-             World.mcp_tool(context, context.reader, "halc2_pending_request_read", %{
+             World.mcp_tool(context, context.reader, "hal_c2_pending_request_read", %{
                "threadId" => World.thread_id(context, context.asking),
                "requestId" => question["id"]
              })
@@ -207,7 +207,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
   step "the agent of {string} answers it", %{args: [caller]} = context do
     [question] = requests(context, "user_input")
 
-    tool(context, caller, "halc2_pending_request_respond", %{
+    tool(context, caller, "hal_c2_pending_request_respond", %{
       "threadId" => World.thread_id(context, context.asking),
       "requestId" => question["id"],
       "answers" => %{"color" => "Red"}
@@ -238,7 +238,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
   step "the agent of {string} responds to that request", %{args: [caller]} = context do
     [approval] = requests(context, "command")
 
-    tool(context, caller, "halc2_pending_request_respond", %{
+    tool(context, caller, "hal_c2_pending_request_respond", %{
       "threadId" => World.thread_id(context, context.asking),
       "requestId" => approval["id"],
       "answers" => %{"decision" => "accept"}
@@ -254,7 +254,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
     World.await_row("gone", &(&1["deletedAt"] != nil))
 
     context
-    |> tool(caller, "halc2_project_list", %{"limit" => 1})
+    |> tool(caller, "hal_c2_project_list", %{"limit" => 1})
     |> Map.put(:reader, caller)
   end
 
@@ -262,7 +262,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
     assert {:ok, %{"projects" => [first], "nextCursor" => 1, "total" => 2}} = context.mcp_result
 
     assert {:ok, %{"projects" => [second], "nextCursor" => nil, "total" => 2}} =
-             World.mcp_tool(context, context.reader, "halc2_project_list", %{
+             World.mcp_tool(context, context.reader, "hal_c2_project_list", %{
                "cursor" => 1,
                "limit" => 1
              })
@@ -274,12 +274,12 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
   step "reading project {string} fails with {string}", %{args: [project, message]} = context do
     assert {:error, "invalid_request", ^message} =
-             World.mcp_tool(context, context.reader, "halc2_project_read", %{
+             World.mcp_tool(context, context.reader, "hal_c2_project_read", %{
                "projectId" => project
              })
 
     assert {:ok, %{"project" => _}} =
-             World.mcp_tool(context, context.reader, "halc2_project_read", %{
+             World.mcp_tool(context, context.reader, "hal_c2_project_read", %{
                "projectId" => "demo"
              })
 
@@ -291,7 +291,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
     folder = HalC2.Test.Node.tmp_dir(context.node, "notes-app")
 
     context
-    |> tool(caller, "halc2_project_create", %{"workspaceRoot" => folder})
+    |> tool(caller, "hal_c2_project_create", %{"workspaceRoot" => folder})
     |> Map.put(:folder, folder)
   end
 
@@ -306,7 +306,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
   step "the agent of {string} creates a project for the folder of {string}",
        %{args: [caller, project]} = context do
-    tool(context, caller, "halc2_project_create", %{
+    tool(context, caller, "hal_c2_project_create", %{
       "workspaceRoot" => World.project(context, project).root
     })
   end
@@ -314,7 +314,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
   step "the agent of {string} renames project {string} to {string}",
        %{args: [caller, project, title]} = context do
     context
-    |> tool(caller, "halc2_project_update", %{
+    |> tool(caller, "hal_c2_project_update", %{
       "projectId" => World.project(context, project).id,
       "title" => title
     })
@@ -329,7 +329,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
   step "the agent of {string} deletes project {string} without force",
        %{args: [caller, project]} = context do
-    tool(context, caller, "halc2_project_delete", %{
+    tool(context, caller, "hal_c2_project_delete", %{
       "projectId" => World.project(context, project).id
     })
   end
@@ -344,7 +344,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
   step "the agent of {string} deletes project {string} with force",
        %{args: [caller, project]} = context do
-    tool(context, caller, "halc2_project_delete", %{
+    tool(context, caller, "hal_c2_project_delete", %{
       "projectId" => World.project(context, project).id,
       "force" => true
     })
@@ -368,7 +368,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
     destination = Path.join(HalC2.Test.Node.tmp_dir(context.node, "clones"), "upstream")
 
     context
-    |> tool(caller, "halc2_project_clone", %{
+    |> tool(caller, "hal_c2_project_clone", %{
       "remoteUrl" => source,
       "destinationPath" => destination
     })
@@ -381,7 +381,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
     assert File.read!(Path.join(cwd, "README.md")) == "# upstream\n"
 
     assert {:ok, project} =
-             World.mcp_tool(context, context.cloner, "halc2_project_create", %{
+             World.mcp_tool(context, context.cloner, "hal_c2_project_create", %{
                "workspaceRoot" => cwd
              })
 
@@ -392,7 +392,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
   # --- worktrees -------------------------------------------------------------------
 
   step("the agent of {string} asks for its worktree status", %{args: [caller]} = context,
-    do: tool(context, caller, "halc2_worktree_status")
+    do: tool(context, caller, "hal_c2_worktree_status")
   )
 
   step "it is not attached to a worktree", context do
@@ -413,7 +413,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
     World.git!(root, ["worktree", "add", "-q", "-b", "topic", worktree])
 
     context
-    |> tool(caller, "halc2_worktree_list")
+    |> tool(caller, "hal_c2_worktree_list")
     |> Map.put(:worktree, worktree)
   end
 
@@ -597,7 +597,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
     task =
       Task.async(fn ->
-        World.mcp_tool(context, thread, "halc2_worktree_handoff", %{"branch" => "feature/race"})
+        World.mcp_tool(context, thread, "hal_c2_worktree_handoff", %{"branch" => "feature/race"})
       end)
 
     # Blocks until the hook runs, inside the handoff's `git worktree add`.
@@ -815,7 +815,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
   end
 
   defp handoff(context, caller, arguments),
-    do: tool(context, caller, "halc2_worktree_handoff", arguments)
+    do: tool(context, caller, "hal_c2_worktree_handoff", arguments)
 
   # An origin holding main as it is now; local main then moves a commit ahead.
   defp with_origin(context) do
@@ -850,7 +850,7 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
     if String.contains?(seen, marker) do
       :ok
     else
-      assert_receive {:halc2_terminal, _, %{"type" => "output", "data" => data}}, 10_000
+      assert_receive {:hal_c2_terminal, _, %{"type" => "output", "data" => data}}, 10_000
       await_output(seen <> data, marker)
     end
   end

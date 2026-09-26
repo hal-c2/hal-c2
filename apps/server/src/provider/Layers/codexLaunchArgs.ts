@@ -1,11 +1,11 @@
 import { tokenizeCliArgs } from "@hal-c2/shared/cliArgs";
 
-const HALC2_CODEX_LAUNCH_ARGS_ENV = "HALC2_CODEX_LAUNCH_ARGS";
+const HAL_C2_CODEX_LAUNCH_ARGS_ENV = "HAL_C2_CODEX_LAUNCH_ARGS";
 
 export const resolveCodexLaunchArgs = (
   launchArgs?: string,
   environment: NodeJS.ProcessEnv = process.env,
-) => environment[HALC2_CODEX_LAUNCH_ARGS_ENV]?.trim() || launchArgs?.trim() || "";
+) => environment[HAL_C2_CODEX_LAUNCH_ARGS_ENV]?.trim() || launchArgs?.trim() || "";
 
 const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenizeCliArgs(launchArgs);
 

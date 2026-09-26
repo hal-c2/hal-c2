@@ -513,7 +513,7 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
       send(me, {ref, :settled})
     else
       receive do
-        {:halc2_scheduled_tasks, _node, _tasks} -> idle(me, ref)
+        {:hal_c2_scheduled_tasks, _node, _tasks} -> idle(me, ref)
       end
     end
   end
@@ -536,7 +536,7 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
 
       [] ->
         receive do
-          {:halc2_shell, _} -> new_thread(context)
+          {:hal_c2_shell, _} -> new_thread(context)
         after
           2_000 -> flunk("no thread titled #{inspect(title)} in the project")
         end

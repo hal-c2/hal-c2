@@ -93,7 +93,7 @@ defmodule HalC2.Connect.Publisher do
   def handle_call(:drain, _from, state), do: {:reply, :ok, state}
 
   @impl true
-  def handle_info({:halc2_shell, {:rows, node, rows}}, state) when node == node() do
+  def handle_info({:hal_c2_shell, {:rows, node, rows}}, state) when node == node() do
     ids = for {id, {"thread", _}} <- rows, do: id
     {:noreply, Enum.reduce(ids, state, &publish(&1, cancel_retry(&2, &1)))}
   end

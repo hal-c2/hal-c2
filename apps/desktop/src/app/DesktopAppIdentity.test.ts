@@ -133,7 +133,7 @@ const withIdentity = <A, E, R>(
                 ? Effect.fail(input.legacyPathProbeError)
                 : Effect.succeed(input.legacyPathExists === true && /t3code|T3 Code/.test(path)),
             readFileString: () =>
-              Effect.succeed(input.packageJson ?? '{"halc2CommitHash":"abcdef1234567890"}'),
+              Effect.succeed(input.packageJson ?? '{"halC2CommitHash":"abcdef1234567890"}'),
           }),
         ),
         Layer.provideMerge(makeAssetsLayer(input.pngIconPath ?? Option.none())),
@@ -227,7 +227,7 @@ describe("DesktopAppIdentity", () => {
         calls,
         environment: {
           env: {
-            HALC2_COMMIT_HASH: "0123456789abcdef",
+            HAL_C2_COMMIT_HASH: "0123456789abcdef",
           },
         },
         pngIconPath: Option.some("/icon.png"),

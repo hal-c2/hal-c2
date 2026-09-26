@@ -62,7 +62,7 @@ const PullRequestListPreferencesSchema = Schema.Struct({
 const decodePullRequestListPreferences = Schema.decodeUnknownOption(
   PullRequestListPreferencesSchema,
 );
-const PULL_REQUEST_LIST_PREFERENCES_STORAGE_KEY = "halc2.pullRequests.preferences";
+const PULL_REQUEST_LIST_PREFERENCES_STORAGE_KEY = "hal-c2.pullRequests.preferences";
 type PreferenceStorage = Pick<Storage, "getItem" | "setItem">;
 
 function resolvePreferenceStorage(

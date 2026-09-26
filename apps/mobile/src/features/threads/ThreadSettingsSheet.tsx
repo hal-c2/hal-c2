@@ -138,12 +138,12 @@ function ProviderHeader(props: {
   const content = (
     <>
       <ProviderIcon iconUrl={props.iconUrl} provider={props.driver} size={15} />
-      <Text className="text-sm font-halc2-medium text-foreground-muted">{props.label}</Text>
+      <Text className="text-sm font-hal-c2-medium text-foreground-muted">{props.label}</Text>
       {props.collapsible ? (
         <>
           <View className="flex-1" />
           {props.collapsed ? (
-            <Text className="text-2xs font-halc2-medium text-foreground-muted">
+            <Text className="text-2xs font-hal-c2-medium text-foreground-muted">
               {props.modelCount}
             </Text>
           ) : null}
@@ -195,7 +195,7 @@ function DisclosureRow(props: {
         !props.isLast && "border-b border-border-subtle",
       )}
     >
-      <Text className="text-sm font-halc2-medium text-foreground">{props.label}</Text>
+      <Text className="text-sm font-hal-c2-medium text-foreground">{props.label}</Text>
       <View className="flex-1" />
       {props.value ? (
         <Text className="text-sm text-foreground-muted" numberOfLines={1}>
@@ -225,7 +225,7 @@ function SwitchRow(props: {
         !props.isLast && "border-b border-border-subtle",
       )}
     >
-      <Text className="text-sm font-halc2-medium text-foreground">{props.label}</Text>
+      <Text className="text-sm font-hal-c2-medium text-foreground">{props.label}</Text>
       <ThemedSwitch
         accessibilityLabel={props.label}
         onValueChange={props.onValueChange}
@@ -717,7 +717,7 @@ function ThreadSettingsOptionsItem(props: {
 
   return (
     <View style={{ paddingBottom: insets.bottom + bottomToolbarInset + 12 }}>
-      <Text className="px-5 pb-2 pt-2 text-sm font-halc2-medium text-foreground-muted">
+      <Text className="px-5 pb-2 pt-2 text-sm font-hal-c2-medium text-foreground-muted">
         Options
       </Text>
       <Animated.View
@@ -773,7 +773,7 @@ function ThreadSettingsOptionsItem(props: {
 
       {Platform.OS !== "ios" && session.hasLegacyModels ? (
         <>
-          <Text className="px-5 pb-2 pt-7 text-sm font-halc2-medium text-foreground-muted">
+          <Text className="px-5 pb-2 pt-7 text-sm font-hal-c2-medium text-foreground-muted">
             Catalog
           </Text>
           <View className="mx-4 overflow-hidden rounded-2xl bg-card">

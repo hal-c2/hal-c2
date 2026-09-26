@@ -289,7 +289,7 @@ beforeEach(() => {
     },
     requestAnimationFrame: () => 1,
     cancelAnimationFrame: () => {},
-    halc2Shell: { dispatch: fixture.dispatch },
+    halC2Shell: { dispatch: fixture.dispatch },
   });
   useTerminalUiStateStore.setState({ terminalUiStateByThreadKey: {} });
   useRightPanelStore.setState({ byThreadKey: {} });
@@ -445,7 +445,7 @@ describe("dedicated thread terminals", () => {
     expect(drawer().terminalLaunchLocationsById?.get("term-1")).toMatchObject({
       cwd: "/worktrees/task",
       worktreePath: "/worktrees/task",
-      runtimeEnv: { HALC2_PROJECT_ROOT: "/repo", HALC2_WORKTREE_PATH: "/worktrees/task" },
+      runtimeEnv: { HAL_C2_PROJECT_ROOT: "/repo", HAL_C2_WORKTREE_PATH: "/worktrees/task" },
     });
   });
 

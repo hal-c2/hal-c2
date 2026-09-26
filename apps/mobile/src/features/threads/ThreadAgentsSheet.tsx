@@ -134,7 +134,7 @@ function AgentRow(props: {
     <View className="min-h-14 flex-row items-center gap-3 border-b border-border py-3">
       <SubagentStatusDot tone={presentation.tone} placement="sheet" />
       <View className="min-w-0 flex-1 gap-0.5">
-        <Text className="font-halc2-medium text-sm text-foreground" numberOfLines={1}>
+        <Text className="font-hal-c2-medium text-sm text-foreground" numberOfLines={1}>
           {presentation.title}
         </Text>
         <Text className="text-xs text-foreground-muted" numberOfLines={1}>

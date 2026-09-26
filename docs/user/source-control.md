@@ -50,15 +50,15 @@ glab auth login
 Set an access token in the server's environment:
 
 ```bash
-export HALC2_BITBUCKET_ACCESS_TOKEN="your-access-token"
+export HAL_C2_BITBUCKET_ACCESS_TOKEN="your-access-token"
 ```
 
 Or use an Atlassian account email and API token with read/write access to repositories and pull
 requests, plus user read access (`read:user:bitbucket`):
 
 ```bash
-export HALC2_BITBUCKET_EMAIL="you@example.com"
-export HALC2_BITBUCKET_API_TOKEN="your-token"
+export HAL_C2_BITBUCKET_EMAIL="you@example.com"
+export HAL_C2_BITBUCKET_API_TOKEN="your-token"
 ```
 
 The access token takes precedence if both are configured. Restart the server after changing these

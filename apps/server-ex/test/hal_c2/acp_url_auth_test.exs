@@ -18,7 +18,7 @@ defmodule HalC2.Acp.UrlAuthTest do
   end
 
   defp await_action(id) do
-    assert_receive {:halc2_providers_changed, _}, 1_000
+    assert_receive {:hal_c2_providers_changed, _}, 1_000
 
     case UrlAuth.action("opencode") do
       %{"elicitationId" => ^id} = action -> action

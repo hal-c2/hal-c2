@@ -60,7 +60,7 @@ export class DesktopDevelopmentBackendPortRequiredError extends Schema.TaggedErr
   {},
 ) {
   override get message(): string {
-    return "HALC2_PORT is required in desktop development.";
+    return "HAL_C2_PORT is required in desktop development.";
   }
 }
 

@@ -73,7 +73,7 @@ const AUTH = {
   policy: "remote-reachable",
   bootstrapMethods: ["one-time-token"],
   sessionMethods: ["dpop-access-token"],
-  sessionCookieName: "halc2_session",
+  sessionCookieName: "hal_c2_session",
 } satisfies AuthSessionState["auth"];
 const SESSION = {
   authenticated: true,

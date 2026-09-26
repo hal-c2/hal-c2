@@ -2,11 +2,11 @@ import type { ProviderInteractionMode } from "@hal-c2/contracts";
 import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
 
 import {
-  HALC2_BROWSER_TOOL_INSTRUCTIONS,
-  HALC2_ORCHESTRATION_INSTRUCTIONS,
+  HAL_C2_BROWSER_TOOL_INSTRUCTIONS,
+  HAL_C2_ORCHESTRATION_INSTRUCTIONS,
 } from "./HalC2OrchestrationInstructions.ts";
 
-const HALC2_DEVICE_TOOL_INSTRUCTIONS = `
+const HAL_C2_DEVICE_TOOL_INSTRUCTIONS = `
 
 ## HAL-C2 devices
 
@@ -32,8 +32,8 @@ const normalizeAvailability = (
  */
 const browserToolInstructions = (availability: boolean | HalC2ToolAvailability): string => {
   const tools = normalizeAvailability(availability);
-  return `${tools.browser ? HALC2_BROWSER_TOOL_INSTRUCTIONS : ""}${
-    tools.device ? HALC2_DEVICE_TOOL_INSTRUCTIONS : ""
+  return `${tools.browser ? HAL_C2_BROWSER_TOOL_INSTRUCTIONS : ""}${
+    tools.device ? HAL_C2_DEVICE_TOOL_INSTRUCTIONS : ""
   }`;
 };
 
@@ -184,7 +184,7 @@ Use the \`request_user_input\` tool only when it is listed in the available tool
 
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
 ${browserToolInstructions(browserToolsAvailable)}
-${HALC2_ORCHESTRATION_INSTRUCTIONS}
+${HAL_C2_ORCHESTRATION_INSTRUCTIONS}
 </collaboration_mode>`;
 
 export interface CodexRuntimeInfo {

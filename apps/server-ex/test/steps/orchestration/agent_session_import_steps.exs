@@ -552,7 +552,7 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
       rows
     else
       receive do
-        {:halc2_shell, _} -> await_rows(project, count, deadline)
+        {:hal_c2_shell, _} -> await_rows(project, count, deadline)
       after
         max(deadline - System.monotonic_time(:millisecond), 0) ->
           flunk("expected #{count} imported threads, found #{length(rows)}")

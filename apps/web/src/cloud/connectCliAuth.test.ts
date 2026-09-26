@@ -17,7 +17,7 @@ describe("connectCliAuth", () => {
   it("requires both the publishable key and the CLI OAuth client id", () => {
     vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", TEST_PUBLISHABLE_KEY);
     vi.stubEnv("VITE_CLERK_JWT_TEMPLATE", "hal-c2-relay");
-    vi.stubEnv("VITE_HALC2_RELAY_URL", "https://relay.example.com");
+    vi.stubEnv("VITE_HAL_C2_RELAY_URL", "https://relay.example.com");
     expect(hasConnectCliAuthConfig()).toBe(false);
 
     vi.stubEnv("VITE_CLERK_CLI_OAUTH_CLIENT_ID", "oauthapp_123");

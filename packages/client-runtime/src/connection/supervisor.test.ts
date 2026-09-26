@@ -1237,7 +1237,7 @@ describe("EnvironmentSupervisor", () => {
                   policy: "loopback-browser",
                   bootstrapMethods: ["one-time-token"],
                   sessionMethods: ["dpop-access-token"],
-                  sessionCookieName: "halc2_session_test",
+                  sessionCookieName: "hal_c2_session_test",
                 },
                 scopes: AuthStandardClientScopes,
               }),

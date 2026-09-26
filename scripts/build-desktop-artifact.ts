@@ -927,7 +927,7 @@ interface StagePackageJson {
   readonly name: string;
   readonly version: string;
   readonly buildVersion: string;
-  readonly halc2CommitHash: string;
+  readonly halC2CommitHash: string;
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
@@ -1162,7 +1162,7 @@ export class InvalidAppleTeamIdError extends Schema.TaggedError<InvalidAppleTeam
   },
 ) {
   override get message(): string {
-    return `HALC2_APPLE_TEAM_ID '${this.teamId}' must be a 10-character Apple Developer Team ID.`;
+    return `HAL_C2_APPLE_TEAM_ID '${this.teamId}' must be a 10-character Apple Developer Team ID.`;
   }
 }
 
@@ -1171,7 +1171,7 @@ export class MissingMacPasskeyProvisioningProfileError extends Schema.TaggedErro
   {},
 ) {
   override get message(): string {
-    return "HALC2_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.";
+    return "HAL_C2_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.";
   }
 }
 
@@ -1180,7 +1180,7 @@ export class MissingMacPasskeyDomainConfigurationError extends Schema.TaggedErro
   {},
 ) {
   override get message(): string {
-    return "HALC2_CLERK_PUBLISHABLE_KEY or HALC2_CLERK_PASSKEY_RP_DOMAINS is required for signed macOS passkey builds.";
+    return "HAL_C2_CLERK_PUBLISHABLE_KEY or HAL_C2_CLERK_PASSKEY_RP_DOMAINS is required for signed macOS passkey builds.";
   }
 }
 
@@ -1191,7 +1191,7 @@ export class InvalidMacPasskeyPublishableKeyError extends Schema.TaggedError<Inv
   },
 ) {
   override get message(): string {
-    return "HALC2_CLERK_PUBLISHABLE_KEY is invalid.";
+    return "HAL_C2_CLERK_PUBLISHABLE_KEY is invalid.";
   }
 }
 
@@ -1259,22 +1259,22 @@ function normalizePasskeyRpDomain(value: string): string {
 export function resolveMacPasskeySigningConfiguration(
   env: Readonly<Record<string, string | undefined>>,
 ): MacPasskeySigningConfiguration {
-  const teamId = env.HALC2_APPLE_TEAM_ID?.trim().toUpperCase() ?? "";
+  const teamId = env.HAL_C2_APPLE_TEAM_ID?.trim().toUpperCase() ?? "";
   if (!APPLE_TEAM_ID_PATTERN.test(teamId)) {
     throw new InvalidAppleTeamIdError({ teamId });
   }
 
-  const provisioningProfilePath = env.HALC2_MACOS_PROVISIONING_PROFILE?.trim() ?? "";
+  const provisioningProfilePath = env.HAL_C2_MACOS_PROVISIONING_PROFILE?.trim() ?? "";
   if (provisioningProfilePath.length === 0) {
     throw new MissingMacPasskeyProvisioningProfileError();
   }
 
-  const configuredRpDomains = env.HALC2_CLERK_PASSKEY_RP_DOMAINS?.trim();
+  const configuredRpDomains = env.HAL_C2_CLERK_PASSKEY_RP_DOMAINS?.trim();
   let rpDomains: readonly string[];
   if (configuredRpDomains) {
     rpDomains = configuredRpDomains.split(",").map(normalizePasskeyRpDomain);
   } else {
-    const publishableKey = env.HALC2_CLERK_PUBLISHABLE_KEY?.trim();
+    const publishableKey = env.HAL_C2_CLERK_PUBLISHABLE_KEY?.trim();
     if (!publishableKey) {
       throw new MissingMacPasskeyDomainConfigurationError();
     }
@@ -1589,24 +1589,24 @@ const AzureTrustedSigningOptionsConfig = Config.all({
 });
 
 const BuildEnvConfig = Config.all({
-  platform: Config.schema(BuildPlatform, "HALC2_DESKTOP_PLATFORM").pipe(Config.option),
-  target: Config.String("HALC2_DESKTOP_TARGET").pipe(Config.option),
-  arch: Config.schema(BuildArch, "HALC2_DESKTOP_ARCH").pipe(Config.option),
-  version: Config.String("HALC2_DESKTOP_VERSION").pipe(Config.option),
-  outputDir: Config.String("HALC2_DESKTOP_OUTPUT_DIR").pipe(Config.option),
-  skipBuild: Config.Boolean("HALC2_DESKTOP_SKIP_BUILD").pipe(Config.withDefault(false)),
-  keepStage: Config.Boolean("HALC2_DESKTOP_KEEP_STAGE").pipe(Config.withDefault(false)),
-  signed: Config.Boolean("HALC2_DESKTOP_SIGNED").pipe(Config.withDefault(false)),
-  verbose: Config.Boolean("HALC2_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
-  mockUpdates: Config.Boolean("HALC2_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
-  mockUpdateServerPort: Config.String("HALC2_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
+  platform: Config.schema(BuildPlatform, "HAL_C2_DESKTOP_PLATFORM").pipe(Config.option),
+  target: Config.String("HAL_C2_DESKTOP_TARGET").pipe(Config.option),
+  arch: Config.schema(BuildArch, "HAL_C2_DESKTOP_ARCH").pipe(Config.option),
+  version: Config.String("HAL_C2_DESKTOP_VERSION").pipe(Config.option),
+  outputDir: Config.String("HAL_C2_DESKTOP_OUTPUT_DIR").pipe(Config.option),
+  skipBuild: Config.Boolean("HAL_C2_DESKTOP_SKIP_BUILD").pipe(Config.withDefault(false)),
+  keepStage: Config.Boolean("HAL_C2_DESKTOP_KEEP_STAGE").pipe(Config.withDefault(false)),
+  signed: Config.Boolean("HAL_C2_DESKTOP_SIGNED").pipe(Config.withDefault(false)),
+  verbose: Config.Boolean("HAL_C2_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
+  mockUpdates: Config.Boolean("HAL_C2_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
+  mockUpdateServerPort: Config.String("HAL_C2_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
   // Path to the Linux CLI release archive (hal-c2-<version>-linux-x64.tar.gz) built
   // by the build_linux_cli CI job. The Windows build embeds it verbatim as the
   // WSL runtime.
-  wslRuntime: Config.String("HALC2_DESKTOP_WSL_RUNTIME").pipe(Config.option),
+  wslRuntime: Config.String("HAL_C2_DESKTOP_WSL_RUNTIME").pipe(Config.option),
   // Directory of an Elixir node release (apps/server-ex, `mix release`) to ship as
   // the app's own backend. macOS and Linux only.
-  elixirNode: Config.String("HALC2_DESKTOP_ELIXIR_NODE").pipe(Config.option),
+  elixirNode: Config.String("HAL_C2_DESKTOP_ELIXIR_NODE").pipe(Config.option),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -1774,11 +1774,11 @@ const rustTargetIsInstalled = Effect.fn("rustTargetIsInstalled")(function* (targ
 export const preflightLinuxDesktopBuild = Effect.fn("preflightLinuxDesktopBuild")(function* (
   arch: typeof BuildArch.Type = "x64",
 ) {
-  const reuseResourceMonitor = yield* Config.Boolean("HALC2_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
+  const reuseResourceMonitor = yield* Config.Boolean("HAL_C2_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
     Config.withDefault(false),
   );
   const reuseCaptureHelpers = yield* Config.Boolean(
-    "HALC2_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS",
+    "HAL_C2_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS",
   ).pipe(Config.withDefault(false));
   // Rust is only optional when every Linux Rust artifact comes from a cache.
   const needsRust = !reuseResourceMonitor || !reuseCaptureHelpers;
@@ -1816,7 +1816,7 @@ export const preflightMacDesktopBuild = Effect.fn("preflightMacDesktopBuild")(fu
   arch: typeof BuildArch.Type,
 ) {
   const rustTargets = resolveResourceMonitorRustTargets("mac", arch);
-  const reuseResourceMonitor = yield* Config.Boolean("HALC2_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
+  const reuseResourceMonitor = yield* Config.Boolean("HAL_C2_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
     Config.withDefault(false),
   );
   const checks = yield* Effect.all(
@@ -1873,9 +1873,9 @@ function windowsVswherePrerequisiteScript(arch: typeof BuildArch.Type): string {
 export const preflightWindowsDesktopBuild = Effect.fn("preflightWindowsDesktopBuild")(
   function* (input: { readonly arch: typeof BuildArch.Type; readonly bundlesWslRuntime: boolean }) {
     const rustTarget = resolveResourceMonitorRustTargets("win", input.arch)[0]!;
-    const reuseResourceMonitor = yield* Config.Boolean("HALC2_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
-      Config.withDefault(false),
-    );
+    const reuseResourceMonitor = yield* Config.Boolean(
+      "HAL_C2_DESKTOP_REUSE_RESOURCE_MONITOR",
+    ).pipe(Config.withDefault(false));
     const python = yield* resolvePythonForNodeGyp();
     const checks = yield* Effect.all(
       {
@@ -2191,7 +2191,7 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
   const [rustTarget] = resolveResourceMonitorRustTargets("linux", input.arch);
   // Release CI restores these binaries from a cache keyed on the crate sources and
   // skips the Rust toolchain on a hit, so the build must be skippable too.
-  const reuseHelpers = yield* Config.Boolean("HALC2_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS").pipe(
+  const reuseHelpers = yield* Config.Boolean("HAL_C2_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS").pipe(
     Config.withDefault(false),
   );
   const binaryPath = path.join(
@@ -2254,7 +2254,7 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
   const manifestPath = path.join(input.repoRoot, "native/resource-monitor/Cargo.toml");
   const executableName = resourceMonitorExecutableName(input.platform);
   const rustTargets = resolveResourceMonitorRustTargets(input.platform, input.arch);
-  const reuseResourceMonitor = yield* Config.Boolean("HALC2_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
+  const reuseResourceMonitor = yield* Config.Boolean("HAL_C2_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
     Config.withDefault(false),
   );
   const builtBinaries: string[] = [];
@@ -2595,7 +2595,7 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
   updateChannel: "latest" | "nightly",
 ) {
   const env = yield* Config.all({
-    updateRepository: Config.String("HALC2_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
+    updateRepository: Config.String("HAL_C2_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
     githubRepository: Config.String("GITHUB_REPOSITORY").pipe(Config.option),
   });
   const rawRepo = (
@@ -3699,7 +3699,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     name: "hal-c2",
     version: appVersion,
     buildVersion: appVersion,
-    halc2CommitHash: commitHash,
+    halC2CommitHash: commitHash,
     private: true,
     packageManager: rootPackageJson.packageManager,
     description: "HAL-C2 desktop build",
@@ -3937,65 +3937,65 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
 const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   platform: Flag.Literals("platform", BuildPlatform.literals).pipe(
-    Flag.withDescription("Build platform (env: HALC2_DESKTOP_PLATFORM)."),
+    Flag.withDescription("Build platform (env: HAL_C2_DESKTOP_PLATFORM)."),
     Flag.optional,
   ),
   target: Flag.String("target").pipe(
     Flag.withDescription(
-      "Artifact target, for example dmg/AppImage/nsis (env: HALC2_DESKTOP_TARGET).",
+      "Artifact target, for example dmg/AppImage/nsis (env: HAL_C2_DESKTOP_TARGET).",
     ),
     Flag.optional,
   ),
   arch: Flag.Literals("arch", BuildArch.literals).pipe(
-    Flag.withDescription("Build arch, for example arm64/x64/universal (env: HALC2_DESKTOP_ARCH)."),
+    Flag.withDescription("Build arch, for example arm64/x64/universal (env: HAL_C2_DESKTOP_ARCH)."),
     Flag.optional,
   ),
   buildVersion: Flag.String("build-version").pipe(
-    Flag.withDescription("Artifact version metadata (env: HALC2_DESKTOP_VERSION)."),
+    Flag.withDescription("Artifact version metadata (env: HAL_C2_DESKTOP_VERSION)."),
     Flag.optional,
   ),
   outputDir: Flag.String("output-dir").pipe(
-    Flag.withDescription("Output directory for artifacts (env: HALC2_DESKTOP_OUTPUT_DIR)."),
+    Flag.withDescription("Output directory for artifacts (env: HAL_C2_DESKTOP_OUTPUT_DIR)."),
     Flag.optional,
   ),
   skipBuild: Flag.Boolean("skip-build").pipe(
     Flag.withDescription(
-      "Skip `vp run build:desktop` and use existing dist artifacts (env: HALC2_DESKTOP_SKIP_BUILD).",
+      "Skip `vp run build:desktop` and use existing dist artifacts (env: HAL_C2_DESKTOP_SKIP_BUILD).",
     ),
     Flag.optional,
   ),
   keepStage: Flag.Boolean("keep-stage").pipe(
-    Flag.withDescription("Keep temporary staging files (env: HALC2_DESKTOP_KEEP_STAGE)."),
+    Flag.withDescription("Keep temporary staging files (env: HAL_C2_DESKTOP_KEEP_STAGE)."),
     Flag.optional,
   ),
   signed: Flag.Boolean("signed").pipe(
     Flag.withDescription(
-      "Enable signing/notarization discovery; Windows uses Azure Trusted Signing (env: HALC2_DESKTOP_SIGNED).",
+      "Enable signing/notarization discovery; Windows uses Azure Trusted Signing (env: HAL_C2_DESKTOP_SIGNED).",
     ),
     Flag.optional,
   ),
   verbose: Flag.Boolean("verbose").pipe(
-    Flag.withDescription("Stream subprocess stdout (env: HALC2_DESKTOP_VERBOSE)."),
+    Flag.withDescription("Stream subprocess stdout (env: HAL_C2_DESKTOP_VERBOSE)."),
     Flag.optional,
   ),
   mockUpdates: Flag.Boolean("mock-updates").pipe(
-    Flag.withDescription("Enable mock updates (env: HALC2_DESKTOP_MOCK_UPDATES)."),
+    Flag.withDescription("Enable mock updates (env: HAL_C2_DESKTOP_MOCK_UPDATES)."),
     Flag.optional,
   ),
   mockUpdateServerPort: Flag.Int("mock-update-server-port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
-    Flag.withDescription("Mock update server port (env: HALC2_DESKTOP_MOCK_UPDATE_SERVER_PORT)."),
+    Flag.withDescription("Mock update server port (env: HAL_C2_DESKTOP_MOCK_UPDATE_SERVER_PORT)."),
     Flag.optional,
   ),
   elixirNode: Flag.String("elixir-node").pipe(
     Flag.withDescription(
-      "Directory of an Elixir node release (apps/server-ex/_build/prod/rel/hal_c2) to ship as the app's own backend; macOS and Linux (env: HALC2_DESKTOP_ELIXIR_NODE).",
+      "Directory of an Elixir node release (apps/server-ex/_build/prod/rel/hal_c2) to ship as the app's own backend; macOS and Linux (env: HAL_C2_DESKTOP_ELIXIR_NODE).",
     ),
     Flag.optional,
   ),
   wslRuntime: Flag.String("wsl-runtime").pipe(
     Flag.withDescription(
-      "Path to the Linux CLI release archive (hal-c2-<version>-linux-x64.tar.gz) to embed as the WSL runtime of a Windows build (env: HALC2_DESKTOP_WSL_RUNTIME).",
+      "Path to the Linux CLI release archive (hal-c2-<version>-linux-x64.tar.gz) to embed as the WSL runtime of a Windows build (env: HAL_C2_DESKTOP_WSL_RUNTIME).",
     ),
     Flag.optional,
   ),

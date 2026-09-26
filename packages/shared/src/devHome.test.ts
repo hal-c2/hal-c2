@@ -132,18 +132,18 @@ const makeHome = (dirs: ReadonlyArray<string>) =>
   );
 
 describe("resolveHalC2Home", () => {
-  it.effect("prefers HALC2_HOME over the legacy T3CODE_HOME and any existing home", () =>
+  it.effect("prefers HAL_C2_HOME over the legacy T3CODE_HOME and any existing home", () =>
     Effect.gen(function* () {
       const homeDir = yield* makeHome([".hal-c2", ".t3"]);
-      const env = { HALC2_HOME: " /srv/halc2 ", T3CODE_HOME: "/srv/t3" };
-      assert.equal(yield* resolveHalC2Home({ env, homeDir }), "/srv/halc2");
+      const env = { HAL_C2_HOME: " /srv/hal-c2 ", T3CODE_HOME: "/srv/t3" };
+      assert.equal(yield* resolveHalC2Home({ env, homeDir }), "/srv/hal-c2");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("honours the legacy T3CODE_HOME when HALC2_HOME is unset or blank", () =>
+  it.effect("honours the legacy T3CODE_HOME when HAL_C2_HOME is unset or blank", () =>
     Effect.gen(function* () {
       const homeDir = yield* makeHome([".hal-c2"]);
-      const env = { HALC2_HOME: "  ", T3CODE_HOME: "/srv/t3" };
+      const env = { HAL_C2_HOME: "  ", T3CODE_HOME: "/srv/t3" };
       assert.equal(yield* resolveHalC2Home({ env, homeDir }), "/srv/t3");
       assert.equal(yield* configuredHalC2Home({ T3CODE_HOME: "/srv/t3" }), "/srv/t3");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

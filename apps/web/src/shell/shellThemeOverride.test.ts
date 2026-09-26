@@ -27,7 +27,7 @@ function documentFixture(bootstrap: ShellThemeBootstrap = {}) {
   };
   vi.stubGlobal("document", { documentElement: root });
   vi.stubGlobal("window", {
-    __halc2ShellTheme: bootstrap,
+    __halC2ShellTheme: bootstrap,
     localStorage: {
       getItem: (key: string) => storage.get(key) ?? null,
       setItem: (key: string, value: string) => storage.set(key, value),
@@ -70,7 +70,7 @@ describe("shell theme ownership", () => {
     const disconnect = vi.fn();
     const fixture = documentFixture({ observer: { disconnect }, override: shell });
     const publish = vi.fn();
-    vi.stubGlobal("window", { ...window, halc2Shell: { publish } });
+    vi.stubGlobal("window", { ...window, halC2Shell: { publish } });
     const { ShellThemeBridge } = await import("./ShellThemeBridge");
     const renderer = await act(() =>
       create(createElement(ShellThemeBridge, { publishToShell: false })),

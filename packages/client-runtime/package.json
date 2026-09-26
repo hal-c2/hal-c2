@@ -111,9 +111,9 @@
       "types": "./src/voice-input/index.ts",
       "default": "./src/voice-input/index.ts"
     },
-    "./halc2ToolSummary": {
-      "types": "./src/halc2ToolSummary.ts",
-      "default": "./src/halc2ToolSummary.ts"
+    "./halC2ToolSummary": {
+      "types": "./src/halC2ToolSummary.ts",
+      "default": "./src/halC2ToolSummary.ts"
     },
     "./relay": {
       "types": "./src/relay/index.ts",

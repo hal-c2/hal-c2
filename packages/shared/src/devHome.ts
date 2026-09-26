@@ -5,7 +5,7 @@
  * The base dir is resolved in one place so the server, the service launcher
  * and the dev scripts agree:
  *
- * 1. `HALC2_HOME`.
+ * 1. `HAL_C2_HOME`.
  * 2. The legacy `T3CODE_HOME`, still honoured (with one deprecation warning)
  *    so service units and shell profiles written before the rename keep
  *    working.
@@ -16,7 +16,7 @@
  *
  * A linked git worktree gets its own (gitignored) `.hal-c2`, with the same
  * fallback to an existing `.t3`: feature work in a throwaway branch must not
- * share a database with the real app, and an ambient `HALC2_HOME` counts as an
+ * share a database with the real app, and an ambient `HAL_C2_HOME` counts as an
  * explicit base dir — flipping the state directory from `<base>/dev` to
  * `<base>/userdata`, the live production database.
  */
@@ -114,13 +114,13 @@ export const resolveWorktreeHalC2Home = (
     return yield* resolveStateDirIn(worktreePath);
   });
 
-export const HALC2_HOME_DIR_NAME = ".hal-c2";
+export const HAL_C2_HOME_DIR_NAME = ".hal-c2";
 /** The state dir name used before the rename; read in place when it is the only one present. */
 export const LEGACY_HOME_DIR_NAME = ".t3";
 
 /** The environment variables that name a base dir. */
 export interface HalC2HomeEnvironment {
-  readonly HALC2_HOME?: string | undefined;
+  readonly HAL_C2_HOME?: string | undefined;
   readonly T3CODE_HOME?: string | undefined;
 }
 
@@ -128,13 +128,13 @@ let legacyHomeEnvWarned = false;
 
 /**
  * The base dir the environment names, or undefined when it names none.
- * `HALC2_HOME` wins; the legacy `T3CODE_HOME` is honoured and logs a
+ * `HAL_C2_HOME` wins; the legacy `T3CODE_HOME` is honoured and logs a
  * deprecation warning once per process. Values are trimmed, and a blank value
  * is no selection.
  */
 export const configuredHalC2Home = (env: HalC2HomeEnvironment): Effect.Effect<string | undefined> =>
   Effect.gen(function* () {
-    const current = env.HALC2_HOME?.trim();
+    const current = env.HAL_C2_HOME?.trim();
     if (current) {
       return current;
     }
@@ -144,7 +144,7 @@ export const configuredHalC2Home = (env: HalC2HomeEnvironment): Effect.Effect<st
     }
     if (!legacyHomeEnvWarned) {
       legacyHomeEnvWarned = true;
-      yield* Effect.logWarning("T3CODE_HOME is deprecated; set HALC2_HOME instead.");
+      yield* Effect.logWarning("T3CODE_HOME is deprecated; set HAL_C2_HOME instead.");
     }
     return legacy;
   });
@@ -160,7 +160,7 @@ export const resolveStateDirIn = (
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const current = path.join(parent, HALC2_HOME_DIR_NAME);
+    const current = path.join(parent, HAL_C2_HOME_DIR_NAME);
     const isDirectory = (candidate: string) =>
       fileSystem.stat(candidate).pipe(
         Effect.map((info) => info.type === "Directory"),

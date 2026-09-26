@@ -239,8 +239,8 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
         [
           ...(isWindows ? ["@echo off"] : ["#!/bin/sh"]),
           isWindows
-            ? '"%HALC2_TEST_NODE_BINARY%" "%HALC2_TEST_OPENCODE_SCRIPT%" %*'
-            : 'exec "$HALC2_TEST_NODE_BINARY" "$HALC2_TEST_OPENCODE_SCRIPT" "$@"',
+            ? '"%HAL_C2_TEST_NODE_BINARY%" "%HAL_C2_TEST_OPENCODE_SCRIPT%" %*'
+            : 'exec "$HAL_C2_TEST_NODE_BINARY" "$HAL_C2_TEST_OPENCODE_SCRIPT" "$@"',
           "",
         ].join("\n"),
       );
@@ -254,8 +254,8 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
         cwd: tempDir,
         environment: {
           ...hostEnvironment,
-          HALC2_TEST_NODE_BINARY: executablePath,
-          HALC2_TEST_OPENCODE_SCRIPT: scriptPath,
+          HAL_C2_TEST_NODE_BINARY: executablePath,
+          HAL_C2_TEST_OPENCODE_SCRIPT: scriptPath,
         },
       });
 

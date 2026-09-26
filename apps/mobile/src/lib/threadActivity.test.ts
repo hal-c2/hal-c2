@@ -1081,7 +1081,7 @@ describe("buildThreadFeed", () => {
     const toolItem: OrchestrationV2TurnItem = {
       ...base("item-hal-c2-tool", "2026-06-20T00:00:04.000Z", 3),
       type: "dynamic_tool",
-      toolName: "mcp__hal-c2__halc2_thread_read",
+      toolName: "mcp__hal-c2__hal_c2_thread_read",
       input: { threadId: "thread-child" },
       output: { messages: [] },
     };
@@ -1097,7 +1097,7 @@ describe("buildThreadFeed", () => {
   it("uses canonical HAL-C2 orchestration summaries in compact work groups", () => {
     const rows = [
       projected(command("2026-06-20T00:00:01.000Z"), 0),
-      ...["mcp__hal-c2__halc2_thread_send", "hal_c2.halc2_thread_send", "halc2_thread_send"].map(
+      ...["mcp__hal-c2__hal_c2_thread_send", "hal_c2.hal_c2_thread_send", "hal_c2_thread_send"].map(
         (toolName, index) =>
           projected(
             {
@@ -1142,7 +1142,7 @@ describe("buildThreadFeed", () => {
         ...base("list", "2026-09-19T00:00:01.000Z", 1),
         type: "dynamic_tool",
         title: "Custom provider title",
-        toolName: "HAL-C2.halc2_project_list",
+        toolName: "HAL-C2.hal_c2_project_list",
         input: {},
         output: { projects: [] },
       },
@@ -1150,7 +1150,7 @@ describe("buildThreadFeed", () => {
         ...base("clone", "2026-09-19T00:00:02.000Z", 2),
         type: "dynamic_tool",
         title: "Custom provider title",
-        toolName: "mcp__hal_c2__halc2_project_clone",
+        toolName: "mcp__hal_c2__hal_c2_project_clone",
         input: {},
         output: { cwd: "/tmp/repo" },
       },
@@ -1158,7 +1158,7 @@ describe("buildThreadFeed", () => {
         ...base("failed-clone", "2026-09-19T00:00:03.000Z", 3),
         type: "dynamic_tool",
         title: "Custom provider title",
-        toolName: "halc2_project_clone",
+        toolName: "hal_c2_project_clone",
         input: {},
         output: { isError: true },
       },

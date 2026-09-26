@@ -20,7 +20,7 @@ export function ThreadContextDivider(props: {
         {props.active ? (
           <ShimmeringWorkContent
             className="flex-none"
-            textClassName="font-halc2-medium"
+            textClassName="font-hal-c2-medium"
             compact
             icon="brain"
             iconSubtleColor={props.iconColor}
@@ -31,8 +31,8 @@ export function ThreadContextDivider(props: {
           <Text
             className={
               props.failed
-                ? "font-halc2-medium text-xs text-danger-foreground"
-                : "font-halc2-medium text-xs text-foreground-muted"
+                ? "font-hal-c2-medium text-xs text-danger-foreground"
+                : "font-hal-c2-medium text-xs text-foreground-muted"
             }
           >
             {props.label}

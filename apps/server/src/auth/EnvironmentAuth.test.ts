@@ -102,7 +102,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       >[0];
 
       const authenticated = yield* serverAuth.authenticateHttpRequest(request);
-      expect(devExchange.cookieName).toMatch(/^halc2_dev_session_/);
+      expect(devExchange.cookieName).toMatch(/^hal_c2_dev_session_/);
       expect(devExchange.expireNormalCookie).toBe(true);
       expect(authenticated.scopes).toEqual(["orchestration:read"]);
     }).pipe(
@@ -347,7 +347,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       const sessions = yield* SessionStore.SessionStore;
       const bearer = yield* serverAuth.issueSession();
       const verified = yield* serverAuth.authenticateHttpRequest({
-        cookies: { [sessions.legacyCookieName ?? "halc2_session"]: "stale" },
+        cookies: { [sessions.legacyCookieName ?? "hal_c2_session"]: "stale" },
         headers: { authorization: `Bearer ${bearer.token}` },
       } as never);
 

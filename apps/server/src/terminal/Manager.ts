@@ -1229,7 +1229,7 @@ function toSessionKey(threadId: string, terminalId: string): string {
 
 function shouldExcludeTerminalEnvKey(key: string): boolean {
   const normalizedKey = key.toUpperCase();
-  if (normalizedKey.startsWith("HALC2_")) {
+  if (normalizedKey.startsWith("HAL_C2_")) {
     return true;
   }
   if (normalizedKey.startsWith("VITE_")) {

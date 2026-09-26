@@ -41,7 +41,7 @@ const access = (writable = false) =>
     return { ...context, descriptor, settings: yield* Settings.ServerSettingsService };
   });
 export const EnvironmentHandlersLive = EnvironmentToolkit.toLayer({
-  halc2_environment_read: () =>
+  hal_c2_environment_read: () =>
     Effect.gen(function* () {
       const { descriptor, settings } = yield* access();
       const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
@@ -53,7 +53,7 @@ export const EnvironmentHandlersLive = EnvironmentToolkit.toLayer({
         preferences: preferences(current),
       };
     }),
-  halc2_environment_preferences_update: (patch) =>
+  hal_c2_environment_preferences_update: (patch) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;
       const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;

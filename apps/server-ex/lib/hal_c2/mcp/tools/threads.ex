@@ -25,14 +25,14 @@ defmodule HalC2.Mcp.Tools.Threads do
 
   alias HalC2.{Orchestration, StreamState}
 
-  @tools ~w(halc2_thread_launch create_threads halc2_thread_fork halc2_thread_merge_back halc2_thread_update
-            halc2_thread_configure halc2_thread_configuration halc2_thread_organize halc2_thread_transfers
-            halc2_thread_send_attachments halc2_attachment_prepare_upload halc2_attachment_discard
+  @tools ~w(hal_c2_thread_launch create_threads hal_c2_thread_fork hal_c2_thread_merge_back hal_c2_thread_update
+            hal_c2_thread_configure hal_c2_thread_configuration hal_c2_thread_organize hal_c2_thread_transfers
+            hal_c2_thread_send_attachments hal_c2_attachment_prepare_upload hal_c2_attachment_discard
             orchestrator_capabilities)
 
   def tools, do: @tools
 
-  def run("halc2_thread_launch", args, %{row: me} = caller) do
+  def run("hal_c2_thread_launch", args, %{row: me} = caller) do
     attachments = args["attachments"] || []
     project_id = args["projectId"] || me["projectId"]
 
@@ -112,7 +112,7 @@ defmodule HalC2.Mcp.Tools.Threads do
     end
   end
 
-  def run("halc2_thread_fork", args, %{row: me} = caller) do
+  def run("hal_c2_thread_fork", args, %{row: me} = caller) do
     with {:ok, _} <- writable(caller, nil) do
       id = command_id()
       target = id <> ":fork"
@@ -133,7 +133,7 @@ defmodule HalC2.Mcp.Tools.Threads do
     end
   end
 
-  def run("halc2_thread_merge_back", %{"targetThreadId" => target} = args, %{row: me} = caller) do
+  def run("hal_c2_thread_merge_back", %{"targetThreadId" => target} = args, %{row: me} = caller) do
     with {:ok, _} <- writable(caller, target),
          {:ok, %{"sequence" => sequence}} <-
            orchestration(
@@ -150,7 +150,7 @@ defmodule HalC2.Mcp.Tools.Threads do
          do: {:ok, %{"sequence" => sequence, "targetThreadId" => target}}
   end
 
-  def run("halc2_thread_update", %{"action" => action} = args, %{row: me}) do
+  def run("hal_c2_thread_update", %{"action" => action} = args, %{row: me}) do
     with {:ok, row} <- project_thread(me, args["threadId"]),
          {:ok, command} <- metadata_command(action, args, row) do
       id = "command:mcp:thread-update:#{action}:" <> (args["clientRequestId"] || command_id())
@@ -182,7 +182,7 @@ defmodule HalC2.Mcp.Tools.Threads do
     end
   end
 
-  def run("halc2_thread_configure", %{"modelSelection" => selection}, %{row: me} = caller) do
+  def run("hal_c2_thread_configure", %{"modelSelection" => selection}, %{row: me} = caller) do
     with {:ok, _} <- writable(caller, nil) do
       type =
         if selection["instanceId"] in [nil, me["providerInstanceId"]],
@@ -203,7 +203,7 @@ defmodule HalC2.Mcp.Tools.Threads do
     end
   end
 
-  def run("halc2_thread_configuration", args, %{row: me}) do
+  def run("hal_c2_thread_configuration", args, %{row: me}) do
     with {:ok, row} <- project_thread(me, args["threadId"]) do
       thread = thread(row["id"]) || row
 
@@ -217,7 +217,7 @@ defmodule HalC2.Mcp.Tools.Threads do
     end
   end
 
-  def run("halc2_thread_organize", %{"action" => action} = args, caller) do
+  def run("hal_c2_thread_organize", %{"action" => action} = args, caller) do
     with {:ok, row} <- writable(caller, args["threadId"]),
          {:ok, command} <- organize_command(action, args),
          {:ok, %{"sequence" => sequence}} <-
@@ -228,7 +228,7 @@ defmodule HalC2.Mcp.Tools.Threads do
          do: {:ok, %{"sequence" => sequence}}
   end
 
-  def run("halc2_thread_transfers", args, %{row: me}) do
+  def run("hal_c2_thread_transfers", args, %{row: me}) do
     with {:ok, row} <- project_thread(me, args["threadId"]) do
       transfers =
         for transfer <- StreamState.list(stream(row["id"]), "context-transfer"),
@@ -238,7 +238,7 @@ defmodule HalC2.Mcp.Tools.Threads do
     end
   end
 
-  def run("halc2_thread_send_attachments", args, caller) do
+  def run("hal_c2_thread_send_attachments", args, caller) do
     with {:ok, row} <- writable(caller, args["threadId"]),
          :ok <-
            if(thread(row["id"])["archivedAt"],
@@ -276,7 +276,7 @@ defmodule HalC2.Mcp.Tools.Threads do
     end
   end
 
-  def run("halc2_attachment_prepare_upload", %{"upload" => upload}, caller) do
+  def run("hal_c2_attachment_prepare_upload", %{"upload" => upload}, caller) do
     with :ok <- live(caller) do
       case HalC2.Attachments.create_upload_url(upload) do
         {:ok, result} -> {:ok, result}
@@ -285,7 +285,7 @@ defmodule HalC2.Mcp.Tools.Threads do
     end
   end
 
-  def run("halc2_attachment_discard", %{"attachmentId" => id}, caller) do
+  def run("hal_c2_attachment_discard", %{"attachmentId" => id}, caller) do
     with :ok <- live(caller) do
       {:ok, _} = HalC2.Attachments.delete(%{"attachmentId" => id})
       {:ok, %{}}

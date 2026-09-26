@@ -36,7 +36,7 @@ defmodule HalC2.ProviderUsageLimitsTest do
   test "probes shape Codex windows and credits and Claude's session, weekly and model weeklies" do
     :ok = HalC2.Settings.watch(self())
     start()
-    assert_received {:halc2_providers_changed, _}
+    assert_received {:hal_c2_providers_changed, _}
 
     codex = Limits.get("codex")
 

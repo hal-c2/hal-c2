@@ -12,7 +12,7 @@ export interface PierreIconResolution {
 
 const PIERRE_ICON_SPRITE_ID = "hal-c2-pierre-file-icon-sprite";
 
-const HALC2_FILE_ICON_SPRITE = `
+const HAL_C2_FILE_ICON_SPRITE = `
 <svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true">
   <!-- Lucide Film icon, ISC license. -->
   <symbol id="hal-c2-file-icon-video" viewBox="0 0 24 24">
@@ -30,10 +30,10 @@ const HALC2_FILE_ICON_SPRITE = `
   </symbol>
 </svg>`;
 
-export const HALC2_PIERRE_ICONS = {
+export const HAL_C2_PIERRE_ICONS = {
   set: "complete",
   colored: true,
-  spriteSheet: HALC2_FILE_ICON_SPRITE,
+  spriteSheet: HAL_C2_FILE_ICON_SPRITE,
   byFileName: {
     "package.json": "file-tree-builtin-npm",
     "tsconfig.json": "file-tree-builtin-typescript",
@@ -46,7 +46,7 @@ export const HALC2_PIERRE_ICONS = {
   ),
 } satisfies FileTreeIcons;
 
-const completeIconResolver = createFileTreeIconResolver(HALC2_PIERRE_ICONS);
+const completeIconResolver = createFileTreeIconResolver(HAL_C2_PIERRE_ICONS);
 
 const LANGUAGE_EXTENSION_ALIASES: Record<string, string> = {
   bash: "sh",
@@ -106,6 +106,6 @@ export function ensurePierreIconSprite(): void {
   container.style.height = "0";
   container.style.overflow = "hidden";
   container.style.pointerEvents = "none";
-  container.innerHTML = `${getBuiltInSpriteSheet("complete")}${HALC2_FILE_ICON_SPRITE}`;
+  container.innerHTML = `${getBuiltInSpriteSheet("complete")}${HAL_C2_FILE_ICON_SPRITE}`;
   document.body.prepend(container);
 }

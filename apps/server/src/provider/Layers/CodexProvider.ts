@@ -337,7 +337,7 @@ const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
 export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   return {
     clientInfo: {
-      name: "halc2_desktop",
+      name: "hal_c2_desktop",
       title: "HAL-C2 Desktop",
       version: packageJson.version,
     },

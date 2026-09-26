@@ -12,7 +12,7 @@ defmodule HalC2.CodexHotTest do
 
     assert {:ok, %{"userAgent" => _}} =
              Connection.call(conn, "initialize", %{
-               "clientInfo" => %{"name" => "halc2_elixir_spike", "version" => "0.0.0"}
+               "clientInfo" => %{"name" => "hal_c2_elixir_spike", "version" => "0.0.0"}
              })
 
     Connection.notify(conn, "initialized", nil)

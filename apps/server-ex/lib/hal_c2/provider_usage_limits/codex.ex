@@ -212,7 +212,7 @@ defmodule HalC2.ProviderUsageLimits.Codex do
                    conn,
                    "initialize",
                    %{
-                     "clientInfo" => %{"name" => "halc2_elixir", "version" => "0.1.0"},
+                     "clientInfo" => %{"name" => "hal_c2_elixir", "version" => "0.1.0"},
                      "capabilities" => %{"experimentalApi" => true}
                    },
                    15_000

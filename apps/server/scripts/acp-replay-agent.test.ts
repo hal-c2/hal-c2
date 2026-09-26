@@ -22,11 +22,11 @@ async function runRuntimeExit(status: "success" | "error" | "cancelled") {
   const child = NodeChildProcess.spawn(process.execPath, args, {
     env: {
       ...process.env,
-      HALC2_ACP_REPLAY_STATUS_PATH: statusPath,
-      HALC2_ACP_REPLAY_TRANSCRIPT: Buffer.from(JSON.stringify(transcript), "utf8").toString(
+      HAL_C2_ACP_REPLAY_STATUS_PATH: statusPath,
+      HAL_C2_ACP_REPLAY_TRANSCRIPT: Buffer.from(JSON.stringify(transcript), "utf8").toString(
         "base64",
       ),
-      HALC2_ACP_REPLAY_WORKSPACE: scratch,
+      HAL_C2_ACP_REPLAY_WORKSPACE: scratch,
     },
     stdio: ["pipe", "pipe", "pipe"],
   });

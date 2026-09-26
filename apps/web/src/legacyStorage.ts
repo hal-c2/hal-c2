@@ -8,8 +8,8 @@ const LEGACY_KEY_PREFIXES: ReadonlyArray<readonly [legacy: string, current: stri
 ];
 
 const LEGACY_KEYS: Readonly<Record<string, string>> = {
-  "t3.pullRequests.preferences": "halc2.pullRequests.preferences",
-  "t3.backgroundActivity.clientId": "halc2.backgroundActivity.clientId",
+  "t3.pullRequests.preferences": "hal-c2.pullRequests.preferences",
+  "t3.backgroundActivity.clientId": "hal-c2.backgroundActivity.clientId",
 };
 
 const LEGACY_DATABASE_NAMES: Readonly<Record<string, string>> = {

@@ -203,17 +203,17 @@ step("the TUI starts with that keymap file", async (ctx: KeymapWorld) => {
   writeFile(ctx, "config/keymap.json", ctx.keymapFile);
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !key.startsWith("HALC2_TUI_") && key !== "HALC2_HOME")
+    if (value !== undefined && !key.startsWith("HAL_C2_TUI_") && key !== "HAL_C2_HOME")
       env[key] = value;
   }
   const child = Bun.spawn(["bun", "src/index.ts"], {
     cwd: TUI_DIR,
     env: {
       ...env,
-      HALC2_TUI_ORIGIN: "http://127.0.0.1:9",
-      HALC2_TUI_BEARER: "unused",
-      HALC2_TUI_SHELL_DIR: configDir(ctx),
-      HALC2_TUI_LOG: writeFile(ctx, "tui.log", ""),
+      HAL_C2_TUI_ORIGIN: "http://127.0.0.1:9",
+      HAL_C2_TUI_BEARER: "unused",
+      HAL_C2_TUI_SHELL_DIR: configDir(ctx),
+      HAL_C2_TUI_LOG: writeFile(ctx, "tui.log", ""),
     },
     stdin: "ignore",
     stdout: "pipe",

@@ -30,18 +30,18 @@ interface BufferedAnalyticsEvent {
 }
 
 // Telemetry has no baked-in project key: nothing is sent unless
-// HALC2_POSTHOG_KEY names a PostHog project you own.
+// HAL_C2_POSTHOG_KEY names a PostHog project you own.
 const TelemetryEnvConfig = Config.all({
-  posthogKey: Config.String("HALC2_POSTHOG_KEY").pipe(
+  posthogKey: Config.String("HAL_C2_POSTHOG_KEY").pipe(
     Config.withDefault(""),
     Config.map((key) => key.trim()),
   ),
-  posthogHost: Config.String("HALC2_POSTHOG_HOST").pipe(
+  posthogHost: Config.String("HAL_C2_POSTHOG_HOST").pipe(
     Config.withDefault("https://us.i.posthog.com"),
   ),
-  enabled: Config.Boolean("HALC2_TELEMETRY_ENABLED").pipe(Config.withDefault(true)),
-  flushBatchSize: Config.Number("HALC2_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
-  maxBufferedEvents: Config.Number("HALC2_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
+  enabled: Config.Boolean("HAL_C2_TELEMETRY_ENABLED").pipe(Config.withDefault(true)),
+  flushBatchSize: Config.Number("HAL_C2_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
+  maxBufferedEvents: Config.Number("HAL_C2_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
     Config.withDefault(1_000),
   ),
   wslDistroName: Config.String("WSL_DISTRO_NAME").pipe(Config.option),
@@ -140,7 +140,7 @@ export const make = Effect.gen(function* () {
           platform: hostPlatform,
           wsl: Option.getOrUndefined(telemetryConfig.wslDistroName),
           arch: hostArchitecture,
-          halc2Version: packageJson.version,
+          halC2Version: packageJson.version,
           clientType,
           serverOs: serverOsFromNodePlatform(hostPlatform),
           serverArch: hostArchitecture,

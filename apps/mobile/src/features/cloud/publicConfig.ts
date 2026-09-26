@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 export class CloudPublicConfigMissingError extends Schema.TaggedError<CloudPublicConfigMissingError>()(
   "CloudPublicConfigMissingError",
   {
-    key: Schema.Literal("HALC2_CLERK_JWT_TEMPLATE"),
+    key: Schema.Literal("HAL_C2_CLERK_JWT_TEMPLATE"),
   },
 ) {
   override get message(): string {
@@ -99,7 +99,7 @@ export function hasTracingPublicConfig(
 export function resolveRelayClerkTokenOptions() {
   const { jwtTemplate } = resolveCloudPublicConfig().clerk;
   if (!jwtTemplate) {
-    throw new CloudPublicConfigMissingError({ key: "HALC2_CLERK_JWT_TEMPLATE" });
+    throw new CloudPublicConfigMissingError({ key: "HAL_C2_CLERK_JWT_TEMPLATE" });
   }
   return relayClerkTokenOptions(jwtTemplate);
 }

@@ -46,7 +46,7 @@ import {
   resolveHalC2McpToolDefinition,
   resolveHalC2McpToolPresentation,
   type HalC2McpToolPresentation,
-} from "@hal-c2/shared/halc2McpToolPresentation";
+} from "@hal-c2/shared/halC2McpToolPresentation";
 import { compactDynamicToolOutput } from "@hal-c2/shared/toolOutput";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 

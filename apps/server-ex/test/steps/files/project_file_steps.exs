@@ -12,11 +12,11 @@ defmodule HalC2.Steps.Files.ProjectFile do
   alias HalC2.Test.Node.World
 
   step "the checkout's hal-c2.json asks for {string} submodules", %{args: [mode]} = context do
-    context |> submodules() |> commit_halc2_json(JSON.encode!(%{"worktreeSubmodules" => mode}))
+    context |> submodules() |> commit_hal_c2_json(JSON.encode!(%{"worktreeSubmodules" => mode}))
   end
 
   step "the checkout's hal-c2.json is not valid JSON", context do
-    context |> submodules() |> commit_halc2_json("{\"worktreeSubmodules\": ")
+    context |> submodules() |> commit_hal_c2_json("{\"worktreeSubmodules\": ")
   end
 
   step "the project's settings asks for {string} submodules", %{args: [mode]} = context do
@@ -130,7 +130,7 @@ defmodule HalC2.Steps.Files.ProjectFile do
     World.git!(root, ["commit", "-q", "-m", "add #{path}"])
   end
 
-  defp commit_halc2_json(context, text) do
+  defp commit_hal_c2_json(context, text) do
     root = World.project(context).root
     File.write!(Path.join(root, "hal-c2.json"), text)
     World.git!(root, ~w(add hal-c2.json))

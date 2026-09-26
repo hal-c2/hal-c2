@@ -10,7 +10,7 @@ import { WorktreeMcpService } from "../../WorktreeMcpService.ts";
 import { WorktreeToolkit } from "./tools.ts";
 
 const handlers = {
-  halc2_worktree_list: (input) =>
+  hal_c2_worktree_list: (input) =>
     Effect.gen(function* () {
       const context = yield* McpInvocationContext;
       if (!context.capabilities.has("worktree"))
@@ -31,13 +31,13 @@ const handlers = {
         .listRefs({ ...input, cwd: caller.worktreePath ?? project.value.workspaceRoot })
         .pipe(Effect.mapError(unavailable));
     }),
-  halc2_worktree_handoff: (input) =>
+  hal_c2_worktree_handoff: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;
       const service = yield* WorktreeMcpService;
       return yield* service.handoff(scope, input);
     }),
-  halc2_worktree_status: () =>
+  hal_c2_worktree_status: () =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;
       const service = yield* WorktreeMcpService;

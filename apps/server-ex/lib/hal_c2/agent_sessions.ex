@@ -163,11 +163,11 @@ defmodule HalC2.AgentSessions do
   # worktrees (under `.t3` before the rename) are never projects.
   defp excluded?(path) do
     home = user_home()
-    halc2_home = Path.expand(Application.get_env(:hal_c2, :home, Path.join(home, ".hal-c2")))
+    hal_c2_home = Path.expand(Application.get_env(:hal_c2, :home, Path.join(home, ".hal-c2")))
 
     path in [home, Path.expand(System.tmp_dir!()), "/tmp", "/private/tmp"] or
       Enum.any?(
-        [Path.join(home, "Downloads"), Path.join([home, "Documents", "Codex"]), halc2_home],
+        [Path.join(home, "Downloads"), Path.join([home, "Documents", "Codex"]), hal_c2_home],
         &(path == &1 or String.starts_with?(path, &1 <> "/"))
       ) or String.contains?(path <> "/", ["/.hal-c2/worktrees/", "/.t3/worktrees/"])
   end

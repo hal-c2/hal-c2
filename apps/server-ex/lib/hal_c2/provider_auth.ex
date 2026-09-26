@@ -66,7 +66,7 @@ defmodule HalC2.ProviderAuth do
     :exit, _ -> false
   end
 
-  @doc "Adds `pid` as a subscriber; it gets `{:halc2_provider_auth, instance, state}`."
+  @doc "Adds `pid` as a subscriber; it gets `{:hal_c2_provider_auth, instance, state}`."
   def subscribe(instance, pid), do: call(instance, {:subscribe, pid})
 
   def unsubscribe(instance, pid) do
@@ -406,7 +406,7 @@ defmodule HalC2.ProviderAuth do
 
   defp broadcast(state) do
     for {pid, _} <- state.watchers,
-        do: send(pid, {:halc2_provider_auth, state.instance, state.auth})
+        do: send(pid, {:hal_c2_provider_auth, state.instance, state.auth})
   end
 
   defp methods(%{methods: nil}), do: %{}

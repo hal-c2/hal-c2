@@ -22,14 +22,14 @@
 namespace {
 
 // HAL-C2 home, resolved the way the dev runner resolves it: `--home-dir`, then
-// HALC2_HOME, then ~/.hal-c2. The rice and browser profile live beside the
+// HAL_C2_HOME, then ~/.hal-c2. The rice and browser profile live beside the
 // server's state, so a sandboxed home carries the whole app.
 QString resolveHomeDir(const QString& override) {
   if (!override.trimmed().isEmpty()) {
     return QDir(override).absolutePath();
   }
   const QString fromEnv =
-      QProcessEnvironment::systemEnvironment().value(QStringLiteral("HALC2_HOME"));
+      QProcessEnvironment::systemEnvironment().value(QStringLiteral("HAL_C2_HOME"));
   return fromEnv.isEmpty() ? QDir::home().filePath(QStringLiteral(".hal-c2"))
                            : QDir(fromEnv).absolutePath();
 }
@@ -46,15 +46,15 @@ QString resolveQmlSourceDir(const QString& override) {
     return override;
   }
   const QString fromEnv =
-      QProcessEnvironment::systemEnvironment().value(QStringLiteral("HALC2_QML_DIR"));
+      QProcessEnvironment::systemEnvironment().value(QStringLiteral("HAL_C2_QML_DIR"));
   if (!fromEnv.isEmpty()) {
     return fromEnv;
   }
-  return QStringLiteral(HALC2_QML_SOURCE_DIR);
+  return QStringLiteral(HAL_C2_QML_SOURCE_DIR);
 }
 
 QString resolveDefaultHostEntry() {
-  const QString configured = QStringLiteral(HALC2_HOST_ENTRY);
+  const QString configured = QStringLiteral(HAL_C2_HOST_ENTRY);
   return QDir::isAbsolutePath(configured)
              ? configured
              : QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(configured);
@@ -62,11 +62,11 @@ QString resolveDefaultHostEntry() {
 
 QString resolveDefaultNodeExecutable() {
   const QString fromEnv =
-      QProcessEnvironment::systemEnvironment().value(QStringLiteral("HALC2_NODE_BIN"));
+      QProcessEnvironment::systemEnvironment().value(QStringLiteral("HAL_C2_NODE_BIN"));
   if (!fromEnv.isEmpty()) {
     return fromEnv;
   }
-  const QString configured = QStringLiteral(HALC2_NODE_ENTRY);
+  const QString configured = QStringLiteral(HAL_C2_NODE_ENTRY);
   if (QDir::isAbsolutePath(configured)) {
     return configured;
   }
@@ -82,7 +82,7 @@ int main(int argc, char* argv[]) {
   QCoreApplication::setOrganizationName(QStringLiteral("HAL-C2"));
   QCoreApplication::setOrganizationDomain(QStringLiteral("hal-c2.example"));
   QCoreApplication::setApplicationName(QStringLiteral("hal-c2"));
-  QCoreApplication::setApplicationVersion(QStringLiteral(HALC2_APP_VERSION));
+  QCoreApplication::setApplicationVersion(QStringLiteral(HAL_C2_APP_VERSION));
   // Stable app id so compositor rules (blur, opacity, workspace) can target it.
   QGuiApplication::setDesktopFileName(QStringLiteral("hal-c2"));
 
@@ -104,7 +104,7 @@ int main(int argc, char* argv[]) {
       QStringLiteral("url"));
   const QCommandLineOption configDirOption(
       QStringLiteral("config-dir"),
-      QStringLiteral("Directory holding shell.qml, theme.json and qml/ (default $HALC2_HOME/shell, i.e. ~/.hal-c2/shell)."),
+      QStringLiteral("Directory holding shell.qml, theme.json and qml/ (default $HAL_C2_HOME/shell, i.e. ~/.hal-c2/shell)."),
       QStringLiteral("dir"));
   const QCommandLineOption appIdOption(
       QStringLiteral("app-id"),

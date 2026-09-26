@@ -453,7 +453,7 @@ describe("project overrides at environment scope", () => {
   const laptop = EnvironmentId.make("laptop");
   const desk = EnvironmentId.make("desk");
   const fleet = ProjectId.make("fleet");
-  const halc2 = ProjectId.make("hal-c2");
+  const halC2 = ProjectId.make("hal-c2");
   const environment = (
     environmentId: EnvironmentId,
     overrides: ServerSettings["projectSettingsOverrides"],
@@ -472,7 +472,7 @@ describe("project overrides at environment scope", () => {
       [
         environment(laptop, {
           [fleet]: { defaultAutoPull: true, defaultThreadEnvMode: "local" },
-          [halc2]: { defaultThreadEnvMode: "local" },
+          [halC2]: { defaultThreadEnvMode: "local" },
         }),
         environment(desk, { [fleet]: { defaultAutoPull: false } }),
       ],
@@ -489,12 +489,12 @@ describe("project overrides at environment scope", () => {
       [
         environment(laptop, {
           [fleet]: { defaultAutoPull: true, defaultThreadEnvMode: "local" },
-          [halc2]: { defaultAutoPull: true },
+          [halC2]: { defaultAutoPull: true },
         }),
       ],
       [
         { environmentId: laptop, projectId: fleet },
-        { environmentId: laptop, projectId: halc2 },
+        { environmentId: laptop, projectId: halC2 },
       ],
       ["defaultAutoPull"],
     );
@@ -503,7 +503,7 @@ describe("project overrides at environment scope", () => {
         environmentId: laptop,
         label: laptop,
         patch: {
-          projectSettingsOverrides: { [fleet]: { defaultThreadEnvMode: "local" }, [halc2]: null },
+          projectSettingsOverrides: { [fleet]: { defaultThreadEnvMode: "local" }, [halC2]: null },
         },
       },
     ]);

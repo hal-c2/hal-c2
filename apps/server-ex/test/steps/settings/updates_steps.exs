@@ -72,7 +72,7 @@ defmodule HalC2.Steps.Settings.Updates do
     context = HotCodeUpgrade.running_release(context)
     {:ok, listen} = :gen_tcp.listen(0, [:binary, ip: {127, 0, 0, 1}, active: false])
     {:ok, port} = :inet.port(listen)
-    World.put_env("HALC2_UPGRADE_URL", "http://127.0.0.1:#{port}/{version}.tar.gz")
+    World.put_env("HAL_C2_UPGRADE_URL", "http://127.0.0.1:#{port}/{version}.tar.gz")
 
     {client, id} = start_update(Node.connect(context.node), "1.4.0")
 

@@ -40,7 +40,7 @@ private slots:
     QFile page(directory.filePath("app.html"));
     QVERIFY(page.open(QIODevice::WriteOnly));
     page.write("<!doctype html><title>Independent client</title><input id='draft'>"
-               "<script>window.storageIdAtStartup = window.__halc2AppViewStorageId;</script>");
+               "<script>window.storageIdAtStartup = window.__halC2AppViewStorageId;</script>");
     page.close();
     bridge.setPageUrl(QUrl::fromLocalFile(page.fileName()));
     theme = std::make_unique<ThemeStore>(directory.path());
@@ -49,7 +49,7 @@ private slots:
     qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Theme", theme.get());
     qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", profile->profile());
     engine = std::make_unique<QQmlEngine>();
-    engine->addImportPath(QStringLiteral(HALC2_TEST_SOURCE_DIR "/qml"));
+    engine->addImportPath(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/qml"));
     component = std::make_unique<QQmlComponent>(engine.get());
     component->setData(R"(
       import QtQuick
@@ -94,8 +94,8 @@ private slots:
       auto* channel = qobject_cast<QWebChannel*>(view->property("webChannel").value<QObject*>());
       QVERIFY(!channel || channel->registeredObjects().isEmpty());
     }
-    QCOMPARE(evaluate(first.get(), "typeof window.halc2Shell").toString(), QString("undefined"));
-    QCOMPARE(evaluate(second.get(), "typeof window.halc2Shell").toString(), QString("undefined"));
+    QCOMPARE(evaluate(first.get(), "typeof window.halC2Shell").toString(), QString("undefined"));
+    QCOMPARE(evaluate(second.get(), "typeof window.halC2Shell").toString(), QString("undefined"));
     QCOMPARE(evaluate(first.get(), "window.storageIdAtStartup").toString(), QString("window-a"));
     QCOMPARE(evaluate(second.get(), "window.storageIdAtStartup").toString(), QString("window-b"));
 
@@ -150,7 +150,7 @@ private slots:
 
   void transparentCanvasClearsOnlyBackdropsAndRestoresThem() {
     QFETCH(bool, initiallyTransparent);
-    QFile stylesheet(QStringLiteral(HALC2_TEST_SOURCE_DIR "/../web/src/index.css"));
+    QFile stylesheet(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/../web/src/index.css"));
     QVERIFY(stylesheet.open(QIODevice::ReadOnly));
     const QByteArray css = stylesheet.readAll();
     const auto start = css.indexOf("html[data-shell-surface-transparent]");

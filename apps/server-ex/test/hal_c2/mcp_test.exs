@@ -51,7 +51,7 @@ defmodule HalC2.McpTest do
     {caller, tool} = caller("wait for it")
 
     {:ok, launched} =
-      tool.("halc2_thread_launch", %{"title" => "Side quest", "message" => "hello"})
+      tool.("hal_c2_thread_launch", %{"title" => "Side quest", "message" => "hello"})
 
     assert %{"projectId" => @project, "runId" => run_id} = launched
     assert is_binary(run_id)
@@ -62,32 +62,32 @@ defmodule HalC2.McpTest do
     assert %{"createdBy" => "agent", "creationSource" => "mcp", "title" => "Side quest"} =
              StreamState.get(current(launched_id), "thread")[launched_id]
 
-    {:ok, _} = tool.("halc2_thread_send", %{"message" => "first later", "mode" => "queue"})
-    {:ok, _} = tool.("halc2_thread_send", %{"message" => "second later", "mode" => "queue"})
+    {:ok, _} = tool.("hal_c2_thread_send", %{"message" => "first later", "mode" => "queue"})
+    {:ok, _} = tool.("hal_c2_thread_send", %{"message" => "second later", "mode" => "queue"})
     [_, first, second] = runs(await_statuses(caller, ["running", "queued", "queued"]))
 
-    {:ok, %{"items" => items, "nextCursor" => nil}} = tool.("halc2_queue_list", %{})
+    {:ok, %{"items" => items, "nextCursor" => nil}} = tool.("hal_c2_queue_list", %{})
     assert Enum.map(items, & &1["text"]) == ["first later", "second later"]
 
     {:ok, _} =
-      tool.("halc2_queue_edit", %{"queuedRunId" => second["id"], "text" => "second, edited"})
+      tool.("hal_c2_queue_edit", %{"queuedRunId" => second["id"], "text" => "second, edited"})
 
     {:ok, _} =
-      tool.("halc2_queue_reorder", %{
+      tool.("hal_c2_queue_reorder", %{
         "queuedRunId" => second["id"],
         "beforeRunId" => first["id"]
       })
 
-    {:ok, _} = tool.("halc2_queue_cancel", %{"queuedRunId" => first["id"]})
+    {:ok, _} = tool.("hal_c2_queue_cancel", %{"queuedRunId" => first["id"]})
 
-    {:ok, %{"items" => items}} = tool.("halc2_queue_list", %{})
+    {:ok, %{"items" => items}} = tool.("hal_c2_queue_list", %{})
     assert [%{"queuedRunId" => id, "text" => "second, edited"}] = items
     assert id == second["id"]
 
     assert {:ok, %{"text" => "second, edited", "truncated" => false}} =
-             tool.("halc2_queue_read", %{"queuedRunId" => id})
+             tool.("hal_c2_queue_read", %{"queuedRunId" => id})
 
-    assert {:error, text} = tool.("halc2_queue_cancel", %{"queuedRunId" => first["id"]})
+    assert {:error, text} = tool.("hal_c2_queue_cancel", %{"queuedRunId" => first["id"]})
     assert text =~ "invalid_request"
   end
 
@@ -95,14 +95,14 @@ defmodule HalC2.McpTest do
     {caller, tool} = caller("ask me")
     request = await_request(caller)
 
-    assert {:ok, %{"requestIds" => [id]}} = tool.("halc2_pending_request_list", %{})
+    assert {:ok, %{"requestIds" => [id]}} = tool.("hal_c2_pending_request_list", %{})
     assert id == request["id"]
 
     assert {:ok, %{"questions" => [%{"id" => "color", "question" => "Which color?"}]}} =
-             tool.("halc2_pending_request_read", %{"requestId" => id})
+             tool.("hal_c2_pending_request_read", %{"requestId" => id})
 
     assert {:ok, %{"sequence" => _}} =
-             tool.("halc2_pending_request_respond", %{
+             tool.("hal_c2_pending_request_respond", %{
                "requestId" => id,
                "answers" => %{"color" => "Red"}
              })
@@ -112,7 +112,7 @@ defmodule HalC2.McpTest do
     assert [%{"status" => "resolved", "answers" => %{"color" => "Red"}}] =
              StreamState.list(state, "runtime-request")
 
-    assert {:ok, %{"requestIds" => []}} = tool.("halc2_pending_request_list", %{})
+    assert {:ok, %{"requestIds" => []}} = tool.("hal_c2_pending_request_list", %{})
   end
 
   test "an agent registers and updates projects, and lists its workspace's branches", %{
@@ -123,7 +123,7 @@ defmodule HalC2.McpTest do
     root = Path.join(dir, "other")
 
     {:ok, project} =
-      tool.("halc2_project_create", %{
+      tool.("hal_c2_project_create", %{
         "title" => "Other",
         "workspaceRoot" => root,
         "createWorkspaceRootIfMissing" => true
@@ -134,31 +134,31 @@ defmodule HalC2.McpTest do
     await_row(project["id"])
 
     assert {:error, text} =
-             tool.("halc2_project_create", %{"title" => "Again", "workspaceRoot" => work})
+             tool.("hal_c2_project_create", %{"title" => "Again", "workspaceRoot" => work})
 
     assert text =~ "already registered"
 
     assert {:ok, %{"title" => "Renamed", "autoPull" => true}} =
-             tool.("halc2_project_update", %{
+             tool.("hal_c2_project_update", %{
                "projectId" => project["id"],
                "title" => "Renamed",
                "autoPull" => true
              })
 
-    assert {:ok, %{"isRepo" => true, "refs" => refs}} = tool.("halc2_worktree_list", %{})
+    assert {:ok, %{"isRepo" => true, "refs" => refs}} = tool.("hal_c2_worktree_list", %{})
     assert Enum.any?(refs, &(&1["name"] == "main"))
 
     assert {:ok, %{"attached" => false, "projectWorkspaceRoot" => ^work}} =
-             tool.("halc2_worktree_status", %{})
+             tool.("hal_c2_worktree_status", %{})
   end
 
   test "an agent renames and pins its thread, and links its pull requests" do
     {caller, tool} = caller("wait for it")
 
     {:ok, %{"title" => "Renamed"}} =
-      tool.("halc2_thread_update", %{"action" => "rename", "title" => "Renamed"})
+      tool.("hal_c2_thread_update", %{"action" => "rename", "title" => "Renamed"})
 
-    {:ok, _} = tool.("halc2_thread_organize", %{"action" => "pin"})
+    {:ok, _} = tool.("hal_c2_thread_organize", %{"action" => "pin"})
     assert current(caller) |> StreamState.get("thread") |> get_in([caller, "pinnedAt"])
 
     url = "https://github.com/acme/app/pull/7"
@@ -196,13 +196,13 @@ defmodule HalC2.McpTest do
       )
 
     names = Enum.map(tools, & &1["name"])
-    assert "halc2_queue_list" in names and "halc2_thread_launch" in names
+    assert "hal_c2_queue_list" in names and "hal_c2_thread_launch" in names
     assert "delegate_task" in names and "preview_snapshot" in names
 
     assert {:ok, %{"threadId" => ^thread_id, "runtimeMode" => "full-access"}} =
-             tool.("halc2_thread_configuration", %{})
+             tool.("hal_c2_thread_configuration", %{})
 
-    assert {:error, text} = tool.("halc2_thread_launch", %{"title" => "Nope"})
+    assert {:error, text} = tool.("hal_c2_thread_launch", %{"title" => "Nope"})
     assert text =~ "parent_not_active"
   end
 
@@ -264,7 +264,7 @@ defmodule HalC2.McpTest do
   defp await_row(id) do
     unless HalC2.Shell.row(node(), id) do
       receive do
-        {:halc2_shell, _} -> await_row(id)
+        {:hal_c2_shell, _} -> await_row(id)
       after
         5_000 -> flunk("no sidebar row for #{id}")
       end
@@ -284,7 +284,7 @@ defmodule HalC2.McpTest do
       state
     else
       receive do
-        {:halc2_stream, ^thread_id, _} -> await_statuses(thread_id, statuses)
+        {:hal_c2_stream, ^thread_id, _} -> await_statuses(thread_id, statuses)
       after
         5_000 ->
           flunk(
@@ -301,7 +301,7 @@ defmodule HalC2.McpTest do
 
       _ ->
         receive do
-          {:halc2_stream, ^thread_id, _} -> await_request(thread_id)
+          {:hal_c2_stream, ^thread_id, _} -> await_request(thread_id)
         after
           5_000 -> flunk("no pending request")
         end

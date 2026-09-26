@@ -125,7 +125,7 @@ export class ProjectSetupScriptRunner extends Context.Service<
  * the PTY stream. Each run gets its own random token so script output cannot
  * spoof completion, and the sentinel pattern is built per run from it.
  */
-const COMPLETION_SENTINEL_PREFIX = "__HALC2_SETUP_DONE__";
+const COMPLETION_SENTINEL_PREFIX = "__HAL_C2_SETUP_DONE__";
 const OUTPUT_LINE_MAX_LENGTH = 400;
 /** A partial line longer than this is a byte stream, not a line. Keep only the tail. */
 const PARTIAL_LINE_MAX_LENGTH = 4_096;
@@ -187,7 +187,7 @@ function wrapCommandForCompletion(
   const body = command.replace(/\r?\n/g, "\r");
   switch (shell) {
     case "powershell":
-      return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__halc2c = $LASTEXITCODE } elseif ($?) { $__halc2c = 0 } else { $__halc2c = 1 }; Write-Host "${sentinel}$__halc2c"`;
+      return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__hal_c2_code = $LASTEXITCODE } elseif ($?) { $__hal_c2_code = 0 } else { $__hal_c2_code = 1 }; Write-Host "${sentinel}$__hal_c2_code"`;
     case "fish":
       return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
     case "posix":

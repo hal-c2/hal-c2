@@ -8,7 +8,7 @@ const appDir = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.me
 // oxlint-disable-next-line hal-c2/no-global-process-runtime -- Standalone test launcher has no Effect runtime.
 const hostPlatform = NodeOS.platform();
 const executableName = hostPlatform === "win32" ? "qmltestrunner.exe" : "qmltestrunner";
-const testPlatform = process.env.HALC2_QML_TEST_PLATFORM ?? "offscreen";
+const testPlatform = process.env.HAL_C2_QML_TEST_PLATFORM ?? "offscreen";
 
 function capture(command, args) {
   const result = NodeChildProcess.spawnSync(command, args, { encoding: "utf8" });

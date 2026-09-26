@@ -88,21 +88,21 @@ defmodule HalC2.Web.Socket do
       when not is_map_key(state, :v) or :erlang.map_get(:v, state) != @state_version,
       do: handle_info(message, migrate(state))
 
-  def handle_info({:halc2_stream, stream_id, message}, state) do
+  def handle_info({:hal_c2_stream, stream_id, message}, state) do
     case state.by_stream do
       %{^stream_id => id} -> stream_message(state, id, message)
       _ -> {:ok, state}
     end
   end
 
-  def handle_info({:halc2_shell, message}, state) do
+  def handle_info({:hal_c2_shell, message}, state) do
     case Enum.find(state.subs, &match?({_, :shell}, &1)) do
       {id, :shell} -> {:push, Protocol.encode(shell_message(id, message)), state}
       nil -> {:ok, state}
     end
   end
 
-  def handle_info({:halc2_terminal, key, event}, state) do
+  def handle_info({:hal_c2_terminal, key, event}, state) do
     case state.by_terminal do
       %{^key => id} ->
         {:push, Protocol.encode(%{"t" => "terminal", "id" => id, "event" => event}), state}
@@ -112,7 +112,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_server_update, node, event}, state) do
+  def handle_info({:hal_c2_server_update, node, event}, state) do
     case state.by_terminal do
       %{{:server_update, ^node} => id} ->
         case event do
@@ -140,7 +140,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_relay_client_install, node, event}, state) do
+  def handle_info({:hal_c2_relay_client_install, node, event}, state) do
     case state.by_terminal do
       %{{:relay_client_install, ^node} => id} ->
         case event do
@@ -168,7 +168,7 @@ defmodule HalC2.Web.Socket do
 
   # The node moved to another version in place; clients watching it see its new
   # descriptor as a `ready`.
-  def handle_info({:halc2_upgraded, node, outcome}, state) do
+  def handle_info({:hal_c2_upgraded, node, outcome}, state) do
     case remote(node, HalC2.Environment, :descriptor, []) do
       {:ok, descriptor} ->
         config_push(state, node, fn id ->
@@ -185,7 +185,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_git_action, action_id, event}, state) do
+  def handle_info({:hal_c2_git_action, action_id, event}, state) do
     case state.by_terminal do
       %{{:git_action, ^action_id} => id} ->
         frame = Protocol.encode(%{"t" => "gitAction", "id" => id, "event" => event})
@@ -200,16 +200,16 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_settings, node, settings}, state) do
+  def handle_info({:hal_c2_settings, node, settings}, state) do
     # Settings can add, remove, or enable providers.
-    if config_ids(state, node) != [], do: send(self(), {:halc2_providers_changed, node})
+    if config_ids(state, node) != [], do: send(self(), {:hal_c2_providers_changed, node})
     config_push(state, node, &%{"t" => "config.settings", "id" => &1, "settings" => settings})
   end
 
-  def handle_info({:halc2_themes, node, themes}, state),
+  def handle_info({:hal_c2_themes, node, themes}, state),
     do: config_push(state, node, &%{"t" => "config.themes", "id" => &1, "themes" => themes})
 
-  def handle_info({:halc2_usage_limit_sources, node, sources}, state),
+  def handle_info({:hal_c2_usage_limit_sources, node, sources}, state),
     do:
       config_push(
         state,
@@ -217,10 +217,10 @@ defmodule HalC2.Web.Socket do
         &%{"t" => "config.usageLimitSources", "id" => &1, "sources" => sources}
       )
 
-  def handle_info({:halc2_keybindings, node, rules}, state),
+  def handle_info({:hal_c2_keybindings, node, rules}, state),
     do: config_push(state, node, &%{"t" => "config.keybindings", "id" => &1, "rules" => rules})
 
-  def handle_info({:halc2_providers_changed, node}, state) do
+  def handle_info({:hal_c2_providers_changed, node}, state) do
     with [_ | _] <- config_ids(state, node),
          {:ok, providers} <- remote(node, HalC2.Environment, :providers, []) do
       config_push(
@@ -233,7 +233,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_auth_access, event}, state) do
+  def handle_info({:hal_c2_auth_access, event}, state) do
     case state.by_terminal do
       %{:auth_access => id} ->
         {:push, Protocol.encode(%{"t" => "authAccess", "id" => id, "event" => own(event, state)}),
@@ -244,7 +244,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_resource_telemetry, node, snapshot}, state) do
+  def handle_info({:hal_c2_resource_telemetry, node, snapshot}, state) do
     case state.by_terminal do
       %{{:resource_telemetry, ^node} => id} ->
         {:push,
@@ -256,7 +256,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_preview_automation, node, client_id, event}, state) do
+  def handle_info({:hal_c2_preview_automation, node, client_id, event}, state) do
     case state.by_terminal do
       %{{:preview_automation, ^node, ^client_id} => id} when event == :end ->
         {:push, Protocol.encode(%{"t" => "end", "id" => id}), unsubscribe(state, id)}
@@ -270,7 +270,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_preview, node, event}, state) do
+  def handle_info({:hal_c2_preview, node, event}, state) do
     case state.by_terminal do
       %{{:preview, ^node} => id} ->
         {:push, Protocol.encode(%{"t" => "preview", "id" => id, "event" => event}), state}
@@ -280,7 +280,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_local_servers, node, list}, state) do
+  def handle_info({:hal_c2_local_servers, node, list}, state) do
     case state.by_terminal do
       %{{:local_servers, ^node} => id} ->
         {:push, Protocol.encode(%{"t" => "localServers", "id" => id, "list" => list}), state}
@@ -290,7 +290,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_devices, node, device_state}, state) do
+  def handle_info({:hal_c2_devices, node, device_state}, state) do
     case state.by_terminal do
       %{{:devices, ^node} => id} ->
         {:push, Protocol.encode(%{"t" => "devices", "id" => id, "state" => device_state}), state}
@@ -300,7 +300,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_project_clones, node, clones}, state) do
+  def handle_info({:hal_c2_project_clones, node, clones}, state) do
     case state.by_terminal do
       %{{:project_clones, ^node} => id} ->
         {:push, Protocol.encode(%{"t" => "projectClones", "id" => id, "clones" => clones}), state}
@@ -310,7 +310,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_scheduled_tasks, node, tasks}, state) do
+  def handle_info({:hal_c2_scheduled_tasks, node, tasks}, state) do
     case state.by_terminal do
       %{{:scheduled_tasks, ^node} => id} ->
         {:push, Protocol.encode(%{"t" => "scheduledTasks", "id" => id, "tasks" => tasks}), state}
@@ -320,7 +320,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_background_policy, node, policy}, state) do
+  def handle_info({:hal_c2_background_policy, node, policy}, state) do
     case state.by_terminal do
       %{{:background_policy, ^node} => id} ->
         frame = %{"t" => "backgroundPolicy", "id" => id, "policy" => policy}
@@ -331,7 +331,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_pull_request_refreshes, node, revision}, state) do
+  def handle_info({:hal_c2_pull_request_refreshes, node, revision}, state) do
     case state.by_terminal do
       %{{:pull_request_refreshes, ^node} => id} ->
         frame = %{"t" => "pullRequestRefreshes", "id" => id, "revision" => revision}
@@ -342,7 +342,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_worktree_setup, thread_id, snapshot}, state) do
+  def handle_info({:hal_c2_worktree_setup, thread_id, snapshot}, state) do
     case state.by_terminal do
       %{{:worktree_setup, ^thread_id} => id} ->
         {:push, Protocol.encode(%{"t" => "worktreeSetup", "id" => id, "event" => snapshot}),
@@ -353,7 +353,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_provider_install, instance, install}, state) do
+  def handle_info({:hal_c2_provider_install, instance, install}, state) do
     case state.by_terminal do
       %{{:provider_install, ^instance} => id} ->
         {:push, Protocol.encode(%{"t" => "providerInstall", "id" => id, "state" => install}),
@@ -364,7 +364,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_provider_auth, instance, auth}, state) do
+  def handle_info({:hal_c2_provider_auth, instance, auth}, state) do
     case state.by_terminal do
       %{{:provider_auth, ^instance} => id} ->
         {:push, Protocol.encode(%{"t" => "providerAuth", "id" => id, "state" => auth}), state}
@@ -374,7 +374,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_vcs, cwd, event}, state) do
+  def handle_info({:hal_c2_vcs, cwd, event}, state) do
     case state.by_terminal do
       %{{:vcs, ^cwd} => id} ->
         {:push, Protocol.encode(%{"t" => "vcs", "id" => id, "event" => event}), state}
@@ -384,7 +384,7 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:halc2_terminals, node, event}, state) do
+  def handle_info({:hal_c2_terminals, node, event}, state) do
     case state.by_terminal do
       %{{:terminals, ^node} => id} ->
         {:push, Protocol.encode(%{"t" => "terminals", "id" => id, "event" => event}), state}
@@ -395,7 +395,7 @@ defmodule HalC2.Web.Socket do
   end
 
   # An administrator revoked this socket's session: it may not stay connected.
-  def handle_info({:halc2_session_revoked, session}, %{session: session} = state),
+  def handle_info({:hal_c2_session_revoked, session}, %{session: session} = state),
     do: {:stop, :normal, {4401, "session revoked"}, state}
 
   def handle_info({:rpc_reply, id, reply}, state) do

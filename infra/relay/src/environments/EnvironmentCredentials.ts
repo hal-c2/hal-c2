@@ -97,7 +97,7 @@ const make = Effect.gen(function* () {
     const secret = yield* randomTokenPart(3);
     return {
       credentialId,
-      token: `halc2env_${credentialId}_${secret}`,
+      token: `hal_c2_env_${credentialId}_${secret}`,
     };
   });
 

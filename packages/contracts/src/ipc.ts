@@ -1251,7 +1251,7 @@ export interface DesktopBridge {
 }
 
 /** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */
-export const DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER = "__halc2DesktopPreviewRecordingCapture";
+export const DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER = "__halC2DesktopPreviewRecordingCapture";
 
 export interface DesktopPreviewBridge {
   createTab: (tabId: string, defaults?: DesktopPreviewTabDefaults) => Promise<void>;

@@ -279,7 +279,7 @@ defmodule HalC2.Steps.Providers.Pi do
     context = FakeAcp.send_message(context, "please edit a file")
     assert %{"status" => "pending", "kind" => "file-change"} = FakeAcp.await_request(context)
 
-    assert [%{"env" => %{"HALC2_PI_RUNTIME_MODE" => "approval-required"}}] =
+    assert [%{"env" => %{"HAL_C2_PI_RUNTIME_MODE" => "approval-required"}}] =
              thread_starts(context)
 
     context
@@ -300,8 +300,8 @@ defmodule HalC2.Steps.Providers.Pi do
     context = turn(context, "hello again")
 
     assert [first, second] = thread_starts(context)
-    assert first["env"]["HALC2_PI_RUNTIME_MODE"] == "approval-required"
-    assert second["env"]["HALC2_PI_RUNTIME_MODE"] == "full-access"
+    assert first["env"]["HAL_C2_PI_RUNTIME_MODE"] == "approval-required"
+    assert second["env"]["HAL_C2_PI_RUNTIME_MODE"] == "full-access"
     assert [%{"sessionPath" => session}] = FakeAcp.received_type(context, "switch_session")
     assert session == context.pi_session
     assert List.last(replies(context)) == "Reply to hello again after [hello Pi]"

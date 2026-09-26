@@ -26,7 +26,7 @@ defmodule HalC2.PreviewAutomation do
 
   @doc """
   Registers `pid` (a socket) as the host `host` (`PreviewAutomationHost`). It gets
-  `{:halc2_preview_automation, node, client_id, event | :end}`, the first event being
+  `{:hal_c2_preview_automation, node, client_id, event | :end}`, the first event being
   `connected`.
   """
   def connect(host, pid), do: GenServer.call(__MODULE__, {:connect, host, pid})
@@ -104,7 +104,7 @@ defmodule HalC2.PreviewAutomation do
       focus_order: focus_seq
     }
 
-    send(pid, {:halc2_preview_automation, node(), client_id, connected(connection_id)})
+    send(pid, {:hal_c2_preview_automation, node(), client_id, connected(connection_id)})
 
     {:reply, {:ok, connection_id},
      %{state | clients: Map.put(state.clients, client_id, client), focus_seq: focus_seq}}
@@ -173,7 +173,7 @@ defmodule HalC2.PreviewAutomation do
 
         send(
           client.pid,
-          {:halc2_preview_automation, node(), client_id,
+          {:hal_c2_preview_automation, node(), client_id,
            %{"type" => "request", "connectionId" => client.connection_id, "request" => request}}
         )
 
@@ -304,7 +304,7 @@ defmodule HalC2.PreviewAutomation do
         Process.demonitor(client.monitor, [:flush])
 
         if how == :evicted,
-          do: send(client.pid, {:halc2_preview_automation, node(), client_id, :end})
+          do: send(client.pid, {:hal_c2_preview_automation, node(), client_id, :end})
 
         {gone, pending} =
           Enum.split_with(state.pending, fn {_id, p} ->

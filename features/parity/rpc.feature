@@ -28,8 +28,8 @@ Feature: RPC parity with the TypeScript server
 
     Examples: 159 aligned methods
       | method                                   | domain            | via                                                                       |
-      | server.upsertKeybinding                  | server            | rpc as halc2.upsertKeybinding                                                |
-      | server.removeKeybinding                  | server            | rpc as halc2.removeKeybinding                                                |
+      | server.upsertKeybinding                  | server            | rpc as hal-c2.upsertKeybinding                                                |
+      | server.removeKeybinding                  | server            | rpc as hal-c2.removeKeybinding                                                |
       | server.probe                             | server            | client adapter: answered by the client: a connected socket is a live node |
       | server.getConfig                         | server            | shape config                                                              |
       | server.refreshProviders                  | server            | rpc                                                                       |
@@ -44,7 +44,7 @@ Feature: RPC parity with the TypeScript server
       | server.updateServer                      | server            | rpc                                                                       |
       | server.updateServerWithProgress          | server            | shape serverUpdate                                                        |
       | server.getSettings                       | server            | rpc                                                                       |
-      | server.updateSettings                    | server            | rpc as halc2.writeSettings                                                   |
+      | server.updateSettings                    | server            | rpc as hal-c2.writeSettings                                                   |
       | server.discoverSourceControl             | server            | rpc                                                                       |
       | server.searchAcpRegistry                 | server            | rpc                                                                       |
       | server.prepareAcpRegistryAgent           | server            | rpc                                                                       |
@@ -170,7 +170,7 @@ Feature: RPC parity with the TypeScript server
       | orchestration.getFullThreadDiff          | orchestration     | rpc                                                                       |
       | orchestration.searchThreads              | orchestration     | rpc                                                                       |
       | orchestration.getArchivedShellSnapshot   | orchestration     | rpc                                                                       |
-      | orchestration.getThreadProjection        | orchestration     | rpc as halc2.threadRows                                                      |
+      | orchestration.getThreadProjection        | orchestration     | rpc as hal-c2.threadRows                                                      |
       | orchestration.getWorkflowScript          | orchestration     | rpc                                                                       |
       | orchestration.launchThread               | orchestration     | rpc                                                                       |
       | orchestration.subscribeShell             | orchestration     | shape shell                                                               |
@@ -237,11 +237,11 @@ Feature: RPC parity with the TypeScript server
 
     Examples: node-only methods behind aligned contract methods
       | method              | result                                                        |
-      | halc2.readSettings     | the settings document with its version                        |
-      | halc2.writeSettings    | the new version, or a stale-settings error for an old version |
-      | halc2.threadRows       | one thread's stream rows with their offset and time           |
-      | halc2.upsertKeybinding | the keybindings after the change                              |
-      | halc2.removeKeybinding | the keybindings after the removal                             |
+      | hal-c2.readSettings     | the settings document with its version                        |
+      | hal-c2.writeSettings    | the new version, or a stale-settings error for an old version |
+      | hal-c2.threadRows       | one thread's stream rows with their offset and time           |
+      | hal-c2.upsertKeybinding | the keybindings after the change                              |
+      | hal-c2.removeKeybinding | the keybindings after the removal                             |
 
   @node
   Scenario: A method outside the contract is refused

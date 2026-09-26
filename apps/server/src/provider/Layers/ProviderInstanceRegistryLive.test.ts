@@ -355,7 +355,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
           enabled: true,
           environment: [
             {
-              name: "HALC2_CODEX_COLLAB_SCRIPT",
+              name: "HAL_C2_CODEX_COLLAB_SCRIPT",
               value: fixtures.codexScriptPath,
               sensitive: false,
             },

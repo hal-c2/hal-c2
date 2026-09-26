@@ -133,11 +133,11 @@ defmodule HalC2.Pi do
       env =
         HalC2.Acp.instance_env(instance) ++
           [
-            {"HALC2_MCP_URL", (mcp && mcp.url) || ""},
-            {"HALC2_MCP_BEARER_TOKEN",
+            {"HAL_C2_MCP_URL", (mcp && mcp.url) || ""},
+            {"HAL_C2_MCP_BEARER_TOKEN",
              (mcp && String.replace_prefix(mcp.authorization, "Bearer ", "")) || ""}
           ] ++
-          if(extension && mode, do: [{"HALC2_PI_RUNTIME_MODE", mode}], else: [])
+          if(extension && mode, do: [{"HAL_C2_PI_RUNTIME_MODE", mode}], else: [])
 
       {:ok, argv, env}
     end

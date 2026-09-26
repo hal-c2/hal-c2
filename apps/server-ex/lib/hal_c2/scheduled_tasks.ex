@@ -7,7 +7,7 @@ defmodule HalC2.ScheduledTasks do
   run, at least every minute, so a changed clock or a sleeping host is noticed.
   A fixed-time run missed by more than ten minutes (the host was off) moves to
   its next slot instead of firing late. Watchers (client sockets) get
-  `{:halc2_scheduled_tasks, node, tasks}` whenever a task changes.
+  `{:hal_c2_scheduled_tasks, node, tasks}` whenever a task changes.
   """
 
   use GenServer
@@ -400,7 +400,7 @@ defmodule HalC2.ScheduledTasks do
   defp changed(state) do
     save(state.path, sorted(state))
     tasks = sorted(state)
-    for {pid, _} <- state.watchers, do: send(pid, {:halc2_scheduled_tasks, node(), tasks})
+    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_scheduled_tasks, node(), tasks})
     schedule(state)
   end
 

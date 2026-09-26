@@ -1900,7 +1900,7 @@ describe("cached pull request detail", () => {
 
   it("shrugs off corrupt storage and no storage at all", () => {
     const storage = makeStorage();
-    storage.setItem("halc2.pullRequests.detail:env-1:project-1:acme/web#7", "{not json");
+    storage.setItem("hal-c2.pullRequests.detail:env-1:project-1:acme/web#7", "{not json");
     expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
     expect(readPullRequestDetailSnapshot(undefined, "env-1", reference)).toBeNull();
     const hosted = { ...reference, host: "github.com" };

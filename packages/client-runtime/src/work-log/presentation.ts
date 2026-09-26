@@ -12,7 +12,7 @@ import {
   resolveHalC2McpToolDefinition,
   type HalC2McpToolDefinition,
   type HalC2McpToolSummaryAction,
-} from "@hal-c2/shared/halc2McpToolPresentation";
+} from "@hal-c2/shared/halC2McpToolPresentation";
 import { classifyMarkdownImageSource } from "@hal-c2/client-runtime/markdown-images";
 import { resolveMediaSource } from "@hal-c2/client-runtime/media-source";
 import { parseChangeRequestUrl } from "@hal-c2/shared/changeRequestUrl";
@@ -22,9 +22,9 @@ import { toolOutputIndicatesFailure } from "@hal-c2/shared/toolOutput";
 
 import {
   summarizeHalC2ToolCalls,
-  halc2ToolResultIndicatesFailure,
+  halC2ToolResultIndicatesFailure,
   type HalC2ToolSummaryCall,
-} from "@hal-c2/client-runtime/halc2ToolSummary";
+} from "@hal-c2/client-runtime/halC2ToolSummary";
 
 export type WorkLogToolLifecycleStatus = RuntimeItemStatus | "stopped" | "idle";
 
@@ -199,7 +199,7 @@ export function resolveWorkEntryToolPresentation(
   const status = entry.toolLifecycleStatus ?? fallbackStatus;
   return resolveHalC2McpToolPresentation(
     definition,
-    definition && halc2ToolResultIndicatesFailure(workEntryToolOutput(entry)) ? "failed" : status,
+    definition && halC2ToolResultIndicatesFailure(workEntryToolOutput(entry)) ? "failed" : status,
     entry.toolData,
   );
 }
@@ -366,7 +366,7 @@ function workEntryIndicatesToolFailureFromOutput(
   if (!workLogEntryIsToolLike(entry)) return false;
   if (
     resolveHalC2McpToolDefinition(workEntryToolName(entry)) &&
-    halc2ToolResultIndicatesFailure(workEntryToolOutput(entry))
+    halC2ToolResultIndicatesFailure(workEntryToolOutput(entry))
   ) {
     return true;
   }
@@ -536,7 +536,7 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
   }
 }
 
-function halc2ToolSummaryCall(entry: WorkLogPresentationEntry): HalC2ToolSummaryCall {
+function halC2ToolSummaryCall(entry: WorkLogPresentationEntry): HalC2ToolSummaryCall {
   const item = entry.structuredPayload;
   const data =
     entry.toolData !== null && typeof entry.toolData === "object"
@@ -617,30 +617,30 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
     ToolGroupAction | HalC2McpToolSummaryAction,
     {
       action: ToolGroupAction;
-      halc2Action: HalC2McpToolSummaryAction | null;
+      halC2Action: HalC2McpToolSummaryAction | null;
       entries: WorkLogPresentationEntry[];
     }
   >();
   const sources = new Map<string, ToolActivitySource>();
   for (const entry of entries) {
-    const halc2Action =
+    const halC2Action =
       resolveHalC2McpToolDefinition(workEntryToolName(entry))?.summaryAction ?? null;
-    if (entry.toolSource && halc2Action === null) {
+    if (entry.toolSource && halC2Action === null) {
       sources.set(entry.toolSource.key, entry.toolSource);
       continue;
     }
     const action = toolGroupAction(entry);
-    const key = halc2Action ?? action;
+    const key = halC2Action ?? action;
     const group = groups.get(key);
     if (group) group.entries.push(entry);
-    else groups.set(key, { action, halc2Action, entries: [entry] });
+    else groups.set(key, { action, halC2Action, entries: [entry] });
   }
   const summaries = [...groups].map(([action, group], index) => ({
     index,
     count: group.entries.length,
     priority: summaryActionPriority(action),
-    ...(group.halc2Action
-      ? summarizeHalC2ToolCalls(group.halc2Action, group.entries.map(halc2ToolSummaryCall))
+    ...(group.halC2Action
+      ? summarizeHalC2ToolCalls(group.halC2Action, group.entries.map(halC2ToolSummaryCall))
       : {
           label: toolGroupActionLabel(
             group.action,

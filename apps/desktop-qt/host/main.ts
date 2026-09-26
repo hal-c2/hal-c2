@@ -35,7 +35,7 @@ const hostDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const installedServerEntry = NodePath.resolve(hostDir, "../server/bin.mjs");
 const repositoryServerEntry = NodePath.resolve(hostDir, "../../server/dist/bin.mjs");
 const serverEntry =
-  process.env.HALC2_SERVER_ENTRY ??
+  process.env.HAL_C2_SERVER_ENTRY ??
   (NodeFS.existsSync(installedServerEntry)
     ? installedServerEntry
     : NodeFS.existsSync(repositoryServerEntry)

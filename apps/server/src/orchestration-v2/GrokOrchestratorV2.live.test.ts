@@ -117,7 +117,7 @@ const waitForIdle = Effect.fn("GrokOrchestratorV2Live.waitForIdle")(function* (t
   return yield* Effect.die(new Error(`Timed out waiting for Grok thread ${threadId}.`));
 });
 
-describe.runIf(process.env.HALC2_GROK_LIVE_ORCHESTRATOR === "1")(
+describe.runIf(process.env.HAL_C2_GROK_LIVE_ORCHESTRATOR === "1")(
   "Grok V2 live orchestrator",
   () => {
     it.live(

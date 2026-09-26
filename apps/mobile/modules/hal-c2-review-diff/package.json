@@ -10,7 +10,7 @@
     },
     "android": {
       "modules": [
-        "expo.modules.halc2reviewdiff.HalC2ReviewDiffModule"
+        "expo.modules.hal_c2_reviewdiff.HalC2ReviewDiffModule"
       ]
     }
   }

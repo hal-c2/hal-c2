@@ -465,7 +465,7 @@ it.effect("reports implemented tools separately from locally available executabl
             account: Option.none(),
             host: Option.some("bitbucket.org"),
             detail: Option.some(
-              "Set HALC2_BITBUCKET_EMAIL and HALC2_BITBUCKET_API_TOKEN, or HALC2_BITBUCKET_ACCESS_TOKEN.",
+              "Set HAL_C2_BITBUCKET_EMAIL and HAL_C2_BITBUCKET_API_TOKEN, or HAL_C2_BITBUCKET_ACCESS_TOKEN.",
             ),
           }),
         },

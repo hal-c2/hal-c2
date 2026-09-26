@@ -186,7 +186,7 @@ defmodule HalC2.ProviderUsageLimits.Acp do
   defp cursor_api_key?(env) do
     match?(
       {:ok, %{"apiKey" => key}} when is_binary(key) and key != "",
-      JSON.decode(read(env["HALC2_CURSOR_CREDENTIALS"] || ""))
+      JSON.decode(read(env["HAL_C2_CURSOR_CREDENTIALS"] || ""))
     )
   end
 

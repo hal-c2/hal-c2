@@ -33,7 +33,7 @@ defmodule HalC2.ProviderAuthTest do
     )
 
     {:ok, _} = HalC2.ProviderAuth.subscribe("opencode", self())
-    assert_receive {:halc2_provider_auth, "opencode", %{"methods" => methods}}, 5_000
+    assert_receive {:hal_c2_provider_auth, "opencode", %{"methods" => methods}}, 5_000
 
     assert [%{"id" => "browser", "type" => "agent"}, %{"id" => "cli", "type" => "terminal"}] =
              methods
@@ -48,7 +48,7 @@ defmodule HalC2.ProviderAuthTest do
     :ok = HalC2.Settings.watch(self())
     flush_provider_changes()
     HalC2.Acp.entry("opencode")
-    assert_receive {:halc2_providers_changed, _}, 5_000
+    assert_receive {:hal_c2_providers_changed, _}, 5_000
     entry = HalC2.Acp.entry("opencode")
     assert entry["setup"]["canAuthenticate"]
     entry["auth"]["status"]
@@ -123,7 +123,7 @@ defmodule HalC2.ProviderAuthTest do
 
   defp flush_provider_changes do
     receive do
-      {:halc2_providers_changed, _} -> flush_provider_changes()
+      {:hal_c2_providers_changed, _} -> flush_provider_changes()
     after
       0 -> :ok
     end
@@ -131,13 +131,13 @@ defmodule HalC2.ProviderAuthTest do
 
   defp await_phase(phase) do
     receive do
-      {:halc2_provider_auth, _, %{"phase" => ^phase} = state} ->
+      {:hal_c2_provider_auth, _, %{"phase" => ^phase} = state} ->
         state
 
-      {:halc2_provider_auth, _, %{"phase" => "failed"} = state} ->
+      {:hal_c2_provider_auth, _, %{"phase" => "failed"} = state} ->
         flunk("failed: #{state["message"]}")
 
-      {:halc2_provider_auth, _, _} ->
+      {:hal_c2_provider_auth, _, _} ->
         await_phase(phase)
     after
       10_000 -> flunk("no #{phase} state")
@@ -146,10 +146,10 @@ defmodule HalC2.ProviderAuthTest do
 
   defp await_output(text) do
     receive do
-      {:halc2_provider_auth, _, %{"interaction" => %{"type" => "terminal", "output" => output}}} ->
+      {:hal_c2_provider_auth, _, %{"interaction" => %{"type" => "terminal", "output" => output}}} ->
         if output =~ text, do: :ok, else: await_output(text)
 
-      {:halc2_provider_auth, _, _} ->
+      {:hal_c2_provider_auth, _, _} ->
         await_output(text)
     after
       10_000 -> flunk("no terminal output #{inspect(text)}")

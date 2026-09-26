@@ -17,12 +17,12 @@ defmodule HalC2.PreviewAutomationTest do
     host = %{"clientId" => client_id, "environmentId" => "env"}
     host = if operations, do: Map.put(host, "supportedOperations", operations), else: host
     {:ok, connection_id} = HalC2.PreviewAutomation.connect(host, self())
-    assert_receive {:halc2_preview_automation, _, ^client_id, %{"type" => "connected"}}
+    assert_receive {:hal_c2_preview_automation, _, ^client_id, %{"type" => "connected"}}
     connection_id
   end
 
   defp next_request(client_id) do
-    assert_receive {:halc2_preview_automation, _, ^client_id,
+    assert_receive {:hal_c2_preview_automation, _, ^client_id,
                     %{"type" => "request", "connectionId" => connection_id, "request" => request}}
 
     {connection_id, request}
@@ -92,7 +92,7 @@ defmodule HalC2.PreviewAutomationTest do
                @caller
              )
 
-    assert_receive {:halc2_preview_automation, _, "desk", :end}
+    assert_receive {:hal_c2_preview_automation, _, "desk", :end}
 
     assert {:error, "PreviewAutomationNoAvailableHostError", _} =
              HalC2.Mcp.Preview.call("preview_status", %{}, @caller)

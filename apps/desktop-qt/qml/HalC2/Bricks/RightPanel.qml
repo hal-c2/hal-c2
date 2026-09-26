@@ -211,7 +211,7 @@ Rectangle {
             Component.onCompleted: if (wanted)
                 active = true
 
-            // The document follows thread changes itself (halc2Shell.onState), so
+            // The document follows thread changes itself (halC2Shell.onState), so
             // the URL is only the starting point; rebinding it would reload.
             sourceComponent: WebSurface {
                 surfaceId: "rightPanel"

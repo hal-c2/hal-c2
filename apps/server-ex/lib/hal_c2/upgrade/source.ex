@@ -8,7 +8,7 @@ defmodule HalC2.Upgrade.Source do
     2. a cluster peer that already has it, over the peer's HTTP port with a
        one-time link the peer hands out over distribution (bundles never travel
        over distribution itself, which a large message would stall);
-    3. the release artifact at `HALC2_UPGRADE_URL` (`{version}` and `{platform}` are
+    3. the release artifact at `HAL_C2_UPGRADE_URL` (`{version}` and `{platform}` are
        filled in), with its `.sha256` beside it.
 
   Bundles are per platform, since native libraries and ERTS are.
@@ -148,7 +148,7 @@ defmodule HalC2.Upgrade.Source do
 
   defp from_url(version, platform, archive) do
     url =
-      (System.get_env("HALC2_UPGRADE_URL") ||
+      (System.get_env("HAL_C2_UPGRADE_URL") ||
          Application.get_env(:hal_c2, :upgrade_url, @default_url))
       |> String.replace("{version}", version)
       |> String.replace("{platform}", platform)

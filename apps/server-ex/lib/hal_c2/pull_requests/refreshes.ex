@@ -2,7 +2,7 @@ defmodule HalC2.PullRequests.Refreshes do
   @moduledoc """
   A revision that moves whenever a pull request is changed or refreshed through this
   node (`pullRequests.subscribeRefreshes`). Subscribers get the current revision,
-  then `{:halc2_pull_request_refreshes, node, revision}` on every bump, and refetch
+  then `{:hal_c2_pull_request_refreshes, node, revision}` on every bump, and refetch
   what they show.
   """
 
@@ -38,7 +38,7 @@ defmodule HalC2.PullRequests.Refreshes do
     revision = state.revision + 1
 
     for {pid, _} <- state.watchers,
-        do: send(pid, {:halc2_pull_request_refreshes, node(), revision})
+        do: send(pid, {:hal_c2_pull_request_refreshes, node(), revision})
 
     {:noreply, %{state | revision: revision}}
   end

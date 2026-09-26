@@ -259,7 +259,7 @@ function getAutoUpdateDisabledReason(args: {
     return "Automatic updates are only available in packaged production builds.";
   }
   if (args.disabledByEnv) {
-    return "Automatic updates are disabled by the HALC2_DISABLE_AUTO_UPDATE setting.";
+    return "Automatic updates are disabled by the HAL_C2_DISABLE_AUTO_UPDATE setting.";
   }
   if (args.platform === "linux" && !args.appImage) {
     return "Automatic updates on Linux require running the AppImage build.";

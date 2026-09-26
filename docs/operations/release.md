@@ -14,7 +14,7 @@ This document covers the unified release workflow for stable and nightly desktop
   - push tag matching `v*.*.*` for a stable release of an explicit commit
   - scheduled nightly check every 30 minutes
   - manual `workflow_dispatch` with `channel=nightly`
-  - manual `workflow_dispatch` with `channel=preview`, the maintainers' test train. It exercises the whole release flow (build, sign, notarize, smoke, publish) for a commit that end users must never receive, which is how an unmerged branch or a risky change gets a real release run before it lands. It builds the triggering commit with nightly's versioning under the `preview` prerelease identifier (`0.0.41-preview.<date>.<run>`) and publishes a GitHub prerelease plus the npm packages under the `preview` dist-tag. Preview is not on the schedule, no default npm dist-tag points at it, its desktop builds carry no update feed, and no updater manifest (`latest*.yml`, `nightly*.yml`, blockmaps) is attached, so a stable or nightly install cannot be offered one. The only ways onto it are downloading the release by hand, `npx hal-c2@preview`, `HALC2_CHANNEL=preview` for the install scripts, or `hal-c2 update --channel preview` from a terminal; each prints a warning, and the CLI asks for confirmation when the running build is not itself a preview. The release itself is named as a maintainer test build and its body is a warning rather than generated notes: a changelog of unmerged branch history is not a changelog, and nightly and stable notes are unaffected because each series resolves its previous tag within its own channel. The hosted web app, AUR, and Discord announcements are skipped. Keep it; it costs nothing when idle.
+  - manual `workflow_dispatch` with `channel=preview`, the maintainers' test train. It exercises the whole release flow (build, sign, notarize, smoke, publish) for a commit that end users must never receive, which is how an unmerged branch or a risky change gets a real release run before it lands. It builds the triggering commit with nightly's versioning under the `preview` prerelease identifier (`0.0.41-preview.<date>.<run>`) and publishes a GitHub prerelease plus the npm packages under the `preview` dist-tag. Preview is not on the schedule, no default npm dist-tag points at it, its desktop builds carry no update feed, and no updater manifest (`latest*.yml`, `nightly*.yml`, blockmaps) is attached, so a stable or nightly install cannot be offered one. The only ways onto it are downloading the release by hand, `npx hal-c2@preview`, `HAL_C2_CHANNEL=preview` for the install scripts, or `hal-c2 update --channel preview` from a terminal; each prints a warning, and the CLI asks for confirmation when the running build is not itself a preview. The release itself is named as a maintainer test build and its body is a warning rather than generated notes: a changelog of unmerged branch history is not a changelog, and nightly and stable notes are unaffected because each series resolves its previous tag within its own channel. The hosted web app, AUR, and Discord announcements are skipped. Keep it; it costs nothing when idle.
 - A manual stable release builds the commit of the latest published nightly, not `main` HEAD.
   Nightly is the release candidate: verify the nightly, then promote it. Merges to `main` keep
   landing while you verify and never leak into the stable build.
@@ -178,9 +178,9 @@ Required GitHub Actions secrets:
 Optional GitHub Actions variables:
 
 - `VERCEL_TEAM_SLUG`: overrides the Vercel CLI scope when the team slug is preferred over the `VERCEL_ORG_ID` secret.
-- `HALC2_WEB_ROUTER_URL`: defaults to `https://app.hal-c2.example`.
-- `HALC2_WEB_LATEST_DOMAIN`: defaults to `latest.app.hal-c2.example`.
-- `HALC2_WEB_NIGHTLY_DOMAIN`: defaults to `nightly.app.hal-c2.example`.
+- `HAL_C2_WEB_ROUTER_URL`: defaults to `https://app.hal-c2.example`.
+- `HAL_C2_WEB_LATEST_DOMAIN`: defaults to `latest.app.hal-c2.example`.
+- `HAL_C2_WEB_NIGHTLY_DOMAIN`: defaults to `nightly.app.hal-c2.example`.
 
 Required Vercel domains:
 
@@ -189,9 +189,9 @@ Required Vercel domains:
 - `nightly.app.hal-c2.example`: channel alias updated by nightly releases.
 
 The router domain uses `apps/web/vercel.ts` routes. Users opt into a channel by
-visiting `/__halc2/channel?channel=latest` or
-`/__halc2/channel?channel=nightly`; the router stores the
-`halc2_web_channel` cookie and rewrites future requests on `app.hal-c2.example` to
+visiting `/__hal-c2/channel?channel=latest` or
+`/__hal-c2/channel?channel=nightly`; the router stores the
+`hal_c2_web_channel` cookie and rewrites future requests on `app.hal-c2.example` to
 the matching channel alias.
 
 The release deploy job rewrites release package versions before upload so the
@@ -200,7 +200,7 @@ same deployment to both the `latest` channel and the router domain so the router
 rules stay current. Nightly deploys only alias the `nightly` channel. The job
 also passes `VITE_HOSTED_APP_CHANNEL=latest|nightly`, which renders the hosted
 update track selector in the About panel. Changing the selector navigates
-through `/__halc2/channel` on the router domain so the user's channel cookie is
+through `/__hal-c2/channel` on the router domain so the user's channel cookie is
 updated before redirecting to the hosted app root.
 
 One-time Vercel dashboard setup:
@@ -268,7 +268,7 @@ available.
   - The desktop UI shows a rocket update button when an update is available; click once to download, click again after download to restart/install.
 - Provider: GitHub Releases (`provider: github`) configured at build time.
 - Repository slug source:
-  - `HALC2_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.
+  - `HAL_C2_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.
   - otherwise `GITHUB_REPOSITORY` from GitHub Actions.
 - Required release assets for updater:
   - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)

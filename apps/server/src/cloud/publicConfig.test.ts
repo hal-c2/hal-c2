@@ -26,7 +26,7 @@ it.effect("uses the statically injected relay URL when no runtime override exist
 it.effect("prefers a runtime relay URL override over the statically injected value", () =>
   Effect.gen(function* () {
     const relayUrl = yield* makeRelayUrlConfig("https://embedded.example.test").pipe(
-      provideEnv({ HALC2_RELAY_URL: "https://runtime.example.test///" }),
+      provideEnv({ HAL_C2_RELAY_URL: "https://runtime.example.test///" }),
     );
 
     assert.equal(relayUrl, "https://runtime.example.test");
@@ -39,7 +39,7 @@ it.effect("requires a relay URL when the server bundle has no injected value", (
 
 it.effect("rejects an insecure runtime relay URL override", () =>
   makeRelayUrlConfig("https://embedded.example.test").pipe(
-    provideEnv({ HALC2_RELAY_URL: "http://runtime.example.test" }),
+    provideEnv({ HAL_C2_RELAY_URL: "http://runtime.example.test" }),
     Effect.flip,
   ),
 );
@@ -52,12 +52,14 @@ it.effect("normalizes the hosted app URL to an absolute origin", () =>
   Effect.gen(function* () {
     assert.equal(
       yield* hostedAppUrlConfig.pipe(
-        provideEnv({ HALC2_HOSTED_APP_URL: "https://nightly.app.hal-c2.example" }),
+        provideEnv({ HAL_C2_HOSTED_APP_URL: "https://nightly.app.hal-c2.example" }),
       ),
       "https://nightly.app.hal-c2.example",
     );
     assert.equal(
-      yield* hostedAppUrlConfig.pipe(provideEnv({ HALC2_HOSTED_APP_URL: "http://localhost:5733" })),
+      yield* hostedAppUrlConfig.pipe(
+        provideEnv({ HAL_C2_HOSTED_APP_URL: "http://localhost:5733" }),
+      ),
       "http://localhost:5733",
     );
   }),
@@ -72,7 +74,7 @@ it.effect("rejects malformed or insecure hosted app URLs", () =>
       "https://app.hal-c2.example?alias=true",
     ]) {
       const result = yield* hostedAppUrlConfig.pipe(
-        provideEnv({ HALC2_HOSTED_APP_URL: value }),
+        provideEnv({ HAL_C2_HOSTED_APP_URL: value }),
         Effect.result,
       );
       assert.isTrue(Result.isFailure(result), value);
@@ -105,8 +107,8 @@ it.effect("prefers runtime Clerk OAuth config overrides over statically injected
       clerkCliOAuthClientIdFallback: "oauth_client_embedded",
     }).pipe(
       provideEnv({
-        HALC2_CLERK_PUBLISHABLE_KEY: "pk_test_cnVudGltZS5leGFtcGxlLnRlc3Qk",
-        HALC2_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_client_runtime",
+        HAL_C2_CLERK_PUBLISHABLE_KEY: "pk_test_cnVudGltZS5leGFtcGxlLnRlc3Qk",
+        HAL_C2_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_client_runtime",
       }),
     );
 
@@ -154,9 +156,9 @@ it("resolves relay client tracing from runtime config with build-time fallback",
   assert.deepEqual(
     resolveRelayClientTracingConfig(
       {
-        HALC2_RELAY_CLIENT_OTLP_TRACES_URL: "https://runtime.example.test/v1/traces",
-        HALC2_RELAY_CLIENT_OTLP_TRACES_DATASET: "runtime-dataset",
-        HALC2_RELAY_CLIENT_OTLP_TRACES_TOKEN: "runtime-token",
+        HAL_C2_RELAY_CLIENT_OTLP_TRACES_URL: "https://runtime.example.test/v1/traces",
+        HAL_C2_RELAY_CLIENT_OTLP_TRACES_DATASET: "runtime-dataset",
+        HAL_C2_RELAY_CLIENT_OTLP_TRACES_TOKEN: "runtime-token",
       },
       fallback,
     ),
@@ -169,9 +171,9 @@ it("resolves relay client tracing from runtime config with build-time fallback",
   assert.equal(
     resolveRelayClientTracingConfig(
       {
-        HALC2_RELAY_CLIENT_OTLP_TRACES_URL: "http://insecure.example.test/v1/traces",
-        HALC2_RELAY_CLIENT_OTLP_TRACES_DATASET: "runtime-dataset",
-        HALC2_RELAY_CLIENT_OTLP_TRACES_TOKEN: "runtime-token",
+        HAL_C2_RELAY_CLIENT_OTLP_TRACES_URL: "http://insecure.example.test/v1/traces",
+        HAL_C2_RELAY_CLIENT_OTLP_TRACES_DATASET: "runtime-dataset",
+        HAL_C2_RELAY_CLIENT_OTLP_TRACES_TOKEN: "runtime-token",
       },
       fallback,
     ),

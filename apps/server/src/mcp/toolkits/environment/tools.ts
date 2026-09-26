@@ -37,7 +37,7 @@ const shared = {
     ThreadCommandExecutor,
   ],
 };
-const EnvironmentReadTool = Tool.make("halc2_environment_read", {
+const EnvironmentReadTool = Tool.make("hal_c2_environment_read", {
   ...shared,
   description:
     "Read this server's identity and selected environment preferences. Provider/model availability is exposed by orchestrator_capabilities. Writing instructions are limited to 4,000 characters.",
@@ -51,7 +51,7 @@ const EnvironmentReadTool = Tool.make("halc2_environment_read", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
-const EnvironmentPreferencesTool = Tool.make("halc2_environment_preferences_update", {
+const EnvironmentPreferencesTool = Tool.make("hal_c2_environment_preferences_update", {
   ...shared,
   description:
     "Update selected environment-wide preferences through normal settings persistence and notifications. Requires a live full-access/default calling thread. Omitted fields are preserved; empty customInstructions clears them.",

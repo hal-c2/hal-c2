@@ -1,10 +1,10 @@
 import {
-  HALC2_PROJECT_FILE_NAME,
+  HAL_C2_PROJECT_FILE_NAME,
   type EnvironmentId,
   type HalC2ProjectFile,
   type HalC2ProjectFileScript,
 } from "@hal-c2/contracts";
-import { parseHalC2ProjectFile } from "@hal-c2/shared/halc2ProjectFile";
+import { parseHalC2ProjectFile } from "@hal-c2/shared/halC2ProjectFile";
 import { useMemo } from "react";
 
 import { useProjectFileQuery } from "~/components/files/projectFilesQueryState";
@@ -36,7 +36,7 @@ export function useHalC2ProjectFileState(
   const query = useProjectFileQuery(
     environmentId,
     cwd ?? "",
-    HALC2_PROJECT_FILE_NAME,
+    HAL_C2_PROJECT_FILE_NAME,
     cwd !== null,
   );
   const contents = query.data && !query.data.truncated ? query.data.contents : null;

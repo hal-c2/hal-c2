@@ -12,7 +12,7 @@ defmodule HalC2.Steps.Plugins.Release do
   @manifest %{
     "otpRelease" => "29",
     "erts" => "17.0.5",
-    "applications" => %{"halc2_fixture" => "1"},
+    "applications" => %{"hal_c2_fixture" => "1"},
     "nifs" => %{},
     "config" => "c"
   }
@@ -30,7 +30,7 @@ defmodule HalC2.Steps.Plugins.Release do
     File.mkdir_p!(Path.join(root, "lib"))
 
     path = :code.get_path()
-    env = for key <- ~w(RELEASE_ROOT HALC2_SERVICE), into: %{}, do: {key, System.get_env(key)}
+    env = for key <- ~w(RELEASE_ROOT HAL_C2_SERVICE), into: %{}, do: {key, System.get_env(key)}
     System.put_env("RELEASE_ROOT", root)
     # The bundles load several versions of the fixture modules.
     Code.put_compiler_option(:ignore_module_conflict, true)
@@ -57,7 +57,7 @@ defmodule HalC2.Steps.Plugins.Release do
   """
   def put_bundle(context, target, source, running) do
     bundle = Node.tmp_dir(context.node, "bundle")
-    ebin = Path.join([bundle, "lib", "halc2_fixture-#{target}", "ebin"])
+    ebin = Path.join([bundle, "lib", "hal_c2_fixture-#{target}", "ebin"])
     File.mkdir_p!(ebin)
     write_manifest(bundle, target)
 
@@ -93,7 +93,7 @@ defmodule HalC2.Steps.Plugins.LogTap do
   @moduledoc "A `:logger` handler that sends the test process what the node logs."
 
   def attach do
-    id = :"halc2_log_tap_#{System.unique_integer([:positive])}"
+    id = :"hal_c2_log_tap_#{System.unique_integer([:positive])}"
     :ok = :logger.add_handler(id, __MODULE__, %{config: %{pid: self()}, level: :warning})
     ExUnit.Callbacks.on_exit(fn -> :logger.remove_handler(id) end)
   end
@@ -183,7 +183,7 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
   step "the node installs a version that changes a supervisor", context do
     test = self()
     Application.put_env(:hal_c2, :restart_exit, &send(test, {:restart_exit, &1}))
-    System.put_env("HALC2_SERVICE", "1")
+    System.put_env("HAL_C2_SERVICE", "1")
     context = Release.ensure(context)
     target = context.release.from <> "-tree"
 
@@ -692,12 +692,12 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
 
   step "the user picks {string} for text generation", %{args: [id]} = context do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "halc2.readSettings")
+      World.call!(context, "hal-c2.readSettings")
 
     selection = %{"instanceId" => id, "model" => "llama-3"}
 
     {_, context} =
-      World.call!(context, "halc2.writeSettings", %{
+      World.call!(context, "hal-c2.writeSettings", %{
         "settings" => Map.put(settings, "textGenerationModelSelection", selection),
         "version" => version
       })
@@ -933,7 +933,7 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
       entry
     else
       receive do
-        {:halc2_plugins, _node, list} ->
+        {:hal_c2_plugins, _node, list} ->
           entry = Enum.find(list, &(&1["id"] == id))
           if fun.(entry), do: entry, else: await_plugin(id, fun)
       after

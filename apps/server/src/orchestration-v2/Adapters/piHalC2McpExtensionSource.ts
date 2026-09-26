@@ -8,13 +8,13 @@
  * Do not import hal-c2 modules from the string body. The Pi process resolves
  * `@earendil-works/pi-coding-agent` and `typebox` from the user's pi install.
  */
-import { HALC2_ORCHESTRATION_INSTRUCTIONS } from "../../provider/HalC2OrchestrationInstructions.ts";
+import { HAL_C2_ORCHESTRATION_INSTRUCTIONS } from "../../provider/HalC2OrchestrationInstructions.ts";
 
-export const PI_HALC2_MCP_EXTENSION_FILENAME = "pi-hal-c2-mcp-extension.ts";
+export const PI_HAL_C2_MCP_EXTENSION_FILENAME = "pi-hal-c2-mcp-extension.ts";
 
-export const HALC2_MCP_URL_ENV = "HALC2_MCP_URL";
-export const HALC2_MCP_BEARER_ENV = "HALC2_MCP_BEARER_TOKEN";
-export const HALC2_PI_RUNTIME_MODE_ENV = "HALC2_PI_RUNTIME_MODE";
+export const HAL_C2_MCP_URL_ENV = "HAL_C2_MCP_URL";
+export const HAL_C2_MCP_BEARER_ENV = "HAL_C2_MCP_BEARER_TOKEN";
+export const HAL_C2_PI_RUNTIME_MODE_ENV = "HAL_C2_PI_RUNTIME_MODE";
 
 /**
  * Pi tools whose confirmations the bridge raises as file-change approvals.
@@ -22,14 +22,14 @@ export const HALC2_PI_RUNTIME_MODE_ENV = "HALC2_PI_RUNTIME_MODE";
  */
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
-export const PI_HALC2_MCP_EXTENSION_SOURCE = `\
+export const PI_HAL_C2_MCP_EXTENSION_SOURCE = `\
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-const URL_ENV = ${JSON.stringify(HALC2_MCP_URL_ENV)};
-const TOKEN_ENV = ${JSON.stringify(HALC2_MCP_BEARER_ENV)};
-const RUNTIME_MODE_ENV = ${JSON.stringify(HALC2_PI_RUNTIME_MODE_ENV)};
-const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(HALC2_ORCHESTRATION_INSTRUCTIONS.trim())};
+const URL_ENV = ${JSON.stringify(HAL_C2_MCP_URL_ENV)};
+const TOKEN_ENV = ${JSON.stringify(HAL_C2_MCP_BEARER_ENV)};
+const RUNTIME_MODE_ENV = ${JSON.stringify(HAL_C2_PI_RUNTIME_MODE_ENV)};
+const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(HAL_C2_ORCHESTRATION_INSTRUCTIONS.trim())};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -206,7 +206,7 @@ function createMcpClient(endpoint: string, token: string) {
   };
 }
 
-export default async function halc2McpExtension(pi: ExtensionAPI) {
+export default async function halC2McpExtension(pi: ExtensionAPI) {
   // Workaround for an upstream Pi context-budgeting bug: pi-ai reuses the
   // previous response's usage even when a fork's instructions/tools differ,
   // then reserves almost all remaining context for output. OpenRouter can
@@ -251,7 +251,7 @@ export default async function halc2McpExtension(pi: ExtensionAPI) {
   if (endpoint === undefined || token === undefined) {
     pi.on("session_start", async (_event, ctx) => {
       ctx.ui.notify(
-        "hal-c2 MCP unavailable: HALC2_MCP_URL or HALC2_MCP_BEARER_TOKEN is missing.",
+        "hal-c2 MCP unavailable: HAL_C2_MCP_URL or HAL_C2_MCP_BEARER_TOKEN is missing.",
         "warning",
       );
     });

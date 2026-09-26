@@ -367,11 +367,11 @@ export async function runAcpMcpCliFastPath(
   command: "acp-mcp-bridge" | "acp-mcp-call",
   args: ReadonlyArray<string>,
 ): Promise<void> {
-  const endpoint = process.env.HALC2_ACP_MCP_ENDPOINT;
-  const authorization = process.env.HALC2_ACP_MCP_AUTHORIZATION;
+  const endpoint = process.env.HAL_C2_ACP_MCP_ENDPOINT;
+  const authorization = process.env.HAL_C2_ACP_MCP_AUTHORIZATION;
   if (endpoint === undefined || authorization === undefined) {
     process.stderr.write(
-      `${command} requires HALC2_ACP_MCP_ENDPOINT and HALC2_ACP_MCP_AUTHORIZATION.\n`,
+      `${command} requires HAL_C2_ACP_MCP_ENDPOINT and HAL_C2_ACP_MCP_AUTHORIZATION.\n`,
     );
     process.exitCode = 2;
     return;

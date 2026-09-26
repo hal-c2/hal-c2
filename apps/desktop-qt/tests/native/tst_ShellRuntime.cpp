@@ -266,7 +266,7 @@ private slots:
     theme.reload();
     evaluate(theme.injectionScript());
     QCOMPARE(evaluate("snapshot()"), original);
-    QCOMPARE(evaluate("window.__halc2ShellTheme.observer === null").toBool(), true);
+    QCOMPARE(evaluate("window.__halC2ShellTheme.observer === null").toBool(), true);
     QCOMPARE(evaluate("document.documentElement.style.getPropertyValue('--app-theme-chrome')").toString(), QString());
 
     evaluate("document.documentElement.removeAttribute('data-theme-id'); document.documentElement.removeAttribute('data-theme-selected');");
@@ -308,15 +308,15 @@ private slots:
     evaluate("document.documentElement.dataset.themeId = 'page';");
     QCOMPARE(evaluate("document.documentElement.dataset.themeId").toString(), QString("shell-night"));
     evaluate(R"(
-      window.__halc2ShellTheme.observer.disconnect();
-      window.__halc2ShellTheme.observer = null;
-      window.__halc2ShellTheme.applyOverride = value => { window.deliveredTheme = value; };
+      window.__halC2ShellTheme.observer.disconnect();
+      window.__halC2ShellTheme.observer = null;
+      window.__halC2ShellTheme.applyOverride = value => { window.deliveredTheme = value; };
       document.documentElement.dataset.themeId = 'page-owned';
     )");
     evaluate(theme.injectionScript());
     QCOMPARE(evaluate("window.deliveredTheme.id").toString(), QString("shell-night"));
     QCOMPARE(evaluate("document.documentElement.dataset.themeId").toString(), QString("page-owned"));
-    QCOMPARE(evaluate("window.__halc2ShellTheme.observer === null").toBool(), true);
+    QCOMPARE(evaluate("window.__halC2ShellTheme.observer === null").toBool(), true);
     const QString beforePublication = theme.injectionScript();
     theme.applyPageTheme(QVariantMap{{"appearance", "light"}, {"colors", QVariantMap{{"canvas", "#ffffff"}}}});
     QCOMPARE(theme.injectionScript(), beforePublication);

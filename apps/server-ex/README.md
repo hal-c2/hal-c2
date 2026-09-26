@@ -17,9 +17,9 @@ mix hal_c2.server                                    # prints ws://127.0.0.1:378
 mix hal_c2.pair                                      # one-time pairing URL for Settings → Connections
 ```
 
-State lives in the repo's `.hal-c2/elixir` during development; set `HALC2_NODE_HOME` to put
-it elsewhere. The node listens on loopback port 3780; `HALC2_NODE_PORT` and
-`HALC2_NODE_HOST` (a LAN or tailnet address, for pairing other devices; `HALC2_HOST` also
+State lives in the repo's `.hal-c2/elixir` during development; set `HAL_C2_NODE_HOME` to put
+it elsewhere. The node listens on loopback port 3780; `HAL_C2_NODE_PORT` and
+`HAL_C2_NODE_HOST` (a LAN or tailnet address, for pairing other devices; `HAL_C2_HOST` also
 works) change that.
 
 ## Release
@@ -30,14 +30,14 @@ _build/prod/rel/hal_c2/bin/hal_c2 start # foreground; state in ~/.hal-c2/elixir
 ```
 
 A release keeps its state in the `elixir` directory of the HAL-C2 home it shares with
-the Node server (`HALC2_HOME`, default `~/.hal-c2`), or in `HALC2_NODE_HOME` when that is
+the Node server (`HAL_C2_HOME`, default `~/.hal-c2`), or in `HAL_C2_NODE_HOME` when that is
 set. An install from before the rename keeps using `~/.t3/elixir`, and `T3_HOME` and
 `T3CODE_HOME` are still read (`rel/env.sh.eex`).
 
 The release carries the Cursor sidecar (`packages/cursor-acp`, bundled with its
 dependencies for the build machine's platform), so building one needs `pnpm`, and
 running Cursor needs Node 22+ on the machine. The desktop app runs it on its own
-Electron binary instead (`HALC2_NODE_COMMAND`).
+Electron binary instead (`HAL_C2_NODE_COMMAND`).
 
 A machine that has joined a cluster boots clustered: joining writes
 `cluster/vm.args` in its state directory, which the release reads at start.
@@ -49,7 +49,7 @@ is `bin/hal_c2 start`, started again when the node restarts to finish an update.
 
 ## Upgrades
 
-A node carries the HAL-C2 version (`apps/server/package.json`, or `HALC2_NODE_VERSION` for a
+A node carries the HAL-C2 version (`apps/server/package.json`, or `HAL_C2_NODE_VERSION` for a
 build of its own), and clients offer to update it like any server. It moves to the
 new version in place when it can: the running code is replaced module by module and
 nothing reconnects. A new Erlang runtime, native library, configuration or
@@ -58,11 +58,11 @@ supervision tree needs a restart instead, which `bin/hal-c2-service` provides
 
 Nodes get a version's bundle from a cluster peer that has it, or else from the
 `node-v<version>` GitHub release (`.github/workflows/release-node.yml`; set
-`HALC2_UPGRADE_URL` to publish elsewhere). From a checkout:
+`HAL_C2_UPGRADE_URL` to publish elsewhere). From a checkout:
 
 ```sh
-HALC2_NODE_VERSION=0.0.43-mine mix hal_c2.upgrade hal_c2@host     # build a release, send it, update
-mix hal_c2.upgrade --dev halc2a@my-mac halc2b@my-mac        # nodes run with `mix run`: reload changes
+HAL_C2_NODE_VERSION=0.0.43-mine mix hal_c2.upgrade hal_c2@host     # build a release, send it, update
+mix hal_c2.upgrade --dev hal_c2_a@my-mac hal_c2_b@my-mac        # nodes run with `mix run`: reload changes
 MIX_ENV=prod mix hal_c2.bundle                        # just pack _build/prod/rel/hal_c2
 ```
 
@@ -80,7 +80,7 @@ elixir --erl "$(mix hal_c2.cluster vm-args)" -S mix hal_c2.server
 ```
 
 Nodes find each other on the tailnet (`HalC2.Cluster.Tailscale`) or through
-`HALC2_PEERS=hal_c2@host,...`, and only connect when both certificates come from the
+`HAL_C2_PEERS=hal_c2@host,...`, and only connect when both certificates come from the
 cluster's CA.
 
 ## Test

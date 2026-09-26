@@ -42,7 +42,7 @@ describe("copyLegacyStorageKeys", () => {
       unrelated: "x",
       "hal-c2:client-settings:v1": '{"a":1}',
       "hal-c2.renderTable": "true",
-      "halc2.pullRequests.preferences": "{}",
+      "hal-c2.pullRequests.preferences": "{}",
     });
   });
 

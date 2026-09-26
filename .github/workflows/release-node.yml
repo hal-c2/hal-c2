@@ -2,7 +2,7 @@ name: Release Elixir node
 
 # Publishes the bundles Elixir nodes update from (apps/server-ex, HalC2.Upgrade): one
 # per platform, as hal-c2-node-<version>-<platform>.tar.gz with its .sha256, on the
-# node-v<version> release. Nodes fetch them from here unless HALC2_UPGRADE_URL says
+# node-v<version> release. Nodes fetch them from here unless HAL_C2_UPGRADE_URL says
 # otherwise, and share them with their cluster peers.
 
 on:
@@ -68,7 +68,7 @@ jobs:
         working-directory: apps/server-ex
         env:
           MIX_ENV: prod
-          HALC2_NODE_VERSION: ${{ steps.version.outputs.version }}
+          HAL_C2_NODE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           mix deps.get --only prod
           mix release --overwrite

@@ -266,7 +266,7 @@ export function linkPrimaryEnvironmentToCloud(input: {
     const configuredRelayUrl = relayUrl();
     if (!configuredRelayUrl) {
       return yield* new CloudEnvironmentLinkError({
-        message: "HALC2_RELAY_URL is not configured.",
+        message: "HAL_C2_RELAY_URL is not configured.",
       });
     }
     const managedTunnelsEnabled = (input.mode ?? "managed") === "managed";

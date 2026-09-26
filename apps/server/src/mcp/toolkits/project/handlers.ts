@@ -37,7 +37,7 @@ const mutation = Effect.gen(function* () {
   return yield* Project.ProjectService;
 });
 export const ProjectHandlersLive = ProjectToolkit.toLayer({
-  halc2_thread_launch: (input) =>
+  hal_c2_thread_launch: (input) =>
     Effect.gen(function* () {
       const { caller } = yield* readMutationCaller();
       if (caller.runtimeMode !== "full-access" || caller.interactionMode !== "default")
@@ -91,7 +91,7 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
         status: run?.status ?? null,
       };
     }),
-  halc2_project_list: (input) =>
+  hal_c2_project_list: (input) =>
     Effect.gen(function* () {
       const projects = yield* access;
       const snapshot = yield* projects.snapshot.pipe(Effect.mapError(unavailable));
@@ -100,7 +100,7 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
         end = start + (input.limit ?? 20);
       return { projects: rows.slice(start, end), nextCursor: end < rows.length ? end : null };
     }),
-  halc2_project_read: (input) =>
+  hal_c2_project_read: (input) =>
     Effect.gen(function* () {
       const projects = yield* access;
       const result = yield* projects.getById(input.projectId).pipe(Effect.mapError(unavailable));
@@ -111,7 +111,7 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
         });
       return result.value;
     }),
-  halc2_project_create: (input) =>
+  hal_c2_project_create: (input) =>
     Effect.gen(function* () {
       const projects = yield* mutation;
       const commandId = yield* newCommandId();
@@ -119,21 +119,21 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
         .create({ ...input, commandId, projectId: ProjectId.make(commandId) })
         .pipe(Effect.mapError(projectFailure));
     }),
-  halc2_project_update: (input) =>
+  hal_c2_project_update: (input) =>
     Effect.gen(function* () {
       const projects = yield* mutation;
       return yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));
     }),
-  halc2_project_delete: (input) =>
+  hal_c2_project_delete: (input) =>
     Effect.gen(function* () {
       const projects = yield* mutation;
       return yield* projects
         .delete({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));
     }),
-  halc2_project_clone: (input) =>
+  hal_c2_project_clone: (input) =>
     Effect.gen(function* () {
       yield* mutation;
       const repositories = yield* Repositories.SourceControlRepositoryService;

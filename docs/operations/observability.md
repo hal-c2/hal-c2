@@ -126,17 +126,17 @@ Default Grafana login:
 #### 2. Export OTLP env vars
 
 ```bash
-export HALC2_OTLP_TRACES_URL=http://localhost:4318/v1/traces
-export HALC2_OTLP_METRICS_URL=http://localhost:4318/v1/metrics
-export HALC2_OTLP_LOGS_URL=http://localhost:4318/v1/logs
-export HALC2_OTLP_SERVICE_NAME=hal-c2-local
+export HAL_C2_OTLP_TRACES_URL=http://localhost:4318/v1/traces
+export HAL_C2_OTLP_METRICS_URL=http://localhost:4318/v1/metrics
+export HAL_C2_OTLP_LOGS_URL=http://localhost:4318/v1/logs
+export HAL_C2_OTLP_SERVICE_NAME=hal-c2-local
 ```
 
 Optional:
 
 ```bash
-export HALC2_TRACE_MIN_LEVEL=Info
-export HALC2_TRACE_TIMING_ENABLED=true
+export HAL_C2_TRACE_MIN_LEVEL=Info
+export HAL_C2_TRACE_TIMING_ENABLED=true
 ```
 
 #### 3. Launch the app from that same shell
@@ -161,25 +161,25 @@ node --run dev:desktop
 
 Packaged desktop app:
 
-Launch the actual app executable from the same shell so the desktop app and embedded backend inherit `HALC2_OTLP_*`.
+Launch the actual app executable from the same shell so the desktop app and embedded backend inherit `HAL_C2_OTLP_*`.
 
 macOS app bundle example:
 
 ```bash
-HALC2_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
-HALC2_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
-HALC2_OTLP_LOGS_URL=http://localhost:4318/v1/logs \
-HALC2_OTLP_SERVICE_NAME=hal-c2-desktop \
+HAL_C2_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
+HAL_C2_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
+HAL_C2_OTLP_LOGS_URL=http://localhost:4318/v1/logs \
+HAL_C2_OTLP_SERVICE_NAME=hal-c2-desktop \
 "/Applications/HAL-C2.app/Contents/MacOS/HAL-C2"
 ```
 
 Direct binary example:
 
 ```bash
-HALC2_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
-HALC2_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
-HALC2_OTLP_LOGS_URL=http://localhost:4318/v1/logs \
-HALC2_OTLP_SERVICE_NAME=hal-c2-desktop \
+HAL_C2_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
+HAL_C2_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
+HAL_C2_OTLP_LOGS_URL=http://localhost:4318/v1/logs \
+HAL_C2_OTLP_SERVICE_NAME=hal-c2-desktop \
 ./path/to/your/desktop-app-binary
 ```
 
@@ -199,7 +199,7 @@ Resolve the path for the launch mode once. Production and explicitly configured 
 state under the base directory's `userdata` folder:
 
 ```bash
-TRACE_FILE="${HALC2_HOME:-$HOME/.hal-c2}/userdata/logs/server.trace.ndjson"
+TRACE_FILE="${HAL_C2_HOME:-$HOME/.hal-c2}/userdata/logs/server.trace.ndjson"
 ```
 
 A dev server started from a linked worktree defaults to that worktree's local home:
@@ -329,18 +329,18 @@ Traces are best for one request. Metrics are best for trends.
 
 Good metric families to watch:
 
-- `halc2_rpc_request_duration`
-- `halc2_orchestration_command_duration`
-- `halc2_orchestration_command_ack_duration`
-- `halc2_provider_turn_duration`
-- `halc2_git_command_duration`
+- `hal_c2_rpc_request_duration`
+- `hal_c2_orchestration_command_duration`
+- `hal_c2_orchestration_command_ack_duration`
+- `hal_c2_provider_turn_duration`
+- `hal_c2_git_command_duration`
 
 Counters tell you volume and failure rate:
 
-- `halc2_rpc_requests_total`
-- `halc2_orchestration_commands_total`
-- `halc2_provider_turns_total`
-- `halc2_git_commands_total`
+- `hal_c2_rpc_requests_total`
+- `hal_c2_orchestration_commands_total`
+- `hal_c2_provider_turns_total`
+- `hal_c2_git_commands_total`
 
 Use metrics when the question is:
 
@@ -356,7 +356,7 @@ Use traces when the question is:
 
 ### What The New Ack Metric Means
 
-`halc2_orchestration_command_ack_duration` measures:
+`hal_c2_orchestration_command_ack_duration` measures:
 
 - start: command dispatch enters the orchestration engine
 - end: the first committed domain event for that command is published by the server
@@ -387,7 +387,7 @@ If you need those later, add client-side instrumentation or a dedicated server f
 
 ### "Did this command take too long to acknowledge?"
 
-1. Check `halc2_orchestration_command_ack_duration` by `commandType`.
+1. Check `hal_c2_orchestration_command_ack_duration` by `commandType`.
 2. If it is high, inspect the corresponding orchestration trace.
 3. Look at child spans for projection, sqlite, provider, or git work.
 
@@ -401,7 +401,7 @@ If you need those later, add client-side instrumentation or a dedicated server f
 
 Usually one of these is true:
 
-- `HALC2_OTLP_TRACES_URL` was not set
+- `HAL_C2_OTLP_TRACES_URL` was not set
 - the app was launched from a different environment than the one where you exported the vars
 - the app was not fully restarted after changing env
 - Grafana is looking at the wrong time range or service name
@@ -523,10 +523,10 @@ It provides:
 - Effect trace-level and timing refs
 
 The desktop main process is a second producer, assembled in
-`apps/desktop/src/app/DesktopObservability.ts`. It reads the same `HALC2_OTLP_*` names and the same
+`apps/desktop/src/app/DesktopObservability.ts`. It reads the same `HAL_C2_OTLP_*` names and the same
 Settings entries as the backend it supervises, and covers work the backend cannot see: app startup,
 window and menu handling, backend supervision, and updates. It reports as service `desktop`
-regardless of `HALC2_OTLP_SERVICE_NAME`, so a collector shows it alongside the backend rather than
+regardless of `HAL_C2_OTLP_SERVICE_NAME`, so a collector shows it alongside the backend rather than
 mixed into it. It exports traces and logs only; the main process records no metrics, so the metrics
 endpoint applies to the backend alone.
 
@@ -534,23 +534,23 @@ endpoint applies to the backend alone.
 
 Local trace file:
 
-- `HALC2_TRACE_FILE`: override trace file path
-- `HALC2_TRACE_MAX_BYTES`: per-file rotation size, default `10485760`
-- `HALC2_TRACE_MAX_FILES`: rotated file count, default `10`
-- `HALC2_TRACE_BATCH_WINDOW_MS`: flush window, default `200`
-- `HALC2_TRACE_MIN_LEVEL`: minimum trace level, default `Info`
-- `HALC2_TRACE_TIMING_ENABLED`: enable timing metadata, default `true`
+- `HAL_C2_TRACE_FILE`: override trace file path
+- `HAL_C2_TRACE_MAX_BYTES`: per-file rotation size, default `10485760`
+- `HAL_C2_TRACE_MAX_FILES`: rotated file count, default `10`
+- `HAL_C2_TRACE_BATCH_WINDOW_MS`: flush window, default `200`
+- `HAL_C2_TRACE_MIN_LEVEL`: minimum trace level, default `Info`
+- `HAL_C2_TRACE_TIMING_ENABLED`: enable timing metadata, default `true`
 
 OTLP export:
 
-- `HALC2_OTLP_TRACES_URL`: OTLP trace endpoint
-- `HALC2_OTLP_METRICS_URL`: OTLP metric endpoint
-- `HALC2_OTLP_LOGS_URL`: OTLP log endpoint
-- `HALC2_OTLP_EXPORT_INTERVAL_MS`: export interval, default `10000`
-- `HALC2_OTLP_SERVICE_NAME`: service name, default `hal-c2-server`
-- `HALC2_OTLP_HEADERS`: extra headers for all three exporters, same format as
+- `HAL_C2_OTLP_TRACES_URL`: OTLP trace endpoint
+- `HAL_C2_OTLP_METRICS_URL`: OTLP metric endpoint
+- `HAL_C2_OTLP_LOGS_URL`: OTLP log endpoint
+- `HAL_C2_OTLP_EXPORT_INTERVAL_MS`: export interval, default `10000`
+- `HAL_C2_OTLP_SERVICE_NAME`: service name, default `hal-c2-server`
+- `HAL_C2_OTLP_HEADERS`: extra headers for all three exporters, same format as
   `OTEL_EXPORTER_OTLP_HEADERS`: comma-separated `key=value` pairs with percent-encoded values.
-- `HALC2_OTLP_PROTOCOL`: `http/json` (default) or `http/protobuf`
+- `HAL_C2_OTLP_PROTOCOL`: `http/json` (default) or `http/protobuf`
 
 If the OTLP URLs are unset, local tracing still works, metrics stay in-process only, and logs stay
 on stdout only.

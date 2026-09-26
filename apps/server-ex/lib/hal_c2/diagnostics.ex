@@ -13,7 +13,7 @@ defmodule HalC2.Diagnostics do
   unavailable elsewhere. Traces are recorded only while `HalC2.Traces` is on, and
   there is no desktop host to supply power state.
 
-  Watchers get `{:halc2_resource_telemetry, node, snapshot}` after every sample.
+  Watchers get `{:hal_c2_resource_telemetry, node, snapshot}` after every sample.
   """
 
   use GenServer
@@ -187,7 +187,7 @@ defmodule HalC2.Diagnostics do
   def handle_info(:sample, state) do
     state = sample(%{state | timer: nil})
     snapshot = if state.watchers != %{}, do: snapshot(state)
-    for {pid, _} <- state.watchers, do: send(pid, {:halc2_resource_telemetry, node(), snapshot})
+    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_resource_telemetry, node(), snapshot})
     {:noreply, state}
   end
 

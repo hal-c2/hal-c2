@@ -10,7 +10,7 @@
     },
     "android": {
       "modules": [
-        "expo.modules.halc2terminal.HalC2TerminalModule"
+        "expo.modules.hal_c2_terminal.HalC2TerminalModule"
       ]
     }
   }

@@ -238,7 +238,7 @@ export const browserApiCorsLayer = Layer.unwrap(
     // Dev uses credentialed requests from Vite or the Electron custom origin, so both must be
     // explicit. Packaged desktop omits credentials and uses Effect's default wildcard origin.
     //
-    // HALC2_DEV_ALLOWED_ORIGINS covers dev servers reached from a second
+    // HAL_C2_DEV_ALLOWED_ORIGINS covers dev servers reached from a second
     // origin — a tailnet name, a LAN IP, a phone. Browser dev normally proxies
     // through Vite and is same-origin (no preflight at all), so this is a
     // safety net for the desktop renderer and any direct-to-backend caller.

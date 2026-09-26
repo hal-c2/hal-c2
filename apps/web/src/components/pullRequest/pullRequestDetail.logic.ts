@@ -1281,8 +1281,8 @@ const pullRequestDetailSnapshotKey = (
   reference: PullRequestDetailSnapshotRef,
 ) =>
   reference.host
-    ? `halc2.pullRequests.detail:${JSON.stringify([environmentId, reference.projectId, reference.host.toLowerCase(), reference.repository.toLowerCase(), reference.number])}`
-    : `halc2.pullRequests.detail:${environmentId}:${reference.projectId}:${reference.repository}#${reference.number}`;
+    ? `hal-c2.pullRequests.detail:${JSON.stringify([environmentId, reference.projectId, reference.host.toLowerCase(), reference.repository.toLowerCase(), reference.number])}`
+    : `hal-c2.pullRequests.detail:${environmentId}:${reference.projectId}:${reference.repository}#${reference.number}`;
 
 const decodeDetailSnapshot = Schema.decodeUnknownOption(PullRequestDetail);
 

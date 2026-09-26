@@ -4,12 +4,12 @@ defmodule HalC2.Streams.Server do
 
   Subscribers receive, in order:
 
-    * `{:halc2_stream, stream_id, {:snapshot, seq, updated_at, rows, :more | :done}}` chunks when they
+    * `{:hal_c2_stream, stream_id, {:snapshot, seq, updated_at, rows, :more | :done}}` chunks when they
       start fresh or have fallen too far behind, where `rows` is a list of
-      `{kind, entity_id, entity}`, or `{:halc2_stream, stream_id, {:events, events}}`
+      `{kind, entity_id, entity}`, or `{:hal_c2_stream, stream_id, {:events, events}}`
       replaying only what they missed,
-    * `{:halc2_stream, stream_id, {:live, seq}}` once they are caught up, then
-    * `{:halc2_stream, stream_id, {:events, events}}` for every later commit.
+    * `{:hal_c2_stream, stream_id, {:live, seq}}` once they are caught up, then
+    * `{:hal_c2_stream, stream_id, {:events, events}}` for every later commit.
 
   Snapshots are split into chunks of about `@chunk_bytes` because a subscriber may be
   on another node, and one large message would stall every other message on that
@@ -208,13 +208,13 @@ defmodule HalC2.Streams.Server do
 
     case replay do
       events when is_list(events) and length(events) <= @max_replay ->
-        send(pid, {:halc2_stream, state.id, {:events, Enum.reverse(events)}})
+        send(pid, {:hal_c2_stream, state.id, {:events, Enum.reverse(events)}})
 
       _ ->
         send_snapshot(state, pid)
     end
 
-    send(pid, {:halc2_stream, state.id, {:live, state.stream.seq}})
+    send(pid, {:hal_c2_stream, state.id, {:live, state.stream.seq}})
   end
 
   defp send_snapshot(state, pid) do
@@ -226,7 +226,7 @@ defmodule HalC2.Streams.Server do
         do:
           send(
             pid,
-            {:halc2_stream, state.id,
+            {:hal_c2_stream, state.id,
              {:snapshot, state.stream.seq, state.stream.updated_at, chunk,
               if(i == last, do: :done, else: :more)}}
           )
@@ -250,7 +250,7 @@ defmodule HalC2.Streams.Server do
   end
 
   defp broadcast(state, message),
-    do: for({pid, _} <- state.subscribers, do: send(pid, {:halc2_stream, state.id, message}))
+    do: for({pid, _} <- state.subscribers, do: send(pid, {:hal_c2_stream, state.id, message}))
 
   defp timeout(%{subscribers: subs}) when map_size(subs) == 0, do: @idle_stop
   defp timeout(_state), do: :infinity

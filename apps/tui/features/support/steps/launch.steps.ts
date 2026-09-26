@@ -82,14 +82,14 @@ step("the recorded HAL-C2 server is no longer running", (ctx: LaunchWorld) => {
   launchSetup(ctx).server = "stopped";
 });
 
-// The launcher only finds bun through HALC2_TUI_BUN or PATH; the test's own node
-// and bun share PATH, so "not installed" is a HALC2_TUI_BUN pointing at nothing.
+// The launcher only finds bun through HAL_C2_TUI_BUN or PATH; the test's own node
+// and bun share PATH, so "not installed" is a HAL_C2_TUI_BUN pointing at nothing.
 step("Bun is not installed", (ctx: LaunchWorld) => {
   launchSetup(ctx).bun = "missing";
 });
 
 step("the environment variable {string} names a Bun binary", (ctx: LaunchWorld, name: string) => {
-  expect(name).toBe("HALC2_TUI_BUN");
+  expect(name).toBe("HAL_C2_TUI_BUN");
   launchSetup(ctx).bun = "shim";
 });
 
@@ -180,8 +180,8 @@ step("it exits with an error naming the missing value", (ctx: LaunchWorld) => {
   const run = client(ctx);
   expect(run.drew).toBe(false);
   expect(run.code).toBe(1);
-  expect(run.stderr).toContain("HALC2_TUI_ORIGIN");
-  expect(run.stderr).toContain("HALC2_TUI_BEARER");
+  expect(run.stderr).toContain("HAL_C2_TUI_ORIGIN");
+  expect(run.stderr).toContain("HAL_C2_TUI_BEARER");
 });
 
 // --- colour ---

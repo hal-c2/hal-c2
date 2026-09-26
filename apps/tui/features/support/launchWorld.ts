@@ -30,7 +30,7 @@ export const RESTORE_SEQUENCES = ["\x1b[?25h", "\x1b[?1000l", "\x1b[?2004l"] as 
 /** The Givens of a launch: which server the runtime file points at, which bun, which terminal. */
 export interface LaunchSetup {
   server: "running" | "none" | "stopped";
-  /** `HALC2_TUI_BUN`: the recording shim, or a path with nothing there. */
+  /** `HAL_C2_TUI_BUN`: the recording shim, or a path with nothing there. */
   bun: "shim" | "missing";
   /** The terminal's environment; `undefined` removes a key the test process has. */
   env: Record<string, string | undefined>;
@@ -99,7 +99,7 @@ function home(ctx: LaunchWorld): string {
     NodeFS.mkdirSync(NodePath.join(dir, "bin"), { recursive: true });
     NodeFS.writeFileSync(
       NodePath.join(dir, "bin/tmux"),
-      `#!/bin/sh\nprintf '%s\\n' "$*" >> "$HALC2_TEST_TMUX_LOG"\n`,
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> "$HAL_C2_TEST_TMUX_LOG"\n`,
       { mode: 0o755 },
     );
     ctx.launchHome = dir;
@@ -117,11 +117,11 @@ function writeShim(path: string): void {
   const source = `#!${process.execPath}
 import * as NodeFS from "node:fs";
 const env = process.env;
-NodeFS.writeFileSync(env.HALC2_TEST_SHIM_RECORD, JSON.stringify({
+NodeFS.writeFileSync(env.HAL_C2_TEST_SHIM_RECORD, JSON.stringify({
   argv: process.argv.slice(1),
   env: { TERM: env.TERM, COLORTERM: env.COLORTERM, TERM_PROGRAM: env.TERM_PROGRAM },
-  origin: env.HALC2_TUI_ORIGIN,
-  bearer: Boolean(env.HALC2_TUI_BEARER),
+  origin: env.HAL_C2_TUI_ORIGIN,
+  bearer: Boolean(env.HAL_C2_TUI_BEARER),
   ipc: typeof process.send === "function",
 }));
 await import(${JSON.stringify(CLIENT_ENTRY)});
@@ -134,14 +134,14 @@ function cleanEnv(ctx: LaunchWorld): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined) continue;
-    if (key.startsWith("HALC2_TUI_") || key.startsWith("TMUX") || key.startsWith("SSH_")) continue;
-    if (key === "HALC2_HOME" || key === "COLORTERM" || key === "TERM_PROGRAM") continue;
+    if (key.startsWith("HAL_C2_TUI_") || key.startsWith("TMUX") || key.startsWith("SSH_")) continue;
+    if (key === "HAL_C2_HOME" || key === "COLORTERM" || key === "TERM_PROGRAM") continue;
     env[key] = value;
   }
   const dir = home(ctx);
   env.HOME = dir;
   env.PATH = `${NodePath.join(dir, "bin")}${NodePath.delimiter}${env.PATH ?? ""}`;
-  env.HALC2_TEST_TMUX_LOG = NodePath.join(dir, "tmux.log");
+  env.HAL_C2_TEST_TMUX_LOG = NodePath.join(dir, "tmux.log");
   return env;
 }
 
@@ -315,13 +315,13 @@ export async function openLaunch(ctx: LaunchWorld): Promise<OpenLaunch> {
   const bun = setup.bun === "shim" ? bunPath(ctx) : NodePath.join(dir, "no-bun/bin/bun");
   if (setup.bun === "shim") writeShim(bun);
   const env = withTerminal(cleanEnv(ctx), setup.env);
-  env.HALC2_TUI_BUN = bun;
-  env.HALC2_TEST_SHIM_RECORD = NodePath.join(dir, "shim.json");
+  env.HAL_C2_TUI_BUN = bun;
+  env.HAL_C2_TEST_SHIM_RECORD = NodePath.join(dir, "shim.json");
   const tmuxBeforeDraw: string[] = [];
   const spawned = spawn(ctx, ["node", LAUNCHER, "tui", "--base-dir", dir], {
     cwd: REPO_ROOT,
     env,
-    onDraw: () => tmuxBeforeDraw.push(...lines(readText(env.HALC2_TEST_TMUX_LOG!))),
+    onDraw: () => tmuxBeforeDraw.push(...lines(readText(env.HAL_C2_TEST_TMUX_LOG!))),
   });
   const drew = await within(spawned.drawn, DRAW_TIMEOUT_MS, "hal-c2 tui", spawned);
   return {
@@ -364,7 +364,7 @@ export async function runLaunch(ctx: LaunchWorld): Promise<LaunchRun> {
 
 /**
  * Start the client directly (no launcher, so no IPC parent). `credentials: false`
- * leaves out HALC2_TUI_ORIGIN and HALC2_TUI_BEARER; `preload` runs a file first.
+ * leaves out HAL_C2_TUI_ORIGIN and HAL_C2_TUI_BEARER; `preload` runs a file first.
  */
 export async function runClient(
   ctx: LaunchWorld,
@@ -376,12 +376,12 @@ export async function runClient(
 ): Promise<ProcessRun> {
   const dir = home(ctx);
   const env = withTerminal(cleanEnv(ctx), launchSetup(ctx).env);
-  env.HALC2_TUI_LOG = NodePath.join(dir, "client.log");
-  env.HALC2_TUI_SHELL_DIR = NodePath.join(dir, "shell");
+  env.HAL_C2_TUI_LOG = NodePath.join(dir, "client.log");
+  env.HAL_C2_TUI_SHELL_DIR = NodePath.join(dir, "shell");
   if (options.credentials !== false) {
     // Nothing listens there: the client stays on "Connecting…".
-    env.HALC2_TUI_ORIGIN = "http://127.0.0.1:9";
-    env.HALC2_TUI_BEARER = "launch-test";
+    env.HAL_C2_TUI_ORIGIN = "http://127.0.0.1:9";
+    env.HAL_C2_TUI_BEARER = "launch-test";
   }
   const preload = options.preload ? ["--preload", options.preload] : [];
   const spawned = spawn(ctx, [process.execPath, ...preload, CLIENT_ENTRY], {

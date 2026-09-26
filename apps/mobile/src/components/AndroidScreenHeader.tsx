@@ -80,7 +80,7 @@ export function AndroidScreenHeader(props: {
             <Text
               numberOfLines={1}
               style={subtitleTypography}
-              className="mt-px text-[13px] font-halc2-medium text-foreground-muted"
+              className="mt-px text-[13px] font-hal-c2-medium text-foreground-muted"
             >
               {props.subtitle}
             </Text>

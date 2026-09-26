@@ -4,7 +4,7 @@ defmodule HalC2.Terminal.Hub do
   each shell is running.
 
   Terminals report their summary here; watchers (client sockets, possibly on other
-  nodes) get the list once and then `{:halc2_terminals, node, event}` messages shaped
+  nodes) get the list once and then `{:hal_c2_terminals, node, event}` messages shaped
   as `TerminalMetadataStreamEvent`. While any shell runs, one `ps` per second finds
   each shell's child process and tells the terminal when it changes, so its label
   can show the running command.
@@ -135,7 +135,7 @@ defmodule HalC2.Terminal.Hub do
   end
 
   defp broadcast(state, event) do
-    for {pid, _} <- state.watchers, do: send(pid, {:halc2_terminals, node(), event})
+    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_terminals, node(), event})
   end
 
   # Polls only while some shell is running.

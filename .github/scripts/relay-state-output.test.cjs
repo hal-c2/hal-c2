@@ -55,9 +55,9 @@ for (const prefix of [
     assert.equal(result.stdout, "::add-mask::fixture-token\n");
     assert.equal(
       result.envFile,
-      "HALC2_RELAY_CLIENT_OTLP_TRACES_URL=https://example.invalid/traces\n" +
-        "HALC2_RELAY_CLIENT_OTLP_TRACES_DATASET=fixture-dataset\n" +
-        "HALC2_RELAY_CLIENT_OTLP_TRACES_TOKEN=fixture-token\n",
+      "HAL_C2_RELAY_CLIENT_OTLP_TRACES_URL=https://example.invalid/traces\n" +
+        "HAL_C2_RELAY_CLIENT_OTLP_TRACES_DATASET=fixture-dataset\n" +
+        "HAL_C2_RELAY_CLIENT_OTLP_TRACES_TOKEN=fixture-token\n",
     );
   });
 }

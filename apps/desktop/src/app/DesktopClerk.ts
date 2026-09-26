@@ -14,7 +14,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
-declare const __HALC2_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
+declare const __HAL_C2_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
 
 export class DesktopClerkBridgeInitializationError extends Schema.TaggedError<DesktopClerkBridgeInitializationError>()(
   "DesktopClerkBridgeInitializationError",
@@ -67,9 +67,9 @@ function resolveDesktopClerkFrontendApiHostname(
 }
 
 export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHostname(
-  typeof __HALC2_BUILD_CLERK_PUBLISHABLE_KEY__ === "undefined"
+  typeof __HAL_C2_BUILD_CLERK_PUBLISHABLE_KEY__ === "undefined"
     ? undefined
-    : __HALC2_BUILD_CLERK_PUBLISHABLE_KEY__,
+    : __HAL_C2_BUILD_CLERK_PUBLISHABLE_KEY__,
 );
 
 function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean) {

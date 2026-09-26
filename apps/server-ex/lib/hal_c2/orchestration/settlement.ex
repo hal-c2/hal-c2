@@ -62,14 +62,14 @@ defmodule HalC2.Orchestration.Settlement do
   def handle_info(:run, state),
     do: {:noreply, sweep(%{state | pending: MapSet.new()}, state.pending)}
 
-  def handle_info({:halc2_settings, _node, settings}, state) do
+  def handle_info({:hal_c2_settings, _node, settings}, state) do
     case settings_key(settings) do
       same when same == state.settings -> {:noreply, state}
       key -> {:noreply, sweep(%{state | settings: key}, nil)}
     end
   end
 
-  def handle_info({:halc2_shell, {:rows, node, rows}}, state) when node == node() do
+  def handle_info({:hal_c2_shell, {:rows, node, rows}}, state) when node == node() do
     {seen, changed} =
       for {id, {"thread", row}} <- rows, reduce: {state.seen, []} do
         {seen, changed} ->

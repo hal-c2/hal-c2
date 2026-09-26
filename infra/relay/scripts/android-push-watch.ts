@@ -190,7 +190,7 @@ const main = Effect.gen(function* () {
             packageName: device.packageName,
             alert: alert !== null,
             data: fitFcmData({
-              halc2_kind: "agent_activity",
+              hal_c2_kind: "agent_activity",
               device_id: device.deviceId,
               user_id: device.userId,
               updated_at: String(now),

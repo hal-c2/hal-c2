@@ -1283,9 +1283,9 @@ const PROVIDER_REQUIREMENT: Partial<
   },
   bitbucket: {
     missing:
-      "Bitbucket needs API credentials on the server. Set HALC2_BITBUCKET_EMAIL and HALC2_BITBUCKET_API_TOKEN, or HALC2_BITBUCKET_ACCESS_TOKEN.",
+      "Bitbucket needs API credentials on the server. Set HAL_C2_BITBUCKET_EMAIL and HAL_C2_BITBUCKET_API_TOKEN, or HAL_C2_BITBUCKET_ACCESS_TOKEN.",
     unauthenticated:
-      "Bitbucket rejected the configured credentials. Check HALC2_BITBUCKET_EMAIL and HALC2_BITBUCKET_API_TOKEN.",
+      "Bitbucket rejected the configured credentials. Check HAL_C2_BITBUCKET_EMAIL and HAL_C2_BITBUCKET_API_TOKEN.",
   },
 };
 

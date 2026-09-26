@@ -127,7 +127,7 @@ Feature: Node self-update and hot upgrades
 
   @node
   Scenario: The bundle location can be overridden
-    Given HALC2_UPGRADE_URL points to a private mirror
+    Given HAL_C2_UPGRADE_URL points to a private mirror
     When the node downloads a bundle
     Then it downloads from the mirror
 

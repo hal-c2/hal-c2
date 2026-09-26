@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
- * Input for the `halc2_worktree_handoff` MCP tool.
+ * Input for the `hal_c2_worktree_handoff` MCP tool.
  *
  * Creates a git worktree for the calling agent thread and re-points the
  * thread at it. Changing the thread's workspace detaches the live provider
@@ -105,7 +105,7 @@ export const WorktreeMcpStatusResult = Schema.Struct({
     description: "Root of the project's main workspace checkout.",
   }),
   defaultStartFromOrigin: Schema.Boolean.annotate({
-    description: "Server default used by halc2_worktree_handoff when startFromOrigin is omitted.",
+    description: "Server default used by hal_c2_worktree_handoff when startFromOrigin is omitted.",
   }),
 });
 export type WorktreeMcpStatusResult = typeof WorktreeMcpStatusResult.Type;

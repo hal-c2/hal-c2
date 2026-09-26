@@ -73,7 +73,7 @@ const disabledCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({
   enabled: false,
 });
 
-process.env.HALC2_CURSOR_ENABLED = "1";
+process.env.HAL_C2_CURSOR_ENABLED = "1";
 
 // ── Test helpers ────────────────────────────────────────────────────
 
@@ -2402,7 +2402,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
       // assertions below fail.
       it.effect("propagates real Codex probe failures to the aggregator at boot", () =>
         Effect.gen(function* () {
-          const missingBinary = `halc2_codex_missing_`;
+          const missingBinary = `hal_c2_codex_missing_`;
           const serverSettings = yield* makeMutableServerSettingsService(
             decodeServerSettings(
               deepMerge(encodedDefaultServerSettings, {
@@ -2513,8 +2513,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
       // A binary path change must rebuild Codex and publish its new probe result.
       it.effect("re-probes when settings change the codex binaryPath", () =>
         Effect.gen(function* () {
-          const firstMissing = `halc2_codex_first_`;
-          const secondMissing = `halc2_codex_second_`;
+          const firstMissing = `hal_c2_codex_first_`;
+          const secondMissing = `hal_c2_codex_second_`;
           const spawnedCommands: Array<string> = [];
           const secondProbeStarted = yield* Deferred.make<void>();
           const releaseSecondProbe = yield* Deferred.make<void>();
