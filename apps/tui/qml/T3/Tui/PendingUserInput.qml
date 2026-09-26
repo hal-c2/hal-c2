@@ -50,16 +50,25 @@ Rectangle {
         backgroundColor: Theme.colors.bg
         focusedBackgroundColor: Theme.colors.bg
         onTextEdited: Shell.dispatch("userInput.answer.set", { text: text })
+        // A focused field keeps Enter from window shortcuts, so it submits itself.
+        onAccepted: Shell.dispatch("userInput.submit")
     }
     Item {
         flexDirection: "row"
         Text {
             objectName: "userInputSubmit"
+            flexShrink: 0
             text: "[ " + (panel.input.primaryActionLabel ?? "") + " ]"
             color: Theme.colors.accent
             onMouseDown: Shell.dispatch("userInput.submit")
         }
-        Text { text: "  " + (panel.input.hint ?? ""); color: Theme.colors.dim }
+        Text {
+            flexShrink: 1
+            wrapMode: "none"
+            truncate: true
+            text: "  " + (panel.input.hint ?? "")
+            color: Theme.colors.dim
+        }
     }
 
     Shortcut { sequence: "up"; enabled: panel.live; onActivated: Shell.dispatch("userInput.move", { delta: -1 }) }
