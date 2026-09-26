@@ -204,7 +204,10 @@ server.listen(0, "127.0.0.1", () => {
             const stop = yield* spawner.spawn(
               ChildProcess.make("/bin/sh", ["-s"], {
                 cwd: fixture,
-                env: { HAL_C2_TEST_STATE_DIR: fixture },
+                // The XDG prelude derives its defaults from HOME; the state
+                // directory line is replaced above, so nothing outside the
+                // fixture is read.
+                env: { HOME: fixture, HAL_C2_TEST_STATE_DIR: fixture },
                 stdin: Stream.make(new TextEncoder().encode(isolatedScript)),
               }),
             );
