@@ -5,6 +5,7 @@
 #   apps/web/src/components/LegacyThreadMigrationToast.tsx
 #   apps/server-ex/lib/hal_c2/import/v2.ex
 #   apps/server-ex/lib/hal_c2/orchestration/handoff.ex
+# Moving a thread to another machine, where the handoff is the fallback: threads/moving-between-machines.feature.
 
 Feature: Carrying threads and context across servers and agents
   Threads made on an older server come across once, with their conversation. When an

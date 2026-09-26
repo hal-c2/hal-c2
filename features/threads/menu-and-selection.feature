@@ -12,6 +12,7 @@
 #   apps/tui/src/components/ContextMenu.tsx
 #   apps/tui/src/components/Sidebar.tsx (context menu)
 #   packages/contracts/src/shell.ts (thread.menu)
+# Moving a thread to another machine from the menu is specified in threads/moving-between-machines.feature.
 
 Feature: Thread menu and selecting several threads
   Every thread has a menu of the things the user can do to it. Selecting several threads

@@ -7,6 +7,7 @@
 #   packages/contracts/src/agentSessions.ts
 # The wizard's import step is specified in features/navigation/welcome-wizard.feature and the
 # ACP session panel in features/settings/providers-panel.feature; this file is the provider side.
+# Carrying a native session to another machine is specified in providers/portable-sessions.feature.
 
 @node
 Feature: Importing native agent sessions
