@@ -20,6 +20,18 @@ describe("composerContextClipboard", () => {
     expect(html).toContain(rich);
     expect(decodeComposerContextClipboardHtml(html)).toEqual(JSON.parse(fragment));
   });
+  it("reads the pre-rename data-t3-context-fragment attribute", () => {
+    const fragment = encodeComposerContextFragment({
+      version: 1,
+      source: { environmentId: "env" as never },
+      records: [],
+    })!;
+    const html = encodeComposerContextClipboardHtml("text", fragment);
+    expect(html).toContain("data-hal-c2-context-fragment=");
+    const preRename = html.replace("data-hal-c2-context-fragment=", "data-t3-context-fragment=");
+    expect(decodeComposerContextClipboardHtml(preRename)).toEqual(JSON.parse(fragment));
+  });
+
   it("round-trips selections larger than two million characters", () => {
     const fragment = {
       version: 1 as const,

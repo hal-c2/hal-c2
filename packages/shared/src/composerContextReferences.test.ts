@@ -21,6 +21,26 @@ describe("href codec", () => {
     expect(parseComposerContextHref(href)).toEqual({ kind: "review-comment", contextId: "ctx_1" });
   });
 
+  it("reads pre-rename t3-context links but writes only hal-c2-context", () => {
+    expect(parseComposerContextHref("t3-context://v1/image/ctx_1")).toEqual({
+      kind: "image",
+      contextId: "ctx_1",
+    });
+    const text =
+      "See [old](t3-context://v1/file/ctx_2) and ![shot](hal-c2-context://v1/image/ctx_3).";
+    expect(
+      collectComposerContextReferences(text).map((ref) => [ref.contextId, ref.source]),
+    ).toEqual([
+      ["ctx_2", "[old](t3-context://v1/file/ctx_2)"],
+      ["ctx_3", "![shot](hal-c2-context://v1/image/ctx_3)"],
+    ]);
+    expect(
+      replaceComposerContextReferences(text, (ref) => formatComposerContextReference(ref)),
+    ).toBe(
+      "See [old](hal-c2-context://v1/file/ctx_2) and ![shot](hal-c2-context://v1/image/ctx_3).",
+    );
+  });
+
   it("rejects anything that is not exactly scheme, version, kind and id", () => {
     for (const bad of [
       "hal-c2-context://v2/image/ctx_1",
