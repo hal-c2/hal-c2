@@ -90,7 +90,8 @@ int main(int argc, char* argv[]) {
   parser.addVersionOption();
   const QCommandLineOption urlOption(
       QStringLiteral("url"),
-      QStringLiteral("Load this URL instead of spawning the desktop host (dev attach mode)."),
+      QStringLiteral("Attach to the node this pairing link names instead of starting one; any other "
+                     "URL is loaded as it is."),
       QStringLiteral("url"));
   const QCommandLineOption configDirOption(
       QStringLiteral("config-dir"),
@@ -105,7 +106,7 @@ int main(int argc, char* argv[]) {
       QStringLiteral("Allow local folder import for an attached URL known to use this machine's filesystem."));
   const QCommandLineOption homeDirOption(
       QStringLiteral("home-dir"),
-      QStringLiteral("One root for the shell's and the hosted server's files (<dir>/config, data, state, cache)."),
+      QStringLiteral("One root for the shell's and its node's files (<dir>/config, data, state, cache)."),
       QStringLiteral("dir"));
   const QCommandLineOption qmlDirOption(
       QStringLiteral("qml-dir"),
@@ -142,7 +143,7 @@ int main(int argc, char* argv[]) {
   const StoragePaths storage = resolveStoragePaths(parser.value(homeDirOption));
   const QString configDir = resolveConfigDir(parser.value(configDirOption), storage);
   // Created up front so the shell and theme watchers are live from the start: when
-  // the hosted server migrates an old home, the user's shell lands here and reloads.
+  // the node migrates an old home, the user's shell lands here and reloads.
   QDir().mkpath(configDir);
   const QString qmlSourceDir =
       resolveQmlSourceDir(parser.isSet(qmlDirOption) ? parser.value(qmlDirOption) : QString());
@@ -175,9 +176,15 @@ int main(int argc, char* argv[]) {
   backendOptions.nodeExecutable = parser.value(nodeOption);
   backendOptions.hostEntry = parser.value(hostEntryOption);
   backendOptions.hostArguments = parser.positionalArguments();
-  // Without a root the server resolves the same XDG directories itself.
+  // Without a root the node resolves the same XDG directories itself.
   if (!storage.root.isEmpty()) {
     backendOptions.hostArguments.prepend(QStringLiteral("--base-dir=%1").arg(storage.root));
+  }
+  // Attach mode: the host starts no node; it serves the app paired with the
+  // linked node, or hands back any other URL unchanged.
+  if (parser.isSet(urlOption)) {
+    backendOptions.hostArguments.prepend(
+        QStringLiteral("--attach=%1").arg(QUrl::fromUserInput(parser.value(urlOption)).toString(QUrl::FullyEncoded)));
   }
   BackendProcess backend(backendOptions);
   QObject::connect(&backend, &BackendProcess::ready, &bridge, &ShellBridge::setPageUrl);
@@ -187,11 +194,7 @@ int main(int argc, char* argv[]) {
   });
   QObject::connect(&app, &QCoreApplication::aboutToQuit, &backend, &BackendProcess::stop);
 
-  if (parser.isSet(urlOption)) {
-    bridge.setPageUrl(QUrl::fromUserInput(parser.value(urlOption)));
-  } else {
-    backend.start();
-  }
+  backend.start();
 
   // Scripted runs: replay --action and --key steps in command-line order once
   // the page is up, then optionally grab the window and quit. Only the first

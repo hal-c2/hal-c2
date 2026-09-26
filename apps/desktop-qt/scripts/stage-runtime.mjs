@@ -1,38 +1,59 @@
-import * as NodeChildProcess from "node:child_process";
+/**
+ * Stages what the packaged hal-c2-qt runs next to the binary:
+ *   host/*.ts       the desktop host (Node built-ins only, no dependencies)
+ *   web/            the built web app (apps/web/dist, or HAL_C2_WEB_DIST)
+ *   hal-c2-node/    the Elixir node release (apps/server-ex/_build/prod/rel/hal_c2,
+ *                   or HAL_C2_NODE_RELEASE); the host runs its bin/hal_c2
+ *   bin/node        the Node that runs the host and the node's JavaScript sidecars
+ *
+ * Usage: node stage-runtime.mjs <destination>
+ */
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
-
-import { selectCliRuntimeExternalDependencies } from "../../../scripts/lib/cli-external-packages.ts";
 
 const scriptDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const repoRoot = NodePath.resolve(scriptDir, "../../..");
 const destinationArg = process.argv[2];
 // oxlint-disable-next-line hal-c2/no-global-process-runtime -- Standalone packaging script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
-// oxlint-disable-next-line hal-c2/no-global-process-runtime -- Standalone packaging script has no Effect runtime.
-const hostArchitecture = NodeOS.arch();
 
 if (destinationArg === undefined) {
   throw new Error("Usage: stage-runtime.mjs <destination>");
 }
 
 const destination = NodePath.resolve(destinationArg);
-const serverDist = NodePath.join(repoRoot, "apps/server/dist");
+const hostDir = NodePath.join(repoRoot, "apps/desktop-qt/host");
+const webDist = NodePath.resolve(
+  process.env.HAL_C2_WEB_DIST?.trim() || NodePath.join(repoRoot, "apps/web/dist"),
+);
+const nodeRelease = NodePath.resolve(
+  process.env.HAL_C2_NODE_RELEASE?.trim() ||
+    NodePath.join(repoRoot, "apps/server-ex/_build/prod/rel/hal_c2"),
+);
 const nodePrefix = NodePath.resolve(NodePath.dirname(process.execPath), "..");
 const nodeLicense = NodePath.join(nodePrefix, "LICENSE");
 const nodeExecutableName = hostPlatform === "win32" ? "node.exe" : "node";
-const serverManifest = JSON.parse(
-  await NodeFSP.readFile(NodePath.join(repoRoot, "apps/server/package.json"), "utf8"),
+
+function requireFile(path, hint) {
+  if (!NodeFS.existsSync(path)) throw new Error(`${path} is missing. ${hint}`);
+}
+requireFile(
+  NodePath.join(webDist, "index.html"),
+  "Build it with `vp run --filter @hal-c2/web build`.",
 );
-const rootManifest = JSON.parse(
-  await NodeFSP.readFile(NodePath.join(repoRoot, "package.json"), "utf8"),
+requireFile(
+  NodePath.join(nodeRelease, "bin/hal_c2"),
+  "Build it in apps/server-ex with `MIX_ENV=prod mix release`.",
+);
+requireFile(nodeLicense, "Run with a Node install that ships its LICENSE.");
+
+const hostModules = (await NodeFSP.readdir(hostDir)).filter(
+  (name) => name.endsWith(".ts") && !name.endsWith(".test.ts"),
 );
 
-await NodeFSP.access(NodePath.join(serverDist, "bin.mjs"));
-await NodeFSP.access(NodePath.join(serverDist, "client/index.html"));
-await NodeFSP.access(nodeLicense);
 await NodeFSP.rm(destination, { recursive: true, force: true });
 await Promise.all([
   NodeFSP.mkdir(NodePath.join(destination, "host"), { recursive: true }),
@@ -40,59 +61,22 @@ await Promise.all([
   NodeFSP.mkdir(NodePath.join(destination, "licenses/node"), { recursive: true }),
 ]);
 await Promise.all([
-  NodeFSP.copyFile(
-    NodePath.join(repoRoot, "apps/desktop-qt/host/main.ts"),
-    NodePath.join(destination, "host/main.ts"),
+  ...hostModules.map((name) =>
+    NodeFSP.copyFile(NodePath.join(hostDir, name), NodePath.join(destination, "host", name)),
   ),
-  NodeFSP.copyFile(
-    NodePath.join(repoRoot, "apps/desktop-qt/host/pairingUrl.ts"),
-    NodePath.join(destination, "host/pairingUrl.ts"),
-  ),
-  NodeFSP.cp(serverDist, NodePath.join(destination, "server"), { recursive: true }),
+  NodeFSP.cp(webDist, NodePath.join(destination, "web"), { recursive: true }),
+  NodeFSP.cp(nodeRelease, NodePath.join(destination, "hal-c2-node"), {
+    recursive: true,
+    verbatimSymlinks: true,
+  }),
   NodeFSP.copyFile(process.execPath, NodePath.join(destination, "bin", nodeExecutableName)),
   NodeFSP.copyFile(nodeLicense, NodePath.join(destination, "licenses/node/LICENSE")),
 ]);
 if (hostPlatform !== "win32") {
   await NodeFSP.chmod(NodePath.join(destination, "bin", nodeExecutableName), 0o755);
 }
-
-const dependencies = selectCliRuntimeExternalDependencies(serverManifest.dependencies);
+// The host is plain ESM TypeScript run through Node's type stripping.
 await NodeFSP.writeFile(
   NodePath.join(destination, "package.json"),
-  `${JSON.stringify(
-    {
-      name: "hal-c2-qt-runtime",
-      version: serverManifest.version,
-      private: true,
-      type: "module",
-      packageManager: rootManifest.packageManager,
-      dependencies,
-    },
-    null,
-    2,
-  )}\n`,
+  `${JSON.stringify({ name: "hal-c2-qt-runtime", private: true, type: "module" }, null, 2)}\n`,
 );
-
-const supportedArchitectures = [
-  "supportedArchitectures:",
-  `  os: [${hostPlatform}]`,
-  `  cpu: [${hostArchitecture}]`,
-  ...(hostPlatform === "linux" ? ["  libc: [glibc]"] : []),
-  "allowBuilds:",
-  "  msgpackr-extract: true",
-  "  node-pty: true",
-  "nodeLinker: hoisted",
-  "",
-].join("\n");
-await NodeFSP.writeFile(NodePath.join(destination, "pnpm-workspace.yaml"), supportedArchitectures);
-
-const install = NodeChildProcess.spawnSync("vp", ["install", "--prod"], {
-  cwd: destination,
-  stdio: "inherit",
-});
-if (install.error) {
-  throw install.error;
-}
-if (install.status !== 0) {
-  throw new Error(`vp install --prod exited with ${String(install.status)}`);
-}

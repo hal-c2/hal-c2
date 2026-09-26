@@ -7,7 +7,7 @@
 #include <QUrl>
 
 // Spawns the Node desktop host and waits for its `ready` line. The shell never
-// speaks to the server itself; it only needs the URL to hand to the web view.
+// speaks to the node itself; it only needs the URL to hand to the web view.
 class BackendProcess : public QObject {
   Q_OBJECT
 

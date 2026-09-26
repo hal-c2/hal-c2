@@ -1,93 +1,161 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - process launcher, deliberately Effect-free.
 /**
- * Node desktop host for the Qt shell.
+ * Desktop host for the Qt shell.
  *
- * Spawned by hal-c2-qt (see src/BackendProcess.cpp). Starts the HAL-C2 server,
- * announces its pairing URL on stdout as one JSON line, then keeps the server
- * alive until the shell goes away. Everything TypeScript-owned (server
- * lifecycle, and later SSH/Tailscale/secrets/updates) lives on this side; the
- * Qt process only ever sees the URL.
+ * Spawned by hal-c2-qt (see src/BackendProcess.cpp). Serves the built web app
+ * from a loopback port (webBundle.ts), starts the desktop app's own Elixir node
+ * (elixirNode.ts), and announces a `/pair` URL that pairs the app with that node
+ * and opens it. With `--attach=<url>` it starts no node: a node pairing link
+ * opens the app paired with that node, any other URL is announced unchanged.
+ *
+ * Arguments: `--base-dir=<HAL-C2 home>` (the node's home and the app's port key),
+ * `--attach=<url>`.
  *
  * Protocol (stdout, newline-delimited JSON):
- *   {"type":"ready","url":"http://..."}   server accepts connections at url
+ *   {"type":"ready","url":"http://..."}   load this URL
  *   {"type":"error","message":"..."}       fatal, the host is exiting
- *   {"type":"exit","code":n}               server process ended
- * stdin closing means the shell is gone: shut the server down.
+ *   {"type":"exit","code":n}               the node ended on its own
+ * stdin closing means the shell is gone: stop the node and exit.
  */
-import * as NodeChildProcess from "node:child_process";
-import * as NodeFS from "node:fs";
+import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
-import * as NodeReadline from "node:readline";
 import * as NodeURL from "node:url";
 
-import { parsePairingUrlLine } from "./pairingUrl.ts";
+import {
+  fetchDescriptor,
+  nodePort,
+  resolveNodeLaunch,
+  startNode,
+  waitForNode,
+  type RunningNode,
+} from "./elixirNode.ts";
+import { HostError } from "./hostError.ts";
+import { appPairingUrl, readPairingLink } from "./pairingUrl.ts";
+import { resolveWebBundle, serveWebBundle, webPort, type WebServer } from "./webBundle.ts";
 
 type HostMessage =
   | { readonly type: "ready"; readonly url: string }
   | { readonly type: "error"; readonly message: string }
   | { readonly type: "exit"; readonly code: number | null; readonly signal: string | null };
 
+/** A checkout's first start may compile the node. */
+const NODE_START_TIMEOUT_MS = 10 * 60_000;
+/** How long quitting waits for the node before the host exits anyway. */
+const NODE_STOP_GRACE_MS = 1_500;
+
 function emit(message: HostMessage): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
+interface HostArgs {
+  readonly baseDir: string | undefined;
+  readonly attach: string | undefined;
+}
+
+function parseArgs(argv: ReadonlyArray<string>): HostArgs {
+  const values = new Map<string, string>();
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index] ?? "";
+    const match = /^--(base-dir|attach)(?:=(.*))?$/.exec(arg);
+    if (match === null) {
+      throw new HostError(`Unknown desktop host argument: ${arg}`);
+    }
+    const value = match[2] ?? argv[(index += 1)];
+    if (!value) {
+      throw new HostError(`--${match[1]} needs a value.`);
+    }
+    values.set(match[1] ?? "", value);
+  }
+  const baseDir = values.get("base-dir");
+  return {
+    baseDir: baseDir === undefined ? undefined : NodePath.resolve(baseDir),
+    attach: values.get("attach"),
+  };
+}
+
 const hostDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-const installedServerEntry = NodePath.resolve(hostDir, "../server/bin.mjs");
-const repositoryServerEntry = NodePath.resolve(hostDir, "../../server/dist/bin.mjs");
-const serverEntry =
-  process.env.HAL_C2_SERVER_ENTRY ??
-  (NodeFS.existsSync(installedServerEntry)
-    ? installedServerEntry
-    : NodeFS.existsSync(repositoryServerEntry)
-      ? repositoryServerEntry
-      : NodePath.resolve(hostDir, "../../server/src/bin.ts"));
-
-const serverArgs = ["--no-browser", ...process.argv.slice(2)];
-const server = NodeChildProcess.spawn(process.execPath, [serverEntry, ...serverArgs], {
-  stdio: ["ignore", "pipe", "inherit"],
-  env: process.env,
-});
-
-let announced = false;
-const lines = NodeReadline.createInterface({ input: server.stdout });
-lines.on("line", (line) => {
-  process.stderr.write(`${line}\n`);
-  if (announced) return;
-  const url = parsePairingUrlLine(line);
-  if (url !== undefined) {
-    announced = true;
-    emit({ type: "ready", url });
-  }
-});
-
-server.on("error", (error) => {
-  emit({ type: "error", message: `Failed to start server: ${error.message}` });
-  process.exit(1);
-});
-
-server.on("exit", (code, signal) => {
-  if (!announced) {
-    emit({
-      type: "error",
-      message: `Server exited before announcing a pairing URL (code ${String(code)}).`,
-    });
-  }
-  emit({ type: "exit", code, signal });
-  process.exit(code ?? 0);
-});
-
+let node: RunningNode | undefined;
+let web: WebServer | undefined;
 let stopping = false;
-function stop(signal: NodeJS.Signals): void {
-  if (stopping) return;
+
+async function stop(code: number): Promise<never> {
   stopping = true;
-  server.kill(signal);
-  setTimeout(() => server.kill("SIGKILL"), 5_000).unref();
+  const running = node;
+  if (running !== undefined) {
+    running.stop();
+    await Promise.race([
+      running.exited,
+      new Promise((resolve) => setTimeout(resolve, NODE_STOP_GRACE_MS)),
+    ]);
+  }
+  await web?.close();
+  process.exit(code);
+}
+
+async function serveApp(home: string | undefined): Promise<WebServer> {
+  const root = resolveWebBundle(hostDir, process.env);
+  web = await serveWebBundle({ root, port: webPort(process.env, home) });
+  return web;
+}
+
+async function standalone(home: string | undefined): Promise<string> {
+  const app = await serveApp(home);
+  const port = await nodePort(process.env);
+  const launch = resolveNodeLaunch(hostDir, process.env);
+  // Exchangeable for a day with admin scopes (HalC2.Auth); a new one each start
+  // replaces the previous desktop session, and the app upserts the environment
+  // by id, so a relaunch pairs the same environment again.
+  const token = NodeCrypto.randomBytes(32).toString("base64url");
+  const started = startNode({ launch, port, home, token, env: process.env });
+  node = started;
+  await waitForNode(started, NODE_START_TIMEOUT_MS);
+  void started.exited.then(({ code, signal }) => {
+    if (stopping) return;
+    emit({ type: "exit", code, signal });
+    process.exit(code ?? 1);
+  });
+  return appPairingUrl(app.origin, started.origin, token);
+}
+
+async function attach(url: string, home: string | undefined): Promise<string> {
+  const link = readPairingLink(url);
+  if (link === undefined) return url;
+  const descriptor = await fetchDescriptor(link.origin).catch((error: unknown) => {
+    const reason = error instanceof Error && error.cause instanceof Error ? error.cause : error;
+    throw new HostError(
+      `Cannot reach the node at ${link.origin}: ${reason instanceof Error ? reason.message : String(reason)}`,
+    );
+  });
+  // Anything that is not a protocol-3 node (a web dev server, a legacy
+  // server that serves its own app) is loaded as it is.
+  if (descriptor === undefined) return url;
+  const app = await serveApp(home);
+  return link.token === undefined
+    ? `${app.origin}/`
+    : appPairingUrl(app.origin, link.origin, link.token);
 }
 
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-  process.on(signal, () => stop("SIGTERM"));
+  process.on(signal, () => void stop(0));
 }
 // The shell holds our stdin open; EOF means it exited (cleanly or not).
-process.stdin.on("end", () => stop("SIGTERM"));
-process.stdin.on("error", () => stop("SIGTERM"));
+process.stdin.on("end", () => void stop(0));
+process.stdin.on("error", () => void stop(0));
 process.stdin.resume();
+
+try {
+  const args = parseArgs(process.argv.slice(2));
+  const url =
+    args.attach === undefined
+      ? await standalone(args.baseDir)
+      : await attach(args.attach, args.baseDir);
+  if (!stopping) emit({ type: "ready", url });
+} catch (error) {
+  if (!stopping) {
+    emit({
+      type: "error",
+      message: error instanceof HostError ? error.message : `Desktop host failed: ${String(error)}`,
+    });
+    await stop(1);
+  }
+}

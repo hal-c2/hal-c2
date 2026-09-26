@@ -4,12 +4,11 @@ on:
   push:
     paths:
       - "apps/desktop-qt/**"
-      - "apps/server/**"
+      - "apps/server-ex/**"
       - "apps/web/**"
       - "packages/**"
       - "patches/**"
       - "assets/prod/black-universal-1024.png"
-      - "scripts/lib/cli-external-packages.ts"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -18,12 +17,11 @@ on:
   pull_request:
     paths:
       - "apps/desktop-qt/**"
-      - "apps/server/**"
+      - "apps/server-ex/**"
       - "apps/web/**"
       - "packages/**"
       - "patches/**"
       - "assets/prod/black-universal-1024.png"
-      - "scripts/lib/cli-external-packages.ts"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -59,7 +57,7 @@ jobs:
           cache: true
           run-install: |
             args:
-              - --filter=hal-c2...
+              - --filter=@hal-c2/web...
 
       # Official Qt binaries on every platform so WebEngine is always present
       # (distro packages often ship without it).
@@ -91,8 +89,23 @@ jobs:
       - name: Build
         run: cmake --build apps/desktop-qt/build/release
 
-      - name: Build server runtime
-        run: vp run --filter hal-c2 build
+      - name: Build web app
+        run: vp run --filter @hal-c2/web build
+
+      - name: Setup Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          elixir-version: "1.20.3"
+
+      # The node the desktop app starts (host/elixirNode.ts), staged as hal-c2-node/.
+      - name: Build node release
+        working-directory: apps/server-ex
+        env:
+          MIX_ENV: prod
+        run: |
+          mix deps.get --only prod
+          mix release --overwrite
 
       - name: Test QML
         run: node apps/desktop-qt/scripts/test-qml.mjs

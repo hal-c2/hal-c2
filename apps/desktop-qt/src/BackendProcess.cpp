@@ -53,7 +53,7 @@ void BackendProcess::stop() {
     return;
   }
   // Closing stdin is the host's signal that its parent is going away; it
-  // tears the server down itself. Escalate only if it does not.
+  // stops the node itself. Escalate only if it does not.
   m_process.closeWriteChannel();
   m_process.terminate();
   if (!m_process.waitForFinished(2000)) {
