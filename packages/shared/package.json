@@ -311,6 +311,10 @@
       "types": "./src/devHome.ts",
       "import": "./src/devHome.ts"
     },
+    "./xdgDirs": {
+      "types": "./src/xdgDirs.ts",
+      "import": "./src/xdgDirs.ts"
+    },
     "./devProxy": {
       "types": "./src/devProxy.ts",
       "import": "./src/devProxy.ts"
