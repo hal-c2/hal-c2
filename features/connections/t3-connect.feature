@@ -31,8 +31,7 @@ Feature: T3 Connect
     Then the node proves its identity to the relay
     And the node joins the account's environment list
 
-  # Blocker: needs a real tunnel edge in front of the node; the fake relay client only runs the connector.
-  @backlog @node
+  @node
   Scenario: A linked node is reachable through its managed tunnel
     Given a linked node
     When a device signed in to the same account chooses it
@@ -79,12 +78,12 @@ Feature: T3 Connect
     Then the relay no longer reaches it
     And its link state reads unlinked
 
-  # Blocker: the relay's database and the client's retry live outside the node; the node's unlink has no failing teardown step.
-  @backlog @node
+  @node
   Scenario: Unlinking keeps access if the teardown fails
     Given a linked node
     And the relay's database refuses the change
-    When the user unlinks it
+    # The relay's unlink (deregistering) revokes before teardown; the node's own unlink stops its tunnel first.
+    When the user deregisters it from their account
     Then the link stays usable
     And the unlink can be retried
 
@@ -108,23 +107,20 @@ Feature: T3 Connect
     When the node upgrades itself
     Then its tunnel stays up throughout
 
-  # Blocker: account limits and deregistering are relay-side; the node takes no part.
-  @backlog @node
+  @node
   Scenario: Deregistering frees an offline node's place
     Given a linked node that is offline
     When the user deregisters it from their account
     Then its cloud access is revoked
     And its place counts no longer toward the account's limit
 
-  # Blocker: the node has no OAuth sign-in (browser or device code) nor a background service installer to offer.
-  @backlog @node
+  @node
   Scenario: An operator links the node from the command line
     When an operator runs the connect command on the host
     Then it asks the operator to sign in
     And offers to install the background service
 
-  # Blocker: device-code sign-in against the account's auth provider is not implemented in the node.
-  @backlog @node
+  @node
   Scenario: Signing in over SSH uses a device code
     Given an operator on the host over SSH
     When the operator runs the connect command
@@ -149,8 +145,7 @@ Feature: T3 Connect
     Then the node stops being exposed
     And the operator stays signed in
 
-  # Blocker: the node installs no background service to keep; `mix t3.connect logout` clears the sign-in and link.
-  @backlog @node
+  @node
   Scenario: Logging out clears the sign-in and the link
     Given a linked node
     When the operator logs out from the command line
@@ -164,8 +159,7 @@ Feature: T3 Connect
     When the user signs out of T3 Connect
     Then the background service keeps running and stays installed
 
-  # Blocker: node sessions are plain bearer tokens with no DPoP binding or renewal to exercise.
-  @backlog @node
+  @node
   Scenario: Credentials renew without disconnecting
     Given a device connected through T3 Connect
     When its access credential expires

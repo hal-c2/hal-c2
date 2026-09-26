@@ -197,8 +197,8 @@ defmodule T3.Devices.Proxy do
         {%{"token" => token}, _} when is_binary(token) ->
           if Plug.Crypto.secure_compare(token, T3.Web.token()), do: {:ok, :all}, else: :error
 
-        {_, ["Bearer " <> bearer]} ->
-          with {:ok, session} <- T3.Auth.session(bearer), do: {:ok, session.scopes}
+        {_, [_authorization]} ->
+          with {:ok, session} <- T3.Auth.request_session(conn), do: {:ok, session.scopes}
 
         _ ->
           :error

@@ -37,13 +37,7 @@ defmodule T3.Connect.Http do
   match _, do: send_resp(conn, 404, "not found")
 
   defp with_scope(conn, scope, fun) do
-    session =
-      case get_req_header(conn, "authorization") do
-        ["Bearer " <> token] -> T3.Auth.session(token)
-        _ -> :error
-      end
-
-    case session do
+    case T3.Auth.request_session(conn) do
       {:ok, %{scopes: scopes}} ->
         if scope in scopes,
           do: respond(conn, fun.(body(conn))),

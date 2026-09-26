@@ -56,7 +56,8 @@ defmodule T3.Web.Router do
   end
 
   # Pairing: exchange a one-time pairing token for a bearer access token.
-  # A DPoP proof names the device key a T3 Connect credential was minted for.
+  # A DPoP proof names the device key a T3 Connect credential was minted for, and
+  # binds the session to it (`T3.Auth.request_session/1`).
   post "/oauth/token" do
     params = conn.body_params
 
@@ -74,7 +75,7 @@ defmodule T3.Web.Router do
       json(conn, 200, %{
         "access_token" => access,
         "issued_token_type" => "urn:ietf:params:oauth:token-type:access_token",
-        "token_type" => "Bearer",
+        "token_type" => if(proof_jkt, do: "DPoP", else: "Bearer"),
         "expires_in" => expires_in,
         "scope" => Enum.join(scopes, " ")
       })
@@ -86,13 +87,13 @@ defmodule T3.Web.Router do
   get "/api/auth/session" do
     auth = T3.Environment.server_config()["auth"]
 
-    case bearer_session(conn) do
+    case T3.Auth.request_session(conn) do
       {:ok, session} ->
         json(conn, 200, %{
           "authenticated" => true,
           "auth" => auth,
           "scopes" => session.scopes,
-          "sessionMethod" => "bearer-access-token",
+          "sessionMethod" => T3.Auth.session_method(session.proof_jkt),
           "expiresAt" => iso(session.expires_at)
         })
 
@@ -102,8 +103,8 @@ defmodule T3.Web.Router do
   end
 
   post "/api/auth/websocket-ticket" do
-    with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
-         {:ok, ticket, expires_at} <- T3.Auth.issue_ticket(token) do
+    with {:ok, session} <- T3.Auth.request_session(conn),
+         {:ok, ticket, expires_at} <- T3.Auth.issue_ticket(session) do
       json(conn, 200, %{"ticket" => ticket, "expiresAt" => iso(expires_at)})
     else
       _ ->
@@ -231,7 +232,7 @@ defmodule T3.Web.Router do
   # Runs `fun.(session)` for a bearer whose session has `scope`; `fun` returns
   # `{status, body}` or `{:error, reason}`.
   defp with_scope(conn, scope, fun) do
-    case bearer_session(conn) do
+    case T3.Auth.request_session(conn) do
       {:ok, session} ->
         if scope in session.scopes do
           case fun.(session) do
@@ -296,13 +297,6 @@ defmodule T3.Web.Router do
   end
 
   defp trace_id, do: Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
-
-  defp bearer_session(conn) do
-    case get_req_header(conn, "authorization") do
-      ["Bearer " <> token] -> T3.Auth.session(token)
-      _ -> :error
-    end
-  end
 
   defp json(conn, status, body) do
     conn

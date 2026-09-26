@@ -11,6 +11,10 @@ defmodule T3.Auth do
       scopes.
     * A bearer token buys a WebSocket ticket (5 minutes, single use), which the
       client puts in the socket URL so the long-lived token never appears there.
+    * An exchange proven with a DPoP key (a T3 Connect device) makes a session bound
+      to that key for 1 hour: each request carries `Authorization: DPoP <token>` and a
+      fresh proof (`request_session/1`). The device renews through the relay; open
+      sockets are unaffected.
 
   Pairing tokens and sessions are stored hashed in the node's SQLite file, so a
   `mix t3.pair` run next to a running node can mint a pairing token too. Tickets
@@ -26,11 +30,15 @@ defmodule T3.Auth do
 
   @pairing_ttl :timer.minutes(5)
   @session_ttl :timer.hours(24 * 30)
+  @dpop_session_ttl :timer.hours(1)
+  # How long a DPoP proof's `jti` is remembered: past its acceptance window.
+  @proof_ttl :timer.minutes(6)
   @ticket_ttl :timer.minutes(5)
   @standard_scopes ~w(orchestration:read orchestration:operate terminal:operate review:write relay:read)
   @admin_scopes @standard_scopes ++ ~w(access:read access:write relay:write)
   @desktop_ttl :timer.hours(24)
   @tickets __MODULE__.Tickets
+  @proofs __MODULE__.DpopProofs
 
   @schema [
     "CREATE TABLE IF NOT EXISTS auth_pairing (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)",
@@ -57,7 +65,9 @@ defmodule T3.Auth do
     {"auth_sessions", "last_connected_at", "INTEGER"},
     {"auth_sessions", "device_type", "TEXT"},
     {"auth_sessions", "os", "TEXT"},
-    {"auth_sessions", "user_agent", "TEXT"}
+    {"auth_sessions", "user_agent", "TEXT"},
+    # The DPoP key thumbprint a session is bound to, or NULL for a bearer session.
+    {"auth_sessions", "proof_jkt", "TEXT"}
   ]
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -86,19 +96,71 @@ defmodule T3.Auth do
   def exchange(pairing_token, client \\ %{}),
     do: GenServer.call(__MODULE__, {:exchange, pairing_token, client})
 
-  @doc "The session behind a bearer token, if valid."
+  @doc """
+  The session behind an access token, if valid. `proof_jkt` is the DPoP key it is
+  bound to (nil for a bearer session); `request_session/1` checks the proof.
+  """
   @spec session(String.t()) ::
-          {:ok, %{id: String.t(), scopes: [String.t()], expires_at: integer}} | :error
+          {:ok,
+           %{
+             id: String.t(),
+             scopes: [String.t()],
+             expires_at: integer,
+             proof_jkt: String.t() | nil
+           }}
+          | :error
   def session(access_token), do: GenServer.call(__MODULE__, {:session, access_token})
 
-  @spec issue_ticket(String.t()) :: {:ok, String.t(), integer} | :error
-  def issue_ticket(access_token) do
-    with {:ok, session} <- session(access_token) do
-      ticket = random_token()
-      expires_at = now() + @ticket_ttl
-      :ets.insert(@tickets, {ticket, expires_at, session.id})
-      {:ok, ticket, expires_at}
+  @doc """
+  The session an HTTP request authenticates as: `Authorization: Bearer <token>` for a
+  bearer session, or `Authorization: DPoP <token>` with a `DPoP` proof for this
+  method and URL, signed by the session's key, naming the token (`ath`) and not
+  used before. A bound token sent as a bearer, or a proof on a bearer token, is refused.
+  """
+  @spec request_session(Plug.Conn.t()) :: {:ok, map} | :error
+  def request_session(%Plug.Conn{} = conn) do
+    case {Plug.Conn.get_req_header(conn, "authorization"), Plug.Conn.get_req_header(conn, "dpop")} do
+      {["Bearer " <> token], []} ->
+        case session(token) do
+          {:ok, %{proof_jkt: nil} = session} -> {:ok, session}
+          _ -> :error
+        end
+
+      {["DPoP " <> token], [proof]} ->
+        url = "#{conn.scheme}://#{conn.host}:#{conn.port}#{conn.request_path}"
+
+        with {:ok, %{proof_jkt: jkt} = session} when is_binary(jkt) <- session(token),
+             {:ok, %{thumbprint: ^jkt, jti: jti}} <-
+               T3.Connect.Jwt.verify_dpop(proof, conn.method, url, System.os_time(:second), token),
+             true <- fresh_proof?(jkt, jti) do
+          {:ok, session}
+        else
+          _ -> :error
+        end
+
+      _ ->
+        :error
     end
+  end
+
+  # Each proof authorizes one request.
+  defp fresh_proof?(jkt, jti) do
+    now = now()
+    :ets.select_delete(@proofs, [{{:_, :"$1"}, [{:<, :"$1", now}], [true]}])
+    :ets.insert_new(@proofs, {{jkt, jti}, now + @proof_ttl})
+  end
+
+  @doc "A WebSocket ticket for an access token, or for a session `request_session/1` found."
+  @spec issue_ticket(String.t() | map) :: {:ok, String.t(), integer} | :error
+  def issue_ticket(%{id: id}) do
+    ticket = random_token()
+    expires_at = now() + @ticket_ttl
+    :ets.insert(@tickets, {ticket, expires_at, id})
+    {:ok, ticket, expires_at}
+  end
+
+  def issue_ticket(access_token) do
+    with {:ok, session} <- session(access_token), do: issue_ticket(session)
   end
 
   @doc "Consumes a WebSocket ticket; each ticket opens one socket, for its session."
@@ -158,6 +220,7 @@ defmodule T3.Auth do
   @impl true
   def init(_opts) do
     :ets.new(@tickets, [:named_table, :public, write_concurrency: true])
+    :ets.new(@proofs, [:named_table, :public, write_concurrency: true])
     path = T3.Store.path()
     with_db(path, &ensure_schema/1)
 
@@ -213,12 +276,14 @@ defmodule T3.Auth do
       with_db(state.path, fn db ->
         case query(
                db,
-               "SELECT id, scopes, expires_at FROM auth_sessions WHERE token_hash = ?1",
+               "SELECT id, scopes, expires_at, proof_jkt FROM auth_sessions WHERE token_hash = ?1",
                [hash(token)]
              ) do
-          [[id, scopes, expires_at]] ->
+          [[id, scopes, expires_at, jkt]] ->
             if expires_at > now(),
-              do: {:ok, %{id: id, scopes: String.split(scopes), expires_at: expires_at}},
+              do:
+                {:ok,
+                 %{id: id, scopes: String.split(scopes), expires_at: expires_at, proof_jkt: jkt}},
               else: :error
 
           [] ->
@@ -345,23 +410,25 @@ defmodule T3.Auth do
     access = random_token()
     id = "session-" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
     created = now()
+    ttl = if client[:proof_jkt], do: @dpop_session_ttl, else: @session_ttl
 
     exec(
       db,
       """
-      INSERT INTO auth_sessions (token_hash, scopes, label, created_at, expires_at, id, device_type, os, user_agent)
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+      INSERT INTO auth_sessions (token_hash, scopes, label, created_at, expires_at, id, device_type, os, user_agent, proof_jkt)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
       """,
       [
         hash(access),
         Enum.join(scopes, " "),
         client[:label],
         created,
-        created + @session_ttl,
+        created + ttl,
         id,
         client[:device_type],
         client[:os],
-        client[:user_agent]
+        client[:user_agent],
+        client[:proof_jkt]
       ]
     )
 
@@ -369,7 +436,7 @@ defmodule T3.Auth do
       for client <- session_rows(db, online(state), "id = ?1", [id]),
           do: event("clientUpserted", client)
 
-    {{:ok, access, div(@session_ttl, 1000), scopes}, events ++ upserted}
+    {{:ok, access, div(ttl, 1000), scopes}, events ++ upserted}
   end
 
   defp links(path) do
@@ -398,17 +465,17 @@ defmodule T3.Auth do
   defp online(state), do: state.sockets |> Map.values() |> MapSet.new()
 
   defp session_rows(db, online, where, args) do
-    for [id, scopes, label, created, expires, last, device, os, agent] <-
+    for [id, scopes, label, created, expires, last, device, os, agent, jkt] <-
           query(
             db,
-            "SELECT id, scopes, label, created_at, expires_at, last_connected_at, device_type, os, user_agent FROM auth_sessions WHERE #{where} ORDER BY created_at",
+            "SELECT id, scopes, label, created_at, expires_at, last_connected_at, device_type, os, user_agent, proof_jkt FROM auth_sessions WHERE #{where} ORDER BY created_at",
             args
           ) do
       %{
         "sessionId" => id,
         "subject" => "client",
         "scopes" => String.split(scopes),
-        "method" => "bearer-access-token",
+        "method" => session_method(jkt),
         "client" =>
           %{"deviceType" => device || device_type(agent)}
           |> put_present("label", label)
@@ -438,6 +505,10 @@ defmodule T3.Auth do
           do: event("clientUpserted", client)
     end)
   end
+
+  @doc "How a session authenticates (`sessionMethod`): with or without a DPoP key."
+  def session_method(nil), do: "bearer-access-token"
+  def session_method(_jkt), do: "dpop-access-token"
 
   defp device_type(nil), do: "unknown"
 
