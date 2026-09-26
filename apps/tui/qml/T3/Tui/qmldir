@@ -8,6 +8,7 @@ SidebarThreadRow 1.0 SidebarThreadRow.qml
 StatusLine 1.0 StatusLine.qml
 Conversation 1.0 Conversation.qml
 ContextMenu 1.0 ContextMenu.qml
+ImageViewer 1.0 ImageViewer.qml
 CommandPalette 1.0 CommandPalette.qml
 ThreadOverlay 1.0 ThreadOverlay.qml
 NewThreadForm 1.0 NewThreadForm.qml

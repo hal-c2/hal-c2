@@ -39,6 +39,8 @@ import {
 import { createThreadActions } from "./threadActions.ts";
 import { createTuiTheme, TUI_THEME_STATE, type TuiTheme } from "./theme.ts";
 import { createThreadView } from "./threadView.ts";
+import type { CellPixels } from "./timelineState.ts";
+import type { InlineImageTransport } from "../terminalGraphics.ts";
 
 /** Published under `status`: the one-line status message and its tone. */
 export interface TuiStatusState {
@@ -117,8 +119,24 @@ export interface HostOptions {
   readonly readLocalImage?: (path: string) => Promise<Uint8Array>;
   /** Decode attached images for their preview (default: `@t3tools/opentui-image`). */
   readonly decodeImage?: ImageDecoder;
+  /**
+   * How inline images reach the terminal ("direct", or "tmux" passthrough);
+   * null or absent: the terminal draws none and attachments stay text lines.
+   */
+  readonly inlineImages?: InlineImageTransport | null;
+  /** Pixel size of a terminal cell, when the terminal reported it (sizes images). */
+  readonly cellPixels?: () => CellPixels | null;
   /** Sees every action dispatched, from QML, keymaps or the palette (tests, debugging). */
   readonly trace?: (action: string, payload: unknown) => void;
+}
+
+/**
+ * Published under `graphics`: the host's inline-image decision. Bricks draw
+ * attachment previews with the Kitty protocol only when `inlineImages` is set;
+ * "tmux" means the drawing goes through tmux passthrough to the outer terminal.
+ */
+export interface TuiGraphicsState {
+  readonly inlineImages: InlineImageTransport | null;
 }
 
 /** Published under `clock`: when the sidebar's next time boundary (a snooze wake) is due. */
@@ -235,6 +253,7 @@ export function createHost(options: HostOptions): Host {
     plugins: { items: [] } satisfies TuiPluginsState,
     problems: { items: [] },
     connection: connectionState("connecting"),
+    graphics: { inlineImages: options.inlineImages ?? null } satisfies TuiGraphicsState,
   });
 
   let pluginPort: PluginPort | null = null;
@@ -271,6 +290,9 @@ export function createHost(options: HostOptions): Host {
     mode: () => mode,
     setMode: (next) => setMode(next),
     nowMs: () => Date.parse(now()),
+    inlineImages: (options.inlineImages ?? null) !== null,
+    ...(options.cellPixels ? { cellPixels: options.cellPixels } : {}),
+    size: () => size,
   });
   let layout: TuiLayoutState;
   const publishLayout = () => {
@@ -928,6 +950,7 @@ export function createHost(options: HostOptions): Host {
       publishSidebar();
       terminal.sync();
       files.sync();
+      threadView.resize();
     },
     Shell: { state, dispatch },
     Theme: createTuiTheme(),
@@ -936,6 +959,7 @@ export function createHost(options: HostOptions): Host {
       await addProject.settled();
       await files.settled();
       await terminal.settled();
+      await threadView.settled();
     },
     attachPlugins: (port) => {
       pluginPort = port;

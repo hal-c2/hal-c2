@@ -30,6 +30,7 @@ Item {
     Keymap { priority: 1; enabled: keys.mode === "contextMenu"; bindings: keys.layers.contextMenu; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "rename"; bindings: keys.layers.rename; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "confirmDelete"; bindings: keys.layers.confirmDelete; onActivated: (action, event) => keys.run(action, event) }
+    Keymap { priority: 1; enabled: keys.mode === "imagePreview"; bindings: keys.layers.imagePreview; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "diff"; bindings: keys.layers.diff; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "files"; bindings: keys.layers.files; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "settings"; bindings: keys.layers.settings; onActivated: (action, event) => keys.run(action, event) }

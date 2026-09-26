@@ -13,7 +13,9 @@ import {
   derivePendingUserInputs,
   type PendingUserInput,
 } from "../userInput.ts";
-import type { TuiMode } from "./layoutState.ts";
+import { createAttachmentPreviews } from "./attachmentPreviews.ts";
+import { buildImageViewerState, type TuiImageViewerState } from "./imageViewer.ts";
+import type { TuiMode, TuiSize } from "./layoutState.ts";
 import {
   nextThreadAlerts,
   OPEN_THREAD_ACTION,
@@ -25,14 +27,15 @@ import {
   checkpointDirPaths,
   EMPTY_TIMELINE_VIEW,
   TIMELINE_WINDOW_SIZE,
+  type CellPixels,
   type TimelineState,
   type TimelineView,
 } from "./timelineState.ts";
 
 // The open thread's view state (port of the timeline, approval, question,
 // plan, revert and diff parts of ChatView). Publishes `timeline`,
-// `timelineScroll`, `approvals`, `userInput`, `threadHints`, `revert`, `diff`
-// and `notifications`, and handles their actions.
+// `timelineScroll`, `approvals`, `userInput`, `threadHints`, `revert`, `diff`,
+// `imageViewer` and `notifications`, and handles their actions.
 
 /** Options a question panel shows at once, scrolled around the highlight. */
 export const USER_INPUT_OPTION_WINDOW = 8;
@@ -46,6 +49,12 @@ export interface ThreadViewOptions {
   readonly setMode: (mode: TuiMode) => void;
   readonly nowMs: () => number;
   readonly palette?: Palette;
+  /** The terminal draws inline images: load previews for image attachments. */
+  readonly inlineImages?: boolean;
+  /** Pixel size of a terminal cell, when known (sizes previews and the viewer). */
+  readonly cellPixels?: () => CellPixels | null;
+  /** The terminal size (the image viewer fills it). */
+  readonly size: () => TuiSize;
 }
 
 export interface ThreadView {
@@ -57,6 +66,10 @@ export interface ThreadView {
   readonly dispatch: (action: string, payload: unknown) => boolean;
   /** "userInput" while a question waits for an answer, otherwise "compose". */
   readonly composeMode: () => TuiMode;
+  /** The terminal was resized (the image viewer refits). */
+  readonly resize: () => void;
+  /** Resolves once attachment links and previews asked for so far have landed. */
+  readonly settled: () => Promise<void>;
 }
 
 interface QuestionState {
@@ -139,6 +152,13 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   let alerts: ReadonlyArray<ThreadAlert> = [];
   let alertSeq = 0;
   let viewedThreadId: string | null = null;
+  let imageViewer: TuiImageViewerState | null = null;
+  const cellPixels = () => options.cellPixels?.() ?? null;
+  const attachments = createAttachmentPreviews({
+    client,
+    inlineImages: options.inlineImages === true,
+    onChange: () => publishTimeline(),
+  });
 
   const activeQuestion = (): PendingUserInput | null => questions[0] ?? null;
   const questionOpen = () => activeQuestion() !== null && !question.deferred;
@@ -163,8 +183,50 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       nowMs: options.nowMs(),
       palette,
       emptyHint: "Select a thread with Alt+↑/↓ or click",
+      attachments: attachments.get,
+      cellPixels: cellPixels(),
     });
     state.set("timeline", timeline);
+  };
+
+  // --- image viewer --------------------------------------------------------
+
+  const imageAttachment = (id: string) => {
+    for (const message of detail?.messages ?? []) {
+      const found = message.attachments?.find(
+        (attachment) => attachment.type === "image" && attachment.id === id,
+      );
+      if (found) return found;
+    }
+    return null;
+  };
+
+  const viewImage = (id: string | null) => {
+    const attachment = id === null ? null : imageAttachment(id);
+    const image = attachment ? attachments.get(attachment.id).image : null;
+    imageViewer =
+      attachment && image
+        ? buildImageViewerState({
+            attachment,
+            image,
+            size: options.size(),
+            cellPixels: cellPixels(),
+          })
+        : null;
+    state.set("imageViewer", imageViewer);
+  };
+
+  const openImage = (id: unknown) => {
+    if (typeof id !== "string") return;
+    viewImage(id);
+    if (imageViewer) options.setMode("imagePreview");
+  };
+
+  /** Close the viewer; the timeline under it never moved. */
+  const closeImage = () => {
+    if (!imageViewer) return;
+    viewImage(null);
+    if (options.mode() === "imagePreview") options.setMode("compose");
   };
 
   const requestScroll = (to: "top" | "bottom" | null, by = 0) => {
@@ -604,6 +666,8 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       approvalIndex = 0;
       if (diff.open) closeDiff();
       if (options.mode() === "revert") closeRevert();
+      closeImage();
+      attachments.forgetFailures();
     }
     approvals = detail ? derivePendingApprovals(detail.activities) : [];
     approvalIndex = Math.min(approvalIndex, Math.max(0, approvals.length - 1));
@@ -700,6 +764,12 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       case "timeline.files.toggleAll":
         toggleAllDirs(Number(field(payload, "turnCount")));
         return true;
+      case "image.open":
+        openImage(field(payload, "id"));
+        return true;
+      case "image.close":
+        closeImage();
+        return true;
       case "link.open": {
         const url = field(payload, "url");
         if (typeof url === "string") store.setStatus(url, "info");
@@ -767,6 +837,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
 
   publishDiff();
   publishRevert();
+  state.set("imageViewer", imageViewer);
 
   return {
     sync,
@@ -777,5 +848,9 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     },
     dispatch,
     composeMode,
+    resize: () => {
+      if (imageViewer) viewImage(imageViewer.id);
+    },
+    settled: attachments.settled,
   };
 }

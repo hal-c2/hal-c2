@@ -27,6 +27,7 @@ import {
   workLogStatusKind,
   type WorkLogEntry,
 } from "../worklog.ts";
+import type { AttachmentPreview } from "./attachmentPreviews.ts";
 import { chunk, markdownLines, styled, type StyledText } from "./styledText.ts";
 
 // The conversation as published under `timeline` (port of MessagesTimeline):
@@ -77,7 +78,27 @@ export interface TimelineLine {
     readonly action: string;
     readonly payload: unknown;
   } | null;
+  /** An inline image drawn in place of the text (only when the terminal draws images). */
+  readonly image: TimelineImage | null;
 }
+
+/** An image attachment's inline preview, `columns` × `rows` cells, aspect kept. */
+export interface TimelineImage {
+  readonly id: string;
+  /** Encoded image bytes the Image brick draws. */
+  readonly source: Uint8Array;
+  readonly columns: number;
+  readonly rows: number;
+}
+
+/** Pixel size of one terminal cell. */
+export interface CellPixels {
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Used until the terminal reports its pixel size (the old TUI's fallback). */
+export const FALLBACK_CELL_PIXELS: CellPixels = { width: 18, height: 35 };
 
 export interface TimelineItem {
   readonly key: string;
@@ -122,6 +143,10 @@ export interface TimelineInput {
   readonly nowMs: number;
   readonly palette: Palette;
   readonly emptyHint: string;
+  /** Image attachments' links and previews; without it every link reads unavailable. */
+  readonly attachments?: (attachmentId: string) => AttachmentPreview;
+  /** Sizes inline previews (default: `FALLBACK_CELL_PIXELS`). */
+  readonly cellPixels?: CellPixels | null;
 }
 
 const line = (
@@ -129,7 +154,7 @@ const line = (
   action: string | null = null,
   payload: unknown = null,
   right: TimelineLine["right"] = null,
-): TimelineLine => ({ text, action, payload, right });
+): TimelineLine => ({ text, action, payload, right, image: null });
 
 const item = (
   key: string,
@@ -176,7 +201,14 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
   const window = resolveTimelineWindow(rows.length, view.windowEnd);
   const showingLatest = window.end === rows.length;
   const checkpointByMessage = changedFilesByMessage(detail.checkpoints);
-  const ctx: RowContext = { palette, width, view, checkpointByMessage };
+  const ctx: RowContext = {
+    palette,
+    width,
+    view,
+    checkpointByMessage,
+    attachments: input.attachments ?? (() => UNAVAILABLE_ATTACHMENT),
+    cellPixels: input.cellPixels ?? FALLBACK_CELL_PIXELS,
+  };
 
   const items: TimelineItem[] = [];
   if (window.start > 0 || input.hasOlderTurns) {
@@ -298,6 +330,91 @@ interface RowContext {
   readonly width: number;
   readonly view: TimelineView;
   readonly checkpointByMessage: Map<string, OrchestrationCheckpointSummary>;
+  readonly attachments: (attachmentId: string) => AttachmentPreview;
+  readonly cellPixels: CellPixels;
+}
+
+const UNAVAILABLE_ATTACHMENT: AttachmentPreview = {
+  link: { state: "unavailable" },
+  image: null,
+};
+
+// The web bounds conversation previews to a ~206x220px grid cell; terminal
+// cells are chunky, so the TUI gets twice that pixel box and scales down into
+// it (never up).
+const PREVIEW_MAX_WIDTH_PX = 420;
+const PREVIEW_MAX_HEIGHT_PX = 440;
+/** The least room the link part of an attachment line keeps before it is clipped. */
+const ATTACHMENT_TAIL_MIN = 8;
+
+type ImageAttachment = { readonly id: string; readonly name: string; readonly sizeBytes: number };
+
+/** `▣ name · 12 KB`: what an image attachment is called everywhere. */
+export function attachmentLabel(attachment: Pick<ImageAttachment, "name" | "sizeBytes">): string {
+  const sizeKb = Math.max(1, Math.round(attachment.sizeBytes / 1024));
+  return `${TOOL_ICONS.imageView.glyph} ${attachment.name} · ${sizeKb} KB`;
+}
+
+/** The attachment's link part: its URL, or why there is none yet. */
+function attachmentLinkText(link: AttachmentPreview["link"]): string {
+  if (link.state === "ready") return link.url;
+  return link.state === "pending" ? "resolving link…" : "link unavailable";
+}
+
+/** Cells a preview takes: scaled into the preview box, never up, then into `maxColumns`. */
+export function previewCells(
+  image: { readonly imageWidth: number; readonly imageHeight: number },
+  maxColumns: number,
+  cell: CellPixels,
+): { readonly columns: number; readonly rows: number } {
+  const scale = Math.min(
+    1,
+    PREVIEW_MAX_WIDTH_PX / image.imageWidth,
+    PREVIEW_MAX_HEIGHT_PX / image.imageHeight,
+  );
+  const columns = Math.min(
+    Math.max(1, Math.round((image.imageWidth * scale) / cell.width)),
+    Math.max(1, maxColumns),
+  );
+  const rows = Math.max(
+    1,
+    Math.round((image.imageHeight / image.imageWidth) * columns * (cell.width / cell.height)),
+  );
+  return { columns, rows };
+}
+
+/**
+ * An image attachment: its label and link line (a click opens the link), and
+ * the inline preview under it once loaded (a click opens it full size).
+ */
+function attachmentLines(
+  attachment: ImageAttachment,
+  lineWidth: number,
+  ctx: RowContext,
+): TimelineLine[] {
+  const { link, image } = ctx.attachments(attachment.id);
+  const label = attachmentLabel(attachment);
+  const linkText = attachmentLinkText(link);
+  const tail = image ? `click image to expand · ${linkText}` : linkText;
+  const tailWidth = Math.max(ATTACHMENT_TAIL_MIN, lineWidth - Bun.stringWidth(label) - 2);
+  const lines = [
+    line(
+      styled(
+        chunk(label, { fg: ctx.palette.accent }),
+        chunk(`  ${clip(tail, tailWidth)}`, { fg: ctx.palette.dim }),
+      ),
+      link.state === "ready" ? "link.open" : null,
+      link.state === "ready" ? { url: link.url } : null,
+    ),
+  ];
+  if (image) {
+    const cells = previewCells(image, lineWidth, ctx.cellPixels);
+    lines.push({
+      ...line(styled(), "image.open", { id: attachment.id }),
+      image: { id: attachment.id, source: image.source, ...cells },
+    });
+  }
+  return lines;
 }
 
 function pushRow(items: TimelineItem[], row: TimelineRow, ctx: RowContext): void {
@@ -334,25 +451,23 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
   const rawBody = message.text.trim().length > 0 ? message.text : "…";
   const body = markdownLines(linkifyTimelineUrls(rawBody), palette);
   const images = (message.attachments ?? []).filter((attachment) => attachment.type === "image");
-  const imageLines = images.map((attachment) =>
-    line(
-      styled(
-        chunk(
-          `${TOOL_ICONS.imageView.glyph} ${attachment.name} · ${Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB`,
-          { fg: palette.accent },
-        ),
-      ),
-    ),
-  );
 
   if (message.role === "user") {
     const maxBubble = Math.max(8, Math.floor(width * 0.8));
     const canCollapse = shouldCollapseUserMessage(rawBody);
     const toggleWidth = canCollapse ? Bun.stringWidth("⌄ Show full message") : 1;
+    // An attachment's label and link, or its preview, widen the bubble as far as it may go.
+    const attachmentWidth = images.length > 0 ? maxBubble - 4 : 0;
     const longest = rawBody
       .split("\n")
       .reduce((max, text) => Math.max(max, Bun.stringWidth(text)), toggleWidth);
-    const bubbleWidth = Math.max(1, Math.min(width, maxBubble, longest + 4));
+    const bubbleWidth = Math.max(
+      1,
+      Math.min(width, maxBubble, Math.max(longest, attachmentWidth) + 4),
+    );
+    const imageLines = images.flatMap((attachment) =>
+      attachmentLines(attachment, bubbleWidth - 4, ctx),
+    );
     const expanded = ctx.view.expandedMessages.has(message.id);
     const shown = canCollapse && !expanded ? clipRows(body, bubbleWidth - 4) : body;
     items.push(
@@ -381,6 +496,7 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
     return;
   }
 
+  const imageLines = images.flatMap((attachment) => attachmentLines(attachment, width, ctx));
   items.push(
     item(row.id, "message", width, [...body.map((text) => line(text)), ...imageLines], {
       marginTop: 1,

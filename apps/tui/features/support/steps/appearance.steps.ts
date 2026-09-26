@@ -10,7 +10,46 @@ import type { TuiSidebarState } from "../../../src/host/sidebarState.ts";
 import { scheduleColorCapabilityLog } from "../../../src/terminalStartup.ts";
 import { shell } from "../fakeClient.ts";
 import { changes, ready, scm, setCheckout, settle, vcsStatus } from "../gitWorld.ts";
-import { boot, snapshot, useClient, type World } from "../world.ts";
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
+import { decodeImage } from "@t3tools/opentui-image";
+import type { QmlObject } from "opentui-qml";
+
+import { createAttachmentImageCache } from "../../../src/attachmentImages.ts";
+import { FALLBACK_CELL_PIXELS } from "../../../src/host/timelineState.ts";
+import { inlineImageTransport } from "../../../src/terminalGraphics.ts";
+import { TUI_RENDERER_CONFIG } from "../../../src/terminalStartup.ts";
+import { addThread, flush, ui } from "../environment.ts";
+import { launchSetup, type LaunchWorld } from "../launchWorld.ts";
+import { thread } from "../fakeClient.ts";
+import {
+  hostState,
+  message,
+  plain,
+  openThread,
+  timelineText,
+  type ThreadWorld,
+} from "../threadWorld.ts";
+import {
+  click,
+  contextMenu,
+  findOnScreen,
+  rightClick,
+  rowPosition,
+  sidebar,
+  threadRows,
+  type ThreadRow,
+} from "../threadUi.ts";
+import {
+  advance,
+  boot,
+  findObject,
+  geometry,
+  pressKey,
+  settle as settleWorld,
+  snapshot,
+  useClient,
+  type World,
+} from "../world.ts";
 
 interface AppearanceWorld extends World {
   /** Timers the startup scheduled, run by "… two seconds later". */
@@ -310,4 +349,439 @@ step("{string} is tinted for its file type", (ctx: World, path: string) => {
 
 step("{string} is dimmed", (ctx: World, path: string) => {
   expectColour(spanOn(ctx, path, path).fg, THEME.dim);
+});
+
+// --- mouse ---
+
+/** Two threads in the list; the first opens selected at boot. */
+async function twoThreads(ctx: World): Promise<{ active: string; other: ThreadRow }> {
+  addThread(ctx, "Fix the login form");
+  addThread(ctx, "Tidy the docs");
+  await ui(ctx);
+  const active = sidebar(ctx).activeThreadKey;
+  const other = threadRows(ctx).find((row) => row.key !== active);
+  if (!active || !other) throw new Error("expected one open thread and another listed");
+  return { active, other };
+}
+
+interface MouseWorld extends World {
+  /** The thread the pointer acted on, and the thread open before it did. */
+  pointed?: { key: string; activeBefore: string };
+  /** Actions dispatched before the pointer acted. */
+  dispatchedBefore?: number;
+}
+
+step("the user clicks a thread in the list", async (ctx: MouseWorld) => {
+  const { active, other } = await twoThreads(ctx);
+  ctx.pointed = { key: other.key, activeBefore: active };
+  await click(ctx, rowPosition(ctx, other.thread.title));
+});
+
+step("that thread opens", (ctx: MouseWorld) => {
+  expect(sidebar(ctx).activeThreadKey).toBe(ctx.pointed!.key);
+  expect(ctx.host!.state.get("page")).toMatchObject({ kind: "thread", key: ctx.pointed!.key });
+});
+
+step("the user right-clicks a thread in the list", async (ctx: MouseWorld) => {
+  const { active, other } = await twoThreads(ctx);
+  ctx.pointed = { key: other.key, activeBefore: active };
+  await rightClick(ctx, rowPosition(ctx, other.thread.title));
+});
+
+step("the user presses and holds on a thread in the list", async (ctx: MouseWorld) => {
+  const { active, other } = await twoThreads(ctx);
+  ctx.pointed = { key: other.key, activeBefore: active };
+  const at = rowPosition(ctx, other.thread.title);
+  await ctx.app!.mockMouse.pressDown(at.x, at.y);
+  await ctx.app!.renderOnce();
+  await advance(ctx, 500);
+  await ctx.app!.mockMouse.release(at.x, at.y);
+  await flush(ctx);
+});
+
+step(
+  "the thread context menu opens without changing the selected thread",
+  async (ctx: MouseWorld) => {
+    expect(contextMenu(ctx)?.threadKey).toBe(ctx.pointed!.key);
+    expect(sidebar(ctx).activeThreadKey).toBe(ctx.pointed!.activeBefore);
+    await snapshot(ctx);
+    expect(geometry(findObject(ctx, "contextMenu")).visible).toBe(true);
+  },
+);
+
+step("the user drags across text in the timeline", async (ctx: MouseWorld & ThreadWorld) => {
+  await openThread(ctx, {
+    ...thread(),
+    messages: [message("m1", "assistant", "The quick brown fox jumps over the lazy dog", 1)],
+  } as never);
+  const at = await findOnScreen(ctx, "quick brown fox");
+  if (!at) throw new Error(`the message is not on screen:\n${await snapshot(ctx)}`);
+  ctx.dispatchedBefore = ctx.dispatched!.length;
+  await ctx.app!.mockMouse.drag(at.x, at.y, at.x + "quick brown fox".length, at.y);
+  await settleWorld(ctx);
+});
+
+step("the terminal's native text selection works", (ctx: MouseWorld) => {
+  // Pointer motion is never reported, so the terminal keeps drag-selection;
+  // a drag inside the client selects text rather than acting.
+  expect(TUI_RENDERER_CONFIG.enableMouseMovement).toBe(false);
+  expect(ctx.dispatched!.slice(ctx.dispatchedBefore)).toEqual([]);
+  expect(ctx.app!.renderer.getSelection()?.getSelectedText()).toContain("quick brown fox");
+});
+
+const LONG_MESSAGE = Array.from({ length: 30 }, (_, i) => `line ${i + 1} of the pasted log`).join(
+  "\n",
+);
+
+step("one click reaches the same control more than once", async (ctx: MouseWorld & ThreadWorld) => {
+  await openThread(ctx, {
+    ...thread(),
+    messages: [message("m1", "user", LONG_MESSAGE, 1)],
+  } as never);
+  const at = await findOnScreen(ctx, "Show full message");
+  if (!at) throw new Error(`no collapsed message on screen:\n${await snapshot(ctx)}`);
+  ctx.dispatchedBefore = ctx.dispatched!.length;
+  // One press the terminal reported twice, handled before anything else runs.
+  const press = Buffer.from(`\x1b[<0;${at.x + 1};${at.y + 1}M`);
+  ctx.app!.renderer.stdin.emit("data", press);
+  ctx.app!.renderer.stdin.emit("data", press);
+  expect(ctx.dispatched!.slice(ctx.dispatchedBefore)).toEqual([]);
+  ctx.app!.renderer.stdin.emit("data", Buffer.from(`\x1b[<0;${at.x + 1};${at.y + 1}m`));
+  await settleWorld(ctx);
+});
+
+step("the action runs once, after the click has been handled", async (ctx: MouseWorld) => {
+  const toggles = ctx
+    .dispatched!.slice(ctx.dispatchedBefore)
+    .filter((entry) => entry.action === "timeline.message.toggle");
+  expect(toggles).toHaveLength(1);
+  expect(await snapshot(ctx)).toContain("Show less");
+});
+
+// --- inline images ---
+
+// A 160×80 PNG: twice as wide as it is tall, so a stretched preview shows.
+const PNG = Uint8Array.from(
+  atob(
+    "iVBORw0KGgoAAAANSUhEUgAAAKAAAABQCAIAAAARP+ljAAAAlUlEQVR42u3RQQ0AAAjEsJODRCQiCxO8SJMpWFM9elwsACzAAizAAizAAgxYgAVYgAVYgAUYsAALsAALsAALsAADFmABFmABFmABBizAAizAAizAAgxYgAVYgAVYgAVYgAELsAALsAALsAADFmABFmABFmABBuwCYAEWYAEWYAEWYMACLMACLMACLMCABViABViAddUCiP1UGxK/LD4AAAAASUVORK5CYII=",
+  ),
+  (char) => char.charCodeAt(0),
+);
+const PNG_ASPECT = 160 / 80;
+
+interface ImageFixture {
+  /** The link the server hands out: a URL, none, or never answered. */
+  link: "ready" | "unavailable" | "pending";
+  /** Preview downloads that fail with a network error before one succeeds. */
+  networkFailures: number;
+  /** Advertised download size (the real one by default). */
+  contentLength: number;
+  fetches: number;
+  decodes: number;
+}
+
+interface ImageWorld extends LaunchWorld, ThreadWorld {
+  images?: ImageFixture;
+  /** tmux's global environment (`tmux show-environment -g`). */
+  tmuxEnvironment?: string;
+  /** The timeline's scroll offset when the viewer opened. */
+  scrollBefore?: number;
+}
+
+const ATTACHMENT = {
+  type: "image",
+  id: "att-screenshot",
+  name: "screenshot.png",
+  mimeType: "image/png",
+  sizeBytes: 48 * 1024,
+} as const;
+const ATTACHMENT_URL = "https://t3.example/attachments/att-screenshot";
+
+function images(ctx: ImageWorld): ImageFixture {
+  return (ctx.images ??= {
+    link: "ready",
+    networkFailures: 0,
+    contentLength: PNG.byteLength,
+    fetches: 0,
+    decodes: 0,
+  });
+}
+
+/** A terminal that draws Kitty graphics, for scenarios about the preview itself. */
+const kittyTerminal = (ctx: ImageWorld) => Object.assign(launchSetup(ctx).env, TERMINALS_KITTY);
+const TERMINALS_KITTY = { TERM: "xterm-kitty", TERM_PROGRAM: undefined };
+
+/**
+ * Open a thread whose user message carries a screenshot, the client deciding
+ * inline images from the terminal environment as the entry point does and
+ * loading previews through the real attachment cache.
+ */
+async function showImageMessage(
+  ctx: ImageWorld,
+  extra: { messagesAround?: number; threads?: number } = {},
+): Promise<void> {
+  const fixture = images(ctx);
+  const transport = inlineImageTransport(launchSetup(ctx).env, () => ctx.tmuxEnvironment ?? "");
+  ctx.hostOptions = { ...ctx.hostOptions, inlineImages: transport };
+  const cache = createAttachmentImageCache({
+    fetcher: async () => {
+      fixture.fetches += 1;
+      if (fixture.networkFailures > 0) {
+        fixture.networkFailures -= 1;
+        throw new TypeError("fetch failed");
+      }
+      return new Response(PNG, {
+        headers: { "content-type": "image/png", "content-length": String(fixture.contentLength) },
+      });
+    },
+    decoder: (encoded) => {
+      fixture.decodes += 1;
+      return decodeImage(encoded, { maxWidth: 720, maxHeight: 480 });
+    },
+  });
+  const replies = (from: number) =>
+    Array.from({ length: extra.messagesAround ?? 0 }, (_, i) =>
+      message(
+        `m-${from + i}`,
+        "assistant",
+        `Reply ${from + i}\n\nSecond paragraph of reply ${from + i}.`,
+        from + i,
+      ),
+    );
+  const messages = [
+    ...replies(1),
+    message("m-image", "user", "Here is the broken layout", 100, {
+      attachments: [ATTACHMENT],
+    } as never),
+    ...replies(200),
+  ];
+  if (fixture.link === "pending") ctx.held = (ctx.held ?? 0) + 1;
+  const [first] = shell().threads;
+  await openThread(ctx, { ...thread(), messages } as never, {
+    ...((extra.threads ?? 1) > 1 && {
+      shellSnapshot: shell([first!, { ...first!, id: "t2" as never, title: "Thread two" }]),
+    }),
+    getAttachmentUrl: async () => {
+      if (fixture.link === "pending") return new Promise<string | null>(() => {});
+      return fixture.link === "ready" ? ATTACHMENT_URL : null;
+    },
+    getAttachmentImage: (attachmentId, url) => cache.load(attachmentId, url),
+  });
+  await settleWorld(ctx);
+}
+
+/** The inline preview's Image node, or null when none is drawn. */
+function inlineImage(ctx: World): QmlObject | null {
+  try {
+    return findObject(ctx, `attachmentImage-${ATTACHMENT.id}`);
+  } catch {
+    return null;
+  }
+}
+
+/** The timeline line that names the attachment. */
+function attachmentLine(ctx: World): string {
+  const found = timelineText(ctx).find((text) => text.includes(ATTACHMENT.name));
+  if (!found) throw new Error(`no attachment line in:\n${timelineText(ctx).join("\n")}`);
+  return found;
+}
+
+/**
+ * The attachment's link as the line shows it: the URL, clipped with "…" when
+ * the bubble is narrower, and a click on the line opens the whole URL.
+ */
+function expectAttachmentLink(ctx: World): void {
+  const text = attachmentLine(ctx);
+  const shown = text.slice(text.indexOf("KB") + 2).trim();
+  expect(shown.length).toBeGreaterThan(8);
+  expect(ATTACHMENT_URL.startsWith(shown.replace(/…$/, ""))).toBe(true);
+  const entry = hostState(ctx, "timeline")
+    .items.flatMap((item: { lines: unknown[] }) => item.lines)
+    .find((line: { text: unknown }) => plain(line.text as never).includes(ATTACHMENT.name));
+  expect(entry).toMatchObject({ action: "link.open", payload: { url: ATTACHMENT_URL } });
+}
+
+async function expectInlineImage(ctx: ImageWorld, transport: "direct" | "tmux"): Promise<void> {
+  expect(hostState(ctx, "graphics")).toEqual({ inlineImages: transport });
+  await snapshot(ctx);
+  const image = inlineImage(ctx);
+  expect(image).not.toBeNull();
+  expect(geometry(image!)).toMatchObject({ visible: true });
+  expect(geometry(image!).width).toBeGreaterThan(0);
+  expect(image!.get("protocol")).toBe("kitty");
+  expect(image!.get("status")).toBe("ready");
+}
+
+step("the terminal client runs inside tmux in Ghostty", (ctx: ImageWorld) => {
+  Object.assign(launchSetup(ctx).env, TMUX_PANE);
+  ctx.tmuxEnvironment = "TERM=xterm-ghostty\nTERM_PROGRAM=ghostty\n";
+});
+
+step("the terminal client runs inside tmux in a terminal it cannot identify", (ctx: ImageWorld) => {
+  Object.assign(launchSetup(ctx).env, TMUX_PANE);
+  ctx.tmuxEnvironment = "TERM=xterm-256color\nTERM_PROGRAM=SomeTerm\n";
+});
+
+// Inside tmux the pane names tmux, not the terminal around it.
+const TMUX_PANE = {
+  TMUX: "/tmp/tmux-1000/default,4242,0",
+  TERM: "tmux-256color",
+  TERM_PROGRAM: "tmux",
+};
+
+step("a message with an image attachment is shown", (ctx: ImageWorld) => showImageMessage(ctx));
+
+step("the image is drawn inline in the timeline", (ctx: ImageWorld) =>
+  expectInlineImage(ctx, "direct"),
+);
+
+step("the image is drawn inline through tmux passthrough", (ctx: ImageWorld) =>
+  expectInlineImage(ctx, "tmux"),
+);
+
+step("no image is drawn", async (ctx: ImageWorld) => {
+  expect(hostState(ctx, "graphics")).toEqual({ inlineImages: null });
+  await snapshot(ctx);
+  expect(inlineImage(ctx)).toBeNull();
+  expect(images(ctx).fetches).toBe(0);
+});
+
+step("the attachment shows its name, size and link", async (ctx: ImageWorld) => {
+  expect(attachmentLine(ctx)).toContain("screenshot.png · 48 KB");
+  expectAttachmentLink(ctx);
+  expect(await snapshot(ctx)).toContain("screenshot.png · 48 KB");
+});
+
+step(
+  /^an image attachment whose link is (still loading|unavailable)$/,
+  async (ctx: ImageWorld, state: string) => {
+    images(ctx).link = state === "still loading" ? "pending" : "unavailable";
+    await showImageMessage(ctx);
+  },
+);
+
+step("the attachment line reads {string}", async (ctx: ImageWorld, text: string) => {
+  expect(attachmentLine(ctx)).toContain(text);
+  expect(await snapshot(ctx)).toContain(text);
+});
+
+step("an image attachment larger than the preview byte limit", async (ctx: ImageWorld) => {
+  kittyTerminal(ctx);
+  images(ctx).contentLength = PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1;
+  await showImageMessage(ctx);
+});
+
+step("no inline preview is drawn", async (ctx: ImageWorld) => {
+  await snapshot(ctx);
+  expect(images(ctx).fetches).toBe(1);
+  expect(images(ctx).decodes).toBe(0);
+  expect(inlineImage(ctx)).toBeNull();
+});
+
+step("the attachment line stays visible", async (ctx: ImageWorld) => {
+  expectAttachmentLink(ctx);
+  expect(await snapshot(ctx)).toContain("screenshot.png · 48 KB");
+});
+
+step("an image preview failed because of a network error", async (ctx: ImageWorld) => {
+  kittyTerminal(ctx);
+  images(ctx).networkFailures = 1;
+  await showImageMessage(ctx, { threads: 2 });
+  expect(images(ctx).fetches).toBe(1);
+  expect(inlineImage(ctx)).toBeNull();
+});
+
+step("the message is shown again", async (ctx: ImageWorld) => {
+  // Away to the other thread and back.
+  await pressKey(ctx, "Alt+Down");
+  await settleWorld(ctx);
+  await pressKey(ctx, "Alt+Up");
+  await settleWorld(ctx);
+  expect(ctx.host!.state.get("page")).toMatchObject({ kind: "thread", threadId: "t1" });
+});
+
+step("the client tries to load the preview again", async (ctx: ImageWorld) => {
+  expect(images(ctx).fetches).toBe(2);
+  await snapshot(ctx);
+  expect(inlineImage(ctx)).not.toBeNull();
+});
+
+/** Click the inline preview where it is drawn. */
+async function clickImage(ctx: ImageWorld): Promise<void> {
+  await snapshot(ctx);
+  const image = inlineImage(ctx);
+  if (!image) throw new Error("no inline image to click");
+  const { x, y } = (image as unknown as { renderable: { x: number; y: number } }).renderable;
+  await ctx.app!.click(x + 1, y + 1);
+  await settleWorld(ctx);
+}
+
+step("an inline image in the timeline", async (ctx: ImageWorld) => {
+  kittyTerminal(ctx);
+  await showImageMessage(ctx);
+  await expectInlineImage(ctx, "direct");
+});
+
+step("the user clicks the image", clickImage);
+
+step("the image opens fitted inside the terminal without distortion", async (ctx: ImageWorld) => {
+  expect(hostState(ctx, "mode")).toBe("imagePreview");
+  const viewer = hostState(ctx, "imageViewer");
+  expect(viewer).toMatchObject({ id: ATTACHMENT.id });
+  await snapshot(ctx);
+  const image = findObject(ctx, "imageViewerImage");
+  expect(geometry(image)).toMatchObject({
+    visible: true,
+    width: viewer.columns,
+    height: viewer.rows,
+  });
+  expect(image.get("status")).toBe("ready");
+  const drawn = (image as unknown as { renderable: { x: number; y: number } }).renderable;
+  expect(drawn.x).toBeGreaterThanOrEqual(0);
+  expect(drawn.y).toBeGreaterThanOrEqual(0);
+  expect(drawn.x + viewer.columns).toBeLessThanOrEqual(ctx.columns!);
+  expect(drawn.y + viewer.rows).toBeLessThanOrEqual(ctx.rows!);
+  // It fills the room it has in one direction and keeps the image's shape:
+  // cells are taller than wide, so the rows follow from the columns.
+  const cell = FALLBACK_CELL_PIXELS;
+  const expectedRows = (viewer.columns * cell.width) / PNG_ASPECT / cell.height;
+  expect(Math.abs(viewer.rows - expectedRows)).toBeLessThanOrEqual(1);
+  expect(viewer.columns >= ctx.columns! - 4 || viewer.rows >= ctx.rows! - 4).toBe(true);
+});
+
+const timelineScroll = (ctx: World) => Number(findObject(ctx, "timeline").get("contentY"));
+
+step("an image is open full size", async (ctx: ImageWorld) => {
+  kittyTerminal(ctx);
+  await showImageMessage(ctx, { messagesAround: 15 });
+  // Scroll back up until the screenshot is on screen, away from the newest reply.
+  for (let page = 0; page < 20; page += 1) {
+    await snapshot(ctx);
+    const image = inlineImage(ctx) as unknown as { renderable: { y: number } } | null;
+    const scroller = findObject(ctx, "timeline") as unknown as {
+      renderable: { y: number; height: number };
+    };
+    const y = image?.renderable.y ?? -1;
+    if (y >= scroller.renderable.y && y < scroller.renderable.y + scroller.renderable.height - 2)
+      break;
+    await pressKey(ctx, "PgUp");
+    await settleWorld(ctx);
+  }
+  ctx.scrollBefore = timelineScroll(ctx);
+  expect(ctx.scrollBefore).toBeGreaterThan(0);
+  await clickImage(ctx);
+  expect(hostState(ctx, "imageViewer")).not.toBeNull();
+});
+
+step("the image closes", async (ctx: ImageWorld) => {
+  expect(hostState(ctx, "imageViewer")).toBeNull();
+  expect(hostState(ctx, "mode")).not.toBe("imagePreview");
+  await snapshot(ctx);
+  expect(geometry(findObject(ctx, "imageViewerLayer")).visible).toBe(false);
+});
+
+step("the timeline is at the same scroll position as before", async (ctx: ImageWorld) => {
+  await snapshot(ctx);
+  expect(timelineScroll(ctx)).toBe(ctx.scrollBefore!);
+  expect(inlineImage(ctx)).not.toBeNull();
 });

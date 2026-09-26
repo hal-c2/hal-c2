@@ -91,5 +91,6 @@ Window {
         }
     }
 
+    ImageViewer {}
     ContextMenu {}
 }

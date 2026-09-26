@@ -9,7 +9,7 @@ import { installKittyClipboardExtension } from "@t3tools/opentui-image";
 import { runShell } from "opentui-qml";
 
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
-import { detectKittyGraphicsTerminal } from "./terminalGraphics.ts";
+import { detectInlineImageTransport } from "./terminalGraphics.ts";
 import { createHost } from "./host/host.ts";
 import { enginePluginPort } from "./host/plugins.ts";
 import { readUserConfig } from "./host/userConfig.ts";
@@ -97,12 +97,12 @@ async function main(): Promise<void> {
   // background colour) shows through instead of OpenTUI's opaque default. Mouse
   // motion stays disabled so terminal drag-selection works, while clicks and wheel
   // reporting remain enabled explicitly in the shared renderer configuration.
-  const tmuxPassthrough = detectKittyGraphicsTerminal();
+  const inlineImages = detectInlineImageTransport();
   const renderer = await createCliRenderer(TUI_RENDERER_CONFIG);
 
   scheduleColorCapabilityLog({ log: appendLog, capabilities: () => renderer.capabilities });
   installKittyClipboardExtension(renderer, {
-    tmuxPassthrough,
+    tmuxPassthrough: inlineImages !== null,
   });
 
   let resolveDone: () => void = () => {};
@@ -126,6 +126,15 @@ async function main(): Promise<void> {
     size: { columns: renderer.width, rows: renderer.height },
     onQuit: handleExit,
     log: appendLog,
+    inlineImages,
+    // Cell pixels size image previews; unknown until the terminal reports them.
+    cellPixels: () =>
+      renderer.resolution && renderer.width > 0 && renderer.height > 0
+        ? {
+            width: renderer.resolution.width / renderer.width,
+            height: renderer.resolution.height / renderer.height,
+          }
+        : null,
     copyToClipboard: (text) => {
       renderer.copyToClipboardOSC52(text);
       return renderer.isOsc52Supported();

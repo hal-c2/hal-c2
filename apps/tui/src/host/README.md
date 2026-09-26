@@ -12,8 +12,8 @@ desktop shell's contract names, extended for the terminal), `mode`, `status`,
 `git`, `settings`, `paneScroll`, `terminal`, `files`, `addProject`,
 `keybindings` (`src/keymap.ts`: the chord layers per mode, the reference
 groups and the web parity table), `plugins`, `problems`, `connection` (see
-"Plugins, problems and connection"), and the open thread's keys from
-`threadView.ts` (below).
+"Plugins, problems and connection"), `graphics`, and the open thread's keys
+from `threadView.ts` (below).
 
 - `sidebar` adds the list viewport (`visibleRows`, `scrollTop`,
   `hiddenAbove`/`hiddenBelow`), `scopeLabel`, and a `draft` row while the
@@ -27,7 +27,16 @@ groups and the web parity table), `plugins`, `problems`, `connection` (see
   `editorRows` / `popoverRows`.
 - `page` has `kind: "draft"` while a new-thread draft with a project is open.
 - `contextMenu` (null when closed): the thread menu's `threadKey`, position,
-  size, `rows` (items and separators) and highlighted index.
+  size, `rows` (items and separators) and highlighted index. Opening it never
+  changes which thread is open.
+- `graphics.inlineImages`: the host's one inline-image decision, fixed at
+  start (`HostOptions.inlineImages`, from `detectInlineImageTransport` in
+  `src/terminalGraphics.ts`). `"direct"` for a terminal known to draw Kitty
+  graphics (Ghostty, Kitty, WezTerm, Konsole), `"tmux"` inside tmux when tmux's
+  global environment names such a terminal (drawn through passthrough), null
+  otherwise. There is no probing: an unknown terminal gets no previews, only
+  the attachment's label and link line. Only when it is set does the timeline
+  load previews (`attachmentPreviews.ts`) and add image lines.
 - `overlay` (null when closed): `rename` or `confirmDelete` for a thread.
 - `palette`: `open`, `query`, the filtered `commands`, highlighted `index`.
 - `composer`: the prompt of the open thread or the new-thread draft (text,
@@ -75,6 +84,7 @@ conversation: `settings.open`, `settings.close` (`mode: "settings"`).
 | Key                          | Actions                                                                                                                                                                                                                       |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `timeline`, `timelineScroll` | `timeline.showOlder`, `timeline.showNewer`, `timeline.scroll {by}`, `timeline.workGroup.toggle`, `timeline.fold.toggle`, `timeline.message.toggle`, `timeline.files.toggleDir`, `timeline.files.toggleAll`, `link.open {url}` |
+| `imageViewer`                | `image.open {id}`, `image.close` (`mode: "imagePreview"`)                                                                                                                                                                     |
 | `approvals`                  | `approval.approve`, `approval.decline`, `approval.next`, `approval.previous`                                                                                                                                                  |
 | `userInput`                  | `userInput.move`, `userInput.toggle`, `userInput.answer.set`, `userInput.submit`, `userInput.defer`, `userInput.reopen`                                                                                                       |
 | `threadHints`                | `plan.implement`                                                                                                                                                                                                              |
@@ -82,8 +92,16 @@ conversation: `settings.open`, `settings.close` (`mode: "settings"`).
 | `diff`                       | `diff.open`, `diff.all`, `diff.toggleView`, `diff.next`, `diff.previous`, `diff.close`                                                                                                                                        |
 | `notifications`              | `notification.dismiss`, `notification.action` (thread alerts from `notificationsState.ts`)                                                                                                                                    |
 
+A timeline line with `image` is an attachment preview (`columns` × `rows`
+cells, encoded `source`); its link line reads the URL, "resolving link…" or
+"link unavailable". Previews that failed (network error, over the byte limit)
+and unavailable links are retried when the thread is shown again.
+`imageViewer` (null when closed) is one preview fitted inside the terminal
+with its aspect kept; the timeline stays mounted under it, so closing returns
+to the same scroll position.
+
 `mode` gains `userInput` (a question waits; "compose" resolves to it), `revert`,
-`diff`, and `list` (the thread list has the keys: `sidebar.list.focus`, left
+`diff`, `imagePreview`, and `list` (the thread list has the keys: `sidebar.list.focus`, left
 with Esc or `sidebar.list.blur`; no chord enters it yet). `diff.open {turnCount?, path?}` opens one turn (all changes
 without one); the timeline's changed-file rows and the palette open it.
 

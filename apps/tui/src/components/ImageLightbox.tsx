@@ -3,6 +3,7 @@ import { useRenderer } from "@opentui/react";
 import * as React from "react";
 
 import { clip } from "../format.ts";
+import { fitImageToCells } from "../host/imageViewer.ts";
 import { deferMouseAction } from "../mouse.ts";
 import { usePalette } from "../theme.ts";
 
@@ -15,32 +16,7 @@ export interface ExpandedImagePreview {
   readonly image: ImagePreview;
 }
 
-export function fitImageToCells(input: {
-  readonly imageWidth: number;
-  readonly imageHeight: number;
-  readonly maxColumns: number;
-  readonly maxRows: number;
-  readonly cellWidth: number;
-  readonly cellHeight: number;
-}): { readonly columns: number; readonly rows: number } {
-  const maxColumns = Math.max(1, Math.floor(input.maxColumns));
-  const maxRows = Math.max(1, Math.floor(input.maxRows));
-  const cellWidth = input.cellWidth > 0 ? input.cellWidth : FALLBACK_CELL_WIDTH;
-  const cellHeight = input.cellHeight > 0 ? input.cellHeight : FALLBACK_CELL_HEIGHT;
-  let columns = maxColumns;
-  let rows = Math.max(
-    1,
-    Math.round((input.imageHeight / input.imageWidth) * columns * (cellWidth / cellHeight)),
-  );
-  if (rows > maxRows) {
-    rows = maxRows;
-    columns = Math.max(
-      1,
-      Math.round((input.imageWidth / input.imageHeight) * rows * (cellHeight / cellWidth)),
-    );
-  }
-  return { columns: Math.min(columns, maxColumns), rows: Math.min(rows, maxRows) };
-}
+export { fitImageToCells };
 
 export const ImageLightbox = React.memo(function ImageLightbox({
   preview,
