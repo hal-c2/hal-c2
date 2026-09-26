@@ -40,6 +40,13 @@ export function isHostedStaticApp(url?: URL): boolean {
     return true;
   }
 
+  // The Qt desktop shell serves this bundle from its own loopback origin and
+  // pairs it with an Elixir node, which serves no app: there is no same-origin
+  // server, every environment is remote (apps/desktop-qt/host/webBundle.ts).
+  if (typeof window !== "undefined" && window.halC2Shell !== undefined) {
+    return true;
+  }
+
   // No window, or a window without a location (tests, static render), means
   // no origin to be hosted at.
   if (url === undefined && (typeof window === "undefined" || window.location === undefined)) {

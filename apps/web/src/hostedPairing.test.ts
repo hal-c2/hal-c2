@@ -11,6 +11,7 @@ import {
 describe("hostedPairing", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it("reads hosted pairing host and query token parameters", () => {
@@ -90,5 +91,17 @@ describe("hostedPairing", () => {
 
     vi.stubEnv("VITE_HTTP_URL", "https://backend.example.com");
     expect(isHostedStaticApp(new URL("https://nightly.app.hal-c2.example/"))).toBe(false);
+  });
+
+  it("treats the Qt desktop shell as a static app with only remote environments", () => {
+    vi.stubEnv("VITE_HOSTED_APP_URL", "https://app.hal-c2.example");
+    vi.stubEnv("VITE_HTTP_URL", "");
+    vi.stubEnv("VITE_WS_URL", "");
+    vi.stubGlobal("window", { halC2Shell: {} });
+
+    expect(isHostedStaticApp(new URL("http://127.0.0.1:24680/"))).toBe(true);
+
+    vi.stubEnv("VITE_HTTP_URL", "https://backend.example.com");
+    expect(isHostedStaticApp(new URL("http://127.0.0.1:24680/"))).toBe(false);
   });
 });

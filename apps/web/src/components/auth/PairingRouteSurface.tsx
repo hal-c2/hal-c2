@@ -146,6 +146,10 @@ export function HostedPairingRouteSurface() {
     reportFailure: false,
   });
   const hostedPairingRequestRef = useRef(readHostedPairingRequest());
+  // `auto=1` (the Qt desktop host's own node): open the app once paired.
+  const openAppWhenPairedRef = useRef(
+    new URL(window.location.href).searchParams.get("auto") === "1",
+  );
   const [status, setStatus] = useState<"pairing" | "paired" | "error">(() =>
     hostedPairingRequestRef.current ? "pairing" : "error",
   );
@@ -187,6 +191,9 @@ export function HostedPairingRouteSurface() {
     if (result._tag === "Success") {
       setStatus("paired");
       setMessage(`${request.label || "The environment"} is saved in this browser.`);
+      if (openAppWhenPairedRef.current) {
+        window.location.replace("/");
+      }
       return;
     }
 
