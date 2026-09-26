@@ -2,7 +2,8 @@
 #   apps/desktop-qt/host/main.ts (desktop host: node lifecycle, app bundle, ready URL)
 #   apps/desktop-qt/host/main.test.ts (these scenarios, by name, against a fake node)
 #   apps/desktop-qt/src/BackendProcess.cpp (host process, ready/error lines, stdin close on exit)
-#   apps/desktop-qt/src/main.cpp (--url attach mode, --home-dir)
+#   apps/desktop-qt/src/main.cpp (--url attach mode, --home-dir, --screenshot scripted runs)
+#   apps/desktop-qt/src/WebProfile.cpp (Chromium flags for a run without a display)
 #   apps/server-ex/lib/hal_c2/desktop.ex (bootstrap line on standard input)
 #   apps/web/src/components/auth/PairingRouteSurface.tsx (hosted pairing route, auto=1)
 #   docs/internals/desktop-qt.md (process model)
@@ -133,3 +134,17 @@ Feature: The desktop app runs its own node
         | setting          |
         | HAL_C2_NODE_PORT |
         | HAL_C2_WEB_PORT  |
+
+  Rule: A scripted screenshot shows what the user would see
+
+    @desktop @backlog
+    Scenario: A screenshot taken without a display shows the app's page
+      Given the desktop app runs without a display
+      When the user starts the desktop app asking for a screenshot
+      Then the screenshot shows the app's page inside the window, not an empty view
+
+    @desktop @backlog
+    Scenario: A screenshot of a desktop app that fails to start shows why and quits
+      When the user starts the desktop app asking for a screenshot, with a pairing link for a node that is not running
+      Then the screenshot shows the desktop app saying it cannot reach the node
+      And the desktop app quits with a failure code
