@@ -14,7 +14,7 @@
 #   apps/desktop-qt/src/main.cpp (--home-dir, shell config dir, web profile, --base-dir for the hosted server)
 #   apps/desktop/src/app/DesktopAppActivation.ts (desktop app control socket)
 #   apps/desktop/src/wsl/DesktopWslEnvironment.ts (wsl-runtime inside a distro)
-#   apps/tui/src/index.ts (HAL_C2_TUI_SHELL_DIR, shell/tui)
+#   apps/tui/src/shellConfigDir.ts (HAL_C2_TUI_SHELL_DIR, config/shell/tui)
 #   docs/internals/glossary.md (HAL-C2 home)
 #   docs/internals/desktop-qt.md (web engine profile, shell directory)
 #   docs/operations/development.md (State and ports)
@@ -353,7 +353,7 @@ Feature: Where HAL-C2 keeps its files
       When the user starts the desktop app
       Then its control channel is the same named pipe as before
 
-    @backlog @tui
+    @tui
     Scenario Outline: The terminal client finds the user's shell in the config directory
       Given <setting>
       When the user runs "hal-c2 tui"

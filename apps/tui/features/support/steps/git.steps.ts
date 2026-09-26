@@ -6,6 +6,7 @@ import { expect } from "bun:test";
 import type { TuiLayoutState } from "../../../src/host/layoutState.ts";
 import { step } from "../../steps.ts";
 import { runLaunch } from "../launchWorld.ts";
+import { runStorageLaunch, type StorageWorld } from "../storageWorld.ts";
 import { runOpentuiQml } from "./qml-runtime.steps.ts";
 import {
   CHECKOUTS,
@@ -293,6 +294,8 @@ step("the user runs {string}", async (ctx: World, label: string) => {
   if (label.startsWith("hal-c2 ")) {
     if (label !== "hal-c2 tui")
       throw new Error(`the user runs "${label}": only "hal-c2 tui" launches here`);
+    // storage-layout.feature runs the client entry itself, to see where it reads the shell.
+    if ((ctx as StorageWorld).storage) return runStorageLaunch(ctx);
     await runLaunch(ctx);
     return;
   }

@@ -13,6 +13,7 @@ import { detectInlineImageTransport } from "./terminalGraphics.ts";
 import { createHost } from "./host/host.ts";
 import { enginePluginPort } from "./host/plugins.ts";
 import { readUserConfig } from "./host/userConfig.ts";
+import { resolveShellConfigDir } from "./shellConfigDir.ts";
 import { makeSocketTicketMinter } from "./socketTicket.ts";
 import {
   ensureColorCapabilityEnv,
@@ -47,18 +48,6 @@ function resolveQmlDir(): string {
     : NodePath.join(here, "../qml");
 }
 
-/** Where a user's `shell.qml` (and extra `qml/` modules) override the default shell. */
-function resolveShellConfigDir(): string {
-  return (
-    process.env.HAL_C2_TUI_SHELL_DIR ??
-    NodePath.join(
-      process.env.HAL_C2_HOME ?? NodePath.join(NodeOS.homedir(), ".hal-c2"),
-      "shell",
-      "tui",
-    )
-  );
-}
-
 async function main(): Promise<void> {
   const origin = process.env.HAL_C2_TUI_ORIGIN;
   const bearerToken = process.env.HAL_C2_TUI_BEARER;
@@ -79,7 +68,11 @@ async function main(): Promise<void> {
 
   // Read the user's keymap and plugin locations before taking over the terminal,
   // so a broken keymap.json stops here with a readable error.
-  const configDir = resolveShellConfigDir();
+  const configDir = resolveShellConfigDir({
+    env: process.env,
+    homeDir: NodeOS.homedir(),
+    platform: process.platform,
+  });
   const configWarnings: string[] = [];
   const userConfig = readUserConfig({
     configDir,
