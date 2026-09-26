@@ -1,6 +1,6 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ShellDesktopNotification } from "@t3tools/contracts/shell";
+import type { EnvironmentThreadShell } from "@hal-c2/client-runtime/state/models";
+import { scopeThreadRef, scopedThreadKey } from "@hal-c2/client-runtime/environment";
+import type { ShellDesktopNotification } from "@hal-c2/contracts/shell";
 
 import { randomUUID } from "../lib/utils";
 

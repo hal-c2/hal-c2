@@ -12,11 +12,7 @@ import {
   type ReviewSectionItem,
 } from "./reviewModel";
 
-import type {
-  EnvironmentId,
-  ReviewDiffFileStat,
-  ReviewDiffPreviewSource,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ReviewDiffFileStat, ReviewDiffPreviewSource } from "@hal-c2/contracts";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import * as Atom from "effect/unstable/reactivity/Atom";

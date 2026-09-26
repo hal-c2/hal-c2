@@ -1,4 +1,4 @@
-import type { OrchestrationV2AppThread, OrchestrationV2CheckpointScope } from "@t3tools/contracts";
+import type { OrchestrationV2AppThread, OrchestrationV2CheckpointScope } from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import type { ProjectionStoreV2 } from "./ProjectionStore.ts";

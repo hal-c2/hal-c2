@@ -6,7 +6,7 @@
  *
  * @module OrchestrationProjectionPipeline
  */
-import type { OrchestrationEvent } from "@t3tools/contracts/legacy-orchestration";
+import type { OrchestrationEvent } from "@hal-c2/contracts/legacy-orchestration";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 
@@ -48,4 +48,4 @@ export interface OrchestrationProjectionPipelineShape {
 export class OrchestrationProjectionPipeline extends Context.Service<
   OrchestrationProjectionPipeline,
   OrchestrationProjectionPipelineShape
->()("t3/orchestration/Services/ProjectionPipeline/OrchestrationProjectionPipeline") {}
+>()("hal-c2/orchestration/Services/ProjectionPipeline/OrchestrationProjectionPipeline") {}

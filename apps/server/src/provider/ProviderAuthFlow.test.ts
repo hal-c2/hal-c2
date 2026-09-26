@@ -6,7 +6,7 @@ import {
   type ProviderAuthInteraction,
   type ProviderAuthResponse,
   type ProviderAuthState,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
@@ -214,7 +214,7 @@ it.effect.each([
       const received = yield* Deferred.make<ProviderAuthResponse>();
       const controller = yield* ProviderAuthFlow.make({
         instanceId,
-        credentialBinding: { owner: "t3", key: "binding" },
+        credentialBinding: { owner: "hal-c2", key: "binding" },
         methods: Effect.succeed([method]),
         authenticate: (_, context) =>
           Effect.gen(function* () {
@@ -309,7 +309,7 @@ it.effect.each([
   Effect.gen(function* () {
     const controller = yield* ProviderAuthFlow.make({
       instanceId,
-      credentialBinding: { owner: "t3", key: "failure" },
+      credentialBinding: { owner: "hal-c2", key: "failure" },
       methods: Effect.succeed([method]),
       authenticate: () => failure,
       logout: Effect.void,
@@ -333,7 +333,7 @@ const makeBlockingResponseHarness = Effect.gen(function* () {
   let responses = 0;
   const controller = yield* ProviderAuthFlow.make({
     instanceId,
-    credentialBinding: { owner: "t3", key: "blocked-response" },
+    credentialBinding: { owner: "hal-c2", key: "blocked-response" },
     methods: Effect.succeed([method]),
     authenticate: (_, context) =>
       Effect.gen(function* () {

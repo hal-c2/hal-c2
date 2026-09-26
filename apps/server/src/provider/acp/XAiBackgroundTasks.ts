@@ -4,7 +4,7 @@ import {
   type ProviderRuntimeTaskProgressEvent,
   type ProviderRuntimeTaskCompletedEvent,
   type TurnId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 
 type TaskEvent =
   | Pick<ProviderRuntimeTaskStartedEvent, "type" | "payload" | "turnId">

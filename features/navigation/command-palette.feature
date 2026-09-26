@@ -17,7 +17,7 @@ Feature: Command palette
   projects and settings, and find files and text in the project.
 
   Background:
-    Given the user has a project "t3code" with threads
+    Given the user has a project "hal-c2" with threads
     And the user is looking at a thread in that project
 
   Rule: Opening and closing
@@ -92,7 +92,7 @@ Feature: Command palette
     Scenario: A thread entry names its project and branch
       Given the thread "Fix login" is on branch "auth-fix"
       When the user opens the command palette
-      Then "Fix login" is described with the project "t3code" and "#auth-fix"
+      Then "Fix login" is described with the project "hal-c2" and "#auth-fix"
 
     @backlog @desktop
     Scenario: The current thread is marked
@@ -208,7 +208,7 @@ Feature: Command palette
 
       Examples:
         | entry                            | title                       | outcome                                                        |
-        | action:new-thread                | New thread in t3code        | a new thread starts in "t3code"                                |
+        | action:new-thread                | New thread in hal-c2        | a new thread starts in "hal-c2"                                |
         | action:new-thread-in             | New thread in...            | the palette lists projects with the current project first      |
         | action:copy-thread-reference     | Copy thread ID              | the thread id is on the clipboard                              |
         | action:link-pull-request         | Link pull request to thread | the user is asked which pull request to link to the thread     |

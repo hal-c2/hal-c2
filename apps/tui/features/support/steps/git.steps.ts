@@ -284,15 +284,15 @@ step(
 
 // --- running actions ---
 
-// One "the user runs" for every world: `t3 …` is the real launcher (only
-// `t3 tui` runs here), `opentui-qml …` the runtime's CLI, palette commands
+// One "the user runs" for every world: `hal-c2 …` is the real launcher (only
+// `hal-c2 tui` runs here), `opentui-qml …` the runtime's CLI, palette commands
 // (T5's add-project entries) go through the palette, everything else is a git
 // action.
 const PALETTE_COMMANDS = new Set(["Add project", "Open WSL folder"]);
 step("the user runs {string}", async (ctx: World, label: string) => {
-  if (label.startsWith("t3 ")) {
-    if (label !== "t3 tui")
-      throw new Error(`the user runs "${label}": only "t3 tui" launches here`);
+  if (label.startsWith("hal-c2 ")) {
+    if (label !== "hal-c2 tui")
+      throw new Error(`the user runs "${label}": only "hal-c2 tui" launches here`);
     await runLaunch(ctx);
     return;
   }

@@ -1,5 +1,5 @@
 # Sources:
-#   apps/server-ex/lib/t3/workflow_scripts.ex (orchestration.getWorkflowScript)
+#   apps/server-ex/lib/hal_c2/workflow_scripts.ex (orchestration.getWorkflowScript)
 #   packages/contracts/src/orchestrationV2.ts (OrchestrationGetWorkflowScriptError reasons)
 #   apps/server/src/orchestration-v2/ (workflow script reader)
 @plugin-claude

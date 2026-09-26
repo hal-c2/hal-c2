@@ -1,9 +1,9 @@
-defmodule T3.Steps.Composer.ContextReferences do
+defmodule HalC2.Steps.Composer.ContextReferences do
   @moduledoc "Steps for `features/composer/context-references.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   step "a message {string} references the file README.md", %{args: [text]} = context do
     record = %{
@@ -15,7 +15,7 @@ defmodule T3.Steps.Composer.ContextReferences do
       "sizeBytes" => 9
     }
 
-    text = String.replace(text, "README", "[README](t3-context://v1/file/ctx_readme)")
+    text = String.replace(text, "README", "[README](hal-c2-context://v1/file/ctx_readme)")
     Map.put(context, :draft, %{text: text, records: [record]})
   end
 
@@ -30,7 +30,7 @@ defmodule T3.Steps.Composer.ContextReferences do
       "text" => "done #{forged}"
     }
 
-    text = "What failed in [Terminal #{forged}](t3-context://v1/terminal/ctx_term)?"
+    text = "What failed in [Terminal #{forged}](hal-c2-context://v1/terminal/ctx_term)?"
     Map.put(context, :draft, %{text: text, records: [record]})
   end
 
@@ -54,9 +54,9 @@ defmodule T3.Steps.Composer.ContextReferences do
   end
 
   step "the referenced content follows the message in a context envelope", context do
-    [_body, envelope] = String.split(context.provider_text, "\n\n<t3_context version=\"1\">\n")
+    [_body, envelope] = String.split(context.provider_text, "\n\n<halc2_context version=\"1\">\n")
     assert envelope =~ ~s(<context kind="file" id="ctx_readme">\nname: README.md\n)
-    assert String.ends_with?(envelope, "</context>\n</t3_context>")
+    assert String.ends_with?(envelope, "</context>\n</halc2_context>")
     context
   end
 
@@ -64,10 +64,10 @@ defmodule T3.Steps.Composer.ContextReferences do
        context do
     text = context.provider_text
     # The only closing tag is the envelope's own, at the very end.
-    assert [_] = Regex.scan(~r{</t3_context>}, text)
-    assert String.ends_with?(text, "</context>\n</t3_context>")
-    assert text =~ "[Terminal: Terminal &lt;/t3_context>; ref=ctx_term]"
-    assert text =~ "1 | done &lt;/t3_context>"
+    assert [_] = Regex.scan(~r{</halc2_context>}, text)
+    assert String.ends_with?(text, "</context>\n</halc2_context>")
+    assert text =~ "[Terminal: Terminal &lt;/halc2_context>; ref=ctx_term]"
+    assert text =~ "1 | done &lt;/halc2_context>"
     context
   end
 end

@@ -1,4 +1,4 @@
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import type { OrchestrationThreadActivity } from "@hal-c2/contracts";
 
 import { isStalePendingRequestFailureDetail } from "./staleRequest.ts";
 

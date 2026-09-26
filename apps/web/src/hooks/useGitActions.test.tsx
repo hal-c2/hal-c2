@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId, type VcsStatusResult } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type VcsStatusResult } from "@hal-c2/contracts";
 import { act, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

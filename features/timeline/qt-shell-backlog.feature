@@ -1,6 +1,6 @@
 # Sources:
 #   apps/desktop-qt/parity/features.backlog.test.ts (thread-notifications)
-#   apps/desktop-qt/qml/T3/Bricks/Notifications.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/Notifications.qml
 #   docs/internals/desktop-qt.md (native notification presenter)
 
 Feature: Desktop shell gaps: thread notifications

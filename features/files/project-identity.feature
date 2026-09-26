@@ -1,7 +1,7 @@
 # Sources:
 #   docs/user/project-settings.md (Project icons)
-#   apps/server-ex/lib/t3/environment_themes.ex
-#   apps/server-ex/test/t3/features_backlog_test.exs (project-favicon-assets)
+#   apps/server-ex/lib/hal_c2/environment_themes.ex
+#   apps/server-ex/test/hal_c2/features_backlog_test.exs (project-favicon-assets)
 #   apps/web/src/components/ProjectFavicon.tsx
 #   apps/web/src/components/ProjectMonogram.tsx
 #   apps/web/src/components/ProjectEnvironmentBadge.tsx
@@ -118,7 +118,7 @@ Feature: Project and environment identity
 
     @node
     Scenario: Theme files in the environment's themes folder are offered to clients
-      Given the T3 home of "laptop" has the theme file "themes/dusk.json"
+      Given the HAL-C2 home of "laptop" has the theme file "themes/dusk.json"
       When a client connects to "laptop"
       Then the theme "dusk" is offered
 

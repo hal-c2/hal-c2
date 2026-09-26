@@ -2,14 +2,14 @@
 #   docs/user/thread-sidebar.md (New threads, background start, multi-model fan-out)
 #   apps/web/src/hooks/useHandleNewThread.ts
 #   apps/web/src/components/threadActionMenu.logic.ts (New thread on <branch>)
-#   apps/desktop-qt/qml/T3/Bricks/Sidebar.qml (New thread, draft rows)
+#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (New thread, draft rows)
 #   apps/tui/src/newThread.logic.ts
 #   apps/tui/src/commands.ts (New thread)
 #   packages/contracts/src/orchestrationV2.ts (thread.create, thread.created)
 #   packages/contracts/src/rpc.ts (launchThread)
-#   apps/server-ex/lib/t3/orchestration.ex (thread.create, launchThread)
-#   apps/server/src/cli/app.test.ts, apps/web/src/desktopAppActivation.ts (t3 app <folder>)
-#   The basic "t3 app ~/code/api" case lives in settings/install.feature.
+#   apps/server-ex/lib/hal_c2/orchestration.ex (thread.create, launchThread)
+#   apps/server/src/cli/app.test.ts, apps/web/src/desktopAppActivation.ts (hal-c2 app <folder>)
+#   The basic "hal-c2 app ~/code/api" case lives in settings/install.feature.
 
 Feature: Creating threads
   A thread is the durable conversation for a project. Starting one keeps the user's
@@ -172,20 +172,20 @@ Feature: Creating threads
   @backlog @desktop
   Scenario: Opening a folder that is already a project starts a thread in it
     Given the desktop app is running and "shop" lives at "~/code/shop"
-    When the user runs "t3 app ~/code/shop"
+    When the user runs "hal-c2 app ~/code/shop"
     Then the desktop app opens a new thread in "shop"
     And no second "shop" project is added
 
   @backlog @desktop
-  Scenario: Running t3 app without a folder opens the current folder
+  Scenario: Running hal-c2 app without a folder opens the current folder
     Given the desktop app is running
-    When the user runs "t3 app" inside "~/code/shop"
+    When the user runs "hal-c2 app" inside "~/code/shop"
     Then the desktop app opens a new thread in "shop"
 
   @backlog @desktop
-  Scenario Outline: t3 app refuses what it cannot open
+  Scenario Outline: hal-c2 app refuses what it cannot open
     Given <situation>
-    When the user runs "t3 app ~/code/shop"
+    When the user runs "hal-c2 app ~/code/shop"
     Then the command fails saying <reason>
     And no thread is opened
 
@@ -194,5 +194,5 @@ Feature: Creating threads
       | the user is connected over SSH                                       | it only controls a desktop app on the same machine   |
       | the desktop app's own environment is not connected                   | the desktop app's local environment is not connected |
       | the command runs in WSL but the desktop app's environment is Windows | cross-platform paths are not supported               |
-      | the folder cannot be added as a project                              | T3 Code could not add the project                    |
+      | the folder cannot be added as a project                              | HAL-C2 could not add the project                    |
 

@@ -6,9 +6,9 @@ import {
   type RunId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
-import { modelSelectionCommandType } from "@t3tools/shared/model";
+import { modelSelectionCommandType } from "@hal-c2/shared/model";
 
 import {
   newCommandId,
@@ -106,14 +106,14 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
         nextRunAt: task.nextRunAt,
       };
     }),
-  t3_thread_search: (input) =>
+  halc2_thread_search: (input) =>
     Effect.gen(function* () {
       const { caller } = yield* readCaller();
       const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const result = yield* query.searchThreads(input).pipe(Effect.mapError(unavailable));
       return { matches: result.matches.filter((match) => match.projectId === caller.projectId) };
     }),
-  t3_thread_fork: (input) =>
+  halc2_thread_fork: (input) =>
     Effect.gen(function* () {
       const { threads, projection } = yield* readWritableThread();
       const commandId = yield* newCommandId();
@@ -132,7 +132,7 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
         .pipe(Effect.mapError(unavailable));
       return { sequence: result.sequence, targetThreadId };
     }),
-  t3_thread_merge_back: (input) =>
+  halc2_thread_merge_back: (input) =>
     Effect.gen(function* () {
       const { threads, caller } = yield* readWritableThread(input.targetThreadId);
       const result = yield* threads
@@ -148,7 +148,7 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
         .pipe(Effect.mapError(unavailable));
       return { sequence: result.sequence, targetThreadId: input.targetThreadId };
     }),
-  t3_thread_transfers: (input) =>
+  halc2_thread_transfers: (input) =>
     Effect.gen(function* () {
       const { projection } = yield* readThread(input.threadId, ["contextTransfers"]);
       return {
@@ -162,7 +162,7 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
         ),
       };
     }),
-  t3_thread_configuration: (input) =>
+  halc2_thread_configuration: (input) =>
     Effect.gen(function* () {
       const {
         projection: { thread },
@@ -174,7 +174,7 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
         interactionMode: thread.interactionMode,
       };
     }),
-  t3_thread_configure: (input) =>
+  halc2_thread_configure: (input) =>
     Effect.gen(function* () {
       const {
         threads,
@@ -191,7 +191,7 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
         .pipe(Effect.mapError(unavailable));
       return { sequence: result.sequence };
     }),
-  t3_pending_request_list: (input) =>
+  halc2_pending_request_list: (input) =>
     Effect.gen(function* () {
       const { projection } = yield* readThread(input.threadId, ["runtimeRequests"]);
       return {
@@ -200,12 +200,12 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
           .map((request) => request.id),
       };
     }),
-  t3_pending_request_read: (input) =>
+  halc2_pending_request_read: (input) =>
     Effect.gen(function* () {
       const { item } = yield* readQuestion(input);
       return { requestId: input.requestId, questions: item.questions };
     }),
-  t3_pending_request_respond: (input) =>
+  halc2_pending_request_respond: (input) =>
     Effect.gen(function* () {
       const { threads, projection } = yield* readQuestion(input, true);
       const result = yield* threads
@@ -219,7 +219,7 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
         .pipe(Effect.mapError(unavailable));
       return { sequence: result.sequence };
     }),
-  t3_queue_list: (input) =>
+  halc2_queue_list: (input) =>
     Effect.gen(function* () {
       const { projection } = yield* readThread(input.threadId, ["runs", "messages"]);
       const runs = queuedRunsInDeliveryOrder(projection);
@@ -233,7 +233,7 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
         nextCursor: end < runs.length ? end : null,
       };
     }),
-  t3_queue_read: (input) =>
+  halc2_queue_read: (input) =>
     Effect.gen(function* () {
       const { projection } = yield* readThread(input.threadId, ["runs", "messages"]);
       const entry = queueEntry(projection, input.queuedRunId, 16000);
@@ -245,34 +245,34 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
         }))
       );
     }),
-  t3_queue_edit: (input) =>
+  halc2_queue_edit: (input) =>
     dispatch(input.threadId, (common) => ({
       ...common,
       type: "queued-run.edit",
       runId: input.queuedRunId,
       text: input.text,
     })),
-  t3_queue_cancel: (input) =>
+  halc2_queue_cancel: (input) =>
     dispatch(input.threadId, (common) => ({
       ...common,
       type: "queued-run.cancel",
       runId: input.queuedRunId,
     })),
-  t3_queue_reorder: (input) =>
+  halc2_queue_reorder: (input) =>
     dispatch(input.threadId, (common) => ({
       ...common,
       type: "queued-run.reorder",
       runId: input.queuedRunId,
       beforeRunId: input.beforeRunId,
     })),
-  t3_queue_promote_to_steer: (input) =>
+  halc2_queue_promote_to_steer: (input) =>
     dispatch(input.threadId, (common) => ({
       ...common,
       type: "queued-message.promote-to-steer",
       queuedRunId: input.queuedRunId,
       targetRunId: input.targetRunId,
     })),
-  t3_thread_organize: (input) =>
+  halc2_thread_organize: (input) =>
     Effect.gen(function* () {
       const { threads, projection } = yield* readWritableThread(input.threadId);
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };

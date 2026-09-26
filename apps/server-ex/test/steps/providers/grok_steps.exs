@@ -1,14 +1,14 @@
-defmodule T3.Steps.Providers.Grok do
+defmodule HalC2.Steps.Providers.Grok do
   @moduledoc """
   Steps for `features/providers/grok.feature`: Grok as an ACP agent, played by the
-  scripted fake (`T3.Test.FakeAcp`) behind the instance's binary path.
+  scripted fake (`HalC2.Test.FakeAcp`) behind the instance's binary path.
   """
   use Cucumber.StepDefinition
 
   import ExUnit.Assertions
 
-  alias T3.Test.FakeAcp
-  alias T3.Test.Node.World
+  alias HalC2.Test.FakeAcp
+  alias HalC2.Test.Node.World
 
   @models [
     %{"value" => "grok-code-fast-1", "name" => "Grok Code Fast"},
@@ -36,7 +36,7 @@ defmodule T3.Steps.Providers.Grok do
 
   step "no Grok process is started", context do
     # What the node's boot runs, then a client reading the provider list.
-    T3.Acp.load()
+    HalC2.Acp.load()
     assert %{"enabled" => false} = FakeAcp.entry("grok")
     assert FakeAcp.starts(context, "grok") == []
     context
@@ -44,8 +44,8 @@ defmodule T3.Steps.Providers.Grok do
 
   step "the grok command is not installed on the node", context do
     FakeAcp.services()
-    T3.Acp.forget("grok")
-    missing = Path.join(T3.Test.Node.tmp_dir(context.node, "no-grok"), "grok")
+    HalC2.Acp.forget("grok")
+    missing = Path.join(HalC2.Test.Node.tmp_dir(context.node, "no-grok"), "grok")
     FakeAcp.settings(&put_in(&1, ["providers"], %{"grok" => %{"binaryPath" => missing}}))
     Map.put(context, :provider, "grok")
   end
@@ -159,8 +159,8 @@ defmodule T3.Steps.Providers.Grok do
 
   step "Grok has written transcripts on this machine", context do
     FakeAcp.services()
-    T3.Test.Node.ensure(T3.Usage)
-    root = T3.Test.Node.tmp_dir(context.node, "homes")
+    HalC2.Test.Node.ensure(HalC2.Usage)
+    root = HalC2.Test.Node.tmp_dir(context.node, "homes")
     grok = Path.join(root, "grok")
     session = Path.join([grok, "sessions", "s-1"])
     File.mkdir_p!(session)
@@ -421,7 +421,7 @@ defmodule T3.Steps.Providers.Grok do
     item =
       World.await_stream(World.thread_id(context, context.thread), fn state ->
         state
-        |> T3.StreamState.list("turn-item")
+        |> HalC2.StreamState.list("turn-item")
         |> Enum.find(&(&1["type"] == "user_input_request"))
       end)
 
@@ -494,7 +494,7 @@ defmodule T3.Steps.Providers.Grok do
     state = FakeAcp.await_run(context, "failed")
 
     assert Enum.any?(
-             T3.StreamState.list(state, "provider-session"),
+             HalC2.StreamState.list(state, "provider-session"),
              &(&1["lastError"] == "Grok usage limit reached. Try again later.")
            )
 
@@ -504,7 +504,7 @@ defmodule T3.Steps.Providers.Grok do
   # --- usage limits ---------------------------------------------------------------
 
   step "Grok is signed in with a Grok account", context do
-    home = T3.Test.Node.tmp_dir(context.node, "grok-home")
+    home = HalC2.Test.Node.tmp_dir(context.node, "grok-home")
 
     File.write!(
       Path.join(home, "auth.json"),
@@ -539,7 +539,7 @@ defmodule T3.Steps.Providers.Grok do
            }
 
     # Read with the Grok account's own sign-in.
-    requests = T3.Test.FakeHttp.requests(context.billing)
+    requests = HalC2.Test.FakeHttp.requests(context.billing)
     assert [_ | _] = requests
 
     assert Enum.all?(
@@ -552,7 +552,7 @@ defmodule T3.Steps.Providers.Grok do
 
   step "the Grok instance uses an API key", context do
     # A signed-in account is on the machine too; the key is what Grok would use.
-    home = T3.Test.Node.tmp_dir(context.node, "grok-home")
+    home = HalC2.Test.Node.tmp_dir(context.node, "grok-home")
     key = "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"
     File.write!(Path.join(home, "auth.json"), JSON.encode!(%{key => %{"key" => "grok-token"}}))
 
@@ -569,15 +569,15 @@ defmodule T3.Steps.Providers.Grok do
     assert %{"windows" => [], "unavailable" => %{"reason" => "unsupported"}} =
              FakeAcp.find(context.providers, "grok")["usageLimits"]
 
-    assert T3.Test.FakeHttp.requests(context.billing) == []
+    assert HalC2.Test.FakeHttp.requests(context.billing) == []
     context
   end
 
-  # xAI's billing API, played by `T3.Test.FakeHttp`.
+  # xAI's billing API, played by `HalC2.Test.FakeHttp`.
   defp billing(context, response) do
-    {url, log} = T3.Test.FakeHttp.start(%{"/v1/billing" => {200, response}})
-    Application.put_env(:t3, :grok_billing_url, url <> "/v1/billing?format=credits")
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :grok_billing_url) end)
+    {url, log} = HalC2.Test.FakeHttp.start(%{"/v1/billing" => {200, response}})
+    Application.put_env(:hal_c2, :grok_billing_url, url <> "/v1/billing?format=credits")
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :grok_billing_url) end)
     Map.put(context, :billing, log)
   end
 
@@ -661,7 +661,7 @@ defmodule T3.Steps.Providers.Grok do
   # The agent has started answering: the prompt reached it.
   defp await_answer(context) do
     World.await_stream(World.thread_id(context, context.thread), fn state ->
-      Enum.any?(T3.StreamState.list(state, "turn-item"), &(&1["type"] == "assistant_message"))
+      Enum.any?(HalC2.StreamState.list(state, "turn-item"), &(&1["type"] == "assistant_message"))
     end)
   end
 end

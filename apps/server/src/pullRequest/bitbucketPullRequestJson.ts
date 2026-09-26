@@ -14,9 +14,9 @@ import type {
   PullRequestReviewThread,
   PullRequestReviewerCandidate,
   PullRequestState,
-} from "@t3tools/contracts";
-import { TrimmedNonEmptyString } from "@t3tools/contracts";
-import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+} from "@hal-c2/contracts";
+import { TrimmedNonEmptyString } from "@hal-c2/contracts";
+import { decodeJsonResult } from "@hal-c2/shared/schemaJson";
 
 import { dedupeChecks } from "./pullRequestChecks.ts";
 

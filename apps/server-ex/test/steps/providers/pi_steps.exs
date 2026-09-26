@@ -1,16 +1,16 @@
-defmodule T3.Steps.Providers.Pi do
+defmodule HalC2.Steps.Providers.Pi do
   @moduledoc """
   Steps for `features/providers/pi.feature`. The node runs Pi in its own RPC mode
-  (`T3.Pi`, `T3.Pi.ThreadRuntime`); the scripted fake Pi (`fake_pi_rpc.py`, through
-  `T3.Test.FakeAcp.install_pi/3`) is the user's `pi`, sessions and all.
+  (`HalC2.Pi`, `HalC2.Pi.ThreadRuntime`); the scripted fake Pi (`fake_pi_rpc.py`, through
+  `HalC2.Test.FakeAcp.install_pi/3`) is the user's `pi`, sessions and all.
   """
   use Cucumber.StepDefinition
 
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.FakeAcp
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.FakeAcp
+  alias HalC2.Test.Node.World
 
   defp install(context, config \\ %{}, opts \\ []),
     do: FakeAcp.install_pi(context, config, Keyword.put_new(opts, :enabled, true))
@@ -34,7 +34,7 @@ defmodule T3.Steps.Providers.Pi do
 
   defp state(context, title \\ nil) do
     id = World.thread_id(context, title || context.thread)
-    T3.Streams.Server.state(T3.Streams.ensure(id))
+    HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
   end
 
   defp replies(context, title \\ nil) do
@@ -80,7 +80,7 @@ defmodule T3.Steps.Providers.Pi do
   end
 
   step "no Pi process is started", context do
-    T3.Acp.load()
+    HalC2.Acp.load()
     assert %{"enabled" => false} = FakeAcp.entry("pi")
     assert FakeAcp.starts(context, "pi") == []
     context
@@ -88,8 +88,8 @@ defmodule T3.Steps.Providers.Pi do
 
   step "the pi command is not installed on the node", context do
     FakeAcp.services()
-    T3.Acp.forget("pi")
-    missing = Path.join(T3.Test.Node.tmp_dir(context.node, "no-pi"), "pi")
+    HalC2.Acp.forget("pi")
+    missing = Path.join(HalC2.Test.Node.tmp_dir(context.node, "no-pi"), "pi")
     FakeAcp.settings(&put_in(&1, ["providers"], %{"pi" => %{"binaryPath" => missing}}))
     Map.put(context, :provider, "pi")
   end
@@ -106,9 +106,9 @@ defmodule T3.Steps.Providers.Pi do
     context
   end
 
-  # The path lives in the scenario's machine (`T3.Test.Node.Host`).
+  # The path lives in the scenario's machine (`HalC2.Test.Node.Host`).
   step "Pi's binary path is set to {string}", %{args: [path]} = context do
-    install(context, %{}, path: T3.Test.Node.Host.path(context, path))
+    install(context, %{}, path: HalC2.Test.Node.Host.path(context, path))
   end
 
   step "the user sends a message to Pi", context do
@@ -120,10 +120,10 @@ defmodule T3.Steps.Providers.Pi do
   end
 
   step "that Pi binary runs the turn", context do
-    assert_runs_on(context, T3.Test.Node.Host.path(context, "/opt/pi/bin/pi"))
+    assert_runs_on(context, HalC2.Test.Node.Host.path(context, "/opt/pi/bin/pi"))
   end
 
-  # That binary ran Pi's RPC mode in the project, with T3's extension, and got the
+  # That binary ran Pi's RPC mode in the project, with HAL-C2's extension, and got the
   # message as a prompt.
   defp assert_runs_on(context, bin) do
     assert [%{"argv" => argv, "env" => env}] = thread_starts(context)
@@ -196,11 +196,11 @@ defmodule T3.Steps.Providers.Pi do
     context
   end
 
-  step "the setting is refused with a message that T3 Code owns that part of Pi", context do
+  step "the setting is refused with a message that HAL-C2 owns that part of Pi", context do
     assert %{"status" => "error", "message" => message} = pi(context)
 
     assert message ==
-             "Pi launch argument '--mode' is controlled by T3 Code and cannot be overridden."
+             "Pi launch argument '--mode' is controlled by HAL-C2 and cannot be overridden."
 
     # Pi never ran with them.
     refute Enum.any?(FakeAcp.starts(context), &("json" in &1["argv"]))
@@ -275,10 +275,10 @@ defmodule T3.Steps.Providers.Pi do
     assert ["approval-required" | modes] = pi(context)["supportedRuntimeModes"]
     refute "auto" in modes
 
-    # ...and T3's extension in Pi holds an edit for the user.
+    # ...and HAL-C2's extension in Pi holds an edit for the user.
     context = FakeAcp.send_message(context, "please edit a file")
     assert %{"status" => "pending", "kind" => "file-change"} = FakeAcp.await_request(context)
-    assert [%{"env" => %{"T3_PI_RUNTIME_MODE" => "approval-required"}}] = thread_starts(context)
+    assert [%{"env" => %{"HALC2_PI_RUNTIME_MODE" => "approval-required"}}] = thread_starts(context)
     context
   end
 
@@ -297,8 +297,8 @@ defmodule T3.Steps.Providers.Pi do
     context = turn(context, "hello again")
 
     assert [first, second] = thread_starts(context)
-    assert first["env"]["T3_PI_RUNTIME_MODE"] == "approval-required"
-    assert second["env"]["T3_PI_RUNTIME_MODE"] == "full-access"
+    assert first["env"]["HALC2_PI_RUNTIME_MODE"] == "approval-required"
+    assert second["env"]["HALC2_PI_RUNTIME_MODE"] == "full-access"
     assert [%{"sessionPath" => session}] = FakeAcp.received_type(context, "switch_session")
     assert session == context.pi_session
     assert List.last(replies(context)) == "Reply to hello again after [hello Pi]"
@@ -378,7 +378,7 @@ defmodule T3.Steps.Providers.Pi do
 
   # --- Pi's terminal app ---
 
-  step "a Pi thread in T3 Code", context do
+  step "a Pi thread in HAL-C2", context do
     context |> install() |> FakeAcp.thread() |> turn("hello Pi")
   end
 
@@ -427,14 +427,14 @@ defmodule T3.Steps.Providers.Pi do
 
   step "the user forks from the second turn into a new worktree", context do
     root = World.project(context).root
-    worktree = Path.join(T3.Test.Node.tmp_dir(context.node, "worktrees"), "pi-fork")
+    worktree = Path.join(HalC2.Test.Node.tmp_dir(context.node, "worktrees"), "pi-fork")
     World.git!(root, ["worktree", "add", "-q", "-b", "pi-fork", worktree])
     source = World.thread_id(context, context.thread)
     run = state(context) |> StreamState.list("run") |> Enum.find(&(&1["ordinal"] == 2))
     id = "th-pi-fork-#{System.unique_integer([:positive])}"
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.fork",
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
         "sourceThreadId" => source,
@@ -444,7 +444,7 @@ defmodule T3.Steps.Providers.Pi do
       })
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.metadata.update",
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
         "threadId" => id,
@@ -508,7 +508,7 @@ defmodule T3.Steps.Providers.Pi do
     Map.put(context, :skills, FakeAcp.find(providers, "pi")["skills"])
   end
 
-  # T3 writes a skill as `$name`; Pi gets its own `/skill:name` command.
+  # HAL-C2 writes a skill as `$name`; Pi gets its own `/skill:name` command.
   step "{string} is offered and uses Pi's own skill expansion", %{args: [name]} = context do
     assert [%{"name" => ^name, "scope" => "project", "enabled" => true}] = context.skills
     context = turn(context, "$#{name} to staging")
@@ -614,7 +614,7 @@ defmodule T3.Steps.Providers.Pi do
              "outputTokens" => 200
            } = usage
 
-    {:ok, _} = T3.Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+    {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
     FakeAcp.await_run(context, "interrupted")
     context
   end
@@ -622,7 +622,7 @@ defmodule T3.Steps.Providers.Pi do
   # --- delegation ---
 
   step "Pi delegates a task", context do
-    T3.Test.Node.ensure(T3.Mcp)
+    HalC2.Test.Node.ensure(HalC2.Mcp)
 
     turns = [
       %{
@@ -667,7 +667,7 @@ defmodule T3.Steps.Providers.Pi do
              StreamState.list(state, "turn-item") |> Enum.filter(&(&1["type"] == "subagent"))
 
     assert node_id == task["id"]
-    child = T3.Streams.Server.state(T3.Streams.ensure(child_id))
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(child_id))
 
     assert %{"lineage" => %{"parentThreadId" => ^thread_id, "relationshipToParent" => "subagent"}} =
              StreamState.get(child, "thread")[child_id]

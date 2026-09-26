@@ -2,8 +2,8 @@
 #   docs/user/remote-access.md (Pair over a LAN or private network, Manage or revoke access)
 #   docs/operations/development.md (vp run dev --share pairing URL, Reusable dev credential)
 #   docs/internals/environment-auth.md (Authority survives transport changes)
-#   apps/server-ex/lib/mix/tasks/t3.pair.ex
-#   apps/server-ex/lib/t3/auth.ex, apps/server-ex/lib/t3/web/router.ex (/oauth/token, pairing links)
+#   apps/server-ex/lib/mix/tasks/hal_c2.pair.ex
+#   apps/server-ex/lib/hal_c2/auth.ex, apps/server-ex/lib/hal_c2/web/router.ex (/oauth/token, pairing links)
 #   apps/web/src/components/settings/ConnectionsSettings.tsx (Add environment, Create pairing link,
 #     pairing link scopes, QR code, hosted app link, pairing code)
 #   apps/web/src/components/settings/pairingUrls.ts
@@ -12,7 +12,7 @@
 #   apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx
 #   apps/desktop-qt/host/pairingUrl.ts (pairing URL announced by a server)
 #   apps/tui/src/features.backlog.test.ts (environment-access-management)
-#   docs/user/remote-access.md (t3 auth)
+#   docs/user/remote-access.md (HAL-C2 auth)
 #   packages/contracts/src/auth.ts (pairing link, scopes)
 #   Shared domain: tui/launch.feature holds pairing the terminal client from its command line;
 #   mobile/pairing-and-environments.feature holds pairing from a phone;
@@ -128,10 +128,10 @@ Feature: Pairing a client with an environment
     When the user revokes every other client
     Then only the terminal client's own session remains
 
-  # The hosted app.t3.codes pairing link. hal-c2 has no hosted web app; QML clients pair
+  # The hosted app.hal-c2.example pairing link. HAL-C2 has no hosted web app; QML clients pair
   # with the node's own link.
   @dropped @desktop
   Scenario: The user copies a hosted app pairing link
     Given the environment is reachable over HTTPS
     When the user copies the hosted app link
-    Then a browser can pair through app.t3.codes without installing anything
+    Then a browser can pair through app.hal-c2.example without installing anything

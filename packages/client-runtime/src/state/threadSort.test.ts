@@ -1,4 +1,4 @@
-import { ProjectId } from "@t3tools/contracts";
+import { ProjectId } from "@hal-c2/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {

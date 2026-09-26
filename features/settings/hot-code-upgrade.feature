@@ -1,10 +1,10 @@
 # Sources:
-#   apps/server-ex/lib/t3/upgrade.ex (release check, restart path, outcome, errors)
-#   apps/server-ex/lib/t3/upgrade/source.ex (local cache, cluster peer, release download, checksum)
-#   apps/server-ex/lib/t3/hot.ex (in-place load, code_change, reload_cluster)
-#   apps/server-ex/lib/t3/recovery.ex (continuing cut-off turns)
-#   apps/server-ex/lib/mix/tasks/t3.upgrade.ex
-#   apps/server-ex/rel/overlays/bin/t3-service
+#   apps/server-ex/lib/hal_c2/upgrade.ex (release check, restart path, outcome, errors)
+#   apps/server-ex/lib/hal_c2/upgrade/source.ex (local cache, cluster peer, release download, checksum)
+#   apps/server-ex/lib/hal_c2/hot.ex (in-place load, code_change, reload_cluster)
+#   apps/server-ex/lib/hal_c2/recovery.ex (continuing cut-off turns)
+#   apps/server-ex/lib/mix/tasks/hal_c2.upgrade.ex
+#   apps/server-ex/rel/overlays/bin/hal-c2-service
 #   docs/internals/server-updates.md
 
 Feature: Hot code upgrade
@@ -65,7 +65,7 @@ Feature: Hot code upgrade
 
     Examples:
       | situation                                     | version | reason                                   |
-      | the node runs from a source checkout          | 1.4.0   | a checkout updates with mix t3.upgrade   |
+      | the node runs from a source checkout          | 1.4.0   | a checkout updates with mix hal_c2.upgrade   |
       | the node already runs "1.3.0"                 | 1.3.0   | it already runs that version             |
       | the node was not started by its service       | 1.4.0   | nothing would restart it                 |
 

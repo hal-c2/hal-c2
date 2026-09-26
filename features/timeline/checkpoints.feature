@@ -1,7 +1,7 @@
 # Sources:
-#   apps/server-ex/lib/t3/checkpoint.ex (hidden commit per run, private index, 10 MB diff limit)
-#   apps/server-ex/lib/t3/orchestration/rollback.ex (checkpoint.rollback, restoreFiles, errors)
-#   apps/server-ex/lib/t3/projection/timeline.ex (rolled_back runs hidden)
+#   apps/server-ex/lib/hal_c2/checkpoint.ex (hidden commit per run, private index, 10 MB diff limit)
+#   apps/server-ex/lib/hal_c2/orchestration/rollback.ex (checkpoint.rollback, restoreFiles, errors)
+#   apps/server-ex/lib/hal_c2/projection/timeline.ex (rolled_back runs hidden)
 #   packages/contracts/src/orchestrationV2.ts (checkpoint.rollback, checkpoint.captured, checkpoint.rollback-requested)
 #   apps/web/src/components/ChatView.tsx (Edit from here, Revert files too, Revert and keep changes, rollback confirm, errors)
 #   apps/web/src/components/chat/V2ItemInspector.tsx (checkpoint status, Roll back)

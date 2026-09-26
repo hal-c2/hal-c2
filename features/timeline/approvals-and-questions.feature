@@ -3,11 +3,11 @@
 #   packages/contracts/src/orchestrationV2.ts (runtime-request.respond, thread.user-input.dismiss, approval_request, user_input_request)
 #   packages/contracts/src/providerPolicy.ts (ProviderApprovalDecision)
 #   packages/contracts/src/providerRuntime.ts (ProviderApprovalOption, ProviderRequestKind)
-#   apps/server-ex/lib/t3/orchestration.ex (runtime-request.respond, thread.user-input.dismiss)
-#   apps/server-ex/lib/t3/orchestration/turn_writer.ex (approval_request, user_input_request items)
-#   apps/server-ex/lib/t3/codex/thread_runtime.ex (acceptAlways becomes acceptForSession)
-#   apps/server-ex/lib/t3/claude/thread_runtime.ex (session approvals add session permission rules)
-#   apps/server-ex/lib/t3/acp/thread_runtime.ex (allow_once, allow_always, reject_once)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (runtime-request.respond, thread.user-input.dismiss)
+#   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (approval_request, user_input_request items)
+#   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (acceptAlways becomes acceptForSession)
+#   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (session approvals add session permission rules)
+#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (allow_once, allow_always, reject_once)
 #   apps/web/src/components/chat/ComposerPendingApprovalActions.tsx
 #   apps/web/src/components/chat/ComposerPendingApprovalPanel.tsx
 #   apps/web/src/components/chat/ComposerPendingUserInputPanel.tsx

@@ -1,18 +1,18 @@
-import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import { ExecutionEnvironmentDescriptor } from "@hal-c2/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
 import { type PersistedServerRuntimeState, isProcessAlive } from "../serverRuntimeState.ts";
 
-const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
+const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/hal-c2/environment";
 const SERVER_PROBE_TIMEOUT = Duration.millis(2_500);
 
-/** Distinguishes a live T3 server from a dead origin or an unrelated responder. */
+/** Distinguishes a live HAL-C2 server from a dead origin or an unrelated responder. */
 export type EnvironmentProbeResult =
   | { readonly _tag: "descriptor"; readonly descriptor: ExecutionEnvironmentDescriptor }
   | { readonly _tag: "unreachable" }
-  | { readonly _tag: "not-a-t3-server" };
+  | { readonly _tag: "not-a-hal-c2-server" };
 
 export const probeEnvironmentDescriptor = Effect.fn("runningServer.probeEnvironmentDescriptor")(
   function* (baseUrl: string) {
@@ -27,7 +27,7 @@ export const probeEnvironmentDescriptor = Effect.fn("runningServer.probeEnvironm
     }
     const descriptor = yield* HttpClientResponse.filterStatusOk(response).pipe(
       Effect.flatMap(HttpClientResponse.schemaBodyJson(ExecutionEnvironmentDescriptor)),
-      Effect.mapError(() => ({ _tag: "not-a-t3-server" }) as const),
+      Effect.mapError(() => ({ _tag: "not-a-hal-c2-server" }) as const),
     );
     return { _tag: "descriptor", descriptor } as const;
   },

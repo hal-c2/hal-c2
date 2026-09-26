@@ -4,8 +4,8 @@
 #     delegated_task.completion-delivery.dispose, notification.delivery.accept, node.updated,
 #     turn-item.updated)
 #   packages/contracts/src/orchestratorMcp.ts (delegate_task, task_status, task_cancel, error codes)
-#   apps/server-ex/lib/t3/orchestration/delegation.ex
-#   apps/server-ex/lib/t3/mcp/tools.ex (delegate_task, task_status, task_cancel)
+#   apps/server-ex/lib/hal_c2/orchestration/delegation.ex
+#   apps/server-ex/lib/hal_c2/mcp/tools.ex (delegate_task, task_status, task_cancel)
 #   apps/server/src/orchestration-v2/ (delegated task reactor and completion delivery)
 #   apps/server/src/mcp/ (orchestrator toolkit)
 Feature: Delegating tasks to subagents

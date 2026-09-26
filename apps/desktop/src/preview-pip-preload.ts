@@ -1,4 +1,4 @@
-import type { DesktopPreviewRecordingFrame } from "@t3tools/contracts";
+import type { DesktopPreviewRecordingFrame } from "@hal-c2/contracts";
 import { contextBridge, ipcRenderer } from "electron";
 
 import { PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "./ipc/channels.ts";

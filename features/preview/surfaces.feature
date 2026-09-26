@@ -2,11 +2,11 @@
 #   docs/user/browser-import.md
 #   docs/user/keybindings.md (previewOpen and previewFocus contexts)
 #   packages/contracts/src/preview.ts (PreviewOpenInput, PreviewNavigateInput, PreviewReportStatusInput, PreviewResizeInput, PreviewEvent, viewport limits and presets, zoom ladder, DiscoveredLocalServerList)
-#   apps/server-ex/lib/t3/preview.ex (tab snapshots, serverEpoch, revision, lookup errors)
-#   apps/server-ex/lib/t3/local_servers.ex (subscribeDiscoveredLocalServers)
-#   apps/server-ex/lib/t3/rpc.ex (preview.open, navigate, reportStatus, resize, refresh, close, list)
-#   apps/server-ex/test/t3/preview_test.exs
-#   apps/desktop-qt/qml/T3/Bricks/RightPanel.qml (add menu has no browser entry)
+#   apps/server-ex/lib/hal_c2/preview.ex (tab snapshots, serverEpoch, revision, lookup errors)
+#   apps/server-ex/lib/hal_c2/local_servers.ex (subscribeDiscoveredLocalServers)
+#   apps/server-ex/lib/hal_c2/rpc.ex (preview.open, navigate, reportStatus, resize, refresh, close, list)
+#   apps/server-ex/test/hal_c2/preview_test.exs
+#   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (add menu has no browser entry)
 #   apps/desktop-qt/parity/features.backlog.test.ts (in-app-preview)
 #   apps/tui/src/features.backlog.test.ts (preview-surface)
 #   apps/desktop/src/preview/Manager.ts (webview host, zoom, mute, popups)

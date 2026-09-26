@@ -2,7 +2,7 @@
  * A protocol-3 entity patch: changed fields (`s`), string suffixes appended to
  * existing fields (`a`, streamed text and output), removed fields (`u`), and `d`
  * to remove the entity first (alone it deletes; with `s` it replaces).
- * Mirrors `T3.Patch` on the server.
+ * Mirrors `HalC2.Patch` on the server.
  */
 export interface Patch {
   readonly s?: Readonly<Record<string, unknown>>;

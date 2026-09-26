@@ -11,15 +11,15 @@
 #   apps/web/src/components/settings/customModelEditor.logic.ts
 #   apps/web/src/components/settings/RedactedSensitiveText.tsx
 #   apps/web/src/components/settings/providerStatus.ts (version advisory titles, Update now, Install <version>)
-#   apps/server-ex/lib/t3/provider_updates.ex (versionAdvisory, updateCommand, canUpdate)
-#   apps/server-ex/lib/t3/rpc.ex (server.refreshProviders, server.updateProvider, server.searchAcpRegistry,
+#   apps/server-ex/lib/hal_c2/provider_updates.ex (versionAdvisory, updateCommand, canUpdate)
+#   apps/server-ex/lib/hal_c2/rpc.ex (server.refreshProviders, server.updateProvider, server.searchAcpRegistry,
 #     server.prepareAcpRegistryAgent, server.uninstallAcpRegistryManagedBinary, server.listAcpRegistrySessions,
 #     server.importAcpRegistrySession, server.deleteAcpRegistrySession, server.listAcpRegistryProviders,
 #     server.setAcpRegistryProvider, server.disableAcpRegistryProvider, server.logoutAcpRegistry)
-#   apps/server-ex/lib/t3/acp/catalog.ex
-#   apps/server-ex/lib/t3/acp/sessions.ex
-#   apps/server-ex/lib/t3/environment.ex (refresh_providers)
-#   apps/server-ex/lib/t3/web/socket.ex (config.providers)
+#   apps/server-ex/lib/hal_c2/acp/catalog.ex
+#   apps/server-ex/lib/hal_c2/acp/sessions.ex
+#   apps/server-ex/lib/hal_c2/environment.ex (refresh_providers)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (config.providers)
 #   apps/tui/src/features.backlog.test.ts (editable-settings, provider maintenance)
 
 Feature: Providers settings panel
@@ -142,9 +142,9 @@ Feature: Providers settings panel
 
     @node
     Scenario: Importing a native session continues it as a thread
-      Given the agent "gemini" has a native session for the project "t3code"
+      Given the agent "gemini" has a native session for the project "hal-c2"
       When the user imports that session
-      Then a thread continuing the session is created in "t3code"
+      Then a thread continuing the session is created in "hal-c2"
 
     @node
     Scenario: An imported session cannot be deleted before its thread
@@ -253,7 +253,7 @@ Feature: Providers settings panel
 
     @backlog @desktop
     Scenario Outline: A provider version outside the supported range is flagged in the panel
-      Given the installed "OpenCode" is <status> for this T3 Code release
+      Given the installed "OpenCode" is <status> for this HAL-C2 release
       When the user opens the version details of "OpenCode"
       Then the user is warned "<title>" with the version to use for full support
 

@@ -4,7 +4,7 @@ import {
   MessageId,
   RunId,
   type OrchestrationV2RunStatus,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 

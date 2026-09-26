@@ -5,11 +5,11 @@
 #   apps/web/src/components/settings/EnvironmentRow.tsx
 #   apps/web/src/components/settings/RedactedSensitiveText.tsx
 #   apps/desktop-qt/parity/features.backlog.test.ts (SSH environments, network access)
-#   apps/server-ex/test/t3/features_backlog_test.exs (T3 Connect link)
+#   apps/server-ex/test/hal_c2/features_backlog_test.exs (HAL-C2 Connect link)
 
 Feature: Connections settings
   The Connections page shows this machine's server, the devices allowed to reach it, and the
-  other environments this device connects to. Pairing itself, T3 Connect and load balancing are
+  other environments this device connects to. Pairing itself, HAL-C2 Connect and load balancing are
   specified in their own domains; this file covers the page and the effect of each control.
 
   Background:
@@ -105,15 +105,15 @@ Feature: Connections settings
         | on Windows                    | on Windows only                 |
 
     @backlog @desktop
-    Scenario: Linking this machine to T3 Connect needs a signed-in account
-      Given the user is not signed in to T3 Connect
-      When the user looks at the T3 Connect link
+    Scenario: Linking this machine to HAL-C2 Connect needs a signed-in account
+      Given the user is not signed in to HAL-C2 Connect
+      When the user looks at the HAL-C2 Connect link
       Then the link cannot be turned on
-      And the user is told to sign in to T3 Connect
+      And the user is told to sign in to HAL-C2 Connect
 
     @backlog @desktop
-    Scenario: Linking and unlinking this machine to T3 Connect
-      Given the user is signed in to T3 Connect
+    Scenario: Linking and unlinking this machine to HAL-C2 Connect
+      Given the user is signed in to HAL-C2 Connect
       When the user links this machine
       Then the user is told this machine is linked
       When the user unlinks this machine
@@ -121,7 +121,7 @@ Feature: Connections settings
 
     @backlog @desktop
     Scenario: Publishing agent activity can be turned on and off
-      Given this machine is linked to T3 Connect
+      Given this machine is linked to HAL-C2 Connect
       When the user turns on publishing agent activity
       Then agent activity from this machine is shared with the user's other devices
       When the user turns it off
@@ -211,7 +211,7 @@ Feature: Connections settings
     Scenario: Adding an environment over SSH
       Given the user's SSH config names the host "devbox"
       When the user adds an environment over SSH to "devbox"
-      Then T3 Code starts on "devbox" and it is listed as an environment
+      Then HAL-C2 starts on "devbox" and it is listed as an environment
 
     @backlog @desktop
     Scenario: An environment that cannot be added is reported
@@ -241,7 +241,7 @@ Feature: Connections settings
 
       Examples:
         | route                    | label              |
-        | through T3 Connect       | T3 Connect         |
+        | through HAL-C2 Connect       | HAL-C2 Connect         |
         | over SSH as ada@devbox   | SSH ada@devbox     |
         | through WSL              | WSL                |
 

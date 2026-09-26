@@ -2,7 +2,7 @@
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch dispatchMode and deliveryIntent,
 #     queued-run.cancel, queued-run.edit, queued-run.reorder, queued-message.promote-to-steer,
 #     queue.resume, run.updated, message.updated, turn-item.updated)
-#   apps/server-ex/lib/t3/orchestration.ex (decide_message, queue_run, steer, restart_promoted)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (decide_message, queue_run, steer, restart_promoted)
 #   apps/server/src/orchestration-v2/ (dispatch mode resolution)
 #   docs/user/ (composer queue and steer guidance)
 Feature: Queueing, steering and restarting

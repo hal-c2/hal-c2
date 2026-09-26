@@ -1,12 +1,12 @@
 # Sources:
-#   apps/server-ex/lib/t3/text_generation.ex (model selection, fallback, thread titles,
+#   apps/server-ex/lib/hal_c2/text_generation.ex (model selection, fallback, thread titles,
 #     branch names, output normalization)
-#   apps/server-ex/lib/t3/text_generation/prompts.ex, style.ex
+#   apps/server-ex/lib/hal_c2/text_generation/prompts.ex, style.ex
 #   apps/server/src/textGeneration/ (TextGeneration.ts, TextGenerationPolicy.ts,
 #     ThreadTitleLinks.ts, ThreadTitleContext.ts, PiTextGeneration.ts,
 #     AntigravityTextGeneration.ts)
-#   apps/server-ex/lib/t3/git_actions.ex (Style.policy, Style.pr_template for commits and PRs)
-#   apps/server-ex/lib/t3/settings.ex (project-scoped textGenerationModelSelection,
+#   apps/server-ex/lib/hal_c2/git_actions.ex (Style.policy, Style.pr_template for commits and PRs)
+#   apps/server-ex/lib/hal_c2/settings.ex (project-scoped textGenerationModelSelection,
 #     sourceControlWriterModelSelection, sourceControlWritingStyle)
 #   The commit flow and writing style instructions are covered in
 #   source-control/commit-and-generated-messages.feature; here only who writes and PR templates.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@hal-c2/client-runtime/state/models";
+import { EnvironmentId, ProjectId, ThreadId } from "@hal-c2/contracts";
 
 import { makeThreadFixture } from "../test-fixtures";
 import { partitionSidebarThreads, type SidebarThreadCapabilities } from "./Sidebar.logic";

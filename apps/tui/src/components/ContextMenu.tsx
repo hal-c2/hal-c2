@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem } from "@hal-c2/contracts";
 import { RGBA, type MouseEvent } from "@opentui/core";
 import * as React from "react";
 

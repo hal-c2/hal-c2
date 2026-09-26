@@ -4,7 +4,7 @@ import type {
   ProviderAuthState,
   ProviderInstanceId,
   ProviderSetupError,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
@@ -12,7 +12,7 @@ import type * as Scope from "effect/Scope";
 
 export interface ProviderAuthController {
   /** Equal keys mean these instances share credentials on this environment. */
-  readonly credentialBinding?: { readonly owner: "provider" | "t3"; readonly key: string };
+  readonly credentialBinding?: { readonly owner: "provider" | "hal-c2"; readonly key: string };
   readonly isChangingCredentials?: Effect.Effect<boolean>;
   readonly invalidate?: Effect.Effect<void>;
   readonly refreshMethods?: Effect.Effect<void>;
@@ -80,4 +80,4 @@ export interface ProviderAuthServiceShape {
 export class ProviderAuthService extends Context.Service<
   ProviderAuthService,
   ProviderAuthServiceShape
->()("t3/provider/Services/ProviderAuthService") {}
+>()("hal-c2/provider/Services/ProviderAuthService") {}

@@ -266,7 +266,7 @@ private slots:
     theme.reload();
     evaluate(theme.injectionScript());
     QCOMPARE(evaluate("snapshot()"), original);
-    QCOMPARE(evaluate("window.__t3ShellTheme.observer === null").toBool(), true);
+    QCOMPARE(evaluate("window.__halc2ShellTheme.observer === null").toBool(), true);
     QCOMPARE(evaluate("document.documentElement.style.getPropertyValue('--app-theme-chrome')").toString(), QString());
 
     evaluate("document.documentElement.removeAttribute('data-theme-id'); document.documentElement.removeAttribute('data-theme-selected');");
@@ -308,15 +308,15 @@ private slots:
     evaluate("document.documentElement.dataset.themeId = 'page';");
     QCOMPARE(evaluate("document.documentElement.dataset.themeId").toString(), QString("shell-night"));
     evaluate(R"(
-      window.__t3ShellTheme.observer.disconnect();
-      window.__t3ShellTheme.observer = null;
-      window.__t3ShellTheme.applyOverride = value => { window.deliveredTheme = value; };
+      window.__halc2ShellTheme.observer.disconnect();
+      window.__halc2ShellTheme.observer = null;
+      window.__halc2ShellTheme.applyOverride = value => { window.deliveredTheme = value; };
       document.documentElement.dataset.themeId = 'page-owned';
     )");
     evaluate(theme.injectionScript());
     QCOMPARE(evaluate("window.deliveredTheme.id").toString(), QString("shell-night"));
     QCOMPARE(evaluate("document.documentElement.dataset.themeId").toString(), QString("page-owned"));
-    QCOMPARE(evaluate("window.__t3ShellTheme.observer === null").toBool(), true);
+    QCOMPARE(evaluate("window.__halc2ShellTheme.observer === null").toBool(), true);
     const QString beforePublication = theme.injectionScript();
     theme.applyPageTheme(QVariantMap{{"appearance", "light"}, {"colors", QVariantMap{{"canvas", "#ffffff"}}}});
     QCOMPARE(theme.injectionScript(), beforePublication);
@@ -332,9 +332,9 @@ private slots:
     const QString config = directory.filePath("config");
     const QString sources = directory.filePath("qml");
     QVERIFY(QDir().mkpath(config));
-    QVERIFY(QDir().mkpath(sources + "/T3/Bricks"));
+    QVERIFY(QDir().mkpath(sources + "/HalC2/Bricks"));
     const QString shellPath = config + "/shell.qml";
-    const QString defaultPath = sources + "/T3/Bricks/DefaultShell.qml";
+    const QString defaultPath = sources + "/HalC2/Bricks/DefaultShell.qml";
     const auto writeSource = [](const QString& path, const QByteArray& contents) {
       QFile file(path);
       return file.open(QIODevice::WriteOnly) && file.write(contents) == contents.size();
@@ -342,7 +342,7 @@ private slots:
     const auto source = [](int revision) {
       return QByteArray(R"(
 import QtQuick
-import T3.Shell
+import HalC2.Shell
 Window {
   objectName: "reload-probe"
   property int revision: )") + QByteArray::number(revision) + QByteArray(revision, ' ') + R"(
@@ -360,7 +360,7 @@ Window {
     bridge.publish("composer", QVariantMap{{"text", "Retained draft"}});
     ThemeStore theme(config);
     WebProfile webProfile(directory.filePath("web"));
-    qmlRegisterSingletonInstance("T3.Shell", 1, 0, "WebProfile", webProfile.profile());
+    qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", webProfile.profile());
     ShellRuntime runtime({config, sources}, &bridge, &theme);
     const auto window = []() -> QQuickWindow* {
       QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);

@@ -1,9 +1,9 @@
-defmodule T3.Steps.Orchestration.Threads do
+defmodule HalC2.Steps.Orchestration.Threads do
   @moduledoc "Steps for `features/node/orchestration/threads.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   @model %{"instanceId" => "codex", "model" => "gpt-5.4"}
 
@@ -55,7 +55,7 @@ defmodule T3.Steps.Orchestration.Threads do
 
   defp await_mark_cleared(context) do
     World.await_state(context, context.thread, fn state ->
-      T3.StreamState.get(state, "thread")[context.thread]["titleRegeneration"] == nil
+      HalC2.StreamState.get(state, "thread")[context.thread]["titleRegeneration"] == nil
     end)
 
     context
@@ -256,7 +256,7 @@ defmodule T3.Steps.Orchestration.Threads do
 
   step "a new title is generated from the thread's messages and its previous title", context do
     World.await_state(context, context.thread, fn state ->
-      T3.StreamState.get(state, "thread")[context.thread]["title"] == "Login redirect fix"
+      HalC2.StreamState.get(state, "thread")[context.thread]["title"] == "Login redirect fix"
     end)
 
     assert mark(context) == nil
@@ -416,7 +416,7 @@ defmodule T3.Steps.Orchestration.Threads do
     World.await_row(thread, &(&1["deletedAt"] != nil))
 
     live =
-      for {{_node, id}, {"thread", row}} <- T3.Shell.rows(),
+      for {{_node, id}, {"thread", row}} <- HalC2.Shell.rows(),
           row["projectId"] == project and row["deletedAt"] == nil,
           do: id
 
@@ -433,7 +433,7 @@ defmodule T3.Steps.Orchestration.Threads do
       |> ok!()
 
     World.await_latest_run(context, thread, "completed")
-    [pid] = for {pid, _} <- Registry.lookup(T3.Codex.Registry, thread), do: pid
+    [pid] = for {pid, _} <- Registry.lookup(HalC2.Codex.Registry, thread), do: pid
     assert [%{"status" => status}] = World.entities(context, thread, "provider-session")
     assert status != "stopped"
     Map.put(context, :runtime, pid)
@@ -457,8 +457,8 @@ defmodule T3.Steps.Orchestration.Threads do
   end
 
   step "a client subscribes to the shell", context do
-    client = T3.Test.Node.sub(World.client(context), 900, %{"type" => "shell"})
-    {%{"t" => "shell"}, client} = T3.Test.WsClient.recv(client, 1_000)
+    client = HalC2.Test.Node.sub(World.client(context), 900, %{"type" => "shell"})
+    {%{"t" => "shell"}, client} = HalC2.Test.WsClient.recv(client, 1_000)
     World.put_client(context, client)
   end
 
@@ -467,7 +467,7 @@ defmodule T3.Steps.Orchestration.Threads do
     assert {:ok, _} = context.reply
 
     {frame, client} =
-      T3.Test.Node.await(World.client(context), fn frame ->
+      HalC2.Test.Node.await(World.client(context), fn frame ->
         frame["t"] == "shell.rows" and
           Enum.any?(
             frame["rows"],
@@ -617,7 +617,7 @@ defmodule T3.Steps.Orchestration.Threads do
   step "the parent's timeline links to {string} and the run that created it",
        %{args: [child]} = context do
     assert {:ok, _} = context.reply
-    items = T3.Projection.Timeline.local_items(World.state(context, context.parent))
+    items = HalC2.Projection.Timeline.local_items(World.state(context, context.parent))
 
     assert %{"runId" => run_id, "title" => "Child work", "targetModel" => "gpt-5.4"} =
              Enum.find(items, &(&1["type"] == "thread_created" and &1["targetThreadId"] == child))

@@ -1,5 +1,5 @@
 # Sources:
-#   apps/server-ex/lib/t3/workspace.ex (search_entries, rank, search_contents)
+#   apps/server-ex/lib/hal_c2/workspace.ex (search_entries, rank, search_contents)
 #   apps/web/src/components/search/ProjectContentSearchDialog.tsx
 #   apps/web/src/components/files/ProjectFilePicker.tsx
 #   apps/web/src/components/CommandPalette.tsx (Go to file, Search project contents)

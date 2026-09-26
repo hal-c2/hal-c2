@@ -1,4 +1,4 @@
-defmodule T3.Steps.SourceControl.CheckpointDiffs do
+defmodule HalC2.Steps.SourceControl.CheckpointDiffs do
   @moduledoc """
   The Background names the finished turns; they are played (through the fake Codex,
   `World.run_turn/3`) the first time a step needs them, so a `Given` can still say
@@ -8,7 +8,7 @@ defmodule T3.Steps.SourceControl.CheckpointDiffs do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   @branch_refs ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"]
   @cart "if (total) {\n  pay(total)\n}\n"
@@ -52,8 +52,8 @@ defmodule T3.Steps.SourceControl.CheckpointDiffs do
   end
 
   defp checkpoints(context) do
-    T3.Streams.Server.state(T3.Streams.ensure(thread_id(context)))
-    |> T3.StreamState.list("checkpoint")
+    HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id(context)))
+    |> HalC2.StreamState.list("checkpoint")
     |> Enum.sort_by(& &1["appRunOrdinal"])
   end
 
@@ -188,7 +188,7 @@ defmodule T3.Steps.SourceControl.CheckpointDiffs do
   step "turn {int} is still running", %{args: [n]} = context do
     context = played(context)
     id = thread_id(context)
-    :ok = T3.Streams.subscribe(id, self(), nil)
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
 
     {{:ok, _}, context} =
       World.dispatch(context, %{
@@ -214,7 +214,7 @@ defmodule T3.Steps.SourceControl.CheckpointDiffs do
        %{args: [title]} = context do
     assert title == context.thread_title
     id = "imported-#{System.unique_integer([:positive])}"
-    scope = T3.Checkpoint.scope_id(id)
+    scope = HalC2.Checkpoint.scope_id(id)
     project = World.project(context, "shop").id
 
     # The previous server's hidden refs: a commit of the whole checkout per turn.
@@ -223,14 +223,14 @@ defmodule T3.Steps.SourceControl.CheckpointDiffs do
         if ordinal > 0,
           do: File.write!(Path.join(context.cwd, "old#{ordinal}.ts"), "old #{ordinal}\n")
 
-        ref = T3.Checkpoint.ref(scope, ordinal)
+        ref = HalC2.Checkpoint.ref(scope, ordinal)
         snapshot!(context.cwd, ref)
         {ordinal, ref}
       end
 
-    source = Path.join(T3.Test.Node.tmp_dir(context.node, "previous-server"), "state.sqlite")
+    source = Path.join(HalC2.Test.Node.tmp_dir(context.node, "previous-server"), "state.sqlite")
     write_node_log(source, node_events(id, project, scope, refs, context.cwd))
-    {:ok, _} = T3.Import.V2.run(source, T3.Store, only: [id])
+    {:ok, _} = HalC2.Import.V2.run(source, HalC2.Store, only: [id])
 
     context
     |> put_in([:threads, title], id)
@@ -246,13 +246,13 @@ defmodule T3.Steps.SourceControl.CheckpointDiffs do
 
   defp await_running(id, ordinal) do
     running? =
-      T3.Streams.Server.state(T3.Streams.ensure(id))
-      |> T3.StreamState.list("run")
+      HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
+      |> HalC2.StreamState.list("run")
       |> Enum.any?(&(&1["ordinal"] == ordinal and &1["status"] == "running"))
 
     unless running? do
       receive do
-        {:t3_stream, ^id, _} -> await_running(id, ordinal)
+        {:halc2_stream, ^id, _} -> await_running(id, ordinal)
       after
         10_000 -> flunk("turn #{ordinal} never started")
       end
@@ -261,7 +261,7 @@ defmodule T3.Steps.SourceControl.CheckpointDiffs do
 
   # Commits the whole checkout to `ref` through a scratch index, as a checkpoint does.
   defp snapshot!(cwd, ref) do
-    index = Path.join(System.tmp_dir!(), "t3-import-index-#{System.unique_integer([:positive])}")
+    index = Path.join(System.tmp_dir!(), "hal-c2-import-index-#{System.unique_integer([:positive])}")
     env = [{"GIT_INDEX_FILE", index}]
 
     try do
@@ -294,7 +294,7 @@ defmodule T3.Steps.SourceControl.CheckpointDiffs do
         }
 
         checkpoint = %{
-          "id" => T3.Checkpoint.checkpoint_id(scope, ordinal),
+          "id" => HalC2.Checkpoint.checkpoint_id(scope, ordinal),
           "threadId" => id,
           "scopeId" => scope,
           "runId" => run["id"],

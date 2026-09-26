@@ -1,11 +1,11 @@
 # Sources:
 #   docs/user/permission-modes.md
-#   apps/server-ex/lib/t3/claude/thread_runtime.ex (runtime mode map, approval decisions, plan capture)
-#   apps/server-ex/lib/t3/codex/thread_runtime.ex (approval policy and sandbox map, acceptAlways -> acceptForSession, collaborationMode)
-#   apps/server-ex/lib/t3/acp.ex (grok and cursor launch flags per mode, opencode ignores the mode)
-#   apps/server-ex/lib/t3/acp/thread_runtime.ex (full-access auto-grant, allow/reject option choice, cancellation)
-#   apps/server-ex/lib/t3/orchestration/delegation.ex (child runtime/interaction mode escalation refused)
-#   apps/server-ex/lib/t3/settings.ex (defaultRuntimeMode is project-scoped)
+#   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (runtime mode map, approval decisions, plan capture)
+#   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (approval policy and sandbox map, acceptAlways -> acceptForSession, collaborationMode)
+#   apps/server-ex/lib/hal_c2/acp.ex (grok and cursor launch flags per mode, opencode ignores the mode)
+#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (full-access auto-grant, allow/reject option choice, cancellation)
+#   apps/server-ex/lib/hal_c2/orchestration/delegation.ex (child runtime/interaction mode escalation refused)
+#   apps/server-ex/lib/hal_c2/settings.ex (defaultRuntimeMode is project-scoped)
 #   apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts (auto -> auto_review), apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts
 #   apps/web/src/components/chat/runtimeModeConfig.ts, apps/web/src/components/settings/ProjectDefaultsSettings.tsx (New threads -> Permissions)
 #   apps/tui/src/controls.ts (runtime mode and plan/build toggles)
@@ -13,7 +13,7 @@
 
 @node
 Feature: Permission modes
-  A thread's permission mode decides when the agent must ask before acting. T3 Code has
+  A thread's permission mode decides when the agent must ask before acting. HAL-C2 has
   four modes and each provider maps them onto its own permission system. Approvals and
   plan mode work the same way from the user's side whichever provider runs the turn.
 

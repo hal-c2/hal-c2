@@ -185,6 +185,6 @@ Feature: Keybindings settings
 
     @backlog @desktop
     Scenario: A browser warns that it may claim shortcuts
-      Given the user is using T3 Code in a browser
-      Then the panel warns that some shortcuts may be claimed by the browser before T3 Code sees them
+      Given the user is using HAL-C2 in a browser
+      Then the panel warns that some shortcuts may be claimed by the browser before HAL-C2 sees them
       And suggests the desktop app for better keybinding support

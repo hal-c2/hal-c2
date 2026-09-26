@@ -9,7 +9,7 @@ import {
 } from "react";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 
-import { isElectron, isT3Shell } from "../env";
+import { isElectron, isHalC2Shell } from "../env";
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { isEditableFocused } from "../lib/editableFocus";
@@ -264,14 +264,14 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
       <SidebarProvider
         // Qt lays out the sidebar outside the web viewport, including at narrow widths.
-        responsive={!isT3Shell}
+        responsive={!isHalC2Shell}
         className="h-dvh! min-h-0!"
         data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
         defaultOpen
         style={sidebarProviderStyle}
       >
         <ProjectProjectionRetention />
-        {isT3Shell ? null : (
+        {isHalC2Shell ? null : (
           <Sidebar
             side="left"
             collapsible="offcanvas"
@@ -300,7 +300,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           </Sidebar>
         )}
         {children}
-        {isT3Shell ? <ShellLayoutBridge /> : <SidebarControl />}
+        {isHalC2Shell ? <ShellLayoutBridge /> : <SidebarControl />}
         <NavigationHistoryShortcuts />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>

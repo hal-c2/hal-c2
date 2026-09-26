@@ -1,6 +1,6 @@
 # Sources:
 #   apps/mobile/src/features/widgets/ (SubscriptionUsage and AgentActivity widgets)
-#   apps/mobile/modules/t3-subscription-widget
+#   apps/mobile/modules/hal-c2-subscription-widget
 #   apps/mobile/app.config.ts (expo-widgets families, frequent updates, push updates)
 #   apps/mobile/src/features/usage/ (subscription usage coordinator)
 # Provider usage limits are specified in features/providers/. This file covers the
@@ -50,12 +50,12 @@ Feature: Home screen and lock screen widgets
   @backlog @mobile
   Scenario: Usage older than 15 minutes asks the user to refresh
     Given the widget's usage was last updated 20 minutes ago
-    Then the widget asks the user to open T3 Code to refresh
+    Then the widget asks the user to open HAL-C2 to refresh
 
   @backlog @mobile
   Scenario: A widget with no connected environment asks the user to connect
     Given the phone is not paired with any environment
-    Then the usage widget asks the user to open T3 Code to connect
+    Then the usage widget asks the user to open HAL-C2 to connect
     When the user taps the widget
     Then the app opens to add an environment
 

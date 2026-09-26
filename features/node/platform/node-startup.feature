@@ -1,21 +1,21 @@
 # Sources:
-#   apps/server-ex/config/runtime.exs (T3_HOME, T3_PORT, T3CODE_HOST)
-#   apps/server/src/cli/config.ts (T3CODE_HOST)
-#   apps/server-ex/lib/mix/tasks/t3.server.ex, t3.import.ex, t3.bundle.ex
+#   apps/server-ex/config/runtime.exs (HALC2_HOME, HALC2_NODE_PORT, HALC2_HOST)
+#   apps/server/src/cli/config.ts (HALC2_HOST)
+#   apps/server-ex/lib/mix/tasks/hal_c2.server.ex, hal_c2.import.ex, hal_c2.bundle.ex
 #   apps/server-ex/rel/env.sh.eex (RELEASE_DISTRIBUTION, cluster vm.args)
-#   apps/server-ex/rel/overlays/bin/t3-service (restart loop on exit 75), lib/t3/service.ex
-#   apps/server-ex/lib/t3/desktop.ex (T3_BOOTSTRAP_STDIN), acp.ex (T3_NODE_COMMAND, T3_NODE_ELECTRON)
-#   apps/server-ex/lib/t3/web.ex (access-token), environment.ex (environment-id, T3_LABEL, descriptor)
-#   apps/server-ex/lib/t3/import/v2.ex
+#   apps/server-ex/rel/overlays/bin/hal-c2-service (restart loop on exit 75), lib/hal_c2/service.ex
+#   apps/server-ex/lib/hal_c2/desktop.ex (HALC2_BOOTSTRAP_STDIN), acp.ex (HALC2_NODE_COMMAND, HALC2_NODE_ELECTRON)
+#   apps/server-ex/lib/hal_c2/web.ex (access-token), environment.ex (environment-id, HALC2_LABEL, descriptor)
+#   apps/server-ex/lib/hal_c2/import/v2.ex
 #   packages/contracts/src/desktopBootstrap.ts
 #   packages/contracts/src/environment.ts (ExecutionEnvironmentDescriptor)
-#   docs/user/remote-access.md (t3 serve, t3 serve --host)
+#   docs/user/remote-access.md (hal-c2 serve, hal-c2 serve --host)
 #   docs/user/background-service.md (service install, status, removal)
 #   docs/internals/remote.md (environment identity survives restarts and address changes)
 #   docs/operations/development.md (state and ports)
 
 Feature: Starting the node
-  A node is one Elixir release that owns a T3 home directory. It starts from a checkout
+  A node is one Elixir release that owns a HAL-C2 home directory. It starts from a checkout
   for development, from a release for everyone else, as a background service, or as the
   desktop app's own server.
 
@@ -33,22 +33,22 @@ Feature: Starting the node
 
   @node
   Scenario: The port and home directory come from the environment
-    Given T3_PORT is 4100 and T3_HOME is "/srv/t3"
+    Given HALC2_NODE_PORT is 4100 and HALC2_HOME is "/srv/hal-c2"
     When the node starts
     Then it serves clients on port 4100
-    And its database, logs and worktrees live under "/srv/t3"
+    And its database, logs and worktrees live under "/srv/hal-c2"
 
   @node
   Scenario: A checkout keeps its state inside the checkout
     Given no home directory is configured
     When a developer starts the node from a checkout
-    Then its state lives in the checkout's ".t3/elixir" directory
+    Then its state lives in the checkout's ".hal-c2/elixir" directory
 
   @node
-  Scenario: A release keeps its state in the user's T3 home
+  Scenario: A release keeps its state in the user's HAL-C2 home
     Given no home directory is configured
     When a user starts the node from a release
-    Then its state lives in "~/.t3/elixir"
+    Then its state lives in "~/.hal-c2/elixir"
 
   @node
   Scenario: The node binds to loopback unless it was told otherwise
@@ -87,7 +87,7 @@ Feature: Starting the node
 
   @node
   Scenario: A configured label names the environment
-    Given T3_LABEL is "Build box"
+    Given HALC2_LABEL is "Build box"
     When a client reads the node's environment descriptor
     Then the label is "Build box"
 
@@ -134,9 +134,9 @@ Feature: Starting the node
   @node
   Scenario: The desktop app starts the node without putting its secret on the command line
     Given the desktop app launches the node in bootstrap mode
-    When it writes the port, host, T3 home and bootstrap token as one line on standard input
+    When it writes the port, host, HAL-C2 home and bootstrap token as one line on standard input
     Then the node listens on that host and port
-    And keeps its state under the "elixir" directory of that T3 home
+    And keeps its state under the "elixir" directory of that HAL-C2 home
     And the token never appears in the process arguments or environment
 
   @node
@@ -164,8 +164,8 @@ Feature: Starting the node
     Then it starts with cluster distribution over mutual TLS
     And without them it starts with distribution off
 
-  # The TypeScript server's --home-dir, --port and --mode flags. A node reads T3_HOME and
-  # T3_PORT and has one mode; the desktop bootstrap covers the desktop case.
+  # The TypeScript server's --home-dir, --port and --mode flags. A node reads HALC2_HOME and
+  # HALC2_NODE_PORT and has one mode; the desktop bootstrap covers the desktop case.
   @dropped @node
   Scenario: The server takes its home and mode as command-line flags
     When a user starts the server with a home directory flag

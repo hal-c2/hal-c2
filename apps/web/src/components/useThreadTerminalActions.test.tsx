@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId, type ProjectScript } from "@hal-c2/contracts";
 import { act, useLayoutEffect } from "react";
 import * as Cause from "effect/Cause";
 import { create, type ReactTestRenderer } from "react-test-renderer";

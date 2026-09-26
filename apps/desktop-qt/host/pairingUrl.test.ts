@@ -31,7 +31,7 @@ describe("parsePairingUrlLine", () => {
 describe("findPairingUrl", () => {
   it("returns the first pairing URL in multi-line output", () => {
     const output = [
-      "T3 Code server is ready.",
+      "HAL-C2 server is ready.",
       "Connection string: localhost:3773",
       "Pairing URL: http://localhost:3773/pair?token=first",
       "Pairing URL: http://localhost:3773/pair?token=second",

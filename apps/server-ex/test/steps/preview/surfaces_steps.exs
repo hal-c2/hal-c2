@@ -1,4 +1,4 @@
-defmodule T3.Steps.Preview.Surfaces do
+defmodule HalC2.Steps.Preview.Surfaces do
   @moduledoc """
   Steps for `features/preview/surfaces.feature`: the node's browser tabs
   (`preview.*` RPCs and the `preview` shape) and its local server suggestions
@@ -12,8 +12,8 @@ defmodule T3.Steps.Preview.Surfaces do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @thread "th-preview"
   @watch 71
@@ -387,7 +387,7 @@ defmodule T3.Steps.Preview.Surfaces do
   end
 
   step "the node no longer scans for listening ports", context do
-    pid = Process.whereis(T3.LocalServers)
+    pid = Process.whereis(HalC2.LocalServers)
     # The next scan tick, now rather than a few seconds from now.
     send(pid, :scan)
     state = :sys.get_state(pid)
@@ -411,7 +411,7 @@ defmodule T3.Steps.Preview.Surfaces do
   # --- helpers -------------------------------------------------------------------------
 
   defp services(context) do
-    Node.ensure(T3.Preview)
+    Node.ensure(HalC2.Preview)
     context
   end
 
@@ -434,7 +434,7 @@ defmodule T3.Steps.Preview.Surfaces do
   end
 
   defp ping(client) do
-    client = T3.Test.WsClient.send_json(client, %{"t" => "ping"})
+    client = HalC2.Test.WsClient.send_json(client, %{"t" => "ping"})
     {_, client} = Node.await(client, &(&1["t"] == "pong"))
     client
   end
@@ -488,12 +488,12 @@ defmodule T3.Steps.Preview.Surfaces do
 
   # Pings and collects every preview event that arrives before the pong.
   defp ping(client, :collect) do
-    client = T3.Test.WsClient.send_json(client, %{"t" => "ping"})
+    client = HalC2.Test.WsClient.send_json(client, %{"t" => "ping"})
     collect(client, [])
   end
 
   defp collect(client, acc) do
-    {frame, client} = T3.Test.WsClient.recv(client, 2_000)
+    {frame, client} = HalC2.Test.WsClient.recv(client, 2_000)
 
     case frame do
       %{"t" => "pong"} -> {Enum.reverse(acc), client}
@@ -539,7 +539,7 @@ defmodule T3.Steps.Preview.Surfaces do
   end
 
   defp watch_servers(context) do
-    Node.ensure(T3.LocalServers)
+    Node.ensure(HalC2.LocalServers)
 
     client =
       Node.sub(World.client(context), @servers, %{

@@ -1,5 +1,5 @@
 {
-  "name": "@t3tools/tailscale",
+  "name": "@hal-c2/tailscale",
   "private": true,
   "type": "module",
   "exports": {
@@ -13,7 +13,7 @@
     "test": "vp test run"
   },
   "dependencies": {
-    "@t3tools/shared": "workspace:*",
+    "@hal-c2/shared": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

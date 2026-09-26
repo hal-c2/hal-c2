@@ -1,4 +1,4 @@
-defmodule T3.Steps.Timeline.Checkpoints do
+defmodule HalC2.Steps.Timeline.Checkpoints do
   @moduledoc """
   Steps for `features/timeline/checkpoints.feature`. The thread works in a git
   worktree of its own (so files can be restored), and its three turns each write one
@@ -7,14 +7,14 @@ defmodule T3.Steps.Timeline.Checkpoints do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node.World
 
   @files ["a.txt", "b.txt", "c.txt"]
 
   step "a thread in {string} with three finished turns", %{args: [project]} = context do
     root = World.project(context, project).root
-    worktree = T3.Test.Node.tmp_dir(context.node, "rewind")
+    worktree = HalC2.Test.Node.tmp_dir(context.node, "rewind")
     World.git!(root, ["worktree", "add", "-q", "-b", "rewind", worktree])
 
     context
@@ -72,7 +72,7 @@ defmodule T3.Steps.Timeline.Checkpoints do
              "rolled_back"
            ]
 
-    shown = MapSet.new(T3.Projection.Timeline.local_items(state), & &1["runId"])
+    shown = MapSet.new(HalC2.Projection.Timeline.local_items(state), & &1["runId"])
     assert MapSet.member?(shown, first["id"])
     refute MapSet.member?(shown, second["id"])
     refute MapSet.member?(shown, third["id"])
@@ -119,7 +119,7 @@ defmodule T3.Steps.Timeline.Checkpoints do
   step "the thread has no provider conversation", context do
     World.patch_thread(context, context.current, %{
       "activeProviderThreadId" => nil,
-      "updatedAt" => T3.Orchestration.Entities.now()
+      "updatedAt" => HalC2.Orchestration.Entities.now()
     })
   end
 
@@ -134,11 +134,11 @@ defmodule T3.Steps.Timeline.Checkpoints do
   end
 
   step "the checkpoint after turn 1 has gone stale", context do
-    scope = T3.Checkpoint.scope_id(World.thread_id(context, context.current))
-    id = T3.Checkpoint.checkpoint_id(scope, 1)
+    scope = HalC2.Checkpoint.scope_id(World.thread_id(context, context.current))
+    id = HalC2.Checkpoint.checkpoint_id(scope, 1)
 
     World.put_entity(context, context.current, "checkpoint", id, %{"s" => %{"status" => "stale"}})
-    |> World.patch_thread(context.current, %{"updatedAt" => T3.Orchestration.Entities.now()})
+    |> World.patch_thread(context.current, %{"updatedAt" => HalC2.Orchestration.Entities.now()})
     |> Map.put(:stale_checkpoint, id)
   end
 
@@ -158,13 +158,13 @@ defmodule T3.Steps.Timeline.Checkpoints do
   end
 
   defp rollback(context, ordinal, restore) do
-    scope = T3.Checkpoint.scope_id(World.thread_id(context, context.current))
+    scope = HalC2.Checkpoint.scope_id(World.thread_id(context, context.current))
 
     World.dispatch(context, %{
       "type" => "checkpoint.rollback",
       "threadId" => World.thread_id(context, context.current),
       "scopeId" => scope,
-      "checkpointId" => T3.Checkpoint.checkpoint_id(scope, ordinal),
+      "checkpointId" => HalC2.Checkpoint.checkpoint_id(scope, ordinal),
       "restoreFiles" => restore
     })
   end

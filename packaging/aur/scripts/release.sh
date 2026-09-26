@@ -2,14 +2,14 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-repo='pingdotgg/t3code'
+repo='hal-c2/hal-c2'
 tag="${RELEASE_TAG:?RELEASE_TAG is required}"
 pkgrel="${PKGREL:-1}"
 
 if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  pkgname='t3code-bin'
+  pkgname='hal-c2-bin'
 elif [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[0-9]+$ ]]; then
-  pkgname='t3code-nightly-bin'
+  pkgname='hal-c2-nightly-bin'
 else
   echo "Release $tag does not publish an AUR package."
   exit 0
@@ -17,7 +17,7 @@ fi
 
 version="${tag#v}"
 pkgver="${version//-/_}"
-asset_name="T3-Code-${version}-x86_64.AppImage"
+asset_name="HAL-C2-${version}-x86_64.AppImage"
 release_json="$(gh api "repos/$repo/releases/tags/$tag")"
 asset_digest="$(jq -r --arg name "$asset_name" \
   '.assets[] | select(.name == $name) | .digest' <<<"$release_json")"
@@ -77,9 +77,9 @@ export GIT_SSH_COMMAND="ssh -i $key_file -o IdentitiesOnly=yes -o UserKnownHosts
 git clone "ssh://aur@aur.archlinux.org/$pkgname.git" "$aur_dir"
 cp PKGBUILD .SRCINFO "$aur_dir/"
 cd "$aur_dir"
-git rm --ignore-unmatch LICENSE .upstream-commit t3code-icon.png
-git config user.name 't3code-ci'
-git config user.email 't3code-ci@users.noreply.github.com'
+git rm --ignore-unmatch LICENSE .upstream-commit hal-c2-icon.png
+git config user.name 'hal-c2-ci'
+git config user.email 'hal-c2-ci@users.noreply.github.com'
 git add -A
 
 if git diff --cached --quiet; then

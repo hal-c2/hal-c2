@@ -2,7 +2,7 @@ import type {
   RepositoryIdentity,
   SourceControlProviderInfo,
   SourceControlProviderKind,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 
 export interface ChangeRequestPresentation {
   readonly icon: "github" | "gitlab" | "forgejo" | "azure-devops" | "bitbucket" | "change-request";

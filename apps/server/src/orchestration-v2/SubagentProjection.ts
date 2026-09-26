@@ -15,9 +15,9 @@ import type {
   ProviderTurnId,
   ThreadId,
   TurnItemId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as DateTime from "effect/DateTime";
-import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
+import { isOrchestrationV2WorkActive } from "@hal-c2/contracts";
 
 function trimmed(value: string | null | undefined): string | undefined {
   const result = value?.trim();

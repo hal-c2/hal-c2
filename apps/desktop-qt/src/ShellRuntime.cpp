@@ -32,9 +32,9 @@ ShellRuntime::ShellRuntime(Options options, ShellBridge* bridge, ThemeStore* the
     : QObject(parent), m_options(std::move(options)), m_bridge(bridge), m_theme(theme) {
   // These instances, including WebProfile registered by main, belong to one
   // engine for its entire lifetime. Reload replaces only the root objects.
-  qmlRegisterSingletonInstance("T3.Shell", 1, 0, "Shell", m_bridge);
-  qmlRegisterSingletonInstance("T3.Shell", 1, 0, "Theme", m_theme);
-  qmlRegisterSingletonInstance("T3.Shell", 1, 0, "Runtime", this);
+  qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Shell", m_bridge);
+  qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Theme", m_theme);
+  qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Runtime", this);
 
   applyApplicationAppearance(m_theme->windowLiquidGlass() && !m_theme->followsSystemAppearance(),
                              m_theme->appearance() != QStringLiteral("light"));
@@ -70,18 +70,18 @@ QString ShellRuntime::userShellPath() const {
 }
 
 QString ShellRuntime::appVersion() const {
-  return QStringLiteral(T3_APP_VERSION);
+  return QStringLiteral(HALC2_APP_VERSION);
 }
 
 QUrl ShellRuntime::defaultShellUrl() const {
   if (!m_options.qmlSourceDir.isEmpty()) {
     const QString onDisk =
-        QDir(m_options.qmlSourceDir).filePath(QStringLiteral("T3/Bricks/DefaultShell.qml"));
+        QDir(m_options.qmlSourceDir).filePath(QStringLiteral("HalC2/Bricks/DefaultShell.qml"));
     if (QFileInfo::exists(onDisk)) {
       return QUrl::fromLocalFile(onDisk);
     }
   }
-  return QUrl(QStringLiteral("qrc:/qt/qml/T3/Bricks/DefaultShell.qml"));
+  return QUrl(QStringLiteral("qrc:/qt/qml/HalC2/Bricks/DefaultShell.qml"));
 }
 
 void ShellRuntime::start() {

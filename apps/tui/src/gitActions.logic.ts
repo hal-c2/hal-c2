@@ -3,7 +3,7 @@ import type {
   VcsStatusLocalResult,
   VcsStatusRemoteResult,
   VcsStatusResult,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 
 /**
  * Fold the VCS-status stream's split local/remote results into the combined

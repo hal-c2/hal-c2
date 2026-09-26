@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem } from "@hal-c2/contracts";
 import type { PropertyMap } from "opentui-qml";
 
 import type { TuiClient } from "../connection.ts";

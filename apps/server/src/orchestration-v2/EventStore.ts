@@ -3,7 +3,7 @@ import {
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -71,7 +71,7 @@ export interface EventStoreV2Shape {
 }
 
 export class EventStoreV2 extends Context.Service<EventStoreV2, EventStoreV2Shape>()(
-  "t3/orchestration-v2/EventStore/EventStoreV2",
+  "hal-c2/orchestration-v2/EventStore/EventStoreV2",
 ) {}
 
 const baseLayer: Layer.Layer<EventStoreV2, never, OrchestrationEventStore> = Layer.effect(

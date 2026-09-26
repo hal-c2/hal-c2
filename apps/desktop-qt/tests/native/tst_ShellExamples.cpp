@@ -39,12 +39,12 @@ class ShellExamplesTest : public QObject {
 private slots:
   void initTestCase() {
     QVERIFY(directory.isValid());
-    qmlRegisterType<LocalFolderModel>("T3.Shell", 1, 0, "LocalFolderModel");
+    qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
     theme = std::make_unique<ThemeStore>(directory.path());
     profile = std::make_unique<WebProfile>(directory.filePath("web"));
-    qmlRegisterSingletonInstance("T3.Shell", 1, 0, "WebProfile", profile->profile());
+    qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", profile->profile());
     runtime = std::make_unique<ShellRuntime>(
-        ShellRuntime::Options{directory.path(), QStringLiteral(T3_TEST_SOURCE_DIR "/qml")},
+        ShellRuntime::Options{directory.path(), QStringLiteral(HALC2_TEST_SOURCE_DIR "/qml")},
         &bridge, theme.get());
     bridge.setPageUrl(QUrl("about:blank"));
     const auto state = QJsonDocument::fromJson(R"({
@@ -88,7 +88,7 @@ private slots:
   void layoutsFit() {
     QFETCH(QString, example);
     QFETCH(int, width);
-    const QDir source(QStringLiteral(T3_TEST_SOURCE_DIR "/examples/") + example);
+    const QDir source(QStringLiteral(HALC2_TEST_SOURCE_DIR "/examples/") + example);
     for (const auto& file : source.entryList(QDir::Files)) {
       const QString target = directory.filePath(file);
       if (QFile::exists(target)) QVERIFY(QFile::remove(target));
@@ -229,7 +229,7 @@ private slots:
     if (example == "folders") {
       auto* explorer = window->findChild<QQuickItem*>("folderExplorer");
       QVERIFY(explorer);
-      auto* page = window->findChild<QQuickItem*>("T3WebSurface");
+      auto* page = window->findChild<QQuickItem*>("HalC2WebSurface");
       QVERIFY(page);
       auto* threads = window->findChild<QQuickItem*>("threadSidebar");
       QVERIFY(threads);
@@ -287,7 +287,7 @@ private slots:
   void panelTabsSupportKeyboardActivationAndClose() {
     QFile source(directory.filePath("shell.qml"));
     QVERIFY(source.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    source.write("import QtQuick\nimport T3.Bricks\nShellWindow { width: 600; height: 400; RightPanel { anchors.fill: parent } }");
+    source.write("import QtQuick\nimport HalC2.Bricks\nShellWindow { width: 600; height: 400; RightPanel { anchors.fill: parent } }");
     source.close();
     bridge.publish("rightPanel", QJsonDocument::fromJson(R"({
       "isOpen": true, "activeSurfaceId": "diff", "embedPath": "/test",
@@ -322,7 +322,7 @@ private slots:
   }
 
   void dashboardDimmerPreservesRoundedCorners() {
-    const QDir source(QStringLiteral(T3_TEST_SOURCE_DIR "/examples/dashboard"));
+    const QDir source(QStringLiteral(HALC2_TEST_SOURCE_DIR "/examples/dashboard"));
     for (const auto& file : source.entryList(QDir::Files)) {
       const QString target = directory.filePath(file);
       if (QFile::exists(target)) QVERIFY(QFile::remove(target));
@@ -337,7 +337,7 @@ private slots:
     QVERIFY(window);
     window->resize(1400, 880);
     QVERIFY(QTest::qWaitForWindowExposed(window));
-    auto* page = findVisualItem(window->contentItem(), "T3WebSurface");
+    auto* page = findVisualItem(window->contentItem(), "HalC2WebSurface");
     auto* drawer = findVisualItem(window->contentItem(), "drawer");
     QVERIFY(page);
     QVERIFY(drawer);
@@ -374,7 +374,7 @@ private slots:
     QVERIFY(source.open(QIODevice::WriteOnly | QIODevice::Truncate));
     source.write(R"(
       import QtQuick
-      import T3.Bricks
+      import HalC2.Bricks
       DefaultShell {
         property bool toolbarEnabled: true
         toolbar: toolbarEnabled ? extension : null

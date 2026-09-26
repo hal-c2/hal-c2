@@ -1,6 +1,6 @@
 # Sources:
 #   apps/mobile/src/features/terminal/ (sessions, status, text size, accessory keys, context)
-#   apps/mobile/modules/t3-terminal
+#   apps/mobile/modules/hal-c2-terminal
 # Terminal sessions are specified in features/terminal/. This file covers using a terminal
 # with a touch keyboard on a small screen.
 

@@ -1,9 +1,9 @@
-defmodule T3.Steps.Orchestration.ProviderHandoff do
+defmodule HalC2.Steps.Orchestration.ProviderHandoff do
   @moduledoc "Steps for features/node/orchestration/provider-handoff.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   @models %{"codex" => "gpt-5.4", "claudeAgent" => "claude-haiku"}
   @history_start "<conversation_history>\nThis conversation started in another agent session. Continue from it.\n\n"
@@ -60,7 +60,7 @@ defmodule T3.Steps.Orchestration.ProviderHandoff do
     # The provider process is gone and its conversation with it.
     {pid, _} = World.codex_runtime(context, thread)
     ref = Process.monitor(pid)
-    :ok = DynamicSupervisor.terminate_child(T3.Codex.Supervisor, pid)
+    :ok = DynamicSupervisor.terminate_child(HalC2.Codex.Supervisor, pid)
     assert_receive {:DOWN, ^ref, :process, ^pid, _}
 
     [provider_thread] = World.entities(context, thread, "provider-thread")
@@ -293,7 +293,7 @@ defmodule T3.Steps.Orchestration.ProviderHandoff do
 
     World.await_state(context, thread, fn state ->
       state
-      |> T3.StreamState.list("run")
+      |> HalC2.StreamState.list("run")
       |> Enum.count(&(&1["status"] in ~w(completed failed interrupted)))
       |> Kernel.>(done)
     end)

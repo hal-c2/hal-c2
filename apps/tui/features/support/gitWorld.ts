@@ -7,7 +7,7 @@ import type {
   GitStackedAction,
   OrchestrationThread,
   VcsStatusResult,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 
 import type { TuiGitState } from "../../src/host/gitState.ts";
 import type { TuiLayoutState } from "../../src/host/layoutState.ts";

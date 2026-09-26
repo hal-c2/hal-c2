@@ -1,4 +1,4 @@
-import type { SnapShotAccessibilityNode, SnapShotSource } from "@t3tools/contracts";
+import type { SnapShotAccessibilityNode, SnapShotSource } from "@hal-c2/contracts";
 
 /** Keep image-relative accessibility coordinates aligned with a recompressed attachment. */
 export function resizeSnapShotSource(

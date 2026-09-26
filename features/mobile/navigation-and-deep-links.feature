@@ -2,7 +2,7 @@
 #   docs/internals/mobile-navigation.md (root stack, overlay routes, previews)
 #   apps/mobile/src/Stack.tsx (route table, deep link prefixes, not found)
 #   apps/mobile/src/features/shortcuts/ (Android launcher shortcuts, allowlisted links)
-#   apps/mobile/app.config.ts (t3code, t3code-dev and t3code-preview schemes)
+#   apps/mobile/app.config.ts (hal-c2, hal-c2-dev and hal-c2-preview schemes)
 #   apps/mobile/plugins/withIosSceneLifecycle
 # Desktop navigation and the command palette are specified in features/navigation/.
 # This file covers links into the phone app and moving between phone screens.
@@ -80,9 +80,9 @@ Feature: Navigating the phone app and opening links into it
 
     Examples:
       | build       | scheme           |
-      | production  | t3code://        |
-      | preview     | t3code-preview:// |
-      | development | t3code-dev://    |
+      | production  | hal-c2://        |
+      | preview     | hal-c2-preview:// |
+      | development | hal-c2-dev://    |
 
   @backlog @mobile
   Scenario: Sheets and previews do not change the layout behind them
@@ -122,7 +122,7 @@ Feature: Navigating the phone app and opening links into it
   @backlog @mobile
   Scenario: Siri and App Shortcuts can start a task
     Given the user is on an iPhone
-    When the user asks Siri to start a T3 Code task in "shop"
+    When the user asks Siri to start a HAL-C2 task in "shop"
     Then a new task opens in "shop"
 
   @backlog @mobile

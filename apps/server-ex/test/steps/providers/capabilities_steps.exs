@@ -1,14 +1,14 @@
-defmodule T3.Steps.Providers.Capabilities do
+defmodule HalC2.Steps.Providers.Capabilities do
   @moduledoc """
   Steps for `features/providers/capabilities.feature`: the same conversation moves
-  across the fake providers (`T3.Test.Node.World.fake_providers/2`) and each one's
+  across the fake providers (`HalC2.Test.Node.World.fake_providers/2`) and each one's
   log shows what it was handed.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node.World
 
   @thread "Work"
   @instances %{
@@ -38,9 +38,9 @@ defmodule T3.Steps.Providers.Capabilities do
   defp fake_pi(context, "Pi") do
     wait = %{"match" => "wait for me", "steps" => [%{"waitAbort" => true}]}
 
-    T3.Test.FakeAcp.install_pi(context, %{},
+    HalC2.Test.FakeAcp.install_pi(context, %{},
       enabled: true,
-      turns: [wait | T3.Test.FakeAcp.pi_turns()]
+      turns: [wait | HalC2.Test.FakeAcp.pi_turns()]
     )
   end
 
@@ -206,7 +206,7 @@ defmodule T3.Steps.Providers.Capabilities do
     [run] = World.runs(context, "Other")
 
     reply =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.merge_back",
         "commandId" => "cmd-merge-#{System.unique_integer([:positive])}",
         "sourceThreadId" => World.thread_id(context, "Other"),
@@ -374,7 +374,7 @@ defmodule T3.Steps.Providers.Capabilities do
     run = context |> World.runs("fork") |> List.last()
 
     assert :ok =
-             T3.Orchestration.dispatch(%{
+             HalC2.Orchestration.dispatch(%{
                "type" => "thread.merge_back",
                "commandId" => "cmd-merge-#{System.unique_integer([:positive])}",
                "sourceThreadId" => World.thread_id(context, "fork"),

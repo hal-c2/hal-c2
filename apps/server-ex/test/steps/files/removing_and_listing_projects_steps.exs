@@ -1,4 +1,4 @@
-defmodule T3.Steps.Files.RemovingAndListingProjects do
+defmodule HalC2.Steps.Files.RemovingAndListingProjects do
   @moduledoc """
   Steps for `features/files/removing-and-listing-projects.feature`: project updates
   and deletes over `projects.mutate`, and the automatic pull a node runs at boot.
@@ -6,8 +6,8 @@ defmodule T3.Steps.Files.RemovingAndListingProjects do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.{Host, World}
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.{Host, World}
 
   @sonnet %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-5"}
 
@@ -16,8 +16,8 @@ defmodule T3.Steps.Files.RemovingAndListingProjects do
     root = Host.path(context, path)
     File.mkdir_p!(root)
     World.git!(root, ~w(init -q -b main))
-    World.git!(root, ~w(config user.email t3@example.com))
-    World.git!(root, ~w(config user.name T3))
+    World.git!(root, ~w(config user.email hal-c2@example.com))
+    World.git!(root, ~w(config user.name HAL-C2))
     File.write!(Path.join(root, "README.md"), "# #{title}\n")
     World.git!(root, ~w(add README.md))
     World.git!(root, ~w(commit -q -m init))
@@ -66,7 +66,7 @@ defmodule T3.Steps.Files.RemovingAndListingProjects do
     id = World.project(context, project).id
     World.await_row(id, &(&1["deletedAt"] != nil))
 
-    refute Enum.any?(T3.Shell.rows(), fn
+    refute Enum.any?(HalC2.Shell.rows(), fn
              {{_node, ^id}, {"project", row}} -> row["deletedAt"] == nil
              _ -> false
            end)
@@ -93,8 +93,8 @@ defmodule T3.Steps.Files.RemovingAndListingProjects do
   end
 
   step "automatic pull was never turned on for {string}", %{args: [project]} = context do
-    Node.ensure(T3.Settings)
-    refute T3.Settings.for_project(World.project(context, project).id)["defaultAutoPull"]
+    Node.ensure(HalC2.Settings)
+    refute HalC2.Settings.for_project(World.project(context, project).id)["defaultAutoPull"]
     context
   end
 
@@ -156,29 +156,29 @@ defmodule T3.Steps.Files.RemovingAndListingProjects do
 
   step "the node starts normally", context do
     client = World.client(context)
-    client = T3.Test.WsClient.send_json(client, %{"t" => "ping"})
-    {%{"t" => "pong"}, client} = T3.Test.WsClient.recv(client, 1_000)
+    client = HalC2.Test.WsClient.send_json(client, %{"t" => "ping"})
+    {%{"t" => "pong"}, client} = HalC2.Test.WsClient.recv(client, 1_000)
     assert World.await_row(World.project(context).id, & &1)
     World.put_client(context, client)
   end
 
   defp auto_pull(context, project, on) do
-    Node.ensure(T3.Settings)
-    Node.ensure({Registry, keys: :unique, name: T3.Vcs.Registry})
-    {settings, version} = T3.Settings.get()
+    Node.ensure(HalC2.Settings)
+    Node.ensure({Registry, keys: :unique, name: HalC2.Vcs.Registry})
+    {settings, version} = HalC2.Settings.get()
     id = World.project(context, project).id
 
     overrides =
       Map.put(settings["projectSettingsOverrides"] || %{}, id, %{"defaultAutoPull" => on})
 
-    {:ok, _} = T3.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
     context
   end
 
   # The checkout becomes a clone of a new origin that someone else pushed to since.
   defp behind(context, project) do
-    Node.ensure(T3.Settings)
-    Node.ensure({Registry, keys: :unique, name: T3.Vcs.Registry})
+    Node.ensure(HalC2.Settings)
+    Node.ensure({Registry, keys: :unique, name: HalC2.Vcs.Registry})
     root = World.project(context, project).root
     origin = Node.tmp_dir(context.node, "origin.git")
     other = Node.tmp_dir(context.node, "other")
@@ -199,9 +199,9 @@ defmodule T3.Steps.Files.RemovingAndListingProjects do
 
     World.git!(root, [
       "-c",
-      "user.name=T3",
+      "user.name=HAL-C2",
       "-c",
-      "user.email=t3@example.com",
+      "user.email=hal-c2@example.com",
       "commit",
       "-q",
       "-m",
@@ -212,7 +212,7 @@ defmodule T3.Steps.Files.RemovingAndListingProjects do
   defp head(root), do: World.git!(root, ~w(rev-parse HEAD))
 
   defp mutate(context, project, fields) do
-    T3.Projects.mutate(
+    HalC2.Projects.mutate(
       Map.merge(
         %{"type" => "project.update", "projectId" => World.project(context, project).id},
         fields

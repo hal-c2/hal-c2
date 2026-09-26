@@ -7,7 +7,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import { onTestFinished, vi } from "vite-plus/test";
 
 const composerDraftFileMocks = vi.hoisted(() => {
@@ -128,7 +128,7 @@ vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "0000" })
 vi.mock("./assets", () => ({ assetEnvironment: {} }));
 vi.mock("./attachments", () => ({ attachmentEnvironment: {} }));
 vi.mock("./session", () => ({ environmentSession: {} }));
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+vi.mock("@hal-c2/client-runtime/state/runtime", () => ({
   createEnvironmentRpcCommand: () => Symbol("rpc-command"),
   executeAtomQuery: () => {
     throw new Error("Unexpected network query in the inline read test");
@@ -148,7 +148,7 @@ vi.mock("../features/sharing/incoming-share-storage", () => ({
 }));
 
 import type { DraftComposerAttachment } from "../lib/composerImages";
-import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
+import { formatComposerContextReference } from "@hal-c2/shared/composerContextReferences";
 import { appAtomRegistry } from "./atom-registry";
 import { threadOutboxManager } from "./thread-outbox";
 import {
@@ -233,7 +233,9 @@ function contextDraft(start: number, count: number): ComposerDraft {
     name: "skill",
   }));
   return {
-    text: records.map((record) => `[Skill](t3-context://v1/skill/${record.contextId})`).join(" "),
+    text: records
+      .map((record) => `[Skill](hal-c2-context://v1/skill/${record.contextId})`)
+      .join(" "),
     context: { version: 1, records },
     attachments: [],
   };
@@ -265,7 +267,9 @@ describe("mobile composer drafts", () => {
       const restored = archived
         ? decoded.cloudDrafts.signedOut.account?.drafts.thread
         : decoded.drafts.thread;
-      expect(restored?.text).toBe("Review these [notes.txt](t3-context://v1/file/legacy-file) ");
+      expect(restored?.text).toBe(
+        "Review these [notes.txt](hal-c2-context://v1/file/legacy-file) ",
+      );
       expect(restored?.attachments).toEqual(legacy.attachments);
       expect(restored?.context?.records).toEqual([
         expect.objectContaining({ kind: "file", attachmentId: file.id }),
@@ -311,7 +315,7 @@ describe("mobile composer drafts", () => {
       expect(restored?.context?.records).toHaveLength(2);
       expect(restored?.context?.records).toContainEqual(skill);
       expect(restored?.text).toBe(
-        `[notes.txt](t3-context://v1/file/${records.length === 2 ? "original" : "file_2"}) `,
+        `[notes.txt](hal-c2-context://v1/file/${records.length === 2 ? "original" : "file_2"}) `,
       );
     }
   });
@@ -325,7 +329,7 @@ describe("mobile composer drafts", () => {
         name: "notes.txt",
         mimeType: "text/plain",
         sizeBytes: 1,
-        fileUri: "file:///documents/t3-composer-attachments/undo-file.txt",
+        fileUri: "file:///documents/hal-c2-composer-attachments/undo-file.txt",
         ...(uploaded
           ? {
               uploadedAttachmentId: "pending-upload",
@@ -505,9 +509,9 @@ describe("mobile composer drafts", () => {
     const existing = contextDraft(0, 2);
     const incoming = contextDraft(2, 2);
     const merged = mergeComposerDraftContentState(
-      { key: { ...existing, text: "[Skill](t3-context://v1/skill/skill-0)" } },
+      { key: { ...existing, text: "[Skill](hal-c2-context://v1/skill/skill-0)" } },
       "key",
-      { ...incoming, text: "[Skill](t3-context://v1/skill/skill-2)" },
+      { ...incoming, text: "[Skill](hal-c2-context://v1/skill/skill-2)" },
     );
     expect(merged.key?.context?.records.map((record) => record.contextId)).toEqual([
       "skill-0",
@@ -602,7 +606,7 @@ describe("mobile composer drafts", () => {
     appAtomRegistry.set(composerDraftsAtom, {
       [key]: {
         text: records
-          .map((record) => `[Skill](t3-context://v1/skill/${record.contextId})`)
+          .map((record) => `[Skill](hal-c2-context://v1/skill/${record.contextId})`)
           .join(" "),
         context: { version: 1, records },
         attachments: [],
@@ -650,7 +654,7 @@ describe("mobile composer drafts", () => {
       write.resolve(file);
       expect(await pending).toBe(0);
       const draft = getComposerDraftSnapshot(key);
-      expect(draft.text).toBe("before [pasted-text.txt](t3-context://v1/file/paste) after");
+      expect(draft.text).toBe("before [pasted-text.txt](hal-c2-context://v1/file/paste) after");
       expect(draft.attachments).toEqual([file]);
     },
   );
@@ -687,7 +691,7 @@ describe("mobile composer drafts", () => {
         fileUri: `file:///notes-${index}.txt`,
       }));
       appendComposerDraftAttachments(key, files, { appendReference: true });
-      const firstLink = "[notes-0.txt](t3-context://v1/file/file-0)";
+      const firstLink = "[notes-0.txt](hal-c2-context://v1/file/file-0)";
       const insertion = captureComposerDraftInsertion(key, { start: 0, end: firstLink.length });
       expect(countComposerDraftAttachmentsAfterSelection(key, insertion)).toBe(99);
       expect(getComposerDraftAfterSelection(key, insertion).context?.records).toHaveLength(99);
@@ -757,7 +761,7 @@ describe("mobile composer drafts", () => {
       fileUri: `file:///notes-${index}.txt`,
     }));
     appendComposerDraftAttachments(key, files, { appendReference: true });
-    const firstLink = "[notes-0.txt](t3-context://v1/file/existing-0)";
+    const firstLink = "[notes-0.txt](hal-c2-context://v1/file/existing-0)";
     const insertion = captureComposerDraftInsertion(key, { start: 0, end: firstLink.length });
     setComposerDraftText(key, `New edit ${insertion.text}`);
     const edited = getComposerDraftSnapshot(key);
@@ -825,7 +829,7 @@ describe("mobile composer drafts", () => {
       lineEnd: 1,
       text: "Build failed",
     };
-    const reference = "[Build output](t3-context://v1/terminal/context-terminal)";
+    const reference = "[Build output](hal-c2-context://v1/terminal/context-terminal)";
     setComposerDraftText(draftKey, "Fix this next");
     rememberComposerDraftSelection(draftKey, "Fix this next", { start: 4, end: 8 });
     insertComposerDraftContext(draftKey, {
@@ -871,7 +875,7 @@ describe("mobile composer drafts", () => {
       }).drafts,
     ).toEqual({
       "environment-1:thread-1": {
-        text: "Review this file [report.pdf](t3-context://v1/file/file-1) ",
+        text: "Review this file [report.pdf](hal-c2-context://v1/file/file-1) ",
         attachments: [file],
         context: {
           version: 1,
@@ -905,7 +909,7 @@ describe("mobile composer drafts", () => {
       name: `${id}.mov`,
       mimeType: "video/quicktime",
       sizeBytes: 42,
-      fileUri: `file:///documents/t3-composer-attachments/${id}.mov`,
+      fileUri: `file:///documents/hal-c2-composer-attachments/${id}.mov`,
     });
     const draftKey = "new-task:environment-1:project-cap";
     const existing = Array.from({ length: 99 }, (_, index) => makeAttachment(`held-${index}`));
@@ -946,7 +950,7 @@ describe("mobile composer drafts", () => {
       name: "report.pdf",
       mimeType: "application/pdf",
       sizeBytes: 42,
-      fileUri: "file:///documents/t3-composer-attachments/report.pdf",
+      fileUri: "file:///documents/hal-c2-composer-attachments/report.pdf",
     };
     appAtomRegistry.set(composerDraftsAtom, {
       source: { text: "First draft", attachments: [file] },
@@ -976,8 +980,8 @@ describe("mobile composer drafts", () => {
       name: "photo.png",
       mimeType: "image/png",
       sizeBytes: 3,
-      fileUri: "file:///documents/t3-composer-attachments/photo.png",
-      previewUri: "file:///documents/t3-composer-attachments/photo.png",
+      fileUri: "file:///documents/hal-c2-composer-attachments/photo.png",
+      previewUri: "file:///documents/hal-c2-composer-attachments/photo.png",
     };
     appAtomRegistry.set(composerDraftsAtom, {
       "environment-1:thread-1": { text: "look at this", attachments: [image] },
@@ -1018,8 +1022,8 @@ describe("mobile composer drafts", () => {
       name: "photo.png",
       mimeType: "image/png",
       sizeBytes: 3,
-      fileUri: "file:///documents/t3-composer-attachments/photo.png",
-      previewUri: "file:///documents/t3-composer-attachments/photo.png",
+      fileUri: "file:///documents/hal-c2-composer-attachments/photo.png",
+      previewUri: "file:///documents/hal-c2-composer-attachments/photo.png",
     };
     const readStarted = Promise.withResolvers<void>();
     const read = Promise.withResolvers<void>();
@@ -1076,7 +1080,7 @@ describe("mobile composer drafts", () => {
       name: "report.pdf",
       mimeType: "application/pdf",
       sizeBytes: 42,
-      fileUri: "file:///documents/t3-composer-attachments/failed-send.pdf",
+      fileUri: "file:///documents/hal-c2-composer-attachments/failed-send.pdf",
       uploadedAttachmentId: "pending-failed-send",
       uploadEnvironmentId: EnvironmentId.make("environment-1"),
     };
@@ -1162,7 +1166,7 @@ describe("mobile composer drafts", () => {
         name,
         mimeType: type === "image" ? "image/png" : "application/pdf",
         sizeBytes: 42,
-        fileUri: `file:///documents/t3-composer-attachments/${name}`,
+        fileUri: `file:///documents/hal-c2-composer-attachments/${name}`,
         uploadEnvironmentId: environmentId,
         uploadedAttachmentId: "pending-notes",
       };
@@ -1210,7 +1214,7 @@ describe("mobile composer drafts", () => {
         type === "image"
           ? { text: "Unsent notes", attachments: [file] }
           : {
-              text: "Unsent notes [notes.pdf](t3-context://v1/file/local-notes) ",
+              text: "Unsent notes [notes.pdf](hal-c2-context://v1/file/local-notes) ",
               attachments: [file],
               context: {
                 version: 1,
@@ -1232,7 +1236,7 @@ describe("mobile composer drafts", () => {
       expect(getComposerDraftSnapshot("pending-task:queued-1").text).toBe(
         type === "image"
           ? "Edited queued task"
-          : "Edited queued task [notes.pdf](t3-context://v1/file/local-notes) ",
+          : "Edited queued task [notes.pdf](hal-c2-context://v1/file/local-notes) ",
       );
       expect(enqueue).toHaveBeenCalledExactlyOnceWith(queued);
       expect(appAtomRegistry.get(composerCloudDraftsAtom).signedOut).toEqual({});
@@ -1279,7 +1283,7 @@ describe("mobile composer drafts", () => {
         name,
         mimeType: type === "image" ? "image/png" : "video/mp4",
         sizeBytes: 42,
-        fileUri: `file:///private/var/mobile/Containers/Data/Application/11111111-1111-4111-8111-111111111111/Documents/t3-composer-attachments/${fileName}`,
+        fileUri: `file:///private/var/mobile/Containers/Data/Application/11111111-1111-4111-8111-111111111111/Documents/hal-c2-composer-attachments/${fileName}`,
       };
       const file =
         type === "image"
@@ -1287,7 +1291,7 @@ describe("mobile composer drafts", () => {
           : { ...metadata, type };
       const currentFile = {
         ...file,
-        fileUri: `file:///var/mobile/Containers/Data/Application/22222222-2222-4222-8222-222222222222/Documents/t3-composer-attachments/${fileName}`,
+        fileUri: `file:///var/mobile/Containers/Data/Application/22222222-2222-4222-8222-222222222222/Documents/hal-c2-composer-attachments/${fileName}`,
       };
       const releasePlayback = retainComposerAttachmentFileForPreview(file);
       const releaseShareCopy = retainComposerAttachmentFileForPreview(currentFile);
@@ -1323,7 +1327,7 @@ describe("mobile composer drafts", () => {
       name: "recording.mp4",
       mimeType: "video/mp4",
       sizeBytes: 42,
-      fileUri: "file:///documents/t3-composer-attachments/recording.mp4",
+      fileUri: "file:///documents/hal-c2-composer-attachments/recording.mp4",
     };
     const ownershipReadStarted = Promise.withResolvers<void>();
     const ownershipRead = Promise.withResolvers<[]>();
@@ -1360,7 +1364,7 @@ describe("mobile composer drafts", () => {
       name: "report.pdf",
       mimeType: "application/pdf",
       sizeBytes: 42,
-      fileUri: "file:///documents/t3-composer-attachments/discarded.pdf",
+      fileUri: "file:///documents/hal-c2-composer-attachments/discarded.pdf",
       uploadedAttachmentId: "pending-discarded",
       uploadEnvironmentId: environmentId,
     };
@@ -1383,14 +1387,14 @@ describe("mobile composer drafts", () => {
       name: "report.pdf",
       mimeType: "application/pdf",
       sizeBytes: 42,
-      fileUri: "file:///documents/t3-composer-attachments/discarded-copy.pdf",
+      fileUri: "file:///documents/hal-c2-composer-attachments/discarded-copy.pdf",
       uploadedAttachmentId: "pending-shared",
       uploadEnvironmentId: environmentId,
     };
     const retained = {
       ...discarded,
       id: "file-retained-copy",
-      fileUri: "file:///documents/t3-composer-attachments/retained-copy.pdf",
+      fileUri: "file:///documents/hal-c2-composer-attachments/retained-copy.pdf",
     };
     appAtomRegistry.set(composerDraftsAtom, {
       "environment-1:thread-1": { text: "Keep this copy", attachments: [retained] },
@@ -1416,7 +1420,7 @@ describe("mobile composer drafts", () => {
       name: "report.pdf",
       mimeType: "application/pdf",
       sizeBytes: 42,
-      fileUri: "file:///documents/t3-composer-attachments/delete-failed.pdf",
+      fileUri: "file:///documents/hal-c2-composer-attachments/delete-failed.pdf",
       uploadedAttachmentId: "pending-delete-failed",
       uploadEnvironmentId: EnvironmentId.make("environment-1"),
     };
@@ -1437,7 +1441,7 @@ describe("mobile composer drafts", () => {
       name: "report.pdf",
       mimeType: "application/pdf",
       sizeBytes: 42,
-      fileUri: "file:///documents/t3-composer-attachments/report.pdf",
+      fileUri: "file:///documents/hal-c2-composer-attachments/report.pdf",
     };
     appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, {
       "environment-1:thread-1": [
@@ -1465,7 +1469,7 @@ describe("mobile composer drafts", () => {
       name: "report.pdf",
       mimeType: "application/pdf",
       sizeBytes: 42,
-      fileUri: "file:///documents/t3-composer-attachments/report.pdf",
+      fileUri: "file:///documents/hal-c2-composer-attachments/report.pdf",
     };
     const load = vi.spyOn(threadOutboxManager, "load").mockImplementation(async () => {
       appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, {
@@ -1503,7 +1507,7 @@ describe("mobile composer drafts", () => {
       name: "report.pdf",
       mimeType: "application/pdf",
       sizeBytes: 42,
-      fileUri: "file:///documents/t3-composer-attachments/incoming.pdf",
+      fileUri: "file:///documents/hal-c2-composer-attachments/incoming.pdf",
     };
     incomingShareStorageMocks.load
       .mockResolvedValueOnce([
@@ -1538,7 +1542,7 @@ describe("mobile composer drafts", () => {
       name: "report.pdf",
       mimeType: "application/pdf",
       sizeBytes: 42,
-      fileUri: "file:///documents/t3-composer-attachments/incoming-unknown.pdf",
+      fileUri: "file:///documents/hal-c2-composer-attachments/incoming-unknown.pdf",
     };
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     incomingShareStorageMocks.load.mockRejectedValueOnce(new Error("inbox unavailable"));
@@ -1560,11 +1564,11 @@ describe("mobile composer drafts", () => {
         name: "report.pdf",
         mimeType: "application/pdf",
         sizeBytes: 42,
-        fileUri: `file:///private/var/mobile/Containers/Data/Application/11111111-1111-4111-8111-111111111111/Documents/t3-composer-attachments/${fileName}`,
+        fileUri: `file:///private/var/mobile/Containers/Data/Application/11111111-1111-4111-8111-111111111111/Documents/hal-c2-composer-attachments/${fileName}`,
       };
       const currentFile = {
         ...oldFile,
-        fileUri: `file:///var/mobile/Containers/Data/Application/22222222-2222-4222-8222-222222222222/Documents/t3-composer-attachments/${fileName}`,
+        fileUri: `file:///var/mobile/Containers/Data/Application/22222222-2222-4222-8222-222222222222/Documents/hal-c2-composer-attachments/${fileName}`,
       };
       const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
       onTestFinished(() => outboxLoad.mockRestore());
@@ -1625,7 +1629,7 @@ describe("mobile composer drafts", () => {
       name: "report.pdf",
       mimeType: "application/pdf",
       sizeBytes: 42,
-      fileUri: "file:///documents/t3-composer-attachments/report.pdf",
+      fileUri: "file:///documents/hal-c2-composer-attachments/report.pdf",
     };
     setComposerDraftText("environment-1:thread-1", "Unsaved draft");
     composerDraftFileMocks.setWriteError(new Error("storage unavailable"));
@@ -2051,7 +2055,7 @@ describe("mobile composer drafts", () => {
         name: "report.pdf",
         mimeType: "application/pdf",
         sizeBytes: 42,
-        fileUri: "file:///documents/t3-composer-attachments/report.pdf",
+        fileUri: "file:///documents/hal-c2-composer-attachments/report.pdf",
       };
       composerDraftFileMocks.setDocument({
         schemaVersion: failure === "decode" ? 999 : 1,
@@ -2500,7 +2504,7 @@ describe("mobile composer drafts", () => {
       name: "kept.pdf",
       mimeType: "application/pdf",
       sizeBytes: 1,
-      fileUri: "file:///documents/t3-composer-attachments/kept.pdf",
+      fileUri: "file:///documents/hal-c2-composer-attachments/kept.pdf",
     };
     const insertedAttachment = {
       id: "inserted",
@@ -2508,7 +2512,7 @@ describe("mobile composer drafts", () => {
       name: "inserted.pdf",
       mimeType: "application/pdf",
       sizeBytes: 1,
-      fileUri: "file:///documents/t3-composer-attachments/inserted.pdf",
+      fileUri: "file:///documents/hal-c2-composer-attachments/inserted.pdf",
     };
     const userAttachment = { ...keptAttachment, id: "user-added" };
     const snapshot: ComposerDraft = { text: "typed before", attachments: [keptAttachment] };
@@ -2577,7 +2581,7 @@ describe("mobile composer drafts", () => {
       name: `${id}.pdf`,
       mimeType: "application/pdf",
       sizeBytes: 42,
-      fileUri: `file:///documents/t3-composer-attachments/${id}.pdf`,
+      fileUri: `file:///documents/hal-c2-composer-attachments/${id}.pdf`,
     });
     const first = fileFor("file-first");
     const reowned = fileFor("file-reowned");
@@ -2612,7 +2616,7 @@ describe("mobile composer drafts", () => {
       name: "shared.pdf",
       mimeType: "application/pdf",
       sizeBytes: 42,
-      fileUri: "file:///documents/t3-composer-attachments/shared.pdf",
+      fileUri: "file:///documents/hal-c2-composer-attachments/shared.pdf",
       uploadEnvironmentId: EnvironmentId.make("environment-1"),
       uploadedAttachmentId: "pending-partial-outbox",
     };
@@ -2687,7 +2691,7 @@ describe("mobile composer drafts", () => {
       name: "report.pdf",
       mimeType: "application/pdf",
       sizeBytes: 42,
-      fileUri: "file:///documents/t3-composer-attachments/report.pdf",
+      fileUri: "file:///documents/hal-c2-composer-attachments/report.pdf",
     };
     composerDraftFileMocks.setDocument({
       schemaVersion: 1,
@@ -2703,7 +2707,7 @@ describe("mobile composer drafts", () => {
 
     expect(freshRegistry.get(fresh.composerDraftsAtom)).toEqual({
       "environment-1:thread-1": {
-        text: "Persisted draft [report.pdf](t3-context://v1/file/file-cold-start) ",
+        text: "Persisted draft [report.pdf](hal-c2-context://v1/file/file-cold-start) ",
         attachments: [file],
         context: {
           version: 1,

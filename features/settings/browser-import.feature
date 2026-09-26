@@ -5,7 +5,7 @@
 #   apps/web/src/components/settings/IntegrationsSettings.tsx (Import from, browser profiles)
 
 Feature: Importing cookies from another browser
-  The user can bring cookies from an installed browser into a T3 Code browser profile, so agents
+  The user can bring cookies from an installed browser into a HAL-C2 browser profile, so agents
   and previews are signed in to the same sites.
 
   Background:
@@ -87,10 +87,10 @@ Feature: Importing cookies from another browser
 
     @backlog @desktop
     Scenario: Full Disk Access is needed on macOS
-      Given T3 Code does not have Full Disk Access
+      Given HAL-C2 does not have Full Disk Access
       When the user imports cookies from Safari
       Then the user is asked to allow Full Disk Access
-      And is told to quit and reopen T3 Code if access does not update
+      And is told to quit and reopen HAL-C2 if access does not update
 
     @backlog @desktop
     Scenario: System Settings cannot be opened for Full Disk Access

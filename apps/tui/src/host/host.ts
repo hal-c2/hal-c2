@@ -1,7 +1,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 
-import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@hal-c2/contracts";
 import { createPropertyMap, type PropertyMap } from "opentui-qml";
 
 import type { TuiClient, TuiConnectionPhase } from "../connection.ts";
@@ -117,7 +117,7 @@ export interface HostOptions {
   readonly runEditor?: (command: EditorCommand, file: string) => Promise<void>;
   /** Read an image pasted as an absolute path on this machine. */
   readonly readLocalImage?: (path: string) => Promise<Uint8Array>;
-  /** Decode attached images for their preview (default: `@t3tools/opentui-image`). */
+  /** Decode attached images for their preview (default: `@hal-c2/opentui-image`). */
   readonly decodeImage?: ImageDecoder;
   /**
    * How inline images reach the terminal ("direct", or "tmux" passthrough);
@@ -895,7 +895,7 @@ export function createHost(options: HostOptions): Host {
         if (DECLINABLE_ACTIONS.has(action)) return false;
         if (!unknownActions.has(action)) {
           unknownActions.add(action);
-          log(`t3 tui: unknown shell action "${action}"`);
+          log(`hal-c2 tui: unknown shell action "${action}"`);
         }
         return false;
     }

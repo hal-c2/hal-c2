@@ -8,7 +8,7 @@ import {
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationReadModel,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -115,7 +115,7 @@ it.layer(NodeServices.layer)("turn diff complete decider", (it) => {
       const event = yield* decideOrchestrationCommand({
         command: {
           ...placeholderCommand(),
-          checkpointRef: CheckpointRef.make("refs/t3/checkpoints/turn-1"),
+          checkpointRef: CheckpointRef.make("refs/hal-c2/checkpoints/turn-1"),
           status: "ready",
         },
         readModel: makeReadModel([makeCheckpoint("missing")]),

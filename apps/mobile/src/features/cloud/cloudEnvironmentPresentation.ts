@@ -1,8 +1,8 @@
-import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
+import type { RelayEnvironmentStatusResponse } from "@hal-c2/contracts/relay";
 import {
   orchestrationProtocolCompatibilityError,
   type EnvironmentConnectionPhase,
-} from "@t3tools/client-runtime/connection";
+} from "@hal-c2/client-runtime/connection";
 
 export interface AvailableCloudEnvironmentPresentation {
   readonly connectionError: string | null;

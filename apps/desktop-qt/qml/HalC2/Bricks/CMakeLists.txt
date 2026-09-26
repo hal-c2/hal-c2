@@ -1,0 +1,47 @@
+# Pure-QML bricks. The qmldir is hand-written (no `prefer` line) so the same
+# directory works both compiled into the binary and as a disk import path for
+# hot reload.
+qt_add_qml_module(halc2bricks
+  URI HalC2.Bricks
+  VERSION 1.0
+  STATIC
+  NO_GENERATE_QMLDIR
+  NO_PLUGIN_OPTIONAL
+  QML_FILES
+    AppView.qml
+    AppWindow.qml
+    Composer.qml
+    ComposerVimKeys.qml
+    ProjectFolderDrop.qml
+    FolderExplorer.qml
+    FolderOperationDialog.qml
+    ContextMenuHost.qml
+    DefaultShell.qml
+    GitActions.qml
+    Notifications.qml
+    RightPanel.qml
+    SettingsNav.qml
+    ShellErrorOverlay.qml
+    ShellButton.qml
+    ShellCard.qml
+    ShellChevron.qml
+    ShellComboBox.qml
+    ShellIcon.qml
+    ShellSplitButton.qml
+    ShellMenu.qml
+    ShellMenuItem.qml
+    ShellTextField.qml
+    ShellWindow.qml
+    Sidebar.qml
+    SidebarThreadRow.qml
+    HalC2Wordmark.qml
+    TerminalDrawer.qml
+    TitleBar.qml
+    WebSurface.qml
+    WindowControls.qml
+    Workspace.qml
+    js/lucide.js
+  RESOURCES
+    qmldir
+    js/shell-connect.js
+)

@@ -1,6 +1,6 @@
-# hal-c2 feature specifications
+# HAL-C2 feature specifications
 
-Every behaviour hal-c2 has, will have, or has deliberately dropped is written here in Gherkin.
+Every behaviour HAL-C2 has, will have, or has deliberately dropped is written here in Gherkin.
 This tree is the feature-loss ledger for the move from the TypeScript server, the web app
 and the React Native app to the Elixir node with QML on every surface. A behaviour that is
 not in this tree does not exist as far as the rewrite is concerned.
@@ -20,7 +20,7 @@ One directory per product domain, not per surface. Surfaces are tags.
 | `preview/`        | in-app preview surfaces                                                      |
 | `files/`          | project files, explorer, folder operations, project scripts and actions      |
 | `settings/`       | every settings panel, scopes and inheritance, storage, diagnostics, updates  |
-| `connections/`    | pairing, devices, remote access, T3 Connect, clustering                      |
+| `connections/`    | pairing, devices, remote access, HAL-C2 Connect, clustering                  |
 | `node/`           | the Elixir node itself: protocol, auth, orchestration engine, checkpoints    |
 | `providers/`      | each agent provider as a plugin: install, auth, models, usage, sessions      |
 | `plugins/`        | the plugin system: UI plugins, node plugins, agent plugins                   |
@@ -38,11 +38,11 @@ Surface tags say where a scenario must hold. A scenario carries every surface it
 - `@tui` runs against the terminal client rendered by opentui-qml.
 - `@shared` is shorthand for `@desktop @mobile @tui` and means the QML is shared between them.
 
-Status tags say whether the hal-c2 stack delivers the scenario today. The hal-c2 stack is the
+Status tags say whether the HAL-C2 stack delivers the scenario today. The HAL-C2 stack is the
 Elixir node, native QML, and the TUI. Anything served by `apps/server`, `apps/web` or
 `apps/mobile` does not count.
 
-- No status tag means the scenario passes on the hal-c2 stack now.
+- No status tag means the scenario passes on the HAL-C2 stack now.
 - `@backlog` means the product does this today through code that is going away, or it is new
   intended behaviour. This is the list of things we must not lose.
 - `@dropped` means we decided not to carry the behaviour. The scenario stays so the decision

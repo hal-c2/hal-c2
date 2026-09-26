@@ -2,7 +2,7 @@
 #   docs/user/source-control.md (merge, auto-merge, revert, fork workflows, reviewers, labels)
 #   packages/contracts/src/pullRequest.ts (PullRequestAction, PullRequestMergeMethod, PullRequestUpdateMethod, PullRequestCapabilities, PullRequestViewerPermissions)
 #   packages/contracts/src/rpc.ts (pullRequests.runAction, pullRequests.reviewerCandidates, pullRequests.requestReviewers, pullRequests.labelCandidates, pullRequests.setLabels)
-#   apps/server-ex/lib/t3/pull_requests.ex (run_action, reviewer_candidates, request_reviewers, label_candidates, set_labels, refusals)
+#   apps/server-ex/lib/hal_c2/pull_requests.ex (run_action, reviewer_candidates, request_reviewers, label_candidates, set_labels, refusals)
 #   apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx
 #   apps/web/src/components/pullRequest/PullRequestReviewerPicker.tsx
 #   apps/web/src/components/pullRequest/PullRequestLabelPicker.tsx

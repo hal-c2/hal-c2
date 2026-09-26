@@ -1,4 +1,4 @@
-defmodule T3.Steps.Timeline.ApprovalsAndQuestions do
+defmodule HalC2.Steps.Timeline.ApprovalsAndQuestions do
   @moduledoc """
   Steps for `features/timeline/approvals-and-questions.feature`. The agents are the
   fake providers in `test/support`: "approve run: CMD" asks to run a command, "ask: Q"
@@ -8,8 +8,8 @@ defmodule T3.Steps.Timeline.ApprovalsAndQuestions do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node.World
 
   step "the user is looking at a thread in {string} whose agent is working",
        %{args: [project]} = context do
@@ -122,7 +122,7 @@ defmodule T3.Steps.Timeline.ApprovalsAndQuestions do
       request = context[:request] || World.await_request(context, title)
 
       {:ok, _} =
-        T3.Orchestration.dispatch(%{
+        HalC2.Orchestration.dispatch(%{
           "type" => "thread.user-input.dismiss",
           "threadId" => World.thread_id(context, title),
           "requestId" => request["id"]
@@ -131,7 +131,7 @@ defmodule T3.Steps.Timeline.ApprovalsAndQuestions do
       Map.put(context, :request, request)
     else
       assert {:ok, _} =
-               T3.Orchestration.dispatch(%{
+               HalC2.Orchestration.dispatch(%{
                  "type" => "thread.user-input.dismiss",
                  "threadId" => World.thread_id(context, World.current(context)),
                  "requestId" => context.request_id
@@ -176,7 +176,7 @@ defmodule T3.Steps.Timeline.ApprovalsAndQuestions do
     title = World.current(context)
 
     assert {:ok, _} =
-             T3.Orchestration.dispatch(%{
+             HalC2.Orchestration.dispatch(%{
                "type" => "runtime-request.respond",
                "threadId" => World.thread_id(context, title),
                "requestId" => context.request_id,

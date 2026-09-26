@@ -1,4 +1,4 @@
-import type { PreviewAutomationPressInput } from "@t3tools/contracts";
+import type { PreviewAutomationPressInput } from "@hal-c2/contracts";
 
 interface KeyDefinition {
   readonly code: string;

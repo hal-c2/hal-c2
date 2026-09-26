@@ -1,4 +1,4 @@
-import type { TerminalSummary } from "@t3tools/contracts";
+import type { TerminalSummary } from "@hal-c2/contracts";
 
 /** Human-readable label for a terminal tab; matches mobile and web sidebars. */
 export function getTerminalLabel(terminalId: string): string {

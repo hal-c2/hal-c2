@@ -1,10 +1,10 @@
-defmodule T3.Steps.Orchestration.Projections do
+defmodule HalC2.Steps.Orchestration.Projections do
   @moduledoc "Steps for features/node/orchestration/projections.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # --- run status ----------------------------------------------------------------------
 
@@ -47,7 +47,7 @@ defmodule T3.Steps.Orchestration.Projections do
     assert {:ok, _} = context.reply
 
     World.await_state(context, thread, fn state ->
-      Enum.any?(T3.StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
+      Enum.any?(HalC2.StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
     end)
 
     Map.put(context, :thread, thread)
@@ -463,7 +463,7 @@ defmodule T3.Steps.Orchestration.Projections do
     id = World.thread_id(context, thread)
 
     {:ok, _} =
-      T3.Streams.commit(id, :thread, [
+      HalC2.Streams.commit(id, :thread, [
         {"thread", id, %{"s" => %{"title" => "Renamed"}}, DateTime.to_unix(ms, :millisecond)}
       ])
 
@@ -488,7 +488,7 @@ defmodule T3.Steps.Orchestration.Projections do
     Stream.iterate(1, &(&1 + 1))
     |> Enum.reduce_while(nil, fn i, _ ->
       {:ok, last} =
-        T3.Streams.commit(id, :thread, [{"thread", id, %{"s" => %{"title" => "Title #{i}"}}}])
+        HalC2.Streams.commit(id, :thread, [{"thread", id, %{"s" => %{"title" => "Title #{i}"}}}])
 
       if last > seq + 5, do: {:halt, last}, else: {:cont, last}
     end)
@@ -503,7 +503,7 @@ defmodule T3.Steps.Orchestration.Projections do
     client = World.client(context)
 
     client =
-      T3.Test.WsClient.send_json(client, %{
+      HalC2.Test.WsClient.send_json(client, %{
         "t" => "sub",
         "id" => 41,
         "shape" => shape,

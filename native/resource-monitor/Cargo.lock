@@ -19,6 +19,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hal-c2-resource-monitor"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sysinfo",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -187,15 +196,6 @@ dependencies = [
  "objc2-io-kit",
  "objc2-open-directory",
  "windows",
-]
-
-[[package]]
-name = "t3-resource-monitor"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "sysinfo",
 ]
 
 [[package]]

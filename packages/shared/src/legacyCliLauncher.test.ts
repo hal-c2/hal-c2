@@ -8,20 +8,20 @@ import { expect, it } from "vite-plus/test";
 
 import { legacyCliLauncherScript } from "./legacyCliLauncher.ts";
 
-// oxlint-disable-next-line t3code/no-global-process-runtime -- This test launches a real host executable.
+// oxlint-disable-next-line hal-c2/no-global-process-runtime -- This test launches a real host executable.
 const hostPlatform = NodeOS.platform();
-// oxlint-disable-next-line t3code/no-global-process-runtime -- Match the real executable used by the subprocess.
+// oxlint-disable-next-line hal-c2/no-global-process-runtime -- Match the real executable used by the subprocess.
 const hostArch = NodeOS.arch();
 
 // The fixture executable uses a POSIX shebang. The wrapper itself also runs on Windows.
 it.skipIf(hostPlatform === "win32")(
   "keeps service IPC, arguments, and termination connected",
   async () => {
-    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-legacy-launcher-"));
-    const entry = NodePath.join(root, "node_modules/t3/dist/bin.mjs");
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "hal-c2-legacy-launcher-"));
+    const entry = NodePath.join(root, "node_modules/hal-c2/dist/bin.mjs");
     const executable = NodePath.join(
       root,
-      `node_modules/@t3code/t3-${hostPlatform}-${hostArch}/t3`,
+      `node_modules/@hal-c2/hal-c2-${hostPlatform}-${hostArch}/hal-c2`,
     );
     await NodeFSP.mkdir(NodePath.dirname(entry), { recursive: true });
     await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });

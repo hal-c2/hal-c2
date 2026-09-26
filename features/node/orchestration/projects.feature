@@ -1,5 +1,5 @@
 # Sources:
-#   apps/server-ex/lib/t3/projects.ex (projects.mutate: project.create, project.update,
+#   apps/server-ex/lib/hal_c2/projects.ex (projects.mutate: project.create, project.update,
 #     project.delete; which project a folder belongs to)
 #   packages/contracts/src/project.ts (ProjectMutation, ProjectMutationError, Project)
 #   packages/contracts/src/orchestrationV2.ts (project.updated, project.removed)

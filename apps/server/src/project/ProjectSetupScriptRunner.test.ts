@@ -1,5 +1,5 @@
 import { assert, it, vi } from "@effect/vitest";
-import { ProjectId } from "@t3tools/contracts";
+import { ProjectId } from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -86,8 +86,8 @@ it.effect("resolves setup scripts through the standalone project service", () =>
     });
     assert.equal(open.mock.calls[0]?.[0].cwd, "/repo-worktree");
     assert.deepEqual(open.mock.calls[0]?.[0].env, {
-      T3CODE_PROJECT_ROOT: "/repo",
-      T3CODE_WORKTREE_PATH: "/repo-worktree",
+      HALC2_PROJECT_ROOT: "/repo",
+      HALC2_WORKTREE_PATH: "/repo-worktree",
       COLORTERM: "",
       NO_COLOR: "1",
       FORCE_COLOR: "0",

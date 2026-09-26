@@ -1,11 +1,11 @@
-import type { ChatFileAttachment } from "@t3tools/contracts";
+import type { ChatFileAttachment } from "@hal-c2/contracts";
 import type { Directory } from "expo-file-system";
 import type { SharingOptions } from "expo-sharing";
 
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
 
-const ATTACHMENT_DOWNLOAD_DIRECTORY = "t3-attachment-downloads";
+const ATTACHMENT_DOWNLOAD_DIRECTORY = "hal-c2-attachment-downloads";
 const DOWNLOAD_RETENTION_MS = 24 * 60 * 60_000;
 const DOWNLOAD_DIRECTORY_NAME = /^(\d+)-[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
 const activeDirectories = new Set<string>();
@@ -188,7 +188,7 @@ export async function openAttachmentInViewer(input: {
     const endHandoff = beginForegroundHandoff();
     try {
       await requireNativeModule<{ openFile(uri: string, mimeType: string): Promise<void> }>(
-        "T3NativeControls",
+        "HalC2NativeControls",
       ).openFile(
         cached.file.uri,
         input.attachment.mimeType.split(";", 1)[0]?.trim() || "application/octet-stream",

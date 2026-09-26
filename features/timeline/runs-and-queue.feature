@@ -2,10 +2,10 @@
 #   docs/user/composer.md (Queued messages, Follow-up behavior)
 #   docs/user/updating.md (Continue threads after restarts)
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch, run.interrupt, queue.resume, queued-run.reorder, queued-run.cancel, queued-run.edit, queued-message.promote-to-steer, provider-session.detach, run.created, run.updated, run_interrupt_request, run_interrupt_result)
-#   apps/server-ex/lib/t3/orchestration.ex (queueing, steering, restart, interrupt, detach)
-#   apps/server-ex/lib/t3/orchestration/recovery.ex (settle at boot, Continue where you left off)
-#   apps/server-ex/lib/t3/orchestration/turn_writer.ex (next queued message starts)
-#   apps/server-ex/lib/t3/projection/timeline.ex (cancelled queued messages and superseded interrupts hidden)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (queueing, steering, restart, interrupt, detach)
+#   apps/server-ex/lib/hal_c2/orchestration/recovery.ex (settle at boot, Continue where you left off)
+#   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (next queued message starts)
+#   apps/server-ex/lib/hal_c2/projection/timeline.ex (cancelled queued messages and superseded interrupts hidden)
 #   apps/web/src/components/chat/QueuedRunsControl.tsx
 #   apps/web/src/components/chat/MessagesTimeline.tsx (Queued, Steer markers, Interrupt requested, Run interrupted, Superseded attempt, Partial output retained)
 #   apps/web/src/components/chat/ThreadErrorBanner.tsx
@@ -158,8 +158,8 @@ Feature: Runs, interruptions and the queue
 
     Examples:
       | problem                                                  | title                    | message                                                   |
-      | is not installed and T3 Code can install it              | Codex provider status    | Open provider setup to install Codex on this environment. |
-      | is signed out and T3 Code can sign it in                 | Codex is unauthenticated | Open provider setup to sign in.                           |
+      | is not installed and HAL-C2 can install it              | Codex provider status    | Open provider setup to install Codex on this environment. |
+      | is signed out and HAL-C2 can sign it in                 | Codex is unauthenticated | Open provider setup to sign in.                           |
       | is signed out and can only be signed in from its own CLI | Codex is unauthenticated | Sign in via the CLI to authenticate again.                |
       | is unavailable                                           | Codex provider status    | Codex provider is unavailable.                            |
 

@@ -4,8 +4,8 @@ import * as DateTime from "effect/DateTime";
 import {
   deriveThreadCheckpointSummaries,
   type ThreadCheckpointSummary,
-} from "@t3tools/client-runtime/state/thread-checkpoints";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+} from "@hal-c2/client-runtime/state/thread-checkpoints";
+import type { EnvironmentId, ThreadId } from "@hal-c2/contracts";
 
 import { useCheckpointDiff } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";

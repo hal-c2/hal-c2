@@ -1,9 +1,9 @@
-defmodule T3.Steps.Composer.ModelAndMode do
+defmodule HalC2.Steps.Composer.ModelAndMode do
   @moduledoc "Steps for `features/composer/model-and-mode.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   # The runtime mode each permission level is, and what Codex is told for it.
   @modes %{
@@ -85,7 +85,7 @@ defmodule T3.Steps.Composer.ModelAndMode do
     {{:ok, _}, context} = World.send_message(context, thread, "go on")
 
     World.await_thread(context, thread, fn state ->
-      runs = T3.StreamState.list(state, "run")
+      runs = HalC2.StreamState.list(state, "run")
       length(runs) == done + 1 and Enum.all?(runs, &(&1["status"] == "completed"))
     end)
 

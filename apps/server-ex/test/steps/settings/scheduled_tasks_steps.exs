@@ -1,7 +1,7 @@
-defmodule T3.Steps.Settings.ScheduledTasks do
+defmodule HalC2.Steps.Settings.ScheduledTasks do
   @moduledoc """
   Steps for `features/settings/scheduled-tasks.feature`, against
-  `T3.ScheduledTasks` over the `scheduledTasks.*` RPCs.
+  `HalC2.ScheduledTasks` over the `scheduledTasks.*` RPCs.
 
   Time is the scenario's: the service's clock (`:scheduled_tasks_clock`) reads a
   value the steps set, starting on Monday 2026-09-21 at 07:00 local time. Time
@@ -13,8 +13,8 @@ defmodule T3.Steps.Settings.ScheduledTasks do
 
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @monday ~D[2026-09-21]
   @clock {__MODULE__, :clock}
@@ -69,11 +69,11 @@ defmodule T3.Steps.Settings.ScheduledTasks do
     context = World.create_thread(context, "Triage", "api")
     thread = World.thread_id(context, "Triage")
     context = save_task(context, %{"threadId" => thread, "schedule" => every(60)})
-    :ok = :sys.suspend(T3.Streams.ensure(thread))
+    :ok = :sys.suspend(HalC2.Streams.ensure(thread))
     set_clock(DateTime.add(now(), 60, :minute))
-    send(T3.ScheduledTasks, :tick)
+    send(HalC2.ScheduledTasks, :tick)
 
-    assert %{runs: runs, tasks: tasks} = :sys.get_state(T3.ScheduledTasks)
+    assert %{runs: runs, tasks: tasks} = :sys.get_state(HalC2.ScheduledTasks)
     assert map_size(runs) == 1
     assert tasks[context.task["id"]]["lastRunStatus"] == "running"
     context
@@ -81,7 +81,7 @@ defmodule T3.Steps.Settings.ScheduledTasks do
 
   step "a task saved by an older version that runs every 10 seconds", context do
     context = start(context)
-    :ok = ExUnit.Callbacks.stop_supervised(T3.ScheduledTasks)
+    :ok = ExUnit.Callbacks.stop_supervised(HalC2.ScheduledTasks)
     at = iso(now())
 
     legacy =
@@ -166,7 +166,7 @@ defmodule T3.Steps.Settings.ScheduledTasks do
 
   step "the task does not run immediately", context do
     context = start(context)
-    send(T3.ScheduledTasks, :tick)
+    send(HalC2.ScheduledTasks, :tick)
     settle()
     assert %{"runCount" => 0, "lastRunStatus" => "never"} = task(context)
     context
@@ -369,7 +369,7 @@ defmodule T3.Steps.Settings.ScheduledTasks do
     }
 
     caller = %{thread_id: World.thread_id(context, "Agent work"), instance: "codex"}
-    assert {:ok, %{"task" => task}} = T3.Mcp.Tools.call("schedule_task", args, caller)
+    assert {:ok, %{"task" => task}} = HalC2.Mcp.Tools.call("schedule_task", args, caller)
     Map.put(context, :task, task)
   end
 
@@ -400,7 +400,7 @@ defmodule T3.Steps.Settings.ScheduledTasks do
       ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase(@clock) end)
     end
 
-    Node.ensure(T3.ScheduledTasks)
+    Node.ensure(HalC2.ScheduledTasks)
     Map.put(context, :clock?, true)
   end
 
@@ -466,7 +466,7 @@ defmodule T3.Steps.Settings.ScheduledTasks do
 
     for _ <- 1..minutes do
       set_clock(DateTime.add(now(), 1, :minute))
-      send(T3.ScheduledTasks, :tick)
+      send(HalC2.ScheduledTasks, :tick)
       settle()
     end
 
@@ -490,7 +490,7 @@ defmodule T3.Steps.Settings.ScheduledTasks do
 
     {pid, monitor} =
       spawn_monitor(fn ->
-        {:ok, _} = T3.ScheduledTasks.subscribe(self())
+        {:ok, _} = HalC2.ScheduledTasks.subscribe(self())
         idle(me, ref)
       end)
 
@@ -509,11 +509,11 @@ defmodule T3.Steps.Settings.ScheduledTasks do
   end
 
   defp idle(me, ref) do
-    if :sys.get_state(T3.ScheduledTasks).runs == %{} do
+    if :sys.get_state(HalC2.ScheduledTasks).runs == %{} do
       send(me, {ref, :settled})
     else
       receive do
-        {:t3_scheduled_tasks, _node, _tasks} -> idle(me, ref)
+        {:halc2_scheduled_tasks, _node, _tasks} -> idle(me, ref)
       end
     end
   end
@@ -524,7 +524,7 @@ defmodule T3.Steps.Settings.ScheduledTasks do
     project = World.project(context, "api").id
 
     ids =
-      for {{node, id}, {"thread", row}} <- T3.Shell.rows(),
+      for {{node, id}, {"thread", row}} <- HalC2.Shell.rows(),
           node == node(),
           row["projectId"] == project,
           row["title"] == title,
@@ -536,7 +536,7 @@ defmodule T3.Steps.Settings.ScheduledTasks do
 
       [] ->
         receive do
-          {:t3_shell, _} -> new_thread(context)
+          {:halc2_shell, _} -> new_thread(context)
         after
           2_000 -> flunk("no thread titled #{inspect(title)} in the project")
         end
@@ -544,9 +544,9 @@ defmodule T3.Steps.Settings.ScheduledTasks do
   end
 
   defp assert_prompt_in(thread_id) do
-    state = T3.Streams.Server.state(T3.Streams.ensure(thread_id))
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
 
-    assert Enum.any?(T3.StreamState.list(state, "message"), fn message ->
+    assert Enum.any?(HalC2.StreamState.list(state, "message"), fn message ->
              message["role"] == "user" and message["text"] == "Look at new Sentry errors."
            end),
            "the task's prompt is not in #{thread_id}"

@@ -1,7 +1,7 @@
 import { type ScrollBoxRenderable, SyntaxStyle } from "@opentui/core";
-import type { ImagePreview } from "@t3tools/opentui-image";
-import type { OrchestrationCheckpointSummary, OrchestrationThread } from "@t3tools/contracts";
-import { shouldCollapseUserMessage } from "@t3tools/shared/chatMessages";
+import type { ImagePreview } from "@hal-c2/opentui-image";
+import type { OrchestrationCheckpointSummary, OrchestrationThread } from "@hal-c2/contracts";
+import { shouldCollapseUserMessage } from "@hal-c2/shared/chatMessages";
 import * as React from "react";
 import { useRenderer } from "@opentui/react";
 

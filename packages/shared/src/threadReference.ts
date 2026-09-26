@@ -1,4 +1,4 @@
-import type { ThreadPullRequestLink } from "@t3tools/contracts";
+import type { ThreadPullRequestLink } from "@hal-c2/contracts";
 
 import { resolveThreadCurrentPullRequestLink } from "./threadPullRequests.ts";
 

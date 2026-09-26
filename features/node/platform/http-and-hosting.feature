@@ -1,7 +1,7 @@
 # Sources:
-#   apps/server-ex/lib/t3/web/router.ex (CORS, /.well-known/t3/environment, GET /, /mcp,
+#   apps/server-ex/lib/hal_c2/web/router.ex (CORS, /.well-known/hal-c2/environment, GET /, /mcp,
 #     /api/pull-requests/diff, 404 fallback)
-#   apps/server-ex/test/t3/features_backlog_test.exs (hosted-web-app)
+#   apps/server-ex/test/hal_c2/features_backlog_test.exs (hosted-web-app)
 #   apps/server/src/http.ts (static web app, browser session)
 #   apps/web/src/environments/primary/auth.ts
 #   apps/web/src/hostedPairing.ts
@@ -81,13 +81,13 @@ Feature: The node's HTTP surface and what it hosts
     When it connects
     Then it loads the matching QML overlay from that node
 
-  # hosted-web-app: hal-c2 has no web app. apps/web is going away; QML clients replace it,
+  # hosted-web-app: HAL-C2 has no web app. apps/web is going away; QML clients replace it,
   # so the node does not serve the web bundle or the browser pages that bootstrap it.
   @dropped @node
   Scenario: The node serves the web app at its origin
     Given a node started for a local browser
     When the browser opens the node's origin
-    Then it loads the T3 Code web app instead of the pairing help page
+    Then it loads the HAL-C2 web app instead of the pairing help page
 
   # hosted-web-app: browser cookies exist only to serve the web app.
   @dropped @node
@@ -104,7 +104,7 @@ Feature: The node's HTTP surface and what it hosts
     When the user revokes that client from Connections
     Then the browser's next request is refused
 
-  # The hosted app.t3.codes pairing page carries the secret in the URL fragment. hal-c2
+  # The hosted app.hal-c2.example pairing page carries the secret in the URL fragment. HAL-C2
   # clients paste or scan the node's own pairing link instead.
   @dropped @node
   Scenario: A hosted pairing link keeps its secret out of the hosted origin

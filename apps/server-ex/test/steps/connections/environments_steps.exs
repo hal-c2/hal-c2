@@ -1,4 +1,4 @@
-defmodule T3.Steps.Connections.Environments do
+defmodule HalC2.Steps.Connections.Environments do
   @moduledoc """
   Steps for `features/connections/environments.feature`: the node's side of a
   client's environment list, its descriptor and the persisted environment icon.
@@ -6,13 +6,13 @@ defmodule T3.Steps.Connections.Environments do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # The client's list of environments is client state; the node's part is that
   # pairing with it over HTTP gives the client a session, as for any other environment.
   step "a client paired with two environments", context do
-    {:ok, %{"credential" => credential}} = T3.Auth.create_pairing_link(%{"label" => "Laptop"})
+    {:ok, %{"credential" => credential}} = HalC2.Auth.create_pairing_link(%{"label" => "Laptop"})
 
     {200, %{"access_token" => access, "token_type" => "Bearer"}} =
       Node.pair_http(context.node, credential)
@@ -21,7 +21,7 @@ defmodule T3.Steps.Connections.Environments do
   end
 
   step "a client reads the node's descriptor", context do
-    {200, descriptor} = Node.http(context.node, :get, "/.well-known/t3/environment")
+    {200, descriptor} = Node.http(context.node, :get, "/.well-known/hal-c2/environment")
     Map.put(context, :descriptor, descriptor)
   end
 
@@ -29,10 +29,10 @@ defmodule T3.Steps.Connections.Environments do
     descriptor = context.descriptor
     assert descriptor["environmentId"] == context.node.environment
     {:ok, host} = :inet.gethostname()
-    assert descriptor["label"] == (System.get_env("T3_LABEL") || List.to_string(host))
+    assert descriptor["label"] == (System.get_env("HALC2_LABEL") || List.to_string(host))
     assert %{"os" => os, "arch" => arch} = descriptor["platform"]
     assert is_binary(os) and is_binary(arch)
-    assert descriptor["platform"]["machine"] == T3.Environment.Machine.kind()
+    assert descriptor["platform"]["machine"] == HalC2.Environment.Machine.kind()
     assert descriptor["capabilities"]["environmentIcon"] == true
     context
   end
@@ -63,25 +63,25 @@ defmodule T3.Steps.Connections.Environments do
   step "the node's settings name no icon", context do
     {settings, context} = read_settings(context)
     assert settings["environmentIcon"] == nil
-    assert T3.Settings.settings()["environmentIcon"] == nil
+    assert HalC2.Settings.settings()["environmentIcon"] == nil
     context
   end
 
   step "the descriptor still names the machine the node detected", context do
-    {200, descriptor} = Node.http(context.node, :get, "/.well-known/t3/environment")
-    assert descriptor["platform"]["machine"] == T3.Environment.Machine.kind()
+    {200, descriptor} = Node.http(context.node, :get, "/.well-known/hal-c2/environment")
+    assert descriptor["platform"]["machine"] == HalC2.Environment.Machine.kind()
     context
   end
 
   defp admin_client(context) do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     access = Node.pair(Node.admin_scopes(), "Admin")
     World.put_client(context, Node.connect_as(context.node, access))
   end
 
   defp read_settings(context) do
     {%{"settings" => settings, "version" => version}, context} =
-      World.call!(context, "t3.readSettings")
+      World.call!(context, "halc2.readSettings")
 
     {settings, Map.put(context, :settings_version, version)}
   end
@@ -90,7 +90,7 @@ defmodule T3.Steps.Connections.Environments do
     {settings, context} = read_settings(context)
 
     {%{"version" => _}, context} =
-      World.call!(context, "t3.writeSettings", %{
+      World.call!(context, "halc2.writeSettings", %{
         "settings" => Map.put(settings, "environmentIcon", icon),
         "version" => context.settings_version
       })

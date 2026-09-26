@@ -7,7 +7,7 @@ import type { ShellThemeBootstrap } from "./shellThemeOverride";
 function documentFixture(bootstrap: ShellThemeBootstrap = {}) {
   const variables = new Map<string, string>();
   const classes = new Set<string>();
-  const storage = new Map<string, string>([["t3code:theme", "light"]]);
+  const storage = new Map<string, string>([["hal-c2:theme", "light"]]);
   const root = {
     dataset: {} as Record<string, string>,
     classList: {
@@ -27,7 +27,7 @@ function documentFixture(bootstrap: ShellThemeBootstrap = {}) {
   };
   vi.stubGlobal("document", { documentElement: root });
   vi.stubGlobal("window", {
-    __t3ShellTheme: bootstrap,
+    __halc2ShellTheme: bootstrap,
     localStorage: {
       getItem: (key: string) => storage.get(key) ?? null,
       setItem: (key: string, value: string) => storage.set(key, value),
@@ -70,7 +70,7 @@ describe("shell theme ownership", () => {
     const disconnect = vi.fn();
     const fixture = documentFixture({ observer: { disconnect }, override: shell });
     const publish = vi.fn();
-    vi.stubGlobal("window", { ...window, t3Shell: { publish } });
+    vi.stubGlobal("window", { ...window, halc2Shell: { publish } });
     const { ShellThemeBridge } = await import("./ShellThemeBridge");
     const renderer = await act(() =>
       create(createElement(ShellThemeBridge, { publishToShell: false })),
@@ -101,7 +101,7 @@ describe("shell theme ownership", () => {
       expect(fixture.classes.has("dark")).toBe(true);
       expect(fixture.variables.get("--app-theme-canvas")).toBe("#123456");
     }
-    expect(fixture.storage.get("t3code:theme")).toBe("light");
+    expect(fixture.storage.get("hal-c2:theme")).toBe("light");
   });
 
   it("accepts live replacement, removes stale variables, and releases unchanged stored preferences", async () => {
@@ -137,7 +137,7 @@ describe("shell theme ownership", () => {
     expect(fixture.root.dataset.themeId).toBeUndefined();
     expect(fixture.classes.has("dark")).toBe(false);
     expect(fixture.variables.has("--app-theme-text")).toBe(false);
-    expect(fixture.storage.get("t3code:theme")).toBe("light");
+    expect(fixture.storage.get("hal-c2:theme")).toBe("light");
     await act(() => renderer.unmount());
   });
 

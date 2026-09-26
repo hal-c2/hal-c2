@@ -1,9 +1,9 @@
-defmodule T3.Steps.Settings.Usage do
+defmodule HalC2.Steps.Settings.Usage do
   @moduledoc """
   Settings → Usage against a node: the usage summary read from the provider CLIs'
   transcripts (`server.getUsageSummary`), model prices (`server.refreshUsageRates`,
   `usagePriceOverrides`), and the Codex and Claude limits published on the provider
-  entries (`T3.ProviderUsageLimits`, driven by `test/support/fake_codex.py` and
+  entries (`HalC2.ProviderUsageLimits`, driven by `test/support/fake_codex.py` and
   `fake_claude.py`).
 
   Every provider home lives under the scenario's home, so nothing reads the
@@ -12,9 +12,9 @@ defmodule T3.Steps.Settings.Usage do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.ProviderUsageLimits, as: Limits
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.ProviderUsageLimits, as: Limits
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @fake_codex Path.expand("../../support/fake_codex.py", __DIR__)
   @fake_claude Path.expand("../../support/fake_claude.py", __DIR__)
@@ -504,7 +504,7 @@ defmodule T3.Steps.Settings.Usage do
       }
 
       context = World.update_settings(context, World.deep_merge(base, patch))
-      Node.ensure(T3.Usage)
+      Node.ensure(HalC2.Usage)
       Map.put(context, :usage, Map.put(homes, :grok, grok))
     end
   end
@@ -514,7 +514,7 @@ defmodule T3.Steps.Settings.Usage do
     World.put_app_env(:codex_command, ["python3", @fake_codex])
     World.put_app_env(:claude_command, ["python3", @fake_claude])
     World.put_env("FAKE_CODEX_CONSUME_LOG", Path.join(context.node.home, "consumed"))
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     Node.ensure(Limits)
     :ok = Limits.refresh([])
     assert Limits.get("codex") && Limits.get("claudeAgent")

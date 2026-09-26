@@ -1,0 +1,3 @@
+module HalC2.Shell
+singleton Shell 1.0 Shell.qml
+singleton Theme 1.0 Theme.qml

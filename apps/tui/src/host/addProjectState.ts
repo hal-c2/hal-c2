@@ -2,7 +2,7 @@
 // local folder to register, or a repository and the folder to clone it into.
 // Port of ChatView's add-project flow; the AddProject brick paints
 // `addProject` and dispatches `project.add.*`.
-import type { FilesystemBrowseResult, SourceControlDiscoveryResult } from "@t3tools/contracts";
+import type { FilesystemBrowseResult, SourceControlDiscoveryResult } from "@hal-c2/contracts";
 import {
   addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,
@@ -15,16 +15,16 @@ import {
   resolveAddProjectPath,
   sortAddProjectProviderSources,
   type AddProjectRemoteSource,
-} from "@t3tools/client-runtime/operations/projects";
+} from "@hal-c2/client-runtime/operations/projects";
 import {
   filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
-} from "@t3tools/client-runtime/state/filesystem";
+} from "@hal-c2/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
   findProjectByPath,
   hasTrailingPathSeparator,
-} from "@t3tools/client-runtime/state/projects";
+} from "@hal-c2/client-runtime/state/projects";
 
 import type { TuiClient } from "../connection.ts";
 import type { Store } from "../store.ts";

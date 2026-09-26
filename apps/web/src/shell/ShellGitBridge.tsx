@@ -1,4 +1,4 @@
-import type { ShellGitState } from "@t3tools/contracts/shell";
+import type { ShellGitState } from "@hal-c2/contracts/shell";
 import { useMemo } from "react";
 
 import { useShellActions } from "./useShellActions";

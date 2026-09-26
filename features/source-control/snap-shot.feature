@@ -16,24 +16,24 @@ Feature: Snap Shot captures another app's window into the draft
     Given the desktop app with Snap Shot turned on and its shortcut set
 
   Scenario: Capturing the window in front
-    Given the user is working in a browser with a thread open in T3 Code
+    Given the user is working in a browser with a thread open in HAL-C2
     When the user presses the Snap Shot shortcut
     Then an image of the browser window is attached to the thread's draft
-    And T3 Code comes to the front
+    And HAL-C2 comes to the front
 
   Scenario: Capturing with no thread open starts a draft
     Given no thread is open and the current project is "shop"
     When the user presses the Snap Shot shortcut from another app
     Then a new draft in "shop" holds the capture
 
-  Scenario: Capturing while T3 Code is in front captures T3 Code
-    Given T3 Code is the app in front
+  Scenario: Capturing while HAL-C2 is in front captures HAL-C2
+    Given HAL-C2 is the app in front
     When the user presses the Snap Shot shortcut
-    Then an image of the T3 Code window is attached to the draft
+    Then an image of the HAL-C2 window is attached to the draft
 
   Scenario: Captures waiting to be sent survive a restart
     Given a capture is attached to a draft that was not sent
-    When the user restarts T3 Code
+    When the user restarts HAL-C2
     Then the capture is still attached to the draft
 
   Scenario: An oversize capture is discarded
@@ -84,7 +84,7 @@ Feature: Snap Shot captures another app's window into the draft
 
     Examples:
       | desktop            | backend                                    |
-      | GNOME              | the T3 Code GNOME extension                |
+      | GNOME              | the HAL-C2 GNOME extension                |
       | KDE Plasma         | the capture helper                         |
       | Hyprland           | the capture helper and a Hyprland binding  |
       | Niri               | a Niri binding                             |
@@ -104,7 +104,7 @@ Feature: Snap Shot captures another app's window into the draft
   Scenario: A disabled GNOME extension is explained
     Given the GNOME extension is installed but turned off
     When the user checks capture access
-    Then the user is told to turn on T3 Code SnapShots in GNOME Extensions
+    Then the user is told to turn on HAL-C2 SnapShots in GNOME Extensions
 
   Scenario: Editing a compositor config is reviewed and backed up
     Given a Hyprland session
@@ -119,7 +119,7 @@ Feature: Snap Shot captures another app's window into the draft
     Then nothing is written and the user is asked to review again
 
   Scenario: Hyprland access being denied is shown plainly
-    Given Hyprland refuses screen capture to T3 Code
+    Given Hyprland refuses screen capture to HAL-C2
     When the user presses the Snap Shot shortcut
     Then the user is shown the capture was denied and how to allow it
 

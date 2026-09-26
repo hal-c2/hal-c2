@@ -1,4 +1,4 @@
-defmodule T3.Steps.Files.Search do
+defmodule HalC2.Steps.Files.Search do
   @moduledoc """
   Steps for `features/files/search.feature`: `projects.searchEntries` and
   `projects.searchContents` over the socket. The paths a search returns go in
@@ -7,8 +7,8 @@ defmodule T3.Steps.Files.Search do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   step "{string} holds {string}, {string}, {string} and {string}",
        %{args: [project, a, b, c, d]} = context do
@@ -155,8 +155,8 @@ defmodule T3.Steps.Files.Search do
   end
 
   step "ripgrep is not installed on the environment", context do
-    Application.put_env(:t3, :ripgrep, "rg-not-installed")
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :ripgrep) end)
+    Application.put_env(:hal_c2, :ripgrep, "rg-not-installed")
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :ripgrep) end)
     context
   end
 
@@ -180,7 +180,7 @@ defmodule T3.Steps.Files.Search do
   end
 
   defp search_entries(context, project, query, kind, limit) do
-    Node.ensure(T3.Workspace)
+    Node.ensure(HalC2.Workspace)
 
     input =
       case kind do
@@ -210,7 +210,7 @@ defmodule T3.Steps.Files.Search do
   end
 
   defp search_contents(context, project, query, options) do
-    Node.ensure(T3.Workspace)
+    Node.ensure(HalC2.Workspace)
 
     {reply, context} =
       World.call(

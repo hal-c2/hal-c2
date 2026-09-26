@@ -1,6 +1,6 @@
 # Sources:
 #   apps/desktop-qt/tests/tst_Scenarios.qml (composer scenarios)
-#   apps/desktop-qt/qml/T3/Bricks/Composer.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml
 
 Feature: Desktop shell scenarios: composer
   Executable scenarios for the native desktop composer, driven through the shell's test

@@ -28,7 +28,7 @@ const withServer = <A, E, R>(run: (origin: string) => Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(
     Effect.callback<NodeHttp.Server>((resume) => {
       const server = NodeHttp.createServer((request, response) => {
-        if (request.url === "/.well-known/t3/environment") {
+        if (request.url === "/.well-known/hal-c2/environment") {
           response.writeHead(200, { "content-type": "application/json" });
           response.end(JSON.stringify(descriptor));
           return;
@@ -49,7 +49,7 @@ const withServer = <A, E, R>(run: (origin: string) => Effect.Effect<A, E, R>) =>
   );
 
 describe("live persisted server validation", () => {
-  it.effect("accepts a live pid whose origin serves a T3 descriptor", () =>
+  it.effect("accepts a live pid whose origin serves a HAL-C2 descriptor", () =>
     withServer((origin) =>
       Effect.gen(function* () {
         assert.isTrue(yield* isLivePersistedServerRuntimeState(state(origin)));
@@ -57,7 +57,7 @@ describe("live persisted server validation", () => {
     ).pipe(Effect.provide(FetchHttpClient.layer)),
   );
 
-  it.effect("rejects a dead pid even when the origin was reused by T3", () =>
+  it.effect("rejects a dead pid even when the origin was reused by HAL-C2", () =>
     withServer((origin) =>
       Effect.gen(function* () {
         assert.isFalse(yield* isLivePersistedServerRuntimeState(state(origin, 4_194_305)));

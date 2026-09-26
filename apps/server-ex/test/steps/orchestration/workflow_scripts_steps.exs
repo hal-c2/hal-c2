@@ -1,4 +1,4 @@
-defmodule T3.Steps.Orchestration.WorkflowScripts do
+defmodule HalC2.Steps.Orchestration.WorkflowScripts do
   @moduledoc """
   Steps for `features/node/orchestration/workflow-scripts.feature`: the Claude
   projects folder is a temporary one (`:workflow_scripts_root`), and clients ask
@@ -7,8 +7,8 @@ defmodule T3.Steps.Orchestration.WorkflowScripts do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   step "a node whose Claude projects folder exists", context do
     root = Node.tmp_dir(context.node, "claude-projects")

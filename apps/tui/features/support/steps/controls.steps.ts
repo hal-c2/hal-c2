@@ -9,7 +9,7 @@ import {
   type RuntimeMode,
   type ServerProvider,
   type VcsRef,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 
 import { step } from "../../steps.ts";
 import { RUNTIME_MODE_META } from "../../../src/controls.ts";

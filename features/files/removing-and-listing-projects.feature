@@ -1,9 +1,9 @@
 # Sources:
 #   docs/user/project-settings.md (Project category, removal)
-#   apps/server-ex/lib/t3/projects.ex (project.update, project.delete, auto_pull)
+#   apps/server-ex/lib/hal_c2/projects.ex (project.update, project.delete, auto_pull)
 #   apps/web/src/components/settings/ProjectsSettings.tsx (removal)
-#   apps/web/src/shell/T3ShellBridge.tsx (project.remove)
-#   apps/desktop-qt/qml/T3/Bricks/FolderExplorer.qml (Remove from T3)
+#   apps/web/src/shell/HalC2ShellBridge.tsx (project.remove)
+#   apps/desktop-qt/qml/HalC2/Bricks/FolderExplorer.qml (Remove from HAL-C2)
 #   apps/tui/src/features.backlog.test.ts (project-lifecycle)
 #   packages/contracts/src/project.ts (project.update, project.delete, autoPull)
 #   packages/contracts/src/rpc.ts (projects.mutate; projects.list and projects.remove are
@@ -11,7 +11,7 @@
 
 Feature: Removing and updating projects
   A project entry can be renamed, changed, and removed. Removing a project clears its
-  conversations from T3 Code but never deletes files on disk.
+  conversations from HAL-C2 but never deletes files on disk.
 
   Background:
     Given a connected environment "laptop" with the project "shop" at "/home/sam/shop"
@@ -63,7 +63,7 @@ Feature: Removing and updating projects
   @backlog @desktop
   Scenario: Removing a registered folder from the folder explorer asks through project settings
     Given the folder explorer shows "/home/sam/shop"
-    When the user removes "/home/sam/shop" from T3 Code
+    When the user removes "/home/sam/shop" from HAL-C2
     Then the removal confirmation for "shop" on "laptop" opens
 
   Rule: Automatic pull at startup

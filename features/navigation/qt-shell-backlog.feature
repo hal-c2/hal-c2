@@ -3,9 +3,9 @@
 #   app-updates, ssh-environments, network-access, open-workspace-activation,
 #   terminal-drawer-launch-context)
 #   apps/desktop-qt/parity/web-parity.test.ts (thread jump, composer send chords, toolbar chords)
-#   apps/desktop-qt/qml/T3/Bricks/ShellWindow.qml (window shortcuts)
-#   apps/desktop-qt/qml/T3/Bricks/RightPanel.qml
-#   apps/desktop-qt/qml/T3/Bricks/TerminalDrawer.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts)
+#   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml
 #   docs/user/updating.md
 #   docs/user/remote-access.md
 
@@ -77,10 +77,10 @@ Feature: Desktop shell gaps
   Rule: SSH environments
 
     @backlog @desktop
-    Scenario: Adding an SSH host starts T3 Code there
+    Scenario: Adding an SSH host starts HAL-C2 there
       Given the user's SSH config names the host "build-box"
       When the user adds "build-box" in Connections settings
-      Then T3 Code starts on "build-box"
+      Then HAL-C2 starts on "build-box"
       And "build-box" is added as an environment
 
     @backlog @desktop

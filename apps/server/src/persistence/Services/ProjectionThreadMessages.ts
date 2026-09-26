@@ -13,8 +13,8 @@ import {
   ThreadId,
   TurnId,
   IsoDateTime,
-} from "@t3tools/contracts";
-import { OrchestrationMessageRole } from "@t3tools/contracts/legacy-orchestration";
+} from "@hal-c2/contracts";
+import { OrchestrationMessageRole } from "@hal-c2/contracts/legacy-orchestration";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
 import * as Struct from "effect/Struct";
@@ -126,4 +126,4 @@ export interface ProjectionThreadMessageRepositoryShape {
 export class ProjectionThreadMessageRepository extends Context.Service<
   ProjectionThreadMessageRepository,
   ProjectionThreadMessageRepositoryShape
->()("t3/persistence/Services/ProjectionThreadMessages/ProjectionThreadMessageRepository") {}
+>()("hal-c2/persistence/Services/ProjectionThreadMessages/ProjectionThreadMessageRepository") {}

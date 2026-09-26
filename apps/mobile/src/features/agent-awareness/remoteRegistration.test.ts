@@ -15,10 +15,10 @@ import {
   HttpClientRequest,
   HttpClientResponse,
 } from "effect/unstable/http";
-import { ManagedRelay } from "@t3tools/client-runtime/relay";
+import { ManagedRelay } from "@hal-c2/client-runtime/relay";
 
-import type { EnvironmentId } from "@t3tools/contracts";
-import { verifyDpopProof } from "@t3tools/shared/dpop";
+import type { EnvironmentId } from "@hal-c2/contracts";
+import { verifyDpopProof } from "@hal-c2/shared/dpop";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { cryptoLayer } from "../cloud/dpop";
 import { managedRelayClientLayer } from "../cloud/managedRelayLayer";
@@ -318,13 +318,13 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         label: "Julius's iPhone",
         iosMajorVersion: 18,
         appVersion: "1.0.0",
-        bundleId: "com.t3tools.t3code.preview",
+        bundleId: "io.github.halc2.halc2.preview",
         apsEnvironment: resolveApsEnvironment("preview"),
         notificationsEnabled: true,
         preferences: {},
       }),
     ).toMatchObject({
-      bundleId: "com.t3tools.t3code.preview",
+      bundleId: "io.github.halc2.halc2.preview",
       apsEnvironment: "production",
     });
   });
@@ -911,7 +911,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     armAgentAwarenessLiveActivityForLocalWork({
       environmentId: "env-1" as EnvironmentId,
       threadTitle: "Fix the flaky test",
-      projectTitle: "t3code",
+      projectTitle: "hal-c2",
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -930,7 +930,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     armAgentAwarenessLiveActivityForLocalWork({
       environmentId: "env-publishing" as EnvironmentId,
       threadTitle: "Fix the flaky test",
-      projectTitle: "t3code",
+      projectTitle: "hal-c2",
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(widgetMocks.start).toHaveBeenCalledTimes(1);
@@ -944,7 +944,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     armAgentAwarenessLiveActivityForLocalWork({
       environmentId: "env-pre-capability" as EnvironmentId,
       threadTitle: "Fix the flaky test",
-      projectTitle: "t3code",
+      projectTitle: "hal-c2",
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(widgetMocks.start).toHaveBeenCalledTimes(1);

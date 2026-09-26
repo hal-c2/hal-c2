@@ -1,12 +1,12 @@
 # Sources:
-#   apps/server-ex/lib/t3/mcp.ex (POST /mcp, per-thread bearer credentials, JSON-RPC methods)
-#   apps/server-ex/lib/t3/mcp/tools.ex (advertised tools, caller access rules, escalation checks)
+#   apps/server-ex/lib/hal_c2/mcp.ex (POST /mcp, per-thread bearer credentials, JSON-RPC methods)
+#   apps/server-ex/lib/hal_c2/mcp/tools.ex (advertised tools, caller access rules, escalation checks)
 #   apps/server-ex/priv/mcp_tools.json, priv/mcp_instructions.md (exported from the Node server)
 #   apps/server/src/mcp/McpSessionRegistry.ts (credential idle expiry and revocation)
 #   apps/server/src/mcp/toolkits/ (tool definitions and OrchestratorMcpFailure codes)
-Feature: The T3 Code MCP server agents receive
-  Every agent running in a thread gets an MCP server named "t3-code" so it can
-  work with T3 itself. Each call acts as the thread whose agent made it, and an
+Feature: The HAL-C2 MCP server agents receive
+  Every agent running in a thread gets an MCP server named "hal-c2" so it can
+  work with HAL-C2 itself. Each call acts as the thread whose agent made it, and an
   agent can never reach beyond its own project or give a thread more power than
   its own.
 
@@ -18,7 +18,7 @@ Feature: The T3 Code MCP server agents receive
   @node
   Scenario: A thread's agent gets its own credential for the server
     When a run of "caller" starts on "codex"
-    Then the agent is given the "t3-code" server with a bearer credential for "caller" on "codex"
+    Then the agent is given the "hal-c2" server with a bearer credential for "caller" on "codex"
     And asking again for "caller" on "codex" gives the same credential
 
   @node
@@ -39,14 +39,14 @@ Feature: The T3 Code MCP server agents receive
 
   @node
   Scenario: A project can keep the server from its agents
-    Given project "demo" turns agent access to T3 off
+    Given project "demo" turns agent access to HAL-C2 off
     When a run of "caller" starts
-    Then the agent is given no "t3-code" server
+    Then the agent is given no "hal-c2" server
 
   @node
   Scenario: Initializing reports the server and the instructions for agents
     When the agent of "caller" initializes the MCP session
-    Then the answer names server "t3-code", offers tools and includes T3's agent instructions
+    Then the answer names server "hal-c2", offers tools and includes HAL-C2's agent instructions
     And the protocol version is the one the agent asked for
 
   @node
@@ -82,8 +82,8 @@ Feature: The T3 Code MCP server agents receive
 
   @node
   Scenario: A tool the node does not implement is refused by name
-    When the agent of "caller" calls a tool "t3_teleport"
-    Then it fails with code "capability_denied" and "t3_teleport is not available on this node."
+    When the agent of "caller" calls a tool "halc2_teleport"
+    Then it fails with code "capability_denied" and "halc2_teleport is not available on this node."
 
   @node
   Scenario: A deleted thread's credential no longer acts

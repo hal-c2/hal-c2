@@ -16,9 +16,9 @@
 #   turns            [{"match": substring, "steps": [...]}], first match wins
 #
 # Turn steps: {"text": s[, "usage": {...}]}, {"thinking": s}, {"tool": name, "args": {},
-# "output": s} (T3's extension gate first: see `allowed`), {"select": {"title",
+# "output": s} (HAL-C2's extension gate first: see `allowed`), {"select": {"title",
 # "options"}} (waits for the answer, then says it), {"event": {...}} (sent as is),
-# {"mcp": {"name", "arguments"}} (a T3 MCP tool call), {"waitAbort": true}, {"exit": code}.
+# {"mcp": {"name", "arguments"}} (a HAL-C2 MCP tool call), {"waitAbort": true}, {"exit": code}.
 # Without a match the reply names the conversation so far.
 import json, os, sys, urllib.request, uuid
 
@@ -26,7 +26,7 @@ DIR = os.environ["FAKE_DIR"]
 LOG = os.path.join(DIR, "log.jsonl")
 CONFIG = os.path.join(DIR, "config.json")
 SESSIONS = os.path.join(DIR, "sessions")
-ENV_PREFIXES = ("PI_", "T3_", "FAKE_")
+ENV_PREFIXES = ("PI_", "HALC2_", "FAKE_")
 READ_ONLY = ("read", "grep", "find", "ls")
 FILE_CHANGES = ("edit", "write")
 
@@ -185,9 +185,9 @@ def dialog(method, fields):
     return ui_answers.get(ui_id, {"cancelled": True})
 
 
-# T3's extension (`priv/pi/t3-mcp-extension.ts`) asks before tools the mode does not allow.
+# HAL-C2's extension (`priv/pi/hal-c2-mcp-extension.ts`) asks before tools the mode does not allow.
 def allowed(tool, args):
-    mode = os.environ.get("T3_PI_RUNTIME_MODE", "full-access")
+    mode = os.environ.get("HALC2_PI_RUNTIME_MODE", "full-access")
     if mode == "full-access" or tool in READ_ONLY:
         return True
     if mode == "auto-accept-edits" and tool in FILE_CHANGES:
@@ -238,7 +238,7 @@ def run_turn(text):
                 log({"tool": {"name": tool, "args": args}})
                 result, error = step.get("output", "ok"), False
             else:
-                result, error = "%s was declined in T3 Code." % tool, True
+                result, error = "%s was declined in HAL-C2." % tool, True
             send({"type": "tool_execution_start", "toolCallId": call_id, "toolName": tool,
                   "args": args})
             send({"type": "tool_execution_end", "toolCallId": call_id, "toolName": tool,
@@ -256,9 +256,9 @@ def run_turn(text):
         elif "mcp" in step:
             body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                                "params": step["mcp"]}).encode()
-            req = urllib.request.Request(os.environ["T3_MCP_URL"], data=body, headers={
+            req = urllib.request.Request(os.environ["HALC2_MCP_URL"], data=body, headers={
                 "Content-Type": "application/json", "Accept": "application/json",
-                "Authorization": "Bearer " + os.environ["T3_MCP_BEARER_TOKEN"]})
+                "Authorization": "Bearer " + os.environ["HALC2_MCP_BEARER_TOKEN"]})
             with urllib.request.urlopen(req, timeout=60) as res:
                 log({"mcp": json.loads(res.read())})
         elif "waitAbort" in step:

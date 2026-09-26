@@ -27,18 +27,18 @@ private slots:
     bridge.setLocalFolderImportEnabled(true);
     bridge.publish("sidebar", QVariantMap{{"localEnvironmentId", "local"}, {"localProjects", QVariantList{}}});
     theme = std::make_unique<ThemeStore>(directory.path());
-    qmlRegisterSingletonInstance("T3.Shell", 1, 0, "Shell", &bridge);
-    qmlRegisterSingletonInstance("T3.Shell", 1, 0, "Theme", theme.get());
-    qmlRegisterType<LocalFolderModel>("T3.Shell", 1, 0, "LocalFolderModel");
+    qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Shell", &bridge);
+    qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Theme", theme.get());
+    qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
     engine = std::make_unique<QQmlEngine>();
-    engine->addImportPath(QStringLiteral(T3_TEST_SOURCE_DIR "/qml"));
+    engine->addImportPath(QStringLiteral(HALC2_TEST_SOURCE_DIR "/qml"));
   }
 
   void dialogsOperateOnRealFoldersAndCancellationPreservesThem() {
     QQmlComponent component(engine.get());
     component.setData(R"(
       import QtQuick
-      import T3.Bricks
+      import HalC2.Bricks
       Window {
         id: window
         width: 900; height: 700; visible: true
@@ -140,7 +140,7 @@ private slots:
     QQmlComponent component(engine.get());
     component.setData(R"(
       import QtQuick
-      import T3.Bricks
+      import HalC2.Bricks
       Window {
         id: window
         width: 900; height: 900; visible: true

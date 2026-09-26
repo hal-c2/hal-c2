@@ -1,11 +1,11 @@
 # Sources:
-#   apps/server-ex/lib/t3/store.ex (event log, snapshots, compression, read-only readers)
-#   apps/server-ex/lib/t3/patch.ex (set, append, unset, delete, quiet)
-#   apps/server-ex/lib/t3/stream_state.ex (folded state, snapshot migration)
-#   apps/server-ex/lib/t3/streams/server.ex (snapshot every 500 events, sidebar debounce)
-#   apps/server-ex/lib/t3/shell.ex (cluster-wide sidebar rows)
-#   apps/server-ex/lib/t3/search.ex (message index backfill)
-#   apps/server-ex/lib/t3/projection.ex
+#   apps/server-ex/lib/hal_c2/store.ex (event log, snapshots, compression, read-only readers)
+#   apps/server-ex/lib/hal_c2/patch.ex (set, append, unset, delete, quiet)
+#   apps/server-ex/lib/hal_c2/stream_state.ex (folded state, snapshot migration)
+#   apps/server-ex/lib/hal_c2/streams/server.ex (snapshot every 500 events, sidebar debounce)
+#   apps/server-ex/lib/hal_c2/shell.ex (cluster-wide sidebar rows)
+#   apps/server-ex/lib/hal_c2/search.ex (message index backfill)
+#   apps/server-ex/lib/hal_c2/projection.ex
 #   apps/server/src/persistence/Migrations (TypeScript migrations, replaced by the node's store)
 #   docs/internals/overview.md (event sourcing)
 

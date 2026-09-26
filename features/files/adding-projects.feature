@@ -1,15 +1,15 @@
 # Sources:
 #   docs/user/project-settings.md
-#   apps/server-ex/lib/t3/projects.ex (project.create, browse)
-#   apps/server-ex/lib/t3/project_clones.ex (projectClone.start, retry, cancel, progress)
-#   apps/server-ex/lib/t3/source_control.ex (lookup, remote, clone)
-#   apps/server-ex/lib/t3/web/protocol.ex (projectClones stream)
+#   apps/server-ex/lib/hal_c2/projects.ex (project.create, browse)
+#   apps/server-ex/lib/hal_c2/project_clones.ex (projectClone.start, retry, cancel, progress)
+#   apps/server-ex/lib/hal_c2/source_control.ex (lookup, remote, clone)
+#   apps/server-ex/lib/hal_c2/web/protocol.ex (projectClones stream)
 #   apps/web/src/components/CommandPalette.tsx (Add project, Local folder, clone flow)
 #   apps/web/src/components/NoProjectsHero.tsx
 #   apps/web/src/components/ProjectCloneToastCoordinator.tsx
 #   apps/web/src/shell/useShellFolderDrop.ts
-#   apps/desktop-qt/qml/T3/Bricks/ProjectFolderDrop.qml
-#   apps/desktop-qt/qml/T3/Bricks/Sidebar.qml (Add project)
+#   apps/desktop-qt/qml/HalC2/Bricks/ProjectFolderDrop.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Add project)
 #   apps/desktop-qt/src/ShellBridge.cpp (project.folder.open, localDirectoryPath)
 #   apps/tui/src/components/AddProjectOverlay.tsx
 #   apps/tui/src/components/ChatView.tsx (add project flow)

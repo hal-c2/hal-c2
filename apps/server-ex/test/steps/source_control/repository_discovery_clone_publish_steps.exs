@@ -1,15 +1,15 @@
-defmodule T3.Steps.SourceControl.RepositoryDiscoveryClonePublish do
+defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
   @moduledoc """
   Steps for `features/source-control/repository-discovery-clone-publish.feature`:
   tool discovery against fake host CLIs, lookups, clones from local bare
-  repositories, project clones (`T3.ProjectClones`) and publishing.
+  repositories, project clones (`HalC2.ProjectClones`) and publishing.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.SourceControl.Shared
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # tool => {label, version line, auth rule (nil for version control), account host}
   @tools %{
@@ -234,14 +234,14 @@ defmodule T3.Steps.SourceControl.RepositoryDiscoveryClonePublish do
     context
   end
 
-  # The host answers with an address whose transport (`git-remote-t3hang`) never
+  # The host answers with an address whose transport (`git-remote-halc2hang`) never
   # replies, so the clone stays connecting until it is cancelled.
   step "a clone of {string} is in progress", %{args: [repository]} = context do
     context = World.fake_cli(context, ["gh"])
-    helper = Path.join(context.cli.bin, "git-remote-t3hang")
+    helper = Path.join(context.cli.bin, "git-remote-halc2hang")
     File.write!(helper, "#!/bin/sh\nexec cat > /dev/null\n")
     File.chmod!(helper, 0o755)
-    url = "t3hang::#{repository}"
+    url = "halc2hang::#{repository}"
 
     context
     |> World.cli_rules(lookup_rule(repository, %{"url" => url, "sshUrl" => url}))
@@ -308,7 +308,7 @@ defmodule T3.Steps.SourceControl.RepositoryDiscoveryClonePublish do
   # step delivers that timer's message now, to every clone, instead of waiting.
   step "some time passes", context do
     flush_clones()
-    for id <- [context.done_id, context.failed.id], do: send(T3.ProjectClones, {:forget, id})
+    for id <- [context.done_id, context.failed.id], do: send(HalC2.ProjectClones, {:forget, id})
     context
   end
 
@@ -320,7 +320,7 @@ defmodule T3.Steps.SourceControl.RepositoryDiscoveryClonePublish do
 
   step "the failed clone is still reported until it is retried", context do
     %{id: id, bare: bare} = context.failed
-    {:ok, list} = T3.ProjectClones.subscribe(self())
+    {:ok, list} = HalC2.ProjectClones.subscribe(self())
     assert %{"phase" => "failed"} = clone(list, id)
     World.git_remote(context, World.git_repo(context, "broken")) |> File.rename!(bare)
 
@@ -441,8 +441,8 @@ defmodule T3.Steps.SourceControl.RepositoryDiscoveryClonePublish do
 
   # Starts a project clone of `source` into a new folder, following its snapshots.
   defp start_clone(context, source) do
-    Node.ensure(T3.ProjectClones)
-    {:ok, _} = T3.ProjectClones.subscribe(self())
+    Node.ensure(HalC2.ProjectClones)
+    {:ok, _} = HalC2.ProjectClones.subscribe(self())
     id = "clone-#{System.unique_integer([:positive])}"
     dest = Path.join(Node.tmp_dir(context.node, "clones"), id)
 
@@ -483,7 +483,7 @@ defmodule T3.Steps.SourceControl.RepositoryDiscoveryClonePublish do
   # seen is kept in the process dictionary.
   defp await_clones(fun) do
     receive do
-      {:t3_project_clones, _node, list} ->
+      {:halc2_project_clones, _node, list} ->
         Process.put(:clone_snapshots, Process.get(:clone_snapshots, []) ++ [list])
         if fun.(list), do: list, else: await_clones(fun)
     after
@@ -496,7 +496,7 @@ defmodule T3.Steps.SourceControl.RepositoryDiscoveryClonePublish do
 
   defp flush_clones do
     receive do
-      {:t3_project_clones, _node, _list} -> flush_clones()
+      {:halc2_project_clones, _node, _list} -> flush_clones()
     after
       0 -> :ok
     end

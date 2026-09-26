@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import type { OrchestrationThread } from "@t3tools/contracts";
+import type { OrchestrationThread } from "@hal-c2/contracts";
 import {
   composerControls,
   getReasoningEffort,

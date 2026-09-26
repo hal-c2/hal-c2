@@ -1,4 +1,4 @@
-import { type ChatAttachment, MessageId, OrchestratorMcpFailure } from "@t3tools/contracts";
+import { type ChatAttachment, MessageId, OrchestratorMcpFailure } from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 import * as Upload from "../../../assets/AttachmentUpload.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
@@ -32,20 +32,20 @@ export function resolveAttachmentReferences(
 }
 
 export const AttachmentHandlersLive = AttachmentToolkit.toLayer({
-  t3_attachment_prepare_upload: (input) =>
+  halc2_attachment_prepare_upload: (input) =>
     Effect.gen(function* () {
       yield* readMutationCaller();
       return yield* Upload.issueAttachmentUploadUrl(input.upload).pipe(
         Effect.mapError(unavailable),
       );
     }),
-  t3_attachment_discard: (input) =>
+  halc2_attachment_discard: (input) =>
     Effect.gen(function* () {
       yield* readMutationCaller();
       yield* Upload.deletePendingAttachment(input.attachmentId);
       return {};
     }),
-  t3_thread_send_attachments: (input) =>
+  halc2_thread_send_attachments: (input) =>
     Effect.gen(function* () {
       const { caller, projection } = yield* readWritableThread(input.threadId, ["messages"]);
       if (projection.thread.archivedAt !== null)

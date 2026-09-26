@@ -1,8 +1,8 @@
 # Sources:
-#   apps/server-ex/lib/t3/web/protocol.ex (@version 3, client and server frames, shapes, decode)
-#   apps/server-ex/lib/t3/web/socket.ex (hello, snapshot, events, live, resync, end, shell.*, config.*, rpc.*)
-#   apps/server-ex/lib/t3/web/router.ex (GET /ws)
-#   apps/server-ex/lib/t3/web/wire.ex (snapshot rows and event patches on the wire)
+#   apps/server-ex/lib/hal_c2/web/protocol.ex (@version 3, client and server frames, shapes, decode)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (hello, snapshot, events, live, resync, end, shell.*, config.*, rpc.*)
+#   apps/server-ex/lib/hal_c2/web/router.ex (GET /ws)
+#   apps/server-ex/lib/hal_c2/web/wire.ex (snapshot rows and event patches on the wire)
 #   packages/client-runtime/src/v3/clusterSocket.ts (the 19 shape types, hello, resync, end)
 #   packages/client-runtime/src/v3/session.ts (methods a protocol 3 environment does not serve yet)
 #   packages/client-runtime/src/connection/compatibility.ts (SHAPE_PROTOCOL_VERSION, negotiation)

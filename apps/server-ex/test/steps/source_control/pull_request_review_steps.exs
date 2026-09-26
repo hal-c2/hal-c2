@@ -1,7 +1,7 @@
-defmodule T3.Steps.SourceControl.PullRequestReview do
+defmodule HalC2.Steps.SourceControl.PullRequestReview do
   @moduledoc """
   Steps for `features/source-control/pull-request-review.feature`. GitHub is the fake
-  `gh` (`T3.Steps.SourceControl.Shared.open_pull_request/3` for the pull request
+  `gh` (`HalC2.Steps.SourceControl.Shared.open_pull_request/3` for the pull request
   itself); `context.review` holds its conversation (`pr view` and the review-thread
   read) and `context.viewed` the files the user marked viewed, answered afresh on
   each change. A write is checked as the call the node made to GitHub.
@@ -9,8 +9,8 @@ defmodule T3.Steps.SourceControl.PullRequestReview do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.SourceControl.Shared
-  alias T3.Test.Node.World
+  alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.Test.Node.World
 
   @me "monalisa"
   @base "1111111111111111111111111111111111111111"

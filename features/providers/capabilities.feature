@@ -1,9 +1,9 @@
 # Sources:
-#   apps/server-ex/lib/t3/orchestration.ex (steerable?, driver_for, follow-up queueing)
-#   apps/server-ex/lib/t3/orchestration/handoff.ex (native forks for codex/claudeAgent, transcript otherwise, 60 000 character cap)
-#   apps/server-ex/lib/t3/orchestration/fork.ex (thread.fork, thread.merge_back)
-#   apps/server-ex/lib/t3/acp/thread_runtime.ex (rollback starts a fresh session, refuses while a turn runs)
-#   apps/server-ex/lib/t3/text_generation.ex (which providers write titles, commits and PRs)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (steerable?, driver_for, follow-up queueing)
+#   apps/server-ex/lib/hal_c2/orchestration/handoff.ex (native forks for codex/claudeAgent, transcript otherwise, 60 000 character cap)
+#   apps/server-ex/lib/hal_c2/orchestration/fork.ex (thread.fork, thread.merge_back)
+#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (rollback starts a fresh session, refuses while a turn runs)
+#   apps/server-ex/lib/hal_c2/text_generation.ex (which providers write titles, commits and PRs)
 #   apps/server/src/orchestration-v2/Adapters/*AdapterV2.ts (per-provider capabilities), packages/contracts/src/server.ts
 #   apps/web/src/components/chat/ChatComposer.tsx (capability-gated controls)
 #   docs/user/providers-claude.md, docs/user/providers-codex.md, docs/user/providers-opencode.md,
@@ -12,7 +12,7 @@
 @node
 Feature: Provider capabilities
   Providers differ in what they can do mid-conversation. Each provider plugin declares
-  its capabilities, and T3 Code degrades the same way for every provider that lacks one:
+  its capabilities, and HAL-C2 degrades the same way for every provider that lacks one:
   the control is hidden or the action falls back, never silently dropped.
 
   Background:

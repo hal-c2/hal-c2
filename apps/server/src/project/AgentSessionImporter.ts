@@ -21,8 +21,8 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
-} from "@t3tools/contracts";
-import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
+} from "@hal-c2/contracts";
+import { normalizeProjectPathForComparison } from "@hal-c2/shared/path";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -404,6 +404,6 @@ type AgentSessionImporterShape = Effect.Success<typeof make>;
 export class AgentSessionImporter extends Context.Service<
   AgentSessionImporter,
   AgentSessionImporterShape
->()("t3/project/AgentSessionImporter") {}
+>()("hal-c2/project/AgentSessionImporter") {}
 
 export const layer = Layer.effect(AgentSessionImporter, make);

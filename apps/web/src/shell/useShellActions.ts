@@ -1,4 +1,4 @@
-import { ShellAction } from "@t3tools/contracts/shell";
+import { ShellAction } from "@hal-c2/contracts/shell";
 import * as Schema from "effect/Schema";
 import { useEffect, useRef } from "react";
 
@@ -23,7 +23,7 @@ export function useShellActions(handler: (action: ShellAction) => void): void {
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
   useEffect(() => {
-    const shell = window.t3Shell;
+    const shell = window.halc2Shell;
     if (!shell) return;
     let disposed = false;
     let unsubscribe: (() => void) | null = null;

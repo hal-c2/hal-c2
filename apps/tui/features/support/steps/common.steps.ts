@@ -171,7 +171,7 @@ step("the user presses escape", async (ctx: World) => {
 
 // --- added by T6 ---
 
-// "t3 tui" and "opentui-qml …" run programs; their exit status is the CLI's
+// "hal-c2 tui" and "opentui-qml …" run programs; their exit status is the CLI's
 // (qml-runtime) when one ran, else the launched client's.
 step("it exits with status {int}", (ctx: World, status: number) =>
   ctx.cli ? expectCliStatus(ctx, status) : expectClientStatus(ctx, status),

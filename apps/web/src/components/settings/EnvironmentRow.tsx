@@ -1,4 +1,4 @@
-import type { DesktopSshEnvironmentTarget, EnvironmentMachineKind } from "@t3tools/contracts";
+import type { DesktopSshEnvironmentTarget, EnvironmentMachineKind } from "@hal-c2/contracts";
 import * as Option from "effect/Option";
 import type { ReactNode } from "react";
 
@@ -14,12 +14,12 @@ export function formatDesktopSshTarget(target: DesktopSshEnvironmentTarget): str
 
 /**
  * How this client reaches a machine, printed first in every environment row so
- * T3 Connect, SSH, WSL, and plain remote links are told apart without a legend.
+ * HAL-C2 Connect, SSH, WSL, and plain remote links are told apart without a legend.
  */
 export function environmentTransportLabel(environment: EnvironmentPresentation): string {
   const { entry } = environment;
   if (entry.target._tag === "PrimaryConnectionTarget") return "This machine";
-  if (environment.relayManaged) return "T3 Connect";
+  if (environment.relayManaged) return "HAL-C2 Connect";
   if (isDesktopLocalConnectionTarget(entry.target)) return "WSL";
   if (
     entry.target._tag === "SshConnectionTarget" &&

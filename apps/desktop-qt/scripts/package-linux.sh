@@ -22,24 +22,24 @@ fetch "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/1-
 rm -rf "${app_dir}"
 cmake --install "${build_dir}" --prefix "${app_dir}/usr"
 
-# Desktop entry + icon: the app id (t3code) must match what the shell sets so
+# Desktop entry + icon: the app id (hal-c2) must match what the shell sets so
 # compositor rules can target the window.
 mkdir -p "${app_dir}/usr/share/applications" "${app_dir}/usr/share/icons/hicolor/1024x1024/apps"
-cat > "${app_dir}/usr/share/applications/t3code.desktop" <<'DESKTOP'
+cat > "${app_dir}/usr/share/applications/hal-c2.desktop" <<'DESKTOP'
 [Desktop Entry]
 Type=Application
-Name=T3 Code
-Exec=t3code-qt
-Icon=t3code
+Name=HAL-C2
+Exec=hal-c2-qt
+Icon=hal-c2
 Categories=Development;
-StartupWMClass=t3code
+StartupWMClass=hal-c2
 DESKTOP
 icon_source="$(dirname "$0")/../../../assets/prod/black-universal-1024.png"
-cp "${icon_source}" "${app_dir}/usr/share/icons/hicolor/1024x1024/apps/t3code.png"
+cp "${icon_source}" "${app_dir}/usr/share/icons/hicolor/1024x1024/apps/hal-c2.png"
 
-node "$(dirname "$0")/stage-runtime.mjs" "${app_dir}/usr/share/t3code"
+node "$(dirname "$0")/stage-runtime.mjs" "${app_dir}/usr/share/hal-c2"
 
 export QML_SOURCES_PATHS="$(cd "$(dirname "$0")/.." && pwd)/qml"
-export OUTPUT="${build_dir}/t3code-qt-x86_64.AppImage"
+export OUTPUT="${build_dir}/hal-c2-qt-x86_64.AppImage"
 "${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --plugin qt --output appimage
 echo "AppImage at ${OUTPUT}"

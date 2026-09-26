@@ -6,7 +6,7 @@
 #   apps/tui/src/commands.ts (Rename thread)
 #   apps/tui/src/components/ThreadOverlays.tsx
 #   packages/contracts/src/orchestrationV2.ts (thread.metadata.update, thread.title.regeneration.complete, thread.metadata-updated)
-#   apps/server-ex/lib/t3/orchestration.ex (metadata.update, title generation)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (metadata.update, title generation)
 
 Feature: Thread titles
   Threads get a title from their first message. The user or the agent can rename a

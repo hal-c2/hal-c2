@@ -1,8 +1,8 @@
 # Sources:
 #   docs/user/composer.md (prompt recall, prompt stash)
 #   docs/internals/composer-editors.md
-#   apps/desktop-qt/qml/T3/Bricks/ComposerVimKeys.qml
-#   apps/desktop-qt/qml/T3/Bricks/Composer.qml (editor actions, text insertion)
+#   apps/desktop-qt/qml/HalC2/Bricks/ComposerVimKeys.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (editor actions, text insertion)
 #   apps/desktop-qt/tests/tst_ComposerExtensions.qml
 #   apps/desktop-qt/tests/tst_ComposerActions.qml
 #   apps/tui/src/promptEditor.ts

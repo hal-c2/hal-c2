@@ -1,10 +1,10 @@
-defmodule T3.Steps.Platform.HttpAndHosting do
+defmodule HalC2.Steps.Platform.HttpAndHosting do
   @moduledoc "Steps for features/node/platform/http-and-hosting.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @fake_gh Path.expand("../../support/fake_gh.py", __DIR__)
   @patch "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+b\n"
@@ -68,7 +68,7 @@ defmodule T3.Steps.Platform.HttpAndHosting do
   end
 
   step "anyone asks the node's well-known environment route", context do
-    Map.put(context, :response, Node.request(context.node, :get, "/.well-known/t3/environment"))
+    Map.put(context, :response, Node.request(context.node, :get, "/.well-known/hal-c2/environment"))
   end
 
   step "it answers with the environment descriptor and node name", context do
@@ -109,11 +109,11 @@ defmodule T3.Steps.Platform.HttpAndHosting do
   end
 
   step "a thread's agent with its MCP bearer", context do
-    Node.ensure(T3.Mcp)
+    Node.ensure(HalC2.Mcp)
     context = context |> World.create_project("Work") |> World.create_thread("Agent work")
 
     %{authorization: authorization} =
-      T3.Mcp.server(World.thread_id(context, "Agent work"), "codex")
+      HalC2.Mcp.server(World.thread_id(context, "Agent work"), "codex")
 
     Map.put(context, :mcp, authorization)
   end
@@ -161,7 +161,7 @@ defmodule T3.Steps.Platform.HttpAndHosting do
 
   step "a client with orchestration:read", context do
     assert {200, %{"access_token" => access, "scope" => scope}} =
-             Node.exchange(context.node, T3.Auth.create_pairing_token(context.node.store))
+             Node.exchange(context.node, HalC2.Auth.create_pairing_token(context.node.store))
 
     assert "orchestration:read" in String.split(scope)
     Map.put(context, :access, access)

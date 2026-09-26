@@ -1,10 +1,10 @@
 # Sources:
 #   docs/user/composer.md (custom models, remembered model defaults)
 #   docs/user/permission-modes.md
-#   apps/desktop-qt/qml/T3/Bricks/Composer.qml (model, effort, permissions, Build and Plan, context strip)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (model, effort, permissions, Build and Plan, context strip)
 #   apps/tui/src/models.ts (flattened model list, unavailable providers skipped)
 #   apps/tui/src/components/ChatView.tsx (plan toggle, access, model and effort shortcuts)
-#   apps/server-ex/lib/t3/orchestration.ex (thread.runtime-mode.set, thread.interaction-mode.set, thread.model-selection.set)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (thread.runtime-mode.set, thread.interaction-mode.set, thread.model-selection.set)
 #   apps/web/src/components/chat/TraitsPicker.tsx
 #   apps/web/src/components/chat/ModelPickerContent.tsx
 #   apps/web/src/components/chat/ModelPickerSidebar.tsx

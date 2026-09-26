@@ -246,7 +246,7 @@ export const Sidebar = React.memo(function Sidebar({
       overflow="hidden"
     >
       <text>
-        <strong>T3</strong>
+        <strong>HAL-C2</strong>
         <span fg={palette.dim}> Code</span>
       </text>
       <box

@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
-import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import { parseScopedThreadKey } from "@hal-c2/client-runtime/environment";
+import type { ScopedThreadRef } from "@hal-c2/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { useEffect } from "react";
@@ -36,7 +36,7 @@ export function ShellEmbedRouteBridge({
 }) {
   const navigate = useNavigate();
   useEffect(() => {
-    const shell = window.t3Shell;
+    const shell = window.halc2Shell;
     if (!shell) return;
     let disposed = false;
     let unsubscribe: (() => void) | null = null;
@@ -71,7 +71,7 @@ export function ShellEmbedRouteBridge({
 
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   useEffect(() => {
-    const shell = window.t3Shell;
+    const shell = window.halc2Shell;
     if (!shell) return;
     // Bubble phase: this document's own handlers (ChatView's, the terminal's)
     // have had the key by now and prevented what they consumed.

@@ -14,7 +14,7 @@ import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { assert, it } from "@effect/vitest";
 
-import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
+import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@hal-c2/contracts";
 import * as ServerConfig from "../config.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -25,7 +25,7 @@ import * as VcsProcess from "./VcsProcess.ts";
 import { runVcsDriverContractSuite } from "./testing/VcsDriverContractHarness.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
-  prefix: "t3-git-vcs-contract-",
+  prefix: "hal-c2-git-vcs-contract-",
 });
 const GitContractLayer = Layer.mergeAll(GitVcsDriver.vcsLayer, GitVcsDriver.layer).pipe(
   Layer.provide(ServerConfigLayer),
@@ -110,7 +110,7 @@ const makeCheckpointFixture = Effect.fn("makeCheckpointFixture")(function* (
   yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "initial\n");
   yield* git(["add", "."]);
   yield* git(["commit", "-m", "initial"]);
-  const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/test");
+  const checkpointRef = CheckpointRef.make("refs/hal-c2/checkpoints/test");
   yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "staged\n");
   yield* git(["add", "."]);
   yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "unstaged\n");
@@ -122,7 +122,7 @@ it.effect("checkpoint capture skips untracked nested repositories without a comm
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-unborn-" });
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "hal-c2-checkpoint-unborn-" });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     const nested = "scratch/empty [repo]";
     yield* git(["init", nested]);
@@ -168,7 +168,7 @@ it.effect("checkpoint recovery discovers nested HEAD independently of inherited 
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-git-dir-" });
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-checkpoint-git-dir-" });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     yield* git(["init", "empty"]);
     const originalIndex = yield* fs.readFile(path.join(cwd, ".git", "index"));
@@ -197,7 +197,7 @@ it.effect("checkpoint capture still fails when a clean filter rejects a file", (
     const path = yield* Path.Path;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
     const cwd = yield* fileSystem.makeTempDirectoryScoped({
-      prefix: "t3-checkpoint-filter-failure-",
+      prefix: "hal-c2-checkpoint-filter-failure-",
     });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     yield* fileSystem.writeFileString(path.join(cwd, ".gitattributes"), "file.txt filter=reject\n");
@@ -220,7 +220,7 @@ it.effect("checkpoint capture refuses a truncated nested repository listing", ()
     const fs = yield* FileSystem.FileSystem;
     const liveProcess = yield* VcsProcess.VcsProcess;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-truncated-" });
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-checkpoint-truncated-" });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     yield* git(["init", "empty"]);
     const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
@@ -251,7 +251,7 @@ it.effect("checkpoint recovery refuses excessive candidates before probing", () 
     const path = yield* Path.Path;
     const liveProcess = yield* VcsProcess.VcsProcess;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-recovery-cap-" });
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-checkpoint-recovery-cap-" });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     yield* git(["init", "empty0"]);
     for (let i = 1; i < 65; i++)
@@ -300,7 +300,7 @@ it.effect.each([
       const path = yield* Path.Path;
       const liveRunner = yield* ProcessRunner.ProcessRunner;
       const driver = yield* GitVcsDriver.makeVcsDriverShape();
-      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-ref-race-" });
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-checkpoint-ref-race-" });
       const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
       if (nestedRecovery) yield* git(["init", "empty"]);
       const originalIndex = yield* fs.readFile(path.join(cwd, ".git", "index"));
@@ -399,7 +399,9 @@ for (const blockedPhase of ["discovery", "probe", "retry"] as const) {
       const path = yield* Path.Path;
       const liveProcess = yield* VcsProcess.VcsProcess;
       const driver = yield* GitVcsDriver.makeVcsDriverShape();
-      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-recovery-timeout-" });
+      const cwd = yield* fs.makeTempDirectoryScoped({
+        prefix: "hal-c2-checkpoint-recovery-timeout-",
+      });
       const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
       yield* git(["init", "empty"]);
       const originalIndex = yield* fs.readFile(path.join(cwd, ".git", "index"));
@@ -486,7 +488,9 @@ it.effect("checkpoint recovery preserves interruption and removes the private in
     const fs = yield* FileSystem.FileSystem;
     const liveProcess = yield* VcsProcess.VcsProcess;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-recovery-interrupt-" });
+    const cwd = yield* fs.makeTempDirectoryScoped({
+      prefix: "hal-c2-checkpoint-recovery-interrupt-",
+    });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     yield* git(["init", "empty"]);
     const entered = yield* Deferred.make<void>();
@@ -520,7 +524,7 @@ it.effect("checkpoint capture does not rerun clean filters for unchanged indexed
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-cache-" });
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "hal-c2-checkpoint-cache-" });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     yield* fileSystem.writeFileString(
       path.join(cwd, ".gitattributes"),
@@ -563,7 +567,7 @@ for (const nested of [false, true]) {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const driver = yield* GitVcsDriver.makeVcsDriverShape();
-          const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-sparse-" });
+          const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-checkpoint-sparse-" });
           const { git } = yield* makeCheckpointFixture(driver, cwd);
           const write = Effect.fn(function* (name: string, contents: string) {
             yield* fs.makeDirectory(path.dirname(path.join(cwd, name)), { recursive: true });
@@ -610,7 +614,7 @@ for (const nested of [false, true]) {
             .pipe(Effect.orElseSucceed(() => null));
           const captureCwd = nested ? path.join(cwd, "scope") : cwd;
           for (const turn of [1, 2]) {
-            const ref = CheckpointRef.make(`refs/t3/checkpoints/sparse/${turn}`);
+            const ref = CheckpointRef.make(`refs/hal-c2/checkpoints/sparse/${turn}`);
             if (turn === 2) {
               yield* write("scope/in/edit", "second\n");
               yield* fs.remove(path.join(cwd, "scope/out/new file"));
@@ -665,7 +669,7 @@ it.effect("checkpoint capture keeps the legacy path when Git lacks add --sparse"
     const path = yield* Path.Path;
     const liveProcess = yield* VcsProcess.VcsProcess;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-legacy-" });
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-checkpoint-legacy-" });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     yield* git(["sparse-checkout", "set", "--cone", "included"]);
     const originalIndex = yield* fs.readFile(path.join(cwd, ".git/index"));
@@ -708,7 +712,7 @@ for (const indexMode of ["normal", "flags", "sparse"] as const) {
         const path = yield* Path.Path;
         const liveProcess = yield* VcsProcess.VcsProcess;
         const driver = yield* GitVcsDriver.makeVcsDriverShape();
-        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-inspection-" });
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-checkpoint-inspection-" });
         const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
         yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "stable filter=probe\n");
         yield* fs.writeFileString(path.join(cwd, "stable"), "unchanged\n");
@@ -766,7 +770,9 @@ for (const timestamp of [1_700_000_000, 1_700_000_000.9999]) {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const driver = yield* GitVcsDriver.makeVcsDriverShape();
-        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-racy-" });
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "hal-c2-checkpoint-racy-",
+        });
         const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
         const filePath = path.join(cwd, "file.txt");
         const indexPath = path.join(cwd, ".git", "index");
@@ -804,7 +810,7 @@ for (const nested of [false, true]) {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const driver = yield* GitVcsDriver.makeVcsDriverShape();
-          const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-sparse-" });
+          const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-checkpoint-sparse-" });
           const { git } = yield* makeCheckpointFixture(driver, cwd);
           const write = Effect.fn(function* (name: string, contents: string) {
             yield* fs.makeDirectory(path.dirname(path.join(cwd, name)), { recursive: true });
@@ -851,7 +857,7 @@ for (const nested of [false, true]) {
             .pipe(Effect.orElseSucceed(() => null));
           const captureCwd = nested ? path.join(cwd, "scope") : cwd;
           for (const turn of [1, 2]) {
-            const ref = CheckpointRef.make(`refs/t3/checkpoints/sparse/${turn}`);
+            const ref = CheckpointRef.make(`refs/hal-c2/checkpoints/sparse/${turn}`);
             if (turn === 2) {
               yield* write("scope/in/edit", "second\n");
               yield* fs.remove(path.join(cwd, "scope/out/new file"));
@@ -906,7 +912,9 @@ it.effect("checkpoint capture preserves racy edits made after resetting the inde
     const path = yield* Path.Path;
     const liveProcess = yield* VcsProcess.VcsProcess;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-racy-reset-" });
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "hal-c2-checkpoint-racy-reset-",
+    });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     const racyPath = path.join(cwd, "racy.txt");
     const indexPath = path.join(cwd, ".git", "index");
@@ -952,7 +960,9 @@ for (const nested of [false, true]) {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const driver = yield* GitVcsDriver.makeVcsDriverShape();
-          const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-turns-" });
+          const cwd = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "hal-c2-checkpoint-turns-",
+          });
           const { git } = yield* makeCheckpointFixture(driver, cwd);
           const write = (name: string, contents: string) =>
             fileSystem.writeFileString(path.join(cwd, name), contents);
@@ -987,8 +997,8 @@ for (const nested of [false, true]) {
           yield* fileSystem.remove(path.join(cwd, "scope/deleted"));
           yield* fileSystem.remove(path.join(cwd, "scope/new-deleted"));
           const captureCwd = nested ? path.join(cwd, "scope") : cwd;
-          const first = CheckpointRef.make("refs/t3/checkpoints/turns/1");
-          const second = CheckpointRef.make("refs/t3/checkpoints/turns/2");
+          const first = CheckpointRef.make("refs/hal-c2/checkpoints/turns/1");
+          const second = CheckpointRef.make("refs/hal-c2/checkpoints/turns/2");
           yield* driver.checkpoints.captureCheckpoint({ cwd: captureCwd, checkpointRef: first });
           for (const name of ["scope/staged", "scope/assumed", "scope/skipped"]) {
             assert.strictEqual((yield* git(["show", `${first}:${name}`])).stdout, "working\n");
@@ -1030,7 +1040,7 @@ for (const indexState of ["missing", "invalid"] as const) {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const driver = yield* GitVcsDriver.makeVcsDriverShape();
-      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-index-" });
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "hal-c2-checkpoint-index-" });
       const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
       const indexPath = path.join(cwd, ".git", "index");
       if (indexState === "missing") {
@@ -1057,7 +1067,9 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
     const path = yield* Path.Path;
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
     for (const nested of [false, true]) {
-      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-empty-checkpoint-" });
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "hal-c2-empty-checkpoint-",
+      });
       yield* runGit(root, ["init"]);
       yield* runGit(root, ["config", "user.email", "test@test.com"]);
       yield* runGit(root, ["config", "user.name", "Test"]);
@@ -1068,7 +1080,7 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
       yield* runGit(root, ["commit", "--allow-empty", "-m", "initial"]);
       const cwd = nested ? path.join(root, "nested") : root;
       yield* fileSystem.makeDirectory(cwd, { recursive: true });
-      const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/empty");
+      const checkpointRef = CheckpointRef.make("refs/hal-c2/checkpoints/empty");
       yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
       if (nested) {
         yield* fileSystem.writeFileString(path.join(root, "outside.txt"), "changed\n");
@@ -1128,14 +1140,14 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
       cwd: "/repo",
       args: ["status"],
       env: {
-        GIT_INDEX_FILE: "/tmp/t3-index",
+        GIT_INDEX_FILE: "/tmp/hal-c2-index",
       },
       appendTruncationMarker: true,
       outputMode: "error",
     });
 
     assert.deepStrictEqual(observedEnv, {
-      GIT_INDEX_FILE: "/tmp/t3-index",
+      GIT_INDEX_FILE: "/tmp/hal-c2-index",
     });
     assert.strictEqual(observedAppendTruncationMarker, true);
     assert.strictEqual(observedOutputMode, "error");
@@ -1171,7 +1183,7 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
 
     yield* driver.checkpoints.captureCheckpoint({
       cwd: "/repo",
-      checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread/turn/1"),
+      checkpointRef: CheckpointRef.make("refs/hal-c2/checkpoints/thread/turn/1"),
     });
 
     const writeCommands = ["add", "write-tree", "commit-tree", "update-ref"];
@@ -1195,7 +1207,7 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
       "-c",
       "core.fsyncMethod=fsync",
       "update-ref",
-      "refs/t3/checkpoints/thread/turn/1",
+      "refs/hal-c2/checkpoints/thread/turn/1",
       "commit0000",
     ]);
   }).pipe(

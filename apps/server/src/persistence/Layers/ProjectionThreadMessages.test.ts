@@ -1,4 +1,4 @@
-import { MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import { MessageId, ThreadId, TurnId } from "@hal-c2/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -94,7 +94,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         threadId,
         turnId: null,
         role: "user",
-        text: "see [Terminal 1 line 4](t3-context://v1/terminal/ctx_1)",
+        text: "see [Terminal 1 line 4](hal-c2-context://v1/terminal/ctx_1)",
         context,
         isStreaming: false,
         createdAt,
@@ -105,7 +105,7 @@ layer("ProjectionThreadMessageRepository", (it) => {
         threadId,
         turnId: null,
         role: "user",
-        text: "see [Terminal 1 line 4](t3-context://v1/terminal/ctx_1)",
+        text: "see [Terminal 1 line 4](hal-c2-context://v1/terminal/ctx_1)",
         isStreaming: false,
         createdAt,
         updatedAt: "2026-02-28T19:05:01.000Z",

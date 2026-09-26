@@ -1,5 +1,5 @@
-import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
-import { ShellComposerState, type T3Shell } from "@t3tools/contracts/shell";
+import { ProviderDriverKind, ProviderInstanceId } from "@hal-c2/contracts";
+import { ShellComposerState, type HalC2Shell } from "@hal-c2/contracts/shell";
 import * as Schema from "effect/Schema";
 import { act, useEffect, useRef, useState } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -56,7 +56,7 @@ const defaults = {
 } satisfies Partial<ShellComposerBridgeProps>;
 
 let renderer: ReactTestRenderer | null = null;
-let dispatch: Parameters<T3Shell["onAction"]>[0];
+let dispatch: Parameters<HalC2Shell["onAction"]>[0];
 let published: ShellComposerState[];
 let replaceFromPage: (text: string) => void;
 let submitted: string[];
@@ -91,7 +91,7 @@ beforeEach(async () => {
   submitted = [];
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", {
-    t3Shell: {
+    halc2Shell: {
       publish: async (key, state) => {
         if (key === "composer" && state !== null) {
           published.push(decodeComposer(state));
@@ -101,7 +101,7 @@ beforeEach(async () => {
         dispatch = listener;
         return () => {};
       },
-    } satisfies Pick<T3Shell, "publish" | "onAction">,
+    } satisfies Pick<HalC2Shell, "publish" | "onAction">,
   });
   await act(() => {
     renderer = create(<ComposerPage />);

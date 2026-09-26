@@ -1,16 +1,16 @@
-defmodule T3.Steps.Orchestration.McpServer do
+defmodule HalC2.Steps.Orchestration.McpServer do
   @moduledoc """
-  Steps for `features/node/orchestration/mcp-server.feature`: the `t3-code` MCP
-  server, driven through `T3.Mcp.handle/2` as the agent of a thread would call it.
+  Steps for `features/node/orchestration/mcp-server.feature`: the `hal-c2` MCP
+  server, driven through `HalC2.Mcp.handle/2` as the agent of a thread would call it.
 
   Raw answers are kept in `context.mcp_response` (`{status, body}`); tool outcomes in
-  `context.mcp_result` (see `T3.Test.Node.World.mcp_tool/5`). What the fake Codex CLI
+  `context.mcp_result` (see `HalC2.Test.Node.World.mcp_tool/5`). What the fake Codex CLI
   was given for a session comes from `World.codex_sessions/1`.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   # --- background ------------------------------------------------------------------
 
@@ -44,11 +44,11 @@ defmodule T3.Steps.Orchestration.McpServer do
     server = get_in(latest_session(context), ["params", "config", "mcp_servers", name])
     assert %{"url" => url, "http_headers" => %{"Authorization" => "Bearer " <> _ = auth}} = server
     assert String.ends_with?(url, "/mcp")
-    assert T3.Mcp.server(World.thread_id(context, thread), instance).authorization == auth
+    assert HalC2.Mcp.server(World.thread_id(context, thread), instance).authorization == auth
 
     # The credential acts as that thread.
     assert {200, %{"result" => %{"structuredContent" => %{"thread" => %{"threadId" => id}}}}} =
-             T3.Mcp.handle(auth, tool_request("t3_thread_read", %{}))
+             HalC2.Mcp.handle(auth, tool_request("halc2_thread_read", %{}))
 
     assert id == World.thread_id(context, thread)
     Map.put(context, :credential, auth)
@@ -56,7 +56,7 @@ defmodule T3.Steps.Orchestration.McpServer do
 
   step "asking again for {string} on {string} gives the same credential",
        %{args: [thread, instance]} = context do
-    assert T3.Mcp.server(World.thread_id(context, thread), instance).authorization ==
+    assert HalC2.Mcp.server(World.thread_id(context, thread), instance).authorization ==
              context.credential
 
     context
@@ -67,8 +67,8 @@ defmodule T3.Steps.Orchestration.McpServer do
     id = World.thread_id(context, thread)
 
     Map.put(context, :credentials, [
-      T3.Mcp.server(id, first).authorization,
-      T3.Mcp.server(id, second).authorization
+      HalC2.Mcp.server(id, first).authorization,
+      HalC2.Mcp.server(id, second).authorization
     ])
   end
 
@@ -89,7 +89,7 @@ defmodule T3.Steps.Orchestration.McpServer do
         "with a non-bearer authorization" -> "Basic " <> Base.encode64("agent:secret")
       end
 
-    Map.put(context, :mcp_response, T3.Mcp.handle(authorization, request("ping")))
+    Map.put(context, :mcp_response, HalC2.Mcp.handle(authorization, request("ping")))
   end
 
   step "it is answered with status {int} and error {string}",
@@ -98,9 +98,9 @@ defmodule T3.Steps.Orchestration.McpServer do
     context
   end
 
-  step "project {string} turns agent access to T3 off", %{args: [project]} = context do
+  step "project {string} turns agent access to HAL-C2 off", %{args: [project]} = context do
     id = World.project(context, project).id
-    {settings, version} = T3.Settings.get()
+    {settings, version} = HalC2.Settings.get()
     overrides = Map.get(settings, "projectSettingsOverrides", %{})
 
     settings =
@@ -110,8 +110,8 @@ defmodule T3.Steps.Orchestration.McpServer do
         Map.put(overrides, id, %{"enableAgentBrowserAccess" => false})
       )
 
-    {:ok, _} = T3.Settings.put(settings, version)
-    assert T3.Settings.for_project(id)["enableAgentBrowserAccess"] == false
+    {:ok, _} = HalC2.Settings.put(settings, version)
+    assert HalC2.Settings.for_project(id)["enableAgentBrowserAccess"] == false
     context
   end
 
@@ -132,13 +132,13 @@ defmodule T3.Steps.Orchestration.McpServer do
     |> Map.put(:protocol_version, "2025-03-26")
   end
 
-  step "the answer names server {string}, offers tools and includes T3's agent instructions",
+  step "the answer names server {string}, offers tools and includes HAL-C2's agent instructions",
        %{args: [name]} = context do
     assert {200, %{"result" => result}} = context.mcp_response
     assert result["serverInfo"]["name"] == name
     assert Map.has_key?(result["capabilities"], "tools")
-    assert result["instructions"] == T3.Mcp.instructions()
-    assert result["instructions"] =~ "T3"
+    assert result["instructions"] == HalC2.Mcp.instructions()
+    assert result["instructions"] =~ "HAL-C2"
     context
   end
 
@@ -160,7 +160,7 @@ defmodule T3.Steps.Orchestration.McpServer do
 
   step "the agent of {string} sends a notification without an id", %{args: [caller]} = context do
     body = JSON.encode!(%{"jsonrpc" => "2.0", "method" => "notifications/initialized"})
-    Map.put(context, :mcp_response, T3.Mcp.handle(credential(context, caller), body))
+    Map.put(context, :mcp_response, HalC2.Mcp.handle(credential(context, caller), body))
   end
 
   step "the server accepts it with status {int} and no body", %{args: [status]} = context do
@@ -180,7 +180,7 @@ defmodule T3.Steps.Orchestration.McpServer do
   end
 
   step "the agent of {string} sends a body that is not JSON", %{args: [caller]} = context do
-    response = T3.Mcp.handle(credential(context, caller), "{not json")
+    response = HalC2.Mcp.handle(credential(context, caller), "{not json")
     Map.put(context, :mcp_response, response)
   end
 
@@ -198,7 +198,7 @@ defmodule T3.Steps.Orchestration.McpServer do
     assert {200, %{"result" => %{"tools" => tools}}} = context.mcp_response
 
     exported =
-      Application.app_dir(:t3, "priv/mcp_tools.json")
+      Application.app_dir(:hal_c2, "priv/mcp_tools.json")
       |> File.read!()
       |> JSON.decode!()
       |> Enum.map(& &1["name"])
@@ -206,7 +206,7 @@ defmodule T3.Steps.Orchestration.McpServer do
     listed = Enum.map(tools, & &1["name"])
     assert Enum.sort(listed) == Enum.sort(exported)
 
-    for prefix <- ~w(t3_thread_ t3_queue_ t3_project_ t3_worktree_ preview_ device_),
+    for prefix <- ~w(halc2_thread_ halc2_queue_ halc2_project_ halc2_worktree_ preview_ device_),
         do: assert(Enum.any?(listed, &String.starts_with?(&1, prefix)), prefix)
 
     for name <- ~w(link_pull_request schedule_task delegate_task), do: assert(name in listed)
@@ -219,7 +219,7 @@ defmodule T3.Steps.Orchestration.McpServer do
   step "the agent of {string} reads a thread that does not exist", %{args: [caller]} = context do
     response =
       World.mcp(context, caller, "tools/call", %{
-        "name" => "t3_thread_read",
+        "name" => "halc2_thread_read",
         "arguments" => %{"threadId" => "thread-that-does-not-exist"}
       })
 
@@ -253,7 +253,7 @@ defmodule T3.Steps.Orchestration.McpServer do
     context = end_turn(context, thread)
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.delete",
         "commandId" => "cmd-delete-#{System.unique_integer([:positive])}",
         "threadId" => World.thread_id(context, thread)
@@ -264,7 +264,7 @@ defmodule T3.Steps.Orchestration.McpServer do
   end
 
   step "its agent calls any tool", context do
-    {200, body} = T3.Mcp.handle(context.credential, tool_request("t3_thread_list", %{}))
+    {200, body} = HalC2.Mcp.handle(context.credential, tool_request("halc2_thread_list", %{}))
     %{"result" => %{"isError" => true, "content" => [%{"text" => text}]}} = body
     %{"code" => code, "message" => message} = JSON.decode!(text)
     Map.put(context, :mcp_result, {:error, code, message})
@@ -281,7 +281,7 @@ defmodule T3.Steps.Orchestration.McpServer do
 
   step "the agent of {string} reads {string}", %{args: [caller, thread]} = context do
     result =
-      World.mcp_tool(context, caller, "t3_thread_read", %{
+      World.mcp_tool(context, caller, "halc2_thread_read", %{
         "threadId" => World.thread_id(context, thread)
       })
 
@@ -311,7 +311,7 @@ defmodule T3.Steps.Orchestration.McpServer do
       World.mcp_tool(
         context,
         caller,
-        "t3_thread_send",
+        "halc2_thread_send",
         %{"threadId" => World.thread_id(context, "other"), "message" => "say hi"},
         context[:mcp_instance] || "codex"
       )
@@ -322,7 +322,7 @@ defmodule T3.Steps.Orchestration.McpServer do
   step "the agent of {string} lists the threads of {string}",
        %{args: [caller, project]} = context do
     context = Map.put(context, :listed_project, World.project(context, project).id)
-    Map.put(context, :mcp_result, World.mcp_tool(context, caller, "t3_thread_list"))
+    Map.put(context, :mcp_result, World.mcp_tool(context, caller, "halc2_thread_list"))
   end
 
   step "it receives them", context do
@@ -330,7 +330,7 @@ defmodule T3.Steps.Orchestration.McpServer do
     ids = Enum.map(threads, & &1["threadId"])
 
     for {_title, id} <- context.threads do
-      {"thread", row} = T3.Shell.row(node(), id)
+      {"thread", row} = HalC2.Shell.row(node(), id)
       if row["projectId"] == context.listed_project, do: assert(id in ids)
     end
 
@@ -355,7 +355,7 @@ defmodule T3.Steps.Orchestration.McpServer do
 
   step "the agent of {string} changes {string}", %{args: [caller, thread]} = context do
     result =
-      World.mcp_tool(context, caller, "t3_thread_send", %{
+      World.mcp_tool(context, caller, "halc2_thread_send", %{
         "threadId" => World.thread_id(context, thread),
         "message" => "say changed"
       })
@@ -369,7 +369,7 @@ defmodule T3.Steps.Orchestration.McpServer do
 
     World.await_state(context, target, fn state ->
       Enum.any?(
-        T3.StreamState.list(state, "message"),
+        HalC2.StreamState.list(state, "message"),
         &(&1["text"] == "say changed" and
             &1["senderThreadId"] == World.thread_id(context, "caller"))
       )
@@ -383,14 +383,14 @@ defmodule T3.Steps.Orchestration.McpServer do
     {tool, arguments} =
       case change do
         "creates a project" ->
-          {"t3_project_create",
-           %{"workspaceRoot" => T3.Test.Node.tmp_dir(context.node, "new-project")}}
+          {"halc2_project_create",
+           %{"workspaceRoot" => HalC2.Test.Node.tmp_dir(context.node, "new-project")}}
 
         "launches a thread" ->
-          {"t3_thread_launch", %{"title" => "Child", "message" => "say hi"}}
+          {"halc2_thread_launch", %{"title" => "Child", "message" => "say hi"}}
 
         "updates the environment preferences" ->
-          {"t3_environment_preferences_update", %{"defaultThreadEnvMode" => "worktree"}}
+          {"halc2_environment_preferences_update", %{"defaultThreadEnvMode" => "worktree"}}
       end
 
     Map.put(context, :mcp_result, World.mcp_tool(context, caller, tool, arguments))
@@ -404,7 +404,7 @@ defmodule T3.Steps.Orchestration.McpServer do
     "Bearer " <> token = auth = credential(context, caller)
     # A day and a minute since its last call (the liveness window is a day).
     idle_since = System.monotonic_time(:millisecond) - (24 * 60 + 1) * 60 * 1_000
-    assert :ets.update_element(T3.Mcp.Credentials, token, {3, idle_since})
+    assert :ets.update_element(HalC2.Mcp.Credentials, token, {3, idle_since})
     Map.put(context, :credential, auth)
   end
 
@@ -416,7 +416,7 @@ defmodule T3.Steps.Orchestration.McpServer do
   end
 
   step ~r/^(?:it calls a tool|the old agent calls a tool with its credential)$/, context do
-    response = T3.Mcp.handle(context.credential, tool_request("t3_thread_list", %{}))
+    response = HalC2.Mcp.handle(context.credential, tool_request("halc2_thread_list", %{}))
     Map.put(context, :mcp_response, response)
   end
 
@@ -434,11 +434,11 @@ defmodule T3.Steps.Orchestration.McpServer do
     do: request("tools/call", %{"name" => name, "arguments" => arguments})
 
   defp credential(context, thread),
-    do: T3.Mcp.server(World.thread_id(context, thread), "codex").authorization
+    do: HalC2.Mcp.server(World.thread_id(context, thread), "codex").authorization
 
   defp await_active(context, thread) do
     World.await_state(context, thread, fn state ->
-      Enum.any?(T3.StreamState.list(state, "run"), &(&1["status"] == "running"))
+      Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "running"))
     end)
   end
 
@@ -451,7 +451,7 @@ defmodule T3.Steps.Orchestration.McpServer do
 
     World.await_state(context, thread, fn state ->
       Enum.all?(
-        T3.StreamState.list(state, "run"),
+        HalC2.StreamState.list(state, "run"),
         &(&1["status"] not in ~w(preparing starting running waiting))
       )
     end)
@@ -461,10 +461,10 @@ defmodule T3.Steps.Orchestration.McpServer do
 
   defp stop_session(context, thread) do
     state = World.state(context, thread)
-    [session | _] = T3.StreamState.list(state, "provider-session")
+    [session | _] = HalC2.StreamState.list(state, "provider-session")
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "provider-session.detach",
         "commandId" => "cmd-detach-#{System.unique_integer([:positive])}",
         "threadId" => World.thread_id(context, thread),
@@ -491,7 +491,7 @@ defmodule T3.Steps.Orchestration.McpServer do
 
   defp set_mode(context, thread, type, field, mode) do
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => type,
         "commandId" => "cmd-mode-#{System.unique_integer([:positive])}",
         "threadId" => World.thread_id(context, thread),

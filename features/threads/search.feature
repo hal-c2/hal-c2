@@ -4,9 +4,9 @@
 #   apps/web/src/components/Sidebar.logic.ts (title search, content matches)
 #   apps/tui/src/components/Sidebar.logic.ts (filter)
 #   apps/tui/src/commands.ts (Filter threads)
-#   apps/desktop-qt/qml/T3/Bricks/Sidebar.qml (Search opens the palette)
+#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Search opens the palette)
 #   packages/contracts/src/rpc.ts (searchThreads)
-#   apps/server-ex/lib/t3/search.ex
+#   apps/server-ex/lib/hal_c2/search.ex
 
 Feature: Searching threads
   The user finds a thread by its title or by something said in it, across every connected

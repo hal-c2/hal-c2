@@ -1,4 +1,4 @@
-defmodule T3.Steps.Files.ProjectIdentity do
+defmodule HalC2.Steps.Files.ProjectIdentity do
   @moduledoc """
   Steps for `features/files/project-identity.feature`: a project's icon through a
   `project-favicon` asset URL fetched over HTTP, and the themes a node publishes
@@ -8,8 +8,8 @@ defmodule T3.Steps.Files.ProjectIdentity do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @config 8101
 
@@ -53,7 +53,7 @@ defmodule T3.Steps.Files.ProjectIdentity do
 
   # --- themes ------------------------------------------------------------------------
 
-  step "the T3 home of {string} has the theme file {string}", %{args: [_env, file]} = context do
+  step "the HAL-C2 home of {string} has the theme file {string}", %{args: [_env, file]} = context do
     theme(context, file)
     context
   end
@@ -197,10 +197,10 @@ defmodule T3.Steps.Files.ProjectIdentity do
 
   defp connect(context) do
     # The folder is checked often so a change reaches clients quickly.
-    Application.put_env(:t3, :theme_check_ms, 50)
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :theme_check_ms) end)
-    Node.ensure(T3.Settings)
-    Node.ensure(T3.EnvironmentThemes)
+    Application.put_env(:hal_c2, :theme_check_ms, 50)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :theme_check_ms) end)
+    Node.ensure(HalC2.Settings)
+    Node.ensure(HalC2.EnvironmentThemes)
 
     client =
       Node.sub(Node.connect(context.node), @config, %{

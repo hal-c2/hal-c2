@@ -1,10 +1,10 @@
 import QtQuick
 import QtQuick.Layouts
-import T3.Shell
-import T3.Bricks
+import HalC2.Shell
+import HalC2.Bricks
 
-// Copy to ~/.t3/shell/shell.qml and edit; the app reloads on save.
-// Bricks come from T3.Bricks, data from the T3.Shell singletons
+// Copy to ~/.hal-c2/shell/shell.qml and edit; the app reloads on save.
+// Bricks come from HalC2.Bricks, data from the HalC2.Shell singletons
 // (Shell.state, Shell.dispatch, Theme.*, Runtime.*). ShellWindow brings the
 // window boilerplate, the error overlay and the page's window commands.
 ShellWindow {

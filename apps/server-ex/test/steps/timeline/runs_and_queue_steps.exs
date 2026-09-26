@@ -1,4 +1,4 @@
-defmodule T3.Steps.Timeline.RunsAndQueue do
+defmodule HalC2.Steps.Timeline.RunsAndQueue do
   @moduledoc """
   Steps for `features/timeline/runs-and-queue.feature`. "the user queues" and "the
   user resumes the queue" are shared with `features/composer/queue-and-steer.feature`.
@@ -9,8 +9,8 @@ defmodule T3.Steps.Timeline.RunsAndQueue do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node.World
 
   step "the timeline marks the run as interrupted", context do
     run_id = context.interrupted_run
@@ -18,13 +18,13 @@ defmodule T3.Steps.Timeline.RunsAndQueue do
     state =
       World.await_thread(context, World.current(context), fn state ->
         Enum.any?(
-          T3.Projection.Timeline.local_items(state),
+          HalC2.Projection.Timeline.local_items(state),
           &(&1["type"] == "run_interrupt_result" and &1["runId"] == run_id)
         )
       end)
 
     types =
-      for item <- T3.Projection.Timeline.local_items(state),
+      for item <- HalC2.Projection.Timeline.local_items(state),
           item["runId"] == run_id,
           do: item["type"]
 
@@ -52,7 +52,7 @@ defmodule T3.Steps.Timeline.RunsAndQueue do
     assert World.queued(context, title) != []
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "run.interrupt",
         "threadId" => World.thread_id(context, title),
         "runId" => running["id"]
@@ -89,7 +89,7 @@ defmodule T3.Steps.Timeline.RunsAndQueue do
 
       World.await_value(context, title, fn state ->
         Enum.any?(
-          T3.StreamState.list(state, "message"),
+          HalC2.StreamState.list(state, "message"),
           &(&1["role"] == "assistant" and &1["text"] == "steered: one more thing")
         )
       end)
@@ -103,7 +103,7 @@ defmodule T3.Steps.Timeline.RunsAndQueue do
           item =
             World.await_stream(thread_id, fn state ->
               Enum.find(
-                T3.StreamState.list(state, "turn-item"),
+                HalC2.StreamState.list(state, "turn-item"),
                 &(&1["messageId"] == context.follow_up)
               )
             end)
@@ -111,8 +111,8 @@ defmodule T3.Steps.Timeline.RunsAndQueue do
           assert %{"inputIntent" => "steer", "runId" => ^run_id} = item
 
           assert [%{"id" => ^run_id}] =
-                   T3.StreamState.list(
-                     T3.Streams.Server.state(T3.Streams.ensure(thread_id)),
+                   HalC2.StreamState.list(
+                     HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id)),
                      "run"
                    )
 
@@ -200,7 +200,7 @@ defmodule T3.Steps.Timeline.RunsAndQueue do
     [working] = Enum.filter(World.runs(context, title), &(&1["status"] == "running"))
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "queued-message.promote-to-steer",
         "threadId" => World.thread_id(context, title),
         "queuedRunId" => queued_run(context, text)["id"],
@@ -225,7 +225,7 @@ defmodule T3.Steps.Timeline.RunsAndQueue do
     context = World.working_thread(context, title)
     {{:ok, _}, context} = World.send_message(context, title, "first follow-up")
     {{:ok, _}, context} = World.send_message(context, title, "second follow-up")
-    %{context | node: T3.Test.Node.restart(context.node), clients: %{}}
+    %{context | node: HalC2.Test.Node.restart(context.node), clients: %{}}
   end
 
   step "the queue is held and the messages are kept", context do
@@ -242,7 +242,7 @@ defmodule T3.Steps.Timeline.RunsAndQueue do
     context = if context[:agents], do: context, else: World.agents(context)
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "queue.resume",
         "threadId" => World.thread_id(context, title)
       })
@@ -274,11 +274,11 @@ defmodule T3.Steps.Timeline.RunsAndQueue do
   end
 
   step "continuing threads after restarts is {word}", %{args: [setting]} = context do
-    T3.Test.Node.ensure(T3.Settings)
-    {_, version} = T3.Settings.get()
+    HalC2.Test.Node.ensure(HalC2.Settings)
+    {_, version} = HalC2.Settings.get()
 
     {:ok, _} =
-      T3.Settings.put(%{"continueThreadsAfterServerUpdate" => setting == "on"}, version)
+      HalC2.Settings.put(%{"continueThreadsAfterServerUpdate" => setting == "on"}, version)
 
     context
   end
@@ -332,7 +332,7 @@ defmodule T3.Steps.Timeline.RunsAndQueue do
     title = World.current(context)
 
     {:ok, _} =
-      T3.Orchestration.dispatch(
+      HalC2.Orchestration.dispatch(
         Map.merge(
           %{
             "type" => type,

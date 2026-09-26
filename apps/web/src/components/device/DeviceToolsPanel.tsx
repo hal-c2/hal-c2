@@ -1,4 +1,4 @@
-import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
+import type { DeviceHubAccess } from "@hal-c2/client-runtime/state/deviceHubAccess";
 import type {
   DeviceActionInput,
   DeviceDetail,
@@ -6,7 +6,7 @@ import type {
   DeviceSummary,
   DeviceTextSize,
   EnvironmentId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import { ChevronDown, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 

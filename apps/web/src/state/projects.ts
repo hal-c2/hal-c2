@@ -1,7 +1,7 @@
-import { createEnvironmentProjectAtoms } from "@t3tools/client-runtime/state/projects";
-import { createProjectEnvironmentAtoms } from "@t3tools/client-runtime/state/projects";
-import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
-import { WS_METHODS } from "@t3tools/contracts";
+import { createEnvironmentProjectAtoms } from "@hal-c2/client-runtime/state/projects";
+import { createProjectEnvironmentAtoms } from "@hal-c2/client-runtime/state/projects";
+import { createEnvironmentRpcQueryAtomFamily } from "@hal-c2/client-runtime/state/runtime";
+import { WS_METHODS } from "@hal-c2/contracts";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";

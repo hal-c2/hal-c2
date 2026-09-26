@@ -21,7 +21,7 @@ describe("generate mobile Uniwind themes", () => {
 
     expect(
       staleOutputs,
-      "Run `vp run --filter @t3tools/mobile generate` and commit the generated outputs.",
+      "Run `vp run --filter @hal-c2/mobile generate` and commit the generated outputs.",
     ).toEqual([]);
   });
 

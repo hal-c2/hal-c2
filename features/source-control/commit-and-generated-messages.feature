@@ -2,12 +2,12 @@
 #   docs/user/source-control.md (Commit, push and PR with generated messages)
 #   packages/contracts/src/git.ts (GitStackedAction, GitRunStackedActionInput, GitActionProgressEvent)
 #   packages/contracts/src/rpc.ts (git.runStackedAction)
-#   apps/server-ex/lib/t3/git_actions.ex
-#   apps/server-ex/lib/t3/text_generation.ex (commit_message, branch_name)
-#   apps/server-ex/lib/t3/text_generation/style.ex (policy, pr_template)
-#   apps/server-ex/lib/t3/text_generation.ex (pr_content)
+#   apps/server-ex/lib/hal_c2/git_actions.ex
+#   apps/server-ex/lib/hal_c2/text_generation.ex (commit_message, branch_name)
+#   apps/server-ex/lib/hal_c2/text_generation/style.ex (policy, pr_template)
+#   apps/server-ex/lib/hal_c2/text_generation.ex (pr_content)
 #   apps/web/src/components/GitActionsControl.tsx (commit dialog)
-#   apps/desktop-qt/qml/T3/Bricks/GitActions.qml (commit dialog)
+#   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (commit dialog)
 #   apps/desktop-qt/tests/tst_GitActions.qml
 #   apps/tui/src/components/ChatView.tsx (onRunGitAction, commit message prompt)
 #   apps/tui/src/store.ts (runGitAction)

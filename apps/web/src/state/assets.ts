@@ -1,7 +1,7 @@
 import {
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
-} from "@t3tools/client-runtime/state/assets";
+} from "@hal-c2/client-runtime/state/assets";
 import { Atom } from "effect/unstable/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";

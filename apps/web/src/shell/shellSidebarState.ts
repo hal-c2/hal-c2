@@ -1,21 +1,21 @@
-import type { EnvironmentId } from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { EnvironmentId } from "@hal-c2/contracts";
+import type { EnvironmentThreadShell } from "@hal-c2/client-runtime/state/models";
 import {
   scopeProjectRef,
   scopeThreadRef,
   scopedProjectKey,
   scopedThreadKey,
-} from "@t3tools/client-runtime/environment";
+} from "@hal-c2/client-runtime/environment";
 import {
   canSnooze,
   snoozeWakeLabel,
   threadWokeAt,
-} from "@t3tools/client-runtime/state/thread-settled";
+} from "@hal-c2/client-runtime/state/thread-settled";
 import type {
   ShellSidebarDraft,
   ShellSidebarState,
   ShellSidebarThread,
-} from "@t3tools/contracts/shell";
+} from "@hal-c2/contracts/shell";
 
 import {
   hasUnseenCompletion,

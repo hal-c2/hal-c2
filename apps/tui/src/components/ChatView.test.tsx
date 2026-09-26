@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { type Renderable, ScrollBoxRenderable } from "@opentui/core";
 import { testRender } from "@opentui/react/test-utils";
 import { MouseButtons } from "@opentui/core/testing";
-import type { ImagePreview } from "@t3tools/opentui-image";
+import type { ImagePreview } from "@hal-c2/opentui-image";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -12,7 +12,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type OrchestrationThread,
   type VcsStatusResult,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 
 import type { OrchestrationShellSnapshot, TuiClient } from "../connection.ts";
 import {
@@ -1191,7 +1191,7 @@ describe("ChatView acknowledged submissions", () => {
   });
 
   it("Given the terminal pastes an explicit local image outside the workspace, when it is readable, then the prompt stages it without using the workspace reader", async () => {
-    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-prompt-image-"));
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "hal-c2-prompt-image-"));
     const imagePath = NodePath.join(directory, "outside workspace.png");
     await NodeFSP.writeFile(imagePath, Buffer.from(PNG_BASE64, "base64"));
     try {

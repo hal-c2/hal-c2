@@ -1,26 +1,26 @@
-import type { ProviderInteractionMode } from "@t3tools/contracts";
+import type { ProviderInteractionMode } from "@hal-c2/contracts";
 import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
 
 import {
-  T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
-  T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-} from "./T3OrchestrationInstructions.ts";
+  HALC2_BROWSER_TOOL_INSTRUCTIONS,
+  HALC2_ORCHESTRATION_INSTRUCTIONS,
+} from "./HalC2OrchestrationInstructions.ts";
 
-const T3_CODE_DEVICE_TOOL_INSTRUCTIONS = `
+const HALC2_DEVICE_TOOL_INSTRUCTIONS = `
 
-## T3 Code devices
+## HAL-C2 devices
 
-The \`t3-code\` MCP server also exposes \`device_*\` tools for iOS Simulators and Android Emulators on this environment. For mobile verification, call \`device_list\`, then \`device_open\` so the user can watch the device in their Device panel; its result explains how to drive the device. Driving happens through the \`agent-device\` CLI, using the exact launcher path returned by \`device_open\`. Keep the host config and session flags returned by \`device_open\` on every command so concurrent devices stay independent: prefer \`agent-device snapshot -i\` refs over coordinates, and use \`device_screenshot\` when you need to see the screen. Do not call simctl, adb, xcrun, or serve-sim directly while these tools are present. If \`device_list\` reports a platform as unavailable, say so instead of trying another route.
+The \`hal-c2\` MCP server also exposes \`device_*\` tools for iOS Simulators and Android Emulators on this environment. For mobile verification, call \`device_list\`, then \`device_open\` so the user can watch the device in their Device panel; its result explains how to drive the device. Driving happens through the \`agent-device\` CLI, using the exact launcher path returned by \`device_open\`. Keep the host config and session flags returned by \`device_open\` on every command so concurrent devices stay independent: prefer \`agent-device snapshot -i\` refs over coordinates, and use \`device_screenshot\` when you need to see the screen. Do not call simctl, adb, xcrun, or serve-sim directly while these tools are present. If \`device_list\` reports a platform as unavailable, say so instead of trying another route.
 `;
 
-export interface T3CodeToolAvailability {
+export interface HalC2ToolAvailability {
   readonly browser: boolean;
   readonly device: boolean;
 }
 
 const normalizeAvailability = (
-  availability: boolean | T3CodeToolAvailability,
-): T3CodeToolAvailability =>
+  availability: boolean | HalC2ToolAvailability,
+): HalC2ToolAvailability =>
   typeof availability === "boolean" ? { browser: availability, device: false } : availability;
 
 /**
@@ -30,15 +30,15 @@ const normalizeAvailability = (
  * from Playwright, agent-browser, and raw simctl/adb, so leaving them in would
  * talk it out of the only automation it still has.
  */
-const browserToolInstructions = (availability: boolean | T3CodeToolAvailability): string => {
+const browserToolInstructions = (availability: boolean | HalC2ToolAvailability): string => {
   const tools = normalizeAvailability(availability);
-  return `${tools.browser ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS : ""}${
-    tools.device ? T3_CODE_DEVICE_TOOL_INSTRUCTIONS : ""
+  return `${tools.browser ? HALC2_BROWSER_TOOL_INSTRUCTIONS : ""}${
+    tools.device ? HALC2_DEVICE_TOOL_INSTRUCTIONS : ""
   }`;
 };
 
 const codexPlanModeDeveloperInstructions = (
-  browserToolsAvailable: boolean | T3CodeToolAvailability,
+  browserToolsAvailable: boolean | HalC2ToolAvailability,
 ): string => `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
@@ -171,7 +171,7 @@ ${browserToolInstructions(browserToolsAvailable)}
 </collaboration_mode>`;
 
 const codexDefaultModeDeveloperInstructions = (
-  browserToolsAvailable: boolean | T3CodeToolAvailability,
+  browserToolsAvailable: boolean | HalC2ToolAvailability,
 ): string => `<collaboration_mode># Collaboration Mode: Default
 
 You are now in Default mode. Any previous instructions for other modes (e.g. Plan mode) are no longer active.
@@ -184,7 +184,7 @@ Use the \`request_user_input\` tool only when it is listed in the available tool
 
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
 ${browserToolInstructions(browserToolsAvailable)}
-${T3_CODE_ORCHESTRATION_INSTRUCTIONS}
+${HALC2_ORCHESTRATION_INSTRUCTIONS}
 </collaboration_mode>`;
 
 export interface CodexRuntimeInfo {
@@ -196,11 +196,11 @@ export function buildCodexDeveloperInstructions(
   interactionMode: ProviderInteractionMode,
   runtime: CodexRuntimeInfo,
   /**
-   * Whether the `t3-code` MCP server is attached to this turn. Callers derive
+   * Whether the `hal-c2` MCP server is attached to this turn. Callers derive
    * it from the session's actual MCP configuration rather than re-reading the
    * setting, so the prompt cannot claim tools the turn doesn't have.
    */
-  browserToolsAvailable: boolean | T3CodeToolAvailability = true,
+  browserToolsAvailable: boolean | HalC2ToolAvailability = true,
 ): string {
   const base =
     interactionMode === "plan"

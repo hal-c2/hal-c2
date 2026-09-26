@@ -12,9 +12,9 @@
 #   apps/web/src/components/settings/useScopedModelAvailability.ts
 #   apps/web/src/components/settings/useSettingsProjectGroups.ts
 #   packages/contracts/src/settings.ts (ServerSettings, ProjectSettingsOverrides, ServerSettingsPatch)
-#   apps/server-ex/lib/t3/settings.ex (versioned put, project resolution, watchers)
-#   apps/server-ex/lib/t3/rpc.ex (t3.readSettings, t3.writeSettings)
-#   apps/server-ex/lib/t3/web/socket.ex (config.settings)
+#   apps/server-ex/lib/hal_c2/settings.ex (versioned put, project resolution, watchers)
+#   apps/server-ex/lib/hal_c2/rpc.ex (halc2.readSettings, halc2.writeSettings)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (config.settings)
 
 Feature: Settings scopes and inheritance
   Settings apply to all environments, one environment, one project, or one checkout of a
@@ -23,7 +23,7 @@ Feature: Settings scopes and inheritance
 
   Background:
     Given the user has environments "Laptop" and "Build box"
-    And the project "t3code" has a checkout on each environment
+    And the project "hal-c2" has a checkout on each environment
 
   Rule: The node stores one versioned settings document
 
@@ -51,22 +51,22 @@ Feature: Settings scopes and inheritance
     @node
     Scenario: A project sees its overrides over the environment's values
       Given the environment's default runtime mode is full access
-      And the project "t3code" overrides the default runtime mode to approval required
-      When the node resolves the settings for "t3code"
+      And the project "hal-c2" overrides the default runtime mode to approval required
+      When the node resolves the settings for "hal-c2"
       Then the default runtime mode is approval required
       And settings the project does not override keep the environment's values
 
     @node
     Scenario: A project cannot override an environment-wide setting
-      Given the project "t3code" has an override for an environment-wide setting
-      When the node resolves the settings for "t3code"
+      Given the project "hal-c2" has an override for an environment-wide setting
+      When the node resolves the settings for "hal-c2"
       Then that setting keeps the environment's value
 
     @node
     Scenario: A project model override on a disabled provider falls back to the environment's
-      Given the project "t3code" overrides the default model with a model from "Codex"
+      Given the project "hal-c2" overrides the default model with a model from "Codex"
       And the "Codex" provider is disabled on this environment
-      When the node resolves the settings for "t3code"
+      When the node resolves the settings for "hal-c2"
       Then the default model is the environment's default model
 
   Rule: The user chooses where settings apply
@@ -78,14 +78,14 @@ Feature: Settings scopes and inheritance
 
     @backlog @desktop
     Scenario Outline: Changing one axis of the scope keeps the other
-      Given the user is editing settings for "t3code" on "Laptop"
+      Given the user is editing settings for "hal-c2" on "Laptop"
       When the user chooses <choice>
       Then settings apply to <result>
 
       Examples:
         | choice                        | result                                |
-        | the environment "Build box"   | "t3code" on "Build box"               |
-        | all environments              | "t3code" across all checkouts         |
+        | the environment "Build box"   | "hal-c2" on "Build box"               |
+        | all environments              | "hal-c2" across all checkouts         |
         | all projects                  | every project on "Laptop"             |
 
     @backlog @desktop
@@ -110,7 +110,7 @@ Feature: Settings scopes and inheritance
 
     @backlog @desktop
     Scenario: A section with nothing to change at this scope offers where to go instead
-      Given the user is editing settings for the project "t3code"
+      Given the user is editing settings for the project "hal-c2"
       When the user opens a section that only has environment-wide settings
       Then the page offers each environment the section can be changed on
 
@@ -124,14 +124,14 @@ Feature: Settings scopes and inheritance
 
     @backlog @desktop
     Scenario: A project change is saved as an override for that project
-      Given the user is editing settings for the project "t3code"
+      Given the user is editing settings for the project "hal-c2"
       When the user changes the default model
-      Then "t3code" overrides the default model on each environment with a checkout of it
+      Then "hal-c2" overrides the default model on each environment with a checkout of it
       And other projects keep the environment's default model
 
     @backlog @desktop
     Scenario: A device preference is saved on this device only
-      Given the user is editing settings for the project "t3code"
+      Given the user is editing settings for the project "hal-c2"
       When the user changes a preference that belongs to this device
       Then the preference is saved on this device
       And no environment is changed
@@ -153,7 +153,7 @@ Feature: Settings scopes and inheritance
 
     @backlog @desktop
     Scenario: An environment-wide setting cannot be changed at project scope
-      Given the user is editing settings for the project "t3code"
+      Given the user is editing settings for the project "hal-c2"
       When the user looks at an environment-wide setting
       Then the setting cannot be changed
       And the user is told to select an environment to change it
@@ -162,28 +162,28 @@ Feature: Settings scopes and inheritance
 
     @backlog @desktop
     Scenario: The inheritance chain shows which layer wins
-      Given the user is editing settings for the project "t3code"
-      And "t3code" does not override the default model
+      Given the user is editing settings for the project "hal-c2"
+      And "hal-c2" does not override the default model
       When the user asks where the default model comes from
       Then the project, environment, repository file and built-in default layers are listed in that order
       And the environment layer is marked as the one in effect
 
     @backlog @desktop
     Scenario: Resetting a project override inherits the environment's value again
-      Given "t3code" overrides the default model
-      And the user is editing settings for the project "t3code"
+      Given "hal-c2" overrides the default model
+      And the user is editing settings for the project "hal-c2"
       When the user resets the default model to the inherited value
-      Then "t3code" no longer overrides the default model
+      Then "hal-c2" no longer overrides the default model
       And the default model shows the environment's value
 
     @backlog @desktop
     Scenario: The environment view lists and clears project overrides
-      Given "t3code" overrides the default model on "Laptop"
+      Given "hal-c2" overrides the default model on "Laptop"
       And the user is editing settings for "Laptop"
       When the user asks where the default model comes from
-      Then "t3code" is listed as overriding it
-      When the user resets the override for "t3code"
-      Then "t3code" uses the value from "Laptop"
+      Then "hal-c2" is listed as overriding it
+      When the user resets the override for "hal-c2"
+      Then "hal-c2" uses the value from "Laptop"
 
     @backlog @desktop
     Scenario: A value that differs between environments shows as mixed

@@ -3,7 +3,7 @@
 
 /**
  * Framework-free client for expo-device-hub's per-device streams, reached
- * through the T3 proxy. One class handles both platforms because the hub
+ * through the HAL-C2 proxy. One class handles both platforms because the hub
  * vendors two servers with different wire formats:
  *
  * - iOS (serve-sim): video is an HTTP `stream.avcc` body of length-prefixed
@@ -20,7 +20,7 @@
  * hidden panel calls `stop()` so an idle device costs nothing on the GPU.
  */
 import { type DeviceHubAccess, withDeviceHubQuery } from "./hubAccess.ts";
-import type { DevicePlatform } from "@t3tools/contracts";
+import type { DevicePlatform } from "@hal-c2/contracts";
 
 export type DeviceStreamStatus = "connecting" | "streaming" | "error";
 

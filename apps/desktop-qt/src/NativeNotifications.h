@@ -2,7 +2,7 @@
 
 #include <QHash>
 #include <QObject>
-#ifdef T3_HAS_DBUS
+#ifdef HALC2_HAS_DBUS
 #include <QDBusMessage>
 #endif
 
@@ -31,7 +31,7 @@ signals:
   void activated(const QString& key);
 
 private slots:
-#ifdef T3_HAS_DBUS
+#ifdef HALC2_HAS_DBUS
   void notificationAction(uint id, const QString& action, const QDBusMessage& message);
   void notificationClosed(uint id, uint reason, const QDBusMessage& message);
 #endif

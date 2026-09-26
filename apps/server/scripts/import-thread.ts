@@ -14,11 +14,13 @@ export const importThreadCommand = Command.make(
   {
     archive: Flag.String("archive").pipe(Flag.withDescription("Thread archive JSON to import.")),
     destination: Flag.String("destination").pipe(
-      Flag.withDescription("Workspace root, T3 base directory, or direct state directory."),
+      Flag.withDescription("Workspace root, HAL-C2 base directory, or direct state directory."),
     ),
     state: Flag.Literals("state", ThreadTransferState.literals).pipe(
       Flag.withDefault("userdata"),
-      Flag.withDescription("State directory below the T3 base directory; defaults to userdata."),
+      Flag.withDescription(
+        "State directory below the HAL-C2 base directory; defaults to userdata.",
+      ),
     ),
     targetProjectId: Flag.String("target-project-id").pipe(
       Flag.optional,
@@ -41,10 +43,10 @@ export const importThreadCommand = Command.make(
       );
       yield* Console.log(`  Database backup: ${result.backup}`);
       yield* Console.log(
-        "Restart the destination T3 server so its projector reads the new events.",
+        "Restart the destination HAL-C2 server so its projector reads the new events.",
       );
     }),
-).pipe(Command.withDescription("Import one T3 thread into an isolated project database."));
+).pipe(Command.withDescription("Import one HAL-C2 thread into an isolated project database."));
 
 if (import.meta.main) {
   Command.run(importThreadCommand, { version: "0.0.0" }).pipe(

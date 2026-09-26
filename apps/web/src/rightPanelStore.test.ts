@@ -1,5 +1,5 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@hal-c2/client-runtime/environment";
+import { type EnvironmentId, ThreadId } from "@hal-c2/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -111,7 +111,7 @@ describe("rightPanelStore", () => {
   const completedDiff = { id: "diff", kind: "diff" } as const;
   const linkedPullRequest = pullRequestSurface({
     projectId: "project-a",
-    repository: "pingdotgg/t3code",
+    repository: "hal-c2/hal-c2",
     number: 42,
   });
 
@@ -312,7 +312,7 @@ describe("rightPanelStore", () => {
   it("upgrades the legacy singleton pull request surface to a reference-keyed tab", () => {
     const id = pullRequestSurfaceId({
       projectId: "project-a",
-      repository: "pingdotgg/t3code",
+      repository: "hal-c2/hal-c2",
       number: 4909,
     });
     expect(
@@ -326,7 +326,7 @@ describe("rightPanelStore", () => {
                 id: "pull-request",
                 kind: "pull-request",
                 projectId: "project-a",
-                repository: "pingdotgg/t3code",
+                repository: "hal-c2/hal-c2",
                 number: 4909,
               },
             ],
@@ -343,7 +343,7 @@ describe("rightPanelStore", () => {
               id,
               kind: "pull-request",
               projectId: "project-a",
-              repository: "pingdotgg/t3code",
+              repository: "hal-c2/hal-c2",
               number: 4909,
             },
           ],
@@ -356,7 +356,7 @@ describe("rightPanelStore", () => {
   it("drops the pull-request list's shared panel so a restart opens the page fresh", () => {
     const id = pullRequestSurfaceId({
       projectId: "project-a",
-      repository: "pingdotgg/t3code",
+      repository: "hal-c2/hal-c2",
       number: 4909,
     });
     const panelState = {
@@ -367,7 +367,7 @@ describe("rightPanelStore", () => {
           id,
           kind: "pull-request" as const,
           projectId: "project-a",
-          repository: "pingdotgg/t3code",
+          repository: "hal-c2/hal-c2",
           number: 4909,
         },
       ],
@@ -792,11 +792,11 @@ describe("rightPanelStore", () => {
   });
 
   it("tracks one surface per pull request", () => {
-    const first = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
-    const second = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4910 };
+    const first = { projectId: "project-a", repository: "hal-c2/hal-c2", number: 4909 };
+    const second = { projectId: "project-a", repository: "hal-c2/hal-c2", number: 4910 };
     useRightPanelStore.getState().openPullRequest(refA, first);
     useRightPanelStore.getState().openPullRequest(refA, second);
-    const url = "https://gitlab.example.com/pingdotgg/t3code/-/merge_requests/4909";
+    const url = "https://gitlab.example.com/hal-c2/hal-c2/-/merge_requests/4909";
     useRightPanelStore.getState().openPullRequest(refA, { ...first, url });
     useRightPanelStore.getState().openPullRequest(refA, first);
 
@@ -828,7 +828,7 @@ describe("rightPanelStore", () => {
     const local = {
       environmentId: "local",
       projectId: "project-a",
-      repository: "pingdotgg/t3code",
+      repository: "hal-c2/hal-c2",
       number: 4909,
     };
     const remote = { ...local, environmentId: "remote" };
@@ -853,13 +853,13 @@ describe("rightPanelStore", () => {
     const fromServerA = {
       environmentId: "server-a",
       projectId: "project-a",
-      repository: "pingdotgg/t3code",
+      repository: "hal-c2/hal-c2",
       number: 1,
     };
     const fromServerB = {
       environmentId: "server-b",
       projectId: "project-b",
-      repository: "pingdotgg/t3code",
+      repository: "hal-c2/hal-c2",
       number: 2,
     };
 

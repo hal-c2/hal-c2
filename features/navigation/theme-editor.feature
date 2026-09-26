@@ -112,7 +112,7 @@ Feature: Custom themes
 
       Examples:
         | files                        | result                          |
-        | one T3 Code theme file       | the theme is added              |
+        | one HAL-C2 theme file       | the theme is added              |
         | one VS Code theme file       | the theme is added              |
         | three theme files at once    | the user is told "3 themes added" |
 

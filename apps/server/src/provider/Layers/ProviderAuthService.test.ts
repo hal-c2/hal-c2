@@ -9,7 +9,7 @@ import {
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ThreadShell,
   type ProviderAuthState,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -906,7 +906,7 @@ it.effect.each(["start", "logout", "prompt"] as const)(
 
 it.effect.each([
   { owner: "provider" as const, key: "different-binding" },
-  { owner: "t3" as const, key: "shared" },
+  { owner: "hal-c2" as const, key: "shared" },
 ])(
   "does not invalidate a peer that switches credential binding during session draining %#",
   (binding) =>

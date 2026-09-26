@@ -5,8 +5,8 @@
  * API constrained to store actions/selectors.
  */
 
-import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { type ScopedThreadRef } from "@t3tools/contracts";
+import { parseScopedThreadKey, scopedThreadKey } from "@hal-c2/client-runtime/environment";
+import { type ScopedThreadRef } from "@hal-c2/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
@@ -28,7 +28,7 @@ export interface ThreadTerminalUiState {
 }
 
 // Keep the old storage key so existing drawer layout preferences migrate.
-export const TERMINAL_UI_STATE_STORAGE_KEY = appViewStorageKey("t3code:terminal-state:v1");
+export const TERMINAL_UI_STATE_STORAGE_KEY = appViewStorageKey("hal-c2:terminal-state:v1");
 
 interface PersistedTerminalUiStateStoreState {
   terminalUiStateByThreadKey?: Record<string, ThreadTerminalUiState>;

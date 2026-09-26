@@ -1,10 +1,10 @@
-defmodule T3.Steps.Plugins.PluginCatalog do
+defmodule HalC2.Steps.Plugins.PluginCatalog do
   @moduledoc "Steps for `features/plugins/plugin-catalog.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.Plugins.{AcpRegistry, Fixtures}
-  alias T3.Test.Node.World
+  alias HalC2.Steps.Plugins.{AcpRegistry, Fixtures}
+  alias HalC2.Test.Node.World
 
   # --- searching the registry ------------------------------------------------------
 
@@ -48,7 +48,7 @@ defmodule T3.Steps.Plugins.PluginCatalog do
     assert installed_files(context, id) == []
 
     refute Enum.any?(
-             T3.Settings.settings()["providerInstances"] || %{},
+             HalC2.Settings.settings()["providerInstances"] || %{},
              fn {_, i} -> get_in(i, ["config", "agentId"]) == id end
            )
 
@@ -63,7 +63,7 @@ defmodule T3.Steps.Plugins.PluginCatalog do
       AcpRegistry.agent(context, id, %{
         "distribution" => %{
           "binary" => %{
-            T3.Acp.Catalog.platform() => %{
+            HalC2.Acp.Catalog.platform() => %{
               "archive" => "http://192.0.2.10/acme.tar.gz",
               "cmd" => "./bin/fake"
             }
@@ -74,14 +74,14 @@ defmodule T3.Steps.Plugins.PluginCatalog do
   end
 
   # The registry in play is the plugin fixture's (`context.registry`) or, in
-  # `providers/acp-registry.feature`, the one `T3.Test.AcpFixtures` serves.
+  # `providers/acp-registry.feature`, the one `HalC2.Test.AcpFixtures` serves.
   step "the user adds {string}", %{args: [id]} = context do
     if context[:registry] do
       add(context, id)
     else
       {reply, ctx} = World.call(context, "server.prepareAcpRegistryAgent", %{"agentId" => id})
       # A client creates the instance only once the agent is prepared.
-      if match?({:ok, _}, reply), do: T3.Test.AcpFixtures.add_registry_instance(id, id)
+      if match?({:ok, _}, reply), do: HalC2.Test.AcpFixtures.add_registry_instance(id, id)
       Map.put(ctx, :reply, reply)
     end
   end
@@ -141,7 +141,7 @@ defmodule T3.Steps.Plugins.PluginCatalog do
   step "the registry cannot be reached now", context do
     File.rm!(Path.join(context.registry.served, "registry.json"))
     # A fresh process has only what the node wrote to disk.
-    :persistent_term.erase({T3.Acp.Catalog, :index})
+    :persistent_term.erase({HalC2.Acp.Catalog, :index})
     context
   end
 

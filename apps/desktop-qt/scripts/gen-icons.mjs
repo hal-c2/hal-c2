@@ -1,4 +1,4 @@
-// Regenerates qml/T3/Bricks/js/lucide.js: the stroke paths of the lucide
+// Regenerates qml/HalC2/Bricks/js/lucide.js: the stroke paths of the lucide
 // icons the bricks draw, flattened to one SVG path per icon on a 24-unit grid
 // so ShellIcon needs a single PathSvg. Add a name to ICONS and run
 // `node apps/desktop-qt/scripts/gen-icons.mjs` from the repo root; the icon
@@ -74,7 +74,7 @@ const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const repoRoot = NodePath.join(here, "..", "..", "..");
 const require = NodeModule.createRequire(NodePath.join(repoRoot, "apps/web/package.json"));
 const iconsDir = NodePath.dirname(require.resolve("lucide-react/dist/esm/icons/x.js"));
-const output = NodePath.join(here, "..", "qml/T3/Bricks/js/lucide.js");
+const output = NodePath.join(here, "..", "qml/HalC2/Bricks/js/lucide.js");
 
 const num = (value) => Number(value);
 const arc = (cx, cy, rx, ry) =>

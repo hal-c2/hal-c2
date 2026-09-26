@@ -1,21 +1,21 @@
-defmodule T3.Steps.Platform.NodeStartup do
+defmodule HalC2.Steps.Platform.NodeStartup do
   @moduledoc "Steps for features/node/platform/node-startup.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias Exqlite.Sqlite3
-  alias T3.Test.{Node, WsClient}
-  alias T3.Test.Node.World
+  alias HalC2.Test.{Node, WsClient}
+  alias HalC2.Test.Node.World
 
   # Boot configuration is read the way a node boots: `config/config.exs` for the
   # build (dev from a checkout, prod in a release), then `config/runtime.exs` with
-  # the process environment. Listeners are checked through `T3.Web.child_spec/1`
+  # the process environment. Listeners are checked through `HalC2.Web.child_spec/1`
   # under that configuration, so no step binds the real default port.
 
   # --- the printed URL -------------------------------------------------------------------
 
   step "a developer starts the node from a checkout", context do
-    [line] = World.mix_output(Mix.Tasks.T3.Server, :announce)
+    [line] = World.mix_output(Mix.Tasks.HalC2.Server, :announce)
     Map.merge(context, %{printed: line, boot: boot_config(:dev)})
   end
 
@@ -40,18 +40,18 @@ defmodule T3.Steps.Platform.NodeStartup do
   # --- port, home and bind host -----------------------------------------------------------
 
   step "no port is configured", context do
-    World.put_os_env("T3_PORT", nil)
+    World.put_os_env("HALC2_NODE_PORT", nil)
     Map.put(context, :boot_env, :dev)
   end
 
-  step "T3_PORT is {int} and T3_HOME is {string}", %{args: [port, home]} = context do
-    World.put_os_env("T3_PORT", to_string(port))
-    World.put_os_env("T3_HOME", home)
+  step "HALC2_NODE_PORT is {int} and HALC2_HOME is {string}", %{args: [port, home]} = context do
+    World.put_os_env("HALC2_NODE_PORT", to_string(port))
+    World.put_os_env("HALC2_HOME", home)
     Map.put(context, :boot_env, :prod)
   end
 
   step "the bind host is set to {string} in the environment", %{args: [host]} = context do
-    World.put_os_env("T3CODE_HOST", host)
+    World.put_os_env("HALC2_HOST", host)
     Map.put(context, :boot_env, :prod)
   end
 
@@ -73,10 +73,10 @@ defmodule T3.Steps.Platform.NodeStartup do
     paths =
       with_app_env([home: home], fn ->
         [
-          T3.Store.home_path(),
-          T3.Traces.path(),
-          T3.ProviderLog.path("thread-1"),
-          T3.Vcs.worktree_path("/code/app", "feature/login")
+          HalC2.Store.home_path(),
+          HalC2.Traces.path(),
+          HalC2.ProviderLog.path("thread-1"),
+          HalC2.Vcs.worktree_path("/code/app", "feature/login")
         ]
       end)
 
@@ -85,7 +85,7 @@ defmodule T3.Steps.Platform.NodeStartup do
   end
 
   step "no home directory is configured", context do
-    World.put_os_env("T3_HOME", nil)
+    World.put_os_env("HALC2_HOME", nil)
     context
   end
 
@@ -106,7 +106,7 @@ defmodule T3.Steps.Platform.NodeStartup do
   end
 
   step "the node starts from a checkout or a release", context do
-    World.put_os_env("T3CODE_HOST", nil)
+    World.put_os_env("HALC2_HOST", nil)
     boots = [boot_config(:dev), release_boot(Node.tmp_dir(context.node, "user-home"))]
     Map.put(context, :boots, boots)
   end
@@ -115,7 +115,7 @@ defmodule T3.Steps.Platform.NodeStartup do
     for boot <- context.boots, do: assert({{127, 0, 0, 1}, _} = listener(boot))
 
     # The running node, too: its listener is on loopback, and no other address answers.
-    assert {:ok, {{127, 0, 0, 1}, port}} = ThousandIsland.listener_info(T3.Web.Listener)
+    assert {:ok, {{127, 0, 0, 1}, port}} = ThousandIsland.listener_info(HalC2.Web.Listener)
 
     if ip = lan_address() do
       assert {:error, _} = :gen_tcp.connect(ip, port, [], 1_000)
@@ -132,13 +132,13 @@ defmodule T3.Steps.Platform.NodeStartup do
   end
 
   step "clients on that network can reach it", context do
-    assert {:ok, {{200, body}, _}} = lan_request(context, :get, "/.well-known/t3/environment")
+    assert {:ok, {{200, body}, _}} = lan_request(context, :get, "/.well-known/hal-c2/environment")
     assert JSON.decode!(body)["environmentId"] == context.node.environment
     context
   end
 
   step "its pairing links use that address", context do
-    [link] = World.mix_output(Mix.Tasks.T3.Pair, :run, [[]])
+    [link] = World.mix_output(Mix.Tasks.HalC2.Pair, :run, [[]])
     base = "http://#{context.lan_host}:#{context.node.port}/?token="
     assert String.starts_with?(link, base), link
 
@@ -149,7 +149,7 @@ defmodule T3.Steps.Platform.NodeStartup do
       URI.encode_query(%{
         "grant_type" => "urn:ietf:params:oauth:grant-type:token-exchange",
         "subject_token" => token,
-        "subject_token_type" => "urn:t3:params:oauth:token-type:environment-bootstrap",
+        "subject_token_type" => "urn:hal-c2:params:oauth:token-type:environment-bootstrap",
         "client_label" => "Laptop"
       })
 
@@ -182,11 +182,11 @@ defmodule T3.Steps.Platform.NodeStartup do
 
   step "the node started once and recorded its environment id", context do
     # A fresh process: nothing cached from an earlier node in this VM.
-    :persistent_term.erase({T3.Environment, :id})
+    :persistent_term.erase({HalC2.Environment, :id})
     context = %{context | node: Node.restart(context.node), clients: %{}}
 
     {200, _, %{"environmentId" => id}} =
-      Node.request(context.node, :get, "/.well-known/t3/environment")
+      Node.request(context.node, :get, "/.well-known/hal-c2/environment")
 
     assert File.read!(Path.join(context.node.home, "environment-id")) == id
     Map.put(context, :environment_id, id)
@@ -195,7 +195,7 @@ defmodule T3.Steps.Platform.NodeStartup do
   step "the node restarts on another port", context do
     old_port = context.node.port
     # A new process reads its identity from the home again.
-    :persistent_term.erase({T3.Environment, :id})
+    :persistent_term.erase({HalC2.Environment, :id})
     node = Node.restart(%{context.node | port: 0})
     assert node.port != old_port
     %{context | node: node, clients: %{}}
@@ -203,24 +203,24 @@ defmodule T3.Steps.Platform.NodeStartup do
 
   step "it reports the same environment id", context do
     assert {200, _, %{"environmentId" => id}} =
-             Node.request(context.node, :get, "/.well-known/t3/environment")
+             Node.request(context.node, :get, "/.well-known/hal-c2/environment")
 
     assert id == context.environment_id
     context
   end
 
   step "no label is configured", context do
-    World.put_os_env("T3_LABEL", nil)
+    World.put_os_env("HALC2_LABEL", nil)
     context
   end
 
-  step "T3_LABEL is {string}", %{args: [label]} = context do
-    World.put_os_env("T3_LABEL", label)
+  step "HALC2_LABEL is {string}", %{args: [label]} = context do
+    World.put_os_env("HALC2_LABEL", label)
     context
   end
 
   step "a client reads the node's environment descriptor", context do
-    assert {200, _, descriptor} = Node.request(context.node, :get, "/.well-known/t3/environment")
+    assert {200, _, descriptor} = Node.request(context.node, :get, "/.well-known/hal-c2/environment")
     Map.put(context, :descriptor, descriptor)
   end
 
@@ -241,7 +241,7 @@ defmodule T3.Steps.Platform.NodeStartup do
     assert is_binary(d["label"]) and d["label"] != ""
     assert %{"os" => os, "arch" => arch} = d["platform"]
     assert os in ~w(linux darwin win32) and is_binary(arch)
-    assert d["serverVersion"] == T3.Upgrade.version()
+    assert d["serverVersion"] == HalC2.Upgrade.version()
     context
   end
 
@@ -264,26 +264,26 @@ defmodule T3.Steps.Platform.NodeStartup do
   step "the node runs under the service wrapper", context do
     bin = Path.join(Node.tmp_dir(context.node, "release"), "bin")
     File.mkdir_p!(bin)
-    wrapper = Path.join(bin, "t3-service")
-    File.cp!(Path.join(project_dir(), "rel/overlays/bin/t3-service"), wrapper)
+    wrapper = Path.join(bin, "hal-c2-service")
+    File.cp!(Path.join(project_dir(), "rel/overlays/bin/hal-c2-service"), wrapper)
     File.chmod!(wrapper, 0o755)
     log = Path.join(bin, "starts.log")
 
-    # A stand-in for bin/t3: the first start exits asking for a restart (75, what
-    # `T3.Upgrade` stops with), the second with an ordinary failure.
-    File.write!(Path.join(bin, "t3"), """
+    # A stand-in for bin/hal_c2: the first start exits asking for a restart (75, what
+    # `HalC2.Upgrade` stops with), the second with an ordinary failure.
+    File.write!(Path.join(bin, "hal_c2"), """
     #!/bin/sh
-    echo "$* service=$T3_SERVICE" >> "#{log}"
+    echo "$* service=$HALC2_SERVICE" >> "#{log}"
     [ "$(wc -l < "#{log}")" -eq 1 ] && exit 75
     exit 3
     """)
 
-    File.chmod!(Path.join(bin, "t3"), 0o755)
+    File.chmod!(Path.join(bin, "hal_c2"), 0o755)
     Map.put(context, :wrapper, %{path: wrapper, log: log})
   end
 
   step "the node exits asking for a restart", context do
-    {_, status} = System.cmd(context.wrapper.path, ["--flag"], env: [{"T3_SERVICE", nil}])
+    {_, status} = System.cmd(context.wrapper.path, ["--flag"], env: [{"HALC2_SERVICE", nil}])
     Map.put(context, :wrapper_status, status)
   end
 
@@ -305,40 +305,40 @@ defmodule T3.Steps.Platform.NodeStartup do
     World.put_app_env(:service_user_home, user_home)
     World.put_app_env(:service_platform, {:unix, :linux})
     tools = fake_service_manager(context)
-    assert {:ok, status} = T3.Service.install()
+    assert {:ok, status} = HalC2.Service.install()
     Map.merge(context, %{service: status, service_tools: tools})
   end
 
   step "the node is registered with the system's service manager", context do
     unit = File.read!(context.service["unitPath"])
     release = System.get_env("RELEASE_ROOT")
-    assert unit =~ "ExecStart=#{release}/bin/t3-service"
-    assert unit =~ "Environment=T3_HOME=#{context.node.home}"
+    assert unit =~ "ExecStart=#{release}/bin/hal-c2-service"
+    assert unit =~ "Environment=HALC2_HOME=#{context.node.home}"
     assert context.service["installed"] and context.service["current"]
     assert "--user daemon-reload" in calls(context)
-    assert "--user restart t3code.service" in calls(context)
+    assert "--user restart hal-c2.service" in calls(context)
     context
   end
 
   step "it starts on login", context do
     assert File.read!(context.service["unitPath"]) =~ "WantedBy=default.target"
-    assert "--user enable t3code.service" in calls(context)
+    assert "--user enable hal-c2.service" in calls(context)
     # Lingering keeps it running after the user logs out.
     assert File.exists?(Path.join(Path.dirname(context.service_tools), "linger"))
     context
   end
 
   step "the user can see its status and remove it again", context do
-    assert %{"installed" => true, "current" => true, "logPath" => log} = T3.Service.status()
+    assert %{"installed" => true, "current" => true, "logPath" => log} = HalC2.Service.status()
     assert log == Path.join([context.node.home, "logs", "boot-service.log"])
 
-    assert :ok = T3.Service.uninstall()
-    assert "--user disable --now t3code.service" in calls(context)
-    refute T3.Service.status()["installed"]
+    assert :ok = HalC2.Service.uninstall()
+    assert "--user disable --now hal-c2.service" in calls(context)
+    refute HalC2.Service.status()["installed"]
 
     refute File.exists?(context.service["unitPath"])
     # The node's state stays.
-    assert File.exists?(Path.join(context.node.home, "t3.sqlite"))
+    assert File.exists?(Path.join(context.node.home, "hal-c2.sqlite"))
     context
   end
 
@@ -346,9 +346,9 @@ defmodule T3.Steps.Platform.NodeStartup do
 
   step "a maintainer builds a release bundle", context do
     root = Node.tmp_dir(context.node, "rel")
-    version = T3.Upgrade.version()
+    version = HalC2.Upgrade.version()
 
-    for dir <- ["bin", "lib/t3-#{version}/ebin", "releases/#{version}", "erts-17.0.5/bin"],
+    for dir <- ["bin", "lib/hal-c2-#{version}/ebin", "releases/#{version}", "erts-17.0.5/bin"],
         do: File.mkdir_p!(Path.join(root, dir))
 
     File.write!(Path.join(root, "releases/start_erl.data"), "17.0.5 #{version}\n")
@@ -359,12 +359,12 @@ defmodule T3.Steps.Platform.NodeStartup do
     )
 
     out = Node.tmp_dir(context.node, "out")
-    path = Mix.Tasks.T3.Bundle.bundle(out, root)
+    path = Mix.Tasks.HalC2.Bundle.bundle(out, root)
     Map.merge(context, %{bundle: path, bundle_out: out, bundle_version: version})
   end
 
   step "it writes one archive named for the version and platform", context do
-    name = "t3-node-#{context.bundle_version}-#{T3.Upgrade.platform()}.tar.gz"
+    name = "hal-c2-node-#{context.bundle_version}-#{HalC2.Upgrade.platform()}.tar.gz"
     assert Path.basename(context.bundle) == name
     assert Path.wildcard(Path.join(context.bundle_out, "*.tar.gz")) == [context.bundle]
     {:ok, entries} = :erl_tar.table(String.to_charlist(context.bundle), [:compressed])
@@ -387,15 +387,15 @@ defmodule T3.Steps.Platform.NodeStartup do
     node = System.find_executable("node") || flunk("node is not installed")
     {"v" <> version, 0} = System.cmd(node, ["--version"])
     assert version |> String.split(".") |> hd() |> String.to_integer() >= major
-    World.put_os_env("T3_NODE_COMMAND", nil)
-    Node.ensure(T3.Settings)
+    World.put_os_env("HALC2_NODE_COMMAND", nil)
+    Node.ensure(HalC2.Settings)
     context
   end
 
   step "the node needs the Cursor provider", context do
-    # The release's own layout (`lib/t3-<version>/priv`, where mix.exs stages the
+    # The release's own layout (`lib/hal-c2-<version>/priv`, where mix.exs stages the
     # sidecar), put first on the code path so the application resolves to it.
-    lib = Path.join([Node.tmp_dir(context.node, "rel"), "lib", "t3-#{T3.Upgrade.version()}"])
+    lib = Path.join([Node.tmp_dir(context.node, "rel"), "lib", "hal-c2-#{HalC2.Upgrade.version()}"])
     sidecar = Path.join(lib, "priv/cursor-acp/main.mjs")
     File.mkdir_p!(Path.dirname(sidecar))
     File.write!(sidecar, "")
@@ -405,7 +405,7 @@ defmodule T3.Steps.Platform.NodeStartup do
 
     command =
       try do
-        T3.Acp.command("cursor")
+        HalC2.Acp.command("cursor")
       after
         :code.del_path(String.to_charlist(ebin))
       end
@@ -420,15 +420,15 @@ defmodule T3.Steps.Platform.NodeStartup do
   end
 
   step "the desktop app names its Electron binary for the node", context do
-    electron = "/Applications/T3 Code.app/Contents/MacOS/T3 Code"
-    World.put_os_env("T3_NODE_COMMAND", electron)
-    World.put_os_env("T3_NODE_ELECTRON", "1")
-    Node.ensure(T3.Settings)
+    electron = "/Applications/HAL-C2.app/Contents/MacOS/HAL-C2"
+    World.put_os_env("HALC2_NODE_COMMAND", electron)
+    World.put_os_env("HALC2_NODE_ELECTRON", "1")
+    Node.ensure(HalC2.Settings)
     Map.put(context, :electron, electron)
   end
 
   step "the node starts a JavaScript sidecar", context do
-    Map.put(context, :acp_command, T3.Acp.command("cursor"))
+    Map.put(context, :acp_command, HalC2.Acp.command("cursor"))
   end
 
   step "it runs it with that binary in Node mode", context do
@@ -443,27 +443,27 @@ defmodule T3.Steps.Platform.NodeStartup do
   # --- the desktop bootstrap --------------------------------------------------------------
 
   step "the desktop app launches the node in bootstrap mode", context do
-    World.put_os_env("T3_BOOTSTRAP_STDIN", "1")
+    World.put_os_env("HALC2_BOOTSTRAP_STDIN", "1")
     # Everything the bootstrap sets comes back when the scenario ends.
     for key <- [:home, :port, :host, :desktop_token],
-        do: World.put_app_env(key, Application.get_env(:t3, key))
+        do: World.put_app_env(key, Application.get_env(:hal_c2, key))
 
     context
   end
 
-  step "it writes the port, host, T3 home and bootstrap token as one line on standard input",
+  step "it writes the port, host, HAL-C2 home and bootstrap token as one line on standard input",
        context do
     {:ok, socket} = :gen_tcp.listen(0, ip: {127, 0, 0, 1})
     {:ok, port} = :inet.port(socket)
     :gen_tcp.close(socket)
-    t3_home = Node.tmp_dir(context.node, "desktop-t3")
+    halc2_home = Node.tmp_dir(context.node, "desktop-hal-c2")
     token = "desktop-#{System.unique_integer([:positive])}"
 
     line =
       JSON.encode!(%{
         "port" => port,
         "host" => "127.0.0.1",
-        "t3Home" => t3_home,
+        "halc2Home" => halc2_home,
         "desktopBootstrapToken" => token
       })
 
@@ -472,39 +472,39 @@ defmodule T3.Steps.Platform.NodeStartup do
     :ok =
       Task.async(fn ->
         Process.group_leader(self(), stdin)
-        T3.Desktop.configure()
+        HalC2.Desktop.configure()
       end)
       |> Task.await()
 
     # The node's services come up under what the bootstrap configured, as they do
-    # after `T3.Desktop.configure/0` in `T3.Application`.
-    for child <- [T3.Web, T3.Shell, T3.Streams, T3.Auth, T3.Store],
+    # after `HalC2.Desktop.configure/0` in `HalC2.Application`.
+    for child <- [HalC2.Web, HalC2.Shell, HalC2.Streams, HalC2.Auth, HalC2.Store],
         do: ExUnit.Callbacks.stop_supervised(child)
 
-    :persistent_term.erase({T3.Web, :token})
+    :persistent_term.erase({HalC2.Web, :token})
 
-    for child <- [{T3.Store, path: T3.Store.home_path()}, T3.Auth, T3.Streams, T3.Shell, T3.Web],
+    for child <- [{HalC2.Store, path: HalC2.Store.home_path()}, HalC2.Auth, HalC2.Streams, HalC2.Shell, HalC2.Web],
         do: Node.ensure(child)
 
-    Map.merge(context, %{desktop: %{port: port, t3_home: t3_home, token: token}})
+    Map.merge(context, %{desktop: %{port: port, halc2_home: halc2_home, token: token}})
   end
 
   step "the node listens on that host and port", context do
     port = context.desktop.port
-    assert {:ok, {{127, 0, 0, 1}, ^port}} = ThousandIsland.listener_info(T3.Web.Listener)
+    assert {:ok, {{127, 0, 0, 1}, ^port}} = ThousandIsland.listener_info(HalC2.Web.Listener)
 
     assert {200, _, %{"environmentId" => _}} =
-             Node.request(%{port: port}, :get, "/.well-known/t3/environment")
+             Node.request(%{port: port}, :get, "/.well-known/hal-c2/environment")
 
     # The window pairs with the token it passed.
     assert {200, %{"access_token" => _}} = Node.exchange(%{port: port}, context.desktop.token)
     context
   end
 
-  step "keeps its state under the {string} directory of that T3 home", %{args: [dir]} = context do
-    home = Path.join(context.desktop.t3_home, dir)
-    assert Application.fetch_env!(:t3, :home) == home
-    assert T3.Store.home_path() == Path.join(home, "t3.sqlite")
+  step "keeps its state under the {string} directory of that HAL-C2 home", %{args: [dir]} = context do
+    home = Path.join(context.desktop.halc2_home, dir)
+    assert Application.fetch_env!(:hal_c2, :home) == home
+    assert HalC2.Store.home_path() == Path.join(home, "hal-c2.sqlite")
     assert File.exists?(Path.join(home, "access-token"))
     context
   end
@@ -544,11 +544,11 @@ defmodule T3.Steps.Platform.NodeStartup do
 
   step "an operator imports it into the node's home", context do
     # The import runs offline, against a stopped node's store.
-    for child <- [T3.Web, T3.Shell, T3.Streams, T3.Auth, T3.Store],
+    for child <- [HalC2.Web, HalC2.Shell, HalC2.Streams, HalC2.Auth, HalC2.Store],
         do: ExUnit.Callbacks.stop_supervised(child)
 
-    lines = World.mix_output(Mix.Tasks.T3.Import, :run, [[context.ts_source]])
-    GenServer.stop(T3.Store)
+    lines = World.mix_output(Mix.Tasks.HalC2.Import, :run, [[context.ts_source]])
+    GenServer.stop(HalC2.Store)
 
     Map.merge(context, %{
       import_output: Enum.join(lines, "\n"),
@@ -557,11 +557,11 @@ defmodule T3.Steps.Platform.NodeStartup do
   end
 
   step "every thread stream is copied into the node's store", context do
-    store = T3.Store.home_path()
+    store = HalC2.Store.home_path()
 
     for {stream, title} <- [{"thread-1", "Fix login"}, {"thread-2", "Add search v2"}] do
-      state = T3.StreamState.load(store, stream)
-      assert %{^stream => %{"title" => ^title}} = T3.StreamState.get(state, "thread")
+      state = HalC2.StreamState.load(store, stream)
+      assert %{^stream => %{"title" => ^title}} = HalC2.StreamState.get(state, "thread")
     end
 
     context
@@ -574,12 +574,12 @@ defmodule T3.Steps.Platform.NodeStartup do
   end
 
   step "an operator runs the import with no source", context do
-    error = assert_raise Mix.Error, fn -> Mix.Tasks.T3.Import.run([]) end
+    error = assert_raise Mix.Error, fn -> Mix.Tasks.HalC2.Import.run([]) end
     Map.put(context, :refusal, error.message)
   end
 
   step "it refuses with the expected usage", context do
-    assert context.refusal == "usage: mix t3.import PATH/TO/state.sqlite"
+    assert context.refusal == "usage: mix hal_c2.import PATH/TO/state.sqlite"
     context
   end
 
@@ -587,7 +587,7 @@ defmodule T3.Steps.Platform.NodeStartup do
 
   step "the home directory holds cluster boot arguments", context do
     home = Node.tmp_dir(context.node, "clustered")
-    :ok = T3.Cluster.init(home, "100.64.0.9")
+    :ok = HalC2.Cluster.init(home, "100.64.0.9")
     Map.put(context, :cluster_home, home)
   end
 
@@ -603,7 +603,7 @@ defmodule T3.Steps.Platform.NodeStartup do
 
     args = File.read!(args_file)
     assert args =~ "-proto_dist inet_tls"
-    assert args =~ "-name t3@100.64.0.9"
+    assert args =~ "-name hal_c2@100.64.0.9"
     [_, conf_file] = Regex.run(~r/-ssl_dist_optfile (\S+)/, args)
     {:ok, [conf]} = :file.consult(String.to_charlist(conf_file))
     assert conf[:server][:verify] == :verify_peer
@@ -623,29 +623,29 @@ defmodule T3.Steps.Platform.NodeStartup do
 
   defp project_dir, do: Path.dirname(Mix.Project.project_file())
 
-  # The `:t3` config a node boots with in `env`, from the current process environment.
+  # The `:hal_c2` config a node boots with in `env`, from the current process environment.
   defp boot_config(env) do
     config = Path.join(project_dir(), "config")
     base = Config.Reader.read!(Path.join(config, "config.exs"), env: env, target: :host)
     runtime = Config.Reader.read!(Path.join(config, "runtime.exs"), env: env, target: :host)
-    Config.Reader.merge(base, runtime)[:t3]
+    Config.Reader.merge(base, runtime)[:hal_c2]
   end
 
-  # A release boots with the T3_HOME its env.sh settles on for this user.
+  # A release boots with the HALC2_HOME its env.sh settles on for this user.
   defp release_boot(user_home) do
-    home = release_env(nil, [{"HOME", user_home}])["T3_HOME"]
-    previous = System.get_env("T3_HOME")
-    System.put_env("T3_HOME", home)
+    home = release_env(nil, [{"HOME", user_home}])["HALC2_HOME"]
+    previous = System.get_env("HALC2_HOME")
+    System.put_env("HALC2_HOME", home)
 
     try do
       boot_config(:prod)
     after
-      if previous, do: System.put_env("T3_HOME", previous), else: System.delete_env("T3_HOME")
+      if previous, do: System.put_env("HALC2_HOME", previous), else: System.delete_env("HALC2_HOME")
     end
   end
 
   # What rel/env.sh.eex exports, sourced the way the release script does.
-  defp release_env(t3_home, env \\ []) do
+  defp release_env(halc2_home, env \\ []) do
     script = Path.join(project_dir(), "rel/env.sh.eex")
 
     {out, 0} =
@@ -653,38 +653,38 @@ defmodule T3.Steps.Platform.NodeStartup do
         "sh",
         [
           "-c",
-          ~s(. "$0"; printf '%s\\n' "$T3_HOME" "$RELEASE_DISTRIBUTION" "${ELIXIR_ERL_OPTIONS:-}"),
+          ~s(. "$0"; printf '%s\\n' "$HALC2_HOME" "$RELEASE_DISTRIBUTION" "${ELIXIR_ERL_OPTIONS:-}"),
           script
         ],
         env:
           [
-            {"T3_HOME", t3_home},
+            {"HALC2_HOME", halc2_home},
             {"RELEASE_DISTRIBUTION", nil},
             {"ELIXIR_ERL_OPTIONS", nil}
           ] ++ env
       )
 
     [home, dist, opts] = String.split(out, "\n") |> Enum.take(3)
-    %{"T3_HOME" => home, "RELEASE_DISTRIBUTION" => dist, "ELIXIR_ERL_OPTIONS" => opts}
+    %{"HALC2_HOME" => home, "RELEASE_DISTRIBUTION" => dist, "ELIXIR_ERL_OPTIONS" => opts}
   end
 
-  # `{ip, port}` of the listener `T3.Web` would start under `boot`.
+  # `{ip, port}` of the listener `HalC2.Web` would start under `boot`.
   defp listener(boot) do
     %{start: {Bandit, :start_link, [opts]}} =
-      with_app_env([port: boot[:port], host: boot[:host]], fn -> T3.Web.child_spec([]) end)
+      with_app_env([port: boot[:port], host: boot[:host]], fn -> HalC2.Web.child_spec([]) end)
 
     {opts[:ip], opts[:port]}
   end
 
-  # Runs `fun` with `:t3` env keys set (nil unsets), then puts them back.
+  # Runs `fun` with `:hal_c2` env keys set (nil unsets), then puts them back.
   defp with_app_env(pairs, fun) do
-    previous = for {key, _} <- pairs, do: {key, Application.fetch_env(:t3, key)}
+    previous = for {key, _} <- pairs, do: {key, Application.fetch_env(:hal_c2, key)}
 
     for {key, value} <- pairs,
         do:
           if(value == nil,
-            do: Application.delete_env(:t3, key),
-            else: Application.put_env(:t3, key, value)
+            do: Application.delete_env(:hal_c2, key),
+            else: Application.put_env(:hal_c2, key, value)
           )
 
     try do
@@ -692,8 +692,8 @@ defmodule T3.Steps.Platform.NodeStartup do
     after
       for {key, old} <- previous do
         case old do
-          {:ok, value} -> Application.put_env(:t3, key, value)
-          :error -> Application.delete_env(:t3, key)
+          {:ok, value} -> Application.put_env(:hal_c2, key, value)
+          :error -> Application.delete_env(:hal_c2, key)
         end
       end
     end

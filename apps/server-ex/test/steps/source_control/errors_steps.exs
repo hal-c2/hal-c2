@@ -1,9 +1,9 @@
-defmodule T3.Steps.SourceControl.Errors do
+defmodule HalC2.Steps.SourceControl.Errors do
   @moduledoc "Steps for `features/source-control/errors.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   step "the thread's folder is not a git repository", context do
     File.rm_rf!(Path.join(context.cwd, ".git"))

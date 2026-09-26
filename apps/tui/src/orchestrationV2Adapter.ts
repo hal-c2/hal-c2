@@ -8,12 +8,12 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
-} from "@t3tools/contracts";
-import { deriveThreadCheckpointSummaries } from "@t3tools/client-runtime/state/thread-checkpoints";
+} from "@hal-c2/contracts";
+import { deriveThreadCheckpointSummaries } from "@hal-c2/client-runtime/state/thread-checkpoints";
 import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
-} from "@t3tools/client-runtime/state/thread-execution";
+} from "@hal-c2/client-runtime/state/thread-execution";
 import * as DateTime from "effect/DateTime";
 
 // The TUI still uses its compact legacy-shaped presentation model. Keep that

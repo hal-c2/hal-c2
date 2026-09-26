@@ -7,10 +7,10 @@ import * as NodeURL from "node:url";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 const directories: string[] = [];
-// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone tooling tests run without an Effect runtime.
+// oxlint-disable-next-line hal-c2/no-global-process-runtime -- Standalone tooling tests run without an Effect runtime.
 const platform = NodeOS.platform();
 function temporaryDirectory() {
-  const path = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-qt-tooling-"));
+  const path = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hal-c2-qt-tooling-"));
   directories.push(path);
   return path;
 }

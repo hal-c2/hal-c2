@@ -1,7 +1,7 @@
 # Sources:
-#   apps/server-ex/lib/t3/attachments.ex (upload URLs, claims, persist, signed asset URLs)
-#   apps/server-ex/lib/t3/web/router.ex (POST /api/attachments/upload/:token, GET /api/assets/:token)
-#   apps/server-ex/test/t3/features_backlog_test.exs (project-favicon-assets, native-app-icon-assets,
+#   apps/server-ex/lib/hal_c2/attachments.ex (upload URLs, claims, persist, signed asset URLs)
+#   apps/server-ex/lib/hal_c2/web/router.ex (POST /api/attachments/upload/:token, GET /api/assets/:token)
+#   apps/server-ex/test/hal_c2/features_backlog_test.exs (project-favicon-assets, native-app-icon-assets,
 #     github-media-assets)
 #   packages/contracts/src/assets.ts (asset resources and errors)
 #   packages/contracts/src/rpc.ts (attachments.createUploadUrl, attachments.delete, assets.createUrl,

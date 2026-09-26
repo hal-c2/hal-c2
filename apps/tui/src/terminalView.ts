@@ -3,7 +3,7 @@ import {
   collectWrappedTerminalLinkLine,
   extractTerminalLinks,
   resolveWrappedTerminalLinkRange,
-} from "@t3tools/shared/terminalLinks";
+} from "@hal-c2/shared/terminalLinks";
 import type { IBufferCell, Terminal } from "@xterm/headless";
 
 import { indexedColor } from "./theme.ts";

@@ -74,6 +74,6 @@ describe("createHost", () => {
     const { host, logged } = boot();
     host.dispatch("nope");
     host.dispatch("nope");
-    expect(logged).toEqual(['t3 tui: unknown shell action "nope"']);
+    expect(logged).toEqual(['hal-c2 tui: unknown shell action "nope"']);
   });
 });

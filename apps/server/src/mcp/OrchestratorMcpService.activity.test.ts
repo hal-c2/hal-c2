@@ -7,7 +7,7 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -342,7 +342,7 @@ it("readThread reaches a thread the user attached as context, but not one an age
     runId: null,
     nodeId: null,
     role: "user",
-    text: `[Attached](t3-context://v1/thread/thread_${input.threadId})`,
+    text: `[Attached](hal-c2-context://v1/thread/thread_${input.threadId})`,
     context: { version: 1, records: [threadRecord(input.threadId)] },
     attachments: [],
     streaming: false,

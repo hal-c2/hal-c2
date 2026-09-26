@@ -1,9 +1,9 @@
-import { createDeviceEnvironmentAtoms } from "@t3tools/client-runtime/state/device";
+import { createDeviceEnvironmentAtoms } from "@hal-c2/client-runtime/state/device";
 import {
   atDeviceHubBasePath,
   resolveDeviceHubAccess,
-} from "@t3tools/client-runtime/state/deviceHubAccess";
-import type { EnvironmentId } from "@t3tools/contracts";
+} from "@hal-c2/client-runtime/state/deviceHubAccess";
+import type { EnvironmentId } from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Atom } from "effect/unstable/reactivity";

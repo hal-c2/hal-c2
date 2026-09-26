@@ -1,5 +1,5 @@
 # Sources:
-#   apps/desktop-qt/qml/T3/Bricks/SidebarThreadRow.qml (status words, recede, relative age)
+#   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (status words, recede, relative age)
 #   apps/desktop-qt/tests/tst_SidebarThreadRow.qml
 #   apps/desktop-qt/tests/tst_SidebarThreadRowHover.qml
 #   apps/tui/src/theme.ts (resolveThreadStatus)
@@ -9,7 +9,7 @@
 #   apps/web/src/hooks/useThreadVisitedMigration.ts
 #   packages/contracts/src/shell.ts (thread.markUnread)
 #   packages/contracts/src/orchestrationV2.ts (thread.visit, thread.mark-unread, thread.visited, thread.marked-unread)
-#   apps/server-ex/lib/t3/orchestration.ex (visit, mark-unread)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (visit, mark-unread)
 
 Feature: Unread and status in the thread list
   Each thread says whether it needs the user, is busy, or has finished work the user has

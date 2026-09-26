@@ -9,7 +9,7 @@ import { ForwardCompatibleArray } from "./baseSchemas.ts";
  * records behind the copied links plus where they came from, never bytes or URLs; the receiver
  * resolves binaries through its own environment.
  */
-export const COMPOSER_CONTEXT_CLIPBOARD_MIME = "web application/x-t3-context-fragment+json";
+export const COMPOSER_CONTEXT_CLIPBOARD_MIME = "web application/x-hal-c2-context-fragment+json";
 
 export const ComposerContextClipboardFragment = Schema.Struct({
   version: Schema.Literal(1),

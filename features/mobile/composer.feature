@@ -4,8 +4,8 @@
 #   apps/mobile/src/state/composer-attachment-uploads.ts (upload progress, retry)
 #   apps/mobile/src/state/attachments.ts
 #   apps/mobile/src/state/edit-pending-thread-message.ts
-#   apps/mobile/src/native/T3ComposerEditor
-#   apps/mobile/modules/t3-composer-editor
+#   apps/mobile/src/native/HalC2ComposerEditor
+#   apps/mobile/modules/hal-c2-composer-editor
 #   apps/mobile/src/features/files/ (attachment screen, remove from draft)
 # Drafting, sending, queueing and steering are specified in features/composer/. This file
 # covers the phone twist: the on-screen keyboard, touch attachments and small-screen sheets.

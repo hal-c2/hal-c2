@@ -1,20 +1,20 @@
-defmodule T3.Steps.Providers.ProviderSetup do
+defmodule HalC2.Steps.Providers.ProviderSetup do
   @moduledoc """
   Steps for `features/providers/provider-setup.feature`: status checks that never
   set anything up, updates run by the installer that owns a provider, and ACP
   sign-in (`provider.auth.*`) shared by every client of the node.
 
   The ACP agent that signs in is Grok run as the fake agent of
-  `T3.Test.AcpFixtures`; it asks the user to open a sign-in page
+  `HalC2.Test.AcpFixtures`; it asks the user to open a sign-in page
   (`https://acme.test/login`) and is signed in once the user accepts.
   """
   use Cucumber.StepDefinition
 
   import ExUnit.Assertions
 
-  alias T3.Test.AcpFixtures, as: Acp
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.AcpFixtures, as: Acp
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @login [%{"id" => "acme-login", "name" => "Log in with Acme"}]
 
@@ -61,7 +61,7 @@ defmodule T3.Steps.Providers.ProviderSetup do
     homebrew(ctx, "codex", :codex_command, "fake_codex.py", "codex-cli %s", "0.1.0")
 
     :persistent_term.put(
-      {T3.ProviderUpdates, "codex"},
+      {HalC2.ProviderUpdates, "codex"},
       {"0.2.0", System.monotonic_time(:millisecond)}
     )
 
@@ -97,7 +97,7 @@ defmodule T3.Steps.Providers.ProviderSetup do
     linked = Path.join(brew, "bin/#{name}")
     File.mkdir_p!(Path.dirname(linked))
     File.ln_s!(cellar, linked)
-    Application.put_env(:t3, app_key, [linked])
+    Application.put_env(:hal_c2, app_key, [linked])
 
     bin = Path.join(home, "fake-bin")
 
@@ -135,9 +135,9 @@ defmodule T3.Steps.Providers.ProviderSetup do
   # once Codex's update waits for it.
   defp watch_updates(test, hold) do
     receive do
-      {:t3_providers_changed, _} ->
+      {:halc2_providers_changed, _} ->
         for driver <- ["codex", "claudeAgent"],
-            state = :persistent_term.get({T3.ProviderUpdates, driver, :state}, nil) do
+            state = :persistent_term.get({HalC2.ProviderUpdates, driver, :state}, nil) do
           send(test, {:update_state, driver, state})
           if driver == "codex" and state["status"] == "queued", do: release(hold)
         end
@@ -159,8 +159,8 @@ defmodule T3.Steps.Providers.ProviderSetup do
   end
 
   step "the node checks its providers in the background", context do
-    T3.Acp.load()
-    Map.put(context, :providers, T3.Environment.providers())
+    HalC2.Acp.load()
+    Map.put(context, :providers, HalC2.Environment.providers())
   end
 
   step "no sign-in or installation is started", context do
@@ -201,7 +201,7 @@ defmodule T3.Steps.Providers.ProviderSetup do
     homebrew(ctx, "claude-code", :claude_command, "fake_claude.py", "%s (Claude Code)", "1.0.0")
 
     :persistent_term.put(
-      {T3.ProviderUpdates, "claudeAgent"},
+      {HalC2.ProviderUpdates, "claudeAgent"},
       {"1.1.0", System.monotonic_time(:millisecond)}
     )
 
@@ -215,14 +215,14 @@ defmodule T3.Steps.Providers.ProviderSetup do
 
     watcher =
       spawn_link(fn ->
-        :ok = T3.Settings.watch(self())
+        :ok = HalC2.Settings.watch(self())
         send(test, :watching)
         watch_updates(test, hold)
       end)
 
     assert_receive :watching
     ExUnit.Callbacks.on_exit(fn -> Process.exit(watcher, :kill) end)
-    claude = Task.async(fn -> T3.ProviderUpdates.update(%{"provider" => "claudeAgent"}) end)
+    claude = Task.async(fn -> HalC2.ProviderUpdates.update(%{"provider" => "claudeAgent"}) end)
     assert_receive {:update_state, "claudeAgent", %{"status" => "running"}}, 5_000
     Map.put(ctx, :claude_update, claude)
   end
@@ -263,7 +263,7 @@ defmodule T3.Steps.Providers.ProviderSetup do
     assert %{
              "status" => "unchanged",
              "message" =>
-               "Update command completed, but T3 Code still detects an outdated provider version."
+               "Update command completed, but HAL-C2 still detects an outdated provider version."
            } = codex["updateState"]
 
     context
@@ -282,7 +282,7 @@ defmodule T3.Steps.Providers.ProviderSetup do
     linked = Path.join(home, "npm/bin/codex")
     File.mkdir_p!(Path.dirname(linked))
     File.ln_s!(real, linked)
-    Application.put_env(:t3, :codex_command, [linked])
+    Application.put_env(:hal_c2, :codex_command, [linked])
     ctx
   end
 
@@ -313,7 +313,7 @@ defmodule T3.Steps.Providers.ProviderSetup do
 
   # --- sign-in -----------------------------------------------------------------------
 
-  step "the user tries to sign in to Codex from T3 Code", context do
+  step "the user tries to sign in to Codex from HAL-C2", context do
     ctx = Acp.ready(context)
     {reply, ctx} = World.call(ctx, "provider.auth.start", %{"instanceId" => "codex"})
     Map.put(ctx, :reply, reply)

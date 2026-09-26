@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 import type * as EffectAcpSchema from "effect-acp/compat";
 

@@ -1,7 +1,7 @@
-defmodule T3.Steps.Orchestration.TextGeneration do
+defmodule HalC2.Steps.Orchestration.TextGeneration do
   @moduledoc """
   Steps for `features/node/orchestration/text-generation.feature`. The engine's
-  writers (`T3.TextGeneration`) run against fakes: `fake_text_cli.py` as the
+  writers (`HalC2.TextGeneration`) run against fakes: `fake_text_cli.py` as the
   `claude` and `codex` CLIs, `fake_acp.py --instance <id>` as the ACP agents, and
   `fake_gh.py` for linked GitHub items. Each fake logs its calls, which is how a
   step tells who wrote and what they were given.
@@ -9,9 +9,9 @@ defmodule T3.Steps.Orchestration.TextGeneration do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.TextGeneration
-  alias T3.TextGeneration.Style
-  alias T3.Test.Node.World
+  alias HalC2.TextGeneration
+  alias HalC2.TextGeneration.Style
+  alias HalC2.Test.Node.World
 
   @fake_acp Path.expand("../../support/fake_acp.py", __DIR__)
   @fake_gh Path.expand("../../support/fake_gh.py", __DIR__)
@@ -36,7 +36,7 @@ defmodule T3.Steps.Orchestration.TextGeneration do
 
   step "no text generation model is chosen", context do
     context = install(context)
-    refute T3.Settings.settings()["textGenerationModelSelection"]
+    refute HalC2.Settings.settings()["textGenerationModelSelection"]
     context
   end
 
@@ -297,7 +297,7 @@ defmodule T3.Steps.Orchestration.TextGeneration do
 
     title(
       context,
-      "Take over https://github.com/t3/code/pull/7 and fix https://github.com/t3/code/issues/9."
+      "Take over https://github.com/hal-c2/code/pull/7 and fix https://github.com/hal-c2/code/issues/9."
     )
   end
 
@@ -310,7 +310,7 @@ defmodule T3.Steps.Orchestration.TextGeneration do
           {9, "Session cookie expires early", "Users are signed out after a minute. "}
         ] do
       assert prompt =~
-               "https://github.com/t3/code/#{if number == 7, do: "pull", else: "issues"}/#{number}\n"
+               "https://github.com/hal-c2/code/#{if number == 7, do: "pull", else: "issues"}/#{number}\n"
 
       assert prompt =~ JSON.encode!(title)
       # The body's first 1,200 characters, not its end.
@@ -331,20 +331,20 @@ defmodule T3.Steps.Orchestration.TextGeneration do
         item(4, "Fourth issue", "Four. ")
       ])
 
-    links = Enum.map_join(1..4, " ", &"https://github.com/t3/code/issues/#{&1}")
+    links = Enum.map_join(1..4, " ", &"https://github.com/hal-c2/code/issues/#{&1}")
     started = System.monotonic_time(:millisecond)
     context = title(context, "Triage #{links}")
     Map.put(context, :elapsed, System.monotonic_time(:millisecond) - started)
   end
 
   step "only the first two are looked up", context do
-    assert gh_endpoints(context) == ["repos/t3/code/issues/1", "repos/t3/code/issues/2"]
+    assert gh_endpoints(context) == ["repos/hal-c2/code/issues/1", "repos/hal-c2/code/issues/2"]
     context
   end
 
   step "a lookup that takes longer than 3 seconds is reported as unavailable", context do
     assert [%{"prompt" => prompt}] = calls(context)
-    assert prompt =~ "https://github.com/t3/code/issues/2: unavailable"
+    assert prompt =~ "https://github.com/hal-c2/code/issues/2: unavailable"
     assert prompt =~ JSON.encode!("First issue")
     # Cut off at 3 seconds, long before the slow lookup would answer (10 s).
     assert context.elapsed in 3_000..9_000
@@ -355,8 +355,8 @@ defmodule T3.Steps.Orchestration.TextGeneration do
     context
     |> github([item(7, "Private work", "Secret. ")])
     |> title(
-      "Review https://gitlab.com/t3/code/pull/7, https://github.example.com/t3/code/pull/7 " <>
-        "and https://someone@github.com/t3/code/pull/7"
+      "Review https://gitlab.com/hal-c2/code/pull/7, https://github.example.com/hal-c2/code/pull/7 " <>
+        "and https://someone@github.com/hal-c2/code/pull/7"
     )
   end
 
@@ -372,7 +372,7 @@ defmodule T3.Steps.Orchestration.TextGeneration do
     png = Base.encode64("\x89PNG fake image")
 
     {:ok, %{"attachments" => [image]}} =
-      T3.Attachments.persist(%{
+      HalC2.Attachments.persist(%{
         "threadId" => "t-image",
         "attachments" => [
           %{"dataUrl" => "data:image/png;base64,#{png}", "name" => "shot.png"}
@@ -387,7 +387,7 @@ defmodule T3.Steps.Orchestration.TextGeneration do
   step "the writer receives the image", context do
     assert {:ok, _} = context.reply
     assert [%{"prompt" => prompt} = call] = calls(context)
-    assert after_flag(call, "--image") == T3.Attachments.path(context.image)
+    assert after_flag(call, "--image") == HalC2.Attachments.path(context.image)
     assert prompt =~ "Attachment metadata:"
     assert prompt =~ "shot.png"
     context
@@ -545,7 +545,7 @@ defmodule T3.Steps.Orchestration.TextGeneration do
     )
   end
 
-  # As `T3.GitActions` asks for a new pull request's text, with the base's template.
+  # As `HalC2.GitActions` asks for a new pull request's text, with the base's template.
   defp pull_request(context) do
     context = install(context)
     cwd = root(context)
@@ -590,7 +590,7 @@ defmodule T3.Steps.Orchestration.TextGeneration do
   # A GitHub item as the fake `gh api` answers it: a title, and a body longer than 1,200.
   defp item(number, title, body) do
     %{
-      "args" => ["--hostname github.com", "repos/t3/code/issues/#{number} "],
+      "args" => ["--hostname github.com", "repos/hal-c2/code/issues/#{number} "],
       "stdout" => %{
         "title" => title,
         "body" => body <> String.duplicate("x", 1_200) <> "END #{number}"
@@ -600,7 +600,7 @@ defmodule T3.Steps.Orchestration.TextGeneration do
 
   defp github(context, rules) do
     context = install(context)
-    dir = T3.Test.Node.tmp_dir(context.node, "gh")
+    dir = HalC2.Test.Node.tmp_dir(context.node, "gh")
     log = Path.join(dir, "calls.jsonl")
     rules_path = Path.join(dir, "rules.json")
     File.write!(rules_path, JSON.encode!(rules))

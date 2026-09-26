@@ -1,7 +1,7 @@
 # Sources:
 #   docs/internals/providers.md (setup never as a health-check side effect, update ownership proven by real path)
-#   apps/server-ex/lib/t3/provider_auth.ex (provider.auth.start, provider.auth.respond, provider.auth.complete, provider.auth.cancel, provider.auth.logout, provider.auth.subscribe)
-#   apps/server-ex/lib/t3/provider_updates.ex (server.updateProvider, versionAdvisory)
+#   apps/server-ex/lib/hal_c2/provider_auth.ex (provider.auth.start, provider.auth.respond, provider.auth.complete, provider.auth.cancel, provider.auth.logout, provider.auth.subscribe)
+#   apps/server-ex/lib/hal_c2/provider_updates.ex (server.updateProvider, versionAdvisory)
 #   apps/server/src/provider/providerMaintenance.ts, apps/server/src/provider/providerMaintenanceRunner.ts
 #   apps/server/src/provider/providerCompatibility.ts (applyProviderCompatibility, latestVersionStatus)
 #   apps/web/src/components/settings/providerStatus.ts (getProviderVersionAdvisoryPresentation)
@@ -15,7 +15,7 @@
 Feature: Provider setup, updates and sign-in
   Every provider plugin goes through the same setup: find or install its runtime, keep
   it current through whatever installed it, and sign in when the provider supports
-  signing in from T3 Code. Checking a provider never installs or signs in anything.
+  signing in from HAL-C2. Checking a provider never installs or signs in anything.
 
   Background:
     Given a connected environment with the project "shop"
@@ -38,8 +38,8 @@ Feature: Provider setup, updates and sign-in
     When the user opens Claude's update details
     Then no update command is offered for Claude
 
-  Scenario: Only providers that support it sign in from T3 Code
-    When the user tries to sign in to Codex from T3 Code
+  Scenario: Only providers that support it sign in from HAL-C2
+    When the user tries to sign in to Codex from HAL-C2
     Then the user is told this provider does not sign in here
 
   Scenario: A sign-in is shared by every client of the node
@@ -78,7 +78,7 @@ Feature: Provider setup, updates and sign-in
 
   @backlog
   Scenario Outline: A provider version outside the supported range is flagged
-    Given the installed provider version is <status> for this T3 Code release
+    Given the installed provider version is <status> for this HAL-C2 release
     When the user opens the provider list
     Then the provider shows "<title>"
 
@@ -91,7 +91,7 @@ Feature: Provider setup, updates and sign-in
   @backlog
   Scenario: No update is offered when the latest release is itself incompatible
     Given Codex is behind the latest release
-    And that latest release is known to be broken with this T3 Code release
+    And that latest release is known to be broken with this HAL-C2 release
     When the user opens the provider list
     Then Codex is not offered an update to that release
 
@@ -118,7 +118,7 @@ Feature: Provider setup, updates and sign-in
     Then the provider is installed
 
   @backlog @mobile
-  Scenario: The mobile app lists providers that can sign in from T3 Code
+  Scenario: The mobile app lists providers that can sign in from HAL-C2
     When the user opens provider accounts on the mobile app
     Then only providers with in-app sign-in are listed, per device
 

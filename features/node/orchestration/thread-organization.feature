@@ -3,7 +3,7 @@
 #     thread.unsettled, thread.snooze, thread.snoozed, thread.unsnooze, thread.unsnoozed,
 #     thread.pin, thread.pinned, thread.unpin, thread.unpinned, thread.pin.reorder,
 #     thread.pin-reordered, thread.active.reorder, thread.active-reordered)
-#   apps/server-ex/lib/t3/orchestration.ex (thread field updates)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (thread field updates)
 #   apps/server/src/orchestration-v2/ (projector for organization fields)
 #   apps/server/src/orchestration-v2/Orchestrator.ts (thread.snooze and thread.archive guards)
 #   apps/web/src/hooks/useThreadActions.ts (ThreadSnoozeBlockedError, ThreadArchiveBlockedError)

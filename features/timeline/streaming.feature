@@ -1,6 +1,6 @@
 # Sources:
-#   apps/server-ex/lib/t3/orchestration/turn_writer.ex (paragraph and turn streaming, flush interval, next queued message)
-#   apps/server-ex/lib/t3/projection/timeline.ex (hidden items)
+#   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (paragraph and turn streaming, flush interval, next queued message)
+#   apps/server-ex/lib/hal_c2/projection/timeline.ex (hidden items)
 #   packages/contracts/src/orchestrationV2.ts (message.updated, run.created, run.updated, ResponseStreamingMode)
 #   apps/web/src/components/settings/SettingsPanels.tsx (Response streaming)
 #   apps/web/src/components/chat/MessagesTimeline.tsx (Thinking, Thought, Working for, turn folds, Show full message)

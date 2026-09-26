@@ -5,8 +5,8 @@ import * as Scope from "effect/Scope";
 import { HttpClient } from "effect/unstable/http";
 import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 
-import { settleAsyncResult, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { settleAsyncResult, squashAtomCommandFailure } from "@hal-c2/client-runtime/state/runtime";
+import { safeErrorLogAttributes } from "@hal-c2/client-runtime/errors";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary";
 import * as ClientTracer from "./clientTracer";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
@@ -15,9 +15,9 @@ import { APP_VERSION } from "~/branding";
 
 const DEFAULT_EXPORT_INTERVAL_MS = 1_000;
 const CLIENT_TRACING_RESOURCE = {
-  serviceName: "t3-web",
+  serviceName: "hal-c2-web",
   attributes: {
-    "service.runtime": "t3-web",
+    "service.runtime": "hal-c2-web",
     "service.mode": isElectron ? "electron" : "browser",
     "service.version": APP_VERSION,
   },

@@ -1,8 +1,8 @@
 # Sources:
 #   packages/contracts/src/orchestrationV2.ts (thread.fork, thread.merge_back, thread.created,
 #     context-transfer.created, context-transfer.updated, context-handoff.updated)
-#   apps/server-ex/lib/t3/orchestration/fork.ex
-#   apps/server-ex/lib/t3/orchestration/handoff.ex
+#   apps/server-ex/lib/hal_c2/orchestration/fork.ex
+#   apps/server-ex/lib/hal_c2/orchestration/handoff.ex
 #   apps/server/src/orchestration-v2/ (fork and merge-back transfers)
 #   docs/internals/ (context transfers and handoffs)
 Feature: Forking a thread and merging work back

@@ -1,4 +1,4 @@
-import { EnvironmentThemeFile } from "@t3tools/contracts";
+import { EnvironmentThemeFile } from "@hal-c2/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -13,7 +13,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
-import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import { symlinksSupported } from "@hal-c2/shared/testing/symlinks";
 
 const encodeThemeFile = Schema.encodeSync(Schema.fromJsonString(EnvironmentThemeFile));
 
@@ -48,7 +48,7 @@ const withEnvironmentThemes = <A, E>(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-environment-theme-" });
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-environment-theme-" });
     const themesDir = path.join(baseDir, "userdata", "themes");
     yield* fs.makeDirectory(themesDir, { recursive: true });
     for (const [filename, contents] of Object.entries(seeds)) {
@@ -234,7 +234,7 @@ describe("environment theme watching", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-theme-watch-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-theme-watch-" });
       const themesDir = path.join(baseDir, "userdata", "themes");
       yield* fs.makeDirectory(themesDir, { recursive: true });
 

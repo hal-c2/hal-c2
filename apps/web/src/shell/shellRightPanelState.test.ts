@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ShellRightPanelState } from "@t3tools/contracts/shell";
+import { ShellRightPanelState } from "@hal-c2/contracts/shell";
 import * as Schema from "effect/Schema";
 
 import type { RightPanelSurface } from "../rightPanelStore";

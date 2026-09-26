@@ -5,8 +5,8 @@
 #   apps/tui/src/keymap.ts (KEYBINDING_GROUPS), apps/tui/src/keymap.test.ts
 #   apps/tui/src/components/SettingsView.tsx (keybindings section)
 #   apps/web/src/components/settings/KeybindingsSettings.tsx
-#   apps/desktop-qt/qml/T3/Bricks/ShellWindow.qml (configurable keybindings as window shortcuts)
-#   apps/server-ex/lib/t3/keybindings.ex (keybindings.json rules)
+#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (configurable keybindings as window shortcuts)
+#   apps/server-ex/lib/hal_c2/keybindings.ex (keybindings.json rules)
 #   packages/contracts/src/rpc.ts (server.upsertKeybinding, server.removeKeybinding)
 #   packages/contracts/src/keybindings.ts (KeybindingsConfigError)
 

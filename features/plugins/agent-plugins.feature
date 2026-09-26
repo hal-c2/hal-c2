@@ -2,10 +2,10 @@
 #   docs/orchestration-v2/provider-capability-system.md (capability groups, degradation policies, adapter contract)
 #   docs/internals/providers.md (route by instance, unknown drivers)
 #   docs/user/providers-acp.md
-#   apps/server-ex/lib/t3/orchestration.ex (driver_for, runtime, steerable?)
-#   apps/server-ex/lib/t3/acp.ex (built-in ACP agents, acpRegistry driver)
-#   apps/server-ex/lib/t3/acp/catalog.ex, apps/server-ex/lib/t3/acp/thread_runtime.ex
-#   apps/server-ex/lib/t3/claude/provider.ex, apps/server-ex/lib/t3/codex/provider.ex
+#   apps/server-ex/lib/hal_c2/orchestration.ex (driver_for, runtime, steerable?)
+#   apps/server-ex/lib/hal_c2/acp.ex (built-in ACP agents, acpRegistry driver)
+#   apps/server-ex/lib/hal_c2/acp/catalog.ex, apps/server-ex/lib/hal_c2/acp/thread_runtime.ex
+#   apps/server-ex/lib/hal_c2/claude/provider.ex, apps/server-ex/lib/hal_c2/codex/provider.ex
 #   apps/server/src/provider/Drivers (one driver per provider)
 #   packages/contracts/src/providerInstance.ts (ProviderInstanceMutation, availability unavailable)
 #   packages/contracts/src/server.ts (ServerProvider capability flags)
@@ -134,7 +134,7 @@ Feature: Agent providers are plugins
   Scenario: ACP is the recommended contract for new providers
     Given a new agent that speaks ACP
     When its author publishes it to the ACP registry
-    Then users can add it from the registry without a T3 plugin
+    Then users can add it from the registry without a HAL-C2 plugin
 
   @node
   Scenario: A provider plugin can extend an ACP agent with extra behaviour

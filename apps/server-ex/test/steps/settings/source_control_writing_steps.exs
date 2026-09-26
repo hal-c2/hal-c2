@@ -1,14 +1,14 @@
-defmodule T3.Steps.Settings.SourceControlWriting do
+defmodule HalC2.Steps.Settings.SourceControlWriting do
   @moduledoc """
   Who writes commit messages and in what style: a commit action
-  (`T3.GitActions.run/2`) in a project whose text generation CLIs are the
+  (`HalC2.GitActions.run/2`) in a project whose text generation CLIs are the
   `fake_text_cli.py` fake, observed through the prompts and argv it logged.
   """
   use Cucumber.StepDefinition
 
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   step "the environment's writing style is Conventional Commits", context do
     context
@@ -53,10 +53,10 @@ defmodule T3.Steps.Settings.SourceControlWriting do
     case context do
       %{text_log: _} ->
         cwd = World.project(context).root
-        policy = T3.TextGeneration.Style.policy(cwd)
+        policy = HalC2.TextGeneration.Style.policy(cwd)
 
         result =
-          T3.TextGeneration.commit_message(cwd, "main", "M README.md", "diff", false,
+          HalC2.TextGeneration.commit_message(cwd, "main", "M README.md", "diff", false,
             policy: policy
           )
 
@@ -90,7 +90,7 @@ defmodule T3.Steps.Settings.SourceControlWriting do
     root = World.project(context, project).root
     File.write!(Path.join(root, "checkout.ex"), "defmodule Checkout, do: nil\n")
 
-    result = T3.GitActions.run(%{"cwd" => root, "action" => "commit"}, fn _ -> :ok end)
+    result = HalC2.GitActions.run(%{"cwd" => root, "action" => "commit"}, fn _ -> :ok end)
     assert {:ok, _} = result
     Map.put(context, :commit, result)
   end

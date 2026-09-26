@@ -1,4 +1,4 @@
-defmodule T3.Steps.Navigation.EnvironmentThemes do
+defmodule HalC2.Steps.Navigation.EnvironmentThemes do
   @moduledoc """
   Steps for `features/navigation/environment-themes.feature`.
 
@@ -11,9 +11,9 @@ defmodule T3.Steps.Navigation.EnvironmentThemes do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
-  alias T3.Test.WsClient
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
+  alias HalC2.Test.WsClient
 
   @built_in ~w(t3-chat grove ocean ember iris)
 
@@ -116,7 +116,7 @@ defmodule T3.Steps.Navigation.EnvironmentThemes do
     refute context.bad_id in ids(context.published),
            "#{context.bad_id} was published: #{inspect(ids(context.published))}"
 
-    refute context.bad_id in ids(T3.EnvironmentThemes.current())
+    refute context.bad_id in ids(HalC2.EnvironmentThemes.current())
     context
   end
 
@@ -143,7 +143,7 @@ defmodule T3.Steps.Navigation.EnvironmentThemes do
 
     # All of them are in the folder; the node's current set, what it publishes, stays capped.
     assert length(File.ls!(themes_dir(context))) == context.written_count
-    assert length(T3.EnvironmentThemes.current()) == max
+    assert length(HalC2.EnvironmentThemes.current()) == max
     context
   end
 
@@ -186,9 +186,9 @@ defmodule T3.Steps.Navigation.EnvironmentThemes do
     context
   end
 
-  # `t3 theme ...` is `mix t3.theme ...` on the node. A theme must be published
+  # `hal-c2 theme ...` is `mix hal_c2.theme ...` on the node. A theme must be published
   # before it can be set, so "nightfall" is published first when it is not yet.
-  step ~r/^the server operator runs "t3 theme (?<args>[^"]+)"(?: again)?$/,
+  step ~r/^the server operator runs "hal-c2 theme (?<args>[^"]+)"(?: again)?$/,
        %{args: [args]} = context do
     args = String.split(args)
 
@@ -202,8 +202,8 @@ defmodule T3.Steps.Navigation.EnvironmentThemes do
   end
 
   step "no default is set", context do
-    assert T3.EnvironmentThemes.show()["defaultTheme"] == nil
-    {:ok, saved} = T3.Settings.saved()
+    assert HalC2.EnvironmentThemes.show()["defaultTheme"] == nil
+    {:ok, saved} = HalC2.Settings.saved()
     refute Map.has_key?(saved, "defaultTheme")
     refute Map.has_key?(saved, "defaultThemeSetAt")
     assert context.operator_output =~ "Environment theme cleared."
@@ -223,7 +223,7 @@ defmodule T3.Steps.Navigation.EnvironmentThemes do
   end
 
   step "the default theme and every published theme are listed", context do
-    show = T3.EnvironmentThemes.show()
+    show = HalC2.EnvironmentThemes.show()
     assert show["defaultTheme"] != nil
     assert show["published"] != []
     assert context.operator_output =~ ~s(Environment theme: "#{show["defaultTheme"]}".)
@@ -239,17 +239,17 @@ defmodule T3.Steps.Navigation.EnvironmentThemes do
   # and the settings service, whose watchers the pushes go through.
   defp services(context) do
     unless Map.get(context, :theme_services) do
-      previous = Application.get_env(:t3, :theme_check_ms)
-      Application.put_env(:t3, :theme_check_ms, 50)
+      previous = Application.get_env(:hal_c2, :theme_check_ms)
+      Application.put_env(:hal_c2, :theme_check_ms, 50)
 
       ExUnit.Callbacks.on_exit(fn ->
         if previous,
-          do: Application.put_env(:t3, :theme_check_ms, previous),
-          else: Application.delete_env(:t3, :theme_check_ms)
+          do: Application.put_env(:hal_c2, :theme_check_ms, previous),
+          else: Application.delete_env(:hal_c2, :theme_check_ms)
       end)
 
-      Node.ensure(T3.Settings)
-      Node.ensure(T3.EnvironmentThemes)
+      Node.ensure(HalC2.Settings)
+      Node.ensure(HalC2.EnvironmentThemes)
     end
 
     Map.put(context, :theme_services, true)
@@ -348,7 +348,7 @@ defmodule T3.Steps.Navigation.EnvironmentThemes do
   defp server_default(context, theme) do
     context = services(context)
     publish(context, theme)
-    assert :ok = T3.EnvironmentThemes.set_default(theme)
+    assert :ok = HalC2.EnvironmentThemes.set_default(theme)
     context |> follow_default("default") |> await_theme("default", theme)
   end
 
@@ -430,17 +430,17 @@ defmodule T3.Steps.Navigation.EnvironmentThemes do
 
   # Runs the operator's command in this process, capturing what it prints.
   defp run_theme_task(args) do
-    home = Application.fetch_env!(:t3, :home)
+    home = Application.fetch_env!(:hal_c2, :home)
     shell = Mix.shell()
     Mix.shell(Mix.Shell.Process)
 
     try do
-      Mix.Tasks.T3.Theme.run(args)
+      Mix.Tasks.HalC2.Theme.run(args)
     after
       Mix.shell(shell)
     end
 
-    assert Application.fetch_env!(:t3, :home) == home
+    assert Application.fetch_env!(:hal_c2, :home) == home
     collect_output([])
   end
 

@@ -2,11 +2,11 @@
 #   docs/user/terminal.md
 #   docs/internals/terminal-runtime.md
 #   packages/contracts/src/terminal.ts (TerminalOpenInput, TerminalSessionSnapshot, DEFAULT_TERMINAL_ID)
-#   apps/server-ex/lib/t3/terminal.ex (open, launch context, shell and env selection, labels)
-#   apps/server-ex/lib/t3/storage_cleanup.ex (busy? keeps worktrees with a running terminal)
-#   apps/server-ex/test/t3/terminal_test.exs
-#   apps/desktop-qt/qml/T3/Bricks/TerminalDrawer.qml (terminal.toggle, terminal.resize, focusTerminal)
-#   apps/desktop-qt/qml/T3/Bricks/Workspace.qml (terminal toggle, terminalAvailable)
+#   apps/server-ex/lib/hal_c2/terminal.ex (open, launch context, shell and env selection, labels)
+#   apps/server-ex/lib/hal_c2/storage_cleanup.ex (busy? keeps worktrees with a running terminal)
+#   apps/server-ex/test/hal_c2/terminal_test.exs
+#   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml (terminal.toggle, terminal.resize, focusTerminal)
+#   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (terminal toggle, terminalAvailable)
 #   apps/desktop-qt/tests/tst_Scenarios.qml (terminal toggle)
 #   apps/desktop-qt/parity/features.backlog.test.ts (terminal-drawer-launch-context)
 #   apps/tui/src/components/ChatView.tsx (toggleTerminal, initialTabs)
@@ -71,8 +71,8 @@ Feature: Terminal sessions
         | PORT                                |
         | ELECTRON_RENDERER_PORT              |
         | ELECTRON_RUN_AS_NODE                |
-        | any variable starting with T3CODE_  |
-        | any variable starting with T3_      |
+        | any variable starting with HALC2_  |
+        | any variable starting with HALC2_      |
         | any variable starting with VITE_    |
         | any variable starting with RELEASE_ |
         | any variable starting with ERL_     |

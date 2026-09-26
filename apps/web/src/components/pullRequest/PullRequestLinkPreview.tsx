@@ -1,5 +1,5 @@
-import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
+import { isAtomCommandInterrupted } from "@hal-c2/client-runtime/state/runtime";
+import type { EnvironmentId, PullRequestRef } from "@hal-c2/contracts";
 import {
   cloneElement,
   useState,

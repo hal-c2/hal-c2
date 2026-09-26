@@ -1,14 +1,14 @@
-defmodule T3.Steps.Settings.ProjectDefaults do
+defmodule HalC2.Steps.Settings.ProjectDefaults do
   @moduledoc """
   Project default rows: an environment value, a project's override, and what
-  `T3.Settings.for_project/1` resolves (the resolving step lives in
+  `HalC2.Settings.for_project/1` resolves (the resolving step lives in
   `scopes_and_inheritance_steps.exs`).
   """
   use Cucumber.StepDefinition
 
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   @models %{"Sonnet" => %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-6"}}
 

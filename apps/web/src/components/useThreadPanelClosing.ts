@@ -1,5 +1,5 @@
-import { type ScopedThreadRef } from "@t3tools/contracts";
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import { type ScopedThreadRef } from "@hal-c2/contracts";
+import { getTerminalLabel } from "@hal-c2/shared/terminalLabels";
 import { useCallback } from "react";
 import { readLocalApi } from "../localApi";
 import {

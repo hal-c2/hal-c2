@@ -11,11 +11,11 @@ it("points the read-only prompt at the unique recording workspace", () => {
     cursorReplayPromptsForWorkspace({
       scenario: "tool_call_read_only",
       configuredPrompts: ["stale global path"],
-      packageJsonPath: "/tmp/t3-cursor-owned-abc123/package.json",
-      tsconfigPath: "/tmp/t3-cursor-owned-abc123/tsconfig.json",
+      packageJsonPath: "/tmp/hal-c2-cursor-owned-abc123/package.json",
+      tsconfigPath: "/tmp/hal-c2-cursor-owned-abc123/tsconfig.json",
     }),
     [
-      "Read /tmp/t3-cursor-owned-abc123/package.json and /tmp/t3-cursor-owned-abc123/tsconfig.json, then answer exactly: read only tool fixture complete",
+      "Read /tmp/hal-c2-cursor-owned-abc123/package.json and /tmp/hal-c2-cursor-owned-abc123/tsconfig.json, then answer exactly: read only tool fixture complete",
     ],
   );
 });

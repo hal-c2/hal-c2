@@ -1,10 +1,10 @@
-defmodule T3.Steps.Orchestration.Commands do
+defmodule HalC2.Steps.Orchestration.Commands do
   @moduledoc "Steps for `features/node/orchestration/commands.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   step "{string} is at sequence {int}", %{args: [thread, seq]} = context do
     Map.put(context, :sequence, bump(context, thread, seq))
@@ -57,7 +57,7 @@ defmodule T3.Steps.Orchestration.Commands do
       |> Enum.map(fn title ->
         Task.async(fn ->
           {:ok, %{"sequence" => seq}} =
-            T3.Orchestration.dispatch(%{
+            HalC2.Orchestration.dispatch(%{
               "type" => "thread.metadata.update",
               "commandId" => "cmd-#{System.unique_integer([:positive])}",
               "threadId" => id,
@@ -80,7 +80,7 @@ defmodule T3.Steps.Orchestration.Commands do
     # The stream's events hold both renames, one after the other.
     applied =
       context.node.store
-      |> T3.Store.reduce_stream(id, 0, [], fn event, acc ->
+      |> HalC2.Store.reduce_stream(id, 0, [], fn event, acc ->
         case Enum.find(titles, &String.contains?(JSON.encode!(event.patch), &1)) do
           nil -> acc
           title -> [title | acc]
@@ -143,10 +143,10 @@ defmodule T3.Steps.Orchestration.Commands do
 
   step "no second message or run is created", context do
     state = World.state(context, "t1")
-    assert [%{"status" => "completed"}] = T3.StreamState.list(state, "run")
+    assert [%{"status" => "completed"}] = HalC2.StreamState.list(state, "run")
 
     assert [_] =
-             state |> T3.StreamState.list("message") |> Enum.filter(&(&1["role"] == "user"))
+             state |> HalC2.StreamState.list("message") |> Enum.filter(&(&1["role"] == "user"))
 
     context
   end
@@ -181,7 +181,7 @@ defmodule T3.Steps.Orchestration.Commands do
   step "a command was accepted and its provider work was not yet started", context do
     context = World.providers(context)
     context = World.add_message(context, "t1", "user", "hello")
-    [%{"id" => message}] = T3.StreamState.list(World.state(context, "t1"), "message")
+    [%{"id" => message}] = HalC2.StreamState.list(World.state(context, "t1"), "message")
 
     World.add_run(context, "t1", "starting", nil, %{
       "userMessageId" => message,
@@ -191,7 +191,7 @@ defmodule T3.Steps.Orchestration.Commands do
 
   step "the pending provider work runs once after the restart", context do
     state = World.await_runs(context, "t1", ["completed"])
-    assert [_] = T3.StreamState.list(state, "provider-turn")
+    assert [_] = HalC2.StreamState.list(state, "provider-turn")
     context
   end
 
@@ -224,7 +224,7 @@ defmodule T3.Steps.Orchestration.Commands do
     id = World.thread_id(context, thread)
 
     if sequence(context, thread) < seq do
-      {:ok, _} = T3.Streams.commit(id, :thread, [{"thread", id, %{"s" => %{"bump" => seq}}}])
+      {:ok, _} = HalC2.Streams.commit(id, :thread, [{"thread", id, %{"s" => %{"bump" => seq}}}])
       bump(context, thread, seq)
     else
       sequence(context, thread)

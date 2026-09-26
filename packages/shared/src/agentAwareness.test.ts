@@ -5,8 +5,8 @@ import type {
   OrchestrationV2ThreadShell,
   Project,
   ThreadId,
-} from "@t3tools/contracts";
-import { ProviderInstanceId, RuntimeRequestId } from "@t3tools/contracts";
+} from "@hal-c2/contracts";
+import { ProviderInstanceId, RuntimeRequestId } from "@hal-c2/contracts";
 import * as DateTime from "effect/DateTime";
 
 import { projectThreadAwarenessV2 } from "./agentAwareness.ts";
@@ -14,7 +14,7 @@ import { projectThreadAwarenessV2 } from "./agentAwareness.ts";
 const NOW = "2026-05-22T12:00:00.000Z";
 
 const project = {
-  title: "t3code",
+  title: "hal-c2",
 } satisfies Pick<Project, "title">;
 
 describe("projectThreadAwarenessV2", () => {

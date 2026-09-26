@@ -3,7 +3,7 @@
 #   apps/web/src/components/settings/ProjectsSettings.tsx
 #   apps/web/src/components/settings/ProjectSettingsPanel.tsx
 #   apps/web/src/components/settings/ProjectSettingsPanel.logic.ts
-#   apps/web/src/shell/T3ShellBridge.tsx (project.remove)
+#   apps/web/src/shell/HalC2ShellBridge.tsx (project.remove)
 #   apps/tui/src/features.backlog.test.ts (project-lifecycle)
 #   packages/contracts/src/rpc.ts (projects.mutate)
 
@@ -99,7 +99,7 @@ Feature: Projects settings panel
 
   @backlog @desktop
   Scenario: Removing from the desktop folder explorer opens the removal in settings
-    When the user removes a registered folder from T3 Code in the folder explorer
+    When the user removes a registered folder from HAL-C2 in the folder explorer
     Then the Projects settings open with the removal confirmation for that project
 
   @backlog @desktop

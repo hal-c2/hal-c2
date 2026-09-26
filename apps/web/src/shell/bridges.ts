@@ -10,5 +10,5 @@ export { ShellSettingsBridge } from "./ShellSettingsBridge";
 export { ShellThemeBridge } from "./ShellThemeBridge";
 export { ShellToastBridge } from "./ShellToastBridge";
 export { ShellWorkspaceBridge } from "./ShellWorkspaceBridge";
-export { T3ShellBridge } from "./T3ShellBridge";
+export { HalC2ShellBridge } from "./HalC2ShellBridge";
 export { closeShellContextMenu, showShellContextMenu } from "./shellContextMenu";

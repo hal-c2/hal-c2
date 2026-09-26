@@ -2,7 +2,7 @@
 // the server's answers to thread commands. Givens shape it before the client
 // connects; after that every change is pushed as a fresh shell snapshot, as
 // the real server does. Steps read `ctx.fake.calls` for what the client asked.
-import { DEFAULT_SERVER_SETTINGS, type ThreadEnvMode, type VcsRef } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, type ThreadEnvMode, type VcsRef } from "@hal-c2/contracts";
 
 import type { OrchestrationShellSnapshot } from "../../src/connection.ts";
 import { boot, useClient, type World } from "./world.ts";

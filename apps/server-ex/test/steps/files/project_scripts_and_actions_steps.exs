@@ -1,19 +1,19 @@
-defmodule T3.Steps.Files.ProjectScriptsAndActions do
+defmodule HalC2.Steps.Files.ProjectScriptsAndActions do
   @moduledoc """
   Steps for `features/files/project-scripts-and-actions.feature`: a project's actions,
   and the setup script a new worktree runs before (or alongside) the agent.
 
   `bun` is a fake on PATH that records where it ran, exits with `context.bun_exit`,
   and, when `context.bun_holds`, waits for a line on its terminal first. The agent
-  is the fake Codex app server. Setup progress arrives as `T3.WorktreeSetup`
+  is the fake Codex app server. Setup progress arrives as `HalC2.WorktreeSetup`
   snapshots, kept in order under `context.setup_snapshots`.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @fake_codex Path.expand("../../support/fake_codex.py", __DIR__)
 
@@ -53,8 +53,8 @@ defmodule T3.Steps.Files.ProjectScriptsAndActions do
   step "a thread in {string} starts on a new worktree", %{args: [project]} = context do
     context = setup_services(context)
     thread_id = "th-setup-#{System.unique_integer([:positive])}"
-    T3.WorktreeSetup.subscribe(thread_id, self())
-    :ok = T3.Streams.subscribe(thread_id, self(), nil)
+    HalC2.WorktreeSetup.subscribe(thread_id, self())
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
 
     {_result, context} =
       World.call!(context, "orchestration.launchThread", %{
@@ -80,7 +80,7 @@ defmodule T3.Steps.Files.ProjectScriptsAndActions do
     {context, snapshot} = await_snapshot(context, &(stage(&1, "setup-script") in ~w(done failed)))
 
     assert %{"command" => ^command, "terminalId" => "setup"} = snapshot["setupScript"]
-    assert [_] = Registry.lookup(T3.Terminal.Registry, {context.setup_thread, "setup"})
+    assert [_] = Registry.lookup(HalC2.Terminal.Registry, {context.setup_thread, "setup"})
 
     ran_in = context.bun_log |> Path.join("install.cwd") |> File.read!() |> String.trim()
     assert real(ran_in) == real(snapshot["worktreePath"])
@@ -105,7 +105,7 @@ defmodule T3.Steps.Files.ProjectScriptsAndActions do
 
     # Lets the held `bun install` finish.
     {:ok, _} =
-      T3.Terminal.write(%{
+      HalC2.Terminal.write(%{
         "threadId" => context.setup_thread,
         "terminalId" => "setup",
         "data" => "\r"
@@ -179,16 +179,16 @@ defmodule T3.Steps.Files.ProjectScriptsAndActions do
 
   # The services a worktree launch needs, a fake agent, and the fake `bun`.
   defp setup_services(context) do
-    Node.ensure(T3.Settings)
-    Node.ensure({Registry, keys: :unique, name: T3.Vcs.Registry})
-    Node.ensure(T3.Workspace)
-    Node.ensure({Registry, keys: :unique, name: T3.Codex.Registry})
-    Node.ensure({DynamicSupervisor, name: T3.Codex.Supervisor, strategy: :one_for_one})
-    context = T3.Test.Node.Terminal.ensure(context)
-    Node.ensure(T3.WorktreeSetup)
+    Node.ensure(HalC2.Settings)
+    Node.ensure({Registry, keys: :unique, name: HalC2.Vcs.Registry})
+    Node.ensure(HalC2.Workspace)
+    Node.ensure({Registry, keys: :unique, name: HalC2.Codex.Registry})
+    Node.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+    context = HalC2.Test.Node.Terminal.ensure(context)
+    Node.ensure(HalC2.WorktreeSetup)
 
-    Application.put_env(:t3, :codex_command, ["python3", "-u", @fake_codex])
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :codex_command) end)
+    Application.put_env(:hal_c2, :codex_command, ["python3", "-u", @fake_codex])
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :codex_command) end)
 
     bin = Node.tmp_dir(context.node, "bin")
     log = Node.tmp_dir(context.node, "bun-log")
@@ -201,7 +201,7 @@ defmodule T3.Steps.Files.ProjectScriptsAndActions do
     """)
 
     File.chmod!(Path.join(bin, "bun"), 0o755)
-    T3.Test.Node.Terminal.put_env("PATH", bin <> ":" <> System.get_env("PATH", ""))
+    HalC2.Test.Node.Terminal.put_env("PATH", bin <> ":" <> System.get_env("PATH", ""))
     Map.put(context, :bun_log, log)
   end
 
@@ -212,7 +212,7 @@ defmodule T3.Steps.Files.ProjectScriptsAndActions do
     case Enum.find(context.setup_snapshots, pred) do
       nil ->
         receive do
-          {:t3_worktree_setup, ^thread_id, snapshot} ->
+          {:halc2_worktree_setup, ^thread_id, snapshot} ->
             context
             |> Map.update!(:setup_snapshots, &(&1 ++ [snapshot]))
             |> await_snapshot(pred)
@@ -228,13 +228,13 @@ defmodule T3.Steps.Files.ProjectScriptsAndActions do
   # The agent's run left `preparing` and its turn completed.
   defp agent_ran(context) do
     thread_id = context.setup_thread
-    state = T3.Streams.Server.state(T3.Streams.ensure(thread_id))
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
 
     if match?([%{"status" => "completed"}], StreamState.list(state, "run")) do
       context
     else
       receive do
-        {:t3_stream, ^thread_id, _} -> agent_ran(context)
+        {:halc2_stream, ^thread_id, _} -> agent_ran(context)
       after
         15_000 ->
           flunk("the agent's run never completed: #{inspect(StreamState.list(state, "run"))}")

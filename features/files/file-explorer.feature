@@ -1,5 +1,5 @@
 # Sources:
-#   apps/server-ex/lib/t3/workspace.ex (index, list_entries)
+#   apps/server-ex/lib/hal_c2/workspace.ex (index, list_entries)
 #   apps/web/src/components/files/FileBrowserPanel.tsx
 #   apps/web/src/components/files/useDirectoryEntries.ts
 #   apps/web/src/components/files/fileTreeDragMention.ts

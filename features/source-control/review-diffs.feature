@@ -1,7 +1,7 @@
 # Sources:
 #   packages/contracts/src/review.ts (ReviewDiffPreviewInput, ReviewDiffPreviewResult, ReviewDiffFileContentsInput)
 #   packages/contracts/src/rpc.ts (review.getDiffPreview, review.getDiffFileContents)
-#   apps/server-ex/lib/t3/review.ex
+#   apps/server-ex/lib/hal_c2/review.ex
 #   apps/web/src/components/DiffPanel.tsx
 #   apps/web/src/components/DiffPanelShell.tsx
 #   apps/web/src/components/DiffFilePathCopyButton.tsx
@@ -12,7 +12,7 @@
 #   apps/tui/src/components/DiffViewer.tsx
 #   apps/tui/src/diffSplit.ts
 #   apps/tui/src/features.backlog.test.ts (review-workspace)
-#   apps/desktop-qt/qml/T3/Bricks/RightPanel.qml (Diff)
+#   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (Diff)
 
 Feature: Reviewing working tree and branch changes
   Beside a thread the user reviews what changed in the checkout, either uncommitted work

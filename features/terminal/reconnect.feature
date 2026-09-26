@@ -2,12 +2,12 @@
 #   docs/user/terminal.md (server-owned sessions, scrollback limits)
 #   docs/internals/terminal-runtime.md (bounded restore, query stripping, 512 KiB client buffer)
 #   packages/contracts/src/terminal.ts (TerminalAttachInput, TerminalAttachStreamEvent, TerminalMetadataStreamEvent, history limits)
-#   apps/server-ex/lib/t3/terminal.ex (attach, restartIfNotRunning, history persistence)
-#   apps/server-ex/lib/t3/terminal/history.ex (query stripping, split escapes, UTF-8 carry, trimming)
-#   apps/server-ex/lib/t3/terminal/hub.ex (metadata snapshot, upsert, remove)
-#   apps/server-ex/lib/t3/web/protocol.ex (terminal and terminals subscription shapes, unknown node)
-#   apps/server-ex/lib/t3/web/socket.ex (remote terminal hub watch)
-#   apps/server-ex/test/t3/terminal_test.exs
+#   apps/server-ex/lib/hal_c2/terminal.ex (attach, restartIfNotRunning, history persistence)
+#   apps/server-ex/lib/hal_c2/terminal/history.ex (query stripping, split escapes, UTF-8 carry, trimming)
+#   apps/server-ex/lib/hal_c2/terminal/hub.ex (metadata snapshot, upsert, remove)
+#   apps/server-ex/lib/hal_c2/web/protocol.ex (terminal and terminals subscription shapes, unknown node)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (remote terminal hub watch)
+#   apps/server-ex/test/hal_c2/terminal_test.exs
 #   apps/tui/src/components/ThreadTerminalDrawer.tsx (snapshot replay, 128 KiB tail)
 #   apps/tui/src/connection.ts (subscribeTerminal, subscribeTerminalMetadata)
 #   apps/web/src/components/TerminalEventSync.tsx

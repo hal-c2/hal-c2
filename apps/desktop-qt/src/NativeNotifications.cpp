@@ -1,6 +1,6 @@
 #include "NativeNotifications.h"
 
-#ifdef T3_HAS_DBUS
+#ifdef HALC2_HAS_DBUS
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
 #include <QDBusMessage>
@@ -10,7 +10,7 @@
 #endif
 
 namespace {
-#ifdef T3_HAS_DBUS
+#ifdef HALC2_HAS_DBUS
 const QString service = QStringLiteral("org.freedesktop.Notifications");
 const QString path = QStringLiteral("/org/freedesktop/Notifications");
 
@@ -23,7 +23,7 @@ void closeNotification(const QString& owner, uint id) {
 }
 
 NativeNotifications::NativeNotifications(QObject* parent) : QObject(parent) {
-#ifdef T3_HAS_DBUS
+#ifdef HALC2_HAS_DBUS
   auto bus = QDBusConnection::sessionBus();
   bus.connect(service, path, service, QStringLiteral("ActionInvoked"), this,
               SLOT(notificationAction(uint,QString,QDBusMessage)));
@@ -41,7 +41,7 @@ NativeNotifications::~NativeNotifications() {
 
 void NativeNotifications::refreshSupport() {
   bool supported = false;
-#ifdef T3_HAS_DBUS
+#ifdef HALC2_HAS_DBUS
   const auto bus = QDBusConnection::sessionBus();
   const QString owner = bus.isConnected() ? bus.interface()->serviceOwner(service).value() : QString();
   if (m_serviceOwner != owner) {
@@ -77,15 +77,15 @@ bool NativeNotifications::show(const QString& key, const QString& title, const Q
     setError(tr("Native notifications require a Linux desktop notification service."));
     return false;
   }
-#ifdef T3_HAS_DBUS
+#ifdef HALC2_HAS_DBUS
   // A notification ID belongs to one daemon, not its reusable well-known
   // service name. Pin requests and delayed cleanup to that unique owner.
   const QString owner = m_serviceOwner;
   auto message = QDBusMessage::createMethodCall(owner, path, service, QStringLiteral("Notify"));
-  message << QStringLiteral("T3 Code") << m_notifications.key(key, 0u)
-          << QStringLiteral("t3code") << title << body.toHtmlEscaped()
+  message << QStringLiteral("HAL-C2") << m_notifications.key(key, 0u)
+          << QStringLiteral("hal-c2") << title << body.toHtmlEscaped()
           << QStringList{QStringLiteral("default"), tr("Open thread")}
-          << QVariantMap{{QStringLiteral("desktop-entry"), QStringLiteral("t3code")},
+          << QVariantMap{{QStringLiteral("desktop-entry"), QStringLiteral("hal-c2")},
                          {QStringLiteral("suppress-sound"), silent}}
           << qMax(-1, timeoutMs);
   auto* pending = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(message), this);
@@ -113,7 +113,7 @@ bool NativeNotifications::show(const QString& key, const QString& title, const Q
 #endif
 }
 
-#ifdef T3_HAS_DBUS
+#ifdef HALC2_HAS_DBUS
 void NativeNotifications::notificationAction(uint id, const QString& action, const QDBusMessage& message) {
   if (message.service() == m_serviceOwner && m_enabled && action == QStringLiteral("default") && m_notifications.contains(id)) {
     emit activated(m_notifications.value(id));
@@ -127,7 +127,7 @@ void NativeNotifications::notificationClosed(uint id, uint reason, const QDBusMe
 #endif
 
 void NativeNotifications::closeAll() {
-#ifdef T3_HAS_DBUS
+#ifdef HALC2_HAS_DBUS
   for (const auto id : m_notifications.keys()) closeNotification(m_serviceOwner, id);
 #endif
   m_notifications.clear();

@@ -1,4 +1,4 @@
-defmodule T3.Steps.Files.AddingProjects do
+defmodule HalC2.Steps.Files.AddingProjects do
   @moduledoc """
   Steps for `features/files/adding-projects.feature`. Clones run real `git` against
   a `git://` server on loopback that either holds the connection open (a clone in
@@ -9,8 +9,8 @@ defmodule T3.Steps.Files.AddingProjects do
   import ExUnit.Assertions
   import ExUnit.Callbacks, only: [on_exit: 1, start_supervised!: 1]
 
-  alias T3.Test.Node
-  alias T3.Test.Node.{Host, World}
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.{Host, World}
 
   @fake_cli Path.expand("../../support/fake_gh.py", __DIR__)
   @clones_sub 7_001
@@ -108,7 +108,7 @@ defmodule T3.Steps.Files.AddingProjects do
   end
 
   step "git reports {string}", %{args: [line]} = context do
-    send(T3.ProjectClones, {:clone_progress, context.clone.id, T3.ProjectClones.progress(line)})
+    send(HalC2.ProjectClones, {:clone_progress, context.clone.id, HalC2.ProjectClones.progress(line)})
     context
   end
 
@@ -126,7 +126,7 @@ defmodule T3.Steps.Files.AddingProjects do
   end
 
   step "half a minute passes", context do
-    send(T3.ProjectClones, {:forget, context.clone.id})
+    send(HalC2.ProjectClones, {:forget, context.clone.id})
     context
   end
 
@@ -293,7 +293,7 @@ defmodule T3.Steps.Files.AddingProjects do
   end
 
   defp projects do
-    for {{node, _}, {"project", row}} <- T3.Shell.rows(),
+    for {{node, _}, {"project", row}} <- HalC2.Shell.rows(),
         node == node(),
         row["deletedAt"] == nil,
         do: row
@@ -311,7 +311,7 @@ defmodule T3.Steps.Files.AddingProjects do
   defp call(context, method, payload) do
     id = System.unique_integer([:positive])
     client = Node.rpc(World.client(context), context.node.environment, id, method, payload)
-    {frame, skipped, client} = T3.Test.WsClient.recv_until(client, Node.reply?(id), 5_000)
+    {frame, skipped, client} = HalC2.Test.WsClient.recv_until(client, Node.reply?(id), 5_000)
     context = World.put_client(context, %{client | inbox: skipped ++ client.inbox})
 
     case frame do
@@ -323,7 +323,7 @@ defmodule T3.Steps.Files.AddingProjects do
   defp clones_shape, do: %{"type" => "projectClones", "node" => Atom.to_string(node())}
 
   defp start_clone(context, url, dest) do
-    Node.ensure(T3.ProjectClones)
+    Node.ensure(HalC2.ProjectClones)
     real = Host.path(context, dest)
     File.mkdir_p!(Path.dirname(real))
     id = World.slug(Path.basename(dest))
@@ -508,8 +508,8 @@ defmodule T3.Steps.Files.AddingProjects do
       )
 
     env = [
-      {"T3CODE_BITBUCKET_API_BASE_URL", "http://127.0.0.1:#{port}/2.0"},
-      {"T3CODE_BITBUCKET_ACCESS_TOKEN", "bb-token"}
+      {"HALC2_BITBUCKET_API_BASE_URL", "http://127.0.0.1:#{port}/2.0"},
+      {"HALC2_BITBUCKET_ACCESS_TOKEN", "bb-token"}
     ]
 
     System.put_env(env)
@@ -522,15 +522,15 @@ defmodule T3.Steps.Files.AddingProjects do
     dir = Node.tmp_dir(context.node, "fake-#{exe}")
     File.write!(Path.join(dir, "rules.json"), JSON.encode!(rules))
     key = :"#{exe}_command"
-    previous = Application.get_env(:t3, key)
-    Application.put_env(:t3, key, @fake_cli)
+    previous = Application.get_env(:hal_c2, key)
+    Application.put_env(:hal_c2, key, @fake_cli)
     System.put_env("FAKE_GH_RULES", Path.join(dir, "rules.json"))
     System.put_env("FAKE_GH_LOG", Path.join(dir, "calls.log"))
 
     on_exit(fn ->
       if previous,
-        do: Application.put_env(:t3, key, previous),
-        else: Application.delete_env(:t3, key)
+        do: Application.put_env(:hal_c2, key, previous),
+        else: Application.delete_env(:hal_c2, key)
 
       System.delete_env("FAKE_GH_RULES")
       System.delete_env("FAKE_GH_LOG")

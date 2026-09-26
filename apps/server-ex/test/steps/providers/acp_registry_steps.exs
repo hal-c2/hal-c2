@@ -1,8 +1,8 @@
-defmodule T3.Steps.Providers.AcpRegistry do
+defmodule HalC2.Steps.Providers.AcpRegistry do
   @moduledoc """
   Steps for `features/providers/acp-registry.feature`: agents from the ACP Registry.
 
-  The registry is served on loopback by `T3.Test.AcpFixtures` and lists "acme", whose
+  The registry is served on loopback by `HalC2.Test.AcpFixtures` and lists "acme", whose
   archive holds `bin/acme`, which runs the fake agent "acme". Scenarios that are not
   about installing run the instance "acme" straight as that fake (`run_as/3`). Sign-in
   RPCs go through the client "ops", so the frames the other clients await are never
@@ -12,9 +12,9 @@ defmodule T3.Steps.Providers.AcpRegistry do
 
   import ExUnit.Assertions
 
-  alias T3.Test.AcpFixtures, as: Acp
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.AcpFixtures, as: Acp
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @browser %{"id" => "acme-login", "name" => "Log in with Acme"}
   @terminal %{
@@ -50,7 +50,7 @@ defmodule T3.Steps.Providers.AcpRegistry do
   defp tools(ctx, id \\ "acme"), do: Path.join([ctx.node.home, "tools", id])
 
   defp installed(ctx),
-    do: Path.join([tools(ctx), "2.0.0", T3.Acp.Catalog.platform(), "bin", "acme"])
+    do: Path.join([tools(ctx), "2.0.0", HalC2.Acp.Catalog.platform(), "bin", "acme"])
 
   defp ops(ctx) do
     if Map.has_key?(ctx.clients, "ops"),
@@ -264,7 +264,7 @@ defmodule T3.Steps.Providers.AcpRegistry do
 
   step "an instance of {string} is created and enabled", %{args: [id]} = context do
     assert %{"driver" => "acpRegistry", "config" => %{"agentId" => ^id}} =
-             T3.Settings.settings()["providerInstances"][id]
+             HalC2.Settings.settings()["providerInstances"][id]
 
     assert %{"enabled" => true, "driver" => "acpRegistry"} = Acp.provider(id)
     context
@@ -285,7 +285,7 @@ defmodule T3.Steps.Providers.AcpRegistry do
   # The client marks a result as added when one of its instances runs that agent.
   step "{string} is shown as already added", %{args: [id]} = context do
     assert id in ids(context.reply)
-    {%{"settings" => settings}, ctx} = World.call!(context, "t3.readSettings", %{})
+    {%{"settings" => settings}, ctx} = World.call!(context, "halc2.readSettings", %{})
 
     assert Enum.any?(
              settings["providerInstances"],
@@ -321,10 +321,10 @@ defmodule T3.Steps.Providers.AcpRegistry do
 
   step "the registry lists a checksum for {string}", %{args: [id]} = context do
     ctx = Acp.publish(context)
-    assert {:ok, agents} = T3.Acp.Catalog.index(true)
+    assert {:ok, agents} = HalC2.Acp.Catalog.index(true)
     agent = Enum.find(agents, &(&1["id"] == id))
 
-    assert agent["distribution"]["binary"][T3.Acp.Catalog.platform()]["sha256"] =~
+    assert agent["distribution"]["binary"][HalC2.Acp.Catalog.platform()]["sha256"] =~
              ~r/^[0-9a-f]{64}$/
 
     ctx
@@ -364,13 +364,13 @@ defmodule T3.Steps.Providers.AcpRegistry do
   step "the node has never fetched the registry", context do
     ctx = Acp.ready(context)
     refute File.exists?(Path.join([ctx.node.home, "cache", "acp-registry", "registry.json"]))
-    assert :persistent_term.get({T3.Acp.Catalog, :index}, nil) == nil
+    assert :persistent_term.get({HalC2.Acp.Catalog, :index}, nil) == nil
     ctx
   end
 
   step "the registry cannot be reached", context do
     # `AcpFixtures.ready/1` points the node at a closed loopback port.
-    assert Application.get_env(:t3, :acp_registry_url) =~ "127.0.0.1:1/"
+    assert Application.get_env(:hal_c2, :acp_registry_url) =~ "127.0.0.1:1/"
     context
   end
 
@@ -386,17 +386,17 @@ defmodule T3.Steps.Providers.AcpRegistry do
 
   step "the node fetched the registry an hour ago", context do
     ctx = Acp.publish(context)
-    {:ok, [_]} = T3.Acp.Catalog.index(true)
+    {:ok, [_]} = HalC2.Acp.Catalog.index(true)
     assert Acp.registry_requests(ctx) == ["registry.json"]
     cache = Path.join([ctx.node.home, "cache", "acp-registry", "registry.json"])
     File.touch!(cache, System.os_time(:second) - 3600)
     # A node that starts now has only the file.
-    :persistent_term.erase({T3.Acp.Catalog, :index})
+    :persistent_term.erase({HalC2.Acp.Catalog, :index})
     ctx
   end
 
   step "the node needs registry data without a search", context do
-    Map.put(context, :described, T3.Acp.Catalog.describe("acme"))
+    Map.put(context, :described, HalC2.Acp.Catalog.describe("acme"))
   end
 
   step "the cached copy is used", context do
@@ -489,7 +489,7 @@ defmodule T3.Steps.Providers.AcpRegistry do
       {state, ctx} = await_phase(ctx, "waiting", terminal_shows?("Paste code: "))
       Map.put(ctx, :interaction, state["interaction"])
     else
-      T3.Steps.Providers.Cursor.sign_in_to(context, id)
+      HalC2.Steps.Providers.Cursor.sign_in_to(context, id)
     end
   end
 
@@ -817,7 +817,7 @@ defmodule T3.Steps.Providers.AcpRegistry do
     assert Acp.assistant_text(thread(context)) =~ "allowed"
 
     refute Enum.any?(
-             T3.StreamState.list(Acp.stream(thread(context)), "runtime-request"),
+             HalC2.StreamState.list(Acp.stream(thread(context)), "runtime-request"),
              &(&1["status"] == "pending")
            )
 
@@ -828,7 +828,7 @@ defmodule T3.Steps.Providers.AcpRegistry do
     ctx = context |> acme() |> run_on_acme("wait")
 
     Acp.await_stream(thread(ctx), fn state ->
-      Enum.any?(T3.StreamState.list(state, "run"), &(&1["status"] == "running"))
+      Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "running"))
     end)
 
     Acp.await_stream(thread(ctx), fn _ -> Acp.requests(ctx, "acme", "session/prompt") != [] end)
@@ -849,26 +849,26 @@ defmodule T3.Steps.Providers.AcpRegistry do
     Acp.await_runs(thread(ctx), 2)
     Acp.follow_up(ctx, ctx.thread, "write three.txt")
     Acp.await_runs(thread(ctx), 3)
-    scope = T3.Checkpoint.scope_id(thread(ctx))
-    last = T3.Checkpoint.checkpoint_id(scope, 3)
+    scope = HalC2.Checkpoint.scope_id(thread(ctx))
+    last = HalC2.Checkpoint.checkpoint_id(scope, 3)
 
     Acp.await_stream(thread(ctx), fn state ->
-      T3.StreamState.get(state, "checkpoint")[last]["status"] == "ready"
+      HalC2.StreamState.get(state, "checkpoint")[last]["status"] == "ready"
     end)
 
     ctx
   end
 
   step "the user rolls back to the first turn", context do
-    scope = T3.Checkpoint.scope_id(thread(context))
+    scope = HalC2.Checkpoint.scope_id(thread(context))
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "checkpoint.rollback",
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
         "threadId" => thread(context),
         "scopeId" => scope,
-        "checkpointId" => T3.Checkpoint.checkpoint_id(scope, 1)
+        "checkpointId" => HalC2.Checkpoint.checkpoint_id(scope, 1)
       })
 
     Map.put(context, :before_rollback, length(Acp.log(context, "acme")))
@@ -888,7 +888,7 @@ defmodule T3.Steps.Providers.AcpRegistry do
     Acp.follow_up(context, context.thread, "what now")
 
     Acp.await_stream(thread(context), fn state ->
-      state |> T3.StreamState.list("run") |> Enum.count(&(&1["status"] == "completed")) == 2
+      state |> HalC2.StreamState.list("run") |> Enum.count(&(&1["status"] == "completed")) == 2
     end)
 
     since = Enum.drop(Acp.log(context, "acme"), context.before_rollback)
@@ -914,7 +914,7 @@ defmodule T3.Steps.Providers.AcpRegistry do
 
   step "the user switches the thread to the other model", context do
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.model-selection.set",
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
         "threadId" => thread(context),
@@ -1120,7 +1120,7 @@ defmodule T3.Steps.Providers.AcpRegistry do
 
   step "the task list and the context meter follow the agent's reports", context do
     state = Acp.stream(thread(context))
-    assert [plan] = T3.StreamState.list(state, "plan")
+    assert [plan] = HalC2.StreamState.list(state, "plan")
 
     assert [
              %{"text" => "Read the code", "status" => "completed"},
@@ -1128,7 +1128,7 @@ defmodule T3.Steps.Providers.AcpRegistry do
            ] = plan["steps"]
 
     assert [%{"contextUsage" => %{"usedTokens" => 1200, "maxTokens" => 200_000}}] =
-             T3.StreamState.list(state, "provider-thread")
+             HalC2.StreamState.list(state, "provider-thread")
 
     context
   end

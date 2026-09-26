@@ -1,0 +1,17 @@
+{
+  "name": "@hal-c2/mobile-terminal-native",
+  "version": "0.0.0",
+  "private": true,
+  "expo-module": {
+    "ios": {
+      "modules": [
+        "HalC2TerminalModule"
+      ]
+    },
+    "android": {
+      "modules": [
+        "expo.modules.halc2terminal.HalC2TerminalModule"
+      ]
+    }
+  }
+}

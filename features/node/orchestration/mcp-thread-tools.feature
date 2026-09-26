@@ -1,11 +1,11 @@
 # Sources:
-#   apps/server-ex/lib/t3/mcp/tools.ex (t3_thread_list, t3_thread_read, t3_thread_send,
-#     t3_thread_wait, t3_thread_interrupt, t3_thread_search, t3_environment_read,
-#     t3_environment_preferences_update)
-#   apps/server-ex/lib/t3/mcp/tools/threads.ex (t3_thread_launch, create_threads,
-#     t3_thread_fork, t3_thread_merge_back, t3_thread_update, t3_thread_configure,
-#     t3_thread_configuration, t3_thread_organize, t3_thread_transfers,
-#     t3_thread_send_attachments, t3_attachment_prepare_upload, t3_attachment_discard,
+#   apps/server-ex/lib/hal_c2/mcp/tools.ex (halc2_thread_list, halc2_thread_read, halc2_thread_send,
+#     halc2_thread_wait, halc2_thread_interrupt, halc2_thread_search, halc2_environment_read,
+#     halc2_environment_preferences_update)
+#   apps/server-ex/lib/hal_c2/mcp/tools/threads.ex (halc2_thread_launch, create_threads,
+#     halc2_thread_fork, halc2_thread_merge_back, halc2_thread_update, halc2_thread_configure,
+#     halc2_thread_configuration, halc2_thread_organize, halc2_thread_transfers,
+#     halc2_thread_send_attachments, halc2_attachment_prepare_upload, halc2_attachment_discard,
 #     orchestrator_capabilities)
 #   V2 commands issued: message.dispatch (start_immediately, steer_active, restart_active,
 #     queue_after_active), run.interrupt, thread.create, thread.fork, thread.merge_back,

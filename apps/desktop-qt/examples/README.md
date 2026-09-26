@@ -1,12 +1,12 @@
 # Shell examples
 
 Each folder is a complete rice: a `shell.qml` layout composed from the
-`T3.Bricks` module and a `theme.json` in the web app's theme format (plus the
+`HalC2.Bricks` module and a `theme.json` in the web app's theme format (plus the
 shell-only `window`, `radius` and `fonts` keys). Copy one into your config dir
 and the app reloads on save:
 
 ```sh
-cp examples/glass/*.* ~/.t3/shell/
+cp examples/glass/*.* ~/.hal-c2/shell/
 ```
 
 | Example     | Idea                                                                                                                                                                                                                                                                                                                                                    |
@@ -17,11 +17,11 @@ cp examples/glass/*.* ~/.t3/shell/
 | `terminal`  | Status line with the wordmark, a prompt mark, counts and the model; mono type, sharp corners. Made for a tiling desktop such as Omarchy, with flags at the top of `shell.qml` for a clock, window buttons and a chip of the palette's sixteen colours. Its `theme.json` is Tokyo Night as `vp run theme:qt` writes it from a terminal in those colours. |
 
 Pick up your own terminal's colours (it asks the terminal for its palette and
-writes `theme.json` into the shell directory, `~/.t3/shell` by default):
+writes `theme.json` into the shell directory, `~/.hal-c2/shell` by default):
 
 ```sh
 vp run theme:qt
-vp run theme:qt ~/.t3/shell
+vp run theme:qt ~/.hal-c2/shell
 ```
 
 On macOS, `glass-macos` follows the system light/dark appearance, with real window traffic lights,
@@ -57,7 +57,7 @@ commands built in), the bricks (`TitleBar`, `Sidebar`, `SettingsNav`,
 `Workspace`, `GitActions`, `WebSurface`, `Composer`, `RightPanel`, `TerminalDrawer`,
 `Notifications`), the themed controls (`ShellCard`, `ShellButton`,
 `ShellComboBox`, `ShellTextField`, `ShellMenu`, `ShellMenuItem`, `ShellIcon`,
-`WindowControls`), and the `T3.Shell` singletons: `Shell.state.<key>` for
+`WindowControls`), and the `HalC2.Shell` singletons: `Shell.state.<key>` for
 everything the page publishes, `Shell.dispatch(action, payload)` to act,
 `Theme.palette.color(role, fallback)` / `Theme.radius` / `Theme.fontUi` /
 `Theme.fontMono`, and `Runtime.reload()`.

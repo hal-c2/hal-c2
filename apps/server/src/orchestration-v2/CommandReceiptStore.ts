@@ -1,4 +1,4 @@
-import { CommandId, NonNegativeInt, ThreadId } from "@t3tools/contracts";
+import { CommandId, NonNegativeInt, ThreadId } from "@hal-c2/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -75,7 +75,7 @@ export interface CommandReceiptStoreV2Shape {
 export class CommandReceiptStoreV2 extends Context.Service<
   CommandReceiptStoreV2,
   CommandReceiptStoreV2Shape
->()("t3/orchestration-v2/CommandReceiptStore/CommandReceiptStoreV2") {}
+>()("hal-c2/orchestration-v2/CommandReceiptStore/CommandReceiptStoreV2") {}
 
 /**
  * IMPLEMENTATIONS

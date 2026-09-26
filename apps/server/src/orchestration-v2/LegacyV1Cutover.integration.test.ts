@@ -12,8 +12,8 @@ import {
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
-} from "@t3tools/contracts";
-import { layer as nodeSqliteClientLayer } from "@t3tools/shared/nodeSqliteClient";
+} from "@hal-c2/contracts";
+import { layer as nodeSqliteClientLayer } from "@hal-c2/shared/nodeSqliteClient";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -228,7 +228,7 @@ const seedV1Database = (fixturePath: string, workspace: string) =>
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-05T00:00:00.000Z",
         linkedPullRequestJson:
-          '{"projectId":"project:cutover","repository":"pingdotgg/t3code","number":9100,"url":"https://github.com/pingdotgg/t3code/pull/9100"}',
+          '{"projectId":"project:cutover","repository":"hal-c2/hal-c2","number":9100,"url":"https://github.com/hal-c2/hal-c2/pull/9100"}',
       });
       yield* insertMessage({
         messageId: "message:cutover:active:1",
@@ -659,7 +659,7 @@ describe("orchestration v2 legacy v1 cutover", () => {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const workspace = yield* checkpointWorkspace("legacy-v1-cutover");
-          const stateDir = yield* fs.makeTempDirectory({ prefix: "t3-v1-cutover-state-" });
+          const stateDir = yield* fs.makeTempDirectory({ prefix: "hal-c2-v1-cutover-state-" });
           const fixturePath = path.join(stateDir, "v1-source.sqlite");
           const copyPath = path.join(stateDir, "userdata", "state.sqlite");
           yield* fs.makeDirectory(path.join(stateDir, "userdata"), { recursive: true });

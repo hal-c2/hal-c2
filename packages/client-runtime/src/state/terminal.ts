@@ -2,7 +2,7 @@ import {
   type TerminalMetadataStreamEvent,
   type TerminalSummary,
   WS_METHODS,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Stream from "effect/Stream";
 import { Atom } from "effect/unstable/reactivity";
 

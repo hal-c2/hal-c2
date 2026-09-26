@@ -7,9 +7,9 @@ import {
   AcpRegistrySettings,
   defaultInstanceIdForDriver,
   ProviderDriverKind,
-} from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
+} from "@hal-c2/contracts";
+import { HostProcessEnvironment } from "@hal-c2/shared/hostProcess";
+import { resolveSelfInvocation, type SelfInvocation } from "@hal-c2/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

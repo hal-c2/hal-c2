@@ -1,4 +1,4 @@
-import type { ImagePreview } from "@t3tools/opentui-image";
+import type { ImagePreview } from "@hal-c2/opentui-image";
 
 import type { TuiSize } from "./layoutState.ts";
 import { attachmentLabel, FALLBACK_CELL_PIXELS, type CellPixels } from "./timelineState.ts";

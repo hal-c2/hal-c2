@@ -1,5 +1,5 @@
 import * as NodeCrypto from "node:crypto";
-import { AuthSessionId } from "@t3tools/contracts";
+import { AuthSessionId } from "@hal-c2/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Redacted from "effect/Redacted";
 
@@ -24,7 +24,7 @@ export function resolveReusableDevAuth(
   return {
     credential: Redacted.value(token),
     sessionId: AuthSessionId.make(`${REUSABLE_DEV_SESSION_PREFIX}${tokenId}`),
-    cookieName: `t3_dev_session_${tokenId}`,
+    cookieName: `halc2_dev_session_${tokenId}`,
     matches: (credential: string) =>
       NodeCrypto.timingSafeEqual(hash, NodeCrypto.createHash("sha256").update(credential).digest()),
   };

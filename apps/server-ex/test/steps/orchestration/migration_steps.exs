@@ -1,17 +1,17 @@
-defmodule T3.Steps.Orchestration.Migration do
+defmodule HalC2.Steps.Orchestration.Migration do
   @moduledoc """
   Steps for `features/node/orchestration/migration.feature`. The snapshot is a
   Node server database holding `orchestration_events` (`World.node_log/2`), built
   from `context.snapshot` (oldest first) when the operator imports it. The operator
-  runs `mix t3.import` (`Mix.Tasks.T3.Import`) while the node is stopped, and the
+  runs `mix hal_c2.import` (`Mix.Tasks.HalC2.Import`) while the node is stopped, and the
   node starts on the result.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias Exqlite.Sqlite3
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # 2026-09-01T00:00:00Z; each snapshot event is a second after the one before.
   @start 1_788_220_800_000
@@ -56,9 +56,9 @@ defmodule T3.Steps.Orchestration.Migration do
 
   step "every project and thread stream of the snapshot exists on the node", context do
     expected = for {aggregate, id, _, _, _} <- context.snapshot, uniq: true, do: {aggregate, id}
-    streams = for %{id: id, kind: kind} <- T3.Store.list_streams(T3.Store.path()), do: {kind, id}
+    streams = for %{id: id, kind: kind} <- HalC2.Store.list_streams(HalC2.Store.path()), do: {kind, id}
     assert Enum.sort(streams) == Enum.sort(expected)
-    for {kind, id} <- expected, do: assert({^kind, _} = T3.Shell.row(node(), id))
+    for {kind, id} <- expected, do: assert({^kind, _} = HalC2.Shell.row(node(), id))
     context
   end
 
@@ -147,7 +147,7 @@ defmodule T3.Steps.Orchestration.Migration do
     assert [%{"s" => %{"status" => "ready"}}, %{"s" => %{"status" => "running"}}, %{"d" => true}] =
              sessions
 
-    assert T3.StreamState.get(state(thread), "provider-session") == %{}
+    assert HalC2.StreamState.get(state(thread), "provider-session") == %{}
     context
   end
 
@@ -201,7 +201,7 @@ defmodule T3.Steps.Orchestration.Migration do
   end
 
   step "the activity time of {string} is its last real activity", %{args: [thread]} = context do
-    assert {"thread", row} = T3.Shell.row(node(), thread)
+    assert {"thread", row} = HalC2.Shell.row(node(), thread)
     {:ok, at, 0} = DateTime.from_iso8601(row["updatedAt"])
     assert DateTime.to_unix(at, :millisecond) == context.last_activity
     context
@@ -251,10 +251,10 @@ defmodule T3.Steps.Orchestration.Migration do
   end
 
   step "nothing is imported until the operator runs the import", context do
-    assert T3.Store.list_streams(T3.Store.path()) == []
+    assert HalC2.Store.list_streams(HalC2.Store.path()) == []
 
     node = Node.restart(context.node, fn -> import!(context.source) end)
-    assert Enum.map(T3.Store.list_streams(T3.Store.path()), & &1.id) == ["p1", "t1"]
+    assert Enum.map(HalC2.Store.list_streams(HalC2.Store.path()), & &1.id) == ["p1", "t1"]
     %{context | node: node, clients: %{}}
   end
 
@@ -295,16 +295,16 @@ defmodule T3.Steps.Orchestration.Migration do
     World.node_log(path, context.snapshot)
   end
 
-  # `mix t3.import` as the operator runs it; returns what it printed.
+  # `mix hal_c2.import` as the operator runs it; returns what it printed.
   defp import!(source) do
     shell = Mix.shell()
     Mix.shell(Mix.Shell.Process)
 
     try do
-      Mix.Tasks.T3.Import.run([source])
+      Mix.Tasks.HalC2.Import.run([source])
     after
       Mix.shell(shell)
-      GenServer.stop(T3.Store)
+      GenServer.stop(HalC2.Store)
     end
 
     assert_received {:mix_shell, :info, [output]}
@@ -312,16 +312,16 @@ defmodule T3.Steps.Orchestration.Migration do
   end
 
   defp events(id) do
-    T3.Store.path() |> T3.Store.reduce_stream(id, 0, [], &[&1 | &2]) |> Enum.reverse()
+    HalC2.Store.path() |> HalC2.Store.reduce_stream(id, 0, [], &[&1 | &2]) |> Enum.reverse()
   end
 
-  defp state(id), do: T3.StreamState.load(T3.Store.path(), id)
-  defp entity(stream, kind, id), do: T3.StreamState.get(state(stream), kind)[id]
+  defp state(id), do: HalC2.StreamState.load(HalC2.Store.path(), id)
+  defp entity(stream, kind, id), do: HalC2.StreamState.get(state(stream), kind)[id]
 
   defp store_count(sql), do: sql |> store_rows() |> hd() |> hd()
 
   defp store_rows(sql) do
-    {:ok, db} = Sqlite3.open(T3.Store.path(), mode: :readonly)
+    {:ok, db} = Sqlite3.open(HalC2.Store.path(), mode: :readonly)
 
     try do
       {:ok, stmt} = Sqlite3.prepare(db, sql)

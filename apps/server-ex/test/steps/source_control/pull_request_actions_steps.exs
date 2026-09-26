@@ -1,4 +1,4 @@
-defmodule T3.Steps.SourceControl.PullRequestActions do
+defmodule HalC2.Steps.SourceControl.PullRequestActions do
   @moduledoc """
   Steps for `features/source-control/pull-request-actions.feature`. GitHub is the fake
   `gh`: a Given reshapes pull request 42 as GitHub reports it (and reads it back through
@@ -9,8 +9,8 @@ defmodule T3.Steps.SourceControl.PullRequestActions do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.SourceControl.Shared
-  alias T3.Test.Node.World
+  alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.Test.Node.World
 
   @repository "acme/shop"
   @sha Shared.pr_sha()

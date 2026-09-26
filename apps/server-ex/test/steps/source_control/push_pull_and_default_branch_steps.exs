@@ -1,10 +1,10 @@
-defmodule T3.Steps.SourceControl.PushPullAndDefaultBranch do
+defmodule HalC2.Steps.SourceControl.PushPullAndDefaultBranch do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.SourceControl.Shared
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # --- checkouts and their upstreams ---------------------------------------------
 
@@ -167,7 +167,7 @@ defmodule T3.Steps.SourceControl.PushPullAndDefaultBranch do
   step "{string} is 1 commit ahead and 1 behind its upstream", %{args: [name]} = context do
     context = context |> branch(name) |> track() |> behind(1)
     change(context, "local")
-    status = T3.Vcs.remote_status(context.cwd)
+    status = HalC2.Vcs.remote_status(context.cwd)
     assert {status["aheadCount"], status["behindCount"]} == {1, 1}
     context
   end
@@ -198,7 +198,7 @@ defmodule T3.Steps.SourceControl.PushPullAndDefaultBranch do
   # database from before that check can hold two; this one is written as stored data.
   defp stored_project(context, title, root) do
     id = String.replace(title, " ", "-")
-    at = T3.Orchestration.Entities.now()
+    at = HalC2.Orchestration.Entities.now()
 
     project = %{
       "id" => id,
@@ -210,7 +210,7 @@ defmodule T3.Steps.SourceControl.PushPullAndDefaultBranch do
       "deletedAt" => nil
     }
 
-    {:ok, _} = T3.Streams.commit(id, :project, [{"project", id, T3.Patch.diff(nil, project)}])
+    {:ok, _} = HalC2.Streams.commit(id, :project, [{"project", id, HalC2.Patch.diff(nil, project)}])
     World.await_row(id, & &1)
     put_in(context, [:projects, title], %{id: id, root: root})
   end
@@ -318,7 +318,7 @@ defmodule T3.Steps.SourceControl.PushPullAndDefaultBranch do
   step "the node finishes starting", context do
     # The config snapshot arrives once the node serves clients again.
     client = context.node |> Node.connect() |> Node.config()
-    assert Process.whereis(T3.Shell)
+    assert Process.whereis(HalC2.Shell)
     World.put_client(context, client)
   end
 end

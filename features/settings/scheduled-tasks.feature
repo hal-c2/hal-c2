@@ -1,7 +1,7 @@
 # Sources:
-#   apps/server-ex/lib/t3/scheduled_tasks.ex (store, timer, missed runs, run status)
-#   apps/server-ex/lib/t3/mcp/tools.ex (list_scheduled_tasks, schedule_task, update_scheduled_task, delete_scheduled_task, run_scheduled_task_now)
-#   apps/server-ex/lib/t3/web/socket.ex (scheduledTasks subscription)
+#   apps/server-ex/lib/hal_c2/scheduled_tasks.ex (store, timer, missed runs, run status)
+#   apps/server-ex/lib/hal_c2/mcp/tools.ex (list_scheduled_tasks, schedule_task, update_scheduled_task, delete_scheduled_task, run_scheduled_task_now)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (scheduledTasks subscription)
 #   apps/server-ex/test/node_parity_test.exs (scheduledTasks.* aligned)
 #   packages/contracts/src/scheduledTask.ts (interval and fixed_time schedules, workspace strategies)
 #   packages/contracts/src/rpc.ts (scheduledTasks.list, scheduledTasks.upsert, scheduledTasks.delete, scheduledTasks.setEnabled, scheduledTasks.runNow, scheduledTasks.subscribe)

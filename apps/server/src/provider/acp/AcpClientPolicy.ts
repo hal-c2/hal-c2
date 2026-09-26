@@ -1,15 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import type { ProviderRequestKind, RuntimeMode } from "@t3tools/contracts";
+import type { ProviderRequestKind, RuntimeMode } from "@hal-c2/contracts";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 /**
- * Runtime-policy decisions for ACP work that T3 mediates.
+ * Runtime-policy decisions for ACP work that HAL-C2 mediates.
  *
  * ACP agents touch the machine two ways: provider-owned execution inside the
- * agent process, which T3 can only gate through `session/request_permission`,
- * and client-mediated `fs/*` and `terminal/*` requests, which run with the T3
+ * agent process, which HAL-C2 can only gate through `session/request_permission`,
+ * and client-mediated `fs/*` and `terminal/*` requests, which run with the HAL-C2
  * server's own privileges. Both paths resolve through
  * {@link acpOperationDisposition} so a client-mediated request can never do
  * more than the equivalent permission request would be allowed to do.
@@ -215,7 +215,7 @@ export function acpMcpToolApprovalElicitationDisposition(
   ) {
     return undefined;
   }
-  // This request comes from T3's authenticated, scope-checked MCP endpoint,
+  // This request comes from HAL-C2's authenticated, scope-checked MCP endpoint,
   // not an arbitrary provider command. Let explicit approval mode surface it
   // to the user and otherwise allow the endpoint to enforce its own policy.
   return acpPolicyRequiresApproval(runtimePolicy) ? "ask" : "allow";

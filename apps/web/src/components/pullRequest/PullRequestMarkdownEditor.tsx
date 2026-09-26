@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@hal-c2/contracts";
 
 import { cn } from "~/lib/utils";
 

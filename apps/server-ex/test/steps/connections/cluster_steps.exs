@@ -1,19 +1,19 @@
-defmodule T3.Steps.Connections.Cluster do
+defmodule HalC2.Steps.Connections.Cluster do
   @moduledoc """
   Steps for `features/connections/cluster.feature`.
 
-  The trust scenarios run `mix t3.cluster` in the node's home and boot members as
-  `:peer` nodes with the flags `T3.Cluster.vm_args/1` gives them: TLS distribution on
+  The trust scenarios run `mix hal_c2.cluster` in the node's home and boot members as
+  `:peer` nodes with the flags `HalC2.Cluster.vm_args/1` gives them: TLS distribution on
   the cluster port, each on its own loopback address, driven over stdio so the test VM
   never joins their cluster. The sidebar, streaming, upload and device scenarios make
   the scenario's node a distributed member and start the second member as a peer
-  running the whole application, as `test/t3/cluster_test.exs` does.
+  running the whole application, as `test/hal_c2/cluster_test.exs` does.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.{Node, WsClient}
-  alias T3.Test.Node.World
+  alias HalC2.Test.{Node, WsClient}
+  alias HalC2.Test.Node.World
 
   @tailnet_address "100.64.0.7"
   @simulator %{
@@ -25,19 +25,19 @@ defmodule T3.Steps.Connections.Cluster do
     "booted" => true
   }
 
-  # --- mix t3.cluster -------------------------------------------------------------
+  # --- mix hal_c2.cluster -------------------------------------------------------------
 
   step "the user creates a cluster on a machine with its tailnet address", context do
-    assert [_] = Node.run_task(Mix.Tasks.T3.Cluster, ["init", @tailnet_address])
+    assert [_] = Node.run_task(Mix.Tasks.HalC2.Cluster, ["init", @tailnet_address])
     context
   end
 
   step "the machine has a cluster CA and its own certificate", context do
-    dir = T3.Cluster.dir(context.node.home)
+    dir = HalC2.Cluster.dir(context.node.home)
     ca = X509.Certificate.from_pem!(File.read!(Path.join(dir, "ca.pem")))
     cert = X509.Certificate.from_pem!(File.read!(Path.join(dir, "node.pem")))
 
-    assert X509.Certificate.subject(cert, "CN") == ["t3@#{@tailnet_address}"]
+    assert X509.Certificate.subject(cert, "CN") == ["hal_c2@#{@tailnet_address}"]
     assert X509.Certificate.issuer(cert) == X509.Certificate.subject(ca)
     assert mode(Path.join(dir, "ca.key")) == 0o600
     assert mode(Path.join(dir, "node.key")) == 0o600
@@ -46,12 +46,12 @@ defmodule T3.Steps.Connections.Cluster do
 
   step "it can boot clustered", context do
     flags =
-      ExUnit.CaptureIO.capture_io(fn -> Node.run_task(Mix.Tasks.T3.Cluster, ["vm-args"]) end)
+      ExUnit.CaptureIO.capture_io(fn -> Node.run_task(Mix.Tasks.HalC2.Cluster, ["vm-args"]) end)
 
-    optfile = Path.join(T3.Cluster.dir(context.node.home), "ssl_dist.conf")
+    optfile = Path.join(HalC2.Cluster.dir(context.node.home), "ssl_dist.conf")
 
     for flag <- [
-          "-name t3@#{@tailnet_address}",
+          "-name hal_c2@#{@tailnet_address}",
           "-proto_dist inet_tls",
           "-ssl_dist_optfile #{optfile}",
           "-start_epmd false",
@@ -67,30 +67,30 @@ defmodule T3.Steps.Connections.Cluster do
   end
 
   step "the machine already has a cluster", context do
-    :ok = T3.Cluster.init(context.node.home, @tailnet_address)
-    Map.put(context, :ca, File.read!(Path.join(T3.Cluster.dir(context.node.home), "ca.pem")))
+    :ok = HalC2.Cluster.init(context.node.home, @tailnet_address)
+    Map.put(context, :ca, File.read!(Path.join(HalC2.Cluster.dir(context.node.home), "ca.pem")))
   end
 
   step "the user creates a cluster again", context do
-    Map.put(context, :result, Node.run_task(Mix.Tasks.T3.Cluster, ["init", "100.64.0.8"]))
+    Map.put(context, :result, Node.run_task(Mix.Tasks.HalC2.Cluster, ["init", "100.64.0.8"]))
   end
 
   step "it is refused because the machine already has one", context do
     assert {:error, message} = context.result
     assert message =~ "already has a cluster"
-    assert File.read!(Path.join(T3.Cluster.dir(context.node.home), "ca.pem")) == context.ca
+    assert File.read!(Path.join(HalC2.Cluster.dir(context.node.home), "ca.pem")) == context.ca
     context
   end
 
   step "a cluster member that holds the CA key", context do
-    :ok = T3.Cluster.init(context.node.home, @tailnet_address)
-    assert File.exists?(Path.join(T3.Cluster.dir(context.node.home), "ca.key"))
+    :ok = HalC2.Cluster.init(context.node.home, @tailnet_address)
+    assert File.exists?(Path.join(HalC2.Cluster.dir(context.node.home), "ca.key"))
     context
   end
 
   step "the user invites a new machine by address", context do
     file = Path.join(Node.tmp_dir(context.node, "invite"), "laptop.bundle")
-    assert [_] = Node.run_task(Mix.Tasks.T3.Cluster, ["invite", "100.64.0.8", file])
+    assert [_] = Node.run_task(Mix.Tasks.HalC2.Cluster, ["invite", "100.64.0.8", file])
     Map.put(context, :bundle, file)
   end
 
@@ -104,14 +104,14 @@ defmodule T3.Steps.Connections.Cluster do
 
     ca =
       X509.Certificate.from_pem!(
-        File.read!(Path.join(T3.Cluster.dir(context.node.home), "ca.pem"))
+        File.read!(Path.join(HalC2.Cluster.dir(context.node.home), "ca.pem"))
       )
 
     cert = X509.Certificate.from_pem!(bundle.cert)
     key = X509.PrivateKey.from_pem!(bundle.key)
 
     assert bundle.address == "100.64.0.8"
-    assert X509.Certificate.subject(cert, "CN") == ["t3@100.64.0.8"]
+    assert X509.Certificate.subject(cert, "CN") == ["hal_c2@100.64.0.8"]
     assert X509.Certificate.issuer(cert) == X509.Certificate.subject(ca)
     assert X509.PublicKey.derive(key) == X509.Certificate.public_key(cert)
     context
@@ -119,33 +119,33 @@ defmodule T3.Steps.Connections.Cluster do
 
   step "a join bundle for this machine", context do
     member = Node.tmp_dir(context.node, "member")
-    :ok = T3.Cluster.init(member, @tailnet_address)
+    :ok = HalC2.Cluster.init(member, @tailnet_address)
     file = Path.join(member, "bundle")
-    File.write!(file, T3.Cluster.invite(member, "100.64.0.9"))
+    File.write!(file, HalC2.Cluster.invite(member, "100.64.0.9"))
     Map.put(context, :bundle, file)
   end
 
   step "the user joins with it", context do
-    Map.put(context, :printed, Node.run_task(Mix.Tasks.T3.Cluster, ["join", context.bundle]))
+    Map.put(context, :printed, Node.run_task(Mix.Tasks.HalC2.Cluster, ["join", context.bundle]))
   end
 
   step "the machine becomes a member named after its address", context do
     home = context.node.home
-    assert context.printed == ["Joined as t3@100.64.0.9"]
-    assert T3.Cluster.address(home) == "100.64.0.9"
-    assert T3.Cluster.vm_args(home) =~ "-name t3@100.64.0.9"
+    assert context.printed == ["Joined as hal_c2@100.64.0.9"]
+    assert HalC2.Cluster.address(home) == "100.64.0.9"
+    assert HalC2.Cluster.vm_args(home) =~ "-name hal_c2@100.64.0.9"
     # Only the member that invited can invite again.
-    refute File.exists?(Path.join(T3.Cluster.dir(home), "ca.key"))
+    refute File.exists?(Path.join(HalC2.Cluster.dir(home), "ca.key"))
     context
   end
 
   step "the machine is not in a cluster", context do
-    refute File.exists?(T3.Cluster.dir(context.node.home))
+    refute File.exists?(HalC2.Cluster.dir(context.node.home))
     context
   end
 
   step "the user asks for its cluster boot flags", context do
-    Map.put(context, :result, Node.run_task(Mix.Tasks.T3.Cluster, ["vm-args"]))
+    Map.put(context, :result, Node.run_task(Mix.Tasks.HalC2.Cluster, ["vm-args"]))
   end
 
   step "it is refused because the machine is not in a cluster yet", context do
@@ -171,7 +171,7 @@ defmodule T3.Steps.Connections.Cluster do
     {:ok, info} = :peer.call(a.peer, :net_kernel, :node_info, [b.node])
     {:net_address, {ip, port}, _host, protocol, _family} = info[:address]
     assert protocol == :tls
-    assert {:inet.ntoa(ip) |> to_string(), port} == {b.address, T3.Cluster.dist_port()}
+    assert {:inet.ntoa(ip) |> to_string(), port} == {b.address, HalC2.Cluster.dist_port()}
     # No port mapper: the node neither starts one nor asks one where its peers listen.
     assert :peer.call(a.peer, :init, :get_argument, [:start_epmd]) == {:ok, [[~c"false"]]}
     context
@@ -180,11 +180,11 @@ defmodule T3.Steps.Connections.Cluster do
   step "each listens only on its cluster address", context do
     for {_, member} <- context.booted do
       {:ok, ip} = :inet.parse_address(to_charlist(member.address))
-      assert {:ok, socket} = :gen_tcp.connect(ip, T3.Cluster.dist_port(), [])
+      assert {:ok, socket} = :gen_tcp.connect(ip, HalC2.Cluster.dist_port(), [])
       :gen_tcp.close(socket)
     end
 
-    assert {:error, :econnrefused} = :gen_tcp.connect(~c"127.0.0.1", T3.Cluster.dist_port(), [])
+    assert {:error, :econnrefused} = :gen_tcp.connect(~c"127.0.0.1", HalC2.Cluster.dist_port(), [])
     context
   end
 
@@ -206,7 +206,7 @@ defmodule T3.Steps.Connections.Cluster do
     {:ok, ip} = :inet.parse_address(to_charlist(a.address))
 
     assert {:error, {:tls_alert, {:unknown_ca, _}}} =
-             :ssl.connect(ip, T3.Cluster.dist_port(), options, 5_000)
+             :ssl.connect(ip, HalC2.Cluster.dist_port(), options, 5_000)
 
     context
   end
@@ -221,9 +221,9 @@ defmodule T3.Steps.Connections.Cluster do
   step "a member whose certificate was revoked", context do
     context = context |> member(:a) |> member(:b) |> member(:removed)
     removed = context.members.removed.address
-    # `mix t3.cluster revoke` on each member (this scenario's node home is not one).
-    :ok = T3.Cluster.revoke(context.members.a.home, removed)
-    :ok = T3.Cluster.revoke(context.members.b.home, removed)
+    # `mix hal_c2.cluster revoke` on each member (this scenario's node home is not one).
+    :ok = HalC2.Cluster.revoke(context.members.a.home, removed)
+    :ok = HalC2.Cluster.revoke(context.members.b.home, removed)
     context
   end
 
@@ -270,20 +270,20 @@ defmodule T3.Steps.Connections.Cluster do
     context
   end
 
-  step "T3_PEERS names a member's node", context do
+  step "HALC2_PEERS names a member's node", context do
     distribute()
 
     {:ok, peer, member} =
       :peer.start_link(%{
-        name: :"t3member#{System.unique_integer([:positive])}",
+        name: :"halc2member#{System.unique_integer([:positive])}",
         host: ~c"127.0.0.1",
         longnames: true,
         connection: :standard_io,
         args: [~c"-setcookie", Atom.to_charlist(:erlang.get_cookie())] ++ code_path_args()
       })
 
-    System.put_env("T3_PEERS", Atom.to_string(member))
-    ExUnit.Callbacks.on_exit(fn -> System.delete_env("T3_PEERS") end)
+    System.put_env("HALC2_PEERS", Atom.to_string(member))
+    ExUnit.Callbacks.on_exit(fn -> System.delete_env("HALC2_PEERS") end)
     :ok = :net_kernel.monitor_nodes(true)
     context |> Map.put(:member, member) |> Map.put(:member_peer, peer)
   end
@@ -292,7 +292,7 @@ defmodule T3.Steps.Connections.Cluster do
     member = context.member
     assert_receive {:nodeup, ^member}, 5_000
     # The node has no cluster certificate, so only the static list runs.
-    assert [{:static, _, :worker, _}] = Supervisor.which_children(T3.ClusterSupervisor)
+    assert [{:static, _, :worker, _}] = Supervisor.which_children(HalC2.ClusterSupervisor)
     context
   end
 
@@ -404,7 +404,7 @@ defmodule T3.Steps.Connections.Cluster do
 
   step "a client reads a member's environment descriptor", context do
     context = second_member(context)
-    {200, descriptor} = Node.http(context.node, :get, "/.well-known/t3/environment")
+    {200, descriptor} = Node.http(context.node, :get, "/.well-known/hal-c2/environment")
     Map.put(context, :descriptor, descriptor)
   end
 
@@ -413,7 +413,7 @@ defmodule T3.Steps.Connections.Cluster do
              Enum.sort([
                %{
                  "environmentId" => context.node.environment,
-                 "label" => T3.Environment.descriptor()["label"]
+                 "label" => HalC2.Environment.descriptor()["label"]
                },
                %{"environmentId" => context.second.environment, "label" => "garden-box"}
              ])
@@ -425,7 +425,7 @@ defmodule T3.Steps.Connections.Cluster do
     context = second_member(context)
 
     {:ok, _} =
-      :erpc.call(context.second.node, T3.Streams, :commit, [
+      :erpc.call(context.second.node, HalC2.Streams, :commit, [
         "remote-th",
         :thread,
         [{"thread", "remote-th", %{"s" => %{"id" => "remote-th", "title" => "On b"}}}]
@@ -448,7 +448,7 @@ defmodule T3.Steps.Connections.Cluster do
 
   step "the thread streams over the client's one socket", context do
     {:ok, seq} =
-      :erpc.call(context.second.node, T3.Streams, :commit, [
+      :erpc.call(context.second.node, HalC2.Streams, :commit, [
         "remote-th",
         :thread,
         [{"turn-item", "i1", %{"s" => %{"text" => "from b"}}}]
@@ -465,7 +465,7 @@ defmodule T3.Steps.Connections.Cluster do
 
   step "a client asks for something only the second member can serve", context do
     {reply, client} =
-      Node.call(Node.connect(context.node), context.second.environment, "t3.readSettings")
+      Node.call(Node.connect(context.node), context.second.environment, "halc2.readSettings")
 
     context |> World.put_client(client) |> Map.put(:reply, reply)
   end
@@ -494,10 +494,10 @@ defmodule T3.Steps.Connections.Cluster do
     assert context.upload_status == 204
 
     stored =
-      :erpc.call(context.second.node, T3.Attachments, :path, [%{"id" => context.upload.id}])
+      :erpc.call(context.second.node, HalC2.Attachments, :path, [%{"id" => context.upload.id}])
 
     assert :erpc.call(context.second.node, File, :read!, [stored]) == png()
-    assert T3.Attachments.path(%{"id" => context.upload.id}) == nil
+    assert HalC2.Attachments.path(%{"id" => context.upload.id}) == nil
     context
   end
 
@@ -524,7 +524,7 @@ defmodule T3.Steps.Connections.Cluster do
         {~c"FAKE_HUB_SIMULATORS", to_charlist(JSON.encode!([@simulator]))}
       ])
 
-    {:ok, state} = :erpc.call(context.second.node, T3.Devices, :configure, [%{"enabled" => true}])
+    {:ok, state} = :erpc.call(context.second.node, HalC2.Devices, :configure, [%{"enabled" => true}])
     assert state["hostStatus"] == "ready"
     Map.put(context, :hub, state["hubBasePath"])
   end
@@ -532,12 +532,12 @@ defmodule T3.Steps.Connections.Cluster do
   step "a client connected to the first member watches it", context do
     # The Device panel lists devices, then shows the stream in an <img>.
     {200, devices} =
-      Node.http(context.node, :get, "#{context.hub}/api/devices?token=#{T3.Web.token()}")
+      Node.http(context.node, :get, "#{context.hub}/api/devices?token=#{HalC2.Web.token()}")
 
     assert [%{"id" => "SIM-1"}] = devices["simulators"]
 
     url =
-      "http://127.0.0.1:#{context.node.port}#{context.hub}/vendor/serve-sim/helper/SIM-1/stream.mjpeg?token=#{T3.Web.token()}"
+      "http://127.0.0.1:#{context.node.port}#{context.hub}/vendor/serve-sim/helper/SIM-1/stream.mjpeg?token=#{HalC2.Web.token()}"
 
     {:ok, ref} = :httpc.request(:get, {to_charlist(url), []}, [], sync: false, stream: :self)
     ExUnit.Callbacks.on_exit(fn -> :httpc.cancel_request(ref) end)
@@ -570,8 +570,8 @@ defmodule T3.Steps.Connections.Cluster do
     address = "127.#{rem(div(n, 250), 250) + 1}.#{rem(div(n, 62_500), 250)}.#{rem(n, 250) + 2}"
 
     case {members[:a], opts[:cluster]} do
-      {%{home: first}, nil} -> :ok = T3.Cluster.join(home, T3.Cluster.invite(first, address))
-      _ -> :ok = T3.Cluster.init(home, address)
+      {%{home: first}, nil} -> :ok = HalC2.Cluster.join(home, HalC2.Cluster.invite(first, address))
+      _ -> :ok = HalC2.Cluster.init(home, address)
     end
 
     Map.put(context, :members, Map.put(members, name, %{home: home, address: address}))
@@ -580,11 +580,11 @@ defmodule T3.Steps.Connections.Cluster do
   # Boots a member with its cluster flags. `app: true` also runs the whole node there.
   defp boot(context, name, opts \\ []) do
     %{home: home, address: address} = member = context.members[name]
-    ["-name", _node | flags] = String.split(T3.Cluster.vm_args(home))
+    ["-name", _node | flags] = String.split(HalC2.Cluster.vm_args(home))
 
     {:ok, peer, node} =
       :peer.start_link(%{
-        name: :t3,
+        name: :hal_c2,
         host: to_charlist(address),
         longnames: true,
         connection: :standard_io,
@@ -595,9 +595,9 @@ defmodule T3.Steps.Connections.Cluster do
       settings = [start_node: true, home: home, port: 0, tailscale_command: member.tailscale]
 
       for {key, value} <- settings,
-          do: :ok = :peer.call(peer, Application, :put_env, [:t3, key, value])
+          do: :ok = :peer.call(peer, Application, :put_env, [:hal_c2, key, value])
 
-      {:ok, _} = :peer.call(peer, Application, :ensure_all_started, [:t3], 30_000)
+      {:ok, _} = :peer.call(peer, Application, :ensure_all_started, [:hal_c2], 30_000)
     end
 
     booted = Map.get(context, :booted, %{})
@@ -639,7 +639,7 @@ defmodule T3.Steps.Connections.Cluster do
 
   # The options a node dials other members with, from its `ssl_dist.conf`.
   defp dial_options(home) do
-    conf = :ssl_dist_sup.consult(to_charlist(Path.join(T3.Cluster.dir(home), "ssl_dist.conf")))
+    conf = :ssl_dist_sup.consult(to_charlist(Path.join(HalC2.Cluster.dir(home), "ssl_dist.conf")))
     conf[:client] |> Keyword.delete(:verify_fun) |> Keyword.put(:active, false)
   end
 
@@ -649,7 +649,7 @@ defmodule T3.Steps.Connections.Cluster do
       {_, 0} = System.cmd("epmd", ["-daemon"])
 
       {:ok, _} =
-        :net_kernel.start(:"t3feature#{System.unique_integer([:positive])}@127.0.0.1", %{
+        :net_kernel.start(:"halc2feature#{System.unique_integer([:positive])}@127.0.0.1", %{
           name_domain: :longnames
         })
 
@@ -666,7 +666,7 @@ defmodule T3.Steps.Connections.Cluster do
   defp second_member(context, home, env) do
     distribute()
     context = %{context | node: Node.restart(context.node)}
-    name = :"t3member#{System.unique_integer([:positive])}"
+    name = :"halc2member#{System.unique_integer([:positive])}"
     start_second(context, name, home || Node.tmp_dir(context.node, "second"), env)
   end
 
@@ -679,14 +679,14 @@ defmodule T3.Steps.Connections.Cluster do
         host: ~c"127.0.0.1",
         longnames: true,
         args: code_path_args(),
-        env: [{~c"T3_LABEL", ~c"garden-box"} | env]
+        env: [{~c"HALC2_LABEL", ~c"garden-box"} | env]
       })
 
     for {key, value} <- [start_node: true, home: home, port: 0],
-        do: :ok = :erpc.call(node, Application, :put_env, [:t3, key, value])
+        do: :ok = :erpc.call(node, Application, :put_env, [:hal_c2, key, value])
 
-    {:ok, _} = :erpc.call(node, Application, :ensure_all_started, [:t3], 30_000)
-    assert_receive {:t3_shell, {:environment, ^node, %{"environmentId" => environment}}}, 10_000
+    {:ok, _} = :erpc.call(node, Application, :ensure_all_started, [:hal_c2], 30_000)
+    assert_receive {:halc2_shell, {:environment, ^node, %{"environmentId" => environment}}}, 10_000
 
     Map.put(context, :second, %{
       name: name,
@@ -700,7 +700,7 @@ defmodule T3.Steps.Connections.Cluster do
   defp sleep_second(context) do
     node = context.second.node
     :peer.stop(context.second.peer)
-    assert_receive {:t3_shell, {:node, ^node, :down}}, 5_000
+    assert_receive {:halc2_shell, {:node, ^node, :down}}, 5_000
     context
   end
 
@@ -708,7 +708,7 @@ defmodule T3.Steps.Connections.Cluster do
     root = Node.tmp_dir(context.node, "garden")
 
     {:ok, _} =
-      :erpc.call(context.second.node, T3.Projects, :mutate, [
+      :erpc.call(context.second.node, HalC2.Projects, :mutate, [
         %{
           "type" => "project.create",
           "projectId" => "garden",
@@ -724,7 +724,7 @@ defmodule T3.Steps.Connections.Cluster do
     id = "th-garden-#{System.unique_integer([:positive])}"
 
     {:ok, _} =
-      :erpc.call(context.second.node, T3.Orchestration, :dispatch, [
+      :erpc.call(context.second.node, HalC2.Orchestration, :dispatch, [
         %{
           "type" => "thread.create",
           "threadId" => id,
@@ -804,7 +804,7 @@ defmodule T3.Steps.Connections.Cluster do
 
   defp upload_link(context) do
     {:ok, link} =
-      :erpc.call(context.second.node, T3.Attachments, :create_upload_url, [
+      :erpc.call(context.second.node, HalC2.Attachments, :create_upload_url, [
         %{"name" => "shot.png", "mimeType" => "image/png", "sizeBytes" => byte_size(png())}
       ])
 
@@ -817,7 +817,7 @@ defmodule T3.Steps.Connections.Cluster do
     status
   end
 
-  # The pinned device tools, already installed, as `test/t3/devices_test.exs` sets them up.
+  # The pinned device tools, already installed, as `test/hal_c2/devices_test.exs` sets them up.
   defp install_device_tools(home) do
     support = Path.expand("test/support")
 

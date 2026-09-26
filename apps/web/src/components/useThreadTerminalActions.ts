@@ -4,19 +4,19 @@ import {
   type ScopedThreadRef,
   type ThreadId,
   TerminalOpenInput,
-} from "@t3tools/contracts";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+} from "@hal-c2/contracts";
+import { scopedThreadKey } from "@hal-c2/client-runtime/environment";
+import { projectScriptCwd, projectScriptRuntimeEnv } from "@hal-c2/shared/projectScripts";
 import {
   getTerminalLabel,
   nextTerminalId,
   resolveTerminalSessionLabel,
-} from "@t3tools/shared/terminalLabels";
+} from "@hal-c2/shared/terminalLabels";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+} from "@hal-c2/client-runtime/state/runtime";
 import { DEFAULT_THREAD_TERMINAL_ID, MAX_TERMINALS_PER_GROUP, type Thread } from "../types";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import type { TerminalLaunchContext } from "./ThreadTerminals";

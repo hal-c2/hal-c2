@@ -25,7 +25,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -43,7 +43,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { Tool } from "effect/unstable/ai";
-import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
+import { formatClaudeResumeCompactionQuestion } from "@hal-c2/shared/claudeCompaction";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -65,8 +65,8 @@ import {
   CLAUDE_DEFAULT_INSTANCE_ID,
   CLAUDE_PROVIDER,
   CLAUDE_READ_ONLY_ALLOWED_TOOLS,
-  CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS,
-  CLAUDE_T3_MCP_TOOL_WILDCARD,
+  CLAUDE_READ_ONLY_HALC2_MCP_ALLOWED_TOOLS,
+  CLAUDE_HALC2_MCP_TOOL_WILDCARD,
   ClaudeProviderCapabilitiesV2,
   ClaudeAgentSdkQueryRunnerError,
   claudeEffectiveQueryPolicyKey,
@@ -480,8 +480,8 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 });
 
 describe("ClaudeAdapterV2 MCP query overrides", () => {
-  const T3_MCP_SERVERS = {
-    "t3-code": {
+  const HALC2_MCP_SERVERS = {
+    "hal-c2": {
       type: "http",
       url: "http://127.0.0.1:43123/mcp",
       headers: {
@@ -526,35 +526,35 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.deepEqual(overrides, { allowedTools: ["Read"] });
   });
 
-  it("pre-approves all t3-code tools when attaching an MCP session without an allowlist", () => {
+  it("pre-approves all hal-c2 tools when attaching an MCP session without an allowlist", () => {
     const threadId = ThreadId.make("thread-claude-mcp-no-allowlist");
     withMcpSession(threadId, () => {
       const overrides = claudeMcpQueryOverrides({ threadId, readOnlySandbox: false });
 
       assert.deepEqual(overrides, {
-        allowedTools: [CLAUDE_T3_MCP_TOOL_WILDCARD],
-        mcpServers: T3_MCP_SERVERS,
+        allowedTools: [CLAUDE_HALC2_MCP_TOOL_WILDCARD],
+        mcpServers: HALC2_MCP_SERVERS,
       });
     });
   });
 
-  it("extends an explicit allowlist with the t3-code wildcard", () => {
+  it("extends an explicit allowlist with the hal-c2 wildcard", () => {
     const threadId = ThreadId.make("thread-claude-mcp-with-allowlist");
     withMcpSession(threadId, () => {
       const overrides = claudeMcpQueryOverrides({
         threadId,
         readOnlySandbox: false,
-        allowedTools: ["Read", "mcp__t3-code__*"],
+        allowedTools: ["Read", "mcp__hal-c2__*"],
       });
 
       assert.deepEqual(overrides, {
-        allowedTools: ["Read", "mcp__t3-code__*"],
-        mcpServers: T3_MCP_SERVERS,
+        allowedTools: ["Read", "mcp__hal-c2__*"],
+        mcpServers: HALC2_MCP_SERVERS,
       });
     });
   });
 
-  it("pre-approves only read-only t3-code tools in a read-only sandbox", () => {
+  it("pre-approves only read-only hal-c2 tools in a read-only sandbox", () => {
     const threadId = ThreadId.make("thread-claude-mcp-read-only");
     withMcpSession(threadId, () => {
       const overrides = claudeMcpQueryOverrides({
@@ -564,19 +564,22 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       });
 
       assert.deepEqual(overrides, {
-        allowedTools: [...CLAUDE_READ_ONLY_ALLOWED_TOOLS, ...CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS],
-        mcpServers: T3_MCP_SERVERS,
+        allowedTools: [
+          ...CLAUDE_READ_ONLY_ALLOWED_TOOLS,
+          ...CLAUDE_READ_ONLY_HALC2_MCP_ALLOWED_TOOLS,
+        ],
+        mcpServers: HALC2_MCP_SERVERS,
       });
-      assert.isFalse(overrides.allowedTools?.includes(CLAUDE_T3_MCP_TOOL_WILDCARD));
+      assert.isFalse(overrides.allowedTools?.includes(CLAUDE_HALC2_MCP_TOOL_WILDCARD));
     });
   });
 
-  it("pre-approves only read-only t3-code tools in a read-only sandbox without an allowlist", () => {
+  it("pre-approves only read-only hal-c2 tools in a read-only sandbox without an allowlist", () => {
     const threadId = ThreadId.make("thread-claude-mcp-read-only-no-allowlist");
     withMcpSession(threadId, () => {
       const overrides = claudeMcpQueryOverrides({ threadId, readOnlySandbox: true });
 
-      assert.deepEqual(overrides.allowedTools, [...CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS]);
+      assert.deepEqual(overrides.allowedTools, [...CLAUDE_READ_ONLY_HALC2_MCP_ALLOWED_TOOLS]);
     });
   });
 
@@ -655,10 +658,10 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ...Object.values(PreviewControlsToolkit.tools),
     ]
       .filter((tool) => Context.get(tool.annotations, Tool.Readonly))
-      .map((tool) => `mcp__t3-code__${tool.name}`)
+      .map((tool) => `mcp__hal-c2__${tool.name}`)
       .sort();
 
-    assert.deepEqual([...CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS].sort(), readOnlyToolNames);
+    assert.deepEqual([...CLAUDE_READ_ONLY_HALC2_MCP_ALLOWED_TOOLS].sort(), readOnlyToolNames);
   });
 });
 
@@ -682,9 +685,9 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
         allowedTools: ["Read"],
       });
       assert.deepEqual(overrides, {
-        allowedTools: ["Read", "mcp__t3-code__*"],
+        allowedTools: ["Read", "mcp__hal-c2__*"],
         mcpServers: {
-          "t3-code": {
+          "hal-c2": {
             type: "http",
             url: "http://127.0.0.1:43123/mcp",
             headers: {
@@ -904,7 +907,7 @@ describe("ClaudeAdapterV2 session permissions", () => {
 
   it("adds a whole-tool session rule when Claude offers no suggestion", () => {
     const result = permissionResultFromDecision({
-      toolName: "mcp__t3__custom_tool",
+      toolName: "mcp__halc2__custom_tool",
       decision: "acceptForSession",
       toolInput: {},
       toolUseID: "tool-2",
@@ -917,7 +920,7 @@ describe("ClaudeAdapterV2 session permissions", () => {
     assert.deepEqual(result.updatedPermissions, [
       {
         type: "addRules",
-        rules: [{ toolName: "mcp__t3__custom_tool" }],
+        rules: [{ toolName: "mcp__halc2__custom_tool" }],
         behavior: "allow",
         destination: "session",
       },
@@ -968,7 +971,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocatorV2;
         const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-claude-resume-",
+          prefix: "hal-c2-claude-resume-",
         });
         let openedOptions: ClaudeAgentSdkQueryOptions | undefined;
         const adapter = makeClaudeAdapterV2({
@@ -1185,7 +1188,7 @@ describe("ClaudeAdapterV2 attachments", () => {
         const idAllocator = yield* IdAllocatorV2;
         const path = yield* Path.Path;
         const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-claude-v2-attachments-",
+          prefix: "hal-c2-claude-v2-attachments-",
         });
         const offeredMessages: Array<SDKUserMessage> = [];
         const adapter = makeClaudeAdapterV2({
@@ -1323,7 +1326,7 @@ describe("ClaudeAdapterV2 attachments", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocatorV2;
         const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-claude-v2-unsupported-attachment-",
+          prefix: "hal-c2-claude-v2-unsupported-attachment-",
         });
         let openCount = 0;
         const adapter = makeClaudeAdapterV2({
@@ -1409,7 +1412,7 @@ describe("ClaudeAdapterV2 native fork", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocatorV2;
         const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-claude-v2-fork-attachments-",
+          prefix: "hal-c2-claude-v2-fork-attachments-",
         });
         const openedQueries: Array<ClaudeAgentSdkQueryOpenInput> = [];
         const forkCalls: Array<{
@@ -1585,7 +1588,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocatorV2;
         const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-claude-v2-session-identity-",
+          prefix: "hal-c2-claude-v2-session-identity-",
         });
         const openedQueries: Array<ClaudeAgentSdkQueryOpenInput> = [];
         const adapter = makeClaudeAdapterV2({
@@ -1833,7 +1836,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
       const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-claude-v2-wake-",
+        prefix: "hal-c2-claude-v2-wake-",
       });
       const sdkMessages = yield* Queue.unbounded<SDKMessage>();
       const offeredMessages: Array<SDKUserMessage> = [];
@@ -3210,7 +3213,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocatorV2;
         const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-claude-v2-roster-interrupt-",
+          prefix: "hal-c2-claude-v2-roster-interrupt-",
         });
         const sdkMessages = yield* Queue.unbounded<SDKMessage>();
         const events: Array<ProviderAdapterV2Event> = [];
@@ -3315,7 +3318,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const idAllocator = yield* IdAllocatorV2;
           const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3-claude-v2-sibling-replace-",
+            prefix: "hal-c2-claude-v2-sibling-replace-",
           });
           const nativeIds = ["native-thread-roster-a", "native-thread-roster-b"] as const;
           let allocateIndex = 0;
@@ -5424,7 +5427,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocatorV2;
         const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-claude-v2-process-reset-",
+          prefix: "hal-c2-claude-v2-process-reset-",
         });
         const processQueues: Array<Queue.Queue<SDKMessage>> = [];
         const events: Array<ProviderAdapterV2Event> = [];
@@ -5691,7 +5694,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const idAllocator = yield* IdAllocatorV2;
           const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3-claude-v2-buffer-replace-",
+            prefix: "hal-c2-claude-v2-buffer-replace-",
           });
           const processQueues: Array<Queue.Queue<SDKMessage>> = [];
           const events: Array<ProviderAdapterV2Event> = [];
@@ -5924,7 +5927,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const idAllocator = yield* IdAllocatorV2;
           const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3-claude-v2-subagent-buffer-replace-",
+            prefix: "hal-c2-claude-v2-subagent-buffer-replace-",
           });
           const processQueues: Array<Queue.Queue<SDKMessage>> = [];
           const events: Array<ProviderAdapterV2Event> = [];
@@ -6115,7 +6118,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const idAllocator = yield* IdAllocatorV2;
           const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3-claude-v2-replace-open-fail-",
+            prefix: "hal-c2-claude-v2-replace-open-fail-",
           });
           let openCount = 0;
           const processQueues: Array<Queue.Queue<SDKMessage>> = [];
@@ -6248,7 +6251,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const fileSystem = yield* FileSystem.FileSystem;
           const idAllocator = yield* IdAllocatorV2;
           const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3-claude-v2-replace-open-fail-wake-",
+            prefix: "hal-c2-claude-v2-replace-open-fail-wake-",
           });
           let openCount = 0;
           const processQueues: Array<Queue.Queue<SDKMessage>> = [];
@@ -6446,7 +6449,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocatorV2;
         const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-claude-v2-first-open-fail-",
+          prefix: "hal-c2-claude-v2-first-open-fail-",
         });
         const events: Array<ProviderAdapterV2Event> = [];
         const adapter = makeClaudeAdapterV2({

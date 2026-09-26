@@ -1,15 +1,15 @@
 # Sources:
 #   docs/user/usage.md
-#   apps/server-ex/lib/t3/usage.ex (server.getUsageSummary, transcript sources, scan cache)
-#   apps/server-ex/lib/t3/usage/aggregator.ex (de-duplication, day and hour buckets)
-#   apps/server-ex/lib/t3/usage/pricing.ex (LiteLLM rates, server.refreshUsageRates, usagePriceOverrides)
-#   apps/server-ex/lib/t3/provider_usage_limits.ex (limits, consumeResetCredit)
+#   apps/server-ex/lib/hal_c2/usage.ex (server.getUsageSummary, transcript sources, scan cache)
+#   apps/server-ex/lib/hal_c2/usage/aggregator.ex (de-duplication, day and hour buckets)
+#   apps/server-ex/lib/hal_c2/usage/pricing.ex (LiteLLM rates, server.refreshUsageRates, usagePriceOverrides)
+#   apps/server-ex/lib/hal_c2/provider_usage_limits.ex (limits, consumeResetCredit)
 #   apps/server-ex/test/node_parity_test.exs (usage summary and rates, consumeResetCredit aligned)
 #   packages/contracts/src/usage.ts
 #   packages/contracts/src/providerUsageLimits.ts
 #   packages/contracts/src/rpc.ts (server.getUsageSummary, server.refreshUsageRates, server.consumeResetCredit)
 #   apps/web/src/components/usage/UsagePage.tsx
-#   apps/desktop-qt/qml/T3/Bricks/Sidebar.qml (usage.open entry)
+#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (usage.open entry)
 
 Feature: Usage and limits
   Usage adds up token use and estimated cost from each provider's local

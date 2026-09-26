@@ -1,8 +1,8 @@
 # Sources:
-#   features/README.md (hal-c2: QML on every surface)
+#   features/README.md (HAL-C2: QML on every surface)
 #   /home/olafura/dev/opentui-qml (QML runtime, Plugin and Slot API)
 #   apps/mobile/src/features/settings/appearance/ (the closest React Native equivalent: themes)
-# New hal-c2 behaviour. How a QML file plugs into the UI (slots, sandboxing, API versions)
+# New HAL-C2 behaviour. How a QML file plugs into the UI (slots, sandboxing, API versions)
 # is specified in features/plugins/. This file covers only the phone user's journey:
 # choosing a file, previewing, applying, reverting, and per-environment memory.
 
@@ -30,7 +30,7 @@ Feature: Customising the phone UI with a QML file
 
   @backlog @mobile
   Scenario: The user opens a QML file shared from another app
-    When the user shares "compact-list.qml" to T3 Code from another app
+    When the user shares "compact-list.qml" to HAL-C2 from another app
     Then the user is offered to preview it as a UI customisation
 
   @backlog @mobile

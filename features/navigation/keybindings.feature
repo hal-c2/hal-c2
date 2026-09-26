@@ -3,7 +3,7 @@
 #   packages/contracts/src/keybindings.ts (every static command id and script.<id>.run)
 #   packages/shared/src/keybindings.ts (DEFAULT_KEYBINDINGS)
 #   apps/desktop-qt/parity/web-parity.test.ts (all 35 keymap rows)
-#   apps/desktop-qt/qml/T3/Bricks/ShellWindow.qml (window shortcuts forwarded as keybinding.press)
+#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts forwarded as keybinding.press)
 #   Keybinding ids: sidebar.toggle, navigation.back, navigation.forward, terminal.toggle,
 #   terminal.split, terminal.splitVertical, terminal.new, terminal.close, rightPanel.toggle,
 #   threadPanel.toggle, rightPanel.toggleMaximized, rightPanel.close, pullRequest.copyNumber,
@@ -342,7 +342,7 @@ Feature: Keybindings
       Given the user is looking at a thread in a browser
       When the user presses mod+shift+j
       Then the user is told "Preview is desktop-only"
-      And the user is told to open T3 Code in the desktop app to use it
+      And the user is told to open HAL-C2 in the desktop app to use it
 
     @backlog @desktop
     Scenario Outline: Preview shortcuts act on the focused preview

@@ -5,8 +5,8 @@
 #     provider-session.detached, provider-thread.updated, provider-turn.updated,
 #     checkpoint-scope.created, run.interrupt)
 #   packages/contracts/src/rpc.ts (orchestration.dispatchCommand, provider.uploadFeedback)
-#   apps/server-ex/lib/t3/orchestration.ex (dispatch_message, new_run, start_turn, release_session)
-#   apps/server-ex/lib/t3/orchestration/turn_writer.ex
+#   apps/server-ex/lib/hal_c2/orchestration.ex (dispatch_message, new_run, start_turn, release_session)
+#   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex
 #   apps/server/src/orchestration-v2/ (run lifecycle)
 #   apps/server/src/provider/Errors.ts (ProviderInstanceNotFoundError),
 #     apps/server/src/provider/Services/ProviderInstanceRegistry.ts

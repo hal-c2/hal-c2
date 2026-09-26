@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(t3code-qt VERSION 0.0.1 LANGUAGES CXX)
+project(hal-c2-qt VERSION 0.0.1 LANGUAGES CXX)
 
 if(APPLE)
   enable_language(OBJCXX)
@@ -16,40 +16,40 @@ qt_policy(SET QTP0001 NEW)
 
 # Where the QML bricks live on disk. Non-release builds load them from here so
 # edits hot-reload without a rebuild; release builds only use the compiled-in
-# copies. T3_QML_SOURCE_DIR="" disables disk loading for any build type.
-if(NOT DEFINED T3_QML_SOURCE_DIR)
-  set(T3_QML_SOURCE_DIR "$<IF:$<CONFIG:Release>,,${CMAKE_CURRENT_SOURCE_DIR}/qml>")
+# copies. HALC2_QML_SOURCE_DIR="" disables disk loading for any build type.
+if(NOT DEFINED HALC2_QML_SOURCE_DIR)
+  set(HALC2_QML_SOURCE_DIR "$<IF:$<CONFIG:Release>,,${CMAKE_CURRENT_SOURCE_DIR}/qml>")
 endif()
 
 # The Node desktop host entry. In-repo builds point at the TypeScript source.
 # Release builds resolve an installed path relative to the executable.
-if(NOT DEFINED T3_HOST_ENTRY)
+if(NOT DEFINED HALC2_HOST_ENTRY)
   if(APPLE)
-    set(_t3_installed_host "../Resources/t3code/host/main.ts")
+    set(_halc2_installed_host "../Resources/hal-c2/host/main.ts")
   else()
-    set(_t3_installed_host "../share/t3code/host/main.ts")
+    set(_halc2_installed_host "../share/hal-c2/host/main.ts")
   endif()
-  set(T3_HOST_ENTRY "$<IF:$<CONFIG:Release>,${_t3_installed_host},${CMAKE_CURRENT_SOURCE_DIR}/host/main.ts>")
+  set(HALC2_HOST_ENTRY "$<IF:$<CONFIG:Release>,${_halc2_installed_host},${CMAKE_CURRENT_SOURCE_DIR}/host/main.ts>")
 endif()
 
 # Release packages carry the same Node executable that installed their native
 # dependencies. Development builds keep using the command from PATH.
-if(NOT DEFINED T3_NODE_ENTRY)
+if(NOT DEFINED HALC2_NODE_ENTRY)
   if(APPLE)
-    set(_t3_installed_node "../Resources/t3code/bin/node")
+    set(_halc2_installed_node "../Resources/hal-c2/bin/node")
   elseif(WIN32)
-    set(_t3_installed_node "../share/t3code/bin/node.exe")
+    set(_halc2_installed_node "../share/hal-c2/bin/node.exe")
   else()
-    set(_t3_installed_node "../share/t3code/bin/node")
+    set(_halc2_installed_node "../share/hal-c2/bin/node")
   endif()
-  set(T3_NODE_ENTRY "$<IF:$<CONFIG:Release>,${_t3_installed_node},node>")
+  set(HALC2_NODE_ENTRY "$<IF:$<CONFIG:Release>,${_halc2_installed_node},node>")
 endif()
 
 # qwebchannel.js is the browser half of Qt WebChannel. Qt installs it as data
 # (share/qt6/webchannel); bundling it makes the injected script independent of
 # whether the runtime Qt exposes it as a qrc resource.
 get_filename_component(_qt_prefix "${QT6_INSTALL_PREFIX}" ABSOLUTE)
-find_file(T3_QWEBCHANNEL_JS qwebchannel.js
+find_file(HALC2_QWEBCHANNEL_JS qwebchannel.js
   HINTS
     "${_qt_prefix}/${QT6_INSTALL_DATA}/webchannel"
     "${_qt_prefix}/share/qt6/webchannel"
@@ -57,7 +57,7 @@ find_file(T3_QWEBCHANNEL_JS qwebchannel.js
     "${_qt_prefix}/../qtwebchannel/share/qt6/webchannel"
 )
 
-qt_add_executable(t3code-qt
+qt_add_executable(hal-c2-qt
   src/main.cpp
   src/LocalFolderModel.cpp
   src/LocalFolderModel.h
@@ -80,49 +80,49 @@ qt_add_executable(t3code-qt
 
 if(UNIX AND NOT APPLE)
   find_package(Qt6 6.9 REQUIRED COMPONENTS DBus)
-  target_link_libraries(t3code-qt PRIVATE Qt6::DBus)
-  target_compile_definitions(t3code-qt PRIVATE T3_HAS_DBUS)
+  target_link_libraries(hal-c2-qt PRIVATE Qt6::DBus)
+  target_compile_definitions(hal-c2-qt PRIVATE HALC2_HAS_DBUS)
 endif()
 
-if(T3_QWEBCHANNEL_JS)
-  set_source_files_properties("${T3_QWEBCHANNEL_JS}" PROPERTIES QT_RESOURCE_ALIAS "qwebchannel.js")
-  qt_add_resources(t3code-qt "t3_webchannel" PREFIX "/t3" FILES "${T3_QWEBCHANNEL_JS}")
-  target_compile_definitions(t3code-qt PRIVATE T3_WEBCHANNEL_SCRIPT_URL="qrc:/t3/qwebchannel.js")
+if(HALC2_QWEBCHANNEL_JS)
+  set_source_files_properties("${HALC2_QWEBCHANNEL_JS}" PROPERTIES QT_RESOURCE_ALIAS "qwebchannel.js")
+  qt_add_resources(hal-c2-qt "halc2_webchannel" PREFIX "/hal-c2" FILES "${HALC2_QWEBCHANNEL_JS}")
+  target_compile_definitions(hal-c2-qt PRIVATE HALC2_WEBCHANNEL_SCRIPT_URL="qrc:/hal-c2/qwebchannel.js")
 else()
   message(STATUS "qwebchannel.js not found next to Qt; relying on qrc:///qtwebchannel/qwebchannel.js at runtime")
-  target_compile_definitions(t3code-qt PRIVATE T3_WEBCHANNEL_SCRIPT_URL="qrc:///qtwebchannel/qwebchannel.js")
+  target_compile_definitions(hal-c2-qt PRIVATE HALC2_WEBCHANNEL_SCRIPT_URL="qrc:///qtwebchannel/qwebchannel.js")
 endif()
 
-target_compile_definitions(t3code-qt PRIVATE
-  T3_QML_SOURCE_DIR="${T3_QML_SOURCE_DIR}"
-  T3_HOST_ENTRY="${T3_HOST_ENTRY}"
-  T3_NODE_ENTRY="${T3_NODE_ENTRY}"
-  T3_APP_VERSION="${PROJECT_VERSION}"
+target_compile_definitions(hal-c2-qt PRIVATE
+  HALC2_QML_SOURCE_DIR="${HALC2_QML_SOURCE_DIR}"
+  HALC2_HOST_ENTRY="${HALC2_HOST_ENTRY}"
+  HALC2_NODE_ENTRY="${HALC2_NODE_ENTRY}"
+  HALC2_APP_VERSION="${PROJECT_VERSION}"
 )
 
 include(cmake/PlatformWindow.cmake)
-t3_target_platform_window(t3code-qt)
+halc2_target_platform_window(hal-c2-qt)
 
-add_subdirectory(qml/T3/Bricks)
+add_subdirectory(qml/HalC2/Bricks)
 
-target_link_libraries(t3code-qt PRIVATE
+target_link_libraries(hal-c2-qt PRIVATE
   Qt6::Core
   Qt6::Gui
   Qt6::GuiPrivate
   Qt6::Quick
   Qt6::WebEngineQuick
   Qt6::WebChannel
-  t3bricksplugin
+  halc2bricksplugin
 )
 
-set_target_properties(t3code-qt PROPERTIES
+set_target_properties(hal-c2-qt PROPERTIES
   MACOSX_BUNDLE TRUE
-  MACOSX_BUNDLE_GUI_IDENTIFIER "codes.t3.desktop-qt"
-  MACOSX_BUNDLE_BUNDLE_NAME "T3 Code"
+  MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.halc2.desktop-qt"
+  MACOSX_BUNDLE_BUNDLE_NAME "HAL-C2"
   WIN32_EXECUTABLE TRUE
 )
 
-install(TARGETS t3code-qt
+install(TARGETS hal-c2-qt
   BUNDLE DESTINATION .
   RUNTIME DESTINATION bin
 )

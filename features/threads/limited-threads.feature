@@ -3,9 +3,9 @@
 #   apps/web/src/components/ChatView.tsx (limit recovery)
 #   apps/web/src/components/settings/SettingsPanels.tsx (Auto-resume limited threads, Snooze limited threads)
 #   packages/contracts/src/orchestrationV2.ts (thread.metadata.update limitRecovery)
-#   apps/server-ex/lib/t3/projection/thread_error.ex (usageLimitResetAt)
-#   apps/server-ex/lib/t3/orchestration.ex (metadata.update limitRecovery)
-#   apps/server-ex/lib/t3/orchestration/limit_recovery.ex (arm and resume at the reset)
+#   apps/server-ex/lib/hal_c2/projection/thread_error.ex (usageLimitResetAt)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (metadata.update limitRecovery)
+#   apps/server-ex/lib/hal_c2/orchestration/limit_recovery.ex (arm and resume at the reset)
 
 Feature: Threads stopped by a usage limit
   When an agent stops on a usage or rate limit, the thread says so and the user decides

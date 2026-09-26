@@ -7,9 +7,9 @@
 import type {
   PreparedConnection,
   SupervisorConnectionState,
-} from "@t3tools/client-runtime/connection";
-import { ConnectionTransientError } from "@t3tools/client-runtime/connection";
-import { RpcSessionFactory, type RpcSession } from "@t3tools/client-runtime/rpc";
+} from "@hal-c2/client-runtime/connection";
+import { ConnectionTransientError } from "@hal-c2/client-runtime/connection";
+import { RpcSessionFactory, type RpcSession } from "@hal-c2/client-runtime/rpc";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";

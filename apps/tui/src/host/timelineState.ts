@@ -1,5 +1,5 @@
-import type { OrchestrationCheckpointSummary, OrchestrationThread } from "@t3tools/contracts";
-import { shouldCollapseUserMessage } from "@t3tools/shared/chatMessages";
+import type { OrchestrationCheckpointSummary, OrchestrationThread } from "@hal-c2/contracts";
+import { shouldCollapseUserMessage } from "@hal-c2/shared/chatMessages";
 
 import { CHAT_CONTENT_MAX_WIDTH } from "../components/ChatView.layout.ts";
 import { deriveContextWindow, formatContextWindow } from "../contextWindow.ts";

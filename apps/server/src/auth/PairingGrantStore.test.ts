@@ -27,7 +27,7 @@ const makeServerConfigLayer = (
       } satisfies ServerConfig.ServerConfig["Service"];
     }),
   ).pipe(
-    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-bootstrap-test-" })),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "hal-c2-auth-bootstrap-test-" })),
   );
 
 const makePairingGrantStoreLayer = (

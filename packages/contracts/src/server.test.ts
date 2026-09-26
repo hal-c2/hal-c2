@@ -184,7 +184,7 @@ describe("server config forward compatibility", () => {
 describe("ServerObservability", () => {
   it("reads a server from before the log signal as exporting no logs", () => {
     const parsed = decodeServerObservability({
-      logsDirectoryPath: "/tmp/t3/logs",
+      logsDirectoryPath: "/tmp/hal-c2/logs",
       localTracingEnabled: true,
       otlpTracesUrl: "https://collector.example.com/v1/traces",
       otlpTracesEnabled: true,

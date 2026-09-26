@@ -1,0 +1,10 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["HalC2TerminalModule"],
+    "podspecPath": "HalC2TerminalNative.podspec"
+  },
+  "android": {
+    "modules": ["expo.modules.halc2terminal.HalC2TerminalModule"]
+  }
+}

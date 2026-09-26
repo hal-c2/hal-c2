@@ -5,14 +5,14 @@ import {
   type ProviderOptionSelection,
   type ScopedThreadRef,
   type ServerProviderModel,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
-} from "@t3tools/shared/model";
+} from "@hal-c2/shared/model";
 import type { ReactNode } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
@@ -62,7 +62,7 @@ export function getComposerPromptInjectionState(prompt: string): ComposerPromptI
 }
 
 /**
- * Cursor ACP can report `fastMode: true` as the provider default. T3 only
+ * Cursor ACP can report `fastMode: true` as the provider default. HAL-C2 only
  * treats Fast as selected when the user chose it (draft/sticky/settings).
  * Otherwise inject an explicit `false` so new chats stay Normal and the
  * send path can overwrite a prior Fast session — descriptor defaults are

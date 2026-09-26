@@ -10,7 +10,7 @@ import { claimShellThemeOverride } from "./shellThemeOverride";
  */
 export function ShellThemeBridge({ publishToShell = true }: { publishToShell?: boolean }) {
   useEffect(() => {
-    const shell = window.t3Shell;
+    const shell = window.halc2Shell;
     if (!shell) return;
     claimShellThemeOverride();
     // Embedded documents consume overrides; only the primary publishes native colors.

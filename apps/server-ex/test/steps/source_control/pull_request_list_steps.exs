@@ -1,4 +1,4 @@
-defmodule T3.Steps.SourceControl.PullRequestList do
+defmodule HalC2.Steps.SourceControl.PullRequestList do
   @moduledoc """
   The fake GitHub holds a few pull requests in each repository and answers a
   `gh pr list` search the way GitHub would for the qualifier it carries: one rule
@@ -8,9 +8,9 @@ defmodule T3.Steps.SourceControl.PullRequestList do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.SourceControl.Shared
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @me "monalisa"
 
@@ -133,7 +133,7 @@ defmodule T3.Steps.SourceControl.PullRequestList do
   end
 
   step "the GitHub CLI is installed and signed in", context do
-    T3.PullRequests.invalidate(%{})
+    HalC2.PullRequests.invalidate(%{})
 
     {reply, context} =
       World.call(context, "pullRequests.routingIdentity", %{"host" => "github.com"})
@@ -387,7 +387,7 @@ defmodule T3.Steps.SourceControl.PullRequestList do
   end
 
   step "the user is looking at the pull request list", context do
-    Node.ensure(T3.PullRequests.Refreshes)
+    Node.ensure(HalC2.PullRequests.Refreshes)
     id = System.unique_integer([:positive])
     shape = %{"type" => "pullRequestRefreshes", "node" => Atom.to_string(node())}
     client = Node.sub(World.client(context), id, shape)
@@ -398,7 +398,7 @@ defmodule T3.Steps.SourceControl.PullRequestList do
     |> Map.put(:refreshes, {id, frame["revision"]})
   end
 
-  step "someone merges a pull request from T3 Code", context do
+  step "someone merges a pull request from HAL-C2", context do
     context =
       World.cli_rules(context, [
         Shared.permissions_rule("WRITE"),

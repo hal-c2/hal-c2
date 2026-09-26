@@ -1,12 +1,12 @@
 # Sources:
-#   apps/server-ex/lib/t3/hot.ex (live module reload, code_change, lingering modules)
-#   apps/server-ex/lib/t3/upgrade.ex (server.updateServer, in-place vs restart, outcome.json)
-#   apps/server-ex/lib/t3/orchestration.ex (driver_for, runtime: provider routing)
-#   apps/server-ex/lib/t3/acp.ex (built-in agents, providerInstances, instances off until enabled)
-#   apps/server-ex/lib/t3/mcp.ex (t3-code MCP server)
-#   apps/server-ex/lib/t3/text_generation.ex (text generation backends by instance)
-#   apps/server-ex/lib/t3/settings.ex (providerInstances, provider_enabled?)
-#   apps/server-ex/lib/t3/pull_requests.ex, apps/server-ex/lib/t3/vcs.ex (git hosts)
+#   apps/server-ex/lib/hal_c2/hot.ex (live module reload, code_change, lingering modules)
+#   apps/server-ex/lib/hal_c2/upgrade.ex (server.updateServer, in-place vs restart, outcome.json)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (driver_for, runtime: provider routing)
+#   apps/server-ex/lib/hal_c2/acp.ex (built-in agents, providerInstances, instances off until enabled)
+#   apps/server-ex/lib/hal_c2/mcp.ex (HAL-C2 MCP server)
+#   apps/server-ex/lib/hal_c2/text_generation.ex (text generation backends by instance)
+#   apps/server-ex/lib/hal_c2/settings.ex (providerInstances, provider_enabled?)
+#   apps/server-ex/lib/hal_c2/pull_requests.ex, apps/server-ex/lib/hal_c2/vcs.ex (git hosts)
 #   docs/orchestration-v2/provider-capability-system.md (adapter contract)
 #   docs/internals/providers.md (route by instance, setup never as a health-check side effect)
 
@@ -185,7 +185,7 @@ Feature: Node plugins
     Then "local-llama" writes the title
 
   @node
-  Scenario: An MCP tool pack is offered to agents next to the built-in T3 tools
+  Scenario: An MCP tool pack is offered to agents next to the built-in HAL-C2 tools
     Given the MCP tool pack "jira-tools" is enabled
     When an agent starts a turn in a project that allows MCP
     Then the agent can call the "jira-tools" tools

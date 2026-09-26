@@ -1,15 +1,15 @@
-defmodule T3.Steps.Providers.ProviderInstances do
+defmodule HalC2.Steps.Providers.ProviderInstances do
   @moduledoc """
   Steps for `features/providers/provider-instances.feature`: provider instances in
   the node's settings, how their agents are started, and provider refreshes. Agents
-  are the fakes of `T3.Test.AcpFixtures`; an absolute path in the feature (such as
+  are the fakes of `HalC2.Test.AcpFixtures`; an absolute path in the feature (such as
   `/opt/grok/bin/grok`) is created under the scenario's home.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.AcpFixtures, as: Acp
-  alias T3.Test.Node
+  alias HalC2.Test.AcpFixtures, as: Acp
+  alias HalC2.Test.Node
 
   @drivers %{"Grok" => "grok", "OpenCode" => "opencode"}
 
@@ -94,7 +94,7 @@ defmodule T3.Steps.Providers.ProviderInstances do
     )
 
     {:ok, %{"title" => "grok title"}} =
-      T3.TextGeneration.thread_title(Acp.dir(ctx), "Fix the login page")
+      HalC2.TextGeneration.thread_title(Acp.dir(ctx), "Fix the login page")
 
     ctx
   end
@@ -104,7 +104,7 @@ defmodule T3.Steps.Providers.ProviderInstances do
     before = Acp.requests(context, "grok", "session/prompt") |> length()
 
     assert {:ok, %{"title" => "codex title"}} =
-             T3.TextGeneration.thread_title(Acp.dir(context), "Fix the login page")
+             HalC2.TextGeneration.thread_title(Acp.dir(context), "Fix the login page")
 
     assert [%{"argv" => argv} | _] =
              context
@@ -127,7 +127,7 @@ defmodule T3.Steps.Providers.ProviderInstances do
     %{before: before, at: at} = context.refreshed
 
     for instance <- ["codex", "claudeAgent"] do
-      now = T3.ProviderUsageLimits.get(instance)
+      now = HalC2.ProviderUsageLimits.get(instance)
       assert now["checkedAt"] >= at, "#{instance} was not probed again"
       assert now["checkedAt"] != before[instance]["checkedAt"]
     end
@@ -140,18 +140,18 @@ defmodule T3.Steps.Providers.ProviderInstances do
     Acp.put_provider("grok", %{"enabled" => true})
     # Grok and Codex have been read once already.
     Acp.check("grok")
-    T3.Codex.Provider.load()
-    :persistent_term.erase({T3.Codex.Provider, :models})
+    HalC2.Codex.Provider.load()
+    :persistent_term.erase({HalC2.Codex.Provider, :models})
     Acp.control(ctx, "grok", %{"models" => [["grok-4", "Grok 4"], ["grok-5", "Grok 5"]]})
 
     {_, ctx} =
-      T3.Test.Node.World.call!(ctx, "server.refreshProviders", %{"refreshModels" => true})
+      HalC2.Test.Node.World.call!(ctx, "server.refreshProviders", %{"refreshModels" => true})
 
     ctx
   end
 
   step "Codex and every enabled ACP agent report their models again", context do
-    assert [_ | _] = :persistent_term.get({T3.Codex.Provider, :models}, nil)
+    assert [_ | _] = :persistent_term.get({HalC2.Codex.Provider, :models}, nil)
     assert length(Acp.requests(context, "grok", "session/new")) == 2
 
     assert ["grok-4", "grok-5"] --
@@ -162,20 +162,20 @@ defmodule T3.Steps.Providers.ProviderInstances do
 
   step "the user refreshes the provider {string}", %{args: [id]} = context do
     ctx = context |> Acp.ready() |> Acp.run_as(id, id) |> Acp.run_as("grok", "grok")
-    Node.ensure(T3.ProviderUsageLimits)
-    :ok = T3.ProviderUsageLimits.refresh([])
+    Node.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh([])
     Acp.put_provider("grok", %{"enabled" => true})
     Acp.put_instance(id, %{"driver" => "grok", "enabled" => true})
     Acp.check("grok")
     Acp.check(id)
 
     before = %{
-      "codex" => T3.ProviderUsageLimits.get("codex"),
+      "codex" => HalC2.ProviderUsageLimits.get("codex"),
       "grok" => length(Acp.launches(ctx, "grok")),
       id => length(Acp.launches(ctx, id))
     }
 
-    {_, ctx} = T3.Test.Node.World.call!(ctx, "server.refreshProviders", %{"instanceId" => id})
+    {_, ctx} = HalC2.Test.Node.World.call!(ctx, "server.refreshProviders", %{"instanceId" => id})
     Map.put(ctx, :refreshed, %{before: before})
   end
 
@@ -183,7 +183,7 @@ defmodule T3.Steps.Providers.ProviderInstances do
     before = context.refreshed.before
     assert length(Acp.launches(context, id)) == before[id] + 1
     assert length(Acp.launches(context, "grok")) == before["grok"]
-    assert T3.ProviderUsageLimits.get("codex") == before["codex"]
+    assert HalC2.ProviderUsageLimits.get("codex") == before["codex"]
     context
   end
 
@@ -191,8 +191,8 @@ defmodule T3.Steps.Providers.ProviderInstances do
 
   step "the user enables Grok on one client", context do
     ctx = context |> Acp.ready() |> Acp.run_as("grok", "grok")
-    second = T3.Test.Node.World.client(ctx, "second") |> Node.config(7)
-    ctx = T3.Test.Node.World.put_client(ctx, "second", second)
+    second = HalC2.Test.Node.World.client(ctx, "second") |> Node.config(7)
+    ctx = HalC2.Test.Node.World.put_client(ctx, "second", second)
 
     Acp.write_settings(
       ctx,
@@ -204,7 +204,7 @@ defmodule T3.Steps.Providers.ProviderInstances do
   step "the other client lists Grok as enabled", context do
     {frame, client} =
       Node.await(
-        T3.Test.Node.World.client(context, "second"),
+        HalC2.Test.Node.World.client(context, "second"),
         fn frame ->
           frame["t"] == "config.providers" and
             Enum.any?(frame["providers"], &(&1["instanceId"] == "grok" and &1["enabled"]))
@@ -213,13 +213,13 @@ defmodule T3.Steps.Providers.ProviderInstances do
       )
 
     assert %{"driver" => "grok"} = Enum.find(frame["providers"], &(&1["instanceId"] == "grok"))
-    T3.Test.Node.World.put_client(context, "second", client)
+    HalC2.Test.Node.World.put_client(context, "second", client)
   end
 
   # --- background health checks -------------------------------------------------------
 
   defp tick do
-    pid = Process.whereis(T3.ProviderUsageLimits)
+    pid = Process.whereis(HalC2.ProviderUsageLimits)
     send(pid, :tick)
     # The tick is handled before this call returns.
     :sys.get_state(pid)
@@ -244,16 +244,16 @@ defmodule T3.Steps.Providers.ProviderInstances do
 
   step "the user sets the provider health check interval to {int}", %{args: [ms]} = context do
     ctx = Acp.ready(context)
-    Node.ensure(T3.ProviderUsageLimits)
-    :ok = T3.ProviderUsageLimits.refresh([])
+    Node.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh([])
     health_override(ctx, ms)
   end
 
   step "providers are no longer checked in the background", context do
-    assert T3.ProviderUsageLimits.interval() == :off
-    before = T3.ProviderUsageLimits.get("codex")
+    assert HalC2.ProviderUsageLimits.interval() == :off
+    before = HalC2.ProviderUsageLimits.get("codex")
     tick()
-    assert T3.ProviderUsageLimits.get("codex") == before
+    assert HalC2.ProviderUsageLimits.get("codex") == before
     context
   end
 
@@ -262,12 +262,12 @@ defmodule T3.Steps.Providers.ProviderInstances do
   end
 
   step "providers are checked on the default interval again", context do
-    assert T3.ProviderUsageLimits.interval() ==
-             T3.BackgroundPolicy.settings(%{})["providerHealthRefreshInterval"]
+    assert HalC2.ProviderUsageLimits.interval() ==
+             HalC2.BackgroundPolicy.settings(%{})["providerHealthRefreshInterval"]
 
-    before = T3.ProviderUsageLimits.get("codex")
+    before = HalC2.ProviderUsageLimits.get("codex")
     tick()
-    assert T3.ProviderUsageLimits.get("codex")["checkedAt"] != before["checkedAt"]
+    assert HalC2.ProviderUsageLimits.get("codex")["checkedAt"] != before["checkedAt"]
     context
   end
 
@@ -348,7 +348,7 @@ defmodule T3.Steps.Providers.ProviderInstances do
 
   defp codex_override_applies?(ctx) do
     project_id = Node.World.project(ctx).id
-    T3.Settings.for_project(project_id)["textGenerationModelSelection"] == @codex_override
+    HalC2.Settings.for_project(project_id)["textGenerationModelSelection"] == @codex_override
   end
 
   step "the user changed the settings of the built-in Codex", context do
@@ -385,7 +385,7 @@ defmodule T3.Steps.Providers.ProviderInstances do
   end
 
   step "Codex's settings are back to their defaults", context do
-    settings = T3.Settings.settings()
+    settings = HalC2.Settings.settings()
     assert settings["providers"]["codex"] == %{}
     refute Map.has_key?(settings["providerInstances"], "codex")
     assert codex_override_applies?(context)

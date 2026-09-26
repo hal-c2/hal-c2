@@ -1,4 +1,4 @@
-import { CommandId } from "@t3tools/contracts";
+import { CommandId } from "@hal-c2/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -80,7 +80,7 @@ export interface OrchestrationEffectExecutorV2Shape {
 export class OrchestrationEffectExecutorV2 extends Context.Service<
   OrchestrationEffectExecutorV2,
   OrchestrationEffectExecutorV2Shape
->()("t3/orchestration-v2/EffectWorker/OrchestrationEffectExecutorV2") {}
+>()("hal-c2/orchestration-v2/EffectWorker/OrchestrationEffectExecutorV2") {}
 
 export const executorLayer: Layer.Layer<
   OrchestrationEffectExecutorV2,
@@ -446,7 +446,7 @@ export interface OrchestrationEffectWorkerV2Shape {
 export class OrchestrationEffectWorkerV2 extends Context.Service<
   OrchestrationEffectWorkerV2,
   OrchestrationEffectWorkerV2Shape
->()("t3/orchestration-v2/EffectWorker/OrchestrationEffectWorkerV2") {}
+>()("hal-c2/orchestration-v2/EffectWorker/OrchestrationEffectWorkerV2") {}
 
 export interface OrchestrationEffectWorkerOptions {
   readonly workerId?: string;

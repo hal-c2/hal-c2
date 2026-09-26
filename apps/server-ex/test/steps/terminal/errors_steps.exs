@@ -1,10 +1,10 @@
-defmodule T3.Steps.Terminal.Errors do
+defmodule HalC2.Steps.Terminal.Errors do
   @moduledoc "Steps for `features/terminal/errors.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.{Terminal, World}
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.{Terminal, World}
 
   # --- why a terminal cannot open ------------------------------------------------------------
 
@@ -31,8 +31,8 @@ defmodule T3.Steps.Terminal.Errors do
 
   step "no shell starts", context do
     %{"threadId" => thread, "terminalId" => terminal} = context.terminal
-    assert Registry.lookup(T3.Terminal.Registry, {thread, terminal}) == []
-    refute Enum.any?(T3.Terminal.Hub.summaries(), &(&1["threadId"] == thread))
+    assert Registry.lookup(HalC2.Terminal.Registry, {thread, terminal}) == []
+    refute Enum.any?(HalC2.Terminal.Hub.summaries(), &(&1["threadId"] == thread))
     context
   end
 
@@ -64,12 +64,12 @@ defmodule T3.Steps.Terminal.Errors do
     Terminal.put_env("SHELL", nil)
 
     Application.put_env(
-      :t3,
+      :hal_c2,
       :terminal_shells,
       Enum.map(~w(/bin/zsh /bin/bash /bin/sh), &Terminal.folder(context, &1))
     )
 
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :terminal_shells) end)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :terminal_shells) end)
     context
   end
 
@@ -91,7 +91,7 @@ defmodule T3.Steps.Terminal.Errors do
     assert snapshot["status"] == "error"
 
     assert Enum.any?(
-             T3.Terminal.Hub.summaries(),
+             HalC2.Terminal.Hub.summaries(),
              &match?(%{"threadId" => ^thread, "terminalId" => ^terminal, "status" => "error"}, &1)
            )
 
@@ -144,7 +144,7 @@ defmodule T3.Steps.Terminal.Errors do
        %{args: [path]} = context do
     context = Terminal.ensure(context)
     input = Terminal.input(context, %{"cwd" => Terminal.mkdir(context, path)})
-    assert Registry.lookup(T3.Terminal.Registry, {input["threadId"], input["terminalId"]}) == []
+    assert Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], input["terminalId"]}) == []
     {{:ok, snapshot}, context} = World.call(context, "terminal.restart", input)
     context |> Terminal.put_input(input) |> Map.put(:snapshot, snapshot)
   end
@@ -163,7 +163,7 @@ defmodule T3.Steps.Terminal.Errors do
   step "the request succeeds and nothing changes", context do
     assert {:ok, nil} = context.reply
     %{"threadId" => thread} = context.terminal
-    assert [%{"threadId" => ^thread, "status" => "running"}] = T3.Terminal.Hub.summaries()
+    assert [%{"threadId" => ^thread, "status" => "running"}] = HalC2.Terminal.Hub.summaries()
     context
   end
 
@@ -206,7 +206,7 @@ defmodule T3.Steps.Terminal.Errors do
         World.put_client(context, name, client)
     end
     |> tap(fn %{terminal: t} ->
-      assert Registry.lookup(T3.Terminal.Registry, {t["threadId"], t["terminalId"]}) == []
+      assert Registry.lookup(HalC2.Terminal.Registry, {t["threadId"], t["terminalId"]}) == []
     end)
   end
 

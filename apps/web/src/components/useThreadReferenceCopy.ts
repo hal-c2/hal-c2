@@ -1,5 +1,5 @@
-import type { ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
-import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
+import type { ScopedThreadRef, ThreadPullRequestLink } from "@hal-c2/contracts";
+import { resolveThreadReferenceCopyTarget } from "@hal-c2/shared/threadReference";
 import { useCallback, useMemo } from "react";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";

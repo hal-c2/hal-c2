@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import type { ContextMenuItem } from "@t3tools/contracts";
-import type { T3Shell } from "@t3tools/contracts/shell";
+import type { ContextMenuItem } from "@hal-c2/contracts";
+import type { HalC2Shell } from "@hal-c2/contracts/shell";
 
 import { closeShellContextMenu, showShellContextMenu } from "./shellContextMenu";
 
@@ -21,7 +21,7 @@ const shell = {
   getState: async () => ({}),
   onState: async () => () => {},
   dispatch: async () => {},
-} satisfies T3Shell;
+} satisfies HalC2Shell;
 
 function select(requestId: string, id: string | null) {
   for (const listener of listeners) listener("contextMenu.select", { requestId, id });
@@ -31,7 +31,7 @@ function lastPublished<T>(): T {
   return publish.mock.calls.at(-1)?.[1] as T;
 }
 
-vi.stubGlobal("window", { t3Shell: shell });
+vi.stubGlobal("window", { halc2Shell: shell });
 
 const items: ContextMenuItem<"rename" | "delete">[] = [
   { id: "rename", label: "Rename" },
@@ -41,7 +41,7 @@ const items: ContextMenuItem<"rename" | "delete">[] = [
 afterEach(() => {
   closeShellContextMenu();
   publish.mockClear();
-  vi.stubGlobal("window", { t3Shell: shell });
+  vi.stubGlobal("window", { halc2Shell: shell });
 });
 
 describe("showShellContextMenu", () => {
@@ -111,10 +111,10 @@ describe("showShellContextMenu", () => {
 
   it("namespaces request ids by the calling document", async () => {
     vi.stubGlobal("window", {
-      t3Shell: {
+      halc2Shell: {
         ...shell,
         surfaceId: "rightPanel",
-      } satisfies T3Shell,
+      } satisfies HalC2Shell,
     });
 
     const result = showShellContextMenu(items);

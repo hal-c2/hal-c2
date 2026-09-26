@@ -1,6 +1,6 @@
 # Sources:
 #   apps/desktop-qt/tests/tst_Scenarios.qml (workspace terminal toggle)
-#   apps/desktop-qt/qml/T3/Bricks/Workspace.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml
 
 Feature: Desktop shell scenarios: header
   Executable scenarios for the native desktop header, driven through the shell's test double.

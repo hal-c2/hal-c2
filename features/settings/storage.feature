@@ -1,5 +1,5 @@
 # Sources:
-#   apps/server-ex/lib/t3/storage_cleanup.ex (hourly sweep, worktree rules, browser artifacts)
+#   apps/server-ex/lib/hal_c2/storage_cleanup.ex (hourly sweep, worktree rules, browser artifacts)
 #   apps/web/src/components/settings/StorageSettings.tsx
 #   packages/contracts/src/settings.ts (storageCleanup, project worktree cleanup)
 

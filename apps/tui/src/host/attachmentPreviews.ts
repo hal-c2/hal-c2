@@ -1,4 +1,4 @@
-import type { ImagePreview } from "@t3tools/opentui-image";
+import type { ImagePreview } from "@hal-c2/opentui-image";
 
 import type { TuiClient } from "../connection.ts";
 

@@ -23,4 +23,4 @@ export const ShellSettingsBridge = lazyBridge((b) => b.ShellSettingsBridge);
 export const ShellThemeBridge = lazyBridge((b) => b.ShellThemeBridge);
 export const ShellToastBridge = lazyBridge((b) => b.ShellToastBridge);
 export const ShellWorkspaceBridge = lazyBridge((b) => b.ShellWorkspaceBridge);
-export const T3ShellBridge = lazyBridge((b) => b.T3ShellBridge);
+export const HalC2ShellBridge = lazyBridge((b) => b.HalC2ShellBridge);

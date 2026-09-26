@@ -1,20 +1,20 @@
-defmodule T3.Steps.Settings.Updates do
+defmodule HalC2.Steps.Settings.Updates do
   @moduledoc """
   Steps for features/settings/updates.feature: server updates with progress (the
-  release from `T3.Steps.Settings.HotCodeUpgrade`) and provider updates
-  (`T3.ProviderUpdates`).
+  release from `HalC2.Steps.Settings.HotCodeUpgrade`) and provider updates
+  (`HalC2.ProviderUpdates`).
 
   Providers are fake CLIs under the node's home, laid out the way each installer
-  lays them out, as `T3.ProviderUpdatesTest` does. `--version` prints the version
+  lays them out, as `HalC2.ProviderUpdatesTest` does. `--version` prints the version
   in the file beside the script; an update writes 9.9.9 there. The latest release
   is 9.9.9, as if already read from the registry.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.Settings.HotCodeUpgrade
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Steps.Settings.HotCodeUpgrade
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @latest "9.9.9"
   @drivers %{"Codex" => "codex", "Claude" => "claudeAgent"}
@@ -63,7 +63,7 @@ defmodule T3.Steps.Settings.Updates do
            ] = Enum.take(context.update_frames, -2)
 
     assert %{"targetVersion" => "1.4.0", "method" => "hot-upgrade"} = result
-    assert T3.Upgrade.version() == "1.4.0"
+    assert HalC2.Upgrade.version() == "1.4.0"
     context
   end
 
@@ -72,7 +72,7 @@ defmodule T3.Steps.Settings.Updates do
     context = HotCodeUpgrade.running_release(context)
     {:ok, listen} = :gen_tcp.listen(0, [:binary, ip: {127, 0, 0, 1}, active: false])
     {:ok, port} = :inet.port(listen)
-    World.put_env("T3_UPGRADE_URL", "http://127.0.0.1:#{port}/{version}.tar.gz")
+    World.put_env("HALC2_UPGRADE_URL", "http://127.0.0.1:#{port}/{version}.tar.gz")
 
     {client, id} = start_update(Node.connect(context.node), "1.4.0")
 
@@ -90,7 +90,7 @@ defmodule T3.Steps.Settings.Updates do
   step "the second update is refused", context do
     assert {:error, "ServerSelfUpdateError", %{"reason" => reason}} = context.reply
     assert reason =~ "already in progress"
-    assert T3.Upgrade.version() == "1.3.0"
+    assert HalC2.Upgrade.version() == "1.3.0"
     context
   end
 
@@ -141,7 +141,7 @@ defmodule T3.Steps.Settings.Updates do
 
   step "Codex is not installed", context do
     context = setup_providers(context)
-    World.put_app_env(:codex_command, ["t3-test-no-codex"])
+    World.put_app_env(:codex_command, ["hal-c2-test-no-codex"])
     context
   end
 
@@ -157,7 +157,7 @@ defmodule T3.Steps.Settings.Updates do
       |> install("Codex", "a global npm install")
       |> World.update_settings(%{"enableProviderUpdateChecks" => false})
 
-    assert T3.Settings.settings()["enableProviderUpdateChecks"] == false
+    assert HalC2.Settings.settings()["enableProviderUpdateChecks"] == false
     context
   end
 
@@ -171,7 +171,7 @@ defmodule T3.Steps.Settings.Updates do
     assert advisory["status"] == "unknown"
     assert advisory["latestVersion"] == nil
     assert advisory["currentVersion"] == "0.1.0"
-    refute :persistent_term.get({T3.ProviderUpdates, "codex", :reading}, false)
+    refute :persistent_term.get({HalC2.ProviderUpdates, "codex", :reading}, false)
     context
   end
 
@@ -199,11 +199,11 @@ defmodule T3.Steps.Settings.Updates do
 
   # A fresh provider state: no cached versions, the latest release already read.
   defp setup_providers(context) do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
 
     keys =
-      [{T3.Codex.Provider, :version}, {T3.Claude.Provider, :version}] ++
-        for driver <- Map.values(@drivers), do: {T3.ProviderUpdates, driver}
+      [{HalC2.Codex.Provider, :version}, {HalC2.Claude.Provider, :version}] ++
+        for driver <- Map.values(@drivers), do: {HalC2.ProviderUpdates, driver}
 
     Enum.each(keys, &:persistent_term.erase/1)
     ExUnit.Callbacks.on_exit(fn -> Enum.each(keys, &:persistent_term.erase/1) end)
@@ -211,7 +211,7 @@ defmodule T3.Steps.Settings.Updates do
     for driver <- Map.values(@drivers),
         do:
           :persistent_term.put(
-            {T3.ProviderUpdates, driver},
+            {HalC2.ProviderUpdates, driver},
             {@latest, System.monotonic_time(:millisecond)}
           )
 

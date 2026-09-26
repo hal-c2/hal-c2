@@ -1,4 +1,4 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@hal-c2/contracts";
 import { useSyncExternalStore } from "react";
 
 /**
@@ -9,7 +9,7 @@ import { useSyncExternalStore } from "react";
  * re-render the ghost.
  */
 
-export const THREAD_CONTEXT_DROP_EVENT = "t3-thread-context-drop";
+export const THREAD_CONTEXT_DROP_EVENT = "hal-c2-thread-context-drop";
 const DROP_TARGET_ATTRIBUTE = "data-thread-context-drop";
 const DROP_OVER_ATTRIBUTE = "data-thread-context-over";
 

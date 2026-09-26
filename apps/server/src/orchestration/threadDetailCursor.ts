@@ -1,4 +1,4 @@
-import type { ThreadId } from "@t3tools/contracts";
+import type { ThreadId } from "@hal-c2/contracts";
 
 /**
  * Opaque, exclusive cursor for windowed thread detail reads. Encodes the thread

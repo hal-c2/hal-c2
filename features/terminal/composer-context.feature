@@ -3,7 +3,7 @@
 #   apps/web/src/lib/terminalContext.ts (normalizeTerminalContextSelection, formatTerminalContextLabel, expired contexts)
 #   apps/web/src/components/ThreadTerminalDrawer.tsx (terminalSelectionMenuItems, terminalContextMenuItems)
 #   apps/web/src/composerDraftStore.ts (terminalContexts on drafts, legacy placeholder migration)
-#   apps/desktop-qt/qml/T3/Bricks/Composer.qml (terminal selection chips, composer.terminalContext.remove)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (terminal selection chips, composer.terminalContext.remove)
 #   apps/tui/src/features.backlog.test.ts (terminal-session-actions, composer context chips)
 #   Cross-domain: composer/context-references.feature owns how chips sit inside the prompt and
 #   reach the provider; this file owns getting terminal output into the draft.

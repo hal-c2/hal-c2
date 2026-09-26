@@ -1,10 +1,10 @@
-defmodule T3.Steps.Terminal.Reconnect do
+defmodule HalC2.Steps.Terminal.Reconnect do
   @moduledoc "Steps for `features/terminal/reconnect.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.{Terminal, World}
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.{Terminal, World}
 
   # --- attaching replays history, then streams --------------------------------------
 
@@ -51,7 +51,7 @@ defmodule T3.Steps.Terminal.Reconnect do
   step "the thread has no terminal {string}", %{args: [terminal]} = context do
     context = Terminal.ensure(context)
     input = Terminal.input(context, %{"terminalId" => terminal})
-    assert Registry.lookup(T3.Terminal.Registry, {input["threadId"], terminal}) == []
+    assert Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], terminal}) == []
     context
   end
 
@@ -431,14 +431,14 @@ defmodule T3.Steps.Terminal.Reconnect do
         "cwd" => Terminal.mkdir(context, "/work/peer")
       })
 
-    {:ok, _} = :erpc.call(peer, T3.Terminal, :open, [input])
+    {:ok, _} = :erpc.call(peer, HalC2.Terminal, :open, [input])
 
     # Something printed there before anyone attaches.
     Task.async(fn ->
-      {:ok, _} = :erpc.call(peer, T3.Terminal, :attach, [input, self()])
+      {:ok, _} = :erpc.call(peer, HalC2.Terminal, :attach, [input, self()])
 
       {:ok, nil} =
-        :erpc.call(peer, T3.Terminal, :write, [Map.put(input, "data", "echo p''eer-history\n")])
+        :erpc.call(peer, HalC2.Terminal, :write, [Map.put(input, "data", "echo p''eer-history\n")])
 
       await_peer_output(line("peer-history"), "")
     end)
@@ -458,7 +458,7 @@ defmodule T3.Steps.Terminal.Reconnect do
     assert context.snapshot["history"] =~ line("peer-history")
     assert context.snapshot["cwd"] == context.terminal["cwd"]
     data = Map.put(attach_input(context), "data", "echo l''ive-from-peer\n")
-    {:ok, nil} = :erpc.call(context.peer, T3.Terminal, :write, [data])
+    {:ok, nil} = :erpc.call(context.peer, HalC2.Terminal, :write, [data])
     {_, _, context} = Terminal.await_output(context, "default", line("live-from-peer"))
     context
   end
@@ -489,7 +489,7 @@ defmodule T3.Steps.Terminal.Reconnect do
   defp refute_running(input),
     do:
       assert(
-        Registry.lookup(T3.Terminal.Registry, {input["threadId"], input["terminalId"]}) == []
+        Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], input["terminalId"]}) == []
       )
 
   # Opens the scenario's terminal and attaches the named clients.
@@ -557,11 +557,11 @@ defmodule T3.Steps.Terminal.Reconnect do
 
   defp await_peer_output(pattern, acc) do
     receive do
-      {:t3_terminal, _key, %{"type" => "output", "data" => data}} ->
+      {:halc2_terminal, _key, %{"type" => "output", "data" => data}} ->
         acc = acc <> data
         if acc =~ pattern, do: acc, else: await_peer_output(pattern, acc)
 
-      {:t3_terminal, _key, _event} ->
+      {:halc2_terminal, _key, _event} ->
         await_peer_output(pattern, acc)
     after
       5_000 -> flunk("no #{inspect(pattern)} from the peer in #{inspect(acc)}")

@@ -1,4 +1,4 @@
-defmodule T3.Steps.Orchestration.AgentSessionImport do
+defmodule HalC2.Steps.Orchestration.AgentSessionImport do
   @moduledoc """
   Steps for `features/node/orchestration/agent-session-import.feature`.
 
@@ -10,12 +10,12 @@ defmodule T3.Steps.Orchestration.AgentSessionImport do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   @day 24 * 60 * 60
 
   step "Claude Code and Codex transcripts exist on this machine", context do
-    root = Path.join(System.tmp_dir!(), "t3-agent-home-#{System.unique_integer([:positive])}")
+    root = Path.join(System.tmp_dir!(), "hal-c2-agent-home-#{System.unique_integer([:positive])}")
     File.mkdir_p!(Path.join(root, ".claude/projects"))
     File.mkdir_p!(Path.join(root, ".codex/sessions"))
 
@@ -87,11 +87,11 @@ defmodule T3.Steps.Orchestration.AgentSessionImport do
         "a folder under Downloads" ->
           Path.join([System.user_home!(), "Downloads", "unpacked"])
 
-        "the T3 home" ->
+        "the HAL-C2 home" ->
           context.node.home
 
-        "a T3 worktree" ->
-          mkdir(Path.join(context.agent_home, ".t3/worktrees/app/t3code-1a2b"))
+        "a HAL-C2 worktree" ->
+          mkdir(Path.join(context.agent_home, ".hal-c2/worktrees/app/hal-c2-1a2b"))
 
         "a linked git worktree" ->
           main = mkdir(dir(context, "~/code/main"))
@@ -115,14 +115,14 @@ defmodule T3.Steps.Orchestration.AgentSessionImport do
   end
 
   # Shared with projects.feature, whose `~` is the scenario's `$HOME`
-  # (`T3.Test.Node.Host`) rather than the agents' home (`context.agent_home`).
+  # (`HalC2.Test.Node.Host`) rather than the agents' home (`context.agent_home`).
   step "project {string} has the folder {string}", %{args: [title, folder]} = context do
     if context[:agent_home] do
       path = mkdir(dir(context, folder))
       session(context, path, source: "claude")
       project(context, title, path)
     else
-      T3.Test.Node.Host.home(context)
+      HalC2.Test.Node.Host.home(context)
 
       World.create_project(context, title, %{
         "workspaceRoot" => folder,
@@ -153,7 +153,7 @@ defmodule T3.Steps.Orchestration.AgentSessionImport do
        %{args: [candidate]} = context do
     [%{"git" => git}] = Enum.filter(context.scan["candidates"], &(&1["title"] == candidate))
     assert git == %{"remoteKey" => "github.com/acme/app", "repository" => "Acme/App"}
-    assert T3.AgentSessions.remote_key("git@github.com:acme/app.git") == git["remoteKey"]
+    assert HalC2.AgentSessions.remote_key("git@github.com:acme/app.git") == git["remoteKey"]
     context
   end
 
@@ -200,10 +200,10 @@ defmodule T3.Steps.Orchestration.AgentSessionImport do
 
     for {id, row} <- threads do
       assert row["settledOverride"] == "settled"
-      state = T3.Streams.Server.state(T3.Streams.ensure(id))
-      assert T3.StreamState.get(state, "thread")[id]["createdBy"] == "system"
+      state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
+      assert HalC2.StreamState.get(state, "thread")[id]["createdBy"] == "system"
 
-      assert state |> T3.StreamState.list("message") |> Enum.map(&{&1["role"], &1["text"]}) ==
+      assert state |> HalC2.StreamState.list("message") |> Enum.map(&{&1["role"], &1["text"]}) ==
                [{"user", "Fix the login bug"}, {"assistant", "Fixed it."}]
     end
 
@@ -212,8 +212,8 @@ defmodule T3.Steps.Orchestration.AgentSessionImport do
 
   step "each is marked as imported history", context do
     for {id, _row} <- imported(context, "demo") do
-      state = T3.Streams.Server.state(T3.Streams.ensure(id))
-      assert T3.StreamState.get(state, "thread")[id]["historyOrigin"] == "v1_import"
+      state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
+      assert HalC2.StreamState.get(state, "thread")[id]["historyOrigin"] == "v1_import"
     end
 
     context
@@ -275,7 +275,7 @@ defmodule T3.Steps.Orchestration.AgentSessionImport do
     seqs =
       for {id, _} <- imported(context, title),
           into: %{},
-          do: {id, T3.Streams.Server.state(T3.Streams.ensure(id)).seq}
+          do: {id, HalC2.Streams.Server.state(HalC2.Streams.ensure(id)).seq}
 
     Map.put(context, :imported_seqs, seqs)
   end
@@ -292,7 +292,7 @@ defmodule T3.Steps.Orchestration.AgentSessionImport do
 
     for {id, _} <- threads,
         do:
-          assert(T3.Streams.Server.state(T3.Streams.ensure(id)).seq == context.imported_seqs[id])
+          assert(HalC2.Streams.Server.state(HalC2.Streams.ensure(id)).seq == context.imported_seqs[id])
 
     context
   end
@@ -456,7 +456,7 @@ defmodule T3.Steps.Orchestration.AgentSessionImport do
     elsewhere = mkdir(dir(context, "~/code/moved"))
 
     {:ok, _} =
-      T3.Projects.mutate(%{
+      HalC2.Projects.mutate(%{
         "type" => "project.update",
         "projectId" => World.project(context, title).id,
         "workspaceRoot" => elsewhere
@@ -542,7 +542,7 @@ defmodule T3.Steps.Orchestration.AgentSessionImport do
 
   defp await_rows(project, count, deadline) do
     rows =
-      for {{node, id}, {"thread", row}} <- T3.Shell.rows(),
+      for {{node, id}, {"thread", row}} <- HalC2.Shell.rows(),
           node == node() and row["projectId"] == project,
           do: {id, row}
 
@@ -550,7 +550,7 @@ defmodule T3.Steps.Orchestration.AgentSessionImport do
       rows
     else
       receive do
-        {:t3_shell, _} -> await_rows(project, count, deadline)
+        {:halc2_shell, _} -> await_rows(project, count, deadline)
       after
         max(deadline - System.monotonic_time(:millisecond), 0) ->
           flunk("expected #{count} imported threads, found #{length(rows)}")
@@ -561,8 +561,8 @@ defmodule T3.Steps.Orchestration.AgentSessionImport do
   defp messages(context) do
     [{id, _}] = imported(context, "demo")
 
-    T3.Streams.Server.state(T3.Streams.ensure(id))
-    |> T3.StreamState.list("message")
+    HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
+    |> HalC2.StreamState.list("message")
     |> Enum.sort_by(& &1["id"])
   end
 
@@ -577,7 +577,7 @@ defmodule T3.Steps.Orchestration.AgentSessionImport do
   defp session(context, cwd, opts) do
     source = Keyword.fetch!(opts, :source)
     mtime = Keyword.get(opts, :mtime, System.os_time(:second))
-    id = Keyword.get(opts, :id, T3.Environment.uuid4())
+    id = Keyword.get(opts, :id, HalC2.Environment.uuid4())
     n = System.unique_integer([:positive])
 
     {path, records} =

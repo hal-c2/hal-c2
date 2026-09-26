@@ -5,7 +5,7 @@ import {
   EnvironmentId,
   MessageId,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { appendPendingThreadMessages } from "./pending-thread-feed";
 
@@ -29,7 +29,7 @@ describe("pending timeline messages", () => {
       path: "src/Checkout.tsx",
     };
     const context = { version: 1 as const, records: [record] };
-    const text = "[Checkout.tsx](t3-context://v1/mention/setup-file)";
+    const text = "[Checkout.tsx](hal-c2-context://v1/mention/setup-file)";
     const entries = appendPendingThreadMessages([], [], [{ ...pending("context"), text, context }]);
     const entry = entries[0];
     expect(entry?.type).toBe("message");

@@ -1,15 +1,15 @@
-defmodule T3.Steps.Providers.PermissionModes do
+defmodule HalC2.Steps.Providers.PermissionModes do
   @moduledoc """
   Steps for `features/providers/permission-modes.feature`: how a thread's runtime and
   interaction modes reach each provider (read from what the fakes were started with
-  and sent, `T3.Test.Node.World.provider_log/2`), approvals, and delegated children.
+  and sent, `HalC2.Test.Node.World.provider_log/2`), approvals, and delegated children.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @thread "Work"
   @instances %{
@@ -29,7 +29,7 @@ defmodule T3.Steps.Providers.PermissionModes do
   # --- defaults for new threads ---------------------------------------------------------------
 
   step "no default permission mode is set", context do
-    {settings, _} = T3.Settings.get()
+    {settings, _} = HalC2.Settings.get()
     refute settings["defaultRuntimeMode"]
     context
   end
@@ -364,7 +364,7 @@ defmodule T3.Steps.Providers.PermissionModes do
     assert [%{"approvalPolicy" => "untrusted"}] = turn_starts(context)
     # The running turn ends as it started; the next one picks up the change.
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "run.interrupt",
         "threadId" => World.thread_id(context, @thread)
       })
@@ -387,7 +387,7 @@ defmodule T3.Steps.Providers.PermissionModes do
   step "the next turn runs in auto-accept edits", context do
     # The delegating turn that "a supervised thread" left running ends first.
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "run.interrupt",
         "threadId" => World.thread_id(context, @thread)
       })
@@ -459,7 +459,7 @@ defmodule T3.Steps.Providers.PermissionModes do
 
   defp set_mode(context, type, fields) do
     {:ok, _} =
-      T3.Orchestration.dispatch(
+      HalC2.Orchestration.dispatch(
         Map.merge(
           %{
             "type" => type,
@@ -479,7 +479,7 @@ defmodule T3.Steps.Providers.PermissionModes do
     context
   end
 
-  # A Codex thread whose turn is running, so its agent can call T3 Code's tools.
+  # A Codex thread whose turn is running, so its agent can call HAL-C2's tools.
   defp running(context, fields) do
     context =
       context
@@ -487,14 +487,14 @@ defmodule T3.Steps.Providers.PermissionModes do
       |> World.launch_on(@thread, "codex", "wait for me", fields)
 
     World.await_running(context, @thread)
-    Node.ensure(T3.Mcp)
-    :ok = T3.Shell.subscribe(self())
+    Node.ensure(HalC2.Mcp)
+    :ok = HalC2.Shell.subscribe(self())
     World.await_row(World.thread_id(context, @thread), & &1)
     context
   end
 
   defp delegate(context, modes) do
-    %{authorization: auth} = T3.Mcp.server(World.thread_id(context, @thread), "codex")
+    %{authorization: auth} = HalC2.Mcp.server(World.thread_id(context, @thread), "codex")
 
     body =
       JSON.encode!(%{
@@ -508,7 +508,7 @@ defmodule T3.Steps.Providers.PermissionModes do
       })
 
     result =
-      case T3.Mcp.handle(auth, body) do
+      case HalC2.Mcp.handle(auth, body) do
         {200, %{"result" => %{"isError" => true, "content" => [%{"text" => text}]}}} ->
           {:error, text}
 

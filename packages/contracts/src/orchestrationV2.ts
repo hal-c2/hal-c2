@@ -287,9 +287,9 @@ export type OrchestrationV2CheckpointCapabilities =
 
 export const OrchestrationV2RuntimePolicyCapabilities = Schema.Struct({
   /**
-   * Where T3 runtime modes are actually enforced. "native" providers receive
+   * Where HAL-C2 runtime modes are actually enforced. "native" providers receive
    * the approval and sandbox policy each turn and confine their own execution.
-   * "client-boundary" providers only have policy applied where T3 mediates the
+   * "client-boundary" providers only have policy applied where HAL-C2 mediates the
    * work (permission requests and client fs/terminal handlers); provider-owned
    * execution is not confined, so sandbox guarantees are reduced.
    */

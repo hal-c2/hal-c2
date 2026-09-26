@@ -4,8 +4,8 @@ import { findUnresolvedTuiBundleImport } from "./tuiBundle.ts";
 
 describe("findUnresolvedTuiBundleImport", () => {
   it("rejects private workspace imports left in the release bundle", () => {
-    expect(findUnresolvedTuiBundleImport('import { x } from "@t3tools/contracts";')).toBe(
-      "@t3tools/contracts",
+    expect(findUnresolvedTuiBundleImport('import { x } from "@hal-c2/contracts";')).toBe(
+      "@hal-c2/contracts",
     );
   });
 
@@ -26,11 +26,9 @@ describe("findUnresolvedTuiBundleImport", () => {
   });
 
   it("rejects bare imports and re-exports of private workspace packages", () => {
-    expect(findUnresolvedTuiBundleImport('import "@t3tools/contracts";')).toBe(
-      "@t3tools/contracts",
-    );
-    expect(findUnresolvedTuiBundleImport('export { value } from "@t3tools/shared/model";')).toBe(
-      "@t3tools/shared/model",
+    expect(findUnresolvedTuiBundleImport('import "@hal-c2/contracts";')).toBe("@hal-c2/contracts");
+    expect(findUnresolvedTuiBundleImport('export { value } from "@hal-c2/shared/model";')).toBe(
+      "@hal-c2/shared/model",
     );
   });
 

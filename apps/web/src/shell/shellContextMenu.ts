@@ -1,5 +1,5 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
-import type { ShellContextMenuItem } from "@t3tools/contracts/shell";
+import type { ContextMenuItem } from "@hal-c2/contracts";
+import type { ShellContextMenuItem } from "@hal-c2/contracts/shell";
 
 import { decodeShellAction } from "./useShellActions";
 
@@ -8,9 +8,9 @@ const pending = new Map<string, (id: string | null) => void>();
 let listening = false;
 
 function ensureListener(): void {
-  if (listening || !window.t3Shell) return;
+  if (listening || !window.halc2Shell) return;
   listening = true;
-  void window.t3Shell.onAction((type, payload) => {
+  void window.halc2Shell.onAction((type, payload) => {
     const action = decodeShellAction(type, payload);
     if (action === null || action.type !== "contextMenu.select") return;
     const resolve = pending.get(action.requestId);
@@ -55,7 +55,7 @@ export function showShellContextMenu<T extends string>(
   items: readonly ContextMenuItem<T>[],
   position?: { x: number; y: number; surface?: string },
 ): Promise<T | null> {
-  const shell = window.t3Shell;
+  const shell = window.halc2Shell;
   if (!shell) return Promise.resolve(null);
   ensureListener();
   closeShellContextMenu();

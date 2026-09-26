@@ -1,10 +1,10 @@
-defmodule T3.Steps.SourceControl.StatusAndChanges do
+defmodule HalC2.Steps.SourceControl.StatusAndChanges do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.SourceControl.Shared
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   defp git(context, args), do: World.git!(context.cwd, args)
 
@@ -118,7 +118,7 @@ defmodule T3.Steps.SourceControl.StatusAndChanges do
   # --- background fetches -----------------------------------------------------------
 
   defp fetch_interval(context, seconds) do
-    Node.ensure(T3.BackgroundPolicy)
+    Node.ensure(HalC2.BackgroundPolicy)
 
     World.put_settings(context, %{
       "backgroundActivity" => %{
@@ -133,7 +133,7 @@ defmodule T3.Steps.SourceControl.StatusAndChanges do
   defp show(context, in_front?) do
     context = World.watch_vcs(context, context.cwd)
 
-    T3.BackgroundPolicy.report_client_activity("session", self(), %{
+    HalC2.BackgroundPolicy.report_client_activity("session", self(), %{
       "clientId" => "client-1",
       "clientKind" => "web",
       "visible" => in_front?,
@@ -142,14 +142,14 @@ defmodule T3.Steps.SourceControl.StatusAndChanges do
     })
 
     # Leases are cast; a call behind it sees the lease in place.
-    assert T3.BackgroundPolicy.snapshot()["activeForegroundLeaseCount"] ==
+    assert HalC2.BackgroundPolicy.snapshot()["activeForegroundLeaseCount"] ==
              if(in_front?, do: 1, else: 0)
 
     context
   end
 
   defp watcher(context) do
-    [{pid, _}] = Registry.lookup(T3.Vcs.Registry, context.cwd)
+    [{pid, _}] = Registry.lookup(HalC2.Vcs.Registry, context.cwd)
     pid
   end
 

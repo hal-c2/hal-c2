@@ -1,8 +1,8 @@
-defmodule T3.Steps.SourceControl.RefsAndBranches do
+defmodule HalC2.Steps.SourceControl.RefsAndBranches do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   defp git(context, args), do: World.git!(context.cwd, args)
 

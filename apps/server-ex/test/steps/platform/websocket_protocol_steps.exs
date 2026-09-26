@@ -1,16 +1,16 @@
-defmodule T3.Steps.Platform.WebsocketProtocol do
+defmodule HalC2.Steps.Platform.WebsocketProtocol do
   @moduledoc "Steps for `features/node/platform/websocket-protocol.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
-  alias T3.Test.WsClient
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
+  alias HalC2.Test.WsClient
 
   # --- greeting and credentials ---------------------------------------------------------
 
   step "the client opens a socket with a valid credential", context do
-    {:ok, client} = WsClient.connect(context.node.port, "/ws?token=#{T3.Web.token()}")
+    {:ok, client} = WsClient.connect(context.node.port, "/ws?token=#{HalC2.Web.token()}")
     {hello, client} = WsClient.recv(client, 1_000)
     context |> Map.put(:hello, hello) |> World.put_client(client)
   end
@@ -30,7 +30,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
   end
 
   step "the client minted a socket ticket", context do
-    {:ok, ticket, _expires} = T3.Auth.issue_ticket(context.access_token)
+    {:ok, ticket, _expires} = HalC2.Auth.issue_ticket(context.access_token)
     Map.put(context, :ticket, ticket)
   end
 
@@ -58,7 +58,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
     # Four rows of 100 KB: more than one 256 KB snapshot part.
     big = String.duplicate("x", 100_000)
     changes = for i <- 1..4, do: {"note", "n#{i}", %{"s" => %{"text" => big}}}
-    {:ok, seq} = T3.Streams.commit(stream, :thread, changes)
+    {:ok, seq} = HalC2.Streams.commit(stream, :thread, changes)
     client = World.client(context) |> sub(1, stream)
     context |> Map.merge(%{stream: stream, seq: seq}) |> World.put_client(client)
   end
@@ -80,7 +80,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
   end
 
   step "later changes arrive live as events", context do
-    {:ok, seq} = T3.Streams.commit(context.stream, :thread, [note("later")])
+    {:ok, seq} = HalC2.Streams.commit(context.stream, :thread, [note("later")])
     {frame, client} = Node.await(World.client(context), &(&1["t"] == "events"))
     assert [[^seq, "note", _, %{"s" => %{"text" => "later"}}, _]] = frame["events"]
     World.put_client(context, client)
@@ -88,7 +88,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
 
   step "the client saw a thread up to some offset and disconnected", context do
     stream = stream_id()
-    {:ok, _} = T3.Streams.commit(stream, :thread, [note("first")])
+    {:ok, _} = HalC2.Streams.commit(stream, :thread, [note("first")])
     client = Node.connect(context.node) |> sub(1, stream)
     {%{"offset" => offset}, client} = Node.await(client, &(&1["t"] == "live"))
     Mint.HTTP.close(client.conn)
@@ -97,14 +97,14 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
 
   step "fewer than 2000 events were written since", context do
     {:ok, last} =
-      T3.Streams.commit(context.stream, :thread, for(i <- 1..5, do: note("missed #{i}")))
+      HalC2.Streams.commit(context.stream, :thread, for(i <- 1..5, do: note("missed #{i}")))
 
     Map.put(context, :missed, Enum.to_list((context.offset + 1)..last))
   end
 
   step "more than 2000 events were written since", context do
     {:ok, last} =
-      T3.Streams.commit(context.stream, :thread, for(i <- 1..2_001, do: note("n#{i}")))
+      HalC2.Streams.commit(context.stream, :thread, for(i <- 1..2_001, do: note("n#{i}")))
 
     Map.put(context, :seq, last)
   end
@@ -145,7 +145,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
     seqs =
       for i <- 1..3 do
         {:ok, seq} =
-          T3.Streams.commit(context.stream, :thread, [
+          HalC2.Streams.commit(context.stream, :thread, [
             {"note", "big#{i}", %{"s" => %{"text" => three_mb}}}
           ])
 
@@ -184,7 +184,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
     seqs =
       for i <- 1..10 do
         {:ok, seq} =
-          T3.Streams.commit(context.stream, :thread, [
+          HalC2.Streams.commit(context.stream, :thread, [
             {"message", "m1", %{"a" => %{"text" => "part#{i} "}}}
           ])
 
@@ -211,7 +211,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
     {frame, client} = Node.await(World.client(context), &(&1["t"] == "error"))
     assert frame == %{"t" => "error", "id" => 2, "reason" => "already subscribed"}
 
-    {:ok, seq} = T3.Streams.commit(context.stream, :thread, [note("still here")])
+    {:ok, seq} = HalC2.Streams.commit(context.stream, :thread, [note("still here")])
     {events, client} = Node.await(client, &(&1["t"] == "events"))
     assert %{"id" => 1, "events" => [[^seq | _]]} = events
     World.put_client(context, client)
@@ -219,7 +219,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
 
   step "the client follows two threads", context do
     [first, second] = for _ <- 1..2, do: stream_id()
-    for s <- [first, second], do: {:ok, _} = T3.Streams.commit(s, :thread, [note("hi")])
+    for s <- [first, second], do: {:ok, _} = HalC2.Streams.commit(s, :thread, [note("hi")])
     client = World.client(context) |> sub(1, first) |> sub(2, second)
 
     {_, client} =
@@ -240,8 +240,8 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
 
   step "both threads change", context do
     [first, second] = context.streams
-    {:ok, _} = T3.Streams.commit(first, :thread, [note("dropped")])
-    {:ok, seq} = T3.Streams.commit(second, :thread, [note("kept")])
+    {:ok, _} = HalC2.Streams.commit(first, :thread, [note("dropped")])
+    {:ok, seq} = HalC2.Streams.commit(second, :thread, [note("kept")])
     Map.put(context, :seq, seq)
   end
 
@@ -254,7 +254,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
   end
 
   step "the second thread keeps streaming", context do
-    {:ok, seq} = T3.Streams.commit(List.last(context.streams), :thread, [note("more")])
+    {:ok, seq} = HalC2.Streams.commit(List.last(context.streams), :thread, [note("more")])
 
     {frame, _, client} =
       WsClient.recv_until(World.client(context), &(&1["t"] == "events" and &1["id"] == 2))
@@ -266,7 +266,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
   # --- config, keybindings, shell and scheduled tasks -----------------------------------
 
   step "two clients follow the node's config", context do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
 
     context
     |> World.put_client("first", Node.connect(context.node) |> Node.config())
@@ -274,13 +274,13 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
   end
 
   step "the first client writes settings at the version it read", context do
-    {%{"version" => version}, context} = World.call!(context, "t3.readSettings", %{}, "first")
+    {%{"version" => version}, context} = World.call!(context, "halc2.readSettings", %{}, "first")
     doc = %{"enableAssistantStreaming" => false}
 
     {%{"version" => next}, context} =
       World.call!(
         context,
-        "t3.writeSettings",
+        "halc2.writeSettings",
         %{"settings" => doc, "version" => version},
         "first"
       )
@@ -299,20 +299,20 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
 
   step "a write from the second client at the old version is refused as stale", context do
     payload = %{"settings" => %{}, "version" => context.version}
-    {reply, context} = World.call(context, "t3.writeSettings", payload, "second")
+    {reply, context} = World.call(context, "halc2.writeSettings", payload, "second")
     assert {:error, "settings changed", %{"_tag" => "StaleSettings"}} = reply
     context
   end
 
   step "the client follows the node's config", context do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     World.put_client(context, Node.config(World.client(context)))
   end
 
   step "it adds a keybinding and then removes it", context do
     rule = %{"key" => "mod+j", "command" => "terminal.toggle"}
-    {added, context} = keybinding(context, "t3.upsertKeybinding", rule)
-    {removed, context} = keybinding(context, "t3.removeKeybinding", rule)
+    {added, context} = keybinding(context, "halc2.upsertKeybinding", rule)
+    {removed, context} = keybinding(context, "halc2.removeKeybinding", rule)
     Map.merge(context, %{rule: rule, changes: [added, removed]})
   end
 
@@ -333,7 +333,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
 
     context =
       if method == "server.removeKeybinding",
-        do: context |> keybinding("t3.upsertKeybinding", rule) |> elem(1),
+        do: context |> keybinding("halc2.upsertKeybinding", rule) |> elem(1),
         else: context
 
     {change, context} = keybinding(context, method, rule)
@@ -396,7 +396,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
   end
 
   step "the client follows the node's scheduled tasks", context do
-    Node.ensure(T3.ScheduledTasks)
+    Node.ensure(HalC2.ScheduledTasks)
     shape = %{"type" => "scheduledTasks", "node" => Atom.to_string(node())}
     client = World.client(context) |> Node.sub(1, shape)
     {%{"tasks" => []}, client} = Node.await(client, &(&1["t"] == "scheduledTasks"))
@@ -464,7 +464,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
   end
 
   step "the socket stays open for other calls", context do
-    {result, context} = World.call!(context, "t3.readSettings")
+    {result, context} = World.call!(context, "halc2.readSettings")
     assert %{"settings" => _, "version" => _} = result
     context
   end
@@ -477,7 +477,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
   end
 
   step "a client sends any node name it likes", context do
-    name = "t3made#{System.unique_integer([:positive])}@nowhere"
+    name = "halc2made#{System.unique_integer([:positive])}@nowhere"
     assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
 
     client =
@@ -498,7 +498,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
 
     # Its own name is one it knows.
     stream = stream_id()
-    {:ok, _} = T3.Streams.commit(stream, :thread, [note("hi")])
+    {:ok, _} = HalC2.Streams.commit(stream, :thread, [note("hi")])
     client = World.client(context) |> sub(3, stream)
     {_, client} = Node.await(client, &(&1["t"] == "live" and &1["id"] == 3))
     World.put_client(context, client)
@@ -515,15 +515,15 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
   end
 
   step "it calls an RPC that takes a long time", context do
-    settings = Node.ensure(T3.Settings)
+    settings = Node.ensure(HalC2.Settings)
     :ok = :sys.suspend(settings)
     ExUnit.Callbacks.on_exit(fn -> resume(settings) end)
-    client = Node.rpc(World.client(context), context.node.environment, 99, "t3.readSettings", %{})
+    client = Node.rpc(World.client(context), context.node.environment, 99, "halc2.readSettings", %{})
     context |> Map.put(:settings_pid, settings) |> World.put_client(client)
   end
 
   step "events for the thread keep arriving while the call runs", context do
-    {:ok, seq} = T3.Streams.commit(context.stream, :thread, [note("while waiting")])
+    {:ok, seq} = HalC2.Streams.commit(context.stream, :thread, [note("while waiting")])
 
     {frame, skipped, client} =
       WsClient.recv_until(World.client(context), &(&1["t"] == "events" and &1["id"] == 1))
@@ -555,37 +555,37 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
 
   step "the second node runs it", context do
     b = context.peer
-    server = :erpc.call(b, T3.Streams, :ensure, [context.thread])
+    server = :erpc.call(b, HalC2.Streams, :ensure, [context.thread])
     assert node(server) == b
-    thread = T3.StreamState.get(:erpc.call(b, T3.Streams.Server, :state, [server]), "thread")
+    thread = HalC2.StreamState.get(:erpc.call(b, HalC2.Streams.Server, :state, [server]), "thread")
     assert %{"title" => "On the second node"} = thread[context.thread]
     # Nothing of it ran here.
-    assert Registry.lookup(T3.Streams.Registry, context.thread) == []
+    assert Registry.lookup(HalC2.Streams.Registry, context.thread) == []
     context
   end
 
   step "the answer comes back over the client's one socket", context do
     assert {:ok, %{} = _result} = context.reply
     # The same socket still serves this node.
-    {_, context} = World.call!(context, "t3.readSettings")
+    {_, context} = World.call!(context, "halc2.readSettings")
     context
   end
 
   step "the client calls an RPC that never finishes", context do
-    assert T3.Web.Socket.rpc_timeout() == :timer.minutes(10)
+    assert HalC2.Web.Socket.rpc_timeout() == :timer.minutes(10)
     # Ten minutes is the default; the scenario shortens it rather than waiting.
-    Application.put_env(:t3, :rpc_timeout, 100)
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :rpc_timeout) end)
-    settings = Node.ensure(T3.Settings)
+    Application.put_env(:hal_c2, :rpc_timeout, 100)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :rpc_timeout) end)
+    settings = Node.ensure(HalC2.Settings)
     :ok = :sys.suspend(settings)
     ExUnit.Callbacks.on_exit(fn -> resume(settings) end)
-    client = Node.rpc(World.client(context), context.node.environment, 7, "t3.readSettings", %{})
+    client = Node.rpc(World.client(context), context.node.environment, 7, "halc2.readSettings", %{})
     context |> Map.put(:settings_pid, settings) |> World.put_client(client)
   end
 
   step "it fails after ten minutes", context do
     {reply, client} = Node.await(World.client(context), Node.reply?(7))
-    assert %{"t" => "rpc.error", "error" => "t3.readSettings timed out"} = reply
+    assert %{"t" => "rpc.error", "error" => "halc2.readSettings timed out"} = reply
     :ok = :sys.resume(context.settings_pid)
     World.put_client(context, client)
   end
@@ -596,11 +596,11 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
     stream = stream_id()
 
     {:ok, seq} =
-      T3.Streams.commit(stream, :thread, [{"note", "kept", %{"s" => %{"text" => "stored"}}}])
+      HalC2.Streams.commit(stream, :thread, [{"note", "kept", %{"s" => %{"text" => "stored"}}}])
 
-    server = T3.Streams.ensure(stream)
+    server = HalC2.Streams.ensure(stream)
     assert :sys.get_state(server).subscribers == %{}
-    assert T3.Streams.Server.idle_stop() == :timer.minutes(5)
+    assert HalC2.Streams.Server.idle_stop() == :timer.minutes(5)
     ref = Process.monitor(server)
     # What the stream's idle timeout delivers once five minutes pass without subscribers.
     send(server, :timeout)
@@ -618,7 +618,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
     {snapshot, client} = Node.await(client, &(&1["t"] == "snapshot"))
     assert snapshot["offset"] == context.seq
     assert [["note", "kept", %{"text" => "stored"}]] = snapshot["rows"]
-    [{server, _}] = Registry.lookup(T3.Streams.Registry, context.stream)
+    [{server, _}] = Registry.lookup(HalC2.Streams.Registry, context.stream)
     assert server != context.server
     World.put_client(context, client)
   end
@@ -641,21 +641,21 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
   # are new versions of the socket and stream modules.
   step "the node loads a new version in place", context do
     if System.get_env("RELEASE_ROOT") == nil, do: Node.release(context.node)
-    Node.ensure(T3.Upgrade)
-    target = "#{T3.Upgrade.version()}-hot#{System.unique_integer([:positive])}"
+    Node.ensure(HalC2.Upgrade)
+    target = "#{HalC2.Upgrade.version()}-hot#{System.unique_integer([:positive])}"
     # Only loaded modules are replaced in place.
-    Code.ensure_loaded!(T3.Streams.Server)
-    modules = [Node.variant(T3.Web.Socket), Node.variant(T3.Streams.Server)]
+    Code.ensure_loaded!(HalC2.Streams.Server)
+    modules = [Node.variant(HalC2.Web.Socket), Node.variant(HalC2.Streams.Server)]
     archive = Node.bundle(context.node, target, %{}, modules)
-    :ok = T3.Upgrade.Source.put(target, T3.Upgrade.platform(), archive)
+    :ok = HalC2.Upgrade.Source.put(target, HalC2.Upgrade.platform(), archive)
 
     assert {:ok, %{"method" => "hot-upgrade", "targetVersion" => ^target}} =
-             T3.Upgrade.update(%{"targetVersion" => target})
+             HalC2.Upgrade.update(%{"targetVersion" => target})
 
-    refute_received {:t3_restart, _}
-    assert function_exported?(T3.Web.Socket, :__t3_variant__, 0)
-    assert function_exported?(T3.Streams.Server, :__t3_variant__, 0)
-    assert T3.Upgrade.version() == target
+    refute_received {:halc2_restart, _}
+    assert function_exported?(HalC2.Web.Socket, :__halc2_variant__, 0)
+    assert function_exported?(HalC2.Streams.Server, :__halc2_variant__, 0)
+    assert HalC2.Upgrade.version() == target
     Map.put(context, :target, target)
   end
 
@@ -706,7 +706,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
 
     missed =
       for s <- context.streams do
-        {:ok, seq} = T3.Streams.commit(s, :thread, [note("while away")])
+        {:ok, seq} = HalC2.Streams.commit(s, :thread, [note("while away")])
         seq
       end
 
@@ -749,11 +749,11 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
   # --- protocol negotiation and revocation -------------------------------------------------
 
   step "a client speaking a protocol newer than the node's", context do
-    Map.put(context, :protocol, T3.Web.Protocol.version() + 1)
+    Map.put(context, :protocol, HalC2.Web.Protocol.version() + 1)
   end
 
   step "it opens a socket", context do
-    path = "/ws?protocol=#{context.protocol}&token=#{T3.Web.token()}"
+    path = "/ws?protocol=#{context.protocol}&token=#{HalC2.Web.token()}"
 
     Map.merge(context, %{
       upgrade: WsClient.connect(context.node.port, path),
@@ -772,12 +772,12 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
   end
 
   step "a client session has an open socket", context do
-    {:ok, %{id: session}} = T3.Auth.session(context.access_token)
+    {:ok, %{id: session}} = HalC2.Auth.session(context.access_token)
     Map.put(context, :session, session)
   end
 
   step "an administrator revokes that session", context do
-    assert T3.Auth.revoke_client(context.session)
+    assert HalC2.Auth.revoke_client(context.session)
     context
   end
 
@@ -787,7 +787,7 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
   end
 
   step "the client cannot reconnect with that session", context do
-    assert T3.Auth.issue_ticket(context.access_token) == :error
+    assert HalC2.Auth.issue_ticket(context.access_token) == :error
 
     assert {401, _, _} = Node.request(context.node, :get, "/ws?token=#{context.access_token}")
 
@@ -827,14 +827,14 @@ defmodule T3.Steps.Platform.WebsocketProtocol do
     stream = stream_id()
 
     {:ok, _} =
-      T3.Streams.commit(stream, :thread, [
+      HalC2.Streams.commit(stream, :thread, [
         {"message", "m1",
          %{"s" => %{"id" => "m1", "role" => "assistant", "text" => "", "streaming" => true}}}
       ])
 
     client = World.client(context) |> sub(1, stream)
     {_, client} = Node.await(client, &(&1["t"] == "live" and &1["id"] == 1))
-    [socket] = Map.keys(:sys.get_state(T3.Streams.ensure(stream)).subscribers)
+    [socket] = Map.keys(:sys.get_state(HalC2.Streams.ensure(stream)).subscribers)
     context |> Map.merge(%{stream: stream, socket: socket}) |> World.put_client(client)
   end
 

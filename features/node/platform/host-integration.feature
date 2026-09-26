@@ -1,9 +1,9 @@
 # Sources:
-#   apps/server-ex/lib/t3/editors.ex (availableEditors, shell.openInEditor)
-#   apps/server-ex/lib/t3/local_servers.ex (subscribeDiscoveredLocalServers)
-#   apps/server-ex/lib/t3/projects.ex (filesystem.browse)
-#   apps/server-ex/lib/t3/paths.ex (symlink resolution)
-#   apps/server-ex/lib/t3/subprocess.ex (line framing, pipe backpressure)
+#   apps/server-ex/lib/hal_c2/editors.ex (availableEditors, shell.openInEditor)
+#   apps/server-ex/lib/hal_c2/local_servers.ex (subscribeDiscoveredLocalServers)
+#   apps/server-ex/lib/hal_c2/projects.ex (filesystem.browse)
+#   apps/server-ex/lib/hal_c2/paths.ex (symlink resolution)
+#   apps/server-ex/lib/hal_c2/subprocess.ex (line framing, pipe backpressure)
 #   packages/contracts/src/editor.ts (EDITORS, launch styles, ExternalLauncher errors)
 #   packages/contracts/src/shell.ts
 #   packages/contracts/src/rpc.ts (shell.openInEditor, filesystem.browse, subscribeDiscoveredLocalServers)

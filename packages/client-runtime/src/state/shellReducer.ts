@@ -2,7 +2,7 @@ import type {
   OrchestrationProjectShell,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ShellStreamItem,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 
 function upsertById<T extends { readonly id: unknown }>(
   items: ReadonlyArray<T>,

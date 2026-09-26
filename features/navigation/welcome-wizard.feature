@@ -13,19 +13,19 @@ Feature: Welcome wizard
     @backlog @desktop
     Scenario: A new installation starts with the wizard
       Given a fresh installation with no workspace
-      When the user opens T3 Code
-      Then the user sees "Set up T3 Code"
+      When the user opens HAL-C2
+      Then the user sees "Set up HAL-C2"
 
     @backlog @desktop
     Scenario: An existing workspace skips the wizard
       Given a workspace that already has projects
-      When the user opens T3 Code
+      When the user opens HAL-C2
       Then the app opens without the wizard
 
     @backlog @desktop
     Scenario: A workspace that cannot be confirmed yet says it is still connecting
       Given the app cannot confirm the workspace during startup
-      When the user opens T3 Code
+      When the user opens HAL-C2
       Then the user sees "Still connecting"
       When the user reloads
       Then the app tries again
@@ -33,7 +33,7 @@ Feature: Welcome wizard
     @backlog @desktop
     Scenario: Unreadable settings are never replaced with defaults
       Given the saved settings cannot be read
-      When the user opens T3 Code
+      When the user opens HAL-C2
       Then the user sees "Could not read settings"
       And the saved settings are left untouched
       When storage becomes available and the user retries
@@ -49,12 +49,12 @@ Feature: Welcome wizard
 
     @backlog @desktop
     Scenario: The serving computer is already selected
-      Given the user opened T3 Code from a desktop app named "studio"
+      Given the user opened HAL-C2 from a desktop app named "studio"
       Then "studio" is connected and selected
 
     @backlog @desktop
     Scenario: Saved and discovered computers are selected by default
-      Given a saved computer and a computer discovered through T3 Connect
+      Given a saved computer and a computer discovered through HAL-C2 Connect
       Then both computers are selected
 
     @backlog @desktop

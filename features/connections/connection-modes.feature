@@ -3,8 +3,8 @@
 #     Desktop-managed SSH)
 #   docs/internals/remote.md
 #   packages/contracts/src/remoteAccess.ts (advertised endpoint kinds, reachability, hosted HTTPS compatibility)
-#   apps/server-ex/lib/t3/web.ex (listener on loopback by default)
-#   apps/server-ex/lib/t3/cluster/tailscale.ex (tailnet discovery for cluster members)
+#   apps/server-ex/lib/hal_c2/web.ex (listener on loopback by default)
+#   apps/server-ex/lib/hal_c2/cluster/tailscale.ex (tailnet discovery for cluster members)
 #   apps/web/src/components/settings/ConnectionsSettings.tsx (Network access, Tailscale HTTPS,
 #     "Only this machine can connect. Restart with a non-loopback host for remote pairing.")
 #   apps/web/src/components/settings/EnvironmentRow.tsx (SshConnectionTarget, SshConnectionProfile)
@@ -12,12 +12,12 @@
 #   apps/tui/src/features.backlog.test.ts (environment-connections)
 #   Shared domain: node/platform/node-startup.feature holds the node's own listening address;
 #   connections/cluster.feature holds nodes reaching each other over the tailnet;
-#   connections/t3-connect.feature holds the relay;
+#   connections/hal-c2-connect.feature holds the relay;
 #   settings/connections.feature holds the desktop network access, Tailscale HTTPS and add-over-SSH controls.
 
 Feature: How clients reach an environment
   A node listens on loopback unless told otherwise. Clients reach it directly on a LAN or
-  tailnet, over Tailscale HTTPS, through a desktop-managed SSH forward, or through T3 Connect.
+  tailnet, over Tailscale HTTPS, through a desktop-managed SSH forward, or through HAL-C2 Connect.
 
   Background:
     Given a running node
@@ -72,7 +72,7 @@ Feature: How clients reach an environment
   @backlog @desktop
   Scenario: Turning off network access keeps tunnels working
     Given network access is on
-    And the environment is also reachable through T3 Connect and Tailscale HTTPS
+    And the environment is also reachable through HAL-C2 Connect and Tailscale HTTPS
     When the user turns network access off
     Then devices on the local network disconnect
     And the tunnels keep working
@@ -104,7 +104,7 @@ Feature: How clients reach an environment
 
   @backlog @desktop
   Scenario: The first SSH launch installs the server on the host
-    Given a host that has never run T3 Code
+    Given a host that has never run HAL-C2
     When the user adds it as an SSH environment
     Then the server is downloaded to the host's runtime folder before it starts
 
@@ -145,7 +145,7 @@ Feature: How clients reach an environment
     When the user retries the launch
     Then the environment reconnects
 
-  # The hosted app at app.t3.codes connects to a node over HTTPS. hal-c2 has no hosted web
+  # The hosted app at app.hal-c2.example connects to a node over HTTPS. HAL-C2 has no hosted web
   # client; QML clients connect over plain HTTP on a LAN or tailnet.
   @dropped @node
   Scenario: A hosted HTTPS client connects only to HTTPS environments

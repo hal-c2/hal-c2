@@ -2,7 +2,7 @@
 // projects, folders and source-control sign-ins are set up before the client
 // boots; the steps then drive the add-project flow by keys.
 import { expect } from "bun:test";
-import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
+import { inferProjectTitleFromPath } from "@hal-c2/client-runtime/state/projects";
 
 import { step } from "../../steps.ts";
 import type { TuiAddProjectState } from "../../../src/host/addProjectState.ts";

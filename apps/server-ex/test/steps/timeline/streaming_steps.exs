@@ -1,4 +1,4 @@
-defmodule T3.Steps.Timeline.Streaming do
+defmodule HalC2.Steps.Timeline.Streaming do
   @moduledoc """
   Steps for `features/timeline/streaming.feature`. The fake Codex writes its reply in
   pieces ("stream paragraphs", "stream a reply") and waits at a gate between pieces
@@ -8,16 +8,16 @@ defmodule T3.Steps.Timeline.Streaming do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node.World
 
   step ~r/^the project streams responses by (?<mode>paragraph|turn)$/,
        %{args: [mode]} = context do
-    T3.Test.Node.ensure(T3.Settings)
-    {settings, version} = T3.Settings.get()
+    HalC2.Test.Node.ensure(HalC2.Settings)
+    {settings, version} = HalC2.Settings.get()
     project = World.project(context).id
     overrides = %{project => %{"responseStreamingMode" => mode}}
-    {:ok, _} = T3.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "projectSettingsOverrides", overrides), version)
     context
   end
 
@@ -101,7 +101,7 @@ defmodule T3.Steps.Timeline.Streaming do
       if Map.keys(acc) == [:seen], do: acc.seen, else: acc
     else
       receive do
-        {:t3_stream, ^id, _} -> loop(id, T3.Streams.Server.state(T3.Streams.ensure(id)), fun, acc)
+        {:halc2_stream, ^id, _} -> loop(id, HalC2.Streams.Server.state(HalC2.Streams.ensure(id)), fun, acc)
       after
         5_000 -> flunk("the reply stopped at #{inspect(acc)}")
       end

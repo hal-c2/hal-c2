@@ -1,19 +1,19 @@
-defmodule T3.Steps.Navigation.KeybindingCustomisation do
+defmodule HalC2.Steps.Navigation.KeybindingCustomisation do
   @moduledoc """
   Steps for `features/navigation/keybinding-customisation.feature`. Clients add and
   remove rules with `server.upsertKeybinding` and `server.removeKeybinding`; the
-  node's rules are `T3.Keybindings.rules/0` and `<home>/keybindings.json`.
+  node's rules are `HalC2.Keybindings.rules/0` and `<home>/keybindings.json`.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # --- the node stores custom rules --------------------------------------------------
 
   step "the node has no custom keybindings", context do
-    assert T3.Keybindings.rules() == []
+    assert HalC2.Keybindings.rules() == []
     refute File.exists?(file(context))
     context
   end
@@ -34,7 +34,7 @@ defmodule T3.Steps.Navigation.KeybindingCustomisation do
   step "the node's keybindings include that rule", context do
     assert {:ok, %{"rules" => rules}} = context.reply
     assert context.rule in rules
-    assert context.rule in T3.Keybindings.rules()
+    assert context.rule in HalC2.Keybindings.rules()
     context
   end
 
@@ -45,23 +45,23 @@ defmodule T3.Steps.Navigation.KeybindingCustomisation do
 
   step "the node has the rule {string} for {string}", %{args: [key, command]} = context do
     rule = rule(key, command)
-    assert {:ok, _} = T3.Keybindings.upsert(rule)
+    assert {:ok, _} = HalC2.Keybindings.upsert(rule)
     Map.put(context, :rule, rule)
   end
 
   step "the node has exactly one such rule", context do
-    assert Enum.count(T3.Keybindings.rules(), &(&1 == context.rule)) == 1
+    assert Enum.count(HalC2.Keybindings.rules(), &(&1 == context.rule)) == 1
     context
   end
 
   step "the node's keybindings include {string} for {string}",
        %{args: [key, command]} = context do
-    assert rule(key, command) in T3.Keybindings.rules()
+    assert rule(key, command) in HalC2.Keybindings.rules()
     context
   end
 
   step "they no longer include {string} for {string}", %{args: [key, command]} = context do
-    refute rule(key, command) in T3.Keybindings.rules()
+    refute rule(key, command) in HalC2.Keybindings.rules()
     context
   end
 
@@ -72,7 +72,7 @@ defmodule T3.Steps.Navigation.KeybindingCustomisation do
   end
 
   step "the node's keybindings no longer include it", context do
-    refute context.rule in T3.Keybindings.rules()
+    refute context.rule in HalC2.Keybindings.rules()
     refute context.rule in JSON.decode!(File.read!(file(context)))
     context
   end
@@ -80,7 +80,7 @@ defmodule T3.Steps.Navigation.KeybindingCustomisation do
   step "the node has {int} custom rules", %{args: [count]} = context do
     rules = for i <- 1..count, do: rule("mod+shift+#{i}", "terminal.new")
     File.write!(file(context), JSON.encode!(rules))
-    assert length(T3.Keybindings.rules()) == count
+    assert length(HalC2.Keybindings.rules()) == count
     Map.merge(context, %{oldest: hd(rules), rule_count: count})
   end
 
@@ -89,19 +89,19 @@ defmodule T3.Steps.Navigation.KeybindingCustomisation do
   end
 
   step "the node keeps {int} rules", %{args: [count]} = context do
-    rules = T3.Keybindings.rules()
+    rules = HalC2.Keybindings.rules()
     assert length(rules) == count
     assert List.last(rules) == context.rule
     context
   end
 
   step "the oldest rule is gone", context do
-    refute context.oldest in T3.Keybindings.rules()
+    refute context.oldest in HalC2.Keybindings.rules()
     context
   end
 
   step "one client adds a keybinding rule", context do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     context = World.put_client(context, "second", Node.config(World.client(context, "second")))
     add(context, rule("mod+shift+t", "terminal.new"), %{}, "first")
   end
@@ -113,7 +113,7 @@ defmodule T3.Steps.Navigation.KeybindingCustomisation do
         &(&1["t"] == "config.keybindings" and context.rule in &1["rules"])
       )
 
-    assert frame["rules"] == T3.Keybindings.rules()
+    assert frame["rules"] == HalC2.Keybindings.rules()
     World.put_client(context, "second", client)
   end
 
@@ -194,7 +194,7 @@ defmodule T3.Steps.Navigation.KeybindingCustomisation do
   step "the rule is rejected", context do
     assert {:error, error, _detail} = context.reply
     assert error =~ "Invalid keybinding rule"
-    refute context.rule in T3.Keybindings.rules()
+    refute context.rule in HalC2.Keybindings.rules()
     context
   end
 

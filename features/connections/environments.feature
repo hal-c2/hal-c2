@@ -2,13 +2,13 @@
 #   docs/user/remote-access.md (Load balancing, Local environment off)
 #   docs/user/install.md (Windows Subsystem for Linux)
 #   docs/internals/connection-runtime.md (saved environments, registry)
-#   apps/server-ex/lib/t3/environment.ex (descriptor, label, environmentIcon capability, platform.machine)
-#   apps/server-ex/lib/t3/environment/machine.ex
+#   apps/server-ex/lib/hal_c2/environment.ex (descriptor, label, environmentIcon capability, platform.machine)
+#   apps/server-ex/lib/hal_c2/environment/machine.ex
 #   packages/contracts/src/environment.ts (ENVIRONMENT_MACHINE_KINDS, environmentIcon capability)
 #   packages/contracts/src/settings.ts (environmentIcon, loadBalancingEnabled, loadBalancingWeights)
 #   apps/web/src/components/settings/ConnectionsSettings.tsx (environment list, Primary environment,
 #     Remove from this device, WSL backend, "The environment is saved and will reconnect on app startup.")
-#   apps/web/src/components/settings/EnvironmentRow.tsx (This machine, T3 Connect, Remote link, SSH)
+#   apps/web/src/components/settings/EnvironmentRow.tsx (This machine, HAL-C2 Connect, Remote link, SSH)
 #   apps/web/src/components/settings/EnvironmentIconPicker.tsx
 #   apps/web/src/components/settings/LoadBalancingSettings.tsx
 #   apps/web/src/components/settings/LocalEnvironmentSetting.tsx
@@ -51,7 +51,7 @@ Feature: Managing environments on a client
   @backlog @tui
   Scenario: The user sees every saved environment and how it is reached
     When the user opens the list of environments
-    Then each environment shows its label, its icon and whether it is this machine, a remote link, SSH or T3 Connect
+    Then each environment shows its label, its icon and whether it is this machine, a remote link, SSH or HAL-C2 Connect
     And each shows whether it is connected
 
   @backlog @desktop @mobile
@@ -124,7 +124,7 @@ Feature: Managing environments on a client
   Scenario: Choosing a WSL distro runs the local environment inside it
     Given the machine runs Windows with a WSL distro that has the provider CLIs installed
     When the user chooses that distro for the local environment
-    Then T3 Code installs its own node runtime in the distro without further steps
+    Then HAL-C2 installs its own node runtime in the distro without further steps
     And agents and projects run inside the distro with the provider CLIs installed there
 
   @backlog @desktop

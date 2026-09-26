@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId } from "@hal-c2/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import type { SidebarProjectSnapshot } from "../sidebarProjectGrouping";
 import { buildShellLocalProjects, resolveShellLocalEnvironmentId } from "./shellLocalProjects";

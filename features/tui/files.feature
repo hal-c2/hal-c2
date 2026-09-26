@@ -3,7 +3,7 @@
 #   apps/tui/src/fileTree.ts, fileTree.test.ts
 #   apps/tui/src/diffSplit.ts (filetypeForPath highlighting)
 #   apps/tui/src/components/ChatView.tsx (Browse files, Attach image)
-#   apps/tui/src/connection.ts (readFileBase64) needs base64 reads; apps/server-ex/lib/t3/workspace.ex read_file
+#   apps/tui/src/connection.ts (readFileBase64) needs base64 reads; apps/server-ex/lib/hal_c2/workspace.ex read_file
 #     returns text only and refuses binary files, so attaching from the browser is backlog on hal-c2.
 #   apps/tui/src/hooks/useKeyBindings.ts (files mode)
 #   apps/tui/src/features.backlog.test.ts (project-lifecycle, project-scripts, workspace-file-actions,

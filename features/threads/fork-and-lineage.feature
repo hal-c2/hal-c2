@@ -5,8 +5,8 @@
 #   apps/web/src/components/chat/ThreadRelationshipsControl.tsx
 #   apps/web/src/components/ChatView.tsx (Fork from this response)
 #   packages/contracts/src/orchestrationV2.ts (thread.fork, thread.merge_back, provider.switch, thread.provider-switched, context-transfer.created, context-transfer.updated, context-handoff.updated)
-#   apps/server-ex/lib/t3/orchestration/fork.ex
-#   apps/server-ex/lib/t3/orchestration/handoff.ex
+#   apps/server-ex/lib/hal_c2/orchestration/fork.ex
+#   apps/server-ex/lib/hal_c2/orchestration/handoff.ex
 
 Feature: Forking threads and merging work back
   A fork is a new thread that starts from a finished point in another thread's history.

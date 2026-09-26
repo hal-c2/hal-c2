@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AcpRegistrySettings } from "@t3tools/contracts";
-import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import { AcpRegistrySettings } from "@hal-c2/contracts";
+import { resolveSelfInvocation } from "@hal-c2/shared/nodeRuntime";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
@@ -48,7 +48,7 @@ function makeAcpRegistryProviderAdapterRegistryReplayLayer(transcript: AcpReplay
       const serverConfig = yield* ServerConfig;
       const replayDir = yield* fileSystem
         .makeTempDirectory({
-          prefix: `t3-orchestration-v2-acp-registry-replay-${transcript.scenario}-`,
+          prefix: `hal-c2-orchestration-v2-acp-registry-replay-${transcript.scenario}-`,
         })
         .pipe(Effect.orDie);
       const statusPath = path.join(replayDir, "status.json");

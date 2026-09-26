@@ -1,17 +1,17 @@
-defmodule T3.Test.Node do
+defmodule HalC2.Test.Node do
   @moduledoc """
   One node under test, as a client sees it over the protocol 3 socket.
 
-  `start/1` brings up the same pieces `T3.ScenariosTest` does (store, auth,
+  `start/1` brings up the same pieces `HalC2.ScenariosTest` does (store, auth,
   streams, shell, web) under the test supervisor with the state in a fresh
   directory; steps add the services their scenario needs with `ensure/1`.
-  Clients are `T3.Test.WsClient` structs threaded through the scenario context.
+  Clients are `HalC2.Test.WsClient` structs threaded through the scenario context.
   """
 
   import ExUnit.Assertions
   import ExUnit.Callbacks, only: [start_supervised: 1, start_supervised!: 1]
 
-  alias T3.Test.WsClient
+  alias HalC2.Test.WsClient
   @doc false
   def ws_client, do: WsClient
 
@@ -21,24 +21,24 @@ defmodule T3.Test.Node do
   """
   def start(dir, port \\ 0) do
     File.mkdir_p!(dir)
-    Application.put_env(:t3, :home, dir)
-    Application.put_env(:t3, :port, port)
-    :persistent_term.erase({T3.Web, :token})
-    start_supervised!({T3.Store, path: Path.join(dir, "t3.sqlite")})
-    start_supervised!(T3.Auth)
-    start_supervised!(T3.Streams)
-    start_supervised!(T3.Shell)
-    web = start_supervised!(Supervisor.child_spec(T3.Web, id: T3.Web))
-    # A named node finds its peers as it would at boot (T3_PEERS, the tailnet).
-    for spec <- T3.Application.discovery(dir),
+    Application.put_env(:hal_c2, :home, dir)
+    Application.put_env(:hal_c2, :port, port)
+    :persistent_term.erase({HalC2.Web, :token})
+    start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
+    start_supervised!(HalC2.Auth)
+    start_supervised!(HalC2.Streams)
+    start_supervised!(HalC2.Shell)
+    web = start_supervised!(Supervisor.child_spec(HalC2.Web, id: HalC2.Web))
+    # A named node finds its peers as it would at boot (HALC2_PEERS, the tailnet).
+    for spec <- HalC2.Application.discovery(dir),
         do: start_supervised!(Supervisor.child_spec(spec, id: :discovery))
 
     {:ok, {_ip, port}} = ThousandIsland.listener_info(web)
-    # The port it got, as a configured node knows its own (`mix t3.pair` reads it).
-    Application.put_env(:t3, :port, port)
-    {_, %{"environmentId" => environment}} = List.keyfind(T3.Shell.environments(), node(), 0)
-    :ok = T3.Shell.subscribe(self())
-    %{port: port, environment: environment, home: dir, store: Path.join(dir, "t3.sqlite")}
+    # The port it got, as a configured node knows its own (`mix hal_c2.pair` reads it).
+    Application.put_env(:hal_c2, :port, port)
+    {_, %{"environmentId" => environment}} = List.keyfind(HalC2.Shell.environments(), node(), 0)
+    :ok = HalC2.Shell.subscribe(self())
+    %{port: port, environment: environment, home: dir, store: Path.join(dir, "hal-c2.sqlite")}
   end
 
   @doc """
@@ -48,15 +48,15 @@ defmodule T3.Test.Node do
   """
   def stop(node) do
     # Provider processes die with the node.
-    if Process.whereis(T3.Codex.Supervisor) do
-      for {_, pid, _, _} <- DynamicSupervisor.which_children(T3.Codex.Supervisor),
-          do: DynamicSupervisor.terminate_child(T3.Codex.Supervisor, pid)
+    if Process.whereis(HalC2.Codex.Supervisor) do
+      for {_, pid, _, _} <- DynamicSupervisor.which_children(HalC2.Codex.Supervisor),
+          do: DynamicSupervisor.terminate_child(HalC2.Codex.Supervisor, pid)
     end
 
     for child <- Enum.reverse(Process.get({__MODULE__, :ensured}, [])),
         do: ExUnit.Callbacks.stop_supervised(Supervisor.child_spec(child, []).id)
 
-    for child <- [:discovery, T3.Web, T3.Shell, T3.Streams, T3.Auth, T3.Store],
+    for child <- [:discovery, HalC2.Web, HalC2.Shell, HalC2.Streams, HalC2.Auth, HalC2.Store],
         do: ExUnit.Callbacks.stop_supervised(child)
 
     node
@@ -65,13 +65,13 @@ defmodule T3.Test.Node do
   @doc """
   Stops the node's services (if `stop/1` has not) and starts them again on the
   same state, as a restart does, on the same port. Services a step started with
-  `ensure/1` (settings, plugins, T3 Connect, diagnostics, scheduled tasks) come
+  `ensure/1` (settings, plugins, HAL-C2 Connect, diagnostics, scheduled tasks) come
   back after the core, so in-memory state (clones, setups) is lost as in a real
   restart. Turns the stop cut off are settled and, where the project asks for
-  it, continued (`T3.Orchestration.Recovery`), as `T3.Application` boots.
+  it, continued (`HalC2.Orchestration.Recovery`), as `HalC2.Application` boots.
   Sockets are gone afterwards; steps reconnect. `while_stopped` runs after the
   services stop and before they start, as an operator's offline task would
-  (`mix t3.import`).
+  (`mix hal_c2.import`).
   """
   def restart(%{home: dir, port: port} = node, while_stopped \\ fn -> :ok end) do
     stop(node)
@@ -79,13 +79,13 @@ defmodule T3.Test.Node do
     ensured = Process.get({__MODULE__, :ensured}, [])
     node = start(dir, port)
     # In the application's order: cut-off turns settle before the optional
-    # services (T3 Connect among them) are back, then the boot tasks run.
-    T3.Orchestration.Recovery.run()
+    # services (HAL-C2 Connect among them) are back, then the boot tasks run.
+    HalC2.Orchestration.Recovery.run()
     Enum.each(ensured, &ensure/1)
-    :ok = T3.Orchestration.Recovery.continue()
+    :ok = HalC2.Orchestration.Recovery.continue()
     # Threads from before the search index are indexed, as at boot.
-    T3.Search.backfill()
-    :ok = T3.Projects.auto_pull()
+    HalC2.Search.backfill()
+    :ok = HalC2.Projects.auto_pull()
     node
   end
 
@@ -120,7 +120,7 @@ defmodule T3.Test.Node do
 
   @doc "Opens a socket with the node's token (or `query`) and consumes the hello frame."
   def connect(%{port: port}, query \\ nil) do
-    {:ok, client} = WsClient.connect(port, "/ws?" <> (query || "token=#{T3.Web.token()}"))
+    {:ok, client} = WsClient.connect(port, "/ws?" <> (query || "token=#{HalC2.Web.token()}"))
     {%{"t" => "hello", "protocol" => 3}, client} = WsClient.recv(client, 1_000)
     client
   end
@@ -224,13 +224,13 @@ defmodule T3.Test.Node do
   def start_peer(node) do
     unless :erlang.is_alive() do
       {_, 0} = System.cmd("epmd", ["-daemon"])
-      name = :"t3features#{System.unique_integer([:positive])}@127.0.0.1"
+      name = :"halc2features#{System.unique_integer([:positive])}@127.0.0.1"
       {:ok, _} = :net_kernel.start(name, %{name_domain: :longnames})
     end
 
     {:ok, peer, name} =
       :peer.start(%{
-        name: :"t3peer#{System.unique_integer([:positive])}",
+        name: :"halc2peer#{System.unique_integer([:positive])}",
         host: ~c"127.0.0.1",
         longnames: true,
         args: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
@@ -240,9 +240,9 @@ defmodule T3.Test.Node do
 
     # A peer node does not read Mix config, so it gets the node settings directly.
     for {key, value} <- [start_node: true, home: Path.join(node.home, "peer"), port: 0],
-        do: :ok = :erpc.call(name, Application, :put_env, [:t3, key, value])
+        do: :ok = :erpc.call(name, Application, :put_env, [:hal_c2, key, value])
 
-    {:ok, _} = :erpc.call(name, Application, :ensure_all_started, [:t3])
+    {:ok, _} = :erpc.call(name, Application, :ensure_all_started, [:hal_c2])
     name
   end
 
@@ -285,9 +285,9 @@ defmodule T3.Test.Node do
   @doc "Pairs a device with `scopes` (default standard); returns its bearer access token."
   def pair(scopes \\ nil, label \\ "Device") do
     {:ok, %{"credential" => credential}} =
-      T3.Auth.create_pairing_link(%{"scopes" => scopes || T3.Auth.standard_scopes()})
+      HalC2.Auth.create_pairing_link(%{"scopes" => scopes || HalC2.Auth.standard_scopes()})
 
-    {:ok, access, _expires, _scopes} = T3.Auth.exchange(credential, %{label: label})
+    {:ok, access, _expires, _scopes} = HalC2.Auth.exchange(credential, %{label: label})
     access
   end
 
@@ -296,7 +296,7 @@ defmodule T3.Test.Node do
     http(node_or_base, :post, "/oauth/token",
       form: %{
         "grant_type" => "urn:ietf:params:oauth:grant-type:token-exchange",
-        "subject_token_type" => "urn:t3:params:oauth:token-type:environment-bootstrap",
+        "subject_token_type" => "urn:hal-c2:params:oauth:token-type:environment-bootstrap",
         "subject_token" => credential,
         "client_label" => label
       }
@@ -305,7 +305,7 @@ defmodule T3.Test.Node do
 
   @doc "Opens a socket for a bearer access token (through a WebSocket ticket)."
   def connect_as(node, access) do
-    {:ok, ticket, _} = T3.Auth.issue_ticket(access)
+    {:ok, ticket, _} = HalC2.Auth.issue_ticket(access)
     connect(node, "wsTicket=#{ticket}")
   end
 
@@ -324,7 +324,7 @@ defmodule T3.Test.Node do
   end
 
   @doc """
-  Runs a Mix task (`Mix.Tasks.T3.Pair`, say) in the node's home as an operator
+  Runs a Mix task (`Mix.Tasks.HalC2.Pair`, say) in the node's home as an operator
   would and returns the lines it printed. A `Mix.raise` comes back as `{:error, message}`.
   """
   def run_task(task, args) do
@@ -350,7 +350,7 @@ defmodule T3.Test.Node do
   end
 
   @doc "The scopes an administrator's session carries."
-  def admin_scopes, do: T3.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
+  def admin_scopes, do: HalC2.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
 
   # --- added by W14 ---
 
@@ -359,15 +359,15 @@ defmodule T3.Test.Node do
   it, waiting until the peer has announced itself; RPCs to the peer route by it.
   """
   def peer_environment(peer) do
-    :ok = T3.Shell.subscribe(self())
+    :ok = HalC2.Shell.subscribe(self())
 
-    case List.keyfind(T3.Shell.environments(), peer, 0) do
+    case List.keyfind(HalC2.Shell.environments(), peer, 0) do
       {^peer, %{"environmentId" => environment}} ->
         environment
 
       nil ->
         receive do
-          {:t3_shell, {:environment, ^peer, %{"environmentId" => environment}}} -> environment
+          {:halc2_shell, {:environment, ^peer, %{"environmentId" => environment}}} -> environment
         after
           10_000 -> ExUnit.Assertions.flunk("#{peer} never announced its environment")
         end
@@ -461,7 +461,7 @@ defmodule T3.Test.Node do
         %{
           "grant_type" => "urn:ietf:params:oauth:grant-type:token-exchange",
           "subject_token" => token,
-          "subject_token_type" => "urn:t3:params:oauth:token-type:environment-bootstrap",
+          "subject_token_type" => "urn:hal-c2:params:oauth:token-type:environment-bootstrap",
           "client_label" => "Test client"
         },
         fields
@@ -486,7 +486,7 @@ defmodule T3.Test.Node do
         {_, 0} = System.cmd("epmd", ["-daemon"])
         # Unique names, so the test never collides with nodes running on this machine.
         {:ok, _} =
-          Node.start(:"t3test#{System.unique_integer([:positive])}@127.0.0.1", :longnames)
+          Node.start(:"halc2test#{System.unique_integer([:positive])}@127.0.0.1", :longnames)
 
         restart(node)
       end
@@ -495,7 +495,7 @@ defmodule T3.Test.Node do
 
     {:ok, pid, name} =
       :peer.start(%{
-        name: :"t3peer#{System.unique_integer([:positive])}",
+        name: :"halc2peer#{System.unique_integer([:positive])}",
         host: ~c"127.0.0.1",
         longnames: true,
         args: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
@@ -511,18 +511,18 @@ defmodule T3.Test.Node do
 
     # A peer node does not read Mix config, so it gets the node settings directly.
     for {key, value} <- [start_node: true, home: home, port: 0],
-        do: :ok = :erpc.call(name, Application, :put_env, [:t3, key, value])
+        do: :ok = :erpc.call(name, Application, :put_env, [:hal_c2, key, value])
 
-    {:ok, _} = :erpc.call(name, Application, :ensure_all_started, [:t3])
-    environment = :erpc.call(name, T3.Environment, :id, [])
+    {:ok, _} = :erpc.call(name, Application, :ensure_all_started, [:hal_c2])
+    environment = :erpc.call(name, HalC2.Environment, :id, [])
     await_environment(name, 10_000)
     {node, %{name: name, pid: pid, environment: environment, home: home}}
   end
 
   defp await_environment(name, timeout) do
-    unless Enum.any?(T3.Shell.environments(), &(elem(&1, 0) == name)) do
+    unless Enum.any?(HalC2.Shell.environments(), &(elem(&1, 0) == name)) do
       receive do
-        {:t3_shell, _} -> await_environment(name, timeout)
+        {:halc2_shell, _} -> await_environment(name, timeout)
       after
         timeout -> flunk("#{name} never joined the shell")
       end
@@ -548,10 +548,10 @@ defmodule T3.Test.Node do
     {body, eof} = Enum.split_with(rest, &(not match?({:eof, _}, &1)))
 
     mark =
-      {:function, 1, :__t3_variant__, 0,
+      {:function, 1, :__halc2_variant__, 0,
        [{:clause, 1, [], [], [{:integer, 1, System.unique_integer([:positive])}]}]}
 
-    export = {:attribute, 1, :export, [{:__t3_variant__, 0}]}
+    export = {:attribute, 1, :export, [{:__halc2_variant__, 0}]}
 
     {:ok, ^mod, beam} =
       :compile.forms(head ++ [module, export | body] ++ [mark | eof], [:binary, :debug_info])
@@ -561,14 +561,14 @@ defmodule T3.Test.Node do
 
   @doc """
   Makes the node run from a release at `<home>/release` (`RELEASE_ROOT`), under the
-  service wrapper (`T3_SERVICE=1`) unless `service: false`. A restart the node asks
-  for is sent to the test process as `{:t3_restart, status}` instead of stopping the
+  service wrapper (`HALC2_SERVICE=1`) unless `service: false`. A restart the node asks
+  for is sent to the test process as `{:halc2_restart, status}` instead of stopping the
   VM. Environment, code paths, loaded versions and modules replaced by `bundle/4`
   are put back when the scenario ends. Returns the release root.
   """
   def release(%{home: home}, opts \\ []) do
     root = Path.join(home, "release")
-    version = T3.Upgrade.version()
+    version = HalC2.Upgrade.version()
     File.mkdir_p!(Path.join([root, "releases", version]))
     File.mkdir_p!(Path.join(root, "bin"))
     File.mkdir_p!(Path.join(root, "lib"))
@@ -582,11 +582,11 @@ defmodule T3.Test.Node do
     System.put_env("RELEASE_ROOT", root)
 
     if Keyword.get(opts, :service, true),
-      do: System.put_env("T3_SERVICE", "1"),
-      else: System.delete_env("T3_SERVICE")
+      do: System.put_env("HALC2_SERVICE", "1"),
+      else: System.delete_env("HALC2_SERVICE")
 
     test = self()
-    Application.put_env(:t3, :restart_exit, &send(test, {:t3_restart, &1}))
+    Application.put_env(:hal_c2, :restart_exit, &send(test, {:halc2_restart, &1}))
 
     unless :persistent_term.get({__MODULE__, :release}, false) do
       :persistent_term.put({__MODULE__, :release}, true)
@@ -594,10 +594,10 @@ defmodule T3.Test.Node do
 
       ExUnit.Callbacks.on_exit(fn ->
         System.delete_env("RELEASE_ROOT")
-        System.delete_env("T3_SERVICE")
-        Application.delete_env(:t3, :restart_exit)
-        :persistent_term.erase({T3.Upgrade, :version})
-        :persistent_term.erase({T3.Upgrade, :outcome})
+        System.delete_env("HALC2_SERVICE")
+        Application.delete_env(:hal_c2, :restart_exit)
+        :persistent_term.erase({HalC2.Upgrade, :version})
+        :persistent_term.erase({HalC2.Upgrade, :outcome})
         :persistent_term.erase({__MODULE__, :release})
         :code.set_path(paths)
         restore_modules()
@@ -613,8 +613,8 @@ defmodule T3.Test.Node do
       "version" => version,
       "otpRelease" => "29",
       "erts" => "17.0.5",
-      "platform" => T3.Upgrade.platform(),
-      "applications" => %{"t3" => version},
+      "platform" => HalC2.Upgrade.platform(),
+      "applications" => %{"hal_c2" => version},
       "nifs" => %{},
       "config" => "c"
     }
@@ -628,9 +628,9 @@ defmodule T3.Test.Node do
   def bundle(node, version, changes \\ %{}, modules \\ []) do
     dir = tmp_dir(node, "bundle")
     rel = Path.join([dir, "releases", version])
-    # Not `t3-<version>`: code paths move to that directory, which must not hide the
+    # Not `hal-c2-<version>`: code paths move to that directory, which must not hide the
     # rest of the application's modules from the test VM.
-    ebin = Path.join([dir, "lib", "t3_bundle-#{version}", "ebin"])
+    ebin = Path.join([dir, "lib", "halc2_bundle-#{version}", "ebin"])
     File.mkdir_p!(rel)
     File.mkdir_p!(ebin)
 
@@ -647,7 +647,7 @@ defmodule T3.Test.Node do
     path =
       Path.join(
         tmp_dir(node, "archive"),
-        T3.Upgrade.Source.file_name(version, T3.Upgrade.platform())
+        HalC2.Upgrade.Source.file_name(version, HalC2.Upgrade.platform())
       )
 
     :ok =
@@ -681,21 +681,21 @@ defmodule T3.Test.Node do
   def restore_modules do
     originals = :persistent_term.get({__MODULE__, :originals}, %{})
     :persistent_term.erase({__MODULE__, :originals})
-    if originals != %{}, do: T3.Hot.reload(Map.to_list(originals))
+    if originals != %{}, do: HalC2.Hot.reload(Map.to_list(originals))
     :ok
   end
 end
 
-defmodule T3.Test.Node.World do
+defmodule HalC2.Test.Node.World do
   @moduledoc """
   What a scenario builds up on its node: projects, threads and sockets, by the
   names the feature uses. Everything is kept in the Cucumber context map so
   steps in any file can find it:
 
-    * `context.node` - `%{port, environment, home, store}` from `T3.Test.Node.start/1`
+    * `context.node` - `%{port, environment, home, store}` from `HalC2.Test.Node.start/1`
     * `context.projects` - title → `%{id, root}`
     * `context.threads` - title → thread id
-    * `context.clients` - name → `T3.Test.WsClient` (`"default"` for the unnamed one)
+    * `context.clients` - name → `HalC2.Test.WsClient` (`"default"` for the unnamed one)
 
   Sockets are values: take one with `client/2`, thread it through the calls,
   and put it back with `put_client/3`.
@@ -703,7 +703,7 @@ defmodule T3.Test.Node.World do
 
   import ExUnit.Assertions
 
-  alias T3.Test.Node
+  alias HalC2.Test.Node
 
   @doc "Creates a project rooted at a fresh git repository; `title` is also its id."
   def create_project(context, title, fields \\ %{}) do
@@ -711,7 +711,7 @@ defmodule T3.Test.Node.World do
     root = fields["workspaceRoot"] || git_repo(context, id)
 
     {:ok, _} =
-      T3.Projects.mutate(
+      HalC2.Projects.mutate(
         Map.merge(
           %{
             "type" => "project.create",
@@ -747,7 +747,7 @@ defmodule T3.Test.Node.World do
       if project || context[:projects] not in [nil, %{}], do: project(context, project).id
 
     {:ok, _} =
-      T3.Orchestration.dispatch(
+      HalC2.Orchestration.dispatch(
         Map.merge(
           %{
             "type" => "thread.create",
@@ -772,12 +772,12 @@ defmodule T3.Test.Node.World do
   @doc "A thread's current entity (the `thread` row of its stream)."
   def thread(context, title) do
     id = thread_id(context, title)
-    T3.StreamState.get(T3.Streams.Server.state(T3.Streams.ensure(id)), "thread")[id]
+    HalC2.StreamState.get(HalC2.Streams.Server.state(HalC2.Streams.ensure(id)), "thread")[id]
   end
 
   @doc "A thread's sidebar row."
   def row(context, title) do
-    case T3.Shell.row(node(), thread_id(context, title)) do
+    case HalC2.Shell.row(node(), thread_id(context, title)) do
       {_kind, row} -> row
       nil -> nil
     end
@@ -788,14 +788,14 @@ defmodule T3.Test.Node.World do
     do: put_entity(context, title, "thread", thread_id(context, title), %{"s" => fields})
 
   @doc """
-  Commits one entity patch (`%{"s" => fields}` or `T3.Patch.delete/0`) to a thread's
+  Commits one entity patch (`%{"s" => fields}` or `HalC2.Patch.delete/0`) to a thread's
   stream and waits until the sidebar row reflects it.
   """
   def put_entity(context, title, kind, id, patch) do
     thread = thread_id(context, title)
     before = System.os_time(:millisecond)
-    {:ok, _} = T3.Streams.commit(thread, :thread, [{kind, id, patch}])
-    await_row(thread, &(T3.Projection.JS.epoch_ms(&1["updatedAt"]) >= before))
+    {:ok, _} = HalC2.Streams.commit(thread, :thread, [{kind, id, patch}])
+    await_row(thread, &(HalC2.Projection.JS.epoch_ms(&1["updatedAt"]) >= before))
     context
   end
 
@@ -860,7 +860,7 @@ defmodule T3.Test.Node.World do
 
   @doc "Waits until a stream's sidebar row satisfies `fun`; the test process must be subscribed to the shell."
   def await_row(id, fun, timeout \\ 2_000) do
-    case T3.Shell.row(node(), id) do
+    case HalC2.Shell.row(node(), id) do
       {_kind, row} -> if fun.(row), do: row, else: await_next_row(id, fun, timeout)
       nil -> await_next_row(id, fun, timeout)
     end
@@ -868,7 +868,7 @@ defmodule T3.Test.Node.World do
 
   defp await_next_row(id, fun, timeout) do
     receive do
-      {:t3_shell, {:rows, _, rows}} ->
+      {:halc2_shell, {:rows, _, rows}} ->
         case List.keyfind(rows, id, 0) do
           {^id, {_kind, row}} -> if fun.(row), do: row, else: await_next_row(id, fun, timeout)
           nil -> await_next_row(id, fun, timeout)
@@ -913,8 +913,8 @@ defmodule T3.Test.Node.World do
   def git_repo(context, name \\ "repo") do
     root = Node.tmp_dir(context.node, name)
     git!(root, ~w(init -q -b main))
-    git!(root, ~w(config user.email t3@example.com))
-    git!(root, ~w(config user.name T3))
+    git!(root, ~w(config user.email hal-c2@example.com))
+    git!(root, ~w(config user.name HAL-C2))
     File.write!(Path.join(root, "README.md"), "# #{name}\n")
     git!(root, ~w(add README.md))
     git!(root, ~w(commit -q -m init))
@@ -935,20 +935,20 @@ defmodule T3.Test.Node.World do
   def slug(title), do: title |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
 
   @doc """
-  Waits until `fun`, given a thread stream's `T3.StreamState`, returns something
+  Waits until `fun`, given a thread stream's `HalC2.StreamState`, returns something
   other than `nil`/`false`, and returns that. Subscribes the test process to the
   stream and re-checks on each of its commits.
   """
   def await_stream(stream_id, fun, timeout \\ 5_000) do
-    :ok = T3.Streams.subscribe(stream_id, self(), nil)
+    :ok = HalC2.Streams.subscribe(stream_id, self(), nil)
     check_stream(stream_id, fun, System.monotonic_time(:millisecond) + timeout)
   end
 
   defp check_stream(id, fun, deadline) do
-    case fun.(T3.Streams.Server.state(T3.Streams.ensure(id))) do
+    case fun.(HalC2.Streams.Server.state(HalC2.Streams.ensure(id))) do
       done when done in [nil, false] ->
         receive do
-          {:t3_stream, ^id, _} -> check_stream(id, fun, deadline)
+          {:halc2_stream, ^id, _} -> check_stream(id, fun, deadline)
         after
           max(deadline - System.monotonic_time(:millisecond), 0) ->
             flunk("#{id}'s stream never reached the expected state")
@@ -961,12 +961,12 @@ defmodule T3.Test.Node.World do
 
   @doc """
   Deep-merges `patch` into the node's settings document and saves it, starting
-  `T3.Settings` if the scenario has not yet. Returns the context.
+  `HalC2.Settings` if the scenario has not yet. Returns the context.
   """
   def update_settings(context, patch) do
-    Node.ensure(T3.Settings)
-    {settings, version} = T3.Settings.get()
-    {:ok, _} = T3.Settings.put(deep_merge(settings, patch), version)
+    Node.ensure(HalC2.Settings)
+    {settings, version} = HalC2.Settings.get()
+    {:ok, _} = HalC2.Settings.put(deep_merge(settings, patch), version)
     context
   end
 
@@ -977,10 +977,10 @@ defmodule T3.Test.Node.World do
   def deep_merge(_a, b), do: b
 
   @doc """
-  Gives the node the device tools the way `T3.DevicesTest` does: the pinned hub
+  Gives the node the device tools the way `HalC2.DevicesTest` does: the pinned hub
   and agent-device fakes installed under the node's home (`hub:` picks another
   hub version, `nil` leaves it out) and a fake Android SDK on `ANDROID_HOME`,
-  restored when the scenario ends. Starts `T3.Settings`; returns the context.
+  restored when the scenario ends. Starts `HalC2.Settings`; returns the context.
   """
   def fake_device_tools(context, opts \\ []) do
     support = Path.expand(".", __DIR__)
@@ -1007,7 +1007,7 @@ defmodule T3.Test.Node.World do
     )
 
     put_env("ANDROID_HOME", sdk)
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     context
   end
 
@@ -1036,19 +1036,19 @@ defmodule T3.Test.Node.World do
     fake = Path.expand("fake_text_cli.py", __DIR__)
 
     for {cli, key} <- [claude: :text_claude_command, codex: :text_codex_command] do
-      previous = Application.fetch_env(:t3, key)
-      Application.put_env(:t3, key, if(cli in clis, do: fake, else: "t3-test-no-#{cli}"))
+      previous = Application.fetch_env(:hal_c2, key)
+      Application.put_env(:hal_c2, key, if(cli in clis, do: fake, else: "hal-c2-test-no-#{cli}"))
 
       ExUnit.Callbacks.on_exit(fn ->
         case previous do
-          {:ok, value} -> Application.put_env(:t3, key, value)
-          :error -> Application.delete_env(:t3, key)
+          {:ok, value} -> Application.put_env(:hal_c2, key, value)
+          :error -> Application.delete_env(:hal_c2, key)
         end
       end)
     end
 
     put_env("FAKE_TEXT_LOG", Path.join(context.node.home, "text-calls.jsonl"))
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     context
   end
 
@@ -1061,7 +1061,7 @@ defmodule T3.Test.Node.World do
   end
 
   @doc """
-  Adds resource samples to `T3.Diagnostics` as if taken `ages` ms ago (newest
+  Adds resource samples to `HalC2.Diagnostics` as if taken `ages` ms ago (newest
   first is not required), each a copy of the latest sample's process tree with
   `cpu` percent on the node's own process. Test setup for history that would
   otherwise take real minutes to collect.
@@ -1069,7 +1069,7 @@ defmodule T3.Test.Node.World do
   def add_resource_samples(ages, cpu \\ 0.0) do
     now = System.system_time(:millisecond)
 
-    :sys.replace_state(T3.Diagnostics, fn state ->
+    :sys.replace_state(HalC2.Diagnostics, fn state ->
       [{_, rows} | _] = state.samples
       rows = Enum.map(rows, &if(&1.depth == 0, do: %{&1 | cpu: cpu}, else: &1))
       old = for age <- ages, do: {now - age, rows}
@@ -1122,15 +1122,15 @@ defmodule T3.Test.Node.World do
     Map.merge(context, %{import_result: result, reply: {:ok, result}})
   end
 
-  @doc "Sets a `:t3` application env key for the rest of the scenario, restoring it after."
+  @doc "Sets a `:hal_c2` application env key for the rest of the scenario, restoring it after."
   def put_app_env(key, value) do
-    previous = Application.fetch_env(:t3, key)
-    Application.put_env(:t3, key, value)
+    previous = Application.fetch_env(:hal_c2, key)
+    Application.put_env(:hal_c2, key, value)
 
     ExUnit.Callbacks.on_exit(fn ->
       case previous do
-        {:ok, value} -> Application.put_env(:t3, key, value)
-        :error -> Application.delete_env(:t3, key)
+        {:ok, value} -> Application.put_env(:hal_c2, key, value)
+        :error -> Application.delete_env(:hal_c2, key)
       end
     end)
   end
@@ -1153,7 +1153,7 @@ defmodule T3.Test.Node.World do
   end
 
   @doc """
-  Creates the thread `title` on its own worktree, a new branch `t3/<slug>` off
+  Creates the thread `title` on its own worktree, a new branch `hal-c2/<slug>` off
   `main` under `<home>/worktrees` as the node makes them, and records it as
   `context.worktree` (`%{thread, path, branch, root}`). `fields` go on the
   thread; `"branch"` and `"worktreePath"` there reuse an existing worktree. A
@@ -1161,7 +1161,7 @@ defmodule T3.Test.Node.World do
   """
   def worktree_thread(context, title, project \\ nil, fields \\ %{}) do
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.Vcs.Registry}, id: T3.Vcs.Registry)
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Vcs.Registry}, id: HalC2.Vcs.Registry)
     )
 
     # A project named but not yet made, or the scenario's first ("api"), is created.
@@ -1178,13 +1178,13 @@ defmodule T3.Test.Node.World do
       end
 
     %{root: root} = project(context, project)
-    branch = fields["branch"] || "t3/#{slug(title)}"
+    branch = fields["branch"] || "hal-c2/#{slug(title)}"
 
     path =
       fields["worktreePath"] ||
         (
           {:ok, %{"worktree" => %{"path" => path}}} =
-            T3.Vcs.create_worktree(%{"cwd" => root, "refName" => "main", "newRefName" => branch})
+            HalC2.Vcs.create_worktree(%{"cwd" => root, "refName" => "main", "newRefName" => branch})
 
           path
         )
@@ -1197,25 +1197,25 @@ defmodule T3.Test.Node.World do
   end
 
   @doc """
-  Starts `T3.StorageCleanup` and what it reads (settings, the provider session
+  Starts `HalC2.StorageCleanup` and what it reads (settings, the provider session
   and VCS registries) if the scenario has not, with its hourly timer off so
   only the scenario sweeps. Returns the context.
   """
   def start_storage_cleanup(context) do
-    unless Process.whereis(T3.StorageCleanup), do: put_app_env(:storage_cleanup_first_ms, nil)
-    Node.ensure(T3.Settings)
+    unless Process.whereis(HalC2.StorageCleanup), do: put_app_env(:storage_cleanup_first_ms, nil)
+    Node.ensure(HalC2.Settings)
 
-    for name <- [T3.Codex.Registry, T3.Claude.Registry, T3.Acp.Registry, T3.Vcs.Registry],
+    for name <- [HalC2.Codex.Registry, HalC2.Claude.Registry, HalC2.Acp.Registry, HalC2.Vcs.Registry],
         do: Node.ensure(Supervisor.child_spec({Registry, keys: :unique, name: name}, id: name))
 
-    Node.ensure(T3.StorageCleanup)
+    Node.ensure(HalC2.StorageCleanup)
     context
   end
 
   @doc "Runs one storage sweep now and waits for it (`start_storage_cleanup/1` first)."
   def sweep_storage(context) do
     context = start_storage_cleanup(context)
-    :ok = T3.StorageCleanup.sweep()
+    :ok = HalC2.StorageCleanup.sweep()
     context
   end
 
@@ -1228,16 +1228,16 @@ defmodule T3.Test.Node.World do
     put_env("SHELL", "/bin/sh")
 
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.Terminal.Registry},
-        id: T3.Terminal.Registry
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Terminal.Registry},
+        id: HalC2.Terminal.Registry
       )
     )
 
-    Node.ensure({DynamicSupervisor, name: T3.Terminal.Supervisor, strategy: :one_for_one})
-    Node.ensure(T3.Terminal.Hub)
+    Node.ensure({DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one})
+    Node.ensure(HalC2.Terminal.Hub)
 
     {:ok, %{"pid" => shell}} =
-      T3.Terminal.open(%{"threadId" => thread_id, "terminalId" => terminal_id, "cwd" => cwd})
+      HalC2.Terminal.open(%{"threadId" => thread_id, "terminalId" => terminal_id, "cwd" => cwd})
 
     ExUnit.Callbacks.on_exit(fn ->
       System.cmd("kill", ["-9", "#{shell}"], stderr_to_stdout: true)
@@ -1259,7 +1259,7 @@ defmodule T3.Test.Node.World do
   def call_keeping(context, method, payload \\ %{}, name \\ "default") do
     id = System.unique_integer([:positive])
     client = Node.rpc(client(context, name), context.node.environment, id, method, payload)
-    {frame, skipped, client} = T3.Test.WsClient.recv_until(client, Node.reply?(id))
+    {frame, skipped, client} = HalC2.Test.WsClient.recv_until(client, Node.reply?(id))
     client = %{client | inbox: skipped ++ client.inbox}
 
     reply =
@@ -1299,13 +1299,13 @@ defmodule T3.Test.Node.World do
 
     previous = %{
       path: System.get_env("PATH"),
-      gh: Application.get_env(:t3, :gh_command),
+      gh: Application.get_env(:hal_c2, :gh_command),
       rules: System.get_env("FAKE_GH_RULES"),
       log: System.get_env("FAKE_GH_LOG")
     }
 
     System.put_env("PATH", bin <> ":" <> previous.path)
-    Application.put_env(:t3, :gh_command, "gh")
+    Application.put_env(:hal_c2, :gh_command, "gh")
     System.put_env("FAKE_GH_RULES", rules)
     System.put_env("FAKE_GH_LOG", log)
 
@@ -1315,12 +1315,12 @@ defmodule T3.Test.Node.World do
       restore_env("FAKE_GH_LOG", previous.log)
 
       if previous.gh,
-        do: Application.put_env(:t3, :gh_command, previous.gh),
-        else: Application.delete_env(:t3, :gh_command)
+        do: Application.put_env(:hal_c2, :gh_command, previous.gh),
+        else: Application.delete_env(:hal_c2, :gh_command)
     end)
 
-    Node.ensure(T3.PullRequests.Refreshes)
-    T3.PullRequests.invalidate(%{})
+    Node.ensure(HalC2.PullRequests.Refreshes)
+    HalC2.PullRequests.invalidate(%{})
     %{bin: bin, rules: rules, log: log}
   end
 
@@ -1358,7 +1358,7 @@ defmodule T3.Test.Node.World do
     File.rm(Path.join(context.cli.bin, tool))
 
     if tool == "gh" do
-      Application.put_env(:t3, :gh_command, "t3-test-no-gh")
+      Application.put_env(:hal_c2, :gh_command, "hal-c2-test-no-gh")
     else
       path =
         System.get_env("PATH")
@@ -1372,7 +1372,7 @@ defmodule T3.Test.Node.World do
       System.put_env("PATH", path)
     end
 
-    T3.PullRequests.invalidate(%{})
+    HalC2.PullRequests.invalidate(%{})
     context
   end
 
@@ -1418,17 +1418,17 @@ defmodule T3.Test.Node.World do
 
     File.write!(
       ssh,
-      ~s(#!/bin/sh\nfor last; do :; done\ncd "$T3_FAKE_REMOTES" && exec sh -c "$last"\n)
+      ~s(#!/bin/sh\nfor last; do :; done\ncd "$HALC2_FAKE_REMOTES" && exec sh -c "$last"\n)
     )
 
     File.chmod!(ssh, 0o755)
-    previous = {System.get_env("GIT_SSH_COMMAND"), System.get_env("T3_FAKE_REMOTES")}
+    previous = {System.get_env("GIT_SSH_COMMAND"), System.get_env("HALC2_FAKE_REMOTES")}
     System.put_env("GIT_SSH_COMMAND", ssh)
-    System.put_env("T3_FAKE_REMOTES", dir)
+    System.put_env("HALC2_FAKE_REMOTES", dir)
 
     ExUnit.Callbacks.on_exit(fn ->
       restore_env("GIT_SSH_COMMAND", elem(previous, 0))
-      restore_env("T3_FAKE_REMOTES", elem(previous, 1))
+      restore_env("HALC2_FAKE_REMOTES", elem(previous, 1))
     end)
 
     dir
@@ -1503,10 +1503,10 @@ defmodule T3.Test.Node.World do
     path = Path.join(Node.tmp_dir(context.node, "writer"), "claude")
     File.write!(path, "#!/bin/sh\n" <> script)
     File.chmod!(path, 0o755)
-    previous = Application.get_env(:t3, :text_claude_command)
-    Application.put_env(:t3, :text_claude_command, path)
+    previous = Application.get_env(:hal_c2, :text_claude_command)
+    Application.put_env(:hal_c2, :text_claude_command, path)
     ExUnit.Callbacks.on_exit(fn -> restore_app_env(:text_claude_command, previous) end)
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     context
   end
 
@@ -1531,10 +1531,10 @@ defmodule T3.Test.Node.World do
 
   # Puts an app env key back as it was; one that was unset stays unset (a nil value
   # would override `Application.get_env/3` defaults in later scenarios).
-  defp restore_app_env(key, nil), do: Application.delete_env(:t3, key)
-  defp restore_app_env(key, value), do: Application.put_env(:t3, key, value)
+  defp restore_app_env(key, nil), do: Application.delete_env(:hal_c2, key)
+  defp restore_app_env(key, value), do: Application.put_env(:hal_c2, key, value)
 
-  @doc "Deep-merges `patch` into the node's settings (starting `T3.Settings` if needed)."
+  @doc "Deep-merges `patch` into the node's settings (starting `HalC2.Settings` if needed)."
   def put_settings(context, patch), do: update_settings(context, patch)
 
   @doc """
@@ -1543,7 +1543,7 @@ defmodule T3.Test.Node.World do
   """
   def capture_log(context) do
     path = Path.join(Node.tmp_dir(context.node, "log"), "node.log")
-    id = :"t3_test_log_#{System.unique_integer([:positive])}"
+    id = :"halc2_test_log_#{System.unique_integer([:positive])}"
     :ok = :logger.add_handler(id, :logger_std_h, %{config: %{file: String.to_charlist(path)}})
     ExUnit.Callbacks.on_exit(fn -> :logger.remove_handler(id) end)
     Map.put(context, :log, {id, path})
@@ -1565,7 +1565,7 @@ defmodule T3.Test.Node.World do
   def run_turn(context, title, text) do
     fake_codex()
     id = thread_id(context, title)
-    :ok = T3.Streams.subscribe(id, self(), nil)
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
     done = completed_runs(id)
 
     {{:ok, _}, context} =
@@ -1583,30 +1583,30 @@ defmodule T3.Test.Node.World do
 
   # The fake Codex app server plays the agent until the scenario ends.
   defp fake_codex do
-    Node.ensure({Registry, keys: :unique, name: T3.Codex.Registry})
-    Node.ensure({DynamicSupervisor, name: T3.Codex.Supervisor, strategy: :one_for_one})
+    Node.ensure({Registry, keys: :unique, name: HalC2.Codex.Registry})
+    Node.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
 
-    unless Application.get_env(:t3, :codex_command) == ["python3", "-u", @fake_codex] do
-      previous = Application.get_env(:t3, :codex_command)
-      Application.put_env(:t3, :codex_command, ["python3", "-u", @fake_codex])
+    unless Application.get_env(:hal_c2, :codex_command) == ["python3", "-u", @fake_codex] do
+      previous = Application.get_env(:hal_c2, :codex_command)
+      Application.put_env(:hal_c2, :codex_command, ["python3", "-u", @fake_codex])
 
       ExUnit.Callbacks.on_exit(fn ->
         if previous,
-          do: Application.put_env(:t3, :codex_command, previous),
-          else: Application.delete_env(:t3, :codex_command)
+          do: Application.put_env(:hal_c2, :codex_command, previous),
+          else: Application.delete_env(:hal_c2, :codex_command)
       end)
     end
   end
 
   defp completed_runs(id) do
-    T3.Streams.Server.state(T3.Streams.ensure(id))
-    |> T3.StreamState.list("run")
+    HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
+    |> HalC2.StreamState.list("run")
     |> Enum.filter(&(&1["status"] == "completed"))
   end
 
   defp await_completed_run(id, before) do
     receive do
-      {:t3_stream, ^id, _} ->
+      {:halc2_stream, ^id, _} ->
         case completed_runs(id) do
           runs when length(runs) > before -> Enum.max_by(runs, & &1["ordinal"])
           _ -> await_completed_run(id, before)
@@ -1656,7 +1656,7 @@ defmodule T3.Test.Node.World do
   """
   def http_post(context, path, body) do
     {:ok, _} = Application.ensure_all_started(:inets)
-    {:ok, token, _, _} = T3.Auth.exchange(T3.Auth.create_pairing_token(context.node.store))
+    {:ok, token, _, _} = HalC2.Auth.exchange(HalC2.Auth.create_pairing_token(context.node.store))
     url = ~c"http://127.0.0.1:#{context.node.port}#{path}"
     headers = [{~c"authorization", ~c"Bearer " ++ to_charlist(token)}]
 
@@ -1672,15 +1672,15 @@ defmodule T3.Test.Node.World do
   Launches a thread in `project` (a title, or nil for the only one) into a new
   worktree of `main` (`orchestration.launchThread`), with `text` as its first
   message and `strategy` merged into its `worktree` workspace strategy. Starts what
-  that needs first: `T3.WorktreeSetup`, terminals, and the fake Codex agent. Sets
+  that needs first: `HalC2.WorktreeSetup`, terminals, and the fake Codex agent. Sets
   `context.setup_thread`, and `context.setup_snapshots` to the setup snapshots seen
   so far, oldest first (`await_setup/3` adds to them).
   """
   def launch_in_worktree(context, project \\ nil, text \\ "list the files", strategy \\ %{}) do
     worktree_services()
     thread_id = "th-worktree-#{System.unique_integer([:positive])}"
-    T3.WorktreeSetup.subscribe(thread_id, self())
-    :ok = T3.Streams.subscribe(thread_id, self(), nil)
+    HalC2.WorktreeSetup.subscribe(thread_id, self())
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
 
     {_, context} =
       call!(context, "orchestration.launchThread", %{
@@ -1699,23 +1699,23 @@ defmodule T3.Test.Node.World do
   end
 
   @doc """
-  Starts what preparing and working in a new worktree needs: `T3.WorktreeSetup`,
+  Starts what preparing and working in a new worktree needs: `HalC2.WorktreeSetup`,
   terminals (a setup script runs in one), and the fake Codex agent.
   """
   def worktree_services do
-    Node.ensure(T3.Settings)
-    Node.ensure(T3.Workspace)
-    Node.ensure({Registry, keys: :unique, name: T3.Terminal.Registry})
+    Node.ensure(HalC2.Settings)
+    Node.ensure(HalC2.Workspace)
+    Node.ensure({Registry, keys: :unique, name: HalC2.Terminal.Registry})
 
     Node.ensure(
       Supervisor.child_spec(
-        {DynamicSupervisor, name: T3.Terminal.Supervisor, strategy: :one_for_one},
+        {DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one},
         id: :terminal_sup
       )
     )
 
-    Node.ensure(T3.Terminal.Hub)
-    Node.ensure(T3.WorktreeSetup)
+    Node.ensure(HalC2.Terminal.Hub)
+    Node.ensure(HalC2.WorktreeSetup)
     fake_codex()
   end
 
@@ -1730,7 +1730,7 @@ defmodule T3.Test.Node.World do
     case Enum.find(context.setup_snapshots, pred) do
       nil ->
         receive do
-          {:t3_worktree_setup, ^thread_id, snapshot} ->
+          {:halc2_worktree_setup, ^thread_id, snapshot} ->
             context
             |> Map.update!(:setup_snapshots, &(&1 ++ [snapshot]))
             |> await_setup(pred, timeout)
@@ -1781,34 +1781,34 @@ defmodule T3.Test.Node.World do
     keys = ~w(codex_command claude_command acp_commands text_codex_command text_claude_command)a
     # Put back as found: config/test.exs sets the text commands to missing CLIs, and
     # deleting them would let later scenarios reach the real `codex`/`claude`.
-    previous = for key <- keys, do: {key, Application.fetch_env(:t3, key)}
-    Application.put_env(:t3, :codex_command, fake.("fake_codex.py"))
-    Application.put_env(:t3, :claude_command, fake.("fake_claude.py"))
+    previous = for key <- keys, do: {key, Application.fetch_env(:hal_c2, key)}
+    Application.put_env(:hal_c2, :codex_command, fake.("fake_codex.py"))
+    Application.put_env(:hal_c2, :claude_command, fake.("fake_claude.py"))
 
-    Application.put_env(:t3, :acp_commands, %{
+    Application.put_env(:hal_c2, :acp_commands, %{
       "opencode" => fake.("fake_acp.py"),
       "cursor" => fake.("fake_acp.py")
     })
 
-    Application.put_env(:t3, :text_codex_command, Path.join(@support, "fake_text_cli.py"))
-    Application.put_env(:t3, :text_claude_command, Path.join(@support, "fake_text_cli.py"))
+    Application.put_env(:hal_c2, :text_codex_command, Path.join(@support, "fake_text_cli.py"))
+    Application.put_env(:hal_c2, :text_claude_command, Path.join(@support, "fake_text_cli.py"))
     for {key, value} <- env, do: System.put_env(key, value)
 
     ExUnit.Callbacks.on_exit(fn ->
       for {key, value} <- previous do
         case value do
-          {:ok, value} -> Application.put_env(:t3, key, value)
-          :error -> Application.delete_env(:t3, key)
+          {:ok, value} -> Application.put_env(:hal_c2, key, value)
+          :error -> Application.delete_env(:hal_c2, key)
         end
       end
 
       for {key, _} <- env, do: System.delete_env(key)
     end)
 
-    for name <- [T3.Codex.Registry, T3.Claude.Registry, T3.Acp.Registry],
+    for name <- [HalC2.Codex.Registry, HalC2.Claude.Registry, HalC2.Acp.Registry],
         do: Node.ensure(Supervisor.child_spec({Registry, keys: :unique, name: name}, id: name))
 
-    Node.ensure({DynamicSupervisor, name: T3.Codex.Supervisor, strategy: :one_for_one})
+    Node.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
     Map.put(context, :agents, true)
   end
 
@@ -1844,11 +1844,11 @@ defmodule T3.Test.Node.World do
     end
   end
 
-  @doc "A thread's live stream state (`T3.StreamState`); subscribes the test process to it."
+  @doc "A thread's live stream state (`HalC2.StreamState`); subscribes the test process to it."
   def stream(context, title) do
     id = thread_id(context, title)
-    :ok = T3.Streams.subscribe(id, self(), nil)
-    T3.Streams.Server.state(T3.Streams.ensure(id))
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
+    HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
   end
 
   @doc """
@@ -1865,7 +1865,7 @@ defmodule T3.Test.Node.World do
 
   @doc "A thread's runs, oldest first."
   def runs(context, title),
-    do: context |> stream(title) |> T3.StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+    do: context |> stream(title) |> HalC2.StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
 
   @doc """
   Waits until `fun` holds for the thread's stream state and returns that state.
@@ -1879,12 +1879,12 @@ defmodule T3.Test.Node.World do
 
   defp await_stream_next(id, fun, timeout, last) do
     receive do
-      {:t3_stream, ^id, _} ->
-        state = T3.Streams.Server.state(T3.Streams.ensure(id))
+      {:halc2_stream, ^id, _} ->
+        state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
         if fun.(state), do: state, else: await_stream_next(id, fun, timeout, state)
     after
       timeout ->
-        runs = last |> T3.StreamState.list("run") |> Enum.map(& &1["status"])
+        runs = last |> HalC2.StreamState.list("run") |> Enum.map(& &1["status"])
         flunk("#{id} never reached the expected state (runs: #{inspect(runs)})")
     end
   end
@@ -1896,7 +1896,7 @@ defmodule T3.Test.Node.World do
       title,
       fn state ->
         state
-        |> T3.StreamState.list("run")
+        |> HalC2.StreamState.list("run")
         |> Enum.sort_by(& &1["ordinal"])
         |> Enum.map(& &1["status"]) == statuses
       end,
@@ -1915,7 +1915,7 @@ defmodule T3.Test.Node.World do
     message_id = extra["messageId"] || "msg-#{System.unique_integer([:positive])}"
 
     reply =
-      T3.Orchestration.dispatch(
+      HalC2.Orchestration.dispatch(
         Map.merge(
           %{
             "type" => "message.dispatch",
@@ -1956,7 +1956,7 @@ defmodule T3.Test.Node.World do
     await_thread(
       context,
       title,
-      &Enum.any?(T3.StreamState.list(&1, "run"), fn run -> run["status"] == "running" end)
+      &Enum.any?(HalC2.StreamState.list(&1, "run"), fn run -> run["status"] == "running" end)
     )
 
     # The sidebar row shows it too, as the node's restart recovery reads it.
@@ -1967,10 +1967,10 @@ defmodule T3.Test.Node.World do
   @doc "A thread's queued messages as `{text, run}`, in queue order."
   def queued(context, title) do
     state = stream(context, title)
-    messages = T3.StreamState.get(state, "message")
+    messages = HalC2.StreamState.get(state, "message")
 
     state
-    |> T3.StreamState.list("run")
+    |> HalC2.StreamState.list("run")
     |> Enum.filter(&(&1["status"] == "queued"))
     |> Enum.sort_by(& &1["queuePosition"])
     |> Enum.map(&{messages[&1["userMessageId"]]["text"], &1})
@@ -1979,10 +1979,10 @@ defmodule T3.Test.Node.World do
   @doc "The newest run whose user message reads `text`, or nil."
   def run_for(context, title, text) do
     state = stream(context, title)
-    messages = T3.StreamState.get(state, "message")
+    messages = HalC2.StreamState.get(state, "message")
 
     state
-    |> T3.StreamState.list("run")
+    |> HalC2.StreamState.list("run")
     |> Enum.filter(&(messages[&1["userMessageId"]]["text"] == text))
     |> Enum.max_by(& &1["ordinal"], fn -> nil end)
   end
@@ -2006,7 +2006,7 @@ defmodule T3.Test.Node.World do
 
     if running do
       {:ok, _} =
-        T3.Orchestration.dispatch(%{
+        HalC2.Orchestration.dispatch(%{
           "type" => "run.interrupt",
           "threadId" => thread_id(context, title),
           "runId" => running["id"]
@@ -2015,15 +2015,15 @@ defmodule T3.Test.Node.World do
       await_thread(
         context,
         title,
-        &(T3.StreamState.get(&1, "run")[running["id"]]["status"] != "running")
+        &(HalC2.StreamState.get(&1, "run")[running["id"]]["status"] != "running")
       )
     end
 
-    known = Map.keys(T3.StreamState.get(stream(context, title), "runtime-request"))
+    known = Map.keys(HalC2.StreamState.get(stream(context, title), "runtime-request"))
     {{:ok, _}, context} = send_message(context, title, text)
 
     pending =
-      &Enum.find(T3.StreamState.list(&1, "runtime-request"), fn r ->
+      &Enum.find(HalC2.StreamState.list(&1, "runtime-request"), fn r ->
         r["status"] == "pending" and r["id"] not in known
       end)
 
@@ -2043,7 +2043,7 @@ defmodule T3.Test.Node.World do
       await_thread(
         context,
         title,
-        &(Enum.count(T3.StreamState.list(&1, "run"), fn r -> r["status"] == "completed" end) >
+        &(Enum.count(HalC2.StreamState.list(&1, "run"), fn r -> r["status"] == "completed" end) >
             done)
       )
 
@@ -2162,7 +2162,7 @@ defmodule T3.Test.Node.World do
     id = fields["threadId"] || "th-launch-#{System.unique_integer([:positive])}"
     title = fields["title"] || "New thread"
     # Subscribed first, so `await_stream/4` wakes on the launch's own commits.
-    :ok = T3.Streams.subscribe(id, self(), nil)
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
 
     input =
       Map.merge(
@@ -2205,13 +2205,13 @@ defmodule T3.Test.Node.World do
     File.write!(path, Enum.join(answers, "\n"))
     System.put_env("FAKE_TEXT_ANSWERS", path)
     System.put_env("FAKE_TEXT_LOG", Path.join(context.node.home, "text-calls.log"))
-    Application.put_env(:t3, :title_retry_ms, 10)
-    Node.ensure(T3.Settings)
+    Application.put_env(:hal_c2, :title_retry_ms, 10)
+    Node.ensure(HalC2.Settings)
 
     ExUnit.Callbacks.on_exit(fn ->
       System.delete_env("FAKE_TEXT_ANSWERS")
       System.delete_env("FAKE_TEXT_LOG")
-      Application.delete_env(:t3, :title_retry_ms)
+      Application.delete_env(:hal_c2, :title_retry_ms)
     end)
 
     Map.put(context, :title_generator, true)
@@ -2233,27 +2233,27 @@ defmodule T3.Test.Node.World do
 
   @doc """
   Starts what preparing a new worktree for a launched thread needs
-  (`T3.WorktreeSetup`, its terminals and settings).
+  (`HalC2.WorktreeSetup`, its terminals and settings).
   """
   def thread_worktrees(context) do
-    Node.ensure(T3.Settings)
-    Node.ensure(T3.Workspace)
+    Node.ensure(HalC2.Settings)
+    Node.ensure(HalC2.Workspace)
 
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.Terminal.Registry},
-        id: T3.Terminal.Registry
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Terminal.Registry},
+        id: HalC2.Terminal.Registry
       )
     )
 
     Node.ensure(
       Supervisor.child_spec(
-        {DynamicSupervisor, name: T3.Terminal.Supervisor, strategy: :one_for_one},
-        id: T3.Terminal.Supervisor
+        {DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one},
+        id: HalC2.Terminal.Supervisor
       )
     )
 
-    Node.ensure(T3.Terminal.Hub)
-    Node.ensure(T3.WorktreeSetup)
+    Node.ensure(HalC2.Terminal.Hub)
+    Node.ensure(HalC2.WorktreeSetup)
     context
   end
 
@@ -2265,7 +2265,7 @@ defmodule T3.Test.Node.World do
     id = "th-#{slug(title)}-#{System.unique_integer([:positive])}"
 
     {:ok, _} =
-      T3.Orchestration.dispatch(
+      HalC2.Orchestration.dispatch(
         Map.merge(
           %{
             "type" => "thread.fork",
@@ -2291,7 +2291,7 @@ defmodule T3.Test.Node.World do
   def setup_result(context, title, timeout \\ 15_000) do
     id = thread_id(context, title)
 
-    case T3.WorktreeSetup.subscribe(id, self()) do
+    case HalC2.WorktreeSetup.subscribe(id, self()) do
       %{"phase" => "running"} -> await_setup_end(id, timeout)
       snapshot -> snapshot
     end
@@ -2299,8 +2299,8 @@ defmodule T3.Test.Node.World do
 
   defp await_setup_end(id, timeout) do
     receive do
-      {:t3_worktree_setup, ^id, %{"phase" => "running"}} -> await_setup_end(id, timeout)
-      {:t3_worktree_setup, ^id, snapshot} -> snapshot
+      {:halc2_worktree_setup, ^id, %{"phase" => "running"}} -> await_setup_end(id, timeout)
+      {:halc2_worktree_setup, ^id, snapshot} -> snapshot
     after
       timeout -> flunk("the worktree setup of #{id} never ended")
     end
@@ -2342,14 +2342,14 @@ defmodule T3.Test.Node.World do
   `claude_starts/1`).
   """
   def providers(context) do
-    if Application.get_env(:t3, :codex_command) == nil do
+    if Application.get_env(:hal_c2, :codex_command) == nil do
       log = "FAKE_CODEX_INPUT_LOG=" <> Path.join(context.node.home, "codex-inputs.jsonl")
       requests = "FAKE_CODEX_REQUEST_LOG=" <> Path.join(context.node.home, "codex-methods.log")
       sessions = "FAKE_CODEX_SESSION_LOG=" <> Path.join(context.node.home, "codex-sessions.jsonl")
       # The full requests and answers, as `codex_requests/2` reads them.
       full = "FAKE_CODEX_LOG=" <> Path.join(context.node.home, "codex-requests.log")
 
-      Application.put_env(:t3, :codex_command, [
+      Application.put_env(:hal_c2, :codex_command, [
         "env",
         log,
         requests,
@@ -2360,14 +2360,14 @@ defmodule T3.Test.Node.World do
         @fake_codex
       ])
 
-      ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :codex_command) end)
+      ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :codex_command) end)
     end
 
-    if Application.get_env(:t3, :claude_command) == nil do
+    if Application.get_env(:hal_c2, :claude_command) == nil do
       log = "FAKE_CLAUDE_ARGV_LOG=" <> Path.join(context.node.home, "claude-argv.jsonl")
       input = "FAKE_CLAUDE_INPUT_LOG=" <> Path.join(context.node.home, "claude-inputs.jsonl")
 
-      Application.put_env(:t3, :claude_command, [
+      Application.put_env(:hal_c2, :claude_command, [
         "env",
         log,
         input,
@@ -2376,29 +2376,29 @@ defmodule T3.Test.Node.World do
         @fake_claude
       ])
 
-      ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :claude_command) end)
+      ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :claude_command) end)
     end
 
-    if Application.get_env(:t3, :acp_commands) == nil do
+    if Application.get_env(:hal_c2, :acp_commands) == nil do
       log = "FAKE_ACP_INPUT_LOG=" <> Path.join(context.node.home, "acp-inputs.jsonl")
 
-      Application.put_env(:t3, :acp_commands, %{
+      Application.put_env(:hal_c2, :acp_commands, %{
         "opencode" => ["env", log, "python3", "-u", @fake_acp]
       })
 
-      ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :acp_commands) end)
+      ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :acp_commands) end)
     end
 
     for child <- [
-          T3.Settings,
-          registry(T3.Codex.Registry),
-          registry(T3.Claude.Registry),
-          registry(T3.Acp.Registry),
+          HalC2.Settings,
+          registry(HalC2.Codex.Registry),
+          registry(HalC2.Claude.Registry),
+          registry(HalC2.Acp.Registry),
           Supervisor.child_spec(
-            {DynamicSupervisor, name: T3.Codex.Supervisor, strategy: :one_for_one},
-            id: T3.Codex.Supervisor
+            {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one},
+            id: HalC2.Codex.Supervisor
           ),
-          T3.Mcp
+          HalC2.Mcp
         ],
         do: Node.ensure(child)
 
@@ -2416,10 +2416,10 @@ defmodule T3.Test.Node.World do
   def launch_titled(context, title, project, text, fields \\ %{}) do
     context = providers(context)
     id = fields["threadId"] || "th-#{slug(title)}-#{System.unique_integer([:positive])}"
-    :ok = T3.Streams.subscribe(id, self(), nil)
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
 
     {:ok, _} =
-      T3.Orchestration.launch_thread(
+      HalC2.Orchestration.launch_thread(
         Map.merge(
           %{
             "commandId" => "cmd-#{id}",
@@ -2444,9 +2444,9 @@ defmodule T3.Test.Node.World do
     put_in(context, [:threads, title], id)
   end
 
-  @doc "A thread's stream state (see `T3.StreamState`)."
+  @doc "A thread's stream state (see `HalC2.StreamState`)."
   def state(context, title),
-    do: T3.Streams.Server.state(T3.Streams.ensure(thread_id(context, title)))
+    do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id(context, title)))
 
   @doc "Waits until a thread's stream state satisfies `fun` (`await_thread/4`)."
   def await_state(context, title, fun, timeout \\ 5_000),
@@ -2454,15 +2454,15 @@ defmodule T3.Test.Node.World do
 
   @doc """
   Sends one JSON-RPC request to the MCP server as the agent of `caller` (a
-  thread title) on `instance`; returns `{status, body}` as `T3.Mcp.handle/2` does.
+  thread title) on `instance`; returns `{status, body}` as `HalC2.Mcp.handle/2` does.
   Once the MCP server runs, it can be called from any process (a waiting call in
   a `Task`, say).
   """
   def mcp(context, caller, method, params \\ %{}, instance \\ "codex") do
-    context = if Process.whereis(T3.Mcp), do: context, else: providers(context)
-    %{authorization: auth} = T3.Mcp.server(thread_id(context, caller), instance)
+    context = if Process.whereis(HalC2.Mcp), do: context, else: providers(context)
+    %{authorization: auth} = HalC2.Mcp.server(thread_id(context, caller), instance)
     request = %{"jsonrpc" => "2.0", "id" => 1, "method" => method, "params" => params}
-    T3.Mcp.handle(auth, JSON.encode!(request))
+    HalC2.Mcp.handle(auth, JSON.encode!(request))
   end
 
   @doc """
@@ -2543,7 +2543,7 @@ defmodule T3.Test.Node.World do
     context = providers(context)
     selection = (thread(context, title) || %{})["modelSelection"]
     fields = if selection, do: Map.put_new(fields, "modelSelection", selection), else: fields
-    {:ok, _} = T3.Orchestration.dispatch(message_command(context, title, text, fields))
+    {:ok, _} = HalC2.Orchestration.dispatch(message_command(context, title, text, fields))
     context
   end
 
@@ -2561,14 +2561,14 @@ defmodule T3.Test.Node.World do
         title,
         fn state ->
           Enum.any?(
-            T3.StreamState.list(state, "run"),
+            HalC2.StreamState.list(state, "run"),
             &(&1["ordinal"] == ordinal and &1["status"] in ~w(completed failed interrupted))
           )
         end,
         timeout
       )
 
-    Enum.find(T3.StreamState.list(state, "run"), &(&1["ordinal"] == ordinal))
+    Enum.find(HalC2.StreamState.list(state, "run"), &(&1["ordinal"] == ordinal))
   end
 
   @doc """
@@ -2597,7 +2597,7 @@ defmodule T3.Test.Node.World do
   """
   def named(context, text) do
     Enum.reduce(context[:threads] || %{}, text, fn {name, id}, text ->
-      runs = T3.Streams.Server.state(T3.Streams.ensure(id)) |> T3.StreamState.list("run")
+      runs = HalC2.Streams.Server.state(HalC2.Streams.ensure(id)) |> HalC2.StreamState.list("run")
 
       Enum.reduce(runs, String.replace(text, id, name), fn run, text ->
         String.replace(text, run["id"], "run-#{run["ordinal"]}")
@@ -2606,20 +2606,20 @@ defmodule T3.Test.Node.World do
   end
 
   @doc """
-  Starts what preparing a new worktree needs (`T3.WorktreeSetup` and the terminals
-  its setup script runs in), with the fake providers, as `T3.Application` does.
+  Starts what preparing a new worktree needs (`HalC2.WorktreeSetup` and the terminals
+  its setup script runs in), with the fake providers, as `HalC2.Application` does.
   """
   def worktree_setup(context) do
     context = providers(context)
 
     for child <- [
-          registry(T3.Terminal.Registry),
+          registry(HalC2.Terminal.Registry),
           Supervisor.child_spec(
-            {DynamicSupervisor, name: T3.Terminal.Supervisor, strategy: :one_for_one},
-            id: T3.Terminal.Supervisor
+            {DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one},
+            id: HalC2.Terminal.Supervisor
           ),
-          T3.Terminal.Hub,
-          T3.WorktreeSetup
+          HalC2.Terminal.Hub,
+          HalC2.WorktreeSetup
         ],
         do: Node.ensure(child)
 
@@ -2647,32 +2647,32 @@ defmodule T3.Test.Node.World do
     end)
   end
 
-  @doc "Deep-merges `patch` into the node's settings (starting `T3.Settings` if needed)."
+  @doc "Deep-merges `patch` into the node's settings (starting `HalC2.Settings` if needed)."
   def merge_settings(patch) do
-    Node.ensure(T3.Settings)
-    {settings, version} = T3.Settings.get()
-    {:ok, _} = T3.Settings.put(deep_merge(settings, patch), version)
+    Node.ensure(HalC2.Settings)
+    {settings, version} = HalC2.Settings.get()
+    {:ok, _} = HalC2.Settings.put(deep_merge(settings, patch), version)
     :ok
   end
 
   @doc """
   Starts what a provider turn and a terminal need: the provider registries and
-  supervisors, T3.Settings, T3.Terminal.Hub and T3.Mcp.
+  supervisors, HalC2.Settings, HalC2.Terminal.Hub and HalC2.Mcp.
   """
   def provider_services do
     for {name, spec} <- [
-          {T3.Codex.Registry, {Registry, keys: :unique, name: T3.Codex.Registry}},
-          {T3.Claude.Registry, {Registry, keys: :unique, name: T3.Claude.Registry}},
-          {T3.Acp.Registry, {Registry, keys: :unique, name: T3.Acp.Registry}},
-          {T3.Codex.Supervisor,
-           {DynamicSupervisor, name: T3.Codex.Supervisor, strategy: :one_for_one}},
-          {T3.Terminal.Registry, {Registry, keys: :unique, name: T3.Terminal.Registry}},
-          {T3.Terminal.Supervisor,
-           {DynamicSupervisor, name: T3.Terminal.Supervisor, strategy: :one_for_one}}
+          {HalC2.Codex.Registry, {Registry, keys: :unique, name: HalC2.Codex.Registry}},
+          {HalC2.Claude.Registry, {Registry, keys: :unique, name: HalC2.Claude.Registry}},
+          {HalC2.Acp.Registry, {Registry, keys: :unique, name: HalC2.Acp.Registry}},
+          {HalC2.Codex.Supervisor,
+           {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one}},
+          {HalC2.Terminal.Registry, {Registry, keys: :unique, name: HalC2.Terminal.Registry}},
+          {HalC2.Terminal.Supervisor,
+           {DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one}}
         ],
         do: Node.ensure(Supervisor.child_spec(spec, id: name))
 
-    Enum.each([T3.Settings, T3.Terminal.Hub, T3.Mcp], &Node.ensure/1)
+    Enum.each([HalC2.Settings, HalC2.Terminal.Hub, HalC2.Mcp], &Node.ensure/1)
   end
 
   @doc """
@@ -2714,12 +2714,12 @@ defmodule T3.Test.Node.World do
   @doc "Waits until thread `title` has a run satisfying `fun`; flunks if a run fails instead."
   def await_run(context, title, fun) do
     id = thread_id(context, title)
-    :ok = T3.Streams.subscribe(id, self(), nil)
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
     await_run_loop(id, fun)
   end
 
   defp await_run_loop(id, fun) do
-    runs = T3.StreamState.list(T3.Streams.Server.state(T3.Streams.ensure(id)), "run")
+    runs = HalC2.StreamState.list(HalC2.Streams.Server.state(HalC2.Streams.ensure(id)), "run")
 
     case Enum.find(runs, fun) do
       nil ->
@@ -2727,7 +2727,7 @@ defmodule T3.Test.Node.World do
         if failed && not fun.(failed), do: flunk("the run failed: #{inspect(failed)}")
 
         receive do
-          {:t3_stream, ^id, _} -> await_run_loop(id, fun)
+          {:halc2_stream, ^id, _} -> await_run_loop(id, fun)
         after
           10_000 -> flunk("no run matched in #{id}: #{inspect(runs)}")
         end
@@ -2743,21 +2743,21 @@ defmodule T3.Test.Node.World do
   """
   def backdate_thread(context, title, ms) do
     id = thread_id(context, title)
-    state = T3.Streams.Server.state(T3.Streams.ensure(id))
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
     at = iso_from_now(-ms)
 
     messages =
-      for m <- T3.StreamState.list(state, "message"),
+      for m <- HalC2.StreamState.list(state, "message"),
           do: {"message", m["id"], %{"s" => %{"createdAt" => at, "updatedAt" => at}}}
 
     runs =
-      for r <- T3.StreamState.list(state, "run"),
+      for r <- HalC2.StreamState.list(state, "run"),
           do:
             {"run", r["id"],
              %{"s" => Map.new(for(k <- ~w(requestedAt startedAt completedAt), r[k], do: {k, at}))}}
 
     {:ok, _} =
-      T3.Streams.commit(
+      HalC2.Streams.commit(
         id,
         :thread,
         [{"thread", id, %{"s" => %{"createdAt" => at}}}] ++ messages ++ runs
@@ -2820,7 +2820,7 @@ defmodule T3.Test.Node.World do
   end
 
   @doc "A thread's entities of `kind` (`\"run\"`, `\"message\"`, ...), in stream order."
-  def entities(context, title, kind), do: T3.StreamState.list(state(context, title), kind)
+  def entities(context, title, kind), do: HalC2.StreamState.list(state(context, title), kind)
 
   @doc "The latest run of a thread (highest ordinal), or nil."
   def latest_run(context, title),
@@ -2832,7 +2832,7 @@ defmodule T3.Test.Node.World do
       context,
       title,
       fn state ->
-        case Enum.max_by(T3.StreamState.list(state, "run"), & &1["ordinal"], fn -> nil end) do
+        case Enum.max_by(HalC2.StreamState.list(state, "run"), & &1["ordinal"], fn -> nil end) do
           %{"status" => ^status} -> true
           _ -> false
         end
@@ -2845,8 +2845,8 @@ defmodule T3.Test.Node.World do
 
   @doc "Every change in a thread's log, oldest first (`%{seq, kind, entity, patch, at}`)."
   def events(context, title) do
-    T3.Store.path()
-    |> T3.Store.reduce_stream(thread_id(context, title), 0, [], &[&1 | &2])
+    HalC2.Store.path()
+    |> HalC2.Store.reduce_stream(thread_id(context, title), 0, [], &[&1 | &2])
     |> Enum.reverse()
   end
 
@@ -2857,7 +2857,7 @@ defmodule T3.Test.Node.World do
   """
   def command(context, command) do
     command = Map.put_new(command, "commandId", "cmd-#{System.unique_integer([:positive])}")
-    Map.put(context, :reply, normalize_reply(T3.Orchestration.dispatch(command)))
+    Map.put(context, :reply, normalize_reply(HalC2.Orchestration.dispatch(command)))
   end
 
   @doc "Normalizes an engine or RPC reply to `{:ok, r}` or `{:error, message, detail}`."
@@ -2906,15 +2906,15 @@ defmodule T3.Test.Node.World do
 
     put_app_env(
       :text_claude_command,
-      if(:claude in clis, do: @fake_text, else: "t3-test-no-claude")
+      if(:claude in clis, do: @fake_text, else: "hal-c2-test-no-claude")
     )
 
     put_app_env(
       :text_codex_command,
-      if(:codex in clis, do: @fake_text, else: "t3-test-no-codex")
+      if(:codex in clis, do: @fake_text, else: "hal-c2-test-no-codex")
     )
 
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     Map.put(context, :text_log, true)
   end
 
@@ -3051,7 +3051,7 @@ defmodule T3.Test.Node.World do
 
   @doc """
   The turn items a client's timeline shows for a thread: the stream's snapshot as a
-  socket receives it, filtered by `T3.Projection.Timeline`. Returns `{items, context}`.
+  socket receives it, filtered by `HalC2.Projection.Timeline`. Returns `{items, context}`.
   """
   def timeline(context, title) do
     shape = %{
@@ -3068,8 +3068,8 @@ defmodule T3.Test.Node.World do
     state =
       rows
       |> Enum.with_index(1)
-      |> Enum.reduce(T3.StreamState.new(), fn {[kind, eid, entity], seq}, state ->
-        T3.StreamState.apply_event(state, %{
+      |> Enum.reduce(HalC2.StreamState.new(), fn {[kind, eid, entity], seq}, state ->
+        HalC2.StreamState.apply_event(state, %{
           seq: seq,
           kind: kind,
           entity: eid,
@@ -3077,7 +3077,7 @@ defmodule T3.Test.Node.World do
         })
       end)
 
-    {T3.Projection.Timeline.local_items(state), put_client(context, client)}
+    {HalC2.Projection.Timeline.local_items(state), put_client(context, client)}
   end
 
   defp snapshot_rows(client, id, acc) do
@@ -3122,7 +3122,7 @@ defmodule T3.Test.Node.World do
   state holds the app-server connection (`conn`) and the active `turn`.
   """
   def codex_runtime(context, title) do
-    [{pid, _}] = Registry.lookup(T3.Codex.Registry, thread_id(context, title))
+    [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id(context, title))
     {pid, :sys.get_state(pid)}
   end
 
@@ -3149,7 +3149,7 @@ defmodule T3.Test.Node.World do
 
   @doc """
   Writes a Node server database holding only `orchestration_events`, as
-  `T3.Import.V2` reads it. Each event is `{aggregate, stream, type, payload, at_ms}`;
+  `HalC2.Import.V2` reads it. Each event is `{aggregate, stream, type, payload, at_ms}`;
   thread events are V2 (`application_event_version` 2), project events carry none.
   """
   def node_log(path, events) do
@@ -3230,7 +3230,7 @@ defmodule T3.Test.Node.World do
       "FAKE_CODEX_TRACE" => logs["codex"],
       "FAKE_ACP_TRACE" => logs["acp"],
       # Cursor's sidecar runs under this Node binary.
-      "T3_NODE_COMMAND" => acp
+      "HALC2_NODE_COMMAND" => acp
     }
 
     for {name, value} <- env, do: put_env(name, value)
@@ -3248,24 +3248,24 @@ defmodule T3.Test.Node.World do
       reset_provider_caches()
     end)
 
-    Node.ensure(T3.Settings)
-    Node.ensure({Registry, keys: :unique, name: T3.Codex.Registry})
+    Node.ensure(HalC2.Settings)
+    Node.ensure({Registry, keys: :unique, name: HalC2.Codex.Registry})
 
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.Claude.Registry},
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Claude.Registry},
         id: :claude_registry
       )
     )
 
     Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.Acp.Registry}, id: :acp_registry)
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Acp.Registry}, id: :acp_registry)
     )
 
-    Node.ensure({DynamicSupervisor, name: T3.Codex.Supervisor, strategy: :one_for_one})
+    Node.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
 
     # The built-in ACP agents run the fake through their binary setting, unless the
     # scenario already pointed them elsewhere.
-    {settings, _} = T3.Settings.get()
+    {settings, _} = HalC2.Settings.get()
 
     merge_settings(%{
       "providers" =>
@@ -3345,16 +3345,16 @@ defmodule T3.Test.Node.World do
   @doc "Forgets what the node cached about its provider CLIs (versions, models, latest releases)."
   def reset_provider_caches do
     for key <- [
-          {T3.Codex.Provider, :models},
-          {T3.Codex.Provider, :version},
-          {T3.Claude.Provider, :version},
-          {T3.ProviderUpdates, "codex"},
-          {T3.ProviderUpdates, "claudeAgent"},
+          {HalC2.Codex.Provider, :models},
+          {HalC2.Codex.Provider, :version},
+          {HalC2.Claude.Provider, :version},
+          {HalC2.ProviderUpdates, "codex"},
+          {HalC2.ProviderUpdates, "claudeAgent"},
           # The update a scenario was offered, and how its last update went.
-          {T3.ProviderUpdates, "codex", :offered},
-          {T3.ProviderUpdates, "claudeAgent", :offered},
-          {T3.ProviderUpdates, "codex", :state},
-          {T3.ProviderUpdates, "claudeAgent", :state}
+          {HalC2.ProviderUpdates, "codex", :offered},
+          {HalC2.ProviderUpdates, "claudeAgent", :offered},
+          {HalC2.ProviderUpdates, "codex", :state},
+          {HalC2.ProviderUpdates, "claudeAgent", :state}
         ],
         do: :persistent_term.erase(key)
 
@@ -3376,12 +3376,12 @@ defmodule T3.Test.Node.World do
   """
   def launch_on(context, title, instance, text, fields \\ %{}) do
     id = "th-#{slug(title)}-#{System.unique_integer([:positive])}"
-    :ok = T3.Streams.subscribe(id, self(), nil)
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
     project = if context[:projects] not in [nil, %{}], do: project(context).id
     {model, fields} = Map.pop(fields, "model", default_model(instance))
 
     {:ok, _} =
-      T3.Orchestration.launch_thread(
+      HalC2.Orchestration.launch_thread(
         Map.merge(
           %{
             "commandId" => "cmd-#{System.unique_integer([:positive])}",
@@ -3433,10 +3433,10 @@ defmodule T3.Test.Node.World do
   """
   def post_message(context, title, text, extra \\ %{}) do
     id = thread_id(context, title)
-    :ok = T3.Streams.subscribe(id, self(), nil)
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
 
     {:ok, _} =
-      T3.Orchestration.dispatch(
+      HalC2.Orchestration.dispatch(
         Map.merge(
           %{
             "type" => "message.dispatch",
@@ -3461,7 +3461,7 @@ defmodule T3.Test.Node.World do
   """
   def await_value(context, title, fun, timeout \\ 5_000) do
     id = thread_id(context, title)
-    :ok = T3.Streams.subscribe(id, self(), nil)
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
     deadline = System.monotonic_time(:millisecond) + timeout
     await_value_loop(context, title, id, fun, deadline)
   end
@@ -3477,15 +3477,15 @@ defmodule T3.Test.Node.World do
         wait = max(deadline - System.monotonic_time(:millisecond), 0)
 
         receive do
-          {:t3_stream, ^id, _} -> await_value_loop(context, title, id, fun, deadline)
+          {:halc2_stream, ^id, _} -> await_value_loop(context, title, id, fun, deadline)
         after
           wait ->
             flunk(
               "#{title}'s stream never got there; runs: " <>
-                inspect(for r <- T3.StreamState.list(state, "run"), do: r["status"]) <>
+                inspect(for r <- HalC2.StreamState.list(state, "run"), do: r["status"]) <>
                 "; errors: " <>
                 inspect(
-                  for s <- T3.StreamState.list(state, "provider-session"), do: s["lastError"]
+                  for s <- HalC2.StreamState.list(state, "provider-session"), do: s["lastError"]
                 )
             )
         end
@@ -3495,7 +3495,7 @@ defmodule T3.Test.Node.World do
   @doc "Waits for the thread's pending provider request (approval or question)."
   def await_request(context, title) do
     await_value(context, title, fn state ->
-      Enum.find(T3.StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
+      Enum.find(HalC2.StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
     end)
   end
 
@@ -3545,17 +3545,17 @@ defmodule T3.Test.Node.World do
     Enum.find(providers, &(&1["instanceId"] == instance))
   end
 
-  @doc "Every event a thread's stream has committed, oldest first (`T3.Store.reduce_stream/6`)."
+  @doc "Every event a thread's stream has committed, oldest first (`HalC2.Store.reduce_stream/6`)."
   def stream_events(context, title) do
-    T3.Store.path()
-    |> T3.Store.reduce_stream(thread_id(context, title), 0, [], &[&1 | &2])
+    HalC2.Store.path()
+    |> HalC2.Store.reduce_stream(thread_id(context, title), 0, [], &[&1 | &2])
     |> Enum.reverse()
   end
 
   @doc "Waits until the thread's last run is `running` (its provider has the turn)."
   def await_running(context, title) do
     await_value(context, title, fn state ->
-      case state |> T3.StreamState.list("run") |> Enum.sort_by(& &1["ordinal"]) |> List.last() do
+      case state |> HalC2.StreamState.list("run") |> Enum.sort_by(& &1["ordinal"]) |> List.last() do
         %{"status" => "running"} = run -> run
         _ -> nil
       end
@@ -3565,7 +3565,7 @@ defmodule T3.Test.Node.World do
   @doc "Waits until the thread's last run has ended; returns the stream state."
   def await_idle(context, title) do
     await_value(context, title, fn state ->
-      runs = T3.StreamState.list(state, "run")
+      runs = HalC2.StreamState.list(state, "run")
 
       if runs != [] and
            Enum.all?(
@@ -3589,7 +3589,7 @@ defmodule T3.Test.Node.World do
       context = post_message(context, title, text)
 
       await_value(context, title, fn state ->
-        length(T3.StreamState.list(state, "run")) > count
+        length(HalC2.StreamState.list(state, "run")) > count
       end)
 
       await_idle(context, title)
@@ -3599,7 +3599,7 @@ defmodule T3.Test.Node.World do
 
   @doc "The assistant's replies in a thread, oldest first."
   def replies(context, title) do
-    for m <- context |> stream(title) |> T3.StreamState.list("message"),
+    for m <- context |> stream(title) |> HalC2.StreamState.list("message"),
         m["role"] == "assistant",
         do: m["text"]
   end
@@ -3607,17 +3607,17 @@ defmodule T3.Test.Node.World do
   @doc "Rolls a thread back to the end of its turn `ordinal` (`checkpoint.rollback`)."
   def rollback(context, title, ordinal, extra \\ %{}) do
     id = thread_id(context, title)
-    scope = T3.Checkpoint.scope_id(id)
+    scope = HalC2.Checkpoint.scope_id(id)
 
     reply =
-      T3.Orchestration.dispatch(
+      HalC2.Orchestration.dispatch(
         Map.merge(
           %{
             "type" => "checkpoint.rollback",
             "commandId" => "cmd-#{System.unique_integer([:positive])}",
             "threadId" => id,
             "scopeId" => scope,
-            "checkpointId" => T3.Checkpoint.checkpoint_id(scope, ordinal)
+            "checkpointId" => HalC2.Checkpoint.checkpoint_id(scope, ordinal)
           },
           extra
         )
@@ -3630,10 +3630,10 @@ defmodule T3.Test.Node.World do
   def fork(context, title, ordinal, fork_title) do
     run = Enum.at(runs(context, title), ordinal - 1)
     id = "th-#{slug(fork_title)}-#{System.unique_integer([:positive])}"
-    :ok = T3.Streams.subscribe(id, self(), nil)
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
 
     reply =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "thread.fork",
         "commandId" => "cmd-fork-#{id}",
         "createdBy" => "user",
@@ -3671,9 +3671,9 @@ defmodule T3.Test.Node.World do
       })
     )
 
-    :persistent_term.erase({T3.Acp.Catalog, :index})
-    commands = Application.get_env(:t3, :acp_commands, %{})
-    Application.put_env(:t3, :acp_commands, Map.put(commands, id, [context.fakes.acp]))
+    :persistent_term.erase({HalC2.Acp.Catalog, :index})
+    commands = Application.get_env(:hal_c2, :acp_commands, %{})
+    Application.put_env(:hal_c2, :acp_commands, Map.put(commands, id, [context.fakes.acp]))
 
     merge_settings(%{
       "providerInstances" => %{
@@ -3682,27 +3682,27 @@ defmodule T3.Test.Node.World do
     })
 
     ExUnit.Callbacks.on_exit(fn ->
-      T3.Acp.forget(id)
-      :persistent_term.erase({T3.Acp.Catalog, :index})
-      Application.put_env(:t3, :acp_commands, commands)
+      HalC2.Acp.forget(id)
+      :persistent_term.erase({HalC2.Acp.Catalog, :index})
+      Application.put_env(:hal_c2, :acp_commands, commands)
     end)
 
-    T3.Acp.reload(id)
+    HalC2.Acp.reload(id)
     context
   end
 
   @doc """
-  Starts recording which transcripts `T3.Usage` parses (call tracing on
-  `T3.Usage.Transcripts.read/3` in the usage process and the tasks it spawns);
+  Starts recording which transcripts `HalC2.Usage` parses (call tracing on
+  `HalC2.Usage.Transcripts.read/3` in the usage process and the tasks it spawns);
   read them back with `usage_reads/0`. Tracing stops when the scenario ends.
   """
   def trace_usage_reads(context) do
-    usage = Process.whereis(T3.Usage) || flunk("T3.Usage is not running")
-    :erlang.trace_pattern({T3.Usage.Transcripts, :read, 3}, true, [])
+    usage = Process.whereis(HalC2.Usage) || flunk("HalC2.Usage is not running")
+    :erlang.trace_pattern({HalC2.Usage.Transcripts, :read, 3}, true, [])
     :erlang.trace(usage, true, [:call, :set_on_spawn, {:tracer, self()}])
 
     ExUnit.Callbacks.on_exit(fn ->
-      :erlang.trace_pattern({T3.Usage.Transcripts, :read, 3}, false, [])
+      :erlang.trace_pattern({HalC2.Usage.Transcripts, :read, 3}, false, [])
     end)
 
     context
@@ -3725,7 +3725,7 @@ defmodule T3.Test.Node.World do
 
   defp collect_usage_reads(acc) do
     receive do
-      {:trace, _pid, :call, {T3.Usage.Transcripts, :read, [path, provider, resume]}} ->
+      {:trace, _pid, :call, {HalC2.Usage.Transcripts, :read, [path, provider, resume]}} ->
         collect_usage_reads([{path, provider, resume} | acc])
     after
       0 -> Enum.reverse(acc)
@@ -3740,9 +3740,9 @@ defmodule T3.Test.Node.World do
   """
   def run_periodic_checks do
     checks = [
-      {T3.Orchestration.IdleSessions, &T3.Orchestration.IdleSessions.check/0},
-      {T3.ProviderUsageLimits, fn -> tick(T3.ProviderUsageLimits) end},
-      {T3.UsageLimitSources, fn -> tick(T3.UsageLimitSources) end}
+      {HalC2.Orchestration.IdleSessions, &HalC2.Orchestration.IdleSessions.check/0},
+      {HalC2.ProviderUsageLimits, fn -> tick(HalC2.ProviderUsageLimits) end},
+      {HalC2.UsageLimitSources, fn -> tick(HalC2.UsageLimitSources) end}
     ]
 
     ran =
@@ -3764,7 +3764,7 @@ end
 
 # --- added by W4 (terminal) ---
 
-defmodule T3.Test.Node.Terminal do
+defmodule HalC2.Test.Node.Terminal do
   @moduledoc """
   Terminals as `features/terminal/` drives them: over the socket, the way a client
   does. The scenario's terminal is `context.terminal` (a `TerminalOpenInput` map);
@@ -3775,8 +3775,8 @@ defmodule T3.Test.Node.Terminal do
 
   import ExUnit.Assertions
 
-  alias T3.Test.{Node, WsClient}
-  alias T3.Test.Node.World
+  alias HalC2.Test.{Node, WsClient}
+  alias HalC2.Test.Node.World
 
   @doc """
   Starts the node's terminal services and makes `/bin/sh` the user's shell for
@@ -3785,9 +3785,9 @@ defmodule T3.Test.Node.Terminal do
   def ensure(%{terminals_ready: true} = context), do: context
 
   def ensure(context) do
-    Node.ensure({Registry, keys: :unique, name: T3.Terminal.Registry})
-    Node.ensure({DynamicSupervisor, name: T3.Terminal.Supervisor, strategy: :one_for_one})
-    Node.ensure(T3.Terminal.Hub)
+    Node.ensure({Registry, keys: :unique, name: HalC2.Terminal.Registry})
+    Node.ensure({DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one})
+    Node.ensure(HalC2.Terminal.Hub)
     put_env("SHELL", "/bin/sh")
     Map.put(context, :terminals_ready, true)
   end
@@ -3961,7 +3961,7 @@ defmodule T3.Test.Node.Terminal do
 
   @doc "The running terminal process for `input`."
   def session(input) do
-    [{pid, _}] = Registry.lookup(T3.Terminal.Registry, {input["threadId"], input["terminalId"]})
+    [{pid, _}] = Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], input["terminalId"]})
     pid
   end
 
@@ -4049,7 +4049,7 @@ end
 
 # --- added by W4 (files) ---
 
-defmodule T3.Test.Node.Host do
+defmodule HalC2.Test.Node.Host do
   @moduledoc """
   The machine a scenario's node runs on, as features name it: absolute paths such
   as `/home/sam/shop` live under the scenario's home, and `~` is `/home/sam`

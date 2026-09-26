@@ -3,18 +3,18 @@ import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@t3tools/client-runtime/environment";
-import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
+} from "@hal-c2/client-runtime/environment";
+import { projectScriptCwd, projectScriptRuntimeEnv } from "@hal-c2/shared/projectScripts";
+import { nextTerminalId, resolveTerminalSessionLabel } from "@hal-c2/shared/terminalLabels";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import { isAtomCommandInterrupted } from "@hal-c2/client-runtime/state/runtime";
 import {
   selectThreadRightPanelState,
   type RightPanelSurface,

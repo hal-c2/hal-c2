@@ -5,7 +5,7 @@ import type {
   OrchestrationMessage,
   OrchestrationThread,
   OrchestrationThreadActivity,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import {
   changedFilesByMessage,
   deriveTimelineEntries,

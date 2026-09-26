@@ -1,11 +1,11 @@
-defmodule T3.Test.Features do
+defmodule HalC2.Test.Features do
   @moduledoc """
   Runs the repo's Gherkin specification (`features/`) against this node.
 
   Only scenarios tagged `@node` and not `@dropped` become tests; the rest belong
   to other surfaces. Step definitions live in `test/steps/`, one file per feature
-  directory, on the harness in `T3.Test.Node`. `mix features` runs them, or
-  `T3_FEATURES=<globs> mix test --only cucumber`; globs are relative to `features/`.
+  directory, on the harness in `HalC2.Test.Node`. `mix features` runs them, or
+  `HALC2_FEATURES=<globs> mix test --only cucumber`; globs are relative to `features/`.
   """
 
   @root Path.expand("../../../../features", __DIR__)

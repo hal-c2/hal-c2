@@ -2,7 +2,7 @@ import type {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationThread,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import { deriveWorkLogEntries, type WorkLogEntry } from "./worklog.ts";
 
 // Build the conversation timeline the way the web UI does: messages interleaved

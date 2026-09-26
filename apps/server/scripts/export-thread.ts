@@ -12,11 +12,13 @@ export const exportThreadCommand = Command.make(
   "export-thread",
   {
     source: Flag.String("source").pipe(
-      Flag.withDescription("Workspace root, T3 base directory, or direct state directory."),
+      Flag.withDescription("Workspace root, HAL-C2 base directory, or direct state directory."),
     ),
     state: Flag.Literals("state", ThreadTransferState.literals).pipe(
       Flag.withDefault("userdata"),
-      Flag.withDescription("State directory below the T3 base directory; defaults to userdata."),
+      Flag.withDescription(
+        "State directory below the HAL-C2 base directory; defaults to userdata.",
+      ),
     ),
     threadId: Flag.String("thread-id"),
     output: Flag.String("output").pipe(Flag.withDescription("Archive JSON file to create.")),
@@ -41,7 +43,7 @@ export const exportThreadCommand = Command.make(
         `  ${result.eventCount} events, ${result.attachmentCount} attachments, ${result.terminalLogCount} terminal logs`,
       );
     }),
-).pipe(Command.withDescription("Export one T3 thread and its supporting files."));
+).pipe(Command.withDescription("Export one HAL-C2 thread and its supporting files."));
 
 if (import.meta.main) {
   Command.run(exportThreadCommand, { version: "0.0.0" }).pipe(

@@ -3,7 +3,7 @@ import type {
   ToolActivityIcon,
   ToolActivityNativeAppReference,
   ToolActivitySource,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import type * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 type CodexLifecycleItem = EffectCodexSchema.V2ItemCompletedNotification["item"];

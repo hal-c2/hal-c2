@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
-import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+import { ConnectionCatalogDocument } from "@hal-c2/client-runtime/platform";
+import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
@@ -68,7 +68,7 @@ function makeLayer(
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
+      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ HALC2_HOME: baseDir })),
     ),
   );
   const safeStorageLayer = makeSafeStorageLayer(encryptionAvailable, failDecrypt);
@@ -95,7 +95,7 @@ const withStore = <A, E, R>(
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-      prefix: "t3-desktop-connection-catalog-test-",
+      prefix: "hal-c2-desktop-connection-catalog-test-",
     });
     return yield* effect.pipe(Effect.provide(makeLayer(baseDir, encryptionAvailable)));
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
@@ -272,7 +272,7 @@ describe("DesktopConnectionCatalogStore", () => {
       const path = yield* Path.Path;
       const baseFileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* baseFileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-connection-catalog-test-",
+        prefix: "hal-c2-desktop-connection-catalog-test-",
       });
       const permissionError = PlatformError.systemError({
         _tag: "PermissionDenied",
@@ -310,7 +310,7 @@ describe("DesktopConnectionCatalogStore", () => {
       const baseFileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* baseFileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-connection-catalog-test-",
+        prefix: "hal-c2-desktop-connection-catalog-test-",
       });
       const permissionError = PlatformError.systemError({
         _tag: "PermissionDenied",
@@ -410,7 +410,7 @@ describe("DesktopConnectionCatalogStore", () => {
       const path = yield* Path.Path;
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-connection-catalog-test-",
+        prefix: "hal-c2-desktop-connection-catalog-test-",
       });
       const failDecrypt = yield* Ref.make(false);
       const layer = makeLayer(baseDir, true, failDecrypt);

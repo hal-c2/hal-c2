@@ -1,11 +1,11 @@
-import { NodeId, PlanId, ProjectId, RunId } from "@t3tools/contracts";
+import { NodeId, PlanId, ProjectId, RunId } from "@hal-c2/contracts";
 import {
   getLatestThreadForProject,
   sortActiveThreadsByOrderKey,
   sortPinnedThreadsByOrderKey,
   sortThreads,
-} from "@t3tools/client-runtime/state/thread-sort";
-import { formatHourShort, formatRelativeHourShort } from "@t3tools/shared/usageFormat";
+} from "@hal-c2/client-runtime/state/thread-sort";
+import { formatHourShort, formatRelativeHourShort } from "@hal-c2/shared/usageFormat";
 import { bench, describe } from "vite-plus/test";
 
 import { makeThreadProjectionFixture } from "./test-fixtures";

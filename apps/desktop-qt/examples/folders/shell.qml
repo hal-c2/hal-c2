@@ -1,13 +1,13 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
-import T3.Shell
-import T3.Bricks
+import HalC2.Shell
+import HalC2.Bricks
 
 DefaultShell {
     id: root
 
-    title: qsTr("T3 Code · folders")
+    title: qsTr("HAL-C2 · folders")
     property string browsePath: ""
     navigationPanel: explorerComponent
 

@@ -14,7 +14,7 @@ import type {
   OrchestrationClientOrigin,
   OrchestrationEvent,
   ProjectOrchestrationCommand,
-} from "@t3tools/contracts/legacy-orchestration";
+} from "@hal-c2/contracts/legacy-orchestration";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
@@ -97,4 +97,4 @@ export interface OrchestrationEngineShape {
 export class OrchestrationEngineService extends Context.Service<
   OrchestrationEngineService,
   OrchestrationEngineShape
->()("t3/orchestration/Services/OrchestrationEngine/OrchestrationEngineService") {}
+>()("hal-c2/orchestration/Services/OrchestrationEngine/OrchestrationEngineService") {}

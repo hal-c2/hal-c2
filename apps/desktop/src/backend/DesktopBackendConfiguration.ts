@@ -1,6 +1,6 @@
 import * as NodeOS from "node:os";
 
-import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
+import { parsePersistedServerObservabilitySettings } from "@hal-c2/shared/serverSettings";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -62,7 +62,7 @@ export class DesktopBackendConfiguration extends Context.Service<
     // backend that actually resolved to Windows.
     readonly resolvePrimaryLabel: Effect.Effect<string>;
   }
->()("@t3tools/desktop/backend/DesktopBackendConfiguration") {}
+>()("@hal-c2/desktop/backend/DesktopBackendConfiguration") {}
 
 interface BackendObservabilitySettings {
   readonly otlpTracesUrl: Option.Option<string>;
@@ -77,16 +77,16 @@ const emptyBackendObservabilitySettings: BackendObservabilitySettings = {
 };
 
 const DESKTOP_BACKEND_ENV_NAMES = [
-  "T3CODE_PORT",
-  "T3CODE_MODE",
-  "T3CODE_NO_BROWSER",
-  "T3CODE_HOST",
-  "T3CODE_DESKTOP_WS_URL",
-  "T3CODE_DESKTOP_LAN_ACCESS",
-  "T3CODE_DESKTOP_LAN_HOST",
-  "T3CODE_DESKTOP_HTTPS_ENDPOINTS",
-  "T3CODE_TAILSCALE_SERVE",
-  "T3CODE_TAILSCALE_SERVE_PORT",
+  "HALC2_PORT",
+  "HALC2_MODE",
+  "HALC2_NO_BROWSER",
+  "HALC2_HOST",
+  "HALC2_DESKTOP_WS_URL",
+  "HALC2_DESKTOP_LAN_ACCESS",
+  "HALC2_DESKTOP_LAN_HOST",
+  "HALC2_DESKTOP_HTTPS_ENDPOINTS",
+  "HALC2_TAILSCALE_SERVE",
+  "HALC2_TAILSCALE_SERVE_PORT",
 ] as const;
 
 // Env vars that the WSL backend needs but Windows process.env won't forward
@@ -96,8 +96,8 @@ const DESKTOP_BACKEND_ENV_NAMES = [
 const WSL_FORWARDED_ENV_NAMES = [
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
-  "T3CODE_OTLP_HEADERS",
-  "T3CODE_OTLP_PROTOCOL",
+  "HALC2_OTLP_HEADERS",
+  "HALC2_OTLP_PROTOCOL",
 ] as const;
 
 const WSL_SERVER_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -155,7 +155,7 @@ const logBackendObservabilitySettingsReadFailure = (
 };
 
 function resourceMonitorBinaryName(platform: NodeJS.Platform): string {
-  return platform === "win32" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
+  return platform === "win32" ? "hal-c2-resource-monitor.exe" : "hal-c2-resource-monitor";
 }
 
 const resolveResourceMonitorPath = Effect.fn(
@@ -240,7 +240,7 @@ interface SharedBootstrapInput {
 }
 
 // What the launch runs inside the distro. The staged runtime is the release's
-// self-contained `t3` executable (Node inside); the mounted server tree is a
+// self-contained `hal-c2` executable (Node inside); the mounted server tree is a
 // script that needs the distro's own Node.
 type WslPreflightRuntime =
   | {
@@ -417,7 +417,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
           _tag: "Ready",
           runningDistro,
           windowsEntryPath: environment.backendEntryPath,
-          runtime: { kind: "executable", entryPath: `${runtime.linuxAppRoot}/t3` },
+          runtime: { kind: "executable", entryPath: `${runtime.linuxAppRoot}/hal-c2` },
           resolvedPath: stagedProbe.resolvedPath,
           runtimeId: input.runtimeArchive.runtimeId,
         } as const;
@@ -514,7 +514,7 @@ const buildObservabilityFragment = (observabilitySettings: BackendObservabilityS
 });
 
 // An Elixir node release reads the same bootstrap as one JSON line on stdin; it
-// has no telemetry fds. It keeps its state under `<t3Home>/elixir`.
+// has no telemetry fds. It keeps its state under `<halc2Home>/elixir`.
 const elixirNodeStartConfig = (
   releaseBin: string,
   bootstrap: DesktopBackendManager.DesktopBackendStartConfig["bootstrap"],
@@ -527,9 +527,9 @@ const elixirNodeStartConfig = (
   // Its Node sidecars (Cursor) run on this Electron binary as Node.
   env: {
     ...backendChildEnvPatch(),
-    T3_BOOTSTRAP_STDIN: "1",
-    T3_NODE_COMMAND: process.execPath,
-    T3_NODE_ELECTRON: "1",
+    HALC2_BOOTSTRAP_STDIN: "1",
+    HALC2_NODE_COMMAND: process.execPath,
+    HALC2_NODE_ELECTRON: "1",
   },
   extendEnv: true,
   bootstrap,
@@ -540,13 +540,13 @@ const elixirNodeStartConfig = (
 });
 
 // A configured release wins. A packaged macOS or Linux app built with
-// `--elixir-node` ships one in resources/t3-node and runs it as its backend.
+// `--elixir-node` ships one in resources/hal-c2-node and runs it as its backend.
 const resolveElixirNodeRelease = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   if (Option.isSome(environment.elixirNodeRelease)) return environment.elixirNodeRelease;
   if (!environment.isPackaged || environment.platform === "win32") return Option.none<string>();
   const fileSystem = yield* FileSystem.FileSystem;
-  const bundled = environment.path.join(environment.resourcesPath, "t3-node", "bin", "t3");
+  const bundled = environment.path.join(environment.resourcesPath, "hal-c2-node", "bin", "hal-c2");
   const exists = yield* fileSystem.exists(bundled).pipe(Effect.orElseSucceed(() => false));
   return exists ? Option.some(bundled) : Option.none<string>();
 });
@@ -570,7 +570,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       mode: "desktop" as const,
       noBrowser: true,
       port: backendExposure.port,
-      t3Home: environment.baseDir,
+      halc2Home: environment.baseDir,
       host: backendExposure.bindHost,
       desktopBootstrapToken: input.bootstrapToken,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
@@ -602,7 +602,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
       },
-      // Primary wants process.env (PATH, dev-runner's T3CODE_HOME, etc.).
+      // Primary wants process.env (PATH, dev-runner's HALC2_HOME, etc.).
       extendEnv: true,
       bootstrap,
       bootstrapDelivery: "fd3",
@@ -647,7 +647,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     mode: "desktop" as const,
     noBrowser: true,
     port: input.port,
-    // Omit t3Home so the Linux backend uses its own home dir instead of
+    // Omit halc2Home so the Linux backend uses its own home dir instead of
     // the Windows-side baseDir (which would be a /mnt/c path and share
     // the SQLite file with the primary).
     host: wslBindHost,
@@ -744,17 +744,17 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     }
   }
 
-  // Build an explicit copy of process.env minus T3CODE_HOME (dev-runner
+  // Build an explicit copy of process.env minus HALC2_HOME (dev-runner
   // exports the Windows-side base dir for the primary; if it leaks into
-  // the WSL backend the Linux side ends up sharing C:\Users\...\.t3 via
+  // the WSL backend the Linux side ends up sharing C:\Users\...\.hal-c2 via
   // /mnt/c, which means both backends read/write the same database and
   // their env-ids collide).
-  const parentEnvWithoutT3Home: Record<string, string | undefined> = {};
+  const parentEnvWithoutHalC2Home: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (key === "T3CODE_HOME") continue;
-    parentEnvWithoutT3Home[key] = value;
+    if (key === "HALC2_HOME") continue;
+    parentEnvWithoutHalC2Home[key] = value;
   }
-  const wslEnv = mergeWslEnv(parentEnvWithoutT3Home.WSLENV, forwardedEnvNames);
+  const wslEnv = mergeWslEnv(parentEnvWithoutHalC2Home.WSLENV, forwardedEnvNames);
 
   const baseConfig = {
     executablePath: "wsl.exe",
@@ -762,12 +762,12 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       preflight._tag === "Ready" ? preflight.windowsEntryPath : environment.backendEntryPath,
     cwd: environment.backendCwd,
     env: {
-      ...parentEnvWithoutT3Home,
+      ...parentEnvWithoutHalC2Home,
       ...backendChildEnvPatch(),
       ...forwardedEnv,
       ...(wslEnv !== undefined ? { WSLENV: wslEnv } : {}),
     },
-    // env is already a complete process.env minus T3CODE_HOME; pass it
+    // env is already a complete process.env minus HALC2_HOME; pass it
     // verbatim instead of letting the spawner re-merge process.env on top.
     extendEnv: false,
     bootstrap,

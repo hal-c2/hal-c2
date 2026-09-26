@@ -1,4 +1,4 @@
-import { OrchestrationV2ShellStreamItem } from "@t3tools/contracts";
+import { OrchestrationV2ShellStreamItem } from "@hal-c2/contracts";
 import * as Schema from "effect/Schema";
 
 /** A protocol-3 shell row: `[node, streamId, kind, row]` ("project" or "thread"). */

@@ -79,7 +79,7 @@ export interface AcpMcpOverAcpBridge {
   readonly dispose: Effect.Effect<void>;
 }
 
-/** Bridges the unstable ACP transport to T3's authenticated streamable-HTTP MCP endpoint. */
+/** Bridges the unstable ACP transport to HAL-C2's authenticated streamable-HTTP MCP endpoint. */
 export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(function* (
   options: AcpMcpOverAcpBridgeOptions,
 ): Effect.fn.Return<AcpMcpOverAcpBridge> {
@@ -130,7 +130,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
             () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
           );
           return yield* Effect.fail(
-            new AcpMcpOverAcpError(`T3 Code MCP endpoint responded with HTTP ${response.status}.`),
+            new AcpMcpOverAcpError(`HAL-C2 MCP endpoint responded with HTTP ${response.status}.`),
           );
         }
         const payloads = [...(yield* Stream.runCollect(responsePayloads(response)))];
@@ -167,7 +167,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         if (!response.ok && response.status !== 404) {
           return yield* Effect.fail(
             new AcpMcpOverAcpError(
-              `T3 Code MCP endpoint rejected disconnect with HTTP ${response.status}.`,
+              `HAL-C2 MCP endpoint rejected disconnect with HTTP ${response.status}.`,
             ),
           );
         }
@@ -181,7 +181,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
   return {
     connect: (request) =>
       Effect.gen(function* () {
-        if (request.serverId !== "t3-code") {
+        if (request.serverId !== "hal-c2") {
           return yield* Effect.fail(
             new AcpMcpOverAcpError(`Unknown ACP MCP server "${request.serverId}".`),
           );

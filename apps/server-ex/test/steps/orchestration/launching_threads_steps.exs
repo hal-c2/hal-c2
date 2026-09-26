@@ -1,4 +1,4 @@
-defmodule T3.Steps.Orchestration.LaunchingThreads do
+defmodule HalC2.Steps.Orchestration.LaunchingThreads do
   @moduledoc """
   Steps for features/node/orchestration/launching-threads.feature.
 
@@ -10,8 +10,8 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @fake_text Path.expand("../../support/fake_text_cli.py", __DIR__)
   @png <<137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3>>
@@ -77,7 +77,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
 
   step "the thread has no runs", context do
     assert World.runs(context, "new") == []
-    assert World.state(context, "new") |> T3.StreamState.list("message") == []
+    assert World.state(context, "new") |> HalC2.StreamState.list("message") == []
     context
   end
 
@@ -85,7 +85,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
     [run] = runs_when(context, thread, ["completed"])
 
     assert World.state(context, thread)
-           |> T3.StreamState.get("message")
+           |> HalC2.StreamState.get("message")
            |> Map.fetch!(run["userMessageId"])
            |> Map.fetch!("text") == text
 
@@ -103,7 +103,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
 
     assert [%{"text" => "Hello"}] =
              World.state(context, "new")
-             |> T3.StreamState.list("message")
+             |> HalC2.StreamState.list("message")
              |> Enum.filter(&(&1["role"] == "user"))
 
     context
@@ -191,7 +191,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
 
   step "no turn starts yet", context do
     assert [%{"status" => "preparing"}] = World.runs(context, "new")
-    assert World.state(context, "new") |> T3.StreamState.list("provider-turn") == []
+    assert World.state(context, "new") |> HalC2.StreamState.list("provider-turn") == []
     refute "turn/start" in World.codex_methods(context)
     context
   end
@@ -207,7 +207,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
 
     message =
       World.state(context, "new")
-      |> T3.StreamState.get("message")
+      |> HalC2.StreamState.get("message")
       |> Map.fetch!(run["userMessageId"])
 
     assert message["text"] == "Hello"
@@ -219,17 +219,17 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
   step "a baseline checkpoint is captured before the turn", context do
     state = World.state(context, "new")
     %{"worktreePath" => path} = World.thread(context, "new")
-    [scope] = T3.StreamState.list(state, "checkpoint-scope")
+    [scope] = HalC2.StreamState.list(state, "checkpoint-scope")
     assert scope["cwd"] == path
 
     ordinals =
       state
-      |> T3.StreamState.list("checkpoint")
+      |> HalC2.StreamState.list("checkpoint")
       |> Enum.map(& &1["ordinalWithinScope"])
       |> Enum.sort()
 
     assert ordinals == [0, 1]
-    World.git!(path, ["rev-parse", "--verify", T3.Checkpoint.ref(scope["id"], 0)])
+    World.git!(path, ["rev-parse", "--verify", HalC2.Checkpoint.ref(scope["id"], 0)])
     context
   end
 
@@ -246,7 +246,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
 
   step "the user cancels the setup before the agent starts", context do
     thread_id = World.thread_id(context, "new")
-    T3.WorktreeSetup.subscribe(thread_id, self())
+    HalC2.WorktreeSetup.subscribe(thread_id, self())
     open_gate(context, :checkout, "0")
     snapshot = await_setup(thread_id, &(&1["setupScript"] != nil))
     assert File.dir?(snapshot["worktreePath"])
@@ -276,7 +276,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
 
   step "the node releases that run as prepared", context do
     thread_id = World.thread_id(context, context.thread)
-    {:error, message} = T3.Orchestration.release_prepared(thread_id, context.started_run)
+    {:error, message} = HalC2.Orchestration.release_prepared(thread_id, context.started_run)
     Map.put(context, :reply, {:error, message, nil})
   end
 
@@ -300,13 +300,13 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
 
   step "the user uploaded {string} but has not sent it", %{args: [name]} = context do
     {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
-      T3.Attachments.create_upload_url(%{
+      HalC2.Attachments.create_upload_url(%{
         "name" => name,
         "mimeType" => "image/png",
         "sizeBytes" => byte_size(@png)
       })
 
-    :ok = T3.Attachments.store(token, @png)
+    :ok = HalC2.Attachments.store(token, @png)
     Map.put(context, :upload, id)
   end
 
@@ -333,7 +333,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
              String.replace(World.thread_id(context, "new"), ~r/[^a-zA-Z0-9_-]/, "-")
            )
 
-    assert File.read!(T3.Attachments.path(attachment)) == @png
+    assert File.read!(HalC2.Attachments.path(attachment)) == @png
     context
   end
 
@@ -343,7 +343,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
     [run] = runs_when(context, "new", ["completed"])
     assert run["userMessageId"] == message["id"]
     assert [prompt] = World.provider_prompts(context, "codex")
-    assert prompt =~ T3.Attachments.path(attachment)
+    assert prompt =~ HalC2.Attachments.path(attachment)
     context
   end
 
@@ -392,7 +392,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
 
     assert [%{"failure" => failure, "status" => "failed"}] =
              World.state(context, "new")
-             |> T3.StreamState.list("turn-item")
+             |> HalC2.StreamState.list("turn-item")
              |> Enum.filter(&(&1["type"] == "error"))
 
     assert failure == context.failure
@@ -443,7 +443,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
   defp launch(context, project, fields) do
     context = World.providers(context)
     input = input(context, project, fields)
-    :ok = T3.Streams.subscribe(input["threadId"], self(), nil)
+    :ok = HalC2.Streams.subscribe(input["threadId"], self(), nil)
     {reply, context} = World.call(context, "orchestration.launchThread", input)
     assert {:ok, %{"threadId" => id}} = reply
     World.await_row(id, & &1)
@@ -489,7 +489,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
     end)
 
     {:ok, _} =
-      T3.Projects.mutate(%{
+      HalC2.Projects.mutate(%{
         "type" => "project.update",
         "projectId" => id,
         "scripts" => [
@@ -520,7 +520,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
 
   defp await_setup(thread_id, fun) do
     receive do
-      {:t3_worktree_setup, ^thread_id, snapshot} ->
+      {:halc2_worktree_setup, ^thread_id, snapshot} ->
         if fun.(snapshot), do: snapshot, else: await_setup(thread_id, fun)
     after
       10_000 -> flunk("the worktree setup never got there")
@@ -529,7 +529,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
 
   defp preparation_item(context, run) do
     World.state(context, "new")
-    |> T3.StreamState.get("turn-item")
+    |> HalC2.StreamState.get("turn-item")
     |> Map.fetch!("turn-item:workspace-preparation:#{run["id"]}")
   end
 
@@ -551,7 +551,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
 
   defp user_messages(context) do
     World.state(context, "new")
-    |> T3.StreamState.list("message")
+    |> HalC2.StreamState.list("message")
     |> Enum.filter(&(&1["role"] == "user"))
   end
 
@@ -582,8 +582,8 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
   end
 
   defp use_text_command(command) do
-    previous = Application.get_env(:t3, :text_codex_command)
-    Application.put_env(:t3, :text_codex_command, command)
+    previous = Application.get_env(:hal_c2, :text_codex_command)
+    Application.put_env(:hal_c2, :text_codex_command, command)
     ExUnit.Callbacks.on_exit(fn -> restore_app_env(:text_codex_command, previous) end)
   end
 
@@ -626,7 +626,7 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
     for pid <- Process.list(),
         {:dictionary, dict} <- [Process.info(pid, :dictionary)],
         me in (dict[:"$callers"] || []),
-        {T3.Orchestration, name, _} <- [dict[:"$initial_call"]],
+        {HalC2.Orchestration, name, _} <- [dict[:"$initial_call"]],
         String.contains?(Atom.to_string(name), "generate_title"),
         do: pid
   end
@@ -640,6 +640,6 @@ defmodule T3.Steps.Orchestration.LaunchingThreads do
 
   # Puts an app env key back as it was; one that was unset stays unset (a nil value
   # would override `Application.get_env/3` defaults in later scenarios).
-  defp restore_app_env(key, nil), do: Application.delete_env(:t3, key)
-  defp restore_app_env(key, value), do: Application.put_env(:t3, key, value)
+  defp restore_app_env(key, nil), do: Application.delete_env(:hal_c2, key)
+  defp restore_app_env(key, value), do: Application.put_env(:hal_c2, key, value)
 end

@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
-import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@hal-c2/contracts";
+import { resolveSelfInvocation } from "@hal-c2/shared/nodeRuntime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
@@ -36,7 +36,7 @@ const decodeAcpRegistryAdapterSettings = Schema.decodeUnknownEffect(
 );
 
 const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
-  prefix: "t3-acp-registry-v2-adapter-",
+  prefix: "hal-c2-acp-registry-v2-adapter-",
 }).pipe(Layer.provide(NodeServices.layer));
 
 const registryLayer = Layer.succeed(
@@ -157,8 +157,8 @@ describe("AcpRegistryAdapterV2", () => {
         instanceId,
         settings,
         environment: {
-          T3_ACP_SESSION_LIFECYCLE: "1",
-          T3_ACP_COMMAND_ADVERTISEMENT_DELAY_MS: "750",
+          HALC2_ACP_SESSION_LIFECYCLE: "1",
+          HALC2_ACP_COMMAND_ADVERTISEMENT_DELAY_MS: "750",
         },
         childProcessSpawner,
         fileSystem,

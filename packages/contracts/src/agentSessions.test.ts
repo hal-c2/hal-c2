@@ -25,7 +25,7 @@ describe("AgentSessionScanResult", () => {
   });
 
   it("preserves reported git identity", () => {
-    const git = { remoteKey: "github.com/pingdotgg/t3code", repository: "pingdotgg/t3code" };
+    const git = { remoteKey: "github.com/hal-c2/hal-c2", repository: "hal-c2/hal-c2" };
     const result = decodeScanResult({
       candidates: [{ ...candidate, git }],
       scannedAt: "2026-08-22T12:00:00.000Z",

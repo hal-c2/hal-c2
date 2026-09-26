@@ -24,7 +24,7 @@ import {
   localSnoozeTime,
   resolveCustomSnooze,
   type CustomSnoozeInput,
-} from "@t3tools/client-runtime/state/thread-settled";
+} from "@hal-c2/client-runtime/state/thread-settled";
 import { requireNativeModule } from "expo";
 import { useEffect, useState } from "react";
 import { AppState, useWindowDimensions } from "react-native";
@@ -54,7 +54,7 @@ const units = [
 ] as const;
 
 function systemUses24HourClock() {
-  return requireNativeModule<{ is24HourFormat(): boolean }>("T3NativeControls").is24HourFormat();
+  return requireNativeModule<{ is24HourFormat(): boolean }>("HalC2NativeControls").is24HourFormat();
 }
 
 export function CustomSnoozeSheet(props: Props) {

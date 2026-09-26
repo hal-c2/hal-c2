@@ -1,13 +1,13 @@
 # Sources:
 #   packages/contracts/src/vcs.ts (VcsListRefsInput, VcsListRefsResult, VcsSwitchRefInput, VcsCreateRefInput)
 #   packages/contracts/src/rpc.ts (vcs.listRefs, vcs.switchRef, vcs.createRef)
-#   apps/server-ex/lib/t3/vcs.ex (list_refs, switch_ref, create_ref)
+#   apps/server-ex/lib/hal_c2/vcs.ex (list_refs, switch_ref, create_ref)
 #   apps/web/src/components/BranchToolbar.tsx
 #   apps/web/src/components/BranchToolbar.logic.ts
 #   apps/web/src/components/BranchToolbarBranchSelector.tsx
 #   apps/web/src/components/BranchPicker.tsx
-#   apps/desktop-qt/qml/T3/Bricks/Composer.qml (branch picker)
-#   apps/desktop-qt/qml/T3/Bricks/SidebarThreadRow.qml (branch line)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (branch picker)
+#   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (branch line)
 #   packages/contracts/src/shell.ts (workspace.branch.search, workspace.branch.select, workspace.branch.create)
 #   apps/tui/src/features.backlog.test.ts (branch-worktree-management)
 

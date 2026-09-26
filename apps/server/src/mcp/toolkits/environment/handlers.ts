@@ -1,4 +1,4 @@
-import { OrchestratorMcpFailure, type ServerSettings } from "@t3tools/contracts";
+import { OrchestratorMcpFailure, type ServerSettings } from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
@@ -41,7 +41,7 @@ const access = (writable = false) =>
     return { ...context, descriptor, settings: yield* Settings.ServerSettingsService };
   });
 export const EnvironmentHandlersLive = EnvironmentToolkit.toLayer({
-  t3_environment_read: () =>
+  halc2_environment_read: () =>
     Effect.gen(function* () {
       const { descriptor, settings } = yield* access();
       const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
@@ -53,7 +53,7 @@ export const EnvironmentHandlersLive = EnvironmentToolkit.toLayer({
         preferences: preferences(current),
       };
     }),
-  t3_environment_preferences_update: (patch) =>
+  halc2_environment_preferences_update: (patch) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;
       const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;

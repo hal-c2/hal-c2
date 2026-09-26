@@ -3,14 +3,14 @@ import type {
   EnvironmentMachineKind,
   ProjectId,
   WorktreeSubmodules,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Schema from "effect/Schema";
 import { toSortableTimestamp } from "../lib/threadSort";
 export {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchSelectionTarget,
-} from "@t3tools/shared/git";
+} from "@hal-c2/shared/git";
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;

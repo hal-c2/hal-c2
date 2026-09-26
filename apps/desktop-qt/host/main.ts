@@ -2,7 +2,7 @@
 /**
  * Node desktop host for the Qt shell.
  *
- * Spawned by t3code-qt (see src/BackendProcess.cpp). Starts the T3 server,
+ * Spawned by hal-c2-qt (see src/BackendProcess.cpp). Starts the HAL-C2 server,
  * announces its pairing URL on stdout as one JSON line, then keeps the server
  * alive until the shell goes away. Everything TypeScript-owned (server
  * lifecycle, and later SSH/Tailscale/secrets/updates) lives on this side; the
@@ -35,7 +35,7 @@ const hostDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const installedServerEntry = NodePath.resolve(hostDir, "../server/bin.mjs");
 const repositoryServerEntry = NodePath.resolve(hostDir, "../../server/dist/bin.mjs");
 const serverEntry =
-  process.env.T3CODE_SERVER_ENTRY ??
+  process.env.HALC2_SERVER_ENTRY ??
   (NodeFS.existsSync(installedServerEntry)
     ? installedServerEntry
     : NodeFS.existsSync(repositoryServerEntry)

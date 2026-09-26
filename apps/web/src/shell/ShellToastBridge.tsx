@@ -1,5 +1,5 @@
 import { Toast } from "@base-ui/react/toast";
-import type { ShellNotification, ShellNotificationsState } from "@t3tools/contracts/shell";
+import type { ShellNotification, ShellNotificationsState } from "@hal-c2/contracts/shell";
 import { useMemo, useRef } from "react";
 
 import {

@@ -1,9 +1,9 @@
-defmodule T3.Steps.Orchestration.Runs do
+defmodule HalC2.Steps.Orchestration.Runs do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # Provider output is delivered to the thread's Codex runtime as if the (fake)
   # app-server sent it (`test/support/fake_codex.py` keeps a "wait" turn running).
@@ -29,8 +29,8 @@ defmodule T3.Steps.Orchestration.Runs do
   end
 
   step "the node has no provider instance {string}", %{args: [instance]} = context do
-    refute Map.has_key?(T3.Settings.settings()["providerInstances"] || %{}, instance)
-    refute T3.Acp.agent?(instance)
+    refute Map.has_key?(HalC2.Settings.settings()["providerInstances"] || %{}, instance)
+    refute HalC2.Acp.agent?(instance)
     context
   end
 
@@ -43,7 +43,7 @@ defmodule T3.Steps.Orchestration.Runs do
   step "no turn starts on any other provider", context do
     assert World.entities(context, context.thread, "run") == []
     assert World.codex_requests(context, "turn/start") == []
-    assert Registry.lookup(T3.Codex.Registry, World.thread_id(context, context.thread)) == []
+    assert Registry.lookup(HalC2.Codex.Registry, World.thread_id(context, context.thread)) == []
     context
   end
 
@@ -228,7 +228,7 @@ defmodule T3.Steps.Orchestration.Runs do
   step "a checkpoint for ordinal 0 exists before the turn starts", context do
     assert {:ok, _} = context.reply
     root = World.project(context, "demo").root
-    ref = T3.Checkpoint.ref(T3.Checkpoint.scope_id(World.thread_id(context, "t1")), 0)
+    ref = HalC2.Checkpoint.ref(HalC2.Checkpoint.scope_id(World.thread_id(context, "t1")), 0)
     # Captured while dispatching, before the turn wrote anything: it is the commit's tree.
     tree = World.git!(root, ["rev-parse", "#{ref}^{tree}"]) |> String.trim()
     assert tree == World.git!(root, ["rev-parse", "HEAD^{tree}"]) |> String.trim()
@@ -247,7 +247,7 @@ defmodule T3.Steps.Orchestration.Runs do
 
     World.await_state(context, context.thread, fn state ->
       Enum.any?(
-        T3.StreamState.list(state, "turn-item"),
+        HalC2.StreamState.list(state, "turn-item"),
         &(&1["type"] == type and &1["runId"] == run)
       )
     end)
@@ -310,21 +310,21 @@ defmodule T3.Steps.Orchestration.Runs do
       "projectSettingsOverrides" => %{id => %{"responseStreamingMode" => mode}}
     })
 
-    assert T3.Settings.for_project(id)["responseStreamingMode"] == mode
+    assert HalC2.Settings.for_project(id)["responseStreamingMode"] == mode
     context
   end
 
   step "project {string} has no response streaming setting", %{args: [project]} = context do
     id = World.project(context, project).id
     context = World.providers(context)
-    {settings, _} = T3.Settings.get()
+    {settings, _} = HalC2.Settings.get()
 
     refute Map.has_key?(
              get_in(settings, ["projectSettingsOverrides", id]) || %{},
              "responseStreamingMode"
            )
 
-    assert T3.Settings.for_project(id)["responseStreamingMode"] in [nil, "paragraph"]
+    assert HalC2.Settings.for_project(id)["responseStreamingMode"] in [nil, "paragraph"]
     context
   end
 
@@ -461,12 +461,12 @@ defmodule T3.Steps.Orchestration.Runs do
 
   step "the provider process exits while {string} starts a turn", %{args: [thread]} = context do
     context = World.providers(context)
-    fake = Application.get_env(:t3, :codex_command)
+    fake = Application.get_env(:hal_c2, :codex_command)
     World.put_app_env(:codex_command, ["python3", "-c", "pass"])
     context = context |> Map.put(:thread, thread) |> World.dispatch_message(thread, "Hi")
     assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
     # The fake Codex is back for the next message.
-    Application.put_env(:t3, :codex_command, fake)
+    Application.put_env(:hal_c2, :codex_command, fake)
     context
   end
 
@@ -534,7 +534,7 @@ defmodule T3.Steps.Orchestration.Runs do
   step "{string} is idle with a provider session", %{args: [thread]} = context do
     context = completed_run(context, thread, "Hi")
     assert %{"status" => "ready"} = session(context, thread, "codex")
-    assert [{pid, _}] = Registry.lookup(T3.Codex.Registry, World.thread_id(context, thread))
+    assert [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, World.thread_id(context, thread))
     Map.put(context, :runtime, {pid, Process.monitor(pid)})
   end
 
@@ -551,7 +551,7 @@ defmodule T3.Steps.Orchestration.Runs do
   step "the provider process for {string} stops", %{args: [thread]} = context do
     {pid, ref} = context.runtime
     assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
-    assert Registry.lookup(T3.Codex.Registry, World.thread_id(context, thread)) == []
+    assert Registry.lookup(HalC2.Codex.Registry, World.thread_id(context, thread)) == []
     context
   end
 

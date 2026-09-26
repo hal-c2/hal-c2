@@ -1,4 +1,4 @@
-import { ApprovalRequestId, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { ApprovalRequestId, EnvironmentId, ThreadId } from "@hal-c2/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   questionAttachmentDraftKey,

@@ -3,12 +3,12 @@ import type {
   RelayAgentAwarenessPreferences,
   RelayDeliveryKind,
   RelayDeliveryResult,
-} from "@t3tools/contracts/relay";
+} from "@hal-c2/contracts/relay";
 import {
   RelayAgentActivityAggregateState as RelayAgentActivityAggregateStateSchema,
   RelayAgentAwarenessPreferences as RelayAgentAwarenessPreferencesSchema,
   RelayDeliveryKind as RelayDeliveryKindSchema,
-} from "@t3tools/contracts/relay";
+} from "@hal-c2/contracts/relay";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -542,7 +542,7 @@ export class ApnsDeliveries extends Context.Service<
       readonly notification: ApnsNotificationPayload;
     }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
   }
->()("t3code-relay/agentActivity/ApnsDeliveries") {}
+>()("hal-c2-relay/agentActivity/ApnsDeliveries") {}
 
 export const make = Effect.gen(function* () {
   const attempts = yield* DeliveryAttempts.DeliveryAttempts;

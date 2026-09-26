@@ -1,4 +1,4 @@
-// tui/launch.feature: `t3 tui` starts the client next to a running server and
+// tui/launch.feature: `hal-c2 tui` starts the client next to a running server and
 // the client gives the terminal back when it leaves. These run real processes on
 // pipes (see launchWorld.ts); the Ctrl+C key itself goes through the headless host.
 import { expect } from "bun:test";
@@ -21,7 +21,7 @@ import {
   type ProcessRun,
 } from "../launchWorld.ts";
 
-const TUI_SESSION_LABEL = "T3 Code TUI";
+const TUI_SESSION_LABEL = "HAL-C2 TUI";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** How each named terminal identifies itself (TERM, TERM_PROGRAM). */
@@ -40,7 +40,7 @@ const TERMINALS: Record<string, { TERM: string; TERM_PROGRAM?: string; KONSOLE_V
   };
 
 function launched(ctx: LaunchWorld): LaunchRun {
-  if (!ctx.launched) throw new Error('no launch ran: use "When the user runs "t3 tui""');
+  if (!ctx.launched) throw new Error('no launch ran: use "When the user runs "hal-c2 tui""');
   return ctx.launched;
 }
 
@@ -70,26 +70,26 @@ function expectTerminalRestored(run: ProcessRun): void {
 
 // --- the server and bun ---
 
-step("a T3 Code server is running on this machine", (ctx: LaunchWorld) => {
+step("a HAL-C2 server is running on this machine", (ctx: LaunchWorld) => {
   launchSetup(ctx).server = "running";
 });
 
-step("no T3 Code server is running on this machine", (ctx: LaunchWorld) => {
+step("no HAL-C2 server is running on this machine", (ctx: LaunchWorld) => {
   launchSetup(ctx).server = "none";
 });
 
-step("the recorded T3 Code server is no longer running", (ctx: LaunchWorld) => {
+step("the recorded HAL-C2 server is no longer running", (ctx: LaunchWorld) => {
   launchSetup(ctx).server = "stopped";
 });
 
-// The launcher only finds bun through T3_TUI_BUN or PATH; the test's own node
-// and bun share PATH, so "not installed" is a T3_TUI_BUN pointing at nothing.
+// The launcher only finds bun through HALC2_TUI_BUN or PATH; the test's own node
+// and bun share PATH, so "not installed" is a HALC2_TUI_BUN pointing at nothing.
 step("Bun is not installed", (ctx: LaunchWorld) => {
   launchSetup(ctx).bun = "missing";
 });
 
 step("the environment variable {string} names a Bun binary", (ctx: LaunchWorld, name: string) => {
-  expect(name).toBe("T3_TUI_BUN");
+  expect(name).toBe("HALC2_TUI_BUN");
   launchSetup(ctx).bun = "shim";
 });
 
@@ -112,7 +112,7 @@ step("the command fails with {string}", (ctx: LaunchWorld, message: string) => {
 step("the command fails and says the recorded server is no longer running", (ctx: LaunchWorld) => {
   const run = launched(ctx);
   expect(run.drew).toBe(false);
-  expect(run.stderr).toContain("The recorded T3 Code server is no longer running.");
+  expect(run.stderr).toContain("The recorded HAL-C2 server is no longer running.");
   expect(run.code).not.toBe(0);
 });
 
@@ -139,7 +139,7 @@ step("the server lists a client session labelled {string}", (ctx: LaunchWorld, l
   expect(label).toBe(TUI_SESSION_LABEL);
   const open = tuiSessions(launched(ctx).sessionsOpen);
   expect(open).toHaveLength(1);
-  expect(open[0]).toMatchObject({ subject: "t3-tui", revoked_at: null });
+  expect(open[0]).toMatchObject({ subject: "hal-c2-tui", revoked_at: null });
 });
 
 step("the session expires after {int} days if never closed", (ctx: LaunchWorld, days: number) => {
@@ -180,8 +180,8 @@ step("it exits with an error naming the missing value", (ctx: LaunchWorld) => {
   const run = client(ctx);
   expect(run.drew).toBe(false);
   expect(run.code).toBe(1);
-  expect(run.stderr).toContain("T3_TUI_ORIGIN");
-  expect(run.stderr).toContain("T3_TUI_BEARER");
+  expect(run.stderr).toContain("HALC2_TUI_ORIGIN");
+  expect(run.stderr).toContain("HALC2_TUI_BEARER");
 });
 
 // --- colour ---
@@ -309,7 +309,7 @@ step(
   (ctx: LaunchWorld) => {
     const run = client(ctx);
     expectTerminalRestored(run);
-    expect(run.stderr).toContain("t3 tui crashed");
+    expect(run.stderr).toContain("hal-c2 tui crashed");
   },
 );
 

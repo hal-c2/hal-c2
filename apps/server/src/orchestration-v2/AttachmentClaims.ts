@@ -3,7 +3,7 @@ import {
   ChatAttachmentId,
   getProviderAttachmentLimitError,
   type ChatAttachment,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 

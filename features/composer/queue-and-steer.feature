@@ -1,9 +1,9 @@
 # Sources:
 #   docs/user/composer.md (follow-up behaviour, queued messages, editing a queued message)
-#   apps/server-ex/lib/t3/orchestration.ex (queued runs, steer, restart dispatch, queue hold)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (queued runs, steer, restart dispatch, queue hold)
 #   apps/web/src/components/chat/QueuedRunsControl.tsx
 #   apps/web/src/components/chat/ComposerPrimaryActions.tsx (queue, steer, stop)
-#   apps/desktop-qt/qml/T3/Bricks/Composer.qml (stop while running)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (stop while running)
 #   apps/tui/src/components/ChatView.tsx (Esc interrupts)
 #   packages/shared/src/keybindings.ts (composer.sendAlternate, thread.steerQueuedMessage, thread.editQueuedMessage)
 #   packages/contracts/src/orchestrationV2.ts (queued-run.cancel, queued-run.edit, queued-run.reorder, queued-message.promote-to-steer, queue.resume, run.interrupt)

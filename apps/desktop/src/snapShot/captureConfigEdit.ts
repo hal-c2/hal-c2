@@ -1,4 +1,4 @@
-import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
+import { parseKeybindingShortcut } from "@hal-c2/shared/keybindings";
 import { readKdlNodes, type KdlNode } from "./captureConfigKdl.ts";
 import { niriCaptureBinding } from "./linuxCaptureSession.ts";
 

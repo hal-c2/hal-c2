@@ -1,5 +1,5 @@
-import type { AssetResource, ThreadId } from "@t3tools/contracts";
-import { mediaMimeType, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
+import type { AssetResource, ThreadId } from "@hal-c2/contracts";
+import { mediaMimeType, mediaMimeTypeFromExtension } from "@hal-c2/shared/filePreview";
 
 import {
   classifyMarkdownImageSource,

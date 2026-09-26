@@ -3,12 +3,12 @@ import { RuntimeMode } from "./providerPolicy.ts";
 
 /**
  * Contract between the web app and a native shell hosting it (the Qt shell
- * in apps/desktop-qt). The shell exposes `window.t3Shell`; the page publishes
+ * in apps/desktop-qt). The shell exposes `window.halc2Shell`; the page publishes
  * derived view models with `publish(key, value)` and receives user intent
  * from shell-rendered chrome as actions. The page stays the only client of
  * the server; the shell never sees the app protocol.
  *
- * Imported as `@t3tools/contracts/shell` so only shell-hosted code pulls
+ * Imported as `@hal-c2/contracts/shell` so only shell-hosted code pulls
  * these schemas into its bundle.
  */
 
@@ -651,8 +651,8 @@ export const ShellAction = Schema.Union([
 ]);
 export type ShellAction = typeof ShellAction.Type;
 
-/** `window.t3Shell`, injected by the shell before any page script runs. */
-export interface T3Shell {
+/** `window.halc2Shell`, injected by the shell before any page script runs. */
+export interface HalC2Shell {
   readonly protocolVersion: number;
   /** Which web surface this document is in (`"primary"`, `"rightPanel"`, …). */
   readonly surfaceId: string;

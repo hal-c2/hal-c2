@@ -4,8 +4,8 @@ export const config: VercelConfig = {
   git: {
     deploymentEnabled: false,
   },
-  installCommand: "npm install -g vite-plus && vp install --filter '@t3tools/marketing...'",
-  buildCommand: "vp run --filter @t3tools/marketing build",
+  installCommand: "npm install -g vite-plus && vp install --filter '@hal-c2/marketing...'",
+  buildCommand: "vp run --filter @hal-c2/marketing build",
   outputDirectory: "dist",
   // `curl … | sh` needs the scripts served as plain text, uncompressed by
   // content negotiation, and never cached past a deploy.
@@ -28,7 +28,7 @@ export const config: VercelConfig = {
   redirects: [
     {
       source: "/app",
-      destination: "https://app.t3.codes",
+      destination: "https://app.hal-c2.example",
       permanent: true,
     },
   ],

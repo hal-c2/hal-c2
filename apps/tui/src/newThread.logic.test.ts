@@ -26,7 +26,7 @@ describe("new-thread parity with the web UI", () => {
         thread: {
           projectId: "project-two",
           branch: "feature/tui",
-          worktreePath: "/tmp/t3code-feature-tui",
+          worktreePath: "/tmp/hal-c2-feature-tui",
         } as never,
         defaultEnvironmentMode: "local",
       }),
@@ -34,7 +34,7 @@ describe("new-thread parity with the web UI", () => {
       projectIndex: 1,
       workspaceMode: "current",
       branch: "feature/tui",
-      worktreePath: "/tmp/t3code-feature-tui",
+      worktreePath: "/tmp/hal-c2-feature-tui",
     });
   });
 
@@ -88,7 +88,7 @@ describe("new-thread parity with the web UI", () => {
       resolveNewThreadBranchSelection({
         workspaceMode: "new-worktree",
         projectCwd: "/repo",
-        currentWorktreePath: "/repo/.t3/worktrees/current",
+        currentWorktreePath: "/repo/.hal-c2/worktrees/current",
         ref: {
           name: "origin/feature/base",
           current: false,
@@ -114,13 +114,13 @@ describe("new-thread parity with the web UI", () => {
           name: "feature/existing",
           current: false,
           isDefault: false,
-          worktreePath: "/repo/.t3/worktrees/existing",
+          worktreePath: "/repo/.hal-c2/worktrees/existing",
         } as never,
       }),
     ).toEqual({
       kind: "reuse-worktree",
       branch: "feature/existing",
-      worktreePath: "/repo/.t3/worktrees/existing",
+      worktreePath: "/repo/.hal-c2/worktrees/existing",
     });
   });
 
@@ -129,7 +129,7 @@ describe("new-thread parity with the web UI", () => {
       resolveNewThreadBranchSelection({
         workspaceMode: "current",
         projectCwd: "/repo",
-        currentWorktreePath: "/repo/.t3/worktrees/current",
+        currentWorktreePath: "/repo/.hal-c2/worktrees/current",
         ref: {
           name: "origin/feature/next",
           current: false,
@@ -141,8 +141,8 @@ describe("new-thread parity with the web UI", () => {
     ).toEqual({
       kind: "switch-checkout",
       branch: "feature/next",
-      checkoutCwd: "/repo/.t3/worktrees/current",
-      worktreePath: "/repo/.t3/worktrees/current",
+      checkoutCwd: "/repo/.hal-c2/worktrees/current",
+      worktreePath: "/repo/.hal-c2/worktrees/current",
     });
   });
 

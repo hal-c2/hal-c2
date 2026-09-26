@@ -1,4 +1,4 @@
-import { DEFAULT_TERMINAL_ID } from "@t3tools/contracts";
+import { DEFAULT_TERMINAL_ID } from "@hal-c2/contracts";
 
 // Pure per-thread terminal-tab transitions (the TUI's form of the web's terminal
 // groups). ChatView owns the side effects (open/close server sessions, focus);

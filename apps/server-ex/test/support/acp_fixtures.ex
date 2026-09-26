@@ -1,4 +1,4 @@
-defmodule T3.Test.AcpFixtures do
+defmodule HalC2.Test.AcpFixtures do
   @moduledoc """
   Fake provider agents for the provider features (`features/providers/`).
 
@@ -13,7 +13,7 @@ defmodule T3.Test.AcpFixtures do
 
   import ExUnit.Assertions
 
-  alias T3.StreamState
+  alias HalC2.StreamState
 
   @support Path.expand(".", __DIR__)
   @fake_agent Path.join(@support, "fake_acme_agent.py")
@@ -31,7 +31,7 @@ defmodule T3.Test.AcpFixtures do
     :text_claude_command,
     :provider_update_checks
   ]
-  @os_keys ["T3_NODE_COMMAND", "T3_NODE_ELECTRON", "PATH", "FAKE_TEXT_LOG"]
+  @os_keys ["HALC2_NODE_COMMAND", "HALC2_NODE_ELECTRON", "PATH", "FAKE_TEXT_LOG"]
 
   @doc "Starts the provider services with fake Codex and Claude; idempotent."
   def ready(%{acp: _} = ctx), do: ctx
@@ -41,14 +41,14 @@ defmodule T3.Test.AcpFixtures do
     File.mkdir_p!(dir)
     File.write!(Path.join(dir, "control.json"), "{}")
 
-    app = for key <- @app_keys, do: {key, Application.fetch_env(:t3, key)}
+    app = for key <- @app_keys, do: {key, Application.fetch_env(:hal_c2, key)}
     os = for key <- @os_keys, do: {key, System.get_env(key)}
 
     ExUnit.Callbacks.on_exit(fn ->
       for {key, value} <- app do
         case value do
-          {:ok, value} -> Application.put_env(:t3, key, value)
-          :error -> Application.delete_env(:t3, key)
+          {:ok, value} -> Application.put_env(:hal_c2, key, value)
+          :error -> Application.delete_env(:hal_c2, key)
         end
       end
 
@@ -64,45 +64,45 @@ defmodule T3.Test.AcpFixtures do
     put_new(:claude_command, ["python3", "-u", @fake_claude])
     put_new(:acp_commands, %{})
     # Nothing reaches the real ACP or npm registries; `registry/2` serves one.
-    Application.put_env(:t3, :acp_registry_url, "http://127.0.0.1:1/registry.json")
-    Application.put_env(:t3, :provider_update_checks, false)
-    Application.put_env(:t3, :text_codex_command, @fake_text)
-    Application.put_env(:t3, :text_claude_command, @fake_text)
+    Application.put_env(:hal_c2, :acp_registry_url, "http://127.0.0.1:1/registry.json")
+    Application.put_env(:hal_c2, :provider_update_checks, false)
+    Application.put_env(:hal_c2, :text_codex_command, @fake_text)
+    Application.put_env(:hal_c2, :text_claude_command, @fake_text)
     System.put_env("FAKE_TEXT_LOG", Path.join(dir, "text.log"))
-    System.delete_env("T3_NODE_ELECTRON")
+    System.delete_env("HALC2_NODE_ELECTRON")
 
-    T3.Test.Node.ensure(T3.Settings)
-    T3.Test.Node.ensure({Registry, keys: :unique, name: T3.Codex.Registry})
+    HalC2.Test.Node.ensure(HalC2.Settings)
+    HalC2.Test.Node.ensure({Registry, keys: :unique, name: HalC2.Codex.Registry})
 
-    T3.Test.Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.Claude.Registry},
+    HalC2.Test.Node.ensure(
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Claude.Registry},
         id: :claude_registry
       )
     )
 
-    T3.Test.Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.Acp.Registry}, id: :acp_registry)
+    HalC2.Test.Node.ensure(
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Acp.Registry}, id: :acp_registry)
     )
 
-    T3.Test.Node.ensure({DynamicSupervisor, name: T3.Codex.Supervisor, strategy: :one_for_one})
+    HalC2.Test.Node.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
 
-    T3.Test.Node.ensure(
-      Supervisor.child_spec({Registry, keys: :unique, name: T3.ProviderAuth.Registry},
+    HalC2.Test.Node.ensure(
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.ProviderAuth.Registry},
         id: :provider_auth_registry
       )
     )
 
-    T3.Test.Node.ensure(
-      {DynamicSupervisor, name: T3.ProviderAuth.Supervisor, strategy: :one_for_one}
+    HalC2.Test.Node.ensure(
+      {DynamicSupervisor, name: HalC2.ProviderAuth.Supervisor, strategy: :one_for_one}
     )
 
-    T3.Test.Node.ensure(T3.Acp.UrlAuth)
+    HalC2.Test.Node.ensure(HalC2.Acp.UrlAuth)
     cursor_node(dir)
     Map.put(ctx, :acp, %{dir: dir})
   end
 
   defp put_new(key, value) do
-    if Application.get_env(:t3, key) == nil, do: Application.put_env(:t3, key, value)
+    if Application.get_env(:hal_c2, key) == nil, do: Application.put_env(:hal_c2, key, value)
   end
 
   # What the node read from agents and registries lives in persistent terms.
@@ -110,22 +110,22 @@ defmodule T3.Test.AcpFixtures do
     for {key, _} <- :persistent_term.get(),
         is_tuple(key),
         elem(key, 0) in [
-          T3.Acp,
-          T3.Acp.Catalog,
-          T3.Codex.Provider,
-          T3.Claude.Provider,
-          T3.ProviderUpdates
+          HalC2.Acp,
+          HalC2.Acp.Catalog,
+          HalC2.Codex.Provider,
+          HalC2.Claude.Provider,
+          HalC2.ProviderUpdates
         ],
         do: :persistent_term.erase(key)
   end
 
-  # Cursor's sidecar runs `$T3_NODE_COMMAND <main.ts> --mode <mode>`; this node
+  # Cursor's sidecar runs `$HALC2_NODE_COMMAND <main.ts> --mode <mode>`; this node
   # command drops main.ts and runs the fake SDK's agent instead.
   defp cursor_node(dir) do
     path = Path.join(dir, "cursor-node")
     File.write!(path, "#!/bin/sh\nshift\nexec node #{@fake_cursor} --control #{dir} \"$@\"\n")
     File.chmod!(path, 0o755)
-    System.put_env("T3_NODE_COMMAND", path)
+    System.put_env("HALC2_NODE_COMMAND", path)
   end
 
   @doc "The fake agents' directory."
@@ -158,8 +158,8 @@ defmodule T3.Test.AcpFixtures do
 
   @doc "Runs instance `id`'s agent as the fake agent `name` (`:acp_commands`)."
   def run_as(ctx, id, name) do
-    commands = Application.get_env(:t3, :acp_commands, %{})
-    Application.put_env(:t3, :acp_commands, Map.put(commands, id, agent_cmd(ctx, name)))
+    commands = Application.get_env(:hal_c2, :acp_commands, %{})
+    Application.put_env(:hal_c2, :acp_commands, Map.put(commands, id, agent_cmd(ctx, name)))
     ctx
   end
 
@@ -178,8 +178,8 @@ defmodule T3.Test.AcpFixtures do
 
   @doc "Changes the settings document with `fun` (as a client write would land)."
   def put_settings(fun) do
-    {settings, version} = T3.Settings.get()
-    {:ok, _} = T3.Settings.put(fun.(settings), version)
+    {settings, version} = HalC2.Settings.get()
+    {:ok, _} = HalC2.Settings.put(fun.(settings), version)
     :ok
   end
 
@@ -210,17 +210,17 @@ defmodule T3.Test.AcpFixtures do
   end
 
   @doc """
-  Writes the settings through a client (`t3.readSettings`, then
-  `t3.writeSettings`), as the settings UI does.
+  Writes the settings through a client (`halc2.readSettings`, then
+  `halc2.writeSettings`), as the settings UI does.
   """
   def write_settings(ctx, fun, name \\ "default") do
     {%{"settings" => settings, "version" => version}, ctx} =
-      T3.Test.Node.World.call!(ctx, "t3.readSettings", %{}, name)
+      HalC2.Test.Node.World.call!(ctx, "halc2.readSettings", %{}, name)
 
     {_, ctx} =
-      T3.Test.Node.World.call!(
+      HalC2.Test.Node.World.call!(
         ctx,
-        "t3.writeSettings",
+        "halc2.writeSettings",
         %{"settings" => fun.(settings), "version" => version},
         name
       )
@@ -229,12 +229,12 @@ defmodule T3.Test.AcpFixtures do
   end
 
   @doc "The provider entry for `id` as clients get it, or nil."
-  def provider(id), do: Enum.find(T3.Environment.providers(), &(&1["instanceId"] == id))
+  def provider(id), do: Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == id))
 
   @doc "Reads instance `id`'s agent again now, as a status check does."
   def check(id) do
-    T3.Acp.reload(id)
-    T3.Acp.entry(id)
+    HalC2.Acp.reload(id)
+    HalC2.Acp.entry(id)
   end
 
   # --- the ACP Registry --------------------------------------------------------------
@@ -272,7 +272,7 @@ defmodule T3.Test.AcpFixtures do
 
       {:ok, {_, port}} = ThousandIsland.listener_info(server)
       base = "http://127.0.0.1:#{port}"
-      Application.put_env(:t3, :acp_registry_url, "#{base}/registry.json")
+      Application.put_env(:hal_c2, :acp_registry_url, "#{base}/registry.json")
       %{ctx | acp: Map.merge(ctx.acp, %{served: served, base: base})}
     end
   end
@@ -290,7 +290,7 @@ defmodule T3.Test.AcpFixtures do
       JSON.encode!(%{"version" => "1.0.0", "agents" => agents})
     )
 
-    :persistent_term.erase({T3.Acp.Catalog, :index})
+    :persistent_term.erase({HalC2.Acp.Catalog, :index})
     File.rm(Path.join([ctx.node.home, "cache", "acp-registry", "registry.json"]))
     ctx
   end
@@ -349,7 +349,7 @@ defmodule T3.Test.AcpFixtures do
       "version" => opts[:version] || "2.0.0",
       "description" => opts[:description] || "A test agent",
       "authors" => ["Acme"],
-      "distribution" => opts[:dist] || %{"binary" => %{T3.Acp.Catalog.platform() => target}}
+      "distribution" => opts[:dist] || %{"binary" => %{HalC2.Acp.Catalog.platform() => target}}
     }
   end
 
@@ -373,10 +373,10 @@ defmodule T3.Test.AcpFixtures do
   def launch(ctx, title, instance, text, opts \\ []) do
     {_, project} = Enum.at(ctx.projects, 0)
     thread_id = "thread-#{System.unique_integer([:positive])}"
-    :ok = T3.Streams.subscribe(thread_id, self(), nil)
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
 
     {:ok, %{"threadId" => ^thread_id}} =
-      T3.Orchestration.launch_thread(%{
+      HalC2.Orchestration.launch_thread(%{
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
         "threadId" => thread_id,
         "projectId" => project.id,
@@ -406,7 +406,7 @@ defmodule T3.Test.AcpFixtures do
   @doc "Sends a follow-up message on a thread."
   def follow_up(ctx, title, text, extra \\ %{}) do
     {:ok, _} =
-      T3.Orchestration.dispatch(
+      HalC2.Orchestration.dispatch(
         Map.merge(
           %{
             "type" => "message.dispatch",
@@ -425,7 +425,7 @@ defmodule T3.Test.AcpFixtures do
   end
 
   @doc "A thread's current stream state."
-  def stream(thread_id), do: T3.Streams.Server.state(T3.Streams.ensure(thread_id))
+  def stream(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
 
   @doc "Waits until `fun.(state)` is truthy on the thread's stream; returns its value."
   def await_stream(thread_id, fun, timeout \\ 5_000) do
@@ -435,7 +435,7 @@ defmodule T3.Test.AcpFixtures do
 
       _ ->
         receive do
-          {:t3_stream, ^thread_id, _} -> await_stream(thread_id, fun, timeout)
+          {:halc2_stream, ^thread_id, _} -> await_stream(thread_id, fun, timeout)
         after
           timeout -> flunk("the thread never got there: #{inspect(summary(thread_id))}")
         end
@@ -483,23 +483,23 @@ defmodule T3.Test.AcpFixtures do
   """
   def watch_auth(ctx, id, name \\ "default", sub \\ nil) do
     sub = sub || 1000 + System.unique_integer([:positive])
-    client = T3.Test.Node.World.client(ctx, name)
+    client = HalC2.Test.Node.World.client(ctx, name)
 
     client =
-      T3.Test.Node.sub(client, sub, %{
+      HalC2.Test.Node.sub(client, sub, %{
         "type" => "providerAuth",
         "node" => Atom.to_string(node()),
         "instanceId" => id
       })
 
     {frame, client} =
-      T3.Test.Node.await(
+      HalC2.Test.Node.await(
         client,
         &(&1["t"] == "providerAuth" and &1["id"] == sub and is_list(&1["state"]["methods"])),
         5_000
       )
 
-    ctx = T3.Test.Node.World.put_client(ctx, name, client)
+    ctx = HalC2.Test.Node.World.put_client(ctx, name, client)
     {frame["state"], put_in(ctx, [Access.key(:auth_subs, %{}), {name, id}], sub)}
   end
 
@@ -508,18 +508,18 @@ defmodule T3.Test.AcpFixtures do
     sub = ctx.auth_subs[{name, id}] || flunk("client #{name} does not watch #{id}'s sign-in")
 
     {frame, client} =
-      T3.Test.Node.await(
-        T3.Test.Node.World.client(ctx, name),
+      HalC2.Test.Node.await(
+        HalC2.Test.Node.World.client(ctx, name),
         &(&1["t"] == "providerAuth" and &1["id"] == sub and fun.(&1["state"])),
         timeout
       )
 
-    {frame["state"], T3.Test.Node.World.put_client(ctx, name, client)}
+    {frame["state"], HalC2.Test.Node.World.put_client(ctx, name, client)}
   end
 
   @doc "The sign-in process of instance `id`, if one runs."
   def auth_server(id) do
-    case Registry.lookup(T3.ProviderAuth.Registry, id) do
+    case Registry.lookup(HalC2.ProviderAuth.Registry, id) do
       [{pid, _}] -> pid
       [] -> nil
     end

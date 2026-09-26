@@ -1,0 +1,34 @@
+# The terminal client's bricks. A user ~/.hal-c2/shell/tui/shell.qml composes these
+# (`import HalC2.Tui`); DefaultShell is the built-in arrangement.
+module HalC2.Tui
+DefaultShell 1.0 DefaultShell.qml
+ShellWindow 1.0 ShellWindow.qml
+Sidebar 1.0 Sidebar.qml
+SidebarThreadRow 1.0 SidebarThreadRow.qml
+StatusLine 1.0 StatusLine.qml
+Conversation 1.0 Conversation.qml
+ContextMenu 1.0 ContextMenu.qml
+ImageViewer 1.0 ImageViewer.qml
+CommandPalette 1.0 CommandPalette.qml
+ThreadOverlay 1.0 ThreadOverlay.qml
+NewThreadForm 1.0 NewThreadForm.qml
+Composer 1.0 Composer.qml
+ComposerFooter 1.0 ComposerFooter.qml
+SelectOverlay 1.0 SelectOverlay.qml
+Timeline 1.0 Timeline.qml
+TimelineLine 1.0 TimelineLine.qml
+WorkingIndicator 1.0 WorkingIndicator.qml
+Approvals 1.0 Approvals.qml
+PendingUserInput 1.0 PendingUserInput.qml
+ThreadHints 1.0 ThreadHints.qml
+RevertPicker 1.0 RevertPicker.qml
+DiffViewer 1.0 DiffViewer.qml
+Notifications 1.0 Notifications.qml
+RightPanel 1.0 RightPanel.qml
+GitActions 1.0 GitActions.qml
+SettingsPage 1.0 SettingsPage.qml
+TerminalDrawer 1.0 TerminalDrawer.qml
+FilesPanel 1.0 FilesPanel.qml
+FileViewer 1.0 FileViewer.qml
+AddProject 1.0 AddProject.qml
+ShellKeymap 1.0 ShellKeymap.qml

@@ -3,7 +3,7 @@ import {
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   ProjectId,
   ProviderInstanceId,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "./model.ts";
 import {
@@ -137,7 +137,7 @@ describe("resolveProjectSettings", () => {
   });
 });
 
-describe("resolveProjectSettings with a t3.json", () => {
+describe("resolveProjectSettings with a hal-c2.json", () => {
   it("walks project override, environment value, file, then built-in for file-backed keys", () => {
     const file = { defaultThreadEnvMode: "worktree" as const };
     const fromOverride = resolveProjectSettings(
@@ -163,7 +163,7 @@ describe("resolveProjectSettings with a t3.json", () => {
 
     const fromFile = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, file);
     expect(fromFile.settings.defaultThreadEnvMode).toBe("worktree");
-    expect(fromFile.sources.defaultThreadEnvMode).toBe("t3.json");
+    expect(fromFile.sources.defaultThreadEnvMode).toBe("hal-c2.json");
 
     const builtIn = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, null);
     expect(builtIn.settings.defaultThreadEnvMode).toBe("local");
@@ -180,7 +180,7 @@ describe("resolveProjectSettings with a t3.json", () => {
       file,
     );
     expect(nullOverride.settings.defaultThreadEnvMode).toBe("worktree");
-    expect(nullOverride.sources.defaultThreadEnvMode).toBe("t3.json");
+    expect(nullOverride.sources.defaultThreadEnvMode).toBe("hal-c2.json");
     // A file that does not mention the key leaves the source alone too.
     expect(
       resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, {}).sources
@@ -198,7 +198,7 @@ describe("resolveProjectSettings with a t3.json", () => {
       resolveProjectFileBackedSetting("worktreeSubmodules", null, {
         worktreeSubmodules: "top-level",
       }),
-    ).toEqual({ value: "top-level", source: "t3.json" });
+    ).toEqual({ value: "top-level", source: "hal-c2.json" });
     expect(resolveProjectFileBackedSetting("worktreeSubmodules", null, null)).toEqual({
       value: "recursive",
       source: "environment",

@@ -1,9 +1,9 @@
 # Sources:
 #   docs/user/source-control.md (writing style, Repository conventions)
 #   apps/web/src/components/settings/SourceControlWritingSettings.tsx
-#   apps/server-ex/lib/t3/settings.ex (sourceControlWritingStyle, sourceControlWriterModelSelection, project overrides)
-#   apps/server-ex/lib/t3/text_generation.ex (model_selection)
-#   apps/server-ex/lib/t3/text_generation/style.ex
+#   apps/server-ex/lib/hal_c2/settings.ex (sourceControlWritingStyle, sourceControlWriterModelSelection, project overrides)
+#   apps/server-ex/lib/hal_c2/text_generation.ex (model_selection)
+#   apps/server-ex/lib/hal_c2/text_generation/style.ex
 
 Feature: Source control writing settings
   The Text generation part of Source Control settings chooses how commit messages, pull

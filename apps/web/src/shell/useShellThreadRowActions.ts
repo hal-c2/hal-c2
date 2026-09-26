@@ -3,14 +3,14 @@ import {
   scopeProjectRef,
   scopeThreadRef,
   scopedThreadKey,
-} from "@t3tools/client-runtime/environment";
+} from "@hal-c2/client-runtime/environment";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+} from "@hal-c2/client-runtime/state/runtime";
+import type { EnvironmentThreadShell } from "@hal-c2/client-runtime/state/models";
+import { threadWokeAt } from "@hal-c2/client-runtime/state/thread-settled";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useRef } from "react";
 

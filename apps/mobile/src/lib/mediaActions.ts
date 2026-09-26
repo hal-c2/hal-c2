@@ -1,8 +1,8 @@
 import { useNavigation } from "@react-navigation/native";
-import type { MediaActionId } from "@t3tools/client-runtime/media-actions";
-import type { MediaReference } from "@t3tools/client-runtime/media-reference";
-import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { normalizeNativeMarkdownUrl } from "@t3tools/mobile-markdown-text/links";
+import type { MediaActionId } from "@hal-c2/client-runtime/media-actions";
+import type { MediaReference } from "@hal-c2/client-runtime/media-reference";
+import type { AssetResource, EnvironmentId, ThreadId } from "@hal-c2/contracts";
+import { normalizeNativeMarkdownUrl } from "@hal-c2/mobile-markdown-text/links";
 import { useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 

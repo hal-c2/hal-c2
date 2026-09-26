@@ -2,7 +2,7 @@ import {
   isToolLifecycleItemType,
   type OrchestrationThreadActivity,
   type ToolLifecycleItemType,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 
 import { TOOL_ICONS } from "./icons.ts";
 

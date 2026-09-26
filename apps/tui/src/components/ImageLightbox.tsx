@@ -1,4 +1,4 @@
-import type { ImagePreview } from "@t3tools/opentui-image";
+import type { ImagePreview } from "@hal-c2/opentui-image";
 import { useRenderer } from "@opentui/react";
 import * as React from "react";
 

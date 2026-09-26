@@ -105,6 +105,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hal-c2-hyprland-snap-shot"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "png",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "smithay-client-toolkit",
+ "tempfile",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-wlr",
+ "wayland-scanner",
+ "wayland-server",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -357,25 +376,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "t3-hyprland-snap-shot"
-version = "0.1.0"
-dependencies = [
- "bitflags",
- "png",
- "rustix 1.1.4",
- "serde",
- "serde_json",
- "smithay-client-toolkit",
- "tempfile",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
- "wayland-protocols-wlr",
- "wayland-scanner",
- "wayland-server",
 ]
 
 [[package]]

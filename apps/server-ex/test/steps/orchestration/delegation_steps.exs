@@ -1,10 +1,10 @@
-defmodule T3.Steps.Orchestration.Delegation do
+defmodule HalC2.Steps.Orchestration.Delegation do
   @moduledoc """
   Steps for `features/node/orchestration/delegation.feature`.
 
   The caller is the parent thread's agent on the fake Codex CLI; its `delegate_task`,
   `task_status` and `task_cancel` calls go through the MCP server
-  (`T3.Test.Node.World.mcp_tool/5`). A task's child thread is named "subagent" in
+  (`HalC2.Test.Node.World.mcp_tool/5`). A task's child thread is named "subagent" in
   the scenario. Children run on the fake CLIs too: a task "wait for it" keeps
   working until the scenario steers it with "say <answer>", which ends its turn
   with that answer.
@@ -12,9 +12,9 @@ defmodule T3.Steps.Orchestration.Delegation do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # --- the caller ----------------------------------------------------------------
 
@@ -40,7 +40,7 @@ defmodule T3.Steps.Orchestration.Delegation do
 
   step "{string} has no active run on the calling provider", %{args: [thread]} = context do
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "run.interrupt",
         "threadId" => World.thread_id(context, thread)
       })
@@ -67,7 +67,7 @@ defmodule T3.Steps.Orchestration.Delegation do
 
   step "the turn of {string} ended", %{args: [thread]} = context do
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "run.interrupt",
         "threadId" => World.thread_id(context, thread)
       })
@@ -236,7 +236,7 @@ defmodule T3.Steps.Orchestration.Delegation do
   step "the subagent runs on {string} with that provider's default model",
        %{args: [instance]} = context do
     default =
-      T3.Environment.providers()
+      HalC2.Environment.providers()
       |> Enum.find(&(&1["instanceId"] == instance))
       |> Map.fetch!("models")
       |> Enum.find(& &1["isDefault"])
@@ -298,7 +298,7 @@ defmodule T3.Steps.Orchestration.Delegation do
       assert System.monotonic_time(:millisecond) - context.wait_started < used + 1_000
     else
       assert Task.yield(context.wait, 0) == nil
-      assert T3.Orchestration.Delegation.wait_budget(context.asked) == used
+      assert HalC2.Orchestration.Delegation.wait_budget(context.asked) == used
     end
 
     context
@@ -489,7 +489,7 @@ defmodule T3.Steps.Orchestration.Delegation do
 
   step "the provider accepts the delivery", context do
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "notification.delivery.accept",
         "commandId" => "command:mailbox-accepted:#{System.unique_integer([:positive])}",
         "threadId" => World.thread_id(context, "parent"),

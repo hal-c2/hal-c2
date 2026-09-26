@@ -5,8 +5,8 @@
 // 4;n the sixteen ANSI slots), maps them onto the theme roles and writes
 // theme.json into the shell config dir:
 //
-//   vp run theme:qt              # $T3CODE_HOME/shell, i.e. ~/.t3/shell
-//   vp run theme:qt ~/.t3/shell  # or any directory (or a .json path)
+//   vp run theme:qt              # $HALC2_HOME/shell, i.e. ~/.hal-c2/shell
+//   vp run theme:qt ~/.hal-c2/shell  # or any directory (or a .json path)
 //
 // Run it inside the terminal whose colours you want; there is nothing to
 // query through a pipe or an editor's task runner. The ANSI slots also land
@@ -261,13 +261,14 @@ export const buildTheme = ({ background, foreground, cursor, selection, ansi }) 
   };
 };
 
-// The shell config dir the way the app resolves it: T3CODE_HOME, then ~/.t3.
+// The shell config dir the way the app resolves it: HALC2_HOME, then ~/.hal-c2.
 // A directory argument gets theme.json inside it; a .json argument is the
 // file itself.
 export const resolveOutput = (argument, env = process.env) => {
   if (argument && NodePath.extname(argument) === ".json") return NodePath.resolve(argument);
   const shellDir =
-    argument ?? NodePath.join(env.T3CODE_HOME || NodePath.join(NodeOS.homedir(), ".t3"), "shell");
+    argument ??
+    NodePath.join(env.HALC2_HOME || NodePath.join(NodeOS.homedir(), ".hal-c2"), "shell");
   return NodePath.join(NodePath.resolve(shellDir), "theme.json");
 };
 
@@ -275,7 +276,7 @@ const USAGE = `usage: vp run theme:qt [shell-dir | theme.json]
 
 Asks the terminal it runs in for its colours (OSC 10/11/12/17 and 4;n) and
 writes theme.json for the Qt shell. Without an argument the file goes to
-$T3CODE_HOME/shell (~/.t3/shell); a directory or a .json path picks the spot.`;
+$HALC2_HOME/shell (~/.hal-c2/shell); a directory or a .json path picks the spot.`;
 
 const main = async () => {
   const [argument, ...rest] = process.argv.slice(2);

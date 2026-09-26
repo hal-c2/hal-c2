@@ -3,7 +3,7 @@ import * as React from "react";
 import { testRender } from "@opentui/react/test-utils";
 
 import type { ComposerControls } from "../controls.ts";
-import type { VcsStatusResult } from "@t3tools/contracts";
+import type { VcsStatusResult } from "@hal-c2/contracts";
 import { SettingsView } from "./SettingsView.tsx";
 
 const controls: ComposerControls = {

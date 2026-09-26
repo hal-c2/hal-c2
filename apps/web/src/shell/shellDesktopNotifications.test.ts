@@ -1,4 +1,4 @@
-import { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, RunId, ThreadId } from "@hal-c2/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { createDesktopNotificationTracker } from "./shellDesktopNotifications";

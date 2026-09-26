@@ -1,9 +1,9 @@
-import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
+import { formatSubagentDisplayTitle } from "@hal-c2/client-runtime/state/subagent-display";
 import {
   isActiveSubagentStatus,
   isTerminalSubagentStatus,
-} from "@t3tools/client-runtime/state/subagentRuntime";
-import type { OrchestrationV2Subagent } from "@t3tools/contracts";
+} from "@hal-c2/client-runtime/state/subagentRuntime";
+import type { OrchestrationV2Subagent } from "@hal-c2/contracts";
 
 const PROMPT_TITLE_LIMIT = 80;
 

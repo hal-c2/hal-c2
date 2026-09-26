@@ -1,18 +1,18 @@
-# `@t3tools/opentui-image`
+# `@hal-c2/opentui-image`
 
-T3 Code's bounded image preview decoder and Kitty clipboard adapter.
+HAL-C2's bounded image preview decoder and Kitty clipboard adapter.
 
 `decodeImage` uses Sharp to rotate, resize, and encode an attachment as a bounded
-PNG preview. T3 Code passes that encoded source directly to OpenTUI's built-in
+PNG preview. HAL-C2 passes that encoded source directly to OpenTUI's built-in
 `<image>` element. OpenTUI owns decoding, layout, clipping, and terminal output.
 
-The package keeps two T3-specific pieces:
+The package keeps two HAL-C2-specific pieces:
 
 - bounded Sharp decoding for formats accepted by chat attachments;
 - Kitty clipboard reads, including tmux passthrough for remote sessions.
 
 ```tsx
-import { decodeImage } from "@t3tools/opentui-image";
+import { decodeImage } from "@hal-c2/opentui-image";
 
 const preview = await decodeImage(encoded, { maxWidth: 720, maxHeight: 480 });
 

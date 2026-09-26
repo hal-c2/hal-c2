@@ -1,5 +1,5 @@
 {
-  "name": "@t3tools/desktop-qt",
+  "name": "@hal-c2/desktop-qt",
   "version": "0.0.1",
   "private": true,
   "type": "module",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import type { VcsStatusResult } from "@t3tools/contracts";
+import type { VcsStatusResult } from "@hal-c2/contracts";
 import {
   buildGitMenuItems,
   buildGitPanelActions,

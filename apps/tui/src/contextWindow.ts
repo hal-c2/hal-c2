@@ -1,4 +1,4 @@
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import type { OrchestrationThreadActivity } from "@hal-c2/contracts";
 
 // The context-window usage meter — a trimmed port of the web client's
 // lib/contextWindow.deriveLatestContextWindowSnapshot. The provider emits

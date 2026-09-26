@@ -1,8 +1,8 @@
 # Sources:
 #   docs/user/usage.md (CLIProxyAPI hub)
-#   apps/server-ex/lib/t3/usage_limit_sources.ex (reading hubs, errors, refresh)
-#   apps/server-ex/lib/t3/usage_limit_sources/cliproxy.ex (accounts, reset credit redemption)
-#   apps/server-ex/lib/t3/web/socket.ex (usageLimitSources subscription)
+#   apps/server-ex/lib/hal_c2/usage_limit_sources.ex (reading hubs, errors, refresh)
+#   apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex (accounts, reset credit redemption)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (usageLimitSources subscription)
 #   packages/contracts/src/usageLimitSourceId.ts
 #   apps/web/src/components/settings/UsageProviderSettings.tsx
 #   apps/web/src/components/settings/AddUsageLimitSourceDialog.tsx

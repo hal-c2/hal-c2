@@ -2,13 +2,13 @@
 #   docs/user/thread-sidebar.md (Settling, Auto-settle rules)
 #   apps/web/src/components/threadActionMenu.logic.ts (Settle thread, Un-settle thread)
 #   apps/web/src/components/settings/SettingsPanels.tsx (General: auto-settle rules)
-#   apps/desktop-qt/qml/T3/Bricks/Sidebar.qml (Settled section, settled limit)
-#   apps/desktop-qt/qml/T3/Bricks/SidebarThreadRow.qml (Settle, Un-settle)
+#   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Settled section, settled limit)
+#   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (Settle, Un-settle)
 #   apps/tui/src/components/Sidebar.logic.ts (Settled section, paging)
 #   apps/tui/src/commands.ts (Settle, Un-settle)
 #   packages/contracts/src/orchestrationV2.ts (thread.settle, thread.auto-settle, thread.unsettle, thread.settled, thread.unsettled)
-#   apps/server-ex/lib/t3/orchestration.ex (settle, unsettle)
-#   apps/server-ex/lib/t3/orchestration/settlement.ex
+#   apps/server-ex/lib/hal_c2/orchestration.ex (settle, unsettle)
+#   apps/server-ex/lib/hal_c2/orchestration/settlement.ex
 
 Feature: Settling threads
   Settling marks a thread as done without archiving it. Threads also settle on their own
@@ -151,7 +151,7 @@ Feature: Settling threads
     Then the settle sweep runs without waiting for the next minute
 
   # docs/user/thread-sidebar.md says pinning does not prevent automatic settlement, but
-  # both servers skip pinned threads and hal-c2 keeps that: a pin means "leave this alone".
+  # both servers skip pinned threads and HAL-C2 keeps that: a pin means "leave this alone".
   # The docs line is stale. Engine detail: node/orchestration/auto-settle.feature.
   @node
   Scenario: A pinned thread is never settled on its own

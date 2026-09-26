@@ -1,15 +1,15 @@
-defmodule T3.Steps.Settings.Integrations do
+defmodule HalC2.Steps.Settings.Integrations do
   @moduledoc """
   The device hub half of Settings → Integrations, driven over `device.configure`
-  and `device.list` on a node whose device tools are the `T3.DevicesTest` fakes.
+  and `device.list` on a node whose device tools are the `HalC2.DevicesTest` fakes.
   npm is a fake on `PATH` so tool updates never reach the registry.
   """
   use Cucumber.StepDefinition
 
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   step "the user has opened the Integrations settings", context do
     context = World.fake_device_tools(context)
@@ -17,23 +17,23 @@ defmodule T3.Steps.Settings.Integrations do
   end
 
   step "the user turns on the device hub for this node", context do
-    Node.ensure(T3.Devices)
+    Node.ensure(HalC2.Devices)
     {reply, context} = World.call(context, "device.configure", %{"enabled" => true})
     Map.put(context, :reply, reply)
   end
 
   step "device support is stored as on", context do
-    assert T3.Settings.settings()["enableDeviceSupport"] == true
+    assert HalC2.Settings.settings()["enableDeviceSupport"] == true
     context
   end
 
   step "device support is stored as off", context do
-    assert T3.Settings.settings()["enableDeviceSupport"] == false
+    assert HalC2.Settings.settings()["enableDeviceSupport"] == false
     context
   end
 
   step "agent device access is stored as off", context do
-    assert T3.Settings.settings()["enableAgentDeviceAccess"] == false
+    assert HalC2.Settings.settings()["enableAgentDeviceAccess"] == false
     context
   end
 
@@ -53,7 +53,7 @@ defmodule T3.Steps.Settings.Integrations do
         "enableAgentDeviceAccess" => true
       })
 
-    Node.ensure(T3.Devices)
+    Node.ensure(HalC2.Devices)
     context
   end
 
@@ -66,7 +66,7 @@ defmodule T3.Steps.Settings.Integrations do
   end
 
   step "the user checks device tool versions on this node", context do
-    Node.ensure(T3.Devices)
+    Node.ensure(HalC2.Devices)
     context = Map.put(context, :tools_before, tool_tree(context))
     {reply, context} = World.call(context, "device.list", %{"inspectOnly" => true})
     Map.put(context, :reply, reply)
@@ -98,7 +98,7 @@ defmodule T3.Steps.Settings.Integrations do
   end
 
   step "the user updates the device hub tool", context do
-    Node.ensure(T3.Devices)
+    Node.ensure(HalC2.Devices)
     {reply, context} = World.call(context, "device.list", %{"updateTool" => "hub"})
     Map.put(context, :reply, reply)
   end

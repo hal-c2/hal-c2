@@ -1,7 +1,7 @@
 # Sources:
 #   /home/olafura/dev/opentui-qml src/runtime/plugins.ts (listPlugins, unregisterPlugin)
-#   apps/server-ex/lib/t3/acp/catalog.ex (registry search, install, checksums, uninstall refused while referenced)
-#   apps/server-ex/lib/t3/usage_limit_sources.ex (secrets sealed in the node, marker shown to clients)
+#   apps/server-ex/lib/hal_c2/acp/catalog.ex (registry search, install, checksums, uninstall refused while referenced)
+#   apps/server-ex/lib/hal_c2/usage_limit_sources.ex (secrets sealed in the node, marker shown to clients)
 #   apps/web/src/components/settings/AcpRegistrySearchStep.tsx (search, Add, Added)
 #   packages/contracts/src/rpc.ts (server.searchAcpRegistry, server.prepareAcpRegistryAgent, server.uninstallAcpRegistryManagedBinary)
 
@@ -96,7 +96,7 @@ Feature: Plugin catalog
 
     Examples:
       | source                                | trust                     |
-      | a signed release from T3 Code         | signed                    |
+      | a signed release from HAL-C2         | signed                    |
       | a paired node                         | from that node            |
       | a local file                          | local                     |
       | a pasted URL                          | unverified                |

@@ -1,6 +1,6 @@
 import { SymbolView } from "../components/AppSymbol";
-import { imageMimeType } from "@t3tools/shared/image";
-import { videoMimeType } from "@t3tools/shared/video";
+import { imageMimeType } from "@hal-c2/shared/image";
+import { videoMimeType } from "@hal-c2/shared/video";
 import { useEffect, useMemo, useState } from "react";
 import { Image, Pressable, ScrollView, View } from "react-native";
 
@@ -18,7 +18,7 @@ import { type MediaActionsSource } from "../lib/mediaActions";
 import { PresentationSource } from "./NativePresentation";
 import type { FilePreviewSource } from "./FilePreviewModal";
 import { isPdfFile } from "../lib/filePreview";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@hal-c2/contracts";
 import {
   retryComposerAttachmentUpload,
   useComposerAttachmentUploadState,
@@ -104,7 +104,7 @@ export function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailPr
  * persisted URI renders meanwhile, which is correct everywhere but after a
  * container move.
  */
-const PREVIEW_CACHE_DIRECTORY = "t3-composer-previews";
+const PREVIEW_CACHE_DIRECTORY = "hal-c2-composer-previews";
 
 /**
  * Fabric re-parses an image source URL on every layout pass of the node, and a

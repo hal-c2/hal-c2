@@ -1,4 +1,4 @@
-defmodule T3.Steps.Composer.QueueAndSteer do
+defmodule HalC2.Steps.Composer.QueueAndSteer do
   @moduledoc """
   Steps for `features/composer/queue-and-steer.feature`. "the user queues" and
   "the user resumes the queue" live with `features/timeline/runs-and-queue.feature`.
@@ -9,8 +9,8 @@ defmodule T3.Steps.Composer.QueueAndSteer do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node.World
 
   step "a thread whose agent is working on a turn", context do
     context
@@ -167,7 +167,7 @@ defmodule T3.Steps.Composer.QueueAndSteer do
     working = running_run(context)
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "queued-message.promote-to-steer",
         "threadId" => World.thread_id(context, World.current(context)),
         "queuedRunId" => context.queued_run["id"],
@@ -202,7 +202,7 @@ defmodule T3.Steps.Composer.QueueAndSteer do
   end
 
   step "the node comes back", context do
-    %{context | node: T3.Test.Node.restart(context.node), clients: %{}}
+    %{context | node: HalC2.Test.Node.restart(context.node), clients: %{}}
   end
 
   # The node recovers before it takes requests; nothing starts the queue after that.
@@ -234,7 +234,7 @@ defmodule T3.Steps.Composer.QueueAndSteer do
 
   defp interrupt(context) do
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "run.interrupt",
         "threadId" => World.thread_id(context, World.current(context)),
         "runId" => running_run(context)["id"]
@@ -251,7 +251,7 @@ defmodule T3.Steps.Composer.QueueAndSteer do
 
   defp queue_command(context, type, run, fields) do
     {:ok, _} =
-      T3.Orchestration.dispatch(
+      HalC2.Orchestration.dispatch(
         Map.merge(
           %{
             "type" => type,

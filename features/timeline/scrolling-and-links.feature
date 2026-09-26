@@ -11,7 +11,7 @@
 #   apps/web/src/components/chat/AssistantCitationCommentEditor.tsx
 #   apps/tui/src/timelineLinks.ts (bare URLs become terminal hyperlinks)
 #   apps/tui/src/components/MessagesTimeline.tsx (windowing, earlier and newer entries, sticks to the bottom)
-#   apps/server-ex/lib/t3/web/socket.ex (thread stream subscriptions, merged bursts, resync from offset)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (thread stream subscriptions, merged bursts, resync from offset)
 
 Feature: Moving through a thread and following links
   A long thread stays easy to read while the agent writes. The view follows new output

@@ -1,6 +1,6 @@
-import { type EnvironmentId, type ThreadId } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { type EnvironmentId, type ThreadId } from "@hal-c2/contracts";
+import { scopeThreadRef } from "@hal-c2/client-runtime/environment";
+import type { EnvironmentProject } from "@hal-c2/client-runtime/state/shell";
 import { ChevronDownIcon } from "lucide-react";
 import {
   memo,

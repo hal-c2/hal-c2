@@ -6,7 +6,7 @@
 
 Feature: Open source licenses
   The user can read the license and attribution notice of every third-party package and asset
-  T3 Code ships or installs on demand, without being connected to any environment.
+  HAL-C2 ships or installs on demand, without being connected to any environment.
 
   Rule: Finding the notices
 
@@ -20,13 +20,13 @@ Feature: Open source licenses
     @backlog @mobile
     Scenario: The licenses page opens from About on mobile
       Given the user has opened settings on mobile
-      When the user opens About T3 Code and then Open source licenses
+      When the user opens About HAL-C2 and then Open source licenses
       Then the list of third-party notices is shown
 
     @backlog @desktop @mobile
     Scenario: Each notice names its version, license and where it is used
       Given the user has opened the open source licenses
-      Then each entry shows its version when known, its license identifier and the parts of T3 Code that use it
+      Then each entry shows its version when known, its license identifier and the parts of HAL-C2 that use it
 
     @backlog @desktop @mobile
     Scenario: Opening an entry shows its full notice text
@@ -56,7 +56,7 @@ Feature: Open source licenses
     @backlog @desktop
     Scenario: Optional device tools are listed though they are not bundled
       Given the user has opened the open source licenses
-      Then the device tools T3 Code installs on demand are listed
+      Then the device tools HAL-C2 installs on demand are listed
 
     @backlog @desktop
     Scenario: Notices load without an environment

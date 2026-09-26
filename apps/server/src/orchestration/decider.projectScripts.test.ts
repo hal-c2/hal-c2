@@ -7,8 +7,8 @@ import {
   ThreadId,
   ProviderInstanceId,
   type ProjectScript,
-} from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+} from "@hal-c2/contracts";
+import { createModelSelection } from "@hal-c2/shared/model";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -249,7 +249,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         color: "violet",
       });
 
-      for (const text of ["T3", "e\u0301", "किखि", "क्ष्म", "\u1100\u1161\u11a8"]) {
+      for (const text of ["HAL-C2", "e\u0301", "किखि", "क्ष्म", "\u1100\u1161\u11a8"]) {
         const monogram = { kind: "monogram", text, color: "violet" } as const;
         const result = yield* decideOrchestrationCommand({
           command: {

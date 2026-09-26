@@ -1,6 +1,6 @@
 # Sources:
 #   docs/user/composer.md (message limits, sending, background prompts, multiple models)
-#   apps/desktop-qt/qml/T3/Bricks/Composer.qml (text sync, submit, draft target)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (text sync, submit, draft target)
 #   apps/desktop-qt/tests/tst_Composer.qml
 #   apps/desktop-qt/tests/tst_ComposerKeyboard.qml
 #   apps/tui/src/components/ChatView.tsx (reply draft, send status, new thread composer)

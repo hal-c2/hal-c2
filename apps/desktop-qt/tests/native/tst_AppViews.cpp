@@ -40,20 +40,20 @@ private slots:
     QFile page(directory.filePath("app.html"));
     QVERIFY(page.open(QIODevice::WriteOnly));
     page.write("<!doctype html><title>Independent client</title><input id='draft'>"
-               "<script>window.storageIdAtStartup = window.__t3AppViewStorageId;</script>");
+               "<script>window.storageIdAtStartup = window.__halc2AppViewStorageId;</script>");
     page.close();
     bridge.setPageUrl(QUrl::fromLocalFile(page.fileName()));
     theme = std::make_unique<ThemeStore>(directory.path());
     profile = std::make_unique<WebProfile>(directory.filePath("web"));
-    qmlRegisterSingletonInstance("T3.Shell", 1, 0, "Shell", &bridge);
-    qmlRegisterSingletonInstance("T3.Shell", 1, 0, "Theme", theme.get());
-    qmlRegisterSingletonInstance("T3.Shell", 1, 0, "WebProfile", profile->profile());
+    qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Shell", &bridge);
+    qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Theme", theme.get());
+    qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", profile->profile());
     engine = std::make_unique<QQmlEngine>();
-    engine->addImportPath(QStringLiteral(T3_TEST_SOURCE_DIR "/qml"));
+    engine->addImportPath(QStringLiteral(HALC2_TEST_SOURCE_DIR "/qml"));
     component = std::make_unique<QQmlComponent>(engine.get());
     component->setData(R"(
       import QtQuick
-      import T3.Bricks
+      import HalC2.Bricks
       AppWindow {
         id: root
         property var scriptResult: null
@@ -94,8 +94,8 @@ private slots:
       auto* channel = qobject_cast<QWebChannel*>(view->property("webChannel").value<QObject*>());
       QVERIFY(!channel || channel->registeredObjects().isEmpty());
     }
-    QCOMPARE(evaluate(first.get(), "typeof window.t3Shell").toString(), QString("undefined"));
-    QCOMPARE(evaluate(second.get(), "typeof window.t3Shell").toString(), QString("undefined"));
+    QCOMPARE(evaluate(first.get(), "typeof window.halc2Shell").toString(), QString("undefined"));
+    QCOMPARE(evaluate(second.get(), "typeof window.halc2Shell").toString(), QString("undefined"));
     QCOMPARE(evaluate(first.get(), "window.storageIdAtStartup").toString(), QString("window-a"));
     QCOMPARE(evaluate(second.get(), "window.storageIdAtStartup").toString(), QString("window-b"));
 
@@ -120,7 +120,7 @@ private slots:
     QQmlComponent fixture(engine.get());
     fixture.setData(R"(
       import QtQuick
-      import T3.Bricks
+      import HalC2.Bricks
       Window {
         id: root
         width: 320; height: 240; visible: true
@@ -150,7 +150,7 @@ private slots:
 
   void transparentCanvasClearsOnlyBackdropsAndRestoresThem() {
     QFETCH(bool, initiallyTransparent);
-    QFile stylesheet(QStringLiteral(T3_TEST_SOURCE_DIR "/../web/src/index.css"));
+    QFile stylesheet(QStringLiteral(HALC2_TEST_SOURCE_DIR "/../web/src/index.css"));
     QVERIFY(stylesheet.open(QIODevice::ReadOnly));
     const QByteArray css = stylesheet.readAll();
     const auto start = css.indexOf("html[data-shell-surface-transparent]");
@@ -172,7 +172,7 @@ private slots:
     QQmlComponent fixture(engine.get());
     fixture.setData(R"(
       import QtQuick
-      import T3.Bricks
+      import HalC2.Bricks
       Window {
         id: root
         width: 320; height: 240; visible: true

@@ -4,8 +4,8 @@
 #   apps/web/src/components/settings/ProjectActionsList.tsx
 #   apps/web/src/components/settings/useProjectScriptSettings.ts
 #   apps/web/src/components/projectScriptEditor.tsx
-#   apps/server-ex/lib/t3/settings.ex (defaultProjectScripts, projectSettingsOverrides)
-#   packages/contracts/src/rpc.ts (t3.readSettings, t3.writeSettings, t3.upsertKeybinding, t3.removeKeybinding)
+#   apps/server-ex/lib/hal_c2/settings.ex (defaultProjectScripts, projectSettingsOverrides)
+#   packages/contracts/src/rpc.ts (halc2.readSettings, halc2.writeSettings, halc2.upsertKeybinding, halc2.removeKeybinding)
 
 Feature: Project actions settings panel
   The Actions panel lists the actions every project on an environment starts with, and a
@@ -47,16 +47,16 @@ Feature: Project actions settings panel
     And "Dev" is marked as having a preview on desktop only
 
   @backlog @desktop
-  Scenario: Actions from t3.json can be imported without editing them first
-    Given the checkout's t3.json declares the action "Lint"
-    When the user imports the actions of "shop" from t3.json
+  Scenario: Actions from hal-c2.json can be imported without editing them first
+    Given the checkout's hal-c2.json declares the action "Lint"
+    When the user imports the actions of "shop" from hal-c2.json
     Then "shop" has the action "Lint"
 
   @backlog @desktop
-  Scenario: An invalid t3.json is flagged in the panel
-    Given the checkout's t3.json is invalid
+  Scenario: An invalid hal-c2.json is flagged in the panel
+    Given the checkout's hal-c2.json is invalid
     When the user opens the Actions settings for "shop"
-    Then the user is warned that t3.json is invalid
+    Then the user is warned that hal-c2.json is invalid
 
   @backlog @desktop
   Scenario: Environments that disagree are shown as different

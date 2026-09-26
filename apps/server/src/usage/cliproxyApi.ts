@@ -6,7 +6,7 @@ import {
   type ProviderConsumeResetCreditResult,
   type UsageLimitSourceAccount,
   type UsageLimitSourceConfig,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -99,7 +99,7 @@ const decodeConsumeResponse = Schema.decodeUnknownEffect(
 const CODEX_BASE = "https://chatgpt.com/backend-api/wham";
 const CREDIT_URL = `${CODEX_BASE}/rate-limit-reset-credits`;
 
-// UUIDv5 per account and credit also deduplicates retries across T3 environments.
+// UUIDv5 per account and credit also deduplicates retries across HAL-C2 environments.
 export function creditRedeemRequestId(accountId: string, creditId: string): string {
   const bytes = NodeCrypto.createHash("sha1")
     .update(Buffer.from("6f1c2a9e2d4b4c1e9a7f3b8d5e0c1a42", "hex"))

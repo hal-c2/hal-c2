@@ -9,9 +9,9 @@ import { selectCliRuntimeExternalDependencies } from "../../../scripts/lib/cli-e
 const scriptDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const repoRoot = NodePath.resolve(scriptDir, "../../..");
 const destinationArg = process.argv[2];
-// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone packaging script has no Effect runtime.
+// oxlint-disable-next-line hal-c2/no-global-process-runtime -- Standalone packaging script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
-// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone packaging script has no Effect runtime.
+// oxlint-disable-next-line hal-c2/no-global-process-runtime -- Standalone packaging script has no Effect runtime.
 const hostArchitecture = NodeOS.arch();
 
 if (destinationArg === undefined) {
@@ -61,7 +61,7 @@ await NodeFSP.writeFile(
   NodePath.join(destination, "package.json"),
   `${JSON.stringify(
     {
-      name: "t3code-qt-runtime",
+      name: "hal-c2-qt-runtime",
       version: serverManifest.version,
       private: true,
       type: "module",

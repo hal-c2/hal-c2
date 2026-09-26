@@ -1,4 +1,4 @@
-defmodule T3.Steps.Settings.ProvidersPanel do
+defmodule HalC2.Steps.Settings.ProvidersPanel do
   @moduledoc """
   Steps for features/settings/providers-panel.feature: what the Providers settings
   page asks of a node.
@@ -13,9 +13,9 @@ defmodule T3.Steps.Settings.ProvidersPanel do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.Settings.Updates
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Steps.Settings.Updates
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @fake_acp Path.expand("../../support/fake_acp.py", __DIR__)
   @instance "gemini"
@@ -23,8 +23,8 @@ defmodule T3.Steps.Settings.ProvidersPanel do
   step "the user has opened the Providers settings for the environment {string}",
        %{args: [_label]} = context do
     # The machine's own Codex and Claude never run here; the Updates rule installs a fake.
-    World.put_app_env(:codex_command, ["t3-test-no-codex"])
-    World.put_app_env(:claude_command, ["t3-test-no-claude"])
+    World.put_app_env(:codex_command, ["hal-c2-test-no-codex"])
+    World.put_app_env(:claude_command, ["hal-c2-test-no-claude"])
 
     context = registry(context)
     state = Path.join(context.node.home, "gemini-state.json")
@@ -32,8 +32,8 @@ defmodule T3.Steps.Settings.ProvidersPanel do
     File.write!(auth, "signed in")
 
     World.put_app_env(:acp_commands, %{@instance => ["python3", "-u", @fake_acp]})
-    T3.Acp.forget(@instance)
-    ExUnit.Callbacks.on_exit(fn -> T3.Acp.forget(@instance) end)
+    HalC2.Acp.forget(@instance)
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Acp.forget(@instance) end)
 
     context =
       World.update_settings(context, %{
@@ -51,8 +51,8 @@ defmodule T3.Steps.Settings.ProvidersPanel do
       })
 
     # The node read the agent when it was added.
-    :ok = T3.Acp.reload(@instance)
-    assert %{"models" => [_ | _]} = T3.Acp.entry(@instance)
+    :ok = HalC2.Acp.reload(@instance)
+    assert %{"models" => [_ | _]} = HalC2.Acp.entry(@instance)
 
     context
     |> World.put_client(Node.config(World.client(context)))
@@ -112,7 +112,7 @@ defmodule T3.Steps.Settings.ProvidersPanel do
       Path.join([
         context.node.home,
         "tools/gemini-cli/1.2.3",
-        T3.Acp.Catalog.platform(),
+        HalC2.Acp.Catalog.platform(),
         "bin/gemini"
       ])
 
@@ -123,7 +123,7 @@ defmodule T3.Steps.Settings.ProvidersPanel do
   step "a provider instance uses the registry agent {string}", %{args: [agent]} = context do
     {_, context} = World.call!(context, "server.prepareAcpRegistryAgent", %{"agentId" => agent})
 
-    assert get_in(T3.Settings.settings(), ["providerInstances", @instance, "config", "agentId"]) ==
+    assert get_in(HalC2.Settings.settings(), ["providerInstances", @instance, "config", "agentId"]) ==
              agent
 
     Map.put(context, :agent, agent)
@@ -151,7 +151,7 @@ defmodule T3.Steps.Settings.ProvidersPanel do
 
   step "the agent {string} has a native session that was not imported",
        %{args: [@instance]} = context do
-    native_session(context, "t3code", "old/2")
+    native_session(context, "hal-c2", "old/2")
   end
 
   step "the user imports that session", context do
@@ -159,7 +159,7 @@ defmodule T3.Steps.Settings.ProvidersPanel do
   end
 
   step "a native session was imported as a thread", context do
-    context |> native_session("t3code", "old-1") |> import_session()
+    context |> native_session("hal-c2", "old-1") |> import_session()
   end
 
   step ~r/^a thread continuing the session is created in "(?<project>[^"]+)"$/,
@@ -168,17 +168,17 @@ defmodule T3.Steps.Settings.ProvidersPanel do
     project_id = World.project(context, project).id
     World.await_row(thread_id, &(&1["projectId"] == project_id))
 
-    state = T3.Streams.Server.state(T3.Streams.ensure(thread_id))
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
 
     assert [%{"providerInstanceId" => @instance, "nativeThreadRef" => %{"nativeId" => "old-1"}}] =
-             T3.StreamState.list(state, "provider-thread")
+             HalC2.StreamState.list(state, "provider-thread")
 
     assert %{"importedThreadId" => ^thread_id} = listed(context, "old-1")
     context
   end
 
   step "the user is told to delete the imported thread first", context do
-    assert {:error, "Delete the imported T3 thread before deleting its native ACP session.",
+    assert {:error, "Delete the imported HAL-C2 thread before deleting its native ACP session.",
             %{"_tag" => "AcpRegistryOperationError", "reason" => "session_delete_failed"}} =
              context.reply
 
@@ -202,7 +202,7 @@ defmodule T3.Steps.Settings.ProvidersPanel do
 
   step "the user sets the agent's model provider to {string} with an authorization header",
        %{args: [url]} = context do
-    context = ensure_project(context, "t3code")
+    context = ensure_project(context, "hal-c2")
 
     input =
       Map.merge(panel_input(context), %{
@@ -317,7 +317,7 @@ defmodule T3.Steps.Settings.ProvidersPanel do
 
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
     base = "http://127.0.0.1:#{port}"
-    here = T3.Acp.Catalog.platform()
+    here = HalC2.Acp.Catalog.platform()
     elsewhere = Enum.find(["windows-aarch64", "darwin-x86_64"], &(&1 != here))
 
     binary = fn platform ->
@@ -362,8 +362,8 @@ defmodule T3.Steps.Settings.ProvidersPanel do
     )
 
     World.put_app_env(:acp_registry_url, "#{base}/registry.json")
-    :persistent_term.erase({T3.Acp.Catalog, :index})
-    ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase({T3.Acp.Catalog, :index}) end)
+    :persistent_term.erase({HalC2.Acp.Catalog, :index})
+    ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase({HalC2.Acp.Catalog, :index}) end)
     context
   end
 

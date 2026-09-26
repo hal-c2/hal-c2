@@ -1,15 +1,15 @@
-defmodule T3.Steps.Settings.UsageLimitSources do
+defmodule HalC2.Steps.Settings.UsageLimitSources do
   @moduledoc """
   Settings → Usage providers: CLIProxyAPI hubs added as usage limit sources
-  (`usageLimitSources` in settings, `T3.UsageLimitSources`). A local fake hub serves
+  (`usageLimitSources` in settings, `HalC2.UsageLimitSources`). A local fake hub serves
   the management API the node reads; hub URLs in the scenarios stand for it.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
-  alias T3.UsageLimitSources
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
+  alias HalC2.UsageLimitSources
 
   @marker "••••••"
   @key "hub-key"
@@ -129,7 +129,7 @@ defmodule T3.Steps.Settings.UsageLimitSources do
 
   # An admin is a client on the node's own token: it may read auth access.
   step "a node the user administers", context do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     Node.ensure(UsageLimitSources)
     client = context |> World.client() |> Node.sub(90, %{"type" => "authAccess"})
     {_, client} = Node.await(client, &(&1["t"] == "authAccess" and &1["id"] == 90))
@@ -179,7 +179,7 @@ defmodule T3.Steps.Settings.UsageLimitSources do
 
   step "a client reads the settings", context do
     {{:ok, %{"settings" => settings, "version" => version}}, context} =
-      World.call(context, "t3.readSettings")
+      World.call(context, "halc2.readSettings")
 
     Map.merge(context, %{settings: settings, version: version})
   end
@@ -194,12 +194,12 @@ defmodule T3.Steps.Settings.UsageLimitSources do
     settings = put_in(context.settings, ["usageLimitSources", "hub", "label"], "Team hub")
 
     {{:ok, _}, context} =
-      World.call(context, "t3.writeSettings", %{
+      World.call(context, "halc2.writeSettings", %{
         "settings" => settings,
         "version" => context.version
       })
 
-    assert get_in(T3.Settings.settings(), ["usageLimitSources", "hub", "label"]) == "Team hub"
+    assert get_in(HalC2.Settings.settings(), ["usageLimitSources", "hub", "label"]) == "Team hub"
     assert UsageLimitSources.key("hub") == @key
     context
   end

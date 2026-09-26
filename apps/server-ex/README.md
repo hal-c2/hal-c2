@@ -1,10 +1,10 @@
-# T3 node (Elixir)
+# HAL-C2 node (Elixir)
 
 The Elixir/OTP backend. Each machine runs one node with its own SQLite event log;
 nodes on your machines join a cluster over mutually authenticated TLS and share one
 sidebar, so a client connected to any node sees threads on all of them.
 
-Clients speak orchestration protocol 3 (`T3.Web.Protocol`): shape subscriptions over
+Clients speak orchestration protocol 3 (`HalC2.Web.Protocol`): shape subscriptions over
 one WebSocket, resumed from an offset. `packages/client-runtime/src/v3` adapts it to
 the existing client state, so a node pairs and appears like any other environment.
 
@@ -12,79 +12,79 @@ the existing client state, so a node pairs and appears like any other environmen
 
 ```sh
 mix deps.get
-mix t3.import ~/path/to/snapshot/state.sqlite   # optional: a VACUUM INTO copy of a Node server's state
-mix t3.server                                    # prints ws://127.0.0.1:3780/ws?token=...
-mix t3.pair                                      # one-time pairing URL for Settings → Connections
+mix hal_c2.import ~/path/to/snapshot/state.sqlite   # optional: a VACUUM INTO copy of a Node server's state
+mix hal_c2.server                                    # prints ws://127.0.0.1:3780/ws?token=...
+mix hal_c2.pair                                      # one-time pairing URL for Settings → Connections
 ```
 
-State lives in the repo's `.t3/elixir` during development; set `T3_HOME` elsewhere.
-The node listens on loopback port 3780; `T3_PORT` and `T3CODE_HOST` (a LAN or tailnet
+State lives in the repo's `.hal-c2/elixir` during development; set `HALC2_HOME` elsewhere.
+The node listens on loopback port 3780; `HALC2_NODE_PORT` and `HALC2_HOST` (a LAN or tailnet
 address, for pairing other devices) change that.
 
 ## Release
 
 ```sh
-MIX_ENV=prod mix release        # _build/prod/rel/t3, about 80 MB with ERTS
-_build/prod/rel/t3/bin/t3 start # foreground; state in $T3_HOME (default ~/.t3/elixir)
+MIX_ENV=prod mix release        # _build/prod/rel/hal_c2, about 80 MB with ERTS
+_build/prod/rel/hal_c2/bin/hal_c2 start # foreground; state in $HALC2_HOME (default ~/.hal-c2/elixir)
 ```
 
 The release carries the Cursor sidecar (`packages/cursor-acp`, bundled with its
 dependencies for the build machine's platform), so building one needs `pnpm`, and
 running Cursor needs Node 22+ on the machine. The desktop app runs it on its own
-Electron binary instead (`T3_NODE_COMMAND`).
+Electron binary instead (`HALC2_NODE_COMMAND`).
 
 A machine that has joined a cluster boots clustered: joining writes
-`$T3_HOME/cluster/vm.args`, which the release reads at start.
+`$HALC2_HOME/cluster/vm.args`, which the release reads at start.
 
-Run it as a service with `bin/t3-service` (under launchd, systemd, or a terminal): it
-is `bin/t3 start`, started again when the node restarts to finish an update.
-`bin/t3-service install` registers it as a systemd user unit (Linux) or launch agent
+Run it as a service with `bin/hal-c2-service` (under launchd, systemd, or a terminal): it
+is `bin/hal_c2 start`, started again when the node restarts to finish an update.
+`bin/hal-c2-service install` registers it as a systemd user unit (Linux) or launch agent
 (macOS) that starts on login; `status` and `uninstall` inspect and remove it.
 
 ## Upgrades
 
-A node carries the T3 version (`apps/server/package.json`, or `T3_VERSION` for a
+A node carries the HAL-C2 version (`apps/server/package.json`, or `HALC2_NODE_VERSION` for a
 build of its own), and clients offer to update it like any server. It moves to the
 new version in place when it can: the running code is replaced module by module and
 nothing reconnects. A new Erlang runtime, native library, configuration or
-supervision tree needs a restart instead, which `bin/t3-service` provides
-(`T3.Upgrade` has the rules).
+supervision tree needs a restart instead, which `bin/hal-c2-service` provides
+(`HalC2.Upgrade` has the rules).
 
 Nodes get a version's bundle from a cluster peer that has it, or else from the
 `node-v<version>` GitHub release (`.github/workflows/release-node.yml`; set
-`T3_UPGRADE_URL` to publish elsewhere). From a checkout:
+`HALC2_UPGRADE_URL` to publish elsewhere). From a checkout:
 
 ```sh
-T3_VERSION=0.0.43-mine mix t3.upgrade t3@host     # build a release, send it, update
-mix t3.upgrade --dev t3a@my-mac t3b@my-mac        # nodes run with `mix run`: reload changes
-MIX_ENV=prod mix t3.bundle                        # just pack _build/prod/rel/t3
+HALC2_NODE_VERSION=0.0.43-mine mix hal_c2.upgrade hal_c2@host     # build a release, send it, update
+mix hal_c2.upgrade --dev halc2a@my-mac halc2b@my-mac        # nodes run with `mix run`: reload changes
+MIX_ENV=prod mix hal_c2.bundle                        # just pack _build/prod/rel/hal_c2
 ```
 
 A process that holds state across an upgrade migrates it: OTP processes in
-`code_change/3`, and `T3.Web.Socket` (whose processes belong to Bandit) at its next
+`code_change/3`, and `HalC2.Web.Socket` (whose processes belong to Bandit) at its next
 callback.
 
 ## Cluster your machines
 
 ```sh
-mix t3.cluster init 100.x.y.z                    # first machine: its Tailscale IP
-mix t3.cluster invite 100.a.b.c bundle           # on a member, for the new machine
-mix t3.cluster join bundle                       # on the new machine; then delete the bundle
-elixir --erl "$(mix t3.cluster vm-args)" -S mix t3.server
+mix hal_c2.cluster init 100.x.y.z                    # first machine: its Tailscale IP
+mix hal_c2.cluster invite 100.a.b.c bundle           # on a member, for the new machine
+mix hal_c2.cluster join bundle                       # on the new machine; then delete the bundle
+elixir --erl "$(mix hal_c2.cluster vm-args)" -S mix hal_c2.server
 ```
 
-Nodes find each other on the tailnet (`T3.Cluster.Tailscale`) or through
-`T3_PEERS=t3@host,...`, and only connect when both certificates come from the
+Nodes find each other on the tailnet (`HalC2.Cluster.Tailscale`) or through
+`HALC2_PEERS=hal_c2@host,...`, and only connect when both certificates come from the
 cluster's CA.
 
 ## Test
 
 `mix test` runs the suite. `--include codex` / `--include claude` drive the real
 CLIs; `--include parity` compares sidebar rows with the Node server's
-(see `test/t3/projection/shell_parity_test.exs`).
+(see `test/hal_c2/projection/shell_parity_test.exs`).
 
 What this node serves, what it still lacks, and why anything was dropped is written as
 Gherkin under the repository's `features/` tree: `features/parity/rpc.feature` and
 `features/parity/commands.feature` hold a row per RPC method and orchestration command,
 and `features/node/` describes the behaviour a client sees over the socket.
-`test/t3/scenarios_test.exs` drives the subset of those scenarios that run today.
+`test/hal_c2/scenarios_test.exs` drives the subset of those scenarios that run today.

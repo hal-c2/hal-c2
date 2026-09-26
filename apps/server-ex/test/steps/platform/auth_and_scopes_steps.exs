@@ -1,10 +1,10 @@
-defmodule T3.Steps.Platform.AuthAndScopes do
+defmodule HalC2.Steps.Platform.AuthAndScopes do
   @moduledoc "Steps for features/node/platform/auth-and-scopes.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @standard ~w(orchestration:read orchestration:operate terminal:operate review:write relay:read)
   @admin @standard ++ ~w(access:read access:write relay:write)
@@ -34,15 +34,15 @@ defmodule T3.Steps.Platform.AuthAndScopes do
     access
   end
 
-  defp standard!(context), do: pair!(context, T3.Auth.create_pairing_token(context.node.store))
+  defp standard!(context), do: pair!(context, HalC2.Auth.create_pairing_token(context.node.store))
 
   defp admin!(context) do
-    {:ok, link} = T3.Auth.create_pairing_link(%{"scopes" => @admin, "label" => "Admin"})
+    {:ok, link} = HalC2.Auth.create_pairing_link(%{"scopes" => @admin, "label" => "Admin"})
     pair!(context, link["credential"], %{"client_label" => "Admin"})
   end
 
   defp session_id(access) do
-    {:ok, session} = T3.Auth.session(access)
+    {:ok, session} = HalC2.Auth.session(access)
     session.id
   end
 
@@ -54,16 +54,16 @@ defmodule T3.Steps.Platform.AuthAndScopes do
     Node.connect(context.node, "wsTicket=#{ticket}")
   end
 
-  # Starts the node again with the desktop app's bootstrap token (as `T3.Desktop` sets it).
+  # Starts the node again with the desktop app's bootstrap token (as `HalC2.Desktop` sets it).
   defp desktop_boot(context, token) do
-    Application.put_env(:t3, :desktop_token, token)
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :desktop_token) end)
+    Application.put_env(:hal_c2, :desktop_token, token)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :desktop_token) end)
     %{context | node: Node.restart(context.node), clients: %{}}
   end
 
   # Moves the node's boot time so its desktop token expires `ms_left` from now.
   defp desktop_expires_in(ms_left),
-    do: :sys.replace_state(T3.Auth, &put_in(&1.desktop.expires_at, now() + ms_left))
+    do: :sys.replace_state(HalC2.Auth, &put_in(&1.desktop.expires_at, now() + ms_left))
 
   # A P-256 key as a DPoP client holds it: `{public_jwk, private_key}`.
   defp dpop_key do
@@ -83,7 +83,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
         "jti" => Base.encode16(:crypto.strong_rand_bytes(8)),
         "iat" => System.os_time(:second)
       }
-      |> then(&if(access, do: Map.put(&1, "ath", T3.Auth.Dpop.ath(access)), else: &1))
+      |> then(&if(access, do: Map.put(&1, "ath", HalC2.Auth.Dpop.ath(access)), else: &1))
 
     input = header <> "." <> b64.(JSON.encode!(claims))
     der = :crypto.sign(:ecdsa, :sha256, input, [private, :secp256r1])
@@ -152,17 +152,17 @@ defmodule T3.Steps.Platform.AuthAndScopes do
   # --- pairing -------------------------------------------------------------------
 
   step "a pairing token minted on the node", context do
-    Map.put(context, :token, T3.Auth.create_pairing_token(context.node.store))
+    Map.put(context, :token, HalC2.Auth.create_pairing_token(context.node.store))
   end
 
   step "a pairing token that a client already exchanged", context do
-    token = T3.Auth.create_pairing_token(context.node.store)
+    token = HalC2.Auth.create_pairing_token(context.node.store)
     pair!(context, token)
     Map.put(context, :token, token)
   end
 
   step "a pairing token minted six minutes ago", context do
-    token = T3.Auth.create_pairing_token(context.node.store)
+    token = HalC2.Auth.create_pairing_token(context.node.store)
     six_minutes_ago = now() - :timer.minutes(6)
 
     sql(
@@ -199,7 +199,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
     assert grant["expires_in"] == 30 * 24 * 60 * 60
     # The label, device type and OS are recorded on the session.
     id = session_id(access)
-    client = Enum.find(T3.Auth.clients(), &(&1["sessionId"] == id))
+    client = Enum.find(HalC2.Auth.clients(), &(&1["sessionId"] == id))
 
     assert %{"label" => "Work laptop", "deviceType" => "desktop", "os" => "macOS"} =
              client["client"]
@@ -210,7 +210,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
   step "the grant lists the scopes it carries", context do
     assert {200, %{"scope" => scope}} = context.grant
     assert String.split(scope) == @standard
-    {:ok, session} = T3.Auth.session(context.access)
+    {:ok, session} = HalC2.Auth.session(context.access)
     assert session.scopes == @standard
     context
   end
@@ -229,7 +229,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
 
   step "an operator mints a pairing link from the command line", context do
     base = url(context, "")
-    assert [link] = mix_output(Mix.Tasks.T3.Pair, [base])
+    assert [link] = mix_output(Mix.Tasks.HalC2.Pair, [base])
     Map.merge(context, %{link: link, base: base})
   end
 
@@ -237,7 +237,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
     assert String.starts_with?(context.link, context.base <> "/?token=")
     %{"token" => token} = context.link |> URI.parse() |> Map.fetch!(:query) |> URI.decode_query()
     # Listed like any pairing link: standard scopes, expiring in five minutes.
-    assert [%{"scopes" => @standard, "expiresAt" => expires}] = T3.Auth.pairing_links()
+    assert [%{"scopes" => @standard, "expiresAt" => expires}] = HalC2.Auth.pairing_links()
     {:ok, expires, _} = DateTime.from_iso8601(expires)
     left = DateTime.diff(expires, DateTime.utc_now(), :second)
     assert left in 290..300
@@ -256,14 +256,14 @@ defmodule T3.Steps.Platform.AuthAndScopes do
     {context, token} =
       case credential do
         "a command-line pairing token" ->
-          {context, T3.Auth.create_pairing_token(context.node.store)}
+          {context, HalC2.Auth.create_pairing_token(context.node.store)}
 
         "the desktop bootstrap token" ->
           {desktop_boot(context, "desktop-bootstrap-token"), "desktop-bootstrap-token"}
 
         "a pairing link naming scopes" ->
           {:ok, link} =
-            T3.Auth.create_pairing_link(%{
+            HalC2.Auth.create_pairing_link(%{
               "scopes" => ["orchestration:read", "relay:write", "files:everything"]
             })
 
@@ -304,7 +304,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
     assert {200, %{"access_token" => access, "scope" => scope}} = context.grant
     assert access != context.access
     assert String.split(scope) == @admin
-    assert {:ok, %{scopes: @admin}} = T3.Auth.session(access)
+    assert {:ok, %{scopes: @admin}} = HalC2.Auth.session(access)
     context
   end
 
@@ -317,7 +317,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
   step "the desktop app exchanged its bootstrap token before a restart", context do
     context = desktop_boot(context, "desktop-token-1")
     access = pair!(context, "desktop-token-1")
-    assert {:ok, _} = T3.Auth.session(access)
+    assert {:ok, _} = HalC2.Auth.session(access)
     Map.put(context, :earlier, access)
   end
 
@@ -327,9 +327,9 @@ defmodule T3.Steps.Platform.AuthAndScopes do
   end
 
   step "the earlier desktop session is revoked in the same step", context do
-    assert T3.Auth.session(context.earlier) == :error
-    assert {:ok, %{scopes: @admin}} = T3.Auth.session(context.access)
-    assert [_one] = Enum.filter(T3.Auth.clients(), &("access:write" in &1["scopes"]))
+    assert HalC2.Auth.session(context.earlier) == :error
+    assert {:ok, %{scopes: @admin}} = HalC2.Auth.session(context.access)
+    assert [_one] = Enum.filter(HalC2.Auth.clients(), &("access:write" in &1["scopes"]))
     context
   end
 
@@ -429,7 +429,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
 
   step ~r/^a client whose session lacks (?<scope>\S+)$/, %{args: [scope]} = context do
     access = standard!(context)
-    {:ok, session} = T3.Auth.session(access)
+    {:ok, session} = HalC2.Auth.session(access)
     refute scope in session.scopes
     Map.put(context, :access, access)
   end
@@ -629,8 +629,8 @@ defmodule T3.Steps.Platform.AuthAndScopes do
     for {label, agent} <- agents do
       form = %{
         "grant_type" => "urn:ietf:params:oauth:grant-type:token-exchange",
-        "subject_token" => T3.Auth.create_pairing_token(context.node.store),
-        "subject_token_type" => "urn:t3:params:oauth:token-type:environment-bootstrap",
+        "subject_token" => HalC2.Auth.create_pairing_token(context.node.store),
+        "subject_token_type" => "urn:hal-c2:params:oauth:token-type:environment-bootstrap",
         "client_label" => label
       }
 
@@ -645,7 +645,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
   end
 
   step "the node records each as mobile, tablet and desktop", context do
-    types = Map.new(T3.Auth.clients(), &{&1["client"]["label"], &1["client"]["deviceType"]})
+    types = Map.new(HalC2.Auth.clients(), &{&1["client"]["label"], &1["client"]["deviceType"]})
     assert types == %{"Phone" => "mobile", "Tablet" => "tablet", "Desktop" => "desktop"}
     context
   end
@@ -712,7 +712,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
               "reason" => "current_session_revoke_not_allowed"
             }} = context.response
 
-    assert {:ok, _} = T3.Auth.session(context.admin)
+    assert {:ok, _} = HalC2.Auth.session(context.admin)
     context
   end
 
@@ -728,8 +728,8 @@ defmodule T3.Steps.Platform.AuthAndScopes do
   end
 
   step "the other two sessions are revoked", context do
-    for access <- context.others, do: assert(T3.Auth.session(access) == :error)
-    assert {:ok, _} = T3.Auth.session(context.admin)
+    for access <- context.others, do: assert(HalC2.Auth.session(access) == :error)
+    assert {:ok, _} = HalC2.Auth.session(context.admin)
     context
   end
 
@@ -741,7 +741,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
   # --- older stores --------------------------------------------------------------
 
   step "a node store written before client metadata was recorded", context do
-    ExUnit.Callbacks.stop_supervised(T3.Auth)
+    ExUnit.Callbacks.stop_supervised(HalC2.Auth)
     sql(context, "DROP TABLE auth_pairing")
     sql(context, "DROP TABLE auth_sessions")
 
@@ -786,7 +786,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
 
   step "existing sessions keep working", context do
     client = socket!(context, context.access)
-    assert [%{"client" => %{"label" => "Old laptop"}}] = T3.Auth.clients()
+    assert [%{"client" => %{"label" => "Old laptop"}}] = HalC2.Auth.clients()
     World.put_client(context, "old", client)
   end
 
@@ -794,7 +794,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
 
   step "a device paired without terminal:operate", context do
     {:ok, link} =
-      T3.Auth.create_pairing_link(%{"scopes" => ["orchestration:read", "orchestration:operate"]})
+      HalC2.Auth.create_pairing_link(%{"scopes" => ["orchestration:read", "orchestration:operate"]})
 
     access = pair!(context, link["credential"])
     World.put_client(context, "device", socket!(context, access))
@@ -835,7 +835,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
   # --- narrowing, DPoP, the dev credential ---------------------------------------
 
   step "a pairing link with administrative scopes", context do
-    {:ok, link} = T3.Auth.create_pairing_link(%{"scopes" => @admin})
+    {:ok, link} = HalC2.Auth.create_pairing_link(%{"scopes" => @admin})
     Map.put(context, :token, link["credential"])
   end
 
@@ -845,7 +845,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
 
     # Asking for a scope the credential does not grant is refused.
     assert {400, %{"error" => "invalid_scope"}} =
-             Node.exchange(context.node, T3.Auth.create_pairing_token(context.node.store), %{
+             Node.exchange(context.node, HalC2.Auth.create_pairing_token(context.node.store), %{
                "scope" => "access:write"
              })
 
@@ -854,13 +854,13 @@ defmodule T3.Steps.Platform.AuthAndScopes do
 
   step "a client that paired with a DPoP key", context do
     key = dpop_key()
-    token = T3.Auth.create_pairing_token(context.node.store)
+    token = HalC2.Auth.create_pairing_token(context.node.store)
     proof = dpop_proof(key, "POST", url(context, "/oauth/token"))
 
     form = %{
       "grant_type" => "urn:ietf:params:oauth:grant-type:token-exchange",
       "subject_token" => token,
-      "subject_token_type" => "urn:t3:params:oauth:token-type:environment-bootstrap"
+      "subject_token_type" => "urn:hal-c2:params:oauth:token-type:environment-bootstrap"
     }
 
     assert {200, _, %{"token_type" => "DPoP", "access_token" => access, "expires_in" => 3600}} =
@@ -926,8 +926,8 @@ defmodule T3.Steps.Platform.AuthAndScopes do
 
   step "a fixed development auth token is configured", context do
     token = "reusable-dev-auth-token-that-is-long-enough"
-    Application.put_env(:t3, :dev_auth_token, token)
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:t3, :dev_auth_token) end)
+    Application.put_env(:hal_c2, :dev_auth_token, token)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :dev_auth_token) end)
 
     %{context | node: Node.restart(context.node), clients: %{}}
     |> Map.put(:token, token)
@@ -968,7 +968,7 @@ defmodule T3.Steps.Platform.AuthAndScopes do
   # --- the command line ------------------------------------------------------------
 
   step "an operator lists sessions from the node's command line", context do
-    Map.put(context, :listed, mix_output(Mix.Tasks.T3.Auth, ["session", "list"]))
+    Map.put(context, :listed, mix_output(Mix.Tasks.HalC2.Auth, ["session", "list"]))
   end
 
   step "it sees the same clients as Connections settings", context do
@@ -984,12 +984,12 @@ defmodule T3.Steps.Platform.AuthAndScopes do
   step "it can revoke one of them", context do
     [other | _] = context.others
     id = session_id(other)
-    assert ["Revoked " <> _] = mix_output(Mix.Tasks.T3.Auth, ["session", "revoke", id])
+    assert ["Revoked " <> _] = mix_output(Mix.Tasks.HalC2.Auth, ["session", "revoke", id])
 
     assert {401, _, _} =
              Node.request(context.node, :post, "/api/auth/websocket-ticket", bearer: other)
 
-    listed = mix_output(Mix.Tasks.T3.Auth, ["session", "list"])
+    listed = mix_output(Mix.Tasks.HalC2.Auth, ["session", "list"])
     refute Enum.any?(listed, &String.starts_with?(&1, id))
     context
   end

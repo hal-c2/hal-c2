@@ -18,7 +18,7 @@ const NativeControls = requireNativeModule<{
     identifier: string,
   ): Promise<void>;
   dismissVideo(identifier: string): Promise<void>;
-}>("T3NativeControls");
+}>("HalC2NativeControls");
 
 function NativeVideoPreview(props: {
   readonly source: VideoPreviewSource;

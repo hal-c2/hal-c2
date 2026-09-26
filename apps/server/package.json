@@ -1,14 +1,14 @@
 {
-  "name": "t3",
+  "name": "hal-c2",
   "version": "0.0.42",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pingdotgg/t3code",
+    "url": "https://github.com/hal-c2/hal-c2",
     "directory": "apps/server"
   },
   "bin": {
-    "t3": "./dist/bin.mjs"
+    "hal-c2": "./dist/bin.mjs"
   },
   "files": [
     "dist"
@@ -44,11 +44,11 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@t3tools/contracts": "workspace:*",
-    "@t3tools/shared": "workspace:*",
-    "@t3tools/ssh": "workspace:*",
-    "@t3tools/tailscale": "workspace:*",
-    "@t3tools/web": "workspace:*",
+    "@hal-c2/contracts": "workspace:*",
+    "@hal-c2/shared": "workspace:*",
+    "@hal-c2/ssh": "workspace:*",
+    "@hal-c2/tailscale": "workspace:*",
+    "@hal-c2/web": "workspace:*",
     "@types/node": "catalog:",
     "@types/yauzl": "^3.4.0",
     "effect-acp": "workspace:*",

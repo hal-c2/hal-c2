@@ -36,8 +36,8 @@ import type {
   PullRequestUpdateMethod,
   PullRequestViewerPermissions,
   SourceControlProviderKind,
-} from "@t3tools/contracts";
-import { SourceControlProviderKind as SourceControlProviderKindSchema } from "@t3tools/contracts";
+} from "@hal-c2/contracts";
+import { SourceControlProviderKind as SourceControlProviderKindSchema } from "@hal-c2/contracts";
 
 /**
  * The one failure shape every provider reports, so the service can decide what a failure means

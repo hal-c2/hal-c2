@@ -2,8 +2,8 @@
 #   packages/contracts/src/orchestrationV2.ts (checkpoint.captured, checkpoint-scope.created,
 #     checkpoint.rollback, checkpoint.rollback-requested, run.updated, provider-thread.updated)
 #   packages/contracts/src/rpc.ts (orchestration.getTurnDiff, orchestration.getFullThreadDiff)
-#   apps/server-ex/lib/t3/checkpoint.ex
-#   apps/server-ex/lib/t3/orchestration/rollback.ex
+#   apps/server-ex/lib/hal_c2/checkpoint.ex
+#   apps/server-ex/lib/hal_c2/orchestration/rollback.ex
 #   apps/server/src/checkpointing/ (checkpoint reactor, rollback)
 #   docs/user/ (diffs and rewinding a thread)
 Feature: Checkpoints, diffs and rewinding

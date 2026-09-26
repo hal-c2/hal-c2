@@ -7,8 +7,8 @@ import {
   chatImageMimeTypeForPath,
   type ProjectReadFileResult,
   type UploadChatImageAttachment,
-} from "@t3tools/contracts";
-import { decodeImage, type ImagePreview } from "@t3tools/opentui-image";
+} from "@hal-c2/contracts";
+import { decodeImage, type ImagePreview } from "@hal-c2/opentui-image";
 
 const PREVIEW_MAX_WIDTH = 240;
 const PREVIEW_MAX_HEIGHT = 160;

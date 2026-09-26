@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { MessageId, RunId, type ReviewDiffPreviewSource } from "@t3tools/contracts";
-import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { MessageId, RunId, type ReviewDiffPreviewSource } from "@hal-c2/contracts";
+import type { ThreadCheckpointSummary } from "@hal-c2/client-runtime/state/thread-checkpoints";
 
 import {
   applyReviewDiffMetadata,
@@ -18,7 +18,7 @@ function makeCheckpoint(
     Pick<ThreadCheckpointSummary, "runId" | "checkpointTurnCount" | "completedAt">,
 ): ThreadCheckpointSummary {
   return {
-    checkpointRef: `refs/t3/checkpoints/thread/${input.checkpointTurnCount}` as any,
+    checkpointRef: `refs/hal-c2/checkpoints/thread/${input.checkpointTurnCount}` as any,
     status: "ready",
     files: [],
     assistantMessageId: MessageId.make(`msg-${input.checkpointTurnCount}`),

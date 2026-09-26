@@ -1,16 +1,16 @@
 # Desktop (Qt) shell
 
 `apps/desktop-qt` is a second desktop client next to the Electron app. It is a
-compiled Qt 6 / QML binary (`t3code-qt`) that hosts the web app in a
+compiled Qt 6 / QML binary (`hal-c2-qt`) that hosts the web app in a
 `WebEngineView` and makes everything around the web view - window, chrome,
 layout, colours - a set of QML "bricks" a user can rearrange and restyle from
-`~/.t3/shell/`. It coexists with `apps/desktop`; nothing in `apps/web` or
+`~/.hal-c2/shell/`. It coexists with `apps/desktop`; nothing in `apps/web` or
 `apps/server` may become Qt-specific.
 
 ## Process model
 
 ```text
-t3code-qt (C++/QML, the shell)
+hal-c2-qt (C++/QML, the shell)
   └─ spawns ─► node apps/desktop-qt/host/main.ts  (the desktop host)
                  └─ spawns ─► node apps/server/src/bin.ts --no-browser  (the server)
 WebEngineView ──── WebSocket ────────────────────────────────────────────► server
@@ -26,9 +26,9 @@ WebEngineView ◄─── WebChannel ───► QML bricks
   newline-delimited JSON (`{"type":"ready","url":...}`); the shell closes the
   host's stdin when it exits, which is the host's cue to shut the server down.
 - **QML gets everything from the web view over WebChannel**, nothing else.
-  State flows web → QML (`t3Shell.publish(key, value)` → `Shell.state[key]`);
+  State flows web → QML (`halc2Shell.publish(key, value)` → `Shell.state[key]`);
   actions flow QML → web (`Shell.dispatch(action, payload)` →
-  `t3Shell.onAction(listener)`).
+  `halc2Shell.onAction(listener)`).
 - The UI-owned parts of `desktopBridge` (open external, window commands,
   colour scheme, dialogs/context menus later) are served by the shell over the
   same channel; the TypeScript-owned parts stay on the Node side.
@@ -40,8 +40,8 @@ running dev server; this is what `vp run dev:qt` uses.
 
 - **One profile.** `src/WebProfile.cpp` configures Qt WebEngine's default
   profile and registers it as the `WebProfile` singleton: storage and a 64 MiB
-  disk HTTP cache under `<T3 home>/userdata/shell-web` (`--home-dir`, then
-  `T3CODE_HOME`, then `~/.t3`), cookies forced persistent, permissions stored.
+  disk HTTP cache under `<HAL-C2 home>/userdata/shell-web` (`--home-dir`, then
+  `HALC2_HOME`, then `~/.hal-c2` or an existing `~/.t3`), cookies forced persistent, permissions stored.
   Every `WebSurface` shares it, so the embed surfaces reuse the primary's
   session and the bundle comes from cache on the next start. Chromium cannot
   share a profile directory between processes: a second shell on the same
@@ -77,14 +77,14 @@ running dev server; this is what `vp run dev:qt` uses.
 | `src/ShellBridge.*`     | The `shell` WebChannel object / `Shell` QML singleton               |
 | `src/ThemeStore.*`      | `theme.json` loader + watcher, `Theme` QML singleton, CSS injection |
 | `src/BackendProcess.*`  | Spawns the Node desktop host, waits for `ready`                     |
-| `qml/T3/Bricks/`        | Pure-QML bricks (see below) and the injected `js/shell-connect.js`  |
+| `qml/HalC2/Bricks/`     | Pure-QML bricks (see below) and the injected `js/shell-connect.js`  |
 | `scripts/gen-icons.mjs` | Regenerates `js/lucide.js`, the icon paths `ShellIcon` draws        |
 | `host/main.ts`          | Node desktop host                                                   |
 | `scripts/dev-qt.mjs`    | Build, pair with the dev server, launch                             |
 | `examples/`             | Starter `theme.json` and `shell.qml`                                |
 
-QML modules: `T3.Shell` is C++-only (`Shell`, `Theme`, `Runtime`, and `WebProfile`
-singletons, registered once and used by one engine throughout its lifetime). `T3.Bricks` is
+QML modules: `HalC2.Shell` is C++-only (`Shell`, `Theme`, `Runtime`, and `WebProfile`
+singletons, registered once and used by one engine throughout its lifetime). `HalC2.Bricks` is
 QML-only with a hand-written `qmldir` (no `prefer` line) so the same directory
 works compiled into the binary and as an on-disk import path.
 
@@ -109,13 +109,13 @@ panel), `ShellButton` (outline, `subtle` ghost, `primary`), `ShellComboBox`
 (ghost, `outline: true` for a field), `ShellSplitButton` (the header's action
 and chevron pill), `ShellMenu` / `ShellMenuItem`, `ShellTextField`, `ShellIcon`,
 `WindowControls` (glyph buttons, or macOS traffic lights with
-`trafficLights: true`), `TitleBar` and `T3Wordmark` (the web app's "T3"
+`trafficLights: true`), `TitleBar` and `HalC2Wordmark` (the web app's "HAL-C2"
 mark as a filled `Shape`, sized by its height). `ShellIcon` draws the page's
 lucide icons as a `Shape` from the path table in `js/lucide.js`, so bricks
 pass an icon name (`iconName: "git-branch"`) and get the same glyph the HTML
 shows, at any size or color.
 
-`DefaultShell` is laid out like the page: the sidebar's brand band ("T3 Code"
+`DefaultShell` is laid out like the page: the sidebar's brand band ("HAL-C2"
 plus the collapse toggle), a 52 px header strip with the breadcrumb and the
 run / open / git pills, the timeline, and the composer card with the checkout
 strip welded under it. Frameless windows get their drag handle and buttons
@@ -136,18 +136,18 @@ Requirements: CMake ≥ 3.21, Ninja, a C++20 compiler, Qt ≥ 6.9 with
 
 ```sh
 vp run dev        # terminal 1: server + web (single origin)
-vp run dev:qt     # terminal 2: cmake configure/build, `t3 pair`, launch with --url
+vp run dev:qt     # terminal 2: cmake configure/build, `hal-c2 pair`, launch with --url
 ```
 
 `dev:qt` resolves the data directory the way `vp run dev` does (`--home-dir`,
-else the worktree's own `.t3`, else `T3CODE_HOME`, else `~/.t3`), pairs with
+else the worktree's own `.hal-c2`, else `HALC2_HOME`, else `~/.hal-c2` or an existing `~/.t3`), pairs with
 the server running there, and launches the shell with that directory as its
-`T3CODE_HOME` so it rices from the matching `shell/`. Pass the same
+`HALC2_HOME` so it rices from the matching `shell/`. Pass the same
 `--home-dir` to both commands if you set one. Its other flags are `--url` (skip
 pairing), `--release` (no disk QML loading) and `--configure-only` (build, do
 not launch); everything else is forwarded to the binary, so
 `vp run dev:qt --screenshot out.png --action rightPanel.toggle` works.
-`pnpm --filter @t3tools/desktop-qt build:qt` builds without launching. Build
+`pnpm --filter @hal-c2/desktop-qt build:qt` builds without launching. Build
 output lands in `apps/desktop-qt/build/<debug|release>` (gitignored).
 
 Standalone (no dev server): run the binary with no `--url`; it spawns the host,
@@ -159,13 +159,13 @@ screen-recording permission), `--action name[=json]` (repeatable; dispatch shell
 actions after the page loads, e.g. `--action rightPanel.toggle`), `--key <chord>`
 (repeatable; press a key chord after the page loads, e.g. `--key Ctrl+1`, portable
 `QKeySequence` names — `--action` and `--key` run in command-line order, 1.5 s
-apart, so a key test can open a thread first); env `T3CODE_HOME`,
-`T3CODE_QML_DIR`, `T3CODE_NODE`, `T3CODE_SERVER_ENTRY`.
+apart, so a key test can open a thread first); env `HALC2_HOME`,
+`HALC2_QML_DIR`, `HALC2_NODE`, `HALC2_SERVER_ENTRY`.
 
 ## Ricing contract
 
-Config dir: `$T3CODE_HOME/shell/`, so `~/.t3/shell/` by default on every
-platform and `<worktree>/.t3/shell/` for a sandboxed dev run; `--config-dir`
+Config dir: `$HALC2_HOME/shell/`, so `~/.hal-c2/shell/` by default on every
+platform and `<worktree>/.hal-c2/shell/` for a sandboxed dev run; `--config-dir`
 overrides it.
 
 ### `theme.json`
@@ -198,7 +198,7 @@ the Settings → Theme editor exports it) plus a shell-only `window` section:
   `ThemeColorRole` list in `packages/shared/src/themePalettes.ts`).
   `variants.<appearance>` overrides `colors` for that appearance.
 - The native document-creation script applies the first-paint colors, then
-  hands its override to the web theme module through `window.__t3ShellTheme`.
+  hands its override to the web theme module through `window.__halc2ShellTheme`.
   The web module applies the override after stored palettes and editor previews,
   without changing saved preferences. Native reinjections deliver data only.
   Embedded documents claim their own override without publishing native colors.
@@ -216,9 +216,9 @@ the Settings → Theme editor exports it) plus a shell-only `window` section:
 
 ### `shell.qml`
 
-If `~/.t3/shell/shell.qml` exists it is loaded as the root instead of the
-built-in `DefaultShell.qml`. It composes bricks from `T3.Bricks` and reads the
-`T3.Shell` singletons:
+If `~/.hal-c2/shell/shell.qml` exists it is loaded as the root instead of the
+built-in `DefaultShell.qml`. It composes bricks from `HalC2.Bricks` and reads the
+`HalC2.Shell` singletons:
 
 - `Shell.pageUrl`, `Shell.state` (whatever the web app published),
   `Shell.dispatch(action, payload)`, `Shell.windowCommandRequested(command)`.
@@ -226,7 +226,7 @@ built-in `DefaultShell.qml`. It composes bricks from `T3.Bricks` and reads the
 - `Runtime.configDir`, `Runtime.userShellPath`, `Runtime.usingUserShell`,
   `Runtime.lastError`, `Runtime.reload()`.
 
-Extra QML modules can live under `~/.t3/shell/qml/` (it is on the import
+Extra QML modules can live under `~/.hal-c2/shell/qml/` (it is on the import
 path). If `shell.qml` fails to load, the default shell takes over with
 `ShellErrorOverlay` showing the error; a broken rice never locks the app.
 
@@ -279,7 +279,7 @@ filesystem methods are exposed to the web page.
 
 The page publishes every primary-local checkout in `sidebar.localProjects`,
 independently of grouped sidebar representatives, and clears the list on
-disconnect or a non-loopback connection. "Remove from T3" sends
+disconnect or a non-loopback connection. "Remove from HAL-C2" sends
 `project.remove {projectKey}` for one physical checkout and opens the existing
 project-settings confirmation. Confirming permanently deletes that entry's
 conversation history, including archived threads, and cleans up its drafts;
@@ -313,7 +313,7 @@ thread title, and runtime mode. Initial observations baseline existing threads
 without replaying their old completions or approvals. A QML policy should
 consume `Shell.stateEntryChanged`, not replay the retained batch on startup.
 
-`NativeNotifications` is a creatable `T3.Shell` type, disabled by default.
+`NativeNotifications` is a creatable `HalC2.Shell` type, disabled by default.
 QML chooses event filters, foreground behavior, titles, message text, sound,
 and timeout, then calls `show(key, title, body, silent, timeoutMs)`. Its
 `activated(key)` signal identifies the originating thread. QML decides whether
@@ -361,7 +361,7 @@ QmlLive was evaluated and rejected: unmaintained since 2019, Qt 5 only.
 time) and `js/shell-connect.js` at document creation, which exposes:
 
 ```ts
-window.t3Shell: {
+window.halc2Shell: {
   protocolVersion: number;                           // 1
   surfaceId: string;                                 // "primary" | "rightPanel"
   ready: Promise<ShellObject>;                       // raw WebChannel proxy
@@ -373,11 +373,11 @@ window.t3Shell: {
 }
 ```
 
-`window.t3Shell` is undefined in a browser tab; the web app must keep working
-without it. `apps/web/src/env.ts` exports `isT3Shell` (module-load-time, like
+`window.halc2Shell` is undefined in a browser tab; the web app must keep working
+without it. `apps/web/src/env.ts` exports `isHalC2Shell` (module-load-time, like
 `isElectron`). The contract — what gets published under which key and which
 actions exist — lives in `packages/contracts/src/shell.ts` and is imported as
-`@t3tools/contracts/shell`, not from the package barrel, so browsers never
+`@hal-c2/contracts/shell`, not from the package barrel, so browsers never
 bundle it. The bridges follow the same rule: `apps/web/src/shell/lazy.tsx`
 wraps each one in `React.lazy`, and only a shell-hosted document ever imports
 `shell/bridges.ts`. Every bridge decodes actions through `useShellActions`
@@ -386,8 +386,8 @@ wraps each one in `React.lazy`, and only a shell-hosted document ever imports
 
 ### `sidebar`
 
-`apps/web/src/shell/T3ShellBridge.tsx` (mounted from the root route when
-`isT3Shell`) publishes `ShellSidebarState`: project groups, the current scope,
+`apps/web/src/shell/HalC2ShellBridge.tsx` (mounted from the root route when
+`isHalC2Shell`) publishes `ShellSidebarState`: project groups, the current scope,
 and the thread list already bucketed (`pinned`/`active`/`snoozed`/`settled`),
 sorted, and annotated with status, status label, unread, branch, the snooze
 wake label, the woke timestamp and whether settle/snooze apply (`wakeLabel`,
@@ -617,7 +617,7 @@ because most rices bring their own title bar.
 
 The page's keybindings are configurable and fire on keydown events the
 document sees, so with native chrome focused (the thread list, the composer
-editor) they would go dead. `T3ShellBridge` publishes the resolved config as
+editor) they would go dead. `HalC2ShellBridge` publishes the resolved config as
 `keybindings`: `apps/web/src/shell/shellKeybindings.ts` turns every modified
 chord into a portable Qt sequence such as `Ctrl+Shift+]` (Qt swaps Ctrl and
 Command on macOS, so the builder swaps them back), skips unmodified keys —
@@ -632,7 +632,7 @@ editor do nothing from chrome; the QML composer submits through
 `composer.submit` instead.
 
 Secondary documents (the terminal drawer, the right panel) carry no
-`T3ShellBridge` and no sidebar, so the handlers behind thread jumps or the
+`HalC2ShellBridge` and no sidebar, so the handlers behind thread jumps or the
 sidebar toggle do not exist there, and while one has focus the shell's own
 shortcuts are off. `ShellEmbedRouteBridge` therefore forwards a keydown its
 document did not consume as `keybinding.press` when the chord resolves to the
@@ -658,7 +658,7 @@ renders the rest.
 
 `localApi.contextMenu.show` routes to the shell when hosted: the items are
 published under `contextMenu` with the surface they belong to (every web
-surface tags its document with `window.t3Shell.surfaceId`; `"shell"` means
+surface tags its document with `window.halc2Shell.surfaceId`; `"shell"` means
 window coordinates from native chrome) and the choice returns as
 `contextMenu.select {requestId, id}`. `ContextMenuHost` lives in each
 `WebSurface` and once at the window level. This makes every context menu in
@@ -695,7 +695,7 @@ selector, the checkout-mode picker, the PR badge and the branch button
 files into the composer's drop pipeline (the brick reads dropped or picked
 files through `Shell.readImageFiles`, 10 MB cap, images only).
 `composer.terminalContext.add {…selection}` adds a terminal selection; the
-embed document's terminal forwards its selections with `t3Shell.dispatch`, so
+embed document's terminal forwards its selections with `halc2Shell.dispatch`, so
 they land in the primary's draft. Attached images and terminal contexts are
 published as removable chips (`composer.attachment.remove`,
 `composer.terminalContext.remove`).
@@ -704,9 +704,9 @@ published as removable chips (`composer.attachment.remove`,
 
 `window.blur` is native on macOS (an `NSVisualEffectView` behind the Qt view,
 `src/PlatformWindow.mm`, tinted by the theme's appearance). On Linux
-`QGuiApplication::setDesktopFileName("t3code")` sets the Wayland app id /
+`QGuiApplication::setDesktopFileName("hal-c2")` sets the Wayland app id /
 X11 `WM_CLASS`, so compositor rules can target the window — on Hyprland:
-`windowrulev2 = opacity 0.9, class:^(t3code)$` and `decorate:blur` — with
+`windowrulev2 = opacity 0.9, class:^(hal-c2)$` and `decorate:blur` — with
 `window.transparent: true` in theme.json for the compositor to blur through.
 `.github/workflows/desktop-qt.yml` builds Release binaries on Linux and
 macOS with the official Qt 6.9 binaries (`jurplel/install-qt-action`) and

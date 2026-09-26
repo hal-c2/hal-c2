@@ -12,7 +12,7 @@ import { acpReplayAgentArgs } from "../src/orchestration-v2/Adapters/AcpAdapterV
 const replayAgentPath = NodeURL.fileURLToPath(new URL("./acp-replay-agent.ts", import.meta.url));
 
 async function runRuntimeExit(status: "success" | "error" | "cancelled") {
-  const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-acp-replay-agent-"));
+  const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hal-c2-acp-replay-agent-"));
   const statusPath = NodePath.join(scratch, "status.json");
   const transcript = {
     scenario: `${status}-runtime-exit`,
@@ -22,9 +22,11 @@ async function runRuntimeExit(status: "success" | "error" | "cancelled") {
   const child = NodeChildProcess.spawn(process.execPath, args, {
     env: {
       ...process.env,
-      T3_ACP_REPLAY_STATUS_PATH: statusPath,
-      T3_ACP_REPLAY_TRANSCRIPT: Buffer.from(JSON.stringify(transcript), "utf8").toString("base64"),
-      T3_ACP_REPLAY_WORKSPACE: scratch,
+      HALC2_ACP_REPLAY_STATUS_PATH: statusPath,
+      HALC2_ACP_REPLAY_TRANSCRIPT: Buffer.from(JSON.stringify(transcript), "utf8").toString(
+        "base64",
+      ),
+      HALC2_ACP_REPLAY_WORKSPACE: scratch,
     },
     stdio: ["pipe", "pipe", "pipe"],
   });

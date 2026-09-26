@@ -1,4 +1,4 @@
-import { type EnvironmentId, UsageLimitSourceId } from "@t3tools/contracts";
+import { type EnvironmentId, UsageLimitSourceId } from "@hal-c2/contracts";
 import { useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";

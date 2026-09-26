@@ -1,4 +1,4 @@
-defmodule T3.Steps.SourceControl.StackedPullRequests do
+defmodule HalC2.Steps.SourceControl.StackedPullRequests do
   @moduledoc """
   Steps for `features/source-control/stacked-pull-requests.feature`. The fake GitHub
   answers a native stack (`context.stack`: its base and layers, bottom first); the
@@ -8,9 +8,9 @@ defmodule T3.Steps.SourceControl.StackedPullRequests do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.SourceControl.Shared
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @stack_number 7
   @unsupported "This stack action is not supported or has no expected head revision."
@@ -193,8 +193,8 @@ defmodule T3.Steps.SourceControl.StackedPullRequests do
     reads = length(World.cli_calls(context, "stacks?pull_request="))
     # A newer snapshot makes the sweep read the stack again.
     context = answer_summaries(context, "2026-09-03T00:00:00Z")
-    T3.PullRequests.Sync.request(%{"repository" => "acme/shop", "number" => number - 1})
-    :ok = T3.PullRequests.Sync.sweep()
+    HalC2.PullRequests.Sync.request(%{"repository" => "acme/shop", "number" => number - 1})
+    :ok = HalC2.PullRequests.Sync.sweep()
     assert length(World.cli_calls(context, "stacks?pull_request=")) > reads
 
     row = World.await_row(World.thread_id(context, context.pr_thread), & &1)
@@ -369,7 +369,7 @@ defmodule T3.Steps.SourceControl.StackedPullRequests do
   end
 
   defp link(context, number, title) do
-    Node.ensure({T3.PullRequests.Sync, interval: nil})
+    Node.ensure({HalC2.PullRequests.Sync, interval: nil})
 
     context =
       if (context[:threads] || %{})[title],
@@ -390,7 +390,7 @@ defmodule T3.Steps.SourceControl.StackedPullRequests do
       })
 
     World.await_row(id, &Enum.any?(&1["pullRequests"] || [], fn l -> l["number"] == number end))
-    :ok = T3.PullRequests.Sync.sweep()
+    :ok = HalC2.PullRequests.Sync.sweep()
     context
   end
 

@@ -1,9 +1,9 @@
-defmodule T3.Steps.Orchestration.ThreadOrganization do
+defmodule HalC2.Steps.Orchestration.ThreadOrganization do
   @moduledoc "Steps for `features/node/orchestration/thread-organization.feature`."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node.World
 
   defp organize(context, thread, type, fields \\ %{}) do
     context
@@ -190,7 +190,7 @@ defmodule T3.Steps.Orchestration.ThreadOrganization do
     context = context |> World.providers() |> World.dispatch_message(thread, text) |> ok!()
 
     World.await_state(context, thread, fn state ->
-      Enum.any?(T3.StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
+      Enum.any?(HalC2.StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
     end)
 
     context

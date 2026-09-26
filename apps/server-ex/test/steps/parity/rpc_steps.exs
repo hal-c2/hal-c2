@@ -1,27 +1,27 @@
-defmodule T3.Steps.Parity.Rpc do
+defmodule HalC2.Steps.Parity.Rpc do
   @moduledoc """
   Steps for `features/parity/rpc.feature`: every aligned contract method is called
   the way a protocol 3 client reaches it, with the smallest fixture that lets the
-  node answer (`T3.Steps.Parity.Fixtures`).
+  node answer (`HalC2.Steps.Parity.Fixtures`).
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Steps.Parity.Fixtures
-  alias T3.Steps.Parity.Shapes
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Steps.Parity.Fixtures
+  alias HalC2.Steps.Parity.Shapes
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # A client paired through an admin pairing link, as the desktop pairs a phone.
   step "a paired protocol 3 client", context do
     {:ok, %{"credential" => credential}} =
-      T3.Auth.create_pairing_link(%{
+      HalC2.Auth.create_pairing_link(%{
         "label" => "Phone",
-        "scopes" => T3.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
+        "scopes" => HalC2.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
       })
 
-    {:ok, access, _expires, _scopes} = T3.Auth.exchange(credential, %{"label" => "Phone"})
-    {:ok, ticket, _} = T3.Auth.issue_ticket(access)
+    {:ok, access, _expires, _scopes} = HalC2.Auth.exchange(credential, %{"label" => "Phone"})
+    {:ok, ticket, _} = HalC2.Auth.issue_ticket(access)
     World.put_client(context, Node.connect(context.node, "wsTicket=#{ticket}"))
   end
 
@@ -47,7 +47,7 @@ defmodule T3.Steps.Parity.Rpc do
 
       "client adapter: answered by the client" <> _ ->
         # The adapter answers a probe from its open socket: a ping the node pongs.
-        client = T3.Test.WsClient.send_json(World.client(context), %{"t" => "ping"})
+        client = HalC2.Test.WsClient.send_json(World.client(context), %{"t" => "ping"})
         {frame, client} = Node.await(client, &(&1["t"] == "pong"))
 
         context
@@ -105,7 +105,7 @@ defmodule T3.Steps.Parity.Rpc do
 
     # Writing again from the version read before is stale now.
     {reply, context} =
-      World.call(context, "t3.writeSettings", %{
+      World.call(context, "halc2.writeSettings", %{
         "settings" => %{},
         "version" => context.fixtures.settings_version
       })
@@ -142,7 +142,7 @@ defmodule T3.Steps.Parity.Rpc do
   end
 end
 
-defmodule T3.Steps.Parity.Fixtures do
+defmodule HalC2.Steps.Parity.Fixtures do
   @moduledoc """
   The smallest world each contract method can be called in: a project on a git
   repository with one thread, the services the method's domain runs on, and
@@ -151,8 +151,8 @@ defmodule T3.Steps.Parity.Fixtures do
   """
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @fake_acp Path.expand("../../support/fake_acp.py", __DIR__)
 
@@ -161,16 +161,16 @@ defmodule T3.Steps.Parity.Fixtures do
 
   def setup(context) do
     home = context.node.home
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
 
     # Nothing reaches GitHub, the user's provider homes or the internet.
-    World.put_app_env(:gh_command, "t3-test-no-gh")
+    World.put_app_env(:gh_command, "hal-c2-test-no-gh")
     World.put_app_env(:acp_commands, %{"opencode" => ["python3", "-u", @fake_acp]})
     World.put_app_env(:agent_sessions_home, Path.join(home, "user"))
     World.put_app_env(:usage_rates_url, write!(home, "rates.json", "{}"))
     World.put_env("CODEX_HOME", Path.join(home, "codex"))
     World.put_env("CLAUDE_CONFIG_DIR", Path.join(home, "claude"))
-    ExUnit.Callbacks.on_exit(fn -> T3.Acp.forget("opencode") end)
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Acp.forget("opencode") end)
 
     World.update_settings(context, %{
       "providerInstances" => %{"opencode" => %{"driver" => "opencode", "enabled" => true}}
@@ -182,7 +182,7 @@ defmodule T3.Steps.Parity.Fixtures do
       |> World.create_thread("Work", "shop")
 
     project = World.project(context, "shop")
-    {_, version} = T3.Settings.get()
+    {_, version} = HalC2.Settings.get()
 
     Map.put(context, :fixtures, %{
       root: project.root,
@@ -211,39 +211,39 @@ defmodule T3.Steps.Parity.Fixtures do
         {%{"cwd" => f.root}, context}
 
       "server.updateProvider" ->
-        {%{"provider" => "t3-no-such-provider"}, context}
+        {%{"provider" => "hal-c2-no-such-provider"}, context}
 
       "provider.consumeResetCredit" ->
-        {%{"sourceId" => "t3-missing"}, context}
+        {%{"sourceId" => "hal-c2-missing"}, context}
 
       "provider.auth.start" ->
-        {%{"instanceId" => "opencode", "methodId" => "t3-none"}, context}
+        {%{"instanceId" => "opencode", "methodId" => "hal-c2-none"}, context}
 
       "provider.auth.respond" ->
-        {%{"instanceId" => "opencode", "flowId" => "t3-none"}, context}
+        {%{"instanceId" => "opencode", "flowId" => "hal-c2-none"}, context}
 
       "provider.auth." <> _ ->
-        {%{"instanceId" => "opencode", "flowId" => "t3-none"}, context}
+        {%{"instanceId" => "opencode", "flowId" => "hal-c2-none"}, context}
 
       "server.updateServer" ->
         {%{}, context}
 
-      "t3.readSettings" ->
+      "halc2.readSettings" ->
         {%{}, context}
 
-      "t3.writeSettings" ->
-        {%{"settings" => T3.Settings.settings(), "version" => f.settings_version}, context}
+      "halc2.writeSettings" ->
+        {%{"settings" => HalC2.Settings.settings(), "version" => f.settings_version}, context}
 
-      "t3.threadRows" ->
+      "halc2.threadRows" ->
         {%{"threadId" => f.thread}, context}
 
-      "t3.upsertKeybinding" ->
+      "halc2.upsertKeybinding" ->
         {keybinding(), context}
 
       "server.upsertKeybinding" ->
         {keybinding(), context}
 
-      "t3.removeKeybinding" ->
+      "halc2.removeKeybinding" ->
         {keybinding(), with_keybinding(context)}
 
       "server.removeKeybinding" ->
@@ -253,13 +253,13 @@ defmodule T3.Steps.Parity.Fixtures do
         {%{"query" => ""}, registry(context)}
 
       "server.prepareAcpRegistryAgent" ->
-        {%{"agentId" => "t3-missing"}, registry(context)}
+        {%{"agentId" => "hal-c2-missing"}, registry(context)}
 
       "server.uninstallAcpRegistryManagedBinary" ->
-        {%{"agentId" => "t3-missing"}, context}
+        {%{"agentId" => "hal-c2-missing"}, context}
 
       "server.acceptAcpRegistryUrlAuth" ->
-        {%{"instanceId" => "opencode", "elicitationId" => "t3-none"}, context}
+        {%{"instanceId" => "opencode", "elicitationId" => "hal-c2-none"}, context}
 
       "server." <> acp
       when acp in ~w(listAcpRegistrySessions listAcpRegistryProviders logoutAcpRegistry) ->
@@ -308,7 +308,7 @@ defmodule T3.Steps.Parity.Fixtures do
         {pr, context}
 
       "sourceControl.lookupRepository" ->
-        {%{"provider" => "t3-none", "repository" => "acme/shop"}, context}
+        {%{"provider" => "hal-c2-none", "repository" => "acme/shop"}, context}
 
       "sourceControl.cloneRepository" ->
         {%{
@@ -326,10 +326,10 @@ defmodule T3.Steps.Parity.Fixtures do
          }, context}
 
       "projectClone." <> _ ->
-        {%{"projectId" => "t3-missing"}, context}
+        {%{"projectId" => "hal-c2-missing"}, context}
 
       "sourceControl.publishRepository" ->
-        {%{"cwd" => f.root, "provider" => "t3-none", "repository" => "shop"}, context}
+        {%{"cwd" => f.root, "provider" => "hal-c2-none", "repository" => "shop"}, context}
 
       "projects.searchEntries" ->
         {%{"cwd" => f.root, "query" => "READ"}, context}
@@ -350,7 +350,7 @@ defmodule T3.Steps.Parity.Fixtures do
         {%{"type" => "project.update", "projectId" => f.project, "title" => "Shop"}, context}
 
       "shell.openInEditor" ->
-        {%{"cwd" => f.root, "editor" => "t3-no-such-editor"}, context}
+        {%{"cwd" => f.root, "editor" => "hal-c2-no-such-editor"}, context}
 
       "filesystem.browse" ->
         {%{"partialPath" => f.root <> "/"}, context}
@@ -377,7 +377,7 @@ defmodule T3.Steps.Parity.Fixtures do
         {%{"name" => "a.txt", "mimeType" => "text/plain", "sizeBytes" => 3}, context}
 
       "attachments.delete" ->
-        {%{"attachmentId" => "pending-t3"}, context}
+        {%{"attachmentId" => "pending-hal-c2"}, context}
 
       "provider.uploadFeedback" ->
         {%{"threadId" => f.thread, "reason" => "parity"}, context}
@@ -465,9 +465,9 @@ defmodule T3.Steps.Parity.Fixtures do
 
       "previewAutomation.respond" ->
         {%{
-           "clientId" => "t3-none",
-           "connectionId" => "t3-none",
-           "requestId" => "t3-none",
+           "clientId" => "hal-c2-none",
+           "connectionId" => "hal-c2-none",
+           "requestId" => "hal-c2-none",
            "ok" => true,
            "result" => %{}
          }, context}
@@ -482,21 +482,21 @@ defmodule T3.Steps.Parity.Fixtures do
         {%{"onboardingCompleted" => true}, context}
 
       "device.testHost" ->
-        {%{"id" => "t3-host", "host" => "example.invalid"}, context}
+        {%{"id" => "hal-c2-host", "host" => "example.invalid"}, context}
 
       "device.open" ->
-        {%{"threadId" => f.thread, "deviceId" => "t3-none", "platform" => "android"}, context}
+        {%{"threadId" => f.thread, "deviceId" => "hal-c2-none", "platform" => "android"}, context}
 
       "device.close" ->
         {%{"threadId" => f.thread}, context}
 
       "device.shutdown" ->
-        {%{"deviceId" => "t3-none", "platform" => "android"}, context}
+        {%{"deviceId" => "hal-c2-none", "platform" => "android"}, context}
 
       "device." <> _ ->
         {%{
            "threadId" => f.thread,
-           "deviceId" => "t3-none",
+           "deviceId" => "hal-c2-none",
            "platform" => "android",
            "action" => %{"type" => "home"}
          }, context}
@@ -545,81 +545,81 @@ defmodule T3.Steps.Parity.Fixtures do
         {%{"id" => task_id()}, with_task(context)}
 
       "scheduledTasks.runNow" ->
-        {%{"id" => "t3-missing"}, context}
+        {%{"id" => "hal-c2-missing"}, context}
 
       _ ->
         {%{}, context}
     end
   end
 
-  # The services each domain runs on, as `T3.Application` starts them.
+  # The services each domain runs on, as `HalC2.Application` starts them.
   defp services(method) do
     children =
       case method do
         "server.updateServer" ->
-          [T3.Upgrade]
+          [HalC2.Upgrade]
 
         "server.getBackgroundPolicy" ->
-          [T3.BackgroundPolicy]
+          [HalC2.BackgroundPolicy]
 
         "server.reportHostPowerState" ->
-          [T3.BackgroundPolicy]
+          [HalC2.BackgroundPolicy]
 
         "server." <> usage when usage in ~w(getUsageSummary refreshUsageRates) ->
-          [T3.Usage]
+          [HalC2.Usage]
 
         "provider.consumeResetCredit" ->
-          [T3.UsageLimitSources]
+          [HalC2.UsageLimitSources]
 
         "provider.auth." <> _ ->
           provider_auth()
 
         "provider.uploadFeedback" ->
-          [registry_child(T3.Codex.Registry)]
+          [registry_child(HalC2.Codex.Registry)]
 
         "server." <> "getProcess" <> _ ->
-          [T3.Diagnostics]
+          [HalC2.Diagnostics]
 
         "server." <> d
         when d in ~w(getHostResources getResourceTelemetryHistory retryResourceTelemetry signalProcess getTraceDiagnostics) ->
-          [T3.Diagnostics]
+          [HalC2.Diagnostics]
 
         "server." <> _ ->
           [
-            registry_child(T3.Acp.Registry),
-            T3.Acp.UrlAuth,
-            {DynamicSupervisor, name: T3.Codex.Supervisor, strategy: :one_for_one}
+            registry_child(HalC2.Acp.Registry),
+            HalC2.Acp.UrlAuth,
+            {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one}
           ]
 
         "pullRequests." <> _ ->
-          [T3.PullRequests.Refreshes]
+          [HalC2.PullRequests.Refreshes]
 
         "projectClone." <> _ ->
-          [T3.ProjectClones]
+          [HalC2.ProjectClones]
 
         "projects." <> _ ->
-          [T3.Workspace]
+          [HalC2.Workspace]
 
         "vcs." <> _ ->
           vcs()
 
         "worktreeSetup." <> _ ->
-          [T3.WorktreeSetup]
+          [HalC2.WorktreeSetup]
 
         "terminal." <> _ ->
           terminals()
 
         "preview." <> _ ->
-          [T3.Preview]
+          [HalC2.Preview]
 
         "previewAutomation." <> _ ->
-          [T3.PreviewAutomation]
+          [HalC2.PreviewAutomation]
 
         "device." <> _ ->
-          [T3.Devices]
+          [HalC2.Devices]
 
         "scheduledTasks." <> _ ->
-          [T3.ScheduledTasks]
+          [HalC2.ScheduledTasks]
 
         _ ->
           []
@@ -631,24 +631,24 @@ defmodule T3.Steps.Parity.Fixtures do
   @doc false
   def terminals,
     do: [
-      registry_child(T3.Terminal.Registry),
-      {DynamicSupervisor, name: T3.Terminal.Supervisor, strategy: :one_for_one},
-      T3.Terminal.Hub
+      registry_child(HalC2.Terminal.Registry),
+      {DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one},
+      HalC2.Terminal.Hub
     ]
 
   @doc false
   def vcs,
     do: [
-      registry_child(T3.Vcs.Registry),
-      {DynamicSupervisor, name: T3.Vcs.Supervisor, strategy: :one_for_one}
+      registry_child(HalC2.Vcs.Registry),
+      {DynamicSupervisor, name: HalC2.Vcs.Supervisor, strategy: :one_for_one}
     ]
 
   @doc false
   def provider_auth,
     do: [
-      registry_child(T3.ProviderAuth.Registry),
-      {DynamicSupervisor, name: T3.ProviderAuth.Supervisor, strategy: :one_for_one},
-      registry_child(T3.Acp.Registry)
+      registry_child(HalC2.ProviderAuth.Registry),
+      {DynamicSupervisor, name: HalC2.ProviderAuth.Supervisor, strategy: :one_for_one},
+      registry_child(HalC2.Acp.Registry)
     ]
 
   # A unique registry named `name`, with its own child id so several can start.
@@ -659,7 +659,7 @@ defmodule T3.Steps.Parity.Fixtures do
   def keybinding, do: %{"key" => "mod+shift+j", "command" => "terminal.toggle"}
 
   defp with_keybinding(context) do
-    {:ok, _} = T3.Keybindings.upsert(keybinding())
+    {:ok, _} = HalC2.Keybindings.upsert(keybinding())
     context
   end
 
@@ -697,7 +697,7 @@ defmodule T3.Steps.Parity.Fixtures do
     }
 
   defp with_task(context) do
-    {:ok, _} = T3.ScheduledTasks.upsert(task())
+    {:ok, _} = HalC2.ScheduledTasks.upsert(task())
     context
   end
 
@@ -714,8 +714,8 @@ defmodule T3.Steps.Parity.Fixtures do
     server = Node.ensure({Bandit, plug: {__MODULE__.AcpIndex, body}, port: 0, ip: :loopback})
     {:ok, {_, port}} = ThousandIsland.listener_info(server)
     World.put_app_env(:acp_registry_url, "http://127.0.0.1:#{port}/registry.json")
-    :persistent_term.erase({T3.Acp.Catalog, :index})
-    ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase({T3.Acp.Catalog, :index}) end)
+    :persistent_term.erase({HalC2.Acp.Catalog, :index})
+    ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase({HalC2.Acp.Catalog, :index}) end)
     context
   end
 

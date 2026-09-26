@@ -2,7 +2,7 @@ import type { TuiThreadShell as OrchestrationThreadShell } from "../orchestratio
 import {
   effectiveSnoozed,
   QUEUED_TURN_START_GRACE_MS,
-} from "@t3tools/client-runtime/state/thread-settled";
+} from "@hal-c2/client-runtime/state/thread-settled";
 
 import type { OrchestrationShellSnapshot } from "../connection.ts";
 

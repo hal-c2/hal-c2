@@ -1,8 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
-import { HostProcessPlatform, isHostWindows } from "@t3tools/shared/hostProcess";
-import { createModelSelection } from "@t3tools/shared/model";
+import { ClaudeSettings, ProviderInstanceId } from "@hal-c2/contracts";
+import { HostProcessPlatform, isHostWindows } from "@hal-c2/shared/hostProcess";
+import { createModelSelection } from "@hal-c2/shared/model";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -25,7 +25,7 @@ import { writeFakeCli } from "../testUtils/fakeCli.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const ClaudeTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
-  prefix: "t3code-claude-text-generation-test-",
+  prefix: "hal-c2-claude-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
 // The stub behaviour lives in Node so the same implementation runs on Windows,
@@ -71,7 +71,7 @@ function makeFakeClaudeBinary(dir: string) {
         "if (settingsIndex === -1 || JSON.parse(argv[settingsIndex + 1]).disableAllHooks !== true) {",
         '  fail("text generation must disable hooks", 10);',
         "}",
-        "const cwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;",
+        "const cwdMustNotBe = process.env.HALC2_FAKE_CLAUDE_CWD_MUST_NOT_BE;",
         "if (cwdMustNotBe && realpathSync(process.cwd()) === realpathSync(cwdMustNotBe)) {",
         '  fail("text generation ran in the project directory", 11);',
         "}",
@@ -85,33 +85,33 @@ function makeFakeClaudeBinary(dir: string) {
         '  stdinContent = Buffer.concat(chunks).toString("utf8");',
         "}",
         "",
-        "const argsMustContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;",
+        "const argsMustContain = process.env.HALC2_FAKE_CLAUDE_ARGS_MUST_CONTAIN;",
         "if (argsMustContain && !args.includes(argsMustContain)) {",
         '  fail("args missing expected content", 2);',
         "}",
         "",
-        "const argsMustNotContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;",
+        "const argsMustNotContain = process.env.HALC2_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;",
         "if (argsMustNotContain && args.includes(argsMustNotContain)) {",
         '  fail("args contained forbidden content", 3);',
         "}",
         "",
-        "const stdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;",
+        "const stdinMustContain = process.env.HALC2_FAKE_CLAUDE_STDIN_MUST_CONTAIN;",
         "if (stdinMustContain && !stdinContent.includes(stdinMustContain)) {",
         '  fail("stdin missing expected content", 4);',
         "}",
         "",
-        "const configDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;",
+        "const configDirMustBe = process.env.HALC2_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;",
         "if (configDirMustBe && process.env.CLAUDE_CONFIG_DIR !== configDirMustBe) {",
         '  fail("CLAUDE_CONFIG_DIR was " + (process.env.CLAUDE_CONFIG_DIR ?? ""), 5);',
         "}",
         "",
-        "const stderrText = process.env.T3_FAKE_CLAUDE_STDERR;",
+        "const stderrText = process.env.HALC2_FAKE_CLAUDE_STDERR;",
         "if (stderrText) {",
         '  process.stderr.write(stderrText + "\\n");',
         "}",
         "",
-        'process.stdout.write(process.env.T3_FAKE_CLAUDE_OUTPUT ?? "");',
-        "process.exitCode = Number(process.env.T3_FAKE_CLAUDE_EXIT_CODE ?? 0);",
+        'process.stdout.write(process.env.HALC2_FAKE_CLAUDE_OUTPUT ?? "");',
+        "process.exitCode = Number(process.env.HALC2_FAKE_CLAUDE_EXIT_CODE ?? 0);",
         "",
       ].join("\n"),
     });
@@ -135,64 +135,64 @@ function withFakeClaudeEnv<A, E, R>(
 ) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-text-" });
+    const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-claude-text-" });
     const binDir = yield* makeFakeClaudeBinary(tempDir);
     const pathDelimiter = (yield* isHostWindows) ? ";" : ":";
     const previousPath = process.env.PATH;
-    const previousOutput = process.env.T3_FAKE_CLAUDE_OUTPUT;
-    const previousExitCode = process.env.T3_FAKE_CLAUDE_EXIT_CODE;
-    const previousStderr = process.env.T3_FAKE_CLAUDE_STDERR;
-    const previousArgsMustContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
-    const previousArgsMustNotContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
-    const previousStdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
-    const previousConfigDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
-    const previousCwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
+    const previousOutput = process.env.HALC2_FAKE_CLAUDE_OUTPUT;
+    const previousExitCode = process.env.HALC2_FAKE_CLAUDE_EXIT_CODE;
+    const previousStderr = process.env.HALC2_FAKE_CLAUDE_STDERR;
+    const previousArgsMustContain = process.env.HALC2_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
+    const previousArgsMustNotContain = process.env.HALC2_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
+    const previousStdinMustContain = process.env.HALC2_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
+    const previousConfigDirMustBe = process.env.HALC2_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
+    const previousCwdMustNotBe = process.env.HALC2_FAKE_CLAUDE_CWD_MUST_NOT_BE;
 
     yield* Effect.acquireRelease(
       Effect.sync(() => {
         process.env.PATH = `${binDir}${pathDelimiter}${previousPath ?? ""}`;
-        process.env.T3_FAKE_CLAUDE_OUTPUT = input.output;
+        process.env.HALC2_FAKE_CLAUDE_OUTPUT = input.output;
 
         if (input.exitCode !== undefined) {
-          process.env.T3_FAKE_CLAUDE_EXIT_CODE = String(input.exitCode);
+          process.env.HALC2_FAKE_CLAUDE_EXIT_CODE = String(input.exitCode);
         } else {
-          delete process.env.T3_FAKE_CLAUDE_EXIT_CODE;
+          delete process.env.HALC2_FAKE_CLAUDE_EXIT_CODE;
         }
 
         if (input.stderr !== undefined) {
-          process.env.T3_FAKE_CLAUDE_STDERR = input.stderr;
+          process.env.HALC2_FAKE_CLAUDE_STDERR = input.stderr;
         } else {
-          delete process.env.T3_FAKE_CLAUDE_STDERR;
+          delete process.env.HALC2_FAKE_CLAUDE_STDERR;
         }
 
         if (input.argsMustContain !== undefined) {
-          process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN = input.argsMustContain;
+          process.env.HALC2_FAKE_CLAUDE_ARGS_MUST_CONTAIN = input.argsMustContain;
         } else {
-          delete process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
+          delete process.env.HALC2_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
         }
 
         if (input.argsMustNotContain !== undefined) {
-          process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN = input.argsMustNotContain;
+          process.env.HALC2_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN = input.argsMustNotContain;
         } else {
-          delete process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
+          delete process.env.HALC2_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
         }
 
         if (input.stdinMustContain !== undefined) {
-          process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN = input.stdinMustContain;
+          process.env.HALC2_FAKE_CLAUDE_STDIN_MUST_CONTAIN = input.stdinMustContain;
         } else {
-          delete process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
+          delete process.env.HALC2_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
         }
 
         if (input.cwdMustNotBe !== undefined) {
-          process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE = input.cwdMustNotBe;
+          process.env.HALC2_FAKE_CLAUDE_CWD_MUST_NOT_BE = input.cwdMustNotBe;
         } else {
-          delete process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
+          delete process.env.HALC2_FAKE_CLAUDE_CWD_MUST_NOT_BE;
         }
 
         if (input.configDirMustBe !== undefined) {
-          process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = input.configDirMustBe;
+          process.env.HALC2_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = input.configDirMustBe;
         } else {
-          delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
+          delete process.env.HALC2_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
         }
       }),
       () =>
@@ -200,51 +200,51 @@ function withFakeClaudeEnv<A, E, R>(
           process.env.PATH = previousPath;
 
           if (previousOutput === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_OUTPUT;
+            delete process.env.HALC2_FAKE_CLAUDE_OUTPUT;
           } else {
-            process.env.T3_FAKE_CLAUDE_OUTPUT = previousOutput;
+            process.env.HALC2_FAKE_CLAUDE_OUTPUT = previousOutput;
           }
 
           if (previousExitCode === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_EXIT_CODE;
+            delete process.env.HALC2_FAKE_CLAUDE_EXIT_CODE;
           } else {
-            process.env.T3_FAKE_CLAUDE_EXIT_CODE = previousExitCode;
+            process.env.HALC2_FAKE_CLAUDE_EXIT_CODE = previousExitCode;
           }
 
           if (previousStderr === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_STDERR;
+            delete process.env.HALC2_FAKE_CLAUDE_STDERR;
           } else {
-            process.env.T3_FAKE_CLAUDE_STDERR = previousStderr;
+            process.env.HALC2_FAKE_CLAUDE_STDERR = previousStderr;
           }
 
           if (previousArgsMustContain === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
+            delete process.env.HALC2_FAKE_CLAUDE_ARGS_MUST_CONTAIN;
           } else {
-            process.env.T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN = previousArgsMustContain;
+            process.env.HALC2_FAKE_CLAUDE_ARGS_MUST_CONTAIN = previousArgsMustContain;
           }
 
           if (previousArgsMustNotContain === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
+            delete process.env.HALC2_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
           } else {
-            process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN = previousArgsMustNotContain;
+            process.env.HALC2_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN = previousArgsMustNotContain;
           }
 
           if (previousStdinMustContain === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
+            delete process.env.HALC2_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
           } else {
-            process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN = previousStdinMustContain;
+            process.env.HALC2_FAKE_CLAUDE_STDIN_MUST_CONTAIN = previousStdinMustContain;
           }
 
           if (previousCwdMustNotBe === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
+            delete process.env.HALC2_FAKE_CLAUDE_CWD_MUST_NOT_BE;
           } else {
-            process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE = previousCwdMustNotBe;
+            process.env.HALC2_FAKE_CLAUDE_CWD_MUST_NOT_BE = previousCwdMustNotBe;
           }
 
           if (previousConfigDirMustBe === undefined) {
-            delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
+            delete process.env.HALC2_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
           } else {
-            process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = previousConfigDirMustBe;
+            process.env.HALC2_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = previousConfigDirMustBe;
           }
         }),
     );

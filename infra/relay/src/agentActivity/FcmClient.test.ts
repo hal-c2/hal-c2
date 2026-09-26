@@ -50,8 +50,8 @@ const config = {
 } satisfies RelayConfiguration["Service"];
 const input = {
   token: "device-token",
-  packageName: "com.t3tools.t3code.dev",
-  data: { t3_kind: "agent_activity", active: "true" },
+  packageName: "io.github.halc2.halc2.dev",
+  data: { halc2_kind: "agent_activity", active: "true" },
   alert: false,
 };
 
@@ -191,7 +191,7 @@ describe("FCM delivery", () => {
             android: {
               priority: "HIGH",
               ttl: "300s",
-              collapse_key: "t3-agent-activity",
+              collapse_key: "hal-c2-agent-activity",
               restricted_package_name: input.packageName,
             },
           },

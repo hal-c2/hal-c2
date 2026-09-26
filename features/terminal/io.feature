@@ -2,9 +2,9 @@
 #   docs/user/terminal.md
 #   docs/internals/terminal-runtime.md (pending writes drain before clear, restart and close)
 #   packages/contracts/src/terminal.ts (TerminalWriteInput, TerminalResizeInput, TerminalClearInput, TerminalRestartInput, TerminalCloseInput, TerminalEvent)
-#   apps/server-ex/lib/t3/terminal.ex (write, resize, clear, restart, close, exit status, output batching)
-#   apps/server-ex/lib/t3/terminal/hub.ex (activity and running-command labels)
-#   apps/server-ex/test/t3/terminal_test.exs
+#   apps/server-ex/lib/hal_c2/terminal.ex (write, resize, clear, restart, close, exit status, output batching)
+#   apps/server-ex/lib/hal_c2/terminal/hub.ex (activity and running-command labels)
+#   apps/server-ex/test/hal_c2/terminal_test.exs
 #   apps/tui/src/components/ChatView.tsx (clearActiveTerminal, restartActiveTerminal, onTerminalKey, onTerminalCopy)
 #   apps/tui/src/components/ThreadTerminalDrawer.tsx (paste, resize of the visible pane, scrollback)
 #   apps/tui/src/terminalView.ts (encodeTerminalPaste, readTerminalViewport, readTerminalFrame)

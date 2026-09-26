@@ -1,11 +1,11 @@
-defmodule T3.Steps.Platform.BackgroundAndCleanup do
+defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
   @moduledoc "Steps for features/node/platform/background-and-cleanup.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.BackgroundPolicy
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.BackgroundPolicy
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @presets %{
     "performance" => %{fetch: 15_000, health: 60_000},
@@ -18,7 +18,7 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
 
   # The policy, with the test process told of each change (`await_policy/2`).
   defp policy(context) do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     Node.ensure(BackgroundPolicy)
 
     if context[:following_policy] do
@@ -37,7 +37,7 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
 
   defp await_policy_change(fun, timeout, last) do
     receive do
-      {:t3_background_policy, _node, snapshot} ->
+      {:halc2_background_policy, _node, snapshot} ->
         if fun.(snapshot), do: snapshot, else: await_policy_change(fun, timeout, snapshot)
     after
       timeout -> flunk("the background policy did not change as expected: #{inspect(last)}")
@@ -116,12 +116,12 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
   defp unit_ms("hour"), do: 3_600_000
 
   # A checkout with an origin and a second clone that pushes to it, watched by the
-  # node (`T3.Vcs.Watch`) for the test process.
+  # node (`HalC2.Vcs.Watch`) for the test process.
   defp watched_checkout(context) do
     for {name, spec} <- [
-          {T3.Vcs.Registry, {Registry, keys: :unique, name: T3.Vcs.Registry}},
-          {T3.Vcs.Supervisor,
-           {DynamicSupervisor, name: T3.Vcs.Supervisor, strategy: :one_for_one}}
+          {HalC2.Vcs.Registry, {Registry, keys: :unique, name: HalC2.Vcs.Registry}},
+          {HalC2.Vcs.Supervisor,
+           {DynamicSupervisor, name: HalC2.Vcs.Supervisor, strategy: :one_for_one}}
         ],
         do: Node.ensure(Supervisor.child_spec(spec, id: name))
 
@@ -132,11 +132,11 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
     pusher = Path.join(Node.tmp_dir(context.node, "pusher"), "repo")
     World.git!(seed, ["clone", "-q", origin, checkout])
     World.git!(seed, ["clone", "-q", origin, pusher])
-    World.git!(pusher, ~w(config user.email t3@example.com))
-    World.git!(pusher, ~w(config user.name T3))
+    World.git!(pusher, ~w(config user.email hal-c2@example.com))
+    World.git!(pusher, ~w(config user.name HAL-C2))
 
-    %{"_tag" => "snapshot"} = T3.Vcs.Watch.subscribe(checkout, self())
-    [{watch, _}] = Registry.lookup(T3.Vcs.Registry, checkout)
+    %{"_tag" => "snapshot"} = HalC2.Vcs.Watch.subscribe(checkout, self())
+    [{watch, _}] = Registry.lookup(HalC2.Vcs.Registry, checkout)
     Map.put(context, :checkout, %{path: checkout, pusher: pusher, watch: watch})
   end
 
@@ -171,14 +171,14 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
   end
 
   defp cleanup_timer_ms do
-    ref = :sys.get_state(T3.StorageCleanup).timer
+    ref = :sys.get_state(HalC2.StorageCleanup).timer
     assert is_reference(ref), "no sweep is scheduled"
     Process.read_timer(ref)
   end
 
   defp fire_sweep do
-    send(T3.StorageCleanup, :tick)
-    _ = :sys.get_state(T3.StorageCleanup)
+    send(HalC2.StorageCleanup, :tick)
+    _ = :sys.get_state(HalC2.StorageCleanup)
     :ok
   end
 
@@ -223,7 +223,7 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
   end
 
   step ~r/^provider health refreshes every (?<every>.+)$/, %{args: [every]} = context do
-    assert T3.ProviderUsageLimits.interval() == duration(every)
+    assert HalC2.ProviderUsageLimits.interval() == duration(every)
     context
   end
 
@@ -266,7 +266,7 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
   step "the other values come from {string}", %{args: [base]} = context do
     settings = BackgroundPolicy.settings()
     assert settings["profile"] == base
-    assert T3.ProviderUsageLimits.interval() == @presets[base].health
+    assert HalC2.ProviderUsageLimits.interval() == @presets[base].health
 
     base_settings = BackgroundPolicy.settings(%{"backgroundActivity" => %{"profile" => base}})
     assert Map.take(settings, @pause_flags) == Map.take(base_settings, @pause_flags)
@@ -287,7 +287,7 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
     assert Process.read_timer(timer) > 0
     pushed = push_upstream(context)
     fire_fetch(context)
-    assert_receive {:t3_vcs, ^path, %{"_tag" => "remoteUpdated", "remote" => remote}}
+    assert_receive {:halc2_vcs, ^path, %{"_tag" => "remoteUpdated", "remote" => remote}}
     assert remote["behindCount"] == 1
     assert World.git!(path, ~w(rev-parse origin/main)) == pushed
     context
@@ -305,7 +305,7 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
     push_upstream(context)
     fire_fetch(context)
     assert World.git!(path, ~w(rev-parse origin/main)) == before
-    refute_received {:t3_vcs, ^path, %{"_tag" => "remoteUpdated"}}
+    refute_received {:halc2_vcs, ^path, %{"_tag" => "remoteUpdated"}}
     context
   end
 
@@ -399,13 +399,13 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
       report(context, %{"scopes" => [scope("/repo"), %{"type" => "provider-status"}]})
 
     assert BackgroundPolicy.run_scope_work?(scope("/repo"))
-    assert T3.ProviderUsageLimits.wanted?()
+    assert HalC2.ProviderUsageLimits.wanted?()
     context
   end
 
   step "the node pauses periodic git and provider refreshes", context do
     refute BackgroundPolicy.run_scope_work?(scope("/repo"))
-    refute T3.ProviderUsageLimits.wanted?()
+    refute HalC2.ProviderUsageLimits.wanted?()
     refute BackgroundPolicy.snapshot()["shouldRunOpportunisticWork"]
     context
   end
@@ -496,7 +496,7 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
     World.provider_services()
     World.merge_settings(%{"storageCleanup" => %{"browserArtifactsAfterDays" => 3}})
     old = artifact(context, "old.png", 4)
-    Node.ensure(T3.StorageCleanup)
+    Node.ensure(HalC2.StorageCleanup)
 
     left = cleanup_timer_ms()
     assert left > 55_000 and left <= 60_000
@@ -524,7 +524,7 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
     fresh = artifact(context, "fresh.png", 1)
     World.merge_settings(%{"storageCleanup" => %{"browserArtifactsAfterDays" => 3}})
     # The settings change reached the cleaner before this call did.
-    _ = :sys.get_state(T3.StorageCleanup)
+    _ = :sys.get_state(HalC2.StorageCleanup)
     Map.put(context, :artifacts, %{old: old, fresh: fresh})
   end
 
@@ -536,7 +536,7 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
 
   step ~r/^worktree cleanup removes worktrees (?<rule>after 7 idle days|once merged|once their thread is deleted|when unchanged from default)$/,
        %{args: [rule]} = context do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     # The worktree steps shared with settings/storage.feature need a project ("api").
     context =
       if context[:projects] in [nil, %{}], do: World.create_project(context, "api"), else: context
@@ -602,7 +602,7 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
         "has a running provider session" ->
           context = context |> World.fake_codex() |> World.socket_message("main", "hello")
           World.await_run(context, "main", &(&1["status"] == "completed"))
-          assert [_] = Registry.lookup(T3.Codex.Registry, World.thread_id(context, "main"))
+          assert [_] = Registry.lookup(HalC2.Codex.Registry, World.thread_id(context, "main"))
           context
 
         "belongs to a thread that is running" ->
@@ -618,7 +618,7 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
   end
 
   step "worktree cleanup is on for the environment", context do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     World.merge_settings(%{"storageCleanup" => %{"worktreeAfterDays" => 7}})
     context
   end
@@ -650,7 +650,7 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
   # A `git` first on PATH pauses the sweep at its first look at the worktree's
   # ignored files until the test lets it go (over a local TCP port).
   step "a worktree qualified for removal when the sweep began", context do
-    Node.ensure(T3.Settings)
+    Node.ensure(HalC2.Settings)
     World.merge_settings(%{"storageCleanup" => %{"worktreeAfterDays" => 7}})
     context = World.worktree_thread(context, "main")
     main = context.worktree
@@ -687,7 +687,7 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
   end
 
   step "a terminal opened in it during the sweep", context do
-    sweep = Task.async(fn -> T3.StorageCleanup.sweep() end)
+    sweep = Task.async(fn -> HalC2.StorageCleanup.sweep() end)
     {:ok, git} = :gen_tcp.accept(context.pause, 10_000)
     assert {:ok, "paused\n"} = :gen_tcp.recv(git, 0, 10_000)
 
@@ -715,7 +715,7 @@ defmodule T3.Steps.Platform.BackgroundAndCleanup do
 
     World.provider_services()
     World.start_storage_cleanup(context)
-    :ok = T3.StorageCleanup.sweep()
+    :ok = HalC2.StorageCleanup.sweep()
     refute File.exists?(context.worktree.path)
     context
   end

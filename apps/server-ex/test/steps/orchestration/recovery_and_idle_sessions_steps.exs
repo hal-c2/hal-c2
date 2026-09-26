@@ -1,10 +1,10 @@
-defmodule T3.Steps.Orchestration.RecoveryAndIdleSessions do
+defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Orchestration.IdleSessions
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.Orchestration.IdleSessions
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   # Turns run on the fake Codex (`World.providers/1`). A turn "cut off" by a stop has
   # its provider process killed first, as provider processes die with the node.
@@ -70,7 +70,7 @@ defmodule T3.Steps.Orchestration.RecoveryAndIdleSessions do
     assert is_binary(completed)
 
     for kind <- ~w(run-attempt provider-turn node) do
-      entities = T3.StreamState.list(state, kind)
+      entities = HalC2.StreamState.list(state, kind)
       assert entities != [], "no #{kind}"
       assert Enum.all?(entities, &(&1["status"] == "interrupted")), inspect({kind, entities})
     end
@@ -122,7 +122,7 @@ defmodule T3.Steps.Orchestration.RecoveryAndIdleSessions do
   step "only {string} is settled", %{args: [thread]} = context do
     # The idle thread's stream was never opened at boot.
     for {title, _} <- context.threads, title != thread do
-      assert Registry.lookup(T3.Streams.Registry, World.thread_id(context, title)) == []
+      assert Registry.lookup(HalC2.Streams.Registry, World.thread_id(context, title)) == []
     end
 
     assert %{"status" => "interrupted"} = World.latest_run(context, thread)
@@ -306,7 +306,7 @@ defmodule T3.Steps.Orchestration.RecoveryAndIdleSessions do
   step "the provider process of {string} keeps running", %{args: [thread]} = context do
     refute World.thread_id(context, thread) in context.released
     assert Process.alive?(context.runtime)
-    assert [{pid, _}] = Registry.lookup(T3.Codex.Registry, World.thread_id(context, thread))
+    assert [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, World.thread_id(context, thread))
     assert pid == context.runtime
     context
   end
@@ -332,7 +332,7 @@ defmodule T3.Steps.Orchestration.RecoveryAndIdleSessions do
   defp kill_provider(context, thread) do
     {pid, _} = World.codex_runtime(context, thread)
     ref = Process.monitor(pid)
-    :ok = DynamicSupervisor.terminate_child(T3.Codex.Supervisor, pid)
+    :ok = DynamicSupervisor.terminate_child(HalC2.Codex.Supervisor, pid)
     assert_receive {:DOWN, ^ref, :process, _, _}
     Map.put(context, :thread, thread)
   end
@@ -362,17 +362,17 @@ defmodule T3.Steps.Orchestration.RecoveryAndIdleSessions do
     state = World.state(context, thread)
 
     runs =
-      for run <- T3.StreamState.list(state, "run"),
+      for run <- HalC2.StreamState.list(state, "run"),
           fields =
             for(key <- ~w(requestedAt startedAt completedAt), run[key], into: %{}, do: {key, at}),
           do: {"run", run["id"], %{"s" => fields}}
 
     messages =
-      for message <- T3.StreamState.list(state, "message"),
+      for message <- HalC2.StreamState.list(state, "message"),
           do: {"message", message["id"], %{"s" => %{"createdAt" => at, "updatedAt" => at}}}
 
     {:ok, _} =
-      T3.Streams.commit(
+      HalC2.Streams.commit(
         id,
         :thread,
         [{"thread", id, %{"s" => %{"createdAt" => at}}}] ++ runs ++ messages
@@ -392,7 +392,7 @@ defmodule T3.Steps.Orchestration.RecoveryAndIdleSessions do
     if released = context[:released], do: assert(id in released)
     pid = context.runtime
     assert_receive {:DOWN, _, :process, ^pid, _}
-    assert Registry.lookup(T3.Codex.Registry, id) == []
+    assert Registry.lookup(HalC2.Codex.Registry, id) == []
     context
   end
 
@@ -404,7 +404,7 @@ defmodule T3.Steps.Orchestration.RecoveryAndIdleSessions do
         "projectSettingsOverrides" => %{id => %{"continueThreadsAfterServerUpdate" => on?}}
       })
 
-    assert T3.Settings.for_project(id)["continueThreadsAfterServerUpdate"] == on?
+    assert HalC2.Settings.for_project(id)["continueThreadsAfterServerUpdate"] == on?
     context
   end
 end

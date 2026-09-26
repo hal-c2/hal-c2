@@ -2,7 +2,7 @@
 #   packages/client-runtime/src/load-balancing.ts (chooseLoadBalancedEnvironment)
 #   apps/web/src/components/settings/LoadBalancingSettings.tsx
 #   apps/web/src/components/ChatView.tsx (balanced environment for new drafts)
-#   apps/server-ex/lib/t3/rpc.ex (server.getHostResources)
+#   apps/server-ex/lib/hal_c2/rpc.ex (server.getHostResources)
 #   packages/contracts/src/rpc.ts (server.getHostResources)
 #   docs/user/remote-access.md (Balance new threads across machines: web and desktop only)
 

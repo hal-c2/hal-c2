@@ -1,15 +1,15 @@
-defmodule T3.Steps.Providers.Codex do
+defmodule HalC2.Steps.Providers.Codex do
   @moduledoc """
   Steps for `features/providers/codex.feature`. Codex runs on `fake_codex.py` (see
-  `T3.Test.Node.World.fake_providers/2`), which plays scripted turns from trigger
+  `HalC2.Test.Node.World.fake_providers/2`), which plays scripted turns from trigger
   words in the message and logs every app-server message it reads.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @thread "Codex work"
 
@@ -17,13 +17,13 @@ defmodule T3.Steps.Providers.Codex do
 
   step "the codex command is installed on the node", context do
     context = World.fake_providers(context)
-    assert System.find_executable(hd(Application.get_env(:t3, :codex_command)))
+    assert System.find_executable(hd(Application.get_env(:hal_c2, :codex_command)))
     context
   end
 
   step "the codex command is not installed on the node", context do
     context = World.fake_providers(context)
-    World.put_app_env(:codex_command, ["t3-test-no-codex"])
+    World.put_app_env(:codex_command, ["hal-c2-test-no-codex"])
     World.reset_provider_caches()
     context
   end
@@ -47,7 +47,7 @@ defmodule T3.Steps.Providers.Codex do
   end
 
   step "the node has read the Codex model list", context do
-    :ok = T3.Codex.Provider.load()
+    :ok = HalC2.Codex.Provider.load()
     {providers, context} = World.provider_list(context)
     Map.put(context, :models, codex(providers)["models"])
   end
@@ -83,7 +83,7 @@ defmodule T3.Steps.Providers.Codex do
     context = World.fake_providers(context, codex_layout: :npm)
 
     :persistent_term.put(
-      {T3.ProviderUpdates, "codex"},
+      {HalC2.ProviderUpdates, "codex"},
       {"9.9.9", System.monotonic_time(:millisecond)}
     )
 
@@ -181,7 +181,7 @@ defmodule T3.Steps.Providers.Codex do
 
   step "the user's answer is sent back to Codex", context do
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "runtime-request.respond",
         "threadId" => World.thread_id(context, @thread),
         "requestId" => context.request["id"],
@@ -274,7 +274,7 @@ defmodule T3.Steps.Providers.Codex do
     context
   end
 
-  step "Codex can call the T3 Code tools for this thread", context do
+  step "Codex can call the HAL-C2 tools for this thread", context do
     start =
       World.await_provider_log(
         context,
@@ -283,7 +283,7 @@ defmodule T3.Steps.Providers.Codex do
       )
 
     %{"url" => url, "http_headers" => headers} =
-      get_in(start, ["in", "params", "config", "mcp_servers", "t3-code"])
+      get_in(start, ["in", "params", "config", "mcp_servers", "hal-c2"])
 
     assert url =~ ~r{^http://127\.0\.0\.1:\d+/mcp$}
     auth = headers["Authorization"]
@@ -293,13 +293,13 @@ defmodule T3.Steps.Providers.Codex do
         "jsonrpc" => "2.0",
         "id" => 1,
         "method" => "tools/call",
-        "params" => %{"name" => "t3_thread_list", "arguments" => %{}}
+        "params" => %{"name" => "halc2_thread_list", "arguments" => %{}}
       })
 
     # The tools find the calling thread through its sidebar row.
-    :ok = T3.Shell.subscribe(self())
+    :ok = HalC2.Shell.subscribe(self())
     World.await_row(World.thread_id(context, @thread), & &1)
-    assert {200, %{"result" => %{"structuredContent" => listed}}} = T3.Mcp.handle(auth, body)
+    assert {200, %{"result" => %{"structuredContent" => listed}}} = HalC2.Mcp.handle(auth, body)
     assert listed["currentThreadId"] == World.thread_id(context, @thread)
     context
   end
@@ -362,7 +362,7 @@ defmodule T3.Steps.Providers.Codex do
   step "a Codex thread has run at least one turn on this node", context do
     context = context |> World.fake_providers() |> World.launch_on(@thread, "codex", "hello")
     World.await_runs(context, @thread, ["completed"])
-    :ok = T3.Shell.subscribe(self())
+    :ok = HalC2.Shell.subscribe(self())
     World.await_row(World.thread_id(context, @thread), &(&1["providerInstanceId"] == "codex"))
     context
   end
@@ -429,7 +429,7 @@ defmodule T3.Steps.Providers.Codex do
     Map.put(
       context,
       :commit_result,
-      T3.TextGeneration.commit_message(root, "main", "M a.txt", "diff --git a/a.txt b/a.txt")
+      HalC2.TextGeneration.commit_message(root, "main", "M a.txt", "diff --git a/a.txt b/a.txt")
     )
   end
 
@@ -475,7 +475,7 @@ defmodule T3.Steps.Providers.Codex do
     )
 
     context = World.fake_providers(context)
-    T3.Codex.Provider.load()
+    HalC2.Codex.Provider.load()
     {providers, context} = World.provider_list(context)
     codex = Enum.find(providers, &(&1["instanceId"] == "codex"))
 
@@ -569,9 +569,9 @@ defmodule T3.Steps.Providers.Codex do
     context = World.fake_providers(context)
     System.put_env("FAKE_CODEX_ACCOUNT", "none")
     # The node reads the account when it checks the provider.
-    Node.ensure(T3.ProviderUsageLimits)
-    :ok = T3.ProviderUsageLimits.refresh(["codex"])
-    :sys.get_state(T3.ProviderUsageLimits)
+    Node.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh(["codex"])
+    :sys.get_state(HalC2.ProviderUsageLimits)
     context
   end
 
@@ -583,10 +583,10 @@ defmodule T3.Steps.Providers.Codex do
   end
 
   step "Codex's usage has been checked", context do
-    Node.ensure(T3.ProviderUsageLimits)
-    :ok = T3.ProviderUsageLimits.refresh(["codex"])
+    Node.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh(["codex"])
     # The account arrives as a cast the probe sent; this call lands after it.
-    :sys.get_state(T3.ProviderUsageLimits)
+    :sys.get_state(HalC2.ProviderUsageLimits)
     {providers, context} = World.provider_list(context)
     Map.put(context, :providers, providers)
   end
@@ -613,7 +613,7 @@ defmodule T3.Steps.Providers.Codex do
 
   defp respond(context, decision) do
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "runtime-request.respond",
         "threadId" => World.thread_id(context, World.current_thread(context)),
         "requestId" => context.request["id"],

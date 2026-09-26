@@ -1,4 +1,4 @@
-defmodule T3.Test.FakeHttp do
+defmodule HalC2.Test.FakeHttp do
   @moduledoc """
   A loopback HTTP service standing in for a provider's web API (Grok's billing,
   OpenCode Go's usage, an OpenCode server). `start/1` serves `routes`, a map from

@@ -2,8 +2,8 @@
 #   packages/contracts/src/orchestrationV2.ts (thread.pull-request.link, thread.pull-request.unlink,
 #     thread.pull-request-link.sync, thread.pull-request.sync, thread.pull-request-synced,
 #     thread.metadata.update linkedPullRequest)
-#   apps/server-ex/lib/t3/orchestration.ex (pull request link fields)
-#   apps/server-ex/lib/t3/pull_requests.ex
+#   apps/server-ex/lib/hal_c2/orchestration.ex (pull request link fields)
+#   apps/server-ex/lib/hal_c2/pull_requests.ex
 #   apps/server/src/orchestration-v2/ (pull request projector)
 Feature: Pull requests linked to a thread
   A thread can carry several pull requests: ones the user or an agent linked,

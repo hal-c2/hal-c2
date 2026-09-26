@@ -1,26 +1,26 @@
-defmodule T3.Steps.Platform.Upgrades do
+defmodule HalC2.Steps.Platform.Upgrades do
   @moduledoc """
   Steps for `features/node/platform/upgrades.feature`. The node runs from a release
-  laid out in its home (`T3.Test.Node.release/2`); bundles are built from variants of
-  loaded modules (`T3.Test.Node.bundle/4`), and a restart arrives as
-  `{:t3_restart, status}` instead of stopping the VM.
+  laid out in its home (`HalC2.Test.Node.release/2`); bundles are built from variants of
+  loaded modules (`HalC2.Test.Node.bundle/4`), and a restart arrives as
+  `{:halc2_restart, status}` instead of stopping the VM.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.Test.Node
-  alias T3.Test.Node.World
-  alias T3.Test.WsClient
-  alias T3.Upgrade
-  alias T3.Upgrade.Source
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
+  alias HalC2.Test.WsClient
+  alias HalC2.Upgrade
+  alias HalC2.Upgrade.Source
 
   @echo Path.expand("../../support/echo_rpc.py", __DIR__)
   @unreachable "http://127.0.0.1:1/{version}/{platform}.tar.gz"
 
   step "a node running from a release under the service wrapper", context do
     root = Node.release(context.node)
-    Node.ensure(T3.Settings)
-    Node.ensure(T3.Upgrade)
+    Node.ensure(HalC2.Settings)
+    Node.ensure(HalC2.Upgrade)
     assert Upgrade.capability() == "hot-upgrade"
     Map.put(context, :root, root)
   end
@@ -30,14 +30,14 @@ defmodule T3.Steps.Platform.Upgrades do
   step "a bundle whose changes are only ordinary modules", context do
     conn =
       ExUnit.Callbacks.start_supervised!(
-        {T3.JsonRpc.Connection, cmd: ["python3", "-u", @echo], handler: self()}
+        {HalC2.JsonRpc.Connection, cmd: ["python3", "-u", @echo], handler: self()}
       )
 
-    assert {:ok, _} = T3.JsonRpc.Connection.call(conn, "echo", 1)
+    assert {:ok, _} = HalC2.JsonRpc.Connection.call(conn, "echo", 1)
 
     context
-    |> bundle(%{}, [Node.variant(T3.JsonRpc.Connection)])
-    |> Map.merge(%{conn: conn, os_pid: T3.JsonRpc.Connection.os_pid(conn)})
+    |> bundle(%{}, [Node.variant(HalC2.JsonRpc.Connection)])
+    |> Map.merge(%{conn: conn, os_pid: HalC2.JsonRpc.Connection.os_pid(conn)})
   end
 
   step ~r/^a client asks the node to update(?: to (?:that version|it))?$/, context do
@@ -49,14 +49,14 @@ defmodule T3.Steps.Platform.Upgrades do
   step "the node loads the changed modules in place", context do
     assert {:ok, %{"method" => "hot-upgrade", "targetVersion" => target}} = context.reply
     assert target == context.target
-    assert function_exported?(T3.JsonRpc.Connection, :__t3_variant__, 0)
-    refute_received {:t3_restart, _}
+    assert function_exported?(HalC2.JsonRpc.Connection, :__halc2_variant__, 0)
+    refute_received {:halc2_restart, _}
     context
   end
 
   step "open sockets and provider sessions stay up", context do
-    assert T3.JsonRpc.Connection.os_pid(context.conn) == context.os_pid
-    assert {:ok, %{"params" => 2}} = T3.JsonRpc.Connection.call(context.conn, "echo", 2)
+    assert HalC2.JsonRpc.Connection.os_pid(context.conn) == context.os_pid
+    assert {:ok, %{"params" => 2}} = HalC2.JsonRpc.Connection.call(context.conn, "echo", 2)
     client = WsClient.send_json(World.client(context), %{"t" => "ping"})
     {_, client} = Node.await(client, &(&1["t"] == "pong"))
     World.put_client(context, client)
@@ -66,7 +66,7 @@ defmodule T3.Steps.Platform.Upgrades do
     assert Upgrade.version() == context.target
 
     assert {200, _, %{"serverVersion" => version}} =
-             Node.request(context.node, :get, "/.well-known/t3/environment")
+             Node.request(context.node, :get, "/.well-known/hal-c2/environment")
 
     assert version == context.target
     context
@@ -121,16 +121,16 @@ defmodule T3.Steps.Platform.Upgrades do
         bundle(context, %{"otpRelease" => "30"})
 
       "the set of applications" ->
-        bundle(context, %{"applications" => %{"t3" => "x", "more" => "1"}})
+        bundle(context, %{"applications" => %{"hal_c2" => "x", "more" => "1"}})
 
       "a native library" ->
-        bundle(context, %{"nifs" => %{"t3" => "t3_nif.so"}})
+        bundle(context, %{"nifs" => %{"hal_c2" => "halc2_nif.so"}})
 
       "the configuration" ->
         bundle(context, %{"config" => "d"})
 
       "a supervisor module" ->
-        bundle(context, %{}, [Node.variant(T3.Streams)])
+        bundle(context, %{}, [Node.variant(HalC2.Streams)])
     end
   end
 
@@ -138,14 +138,14 @@ defmodule T3.Steps.Platform.Upgrades do
     assert {:ok, %{"targetVersion" => target}} = context.reply
     assert target == context.target
     assert File.dir?(Path.join([context.root, "releases", target]))
-    assert File.dir?(Path.join([context.root, "lib", "t3_bundle-#{target}"]))
+    assert File.dir?(Path.join([context.root, "lib", "halc2_bundle-#{target}"]))
     context
   end
 
   step "exits asking its service wrapper to start it again", context do
-    assert_receive {:t3_restart, 75}, 3_000
+    assert_receive {:halc2_restart, 75}, 3_000
     # Nothing was loaded in place.
-    refute function_exported?(T3.Streams, :__t3_variant__, 0)
+    refute function_exported?(HalC2.Streams, :__halc2_variant__, 0)
     context
   end
 
@@ -158,7 +158,7 @@ defmodule T3.Steps.Platform.Upgrades do
   end
 
   step "a node started directly from a release", context do
-    System.delete_env("T3_SERVICE")
+    System.delete_env("HALC2_SERVICE")
     assert Upgrade.release_root() == context.root
     context
   end
@@ -169,8 +169,8 @@ defmodule T3.Steps.Platform.Upgrades do
 
   step "the update fails saying the node was not started by the service wrapper", context do
     assert {:error, _, %{"_tag" => "ServerSelfUpdateError", "reason" => reason}} = context.reply
-    assert reason =~ "not started by bin/t3-service"
-    refute_received {:t3_restart, _}
+    assert reason =~ "not started by bin/hal-c2-service"
+    refute_received {:halc2_restart, _}
     context
   end
 
@@ -181,7 +181,7 @@ defmodule T3.Steps.Platform.Upgrades do
 
   step "the node restarts into the new version instead", context do
     assert {:ok, %{"targetVersion" => target}} = context.reply
-    assert_receive {:t3_restart, 75}, 3_000
+    assert_receive {:halc2_restart, 75}, 3_000
     assert start_version(context) == target
 
     assert %{"status" => "restarting", "targetVersion" => ^target} =
@@ -348,7 +348,7 @@ defmodule T3.Steps.Platform.Upgrades do
     name = Path.basename(context.archive)
     File.cp!(context.archive, Path.join(context.served, name))
     File.cp!(context.archive <> ".sha256", Path.join(context.served, name <> ".sha256"))
-    upgrade_url("http://127.0.0.1:#{context.http_port}/t3-node-{version}-{platform}.tar.gz")
+    upgrade_url("http://127.0.0.1:#{context.http_port}/hal-c2-node-{version}-{platform}.tar.gz")
     refute File.exists?(cached(context.node, context.target))
     context
   end
@@ -375,7 +375,7 @@ defmodule T3.Steps.Platform.Upgrades do
       String.duplicate("0", 64) <> "  #{name}\n"
     )
 
-    upgrade_url("http://127.0.0.1:#{context.http_port}/t3-node-{version}-{platform}.tar.gz")
+    upgrade_url("http://127.0.0.1:#{context.http_port}/hal-c2-node-{version}-{platform}.tar.gz")
     Map.put(context, :version, Upgrade.version())
   end
 
@@ -388,11 +388,11 @@ defmodule T3.Steps.Platform.Upgrades do
 
   step "the running version is unchanged", context do
     assert Upgrade.version() == context.version
-    refute_received {:t3_restart, _}
+    refute_received {:halc2_restart, _}
     context
   end
 
-  step "T3_UPGRADE_URL points to a private mirror", context do
+  step "HALC2_UPGRADE_URL points to a private mirror", context do
     context = context |> bundle(%{}, [], false) |> serve()
     dir = Path.join([context.served, "mirror", context.target])
     File.mkdir_p!(dir)
@@ -423,7 +423,7 @@ defmodule T3.Steps.Platform.Upgrades do
     target = target()
     archive = Node.bundle(node, target)
     nodes = [node(), b.name, c.name]
-    replies = Mix.Tasks.T3.Upgrade.roll_out(nodes, archive)
+    replies = Mix.Tasks.HalC2.Upgrade.roll_out(nodes, archive)
     Map.merge(context, %{target: target, peers: [b, c], replies: replies, archive: archive})
   end
 
@@ -452,12 +452,12 @@ defmodule T3.Steps.Platform.Upgrades do
     System.delete_env("RELEASE_ROOT")
     assert Upgrade.release_root() == nil
     # A build directory holding a recompiled plain module and a recompiled supervisor.
-    ebin = Path.join([Node.tmp_dir(context.node, "_build"), "_build", "dev", "lib", "t3", "ebin"])
+    ebin = Path.join([Node.tmp_dir(context.node, "_build"), "_build", "dev", "lib", "hal_c2", "ebin"])
     File.mkdir_p!(ebin)
 
-    Code.ensure_loaded!(T3.Patch)
+    Code.ensure_loaded!(HalC2.Patch)
 
-    for {mod, beam} <- [Node.variant(T3.Patch), Node.variant(T3.Streams)] do
+    for {mod, beam} <- [Node.variant(HalC2.Patch), Node.variant(HalC2.Streams)] do
       Node.remember_module(mod)
       File.write!(Path.join(ebin, "#{mod}.beam"), beam)
     end
@@ -472,14 +472,14 @@ defmodule T3.Steps.Platform.Upgrades do
   end
 
   step "only modules whose code changed are loaded", context do
-    assert {:ok, %{changed: [T3.Patch]}} = context.report
-    assert function_exported?(T3.Patch, :__t3_variant__, 0)
+    assert {:ok, %{changed: [HalC2.Patch]}} = context.report
+    assert function_exported?(HalC2.Patch, :__halc2_variant__, 0)
     context
   end
 
   step "the report lists modules that need a restart", context do
-    assert {:ok, %{needs_restart: [T3.Streams]}} = context.report
-    refute function_exported?(T3.Streams, :__t3_variant__, 0)
+    assert {:ok, %{needs_restart: [HalC2.Streams]}} = context.report
+    refute function_exported?(HalC2.Streams, :__halc2_variant__, 0)
     context
   end
 
@@ -489,7 +489,7 @@ defmodule T3.Steps.Platform.Upgrades do
   end
 
   step "new code loads", context do
-    Map.put(context, :report, T3.Hot.reload([context.next]))
+    Map.put(context, :report, HalC2.Hot.reload([context.next]))
   end
 
   step "that module is reported as lingering", context do
@@ -508,7 +508,7 @@ defmodule T3.Steps.Platform.Upgrades do
   end
 
   step "a client connected before an in-place update", context do
-    {:push, _hello, state} = T3.Web.Socket.init([])
+    {:push, _hello, state} = HalC2.Web.Socket.init([])
     # The shape socket state had before scopes were kept on it.
     Map.put(context, :old_state, state |> Map.delete(:scopes) |> Map.put(:v, 1))
   end
@@ -517,7 +517,7 @@ defmodule T3.Steps.Platform.Upgrades do
     Map.put(
       context,
       :handled,
-      T3.Web.Socket.handle_in({~s({"t":"ping"}), [opcode: :text]}, context.old_state)
+      HalC2.Web.Socket.handle_in({~s({"t":"ping"}), [opcode: :text]}, context.old_state)
     )
   end
 
@@ -529,7 +529,7 @@ defmodule T3.Steps.Platform.Upgrades do
   end
 
   step "a client reads the descriptor of a node running from a release", context do
-    Map.put(context, :response, Node.request(context.node, :get, "/.well-known/t3/environment"))
+    Map.put(context, :response, Node.request(context.node, :get, "/.well-known/hal-c2/environment"))
   end
 
   step "it offers in-place self-update", context do
@@ -543,7 +543,7 @@ defmodule T3.Steps.Platform.Upgrades do
     System.delete_env("RELEASE_ROOT")
 
     assert {200, _, %{"capabilities" => capabilities}} =
-             Node.request(context.node, :get, "/.well-known/t3/environment")
+             Node.request(context.node, :get, "/.well-known/hal-c2/environment")
 
     refute Map.has_key?(capabilities, "serverSelfUpdate")
     assert capabilities["serverSelfUpdateProgress"] == false
@@ -593,17 +593,17 @@ defmodule T3.Steps.Platform.Upgrades do
   # booted (nil: the one before) and a fresh updater reading the pending outcome.
   defp boot(version) do
     if version, do: :persistent_term.put({Upgrade, :version}, version)
-    :ok = ExUnit.Callbacks.stop_supervised(T3.Upgrade)
-    Node.ensure(T3.Upgrade)
+    :ok = ExUnit.Callbacks.stop_supervised(HalC2.Upgrade)
+    Node.ensure(HalC2.Upgrade)
     # The outcome is read in handle_continue; a call returns after it ran.
-    _ = :sys.get_state(T3.Upgrade)
+    _ = :sys.get_state(HalC2.Upgrade)
   end
 
   defp config_shape, do: %{"type" => "config", "node" => Atom.to_string(node())}
 
   defp upgrade_url(url) do
-    System.put_env("T3_UPGRADE_URL", url)
-    ExUnit.Callbacks.on_exit(fn -> System.delete_env("T3_UPGRADE_URL") end)
+    System.put_env("HALC2_UPGRADE_URL", url)
+    ExUnit.Callbacks.on_exit(fn -> System.delete_env("HALC2_UPGRADE_URL") end)
   end
 
   defp links(peer) do
@@ -630,7 +630,7 @@ defmodule T3.Steps.Platform.Upgrades do
     {:ok, pid} =
       :inets.start(:httpd,
         port: 0,
-        server_name: ~c"t3test",
+        server_name: ~c"halc2test",
         server_root: String.to_charlist(dir),
         document_root: String.to_charlist(dir),
         bind_address: {127, 0, 0, 1}
@@ -644,7 +644,7 @@ defmodule T3.Steps.Platform.Upgrades do
   # a newer version is loaded over it, so the blocked process holds old code and the
   # next load cannot purge it. Returns `{module, pid}`.
   defp blocker(context, which) do
-    mod = :"t3_steps_blocker_#{System.unique_integer([:positive])}"
+    mod = :"halc2_steps_blocker_#{System.unique_integer([:positive])}"
     {:module, ^mod} = :code.load_binary(mod, ~c"#{mod}.beam", blocker_beam(context, mod, 1))
     test = self()
     # Started through a fun, so the updater does not take it for a process of `mod`.
@@ -696,7 +696,7 @@ defmodule T3.Steps.Platform.Upgrades do
 
     File.write!(Path.join([root, "releases", "start_erl.data"]), "17.0.5 #{version}\n")
 
-    for {key, value} <- [{"RELEASE_ROOT", root}, {"T3_UPGRADE_URL", @unreachable}],
+    for {key, value} <- [{"RELEASE_ROOT", root}, {"HALC2_UPGRADE_URL", @unreachable}],
         do: :ok = :erpc.call(name, System, :put_env, [key, value])
   end
 end

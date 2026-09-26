@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
-import T3.Shell
-import T3.Bricks
+import HalC2.Shell
+import HalC2.Bricks
 
 // The shape of a Mac app on macOS 26: the sidebar is the one Liquid Glass
 // layer, edge to edge under a transparent title bar with the traffic lights

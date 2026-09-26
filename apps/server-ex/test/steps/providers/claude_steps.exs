@@ -1,15 +1,15 @@
-defmodule T3.Steps.Providers.Claude do
+defmodule HalC2.Steps.Providers.Claude do
   @moduledoc """
   Steps for `features/providers/claude.feature`. Claude runs on `fake_claude.py` (see
-  `T3.Test.Node.World.fake_providers/2`), which plays scripted turns from trigger
+  `HalC2.Test.Node.World.fake_providers/2`), which plays scripted turns from trigger
   words in the message and logs what it was sent.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias T3.StreamState
-  alias T3.Test.Node
-  alias T3.Test.Node.World
+  alias HalC2.StreamState
+  alias HalC2.Test.Node
+  alias HalC2.Test.Node.World
 
   @thread "Claude work"
 
@@ -17,13 +17,13 @@ defmodule T3.Steps.Providers.Claude do
 
   step "the claude command is installed on the node", context do
     context = World.fake_providers(context)
-    assert System.find_executable(hd(Application.get_env(:t3, :claude_command)))
+    assert System.find_executable(hd(Application.get_env(:hal_c2, :claude_command)))
     context
   end
 
   step "the claude command is not installed on the node", context do
     context = World.fake_providers(context)
-    World.put_app_env(:claude_command, ["t3-test-no-claude"])
+    World.put_app_env(:claude_command, ["hal-c2-test-no-claude"])
     World.reset_provider_caches()
     context
   end
@@ -118,10 +118,10 @@ defmodule T3.Steps.Providers.Claude do
   end
 
   step "Claude's usage has been checked", context do
-    Node.ensure(T3.ProviderUsageLimits)
-    :ok = T3.ProviderUsageLimits.refresh(["claudeAgent"])
+    Node.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh(["claudeAgent"])
     # The account arrives as a cast the probe sent; this call lands after it.
-    :sys.get_state(T3.ProviderUsageLimits)
+    :sys.get_state(HalC2.ProviderUsageLimits)
     {providers, context} = World.provider_list(context)
     Map.put(context, :providers, providers)
   end
@@ -160,9 +160,9 @@ defmodule T3.Steps.Providers.Claude do
     )
 
     ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_CLAUDE_COMMANDS") end)
-    Node.ensure(T3.ProviderUsageLimits)
-    :ok = T3.ProviderUsageLimits.refresh(["claudeAgent"])
-    :sys.get_state(T3.ProviderUsageLimits)
+    Node.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh(["claudeAgent"])
+    :sys.get_state(HalC2.ProviderUsageLimits)
     Map.put(context, :composer_instance, "claudeAgent")
   end
 
@@ -310,7 +310,7 @@ defmodule T3.Steps.Providers.Claude do
 
   step "the user's answer is sent back to Claude", context do
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "runtime-request.respond",
         "threadId" => World.thread_id(context, @thread),
         "requestId" => context.request["id"],
@@ -322,10 +322,10 @@ defmodule T3.Steps.Providers.Claude do
     context
   end
 
-  step "the project allows the T3 Code tools", context do
+  step "the project allows the HAL-C2 tools", context do
     context = World.fake_providers(context)
-    Node.ensure(T3.Mcp)
-    refute T3.Settings.for_project(World.project(context).id)["enableAgentBrowserAccess"] == false
+    Node.ensure(HalC2.Mcp)
+    refute HalC2.Settings.for_project(World.project(context).id)["enableAgentBrowserAccess"] == false
     context
   end
 
@@ -335,10 +335,10 @@ defmodule T3.Steps.Providers.Claude do
     context
   end
 
-  step "Claude can call the T3 Code tools for this thread", context do
+  step "Claude can call the HAL-C2 tools for this thread", context do
     %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
     config = argv |> Enum.drop_while(&(&1 != "--mcp-config")) |> Enum.at(1) |> JSON.decode!()
-    %{"url" => url, "headers" => %{"Authorization" => auth}} = config["mcpServers"]["t3-code"]
+    %{"url" => url, "headers" => %{"Authorization" => auth}} = config["mcpServers"]["hal-c2"]
     assert url =~ ~r{^http://127\.0\.0\.1:\d+/mcp$}
 
     body =
@@ -346,13 +346,13 @@ defmodule T3.Steps.Providers.Claude do
         "jsonrpc" => "2.0",
         "id" => 1,
         "method" => "tools/call",
-        "params" => %{"name" => "t3_thread_list", "arguments" => %{}}
+        "params" => %{"name" => "halc2_thread_list", "arguments" => %{}}
       })
 
     # The tools find the calling thread through its sidebar row.
-    :ok = T3.Shell.subscribe(self())
+    :ok = HalC2.Shell.subscribe(self())
     World.await_row(World.thread_id(context, @thread), & &1)
-    assert {200, %{"result" => %{"structuredContent" => listed}}} = T3.Mcp.handle(auth, body)
+    assert {200, %{"result" => %{"structuredContent" => listed}}} = HalC2.Mcp.handle(auth, body)
     assert listed["currentThreadId"] == World.thread_id(context, @thread)
     context
   end
@@ -410,10 +410,10 @@ defmodule T3.Steps.Providers.Claude do
 
   step "Claude reports that a usage window is nearly used up during a turn", context do
     context = World.fake_providers(context)
-    Node.ensure(T3.ProviderUsageLimits)
+    Node.ensure(HalC2.ProviderUsageLimits)
     context = World.launch_on(context, @thread, "claudeAgent", "rate limit")
     World.await_runs(context, @thread, ["completed"])
-    :sys.get_state(T3.ProviderUsageLimits)
+    :sys.get_state(HalC2.ProviderUsageLimits)
     context
   end
 
@@ -453,7 +453,7 @@ defmodule T3.Steps.Providers.Claude do
     assert {:error, "Interrupt the current turn before rewinding."} = context.reply
 
     {:ok, _} =
-      T3.Orchestration.dispatch(%{
+      HalC2.Orchestration.dispatch(%{
         "type" => "run.interrupt",
         "threadId" => World.thread_id(context, @thread)
       })
@@ -487,7 +487,7 @@ defmodule T3.Steps.Providers.Claude do
   # The npm registry's latest release, as the node last read it.
   defp latest(context, driver, version) do
     :persistent_term.put(
-      {T3.ProviderUpdates, driver},
+      {HalC2.ProviderUpdates, driver},
       {version, System.monotonic_time(:millisecond)}
     )
 

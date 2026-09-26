@@ -10,7 +10,7 @@ import * as NodePath from "node:path";
  *
  * Agents that prefer client-mediated file access send `fs/read_text_file` and
  * `fs/write_text_file` instead of touching the disk themselves. The handlers
- * run with the same privileges as the agent process T3 already spawned, so
+ * run with the same privileges as the agent process HAL-C2 already spawned, so
  * they honor absolute paths without extra confinement.
  */
 

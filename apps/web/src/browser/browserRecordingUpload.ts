@@ -5,12 +5,12 @@ import {
   PreviewAutomationRecordingDeadlineExpiredError,
   type DesktopPreviewRecordingArtifact,
   type ScopedThreadRef,
-} from "@t3tools/contracts";
-import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+} from "@hal-c2/contracts";
+import { resolveAssetUrl } from "@hal-c2/client-runtime/state/assets";
 import {
   deletePendingAttachmentUpload,
   runAttachmentUploadCycle,
-} from "@t3tools/client-runtime/state/attachments";
+} from "@hal-c2/client-runtime/state/attachments";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { attachmentEnvironment } from "~/state/attachments";

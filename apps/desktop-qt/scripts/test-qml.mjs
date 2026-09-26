@@ -5,10 +5,10 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 const appDir = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
-// oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone test launcher has no Effect runtime.
+// oxlint-disable-next-line hal-c2/no-global-process-runtime -- Standalone test launcher has no Effect runtime.
 const hostPlatform = NodeOS.platform();
 const executableName = hostPlatform === "win32" ? "qmltestrunner.exe" : "qmltestrunner";
-const testPlatform = process.env.T3_QML_TEST_PLATFORM ?? "offscreen";
+const testPlatform = process.env.HALC2_QML_TEST_PLATFORM ?? "offscreen";
 
 function capture(command, args) {
   const result = NodeChildProcess.spawnSync(command, args, { encoding: "utf8" });

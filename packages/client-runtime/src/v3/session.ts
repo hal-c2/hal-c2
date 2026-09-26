@@ -84,13 +84,13 @@ import {
   ServerSelfUpdateProgressEvent,
   ProviderUploadFeedbackError,
   type PreviewAutomationHost,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import {
   compileResolvedKeybindingsConfig,
   mergeWithDefaultKeybindings,
-} from "@t3tools/shared/keybindings";
-import { isPreviewUrlNormalizationError, normalizePreviewUrl } from "@t3tools/shared/preview";
-import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+} from "@hal-c2/shared/keybindings";
+import { isPreviewUrlNormalizationError, normalizePreviewUrl } from "@hal-c2/shared/preview";
+import { applyServerSettingsPatch } from "@hal-c2/shared/serverSettings";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -566,7 +566,7 @@ export function makeV3Session(input: {
       (_request: object, message) => new OrchestrationSearchThreadsError({ message }),
     );
 
-    // A node moves to another version in place, or restarts into it (`T3.Upgrade`).
+    // A node moves to another version in place, or restarts into it (`HalC2.Upgrade`).
     const updateError = (_request: object, message: string, cause: unknown) =>
       decodeSelfUpdateError(cause instanceof ClusterRpcError ? cause.detail : undefined).pipe(
         Option.getOrElse(() => new ServerSelfUpdateError({ reason: message })),
@@ -1031,7 +1031,7 @@ export function makeV3Session(input: {
       readonly providerInstanceMutation?: ProviderInstanceMutation;
     }) =>
       Effect.gen(function* () {
-        const current = (yield* nodeCall("t3.readSettings", {})) as {
+        const current = (yield* nodeCall("halc2.readSettings", {})) as {
           readonly settings: unknown;
           readonly version: number;
         };
@@ -1049,7 +1049,7 @@ export function makeV3Session(input: {
         }
         const patched = applyServerSettingsPatch(settings, request.patch);
         const next = mutation === undefined ? patched : withProviderInstance(patched, mutation);
-        yield* nodeCall("t3.writeSettings", {
+        yield* nodeCall("halc2.writeSettings", {
           settings: yield* encodeSettings(next),
           version: current.version,
         });
@@ -1066,7 +1066,7 @@ export function makeV3Session(input: {
     const threadProjection = (request: { readonly threadId: ThreadId }) => {
       const failure = (message: string, cause?: unknown) =>
         new OrchestrationV2GetThreadProjectionError({ threadId: request.threadId, message, cause });
-      return nodeCall("t3.threadRows", { threadId: request.threadId }).pipe(
+      return nodeCall("halc2.threadRows", { threadId: request.threadId }).pipe(
         Effect.mapError((cause) => failure(cause.message, cause)),
         Effect.flatMap((result) => {
           const { rows, offset, at } = result as {
@@ -1103,8 +1103,8 @@ export function makeV3Session(input: {
       [WS_METHODS.providerUploadFeedback]: uploadFeedback,
       [WS_METHODS.serverUpdateServer]: updateServer,
       [WS_METHODS.serverUpdateServerWithProgress]: updateServerWithProgress,
-      [WS_METHODS.serverUpsertKeybinding]: keybindingCommand("t3.upsertKeybinding"),
-      [WS_METHODS.serverRemoveKeybinding]: keybindingCommand("t3.removeKeybinding"),
+      [WS_METHODS.serverUpsertKeybinding]: keybindingCommand("halc2.upsertKeybinding"),
+      [WS_METHODS.serverRemoveKeybinding]: keybindingCommand("halc2.removeKeybinding"),
       [WS_METHODS.shellOpenInEditor]: openInEditor,
       [WS_METHODS.scheduledTasksSubscribe]: scheduledTasks,
       [WS_METHODS.serverDiscoverSourceControl]: forward(

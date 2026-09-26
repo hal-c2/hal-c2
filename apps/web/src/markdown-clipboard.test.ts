@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { serializeRenderedMarkdownFragment } from "./markdown-clipboard";
-import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId } from "@hal-c2/contracts";
 import {
   collectAssistantCitations,
   serializeAssistantCitation,
-} from "@t3tools/shared/assistantCitations";
+} from "@hal-c2/shared/assistantCitations";
 
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
@@ -110,7 +110,7 @@ function renderedCodeBlock(lines: ReadonlyArray<string>): FakeElement {
 
 describe("serializeRenderedMarkdownFragment", () => {
   it("copies a popover context reference once, without its details or nested label", () => {
-    const reference = "[Review comment](t3-context://v1/review-comment/review-1)";
+    const reference = "[Review comment](hal-c2-context://v1/review-comment/review-1)";
     const container = new FakeElement("DIV").append(
       new FakeText("Fix "),
       new FakeElement("BUTTON", [], { "data-markdown-copy": reference }).append(

@@ -1,8 +1,8 @@
 # Sources:
 #   packages/contracts/src/orchestrationV2.ts (thread.auto-settle, thread.settled)
 #   packages/contracts/src/settings.ts (sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays)
-#   apps/server-ex/lib/t3/orchestration/settlement.ex
-#   apps/server-ex/lib/t3/orchestration.ex (thread.auto-settle)
+#   apps/server-ex/lib/hal_c2/orchestration/settlement.ex
+#   apps/server-ex/lib/hal_c2/orchestration.ex (thread.auto-settle)
 #   apps/server/src/orchestration-v2/ (auto-settle reactor)
 #   docs/user/thread-sidebar.md
 Feature: Threads settle on their own
@@ -68,7 +68,7 @@ Feature: Threads settle on their own
 
   # docs/user/thread-sidebar.md says pinning does not prevent automatic settlement, but
   # both apps/server-ex settlement.ex and apps/server ThreadSettlementService.ts skip
-  # pinned threads, as the "is pinned" row below records. hal-c2 keeps the code's
+  # pinned threads, as the "is pinned" row below records. HAL-C2 keeps the code's
   # behaviour; the docs line is stale. User view: threads/settle.feature.
   @node
   Scenario Outline: A thread that still needs attention never auto-settles

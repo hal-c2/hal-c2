@@ -7,7 +7,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type OrchestrationEvent,
-} from "@t3tools/contracts";
+} from "@hal-c2/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -23,7 +23,9 @@ import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 
 const TestLayer = OrchestrationProjectionPipelineLive.pipe(
   Layer.provideMerge(OrchestrationEventStoreLive),
-  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-projection-cleanup-" })),
+  Layer.provideMerge(
+    ServerConfig.layerTest(process.cwd(), { prefix: "hal-c2-projection-cleanup-" }),
+  ),
   Layer.provideMerge(SqlitePersistenceMemory),
   Layer.provideMerge(NodeServices.layer),
 );

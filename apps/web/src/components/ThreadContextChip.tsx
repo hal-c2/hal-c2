@@ -1,4 +1,4 @@
-import type { ThreadContextRecord } from "@t3tools/contracts";
+import type { ThreadContextRecord } from "@hal-c2/contracts";
 import { Link } from "@tanstack/react-router";
 import { MessagesSquareIcon } from "lucide-react";
 

@@ -1,5 +1,5 @@
 # Sources:
-#   docs/user/mobile-notifications.md (publishing must be on, T3 Connect required, 15-minute results)
+#   docs/user/mobile-notifications.md (publishing must be on, HAL-C2 Connect required, 15-minute results)
 #   packages/contracts/src/relay.ts (RelayAgentAwarenessPhase, RelayAgentActivityState,
 #     RelayAgentActivityPublishRequest, RelayAgentActivityPublishProofInvalidReason,
 #     RelayDeviceRegistrationRequest, RelayLiveActivityRegistrationRequest)
@@ -12,11 +12,11 @@
 
 Feature: Publishing agent activity
   A linked environment can sign and publish what its agents are doing so the user's phone
-  gets alerts and live activity through T3 Connect. Phones register with the relay, not with
+  gets alerts and live activity through HAL-C2 Connect. Phones register with the relay, not with
   the node.
 
   Background:
-    Given a node linked to T3 Connect
+    Given a node linked to HAL-C2 Connect
 
   @node
   Scenario: Publishing is off until the user turns it on
@@ -80,7 +80,7 @@ Feature: Publishing agent activity
 
   @node
   Scenario: A directly paired environment cannot publish
-    Given a node paired directly and not linked to T3 Connect
+    Given a node paired directly and not linked to HAL-C2 Connect
     Then the user cannot turn on agent activity publishing
 
   @node

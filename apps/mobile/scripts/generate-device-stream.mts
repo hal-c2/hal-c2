@@ -16,7 +16,7 @@ export async function generateDeviceStreamScript() {
       minify: true,
       lib: {
         entry: NodePath.join(mobileRoot, "src/features/devices/device-stream.browser.ts"),
-        name: "T3DeviceStream",
+        name: "HalC2DeviceStream",
         formats: ["iife"],
       },
     },

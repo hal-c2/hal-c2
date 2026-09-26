@@ -1,6 +1,6 @@
 # Sources:
-#   apps/server-ex/lib/t3/orchestration.ex (orchestration.dispatchCommand, result sequence)
-#   apps/server-ex/lib/t3/streams.ex (one writer per stream, transactions)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (orchestration.dispatchCommand, result sequence)
+#   apps/server-ex/lib/hal_c2/streams.ex (one writer per stream, transactions)
 #   apps/server/src/orchestration-v2/Orchestrator.ts, CommandReceiptStore.ts,
 #     EffectOutbox.ts, EffectWorker.ts, KeyedSerialExecutor.ts
 #   packages/contracts/src/orchestrationV2.ts (OrchestrationV2Command, command receipts)

@@ -10,7 +10,7 @@ import { useEffect, useRef } from "react";
 export function useShellPublish(key: string, state: unknown) {
   const lastJson = useRef("");
   useEffect(() => {
-    const shell = window.t3Shell;
+    const shell = window.halc2Shell;
     if (!shell) return;
     const json = JSON.stringify(state);
     if (json === lastJson.current) return;
@@ -18,7 +18,7 @@ export function useShellPublish(key: string, state: unknown) {
     void shell.publish(key, state);
   }, [key, state]);
   useEffect(() => {
-    const shell = window.t3Shell;
+    const shell = window.halc2Shell;
     if (!shell) return;
     return () => {
       lastJson.current = "";
