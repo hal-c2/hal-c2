@@ -123,6 +123,7 @@ function runBunTui(input: {
       } else {
         process.stderr.write(`t3 tui: failed to start Bun: ${error.message}\n`);
       }
+      process.exitCode = 1;
       resolve();
     });
 
@@ -144,12 +145,14 @@ export const tuiCommand = Command.make("tui", { ...authLocationFlags }).pipe(
         yield* Console.error(
           "No running T3 Code server was found. Start one with `t3 serve` (or `t3 start`) first.",
         );
+        process.exitCode = 1;
         return;
       }
       if (!(yield* isLivePersistedServerRuntimeState(runtimeState.value))) {
         yield* Console.error(
           "The recorded T3 Code server is no longer running. Start it with `t3 serve` (or `t3 start`) first.",
         );
+        process.exitCode = 1;
         return;
       }
       const origin = runtimeState.value.origin;
