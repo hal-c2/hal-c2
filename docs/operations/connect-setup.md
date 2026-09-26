@@ -82,22 +82,22 @@ Clerk's native Android SDK uses `clerk://<applicationId>.callback`. In the Clerk
 
 | Variant     | Callback                                         |
 | ----------- | ------------------------------------------------ |
-| Development | `clerk://io.github.halc2.halc2.dev.callback`     |
-| Preview     | `clerk://io.github.halc2.halc2.preview.callback` |
-| Production  | `clerk://io.github.halc2.halc2.callback`         |
+| Development | `clerk://io.github.halc2.app.dev.callback`     |
+| Preview     | `clerk://io.github.halc2.app.preview.callback` |
+| Production  | `clerk://io.github.halc2.app.callback`         |
 
 Preserve existing entries. These callbacks are separate from the `hal-c2-dev` / `hal-c2-preview` / `hal-c2` navigation schemes. A private development build using the production Clerk key still needs its development callback allowed by that instance's administrator; rebuilding the same package does not change the allowlist.
 
 ## Desktop passkeys
 
-For a production macOS app with bundle ID `io.github.halc2.halc2`:
+For a production macOS app with bundle ID `io.github.halc2.app`:
 
 1. Create an explicit macOS App ID in the Apple Developer portal with **Associated Domains**.
 2. Create a provisioning profile for that App ID and the distribution signing certificate.
 3. In Clerk's Native API settings, add an iOS app with the same Apple Team ID and bundle ID.
    This setting also configures Electron/macOS passkeys.
 4. Check `https://<frontend-api>/.well-known/apple-app-site-association`. Its
-   `webcredentials.apps` must include `<TEAM_ID>.io.github.halc2.halc2`.
+   `webcredentials.apps` must include `<TEAM_ID>.io.github.halc2.app`.
 5. Configure signing as described in the [release runbook](./release.md#2-apple-signing--notarization-setup-macos).
 
 Local signed builds additionally use:
