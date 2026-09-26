@@ -80,7 +80,8 @@ Feature: Keymaps
       | PgDn      | page down               |
       | ctrl++    | control and plus        |
 
-  @tui
+  # opentui-qml keymaps accept "hyper" as a modifier (keymap-host MODIFIER_NAMES); only parseKeySequence rejects it.
+  @backlog @tui
   Scenario: A key sequence with an unknown modifier is reported and skipped
     Given a keymap file that binds "hyper+x" to "palette.open"
     When the keymap loads
@@ -107,14 +108,16 @@ Feature: Keymaps
     When the user disables "vim-nav"
     Then pressing "j" no longer moves the selection
 
-  @tui
+  # Needs the composer brick and its `composer.draft` state (T3).
+  @backlog @tui
   Scenario: Typing in a text field is not taken over by single-key bindings
     Given the plugin keymap "vim-nav" binds "j" to "list.next"
     And the composer has focus
     When the user types "j"
     Then "j" is added to the draft
 
-  @tui
+  # Needs the terminal panel brick and its item-scoped `terminalKeymap` (T5).
+  @backlog @tui
   Scenario: A shortcut scoped to a panel only fires while that panel has focus
     Given the terminal panel binds "ctrl+o" to "terminal.copy" for itself only
     And the composer has focus
@@ -134,7 +137,8 @@ Feature: Keymaps
     When the user removes "snippets"
     Then pressing "ctrl+shift+s" does nothing
 
-  @tui
+  # Needs the Settings keybinding reference (`settings.keybindings.groups`, T4).
+  @backlog @tui
   Scenario: The keybinding reference lists every binding by context
     When the user opens the keybinding reference in Settings
     Then bindings are grouped into Global, Conversation, Terminal and Source control

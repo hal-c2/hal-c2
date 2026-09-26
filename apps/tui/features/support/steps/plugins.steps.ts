@@ -1,234 +1,37 @@
 // plugins/ui-plugins.feature and plugins/plugin-catalog.feature: QML plugins filling the
 // default shell's slots ("statusbar", "composer.actions", "sidebar.footer").
 //
-// Given steps write plugin files to a temp directory and collect start options; the
-// first When/Then boots the real shell with them (`world.boot`). Slot modes are set the
-// way a user would: a shell.qml that re-exports DefaultShell with different modes.
-// A contribution draws "[id]" unless the fixture table gives it a body.
+// Given steps write plugin files and collect start options; the first When/Then boots
+// the real shell with them (see ../pluginWorld.ts).
 import { expect } from "bun:test";
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { createPropertyMap, type PropertyMap } from "opentui-qml";
+import { createPropertyMap } from "opentui-qml";
 
-import type { TuiProblem } from "../../../src/host/host.ts";
-import type { TuiPluginInfo } from "../../../src/host/plugins.ts";
 import { threadKey } from "../../../src/host/sidebarState.ts";
 import { step } from "../../steps.ts";
 import { shell } from "../fakeClient.ts";
-import { boot, findObject, snapshot, type World } from "../world.ts";
-
-type SlotName = "statusbar" | "composer.actions" | "sidebar.footer";
-
-interface PluginWorld extends World {
-  pluginDir?: string;
-  /** Slot modes the scenario's shell sets. */
-  slotModes?: Partial<Record<SlotName, string>>;
-  /** The slot the last Given talked about ("contribute to it"). */
-  lastSlot?: SlotName;
-  /** Plugins written by Given steps, by id, in load order. */
-  pluginSpecs?: Map<string, PluginSpec>;
-  scriptPlugins?: object[];
-  prefs?: PropertyMap;
-  cleanupLog?: string[];
-  listed?: ReadonlyArray<TuiPluginInfo>;
-  serial?: unknown;
-  echoed?: string;
-}
-
-interface PluginSpec {
-  slot: SlotName;
-  order: number | string;
-  file?: string;
-  /** Contributions to write: one normally, two for "twice". */
-  bodies?: string[];
-  declareId?: boolean;
-}
-
-/** Where each slot sits in the default shell. */
-const SLOT_OBJECTS: Record<SlotName, string> = {
-  statusbar: "statusbarSlot",
-  "composer.actions": "composerActionsSlot",
-  "sidebar.footer": "sidebarFooterSlot",
-};
-
-/** The shell property that sets each slot's mode (`DefaultShell { statusLine.slotMode: … }`). */
-const MODE_PROPERTIES: Record<SlotName, string> = {
-  statusbar: "statusLine.slotMode",
-  "composer.actions": "composerActions.mode",
-  "sidebar.footer": "sidebar.footerMode",
-};
-
-/** Contribution bodies for plugins whose content matters to the scenario. */
-const BODIES: Record<string, string> = {
-  "title-echo": `Text { objectName: "plugin-title-echo"
-    property int serial: Math.floor(Math.random() * 1e9)
-    text: "[title-echo " + data.title + " #" + serial + "]" }`,
-  inspector: `Text { objectName: "plugin-inspector"
-    text: "[id=" + plugin.pluginId + " slot=" + slot + " theme=" + theme
-      + " engine=" + (engine ? "yes" : "no") + "]" }`,
-  "broken-visual": `QtObject { }`,
-  crashy: `Text { text: "[crashy]"; NoSuchType { } }`,
-};
-
-const PROBE_BODY = (id: string) => `Text { objectName: "plugin-${id}"
-    text: "[${id} theme=" + typeof theme + ":" + theme + " limit=" + typeof limit + ":" + limit + "]" }`;
-
-const label = (id: string) => `[${id}]`;
-
-function asSlot(name: string): SlotName {
-  if (!(name in SLOT_OBJECTS)) throw new Error(`the default shell has no slot "${name}"`);
-  return name as SlotName;
-}
-
-function pluginDir(ctx: PluginWorld): string {
-  if (!ctx.pluginDir) {
-    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-tui-plugins-"));
-    ctx.cleanups.push(() => NodeFS.rmSync(dir, { recursive: true, force: true }));
-    ctx.pluginDir = dir;
-  }
-  return ctx.pluginDir;
-}
-
-function writeFile(ctx: PluginWorld, name: string, content: string): string {
-  const file = NodePath.join(pluginDir(ctx), name);
-  NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
-  NodeFS.writeFileSync(file, content);
-  return file;
-}
-
-function pluginSource(id: string, spec: PluginSpec): string {
-  const bodies = spec.bodies ?? [
-    BODIES[id] ?? `Text { objectName: "plugin-${id}"; text: "${label(id)}" }`,
-  ];
-  const contributions = bodies
-    .map((body) => `  Contribution { slot: "${spec.slot}"\n    ${body} }`)
-    .join("\n");
-  return `import OpenTUI
-Plugin {
-${spec.declareId === false ? "" : `  pluginId: "${id}"\n`}  order: ${spec.order}
-  Component.onDestruction: cleanupLog.push("${id}")
-${contributions}
-}
-`;
-}
-
-/** Record (or update) a plugin the shell will load at start. */
-function contribute(
-  ctx: PluginWorld,
-  id: string,
-  slot: string = ctx.lastSlot ?? "statusbar",
-  spec: Partial<PluginSpec> = {},
-) {
-  const plugins = (ctx.pluginSpecs ??= new Map());
-  const existing = plugins.get(id);
-  plugins.set(id, { order: 0, ...existing, slot: asSlot(slot), ...spec });
-  ctx.lastSlot = asSlot(slot);
-}
-
-function setMode(ctx: PluginWorld, slot: string, mode: string) {
-  (ctx.slotModes ??= {})[asSlot(slot)] = mode;
-  ctx.lastSlot = asSlot(slot);
-}
-
-/** Write the plugin files and the scenario shell, then boot (once). */
-async function start(
-  ctx: PluginWorld,
-  extra: { pluginDirs?: string[]; plugins?: string[]; context?: Record<string, unknown> } = {},
-) {
-  if (ctx.app) return ctx.app;
-  const files: string[] = [];
-  for (const [id, spec] of ctx.pluginSpecs ?? []) {
-    files.push(writeFile(ctx, spec.file ?? `${id}.qml`, pluginSource(id, spec)));
-  }
-  const modes = Object.entries(ctx.slotModes ?? {}).map(
-    ([slot, mode]) => `${MODE_PROPERTIES[slot as SlotName]}: "${mode}"`,
-  );
-  ctx.cleanupLog ??= [];
-  ctx.prefs ??= createPropertyMap({ weather: 20 });
-  ctx.qml = {
-    ...ctx.qml,
-    ...(modes.length > 0
-      ? { shellSource: `import T3.Tui\nDefaultShell { ${modes.join("; ")} }\n` }
-      : {}),
-    plugins: [...(ctx.scriptPlugins ?? []), ...files, ...(extra.plugins ?? [])],
-    ...(extra.pluginDirs ? { pluginDirs: extra.pluginDirs } : {}),
-    context: { cleanupLog: ctx.cleanupLog, ...ctx.qml?.context, ...extra.context },
-    singletons: { Prefs: ctx.prefs },
-  };
-  const app = await boot(ctx);
-  for (const [slot, objectName] of Object.entries(SLOT_OBJECTS)) {
-    expect(findObject(ctx, objectName).get("name")).toBe(slot);
-  }
-  return app;
-}
-
-/** The screen line a slot is drawn on. */
-async function slotLine(ctx: PluginWorld, slot: SlotName): Promise<string> {
-  await start(ctx);
-  const screen = (await snapshot(ctx)).split("\n");
-  const marker = BUILT_IN_MARKERS[slot];
-  const lines =
-    slot === "statusbar" ? [screen.findLast((line) => line.trim() !== "") ?? ""] : screen;
-  return marker
-    ? (lines.find((line) => line.includes(marker(ctx))) ?? lines.join("\n"))
-    : lines.join("\n");
-}
-
-const BUILT_IN_MARKERS: Record<SlotName, ((ctx: PluginWorld) => string) | null> = {
-  statusbar: (ctx) => (ctx.host!.state.get("status") as { text: string }).text,
-  "composer.actions": () => "Enter send",
-  "sidebar.footer": null,
-};
-
-async function expectBuiltIn(ctx: PluginWorld, slot: SlotName) {
-  await start(ctx);
-  const marker = BUILT_IN_MARKERS[slot];
-  if (marker) expect(await snapshot(ctx)).toContain(marker(ctx));
-  const screen = await snapshot(ctx);
-  for (const [id, spec] of ctx.pluginSpecs ?? []) {
-    if (spec.slot === slot) expect(screen).not.toContain(label(id));
-  }
-}
-
-function problems(ctx: PluginWorld): ReadonlyArray<TuiProblem> {
-  return (ctx.host!.state.get("problems") as { items: TuiProblem[] }).items;
-}
-
-const problemText = (problem: TuiProblem) => `${problem.where ?? ""} ${problem.message}`;
-
-function expectProblem(ctx: PluginWorld, level: TuiProblem["level"] | null, ...needles: string[]) {
-  const found = problems(ctx).filter(
-    (problem) =>
-      (level === null || problem.level === level) &&
-      needles.every((needle) => problemText(problem).includes(needle)),
-  );
-  expect(
-    found.map(problemText),
-    `problems:\n${problems(ctx).map(problemText).join("\n")}`,
-  ).not.toEqual([]);
-}
-
-function listedPlugins(ctx: PluginWorld): ReadonlyArray<TuiPluginInfo> {
-  return (ctx.host!.state.get("plugins") as { items: TuiPluginInfo[] }).items;
-}
-
-async function settleLoads(ctx: PluginWorld) {
-  await Promise.all(ctx.pluginLoads ?? []);
-}
-
-function expectBefore(text: string, first: string, second: string) {
-  expect(text).toContain(first);
-  expect(text).toContain(second);
-  expect(text.indexOf(first)).toBeLessThan(text.indexOf(second));
-}
-
-/** The serial an echoing contribution drew next to `text`; fails when it shows something else. */
-function echoSerial(screen: string, id: string, text: string): string {
-  const match = new RegExp(`\\[${id} ${text} #(\\d+)\\]`).exec(screen);
-  expect(match, `"${id}" should show "${text}"`).not.toBeNull();
-  return match![1]!;
-}
+import {
+  asSlot,
+  contribute,
+  echoSerial,
+  expectBefore,
+  expectBuiltIn,
+  expectProblem,
+  label,
+  listedPlugins,
+  pluginDir,
+  pluginSource,
+  PROBE_BODY,
+  problems,
+  setMode,
+  settleLoads,
+  SLOT_OBJECTS,
+  slotLine,
+  start,
+  writeFile,
+  type PluginWorld,
+} from "../pluginWorld.ts";
+import { findObject, snapshot } from "../world.ts";
 
 // --- shell and slots ------------------------------------------------------------------------------
 

@@ -181,6 +181,7 @@ export function fakeClient({
   readonly emitConnection: (phase: TuiConnectionPhase) => void;
 } {
   let connectionPhase: TuiConnectionPhase = "connecting";
+  let latestShell = shellSnapshot;
   const connectionSubscribers = new Set<(phase: TuiConnectionPhase) => void>();
   let shellSubscriber: ((snapshot: OrchestrationShellSnapshot) => void) | null = null;
   let terminalMetadataSubscriber: ((event: TerminalMetadataStreamEvent) => void) | null = null;
@@ -204,6 +205,8 @@ export function fakeClient({
     cloneRepository,
     subscribeShell: (onSnapshot: (snapshot: OrchestrationShellSnapshot) => void) => {
       shellSubscriber = onSnapshot;
+      // Connected before anyone listened: the subscriber gets the snapshot right away.
+      if (connectionPhase === "connected") onSnapshot(latestShell);
       return () => {
         shellSubscriber = null;
       };
@@ -262,10 +265,14 @@ export function fakeClient({
     client,
     connect: () => {
       connectionPhase = "connected";
+      latestShell = shellSnapshot;
       for (const onPhase of connectionSubscribers) onPhase(connectionPhase);
       shellSubscriber?.(shellSnapshot);
     },
-    emitShell: (snapshot) => shellSubscriber?.(snapshot),
+    emitShell: (snapshot) => {
+      latestShell = snapshot;
+      shellSubscriber?.(snapshot);
+    },
     subscribedThreadIds,
     emitTerminalMetadata: (event) => terminalMetadataSubscriber?.(event),
     emitThread: (next, page = { hasMore: false, loadingOlder: false }) =>

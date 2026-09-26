@@ -31,6 +31,11 @@ export interface BootOptions {
   context?: Record<string, unknown>;
   /** Extra singletons next to Shell and Theme. */
   singletons?: Record<string, unknown>;
+  /**
+   * Keys arrive the way a kitty-protocol terminal sends them, so super and ctrl with
+   * punctuation are reported (a legacy terminal cannot encode them).
+   */
+  kittyKeyboard?: boolean;
 }
 
 export interface World extends StepContext {
@@ -48,6 +53,8 @@ export interface World extends StepContext {
   qml?: BootOptions;
   /** Every `Shell.dispatch` the bricks (and plugins) made, in order. */
   dispatched?: Array<{ readonly action: string; readonly payload: unknown }>;
+  /** Runs right before the first boot, from whichever step boots (scenario start options). */
+  prepare?: () => void;
   /** Plugin loads the host started (`plugin.load`); await them before asserting. */
   pluginLoads?: Array<Promise<void>>;
 }
@@ -65,6 +72,7 @@ export async function boot(
   size: { columns?: number; rows?: number } = {},
 ): Promise<QmlTestApp> {
   if (ctx.app) return ctx.app;
+  ctx.prepare?.();
   const columns = size.columns ?? ctx.columns ?? DEFAULT_COLUMNS;
   const rows = size.rows ?? ctx.rows ?? DEFAULT_ROWS;
   const fake = ctx.fake ?? useClient(ctx);
@@ -86,11 +94,12 @@ export async function boot(
       host.dispatch(action, payload);
     },
   };
-  const { shellSource, ...runOptions } = ctx.qml ?? {};
+  const { shellSource, kittyKeyboard, ...runOptions } = ctx.qml ?? {};
   const app = await testQml(shellSource ?? { file: DEFAULT_SHELL }, {
     ...runOptions,
     width: columns,
     height: rows,
+    ...(kittyKeyboard ? { renderer: { kittyKeyboard: true } } : {}),
     importPaths: [QML_DIR],
     singletons: { ...runOptions.singletons, Shell, Theme: host.Theme },
     onError: host.reportError,
