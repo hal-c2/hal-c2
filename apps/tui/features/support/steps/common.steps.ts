@@ -100,3 +100,7 @@ async function expectStatus(ctx: World, text: string): Promise<void> {
 
 step("the status line says {string}", expectStatus);
 step("the status line reads {string}", expectStatus);
+
+step("the user presses escape", async (ctx: World) => {
+  await pressKey(ctx, "Esc");
+});
