@@ -31,6 +31,7 @@ Feature: Starting the node
   Scenario: Starting a node from a checkout prints its client URL
     When a developer starts the node from a checkout
     Then it prints a WebSocket URL on loopback with the node's own access token
+    And it says how to pair a client, since that token is not a pairing code
     And a client can connect with that URL
 
   @node

@@ -16,10 +16,17 @@ defmodule Mix.Tasks.HalC2.Server do
     Process.sleep(:infinity)
   end
 
-  @doc "Prints the running node's WebSocket URL with its access token."
+  @doc """
+  Prints the running node's WebSocket URL with its access token, and how to pair a
+  client: the access token is for local tools, and pairing takes a one-time code.
+  """
   def announce do
     Mix.shell().info(
       "HAL-C2 node #{node()} #{HalC2.Web.base_url("ws")}/ws?token=#{HalC2.Web.token()}"
+    )
+
+    Mix.shell().info(
+      "To pair a client, run `mise run node:pair` (`--tailscale` to reach it from other devices); the token above is not a pairing code."
     )
   end
 end

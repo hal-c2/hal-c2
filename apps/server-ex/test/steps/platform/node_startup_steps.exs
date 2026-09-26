@@ -21,8 +21,8 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     if context[:storage_user] do
       Storage.start_checkout(context, :checkout)
     else
-      [line] = World.mix_output(Mix.Tasks.HalC2.Server, :announce)
-      Map.merge(context, %{printed: line, boot: boot_config(:dev)})
+      [line, pairing] = World.mix_output(Mix.Tasks.HalC2.Server, :announce)
+      Map.merge(context, %{printed: line, pairing_hint: pairing, boot: boot_config(:dev)})
     end
   end
 
@@ -34,6 +34,12 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     assert String.to_integer(port) == context.node.port
     assert token == File.read!(Path.join(context.node.home, "access-token"))
     Map.put(context, :url, {String.to_integer(port), token})
+  end
+
+  step "it says how to pair a client, since that token is not a pairing code", context do
+    assert context.pairing_hint =~ "mise run node:pair"
+    assert context.pairing_hint =~ "not a pairing code"
+    context
   end
 
   step "a client can connect with that URL", context do
