@@ -22,6 +22,12 @@ the visible window of tree rows around the selection, and `viewer` for an
 opened file (a slice of its lines from `top`). Actions are `files.*`
 (`filesState.ts`); stale listings and reads are dropped by generation.
 
+`addProject` is the add-project flow (`addProjectState.ts`): source, then a
+local folder or a repository and its clone destination, with the folders
+under the typed path. `invite` is true while the environment has no
+projects. Actions are `project.add` and `project.add.*`. An added project
+opens as a `draft` page until the new-thread flow owns drafts.
+
 ## Where the rest of ChatView's state goes
 
 ChatView (`src/components/ChatView.tsx`) still owns the state below. Move it

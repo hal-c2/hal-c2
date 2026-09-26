@@ -10,3 +10,4 @@ Conversation 1.0 Conversation.qml
 TerminalDrawer 1.0 TerminalDrawer.qml
 FilesPanel 1.0 FilesPanel.qml
 FileViewer 1.0 FileViewer.qml
+AddProject 1.0 AddProject.qml

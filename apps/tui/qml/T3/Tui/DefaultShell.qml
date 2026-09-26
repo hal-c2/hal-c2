@@ -11,7 +11,15 @@ ShellWindow {
     Conversation {
         id: conversationView
         flexGrow: 1
-        visible: !Shell.state.files.open
+        visible: !Shell.state.files.open && !Shell.state.addProject.open && !Shell.state.addProject.invite
+    }
+
+    // Pending the palette: adding a project (and, with none yet, the
+    // invitation to) takes the conversation's place.
+    Loader {
+        objectName: "addProjectLoader"
+        active: Shell.state.addProject.open || Shell.state.addProject.invite
+        sourceComponent: AddProject { flexGrow: 1 }
     }
 
     // Pending the layout's right panel slot: the file browser and an opened
@@ -126,6 +134,22 @@ ShellWindow {
         sequence: "escape"
         enabled: Shell.state.mode === "files"
         onActivated: Shell.dispatch("files.back")
+    }
+    // Adding a project: the path field keeps the typing, these move and leave.
+    Shortcut {
+        sequence: "up"
+        enabled: Shell.state.mode === "project"
+        onActivated: Shell.dispatch("project.add.move", { delta: -1 })
+    }
+    Shortcut {
+        sequence: "down"
+        enabled: Shell.state.mode === "project"
+        onActivated: Shell.dispatch("project.add.move", { delta: 1 })
+    }
+    Shortcut {
+        sequence: "escape"
+        enabled: Shell.state.mode === "project"
+        onActivated: Shell.dispatch("project.add.back")
     }
     // The renderer does not exit on Ctrl+C; the app tears down in order. In the
     // terminal it interrupts the running program instead.

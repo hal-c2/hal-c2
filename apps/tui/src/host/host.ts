@@ -3,9 +3,10 @@ import { createPropertyMap, type PropertyMap } from "opentui-qml";
 import type { TuiClient } from "../connection.ts";
 import { buildRows } from "../components/Sidebar.logic.ts";
 import { createStore, type StatusKind, type StoreState } from "../store.ts";
+import { createAddProjectController } from "./addProjectState.ts";
 import { createFilesController } from "./filesState.ts";
 import { buildTuiLayoutState, type TuiMode, type TuiSize } from "./layoutState.ts";
-import { buildTuiSidebarState, idFromKey, threadKey } from "./sidebarState.ts";
+import { buildTuiSidebarState, idFromKey, projectKey, threadKey } from "./sidebarState.ts";
 import {
   createTerminalController,
   type TerminalScrollAction,
@@ -22,6 +23,13 @@ export interface TuiStatusState {
 /** Published under `page`: what the main area shows. */
 export type TuiPageState =
   | { readonly kind: "none" }
+  | {
+      /** A new thread in the project, before its first message. */
+      readonly kind: "draft";
+      readonly draftId: string;
+      readonly projectKey: string;
+      readonly projectTitle: string | null;
+    }
   | {
       readonly kind: "thread";
       readonly key: string;
@@ -148,6 +156,30 @@ export function createHost(options: HostOptions): Host {
     setOpen: (open) => setMode(open ? "files" : "compose"),
     publish: (next) => state.set("files", next),
   });
+  const addProject = createAddProjectController({
+    client,
+    store,
+    currentProjectCwd: () => {
+      const current = store.getState();
+      const selection = current.selection;
+      const projectId =
+        selection?.kind === "project"
+          ? selection.id
+          : selection?.kind === "thread"
+            ? current.shell?.threads.find((thread) => thread.id === selection.id)?.projectId
+            : current.projectScopeId;
+      return (
+        current.shell?.projects.find((project) => project.id === projectId)?.workspaceRoot ?? null
+      );
+    },
+    // Pending the settings key: new paths start in the home folder.
+    baseDirectory: () => null,
+    height: () => size.rows - 1,
+    setOpen: (open) => setMode(open ? "project" : "compose"),
+    // Pending the new-thread flow: selecting the project shows its draft.
+    openDraft: (projectId) => store.select({ kind: "project", id: projectId }),
+    publish: (next) => state.set("addProject", next),
+  });
   const publish = () => {
     const next = store.getState();
     const prev = last;
@@ -198,6 +230,7 @@ export function createHost(options: HostOptions): Host {
       terminal.sync();
     }
     if (prev && prev.selection !== next.selection) files.close();
+    if (prev && prev.shell !== next.shell) addProject.sync();
   };
 
   function setMode(next: TuiMode) {
@@ -310,7 +343,7 @@ export function createHost(options: HostOptions): Host {
         options.onQuit?.();
         return;
       default:
-        if (files.dispatch(action, payload)) return;
+        if (files.dispatch(action, payload) || addProject.dispatch(action, payload)) return;
         if (unknownActions.has(action)) return;
         unknownActions.add(action);
         log(`t3 tui: unknown shell action "${action}"`);
@@ -335,8 +368,9 @@ export function createHost(options: HostOptions): Host {
     },
     Shell: { state, dispatch },
     Theme: createTuiTheme(),
-    commands: () => [...files.commands(), ...terminal.commands()],
+    commands: () => [...addProject.commands(), ...files.commands(), ...terminal.commands()],
     settled: async () => {
+      await addProject.settled();
       await files.settled();
       await terminal.settled();
     },
@@ -349,6 +383,16 @@ export function createHost(options: HostOptions): Host {
 }
 
 function pageFor(state: StoreState, selectedThreadId: string | null): TuiPageState {
+  const selection = state.selection;
+  if (selection?.kind === "project") {
+    return {
+      kind: "draft",
+      draftId: `draft:${selection.id}`,
+      projectKey: projectKey(selection.id),
+      projectTitle:
+        state.shell?.projects.find((project) => project.id === selection.id)?.title ?? null,
+    };
+  }
   if (selectedThreadId === null) return { kind: "none" };
   const shellThread = state.shell?.threads.find((thread) => thread.id === selectedThreadId);
   const title = state.detail?.title ?? shellThread?.title ?? "";
