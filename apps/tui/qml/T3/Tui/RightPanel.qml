@@ -78,6 +78,7 @@ Rectangle {
             height: 1
             focus: Shell.state.mode === "commit"
             placeholderText: "Commit message"
+            placeholderColor: Theme.colors.faint
             color: Theme.colors.text
             focusedColor: Theme.colors.text
             backgroundColor: Theme.colors.bg

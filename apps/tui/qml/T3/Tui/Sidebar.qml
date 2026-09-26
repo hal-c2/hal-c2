@@ -29,6 +29,7 @@ Rectangle {
         height: 1
         focus: bar.filterFocused
         placeholderText: "Filter threads (Ctrl+F)"
+        placeholderColor: Theme.colors.faint
         color: Theme.colors.text
         focusedColor: Theme.colors.text
         backgroundColor: Theme.colors.bg
