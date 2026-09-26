@@ -290,7 +290,8 @@ the archive in place through Electron. Packaged Windows builds also ship
 by the Linux desktop job and handed to the Windows desktop build as
 `--wsl-runtime`, copied in verbatim so WSL runs the exact bytes a Linux user
 downloads. WSL verifies and extracts that archive
-into `~/.hal-c2/wsl-runtime/sha256-<archive-digest>` inside the selected distro,
+into `~/.local/state/hal-c2/wsl-runtime/sha256-<archive-digest>` (under the distro's
+`$XDG_STATE_HOME` when it sets one) inside the selected distro,
 then reuses it for later launches of the same update.
 
 Windows keeps JavaScript and package metadata inside `app.asar` and unpacks only

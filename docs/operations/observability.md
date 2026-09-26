@@ -10,7 +10,8 @@ HAL-C2 has one server-side observability model:
 
 The local trace file is the persisted source of truth for normal local launches. Those launches do not
 write a separate server log file, but SSH-managed launches also persist the remote process's
-stdout/stderr at `~/.hal-c2/ssh-launch/<state>/server.log`.
+stdout/stderr on the remote host at `~/.local/state/hal-c2/ssh-launch/<state>/server.log` (under
+`$XDG_STATE_HOME` when the host sets it).
 
 ## Where To Find Things
 
@@ -21,7 +22,7 @@ Logs are human-facing:
 - destination: stdout
 - format: `Logger.consolePretty()`
 - normal local persistence: none
-- SSH-managed launch persistence: `~/.hal-c2/ssh-launch/<state>/server.log`
+- SSH-managed launch persistence: `ssh-launch/<state>/server.log` in the remote host's state directory
 - remote export: OTLP only, when configured
 
 If you want a log message to show up in the trace file, emit it inside an active span with `Effect.log...`. `Logger.tracerLogger` will attach it as a span event.
@@ -34,12 +35,11 @@ SSH-managed launch persistence stay unchanged either way.
 
 ### Traces
 
-Completed spans are written as NDJSON records to `serverTracePath`. The default depends on how the
-server starts: production and explicitly configured homes use
-`<home>/userdata/logs/server.trace.ndjson` (so `~/.hal-c2/userdata/...` by default, `~/.t3/userdata/...` where `~/.t3` already exists, or
-`/custom/path/userdata/...` with `--home-dir /custom/path`), a linked worktree dev run uses
-`<worktree>/.hal-c2/userdata/logs/server.trace.ndjson`, and an implicit dev run outside a linked
-worktree uses `~/.hal-c2/dev/logs/server.trace.ndjson`.
+Completed spans are written as NDJSON records to `serverTracePath`, which is
+`logs/server.trace.ndjson` in the server's state directory: `~/.local/state/hal-c2/logs/...` for an
+installed server, `<root>/state/logs/...` under a root (`HAL_C2_HOME`, `--base-dir`, `--home-dir`),
+`<worktree>/.hal-c2/state/logs/...` for a linked worktree dev run, and
+`~/.local/state/hal-c2-dev/logs/...` for a dev run from the main checkout.
 
 Important fields common to both record types:
 
@@ -195,23 +195,29 @@ The backend reads observability config at process start. If you change OTLP env 
 
 The trace file is the fastest way to inspect raw span data.
 
-Resolve the path for the launch mode once. Production and explicitly configured homes store runtime
-state under the base directory's `userdata` folder:
+Resolve the path for the launch mode once. An installed server keeps its logs in the XDG state
+directory:
 
 ```bash
-TRACE_FILE="${HAL_C2_HOME:-$HOME/.hal-c2}/userdata/logs/server.trace.ndjson"
+TRACE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/hal-c2/logs/server.trace.ndjson"
 ```
 
-A dev server started from a linked worktree defaults to that worktree's local home:
+A server given a root (`HAL_C2_HOME`, `--base-dir`, `--home-dir`) keeps them under that root:
 
 ```bash
-TRACE_FILE="$WORKTREE/.hal-c2/userdata/logs/server.trace.ndjson"
+TRACE_FILE="$HAL_C2_HOME/state/logs/server.trace.ndjson"
 ```
 
-Only an implicit dev run outside a linked worktree uses the shared dev directory:
+A dev server started from a linked worktree uses that worktree's `.hal-c2`:
 
 ```bash
-TRACE_FILE="$HOME/.hal-c2/dev/logs/server.trace.ndjson"
+TRACE_FILE="$WORKTREE/.hal-c2/state/logs/server.trace.ndjson"
+```
+
+A dev run from the main checkout uses the development profile:
+
+```bash
+TRACE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/hal-c2-dev/logs/server.trace.ndjson"
 ```
 
 Tail the selected file:

@@ -26,23 +26,28 @@ Add `--browser` to open a browser automatically.
 
 ### State and ports
 
-Linked worktrees default to their own `.hal-c2/userdata` (an existing `.t3` is still used), even
-when `HAL_C2_HOME` is set. The main checkout defaults to `dev/userdata` under HAL-C2 home
-(`~/.hal-c2`, or `~/.t3` where it already exists). An explicit `--home-dir` wins in both cases.
-Never run a development server against the live `~/.t3/userdata` or `~/.hal-c2/userdata`.
-See [test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
+A linked worktree keeps everything in its own gitignored `.hal-c2`, as `config`, `data`, `state`,
+and `cache` directories inside it, even when `HAL_C2_HOME` is set. The main checkout uses the
+development profile: `hal-c2-dev` in place of `hal-c2` under each XDG base, so its database is in
+`~/.local/share/hal-c2-dev`. An explicit `--home-dir` is a root that wins in both cases. Worktree
+state from before the XDG layout (a `.t3`, or `.hal-c2/userdata`) is not read and not migrated;
+seed the worktree again instead. Never run a development server against the installed app's
+`~/.local/share/hal-c2` and its sibling directories, or against `~/.t3` and `~/.hal-c2`, which
+only the one-time migration reads ([storage](../internals/storage.md)). See
+[test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
 
 Read ports from the `[dev-runner]` output. Worktrees derive stable preferences from their paths,
 but occupied ports can shift them. `HAL_C2_PORT_OFFSET` or `HAL_C2_DEV_INSTANCE` can select a
 different preference when needed.
 
-### Moving a thread between state directories
+### Moving a thread between data directories
 
 `vp run thread:export --source <dir> --thread-id <id> --output <archive.json>` exports one thread
 with its image attachments, and `vp run thread:import --archive <archive.json> --destination <dir>`
 remaps it onto the destination project after backing up its database. `vp run thread:list --source
-<dir>` finds thread ids. A source or destination can be a workspace containing `.hal-c2`, a HAL-C2 home, or
-a state directory containing `statev2.sqlite`; `--state dev` selects a main-checkout dev database.
+<dir>` finds thread ids. A source or destination can be a workspace containing `.hal-c2`, a root such as that `.hal-c2`, or
+a data directory containing `statev2.sqlite`, such as `~/.local/share/hal-c2-dev` for the main
+checkout's development database.
 Stop the destination server before importing. Terminal history can hold credentials, so export
 skips it unless you pass `--include-terminal-logs`.
 
