@@ -148,6 +148,8 @@ export interface TuiOptions {
   readonly mintSocketUrl: () => Promise<string>;
   /** File the Effect runtime logs to (Ink owns stdout, so never log there). */
   readonly logPath: string;
+  /** Pause between a dropped connection and the next attempt (2 seconds). */
+  readonly reconnectDelay?: Duration.Input;
 }
 
 /** Stable id used to label this client's connection in traces/logs. */
@@ -255,7 +257,7 @@ const CONNECTED_STATE: SupervisorConnectionState = {
  * `mintSocketUrl`. We reuse the heavy `client-runtime` RPC client + reducers but
  * skip its multi-environment relay machinery, which the TUI does not need.
  */
-const makeTuiSupervisor = (options: TuiOptions) =>
+export const makeTuiSupervisor = (options: Omit<TuiOptions, "logPath">) =>
   Effect.gen(function* () {
     const factory = yield* RpcSessionFactory;
     const { origin } = options;
@@ -300,7 +302,7 @@ const makeTuiSupervisor = (options: TuiOptions) =>
         yield* Effect.scoped(runConnection).pipe(Effect.ignore);
         yield* SubscriptionRef.set(sessionRef, Option.none());
         yield* SubscriptionRef.set(stateRef, CONNECTING_STATE);
-        yield* Effect.sleep(RECONNECT_DELAY);
+        yield* Effect.sleep(options.reconnectDelay ?? RECONNECT_DELAY);
       }
     });
 
@@ -316,6 +318,21 @@ const makeTuiSupervisor = (options: TuiOptions) =>
       retryNow: Effect.void,
     });
   });
+
+/**
+ * Maps supervisor states to the phase the UI shows: "connecting" until the first
+ * connection, "reconnecting" whenever it is lost after that.
+ */
+export function connectionPhases(): (state: SupervisorConnectionState) => TuiConnectionPhase {
+  let connectedOnce = false;
+  return (state) => {
+    if (state.phase === "connected") {
+      connectedOnce = true;
+      return "connected";
+    }
+    return connectedOnce ? "reconnecting" : "connecting";
+  };
+}
 
 /** Effect-side logger that never touches stdout (Ink owns the screen). */
 const fileLoggerLayer = (logPath: string) =>
@@ -789,27 +806,14 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
         }),
       ),
     subscribeConnection: (onPhase) => {
-      let connectedOnce = false;
+      const toPhase = connectionPhases();
       return drainStreamUntilUnsubscribe(
         Stream.unwrap(
           Effect.gen(function* () {
             const supervisor = yield* EnvironmentSupervisor;
             return SubscriptionRef.changes(supervisor.state);
           }),
-        ).pipe(
-          Stream.tap((state) =>
-            Effect.sync(() => {
-              if (state.phase === "connected") connectedOnce = true;
-              onPhase(
-                state.phase === "connected"
-                  ? "connected"
-                  : connectedOnce
-                    ? "reconnecting"
-                    : "connecting",
-              );
-            }),
-          ),
-        ),
+        ).pipe(Stream.tap((state) => Effect.sync(() => onPhase(toPhase(state))))),
       );
     },
     subscribeShell: (onSnapshot) => {
