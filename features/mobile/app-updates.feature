@@ -85,7 +85,7 @@ Feature: Keeping the phone app up to date
 
   @dropped @mobile
   Scenario: Development builds refuse over-the-air updates
-    # Dropped: this guards the Expo development client, which hal-c2 does not ship.
+    # Dropped: this guards the Expo development client, which HAL-C2 does not ship.
     Given the user runs a development build
     When the user checks for an update by hand
     Then the user is told updates are unavailable in development builds

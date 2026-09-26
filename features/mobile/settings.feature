@@ -11,7 +11,7 @@
 # Settings shared with the desktop (thread behaviour, follow-ups, project grouping, project
 # defaults, provider accounts, licenses) are specified in features/settings/ and
 # features/providers/, tagged @mobile there. The Return key is in mobile/composer.feature.
-# No phone client exists on hal-c2, so everything here is @backlog.
+# No phone client exists on HAL-C2, so everything here is @backlog.
 
 Feature: Settings that belong to the phone
   Some settings only make sense on a phone: how the app looks on this device, the HAL-C2 account

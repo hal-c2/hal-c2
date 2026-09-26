@@ -183,7 +183,7 @@ Feature: Node self-update and hot upgrades
     And the database is restored to its state before the trial
 
   # Desktop-app two-phase update handoff. A node updates itself in place or restarts under
-  # bin/hal-c2-service; the Electron app's bundled backend is not how hal-c2 ships the node.
+  # bin/hal-c2-service; the Electron app's bundled backend is not how HAL-C2 ships the node.
   @dropped @node
   Scenario: The desktop app commits a prepared update after reconnecting
     Given the desktop app prepared an update and received a token

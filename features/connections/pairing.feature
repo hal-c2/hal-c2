@@ -12,7 +12,7 @@
 #   apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx
 #   apps/desktop-qt/host/pairingUrl.ts (pairing URL announced by a server)
 #   apps/tui/src/features.backlog.test.ts (environment-access-management)
-#   docs/user/remote-access.md (hal-c2 auth)
+#   docs/user/remote-access.md (HAL-C2 auth)
 #   packages/contracts/src/auth.ts (pairing link, scopes)
 #   Shared domain: tui/launch.feature holds pairing the terminal client from its command line;
 #   mobile/pairing-and-environments.feature holds pairing from a phone;
@@ -128,7 +128,7 @@ Feature: Pairing a client with an environment
     When the user revokes every other client
     Then only the terminal client's own session remains
 
-  # The hosted app.hal-c2.example pairing link. hal-c2 has no hosted web app; QML clients pair
+  # The hosted app.hal-c2.example pairing link. HAL-C2 has no hosted web app; QML clients pair
   # with the node's own link.
   @dropped @desktop
   Scenario: The user copies a hosted app pairing link

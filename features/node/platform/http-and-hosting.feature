@@ -81,7 +81,7 @@ Feature: The node's HTTP surface and what it hosts
     When it connects
     Then it loads the matching QML overlay from that node
 
-  # hosted-web-app: hal-c2 has no web app. apps/web is going away; QML clients replace it,
+  # hosted-web-app: HAL-C2 has no web app. apps/web is going away; QML clients replace it,
   # so the node does not serve the web bundle or the browser pages that bootstrap it.
   @dropped @node
   Scenario: The node serves the web app at its origin
@@ -104,7 +104,7 @@ Feature: The node's HTTP surface and what it hosts
     When the user revokes that client from Connections
     Then the browser's next request is refused
 
-  # The hosted app.hal-c2.example pairing page carries the secret in the URL fragment. hal-c2
+  # The hosted app.hal-c2.example pairing page carries the secret in the URL fragment. HAL-C2
   # clients paste or scan the node's own pairing link instead.
   @dropped @node
   Scenario: A hosted pairing link keeps its secret out of the hosted origin

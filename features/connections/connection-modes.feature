@@ -145,7 +145,7 @@ Feature: How clients reach an environment
     When the user retries the launch
     Then the environment reconnects
 
-  # The hosted app at app.hal-c2.example connects to a node over HTTPS. hal-c2 has no hosted web
+  # The hosted app at app.hal-c2.example connects to a node over HTTPS. HAL-C2 has no hosted web
   # client; QML clients connect over plain HTTP on a LAN or tailnet.
   @dropped @node
   Scenario: A hosted HTTPS client connects only to HTTPS environments

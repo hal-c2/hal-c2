@@ -68,7 +68,7 @@ Feature: Threads settle on their own
 
   # docs/user/thread-sidebar.md says pinning does not prevent automatic settlement, but
   # both apps/server-ex settlement.ex and apps/server ThreadSettlementService.ts skip
-  # pinned threads, as the "is pinned" row below records. hal-c2 keeps the code's
+  # pinned threads, as the "is pinned" row below records. HAL-C2 keeps the code's
   # behaviour; the docs line is stale. User view: threads/settle.feature.
   @node
   Scenario Outline: A thread that still needs attention never auto-settles

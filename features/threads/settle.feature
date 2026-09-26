@@ -151,7 +151,7 @@ Feature: Settling threads
     Then the settle sweep runs without waiting for the next minute
 
   # docs/user/thread-sidebar.md says pinning does not prevent automatic settlement, but
-  # both servers skip pinned threads and hal-c2 keeps that: a pin means "leave this alone".
+  # both servers skip pinned threads and HAL-C2 keeps that: a pin means "leave this alone".
   # The docs line is stale. Engine detail: node/orchestration/auto-settle.feature.
   @node
   Scenario: A pinned thread is never settled on its own

@@ -3,7 +3,7 @@
 #   apps/server-ex/lib/hal_c2/upgrade.ex (server.updateServer, in-place vs restart, outcome.json)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (driver_for, runtime: provider routing)
 #   apps/server-ex/lib/hal_c2/acp.ex (built-in agents, providerInstances, instances off until enabled)
-#   apps/server-ex/lib/hal_c2/mcp.ex (hal-c2 MCP server)
+#   apps/server-ex/lib/hal_c2/mcp.ex (HAL-C2 MCP server)
 #   apps/server-ex/lib/hal_c2/text_generation.ex (text generation backends by instance)
 #   apps/server-ex/lib/hal_c2/settings.ex (providerInstances, provider_enabled?)
 #   apps/server-ex/lib/hal_c2/pull_requests.ex, apps/server-ex/lib/hal_c2/vcs.ex (git hosts)
