@@ -17,8 +17,8 @@ The values are upstream's, and we owe T3 Code and its maintainers the product th
 
 - **Open.** The code and the reasoning are public.
 - **Performance.** Audit for regressions: too much data over websockets, CSS animations spiking the GPU, lists that are hard to render. Every change considers its performance cost.
-- **Remote ready.** The websocket layer (`npx hal-c2`, the node) is what makes LAN, Tailscale, and HAL-C2 Connect (a self-hosted relay, also in this repo) work. New features must work over all of them.
-- **Multi-surface.** Web (hosted, and served locally by `npx hal-c2`), desktop (Electron, which bundles the server and can host remote clients, and Qt), mobile, and the TUI. Features reach every surface where reasonable.
+- **Remote ready.** The websocket layer (the `hal-c2` CLI and the node) is what makes LAN, Tailscale, and HAL-C2 Connect (a self-hosted relay, also in this repo) work. New features must work over all of them.
+- **Multi-surface.** Web (hosted, and served locally by `hal-c2`), desktop (Electron, which bundles the server and can host remote clients, and Qt), mobile, and the TUI. Features reach every surface where reasonable.
 - **Small systems.** Do not preserve complexity because it exists, and do not add machinery because it looks impressive. Understand the real constraint, then build the smallest model that makes the correct behavior unsurprising. Measure twice, cut once, and yagni. Honor the developer's intent minimally and realistically.
 
 The rest of this document is good defaults, not hard rules. The developer's preferences override anything here.
