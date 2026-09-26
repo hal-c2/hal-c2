@@ -427,6 +427,15 @@ ensure_remote_node_path() {
 }
 `;
 
+/**
+ * The remote user's XDG data and state directories, resolved the way the
+ * server resolves them (unset or relative values fall back to the defaults).
+ */
+const REMOTE_XDG_DIRS_SCRIPT = `HAL_C2_DATA_HOME="\${XDG_DATA_HOME:-}"
+case "$HAL_C2_DATA_HOME" in /*) ;; *) HAL_C2_DATA_HOME="$HOME/.local/share" ;; esac
+HAL_C2_STATE_HOME="\${XDG_STATE_HOME:-}"
+case "$HAL_C2_STATE_HOME" in /*) ;; *) HAL_C2_STATE_HOME="$HOME/.local/state" ;; esac`;
+
 const REMOTE_RUNNER_SCRIPT = `#!/bin/sh
 set -eu
 @@HAL_C2_NODE_ENV_SCRIPT@@
@@ -449,16 +458,18 @@ fi
 # Self-contained release archive: no Node, npm, or compiler on the remote.
 # Unpacked into the pinned-runtime layout so \`hal-c2 service install\` reuses it.
 HAL_C2_RELEASE_BASE_URL=@@HAL_C2_RELEASE_BASE_URL@@
-HAL_C2_RUNTIME_DIR="$HOME/.hal-c2/runtime/versions/$HAL_C2_ARCHIVE_VERSION"
+${REMOTE_XDG_DIRS_SCRIPT}
+HAL_C2_VERSIONS_DIR="$HAL_C2_DATA_HOME/hal-c2/runtime/versions"
+HAL_C2_RUNTIME_DIR="$HAL_C2_VERSIONS_DIR/$HAL_C2_ARCHIVE_VERSION"
 hal_c2_runtime_ready() {
   [ -x "$HAL_C2_RUNTIME_DIR/hal-c2" ] && [ "$(cat "$HAL_C2_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$HAL_C2_ARCHIVE_VERSION" ]
 }
 if ! hal_c2_runtime_ready; then
-  mkdir -p "$HOME/.hal-c2/runtime/versions"
+  mkdir -p "$HAL_C2_VERSIONS_DIR"
   # Concurrent launches (two clients, a retry racing a slow first run) must
   # not both install: mkdir is the atomic lock and the ready check repeats
   # under it.
-  HAL_C2_LOCK="$HOME/.hal-c2/runtime/versions/.$HAL_C2_ARCHIVE_VERSION.install.lock"
+  HAL_C2_LOCK="$HAL_C2_VERSIONS_DIR/.$HAL_C2_ARCHIVE_VERSION.install.lock"
   # mkdir is the only portable atomic exclusive create (mv would silently
   # nest a candidate inside an existing lock). The owner publishes its pid
   # right after, so a lock with a live owner is never reclaimed however
@@ -505,7 +516,7 @@ if ! hal_c2_runtime_ready; then
     *) printf 'Remote host %s has no hal-c2 release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
   esac
   HAL_C2_ARCHIVE="hal-c2-$HAL_C2_ARCHIVE_VERSION-$HAL_C2_PLATFORM-$HAL_C2_ARCH.tar.gz"
-  HAL_C2_STAGING="$(mktemp -d "$HOME/.hal-c2/runtime/versions/.staging-XXXXXX")"
+  HAL_C2_STAGING="$(mktemp -d "$HAL_C2_VERSIONS_DIR/.staging-XXXXXX")"
   trap 'rm -rf "$HAL_C2_STAGING" "$HAL_C2_LOCK"' EXIT
   hal_c2_fetch() {
     if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
@@ -545,9 +556,19 @@ exec "$HAL_C2_RUNTIME_DIR/hal-c2" "$@"
 const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@HAL_C2_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
-STATE_DIR="$HOME/.hal-c2/ssh-launch/$STATE_KEY"
-DEFAULT_SERVER_HOME="$HOME/.hal-c2"
-DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
+${REMOTE_XDG_DIRS_SCRIPT}
+STATE_DIR="$HAL_C2_STATE_HOME/hal-c2/ssh-launch/$STATE_KEY"
+# The server started below uses the remote user's own HAL-C2 home: HAL_C2_HOME
+# when it is set (and not an old ~/.t3 or ~/.hal-c2), the XDG directories
+# otherwise. A server the user runs there themselves writes the same file.
+case "\${HAL_C2_HOME:-}" in
+  /*) case "$HAL_C2_HOME" in
+        "$HOME/.t3"|"$HOME/.t3/"|"$HOME/.hal-c2"|"$HOME/.hal-c2/") DEFAULT_SERVER_STATE="$HAL_C2_STATE_HOME/hal-c2" ;;
+        *) DEFAULT_SERVER_STATE="\${HAL_C2_HOME%/}/state" ;;
+      esac ;;
+  *) DEFAULT_SERVER_STATE="$HAL_C2_STATE_HOME/hal-c2" ;;
+esac
+DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_STATE/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
 MANAGED_FILE="$STATE_DIR/managed"
@@ -702,7 +723,7 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     exit 1
   fi
-  nohup env HAL_C2_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  nohup env HAL_C2_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
@@ -724,20 +745,20 @@ printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGE
 `;
 
 const REMOTE_PAIRING_SCRIPT = `set -eu
-STATE_DIR="$HOME/.hal-c2/ssh-launch/@@HAL_C2_STATE_KEY@@"
-DEFAULT_SERVER_HOME="$HOME/.hal-c2"
+${REMOTE_XDG_DIRS_SCRIPT}
+STATE_DIR="$HAL_C2_STATE_HOME/hal-c2/ssh-launch/@@HAL_C2_STATE_KEY@@"
 RUNNER_FILE="$STATE_DIR/run-hal-c2.sh"
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
 @@HAL_C2_RUNNER_SCRIPT@@
 SH
 chmod 700 "$RUNNER_FILE"
-PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
-"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json
+"$RUNNER_FILE" auth pairing create --json
 `;
 
 const REMOTE_STOP_SCRIPT = `set -eu
-STATE_DIR="$HOME/.hal-c2/ssh-launch/@@HAL_C2_STATE_KEY@@"
+${REMOTE_XDG_DIRS_SCRIPT}
+STATE_DIR="$HAL_C2_STATE_HOME/hal-c2/ssh-launch/@@HAL_C2_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
@@ -760,7 +781,8 @@ printf '{"stopped":true}\\n'
 `;
 
 const REMOTE_LOG_TAIL_SCRIPT = `set -eu
-STATE_DIR="$HOME/.hal-c2/ssh-launch/@@HAL_C2_STATE_KEY@@"
+${REMOTE_XDG_DIRS_SCRIPT}
+STATE_DIR="$HAL_C2_STATE_HOME/hal-c2/ssh-launch/@@HAL_C2_STATE_KEY@@"
 LOG_FILE="$STATE_DIR/server.log"
 if [ -f "$LOG_FILE" ]; then
   tail -n 80 "$LOG_FILE" 2>/dev/null || true

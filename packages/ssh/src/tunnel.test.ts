@@ -16,6 +16,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshPasswordPrompt } from "./auth.ts";
+import { remoteStateKey } from "./command.ts";
 import { SshCommandError } from "./errors.ts";
 import {
   buildRemoteLaunchScript,
@@ -120,10 +121,8 @@ describe("ssh tunnel scripts", () => {
       script,
       "HAL_C2_RELEASE_BASE_URL='https://github.com/hal-c2/hal-c2/releases/download'",
     );
-    assert.include(
-      script,
-      'HAL_C2_RUNTIME_DIR="$HOME/.hal-c2/runtime/versions/$HAL_C2_ARCHIVE_VERSION"',
-    );
+    assert.include(script, 'HAL_C2_VERSIONS_DIR="$HAL_C2_DATA_HOME/hal-c2/runtime/versions"');
+    assert.include(script, 'HAL_C2_RUNTIME_DIR="$HAL_C2_VERSIONS_DIR/$HAL_C2_ARCHIVE_VERSION"');
     assert.include(
       script,
       'HAL_C2_ARCHIVE="hal-c2-$HAL_C2_ARCHIVE_VERSION-$HAL_C2_PLATFORM-$HAL_C2_ARCH.tar.gz"',
@@ -138,7 +137,7 @@ describe("ssh tunnel scripts", () => {
     // the completion marker after acquiring it.
     assert.include(
       script,
-      'HAL_C2_LOCK="$HOME/.hal-c2/runtime/versions/.$HAL_C2_ARCHIVE_VERSION.install.lock"',
+      'HAL_C2_LOCK="$HAL_C2_VERSIONS_DIR/.$HAL_C2_ARCHIVE_VERSION.install.lock"',
     );
     // mkdir is the exclusive create; the pid follows atomically. A dead owner
     // is reclaimed at once, a never-published owner after a short grace.
@@ -273,7 +272,8 @@ describe("ssh tunnel scripts", () => {
     assert.include(launch, 'kill "$REMOTE_PID" 2>/dev/null || true');
     assert.include(launch, "wait_ready");
     assert.include(launch, '"$RUNNER_FILE" serve --host 127.0.0.1');
-    assert.include(launch, '--base-dir "$DEFAULT_SERVER_HOME"');
+    // The remote server uses the remote user's own HAL-C2 home.
+    assert.notInclude(launch, "--base-dir");
     assert.notInclude(launch, "server-home");
     assert.include(launch, "Remote HAL-C2 server did not become ready");
     assert.include(launch, 'wait_ready "60000"');
@@ -282,11 +282,7 @@ describe("ssh tunnel scripts", () => {
     assert.include(launch, "HAL_C2_ARCHIVE_VERSION='1.2.3-preview.20260911.4'");
     assert.include(
       buildRemotePairingScript(target, ARCHIVE),
-      '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
-    );
-    assert.include(
-      buildRemotePairingScript(target, ARCHIVE),
-      'PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"',
+      '"$RUNNER_FILE" auth pairing create --json',
     );
     assert.notInclude(buildRemotePairingScript(target, ARCHIVE), "server-home");
     assert.include(
@@ -299,10 +295,7 @@ describe("ssh tunnel scripts", () => {
     );
     assert.include(buildRemoteStopScript(target), 'kill "$REMOTE_PID" 2>/dev/null || true');
     assert.include(buildRemoteStopScript(target), 'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"');
-    assert.include(
-      launch,
-      'DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"',
-    );
+    assert.include(launch, 'DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_STATE/server-runtime.json"');
     assert.include(launch, "resolve_default_runtime_port()");
     assert.include(launch, 'DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port');
     assert.include(launch, "if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port))");
@@ -764,6 +757,41 @@ describe("archive runner script", () => {
     return `file://${root}/mirror`;
   });
 
+  it.effect.skipIf(windowsHost)("keeps a host's launch state in its XDG state directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "hal-c2-ssh-launch-" });
+      const target = { alias: "devbox", hostname: "devbox", username: "me", port: 22 } as const;
+      const home = `${root}/home`;
+      const script = `${root}/stop.sh`;
+      yield* fs.writeFileString(script, buildRemoteStopScript(target));
+
+      for (const [xdgStateHome, stateHome] of [
+        [undefined, `${home}/.local/state`],
+        ["relative/state", `${home}/.local/state`],
+        [`${root}/xdg-state`, `${root}/xdg-state`],
+      ] as const) {
+        const launchDir = `${stateHome}/hal-c2/ssh-launch/${remoteStateKey(target)}`;
+        yield* fs.makeDirectory(launchDir, { recursive: true });
+        yield* fs.writeFileString(`${launchDir}/port`, "4000\n");
+        const child = yield* spawner.spawn(
+          ChildProcess.make("sh", [script], {
+            env: {
+              PATH: process.env.PATH ?? "",
+              HOME: home,
+              ...(xdgStateHome === undefined ? {} : { XDG_STATE_HOME: xdgStateHome }),
+            },
+            extendEnv: false,
+          }),
+        );
+        assert.equal(Number(yield* child.exitCode), 0);
+        // The stop script found and cleared the launch state where it expected it.
+        assert.isFalse(yield* fs.exists(`${launchDir}/port`));
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect.skipIf(windowsHost)(
     "installs once when several launches race, and reclaims stale locks",
     () =>
@@ -787,7 +815,7 @@ describe("archive runner script", () => {
           assert.equal(result.exitCode, 0, result.stderr);
           assert.include(result.stdout, `hal-c2 v${archiveVersion}`);
         }
-        const versionsDir = `${home}/.hal-c2/runtime/versions`;
+        const versionsDir = `${home}/.local/share/hal-c2/runtime/versions`;
         assert.deepEqual(yield* fs.readDirectory(versionsDir), [archiveVersion]);
         assert.equal(
           (yield* fs.readFileString(`${versionsDir}/${archiveVersion}/.install-complete`)).trim(),
