@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { importJWK, SignJWT, type JWK } from "jose";
+import { resolveDatabaseName } from "../legacyStorage";
 
 export interface BrowserDpopKey {
   readonly privateKey: CryptoKey;
@@ -45,8 +46,15 @@ function dpopError(message: string, cause?: unknown) {
 }
 
 function openDpopDatabase(): Effect.Effect<IDBDatabase, BrowserDpopError> {
+  return Effect.flatMap(
+    Effect.promise(() => resolveDatabaseName(DPOP_DATABASE_NAME)),
+    (name) => openDpopDatabaseNamed(name),
+  );
+}
+
+function openDpopDatabaseNamed(name: string): Effect.Effect<IDBDatabase, BrowserDpopError> {
   return Effect.callback<IDBDatabase, BrowserDpopError>((resume) => {
-    const request = indexedDB.open(DPOP_DATABASE_NAME, DPOP_DATABASE_VERSION);
+    const request = indexedDB.open(name, DPOP_DATABASE_VERSION);
     request.addEventListener("error", () =>
       resume(
         Effect.fail(dpopError("Could not open DPoP key storage.", request.error ?? undefined)),
