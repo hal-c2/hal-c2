@@ -3,6 +3,7 @@
 #   apps/tui/src/components/ChatView.layout.test.ts
 #   apps/tui/src/components/Sidebar.tsx, Sidebar.logic.ts
 #   apps/tui/src/components/RightPanel.tsx
+#   apps/tui/src/components/MessagesTimeline.tsx (the empty conversation pane)
 #   apps/tui/src/components/ComposerDock.tsx, ComposerDock.test.tsx (centred, bounded prompt)
 #   apps/tui/src/format.ts (clip and pad by display width)
 #   Shared domain: navigation/ owns layout on the other surfaces.
@@ -45,6 +46,12 @@ Feature: Terminal layout at every size
     Given the terminal is 90 columns wide
     When the user opens the source-control panel
     Then the panel replaces the conversation until it is closed
+
+  @tui @backlog
+  Scenario: Before a thread is open the conversation pane says how to pick one
+    Given the terminal client is connected with no thread open
+    Then the conversation pane reads "Select a thread to view its conversation." in the dim colour
+    And no "No thread selected" title is shown
 
   @tui
   Scenario: The conversation column is capped on very wide terminals

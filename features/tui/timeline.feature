@@ -133,6 +133,66 @@ Feature: Reading a thread in the terminal
     Then the message is aligned to the right and collapsed
     And expanding it shows the full message
 
+  @tui @backlog
+  Scenario: The conversation sits in a rounded pane
+    Then the conversation is framed by a rounded border in the faint colour
+    And the thread's title is inside the frame
+
+  @tui @backlog
+  Scenario: Entries are spaced like the OpenTUI client
+    Given the user asked "Fix the build", the agent ran "bun run build" and replied "Fixed."
+    Then the timeline reads:
+      """
+                                                   ╭───────────────╮
+                                                   │ Fix the build │
+                                                   ╰───────────────╯
+
+      $ Ran command ✓  bun run build
+
+
+      Fixed.
+      """
+
+  @tui @backlog
+  Scenario: The user's message is boxed in the accent colour
+    Given the user asked "Fix the build", the agent ran "bun run build" and replied "Fixed."
+    Then the border around "Fix the build" is drawn in the accent colour
+
+  @tui @backlog
+  Scenario: A collapsed message keeps its bubble as narrow as its text
+    Given the user sent twelve lines from "Requirement 1" to "Requirement 12"
+    Then the timeline reads:
+      """
+      ╭────────────────╮
+      │ Requirement 1  │
+      │ Requirement 2  │
+      │ Requirement 3  │
+      │ Requirement 4  │
+      │ Requirement 5  │
+      │ Requirement 6  │
+      │ Requirement 7  │
+      │ Requirement 8  │
+      │ ⌄ Show full    │
+      │ message        │
+      ╰────────────────╯
+      """
+
+  @tui @backlog
+  Scenario: Lists and code blocks read like the OpenTUI client
+    Given the agent replied with a list and a code block
+    Then the timeline reads:
+      """
+      Steps:
+
+      - first item
+      - second item
+
+      const answer = 42;
+
+      Done.
+      """
+    And the list markers are bold in the accent colour
+
   @tui
   Scenario: A turn that changed files shows a changed-files tree
     Given the last turn changed files in nested folders

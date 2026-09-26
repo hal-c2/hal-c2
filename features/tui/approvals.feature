@@ -48,6 +48,12 @@ Feature: Approvals, questions and plans from the keyboard
     Then the timeline shows that three approvals are pending
     And the first one is highlighted
 
+  @tui @backlog
+  Scenario: The approval panel sits in the conversation pane under the timeline
+    Given the agent has three pending approvals
+    Then the approval panel is inside the conversation frame and as wide as the timeline
+    And the selected approval's "▸" marker is in the accent colour
+
   @tui
   Scenario: Arrow keys choose between approvals when the reply is empty
     Given the agent has three pending approvals
@@ -151,6 +157,12 @@ Feature: Approvals, questions and plans from the keyboard
     When the user presses "Ctrl+Y"
     Then the status line says "Implementing plan…"
     And the plan is handed to the agent to implement
+
+  @tui @backlog
+  Scenario: The plan card's caption is a caption, not a button
+    Given the agent proposed a plan
+    When the user clicks the plan card's caption
+    Then the plan is not handed to the agent
 
   @tui
   Scenario: An implemented plan no longer offers to be implemented
