@@ -5,7 +5,7 @@ import { expect } from "bun:test";
 import type { OrchestrationThread, VcsStatusResult } from "@t3tools/contracts";
 
 import type { TuiGitState } from "../../src/host/gitState.ts";
-import { thread } from "./fakeClient.ts";
+import { shell, thread } from "./fakeClient.ts";
 import { boot, pressKey, snapshot, useClient, type World } from "./world.ts";
 
 export const PR_URL = "https://github.com/acme/shop/pull/42";
@@ -85,12 +85,14 @@ interface Scm {
   diffs: Map<string, string | Error>;
 }
 
-export function scm(ctx: World): Scm {
+/** The scenario's thread and checkout; the first call may name the thread. */
+export function scm(ctx: World, options: { title?: string } = {}): Scm {
   const world = ctx as World & { scm?: Scm };
   if (!world.scm) {
+    const title = options.title ?? "Thread one";
     const state: Scm = {
       status: vcsStatus(),
-      detail: { ...thread(), worktreePath: "/workspace/shop" } as OrchestrationThread,
+      detail: { ...thread(), title, worktreePath: "/workspace/shop" } as OrchestrationThread,
       diffs: new Map(),
     };
     world.scm = state;
@@ -99,8 +101,10 @@ export function scm(ctx: World): Scm {
       const value = state.diffs.get(key) ?? "";
       return value instanceof Error ? Promise.reject(value) : Promise.resolve(value);
     };
+    const listed = shell();
     useClient(ctx, {
       detail: state.detail,
+      shellSnapshot: shell(listed.threads.map((row) => ({ ...row, title }))),
       getFullThreadDiff: () => diff("all"),
       getTurnDiff: (_thread, turn) => diff(String(turn)),
     }).setVcsStatus(state.status);
