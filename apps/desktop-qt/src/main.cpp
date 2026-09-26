@@ -261,6 +261,18 @@ int main(int argc, char* argv[]) {
                        }
                      },
                      Qt::SingleShotConnection);
+    // A start that fails never loads a page; grab the error the window shows
+    // instead of waiting forever, and quit with a failure code.
+    if (screenshotRequested) {
+      QObject::connect(&backend, &BackendProcess::failed, &runtime,
+                       [&runtime, &app, target] {
+                         QTimer::singleShot(1500, &runtime, [&runtime, &app, target] {
+                           runtime.captureWindow(target);
+                           app.exit(2);
+                         });
+                       },
+                       Qt::SingleShotConnection);
+    }
   }
 
   runtime.start();
