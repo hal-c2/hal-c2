@@ -4,17 +4,17 @@ import { isLegalDocumentUrl } from "./legal-document-url";
 
 describe("isLegalDocumentUrl", () => {
   it.each([
-    "https://hal-c2.example/legal",
-    "https://hal-c2.example/legal/",
-    "https://hal-c2.example/privacy-policy?source=app",
-    "https://hal-c2.example/terms-of-service#updates",
-    "https://hal-c2.example/security-policy",
+    "https://github.com/hal-c2/hal-c2/blob/HEAD/LICENSE",
+    "https://github.com/hal-c2/hal-c2/blob/HEAD/LICENSE/",
+    "https://github.com/hal-c2/hal-c2/blob/HEAD/LICENSE?plain=1",
+    "https://github.com/hal-c2/hal-c2/blob/HEAD/.github/SECURITY.md#reporting",
   ])("allows a configured legal document: %s", (url) => {
     expect(isLegalDocumentUrl(url)).toBe(true);
   });
 
   it.each([
-    "https://hal-c2.example/download",
+    "https://github.com/hal-c2/hal-c2/blob/HEAD/README.md",
+    "https://github.com/another/repo/blob/HEAD/LICENSE",
     "https://example.com/legal",
     "javascript:alert(1)",
     "not-a-url",

@@ -1,38 +1,11 @@
-const DEFAULT_MARKETING_SITE_URL = "https://hal-c2.example";
+const REPOSITORY_URL = "https://github.com/hal-c2/hal-c2";
 
-function resolveMarketingSiteUrl(override: string | undefined): URL {
-  try {
-    const url = new URL(override?.trim() || DEFAULT_MARKETING_SITE_URL);
-    if (url.protocol !== "https:" && url.protocol !== "http:") {
-      return new URL(DEFAULT_MARKETING_SITE_URL);
-    }
+// HAL-C2 publishes no hosted terms or privacy policy. Its legal documents are
+// the license and security policy in the repository.
+export const LEGAL_URL = `${REPOSITORY_URL}/blob/HEAD/LICENSE`;
+export const SECURITY_POLICY_URL = `${REPOSITORY_URL}/blob/HEAD/.github/SECURITY.md`;
 
-    url.search = "";
-    url.hash = "";
-    url.pathname = `${url.pathname.replace(/\/+$/, "")}/`;
-    return url;
-  } catch {
-    return new URL(DEFAULT_MARKETING_SITE_URL);
-  }
-}
-
-const MARKETING_SITE_URL = resolveMarketingSiteUrl(process.env.EXPO_PUBLIC_MARKETING_SITE_URL);
-
-function marketingSiteDocumentUrl(path: string): string {
-  return new URL(path, MARKETING_SITE_URL).toString();
-}
-
-export const PRIVACY_POLICY_URL = marketingSiteDocumentUrl("privacy-policy");
-export const SECURITY_POLICY_URL = marketingSiteDocumentUrl("security-policy");
-export const TERMS_OF_SERVICE_URL = marketingSiteDocumentUrl("terms-of-service");
-export const LEGAL_URL = marketingSiteDocumentUrl("legal");
-
-export const ALLOWED_LEGAL_DOCUMENT_URLS = [
-  LEGAL_URL,
-  PRIVACY_POLICY_URL,
-  TERMS_OF_SERVICE_URL,
-  SECURITY_POLICY_URL,
-] as const;
+export const ALLOWED_LEGAL_DOCUMENT_URLS = [LEGAL_URL, SECURITY_POLICY_URL] as const;
 
 function webDocumentIdentity(value: string): string | null {
   try {

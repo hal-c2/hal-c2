@@ -39,7 +39,7 @@ mobile verification includes that build step unless the user prohibits it.
 
 Start `vp run dev:client` from `apps/mobile`, or reuse a healthy Metro belonging
 to this checkout. Open its printed development-client URL with AgentDevice
-`open io.github.halc2.halc2.dev <url>` and all returned target arguments.
+`open io.github.halc2.app.dev <url>` and all returned target arguments.
 The device must be able to reach both Metro and the isolated backend.
 
 ## Pair and verify

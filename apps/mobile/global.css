@@ -44,6 +44,10 @@
   font-family: var(--font-medium);
 }
 
+@utility font-halc2-semibold {
+  font-family: var(--font-bold);
+}
+
 @utility font-halc2-bold {
   font-family: var(--font-bold);
 }

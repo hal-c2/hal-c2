@@ -14,6 +14,10 @@ const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
 
+// HAL-C2 ships without an EAS project. Setting HALC2_EAS_PROJECT_ID links the
+// app to one for EAS builds and turns on OTA updates from that project only.
+const easProjectId = repoEnv.HALC2_EAS_PROJECT_ID?.trim() || undefined;
+
 const personalTeamBundleIdentifier = repoEnv.HALC2_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
@@ -75,24 +79,24 @@ const VARIANT_CONFIG = {
   development: {
     appName: "HAL-C2 Dev",
     scheme: "hal-c2-dev",
-    iosBundleIdentifier: "io.github.halc2.halc2.dev",
-    androidPackage: "io.github.halc2.halc2.dev",
+    iosBundleIdentifier: "io.github.halc2.app.dev",
+    androidPackage: "io.github.halc2.app.dev",
     relyingParty: "clerk.hal-c2.example",
     assets: DEVELOPMENT_ASSETS,
   },
   preview: {
     appName: "HAL-C2 Preview",
     scheme: "hal-c2-preview",
-    iosBundleIdentifier: "io.github.halc2.halc2.preview",
-    androidPackage: "io.github.halc2.halc2.preview",
+    iosBundleIdentifier: "io.github.halc2.app.preview",
+    androidPackage: "io.github.halc2.app.preview",
     relyingParty: "clerk.hal-c2.example",
     assets: PREVIEW_ASSETS,
   },
   production: {
     appName: "HAL-C2",
     scheme: "hal-c2",
-    iosBundleIdentifier: "io.github.halc2.halc2",
-    androidPackage: "io.github.halc2.halc2",
+    iosBundleIdentifier: "io.github.halc2.app",
+    androidPackage: "io.github.halc2.app",
     relyingParty: "clerk.hal-c2.example",
     assets: RELEASE_ASSETS,
   },
@@ -224,12 +228,14 @@ const config: ExpoConfig = {
   orientation: "portrait",
   icon: variant.assets.appIcon,
   userInterfaceStyle: "automatic",
-  updates: {
-    enabled: repoEnv.HALC2_MOBILE_UPDATES_ENABLED !== "0",
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    checkAutomatically: "ON_LOAD",
-    fallbackToCacheTimeout: 0,
-  },
+  updates: easProjectId
+    ? {
+        enabled: repoEnv.HALC2_MOBILE_UPDATES_ENABLED !== "0",
+        url: `https://u.expo.dev/${easProjectId}`,
+        checkAutomatically: "ON_LOAD",
+        fallbackToCacheTimeout: 0,
+      }
+    : { enabled: false },
   ios: {
     icon: variant.assets.iosIcon,
     supportsTablet: true,
@@ -237,9 +243,10 @@ const config: ExpoConfig = {
     // showcase capture build requires full screen (see infoPlist below).
     requireFullScreen: process.env.HALC2_SHOWCASE_CAPTURE_BUILD === "1",
     bundleIdentifier: iosBundleIdentifier,
-    // Pin code signing to the HAL-C2 team so non-interactive `expo run:ios`
-    // does not fall back to a personal team (which cannot sign app groups,
-    // Sign in with Apple, or push notification entitlements).
+    // Pin code signing to one team so non-interactive `expo run:ios` does not
+    // fall back to a personal team (which cannot sign app groups, Sign in with
+    // Apple, or push notification entitlements). This is still the upstream
+    // T3 Code team ID; replace it with the team that signs HAL-C2.
     appleTeamId: "ARK85ZXQ4Z",
     associatedDomains: [
       `applinks:${variant.relyingParty}`,
@@ -453,11 +460,9 @@ const config: ExpoConfig = {
       tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
-    eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
-    },
+    ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
   },
-  owner: "pingdotgg",
+  owner: "hal-c2",
 };
 
 export default config;

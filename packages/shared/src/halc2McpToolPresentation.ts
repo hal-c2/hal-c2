@@ -327,21 +327,17 @@ function resolveHalC2McpToolName(value: string): string | null {
       : null;
   }
 
-  const namespaceMatch = /^(?<server>hal-c2|hal_c2|halc2)(?:[.:/]|\s*·\s*)(?<tool>.+)$/i.exec(
-    label,
-  );
+  const namespaceMatch = /^(?<server>hal[-_]?c2)(?:[.:/]|\s*·\s*)(?<tool>.+)$/i.exec(label);
   if (namespaceMatch?.groups) {
     return namespaceMatch.groups.tool ?? null;
   }
 
+  // Bare tool names start with `halc2_` themselves, so the prefix strip must
+  // not win over an exact inventory match.
+  if (Object.hasOwn(HALC2_MCP_TOOLS, label)) return label;
   const prefixed = /^(?:mcp[-_]{1,2})?hal[-_ ]?c2(?:__|[-_.:/ ])(?<tool>.+)$/i.exec(label);
-  // Tool names start with `halc2_` themselves, so a bare tool name also parses
-  // as a prefixed one; accept whichever reading names a known tool.
-  const prefixedTool = prefixed?.groups?.tool;
-  if (prefixedTool !== undefined && Object.hasOwn(HALC2_MCP_TOOLS, prefixedTool)) {
-    return prefixedTool;
-  }
-  return Object.hasOwn(HALC2_MCP_TOOLS, label) ? label : null;
+  const candidate = prefixed?.groups?.tool;
+  return candidate !== undefined && Object.hasOwn(HALC2_MCP_TOOLS, candidate) ? candidate : null;
 }
 
 export function resolveHalC2McpToolDefinition(

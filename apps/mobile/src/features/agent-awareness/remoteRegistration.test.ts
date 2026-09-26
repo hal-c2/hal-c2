@@ -318,13 +318,13 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         label: "Julius's iPhone",
         iosMajorVersion: 18,
         appVersion: "1.0.0",
-        bundleId: "io.github.halc2.halc2.preview",
+        bundleId: "io.github.halc2.app.preview",
         apsEnvironment: resolveApsEnvironment("preview"),
         notificationsEnabled: true,
         preferences: {},
       }),
     ).toMatchObject({
-      bundleId: "io.github.halc2.halc2.preview",
+      bundleId: "io.github.halc2.app.preview",
       apsEnvironment: "production",
     });
   });
