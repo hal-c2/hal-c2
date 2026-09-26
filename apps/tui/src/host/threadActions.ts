@@ -148,8 +148,8 @@ export function createThreadActions(ctx: ThreadActionsContext) {
       hasWorkspacePath: workspacePath(thread) !== null,
     });
     const { columns, rows } = ctx.size();
+    // The menu acts on its own thread; the open thread stays as it was.
     const box = resolveContextMenuLayout(items, { x, y }, { width: columns, height: rows });
-    store.select({ kind: "thread", id: thread.id });
     menuRequests += 1;
     menu = {
       requestId: `thread-menu-${menuRequests}`,
