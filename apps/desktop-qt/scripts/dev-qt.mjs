@@ -231,7 +231,24 @@ if (options.configureOnly) process.exit(0);
 const root = resolveRoot();
 const url = options.url ?? pairWithDevServer(root);
 const binary = binaryPath();
-const binaryArgs = ["--url", url, ...shellArgs];
+// With no root the dev server keeps its files in the `hal-c2-dev` profile, so
+// the shell rices from that profile's config too unless the user chose a dir.
+const devShellArgs =
+  root === undefined && !shellArgs.includes("--config-dir")
+    ? [
+        "--config-dir",
+        NodePath.join(
+          resolveHalC2Dirs({
+            env: process.env,
+            homeDir: NodeOS.homedir(),
+            platform: process.platform,
+            profile: "hal-c2-dev",
+          }).config,
+          "shell",
+        ),
+      ]
+    : [];
+const binaryArgs = ["--url", url, ...devShellArgs, ...shellArgs];
 process.stderr.write(`[dev-qt] root ${root ?? "none (XDG directories)"}\n`);
 process.stderr.write(`[dev-qt] launching ${binary} ${binaryArgs.join(" ")}\n`);
 const child = NodeChildProcess.spawn(binary, binaryArgs, {

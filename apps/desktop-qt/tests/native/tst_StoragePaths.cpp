@@ -78,11 +78,13 @@ private slots:
         QString(),
         environment({{"APPDATA", "C:/Users/me/AppData/Roaming"},
                      {"LOCALAPPDATA", "C:/Users/me/AppData/Local"},
-                     {"XDG_CACHE_HOME", "relative"}}),
+                     {"XDG_CACHE_HOME", "relative"},
+                     {"XDG_DATA_HOME", "D:/xdg/data"}}),
         QStringLiteral("C:/Users/me"), StoragePlatform::Windows);
     QVERIFY(paths.root.isEmpty());
     QCOMPARE(paths.config, QStringLiteral("C:/Users/me/AppData/Roaming/hal-c2/config"));
-    QCOMPARE(paths.data, QStringLiteral("C:/Users/me/AppData/Local/hal-c2/data"));
+    // An XDG variable is a base for one kind, so nothing is nested under it.
+    QCOMPARE(paths.data, QStringLiteral("D:/xdg/data/hal-c2"));
     QCOMPARE(paths.state, QStringLiteral("C:/Users/me/AppData/Local/hal-c2/state"));
     QCOMPARE(paths.cache, QStringLiteral("C:/Users/me/AppData/Local/hal-c2/cache"));
   }

@@ -65,13 +65,16 @@ StoragePaths resolveStoragePaths(const QString& homeDirOverride,
     return value.isEmpty() ? fallback : value;
   };
   if (platform == StoragePlatform::Windows) {
-    // Data, state and cache share %LOCALAPPDATA%, so each kind gets its own folder.
+    // Data, state and cache share %LOCALAPPDATA%, so each kind gets its own folder
+    // there. An XDG variable is already a base for one kind and gets no nesting.
     const QString appData =
         base("APPDATA", join(userHome, QStringLiteral("AppData/Roaming")));
     const QString localAppData =
         base("LOCALAPPDATA", join(userHome, QStringLiteral("AppData/Local")));
     const auto kind = [&](const char* variable, const QString& fallback, const QString& name) {
-      return join(join(base(variable, fallback), kAppDir), name);
+      const QString configured = absoluteEnv(env, QString::fromLatin1(variable), platform);
+      return configured.isEmpty() ? join(join(fallback, kAppDir), name)
+                                  : join(configured, kAppDir);
     };
     return {QString(), kind("XDG_CONFIG_HOME", appData, QStringLiteral("config")),
             kind("XDG_DATA_HOME", localAppData, QStringLiteral("data")),

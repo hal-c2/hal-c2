@@ -171,7 +171,9 @@ Config dir: `<config>/shell/`, so `~/.config/hal-c2/shell/` by default on Linux
 and macOS (`XDG_CONFIG_HOME` moves it), `%APPDATA%\hal-c2\config\shell\` on
 Windows, and `<root>/config/shell/` under `--home-dir`, `HAL_C2_HOME` or a
 sandboxed dev run's `<worktree>/.hal-c2`; `--config-dir` overrides just this
-directory. The shell creates it at startup and watches it, so a shell the hosted
+directory. A dev run with no root (`dev-qt.mjs` outside a worktree) passes
+`--config-dir` for the `hal-c2-dev` profile so the shell rices from the same
+profile the dev server stores in. The shell creates it at startup and watches it, so a shell the hosted
 server migrates from an old `~/.hal-c2/shell/` or `~/.t3/shell/` loads without a
 restart.
 
