@@ -157,7 +157,8 @@ defmodule T3.Steps.SourceControl.ReviewDiffs do
     context
   end
 
-  step ~r/^"(?<file>[^"]+)" was (?<change>changed|added|deleted|renamed without changes|renamed and changed)$/,
+  # A path with an extension; mcp-server's `"<thread>" was deleted` takes the rest.
+  step ~r/^"(?<file>[^"]*\.[^"]*)" was (?<change>changed|added|deleted|renamed without changes|renamed and changed)$/,
        %{args: [path, change]} = context do
     old_path = String.replace_suffix(path, ".ts", "_old.ts")
 

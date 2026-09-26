@@ -1784,16 +1784,6 @@ defmodule T3.Steps.Threads do
     context
   end
 
-  step ~r/^"(?<other>[^"]+)" was not forked from "(?<source>[^"]+)"$/,
-       %{args: [other, source]} = context do
-    context = World.finished_turns(World.create_thread(context, other), other, ["other"])
-
-    refute World.thread(context, other)["lineage"]["parentThreadId"] ==
-             World.thread_id(context, source)
-
-    context
-  end
-
   step ~r/^the merge is rejected because "(?<other>[^"]+)" is not a fork of "(?<source>[^"]+)"$/,
        %{args: [other, source]} = context do
     assert {:error, message, _} = context.reply

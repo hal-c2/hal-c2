@@ -120,13 +120,21 @@ defmodule T3.Orchestration.Rollback do
     do: {:error, "Cannot rewind this Claude thread: no message was recorded for that turn."}
 
   # A provider plugin that cannot roll its conversation back starts the next turn in
-  # a fresh context, marked as no longer matching the provider's own history.
+  # a fresh context, marked as no longer matching the provider's own history. A
+  # provider that fails to drop the turns fails the whole rewind, named as such (the
+  # Node server's ProviderAdapterRollbackThreadError); nothing has changed yet.
   defp rewind(plan) do
     provider = T3.Plugins.declared(plan.driver)
 
-    if provider == nil or :rollback in (provider[:capabilities] || []),
-      do: Orchestration.runtime(plan.instance).rollback(plan.thread_id, plan),
-      else: {:ok, %{"nativeThreadRef" => nil, "contextDivergent" => true}}
+    if provider == nil or :rollback in (provider[:capabilities] || []) do
+      with {:error, reason} <-
+             Orchestration.runtime(plan.instance).rollback(plan.thread_id, plan),
+           do:
+             {:error,
+              "Failed to roll back #{plan.driver} provider thread #{plan.provider_thread["id"]}: #{reason}"}
+    else
+      {:ok, %{"nativeThreadRef" => nil, "contextDivergent" => true}}
+    end
   end
 
   defp restore(plan) do

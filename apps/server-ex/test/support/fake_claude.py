@@ -14,6 +14,10 @@ def send(msg):
     sys.stdout.flush()
 
 session = "fake-session-1"
+# FAKE_CLAUDE_ARGV_LOG names a file each start appends its arguments to, as one JSON list.
+if os.environ.get("FAKE_CLAUDE_ARGV_LOG"):
+    with open(os.environ["FAKE_CLAUDE_ARGV_LOG"], "a") as log:
+        log.write(json.dumps(sys.argv[1:]) + "\n")
 turn = 0
 session_rules = []  # Bash commands the session allows without asking
 resume_at = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--resume-session-at=")), None)
@@ -62,6 +66,10 @@ for line in sys.stdin:
     if os.environ.get("FAKE_CLAUDE_LOG"):
         with open(os.environ["FAKE_CLAUDE_LOG"], "a") as f:
             f.write(json.dumps({"text": text}) + "\n")
+    # FAKE_CLAUDE_INPUT_LOG names a file each user message's text is appended to, as JSON.
+    if os.environ.get("FAKE_CLAUDE_INPUT_LOG"):
+        with open(os.environ["FAKE_CLAUDE_INPUT_LOG"], "a") as log:
+            log.write(json.dumps(text) + "\n")
     send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku"})
     # "usage limit until EPOCH": the plan's five-hour window rejects the turn until then.
     if text.startswith("usage limit until "):

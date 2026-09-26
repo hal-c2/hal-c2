@@ -122,6 +122,35 @@ defmodule T3.Checkpoint do
   end
 
   @doc """
+  The checkpoints of the baselines before run `ordinal` (the workspace before the
+  thread's first run and just before this one), as the Node server records them when
+  the run completes: ready when `baseline/3` captured them, missing otherwise. They
+  belong to no run; rewinding to before the first run names ordinal 0.
+  """
+  def baselines(cwd, scope_id, ordinal, node_id, thread_id, at) do
+    repo = repo?(cwd)
+
+    for n <- Enum.uniq([0, max(ordinal - 1, 0)]) do
+      ref = ref(scope_id, n)
+
+      %{
+        "id" => checkpoint_id(scope_id, n),
+        "threadId" => thread_id,
+        "scopeId" => scope_id,
+        "runId" => nil,
+        "nodeId" => node_id,
+        "parentCheckpointId" => nil,
+        "ordinalWithinScope" => n,
+        "appRunOrdinal" => nil,
+        "ref" => ref,
+        "status" => if(repo and exists?(cwd, ref), do: "ready", else: "missing"),
+        "files" => [],
+        "capturedAt" => at
+      }
+    end
+  end
+
+  @doc """
   The patch between two turn counts of a thread (`orchestration.getTurnDiff`): turn 0
   is the workspace before the first run. `state` is the thread's `T3.StreamState`.
   """
@@ -152,7 +181,7 @@ defmodule T3.Checkpoint do
          {:from, from_ref} when is_binary(from_ref) <-
            {:from, if(from == 0, do: start_ref(state, cwd), else: ready[from]["ref"])},
          {:ok, diff} <-
-           git(
+           diff_git(
              cwd,
              ~w(diff --patch --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/) ++
                if(ignore_whitespace, do: ["--ignore-all-space"], else: []) ++
@@ -164,7 +193,18 @@ defmodule T3.Checkpoint do
       {:to, nil} -> {:error, "turn #{to} has no checkpoint"}
       {:scope, _} -> {:error, "the checkpoint's workspace is unknown"}
       {:from, _} -> {:error, "turn #{from} has no checkpoint"}
+      {:error, :too_large} -> {:error, "the diff is larger than #{@diff_max_bytes} bytes"}
       {:error, reason} -> {:error, "git diff failed: #{inspect(reason)}"}
+    end
+  end
+
+  # A patch past the cap fails the request rather than sending a cut-off patch.
+  defp diff_git(cwd, args, opts) do
+    case T3.Git.run(cwd, args, opts) do
+      {:ok, %{truncated: true}} -> {:error, :too_large}
+      {:ok, %{status: 0, out: out}} -> {:ok, out}
+      {:ok, %{status: status, err: err}} -> {:error, {status, String.trim(err)}}
+      error -> error
     end
   end
 

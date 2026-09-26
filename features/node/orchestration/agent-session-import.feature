@@ -92,6 +92,7 @@ Feature: Importing history from agents already used on this machine
     When it is imported
     Then its thread holds the first user prompt followed by the latest messages, 200 in all
 
+  # Neither server keeps a blank prompt (both skip it), so its title comes from the next one.
   @node
   Scenario Outline: Imported titles
     Given a session <title source>
@@ -102,7 +103,7 @@ Feature: Importing history from agents already used on this machine
       | title source                               | title                                      |
       | has a title Claude generated               | that title                                 |
       | has no title and a multi-line first prompt | the first line of the prompt, up to 100 characters |
-      | has no title and a blank first prompt      | "Imported thread"                          |
+      | has no title and a blank first prompt      | the first line of the next prompt          |
 
   @node
   Scenario: Imported threads use the session's model

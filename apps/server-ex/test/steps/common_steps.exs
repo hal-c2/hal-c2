@@ -1126,9 +1126,22 @@ defmodule T3.Steps.Common do
     World.working_thread(context, thread)
   end
 
+  # Shared by threads/archive-delete, node/orchestration/mcp-thread-tools and
+  # projections: the thread is archived (a running turn keeps running), or,
+  # after it was archived, still is.
   step "{string} is archived", %{args: [thread]} = context do
     id = World.thread_id(context, thread)
-    {:ok, _} = T3.Orchestration.dispatch(%{"type" => "thread.archive", "threadId" => id})
+
+    # As an outcome ("... is archived" after an archive) it only checks.
+    if World.row(context, thread)["archivedAt"] == nil do
+      {:ok, _} =
+        T3.Orchestration.dispatch(%{
+          "type" => "thread.archive",
+          "commandId" => "cmd-archive-#{System.unique_integer([:positive])}",
+          "threadId" => id
+        })
+    end
+
     World.await_row(id, &(&1["archivedAt"] != nil))
     context
   end
@@ -1265,16 +1278,6 @@ defmodule T3.Steps.Common do
     end
   end
 
-  # Forks the source's latest finished run into a thread with that name.
-  step "{string} is a fork of {string}", %{args: [fork, source]} = context do
-    context = World.fork_thread(context, source, fork)
-
-    assert World.thread(context, fork)["lineage"]["parentThreadId"] ==
-             World.thread_id(context, source)
-
-    context
-  end
-
   # Worktree setup of the thread in `context.current`; `context.worktree_path` is the
   # worktree it made.
   defp delete(context, name) do
@@ -1388,5 +1391,113 @@ defmodule T3.Steps.Common do
       })
 
     Map.put(context, :thread_id, thread_id)
+  end
+
+  # --- added by W7 ---
+
+  step "a node with a project {string} rooted at a git repository", %{args: [title]} = context do
+    World.create_project(context, title)
+  end
+
+  step "thread {string} exists in {string}", %{args: [thread, project]} = context do
+    World.create_thread(context, thread, project)
+  end
+
+  # Shared by node/orchestration/thread-organization.feature (setup: the user settled
+  # it) and auto-settle.feature (outcome after a sweep, flagged by `:settle_swept`).
+  step "thread {string} is settled", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+
+    unless context[:settle_swept] do
+      {{:ok, _}, _} = World.dispatch(context, %{"type" => "thread.settle", "threadId" => id})
+    end
+
+    World.await_row(id, &(&1["settledOverride"] == "settled"))
+    context
+  end
+
+  step "a client unsettles {string}", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{"type" => "thread.unsettle", "threadId" => id})
+
+    World.await_row(id, &(&1["settledOverride"] == "active"))
+    Map.put(context, :settle_swept, false)
+  end
+
+  # Shared with other node/orchestration features; the step before it leaves the
+  # RPC reply in `context.reply` as `{:error, message, detail}`.
+  step "it fails with {string}", %{args: [message]} = context do
+    assert {:error, ^message, _detail} = context.reply
+    context
+  end
+
+  # Refusals of commands and RPCs alike: the step before it leaves the reply in
+  # `context.reply`, `{:error, message, detail}` from a socket or `{:error, message}`
+  # from `T3.Orchestration.dispatch/1`.
+  # Ids in the refusal are compared by the names the scenario gives them (`World.named/2`).
+  step "the command fails with {string}", %{args: [message]} = context do
+    case context.reply do
+      {:error, actual, _detail} -> assert World.named(context, actual) == message
+      {:error, actual} -> assert World.named(context, actual) == message
+      other -> flunk("expected a refusal, got #{inspect(other)}")
+    end
+
+    context
+  end
+
+  step "the user sends {string} to {string}", %{args: [text, thread]} = context do
+    context |> World.send_turn(thread, text) |> Map.put(:run_title, thread)
+  end
+
+  # The transcript a client shows (`T3.Projection.Timeline`), in `context.timeline`.
+  step "a client reads the timeline of {string}", %{args: [thread]} = context do
+    resolve = fn id -> T3.Streams.Server.state(T3.Streams.ensure(id)) end
+
+    Map.put(
+      context,
+      :timeline,
+      T3.Projection.Timeline.visible_items(World.state(context, thread), resolve)
+    )
+  end
+
+  # Also used by node/orchestration/threads.feature.
+  step "thread {string} is titled {string}", %{args: [thread, title]} = context do
+    assert World.thread(context, thread)["title"] == title
+    context
+  end
+
+  # Shared with node/orchestration/queue-and-steering.feature and runs.feature: some
+  # run of the scenario's thread (`context.thread`) for message `text` has started
+  # (it may have finished already) and is out of the queue.
+  step "a run for {string} starts", %{args: [text]} = context do
+    World.await_state(context, context.thread, fn state ->
+      messages = T3.StreamState.get(state, "message")
+
+      Enum.any?(T3.StreamState.list(state, "run"), fn run ->
+        run["status"] in ~w(starting running waiting completed) and
+          run["queuePosition"] == nil and messages[run["userMessageId"]]["text"] == text
+      end)
+    end)
+
+    context
+  end
+
+  # Shared with node/orchestration/runs.feature: the scenario's run (`context.running`),
+  # else the latest run of `context.thread`, ends with `status`.
+  step ~r/^the run is (?<status>failed|interrupted)$/, %{args: [status]} = context do
+    World.await_state(context, context.thread, fn state ->
+      runs = T3.StreamState.list(state, "run")
+
+      run =
+        if context[:running],
+          do: Enum.find(runs, &(&1["id"] == context.running)),
+          else: Enum.max_by(runs, & &1["ordinal"], fn -> nil end)
+
+      run["status"] == status
+    end)
+
+    context
   end
 end

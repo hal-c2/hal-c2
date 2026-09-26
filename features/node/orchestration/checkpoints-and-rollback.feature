@@ -126,7 +126,8 @@ Feature: Checkpoints, diffs and rewinding
   Scenario: Restoring files removes files the checkpoint lacks but keeps ignored files
     Given run 2 of "t1" created "new.txt" and the ignored "build/out.js"
     When the user rewinds "t1" to run 1
-    Then "new.txt" is gone
+    # "the file" keeps this step apart from the theme editor's `"<name>" is gone`.
+    Then the file "new.txt" is gone
     And "build/out.js" is still there
     And nothing is left staged
 
@@ -178,7 +179,7 @@ Feature: Checkpoints, diffs and rewinding
     When the user rewinds "t1" to run 1
     Then the provider is not asked to drop any turns
 
-  @node @backlog @plugin-codex
+  @node @plugin-codex
   Scenario: A Codex rollback whose history is paginated is reported as a rollback failure
     Given a Codex thread whose history needs more than one page to rewind
     When the user rewinds it to an early run

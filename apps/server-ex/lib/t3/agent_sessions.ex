@@ -654,12 +654,12 @@ defmodule T3.AgentSessions do
          acc,
          fallback
        ) do
-    case p["message"] do
-      text when is_binary(text) and text != "" ->
-        %{add_message(acc, "user", text, r["timestamp"], fallback) | codex_events: true}
-
-      _ ->
-        acc
+    # A blank prompt is no prompt, as for every other record.
+    with text when is_binary(text) <- p["message"],
+         false <- String.trim(text) == "" do
+      %{add_message(acc, "user", text, r["timestamp"], fallback) | codex_events: true}
+    else
+      _ -> acc
     end
   end
 

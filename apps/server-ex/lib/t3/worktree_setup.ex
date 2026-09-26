@@ -150,13 +150,14 @@ defmodule T3.WorktreeSetup do
               state
 
             {:shutdown, {:failed, message}} ->
-              Orchestration.fail_prepared(thread_id, setup.run_id, "failed")
+              Orchestration.fail_prepared(thread_id, setup.run_id, "failed", failure(message))
               update(state, thread_id, &finish(&1, "failed", message))
 
             other ->
               Logger.warning("worktree setup for #{thread_id} crashed: #{inspect(other)}")
-              Orchestration.fail_prepared(thread_id, setup.run_id, "failed")
-              update(state, thread_id, &finish(&1, "failed", "Worktree setup failed."))
+              message = "Worktree setup failed."
+              Orchestration.fail_prepared(thread_id, setup.run_id, "failed", failure(message))
+              update(state, thread_id, &finish(&1, "failed", message))
           end
 
         {:noreply, state}
@@ -170,6 +171,15 @@ defmodule T3.WorktreeSetup do
     watchers = Map.new(state.watchers, fn {id, pids} -> {id, MapSet.delete(pids, pid)} end)
     {:noreply, %{state | watchers: watchers}}
   end
+
+  # How a preparation failure is recorded on the run, as the Node server words it.
+  defp failure(message),
+    do: %{
+      "class" => "validation_error",
+      "message" => message,
+      "code" => nil,
+      "retryable" => false
+    }
 
   defp update(state, thread_id, fun) do
     case state.setups[thread_id] do
@@ -228,6 +238,7 @@ defmodule T3.WorktreeSetup do
     root = project["workspaceRoot"]
     set = fn fun -> GenServer.call(server, {:update, thread_id, fun}) end
     status = fn id, status, extra -> set.(&set_stage(&1, id, status, extra)) end
+    Orchestration.progress_prepared(thread_id, run_id, "worktree")
 
     # Fetch first when asked and the remote has the base branch.
     start_ref =
@@ -281,6 +292,7 @@ defmodule T3.WorktreeSetup do
     if branch == temporary, do: rename_later(thread_id, path, branch, text)
 
     setup = setup_script(project)
+    Orchestration.progress_prepared(thread_id, run_id, "setup")
 
     wait =
       case setup do

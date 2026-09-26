@@ -5,6 +5,9 @@ defmodule T3.Mcp.Tools.Threads do
   forks and merges, attachments, and what providers a new thread can use.
   """
 
+  # Threads one create_threads call may hold.
+  @max_batch_threads 20
+
   import T3.Mcp.Tools,
     only: [
       command_id: 0,
@@ -88,7 +91,8 @@ defmodule T3.Mcp.Tools.Threads do
 
   # Ordinary top-level threads beside the caller's, in its workspace.
   def run("create_threads", args, %{row: me} = caller) do
-    with :ok <- live(caller) do
+    with :ok <- live(caller),
+         :ok <- batch_size(args["threads"]) do
       parent = thread(me["id"])
       providers = T3.Environment.providers()
       key = args["clientRequestId"] || T3.Environment.uuid4()
@@ -326,7 +330,7 @@ defmodule T3.Mcp.Tools.Threads do
          "threadManagement" => true,
          "incrementalThreadRead" => true,
          "scheduledTasks" => true,
-         "maxBatchThreads" => 20
+         "maxBatchThreads" => @max_batch_threads
        }
      }}
   end
@@ -563,4 +567,14 @@ defmodule T3.Mcp.Tools.Threads do
       end
     end)
   end
+
+  # The input schema's `minItems`/`maxItems`, which the TS server validates.
+  defp batch_size(threads)
+       when is_list(threads) and threads != [] and length(threads) <= @max_batch_threads,
+       do: :ok
+
+  defp batch_size(_threads),
+    do:
+      {:error, "invalid_request",
+       "threads must hold between 1 and #{@max_batch_threads} threads."}
 end

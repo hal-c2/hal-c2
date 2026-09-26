@@ -5,6 +5,10 @@ defmodule T3.Orchestration.Recovery do
   interrupted, with its items, prompts, and provider thread; otherwise the thread
   would stay "running" and refuse its next message.
 
+  A run the node accepted but never handed to its provider goes back to the
+  front of the queue instead, and `continue/0` starts it once, as the Node
+  server's effect outbox replays pending provider work.
+
   Only threads whose sidebar row shows an active run are opened.
   """
 
@@ -41,6 +45,11 @@ defmodule T3.Orchestration.Recovery do
       for({thread_id, %{} = run} <- settled, do: {thread_id, run})
     )
 
+    :persistent_term.put(
+      {__MODULE__, :requeued},
+      for({thread_id, :requeued} <- settled, do: thread_id)
+    )
+
     if settled != [], do: Logger.info("settled interrupted turns in #{length(settled)} threads")
     Enum.map(settled, &elem(&1, 0))
   end
@@ -52,8 +61,17 @@ defmodule T3.Orchestration.Recovery do
   def settle(thread_id) do
     T3.Streams.transact(thread_id, :thread, fn state ->
       changes = changes(state, Entities.now())
-      {changes, {length(changes), continuable(state)}}
+      requeued? = Enum.any?(StreamState.list(state, "run"), &unstarted?(state, &1))
+      {changes, {length(changes), if(requeued?, do: :requeued, else: continuable(state))}}
     end)
+  end
+
+  # Accepted, but the provider never got the turn: no attempt reached it.
+  defp unstarted?(state, run) do
+    attempt = StreamState.get(state, "run-attempt")[run["activeAttemptId"]]
+
+    run["status"] == "starting" and run["startedAt"] == nil and
+      (attempt == nil or (attempt["status"] == "pending" and attempt["providerTurnId"] == nil))
   end
 
   @doc """
@@ -64,6 +82,10 @@ defmodule T3.Orchestration.Recovery do
   def continue do
     runs = :persistent_term.get({__MODULE__, :continuable}, [])
     :persistent_term.erase({__MODULE__, :continuable})
+    requeued = :persistent_term.get({__MODULE__, :requeued}, [])
+    :persistent_term.erase({__MODULE__, :requeued})
+
+    for thread_id <- requeued, do: T3.Orchestration.start_next(thread_id)
 
     for {thread_id, run} <- runs,
         {"thread", thread} <- [T3.Shell.row(node(), thread_id)],
@@ -104,6 +126,15 @@ defmodule T3.Orchestration.Recovery do
     end
   end
 
+  defp requeue(run),
+    do:
+      Map.merge(run, %{
+        "status" => "queued",
+        "queuePosition" => 0,
+        "queueHeld" => false,
+        "activeAttemptId" => nil
+      })
+
   defp changes(state, at) do
     done = %{"status" => "interrupted", "completedAt" => at}
 
@@ -113,6 +144,8 @@ defmodule T3.Orchestration.Recovery do
              cond do
                # Queued messages wait for the user to resume the queue.
                run["status"] == "queued" -> Map.put(run, "queueHeld", true)
+               # Never reached its provider: it goes first and starts again.
+               unstarted?(state, run) -> requeue(run)
                run["status"] in @active_runs -> Map.merge(run, done)
                true -> nil
              end

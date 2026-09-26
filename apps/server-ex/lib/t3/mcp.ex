@@ -7,7 +7,9 @@ defmodule T3.Mcp do
   It is served at `POST /mcp` on the node, as JSON-RPC over HTTP (MCP's
   streamable HTTP transport, answered with plain JSON). Each thread has its own
   bearer credential (`server/2`), given to that thread's agent, so every tool call
-  acts as the thread that made it. Credentials last as long as the node runs.
+  acts as the thread that made it. A credential lapses after a day without MCP
+  traffic while its thread has no run in progress (`:mcp_liveness_ms`), and is
+  revoked when the thread's provider session stops (`revoke/1`).
 
   A project can turn the server off for its threads (`enableAgentBrowserAccess`
   in its settings overrides).
@@ -20,6 +22,7 @@ defmodule T3.Mcp do
 
   @table __MODULE__.Credentials
   @protocol "2025-06-18"
+  @liveness_ms 24 * 60 * 60 * 1_000
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -29,13 +32,21 @@ defmodule T3.Mcp do
   """
   def server(thread_id, instance) do
     token =
-      case :ets.match(@table, {:"$1", %{thread_id: thread_id, instance: instance}}) do
+      case :ets.match(@table, {:"$1", %{thread_id: thread_id, instance: instance}, :_}) do
         [[token] | _] -> token
         [] -> GenServer.call(__MODULE__, {:credential, thread_id, instance})
       end
 
     port = Application.get_env(:t3, :port, 3780)
     %{url: "http://127.0.0.1:#{port}/mcp", authorization: "Bearer " <> token}
+  end
+
+  @doc "Revokes every credential of `thread_id`, as its provider session stops."
+  def revoke(thread_id) do
+    if :ets.whereis(@table) != :undefined,
+      do: :ets.match_delete(@table, {:_, %{thread_id: thread_id, instance: :_}, :_})
+
+    :ok
   end
 
   @doc """
@@ -75,7 +86,8 @@ defmodule T3.Mcp do
   """
   def handle(authorization, body) do
     with "Bearer " <> token <- authorization || :missing,
-         [{_, caller}] <- :ets.lookup(@table, token) do
+         [{_, caller, last_alive}] <- :ets.lookup(@table, token),
+         :ok <- alive(token, caller, last_alive) do
       case JSON.decode(body) do
         {:ok, %{"method" => method} = request} -> answer(request, method, caller)
         _ -> {400, rpc_error(nil, -32700, "Parse error")}
@@ -88,6 +100,28 @@ defmodule T3.Mcp do
            "message" => "A valid provider-scoped MCP bearer credential is required."
          }}
     end
+  end
+
+  # A credential stays alive while its agent calls in or its thread has a run in
+  # progress (the Node server touches it on every provider turn); an idle one lapses.
+  defp alive(token, caller, last_alive) do
+    now = System.monotonic_time(:millisecond)
+
+    if now - last_alive <= Application.get_env(:t3, :mcp_liveness_ms, @liveness_ms) or
+         running?(caller.thread_id) do
+      :ets.update_element(@table, token, {3, now})
+      :ok
+    else
+      :ets.delete(@table, token)
+      :expired
+    end
+  end
+
+  defp running?(thread_id) do
+    T3.Streams.ensure(thread_id)
+    |> T3.Streams.Server.state()
+    |> T3.StreamState.list("run")
+    |> Enum.any?(&(&1["status"] in ~w(preparing starting running waiting)))
   end
 
   # Notifications have no id and get no answer.
@@ -167,13 +201,13 @@ defmodule T3.Mcp do
     caller = %{thread_id: thread_id, instance: instance}
 
     token =
-      case :ets.match(@table, {:"$1", caller}) do
+      case :ets.match(@table, {:"$1", caller, :_}) do
         [[token] | _] ->
           token
 
         [] ->
           token = Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
-          :ets.insert(@table, {token, caller})
+          :ets.insert(@table, {token, caller, System.monotonic_time(:millisecond)})
           token
       end
 

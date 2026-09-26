@@ -1005,7 +1005,10 @@ defmodule T3.Steps.Plugins.AgentPlugins do
   end
 
   step "their diffs and checkpoints can still be viewed", context do
-    assert [%{"status" => "ready"}] = StreamState.list(state(context.thread_id), "checkpoint")
+    # The run's own checkpoint, next to the baseline (ordinal 0) it diffs against.
+    checkpoints = StreamState.list(state(context.thread_id), "checkpoint")
+    assert Enum.all?(checkpoints, &(&1["status"] == "ready"))
+    assert Enum.any?(checkpoints, &(&1["appRunOrdinal"] == 1))
 
     assert {:ok, %{"diff" => diff}} =
              T3.Orchestration.handle("orchestration.getTurnDiff", %{
@@ -1297,7 +1300,12 @@ defmodule T3.Steps.Plugins.AgentPlugins do
   end
 
   step "the revert fails with the plugin's error", context do
-    assert context.revert == {:error, "acme could not rewind its conversation"}
+    # Named as the rollback of the plugin's provider thread, with the plugin's reason.
+    assert {:error, message} = context.revert
+
+    assert message =~
+             ~r/^Failed to roll back acme provider thread .+: acme could not rewind its conversation$/
+
     context
   end
 

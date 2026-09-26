@@ -20,6 +20,8 @@ defmodule T3.Orchestration do
   alias T3.Projection.{JS, PullRequests}
 
   @active_statuses ~w(preparing starting running waiting)
+  # The input of a prepared run's workspace preparation item, as the Node server names it.
+  @preparing_workspace "Preparing workspace"
 
   @thread_updates ~w(thread.archive thread.unarchive thread.delete thread.settle thread.unsettle
                      thread.snooze thread.unsnooze thread.pin thread.unpin thread.pin.reorder
@@ -29,7 +31,7 @@ defmodule T3.Orchestration do
 
   @doc "Handles one client RPC by method name; see `packages/contracts/src/orchestrationV2.ts`."
   @spec handle(String.t(), map) :: {:ok, term} | {:error, String.t()}
-  def handle("orchestration.dispatchCommand", command), do: dispatch(command)
+  def handle("orchestration.dispatchCommand", command), do: dispatch_once(command)
   def handle("orchestration.launchThread", input), do: launch_thread(input)
   def handle("orchestration.searchThreads", input), do: T3.Search.threads(input)
   def handle("orchestration.getWorkflowScript", input), do: T3.WorkflowScripts.read(input)
@@ -88,6 +90,39 @@ defmodule T3.Orchestration do
     state = T3.Streams.Server.state(T3.Streams.ensure(thread_id))
     T3.Checkpoint.turn_diff(state, thread_id, from, to, input["ignoreWhitespace"] != false)
   end
+
+  # A client's command id is answered once: repeating it, as a client retrying
+  # after a reconnect does, returns the first outcome without deciding again (the
+  # Node server's CommandReceiptStore). Receipts live in the store's meta table.
+  defp dispatch_once(%{"commandId" => id} = command) when is_binary(id) do
+    key = "command-receipt:" <> id
+
+    case T3.Store.meta(T3.Store.path(), key) do
+      nil ->
+        outcome = dispatch(command)
+
+        case outcome do
+          {:ok, %{} = result} ->
+            T3.Store.put_meta(key, JSON.encode!(%{"ok" => result}))
+
+          {:error, message} when is_binary(message) ->
+            T3.Store.put_meta(key, JSON.encode!(%{"error" => message}))
+
+          _ ->
+            :ok
+        end
+
+        outcome
+
+      receipt ->
+        case JSON.decode!(receipt) do
+          %{"ok" => result} -> {:ok, result}
+          %{"error" => message} -> {:error, message}
+        end
+    end
+  end
+
+  defp dispatch_once(command), do: dispatch(command)
 
   @spec dispatch(map) :: {:ok, map} | {:error, String.t()}
   def dispatch(%{"type" => "message.dispatch", "threadId" => thread_id} = command) do
@@ -148,7 +183,7 @@ defmodule T3.Orchestration do
       end)
 
     with :ok <- detached do
-      stop_runtimes(thread_id)
+      stop_session(thread_id)
       {:ok, %{"sequence" => sequence(thread_id)}}
     end
   end
@@ -410,6 +445,56 @@ defmodule T3.Orchestration do
   def dispatch(%{"type" => "thread.user-input.dismiss", "threadId" => thread_id} = command),
     do: respond(thread_id, command["requestId"], %{"dismissed" => true})
 
+  # Delegated tasks (`T3.Orchestration.Delegation`).
+  def dispatch(%{"type" => "delegated_task." <> _, "parentThreadId" => thread_id} = command) do
+    result =
+      case command["type"] do
+        "delegated_task.request" ->
+          T3.Orchestration.Delegation.request(command)
+
+        "delegated_task.wake-policy" ->
+          T3.Orchestration.Delegation.wake_policy(command)
+
+        "delegated_task.completion-delivery." <> _ ->
+          T3.Orchestration.Delegation.resolve_delivery(command)
+
+        type ->
+          {:error, "#{type} is not supported by this node yet"}
+      end
+
+    with :ok <- result, do: {:ok, %{"sequence" => sequence(thread_id)}}
+  end
+
+  def dispatch(%{"type" => "notification.delivery.accept", "threadId" => thread_id} = command) do
+    with :ok <- T3.Orchestration.Delegation.accept_delivery(command),
+         do: {:ok, %{"sequence" => sequence(thread_id)}}
+  end
+
+  # Prepared runs: a workspace being made ready before the run's first turn.
+  def dispatch(
+        %{"type" => "prepared-run." <> action, "threadId" => thread_id, "runId" => run_id} =
+          command
+      ) do
+    result =
+      case action do
+        "progress" ->
+          progress_prepared(thread_id, run_id, command["phase"])
+
+        "fail" ->
+          fail_prepared(thread_id, run_id, "failed", command["failure"])
+
+        "release" ->
+          with {:error, _} <- release_prepared(thread_id, run_id),
+               do: {:error, not_preparing(run_id)}
+
+        _ ->
+          {:error, "prepared-run.#{action} is not supported by this node yet"}
+      end
+
+    with ok when ok in [:ok, {:ok, :ok}] <- result,
+         do: {:ok, %{"sequence" => sequence(thread_id)}}
+  end
+
   def dispatch(%{"type" => type}), do: {:error, "#{type} is not supported by this node yet"}
 
   defp response(thread_id, %{"answers" => %{} = answers} = command) do
@@ -490,7 +575,7 @@ defmodule T3.Orchestration do
         end
       end)
 
-    if released == :ok, do: stop_runtimes(thread_id)
+    if released == :ok, do: stop_session(thread_id)
     released
   end
 
@@ -507,6 +592,14 @@ defmodule T3.Orchestration do
     end
 
     :ok
+  end
+
+  # The stopped session's agent loses its T3 tools; the next session gets new ones.
+  # A deleted thread only stops its runtimes: its agent's credential still reaches
+  # the tools, which answer that the calling thread is gone.
+  defp stop_session(thread_id) do
+    stop_runtimes(thread_id)
+    T3.Mcp.revoke(thread_id)
   end
 
   # The built-in runtimes, and the plugin adapters that can take a runtime call.
@@ -648,10 +741,12 @@ defmodule T3.Orchestration do
             "modelSelection" => input["modelSelection"]
           })
 
+        # The first message is a command of its own (`<commandId>:initial-message`),
+        # answered once like any client command.
         launched =
           if strategy["type"] == "worktree" and created in [:created, :reused],
             do: launch_in_worktree(thread_id, thread, strategy, command),
-            else: dispatch(command)
+            else: dispatch_once(command)
 
         with {:ok, _} <- launched, do: {:ok, result}
     end
@@ -763,7 +858,10 @@ defmodule T3.Orchestration do
     end
   end
 
-  @doc "Starts the run a prepared workspace was waiting for."
+  @doc """
+  Starts the run a prepared workspace was waiting for (`prepared-run.release`),
+  completing its preparation item.
+  """
   def release_prepared(thread_id, run_id) do
     decide = fn state ->
       thread = StreamState.get(state, "thread")[thread_id]
@@ -771,7 +869,17 @@ defmodule T3.Orchestration do
 
       with %{"status" => "preparing"} = run <- StreamState.get(state, "run")[run_id],
            %{} = message <- StreamState.get(state, "message")[run["userMessageId"]] do
-        new_run(state, thread, runs, message, run)
+        {changes, result} = new_run(state, thread, runs, message, run)
+
+        done =
+          preparation(state, run_id, %{
+            "status" => "completed",
+            "title" => "Workspace ready",
+            "output" => "Workspace preparation completed.",
+            "exitCode" => 0
+          })
+
+        {changes ++ Enum.reject([done], &is_nil/1), result}
       else
         _ -> {[], {:error, "the run is not waiting for its workspace"}}
       end
@@ -806,22 +914,107 @@ defmodule T3.Orchestration do
     end
   end
 
-  @doc "Ends a run whose workspace could not be prepared (`failed` or `cancelled`)."
-  def fail_prepared(thread_id, run_id, status) do
+  @doc """
+  Shows which phase a prepared run's workspace is in (`prepared-run.progress`):
+  `"worktree"` or `"setup"`.
+  """
+  def progress_prepared(thread_id, run_id, phase) do
+    title = if phase == "worktree", do: "Preparing worktree", else: "Starting setup script"
+
     T3.Streams.transact(thread_id, :thread, fn state ->
-      change =
-        upsert(state, "run", run_id, fn
-          %{"status" => "preparing"} = run ->
-            Map.merge(run, %{"status" => status, "completedAt" => Entities.now()})
+      case StreamState.get(state, "run")[run_id] do
+        %{"status" => "preparing"} ->
+          {Enum.reject([preparation(state, run_id, %{"title" => title})], &is_nil/1), :ok}
 
-          run ->
-            run
-        end)
-
-      {Enum.reject([change], &is_nil/1), :ok}
+        _ ->
+          {[], {:error, not_preparing(run_id)}}
+      end
     end)
+  end
+
+  @doc """
+  Ends a run whose workspace could not be prepared (`failed` or `cancelled`). A
+  failure (`OrchestrationV2ProviderFailure`) is shown on the preparation item and as
+  an error item, as `prepared-run.fail` does.
+  """
+  def fail_prepared(thread_id, run_id, status, failure \\ nil) do
+    result =
+      T3.Streams.transact(thread_id, :thread, fn state ->
+        case StreamState.get(state, "run")[run_id] do
+          %{"status" => "preparing"} = run ->
+            at = Entities.now()
+
+            ended =
+              upsert(state, "run", run_id, fn _ ->
+                Map.merge(run, %{"status" => status, "completedAt" => at})
+              end)
+
+            item =
+              case failure do
+                %{"message" => message} ->
+                  %{
+                    "status" => "failed",
+                    "title" => "Workspace preparation failed",
+                    "output" => message,
+                    "exitCode" => 1
+                  }
+
+                nil ->
+                  %{"status" => status}
+              end
+
+            error =
+              if failure do
+                ids = %{
+                  thread: thread_id,
+                  run: run_id,
+                  root_node: run["rootNodeId"],
+                  provider_thread: run["providerThreadId"]
+                }
+
+                id = "turn-item:workspace-preparation-failure:#{run_id}"
+
+                create(
+                  "turn-item",
+                  id,
+                  Entities.turn_item(ids, id, "error", next_ordinal(state), "failed", at, %{
+                    "title" => "Workspace preparation failed",
+                    "failure" => failure
+                  })
+                )
+              end
+
+            {Enum.reject([ended, preparation(state, run_id, item), error], &is_nil/1), :ok}
+
+          _ ->
+            {[], {:error, not_preparing(run_id)}}
+        end
+      end)
 
     start_next(thread_id)
+    result
+  end
+
+  defp not_preparing(run_id), do: "Run #{run_id} is not awaiting workspace preparation."
+
+  # Updates a prepared run's "Preparing workspace" item, when it has one.
+  defp preparation(state, run_id, fields) do
+    id = preparation_item_id(run_id)
+    at = Entities.now()
+
+    if StreamState.get(state, "turn-item")[id] do
+      ended =
+        if fields["status"] in ~w(completed failed cancelled),
+          do: %{"completedAt" => at},
+          else: %{}
+
+      upsert(
+        state,
+        "turn-item",
+        id,
+        &Map.merge(&1, Map.merge(fields, Map.put(ended, "updatedAt", at)))
+      )
+    end
   end
 
   # The provider driver for an instance: its own id for ACP agents.
@@ -975,6 +1168,14 @@ defmodule T3.Orchestration do
 
   defp with_context(entity, _source), do: entity
 
+  # A message's composer context, the thread whose agent sent it (MCP), and, for a
+  # delegated task's result, which task it delivers (`T3.Orchestration.Delegation`).
+  defp with_message_fields(message, command) do
+    message
+    |> with_context(command)
+    |> Map.merge(Map.take(command, ["senderThreadId", "delegatedCompletion"]))
+  end
+
   # Uploads claimed into the thread, with the context records that name them.
   defp claimed(command, attachments) do
     command
@@ -1017,7 +1218,7 @@ defmodule T3.Orchestration do
               "createdBy" => command["createdBy"] || "user",
               "creationSource" => command["creationSource"] || "web"
             })
-            |> with_context(command)
+            |> with_message_fields(command)
 
           {[create("message", message_id, message)] ++
              steer_changes(state, run, message_id, message, "steer", at), :ok}
@@ -1579,14 +1780,66 @@ defmodule T3.Orchestration do
     end
   end
 
-  # A message whose run waits for its workspace (`release_prepared/2`).
+  # A message whose run waits for its workspace (`release_prepared/2`). As the Node
+  # server shows it: the user's message, then a "Preparing workspace" item that the
+  # preparation's progress, release, or failure updates.
   defp prepare_run(state, thread, runs, command) do
     {changes, {:ok, :queued}} = queue_run(state, thread, runs, command, nil)
 
     [{"run", run_id, %{"s" => run}} | rest] = changes
     run = Map.merge(run, %{"status" => "preparing", "queuePosition" => nil})
-    {[{"run", run_id, %{"s" => run}} | rest], {:ok, {:prepared, run_id}}}
+    at = run["requestedAt"]
+    message_id = run["userMessageId"]
+    ordinal = next_ordinal(state)
+
+    ids = %{
+      thread: thread["id"],
+      run: run_id,
+      root_node: nil,
+      provider_thread: run["providerThreadId"]
+    }
+
+    user_item =
+      Entities.turn_item(
+        ids,
+        "turn-item:user:#{message_id}",
+        "user_message",
+        ordinal,
+        "completed",
+        at,
+        %{
+          "createdBy" => command["createdBy"] || "user",
+          "creationSource" => command["creationSource"] || "web",
+          "messageId" => message_id,
+          "inputIntent" => "turn_start",
+          "text" => command["text"] || "",
+          "attachments" => command["attachments"] || []
+        }
+      )
+      |> with_context(command)
+
+    preparation =
+      Entities.turn_item(
+        ids,
+        preparation_item_id(run_id),
+        "command_execution",
+        ordinal + 1,
+        "running",
+        at,
+        %{
+          "title" => @preparing_workspace,
+          "input" => @preparing_workspace
+        }
+      )
+
+    {[{"run", run_id, %{"s" => run}} | rest] ++
+       [
+         create("turn-item", user_item["id"], user_item),
+         create("turn-item", preparation["id"], preparation)
+       ], {:ok, {:prepared, run_id}}}
   end
+
+  defp preparation_item_id(run_id), do: "turn-item:workspace-preparation:#{run_id}"
 
   # A message for later: its run waits in the queue, with the message itself. A
   # restart puts it first and asks for the active run to be interrupted.
@@ -1622,7 +1875,7 @@ defmodule T3.Orchestration do
         "createdBy" => command["createdBy"] || "user",
         "creationSource" => command["creationSource"] || "web"
       })
-      |> with_context(command)
+      |> with_message_fields(command)
 
     # A restart's message goes first; the others move down one.
     shifted =
@@ -1785,7 +2038,7 @@ defmodule T3.Orchestration do
                   "createdBy" => command["createdBy"] || "user",
                   "creationSource" => command["creationSource"] || "web"
                 })
-                |> with_context(command)
+                |> with_message_fields(command)
               )
           ),
           create(
@@ -1795,7 +2048,10 @@ defmodule T3.Orchestration do
               ids,
               "turn-item:user:#{message_id}",
               "user_message",
-              next_ordinal(state),
+              # A prepared run's message was shown while its workspace was prepared.
+              (StreamState.get(state, "turn-item")["turn-item:user:#{message_id}"] || %{})[
+                "ordinal"
+              ] || next_ordinal(state),
               "completed",
               at,
               %{

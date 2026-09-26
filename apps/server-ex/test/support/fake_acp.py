@@ -105,6 +105,10 @@ for line in sys.stdin:
     elif method == "session/prompt":
         sid = params["sessionId"]
         text = params["prompt"][0]["text"]
+        # FAKE_ACP_INPUT_LOG names a file each prompt's text is appended to, as JSON.
+        if os.environ.get("FAKE_ACP_INPUT_LOG"):
+            with open(os.environ["FAKE_ACP_INPUT_LOG"], "a") as log:
+                log.write(json.dumps(text) + "\n")
         update(sid, {"sessionUpdate": "agent_thought_chunk", "messageId": "th-1", "content": {"type": "text", "text": "Let me look."}})
         update(sid, {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "bash", "kind": "execute", "status": "pending", "rawInput": {}})
         if "Return a JSON object with key: branch." in text:

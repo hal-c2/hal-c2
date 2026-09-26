@@ -18,7 +18,7 @@ defmodule T3.Orchestration.Fork do
   @spec fork(map) :: :ok | {:error, String.t()}
   def fork(%{"sourceThreadId" => source_id, "targetThreadId" => target_id} = command) do
     source = state(source_id)
-    thread = StreamState.get(source, "thread")[source_id]
+    thread = live(source, source_id)
 
     with %{} <- thread || {:error, "Thread #{source_id} was not found."},
          {:ok, run} <- source_run(source, command["sourcePoint"]),
@@ -69,7 +69,7 @@ defmodule T3.Orchestration.Fork do
   @spec merge_back(map) :: :ok | {:error, String.t()}
   def merge_back(%{"sourceThreadId" => fork_id, "targetThreadId" => parent_id} = command) do
     fork = state(fork_id)
-    thread = StreamState.get(fork, "thread")[fork_id]
+    thread = live(fork, fork_id)
 
     forked =
       fork
@@ -81,22 +81,27 @@ defmodule T3.Orchestration.Fork do
            (get_in(thread, ["lineage", "parentThreadId"]) == parent_id and forked != nil) ||
              {:error, "Thread #{fork_id} is not a fork of #{parent_id}."},
          {:ok, run} <- source_run(fork, command["sourcePoint"]),
-         :ok <- completed(run, ["completed", "waiting"]) do
+         :ok <- mergeable(fork, run) do
       at = command["createdAt"] || Entities.now()
 
-      transfer =
-        transfer(
-          command,
-          "merge_back",
-          fork_id,
-          parent_id,
-          point(fork, run),
-          forked["sourcePoint"],
-          run,
-          at
-        )
-
       T3.Streams.transact(parent_id, :thread, fn state ->
+        # The parent has seen the fork's work up to the last merge it consumed.
+        base =
+          state
+          |> StreamState.list("context-transfer")
+          |> Enum.filter(
+            &(&1["type"] == "merge_back" and &1["status"] == "consumed" and
+                &1["sourceThreadId"] == fork_id)
+          )
+          |> Enum.max_by(& &1["consumedAt"], fn -> nil end)
+          |> case do
+            nil -> forked["sourcePoint"]
+            consumed -> consumed["sourcePoint"]
+          end
+
+        transfer =
+          transfer(command, "merge_back", fork_id, parent_id, point(fork, run), base, run, at)
+
         # A newer merge from the same fork replaces one the parent has not used yet.
         superseded =
           for pending <- StreamState.list(state, "context-transfer"),
@@ -111,7 +116,7 @@ defmodule T3.Orchestration.Fork do
                   })
                 end)
 
-        if StreamState.get(state, "thread")[parent_id],
+        if live(state, parent_id),
           do: {superseded ++ [create("context-transfer", transfer["id"], transfer)], :ok},
           else: {[], {:error, "Thread #{parent_id} was not found."}}
       end)
@@ -119,6 +124,27 @@ defmodule T3.Orchestration.Fork do
   end
 
   defp state(thread_id), do: T3.Streams.Server.state(T3.Streams.ensure(thread_id))
+
+  # A deleted thread is gone as far as forking and merging go.
+  defp live(state, thread_id) do
+    case StreamState.get(state, "thread")[thread_id] do
+      %{"deletedAt" => deleted} when deleted != nil -> nil
+      thread -> thread
+    end
+  end
+
+  # Work can be merged back once its provider has finished with it, or while the run
+  # waits on the user (an approval or a question).
+  defp mergeable(state, run) do
+    waiting? =
+      run["status"] == "running" and
+        Enum.any?(StreamState.list(state, "runtime-request"), fn request ->
+          request["status"] == "pending" and
+            get_in(StreamState.get(state, "node"), [request["nodeId"], "runId"]) == run["id"]
+        end)
+
+    if waiting?, do: :ok, else: completed(run, ["completed", "waiting"])
+  end
 
   defp source_run(state, %{"type" => "run", "runId" => run_id}),
     do: found(StreamState.get(state, "run")[run_id])

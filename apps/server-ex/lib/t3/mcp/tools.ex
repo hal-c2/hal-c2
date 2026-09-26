@@ -87,6 +87,12 @@ defmodule T3.Mcp.Tools do
 
   # --- threads ---------------------------------------------------------------------
 
+  @doc """
+  How long `t3_thread_wait` waits for a requested `timeoutMs`: 10 minutes when none
+  is given, at least 1 millisecond and at most 1 hour.
+  """
+  def wait_timeout(requested), do: min(max(parse_number(requested, 600_000), 1), 3_600_000)
+
   @doc false
   def run(name, args, caller)
 
@@ -222,7 +228,7 @@ defmodule T3.Mcp.Tools do
 
   def run("t3_thread_wait", args, %{row: me}) do
     with {:ok, row} <- project_thread(me, args["threadId"]) do
-      timeout = min(max(parse_number(args["timeoutMs"], 600_000), 1), 3_600_000)
+      timeout = wait_timeout(args["timeoutMs"])
       {run, timed_out} = wait(row["id"], args["runId"], timeout)
 
       {:ok,

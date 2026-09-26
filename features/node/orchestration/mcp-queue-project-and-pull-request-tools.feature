@@ -106,7 +106,8 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
   @node
   Scenario: Cloning a repository as a project
     When the agent of "caller" clones a repository
-    Then the repository is cloned and registered as a project
+    # t3_project_clone only clones, in both servers; registering is a t3_project_create call.
+    Then the repository is cloned and can be registered as a project
 
   @node
   Scenario: Worktree status of a thread in the project root

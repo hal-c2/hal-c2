@@ -148,13 +148,13 @@ Feature: The T3 Code MCP server agents receive
       | plan interaction mode          | launches a thread                    |
       | approval-required runtime mode | updates the environment preferences  |
 
-  @node @backlog
+  @node
   Scenario: An idle credential expires
     Given the agent of "caller" has made no call for longer than the idle limit and has no turn in progress
     When it calls a tool
     Then the call is refused with "invalid_mcp_credential"
 
-  @node @backlog
+  @node
   Scenario: Stopping a provider session revokes its credentials
     Given the provider session of "caller" stops
     When the old agent calls a tool with its credential
