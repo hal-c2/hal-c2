@@ -21,7 +21,7 @@ mise run node              # Elixir node in the foreground; --cluster boots it c
 mise run node:pair         # one-time pairing URL for that node (--tailscale to publish it)
 mise run desktop           # build the Qt shell, pair it with the running node, launch
 mise run desktop:build     # build only (--release for a Release build)
-mise run tui               # bundle apps/tui and open it on the running server
+mise run tui               # bundle apps/tui and open it on the running node
 ```
 
 Arguments pass straight through (`mise run desktop -- --help` for the Qt script's own
@@ -31,10 +31,11 @@ once before `mise run desktop` and again after web changes. It pairs with the no
 `--standalone` starts the shell's own node from source, as the installed app does, so do not
 combine it with `mise run node` on the same home.
 
-The TUI still attaches to the legacy Node server, which `vp run dev` starts; its task points
-`hal-c2 tui` at this checkout's `.hal-c2` when that directory exists, since that is where
-`vp run dev` keeps a worktree's server record. Pair the Elixir node into a web client from
-Settings → Connections with the URL `node:pair` prints.
+The TUI finds the node through the runtime record and access token the node keeps in this
+checkout's `.hal-c2`, so start `mise run node` first; `mise run tui -- --url <link>` pairs it
+with another node from a `node:pair` link instead and keeps that session for the next
+`--url <origin>`. Pair the Elixir node into a web client from Settings → Connections with the
+URL `node:pair` prints.
 
 Open the pairing URL printed by the dev runner. The bare origin does not authenticate
 a new browser.
