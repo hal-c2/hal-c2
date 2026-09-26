@@ -54,7 +54,9 @@ defmodule HalC2.Steps.Composer.ContextReferences do
   end
 
   step "the referenced content follows the message in a context envelope", context do
-    [_body, envelope] = String.split(context.provider_text, "\n\n<hal_c2_context version=\"1\">\n")
+    [_body, envelope] =
+      String.split(context.provider_text, "\n\n<hal_c2_context version=\"1\">\n")
+
     assert envelope =~ ~s(<context kind="file" id="ctx_readme">\nname: README.md\n)
     assert String.ends_with?(envelope, "</context>\n</hal_c2_context>")
     context

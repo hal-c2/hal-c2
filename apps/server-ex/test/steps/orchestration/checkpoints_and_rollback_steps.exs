@@ -286,7 +286,10 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
   end
 
   step "the user rewinds {string} to run {int}", %{args: [thread, n]} = context do
-    context |> ensure_later_runs(thread, n) |> rewind(thread, n)
+    # A thread that moved to another machine is rewound there.
+    if context[:move_to],
+      do: HalC2.Steps.Threads.MovingBetweenMachines.rewind_moved(context, thread, n),
+      else: context |> ensure_later_runs(thread, n) |> rewind(thread, n)
   end
 
   step "the user rewinds {string} to run {int} restoring files", %{args: [thread, n]} = context do

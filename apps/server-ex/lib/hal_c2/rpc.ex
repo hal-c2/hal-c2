@@ -46,6 +46,20 @@ defmodule HalC2.Rpc do
      }}
   end
 
+  # Moving a thread to another machine of the cluster (`HalC2.ThreadMove`), and finding
+  # one that moved.
+  def handle("hal-c2.moveThread", %{"threadId" => id, "machine" => machine} = input),
+    do:
+      HalC2.ThreadMove.move(id, machine,
+        project: input["projectId"],
+        confirmed: input["confirmed"] == true
+      )
+
+  def handle("hal-c2.moveDestinations", %{"threadId" => id}),
+    do: HalC2.ThreadMove.destinations(id)
+
+  def handle("hal-c2.locateThread", %{"threadId" => id}), do: HalC2.ThreadMove.locate(id)
+
   def handle("server.updateServer", input), do: HalC2.Upgrade.update(input)
 
   def handle("server.acceptAcpRegistryUrlAuth", input), do: HalC2.Acp.UrlAuth.accept(input)

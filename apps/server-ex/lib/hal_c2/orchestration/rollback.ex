@@ -90,6 +90,7 @@ defmodule HalC2.Orchestration.Rollback do
            driver: provider_thread["driver"],
            provider_thread: provider_thread,
            native_thread_id: get_in(provider_thread, ["nativeThreadRef", "nativeId"]),
+           fork: carried(provider_thread),
            model: get_in(thread, ["modelSelection", "model"]),
            cwd: scope["cwd"],
            target: target,
@@ -112,6 +113,15 @@ defmodule HalC2.Orchestration.Rollback do
          }}
     end
   end
+
+  # A Codex session carried from another machine and not yet opened: the rewind
+  # forks it from its copy first (`HalC2.PortableSessions`).
+  defp carried(%{"carriedSession" => %{"driver" => "codex"} = session} = provider_thread) do
+    if provider_thread["nativeThreadRef"] == nil,
+      do: %{thread: session["nativeId"], turn: nil, path: session["path"]}
+  end
+
+  defp carried(_provider_thread), do: nil
 
   # Nothing to drop from the conversation when every later run is already gone.
   defp rewind(%{drop: 0}), do: {:ok, %{}}
@@ -157,6 +167,7 @@ defmodule HalC2.Orchestration.Rollback do
       Orchestration.upsert(state, "provider-thread", plan.provider_thread["id"], fn entity ->
         entity
         |> Map.merge(patch)
+        |> then(&if(plan.fork && patch != %{}, do: Map.delete(&1, "carriedSession"), else: &1))
         |> Map.merge(%{
           "lastRunOrdinal" => if(plan.target > 0, do: plan.target),
           "status" => "idle",

@@ -95,12 +95,25 @@ defmodule HalC2.Terminal do
     {:ok, nil}
   end
 
+  @doc "Writes the scrollback of a thread's running terminals to disk now."
+  def save(thread_id) do
+    for terminal_id <- running(thread_id),
+        pid = lookup(thread_id, terminal_id),
+        do: call(pid, :save)
+
+    :ok
+  end
+
+  @doc "The ids of a thread's terminals that are running."
+  def running(thread_id),
+    do: Registry.select(@registry, [{{{thread_id, :"$1"}, :_, :_}, [], [:"$1"]}])
+
   @doc """
   `terminal.list`: the thread's terminals, running or with saved scrollback, in
   tab order (`term-N` by number, then others by name).
   """
   def list(%{"threadId" => thread_id}) do
-    running = Registry.select(@registry, [{{{thread_id, :"$1"}, :_, :_}, [], [:"$1"]}])
+    running = running(thread_id)
     prefix = "terminal_#{Base.url_encode64(thread_id, padding: false)}_"
 
     saved =
@@ -297,6 +310,12 @@ defmodule HalC2.Terminal do
       |> start_shell("restarted")
 
     {:reply, {:ok, snapshot(state)}, state}
+  end
+
+  def handle_call(:save, _from, state) do
+    if state.persist_timer, do: Process.cancel_timer(state.persist_timer)
+    persist(state)
+    {:reply, :ok, %{state | persist_timer: nil}}
   end
 
   def handle_call({:close, delete_history}, _from, state) do

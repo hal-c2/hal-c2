@@ -579,7 +579,10 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
       {_, 0} = System.cmd("epmd", ["-daemon"])
 
       {:ok, _} =
-        Elixir.Node.start(:"hal_c2_test#{System.unique_integer([:positive])}@127.0.0.1", :longnames)
+        Elixir.Node.start(
+          :"hal_c2_test#{System.unique_integer([:positive])}@127.0.0.1",
+          :longnames
+        )
 
       ExUnit.Callbacks.on_exit(fn -> Elixir.Node.stop() end)
     end

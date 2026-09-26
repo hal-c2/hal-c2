@@ -25,6 +25,8 @@ defmodule HalC2.Application do
           {Registry, keys: :unique, name: HalC2.Terminal.Registry},
           {DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one},
           HalC2.Terminal.Hub,
+          # Moves a restart or a lost machine cut off are settled.
+          HalC2.ThreadMove,
           {Registry, keys: :unique, name: HalC2.Vcs.Registry},
           HalC2.Workspace,
           HalC2.WorktreeSetup,

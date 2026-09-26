@@ -171,7 +171,14 @@ defmodule HalC2.Codex.ThreadRuntime do
     do: {:reply, {:error, "Interrupt the current turn before rewinding."}, state}
 
   def handle_call({:rollback, plan}, _from, state) do
-    turn = %{cwd: plan.cwd, model: plan.model, native_thread_id: plan.native_thread_id}
+    # A session carried from another machine is forked from its copy before rewinding.
+    turn = %{
+      cwd: plan.cwd,
+      model: plan.model,
+      native_thread_id: plan.native_thread_id,
+      ids: %{thread: plan.thread_id, instance: plan.instance},
+      fork: plan[:fork]
+    }
 
     with {:ok, state} <- connect(state, turn),
          {:ok, state} <- ensure_native_thread(state, turn),
@@ -350,7 +357,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp begin_turn(state, turn) do
     with {:ok, state} <- connect(state, turn),
-         {:ok, state} <- ensure_native_thread(state, turn),
+         {:ok, state, turn} <- open_thread(state, turn),
          {:ok, native_turn} <- start_native_turn(state, turn) do
       at = Entities.now()
       ids = Map.put(turn.ids, :provider_turn, "provider-turn:codex:#{native_turn}")
@@ -469,6 +476,66 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp connect(state, _turn), do: {:ok, state}
+
+  # A session carried from another machine that this Codex cannot open (a newer
+  # Codex wrote it, say) starts a new thread with the handoff instead, and the user
+  # is told.
+  defp open_thread(state, %{fork: %{carried: true} = fork} = turn) do
+    case ensure_native_thread(state, turn) do
+      {:ok, state} ->
+        {:ok, state, turn}
+
+      {:error, reason, state} ->
+        turn = %{
+          turn
+          | fork: nil,
+            text: HalC2.Orchestration.Handoff.prompt(fork[:fallback], turn.text)
+        }
+
+        with {:ok, state} <- ensure_native_thread(state, turn) do
+          not_carried(state, turn, rpc_message(reason))
+          {:ok, state, turn}
+        end
+    end
+  end
+
+  defp open_thread(state, turn) do
+    with {:ok, state} <- ensure_native_thread(state, turn), do: {:ok, state, turn}
+  end
+
+  defp not_carried(state, turn, reason) do
+    at = Entities.now()
+    id = "turn-item:codex:session-not-carried:#{turn.ids.run}"
+
+    message =
+      "Codex on #{HalC2.ThreadArchive.label()} could not continue its own session (#{reason}), so it started a new one with a summary of the conversation."
+
+    commit(state, fn stream ->
+      [
+        Orchestration.create(
+          "turn-item",
+          id,
+          Entities.turn_item(
+            turn.ids,
+            id,
+            "error",
+            Orchestration.next_ordinal(stream),
+            "completed",
+            at,
+            %{
+              "title" => "Session not carried",
+              "failure" => %{
+                "class" => "provider_error",
+                "message" => String.slice(message, 0, 4096),
+                "code" => "session_not_carried",
+                "retryable" => false
+              }
+            }
+          )
+        )
+      ]
+    end)
+  end
 
   defp ensure_native_thread(%{native_thread_id: id} = state, _turn) when is_binary(id),
     do: {:ok, state}

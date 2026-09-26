@@ -1905,6 +1905,15 @@ defmodule HalC2.Orchestration do
       thread == nil ->
         {[], {:error, "unknown thread #{thread_id}"}}
 
+      # A thread that is moving is read-only until it arrives; one that moved lives on.
+      moving = thread["moving"] ->
+        {[],
+         {:error,
+          "#{thread["title"]} is moving to #{moving["label"]}. Send the message once it has arrived."}}
+
+      moved = thread["movedTo"] ->
+        {[], {:error, "#{thread["title"]} has moved to #{moved["label"]}."}}
+
       error = instance_refusal(thread, command) ->
         {[], {:error, error}}
 

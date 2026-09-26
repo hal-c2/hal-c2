@@ -9,6 +9,10 @@ defmodule HalC2.Orchestration.Handoff do
   transcript of that history ahead of the message. A provider thread that the
   thread comes back to gets only the runs it missed. Work merged back from a fork
   arrives the same way, as a transcript prepared when it was merged.
+
+  A thread that moved to another machine (`HalC2.ThreadMove`) continues the agent's
+  carried session, keeping a transcript as its `fallback` should the copy not
+  open; its first run there also tells the agent where the project now lives.
   """
 
   alias HalC2.Orchestration
@@ -23,7 +27,8 @@ defmodule HalC2.Orchestration.Handoff do
   How run `ordinal` starts in `provider_thread` (nil when the run creates it):
   `%{fork: %{thread: native_id, turn: native_turn_id} | nil, context: text | nil,
   changes: [...]}`, where `changes` settle the transfers the run consumes. A Pi
-  fork also names the entry to cut the copy `before` (nil keeps all of it).
+  fork also names the entry to cut the copy `before` (nil keeps all of it). A carried
+  session's fork has `carried: true` and the `fallback` context for a new session.
   """
   def plan(state, provider_thread, driver, run_id, ordinal, at) do
     transfers =
@@ -40,11 +45,21 @@ defmodule HalC2.Orchestration.Handoff do
     fresh =
       provider_thread == nil or get_in(provider_thread, ["nativeThreadRef", "nativeId"]) == nil
 
+    {moved, moved_changes} = moved(state)
+
     {fork, fork_changes} =
       case carried(provider_thread, driver, fresh) do
-        nil when fork == nil -> {nil, fork_changes}
-        nil -> {fork, fork_changes}
-        carried -> {carried, fork_changes ++ [consumed(state, provider_thread)]}
+        nil when fork == nil ->
+          {nil, fork_changes}
+
+        nil ->
+          {fork, fork_changes}
+
+        carried ->
+          fallback = wrap(transcript(state, ordinal), "", moved)
+
+          {Map.put(carried, :fallback, fallback),
+           fork_changes ++ [consumed(state, provider_thread)]}
       end
 
     {history, delta_changes} =
@@ -59,9 +74,27 @@ defmodule HalC2.Orchestration.Handoff do
 
     %{
       fork: fork,
-      context: wrap(history, merged),
-      changes: Enum.reject(fork_changes ++ delta_changes ++ merge_changes, &is_nil/1)
+      context: wrap(history, merged, moved),
+      changes:
+        Enum.reject(fork_changes ++ delta_changes ++ merge_changes ++ moved_changes, &is_nil/1)
     }
+  end
+
+  # The first run after a move to a checkout at another path is told where the
+  # project now lives (the thread's `arrived`, which the run consumes).
+  defp moved(state) do
+    thread = state |> StreamState.get("thread") |> Map.values() |> List.first()
+
+    case thread do
+      %{"arrived" => %{"from" => from, "to" => to} = arrived} ->
+        machine = if arrived["machine"], do: " on #{arrived["machine"]}", else: ""
+
+        {"This thread moved to another machine: the project that was at #{from}#{machine} is now at #{to}. Paths from earlier in the conversation refer to the old location.",
+         [Orchestration.upsert(state, "thread", thread["id"], &Map.delete(&1, "arrived"))]}
+
+      _ ->
+        {nil, []}
+    end
   end
 
   # A session carried from another machine (`HalC2.PortableSessions`): the run
@@ -311,10 +344,11 @@ defmodule HalC2.Orchestration.Handoff do
       else: text
   end
 
-  defp wrap(nil, ""), do: nil
+  defp wrap(nil, "", nil), do: nil
 
-  defp wrap(history, merged) do
+  defp wrap(history, merged, moved) do
     [
+      moved && "<moved>\n#{moved}\n</moved>",
       history &&
         "<conversation_history>\nThis conversation started in another agent session. Continue from it.\n\n#{history}\n</conversation_history>",
       merged != "" &&

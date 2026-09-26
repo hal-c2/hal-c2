@@ -206,7 +206,8 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     listed = Enum.map(tools, & &1["name"])
     assert Enum.sort(listed) == Enum.sort(exported)
 
-    for prefix <- ~w(hal_c2_thread_ hal_c2_queue_ hal_c2_project_ hal_c2_worktree_ preview_ device_),
+    for prefix <-
+          ~w(hal_c2_thread_ hal_c2_queue_ hal_c2_project_ hal_c2_worktree_ preview_ device_),
         do: assert(Enum.any?(listed, &String.starts_with?(&1, prefix)), prefix)
 
     for name <- ~w(link_pull_request schedule_task delegate_task), do: assert(name in listed)

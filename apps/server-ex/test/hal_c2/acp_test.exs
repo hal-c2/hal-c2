@@ -43,6 +43,7 @@ defmodule HalC2.AcpTest do
              HalC2.Acp.command("cursor", "full-access")
 
     assert File.exists?(script)
+
     assert {"HAL_C2_CURSOR_CREDENTIALS", Path.join(dir, "provider-auth/cursor/cursor.json")} in env
   end
 

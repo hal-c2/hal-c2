@@ -6,15 +6,18 @@ defmodule HalC2.ThreadArchive do
 
   Version 2 carries the thread's stream as entities (`HalC2.StreamState.rows/1`), the
   project it lived in (its root and repository), attachments and terminal scrollback
-  (base64 with sha256), a `git bundle` of its checkpoint refs and, when its provider
-  can carry one, the agent's native session (`HalC2.PortableSessions`). Version 1 is
+  (base64 with sha256), a `git bundle` of its checkpoint refs, a bundle of the branch
+  of its own worktree and, when its provider can carry one, the agent's native session
+  (`HalC2.PortableSessions`). Version 1 is
   the Node server's archive (`apps/server/scripts/thread-transfer.ts`); it imports
   through `HalC2.Import.V2` without a session.
 
   An import checks the whole file before it writes anything. The thread lands in a
   named project or the one project here that is a checkout of the same repository;
   every recorded path under the old project root is rewritten to the new one.
-  Checkpoints only land in a checkout of the same repository.
+  Checkpoints only land in a checkout of the same repository, and so does a worktree:
+  its branch is fetched there, checked out in a new worktree and put back to the last
+  checkpoint, so it holds the files as they were at the end of the last run.
   """
 
   alias HalC2.{Attachments, Patch, PortableSessions, Store, StreamState, Streams, Terminal}
@@ -58,6 +61,8 @@ defmodule HalC2.ThreadArchive do
            "repository" => repository(root),
            "worktreePath" => thread["worktreePath"],
            "branch" => thread["branch"],
+           "instanceId" =>
+             get_in(thread, ["modelSelection", "instanceId"]) || thread["providerInstanceId"],
            "machine" => label()
          },
          "updatedAt" => state.updated_at,
@@ -67,6 +72,7 @@ defmodule HalC2.ThreadArchive do
          "terminalLogs" =>
            for({terminal, data} <- Terminal.saved_scrollback(id), do: file(terminal, data)),
          "checkpoints" => checkpoints(state, root),
+         "worktree" => worktree(thread),
          "session" => if(Keyword.get(opts, :session, true), do: session(state, thread, cwd))
        }}
     end
@@ -134,7 +140,8 @@ defmodule HalC2.ThreadArchive do
   def decode(%{"format" => @format, "version" => version} = archive) when version in [1, 2] do
     with {:ok, attachments} <- verify(archive["attachments"], "the attachment"),
          {:ok, logs} <- verify(archive["terminalLogs"] || [], "the terminal log"),
-         {:ok, checkpoints} <- verify_checkpoints(archive["checkpoints"]),
+         {:ok, checkpoints} <- verify_bundle(archive["checkpoints"], "the checkpoints"),
+         {:ok, worktree} <- verify_bundle(archive["worktree"], "the worktree's branch"),
          {:ok, session} <- verify_session(archive["session"]) do
       {:ok,
        %{
@@ -143,6 +150,7 @@ defmodule HalC2.ThreadArchive do
        }
        |> Map.put("terminalLogs", logs)
        |> Map.put("checkpoints", checkpoints)
+       |> Map.put("worktree", worktree)
        |> Map.put("session", session)}
     end
   end
@@ -167,14 +175,16 @@ defmodule HalC2.ThreadArchive do
 
   defp verify(_files, what), do: damaged(what)
 
-  defp verify_checkpoints(nil), do: {:ok, nil}
+  defp verify_bundle(nil, _what), do: {:ok, nil}
 
-  defp verify_checkpoints(%{"bundle" => bundle} = checkpoints) do
+  defp verify_bundle(%{"bundle" => bundle} = value, what) do
     case verified(bundle) do
-      {:ok, data} -> {:ok, Map.put(checkpoints, "bundle", Map.put(bundle, "data", data))}
-      :error -> damaged("the checkpoints")
+      {:ok, data} -> {:ok, Map.put(value, "bundle", Map.put(bundle, "data", data))}
+      :error -> damaged(what)
     end
   end
+
+  defp verify_bundle(_value, what), do: damaged(what)
 
   defp verify_session(nil), do: {:ok, nil}
 
@@ -274,11 +284,15 @@ defmodule HalC2.ThreadArchive do
     meta = archive["thread"]
     id = meta["id"]
     dest_root = project["workspaceRoot"]
-    rewrite = rewriter(meta["projectRoot"], dest_root, meta["projectId"], project["id"])
     same_repo? = repository(dest_root) != nil and repository(dest_root) == meta["repository"]
 
-    {checkpoint_notes, checkpoints_ok?} = place_checkpoints(archive, dest_root, same_repo?)
-    {carried_session, session_notes} = place_session(archive, dest_root, opts)
+    {checkpoint_notes, checkpoints_ok?} = place_checkpoints(archive, project, same_repo?)
+    {worktree, worktree_notes} = place_worktree(archive, project, same_repo?)
+    {carried_session, session_notes} = place_session(archive, worktree || dest_root, opts)
+
+    to_root = rewriter(meta["projectRoot"], dest_root, meta["projectId"], project["id"])
+    to_worktree = rewriter(meta["worktreePath"], worktree, nil, nil)
+    rewrite = &to_root.(to_worktree.(&1))
 
     entities =
       for [kind, eid, entity] <- archive["entities"] do
@@ -294,7 +308,7 @@ defmodule HalC2.ThreadArchive do
 
     entities =
       entities
-      |> Enum.map(&carried(&1, id, archive, meta, dest_root))
+      |> Enum.map(&carried(&1, id, worktree, meta, dest_root))
       |> Enum.map(&with_session(&1, carried_session))
 
     for %{"fileName" => name, "data" => data} <- archive["attachments"] do
@@ -316,13 +330,14 @@ defmodule HalC2.ThreadArchive do
        title: meta["title"],
        project: project["id"],
        session: carried_session != nil,
-       notes: checkpoint_notes ++ session_notes
+       notes: checkpoint_notes ++ worktree_notes ++ session_notes
      }}
   end
 
   # The thread's entity knows where it came from, so the agent can be told the project
-  # moved; a worktree it had stays behind on the machine it left.
-  defp carried({"thread", eid, entity}, id, _archive, meta, dest_root) when eid == id do
+  # moved; it works in its new worktree here, if it got one (the old one stays behind
+  # on the machine it left).
+  defp carried({"thread", eid, entity}, id, worktree, meta, dest_root) when eid == id do
     arrived =
       if meta["projectRoot"] && meta["projectRoot"] != dest_root,
         do: %{"from" => meta["projectRoot"], "to" => dest_root, "machine" => meta["machine"]}
@@ -330,7 +345,7 @@ defmodule HalC2.ThreadArchive do
     entity =
       entity
       |> Map.drop(["movedTo", "moving"])
-      |> Map.put("worktreePath", nil)
+      |> Map.put("worktreePath", worktree)
       |> then(&if(arrived, do: Map.put(&1, "arrived", arrived), else: &1))
 
     {"thread", eid, entity}
@@ -338,13 +353,13 @@ defmodule HalC2.ThreadArchive do
 
   # A provider thread's own session stays on the machine it left unless it is carried
   # (`place_session/3`); without it the next message is a handoff.
-  defp carried({"provider-thread", eid, entity}, _id, _archive, _meta, _root) do
+  defp carried({"provider-thread", eid, entity}, _id, _worktree, _meta, _root) do
     ref = entity["nativeThreadRef"]
     entity = if is_map(ref), do: Map.put(entity, "nativeThreadRef", nil), else: entity
     {"provider-thread", eid, Map.delete(entity, "carriedSession")}
   end
 
-  defp carried(row, _id, _archive, _meta, _root), do: row
+  defp carried(row, _id, _worktree, _meta, _root), do: row
 
   # The provider thread whose session came along continues from the copy.
   defp with_session(
@@ -558,6 +573,24 @@ defmodule HalC2.ThreadArchive do
     end
   end
 
+  # The branch of the thread's own worktree, with the commits it has that were never
+  # pushed.
+  defp worktree(%{"worktreePath" => path, "branch" => branch})
+       when is_binary(path) and is_binary(branch) do
+    bundle = Path.join(System.tmp_dir!(), "hal-c2-bundle-#{System.unique_integer([:positive])}")
+
+    with true <- File.dir?(path),
+         {:ok, _} <- HalC2.Git.ok(path, ["bundle", "create", bundle, "refs/heads/#{branch}"]) do
+      data = File.read!(bundle)
+      File.rm(bundle)
+      %{"branch" => branch, "path" => path, "bundle" => file("worktree.bundle", data)}
+    else
+      _ -> nil
+    end
+  end
+
+  defp worktree(_thread), do: nil
+
   defp scope_cwd(scopes, root) do
     Enum.find_value(scopes, root, fn scope ->
       if is_binary(scope["cwd"]) and File.dir?(scope["cwd"]), do: scope["cwd"]
@@ -568,7 +601,8 @@ defmodule HalC2.ThreadArchive do
   # repository keeps none, and says so.
   defp place_checkpoints(%{"checkpoints" => nil}, _root, _same), do: {[], true}
 
-  defp place_checkpoints(%{"checkpoints" => checkpoints, "thread" => meta}, root, true) do
+  defp place_checkpoints(%{"checkpoints" => checkpoints, "thread" => meta}, project, true) do
+    root = project["workspaceRoot"]
     bundle = Path.join(System.tmp_dir!(), "hal-c2-bundle-#{System.unique_integer([:positive])}")
     File.write!(bundle, checkpoints["bundle"]["data"])
 
@@ -577,19 +611,74 @@ defmodule HalC2.ThreadArchive do
     try do
       case HalC2.Git.ok(root, ["fetch", "--no-tags", "-q", bundle | specs]) do
         {:ok, _} -> {[], true}
-        {:error, _} -> {[checkpoints_note(meta, "could not be copied")], false}
+        {:error, _} -> {[checkpoints_note(meta, project, :failed)], false}
       end
     after
       File.rm(bundle)
     end
   end
 
-  defp place_checkpoints(%{"thread" => meta}, _root, false),
-    do: {[checkpoints_note(meta, "stay behind")], false}
+  defp place_checkpoints(%{"thread" => meta}, project, false),
+    do: {[checkpoints_note(meta, project, :different)], false}
 
-  defp checkpoints_note(meta, what),
+  # A new worktree of `project` on the carried branch, put back to the thread's last
+  # checkpoint. A branch of that name that has other commits here is left alone.
+  defp place_worktree(%{"worktree" => nil}, _project, _same), do: {nil, []}
+  defp place_worktree(%{"worktree" => _}, _project, false), do: {nil, []}
+
+  defp place_worktree(%{"worktree" => worktree, "thread" => meta} = archive, project, true) do
+    root = project["workspaceRoot"]
+    branch = worktree["branch"]
+    bundle = Path.join(System.tmp_dir!(), "hal-c2-bundle-#{System.unique_integer([:positive])}")
+    File.write!(bundle, worktree["bundle"]["data"])
+
+    fetched =
+      HalC2.Git.ok(root, [
+        "fetch",
+        "--no-tags",
+        "-q",
+        bundle,
+        "refs/heads/#{branch}:refs/heads/#{branch}"
+      ])
+
+    File.rm(bundle)
+
+    with {:ok, _} <- fetched,
+         {:ok, %{"worktree" => %{"path" => path}}} <-
+           HalC2.Vcs.create_worktree(%{"cwd" => root, "refName" => branch}) do
+      if ref = last_checkpoint(archive), do: Checkpoint.restore(path, ref)
+      {path, []}
+    else
+      _ ->
+        {nil,
+         [
+           "#{meta["title"]} could not get its own worktree on the branch #{branch} in #{project["title"]} on #{label()}; it works in the project's checkout."
+         ]}
+    end
+  end
+
+  defp last_checkpoint(%{"checkpoints" => %{"refs" => refs}, "entities" => entities}) do
+    entities
+    |> Enum.filter(fn [kind, _, c] ->
+      kind == "checkpoint" and c["status"] == "ready" and c["ref"] in refs
+    end)
+    |> Enum.max_by(fn [_, _, c] -> c["appRunOrdinal"] || 0 end, fn -> nil end)
+    |> case do
+      [_, _, c] -> c["ref"]
+      nil -> nil
+    end
+  end
+
+  defp last_checkpoint(_archive), do: nil
+
+  @doc "What the user is told when a thread's checkpoints do not land in `project` here."
+  def checkpoints_note(meta, project, :different),
     do:
-      "Checkpoints of #{meta["title"]} #{what}: the project on #{label()} is a different repository, so runs from before the move have no diff and cannot be rewound to."
+      "Checkpoints of #{meta["title"]} stay behind: #{project["title"]} on #{label()} is a different repository, so runs from before the move have no diff and cannot be rewound to."
+
+  def checkpoints_note(meta, project, :failed),
+    do:
+      "Checkpoints of #{meta["title"]} could not be copied into #{project["title"]} on #{label()}, so runs from before the move have no diff and cannot be rewound to."
 
   defp session(state, thread, cwd) do
     PortableSessions.export(state, thread, cwd)
@@ -653,7 +742,8 @@ defmodule HalC2.ThreadArchive do
 
   defp sha256(data), do: :crypto.hash(:sha256, data) |> Base.encode16(case: :lower)
 
-  defp find_thread(ref) do
+  @doc "A thread on this node by id, or by title when only one has it."
+  def find_thread(ref) do
     threads = for {"thread", row} <- local_rows(), do: row
 
     case Enum.find(threads, &(&1["id"] == ref)) ||
@@ -668,7 +758,8 @@ defmodule HalC2.ThreadArchive do
   # This node's sidebar rows as stored, which a stream writes before it tells the shell.
   defp local_rows, do: for({_id, kind, row} <- Store.list_shell(Store.path()), do: {kind, row})
 
-  defp local_thread(id) do
+  @doc "This node's thread entity for `id`, or `nil` when it has none."
+  def local_thread(id) do
     if id in Enum.map(Store.list_streams(Store.path()), & &1.id),
       do: StreamState.get(state(id), "thread")[id]
   end

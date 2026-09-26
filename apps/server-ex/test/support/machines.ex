@@ -172,6 +172,35 @@ defmodule HalC2.Test.Machines do
     |> HalC2.StreamState.list(kind)
   end
 
+  @doc "The ids of this node's streams."
+  def streams, do: for(%{id: id} <- HalC2.Store.list_streams(HalC2.Store.path()), do: id)
+
+  @doc "Threads this node is receiving in a move (`HalC2.ThreadMove.accept/2`)."
+  def incoming_moves do
+    dir = Path.join(HalC2.Paths.data_dir(), "incoming-moves")
+    if File.dir?(dir), do: File.ls!(dir), else: []
+  end
+
+  @doc """
+  A `:thread_move_hook` that holds a move at `stage`: it tells `test` with
+  `{:move_held, pid, stage, thread_id}` and waits for `:release` sent to `pid`.
+  """
+  def hold_move(test, stage, stage, id) do
+    send(test, {:move_held, self(), stage, id})
+
+    receive do
+      :release -> :ok
+    end
+  end
+
+  def hold_move(_test, _held, _stage, _id), do: :ok
+
+  @doc "The diff of a thread's runs `from` to `to` on this node (`HalC2.Checkpoint.turn_diff/5`)."
+  def turn_diff(id, from, to) do
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
+    HalC2.Checkpoint.turn_diff(state, id, from, to, false)
+  end
+
   @doc "Creates a project on this node and waits until its row is stored."
   def create_project(id, title, root) do
     {:ok, _} =
