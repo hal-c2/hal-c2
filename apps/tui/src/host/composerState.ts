@@ -955,7 +955,9 @@ export function createComposer(options: ComposerOptions): Composer {
             replyPending = false;
             // Clear only what was sent; text typed while sending stays.
             setDraft(key, (current) => ({
-              text: current.text === submitted.text ? "" : current.text,
+              text: current.text.startsWith(submitted.text)
+                ? current.text.slice(submitted.text.length).replace(/^\s+/, "")
+                : current.text,
               images: current.images.filter((image) => !submitted.images.includes(image)),
             }));
             store.setStatus("Reply sent.", "success");
