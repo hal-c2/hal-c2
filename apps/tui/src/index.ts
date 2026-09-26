@@ -173,6 +173,8 @@ async function main(): Promise<void> {
     size: { columns: renderer.width, rows: renderer.height },
     onQuit: handleExit,
     log: appendLog,
+    // Terminal copy (Ctrl+O) goes through the host terminal's OSC 52.
+    copyToClipboard: (text) => renderer.isOsc52Supported() && renderer.copyToClipboardOSC52(text),
   });
 
   try {

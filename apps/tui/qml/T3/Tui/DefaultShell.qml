@@ -10,6 +10,14 @@ ShellWindow {
 
     Conversation { id: conversationView; flexGrow: 1 }
 
+    // Pending the layout's drawer slot: the terminal sits under the conversation.
+    Loader {
+        id: terminalDrawerLoader
+        objectName: "terminalDrawerLoader"
+        active: Shell.state.terminal.open
+        sourceComponent: TerminalDrawer {}
+    }
+
     Shortcut {
         sequence: "ctrl+f"
         enabled: Shell.state.mode === "compose"
@@ -20,6 +28,57 @@ ShellWindow {
         enabled: Shell.state.mode === "filter"
         onActivated: Shell.dispatch("sidebar.filter.cancel")
     }
-    // The renderer does not exit on Ctrl+C; the app tears down in order.
-    Shortcut { sequence: "ctrl+c"; onActivated: Shell.dispatch("app.quit") }
+    // Terminal drawer. Focused, every other key goes to the running program.
+    Shortcut {
+        sequence: "ctrl+e"
+        enabled: Shell.state.mode === "compose" || Shell.state.mode === "terminal"
+        onActivated: Shell.dispatch("terminal.toggle")
+    }
+    Shortcut {
+        sequence: "ctrl+p"
+        enabled: Shell.state.terminal.open && (Shell.state.mode === "compose" || Shell.state.mode === "terminal")
+        onActivated: Shell.dispatch("terminal.focus.toggle")
+    }
+    Shortcut {
+        sequence: "ctrl+o"
+        enabled: Shell.state.mode === "terminal"
+        onActivated: Shell.dispatch("terminal.copy")
+    }
+    Shortcut {
+        sequence: "shift+pageup"
+        enabled: Shell.state.mode === "terminal"
+        onActivated: Shell.dispatch("terminal.scroll", { action: "page-up" })
+    }
+    Shortcut {
+        sequence: "shift+pagedown"
+        enabled: Shell.state.mode === "terminal"
+        onActivated: Shell.dispatch("terminal.scroll", { action: "page-down" })
+    }
+    Shortcut {
+        sequence: "shift+up"
+        enabled: Shell.state.mode === "terminal"
+        onActivated: Shell.dispatch("terminal.scroll", { action: "line-up" })
+    }
+    Shortcut {
+        sequence: "shift+down"
+        enabled: Shell.state.mode === "terminal"
+        onActivated: Shell.dispatch("terminal.scroll", { action: "line-down" })
+    }
+    Shortcut {
+        sequence: "ctrl+up"
+        enabled: Shell.state.mode === "terminal"
+        onActivated: Shell.dispatch("terminal.resize", { delta: 2 })
+    }
+    Shortcut {
+        sequence: "ctrl+down"
+        enabled: Shell.state.mode === "terminal"
+        onActivated: Shell.dispatch("terminal.resize", { delta: -2 })
+    }
+    // The renderer does not exit on Ctrl+C; the app tears down in order. In the
+    // terminal it interrupts the running program instead.
+    Shortcut {
+        sequence: "ctrl+c"
+        enabled: Shell.state.mode !== "terminal"
+        onActivated: Shell.dispatch("app.quit")
+    }
 }

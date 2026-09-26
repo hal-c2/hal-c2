@@ -5,6 +5,11 @@ import { buildRows } from "../components/Sidebar.logic.ts";
 import { createStore, type StatusKind, type StoreState } from "../store.ts";
 import { buildTuiLayoutState, type TuiMode, type TuiSize } from "./layoutState.ts";
 import { buildTuiSidebarState, idFromKey, threadKey } from "./sidebarState.ts";
+import {
+  createTerminalController,
+  type TerminalScrollAction,
+  type TerminalThread,
+} from "./terminalState.ts";
 import { createTuiTheme, TUI_THEME_STATE, type TuiTheme } from "./theme.ts";
 
 /** Published under `status`: the one-line status message and its tone. */
@@ -38,6 +43,15 @@ export interface HostOptions {
   readonly log: (message: string) => void;
   /** Clock for snooze partitioning; tests pin it. */
   readonly now?: () => string;
+  /** Put text on the user's clipboard (OSC 52); false when the terminal cannot. */
+  readonly copyToClipboard?: (text: string) => boolean;
+}
+
+/** A palette command an area offers now: its title and the action it dispatches. */
+export interface TuiCommand {
+  readonly title: string;
+  readonly action: string;
+  readonly payload?: unknown;
 }
 
 export interface Host {
@@ -48,6 +62,13 @@ export interface Host {
   /** QML singletons: `Shell.state.<key>`, `Shell.dispatch(action, payload)`, `Theme.*`. */
   readonly Shell: TuiShellSingleton;
   readonly Theme: TuiTheme;
+  /** The palette commands the host's areas offer right now. */
+  readonly commands: () => ReadonlyArray<TuiCommand>;
+  /**
+   * Resolves once client calls and terminal writes in flight have landed and
+   * their state is published: the receipt tests wait on.
+   */
+  readonly settled: () => Promise<void>;
   readonly destroy: () => void;
 }
 
@@ -81,11 +102,41 @@ export function createHost(options: HostOptions): Host {
   // Republish a key only when what it is derived from changed, so bindings
   // on other keys are not re-evaluated by every store emit.
   let last: StoreState | null = null;
-  const publishLayout = () =>
-    state.set(
-      "layout",
-      buildTuiLayoutState({ size, sidebarCollapsed, rightPanelVisible: false, mode }),
-    );
+  const layoutState = () =>
+    buildTuiLayoutState({ size, sidebarCollapsed, rightPanelVisible: false, mode });
+  const publishLayout = () => state.set("layout", layoutState());
+
+  const terminalThread = (): TerminalThread | null => {
+    const current = store.getState();
+    if (current.selection?.kind !== "thread") return null;
+    const threadId = current.selection.id;
+    const shellThread = current.shell?.threads.find((thread) => thread.id === threadId);
+    const detail = current.detail?.id === threadId ? current.detail : null;
+    const projectId = detail?.projectId ?? shellThread?.projectId;
+    const worktreePath = detail?.worktreePath ?? shellThread?.worktreePath ?? null;
+    const workspaceRoot =
+      current.shell?.projects.find((project) => project.id === projectId)?.workspaceRoot ??
+      process.cwd();
+    return {
+      threadId,
+      title: detail?.title ?? shellThread?.title ?? "",
+      cwd: worktreePath ?? workspaceRoot,
+      worktreePath,
+    };
+  };
+  const terminal = createTerminalController({
+    client,
+    store,
+    thread: terminalThread,
+    area: () => ({ width: layoutState().mainWidth, height: size.rows }),
+    isFocused: () => mode === "terminal",
+    setFocused: (focused) => {
+      if (focused) setMode("terminal");
+      else if (mode === "terminal") setMode("compose");
+    },
+    copyToClipboard: options.copyToClipboard ?? (() => false),
+    publish: (next) => state.set("terminal", next),
+  });
   const publish = () => {
     const next = store.getState();
     const prev = last;
@@ -132,14 +183,17 @@ export function createHost(options: HostOptions): Host {
     ) {
       state.set("page", pageFor(next, selectedThreadId));
     }
+    if (!prev || prev.selection !== next.selection || prev.detail !== next.detail) {
+      terminal.sync();
+    }
   };
 
-  const setMode = (next: TuiMode) => {
+  function setMode(next: TuiMode) {
     if (next === mode) return;
     mode = next;
     state.set("mode", mode);
     publishLayout();
-  };
+  }
 
   const unknownActions = new Set<string>();
   const dispatch = (action: string, payload?: unknown) => {
@@ -181,6 +235,65 @@ export function createHost(options: HostOptions): Host {
         store.setFilter("");
         setMode("compose");
         return;
+      case "terminal.toggle":
+        terminal.toggle();
+        return;
+      case "terminal.open":
+        terminal.open();
+        return;
+      case "terminal.focus.toggle":
+        terminal.toggleFocus();
+        return;
+      case "terminal.new":
+        terminal.newTab();
+        return;
+      case "terminal.next":
+        terminal.cycle(1);
+        return;
+      case "terminal.previous":
+        terminal.cycle(-1);
+        return;
+      case "terminal.select": {
+        const id = payloadField(payload, "id");
+        if (typeof id === "string") terminal.select(id);
+        return;
+      }
+      case "terminal.close": {
+        const id = payloadField(payload, "id");
+        terminal.close(typeof id === "string" ? id : undefined);
+        return;
+      }
+      case "terminal.clear":
+        terminal.clear();
+        return;
+      case "terminal.restart":
+        terminal.restart();
+        return;
+      case "terminal.copy":
+        terminal.copy();
+        return;
+      case "terminal.input": {
+        const data = payloadField(payload, "data");
+        if (typeof data === "string") terminal.input(data);
+        return;
+      }
+      case "terminal.paste": {
+        const text = payloadField(payload, "text");
+        if (typeof text === "string") terminal.paste(text);
+        return;
+      }
+      case "terminal.scroll": {
+        const scroll = payloadField(payload, "action");
+        if (typeof scroll === "string") terminal.scroll(scroll as TerminalScrollAction);
+        return;
+      }
+      case "terminal.resize": {
+        const height = payloadField(payload, "height");
+        const delta = payloadField(payload, "delta");
+        if (typeof height === "number") terminal.setHeight(height);
+        else if (typeof delta === "number") terminal.resizeBy(delta);
+        return;
+      }
       case "app.quit":
         options.onQuit?.();
         return;
@@ -204,11 +317,15 @@ export function createHost(options: HostOptions): Host {
       size = next;
       state.set("size", size);
       publishLayout();
+      terminal.sync();
     },
     Shell: { state, dispatch },
     Theme: createTuiTheme(),
+    commands: () => [...terminal.commands()],
+    settled: () => terminal.settled(),
     destroy: () => {
       unsubscribe();
+      terminal.dispose();
       store.stop();
     },
   };
