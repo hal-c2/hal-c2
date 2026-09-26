@@ -407,8 +407,18 @@ defmodule HalC2.Steps.Orchestration.Projects do
     context
   end
 
+  # What `HalC2.Hot.reload/2` does to a process whose module changed.
+  step "the node loads new code in place", context do
+    :ok = :sys.suspend(HalC2.Shell)
+    :ok = :sys.change_code(HalC2.Shell, HalC2.Shell, nil, :hot)
+    :ok = :sys.resume(HalC2.Shell)
+    context
+  end
+
   step "project {string} is a checkout of {string} named {string} owned by {string}",
        %{args: [id, key, name, owner]} = context do
+    # Filled in by a task when the shell starts or loads new code.
+    World.await_row(id, &(&1["repositoryIdentity"]["canonicalKey"] == key))
     identity = shell_row(context, id)["repositoryIdentity"]
 
     assert %{"canonicalKey" => ^key, "name" => ^name, "owner" => ^owner} = identity

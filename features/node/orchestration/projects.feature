@@ -126,6 +126,12 @@ Feature: Projects on a node
       Then project "p1" is a checkout of "github.com/acme/other" named "other" owned by "acme"
 
     @node
+    Scenario: A project learns its repository when the node loads new code in place
+      Given project "p1" was added before its checkout had the origin "git@github.com:acme/shop.git"
+      When the node loads new code in place
+      Then project "p1" is a checkout of "github.com/acme/shop" named "shop" owned by "acme"
+
+    @node
     Scenario: A project learns its repository when the node starts
       Given project "p1" was added before its checkout had the origin "git@github.com:acme/shop.git"
       When the node restarts

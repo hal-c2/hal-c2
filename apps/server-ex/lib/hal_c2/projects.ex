@@ -172,9 +172,9 @@ defmodule HalC2.Projects do
   end
 
   @doc """
-  Gives this node's projects the repository identity of their checkout at boot:
-  projects added before the node recorded one, ones imported from the Node server,
-  and checkouts whose origin changed. A folder that is gone or has no origin keeps
+  Gives this node's projects the repository identity of their checkout when the
+  shell starts or loads new code (`HalC2.Shell`): projects added before the node
+  recorded one, ones imported from the Node server, and checkouts whose origin changed. A folder that is gone or has no origin keeps
   what it had. Not a user edit, so the update time stays.
   """
   def identify_repositories do

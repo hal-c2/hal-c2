@@ -75,8 +75,20 @@ defmodule HalC2.Shell do
     end
 
     backfill(path, MapSet.new(stored, &elem(&1, 0)))
+    identify_repositories()
     {:ok, %{subscribers: %{}, online: MapSet.new([node() | Node.list()])}}
   end
+
+  # A hot upgrade runs this with the new code, so projects learn what it knows about
+  # their checkouts without a restart, as they do when the shell starts.
+  @impl true
+  def code_change(_old_vsn, state, _extra) do
+    identify_repositories()
+    {:ok, state}
+  end
+
+  # Outside this server: it runs git per project and commits through the streams.
+  defp identify_repositories, do: Task.start(&HalC2.Projects.identify_repositories/0)
 
   @impl true
   def handle_call(:online_nodes, _from, state), do: {:reply, MapSet.to_list(state.online), state}
