@@ -120,7 +120,8 @@ defmodule T3.Vcs do
   def branch_pull_request(cwd, branch), do: pull_request(cwd, branch, false)
 
   defp pull_request(cwd, branch, default?) do
-    with gh when is_binary(gh) <- System.find_executable("gh"),
+    with gh when is_binary(gh) <-
+           System.find_executable(Application.get_env(:t3, :gh_command, "gh")),
          {:ok, url} <- Git.ok(cwd, ~w(remote get-url origin)),
          true <- String.contains?(url, "github.com"),
          [pr | _] <- gh_pr_list(gh, cwd, branch),
@@ -539,11 +540,7 @@ defmodule T3.Vcs do
   """
   def create_worktree(%{"cwd" => cwd, "refName" => ref} = input) do
     branch = input["newRefName"] || ref
-    home = Application.fetch_env!(:t3, :home)
-
-    path =
-      input["path"] ||
-        Path.join([home, "worktrees", Path.basename(cwd), String.replace(branch, "/", "-")])
+    path = input["path"] || worktree_path(cwd, branch)
 
     args =
       if input["newRefName"],
@@ -552,16 +549,39 @@ defmodule T3.Vcs do
 
     with :ok <- run(cwd, args, "vcs.createWorktree", "git worktree add failed") do
       # `git worktree add` leaves submodules empty; filling them is best effort.
+      # `T3.WorktreeSetup` passes `"submodules" => false` and fills them as its own stage.
+      if input["submodules"] != false, do: init_submodules(cwd, path)
+      changed(cwd)
+      {:ok, %{"worktree" => %{"path" => path, "refName" => branch}}}
+    end
+  end
+
+  @doc "Where a new worktree of `cwd` on `branch` goes when no path is given."
+  def worktree_path(cwd, branch) do
+    home = Application.fetch_env!(:t3, :home)
+    Path.join([home, "worktrees", Path.basename(cwd), String.replace(branch, "/", "-")])
+  end
+
+  @doc """
+  Fills the submodules of the new worktree at `path` (of the checkout `cwd`) as
+  deep as the settings say. Returns `:none` when it has no submodules or they stay
+  empty, `:ok` when they were filled, or `{:error, detail}`.
+  """
+  def init_submodules(cwd, path) do
+    args =
       if File.exists?(Path.join(path, ".gitmodules")) do
         case submodules(cwd, path) do
-          "none" -> :ok
-          "top-level" -> Git.run(path, ~w(submodule update --init))
-          _recursive -> Git.run(path, ~w(submodule update --init --recursive))
+          "none" -> nil
+          "top-level" -> ~w(submodule update --init)
+          _recursive -> ~w(submodule update --init --recursive)
         end
       end
 
-      changed(cwd)
-      {:ok, %{"worktree" => %{"path" => path, "refName" => branch}}}
+    case args && Git.run(path, args) do
+      nil -> :none
+      {:ok, %{status: 0}} -> :ok
+      {:ok, %{err: err}} -> {:error, String.trim(err)}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -612,8 +632,11 @@ defmodule T3.Vcs do
         :ok
 
       {:ok, %{status: status, err: err}} ->
-        # Git's own message says what went wrong ("would be overwritten", ...).
-        message = err |> String.trim() |> String.split("\n") |> Enum.take(-3) |> Enum.join(" ")
+        # Git's own message says what went wrong ("would be overwritten", ...): its
+        # error lines when it marks them, else the end of what it printed.
+        lines = err |> String.trim() |> String.split("\n", trim: true)
+        said = Enum.filter(lines, &String.starts_with?(&1, ["error: ", "fatal: "]))
+        message = if(said == [], do: Enum.take(lines, -3), else: said) |> Enum.join(" ")
 
         {:error,
          git_error(cwd, operation, if(message == "", do: detail, else: message))

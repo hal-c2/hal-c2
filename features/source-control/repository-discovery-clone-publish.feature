@@ -42,7 +42,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
     When the user asks which source control tools are available
     Then GitHub is reported not authenticated and the user is told to run gh auth login
 
-  @backlog @node
+  @node
   Scenario: Bitbucket is found through its environment variables
     Given the node was started with a Bitbucket access token in its environment
     When the user asks which source control tools are available
@@ -64,7 +64,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | GitHub | acme/shop  |
       | GitLab | acme/infra |
 
-  @backlog @node
+  @node
   Scenario Outline: Looking up, cloning and publishing on other hosts
     When the user looks up "acme/shop" on <host>
     Then the repository's name, web address and clone addresses are returned

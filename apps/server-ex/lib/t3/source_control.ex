@@ -51,8 +51,95 @@ defmodule T3.SourceControl do
     {:ok,
      %{
        "versionControlSystems" => for({:ok, item} <- vcs, do: item),
-       "sourceControlProviders" => for({:ok, item} <- providers, do: item)
+       "sourceControlProviders" => for({:ok, item} <- providers, do: item) ++ [bitbucket()]
      }}
+  end
+
+  @bitbucket_hint "Set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN on the server (use a Bitbucket API token with pull request, repository, and user read scopes)."
+
+  # Bitbucket has no CLI: it is always offered, signed in through the server's
+  # environment (an access token, or an email with an API token), which `/user` checks.
+  defp bitbucket do
+    %{token: token, email: email, authorization: authorization} = bitbucket_config()
+
+    auth =
+      case authorization && bitbucket_get("/user") do
+        %{} = user ->
+          account = user["username"] || user["display_name"] || user["account_id"]
+          auth_json("authenticated", account, "bitbucket.org", nil)
+
+        _ when is_binary(token) ->
+          auth_json("unknown", nil, "bitbucket.org", "Bitbucket access token is configured.")
+
+        _ when is_binary(authorization) ->
+          auth_json("unknown", email, "bitbucket.org", "Bitbucket API token is configured.")
+
+        _ ->
+          auth_json(
+            "unauthenticated",
+            nil,
+            "bitbucket.org",
+            "Set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN, or T3CODE_BITBUCKET_ACCESS_TOKEN."
+          )
+      end
+
+    %{
+      "kind" => "bitbucket",
+      "label" => "Bitbucket",
+      "status" => "available",
+      "version" => option(nil),
+      "installHint" => @bitbucket_hint,
+      "detail" => option(nil),
+      "auth" => auth
+    }
+  end
+
+  defp bitbucket_config do
+    env =
+      &(System.get_env(&1, "") |> String.trim() |> then(fn v -> if v == "", do: nil, else: v end))
+
+    token = env.("T3CODE_BITBUCKET_ACCESS_TOKEN")
+    email = env.("T3CODE_BITBUCKET_EMAIL")
+    api_token = env.("T3CODE_BITBUCKET_API_TOKEN")
+
+    authorization =
+      cond do
+        token -> "Bearer " <> token
+        email && api_token -> "Basic " <> Base.encode64(email <> ":" <> api_token)
+        true -> nil
+      end
+
+    %{
+      base: env.("T3CODE_BITBUCKET_API_BASE_URL") || "https://api.bitbucket.org/2.0",
+      token: token,
+      email: email,
+      authorization: authorization
+    }
+  end
+
+  # A Bitbucket API GET's decoded JSON object, or nil.
+  defp bitbucket_get(path) do
+    %{base: base, authorization: authorization} = bitbucket_config()
+    url = String.trim_trailing(base, "/") <> path
+    headers = if authorization, do: [{~c"authorization", to_charlist(authorization)}], else: []
+
+    case :httpc.request(
+           :get,
+           {to_charlist(url), headers},
+           [timeout: @timeout, ssl: :httpc.ssl_verify_host_options(true)],
+           body_format: :binary
+         ) do
+      {:ok, {{_, 200, _}, _, body}} ->
+        case JSON.decode(body) do
+          {:ok, %{} = user} -> user
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  rescue
+    _ -> nil
   end
 
   defp tool(label, exe, hint) do
@@ -94,10 +181,50 @@ defmodule T3.SourceControl do
     end
   end
 
-  defp auth("gitlab", {:ok, out, _}) do
-    case Regex.run(~r/Logged in to (\S+) as (\S+)/, out) do
+  # glab reports on stderr.
+  defp auth("gitlab", {:ok, out, err}) do
+    case Regex.run(~r/Logged in to (\S+) as ([^\s(]+)/, out <> "\n" <> err) do
       [_, host, account] -> auth_json("authenticated", account, host, nil)
-      nil -> auth_json("authenticated", nil, nil, nil)
+      nil -> auth_json("unknown", nil, nil, "GitLab CLI auth status could not be parsed.")
+    end
+  end
+
+  # tea lists its logins; the default one (else the first) is the account.
+  defp auth("forgejo", {:ok, out, _}) do
+    logins =
+      case JSON.decode(out) do
+        {:ok, list} when is_list(list) -> Enum.filter(list, &is_map/1)
+        _ -> []
+      end
+
+    case Enum.find(logins, &(&1["default"] in ["true", true])) || List.first(logins) do
+      %{} = login ->
+        status = if login["valid"] in ["true", true], do: "authenticated", else: "unauthenticated"
+        host = with url when is_binary(url) <- login["url"], do: URI.parse(url).host
+        auth_json(status, login["user"], host, nil)
+
+      nil ->
+        auth_json(
+          "unauthenticated",
+          nil,
+          nil,
+          "Run `tea login add` to authenticate a Forgejo or Gitea server."
+        )
+    end
+  end
+
+  defp auth("azure-devops", {:ok, out, _}) do
+    case first_line(out) do
+      nil ->
+        auth_json(
+          "unknown",
+          nil,
+          "dev.azure.com",
+          "Azure CLI account status could not be parsed."
+        )
+
+      account ->
+        auth_json("authenticated", account, "dev.azure.com", nil)
     end
   end
 
@@ -135,11 +262,55 @@ defmodule T3.SourceControl do
            repo(
              "gitlab",
              name,
-             info["http_url_to_repo"] || info["web_url"],
+             info["web_url"] || info["http_url_to_repo"],
              info["ssh_url_to_repo"]
            )}
         else
           error -> repository_error("gitlab", "lookupRepository", error)
+        end
+
+      "azure-devops" ->
+        args =
+          ~w(repos show --detect true --repository) ++
+            [repository | ~w(--only-show-errors --output json)]
+
+        with {:ok, out, _} <- cmd("az", args, cd: input["cwd"]),
+             {:ok, %{"name" => name, "remoteUrl" => url, "sshUrl" => ssh} = info} <-
+               JSON.decode(out) do
+          name =
+            case info["project"] do
+              %{"name" => project} when is_binary(project) -> project <> "/" <> name
+              _ -> name
+            end
+
+          {:ok, repo("azure-devops", name, url, ssh)}
+        else
+          error -> repository_error("azure-devops", "lookupRepository", error)
+        end
+
+      "forgejo" ->
+        forgejo_lookup(repository, input["cwd"])
+
+      "bitbucket" ->
+        with [workspace, slug] <- String.split(repository, "/", parts: 2),
+             %{"full_name" => name, "links" => links} <-
+               bitbucket_get("/repositories/#{URI.encode(workspace)}/#{URI.encode(slug)}") do
+          clone = fn kind ->
+            Enum.find_value(
+              links["clone"] || [],
+              &(String.downcase(&1["name"] || "") == kind && &1["href"])
+            )
+          end
+
+          url = clone.("https") || get_in(links, ["html", "href"]) || name
+          {:ok, repo("bitbucket", name, url, clone.("ssh") || url)}
+        else
+          _ ->
+            repository_error(
+              "bitbucket",
+              "lookupRepository",
+              {:error, "Bitbucket repository #{repository} could not be read."}
+            )
         end
 
       other ->
@@ -148,6 +319,49 @@ defmodule T3.SourceControl do
           "lookupRepository",
           {:error, "#{other} repositories are not supported here yet."}
         )
+    end
+  end
+
+  # Through `tea`: its default login (or its only one) reads the repository from the
+  # server's API. tea answers HTTP failures with exit 0, so the status line decides.
+  defp forgejo_lookup(repository, cwd) do
+    logins =
+      case cmd("tea", ~w(login list --output json), cd: cwd) do
+        {:ok, out, _} ->
+          case JSON.decode(out) do
+            {:ok, list} when is_list(list) -> list
+            _ -> []
+          end
+
+        _ ->
+          []
+      end
+
+    login =
+      Enum.find(logins, &(&1["default"] in ["true", true])) ||
+        if(length(logins) == 1, do: hd(logins))
+
+    with %{"name" => name, "url" => base} <-
+           login || {:error, "No Forgejo login. Use `tea login add` for this server."},
+         path = repository |> String.split("/") |> Enum.map_join("/", &URI.encode/1),
+         url = String.trim_trailing(base, "/") <> "/api/v1/repos/" <> path,
+         {:ok, out, err} <-
+           cmd("tea", ["api", "--include", "--login", name, "--method", "GET", url], cd: cwd),
+         [_, status] when status < "400" <-
+           Regex.run(~r/^HTTP\/\S+ (\d{3})/m, err) ||
+             {:error, "Forgejo did not answer."},
+         {:ok, %{"full_name" => full_name} = info} <- JSON.decode(out) do
+      {:ok, repo("forgejo", full_name, info["clone_url"], info["ssh_url"])}
+    else
+      [_, status] ->
+        repository_error(
+          "forgejo",
+          "lookupRepository",
+          {:error, "Forgejo answered HTTP #{status}."}
+        )
+
+      error ->
+        repository_error("forgejo", "lookupRepository", error)
     end
   end
 
@@ -270,11 +484,15 @@ defmodule T3.SourceControl do
      }}
   end
 
+  # `gh` is the one `T3.PullRequests` and `T3.GitActions` run too.
+  defp executable("gh"), do: Application.get_env(:t3, :gh_command, "gh")
+  defp executable(exe), do: exe
+
   # Runs a CLI, giving up after `@timeout`: `{:ok, stdout, stderr}` when it exits 0,
   # else `{:error, first line of what it said}`.
   defp cmd(exe, args, opts \\ []) do
     with path when is_binary(path) <-
-           System.find_executable(exe) || {:error, "#{exe} is not installed"} do
+           System.find_executable(executable(exe)) || {:error, "#{exe} is not installed"} do
       cd = if opts[:cd] && File.dir?(opts[:cd]), do: [cd: opts[:cd]], else: []
 
       task =

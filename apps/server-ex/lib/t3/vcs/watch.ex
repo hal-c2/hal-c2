@@ -138,10 +138,11 @@ defmodule T3.Vcs.Watch do
   defp stop_if_idle(state), do: {:noreply, state}
 
   # Checked again every 30 s while fetching is off, so turning it on takes effect.
+  # The timer is kept as `{message, ref}`: what fires next, and when.
   defp schedule_fetch do
     case T3.BackgroundPolicy.settings()["automaticGitFetchInterval"] do
-      ms when is_integer(ms) and ms > 0 -> Process.send_after(self(), :fetch, ms)
-      _ -> Process.send_after(self(), :fetch_off, 30_000)
+      ms when is_integer(ms) and ms > 0 -> {:fetch, Process.send_after(self(), :fetch, ms)}
+      _ -> {:fetch_off, Process.send_after(self(), :fetch_off, 30_000)}
     end
   end
 end

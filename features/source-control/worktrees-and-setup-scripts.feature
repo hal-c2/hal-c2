@@ -78,7 +78,7 @@ Feature: Worktrees and setup scripts
       | Run setup script   |
       | Start agent        |
 
-  @backlog @node
+  @node
   Scenario: Submodule initialization is its own setup stage
     Given "shop" has submodules
     When the user sends the first message of a thread in a new worktree

@@ -5,8 +5,8 @@ defmodule T3.WorktreeSetup do
 
   A thread launched with the `worktree` strategy gets a `preparing` run; a worker then
   fetches the base branch when asked, adds the worktree on a temporary
-  `t3code/<hex>` branch (renamed in the background from the first message), runs
-  the project's setup script in a terminal, and releases the run
+  `t3code/<hex>` branch (renamed in the background from the first message), fills
+  its submodules, runs the project's setup script in a terminal, and releases the run
   (`T3.Orchestration.release_prepared/2`). Its progress is a `WorktreeSetupSnapshot`
   that subscribers get on every change. Until the agent starts the setup can be
   cancelled, which removes the worktree and cancels the run.
@@ -20,6 +20,7 @@ defmodule T3.WorktreeSetup do
 
   alias T3.Orchestration
 
+  # A `submodules` stage joins after `checkout` when the worktree has submodules.
   @stages ~w(fetch checkout setup-script agent)
   @tail_lines 5
 
@@ -78,6 +79,7 @@ defmodule T3.WorktreeSetup do
       worker: worker,
       run_id: run_id,
       root: project["workspaceRoot"],
+      claimed: nil,
       cancellable: true
     }
 
@@ -110,6 +112,17 @@ defmodule T3.WorktreeSetup do
   # Progress from the worker: snapshot changes, and notes on what to undo.
   def handle_call({:update, thread_id, fun}, _from, state),
     do: {:reply, :ok, update(state, thread_id, fun)}
+
+  # The worktree's folder, claimed before `git worktree add` so a cancel during the
+  # checkout still removes it.
+  def handle_call({:claim, thread_id, path}, _from, state) do
+    state =
+      if state.setups[thread_id],
+        do: put_in(state.setups[thread_id].claimed, path),
+        else: state
+
+    {:reply, :ok, state}
+  end
 
   def handle_call({:uncancellable, thread_id}, _from, state) do
     state =
@@ -183,7 +196,7 @@ defmodule T3.WorktreeSetup do
 
   # A cancelled setup leaves nothing behind: no worktree, no workspace on the thread.
   defp cleanup(thread_id, setup) do
-    path = setup.snapshot["worktreePath"]
+    path = setup.snapshot["worktreePath"] || setup.claimed
 
     if path do
       T3.Terminal.close(%{
@@ -192,6 +205,8 @@ defmodule T3.WorktreeSetup do
         "deleteHistory" => true
       })
 
+      # A checkout cut short leaves the worktree locked as "initializing".
+      T3.Git.run(setup.root, ["worktree", "unlock", path])
       T3.Vcs.remove_worktree(%{"cwd" => setup.root, "path" => path, "force" => true})
 
       Orchestration.dispatch(%{
@@ -236,11 +251,16 @@ defmodule T3.WorktreeSetup do
     temporary = "t3code/" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
     branch = strategy["branch"] || temporary
 
+    path = T3.Vcs.worktree_path(root, branch)
+    unless File.exists?(path), do: GenServer.call(server, {:claim, thread_id, path})
+
     {path, branch} =
       case T3.Vcs.create_worktree(%{
              "cwd" => root,
              "refName" => start_ref,
-             "newRefName" => branch
+             "newRefName" => branch,
+             "path" => path,
+             "submodules" => false
            }) do
         {:ok, %{"worktree" => %{"path" => path, "refName" => branch}}} -> {path, branch}
         {:error, error} -> fail("Could not create the worktree: #{message(error)}")
@@ -257,6 +277,7 @@ defmodule T3.WorktreeSetup do
       })
 
     status.("checkout", "done", %{})
+    submodules(root, path, set, status)
     if branch == temporary, do: rename_later(thread_id, path, branch, text)
 
     setup = setup_script(project)
@@ -285,6 +306,25 @@ defmodule T3.WorktreeSetup do
 
     if wait && setup["async"] != false, do: await_script(wait, status, set, fatal: false)
     set.(&finish(&1, "done", nil))
+  end
+
+  # Submodules get their own stage, shown only when the worktree has any.
+  defp submodules(root, path, set, status) do
+    if File.exists?(Path.join(path, ".gitmodules")) do
+      set.(&add_stage(&1, "submodules", after: "checkout"))
+      status.("submodules", "running", %{})
+
+      case T3.Vcs.init_submodules(root, path) do
+        :ok ->
+          status.("submodules", "done", %{})
+
+        :none ->
+          status.("submodules", "skipped", %{})
+
+        {:error, detail} ->
+          status.("submodules", "warning", %{"detail" => String.slice(message(detail), 0, 200)})
+      end
+    end
   end
 
   defp origin?(root), do: match?({:ok, _}, T3.Git.ok(root, ~w(remote get-url origin)))
@@ -419,6 +459,11 @@ defmodule T3.WorktreeSetup do
       "detail" => nil,
       "tail" => []
     }
+
+  defp add_stage(snapshot, id, after: previous) do
+    index = Enum.find_index(snapshot["stages"], &(&1["id"] == previous)) + 1
+    %{snapshot | "stages" => List.insert_at(snapshot["stages"], index, stage(id))}
+  end
 
   defp set_stage(snapshot, id, status, extra) do
     at = now()
