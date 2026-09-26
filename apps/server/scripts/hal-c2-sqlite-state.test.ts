@@ -15,7 +15,7 @@ const createFixtureDatabase = Effect.fn("createSqliteStateFixtureDatabase")(func
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const stateDir = path.join(baseDir, "userdata");
+  const stateDir = path.join(baseDir, "data");
   const databasePath = path.join(stateDir, "statev2.sqlite");
   yield* fs.makeDirectory(stateDir, { recursive: true });
   yield* Effect.gen(function* () {
@@ -101,7 +101,7 @@ it.layer(NodeServices.layer)("hal-c2-sqlite-state", (it) => {
             baseDir,
             sql: "DELETE FROM fixtures",
           },
-          { sharedHome: baseDir },
+          { sharedDataDirs: [path.join(baseDir, "data")] },
         ).pipe(Effect.flip);
         assert.equal(error._tag, "SqliteStateSharedHomeMutationError");
 
@@ -116,7 +116,7 @@ it.layer(NodeServices.layer)("hal-c2-sqlite-state", (it) => {
             baseDir: aliasBaseDir,
             sql: "DELETE FROM fixtures",
           },
-          { sharedHome: baseDir },
+          { sharedDataDirs: [path.join(baseDir, "data")] },
         ).pipe(Effect.flip);
         assert.equal(aliasError._tag, "SqliteStateSharedHomeMutationError");
       }),

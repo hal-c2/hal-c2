@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - node modules provide hashing and the shared-home guard.
+// @effect-diagnostics nodeBuiltinImport:off - node modules provide hashing and the user-data guard.
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 
@@ -18,6 +18,13 @@ import {
   toSafeThreadAttachmentSegment,
 } from "../src/attachmentStore.ts";
 import * as NodeSqliteClient from "@hal-c2/shared/nodeSqliteClient";
+import {
+  HAL_C2_APP_DIR,
+  HAL_C2_DEV_APP_DIR,
+  halC2DirsUnder,
+  resolveHalC2Dirs,
+} from "@hal-c2/shared/xdgDirs";
+import { userDataDirs } from "./hal-c2-sqlite-state.ts";
 import { ensureDevDbNotInUse } from "./migrate-dev-db.ts";
 
 const THREAD_PROJECTION_TABLES = [
@@ -84,8 +91,6 @@ export const ThreadArchive = Schema.Struct({
   ),
 });
 export type ThreadArchive = typeof ThreadArchive.Type;
-export const ThreadTransferState = Schema.Literals(["userdata", "dev"]);
-export type ThreadTransferState = typeof ThreadTransferState.Type;
 
 const decodeThreadArchive = Schema.decodeEffect(Schema.fromJsonString(ThreadArchive));
 const encodeThreadArchive = Schema.encodeEffect(fromJsonStringPretty(ThreadArchive));
@@ -106,26 +111,23 @@ export class ThreadTransferError extends Schema.TaggedError<ThreadTransferError>
 }
 
 export interface ExportThreadInput {
-  /** Workspace root, HAL-C2 base directory, or direct state directory. */
+  /** Workspace root, HAL-C2 root, or data directory. */
   readonly source: string;
-  readonly state?: ThreadTransferState | undefined;
   readonly threadId: string;
   readonly output: string;
   readonly includeTerminalLogs?: boolean | undefined;
 }
 
 export interface ImportThreadInput {
-  /** Workspace root, HAL-C2 base directory, or direct state directory. */
+  /** Workspace root, HAL-C2 root, or data directory. */
   readonly destination: string;
-  readonly state?: ThreadTransferState | undefined;
   readonly archive: string;
   readonly targetProjectId?: string | undefined;
 }
 
 export interface ListThreadsInput {
-  /** Workspace root, HAL-C2 base directory, or direct state directory. */
+  /** Workspace root, HAL-C2 root, or data directory. */
   readonly source: string;
-  readonly state?: ThreadTransferState | undefined;
 }
 
 export const ListedThread = Schema.Struct({
@@ -140,10 +142,14 @@ export const ListedThread = Schema.Struct({
 export type ListedThread = typeof ListedThread.Type;
 
 export interface ThreadTransferOptions {
-  readonly sharedHome?: string | undefined;
+  /** Data directories imports must never touch. Defaults to both of the user's profiles. */
+  readonly sharedDataDirs?: ReadonlyArray<string> | undefined;
 }
 
 interface HalC2Location {
+  /** Holds the database and attachments. */
+  readonly dataDir: string;
+  /** Holds `logs/terminals` and `server-runtime.json`. */
   readonly stateDir: string;
   readonly databasePath: string;
   readonly workspaceRoot: string | null;
@@ -202,9 +208,31 @@ function restoreSqliteValue(value: typeof SqliteValue.Type): null | string | num
   return value instanceof Array ? Uint8Array.from(value) : value;
 }
 
+/**
+ * The state directory beside a data directory: `<root>/state` beside
+ * `<root>/data`, the matching XDG state directory beside one of the user's own
+ * data directories, and the directory itself for anything else.
+ */
+const stateDirBeside = (dataDir: string, path: Path.Path): string => {
+  if (path.basename(dataDir) === "data") {
+    return path.join(path.dirname(dataDir), "state");
+  }
+  for (const profile of [HAL_C2_APP_DIR, HAL_C2_DEV_APP_DIR] as const) {
+    const dirs = resolveHalC2Dirs({
+      env: process.env,
+      homeDir: NodeOS.homedir(),
+      platform: process.platform,
+      profile,
+    });
+    if (path.resolve(dirs.data) === dataDir) {
+      return dirs.state;
+    }
+  }
+  return dataDir;
+};
+
 const resolveHalC2Location = Effect.fn("resolveThreadTransferHalC2Location")(function* (
   input: string,
-  state: ThreadTransferState = "userdata",
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -212,33 +240,35 @@ const resolveHalC2Location = Effect.fn("resolveThreadTransferHalC2Location")(fun
   const directDatabase = path.join(root, "statev2.sqlite");
   if (yield* fs.exists(directDatabase)) {
     return {
-      stateDir: root,
+      dataDir: root,
+      stateDir: stateDirBeside(root, path),
       databasePath: directDatabase,
       workspaceRoot: null,
     } satisfies HalC2Location;
   }
-  const stateDir = path.join(root, state);
-  const stateDatabase = path.join(stateDir, "statev2.sqlite");
-  if (yield* fs.exists(stateDatabase)) {
+  const rootDirs = halC2DirsUnder(root, process.platform);
+  const rootDatabase = path.join(rootDirs.data, "statev2.sqlite");
+  if (yield* fs.exists(rootDatabase)) {
     return {
-      stateDir,
-      databasePath: stateDatabase,
+      dataDir: rootDirs.data,
+      stateDir: rootDirs.state,
+      databasePath: rootDatabase,
       workspaceRoot: null,
     } satisfies HalC2Location;
   }
-  const nestedBaseDir = path.join(root, ".hal-c2");
-  const nestedStateDir = path.join(nestedBaseDir, state);
-  const nestedDatabase = path.join(nestedStateDir, "statev2.sqlite");
+  const nestedDirs = halC2DirsUnder(path.join(root, ".hal-c2"), process.platform);
+  const nestedDatabase = path.join(nestedDirs.data, "statev2.sqlite");
   if (yield* fs.exists(nestedDatabase)) {
     return {
-      stateDir: nestedStateDir,
+      dataDir: nestedDirs.data,
+      stateDir: nestedDirs.state,
       databasePath: nestedDatabase,
       workspaceRoot: root,
     } satisfies HalC2Location;
   }
   return yield* transferError(
     "resolve directory",
-    `No HAL-C2 ${state} database found at '${directDatabase}', '${stateDatabase}', or '${nestedDatabase}'.`,
+    `No HAL-C2 database found at '${directDatabase}', '${rootDatabase}', or '${nestedDatabase}'.`,
   );
 });
 
@@ -311,7 +341,7 @@ const loadAttachments = Effect.fn("loadThreadTransferAttachments")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const attachmentsDir = path.join(location.stateDir, "attachments");
+  const attachmentsDir = path.join(location.dataDir, "attachments");
   if (!(yield* fs.exists(attachmentsDir))) return [];
   const names = (yield* fs.readDirectory(attachmentsDir))
     .filter((name) => isAttachmentForThread(name, threadId))
@@ -409,7 +439,7 @@ const loadListedThreads = Effect.fn("loadListedThreads")(function* (
 });
 
 export const listThreads = Effect.fn("listThreads")(function* (input: ListThreadsInput) {
-  const location = yield* resolveHalC2Location(input.source, input.state);
+  const location = yield* resolveHalC2Location(input.source);
   return yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const projects = yield* sql<ProjectRow>`
@@ -469,7 +499,7 @@ const loadArchive = Effect.fn("loadThreadTransferArchive")(function* (filePath: 
 export const exportThread = Effect.fn("exportThread")(function* (input: ExportThreadInput) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const location = yield* resolveHalC2Location(input.source, input.state);
+  const location = yield* resolveHalC2Location(input.source);
   const output = path.resolve(input.output);
   if (yield* fs.exists(output)) {
     return yield* transferError("export thread", `Output '${output}' already exists.`);
@@ -649,15 +679,13 @@ const resolveTargetProject = Effect.fn("resolveThreadTransferTargetProject")(fun
 });
 
 const writeArchiveFiles = Effect.fn("writeThreadTransferFiles")(function* (
-  location: HalC2Location,
-  directory: ReadonlyArray<string>,
+  destinationDir: string,
   files: ThreadArchive["attachments"],
   kind: "Attachment" | "Terminal log",
   isAllowedName: (fileName: string) => boolean,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const destinationDir = path.join(location.stateDir, ...directory);
   const pending: Array<{ readonly path: string; readonly data: Uint8Array }> = [];
   for (const file of files) {
     if (path.basename(file.fileName) !== file.fileName) {
@@ -732,22 +760,22 @@ export const importThread = Effect.fn("importThread")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const location = yield* resolveHalC2Location(input.destination, input.state);
-  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".hal-c2"));
-  const sharedDatabase = path.join(sharedHome, "userdata", "statev2.sqlite");
-  const [canonicalDatabase, canonicalSharedDatabase] = yield* Effect.all([
-    fs.realPath(location.databasePath).pipe(Effect.orElseSucceed(() => location.databasePath)),
-    fs.realPath(sharedDatabase).pipe(Effect.orElseSucceed(() => sharedDatabase)),
-  ]);
-  if (canonicalDatabase === canonicalSharedDatabase) {
+  const location = yield* resolveHalC2Location(input.destination);
+  const sharedDataDirs = options.sharedDataDirs ?? userDataDirs();
+  const canonical = (dir: string) =>
+    fs.realPath(path.resolve(dir)).pipe(Effect.orElseSucceed(() => path.resolve(dir)));
+  const canonicalDataDir = yield* canonical(location.dataDir);
+  const canonicalSharedDirs = yield* Effect.forEach(sharedDataDirs, canonical);
+  if (canonicalSharedDirs.includes(canonicalDataDir)) {
     return yield* transferError(
       "import thread",
-      "Refusing to mutate the shared ~/.hal-c2 database. Choose an isolated destination.",
+      "Refusing to mutate the database of your own HAL-C2 install. Choose an isolated destination.",
     );
   }
-  yield* ensureDevDbNotInUse(location.databasePath).pipe(
-    Effect.mapError((cause) => transferError("import thread", cause.message, cause)),
-  );
+  yield* ensureDevDbNotInUse(
+    location.databasePath,
+    path.join(location.stateDir, "server-runtime.json"),
+  ).pipe(Effect.mapError((cause) => transferError("import thread", cause.message, cause)));
   const archive = yield* loadArchive(input.archive);
 
   return yield* Effect.gen(function* () {
@@ -796,12 +824,14 @@ export const importThread = Effect.fn("importThread")(function* (
     yield* sql`VACUUM INTO ${backup}`;
     yield* fs.chmod(backup, 0o600);
     const writtenFiles = yield* Effect.all([
-      writeArchiveFiles(location, ["attachments"], archive.attachments, "Attachment", (fileName) =>
-        isAttachmentForThread(fileName, archive.thread.id),
+      writeArchiveFiles(
+        path.join(location.dataDir, "attachments"),
+        archive.attachments,
+        "Attachment",
+        (fileName) => isAttachmentForThread(fileName, archive.thread.id),
       ),
       writeArchiveFiles(
-        location,
-        ["logs", "terminals"],
+        path.join(location.stateDir, "logs", "terminals"),
         archive.terminalLogs,
         "Terminal log",
         (fileName) => isTerminalLogForThread(fileName, archive.thread.id),

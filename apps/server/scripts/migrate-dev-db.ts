@@ -2,10 +2,11 @@
 
 /**
  * Rebuild an isolated dev database from a pruned snapshot of the real
- * ~/.hal-c2 database, then run this checkout's migrations against it.
+ * HAL-C2 database in your data directory, then run this checkout's
+ * migrations against it.
  *
  * `vp run migrate-dev-db` from a worktree:
- *   1. Nukes `<worktree>/.hal-c2/userdata/statev2.sqlite`.
+ *   1. Nukes `<worktree>/.hal-c2/data/statev2.sqlite`.
  *   2. Snapshots the real db (read-only VACUUM INTO) and prunes it to the
  *      most recently updated projects and, per project, the most recent
  *      threads that have fully stopped. Working, settled, and monitored
@@ -28,6 +29,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import { resolveWorktreeHalC2Home } from "@hal-c2/shared/devHome";
+import { HAL_C2_APP_DIR, halC2DirsUnder, resolveHalC2Dirs } from "@hal-c2/shared/xdgDirs";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -39,6 +41,7 @@ import { Command, Flag } from "effect/unstable/cli";
 
 import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@hal-c2/shared/nodeSqliteClient";
+import { userDataDirs } from "./hal-c2-sqlite-state.ts";
 
 export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDevDbNotInWorktreeError>()(
   "MigrateDevDbNotInWorktreeError",
@@ -54,7 +57,7 @@ export class MigrateDevDbSharedHomeError extends Schema.TaggedError<MigrateDevDb
   {},
 ) {
   override get message(): string {
-    return "Refusing to rebuild the shared ~/.hal-c2 database. Use an isolated --base-dir.";
+    return "Refusing to rebuild the database of your own HAL-C2 install. Use an isolated --base-dir.";
   }
 }
 
@@ -141,17 +144,17 @@ export class MigrateDevDbPhaseError extends Schema.TaggedError<MigrateDevDbPhase
 }
 
 export interface RunMigrateDevDbInput {
-  /** Isolated .hal-c2 directory. Defaults to `<worktree>/.hal-c2` of the cwd. */
+  /** Isolated HAL-C2 root. Defaults to `<worktree>/.hal-c2` of the cwd. */
   readonly baseDir?: string | undefined;
-  /** Source database. Defaults to `~/.hal-c2/userdata/state.sqlite`. */
+  /** Source database. Defaults to `state.sqlite` in your HAL-C2 data directory. */
   readonly source?: string | undefined;
   readonly projects: number;
   readonly threadsPerProject: number;
 }
 
 export interface RunMigrateDevDbOptions {
-  /** Overridable for tests; the directory writes must never target. */
-  readonly sharedHome?: string | undefined;
+  /** Overridable for tests; the data directories writes must never target. */
+  readonly sharedDataDirs?: ReadonlyArray<string> | undefined;
 }
 
 interface KeptProject {
@@ -181,7 +184,7 @@ const isProcessAlive = (pid: number): boolean => {
 };
 
 /** Liveness probe for a running dev server. The server writes its pid to
- * server-runtime.json next to the database, which also catches an idle
+ * server-runtime.json in its state directory, which also catches an idle
  * server holding an open-but-inactive connection. The SQL probes below back
  * that up: BEGIN IMMEDIATE fails while a writer is active, and
  * wal_checkpoint(TRUNCATE) reports busy while another connection holds the
@@ -189,11 +192,10 @@ const isProcessAlive = (pid: number): boolean => {
  * clean it up on close. */
 export const ensureDevDbNotInUse = Effect.fn("ensureDevDbNotInUse")(function* (
   databasePath: string,
+  runtimeStatePath: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
 
-  const runtimeStatePath = path.join(path.dirname(databasePath), "server-runtime.json");
   const runtimeState = yield* fs.readFileString(runtimeStatePath).pipe(
     Effect.flatMap(decodeServerRuntimeState),
     // A missing or malformed descriptor is not a liveness signal.
@@ -362,9 +364,18 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".hal-c2"));
+  const sharedDataDirs = options.sharedDataDirs ?? userDataDirs();
   const sourcePath = path.resolve(
-    input.source ?? path.join(sharedHome, "userdata", "state.sqlite"),
+    input.source ??
+      path.join(
+        resolveHalC2Dirs({
+          env: process.env,
+          homeDir: NodeOS.homedir(),
+          platform: process.platform,
+          profile: HAL_C2_APP_DIR,
+        }).data,
+        "state.sqlite",
+      ),
   );
 
   const baseDir =
@@ -374,18 +385,19 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   if (baseDir === undefined) {
     return yield* new MigrateDevDbNotInWorktreeError();
   }
-  const stateDir = path.join(baseDir, "userdata");
-  const databasePath = path.join(stateDir, "statev2.sqlite");
+  const dirs = halC2DirsUnder(baseDir, process.platform);
+  const databasePath = path.join(dirs.data, "statev2.sqlite");
+  const runtimeStatePath = path.join(dirs.state, "server-runtime.json");
   const snapshotPath = `${databasePath}.migrate-dev-db-tmp`;
 
   if (!(yield* fs.exists(sourcePath))) {
     return yield* new MigrateDevDbSourceMissingError({ sourcePath });
   }
-  const [canonicalBaseDir, canonicalSharedHome] = yield* Effect.all([
-    fs.realPath(baseDir).pipe(Effect.orElseSucceed(() => baseDir)),
-    fs.realPath(sharedHome).pipe(Effect.orElseSucceed(() => sharedHome)),
-  ]);
-  if (canonicalBaseDir === canonicalSharedHome) {
+  const canonical = (dir: string) =>
+    fs.realPath(path.resolve(dir)).pipe(Effect.orElseSucceed(() => path.resolve(dir)));
+  const canonicalDataDir = yield* canonical(dirs.data);
+  const canonicalSharedDirs = yield* Effect.forEach(sharedDataDirs, canonical);
+  if (canonicalSharedDirs.includes(canonicalDataDir)) {
     return yield* new MigrateDevDbSharedHomeError();
   }
   // The destination db and snapshot both get deleted below; a --source that
@@ -403,8 +415,8 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     }
   }
 
-  yield* fs.makeDirectory(stateDir, { recursive: true });
-  yield* ensureDevDbNotInUse(databasePath);
+  yield* fs.makeDirectory(dirs.data, { recursive: true });
+  yield* ensureDevDbNotInUse(databasePath, runtimeStatePath);
 
   const wrapPhase =
     (phase: MigrateDevDbPhaseError["phase"], phaseDatabasePath: string) =>
@@ -467,7 +479,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     yield* Console.log(`Compacting into ${databasePath}...`);
     // Re-check right before the swap: a dev server started while the
     // snapshot was migrating and pruning must not lose its database.
-    yield* ensureDevDbNotInUse(databasePath);
+    yield* ensureDevDbNotInUse(databasePath, runtimeStatePath);
     yield* removeDatabaseFiles(databasePath);
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -518,13 +530,13 @@ export const migrateDevDbCommand = Command.make(
     ),
     baseDir: Flag.String("base-dir").pipe(
       Flag.optional,
-      Flag.withDescription(
-        "Isolated .hal-c2 directory. Defaults to the current worktree's .hal-c2.",
-      ),
+      Flag.withDescription("Isolated HAL-C2 root. Defaults to the current worktree's .hal-c2."),
     ),
     source: Flag.String("source").pipe(
       Flag.optional,
-      Flag.withDescription("Source database. Defaults to ~/.hal-c2/userdata/state.sqlite."),
+      Flag.withDescription(
+        "Source database. Defaults to state.sqlite in your HAL-C2 data directory.",
+      ),
     ),
   },
   ({ projects, threadsPerProject, baseDir, source }) =>
@@ -551,7 +563,7 @@ export const migrateDevDbCommand = Command.make(
     }),
 ).pipe(
   Command.withDescription(
-    "Rebuild the worktree dev database from a pruned snapshot of the real ~/.hal-c2 data, then run migrations.",
+    "Rebuild the worktree dev database from a pruned snapshot of your real HAL-C2 data, then run migrations.",
   ),
 );
 

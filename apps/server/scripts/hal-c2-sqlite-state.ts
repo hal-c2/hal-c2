@@ -15,6 +15,12 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import * as NodeSqliteClient from "@hal-c2/shared/nodeSqliteClient";
+import {
+  HAL_C2_APP_DIR,
+  HAL_C2_DEV_APP_DIR,
+  halC2DirsUnder,
+  resolveHalC2Dirs,
+} from "@hal-c2/shared/xdgDirs";
 
 export const SqliteStateOperation = Schema.Literals(["query", "exec"]);
 export type SqliteStateOperation = typeof SqliteStateOperation.Type;
@@ -62,7 +68,7 @@ export class SqliteStateSharedHomeMutationError extends Schema.TaggedError<Sqlit
   {},
 ) {
   override get message(): string {
-    return "Refusing to mutate the shared ~/.hal-c2 database. Use an isolated --base-dir.";
+    return "Refusing to mutate the database of your own HAL-C2 install. Use an isolated --base-dir.";
   }
 }
 
@@ -124,8 +130,21 @@ export interface RunSqliteStateInput {
 }
 
 export interface RunSqliteStateOptions {
-  readonly sharedHome?: string | undefined;
+  /** Data directories that writes must never touch. Defaults to both of the user's profiles. */
+  readonly sharedDataDirs?: ReadonlyArray<string> | undefined;
 }
+
+/** The data directories of the user's own `hal-c2` and `hal-c2-dev` installs. */
+export const userDataDirs = (): ReadonlyArray<string> =>
+  ([HAL_C2_APP_DIR, HAL_C2_DEV_APP_DIR] as const).map(
+    (profile) =>
+      resolveHalC2Dirs({
+        env: process.env,
+        homeDir: NodeOS.homedir(),
+        platform: process.platform,
+        profile,
+      }).data,
+  );
 
 const resolveSqlSource = Effect.fn("resolveSqliteStateSqlSource")(function* (
   sql: string | undefined,
@@ -181,19 +200,20 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const baseDir = path.resolve(input.baseDir);
-  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".hal-c2"));
-  const databasePath = path.join(baseDir, "userdata", "statev2.sqlite");
+  const dataDir = halC2DirsUnder(baseDir, process.platform).data;
+  const sharedDataDirs = options.sharedDataDirs ?? userDataDirs();
+  const databasePath = path.join(dataDir, "statev2.sqlite");
   const source = yield* resolveSqlSource(input.sql, input.file);
 
   if (!(yield* fs.exists(databasePath))) {
     return yield* new SqliteStateDatabaseMissingError({ databasePath });
   }
   if (input.operation === "exec") {
-    const [canonicalBaseDir, canonicalSharedHome] = yield* Effect.all([
-      fs.realPath(baseDir),
-      fs.realPath(sharedHome).pipe(Effect.orElseSucceed(() => sharedHome)),
-    ]);
-    if (canonicalBaseDir === canonicalSharedHome) {
+    const canonical = (dir: string) =>
+      fs.realPath(path.resolve(dir)).pipe(Effect.orElseSucceed(() => path.resolve(dir)));
+    const canonicalDataDir = yield* canonical(dataDir);
+    const canonicalSharedDirs = yield* Effect.forEach(sharedDataDirs, canonical);
+    if (canonicalSharedDirs.includes(canonicalDataDir)) {
       return yield* new SqliteStateSharedHomeMutationError();
     }
   }
@@ -252,7 +272,7 @@ const halC2SqliteStateCommand = Command.make(
       Argument.withDescription("Run a read-only query or a backed-up fixture mutation."),
     ),
     baseDir: Flag.String("base-dir").pipe(
-      Flag.withDescription("Explicit HAL-C2 base directory containing userdata/statev2.sqlite."),
+      Flag.withDescription("Explicit HAL-C2 root directory containing data/statev2.sqlite."),
     ),
     sql: Flag.String("sql").pipe(
       Flag.optional,

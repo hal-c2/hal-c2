@@ -21,7 +21,7 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const stateDir = path.join(baseDir, "userdata");
+  const stateDir = path.join(baseDir, "data");
   const databasePath = path.join(stateDir, "state.sqlite");
   yield* fs.makeDirectory(stateDir, { recursive: true });
   yield* withDatabase(
@@ -74,10 +74,10 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
 
       const result = yield* runMigrateDevDb(
         { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
-        { sharedHome: sourceDir },
+        { sharedDataDirs: [path.join(sourceDir, "data")] },
       );
 
-      assert.equal(result.databasePath, path.join(destDir, "userdata", "statev2.sqlite"));
+      assert.equal(result.databasePath, path.join(destDir, "data", "statev2.sqlite"));
       const kept = yield* withDatabase(
         result.databasePath,
         Effect.gen(function* () {
@@ -106,6 +106,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
   it.effect("fails loudly on a migration slot collision", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-slot-" });
       const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-slot-dest-" });
       const source = yield* createFixtureSource(sourceDir);
@@ -122,7 +123,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
 
       const error = yield* runMigrateDevDb(
         { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
-        { sharedHome: sourceDir },
+        { sharedDataDirs: [path.join(sourceDir, "data")] },
       ).pipe(Effect.flip);
       assert.equal(error._tag, "MigrateDevDbSlotCollisionError");
       if (error._tag === "MigrateDevDbSlotCollisionError") {
@@ -140,7 +141,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-busy-dest-" });
       const source = yield* createFixtureSource(sourceDir);
       // This test process stands in for a live dev server.
-      const stateDir = path.join(destDir, "userdata");
+      const stateDir = path.join(destDir, "state");
       yield* fs.makeDirectory(stateDir, { recursive: true });
       yield* fs.writeFileString(
         path.join(stateDir, "server-runtime.json"),
@@ -149,7 +150,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
 
       const error = yield* runMigrateDevDb(
         { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
-        { sharedHome: sourceDir },
+        { sharedDataDirs: [path.join(sourceDir, "data")] },
       ).pipe(Effect.flip);
       assert.equal(error._tag, "MigrateDevDbServerRunningError");
       if (error._tag === "MigrateDevDbServerRunningError") {
@@ -166,28 +167,29 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-overlap-dest-" });
       // A leftover snapshot from a prior failed run, passed as --source: it
       // must not be deleted before it is read.
-      const leftoverSnapshot = path.join(destDir, "userdata", "statev2.sqlite.migrate-dev-db-tmp");
+      const leftoverSnapshot = path.join(destDir, "data", "statev2.sqlite.migrate-dev-db-tmp");
       yield* fs.makeDirectory(path.dirname(leftoverSnapshot), { recursive: true });
       yield* fs.writeFileString(leftoverSnapshot, "not a real db");
 
       const error = yield* runMigrateDevDb(
         { baseDir: destDir, source: leftoverSnapshot, projects: 5, threadsPerProject: 10 },
-        { sharedHome: sharedDir },
+        { sharedDataDirs: [path.join(sharedDir, "data")] },
       ).pipe(Effect.flip);
       assert.equal(error._tag, "MigrateDevDbSourceIsDestinationError");
       assert.equal(yield* fs.exists(leftoverSnapshot), true);
     }),
   );
 
-  it.effect("refuses to rebuild the shared home", () =>
+  it.effect("refuses to rebuild the user's own data directory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-shared-" });
       const source = yield* createFixtureSource(sourceDir);
 
       const error = yield* runMigrateDevDb(
         { baseDir: sourceDir, source, projects: 5, threadsPerProject: 10 },
-        { sharedHome: sourceDir },
+        { sharedDataDirs: [path.join(sourceDir, "data")] },
       ).pipe(Effect.flip);
       assert.equal(error._tag, "MigrateDevDbSharedHomeError");
     }),

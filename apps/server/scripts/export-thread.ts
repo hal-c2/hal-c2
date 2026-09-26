@@ -6,19 +6,13 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import { Command, Flag } from "effect/unstable/cli";
 
-import { exportThread, ThreadTransferState } from "./thread-transfer.ts";
+import { exportThread } from "./thread-transfer.ts";
 
 export const exportThreadCommand = Command.make(
   "export-thread",
   {
     source: Flag.String("source").pipe(
-      Flag.withDescription("Workspace root, HAL-C2 base directory, or direct state directory."),
-    ),
-    state: Flag.Literals("state", ThreadTransferState.literals).pipe(
-      Flag.withDefault("userdata"),
-      Flag.withDescription(
-        "State directory below the HAL-C2 base directory; defaults to userdata.",
-      ),
+      Flag.withDescription("Workspace root, HAL-C2 root, or data directory."),
     ),
     threadId: Flag.String("thread-id"),
     output: Flag.String("output").pipe(Flag.withDescription("Archive JSON file to create.")),
@@ -27,11 +21,10 @@ export const exportThreadCommand = Command.make(
       Flag.withDescription("Include persisted terminal history, which may contain secrets."),
     ),
   },
-  ({ source, state, threadId, output, includeTerminalLogs }) =>
+  ({ source, threadId, output, includeTerminalLogs }) =>
     Effect.gen(function* () {
       const result = yield* exportThread({
         source,
-        state,
         threadId,
         output,
         includeTerminalLogs,

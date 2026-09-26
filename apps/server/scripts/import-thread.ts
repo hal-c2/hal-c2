@@ -7,32 +7,25 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Command, Flag } from "effect/unstable/cli";
 
-import { importThread, ThreadTransferState } from "./thread-transfer.ts";
+import { importThread } from "./thread-transfer.ts";
 
 export const importThreadCommand = Command.make(
   "import-thread",
   {
     archive: Flag.String("archive").pipe(Flag.withDescription("Thread archive JSON to import.")),
     destination: Flag.String("destination").pipe(
-      Flag.withDescription("Workspace root, HAL-C2 base directory, or direct state directory."),
-    ),
-    state: Flag.Literals("state", ThreadTransferState.literals).pipe(
-      Flag.withDefault("userdata"),
-      Flag.withDescription(
-        "State directory below the HAL-C2 base directory; defaults to userdata.",
-      ),
+      Flag.withDescription("Workspace root, HAL-C2 root, or data directory."),
     ),
     targetProjectId: Flag.String("target-project-id").pipe(
       Flag.optional,
       Flag.withDescription("Project id when it cannot be inferred from the destination path."),
     ),
   },
-  ({ archive, destination, state, targetProjectId }) =>
+  ({ archive, destination, targetProjectId }) =>
     Effect.gen(function* () {
       const result = yield* importThread({
         archive,
         destination,
-        state,
         targetProjectId: Option.getOrUndefined(targetProjectId),
       });
       yield* Console.log(

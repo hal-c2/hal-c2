@@ -21,7 +21,6 @@ interface FixtureInput {
   readonly threadId?: string;
   readonly orchestrationVersion: 1 | 2;
   readonly includeV1EventBesideV2?: boolean;
-  readonly state?: "userdata" | "dev";
 }
 
 const createFixtureDatabase = Effect.fn("createThreadTransferFixtureDatabase")(function* (
@@ -29,7 +28,7 @@ const createFixtureDatabase = Effect.fn("createThreadTransferFixtureDatabase")(f
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const stateDir = path.join(input.workspace, ".hal-c2", input.state ?? "userdata");
+  const stateDir = path.join(input.workspace, ".hal-c2", "data");
   const databasePath = path.join(stateDir, "statev2.sqlite");
   yield* fs.makeDirectory(stateDir, { recursive: true });
   yield* Effect.gen(function* () {
@@ -180,14 +179,14 @@ it.layer(NodeServices.layer)("thread transfer", (it) => {
         orchestrationVersion: 1,
       });
       const attachmentName = "thread-v1-00000000-0000-4000-8000-000000000001.png";
-      const sourceAttachments = path.join(source, ".hal-c2", "userdata", "attachments");
+      const sourceAttachments = path.join(source, ".hal-c2", "data", "attachments");
       yield* fs.makeDirectory(sourceAttachments, { recursive: true });
       yield* fs.writeFile(
         path.join(sourceAttachments, attachmentName),
         Uint8Array.from([137, 80, 78, 71]),
       );
       const terminalLogName = `terminal_${Encoding.encodeBase64Url("thread-v1")}.log`;
-      const sourceTerminalLogs = path.join(source, ".hal-c2", "userdata", "logs", "terminals");
+      const sourceTerminalLogs = path.join(source, ".hal-c2", "state", "logs", "terminals");
       yield* fs.makeDirectory(sourceTerminalLogs, { recursive: true });
       yield* fs.writeFileString(
         path.join(sourceTerminalLogs, terminalLogName),
@@ -223,19 +222,17 @@ it.layer(NodeServices.layer)("thread transfer", (it) => {
 
       const imported = yield* importThread(
         { archive: archivePath, destination },
-        { sharedHome: path.join(root, "shared-home") },
+        { sharedDataDirs: [path.join(root, "shared-home")] },
       );
       assert.equal(imported.targetProjectId, "project-target");
       assert.isTrue(yield* fs.exists(imported.backup));
       assert.isTrue(
-        yield* fs.exists(
-          path.join(destination, ".hal-c2", "userdata", "attachments", attachmentName),
-        ),
+        yield* fs.exists(path.join(destination, ".hal-c2", "data", "attachments", attachmentName)),
       );
       assert.equal(imported.terminalLogCount, 1);
       assert.equal(
         yield* fs.readFileString(
-          path.join(destination, ".hal-c2", "userdata", "logs", "terminals", terminalLogName),
+          path.join(destination, ".hal-c2", "state", "logs", "terminals", terminalLogName),
         ),
         "\u001b[32mterminal output\u001b[0m\n",
       );
@@ -273,9 +270,8 @@ it.layer(NodeServices.layer)("thread transfer", (it) => {
           threadId: "thread-v2",
           orchestrationVersion: 2,
           includeV1EventBesideV2: true,
-          state: "dev",
         });
-        const sourceTerminalLogs = path.join(source, ".hal-c2", "dev", "logs", "terminals");
+        const sourceTerminalLogs = path.join(source, ".hal-c2", "state", "logs", "terminals");
         yield* fs.makeDirectory(sourceTerminalLogs, { recursive: true });
         yield* fs.writeFileString(
           path.join(sourceTerminalLogs, `terminal_${Encoding.encodeBase64Url("thread-v2")}.log`),
@@ -285,10 +281,9 @@ it.layer(NodeServices.layer)("thread transfer", (it) => {
           workspace: destination,
           projectId: "project-target-v2",
           orchestrationVersion: 2,
-          state: "dev",
         });
 
-        const listed = yield* listThreads({ source, state: "dev" });
+        const listed = yield* listThreads({ source });
         assert.deepStrictEqual(listed, [
           {
             id: "thread-v2",
@@ -303,7 +298,6 @@ it.layer(NodeServices.layer)("thread transfer", (it) => {
 
         const exported = yield* exportThread({
           source,
-          state: "dev",
           threadId: "thread-v2",
           output: archivePath,
         });
@@ -312,8 +306,8 @@ it.layer(NodeServices.layer)("thread transfer", (it) => {
         assert.equal(exported.terminalLogCount, 0);
 
         const imported = yield* importThread(
-          { archive: archivePath, destination, state: "dev" },
-          { sharedHome: path.join(root, "shared-home") },
+          { archive: archivePath, destination },
+          { sharedDataDirs: [path.join(root, "shared-home")] },
         );
         assert.equal(imported.terminalLogCount, 0);
         yield* Effect.gen(function* () {
@@ -341,7 +335,7 @@ it.layer(NodeServices.layer)("thread transfer", (it) => {
       }),
   );
 
-  it.effect("imports a released v1 thread into a direct v2 dev state directory", () =>
+  it.effect("imports a released v1 thread into a v2 data directory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -359,7 +353,6 @@ it.layer(NodeServices.layer)("thread transfer", (it) => {
         workspace: destination,
         projectId: "project-dev",
         orchestrationVersion: 2,
-        state: "dev",
       });
 
       yield* exportThread({
@@ -373,7 +366,7 @@ it.layer(NodeServices.layer)("thread transfer", (it) => {
           destination: path.dirname(destinationDatabase),
           targetProjectId: "project-dev",
         },
-        { sharedHome: path.join(root, "shared-home") },
+        { sharedDataDirs: [path.join(root, "shared-home")] },
       );
       assert.equal(imported.orchestrationVersion, 1);
 
@@ -387,6 +380,36 @@ it.layer(NodeServices.layer)("thread transfer", (it) => {
       }).pipe(
         Effect.provide(NodeSqliteClient.layer({ filename: destinationDatabase, readonly: true })),
       );
+    }),
+  );
+
+  it.effect("refuses to import into the user's own data directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "thread-transfer-shared-" });
+      const source = path.join(root, "source");
+      const destination = path.join(root, "destination");
+      const archivePath = path.join(root, "thread.json");
+      yield* createFixtureDatabase({
+        workspace: source,
+        projectId: "project-source",
+        threadId: "thread-v1",
+        orchestrationVersion: 1,
+      });
+      const destinationDatabase = yield* createFixtureDatabase({
+        workspace: destination,
+        projectId: "project-target",
+        orchestrationVersion: 1,
+      });
+      yield* exportThread({ source, threadId: "thread-v1", output: archivePath });
+
+      const error = yield* importThread(
+        { archive: archivePath, destination },
+        { sharedDataDirs: [path.dirname(destinationDatabase)] },
+      ).pipe(Effect.flip);
+      assert.equal(error._tag, "ThreadTransferError");
+      assert.include(error.message, "your own HAL-C2 install");
     }),
   );
 });
