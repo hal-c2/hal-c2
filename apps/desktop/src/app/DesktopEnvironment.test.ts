@@ -77,7 +77,7 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.serverRoot, "/repo");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
-      assert.equal(environment.appUserModelId, "io.github.halc2.halc2.dev");
+      assert.equal(environment.appUserModelId, "io.github.halc2.app.dev");
       assert.equal(environment.linuxWmClass, "hal-c2-dev");
       assert.equal(environment.linuxDesktopEntryName, "io.github.halc2.HalC2.Development.desktop");
       assert.deepEqual(
@@ -176,12 +176,12 @@ describe("DesktopEnvironment", () => {
       const environment = yield* makeEnvironment(
         {},
         {
-          HALC2_DESKTOP_APP_USER_MODEL_ID: " io.github.halc2.halc2.dev.local ",
+          HALC2_DESKTOP_APP_USER_MODEL_ID: " io.github.halc2.app.dev.local ",
           VITE_DEV_SERVER_URL: "http://localhost:5173",
         },
       );
 
-      assert.equal(environment.appUserModelId, "io.github.halc2.halc2.dev.local");
+      assert.equal(environment.appUserModelId, "io.github.halc2.app.dev.local");
     }),
   );
 

@@ -17,8 +17,8 @@ const devBundleIdSuffix = NodePath.basename(repoRoot)
   .replaceAll(/[^a-z0-9]+/g, "");
 const APP_DISPLAY_NAME = isDevelopment ? "HAL-C2 (Dev)" : "HAL-C2 (Alpha)";
 const APP_BUNDLE_ID = isDevelopment
-  ? `io.github.halc2.halc2.dev.${devBundleIdSuffix || "local"}`
-  : "io.github.halc2.halc2";
+  ? `io.github.halc2.app.dev.${devBundleIdSuffix || "local"}`
+  : "io.github.halc2.app";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["hal-c2-dev"] : ["hal-c2"];
 const LAUNCHER_VERSION = 19;
 const developmentMacIconPngPath = NodePath.join(
