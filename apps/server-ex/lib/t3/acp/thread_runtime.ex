@@ -22,8 +22,17 @@ defmodule T3.Acp.ThreadRuntime do
   alias T3.Orchestration
   alias T3.Orchestration.Entities
 
-  @state_version 3
+  @state_version 4
   @registry T3.Acp.Registry
+
+  # Grok's own requests (`x.ai/...`), bare or wrapped in `{method, params}`.
+  @xai_questions ["x.ai/ask_user_question", "_x.ai/ask_user_question"]
+  @xai_plan ["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"]
+  @empty_plan "# No plan written yet\n\n(The agent exited plan mode without writing a plan.)"
+  @plan_captured "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn."
+
+  # Agents that ask T3 about every tool: T3 applies the access mode for them.
+  @gated ~w(opencode pi)
 
   @spec start_turn(String.t(), map) :: :ok
   def start_turn(thread_id, turn),
@@ -44,7 +53,7 @@ defmodule T3.Acp.ThreadRuntime do
   def respond(thread_id, request_id, response) do
     case lookup(thread_id) do
       nil -> {:error, "no pending request"}
-      pid -> GenServer.call(pid, {:respond, request_id, response["decision"] || "decline"})
+      pid -> GenServer.call(pid, {:respond, request_id, response})
     end
   end
 
@@ -105,8 +114,11 @@ defmodule T3.Acp.ThreadRuntime do
        interrupted: false,
        # Updates `session/load` replays are history, not this turn.
        replaying: false,
-       # Open permission prompts: request id -> {rpc id, options}.
+       # Open prompts: request id -> {:permission, rpc id, options, {kind, prompt}}
+       # or {:question, rpc id, params} ({rpc id, options} before v4).
        requests: %{},
+       # Tools the user allowed for the session: {request kind, prompt}.
+       allowed: MapSet.new(),
        # ACP has no system prompt: a session given T3's tools hears about them in
        # its first prompt.
        announce: false
@@ -161,15 +173,36 @@ defmodule T3.Acp.ThreadRuntime do
   def handle_call(:rollback, _from, state),
     do: {:reply, {:error, "Interrupt the current turn before rewinding."}, state}
 
-  def handle_call({:respond, request_id, decision}, _from, state) do
+  # A decision string is how a runtime before v4 was asked.
+  def handle_call({:respond, request_id, decision}, from, state) when is_binary(decision),
+    do: handle_call({:respond, request_id, %{"decision" => decision}}, from, state)
+
+  def handle_call({:respond, request_id, response}, _from, state) do
     case Map.pop(state.requests, request_id) do
       {nil, _} ->
         {:reply, {:error, "no pending request #{request_id}"}, state}
 
-      {{rpc_id, options}, requests} ->
+      {{:question, rpc_id, params}, requests} ->
+        {answer, status} =
+          if response["dismissed"] || !is_map(response["answers"]),
+            do: {%{"outcome" => "cancelled"}, "cancelled"},
+            else: {xai_answers(params, response["answers"]), "resolved"}
+
+        Connection.respond(state.conn, rpc_id, {:ok, answer})
+
+        {:reply, :ok,
+         resolve_request(%{state | requests: requests}, request_id, response, status)}
+
+      {{:permission, rpc_id, options, tool}, requests} ->
+        decision = response["decision"] || "decline"
         Connection.respond(state.conn, rpc_id, {:ok, %{"outcome" => outcome(options, decision)}})
-        state = resolve_request(%{state | requests: requests}, request_id, decision)
-        {:reply, :ok, state}
+        state = %{state | requests: requests} |> remember_allowed(tool, decision)
+        {:reply, :ok, resolve_request(state, request_id, decision)}
+
+      {{rpc_id, options}, requests} ->
+        decision = response["decision"] || "decline"
+        Connection.respond(state.conn, rpc_id, {:ok, %{"outcome" => outcome(options, decision)}})
+        {:reply, :ok, resolve_request(%{state | requests: requests}, request_id, decision)}
     end
   end
 
@@ -201,6 +234,33 @@ defmodule T3.Acp.ThreadRuntime do
     {:noreply, state}
   end
 
+  # Grok's questions for the user.
+  def handle_info({:json_rpc, _conn, {:request, id, method, params}}, %{turn: turn} = state)
+      when method in @xai_questions and turn != nil do
+    params = xai_params(params)
+    native = "xai-question:#{params["toolCallId"] || id}"
+    {state, request_id} = open_question(flush(state), native, xai_questions(params))
+    {:noreply, %{state | requests: Map.put(state.requests, request_id, {:question, id, params})}}
+  end
+
+  # Grok's plan becomes a proposed plan; its own approval gate is abandoned so the
+  # turn ends, and the user implements the plan from T3 in a later turn.
+  def handle_info({:json_rpc, conn, {:request, id, method, params}}, %{turn: turn} = state)
+      when method in @xai_plan and turn != nil do
+    params = xai_params(params)
+    native = "plan:#{params["toolCallId"] || id}"
+
+    markdown =
+      case String.trim(params["planContent"] || "") do
+        "" -> @empty_plan
+        text -> text
+      end
+
+    state = state |> flush() |> ensure_item(native, :plan) |> finish_plan(native, markdown)
+    Connection.respond(conn, id, {:ok, %{"outcome" => "abandoned", "feedback" => @plan_captured}})
+    {:noreply, state}
+  end
+
   # This client offers no file system or terminal; say so rather than hang.
   def handle_info({:json_rpc, conn, {:request, id, method, _params}}, state) do
     Connection.respond(
@@ -220,7 +280,11 @@ defmodule T3.Acp.ThreadRuntime do
         _ when state.interrupted -> {"interrupted", nil}
         {:ok, %{"stopReason" => "cancelled"}} -> {"interrupted", nil}
         {:ok, %{"stopReason" => _}} -> {"completed", nil}
+        # xAI's rate limit.
+        {:error, %{"code" => -32003}} -> {"failed", "Grok usage limit reached. Try again later."}
         {:error, %{"message" => message}} -> {"failed", message}
+        # The agent's process went away before it answered.
+        {:error, :closed} -> {"failed", "#{T3.Acp.label(state.agent)} exited unexpectedly"}
         {:error, reason} -> {"failed", format(reason)}
       end
 
@@ -230,7 +294,7 @@ defmodule T3.Acp.ThreadRuntime do
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
     state =
       if state.turn,
-        do: end_turn(state, "failed", "#{T3.Acp.label(state.agent)} exited"),
+        do: end_turn(state, "failed", "#{T3.Acp.label(state.agent)} exited unexpectedly"),
         else: state
 
     {:noreply, %{state | conn: nil, session_id: nil, prompt: nil}}
@@ -248,7 +312,11 @@ defmodule T3.Acp.ThreadRuntime do
   defp migrate(%{v: 1} = state),
     do: state |> Map.put_new(:mode, nil) |> Map.put(:v, 2) |> migrate()
 
-  defp migrate(%{v: 2} = state), do: state |> Map.put_new(:announce, false) |> Map.put(:v, 3)
+  defp migrate(%{v: 2} = state),
+    do: state |> Map.put_new(:announce, false) |> Map.put(:v, 3) |> migrate()
+
+  defp migrate(%{v: 3} = state),
+    do: state |> Map.put_new(:allowed, MapSet.new()) |> Map.put(:v, 4)
 
   # --- session -------------------------------------------------------------------
 
@@ -364,7 +432,15 @@ defmodule T3.Acp.ThreadRuntime do
     end
   end
 
-  defp set_model(state, model) when is_binary(model) and model != "" and model != state.model do
+  # "Pi default" leaves the model to the user's own Pi settings.
+  defp set_model(%{agent: agent} = state, "default") when agent != nil do
+    if T3.Acp.driver(agent) == "pi", do: state, else: set_model_now(state, "default")
+  end
+
+  defp set_model(state, model), do: set_model_now(state, model)
+
+  defp set_model_now(state, model)
+       when is_binary(model) and model != "" and model != state.model do
     case Connection.call(state.conn, "session/set_config_option", %{
            "sessionId" => state.session_id,
            "configId" => "model",
@@ -379,7 +455,7 @@ defmodule T3.Acp.ThreadRuntime do
     end
   end
 
-  defp set_model(state, _model), do: state
+  defp set_model_now(state, _model), do: state
 
   defp record_session(state, session_id) do
     ids = state.turn.ids
@@ -573,23 +649,70 @@ defmodule T3.Acp.ThreadRuntime do
     options = params["options"] || []
     call = params["toolCall"] || %{}
 
-    if state.turn.runtime_mode == "full-access" do
+    kind =
+      case call["kind"] do
+        "execute" -> "command"
+        k when k in ["edit", "delete", "move"] -> "file-change"
+        k when k in ["read", "search"] -> "file-read"
+        _ -> "permission"
+      end
+
+    prompt = command_text(call["rawInput"] || %{}, call["title"])
+
+    if allowed?(state, kind, call, prompt) do
       Connection.respond(conn, id, {:ok, %{"outcome" => outcome(options, "accept")}})
       state
     else
-      kind =
-        case call["kind"] do
-          "execute" -> "command"
-          k when k in ["edit", "delete", "move"] -> "file-change"
-          k when k in ["read", "search"] -> "file-read"
-          _ -> "permission"
-        end
-
-      prompt = command_text(call["rawInput"] || %{}, call["title"])
       {state, request_id} = open_request(flush(state), "#{id}", kind, prompt)
-      %{state | requests: Map.put(state.requests, request_id, {id, options})}
+      request = {:permission, id, options, {kind, prompt}}
+      %{state | requests: Map.put(state.requests, request_id, request)}
     end
   end
+
+  # Full access allows everything. OpenCode and Pi ask about every tool, so T3
+  # applies the mode for them: reads go ahead (OpenCode keeps asking about .env
+  # files), edits go ahead in auto-accept-edits, and what the user allowed for the
+  # session goes ahead again. Pi has no auto; its old auto threads ask as approval
+  # required does.
+  defp allowed?(%{turn: %{runtime_mode: "full-access"}}, _kind, _call, _prompt), do: true
+
+  defp allowed?(state, kind, call, prompt) do
+    driver = T3.Acp.driver(state.agent)
+    mode = state.turn.runtime_mode
+
+    cond do
+      MapSet.member?(state.allowed, {kind, prompt}) -> true
+      driver not in @gated -> false
+      kind == "file-read" -> not (driver == "opencode" and env_file?(call))
+      kind == "file-change" -> mode == "auto-accept-edits"
+      true -> false
+    end
+  end
+
+  # `.env` and `.env.local`, not `.env.example` or `.env.sample`.
+  defp env_file?(call) do
+    paths =
+      [get_in(call, ["rawInput", "path"]), get_in(call, ["rawInput", "filePath"])] ++
+        for(%{"path" => path} <- call["locations"] || [], do: path)
+
+    Enum.any?(paths, fn
+      path when is_binary(path) ->
+        base = Path.basename(path)
+
+        base == ".env" or
+          (String.starts_with?(base, ".env.") and
+             base not in [".env.example", ".env.sample", ".env.template"])
+
+      _ ->
+        false
+    end)
+  end
+
+  defp remember_allowed(state, tool, decision)
+       when decision in ["acceptForSession", "acceptAlways"],
+       do: %{state | allowed: MapSet.put(state.allowed, tool)}
+
+  defp remember_allowed(state, _tool, _decision), do: state
 
   # The agent's option for a `ProviderApprovalDecision`, or a cancellation.
   defp outcome(options, decision) do
@@ -608,8 +731,21 @@ defmodule T3.Acp.ThreadRuntime do
   end
 
   defp cancel_requests(state) do
-    Enum.reduce(state.requests, %{state | requests: %{}}, fn {request_id, {rpc_id, _}}, state ->
-      Connection.respond(state.conn, rpc_id, {:ok, %{"outcome" => %{"outcome" => "cancelled"}}})
+    Enum.reduce(state.requests, %{state | requests: %{}}, fn {request_id, request}, state ->
+      answer =
+        case request do
+          {:question, rpc_id, _params} ->
+            {rpc_id, %{"outcome" => "cancelled"}}
+
+          {:permission, rpc_id, _options, _tool} ->
+            {rpc_id, %{"outcome" => %{"outcome" => "cancelled"}}}
+
+          {rpc_id, _options} ->
+            {rpc_id, %{"outcome" => %{"outcome" => "cancelled"}}}
+        end
+
+      {rpc_id, result} = answer
+      Connection.respond(state.conn, rpc_id, {:ok, result})
       resolve_request(state, request_id, nil, "cancelled")
     end)
   end
@@ -642,6 +778,69 @@ defmodule T3.Acp.ThreadRuntime do
           ),
       else: text
   end
+
+  # --- Grok's own requests --------------------------------------------------------
+
+  defp xai_params(%{"params" => %{} = params}), do: params
+  defp xai_params(params), do: params || %{}
+
+  # Keyed by question text, as Grok keys its answers; a question with no choices
+  # gets an OK.
+  defp xai_questions(params) do
+    for question <- params["questions"] || [], is_binary(question["question"]) do
+      %{
+        "id" => question["id"] || question["question"],
+        "header" => "Question",
+        "question" => question["question"],
+        "multiSelect" => question["multiSelect"] == true,
+        "options" =>
+          case question["options"] || [] do
+            [] ->
+              [%{"label" => "OK", "description" => "Continue"}]
+
+            options ->
+              for option <- options,
+                  do: %{
+                    "label" => option["label"],
+                    "description" => option["description"] || option["label"]
+                  }
+          end
+      }
+    end
+  end
+
+  # The labels chosen for each question, by question text; free text is "Other"
+  # with the text as a note.
+  defp xai_answers(params, answers) do
+    answered =
+      for question <- params["questions"] || [],
+          values =
+            answer_values(
+              answers[question["id"] || question["question"]] || answers[question["question"]]
+            ),
+          values != [] do
+        labels = for option <- question["options"] || [], do: option["label"]
+        {chosen, notes} = Enum.split_with(values, &(&1 in labels))
+        {question["question"], if(chosen == [], do: ["Other"], else: chosen), notes}
+      end
+
+    annotations =
+      for {text, _chosen, [_ | _] = notes} <- answered,
+          into: %{},
+          do: {text, %{"notes" => Enum.join(notes, "\n")}}
+
+    %{
+      "outcome" => "accepted",
+      "answers" => Map.new(answered, fn {text, chosen, _} -> {text, chosen} end)
+    }
+    |> then(&if(annotations == %{}, do: &1, else: Map.put(&1, "annotations", annotations)))
+  end
+
+  defp answer_values(values) when is_list(values),
+    do: for(value <- values, is_binary(value), value = String.trim(value), value != "", do: value)
+
+  defp answer_values(value) when is_binary(value), do: answer_values([value])
+  defp answer_values(_value), do: []
 
   defp format(reason) when is_binary(reason), do: reason
   defp format(%{"message" => message}), do: message

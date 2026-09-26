@@ -402,4 +402,29 @@ defmodule T3.Test.Node.World do
   def days(n), do: n * 24 * 60 * 60 * 1_000
 
   def slug(title), do: title |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
+
+  @doc """
+  Waits until `fun`, given a thread stream's `T3.StreamState`, returns something
+  other than `nil`/`false`, and returns that. Subscribes the test process to the
+  stream and re-checks on each of its commits.
+  """
+  def await_stream(stream_id, fun, timeout \\ 5_000) do
+    :ok = T3.Streams.subscribe(stream_id, self(), nil)
+    check_stream(stream_id, fun, System.monotonic_time(:millisecond) + timeout)
+  end
+
+  defp check_stream(id, fun, deadline) do
+    case fun.(T3.Streams.Server.state(T3.Streams.ensure(id))) do
+      done when done in [nil, false] ->
+        receive do
+          {:t3_stream, ^id, _} -> check_stream(id, fun, deadline)
+        after
+          max(deadline - System.monotonic_time(:millisecond), 0) ->
+            flunk("#{id}'s stream never reached the expected state")
+        end
+
+      value ->
+        value
+    end
+  end
 end

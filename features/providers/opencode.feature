@@ -54,7 +54,6 @@ Feature: OpenCode
     When the user refreshes provider status
     Then the new provider's models are offered
 
-  @backlog
   Scenario: OpenCode older than the supported version is refused
     Given the installed OpenCode is older than 1.14.19
     When the user enables OpenCode
@@ -84,13 +83,11 @@ Feature: OpenCode
     When the user clears the server URL
     Then OpenCode threads run on a local OpenCode again
 
-  @backlog
   Scenario: OpenCode with no connected providers is a warning
     Given OpenCode has no upstream providers connected
     When the user refreshes provider status
     Then OpenCode is shown with a warning that no providers are connected
 
-  @backlog
   Scenario Outline: OpenCode approvals follow the access mode
     Given the thread runs OpenCode in <mode>
     When OpenCode wants to <action>
@@ -106,7 +103,6 @@ Feature: OpenCode
       | auto-accept edits | run a command           | asked for approval        |
       | full access       | work outside the project| allowed without asking    |
 
-  @backlog
   Scenario Outline: OpenCode approval decisions
     Given OpenCode asked to run a command
     When the user answers <decision>
@@ -166,16 +162,12 @@ Feature: OpenCode
     Then the thread still shows its model
     And if OpenCode rejects the model the user can pick another and retry
 
-  # The compatibility policy ships in apps/server/src/provider/model-manifest.json and is
-  # applied by providerCompatibility.ts; apps/server-ex reports no compatibility advisory.
-  @backlog
   Scenario: An OpenCode older than the supported range is flagged as known broken
     Given OpenCode 1.14.10 is installed
     When the node checks its providers
     Then OpenCode is reported as a known broken version for this T3 Code release
     And the user is told to use OpenCode 1.14.19 or newer
 
-  @backlog
   Scenario: OpenCode in the supported range carries no compatibility warning
     Given OpenCode 1.14.19 is installed
     When the node checks its providers
