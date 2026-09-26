@@ -16,7 +16,7 @@ import {
  * kind-based copy but uses the entry's configured `displayName` so custom
  * instances get their user-authored name (e.g. "Codex Personal — Unavailable.").
  */
-function describeUnavailableInstance(entry: ProviderInstanceEntry): string {
+export function describeUnavailableInstance(entry: ProviderInstanceEntry): string {
   const label = entry.displayName;
   if (!entry.enabled || entry.status === "disabled") {
     return `${label} — Disabled in settings.`;

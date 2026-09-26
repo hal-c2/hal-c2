@@ -9,6 +9,7 @@ import type {
   ScopedThreadRef,
   ServerProviderModel,
 } from "@hal-c2/contracts";
+import type { UnifiedSettings } from "@hal-c2/contracts/settings";
 import { useMemo, useState } from "react";
 import type { ShellComposerState } from "@hal-c2/contracts/shell";
 
@@ -28,8 +29,10 @@ import type { ComposerSubmissionIntent } from "../composer-logic";
 import type { SessionPhase } from "../types";
 import {
   applyComposerOptionChange,
+  buildShellComposerInstances,
   buildShellComposerState,
   resolveComposerOptionDescriptors,
+  toggleFavoriteModel,
 } from "./shellComposerState";
 
 export interface ShellComposerBridgeProps {
@@ -82,6 +85,12 @@ export interface ShellComposerBridgeProps {
   readonly planModeEnabled: boolean;
   readonly getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
   readonly onProviderModelSelect: (instanceId: ProviderInstanceId, model: string) => void;
+  readonly favorites: UnifiedSettings["favorites"];
+  readonly onFavoritesChange: (favorites: UnifiedSettings["favorites"]) => void;
+  readonly lockedProvider: ProviderDriverKind | null;
+  readonly lockedContinuationGroupKey: string | null;
+  /** Label of the `modelPicker.toggle` shortcut, or null when unbound. */
+  readonly modelPickerShortcut: string | null;
   readonly runtimeMode: RuntimeMode;
   readonly runtimeModes: ReadonlyArray<{ value: RuntimeMode; label: string; description: string }>;
   readonly interactionMode: ProviderInteractionMode;
@@ -94,7 +103,8 @@ export interface ShellComposerBridgeProps {
 
 /**
  * Mounted inside ChatComposer when the Qt shell hosts the app. Publishes the
- * composer view model under `composer` and turns `composer.*` actions into the
+ * composer view model under `composer`, the model picker's catalogue under
+ * `modelPicker`, and turns `composer.*` actions into the
  * same calls the HTML editor and footer make, so drafts, model selection,
  * sending and interrupting keep one implementation.
  */
@@ -164,9 +174,6 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
         showPlanFollowUpPrompt: props.showPlanFollowUpPrompt,
         selectedInstanceId: props.noProviderAvailable ? null : props.selectedInstanceId,
         selectedModel: props.noProviderAvailable ? null : props.selectedModel,
-        instanceEntries: props.instanceEntries,
-        modelOptionsByInstance: props.modelOptionsByInstance,
-        getModelDisabledReason: props.getModelDisabledReason,
         optionDescriptors,
         runtimeMode: props.runtimeMode,
         runtimeModes: props.runtimeModes,
@@ -180,6 +187,37 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
     ...state,
     edit: appliedEdit?.target === target ? (appliedEdit.edit ?? null) : null,
   });
+
+  // Memoised on the catalogue alone so typing never rebuilds or resends it.
+  const selectedInstanceId = props.noProviderAvailable ? null : props.selectedInstanceId;
+  const selectedModel = props.noProviderAvailable ? null : props.selectedModel;
+  const modelPicker = useMemo(
+    () => ({
+      instances: buildShellComposerInstances({
+        selectedInstanceId,
+        selectedModel,
+        instanceEntries: props.instanceEntries,
+        modelOptionsByInstance: props.modelOptionsByInstance,
+        getModelDisabledReason: props.getModelDisabledReason,
+        favorites: props.favorites,
+        lockedProvider: props.lockedProvider,
+        lockedContinuationGroupKey: props.lockedContinuationGroupKey,
+      }),
+      shortcut: props.modelPickerShortcut,
+    }),
+    [
+      props.favorites,
+      props.getModelDisabledReason,
+      props.instanceEntries,
+      props.lockedContinuationGroupKey,
+      props.lockedProvider,
+      props.modelOptionsByInstance,
+      props.modelPickerShortcut,
+      selectedInstanceId,
+      selectedModel,
+    ],
+  );
+  useShellPublish("modelPicker", modelPicker);
 
   useShellActions((action) => {
     switch (action.type) {
@@ -245,6 +283,14 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
         return;
       case "composer.model.select":
         props.onProviderModelSelect(action.instanceId as ProviderInstanceId, action.model);
+        return;
+      case "composer.model.favorite.toggle":
+        props.onFavoritesChange(
+          toggleFavoriteModel(props.favorites, {
+            provider: action.instanceId as ProviderInstanceId,
+            model: action.model,
+          }),
+        );
         return;
       case "composer.option.set": {
         if (props.noProviderAvailable) return;

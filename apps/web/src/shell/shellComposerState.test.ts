@@ -2,7 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ProviderInstanceId, ProviderOptionDescriptor, RuntimeMode } from "@hal-c2/contracts";
 
 import type { ProviderInstanceEntry } from "../providerInstances";
-import { applyComposerOptionChange, buildShellComposerState } from "./shellComposerState";
+import {
+  applyComposerOptionChange,
+  buildShellComposerInstances,
+  buildShellComposerState,
+  toggleFavoriteModel,
+} from "./shellComposerState";
 
 const codexInstanceId = "codex" as ProviderInstanceId;
 
@@ -31,6 +36,8 @@ const codexEntry = {
   installed: true,
   isDefault: true,
   isAvailable: true,
+  status: "ready",
+  snapshot: {},
 } as ProviderInstanceEntry;
 
 const runtimeModes: ReadonlyArray<{ value: RuntimeMode; label: string; description: string }> = [
@@ -64,21 +71,6 @@ function baseInput() {
     showPlanFollowUpPrompt: false,
     selectedInstanceId: codexInstanceId,
     selectedModel: "gpt-5.4",
-    instanceEntries: [
-      codexEntry,
-      { ...codexEntry, instanceId: "off" as ProviderInstanceId, enabled: false },
-    ],
-    modelOptionsByInstance: new Map([
-      [
-        codexInstanceId,
-        [
-          { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false },
-          { slug: "gpt-5.4-mini", name: "GPT-5.4 mini", isCustom: false },
-        ],
-      ],
-    ]),
-    getModelDisabledReason: (_instanceId: ProviderInstanceId, model: string) =>
-      model === "gpt-5.4-mini" ? "Started with another model" : null,
     optionDescriptors: [effortDescriptor, thinkingDescriptor],
     runtimeMode: "approval-required" as RuntimeMode,
     runtimeModes,
@@ -88,25 +80,9 @@ function baseInput() {
 }
 
 describe("buildShellComposerState", () => {
-  it("projects enabled instances, their models, and option descriptors", () => {
+  it("projects the option descriptors", () => {
     const state = buildShellComposerState(baseInput());
     expect(state.canSend).toBe(true);
-    expect(state.instances).toEqual([
-      {
-        instanceId: "codex",
-        driverKind: "codex",
-        displayName: "Codex",
-        isAvailable: true,
-        models: [
-          { slug: "gpt-5.4", name: "GPT-5.4", disabledReason: null },
-          {
-            slug: "gpt-5.4-mini",
-            name: "GPT-5.4 mini",
-            disabledReason: "Started with another model",
-          },
-        ],
-      },
-    ]);
     expect(state.options).toEqual([
       {
         id: "effort",
@@ -143,6 +119,145 @@ describe("buildShellComposerState", () => {
       buildShellComposerState({ ...baseInput(), sendDisabledReason: "Messages loading" })
         .sendDisabledReason,
     ).toBe("Messages loading");
+  });
+});
+
+const claudeInstanceId = "claudeAgent" as ProviderInstanceId;
+const claudeEntry = {
+  ...codexEntry,
+  instanceId: claudeInstanceId,
+  driverKind: "claudeAgent",
+  displayName: "Claude",
+} as ProviderInstanceEntry;
+const cursorEntry = {
+  ...codexEntry,
+  instanceId: "cursor" as ProviderInstanceId,
+  driverKind: "cursor",
+  displayName: "Cursor",
+  status: "error",
+  snapshot: { message: "Not installed." },
+} as ProviderInstanceEntry;
+
+function pickerInput() {
+  return {
+    selectedInstanceId: codexInstanceId,
+    selectedModel: "gpt-5.4",
+    instanceEntries: [
+      codexEntry,
+      claudeEntry,
+      cursorEntry,
+      { ...codexEntry, instanceId: "off" as ProviderInstanceId, enabled: false },
+    ],
+    modelOptionsByInstance: new Map([
+      [
+        codexInstanceId,
+        [
+          { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false },
+          { slug: "gpt-5.4-mini", name: "GPT-5.4 mini", isCustom: false, badge: "new" as const },
+        ],
+      ],
+      [
+        claudeInstanceId,
+        [
+          { slug: "sonnet", name: "Claude Sonnet", isCustom: false },
+          { slug: "opus", name: "Claude Opus", isCustom: false },
+        ],
+      ],
+      ["cursor" as ProviderInstanceId, [{ slug: "auto", name: "Auto", isCustom: false }]],
+    ]),
+    getModelDisabledReason: (_instanceId: ProviderInstanceId, model: string) =>
+      model === "gpt-5.4-mini" ? "Started with another model" : null,
+    favorites: [{ provider: claudeInstanceId, model: "opus" }],
+    lockedProvider: null,
+    lockedContinuationGroupKey: null,
+  };
+}
+
+describe("buildShellComposerInstances", () => {
+  it("lists each enabled instance with its models, favourites first", () => {
+    const instances = buildShellComposerInstances(pickerInput());
+    expect(instances.map((instance) => instance.instanceId)).toEqual([
+      "codex",
+      "claudeAgent",
+      "cursor",
+    ]);
+    expect(instances[0]).toEqual({
+      instanceId: "codex",
+      driverKind: "codex",
+      displayName: "Codex",
+      accentColor: null,
+      iconUrl: null,
+      initials: "CO",
+      showBadge: false,
+      status: "ready",
+      isAvailable: true,
+      unavailableReason: null,
+      models: [
+        {
+          slug: "gpt-5.4",
+          name: "GPT-5.4",
+          shortName: null,
+          subProvider: null,
+          isFavorite: false,
+          isCustom: false,
+          isNew: false,
+          isLegacy: false,
+          isUnavailable: false,
+          disabledReason: null,
+        },
+        {
+          slug: "gpt-5.4-mini",
+          name: "GPT-5.4 mini",
+          shortName: null,
+          subProvider: null,
+          isFavorite: false,
+          isCustom: false,
+          isNew: true,
+          isLegacy: false,
+          isUnavailable: false,
+          disabledReason: "Started with another model",
+        },
+      ],
+    });
+    expect(instances[1]!.models.map((model) => [model.slug, model.isFavorite])).toEqual([
+      ["opus", true],
+      ["sonnet", false],
+    ]);
+  });
+
+  it("keeps an unavailable instance in the rail with the reason and no models", () => {
+    const cursor = buildShellComposerInstances(pickerInput())[2]!;
+    expect(cursor).toMatchObject({
+      isAvailable: false,
+      unavailableReason: "Cursor — Unavailable. Not installed.",
+      models: [],
+    });
+  });
+
+  it("moves instances a started thread cannot switch to last, explaining why", () => {
+    const instances = buildShellComposerInstances({
+      ...pickerInput(),
+      lockedProvider: "claudeAgent" as ProviderInstanceEntry["driverKind"],
+    });
+    expect(instances.map((instance) => [instance.instanceId, instance.isAvailable])).toEqual([
+      ["claudeAgent", true],
+      ["codex", false],
+      ["cursor", false],
+    ]);
+    expect(instances[1]).toMatchObject({
+      unavailableReason:
+        "Codex is unavailable in this thread. Start a new thread to switch providers.",
+      models: [],
+    });
+  });
+});
+
+describe("toggleFavoriteModel", () => {
+  it("stars a model once and unstars it again", () => {
+    const opus = { provider: claudeInstanceId, model: "opus" };
+    const starred = toggleFavoriteModel([], opus);
+    expect(starred).toEqual([opus]);
+    expect(toggleFavoriteModel(starred, { ...opus })).toEqual([]);
   });
 });
 

@@ -3,6 +3,7 @@ import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtime
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { useUpdateClientSettings } from "~/hooks/useSettings";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { filterComposerPullRequestMatches } from "@hal-c2/shared/composerPullRequestMatches";
@@ -2277,6 +2278,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     return out;
   }, [providerInstanceEntries, selectedInstanceId, selectedModelForPicker, settings]);
+  const updateClientSettings = useUpdateClientSettings();
+  const onShellFavoritesChange = useCallback(
+    (favorites: UnifiedSettings["favorites"]) => updateClientSettings({ favorites }),
+    [updateClientSettings],
+  );
   const selectedModelForPickerWithCustomFallback = useMemo(() => {
     const currentOptions = modelOptionsByInstance.get(selectedInstanceId) ?? [];
     return currentOptions.some((option) => option.slug === selectedModelForPicker)
@@ -7454,6 +7460,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 planModeEnabled={settings.planModeEnabled}
                 getModelDisabledReason={getModelDisabledReason}
                 onProviderModelSelect={onProviderModelSelect}
+                favorites={settings.favorites}
+                onFavoritesChange={onShellFavoritesChange}
+                lockedProvider={lockedProvider}
+                lockedContinuationGroupKey={lockedContinuationGroupKey ?? null}
+                modelPickerShortcut={shortcutLabelForCommand(keybindings, "modelPicker.toggle")}
                 runtimeMode={runtimeMode}
                 runtimeModes={shellRuntimeModes}
                 interactionMode={interactionMode}

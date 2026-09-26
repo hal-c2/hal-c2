@@ -107,21 +107,59 @@ export const ShellLayoutState = Schema.Struct({
 });
 export type ShellLayoutState = typeof ShellLayoutState.Type;
 
+/** One row of the native model picker, as the web picker's `ModelListRow` shows it. */
 export const ShellComposerModel = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
+  shortName: Schema.NullOr(Schema.String),
+  /** Upstream vendor under a routing provider (OpenCode's `anthropic/…`). */
+  subProvider: Schema.NullOr(Schema.String),
+  isFavorite: Schema.Boolean,
+  isCustom: Schema.Boolean,
+  /** The provider flags it as new (`badge: "new"`). */
+  isNew: Schema.Boolean,
+  isLegacy: Schema.Boolean,
+  isUnavailable: Schema.Boolean,
+  /** Why the model cannot be chosen in this thread; null when it can. */
   disabledReason: Schema.NullOr(Schema.String),
 });
 export type ShellComposerModel = typeof ShellComposerModel.Type;
 
+/**
+ * One enabled provider instance in the model picker's rail, in rail order,
+ * with its models already in the web picker's order (favourites first, then
+ * the user's model order). Instances that cannot be chosen carry no models.
+ */
 export const ShellComposerInstance = Schema.Struct({
   instanceId: Schema.String,
   driverKind: Schema.String,
   displayName: Schema.String,
+  /** `#rrggbb` or null. */
+  accentColor: Schema.NullOr(Schema.String),
+  /** Official ACP registry icon for `acpRegistry` instances. */
+  iconUrl: Schema.NullOr(Schema.String),
+  /** Two-letter fallback mark, and whether the rail badges the icon with it. */
+  initials: Schema.String,
+  showBadge: Schema.Boolean,
+  status: Schema.String,
+  /** False when the rail shows the instance greyed out; `unavailableReason` says why. */
   isAvailable: Schema.Boolean,
+  unavailableReason: Schema.NullOr(Schema.String),
   models: Schema.Array(ShellComposerModel),
 });
 export type ShellComposerInstance = typeof ShellComposerInstance.Type;
+
+/**
+ * Published under the `modelPicker` key beside `composer`. The catalogue
+ * changes rarely, so it stays out of the composer state that every keystroke
+ * republishes. The selection itself is `composer.selectedInstanceId/Model`.
+ */
+export const ShellModelPickerState = Schema.Struct({
+  instances: Schema.Array(ShellComposerInstance),
+  /** Label of the `modelPicker.toggle` shortcut, for the trigger's tooltip. */
+  shortcut: Schema.NullOr(Schema.String),
+});
+export type ShellModelPickerState = typeof ShellModelPickerState.Type;
 
 /** A provider option (reasoning effort, thinking toggles, …) for the selected model. */
 export const ShellComposerOption = Schema.Struct({
@@ -196,7 +234,6 @@ export const ShellComposerState = Schema.Struct({
   showPlanFollowUpPrompt: Schema.Boolean,
   selectedInstanceId: Schema.NullOr(Schema.String),
   selectedModel: Schema.NullOr(Schema.String),
-  instances: Schema.Array(ShellComposerInstance),
   options: Schema.Array(ShellComposerOption),
   runtimeMode: Schema.String,
   runtimeModes: Schema.Array(ShellComposerRuntimeMode),
@@ -558,6 +595,12 @@ export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("composer.interrupt") }),
   Schema.Struct({
     type: Schema.Literal("composer.model.select"),
+    instanceId: Schema.String,
+    model: Schema.String,
+  }),
+  /** Star or unstar a model in the picker (client setting `favorites`). */
+  Schema.Struct({
+    type: Schema.Literal("composer.model.favorite.toggle"),
     instanceId: Schema.String,
     model: Schema.String,
   }),
