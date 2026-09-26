@@ -548,14 +548,125 @@ defmodule T3.Acp.ThreadRuntime do
     if call["status"] in ["completed", "failed"], do: finish_tool(state, id, call), else: state
   end
 
+  # The agent's task list for the turn (ACP `plan`), replaced whole on each update.
+  defp update(%{"sessionUpdate" => "plan", "entries" => entries}, state)
+       when is_list(entries) and entries != [] do
+    steps =
+      for {entry, index} <- Enum.with_index(entries, 1) do
+        %{
+          "id" => "step-#{index}",
+          "text" => non_empty(entry["content"], "Step #{index}"),
+          "status" =>
+            case entry["status"] do
+              "completed" -> "completed"
+              "in_progress" -> "running"
+              _ -> "pending"
+            end
+        }
+      end
+
+    state |> flush() |> write_todo("acp-plan:#{state.turn.ids.run}", steps)
+  end
+
+  # Models the agent adds or drops mid-session reach the picker without a provider refresh.
+  defp update(%{"sessionUpdate" => "config_option_update", "configOptions" => options}, state)
+       when is_list(options) do
+    T3.Acp.put_models(state.agent, options)
+    remember_model(state, %{"configOptions" => options})
+  end
+
+  # How full the session's context is, for the context meter.
+  defp update(%{"sessionUpdate" => "usage_update", "used" => used} = u, state)
+       when is_integer(used) do
+    usage =
+      if is_integer(u["size"]) and u["size"] > 0,
+        do: %{"usedTokens" => used, "maxTokens" => u["size"]},
+        else: %{"usedTokens" => used}
+
+    ids = state.turn.ids
+
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(
+          stream,
+          "provider-thread",
+          ids.provider_thread,
+          &Map.put(&1, "contextUsage", usage)
+        )
+      ]
+    end)
+
+    state
+  end
+
   defp update(_update, state), do: state
+
+  defp non_empty(text, fallback) when is_binary(text) do
+    case String.trim(text) do
+      "" -> fallback
+      text -> text
+    end
+  end
+
+  defp non_empty(_, fallback), do: fallback
 
   defp chunk(state, %{"content" => %{"type" => "text", "text" => text}} = u, kind) do
     key = "#{kind}:#{u["messageId"] || "current"}"
     state |> ensure_item(key, kind) |> buffer(key, "text", text)
   end
 
+  # Content the client cannot render is shown as a placeholder, never its data.
+  defp chunk(state, %{"content" => %{"type" => type} = content} = u, kind)
+       when type in ["image", "audio", "resource", "resource_link"] do
+    chunk(state, %{u | "content" => %{"type" => "text", "text" => placeholder(content)}}, kind)
+  end
+
   defp chunk(state, _u, _kind), do: state
+
+  defp placeholder(%{"type" => "image"} = content),
+    do: "[ACP image (#{meta(content["mimeType"], "unknown type")})#{uri(content["uri"])}]"
+
+  defp placeholder(%{"type" => "audio"} = content),
+    do: "[ACP audio (#{meta(content["mimeType"], "unknown type")})]"
+
+  defp placeholder(%{"type" => "resource", "resource" => %{"text" => text}}) when is_binary(text),
+    do: text
+
+  defp placeholder(%{"type" => "resource", "resource" => resource}) when is_map(resource) do
+    mime = meta(resource["mimeType"], nil)
+    "[ACP binary resource#{if mime, do: " (#{mime})"}#{uri(resource["uri"])}]"
+  end
+
+  defp placeholder(%{"type" => "resource_link"} = content) do
+    label = meta(content["title"], nil) || meta(content["name"], nil) || "resource"
+    description = meta(content["description"], nil)
+    label = if description, do: "#{label}: #{description}", else: label
+
+    case uri(content["uri"]) do
+      "" -> label
+      ": " <> uri -> label <> "\n" <> uri
+    end
+  end
+
+  defp placeholder(_), do: "[Unsupported ACP content]"
+
+  defp meta(value, fallback) when is_binary(value) do
+    case value |> String.trim() |> String.slice(0, 256) do
+      "" -> fallback
+      value -> value
+    end
+  end
+
+  defp meta(_, fallback), do: fallback
+
+  # A data URI would carry the content itself; only real addresses are shown.
+  defp uri(value) do
+    uri = meta(value, "")
+
+    if uri == "" or String.starts_with?(String.downcase(uri), "data:"),
+      do: "",
+      else: ": " <> uri
+  end
 
   defp tool_shape(call) do
     input = call["rawInput"] || %{}

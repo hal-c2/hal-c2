@@ -116,36 +116,12 @@ defmodule T3.ProviderAuth do
   def handle_call({:start, method_id}, _from, state) do
     methods = state.methods || []
     method_id = method_id || default_method(state.instance, methods)
+    refusal = T3.Acp.sign_in_refusal(state.instance)
 
-    if method_id != nil and (methods == [] or Enum.any?(methods, &(&1["id"] == method_id))) do
-      flow_id = T3.Environment.uuid4()
-      expires = System.system_time(:millisecond) + @timeout_ms
-      server = self()
-      instance = state.instance
-
-      worker =
-        spawn_link(fn -> T3.Acp.Auth.login(instance, method_id, server, flow_id) end)
-
-      Process.send_after(self(), {:expire, flow_id}, @timeout_ms)
-
-      state =
-        publish(
-          %{state | flow: %{id: flow_id, worker: worker, responder: nil}},
-          %{
-            "phase" => "starting",
-            "flowId" => flow_id,
-            "expiresAt" => iso(expires),
-            "message" => "Starting sign-in.",
-            "interaction" => nil,
-            "authorizationUrl" => nil
-          }
-        )
-
-      {:reply, {:ok, state.auth}, state}
+    if refusal do
+      {:reply, error(state.instance, "start", refusal), state}
     else
-      {:reply,
-       error(state.instance, "start", "The provider did not advertise this sign-in method."),
-       state}
+      start_flow(method_id, methods, state)
     end
   end
 
@@ -275,16 +251,49 @@ defmodule T3.ProviderAuth do
 
   # --- helpers ---------------------------------------------------------------------
 
+  defp start_flow(method_id, methods, state) do
+    if method_id != nil and (methods == [] or Enum.any?(methods, &(&1["id"] == method_id))) do
+      flow_id = T3.Environment.uuid4()
+      expires = System.system_time(:millisecond) + @timeout_ms
+      server = self()
+      instance = state.instance
+
+      worker =
+        spawn_link(fn -> T3.Acp.Auth.login(instance, method_id, server, flow_id) end)
+
+      Process.send_after(self(), {:expire, flow_id}, @timeout_ms)
+
+      state =
+        publish(
+          %{state | flow: %{id: flow_id, worker: worker, responder: nil}},
+          %{
+            "phase" => "starting",
+            "flowId" => flow_id,
+            "expiresAt" => iso(expires),
+            "message" => "Starting sign-in.",
+            "interaction" => nil,
+            "authorizationUrl" => nil
+          }
+        )
+
+      {:reply, {:ok, state.auth}, state}
+    else
+      {:reply,
+       error(state.instance, "start", "The provider did not advertise this sign-in method."),
+       state}
+    end
+  end
+
   defp end_flow(state, phase, message) do
     Process.unlink(state.flow.worker)
     Process.exit(state.flow.worker, :kill)
     finish(%{state | flow: nil}, phase, message)
   end
 
+  # A finished flow keeps its id, so clients can tell which sign-in ended.
   defp finish(state, phase, message) do
     publish(state, %{
       "phase" => phase,
-      "flowId" => nil,
       "interaction" => nil,
       "authorizationUrl" => nil,
       "expiresAt" => nil,

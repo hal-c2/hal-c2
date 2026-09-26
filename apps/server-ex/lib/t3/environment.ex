@@ -83,8 +83,9 @@ defmodule T3.Environment do
   server's registry refresh does, each ACP agent is started again to read its
   version, sign-in and models; `refreshModels` also reads Codex's model list again.
   Subscription quota is read again too (`T3.ProviderUsageLimits`), and an untargeted
-  refresh re-reads the usage-limit sources, as the Node server's status probe does;
-  a workspace refresh (with a `cwd`) leaves quota and probes alone.
+  refresh re-reads the usage-limit sources, as the Node server's status probe does,
+  and a refresh of one ACP instance reads its agent again; a workspace refresh
+  (with a `cwd`) leaves quota and probes alone.
   """
   def refresh_providers(input) do
     case input do
@@ -157,7 +158,7 @@ defmodule T3.Environment do
     for(
       entry <- [T3.Codex.Provider.entry(), T3.Claude.Provider.entry()],
       entry != nil,
-      do: T3.ProviderUsageLimits.put(entry)
+      do: entry |> T3.ProviderUpdates.put_state() |> T3.ProviderUsageLimits.put()
     ) ++ T3.Acp.entries()
   end
 

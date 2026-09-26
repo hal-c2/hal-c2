@@ -419,11 +419,6 @@ defmodule T3.Steps.Common do
     Map.put(context, :reply, {:ok, result})
   end
 
-  step "the user disables {string}", %{args: [id]} = context do
-    {result, context} = World.call!(context, "plugins.disable", %{"id" => id})
-    Map.put(context, :reply, {:ok, result})
-  end
-
   # --- added by W3-A ---
 
   # HTTP steps leave `context.response` as `%{status: integer, ...}`.
@@ -826,9 +821,28 @@ defmodule T3.Steps.Common do
 
   # Cancels whatever the scenario's Given put in progress: that step leaves a
   # `context.cancel` function (context -> context) saying how.
+  # What is cancelled is whatever the scenario started: a step that started something
+  # cancellable leaves `context.cancel`; an ACP sign-in leaves its flow.
   step "the user cancels it", context do
-    assert is_function(context[:cancel], 1), "nothing in this scenario can be cancelled"
-    context.cancel.(context)
+    cond do
+      is_function(context[:cancel], 1) ->
+        context.cancel.(context)
+
+      context[:flow] ->
+        {state, ctx} =
+          World.call!(
+            context,
+            "provider.auth.cancel",
+            %{"instanceId" => context.auth_instance, "flowId" => context.flow},
+            context[:auth_client] || "default"
+          )
+
+        assert state["flowId"] == context.flow
+        ctx
+
+      true ->
+        flunk("nothing in this scenario can be cancelled")
+    end
   end
 
   # A thread's worktree setup (`World.launch_in_worktree/4`): `context.setup_thread`
@@ -881,5 +895,166 @@ defmodule T3.Steps.Common do
     refute File.exists?(path), "the worktree #{path} is still there"
     refute path in World.worktrees(root), "git still lists #{path}"
     context
+  end
+
+  # --- added by W10 ---
+
+  # Providers run as the fakes of `T3.Test.AcpFixtures`; no real provider CLI starts.
+
+  step "the user refreshes the status of every provider", context do
+    ctx = T3.Test.AcpFixtures.ready(context)
+    Node.ensure(T3.ProviderUsageLimits)
+    # The boot probe has finished once this returns.
+    :ok = T3.ProviderUsageLimits.refresh([])
+    before = Map.new(["codex", "claudeAgent"], &{&1, T3.ProviderUsageLimits.get(&1)})
+    at = T3.Orchestration.Entities.now()
+    {result, ctx} = World.call!(ctx, "server.refreshProviders", %{})
+    Map.put(ctx, :refreshed, %{before: before, at: at, providers: result["providers"]})
+  end
+
+  step "the user disables Grok", context do
+    T3.Test.AcpFixtures.write_settings(context, fn settings ->
+      settings
+      |> put_in([Access.key("providers", %{}), Access.key("grok", %{}), "enabled"], false)
+      |> then(fn settings ->
+        if is_map(get_in(settings, ["providerInstances", "grok"])),
+          do: put_in(settings, ["providerInstances", "grok", "enabled"], false),
+          else: settings
+      end)
+    end)
+  end
+
+  step "Claude was installed in a way the node cannot identify", context do
+    # An executable outside every installer's layout, behind the latest release.
+    ctx = T3.Test.AcpFixtures.ready(context)
+    fake_claude = Path.expand("../support/fake_claude.py", __DIR__)
+    path = Path.join(context.node.home, "odd/bin/claude")
+    File.mkdir_p!(Path.dirname(path))
+
+    File.write!(path, """
+    #!/bin/sh
+    if [ "$1" = "--version" ]; then echo "2.0.0 (Claude Code)"; exit 0; fi
+    exec python3 -u #{fake_claude} "$@"
+    """)
+
+    File.chmod!(path, 0o755)
+    Application.put_env(:t3, :claude_command, [path])
+
+    :persistent_term.put(
+      {T3.ProviderUpdates, "claudeAgent"},
+      {"9.9.9", System.monotonic_time(:millisecond)}
+    )
+
+    ctx
+  end
+
+  # ACP Registry steps shared with `features/plugins/plugin-catalog.feature` (and, for
+  # cancelling, approving and stopping, other provider features). They leave the
+  # node's answer in `context.reply`.
+
+  step "the user searches the ACP registry for {string}", %{args: [query]} = context do
+    alias T3.Test.AcpFixtures, as: Acp
+    ctx = Acp.serve_registry(context)
+
+    other =
+      if T3.Acp.Catalog.platform() == "linux-x86_64", do: "darwin-aarch64", else: "linux-x86_64"
+
+    agent = fn id, name, fields ->
+      Map.merge(
+        %{
+          "id" => id,
+          "name" => name,
+          "version" => "1.0.0",
+          "description" => "An ACP agent",
+          "distribution" => %{"npx" => %{"package" => "@acme/#{id}"}}
+        },
+        fields
+      )
+    end
+
+    # Built only for another platform.
+    elsewhere = %{
+      "distribution" => %{
+        "binary" => %{other => %{"archive" => "https://example.com/a.tar.gz", "cmd" => "./a"}}
+      }
+    }
+
+    agents =
+      [
+        agent.("agent", "Agent", %{}),
+        agent.("code", "Code", %{"description" => "A test tool"}),
+        agent.("agent-0-elsewhere", "Agent 0 Elsewhere", elsewhere),
+        agent.("code-elsewhere", "Code Elsewhere", elsewhere)
+      ] ++
+        for(n <- 1..24, do: agent.("agent-#{n}", "Agent #{n}", %{"description" => "writes code"}))
+
+    ctx = Acp.publish(ctx, agents)
+    {reply, ctx} = World.call(ctx, "server.searchAcpRegistry", %{"query" => query})
+    Map.merge(ctx, %{reply: reply, query: query})
+  end
+
+  step "the user searches the registry", context do
+    {reply, ctx} = World.call(context, "server.searchAcpRegistry", %{"query" => "acme"})
+    Map.put(ctx, :reply, reply)
+  end
+
+  # An ACP sign-in (`context.auth_instance`, `context.flow`), cancelled from the client
+  # `context.auth_client` so the others see it end.
+  # The pending request of the turn on `context.thread`.
+  # A model provider of an ACP Registry agent (`context.model_provider`), or else a
+  # node plugin.
+  step "the user disables {string}", %{args: [id]} = context do
+    if context[:model_provider] == id do
+      {result, ctx} =
+        World.call!(context, "server.disableAcpRegistryProvider", %{
+          "instanceId" => context.auth_instance,
+          "projectId" => World.project(context).id,
+          "providerId" => id
+        })
+
+      Map.put(ctx, :reply, {:ok, result})
+    else
+      {result, ctx} = World.call!(context, "plugins.disable", %{"id" => id})
+      Map.put(ctx, :reply, {:ok, result})
+    end
+  end
+
+  # The provider list the client "default" watches (`context.config_subs`) comes to offer
+  # the model `slug` for the instance `context.model_instance`.
+  step "{string} is offered in the model picker", %{args: [slug]} = context do
+    sub = context.config_subs["default"]
+    instance = context.model_instance
+
+    {_, client} =
+      Node.await(
+        World.client(context),
+        fn frame ->
+          frame["t"] == "config.providers" and frame["id"] == sub and
+            Enum.any?(frame["providers"], fn entry ->
+              entry["instanceId"] == instance and
+                Enum.any?(entry["models"] || [], &(&1["slug"] == slug))
+            end)
+        end,
+        5_000
+      )
+
+    World.put_client(context, client)
+  end
+
+  # The union's W11 section defines the same step; keep one.
+  # The provider list a client receives when it subscribes to the node's config.
+  # Starts the thread a Given described (`context.pending_launch`: `instance`, and
+  # `fields` such as "runtimeMode") with a message, and waits for its turn to end.
+  step "the user sends a message", context do
+    assert %{instance: instance, fields: fields} = context[:pending_launch],
+           "no thread was described to send a message to"
+
+    ctx =
+      context
+      |> Map.delete(:pending_launch)
+      |> T3.Test.AcpFixtures.launch("Work", instance, "hello", mode: fields["runtimeMode"])
+
+    T3.Test.AcpFixtures.await_runs(ctx.threads["Work"], 1)
+    Map.put(ctx, :thread, "Work")
   end
 end

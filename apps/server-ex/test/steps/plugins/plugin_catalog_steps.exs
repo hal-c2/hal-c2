@@ -8,39 +8,6 @@ defmodule T3.Steps.Plugins.PluginCatalog do
 
   # --- searching the registry ------------------------------------------------------
 
-  step "the user searches the ACP registry for {string}", %{args: [query]} = context do
-    context = AcpRegistry.ensure(context)
-
-    other =
-      if T3.Acp.Catalog.platform() == "linux-x86_64", do: "darwin-aarch64", else: "linux-x86_64"
-
-    matches =
-      for n <- 1..24 do
-        AcpRegistry.agent(context, "agent-#{n}", %{
-          "name" => "Agent #{n}",
-          "description" => "writes code"
-        })
-      end
-
-    # Only built for another platform, and not a package either.
-    elsewhere =
-      AcpRegistry.agent(context, "code-elsewhere", %{
-        "name" => "Code Elsewhere",
-        "distribution" => %{
-          "binary" => %{other => %{"archive" => "https://example.com/a.tar.gz", "cmd" => "./a"}}
-        }
-      })
-
-    context =
-      AcpRegistry.publish(context, [
-        AcpRegistry.agent(context, "code", %{"name" => "Code"}),
-        elsewhere | matches
-      ])
-
-    {reply, context} = World.call(context, "server.searchAcpRegistry", %{"query" => query})
-    Map.put(context, :reply, reply)
-  end
-
   step "at most {int} matching agents are listed, best match first",
        %{args: [limit]} = context do
     assert {:ok, %{"agents" => agents}} = context.reply
@@ -106,8 +73,17 @@ defmodule T3.Steps.Plugins.PluginCatalog do
     ])
   end
 
+  # The registry in play is the plugin fixture's (`context.registry`) or, in
+  # `providers/acp-registry.feature`, the one `T3.Test.AcpFixtures` serves.
   step "the user adds {string}", %{args: [id]} = context do
-    add(context, id)
+    if context[:registry] do
+      add(context, id)
+    else
+      {reply, ctx} = World.call(context, "server.prepareAcpRegistryAgent", %{"agentId" => id})
+      # A client creates the instance only once the agent is prepared.
+      if match?({:ok, _}, reply), do: T3.Test.AcpFixtures.add_registry_instance(id, id)
+      Map.put(ctx, :reply, reply)
+    end
   end
 
   step "the install is refused", context do
@@ -167,11 +143,6 @@ defmodule T3.Steps.Plugins.PluginCatalog do
     # A fresh process has only what the node wrote to disk.
     :persistent_term.erase({T3.Acp.Catalog, :index})
     context
-  end
-
-  step "the user searches the registry", context do
-    {reply, context} = World.call(context, "server.searchAcpRegistry", %{"query" => "acme"})
-    Map.put(context, :reply, reply)
   end
 
   step "results come from the last fetched copy", context do

@@ -1,0 +1,394 @@
+defmodule T3.Steps.Providers.ProviderInstances do
+  @moduledoc """
+  Steps for `features/providers/provider-instances.feature`: provider instances in
+  the node's settings, how their agents are started, and provider refreshes. Agents
+  are the fakes of `T3.Test.AcpFixtures`; an absolute path in the feature (such as
+  `/opt/grok/bin/grok`) is created under the scenario's home.
+  """
+  use Cucumber.StepDefinition
+  import ExUnit.Assertions
+
+  alias T3.Test.AcpFixtures, as: Acp
+  alias T3.Test.Node
+
+  @drivers %{"Grok" => "grok", "OpenCode" => "opencode"}
+
+  # A feature's absolute path, inside the scenario's home.
+  defp local(ctx, path), do: Path.join(ctx.node.home, path)
+
+  defp thread_launches(ctx, name) do
+    root = Enum.at(ctx.projects, 0) |> elem(1) |> Map.fetch!(:root)
+    Enum.filter(Acp.launches(ctx, name), &(&1["cwd"] == root))
+  end
+
+  defp run_thread(ctx, instance) do
+    ctx = Acp.launch(ctx, "on #{instance}", instance, "hello")
+    Acp.await_runs(ctx.threads["on #{instance}"], 1)
+    Map.put(ctx, :instance, instance)
+  end
+
+  # --- instance environment ------------------------------------------------------
+
+  step "the user adds a Grok instance {string} with the variable {string}",
+       %{args: [id, name]} = context do
+    ctx = context |> Acp.ready() |> Acp.run_as(id, id)
+
+    Acp.put_instance(id, %{
+      "driver" => "grok",
+      "enabled" => true,
+      "environment" => [%{"name" => name, "value" => "secret-#{name}"}]
+    })
+
+    Map.put(ctx, :variable, name)
+  end
+
+  step "a thread runs on {string}", %{args: [id]} = context do
+    run_thread(context, id)
+  end
+
+  step "Grok runs with that variable set", context do
+    name = context.variable
+    assert [launch | _] = thread_launches(context, context.instance)
+    assert launch["env"][name] == "secret-#{name}"
+    context
+  end
+
+  step "the instance {string} has the variable {string}", %{args: [id, name]} = context do
+    ctx = context |> Acp.ready() |> Acp.run_as(id, id)
+
+    Acp.put_instance(id, %{
+      "driver" => "grok",
+      "enabled" => true,
+      "environment" => [%{"name" => name, "value" => "secret-#{name}"}]
+    })
+
+    ctx |> Map.put(:variable, name) |> Map.put(:instance, id)
+  end
+
+  step "the user removes that variable", context do
+    id = context.instance
+
+    Acp.write_settings(context, fn settings ->
+      update_in(settings, ["providerInstances", id], &Map.put(&1, "environment", []))
+    end)
+  end
+
+  step "Grok no longer runs with it", context do
+    ctx = run_thread(context, context.instance)
+    assert [launch | _] = thread_launches(ctx, ctx.instance)
+    refute Map.has_key?(launch["env"], ctx.variable)
+    ctx
+  end
+
+  # --- text generation fallback ----------------------------------------------------
+
+  step "Grok is picked for thread titles", context do
+    ctx = context |> Acp.ready() |> Acp.run_as("grok", "grok")
+    Acp.put_provider("grok", %{"enabled" => true})
+
+    Acp.put_settings(
+      &Map.put(&1, "textGenerationModelSelection", %{
+        "instanceId" => "grok",
+        "model" => "grok-build"
+      })
+    )
+
+    {:ok, %{"title" => "grok title"}} =
+      T3.TextGeneration.thread_title(Acp.dir(ctx), "Fix the login page")
+
+    ctx
+  end
+
+  step "thread titles are written by the first usable provider with its default model",
+       context do
+    before = Acp.requests(context, "grok", "session/prompt") |> length()
+
+    assert {:ok, %{"title" => "codex title"}} =
+             T3.TextGeneration.thread_title(Acp.dir(context), "Fix the login page")
+
+    assert [%{"argv" => argv} | _] =
+             context
+             |> Acp.dir()
+             |> Path.join("text.log")
+             |> File.read!()
+             |> String.split("\n", trim: true)
+             |> Enum.map(&JSON.decode!/1)
+             |> Enum.reverse()
+
+    assert ["exec" | _] = argv
+    assert "gpt-6-luna" == Enum.at(argv, Enum.find_index(argv, &(&1 == "--model")) + 1)
+    assert length(Acp.requests(context, "grok", "session/prompt")) == before
+    context
+  end
+
+  # --- refreshes -----------------------------------------------------------------------
+
+  step "each provider's account and usage are checked again", context do
+    %{before: before, at: at} = context.refreshed
+
+    for instance <- ["codex", "claudeAgent"] do
+      now = T3.ProviderUsageLimits.get(instance)
+      assert now["checkedAt"] >= at, "#{instance} was not probed again"
+      assert now["checkedAt"] != before[instance]["checkedAt"]
+    end
+
+    context
+  end
+
+  step "the user refreshes provider models", context do
+    ctx = context |> Acp.ready() |> Acp.run_as("grok", "grok")
+    Acp.put_provider("grok", %{"enabled" => true})
+    # Grok and Codex have been read once already.
+    Acp.check("grok")
+    T3.Codex.Provider.load()
+    :persistent_term.erase({T3.Codex.Provider, :models})
+    Acp.control(ctx, "grok", %{"models" => [["grok-4", "Grok 4"], ["grok-5", "Grok 5"]]})
+
+    {_, ctx} =
+      T3.Test.Node.World.call!(ctx, "server.refreshProviders", %{"refreshModels" => true})
+
+    ctx
+  end
+
+  step "Codex and every enabled ACP agent report their models again", context do
+    assert [_ | _] = :persistent_term.get({T3.Codex.Provider, :models}, nil)
+    assert length(Acp.requests(context, "grok", "session/new")) == 2
+
+    assert ["grok-4", "grok-5"] --
+             Enum.map(Acp.provider("grok")["models"], & &1["slug"]) == []
+
+    context
+  end
+
+  step "the user refreshes the provider {string}", %{args: [id]} = context do
+    ctx = context |> Acp.ready() |> Acp.run_as(id, id) |> Acp.run_as("grok", "grok")
+    Node.ensure(T3.ProviderUsageLimits)
+    :ok = T3.ProviderUsageLimits.refresh([])
+    Acp.put_provider("grok", %{"enabled" => true})
+    Acp.put_instance(id, %{"driver" => "grok", "enabled" => true})
+    Acp.check("grok")
+    Acp.check(id)
+
+    before = %{
+      "codex" => T3.ProviderUsageLimits.get("codex"),
+      "grok" => length(Acp.launches(ctx, "grok")),
+      id => length(Acp.launches(ctx, id))
+    }
+
+    {_, ctx} = T3.Test.Node.World.call!(ctx, "server.refreshProviders", %{"instanceId" => id})
+    Map.put(ctx, :refreshed, %{before: before})
+  end
+
+  step "only {string} is checked again", %{args: [id]} = context do
+    before = context.refreshed.before
+    assert length(Acp.launches(context, id)) == before[id] + 1
+    assert length(Acp.launches(context, "grok")) == before["grok"]
+    assert T3.ProviderUsageLimits.get("codex") == before["codex"]
+    context
+  end
+
+  # --- clients ---------------------------------------------------------------------------
+
+  step "the user enables Grok on one client", context do
+    ctx = context |> Acp.ready() |> Acp.run_as("grok", "grok")
+    second = T3.Test.Node.World.client(ctx, "second") |> Node.config(7)
+    ctx = T3.Test.Node.World.put_client(ctx, "second", second)
+
+    Acp.write_settings(
+      ctx,
+      &put_in(&1, [Access.key("providers", %{}), Access.key("grok", %{}), "enabled"], true),
+      "first"
+    )
+  end
+
+  step "the other client lists Grok as enabled", context do
+    {frame, client} =
+      Node.await(
+        T3.Test.Node.World.client(context, "second"),
+        fn frame ->
+          frame["t"] == "config.providers" and
+            Enum.any?(frame["providers"], &(&1["instanceId"] == "grok" and &1["enabled"]))
+        end,
+        5_000
+      )
+
+    assert %{"driver" => "grok"} = Enum.find(frame["providers"], &(&1["instanceId"] == "grok"))
+    T3.Test.Node.World.put_client(context, "second", client)
+  end
+
+  # --- background health checks -------------------------------------------------------
+
+  defp tick do
+    pid = Process.whereis(T3.ProviderUsageLimits)
+    send(pid, :tick)
+    # The tick is handled before this call returns.
+    :sys.get_state(pid)
+  end
+
+  defp health_override(ctx, override) do
+    Acp.write_settings(ctx, fn settings ->
+      Map.put(
+        settings,
+        "backgroundActivity",
+        if(override,
+          do: %{
+            "profile" => "custom",
+            "baseProfile" => "balanced",
+            "overrides" => %{"providerHealthRefreshInterval" => override}
+          },
+          else: %{"profile" => "balanced"}
+        )
+      )
+    end)
+  end
+
+  step "the user sets the provider health check interval to {int}", %{args: [ms]} = context do
+    ctx = Acp.ready(context)
+    Node.ensure(T3.ProviderUsageLimits)
+    :ok = T3.ProviderUsageLimits.refresh([])
+    health_override(ctx, ms)
+  end
+
+  step "providers are no longer checked in the background", context do
+    assert T3.ProviderUsageLimits.interval() == :off
+    before = T3.ProviderUsageLimits.get("codex")
+    tick()
+    assert T3.ProviderUsageLimits.get("codex") == before
+    context
+  end
+
+  step "the user resets the interval", context do
+    health_override(context, nil)
+  end
+
+  step "providers are checked on the default interval again", context do
+    assert T3.ProviderUsageLimits.interval() ==
+             T3.BackgroundPolicy.settings(%{})["providerHealthRefreshInterval"]
+
+    before = T3.ProviderUsageLimits.get("codex")
+    tick()
+    assert T3.ProviderUsageLimits.get("codex")["checkedAt"] != before["checkedAt"]
+    context
+  end
+
+  # --- binary paths ------------------------------------------------------------------------
+
+  step ~r/^the (?<provider>Grok|OpenCode) instance has the binary path "(?<path>[^"]+)"$/,
+       %{args: [provider, path]} = context do
+    ctx = Acp.ready(context)
+    driver = @drivers[provider]
+    Acp.wrapper(ctx, local(ctx, path), driver)
+
+    Acp.put_instance(driver, %{
+      "driver" => driver,
+      "enabled" => true,
+      "config" => %{"binaryPath" => local(ctx, path)}
+    })
+
+    Map.put(ctx, :instance, driver)
+  end
+
+  step "a thread runs on that instance", context do
+    run_thread(context, context.instance)
+  end
+
+  step "{string} is started for the thread", %{args: [path]} = context do
+    assert [launch | _] = thread_launches(context, context.instance)
+    assert launch["argv0"] == local(context, path)
+    context
+  end
+
+  step "Grok's provider settings name the binary path {string}", %{args: [path]} = context do
+    ctx = Acp.ready(context)
+    Acp.wrapper(ctx, local(ctx, path), "grok_work")
+    Acp.put_provider("grok", %{"binaryPath" => local(ctx, path)})
+    ctx
+  end
+
+  step "the instance {string} names the binary path {string}", %{args: [id, path]} = context do
+    Acp.wrapper(context, local(context, path), id)
+
+    Acp.put_instance(id, %{
+      "driver" => "grok",
+      "enabled" => true,
+      "config" => %{"binaryPath" => local(context, path)}
+    })
+
+    context
+  end
+
+  step "the Grok instance has an empty binary path", context do
+    ctx = Acp.ready(context)
+    bin = local(ctx, "bin")
+    Acp.wrapper(ctx, Path.join(bin, "grok"), "grok")
+    System.put_env("PATH", bin <> ":" <> System.get_env("PATH"))
+
+    Acp.put_instance("grok", %{
+      "driver" => "grok",
+      "enabled" => true,
+      "config" => %{"binaryPath" => ""}
+    })
+
+    Map.put(ctx, :instance, "grok")
+  end
+
+  step "the {string} executable found on the path is started", %{args: [name]} = context do
+    assert [launch | _] = thread_launches(context, context.instance)
+    assert launch["argv0"] == System.find_executable(name)
+    assert launch["argv0"] == local(context, "bin/#{name}")
+    context
+  end
+
+  # --- resetting a built-in provider ------------------------------------------------------
+
+  # The node stores the settings document and clients apply patches, so a reset is the
+  # client writing back what `resetDefaultInstance` builds: no `providerInstances.codex`
+  # and `providers.codex` at its defaults (which decode from an empty map).
+  @codex_override %{"instanceId" => "codex", "model" => "gpt-5.5"}
+
+  defp codex_override_applies?(ctx) do
+    project_id = Node.World.project(ctx).id
+    T3.Settings.for_project(project_id)["textGenerationModelSelection"] == @codex_override
+  end
+
+  step "the user changed the settings of the built-in Codex", context do
+    project_id = Node.World.project(context).id
+
+    ctx =
+      Acp.ready(context)
+      |> Acp.write_settings(fn settings ->
+        settings
+        |> put_in([Access.key("providers", %{}), "codex"], %{
+          "enabled" => false,
+          "binaryPath" => "/opt/codex/bin/codex"
+        })
+        |> put_in([Access.key("providerInstances", %{}), "codex"], %{
+          "driver" => "codex",
+          "enabled" => false
+        })
+        |> put_in([Access.key("projectSettingsOverrides", %{}), project_id], %{
+          "textGenerationModelSelection" => @codex_override
+        })
+      end)
+
+    # Codex is off, so the project's Codex model choice falls back to the environment's.
+    refute codex_override_applies?(ctx)
+    ctx
+  end
+
+  step "the user resets Codex to its defaults", context do
+    Acp.write_settings(context, fn settings ->
+      settings
+      |> Map.update("providerInstances", %{}, &Map.delete(&1, "codex"))
+      |> put_in(["providers", "codex"], %{})
+    end)
+  end
+
+  step "Codex's settings are back to their defaults", context do
+    settings = T3.Settings.settings()
+    assert settings["providers"]["codex"] == %{}
+    refute Map.has_key?(settings["providerInstances"], "codex")
+    assert codex_override_applies?(context)
+    context
+  end
+end

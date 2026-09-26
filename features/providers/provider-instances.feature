@@ -33,7 +33,7 @@ Feature: Provider instances
     Then thread titles are written by the first usable provider with its default model
 
   Scenario: Refreshing provider status checks every provider again
-    When the user refreshes provider status
+    When the user refreshes the status of every provider
     Then each provider's account and usage are checked again
 
   Scenario: Refreshing models reloads every provider's model list
@@ -90,7 +90,6 @@ Feature: Provider instances
     Then it is no longer listed
     And threads that ran on it keep their history
 
-  @backlog
   Scenario: A built-in provider cannot be deleted but can be reset
     Given the user changed the settings of the built-in Codex
     When the user resets Codex to its defaults
@@ -116,7 +115,6 @@ Feature: Provider instances
     When the user adds the variable "1BAD" to an instance
     Then the variables are not saved until the name is fixed
 
-  @backlog
   Scenario: A variable can be removed
     Given the instance "grok_work" has the variable "XAI_API_KEY"
     When the user removes that variable

@@ -161,6 +161,10 @@ for line in sys.stdin:
             send({"id": mid, "error": {"code": -32000, "message": "upstream unavailable"}})
         else:
             send({"id": mid, "result": {"outcome": os.environ.get("FAKE_CODEX_CONSUME_OUTCOME", "reset")}})
+    elif method == "model/list":
+        send({"id": mid, "result": {"data": [
+            {"id": "gpt-6-luna", "model": "gpt-6-luna", "displayName": "GPT-6 Luna", "isDefault": True},
+            {"id": "gpt-5.5", "model": "gpt-5.5", "displayName": "GPT-5.5", "isDefault": False}]}})
     elif method == "turn/interrupt":
         send({"id": mid, "result": {}})
         send({"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": params["turnId"], "status": "interrupted"}}})

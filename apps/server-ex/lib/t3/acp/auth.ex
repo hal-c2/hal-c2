@@ -8,9 +8,14 @@ defmodule T3.Acp.Auth do
   PTY whose output the client shows and types into; `env_var` methods read
   variables set on the instance, so there is nothing to run. Every method ends by
   opening a session, which only works once the agent is signed in.
+
+  Failures reach clients as fixed messages; what the agent said goes to the log only,
+  since it can hold a device code or a sign-in URL.
   """
 
   alias T3.JsonRpc.Connection
+
+  require Logger
 
   @login_timeout 300_000
   @transcript_bytes 16_384
@@ -41,7 +46,8 @@ defmodule T3.Acp.Auth do
         {:ok, methods}
 
       {:error, reason} ->
-        {:error, "Could not discover this agent's sign-in methods: #{message(reason)}"}
+        Logger.warning("#{instance} sign-in methods: #{message(reason)}")
+        {:error, "Could not discover this agent's sign-in methods."}
     end
   end
 
@@ -49,7 +55,7 @@ defmodule T3.Acp.Auth do
   def login(instance, method_id, server, flow_id) do
     cwd = System.tmp_dir!()
 
-    with {:ok, command, env} <- T3.Acp.command(instance),
+    with {:command, {:ok, command, env}} <- {:command, T3.Acp.command(instance)},
          {:ok, conn} <- start(command, env, cwd),
          {:ok, init} <- Connection.call(conn, "initialize", T3.Acp.initialize_params()) do
       case Enum.find(init["authMethods"] || [], &(&1["id"] == method_id)) do
@@ -71,7 +77,11 @@ defmodule T3.Acp.Auth do
           verify(conn, cwd, server, flow_id)
       end
     else
-      {:error, reason} -> fail("Could not start the agent: #{message(reason)}")
+      {:command, {:error, reason}} ->
+        fail("Could not prepare the selected ACP agent.", reason)
+
+      {:error, reason} ->
+        fail("Could not initialize the selected ACP agent.", reason)
     end
   end
 
@@ -95,7 +105,7 @@ defmodule T3.Acp.Auth do
 
         case result do
           {:ok, _} -> :ok
-          {:error, reason} -> fail("The agent could not complete sign-in: #{message(reason)}")
+          {:error, reason} -> fail("The ACP agent could not complete sign-in.", reason)
         end
 
       {:json_rpc, ^conn, {:request, id, "elicitation/create", params}} ->
@@ -272,11 +282,16 @@ defmodule T3.Acp.Auth do
         :ok
 
       {:error, reason} ->
-        fail("The provider could not open a session after sign-in: #{message(reason)}")
+        fail("The provider could not create a session after sign-in.", reason)
     end
   end
 
   defp fail(message), do: exit({:shutdown, {:failed, message}})
+
+  defp fail(message, reason) do
+    Logger.warning("ACP sign-in failed: #{message} #{message(reason)}")
+    fail(message)
+  end
 
   defp message(%{"message" => message}) when is_binary(message), do: message
   defp message(reason) when is_binary(reason), do: reason
