@@ -1,8 +1,10 @@
 # Sources:
-#   apps/server-ex/config/runtime.exs (HAL_C2_NODE_HOME, HAL_C2_HOME, HAL_C2_NODE_PORT, HAL_C2_NODE_HOST, HAL_C2_HOST)
+#   apps/server-ex/config/config.exs (the checkout's .hal-c2 sandbox)
+#   apps/server-ex/config/runtime.exs (HAL_C2_NODE_HOME, HAL_C2_HOME, T3_HOME, T3CODE_HOME, HAL_C2_NODE_PORT, HAL_C2_NODE_HOST, HAL_C2_HOST)
+#   apps/server-ex/README.md (Run, Release: where the node keeps its state)
 #   apps/server/src/cli/config.ts (HAL_C2_HOST)
 #   apps/server-ex/lib/mix/tasks/hal_c2.server.ex, hal_c2.import.ex, hal_c2.bundle.ex
-#   apps/server-ex/rel/env.sh.eex (RELEASE_DISTRIBUTION, cluster vm.args)
+#   apps/server-ex/rel/env.sh.eex (the release's home, RELEASE_DISTRIBUTION, cluster vm.args)
 #   apps/server-ex/rel/overlays/bin/hal-c2-service (restart loop on exit 75), lib/hal_c2/service.ex
 #   apps/server-ex/lib/hal_c2/desktop.ex (HAL_C2_BOOTSTRAP_STDIN), acp.ex (HAL_C2_NODE_COMMAND, HAL_C2_NODE_ELECTRON)
 #   apps/server-ex/lib/hal_c2/web.ex (access-token), environment.ex (environment-id, HAL_C2_LABEL, descriptor)
@@ -11,13 +13,17 @@
 #   packages/contracts/src/environment.ts (ExecutionEnvironmentDescriptor)
 #   docs/user/remote-access.md (hal-c2 serve, hal-c2 serve --host)
 #   docs/user/background-service.md (service install, status, removal)
+#   docs/user/install.md (Coming from T3 Code)
+#   docs/internals/glossary.md (HAL-C2 home)
 #   docs/internals/remote.md (environment identity survives restarts and address changes)
 #   docs/operations/development.md (state and ports)
 
 Feature: Starting the node
-  A node is one Elixir release that owns a HAL-C2 home directory. It starts from a checkout
-  for development, from a release for everyone else, as a background service, or as the
-  desktop app's own server.
+  A node is one Elixir release that keeps its files in the user's XDG directories, or under
+  one root when it is given one. It starts from a checkout for development, from a release
+  for everyone else, as a background service, or as the desktop app's own server. Where each
+  file lives is in storage-layout.feature; moving in from "~/.t3" or "~/.hal-c2" is in
+  storage-migration.feature.
 
   @node
   Scenario: Starting a node from a checkout prints its client URL
@@ -32,31 +38,63 @@ Feature: Starting the node
     Then it serves clients on port 3780
 
   @node
-  Scenario: The port and home directory come from the environment
+  Scenario: The port comes from the environment
     Given HAL_C2_NODE_PORT is 4100 and HAL_C2_HOME is "/srv/hal-c2"
     When the node starts
     Then it serves clients on port 4100
-    And its database, logs and worktrees live under "/srv/hal-c2/elixir"
 
-  @node
+  @backlog @node
+  Scenario: HAL_C2_HOME is the root of the node's files
+    Given HAL_C2_HOME is "/srv/hal-c2"
+    When the node starts
+    Then its settings are in "/srv/hal-c2/config/elixir"
+    And its database, secrets and worktrees are in "/srv/hal-c2/data/elixir"
+    And its logs are in "/srv/hal-c2/state/elixir/logs"
+    And its downloaded tools are in "/srv/hal-c2/cache/elixir/tools"
+
+  # T3CODE_HOME and T3_HOME no longer name a home. They only say where to migrate from
+  # (storage-migration.feature), and the node then keeps its files in the XDG directories.
+  @dropped @node
   Scenario: The home directory's name from before the rename still works
     Given the home directory is set with its name from before the rename, T3CODE_HOME="/srv/t3"
     When the node starts
     Then its database, logs and worktrees live under "/srv/t3/elixir"
 
-  @node
+  @backlog @node
   Scenario: A checkout keeps its state inside the checkout
     Given no home directory is configured
     When a developer starts the node from a checkout
-    Then its state lives in the checkout's ".hal-c2/elixir" directory
+    Then its database, secrets and worktrees are in the checkout's ".hal-c2/data/elixir"
+    And its logs are in the checkout's ".hal-c2/state/elixir/logs"
+    And nothing is written to the user's XDG directories
 
-  @node
-  Scenario: A release keeps its state in the user's HAL-C2 home
+  @backlog @node
+  Scenario: A checkout keeps its state inside the checkout even when HAL_C2_HOME is set
+    Given HAL_C2_HOME is "/srv/hal-c2" in the developer's shell
+    When a developer starts the node from a checkout
+    Then its database is in the checkout's ".hal-c2/data/elixir"
+    And nothing is written under "/srv/hal-c2"
+
+  @backlog @node
+  Scenario: A release keeps its state in the user's XDG directories
     Given no home directory is configured
     When a user starts the node from a release
-    Then its state lives in "~/.hal-c2/elixir"
+    Then its settings are in "~/.config/hal-c2/elixir"
+    And its database, secrets and worktrees are in "~/.local/share/hal-c2/elixir"
+    And its logs are in "~/.local/state/hal-c2/elixir/logs"
+    And its downloaded tools are in "~/.cache/hal-c2/elixir/tools"
 
-  @node
+  @backlog @node
+  Scenario: A release never keeps its state in the old HAL-C2 home
+    Given no home directory is configured
+    And the user's home has a "~/.hal-c2/elixir" directory
+    When a user starts the node from a release
+    Then its database is in "~/.local/share/hal-c2/elixir"
+    And nothing is written under "~/.hal-c2"
+
+  # An install from before the rename is copied once into the XDG directories
+  # (storage-migration.feature) and never used in place.
+  @dropped @node
   Scenario: A release keeps using the state an install from before the rename left
     Given no home directory is configured
     And the user's home holds the node state of an install from before the rename
@@ -149,8 +187,20 @@ Feature: Starting the node
     Given the desktop app launches the node in bootstrap mode
     When it writes the port, host, HAL-C2 home and bootstrap token as one line on standard input
     Then the node listens on that host and port
-    And keeps its state under the "elixir" directory of that HAL-C2 home
     And the token never appears in the process arguments or environment
+
+  @backlog @node
+  Scenario: The HAL-C2 home the desktop app names is the root of the node's files
+    Given the desktop app launches the node in bootstrap mode with the HAL-C2 home "/tmp/sandbox"
+    When the node starts
+    Then its database is in "/tmp/sandbox/data/elixir"
+    And its logs are in "/tmp/sandbox/state/elixir/logs"
+
+  @backlog @node
+  Scenario: A desktop app that names no HAL-C2 home leaves the node on the XDG directories
+    Given the desktop app launches the node in bootstrap mode without a HAL-C2 home
+    When the node starts
+    Then its database is in "~/.local/share/hal-c2/elixir"
 
   @node
   Scenario: The desktop app's Electron runs the node's JavaScript sidecars
