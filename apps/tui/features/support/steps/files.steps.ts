@@ -19,7 +19,6 @@ interface FilesWorld extends World {
   listedPaths?: string[];
   listError?: string;
   readErrors?: Record<string, string>;
-  offered?: string[];
 }
 
 const LONG_FILE = Array.from(
@@ -319,9 +318,7 @@ step("the user is told the file is empty", async (ctx: World) => {
 // not offer "Attach image" at all until the attach flow lands (@backlog), so
 // this only holds the palette to not offering it.
 step("the prompt already has the most attachments a turn allows", ensureOpen);
-step("the user opens the command palette", (ctx: FilesWorld) => {
-  ctx.offered = ctx.host!.commands().map((command) => command.title);
-});
-step("{string} is not offered", (ctx: FilesWorld, title: string) => {
-  expect(ctx.offered).not.toContain(title);
+// "{string} is not offered" (projects.steps.ts) checks the palette's commands.
+step("the user opens the command palette", async (ctx: World) => {
+  await settle(ctx);
 });
