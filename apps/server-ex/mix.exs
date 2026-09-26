@@ -9,6 +9,9 @@ defmodule T3.MixProject do
       elixir: "~> 1.20",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: if(Mix.env() == :test, do: ["lib", "test/support"], else: ["lib"]),
+      # Step definitions are Cucumber glue, loaded by test_helper.exs, not test files.
+      test_ignore_filters: [~r{^test/steps/}],
+      aliases: [features: &features/1],
       deps: deps(),
       releases: [
         t3: [
@@ -20,6 +23,8 @@ defmodule T3.MixProject do
     ]
   end
 
+  def cli, do: [preferred_envs: [features: :test]]
+
   def application do
     [
       extra_applications: [:logger, :inets, :ssl, :public_key],
@@ -30,6 +35,7 @@ defmodule T3.MixProject do
   defp deps do
     [
       {:bandit, "~> 1.12"},
+      {:cucumber, "~> 1.0", only: :test},
       {:erlexec, "~> 2.5"},
       {:exile, "~> 0.15"},
       {:exqlite, "~> 0.41"},
@@ -67,6 +73,17 @@ defmodule T3.MixProject do
     )
 
     release
+  end
+
+  # `mix features [glob ...] [-- mix test args]` runs the repo's `@node` Gherkin
+  # scenarios (`features/`) and nothing else. Globs are relative to `features/`
+  # and default to every file; see test/support/features.ex.
+  defp features(args) do
+    {globs, rest} = Enum.split_while(args, &(&1 != "--"))
+    if globs != [], do: System.put_env("T3_FEATURES", Enum.join(globs, ","))
+    System.put_env("T3_FEATURES", System.get_env("T3_FEATURES") || "**/*.feature")
+    Mix.env(:test)
+    Mix.Task.run("test", ["--only", "cucumber" | Enum.drop(rest, 1)])
   end
 
   # `T3_VERSION` names a build apart from the package's release (nightlies, local builds).
