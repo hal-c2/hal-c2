@@ -33,12 +33,13 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
-import bundledManifestJson from "./model-manifest.json" with { type: "json" };
+// The node owns the manifest; this legacy server reads the same file.
+import bundledManifestJson from "../../../server-ex/priv/model-manifest.json" with { type: "json" };
 import { ProviderCompatibilityPolicy } from "./providerCompatibility.ts";
 import type { ServerProviderDraft } from "./providerSnapshot.ts";
 
 const MODEL_MANIFEST_URL =
-  "https://raw.githubusercontent.com/hal-c2/hal-c2/main/apps/server/src/provider/model-manifest.json";
+  "https://raw.githubusercontent.com/hal-c2/hal-c2/main/apps/server-ex/priv/model-manifest.json";
 
 /** How long a fetched manifest stays fresh before the next probe re-fetches. */
 const MANIFEST_TTL_MS = 60 * 60 * 1000;

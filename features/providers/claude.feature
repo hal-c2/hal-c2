@@ -5,7 +5,7 @@
 #   apps/server-ex/lib/hal_c2/provider_updates.ex (claudeAgent advisory, claude update)
 #   apps/server-ex/lib/hal_c2/provider_usage_limits/claude.ex (get_usage)
 #   apps/server-ex/lib/hal_c2/text_generation.ex (claude -p)
-#   apps/server/src/provider/Layers/ClaudeProvider.ts, apps/server/src/provider/ClaudeModelCatalog.ts, apps/server/src/provider/ClaudeModelManifest.ts, apps/server/src/provider/model-manifest.json
+#   apps/server/src/provider/Layers/ClaudeProvider.ts, apps/server/src/provider/ClaudeModelCatalog.ts, apps/server/src/provider/ClaudeModelManifest.ts, apps/server-ex/priv/model-manifest.json
 #   apps/server/src/provider/Drivers/ClaudeDriver.ts, apps/server/src/provider/Drivers/ClaudeHome.ts
 #   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts
 #   apps/server/src/provider/Layers/claudeUsageLimits.ts

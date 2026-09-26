@@ -1,8 +1,13 @@
 # Model manifest
 
-The [bundled manifest](../../apps/server/src/provider/model-manifest.json) allows
-offline startup; fetching it from `main` lets model metadata change between
-releases. Failed fetches or invalid data preserve the last usable manifest.
+The node owns the [manifest](../../apps/server-ex/priv/model-manifest.json). It
+compiles the Claude catalog in, so a manifest change reaches nodes with their next
+release; the node does not fetch it yet.
+
+The legacy Node server bundles the same file, which allows offline startup, and
+fetches it from `main` so model metadata can change between releases. Its releases
+from before the file moved fetch the old path and keep their last usable manifest.
+Failed fetches or invalid data preserve the last usable manifest.
 Remote data must pass both catalog-reference validation and the owning provider's
 adapter validation before replacing the cache.
 

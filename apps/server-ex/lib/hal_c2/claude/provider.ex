@@ -5,7 +5,7 @@ defmodule HalC2.Claude.Provider do
   read at compile time, less those the installed CLI is too old to run.
   """
 
-  @manifest Path.expand("../../../../server/src/provider/model-manifest.json", __DIR__)
+  @manifest Path.expand("../../../priv/model-manifest.json", __DIR__)
   @external_resource @manifest
   @catalog @manifest |> File.read!() |> JSON.decode!() |> get_in(["providers", "claudeAgent"])
 

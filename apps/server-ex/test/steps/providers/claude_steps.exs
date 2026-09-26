@@ -651,7 +651,7 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   defp claude_manifest do
-    Path.expand("../../../../server/src/provider/model-manifest.json", __DIR__)
+    Path.expand("../../../priv/model-manifest.json", __DIR__)
     |> File.read!()
     |> JSON.decode!()
     |> get_in(["providers", "claudeAgent"])

@@ -6,7 +6,7 @@
 #   apps/server/src/provider/Layers/OpenCodeProvider.ts, apps/server/src/provider/Drivers/OpenCodeDriver.ts
 #   apps/server/src/provider/opencodeRuntime.ts, apps/server/src/provider/OpenCodeServerOwner.ts
 #   apps/server/src/orchestration-v2/Adapters/OpenCodeAdapterV2.ts
-#   apps/server/src/provider/model-manifest.json (compatibility: opencode ranges)
+#   apps/server-ex/priv/model-manifest.json (compatibility: opencode ranges)
 #   apps/server/src/provider/providerCompatibility.ts
 #   apps/server/src/provider/Layers/openCodeUsageLimits.ts, apps/server/src/textGeneration/OpenCodeTextGeneration.ts
 

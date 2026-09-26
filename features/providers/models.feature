@@ -4,7 +4,7 @@
 #   apps/server-ex/lib/hal_c2/settings.ex (textGenerationModelSelection, defaultModelSelection dropped for disabled providers)
 #   apps/server-ex/lib/hal_c2/text_generation.ex (defaults and fallback)
 #   apps/tui/src/models.ts (flat model picker, effort choices)
-#   apps/server/src/provider/ModelManifest.ts, apps/server/src/provider/model-manifest.json
+#   apps/server/src/provider/ModelManifest.ts, apps/server-ex/priv/model-manifest.json
 #   apps/server/src/provider/providerCompatibility.ts (applyProviderCompatibility: remote policy over bundled)
 #   apps/web/src/components/settings/ProviderModelsSection.tsx, apps/web/src/components/settings/CustomModelEditor.tsx
 #   apps/web/src/components/settings/customModelEditor.logic.ts
