@@ -169,20 +169,23 @@ export const resolveHalC2Dirs = (options: HalC2DirsOptions): HalC2Dirs => {
   const path = pathFor(platform);
   const appDir = options.profile ?? HAL_C2_APP_DIR;
   const defaults = xdgDefaults(options);
-  const base = (variable: string | undefined, fallback: string) =>
-    absoluteEnvPath(variable, platform) ?? fallback;
-  const windows = platform === "win32";
-  // Windows nests the kind under the app dir (`%LOCALAPPDATA%\hal-c2\data`) because
-  // data, state and cache share one base there.
-  const under = (baseDir: string, kind: HalC2DirKind) =>
-    windows ? path.join(baseDir, appDir, kind) : path.join(baseDir, appDir);
-  const state = under(base(env.XDG_STATE_HOME, defaults.state), "state");
+  // An XDG variable is already a base for one kind. Only the Windows defaults
+  // need the kind nested under the app dir (`%LOCALAPPDATA%\hal-c2\data`),
+  // because data, state and cache share one base there.
+  const under = (variable: string | undefined, fallback: string, kind: HalC2DirKind) => {
+    const configured = absoluteEnvPath(variable, platform);
+    if (configured !== undefined) {
+      return path.join(configured, appDir);
+    }
+    return platform === "win32" ? path.join(fallback, appDir, kind) : path.join(fallback, appDir);
+  };
+  const state = under(env.XDG_STATE_HOME, defaults.state, "state");
   const runtimeBase = absoluteEnvPath(env.XDG_RUNTIME_DIR, platform);
   return {
-    config: under(base(env.XDG_CONFIG_HOME, defaults.config), "config"),
-    data: under(base(env.XDG_DATA_HOME, defaults.data), "data"),
+    config: under(env.XDG_CONFIG_HOME, defaults.config, "config"),
+    data: under(env.XDG_DATA_HOME, defaults.data, "data"),
     state,
-    cache: under(base(env.XDG_CACHE_HOME, defaults.cache), "cache"),
+    cache: under(env.XDG_CACHE_HOME, defaults.cache, "cache"),
     runtime: runtimeBase === undefined ? state : path.join(runtimeBase, appDir),
   };
 };

@@ -62,7 +62,7 @@ describe("resolveHalC2Dirs", () => {
     expect(
       resolveHalC2Dirs({ ...windows, env: { ...windows.env, XDG_CACHE_HOME: "D:\\xdg\\cache" } })
         .cache,
-    ).toBe("D:\\xdg\\cache\\hal-c2\\cache");
+    ).toBe("D:\\xdg\\cache\\hal-c2");
   });
 
   it("ignores empty and relative XDG variables", () => {
