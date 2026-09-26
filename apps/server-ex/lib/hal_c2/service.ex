@@ -143,7 +143,8 @@ defmodule HalC2.Service do
   defp unit_path(:launchd),
     do: Path.join([user_home(), "Library", "LaunchAgents", @label <> ".plist"])
 
-  defp log_path, do: Path.join([Application.fetch_env!(:hal_c2, :home), "logs", "boot-service.log"])
+  defp log_path,
+    do: Path.join([Application.fetch_env!(:hal_c2, :home), "logs", "boot-service.log"])
 
   # Linger keeps the user manager, and so the service, running after logout.
   defp activate(:systemd, _path) do
@@ -198,7 +199,7 @@ defmodule HalC2.Service do
         "[Service]",
         "Type=simple",
         "WorkingDirectory=#{quote_value(cwd)}",
-        "Environment=HALC2_HOME=#{quote_value(Application.fetch_env!(:hal_c2, :home))}",
+        "Environment=HALC2_NODE_HOME=#{quote_value(Application.fetch_env!(:hal_c2, :home))}",
         "Environment=PATH=#{quote_value(System.get_env("PATH", ""))}",
         "ExecStart=#{Enum.map_join(argv, " ", &quote_value/1)}",
         "KillMode=mixed",
@@ -242,7 +243,7 @@ defmodule HalC2.Service do
       <dict>
         <key>PATH</key>
         <string>#{x.(System.get_env("PATH", ""))}</string>
-        <key>HALC2_HOME</key>
+        <key>HALC2_NODE_HOME</key>
         <string>#{x.(Application.fetch_env!(:hal_c2, :home))}</string>
       </dict>
       <key>WorkingDirectory</key>

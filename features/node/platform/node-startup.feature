@@ -1,5 +1,5 @@
 # Sources:
-#   apps/server-ex/config/runtime.exs (HALC2_HOME, HALC2_NODE_PORT, HALC2_HOST)
+#   apps/server-ex/config/runtime.exs (HALC2_NODE_HOME, HALC2_HOME, HALC2_NODE_PORT, HALC2_NODE_HOST, HALC2_HOST)
 #   apps/server/src/cli/config.ts (HALC2_HOST)
 #   apps/server-ex/lib/mix/tasks/hal_c2.server.ex, hal_c2.import.ex, hal_c2.bundle.ex
 #   apps/server-ex/rel/env.sh.eex (RELEASE_DISTRIBUTION, cluster vm.args)
@@ -36,7 +36,13 @@ Feature: Starting the node
     Given HALC2_NODE_PORT is 4100 and HALC2_HOME is "/srv/hal-c2"
     When the node starts
     Then it serves clients on port 4100
-    And its database, logs and worktrees live under "/srv/hal-c2"
+    And its database, logs and worktrees live under "/srv/hal-c2/elixir"
+
+  @node
+  Scenario: The home directory's name from before the rename still works
+    Given the home directory is set with its name from before the rename, T3CODE_HOME="/srv/t3"
+    When the node starts
+    Then its database, logs and worktrees live under "/srv/t3/elixir"
 
   @node
   Scenario: A checkout keeps its state inside the checkout
@@ -49,6 +55,13 @@ Feature: Starting the node
     Given no home directory is configured
     When a user starts the node from a release
     Then its state lives in "~/.hal-c2/elixir"
+
+  @node
+  Scenario: A release keeps using the state an install from before the rename left
+    Given no home directory is configured
+    And the user's home holds the node state of an install from before the rename
+    When a user starts the node from a release
+    Then its state lives in "~/.t3/elixir"
 
   @node
   Scenario: The node binds to loopback unless it was told otherwise
