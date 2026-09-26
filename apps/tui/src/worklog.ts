@@ -345,6 +345,7 @@ export function deriveWorkLogEntries(
 export function workLogIcon(entry: WorkLogEntry): string {
   if (entry.tone === "thinking") return TOOL_ICONS.thinking.glyph;
   if (entry.tone === "error") return TOOL_ICONS.error.glyph;
+  if (entry.activityKind.startsWith("user-input.")) return TOOL_ICONS.userInput.glyph;
   switch (entry.itemType) {
     case "command_execution":
       return TOOL_ICONS.terminal.glyph;

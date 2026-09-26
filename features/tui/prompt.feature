@@ -170,7 +170,7 @@ Feature: Writing a prompt in the terminal
     When the user sends the reply
     Then the reply carries "Match this" and a bounded copy of "logo.png"
 
-  @backlog @tui
+  @tui
   Scenario: The user recalls earlier prompts
     Given the user sent "Run the tests" earlier in this thread
     When the user asks for the previous prompt in an empty prompt

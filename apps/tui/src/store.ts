@@ -65,7 +65,13 @@ export interface Store {
   readonly pullGit: () => void;
 }
 
-export function createStore(client: TuiClient): Store {
+export interface StoreOptions {
+  /** Clock for snooze partitioning; tests pin it. */
+  readonly now?: () => string;
+}
+
+export function createStore(client: TuiClient, options: StoreOptions = {}): Store {
+  const now = options.now ?? (() => new Date().toISOString());
   let state: StoreState = {
     shell: null,
     expanded: new Set<string>([SIDEBAR_SETTLED_SECTION_ID]),
@@ -96,6 +102,7 @@ export function createStore(client: TuiClient): Store {
       selectedThreadId(),
       state.filter,
       state.projectScopeId,
+      now(),
     );
 
   const emit = () => {
@@ -152,6 +159,15 @@ export function createStore(client: TuiClient): Store {
   };
 
   const ensureValidSelection = (rows: Row[]) => {
+    // Archiving the open thread keeps it open (unlisted) so it can be unarchived.
+    if (
+      state.selection?.kind === "thread" &&
+      state.shell?.threads.some(
+        (thread) => thread.id === selectedThreadId() && thread.archivedAt != null,
+      )
+    ) {
+      return;
+    }
     if (rows.length === 0) {
       const hasThreadInScope = (state.shell?.threads ?? []).some(
         (thread) =>
@@ -275,7 +291,14 @@ export function createStore(client: TuiClient): Store {
       set({ gitBusy: true, status: `Running ${action}…`, statusKind: "busy" });
       void client
         .runGitStackedAction({ cwd, action, ...(message ? { commitMessage: message } : {}) })
-        .then(() => set({ gitBusy: false, status: "Git action complete.", statusKind: "success" }))
+        .then((result) =>
+          set({
+            gitBusy: false,
+            // The server's own summary ("Committed 1a2b3c4", "Pushed to origin/x").
+            status: result?.toast.title ?? "Git action complete.",
+            statusKind: "success",
+          }),
+        )
         .catch((error: unknown) =>
           set({ gitBusy: false, status: `Git failed: ${String(error)}`, statusKind: "error" }),
         );

@@ -166,7 +166,7 @@ Feature: Composer controls and new-thread drafts in the terminal
   Scenario: Adding a folder that is already a project says so
     Given "~/code/shop" is already a project
     When the user adds "~/code/shop" again
-    Then the status line says "Project already added"
+    Then the status line says "Project already added. What should we build?"
 
   @backlog @tui
   Scenario: A disabled or signed-out provider explains itself in the composer
@@ -178,7 +178,7 @@ Feature: Composer controls and new-thread drafts in the terminal
     When the user picks a model from a provider the thread cannot switch to
     Then the client explains that a new thread is needed
 
-  @backlog @tui
+  @tui
   Scenario: Provider configuration refreshes live
     When a provider's models change on the server
     Then the model picker lists the new models without restarting the client

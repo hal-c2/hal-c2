@@ -35,6 +35,16 @@ export function resolveNewThreadContext(input: {
     input.thread &&
     input.thread.projectId === contextualProjectId
   ) {
+    // A thread in the project checkout only lends its branch when new threads
+    // default to their own worktree: that branch becomes the new worktree's base.
+    if (input.thread.worktreePath === null && input.defaultEnvironmentMode === "worktree") {
+      return {
+        projectIndex,
+        workspaceMode: "new-worktree",
+        branch: input.thread.branch,
+        worktreePath: null,
+      };
+    }
     return {
       projectIndex,
       workspaceMode: "current",

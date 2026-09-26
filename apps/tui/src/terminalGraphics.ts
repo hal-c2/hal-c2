@@ -38,19 +38,39 @@ export function isKnownKittyGraphicsTerminal(
 }
 
 /**
- * tmux replaces TERM/TERM_PROGRAM in the pane, but keeps the client terminal's
- * original values in its global environment. Read that bounded local snapshot
+ * How inline images reach the terminal: written straight to it ("direct"),
+ * wrapped in tmux passthrough to the terminal outside tmux ("tmux"), or not at
+ * all (null) when the terminal is not one known to draw Kitty graphics.
+ */
+export type InlineImageTransport = "direct" | "tmux";
+
+/**
+ * The inline-image decision for a terminal environment. Inside tmux the pane
+ * names tmux, not the terminal, so `readTmuxEnvironment` supplies tmux's global
+ * environment, which keeps the client terminal's original TERM/TERM_PROGRAM.
+ */
+export function inlineImageTransport(
+  environment: TerminalEnvironment,
+  readTmuxEnvironment: () => string = () => "",
+): InlineImageTransport | null {
+  if (!environment.TMUX) return isKnownKittyGraphicsTerminal(environment) ? "direct" : null;
+  return isKnownKittyGraphicsTerminal(environment, readTmuxEnvironment()) ? "tmux" : null;
+}
+
+/**
+ * `inlineImageTransport` for this process: reads tmux's global environment
+ * (a bounded local `tmux show-environment -g`) only when running inside tmux,
  * so Ghostty-over-SSH can opt into graphics passthrough without guessing.
  */
-export function detectKittyGraphicsTerminal(
+export function detectInlineImageTransport(
   environment: TerminalEnvironment = process.env,
-): boolean {
-  if (!environment.TMUX) return isKnownKittyGraphicsTerminal(environment);
-  const result = NodeChildProcess.spawnSync("tmux", ["show-environment", "-g"], {
-    encoding: "utf8",
-    timeout: 250,
-    windowsHide: true,
+): InlineImageTransport | null {
+  return inlineImageTransport(environment, () => {
+    const result = NodeChildProcess.spawnSync("tmux", ["show-environment", "-g"], {
+      encoding: "utf8",
+      timeout: 250,
+      windowsHide: true,
+    });
+    return result.status === 0 ? (result.stdout ?? "") : "";
   });
-  const tmuxEnvironment = result.status === 0 ? (result.stdout ?? "") : "";
-  return isKnownKittyGraphicsTerminal(environment, tmuxEnvironment);
 }

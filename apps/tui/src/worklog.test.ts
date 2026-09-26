@@ -107,6 +107,18 @@ describe("deriveWorkLogEntries", () => {
     expect(workLogIcon(entries[0]!)).toBe("✱");
   });
 
+  it("Given a question from the agent, then its row carries the user-input icon", () => {
+    const entries = deriveWorkLogEntries([
+      activity({
+        kind: "user-input.requested",
+        tone: "info",
+        summary: "User input requested",
+        payload: { requestId: "q1", questions: [] },
+      }),
+    ]);
+    expect(workLogIcon(entries[0]!)).toBe("✦");
+  });
+
   it("Given activities out of order, then they are sorted by sequence", () => {
     const a = activity({ sequence: 5, summary: "second", payload: { itemType: "web_search" } });
     const b = activity({ sequence: 2, summary: "first", payload: { itemType: "web_search" } });

@@ -56,6 +56,8 @@ Feature: Pairing a client with an environment
     When an administrator revokes it
     Then pairing with it fails
 
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: The user pairs by pasting a pairing link
     Given a pairing link from another machine
@@ -63,11 +65,15 @@ Feature: Pairing a client with an environment
     Then the client pairs and lists the environment
     And connects to it
 
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: The user pairs by entering a host and a pairing code
     When the user adds an environment with host "192.168.1.20:3780" and a pairing code
     Then the client pairs with that environment
 
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: An expired or used pairing link explains itself
     Given a pairing link that already paired another device
@@ -75,6 +81,8 @@ Feature: Pairing a client with an environment
     Then the client says the link is invalid or expired
     And asks for a fresh link
 
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: An unreachable host fails pairing with a reason
     When the user pairs with a host that does not answer
@@ -95,6 +103,8 @@ Feature: Pairing a client with an environment
     Then it reconnects with a new session
     And keeps its local view of the environment
 
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: The terminal client lists live access changes
     Given the user administers the environment
@@ -102,12 +112,16 @@ Feature: Pairing a client with an environment
     Then it lists pairing links and paired clients
     And updates the list when another client pairs
 
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: The terminal client revokes one client
     Given another paired client
     When the user revokes it from the terminal client
     Then that client can no longer connect
 
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: The terminal client revokes every other client
     Given three other paired clients

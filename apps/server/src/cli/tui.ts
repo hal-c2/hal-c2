@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { AuthStandardClientScopes } from "@t3tools/contracts";
@@ -69,6 +70,8 @@ function runBunTui(input: {
   readonly origin: string;
   readonly bearerToken: string;
   readonly logPath: string;
+  /** Where the user's `shell.qml` overrides the TUI's default QML shell. */
+  readonly shellDir: string;
   readonly mintSocketUrl: () => Promise<string>;
 }): Promise<void> {
   const bunCommand = process.env.T3_TUI_BUN ?? "bun";
@@ -92,6 +95,7 @@ function runBunTui(input: {
         T3_TUI_ORIGIN: input.origin,
         T3_TUI_BEARER: input.bearerToken,
         T3_TUI_LOG: input.logPath,
+        T3_TUI_SHELL_DIR: input.shellDir,
       },
     });
 
@@ -119,6 +123,7 @@ function runBunTui(input: {
       } else {
         process.stderr.write(`t3 tui: failed to start Bun: ${error.message}\n`);
       }
+      process.exitCode = 1;
       resolve();
     });
 
@@ -140,12 +145,14 @@ export const tuiCommand = Command.make("tui", { ...authLocationFlags }).pipe(
         yield* Console.error(
           "No running T3 Code server was found. Start one with `t3 serve` (or `t3 start`) first.",
         );
+        process.exitCode = 1;
         return;
       }
       if (!(yield* isLivePersistedServerRuntimeState(runtimeState.value))) {
         yield* Console.error(
           "The recorded T3 Code server is no longer running. Start it with `t3 serve` (or `t3 start`) first.",
         );
+        process.exitCode = 1;
         return;
       }
       const origin = runtimeState.value.origin;
@@ -196,6 +203,7 @@ export const tuiCommand = Command.make("tui", { ...authLocationFlags }).pipe(
             origin,
             bearerToken: session.token,
             logPath: `${config.serverRuntimeStatePath}.tui.log`,
+            shellDir: NodePath.join(config.baseDir, "shell", "tui"),
             mintSocketUrl,
           }),
         );

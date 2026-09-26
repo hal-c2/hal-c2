@@ -91,13 +91,16 @@ const buildCmd = Command.make(
         }),
       );
 
-      const tuiEntry = path.join(repoRoot, "apps/tui/dist/index.js");
-      const tuiTarget = path.join(serverDir, "dist/tui/index.js");
+      // The TUI ships as its bundle plus the QML shell (`dist/qml`) it loads at runtime.
+      const tuiDist = path.join(repoRoot, "apps/tui/dist");
+      const tuiEntry = path.join(tuiDist, "index.js");
+      const tuiTargetDir = path.join(serverDir, "dist/tui");
+      const tuiTarget = path.join(tuiTargetDir, "index.js");
       if (!(yield* fs.exists(tuiEntry))) {
         return yield* new ServerCliBuildAssetMissingError({ assetPath: tuiEntry });
       }
-      yield* fs.makeDirectory(path.dirname(tuiTarget), { recursive: true });
-      yield* fs.copyFile(tuiEntry, tuiTarget);
+      yield* fs.remove(tuiTargetDir, { recursive: true, force: true });
+      yield* fs.copy(tuiDist, tuiTargetDir);
       const tuiBundle = yield* fs.readFileString(tuiTarget);
       const unresolvedImport = findUnresolvedTuiBundleImport(tuiBundle);
       if (unresolvedImport !== null) {

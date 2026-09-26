@@ -97,6 +97,7 @@ import { type Command, filterCommands } from "../commands.ts";
 import { buildFileTree, flattenFileTree } from "../fileTree.ts";
 import { CommandPalette } from "./CommandPalette.tsx";
 import { ContextMenu, firstContextMenuIndex, moveContextMenuIndex } from "./ContextMenu.tsx";
+import { buildThreadContextMenuItems, type ThreadContextMenuAction } from "../threadMenu.logic.ts";
 import { ComposerDock, type ComposerDockContext } from "./ComposerDock.tsx";
 import { FilesView, type FilesStatus, type ViewingFile } from "./FilesView.tsx";
 import { SettingsView } from "./SettingsView.tsx";
@@ -171,56 +172,7 @@ function branchPickerOptions(refs: ReadonlyArray<VcsRef>): ReadonlyArray<SelectO
   });
 }
 
-type ThreadContextMenuAction =
-  | "settle"
-  | "unsettle"
-  | "rename"
-  | "copy-path"
-  | "copy-branch"
-  | "copy-thread-id"
-  | "archive"
-  | "delete";
-
 type ThreadRow = Extract<Row, { kind: "thread" }>;
-
-export function buildThreadContextMenuItems(input: {
-  readonly row: ThreadRow;
-  readonly settlementSupported: boolean;
-  readonly hasWorkspacePath: boolean;
-}): ReadonlyArray<ContextMenuItem<ThreadContextMenuAction>> {
-  const { row } = input;
-  const settled = row.section === "settled";
-  return [
-    ...(input.settlementSupported
-      ? [
-          settled
-            ? { id: "unsettle" as const, label: "Un-settle thread" }
-            : // The server owns the settle rules; a rejection reaches the status line.
-              { id: "settle" as const, label: "Settle thread" },
-        ]
-      : []),
-    {
-      id: "rename",
-      label: "Rename thread",
-      separatorBefore: input.settlementSupported,
-    },
-    {
-      id: "copy-path",
-      label: "Copy path",
-      disabled: !input.hasWorkspacePath,
-      separatorBefore: true,
-    },
-    ...(row.thread.branch ? [{ id: "copy-branch" as const, label: "Copy branch" }] : []),
-    { id: "copy-thread-id", label: "Copy thread ID" },
-    {
-      id: "archive",
-      label: "Archive thread",
-      disabled: row.thread.session?.status === "running",
-      separatorBefore: true,
-    },
-    { id: "delete", label: "Delete", destructive: true },
-  ];
-}
 
 // Top-level layout + state wiring (mirrors apps/web/src/components/ChatView.tsx):
 // owns the external store + UI state, derives the row window and pane heights,

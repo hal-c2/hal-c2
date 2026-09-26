@@ -38,6 +38,21 @@ describe("new-thread parity with the web UI", () => {
     });
   });
 
+  it("Given a thread in the project checkout and worktree is the default, then a new worktree is based on its branch", () => {
+    expect(
+      resolveNewThreadContext({
+        projects,
+        thread: { projectId: "project-one", branch: "main", worktreePath: null } as never,
+        defaultEnvironmentMode: "worktree",
+      }),
+    ).toEqual({
+      projectIndex: 0,
+      workspaceMode: "new-worktree",
+      branch: "main",
+      worktreePath: null,
+    });
+  });
+
   it("Given no selected thread and worktree is the server default, then a new worktree is preselected", () => {
     expect(
       resolveNewThreadContext({

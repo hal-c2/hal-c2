@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { isKnownKittyGraphicsTerminal } from "./terminalGraphics.ts";
+import { inlineImageTransport, isKnownKittyGraphicsTerminal } from "./terminalGraphics.ts";
 
 describe("Kitty graphics terminal detection", () => {
   it("recognizes direct Ghostty, Kitty, WezTerm, and Konsole markers", () => {
@@ -26,5 +26,20 @@ describe("Kitty graphics terminal detection", () => {
         "TERM=xterm-256color\nTERM_PROGRAM=Alacritty\n",
       ),
     ).toBe(false);
+  });
+});
+
+describe("inline image transport", () => {
+  it("draws straight to a known terminal and not at all to an unknown one", () => {
+    expect(inlineImageTransport({ TERM: "xterm-kitty" })).toBe("direct");
+    expect(inlineImageTransport({ TERM: "xterm-256color", TERM_PROGRAM: "Apple_Terminal" })).toBe(
+      null,
+    );
+  });
+
+  it("uses tmux passthrough only when tmux's client terminal is known", () => {
+    const pane = { TMUX: "/tmp/tmux-1000/default,1,0", TERM: "tmux-256color" };
+    expect(inlineImageTransport(pane, () => "TERM_PROGRAM=ghostty\n")).toBe("tmux");
+    expect(inlineImageTransport(pane, () => "TERM_PROGRAM=Alacritty\n")).toBe(null);
   });
 });

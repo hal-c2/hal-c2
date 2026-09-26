@@ -529,7 +529,7 @@ importers:
         specifier: ^1.3.15
         version: 1.15.13
       '@opentui/core':
-        specifier: ^0.5.4
+        specifier: ^0.5.12
         version: 0.5.12(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))
       diff:
         specifier: 8.0.3
@@ -596,10 +596,10 @@ importers:
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115(bufferutil@4.1.0)(effect@4.0.0-rc.115(patch_hash=0dfc4bb8ebd80fb3e06b91ef61346f5259517ab0f2437644fe95ae531084b1f5))(redis@6.2.1)(utf-8-validate@6.0.6)
       '@opentui/core':
-        specifier: ^0.5.4
+        specifier: ^0.5.12
         version: 0.5.12(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))
       '@opentui/react':
-        specifier: ^0.5.4
+        specifier: ^0.5.12
         version: 0.5.12(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))
       '@t3tools/client-runtime':
         specifier: workspace:*
@@ -619,6 +619,9 @@ importers:
       effect:
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115(patch_hash=0dfc4bb8ebd80fb3e06b91ef61346f5259517ab0f2437644fe95ae531084b1f5)
+      opentui-qml:
+        specifier: github:hal-c2/opentui-qml
+        version: https://codeload.github.com/hal-c2/opentui-qml/tar.gz/1ecae5f5df6bb52ca468545ee9d499749b5c5bee(@opentui/react@0.5.12(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))
       react:
         specifier: 19.2.6
         version: 19.2.6
@@ -626,6 +629,12 @@ importers:
         specifier: 0.34.5
         version: 0.34.5
     devDependencies:
+      '@cucumber/gherkin':
+        specifier: ^42.0.1
+        version: 42.0.1
+      '@cucumber/messages':
+        specifier: ^34.2.1
+        version: 34.2.1
       '@types/bun':
         specifier: 1.3.14
         version: 1.3.14
@@ -1029,10 +1038,10 @@ importers:
         version: 0.34.5
     devDependencies:
       '@opentui/core':
-        specifier: ^0.5.4
+        specifier: ^0.5.12
         version: 0.5.12(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))
       '@opentui/react':
-        specifier: ^0.5.4
+        specifier: ^0.5.12
         version: 0.5.12(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))
       '@types/bun':
         specifier: 1.3.14
@@ -2139,6 +2148,12 @@ packages:
   '@crowecawcaw/xa11y@0.13.0':
     resolution: {integrity: sha512-WTYHwlBhImGmmMt81crxaRvNdZXlBNemFyrP5GGHj2WeDTJMBrHgHTaladTypXHXrviFFBBGROl5moijRQ4ODA==}
     engines: {node: '>=18'}
+
+  '@cucumber/gherkin@42.0.1':
+    resolution: {integrity: sha512-Kqg0ULhWqbXp/a1c04ND4sS4KTlIL831tQ0NhZLXWdEhT6LiNsZ5LFRzy/lBy7QQpcKhroKp/i3C2WdEnRBKNg==}
+
+  '@cucumber/messages@34.2.1':
+    resolution: {integrity: sha512-aj2iCAG9ZOpMVcMxcgShifv5fbR96b7SMgdWcPXXh2QbFp7OEcAnQ5MC5YfWUDSDasmw7FU5NJEsOrXdTQOU1A==}
 
   '@cursor/sdk-darwin-arm64@1.0.31':
     resolution: {integrity: sha512-i6INDIQhV7xDeFKfND0yr/SOwv4uJthPMfXXvNpZapO+IbJTx30aPzJVMBqdksvDHyn/cekJB/92Jkz+a5K8Ow==}
@@ -3808,6 +3823,34 @@ packages:
     engines: {bun: '>=1.3.0', node: '>=26.4.0'}
     peerDependencies:
       web-tree-sitter: 0.25.10
+
+  '@opentui/keymap@0.5.12':
+    resolution: {integrity: sha512-yWPvJjRhJTRoRSUucQq9Ua8ZW7n/2YQ/j6JxWq5Qekm4WuFiTplEkebR/Aj2/xA8tX68NOE5qv1LrY0Jk3NLNQ==}
+    peerDependencies:
+      '@opentui/react': 0.5.12
+      '@opentui/solid': 0.5.12
+      react: '>=19.2.0'
+      solid-js: 1.9.12
+    peerDependenciesMeta:
+      '@opentui/react':
+        optional: true
+      '@opentui/solid':
+        optional: true
+      react:
+        optional: true
+      solid-js:
+        optional: true
+
+  '@opentui/qrcode@0.5.12':
+    resolution: {integrity: sha512-VXYF6lEM9dct+GEm2pXnXYHpoZGO9hX2rpqBOPmLvSDJZaWEguRrS3Ye/5tidmaVedtTxzpfHvL4HlVBMMzicw==}
+    peerDependencies:
+      '@opentui/react': 0.5.12
+      '@opentui/solid': 0.5.12
+    peerDependenciesMeta:
+      '@opentui/react':
+        optional: true
+      '@opentui/solid':
+        optional: true
 
   '@opentui/react@0.5.12':
     resolution: {integrity: sha512-cHzTW0Pyr2kl/sMX7nviP2TM0kLwE8x1Dny5KweqCj0PFBAQsISboTxq0jjjeVAUEYWY89xfDzz+rGpwBzWbRg==}
@@ -9400,6 +9443,12 @@ packages:
     resolution: {integrity: sha512-MVHddDVweXZF3awtlAS+6pgKLlm/JgxZ90+/NBurBoQctVOOB/zDdVjcyPzQ+0laDGbsWgrRkflI65sQeOgT9Q==}
     engines: {node: '>=8'}
 
+  opentui-qml@https://codeload.github.com/hal-c2/opentui-qml/tar.gz/1ecae5f5df6bb52ca468545ee9d499749b5c5bee:
+    resolution: {gitHosted: true, integrity: sha512-ajoTmzIzV/69JKwJjajwoM5U0uTE2TbLtyYHUT39SmgOQKCNseF83SDQC71Efhr/i1cHeP2oLNOxqRmW2bEzcQ==, tarball: https://codeload.github.com/hal-c2/opentui-qml/tar.gz/1ecae5f5df6bb52ca468545ee9d499749b5c5bee}
+    version: 0.1.0
+    engines: {bun: '>=1.3.0', node: '>=26.4.0'}
+    hasBin: true
+
   ora@3.4.0:
     resolution: {integrity: sha512-eNwHudNbO1folBP3JsZ19v9azXWtQZjICdr3Q0TDPIaeBQ3mXLrh54wM+er0+hSp+dWKf+Z8KM58CYzEyIYxYg==}
     engines: {node: '>=6'}
@@ -10413,6 +10462,9 @@ packages:
   socks@2.8.9:
     resolution: {integrity: sha512-LJhUYUvItdQ0LkJTmPeaEObWXAqFyfmP85x0tch/ez9cahmhlBBLbIqDFnvBnUJGagb0JbIQrkBs1wJ+yRYpEw==}
     engines: {node: '>= 10.0.0', npm: '>= 3.0.0'}
+
+  solid-js@1.9.12:
+    resolution: {integrity: sha512-QzKaSJq2/iDrWR1As6MHZQ8fQkdOBf8GReYb7L5iKwMGceg7HxDcaOHk0at66tNgn9U2U7dXo8ZZpLIAmGMzgw==}
 
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
@@ -12644,6 +12696,12 @@ snapshots:
       '@crowecawcaw/xa11y-win32-arm64-msvc': 0.13.0
       '@crowecawcaw/xa11y-win32-x64-msvc': 0.13.0
 
+  '@cucumber/gherkin@42.0.1':
+    dependencies:
+      '@cucumber/messages': 34.2.1
+
+  '@cucumber/messages@34.2.1': {}
+
   '@cursor/sdk-darwin-arm64@1.0.31':
     optional: true
 
@@ -14588,6 +14646,27 @@ snapshots:
       '@opentui/core-win32-x64': 0.5.12
     transitivePeerDependencies:
       - typescript
+
+  '@opentui/keymap@0.5.12(@opentui/react@0.5.12(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(react@19.2.6)(solid-js@1.9.12)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))':
+    dependencies:
+      '@opentui/core': 0.5.12(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))
+    optionalDependencies:
+      '@opentui/react': 0.5.12(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      react: 19.2.6
+      solid-js: 1.9.12
+    transitivePeerDependencies:
+      - typescript
+      - web-tree-sitter
+
+  '@opentui/qrcode@0.5.12(@opentui/react@0.5.12(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))':
+    dependencies:
+      '@opentui/core': 0.5.12(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))
+    optionalDependencies:
+      '@opentui/react': 0.5.12(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+    transitivePeerDependencies:
+      - typescript
+      - web-tree-sitter
+    optional: true
 
   '@opentui/react@0.5.12(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))':
     dependencies:
@@ -20580,6 +20659,20 @@ snapshots:
       is-docker: 2.2.1
       is-wsl: 2.2.0
 
+  opentui-qml@https://codeload.github.com/hal-c2/opentui-qml/tar.gz/1ecae5f5df6bb52ca468545ee9d499749b5c5bee(@opentui/react@0.5.12(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5)):
+    dependencies:
+      '@opentui/core': 0.5.12(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))
+      '@opentui/keymap': 0.5.12(@opentui/react@0.5.12(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(react@19.2.6)(solid-js@1.9.12)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))
+      solid-js: 1.9.12
+    optionalDependencies:
+      '@opentui/qrcode': 0.5.12(@opentui/react@0.5.12(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))
+    transitivePeerDependencies:
+      - '@opentui/react'
+      - '@opentui/solid'
+      - react
+      - typescript
+      - web-tree-sitter
+
   ora@3.4.0:
     dependencies:
       chalk: 2.4.2
@@ -22044,6 +22137,12 @@ snapshots:
       ip-address: 10.7.2
       smart-buffer: 4.2.0
     optional: true
+
+  solid-js@1.9.12:
+    dependencies:
+      csstype: 3.2.3
+      seroval: 1.5.4
+      seroval-plugins: 1.5.4(seroval@1.5.4)
 
   source-map-js@1.2.1: {}
 

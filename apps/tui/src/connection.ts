@@ -24,6 +24,7 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
   RuntimeRequestId,
+  type GitRunStackedActionResult,
   type GitStackedAction,
   type FilesystemBrowseResult,
   type SourceControlCloneRepositoryResult,
@@ -148,6 +149,8 @@ export interface TuiOptions {
   readonly mintSocketUrl: () => Promise<string>;
   /** File the Effect runtime logs to (Ink owns stdout, so never log there). */
   readonly logPath: string;
+  /** Pause between a dropped connection and the next attempt (2 seconds). */
+  readonly reconnectDelay?: Duration.Input;
 }
 
 /** Stable id used to label this client's connection in traces/logs. */
@@ -255,7 +258,7 @@ const CONNECTED_STATE: SupervisorConnectionState = {
  * `mintSocketUrl`. We reuse the heavy `client-runtime` RPC client + reducers but
  * skip its multi-environment relay machinery, which the TUI does not need.
  */
-const makeTuiSupervisor = (options: TuiOptions) =>
+export const makeTuiSupervisor = (options: Omit<TuiOptions, "logPath">) =>
   Effect.gen(function* () {
     const factory = yield* RpcSessionFactory;
     const { origin } = options;
@@ -300,7 +303,7 @@ const makeTuiSupervisor = (options: TuiOptions) =>
         yield* Effect.scoped(runConnection).pipe(Effect.ignore);
         yield* SubscriptionRef.set(sessionRef, Option.none());
         yield* SubscriptionRef.set(stateRef, CONNECTING_STATE);
-        yield* Effect.sleep(RECONNECT_DELAY);
+        yield* Effect.sleep(options.reconnectDelay ?? RECONNECT_DELAY);
       }
     });
 
@@ -316,6 +319,21 @@ const makeTuiSupervisor = (options: TuiOptions) =>
       retryNow: Effect.void,
     });
   });
+
+/**
+ * Maps supervisor states to the phase the UI shows: "connecting" until the first
+ * connection, "reconnecting" whenever it is lost after that.
+ */
+export function connectionPhases(): (state: SupervisorConnectionState) => TuiConnectionPhase {
+  let connectedOnce = false;
+  return (state) => {
+    if (state.phase === "connected") {
+      connectedOnce = true;
+      return "connected";
+    }
+    return connectedOnce ? "reconnecting" : "connecting";
+  };
+}
 
 /** Effect-side logger that never touches stdout (Ink owns the screen). */
 const fileLoggerLayer = (logPath: string) =>
@@ -445,8 +463,13 @@ export function buildTuiRuntime(options: TuiOptions): TuiRuntime {
 
 // ── Imperative client surface consumed by the UI components ────────────────
 
+/** Where the loopback connection is: first connect, live, or retrying after a drop. */
+export type TuiConnectionPhase = "connecting" | "connected" | "reconnecting";
+
 export interface TuiClient {
   readonly hostPlatform: NodeJS.Platform;
+  /** Live connection phase (emits the current one first). Returns an unsubscribe fn. */
+  readonly subscribeConnection: (onPhase: (phase: TuiConnectionPhase) => void) => () => void;
   readonly browseFilesystem: (partialPath: string, cwd?: string) => Promise<FilesystemBrowseResult>;
   readonly discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
   readonly lookupRepository: (
@@ -523,13 +546,16 @@ export interface TuiClient {
     cwd: string,
     onStatus: (status: VcsStatusResult) => void,
   ) => () => void;
-  /** Run a stacked git action (commit/push/create_pr/…); resolves when it finishes. */
+  /**
+   * Run a stacked git action (commit/push/create_pr/…); resolves with the
+   * server's result (null if the stream ended without one) when it finishes.
+   */
   readonly runGitStackedAction: (input: {
     readonly cwd: string;
     readonly action: GitStackedAction;
     readonly commitMessage?: string;
     readonly featureBranch?: boolean;
-  }) => Promise<void>;
+  }) => Promise<GitRunStackedActionResult | null>;
   /** Pull the worktree's branch from its upstream. */
   readonly runGitPull: (cwd: string) => Promise<void>;
   /** Fetch the unified diff for the turn that produced the given checkpoint. */
@@ -783,6 +809,17 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
           destinationPath: TrimmedNonEmptyString.make(destinationPath),
         }),
       ),
+    subscribeConnection: (onPhase) => {
+      const toPhase = connectionPhases();
+      return drainStreamUntilUnsubscribe(
+        Stream.unwrap(
+          Effect.gen(function* () {
+            const supervisor = yield* EnvironmentSupervisor;
+            return SubscriptionRef.changes(supervisor.state);
+          }),
+        ).pipe(Stream.tap((state) => Effect.sync(() => onPhase(toPhase(state))))),
+      );
+    },
     subscribeShell: (onSnapshot) => {
       shellWarm ??= startWarmSubscriptionRef(makeEnvironmentShellState());
       return subscribeToWarmRef(shellWarm, (state) => {
@@ -1015,8 +1052,9 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
       return drainStreamUntilUnsubscribe(stream);
     },
 
-    runGitStackedAction: (input) =>
-      runtime.runPromise(
+    runGitStackedAction: (input) => {
+      let finished: GitRunStackedActionResult | null = null;
+      return runtime.runPromise(
         runStream(WS_METHODS.gitRunStackedAction, {
           actionId: `tui-action-${++gitActionSeq}`,
           cwd: input.cwd,
@@ -1026,12 +1064,15 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
         }).pipe(
           // The stream ends when the action completes; an action_failed event (or a
           // failed stream) surfaces as a rejected promise.
-          Stream.runForEach((event) =>
-            event.kind === "action_failed" ? Effect.fail(new Error(event.message)) : Effect.void,
-          ),
-          Effect.asVoid,
+          Stream.runForEach((event) => {
+            if (event.kind === "action_failed") return Effect.fail(new Error(event.message));
+            if (event.kind === "action_finished") finished = event.result;
+            return Effect.void;
+          }),
+          Effect.map(() => finished),
         ),
-      ),
+      );
+    },
 
     runGitPull: (cwd) =>
       runtime.runPromise(request(WS_METHODS.vcsPull, { cwd }).pipe(Effect.asVoid)),

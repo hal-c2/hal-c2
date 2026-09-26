@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import {
   ensureColorCapabilityEnv,
   prepareTerminalViewport,
+  scheduleColorCapabilityLog,
   TUI_RENDERER_CONFIG,
 } from "./terminalStartup.ts";
 
@@ -64,5 +65,28 @@ describe("ensureColorCapabilityEnv", () => {
     const env: NodeJS.ProcessEnv = { TERM: "xterm-256color" };
     ensureColorCapabilityEnv(env);
     expect(env.COLORTERM).toBeUndefined();
+  });
+});
+
+describe("scheduleColorCapabilityLog", () => {
+  it("logs the detected capabilities at startup and again once the handshake settles", () => {
+    const lines: string[] = [];
+    const timers: Array<{ run: () => void; ms: number }> = [];
+    let caps = { rgb: false };
+    scheduleColorCapabilityLog({
+      log: (line) => lines.push(line),
+      capabilities: () => caps,
+      env: { TERM: "xterm-ghostty", COLORTERM: "truecolor" },
+      schedule: (run, ms) => timers.push({ run, ms }),
+    });
+    expect(lines).toEqual([
+      '[color-caps startup] TERM=xterm-ghostty COLORTERM=truecolor caps={"rgb":false}',
+    ]);
+    expect(timers.map((timer) => timer.ms)).toEqual([2000]);
+    caps = { rgb: true };
+    timers[0]!.run();
+    expect(lines[1]).toBe(
+      '[color-caps settled] TERM=xterm-ghostty COLORTERM=truecolor caps={"rgb":true}',
+    );
   });
 });

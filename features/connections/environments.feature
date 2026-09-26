@@ -46,6 +46,8 @@ Feature: Managing environments on a client
     Then the node's settings name no icon
     And the descriptor still names the machine the node detected
 
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: The user sees every saved environment and how it is reached
     When the user opens the list of environments
@@ -64,12 +66,16 @@ Feature: Managing environments on a client
     When the app starts
     Then the client reconnects to it without pairing again
 
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: The user switches the terminal client to another environment
     Given the terminal client knows a local and a remote environment
     When the user activates the remote environment
     Then the terminal client shows that environment's projects and threads
 
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: An unreachable environment cannot be activated
     Given a known environment that is offline
