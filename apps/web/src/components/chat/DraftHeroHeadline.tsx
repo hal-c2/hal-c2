@@ -10,6 +10,7 @@ import { useRetargetDraftProject } from "~/hooks/useRetargetDraftProject";
 import { selectProjectGroupingSettings } from "~/logicalProject";
 import {
   buildSidebarProjectPickerEntries,
+  buildSidebarProjectPickerRows,
   buildSidebarProjectSnapshots,
   projectGroupsSpanEnvironments,
 } from "~/sidebarProjectGrouping";
@@ -107,8 +108,8 @@ export function DraftHeroHeadline({
       }),
     [activeProjectRef, projectGroups],
   );
-  const projectEntryByKey = useMemo(
-    () => new Map(projectPickerEntries.map((entry) => [entry.group.projectKey, entry] as const)),
+  const projectPickerRows = useMemo(
+    () => buildSidebarProjectPickerRows(projectPickerEntries),
     [projectPickerEntries],
   );
   const activeProjectGroup =
@@ -119,8 +120,14 @@ export function DraftHeroHeadline({
             (projectRef) => scopedProjectKey(projectRef) === scopedProjectKey(activeProjectRef),
           ),
         ) ?? null);
-  const activeProjectKey = activeProjectGroup?.projectKey ?? "";
-  const activeProjectDisplayName = activeProjectGroup?.displayName ?? activeProjectTitle;
+  const activeRowValue = activeProjectRef
+    ? `${activeProjectRef.environmentId}:${activeProjectRef.projectId}`
+    : "";
+  // A checkout of a grouped project goes by its own name, as its picker row does.
+  const activeProjectDisplayName =
+    activeProjectGroup && activeProjectGroup.memberProjects.length > 1
+      ? activeProjectTitle
+      : (activeProjectGroup?.displayName ?? activeProjectTitle);
   const hasResolvedProject = activeProjectTitle !== null;
   const canChooseProject = projectPickerEntries.length > 0;
   const shouldShowProjectMenu = canChooseProject;
@@ -148,40 +155,33 @@ export function DraftHeroHeadline({
       </Tooltip>
       <MenuPopup align="center" className="max-h-80 overflow-y-auto">
         <MenuRadioGroup
-          value={activeProjectKey}
+          value={activeRowValue}
           onValueChange={(value) => {
-            const entry = projectEntryByKey.get(value as string);
-            if (!entry || value === activeProjectKey) {
-              return;
-            }
-            if (!draftId) {
-              return;
-            }
-            retargetDraftProject(draftId, entry.group.projectKey, entry.targetProject);
+            const row = projectPickerRows.find((candidate) => candidate.value === value);
+            if (!row || value === activeRowValue || !draftId) return;
+            retargetDraftProject(draftId, row.projectKey, row.project);
           }}
         >
-          {projectPickerEntries.map(({ group }) => {
-            return (
-              <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
-                <span className="flex min-w-0 items-center gap-2">
-                  <ProjectFavicon project={group} className="size-4 shrink-0" />
-                  <Tooltip>
-                    <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
-                      {group.displayName}
-                    </TooltipTrigger>
-                    <TooltipPopup side="top">{group.displayName}</TooltipPopup>
-                  </Tooltip>
-                  {showProjectEnvironments ? (
-                    <ProjectEnvironmentBadge
-                      group={group}
-                      primaryEnvironmentId={primaryEnvironmentId}
-                      machineByEnvironmentId={environmentMachineById}
-                    />
-                  ) : null}
-                </span>
-              </MenuRadioItem>
-            );
-          })}
+          {projectPickerRows.map((row) => (
+            <MenuRadioItem key={row.value} value={row.value} closeOnClick>
+              <span className="flex min-w-0 items-center gap-2">
+                <ProjectFavicon project={row.project} className="size-4 shrink-0" />
+                <Tooltip>
+                  <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
+                    {row.label}
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">{row.project.workspaceRoot}</TooltipPopup>
+                </Tooltip>
+                {showProjectEnvironments ? (
+                  <ProjectEnvironmentBadge
+                    group={row.badgeGroup}
+                    primaryEnvironmentId={primaryEnvironmentId}
+                    machineByEnvironmentId={environmentMachineById}
+                  />
+                ) : null}
+              </span>
+            </MenuRadioItem>
+          ))}
         </MenuRadioGroup>
         <MenuSeparator />
         <MenuItem onClick={openAddProject}>

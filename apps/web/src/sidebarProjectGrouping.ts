@@ -175,3 +175,45 @@ export function buildSidebarProjectPickerEntries(input: {
     ...entries.slice(preferredIndex + 1),
   ];
 }
+
+/** One row of the new-thread project picker: a project, or one checkout of a grouped one. */
+export interface SidebarProjectPickerRow {
+  /** Unique per row: the checkout's machine and project. */
+  value: string;
+  /** The logical project a draft moves into. */
+  projectKey: string;
+  project: SidebarProjectGroupMember;
+  label: string;
+  /** What the machine badge describes: the row's own checkout, or the whole group. */
+  badgeGroup: Pick<SidebarProjectSnapshot, "memberProjects">;
+}
+
+/**
+ * Picker rows: a grouped project lists each of its checkouts under its own name, so
+ * a checkout on another machine can be chosen directly; others keep their one row.
+ */
+export function buildSidebarProjectPickerRows(
+  entries: ReadonlyArray<SidebarProjectPickerEntry>,
+): SidebarProjectPickerRow[] {
+  return entries.flatMap(({ group, targetProject }): SidebarProjectPickerRow[] =>
+    group.memberProjects.length > 1
+      ? [targetProject, ...group.memberProjects.filter((member) => member !== targetProject)].map(
+          (member) => ({
+            value: `${member.environmentId}:${member.id}`,
+            projectKey: group.projectKey,
+            project: member,
+            label: member.title,
+            badgeGroup: { memberProjects: [member] },
+          }),
+        )
+      : [
+          {
+            value: `${targetProject.environmentId}:${targetProject.id}`,
+            projectKey: group.projectKey,
+            project: targetProject,
+            label: group.displayName,
+            badgeGroup: group,
+          },
+        ],
+  );
+}
