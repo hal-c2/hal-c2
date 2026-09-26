@@ -51,7 +51,7 @@ Feature: Approvals and agent questions
       | Codex                                   | allow it for the rest of the session              |
       | an ACP agent such as OpenCode or Cursor | allow it always, or once if always is not offered |
 
-  @plugin:claude @node @backlog
+  @plugin-claude @node @backlog
   Scenario: Claude remembers an approval for the session
     Given the thread runs on Claude
     When the user always allows "npm test" for this session

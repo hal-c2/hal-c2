@@ -12,7 +12,7 @@
 #   apps/server/src/provider/Layers/codexUsageLimits.ts, apps/server/src/provider/Layers/codexResetCredit.ts
 #   packages/contracts/src/rpc.ts (provider.uploadFeedback, provider.consumeResetCredit)
 
-@plugin:codex @node
+@plugin-codex @node
 Feature: Codex
   Codex runs as a bundled provider plugin through the codex app-server protocol. The
   node reads Codex's own model list, maps T3 Code's access modes to Codex's approval

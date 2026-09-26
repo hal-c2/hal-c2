@@ -42,9 +42,63 @@ defmodule T3.Steps.Threads do
     link(context, thread, 5)
   end
 
-  step "{string} is linked to an open pull request", %{args: [thread]} = context do
-    context = link(context, thread, 5)
-    sync(context, thread, 5, %{"state" => "open"})
+  step "{string} is on a branch with an open pull request", %{args: [thread]} = context do
+    World.patch_thread(context, thread, %{
+      "branchPullRequest" => %{
+        "projectId" => World.project(context, "shop").id,
+        "host" => "github.com",
+        "repository" => "acme/shop",
+        "number" => 5,
+        "url" => "https://github.com/acme/shop/pull/5",
+        "snapshot" => %{"state" => "open", "title" => "PR 5", "syncedAt" => World.iso_from_now(0)}
+      }
+    })
+  end
+
+  step "{string} is pinned", %{args: [thread]} = context do
+    World.patch_thread(context, thread, %{"pinnedAt" => World.iso_from_now(-1000)})
+  end
+
+  step "{string} stays active and pinned", %{args: [thread]} = context do
+    row = World.row(context, thread)
+    assert row["settledOverride"] in [nil, "active"]
+    assert row["pinnedAt"] != nil
+    context
+  end
+
+  step "{string} settled automatically after {int} days", %{args: [thread, days]} = context do
+    settle_automatically(context, thread, days)
+  end
+
+  step "the user changes the rule to {string}", %{args: [rule]} = context do
+    [days] = Regex.run(~r/after (\d+) days? of inactivity/, rule, capture: :all_but_first)
+    write_settings(context, %{"sidebarAutoSettleAfterDays" => String.to_integer(days)})
+  end
+
+  step "{string} stays settled", %{args: [thread]} = context do
+    :ok = Settlement.sweep()
+    assert World.row(context, thread)["settledOverride"] == "settled"
+    context
+  end
+
+  # A linked pull request merging is the relevant change here; the settlement
+  # service sweeps that thread on its own, with no sweep asked for.
+  step "an agent run ends, a pull request changes or the auto-settle settings change",
+       context do
+    thread = "Ship checkout"
+    context = context |> settings() |> link(thread, 5)
+    :ok = Settlement.sweep()
+    assert World.row(context, thread)["settledOverride"] in [nil, "active"]
+    sync(context, thread, 5, %{"state" => "merged", "mergedAt" => World.iso_from_now(0)})
+  end
+
+  step "the settle sweep runs without waiting for the next minute", context do
+    World.await_row(
+      World.thread_id(context, "Ship checkout"),
+      &(&1["settledOverride"] == "settled")
+    )
+
+    context
   end
 
   step "the pull request is merged", context do
@@ -66,14 +120,7 @@ defmodule T3.Steps.Threads do
   end
 
   step "{string} settled automatically", %{args: [thread]} = context do
-    context =
-      context
-      |> settings()
-      |> World.add_message(thread, "user", "Ship it", World.iso_from_now(-World.days(4)))
-
-    :ok = Settlement.sweep()
-    assert World.row(context, thread)["settledOverride"] == "settled"
-    context
+    settle_automatically(context, thread, 3)
   end
 
   step "the settle sweep decided to settle {string}", %{args: [thread]} = context do
@@ -159,6 +206,21 @@ defmodule T3.Steps.Threads do
 
   step "{string} stays active", %{args: [thread]} = context do
     assert World.row(context, thread)["settledOverride"] in [nil, "active"]
+    context
+  end
+
+  defp settle_automatically(context, thread, days) do
+    at = World.iso_from_now(-World.days(days + 1))
+
+    context =
+      context
+      |> settings()
+      |> write_settings(%{"sidebarAutoSettleAfterDays" => days})
+      |> World.patch_thread(thread, %{"createdAt" => at})
+      |> World.add_message(thread, "user", "Ship it", at)
+
+    :ok = Settlement.sweep()
+    World.await_row(World.thread_id(context, thread), &(&1["settledOverride"] == "settled"))
     context
   end
 

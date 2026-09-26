@@ -48,7 +48,7 @@ Elixir node, native QML, and the TUI. Anything served by `apps/server`, `apps/we
 - `@dropped` means we decided not to carry the behaviour. The scenario stays so the decision
   is visible and reviewable.
 
-`@plugin:<id>` marks behaviour a plugin provides, for example `@plugin:claude`. The core must
+`@plugin-<id>` marks behaviour a plugin provides, for example `@plugin-claude`. The core must
 work with that plugin absent.
 
 ## Writing rules

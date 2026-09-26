@@ -9,7 +9,7 @@
 #   apps/server/src/orchestration-v2/Adapters/CursorAdapterV2.ts
 #   apps/server/src/provider/Layers/cursorUsageLimits.ts
 
-@plugin:cursor @node
+@plugin-cursor @node
 Feature: Cursor
   Cursor runs through the Cursor SDK behind a small ACP agent that ships with the node.
   There is no Cursor binary to install. The user signs in with a Cursor account in the

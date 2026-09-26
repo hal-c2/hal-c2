@@ -10,7 +10,7 @@
 #   apps/server/src/provider/providerCompatibility.ts
 #   apps/server/src/provider/Layers/openCodeUsageLimits.ts, apps/server/src/textGeneration/OpenCodeTextGeneration.ts
 
-@plugin:opencode @node
+@plugin-opencode @node
 Feature: OpenCode
   OpenCode reaches the models of every upstream provider it is connected to. The node
   runs OpenCode locally, or connects to an OpenCode server the user already runs.

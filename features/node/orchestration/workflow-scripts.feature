@@ -2,7 +2,7 @@
 #   apps/server-ex/lib/t3/workflow_scripts.ex (orchestration.getWorkflowScript)
 #   packages/contracts/src/orchestrationV2.ts (OrchestrationGetWorkflowScriptError reasons)
 #   apps/server/src/orchestration-v2/ (workflow script reader)
-@plugin:claude
+@plugin-claude
 Feature: Reading the script a Claude workflow ran
   A Claude workflow runs a script that Claude keeps under its projects folder.
   A client can ask the node for that script to show it. The path the client

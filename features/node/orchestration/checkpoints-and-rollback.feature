@@ -166,7 +166,7 @@ Feature: Checkpoints, diffs and rewinding
     When the user rewinds thread "missing" to a checkpoint
     Then the command fails with "Thread missing was not found."
 
-  @node @plugin:claude
+  @node @plugin-claude
   Scenario: A Claude thread without a recorded message for the target turn cannot rewind
     Given a Claude thread whose run 1 recorded no provider message
     When the user rewinds it to run 1
@@ -178,7 +178,7 @@ Feature: Checkpoints, diffs and rewinding
     When the user rewinds "t1" to run 1
     Then the provider is not asked to drop any turns
 
-  @node @backlog @plugin:codex
+  @node @backlog @plugin-codex
   Scenario: A Codex rollback whose history is paginated is reported as a rollback failure
     Given a Codex thread whose history needs more than one page to rewind
     When the user rewinds it to an early run

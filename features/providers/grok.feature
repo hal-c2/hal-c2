@@ -6,7 +6,7 @@
 #   apps/server/src/orchestration-v2/Adapters/GrokAdapterV2.ts, apps/server/src/provider/Drivers/GrokSkills.ts
 #   apps/server/src/provider/Layers/grokUsageLimits.ts, apps/server/src/textGeneration/GrokTextGeneration.ts
 
-@plugin:grok @node
+@plugin-grok @node
 Feature: Grok
   Grok runs the local grok CLI as an ACP agent. Sign-in stays with the Grok CLI, or with
   an xAI API key in the instance's environment.

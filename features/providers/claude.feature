@@ -10,7 +10,7 @@
 #   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts
 #   apps/server/src/provider/Layers/claudeUsageLimits.ts
 
-@plugin:claude @node
+@plugin-claude @node
 Feature: Claude
   Claude Code runs as a bundled provider plugin. The node drives the local claude CLI,
   so sign-in, subscription and API keys stay with the CLI on the machine that runs it.

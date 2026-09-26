@@ -7,7 +7,7 @@
 #   apps/server/src/orchestration-v2/Adapters/piT3McpInjection.ts, apps/server/src/provider/PiCommands.ts
 #   apps/server/src/provider/Layers/piThinkingCapabilities.ts, apps/server/src/textGeneration/PiTextGeneration.ts
 
-@plugin:pi @node
+@plugin-pi @node
 Feature: Pi
   Pi uses the user's existing Pi installation with its own models, logins, extensions,
   skills and session files. Pi is early access.

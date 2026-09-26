@@ -204,7 +204,7 @@ Feature: Runs and turns
     When the user sends "Hi" to "t1"
     Then a provider session is opened again and resumes the provider thread
 
-  @node @plugin:codex
+  @node @plugin-codex
   Scenario: Sending feedback about a thread goes to Codex
     Given "t1" has run a Codex turn
     When the user uploads feedback for "t1"

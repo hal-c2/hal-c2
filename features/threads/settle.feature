@@ -89,9 +89,11 @@ Feature: Settling threads
     When the settle sweep runs
     Then "Ship checkout" is settled automatically
 
+  # A pull request the user linked by hand keeps the thread active while it is open;
+  # one only discovered from the branch does not.
   @node
-  Scenario: An open pull request does not keep a quiet thread active
-    Given "Ship checkout" is linked to an open pull request
+  Scenario: An open pull request found on the branch does not keep a quiet thread active
+    Given "Ship checkout" is on a branch with an open pull request
     And the auto-settle rule is "after 3 days of inactivity"
     When "Ship checkout" has had no activity for 3 days
     Then "Ship checkout" is settled automatically

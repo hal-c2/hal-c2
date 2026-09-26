@@ -13,7 +13,7 @@
 #     server.listAcpRegistryProviders, server.setAcpRegistryProvider, server.disableAcpRegistryProvider,
 #     server.logoutAcpRegistry, server.acceptAcpRegistryUrlAuth)
 
-@plugin:acp-registry @node
+@plugin-acp-registry @node
 Feature: ACP registry agents
   Any agent in the official ACP registry can run on a node. The node installs the exact
   version the registry publishes under its own home, runs it on the node's machine, and

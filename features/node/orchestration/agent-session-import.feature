@@ -13,7 +13,7 @@ Feature: Importing history from agents already used on this machine
   Background:
     Given Claude Code and Codex transcripts exist on this machine
 
-  @node @plugin:claude @plugin:codex
+  @node @plugin-claude @plugin-codex
   Scenario: Scanning groups sessions by the folder they ran in
     Given 3 sessions ran in "~/code/app" and 1 in "~/code/lib"
     When a client scans for agent sessions
@@ -116,7 +116,7 @@ Feature: Importing history from agents already used on this machine
     When it is imported
     Then those records are not messages of the thread
 
-  @node @plugin:codex
+  @node @plugin-codex
   Scenario: Codex prompts are imported as the user typed them
     Given a Codex session records each prompt both as typed and with setup text
     When it is imported
