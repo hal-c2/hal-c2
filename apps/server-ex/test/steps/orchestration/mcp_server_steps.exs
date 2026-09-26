@@ -198,10 +198,12 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     assert {200, %{"result" => %{"tools" => tools}}} = context.mcp_response
 
     exported =
-      Application.app_dir(:hal_c2, "priv/mcp_tools.json")
-      |> File.read!()
-      |> JSON.decode!()
-      |> Enum.map(& &1["name"])
+      for file <- ~w(mcp_tools.json mcp_node_tools.json),
+          tool <-
+            Application.app_dir(:hal_c2, Path.join("priv", file))
+            |> File.read!()
+            |> JSON.decode!(),
+          do: tool["name"]
 
     listed = Enum.map(tools, & &1["name"])
     assert Enum.sort(listed) == Enum.sort(exported)

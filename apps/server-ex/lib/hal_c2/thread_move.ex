@@ -61,6 +61,31 @@ defmodule HalC2.ThreadMove do
   end
 
   @doc """
+  Moves the thread `ref` once its running turn ends, as `move/3` with `confirmed:
+  true`: an agent moving its own thread cannot stop its turn to do it. The
+  destination is checked now; the rest when the move runs, and a move that is
+  then refused is logged. Returns `{:ok, %{"status" => "scheduled", ...}}`.
+  """
+  def after_turn(ref, to, opts \\ []) do
+    with {:ok, id} <- thread_id(ref),
+         thread = thread(id),
+         {:ok, dest} <- destination(to, thread),
+         :ok <- movable(state(id), thread, true),
+         :ok <- online(dest, thread) do
+      :ok = GenServer.call(__MODULE__, {:after_turn, id, to, opts})
+
+      {:ok,
+       %{
+         "status" => "scheduled",
+         "threadId" => id,
+         "machine" => dest.label,
+         "environmentId" => dest.environment,
+         "message" => "#{thread["title"]} moves to #{dest.label} when this turn ends."
+       }}
+    end
+  end
+
+  @doc """
   The machines the thread `ref` could move to: `%{"machine", "environmentId",
   "online", "projects"}`, each project as `%{"id", "title", "workspaceRoot",
   "sameRepository"}` (only for a machine that is online).
@@ -160,7 +185,8 @@ defmodule HalC2.ThreadMove do
     end
   end
 
-  defp movable(state, thread) do
+  # `after_turn`: the thread's own agent asked, so its running turn is expected.
+  defp movable(state, thread, after_turn \\ false) do
     title = thread["title"]
     runs = StreamState.list(state, "run")
     requests = StreamState.list(state, "runtime-request")
@@ -174,6 +200,9 @@ defmodule HalC2.ThreadMove do
 
       thread["deletedAt"] ->
         error(:thread_not_movable, "#{title} was deleted.")
+
+      after_turn ->
+        :ok
 
       Enum.any?(requests, &(&1["status"] == "pending")) ->
         error(
@@ -613,7 +642,14 @@ defmodule HalC2.ThreadMove do
     :ok = :net_kernel.monitor_nodes(true)
     File.rm_rf(incoming())
     send(self(), {:settle, :all})
-    {:ok, %{}}
+    {:ok, %{after_turn: %{}}}
+  end
+
+  @impl true
+  def handle_call({:after_turn, id, to, opts}, _from, state) do
+    :ok = Streams.subscribe(id, self(), nil)
+    send(self(), {:turn_check, id})
+    {:reply, :ok, put_in(state, [:after_turn, id], {to, opts})}
   end
 
   @impl true
@@ -625,6 +661,27 @@ defmodule HalC2.ThreadMove do
   def handle_info({:nodeup, node}, state) do
     settle(node)
     {:noreply, state}
+  end
+
+  # A thread waiting for its turn to end: every commit may be the one that ends it.
+  def handle_info({:hal_c2_stream, id, _}, state), do: handle_info({:turn_check, id}, state)
+
+  def handle_info({:turn_check, id}, %{after_turn: waiting} = state)
+      when is_map_key(waiting, id) do
+    if Enum.any?(StreamState.list(state(id), "run"), &(&1["status"] in @active)) do
+      {:noreply, state}
+    else
+      {{to, opts}, waiting} = Map.pop(waiting, id)
+      Streams.unsubscribe(id, self())
+
+      Task.start(fn ->
+        with {:error, %{"message" => message}} <-
+               move(id, to, Keyword.put(opts, :confirmed, true)),
+             do: Logger.warning("thread #{id} did not move to #{to} after its turn: #{message}")
+      end)
+
+      {:noreply, %{state | after_turn: waiting}}
+    end
   end
 
   def handle_info(_other, state), do: {:noreply, state}

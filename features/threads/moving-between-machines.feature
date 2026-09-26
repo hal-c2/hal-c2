@@ -414,7 +414,7 @@ Feature: Moving a thread and its agent to another machine
 
   Rule: Agents can move threads
 
-    @backlog @node
+    @node
     Scenario: An agent moves another thread
       Given the thread "caller" runs in full-access mode
       And "Alpha" is idle
@@ -422,19 +422,19 @@ Feature: Moving a thread and its agent to another machine
       Then "Alpha" moves to "desktop"
       And the agent receives where "Alpha" now lives and whether its session was carried
 
-    @backlog @node
+    @node
     Scenario: An agent moving its own thread moves once its turn ends
       Given the agent is working in "Alpha"
       When the agent of "Alpha" moves its own thread to "desktop"
       Then the agent is told the move will happen when its turn ends
       And when the turn ends "Alpha" moves to "desktop"
 
-    @backlog @node
+    @node
     Scenario: An agent can list the machines a thread can move to
       When the agent of "Alpha" asks where "Alpha" can move
       Then it receives each machine with whether it is online and which of its projects can take "Alpha"
 
-    @backlog @node
+    @node
     Scenario Outline: An agent's move that cannot be made
       Given <situation>
       When the agent of "caller" moves "Alpha" to <machine>

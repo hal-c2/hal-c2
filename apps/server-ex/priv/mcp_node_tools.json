@@ -1,0 +1,30 @@
+[
+  {
+    "name": "hal_c2_thread_move",
+    "description": "Move a thread of the calling project, with its history, attachments, checkpoints and, when the provider can carry it, the agent's own session, to another machine of the cluster. The thread keeps its id. Omit threadId to move this thread: the move then happens when the current turn ends. Moving another thread requires a full-access/default calling thread and a thread that is idle. projectId names the destination project when more than one could take the thread; hal_c2_thread_move_destinations lists them.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "threadId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "machine": {
+          "type": "string",
+          "description": "The destination machine's name or environment id."
+        },
+        "projectId": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+      },
+      "required": ["machine"],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_thread_move_destinations",
+    "description": "List the machines of the cluster a thread of the calling project could move to: each with whether it is online and, when it is, the projects that could take the thread and whether each is a checkout of the same repository. Omit threadId for this thread.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "threadId": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+      },
+      "additionalProperties": true
+    }
+  }
+]

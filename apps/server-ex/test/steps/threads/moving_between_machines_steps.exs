@@ -340,10 +340,16 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     move(context, title, to, context[:move_opts] || [])
   end
 
+  # After an agent moved it (`hal_c2_thread_move`), only checks where it lives.
   step "{string} moves to {string}", %{args: [title, to]} = context do
-    context = move(context, title, to, [])
-    moved!(context)
-    context
+    if context[:mcp_result] do
+      assert {:ok, %{"status" => "moved", "machine" => ^to}} = context.mcp_result
+      arrived!(context, title, to)
+    else
+      context = move(context, title, to, [])
+      moved!(context)
+      context
+    end
   end
 
   step "the user moves {string} to {string} into the project {string}",
@@ -1379,7 +1385,126 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     context
   end
 
+  # --- agents ----------------------------------------------------------------------------
+
+  step "the thread {string} runs in full-access mode", %{args: [title]} = context do
+    calling_thread(context, title, "default")
+  end
+
+  step "{string} runs in plan mode", %{args: [title]} = context do
+    calling_thread(context, title, "plan")
+  end
+
+  step "the cluster has no machine {string}", %{args: [machine]} = context do
+    refute Enum.any?(HalC2.Shell.environments(), &(elem(&1, 1)["label"] == machine))
+    context
+  end
+
+  step "the agent of {string} moves {string} to {string}",
+       %{args: [caller, title, to]} = context do
+    context =
+      if (context[:threads] || %{})[caller],
+        do: context,
+        else: calling_thread(context, caller, "default")
+
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_move", %{
+        "threadId" => World.thread_id(context, title),
+        "machine" => to
+      })
+
+    Map.merge(context, %{mcp_result: result, move_to: to})
+  end
+
+  step "the agent receives where {string} now lives and whether its session was carried",
+       %{args: [title]} = context do
+    id = World.thread_id(context, title)
+    [%{id: project}] = checkouts(context, context.move_to)
+
+    assert {:ok, %{"threadId" => ^id, "projectId" => ^project} = result} = context.mcp_result
+    assert result["machine"] == context.move_to and is_binary(result["environmentId"])
+    assert is_boolean(result["sessionCarried"])
+    context
+  end
+
+  step "the agent of {string} moves its own thread to {string}",
+       %{args: [caller, to]} = context do
+    Node.ensure(HalC2.ThreadMove)
+    result = World.mcp_tool(context, caller, "hal_c2_thread_move", %{"machine" => to})
+    Map.merge(context, %{mcp_result: result, move_to: to, mover: caller})
+  end
+
+  step "the agent is told the move will happen when its turn ends", context do
+    assert {:ok, %{"status" => "scheduled", "message" => message}} = context.mcp_result
+    assert message =~ "when this turn ends"
+    not_moved!(context, context.mover)
+    assert Enum.any?(World.runs(context, context.mover), &(&1["status"] == "running"))
+    context
+  end
+
+  step "when the turn ends {string} moves to {string}", %{args: [title, to]} = context do
+    # Steering a waiting turn of the fake Codex with "say ..." ends it.
+    context = World.send_turn(context, title, "say done")
+
+    World.await_state(
+      context,
+      title,
+      fn state ->
+        HalC2.StreamState.get(state, "thread")[World.thread_id(context, title)]["movedTo"] != nil
+      end,
+      30_000
+    )
+
+    assert Enum.all?(World.runs(context, title), &(&1["status"] == "completed"))
+    arrived!(context, title, to)
+  end
+
+  step "the agent of {string} asks where {string} can move", %{args: [caller, title]} = context do
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_move_destinations", %{
+        "threadId" => World.thread_id(context, title)
+      })
+
+    Map.put(context, :mcp_result, result)
+  end
+
+  step "it receives each machine with whether it is online and which of its projects can take {string}",
+       %{args: [title]} = context do
+    id = World.thread_id(context, title)
+    assert {:ok, %{"threadId" => ^id, "machines" => [desktop]}} = context.mcp_result
+    [%{id: project, root: root}] = checkouts(context, "desktop")
+
+    assert %{"machine" => "desktop", "online" => true, "environmentId" => environment} = desktop
+    assert is_binary(environment)
+
+    assert [%{"id" => ^project, "workspaceRoot" => ^root, "sameRepository" => true}] =
+             desktop["projects"]
+
+    context
+  end
+
   # --- helpers ---------------------------------------------------------------------------
+
+  # A thread of "shop" whose agent calls the tools: full-access, in `interaction` mode,
+  # with a turn running (only a running caller may change things).
+  defp calling_thread(context, title, interaction) do
+    context
+    |> World.create_thread(title, "shop", %{
+      "runtimeMode" => "full-access",
+      "interactionMode" => interaction
+    })
+    |> World.working_thread(title)
+  end
+
+  # The thread lives on `machine` now: the cluster finds it there, and this machine keeps
+  # only a forwarding record.
+  defp arrived!(context, title, machine) do
+    id = World.thread_id(context, title)
+    assert {:ok, %{"machine" => ^machine}} = HalC2.ThreadMove.locate(id)
+    assert World.thread(context, title)["movedTo"]["label"] == machine
+    assert remote_row(context, machine, id)
+    context
+  end
 
   @doc "Rewinds a moved thread on the machine it moved to (`the user rewinds ...` after a move)."
   def rewind_moved(context, title, n) do

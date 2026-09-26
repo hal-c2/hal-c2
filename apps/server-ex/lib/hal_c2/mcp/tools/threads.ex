@@ -2,7 +2,8 @@ defmodule HalC2.Mcp.Tools.Threads do
   @moduledoc """
   MCP tools that create threads and change a thread's configuration, metadata and
   place in the sidebar (`HalC2.Mcp.Tools`): launching and batch-creating threads,
-  forks and merges, attachments, and what providers a new thread can use.
+  forks and merges, attachments, what providers a new thread can use, and moving a
+  thread to another machine of the cluster (`HalC2.ThreadMove`).
   """
 
   # Threads one create_threads call may hold.
@@ -14,6 +15,7 @@ defmodule HalC2.Mcp.Tools.Threads do
       live: 1,
       message_run: 2,
       mode: 3,
+      no_escalation: 2,
       orchestration: 1,
       project_row: 1,
       project_thread: 2,
@@ -23,12 +25,12 @@ defmodule HalC2.Mcp.Tools.Threads do
       writable: 2
     ]
 
-  alias HalC2.{Orchestration, StreamState}
+  alias HalC2.{Orchestration, StreamState, ThreadMove}
 
   @tools ~w(hal_c2_thread_launch create_threads hal_c2_thread_fork hal_c2_thread_merge_back hal_c2_thread_update
             hal_c2_thread_configure hal_c2_thread_configuration hal_c2_thread_organize hal_c2_thread_transfers
             hal_c2_thread_send_attachments hal_c2_attachment_prepare_upload hal_c2_attachment_discard
-            orchestrator_capabilities)
+            orchestrator_capabilities hal_c2_thread_move hal_c2_thread_move_destinations)
 
   def tools, do: @tools
 
@@ -292,6 +294,42 @@ defmodule HalC2.Mcp.Tools.Threads do
     end
   end
 
+  # An agent's own thread moves once its turn ends; moving another thread is an
+  # environment-wide change, and that thread must be idle.
+  def run("hal_c2_thread_move", %{"machine" => to} = args, %{row: me} = caller)
+      when is_binary(to) do
+    own? = args["threadId"] in [nil, me["id"]]
+    opts = if args["projectId"], do: [project: args["projectId"]], else: []
+
+    with {:ok, row} <- project_thread(me, args["threadId"]),
+         :ok <-
+           if(own?,
+             do: :ok,
+             else:
+               unrestricted(
+                 caller,
+                 "Moving another thread requires a full-access/default calling thread."
+               )
+           ),
+         :ok <- live(caller),
+         :ok <- if(own?, do: :ok, else: no_escalation(me, row)) do
+      if own?,
+        do: move_result(ThreadMove.after_turn(row["id"], to, opts)),
+        else: move_result(ThreadMove.move(row["id"], to, [confirmed: true] ++ opts))
+    end
+  end
+
+  def run("hal_c2_thread_move", _args, _caller),
+    do: {:error, "invalid_request", "machine names the machine to move to."}
+
+  def run("hal_c2_thread_move_destinations", args, %{row: me}) do
+    with {:ok, row} <- project_thread(me, args["threadId"]) do
+      with {:ok, machines} <- ThreadMove.destinations(row["id"]),
+           do: move_result({:ok, %{"threadId" => row["id"], "machines" => machines}}),
+           else: (error -> move_result(error))
+    end
+  end
+
   def run("orchestrator_capabilities", _args, %{row: me}) do
     parent = thread(me["id"]) || me
 
@@ -336,6 +374,9 @@ defmodule HalC2.Mcp.Tools.Threads do
   end
 
   # --- helpers ----------------------------------------------------------------------------
+
+  defp move_result({:ok, result}), do: {:ok, result}
+  defp move_result({:error, %{"code" => code, "message" => message}}), do: {:error, code, message}
 
   defp create_thread(parent, providers, key, request, index) do
     with {:ok, selection} <- target(parent, providers, request["target"]),

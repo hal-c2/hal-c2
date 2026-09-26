@@ -4,6 +4,7 @@ defmodule HalC2.Mcp.Tools do
   agent called it. Definitions come from `priv/mcp_tools.json`; only the tools
   implemented here and in the area modules (`HalC2.Mcp.Tools.Threads`, `Queue`,
   `Projects` and `PullRequests`), which share the access helpers below, are advertised.
+  Tools only nodes have are defined in `priv/mcp_node_tools.json`.
 
   The access rules follow the Node server's: a caller sees only threads of its own
   project; changing another thread needs a caller that is itself running, and never
@@ -50,8 +51,14 @@ defmodule HalC2.Mcp.Tools do
   defp definitions do
     case :persistent_term.get({__MODULE__, :definitions}, nil) do
       nil ->
+        # The Node server's tools, and the ones only nodes have (moving between machines).
         tools =
-          Application.app_dir(:hal_c2, "priv/mcp_tools.json") |> File.read!() |> JSON.decode!()
+          Enum.flat_map(
+            ~w(mcp_tools.json mcp_node_tools.json),
+            &(Application.app_dir(:hal_c2, Path.join("priv", &1))
+              |> File.read!()
+              |> JSON.decode!())
+          )
 
         :persistent_term.put({__MODULE__, :definitions}, tools)
         tools
