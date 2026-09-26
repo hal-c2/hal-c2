@@ -263,6 +263,49 @@ defmodule HalC2.Test.Machines do
     HalC2.Streams.flush_shell(id)
   end
 
+  @doc """
+  Makes the scripted fake Pi (`fake_pi_rpc.py`) this node's `pi`, keeping its
+  `config.json` and `log.jsonl` in `dir`.
+  """
+  def install_pi(dir) do
+    bin = Path.join([dir, "bin", "pi"])
+    File.mkdir_p!(Path.dirname(bin))
+    turns = %{"turns" => HalC2.Test.FakeAcp.pi_turns()}
+    File.write!(Path.join(dir, "config.json"), JSON.encode!(turns))
+
+    File.write!(bin, """
+    #!/bin/sh
+    export FAKE_DIR='#{dir}' FAKE_BIN="$0"
+    exec python3 -u '#{Path.join(@support, "fake_pi_rpc.py")}' "$@"
+    """)
+
+    File.chmod!(bin, 0o755)
+    HalC2.Acp.forget("pi")
+
+    put_settings(fn settings ->
+      put_in(settings, [Access.key("providers", %{}), Access.key("pi", %{})], %{
+        "enabled" => true,
+        "binaryPath" => bin
+      })
+    end)
+  end
+
+  @doc "Sets the variable `name` on the provider instance `instance` (a built-in one) here."
+  def put_instance_env(instance, name, value) do
+    put_settings(fn settings ->
+      instances = settings["providerInstances"] || %{}
+      entry = Map.get(instances, instance, %{"driver" => instance, "enabled" => true})
+      entry = Map.put(entry, "environment", [%{"name" => name, "value" => value}])
+      Map.put(settings, "providerInstances", Map.put(instances, instance, entry))
+    end)
+  end
+
+  defp put_settings(fun) do
+    {settings, version} = HalC2.Settings.get()
+    {:ok, _} = HalC2.Settings.put(fun.(settings), version)
+    :ok
+  end
+
   # Each machine's providers are the test fakes, logging under its own home.
   defp fakes(home) do
     fake = &Path.join(@support, &1)

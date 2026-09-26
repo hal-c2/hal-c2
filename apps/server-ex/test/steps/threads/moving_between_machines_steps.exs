@@ -1527,7 +1527,7 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
 
   # The thread works in a new worktree of "shop" on `branch`, with a commit that was
   # never pushed.
-  defp own_worktree(context, title, branch) do
+  def own_worktree(context, title, branch) do
     Node.ensure(
       Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Vcs.Registry},
         id: HalC2.Vcs.Registry
@@ -1667,7 +1667,7 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
   defp move(context, title, to, opts) do
     id = World.thread_id(context, title)
     context = Map.put_new_lazy(context, :before_move, fn -> World.state(context, title) end)
-    result = HalC2.ThreadMove.move(id, to, opts)
+    result = move_where_it_lives(id, to, opts)
     context = Map.merge(context, %{move: result, move_to: to})
 
     case result do
@@ -1685,6 +1685,19 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
 
       {:error, %{"message" => message}} ->
         Map.put(context, :told, [message])
+    end
+  end
+
+  # A thread that moved on is moved again by the machine that holds it now.
+  defp move_where_it_lives(id, to, opts) do
+    here = Atom.to_string(node())
+
+    case HalC2.ThreadMove.locate(id) do
+      {:ok, %{"node" => node}} when node != here ->
+        :erpc.call(String.to_atom(node), HalC2.ThreadMove, :move, [id, to, opts], 60_000)
+
+      _ ->
+        HalC2.ThreadMove.move(id, to, opts)
     end
   end
 
