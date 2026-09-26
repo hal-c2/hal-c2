@@ -47,11 +47,13 @@ import {
 } from "../controls.ts";
 import {
   currentModelIndex,
+  modelOptionStates,
   modelSelectionForOption,
   reasoningChoicesForSelection,
   resolveModelSelection,
   withModelSelectionOption,
   type ModelOption,
+  type ModelOptionState,
 } from "../models.ts";
 import {
   newThreadValidationMessage,
@@ -135,6 +137,8 @@ export interface TuiComposerState {
   readonly selectedInstanceId: string | null;
   readonly selectedModel: string | null;
   readonly effort: string | null;
+  /** The selected model's provider options (effort, toggles) with their values. */
+  readonly options: ReadonlyArray<ModelOptionState>;
   readonly interactionMode: ProviderInteractionMode;
   readonly interactionModeLabel: string;
   readonly runtimeMode: RuntimeMode;
@@ -383,6 +387,7 @@ export function createComposer(options: ComposerOptions): Composer {
       selectedInstanceId: model?.instanceId ?? null,
       selectedModel: model?.model ?? null,
       effort,
+      options: modelOptionStates(modelOptions, model),
       interactionMode,
       interactionModeLabel: interactionModeLabel(interactionMode),
       runtimeMode,

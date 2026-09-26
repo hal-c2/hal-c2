@@ -194,7 +194,7 @@ step("{string} is sent to the thread", async (ctx: World, text: string) => {
   await settle(ctx);
   const sent = callsTo(ctx, "sendReply");
   expect(sent).toHaveLength(1);
-  expect((sent[0]!.args[0] as OrchestrationThread).id).toBe("t1");
+  expect(String((sent[0]!.args[0] as OrchestrationThread).id)).toBe("t1");
   expect(sent[0]!.args[1]).toBe(text);
 });
 
@@ -290,7 +290,7 @@ step("the turn is interrupted", async (ctx: World) => {
 
 async function expectPrimaryAction(ctx: World, label: string): Promise<void> {
   await settle(ctx);
-  expect(composer(ctx).primaryAction).toBe(label);
+  expect(composer(ctx).primaryAction as string).toBe(label);
   await snapshot(ctx);
   expect(String(findObject(ctx, "composerPrimaryAction").get("text"))).toContain(label);
 }

@@ -176,3 +176,37 @@ export function currentModelIndex(
   );
   return index >= 0 ? index : 0;
 }
+
+/** One provider option of the selected model with its current value (desktop `ShellComposerOption`). */
+export interface ModelOptionState {
+  readonly id: string;
+  readonly label: string;
+  readonly type: "select" | "boolean";
+  readonly value: string | boolean | null;
+  readonly choices: ReadonlyArray<{ readonly id: string; readonly label: string }>;
+}
+
+/** Every provider option of the selected model, with the selection's values applied. */
+export function modelOptionStates(
+  options: ReadonlyArray<ModelOption>,
+  selection: ModelSelection | null | undefined,
+): ModelOptionState[] {
+  if (!selection) return [];
+  const model = options.find(
+    (option) => option.instanceId === selection.instanceId && option.model === selection.model,
+  );
+  if (!model?.capabilities) return [];
+  return getProviderOptionDescriptors({
+    caps: model.capabilities,
+    selections: selection.options,
+  }).map((descriptor) => ({
+    id: descriptor.id,
+    label: descriptor.label,
+    type: descriptor.type,
+    value: getProviderOptionCurrentValue(descriptor) ?? null,
+    choices:
+      descriptor.type === "select"
+        ? descriptor.options.map((choice) => ({ id: choice.id, label: choice.label }))
+        : [],
+  }));
+}
