@@ -151,7 +151,12 @@ defmodule T3.Web.Socket do
   def handle_info({:t3_git_action, action_id, event}, state) do
     case state.by_terminal do
       %{{:git_action, ^action_id} => id} ->
-        {:push, Protocol.encode(%{"t" => "gitAction", "id" => id, "event" => event}), state}
+        frame = Protocol.encode(%{"t" => "gitAction", "id" => id, "event" => event})
+
+        # The action's last event ends the subscription, as the Node server's stream ends.
+        if event["kind"] in ["action_finished", "action_failed"],
+          do: {:push, frame, unsubscribe(state, id)},
+          else: {:push, frame, state}
 
       _ ->
         {:ok, state}

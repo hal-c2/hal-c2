@@ -133,17 +133,25 @@ for line in sys.stdin:
         kind = os.environ.get("FAKE_CODEX_ACCOUNT", "chatgpt")
         account = None if kind == "none" else {"type": kind, "email": "me@example.com", "planType": "pro"}
         send({"id": mid, "result": {"account": account, "requiresOpenaiAuth": True}})
+    # FAKE_CODEX_RESET_CREDITS sets how many reset credits are banked (default two);
+    # FAKE_CODEX_CONSUME_OUTCOME is what a redemption answers (default "reset").
     elif method == "account/rateLimits/read":
+        count = os.environ.get("FAKE_CODEX_RESET_CREDITS")
+        if count is None:
+            credits = {"availableCount": 2, "credits": [
+                {"status": "available", "expiresAt": 1800000000},
+                {"status": "available", "expiresAt": 1795000000},
+                {"status": "redeemed", "expiresAt": 1700000000}]}
+        else:
+            credits = {"availableCount": int(count), "credits": [
+                {"status": "available", "expiresAt": 1800000000 + i} for i in range(int(count))]}
         main = {"limitId": "codex", "planType": "pro",
                 "primary": {"usedPercent": 42, "windowDurationMins": 300, "resetsAt": 1790000000},
                 "secondary": {"usedPercent": 10.5, "resetsAt": 1790500000}}
         send({"id": mid, "result": {
             "rateLimits": {"limitId": "codex_spark", "primary": {"usedPercent": 99}},
             "rateLimitsByLimitId": {"codex": main, "codex_spark": {"limitId": "codex_spark", "primary": {"usedPercent": 99}}},
-            "rateLimitResetCredits": {"availableCount": 2, "credits": [
-                {"status": "available", "expiresAt": 1800000000},
-                {"status": "available", "expiresAt": 1795000000},
-                {"status": "redeemed", "expiresAt": 1700000000}]}}})
+            "rateLimitResetCredits": credits}})
     elif method == "account/rateLimitResetCredit/consume":
         with open(os.environ["FAKE_CODEX_CONSUME_LOG"], "a") as log:
             log.write(params["idempotencyKey"] + "\n")
@@ -152,7 +160,7 @@ for line in sys.stdin:
             os.remove(flag)
             send({"id": mid, "error": {"code": -32000, "message": "upstream unavailable"}})
         else:
-            send({"id": mid, "result": {"outcome": "reset"}})
+            send({"id": mid, "result": {"outcome": os.environ.get("FAKE_CODEX_CONSUME_OUTCOME", "reset")}})
     elif method == "turn/interrupt":
         send({"id": mid, "result": {}})
         send({"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": params["turnId"], "status": "interrupted"}}})

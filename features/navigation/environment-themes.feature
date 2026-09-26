@@ -96,41 +96,43 @@ Feature: Environment themes and the desktop shell theme
 
   Rule: A default theme set on the server
 
-    @backlog @node
+    @node
     Scenario: Setting a default switches connected clients
       Given two clients are connected
       When the server operator runs "t3 theme set nightfall"
       Then both clients switch to "nightfall"
 
-    @backlog @node
+    @node
     Scenario: An offline client applies the default when it reconnects
       Given a client is offline
       When the server operator runs "t3 theme set nightfall"
       And the client reconnects
       Then the client switches to "nightfall"
 
-    @backlog @node
+    @node
     Scenario: A client applies a default only once
       Given the server default is "nightfall" and the client applied it
       When the user chooses "Nord"
       And the client reconnects
       Then the client keeps "Nord"
 
-    @backlog @node
+    @node
     Scenario: Setting the same default again reapplies it
       Given the server default is "nightfall" and the user switched to "Nord"
       When the server operator runs "t3 theme set nightfall" again
       Then the client switches to "nightfall"
 
-    @backlog @node
+    @node
     Scenario: Clearing the default leaves current themes alone
       Given the server default is "nightfall"
       When the server operator runs "t3 theme clear"
       Then no default is set
       And every client keeps its current theme
 
-    @backlog @node
+    @node
     Scenario: Showing the default and published themes
+      # A default is set first so the listing has something to show.
+      Given the server default is "nightfall"
       When the server operator runs "t3 theme show"
       Then the default theme and every published theme are listed
 

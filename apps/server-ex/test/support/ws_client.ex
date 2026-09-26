@@ -62,12 +62,20 @@ defmodule T3.Test.WsClient do
       else: recv_until(client, fun, timeout, [frame | skipped])
   end
 
+  # Only this connection's socket messages, so a scenario's other mail (closed
+  # sockets of earlier clients, service subscriptions) stays in the mailbox.
   defp recv_http(conn, acc) do
+    socket = Mint.HTTP.get_socket(conn)
+
     receive do
-      message ->
-        {:ok, conn, responses} = Mint.WebSocket.stream(conn, message)
-        acc = acc ++ responses
-        if Enum.any?(acc, &match?({:done, _}, &1)), do: {conn, acc}, else: recv_http(conn, acc)
+      {tag, ^socket, _} = message when tag in [:tcp, :tcp_error] -> http(conn, acc, message)
+      {:tcp_closed, ^socket} = message -> http(conn, acc, message)
     end
+  end
+
+  defp http(conn, acc, message) do
+    {:ok, conn, responses} = Mint.WebSocket.stream(conn, message)
+    acc = acc ++ responses
+    if Enum.any?(acc, &match?({:done, _}, &1)), do: {conn, acc}, else: recv_http(conn, acc)
   end
 end

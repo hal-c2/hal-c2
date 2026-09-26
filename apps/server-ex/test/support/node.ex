@@ -34,15 +34,38 @@ defmodule T3.Test.Node do
     %{port: port, environment: environment, home: dir, store: Path.join(dir, "t3.sqlite")}
   end
 
+  # Services steps start with `ensure/1` that a restart brings back when they ran.
+  @restartable [T3.Diagnostics, T3.ScheduledTasks]
+
   @doc """
-  Stops the node's services and starts them again on the same state, as a
-  restart does. Sockets are gone afterwards; steps reconnect.
+  Stops the node's services, as a shutdown does, and returns the node with the
+  optional services that were running (`:services`), so `restart/1` brings them
+  back.
   """
-  def restart(%{home: dir}) do
-    for child <- [T3.Web, T3.Shell, T3.Streams, T3.Auth, T3.Store],
+  def stop(node) do
+    running = node[:services] || Enum.filter(@restartable, &Process.whereis/1)
+
+    for child <- running ++ [T3.Web, T3.Shell, T3.Streams, T3.Auth, T3.Store],
         do: ExUnit.Callbacks.stop_supervised(child)
 
-    start(dir)
+    Map.put(node, :services, running)
+  end
+
+  @doc """
+  Stops the node's services (if `stop/1` has not) and starts them again on the
+  same state, as a restart does: turns the stop cut off are settled and, where
+  the project asks for it, continued (`T3.Orchestration.Recovery`), as
+  `T3.Application` boots. Sockets are gone afterwards; steps reconnect. Optional
+  services that were running (`T3.Diagnostics`, which keeps its history only in
+  memory, and `T3.ScheduledTasks`) start again too.
+  """
+  def restart(node) do
+    %{home: dir, services: services} = stop(node)
+    node = start(dir)
+    Enum.each(services, &ensure/1)
+    T3.Orchestration.Recovery.run()
+    :ok = T3.Orchestration.Recovery.continue()
+    node
   end
 
   @doc "Starts a service under the test supervisor if it is not running yet."
@@ -402,4 +425,302 @@ defmodule T3.Test.Node.World do
   def days(n), do: n * 24 * 60 * 60 * 1_000
 
   def slug(title), do: title |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
+
+  @doc """
+  Deep-merges `patch` into the node's settings document and saves it, starting
+  `T3.Settings` if the scenario has not yet. Returns the context.
+  """
+  def update_settings(context, patch) do
+    Node.ensure(T3.Settings)
+    {settings, version} = T3.Settings.get()
+    {:ok, _} = T3.Settings.put(deep_merge(settings, patch), version)
+    context
+  end
+
+  @doc "Merges nested maps, `b` winning; non-map values are replaced."
+  def deep_merge(a, b) when is_map(a) and is_map(b),
+    do: Map.merge(a, b, fn _, x, y -> deep_merge(x, y) end)
+
+  def deep_merge(_a, b), do: b
+
+  @doc """
+  Gives the node the device tools the way `T3.DevicesTest` does: the pinned hub
+  and agent-device fakes installed under the node's home (`hub:` picks another
+  hub version, `nil` leaves it out) and a fake Android SDK on `ANDROID_HOME`,
+  restored when the scenario ends. Starts `T3.Settings`; returns the context.
+  """
+  def fake_device_tools(context, opts \\ []) do
+    support = Path.expand(".", __DIR__)
+    home = context.node.home
+
+    install = fn name, version, entry, fake ->
+      root = Path.join([home, "tools", name, version])
+      fake_tool(Path.join([root, "node_modules", name | entry]), Path.join(support, fake))
+      File.write!(Path.join(root, ".install-complete"), version <> "\n")
+    end
+
+    if hub = Keyword.get(opts, :hub, "0.10.1"),
+      do: install.("expo-device-hub", hub, ~w(dist server cli.mjs), "fake_device_hub.mjs")
+
+    install.("agent-device", "0.21.12", ~w(bin agent-device.mjs), "fake_agent_device.mjs")
+
+    sdk = Path.join(home, "sdk")
+    fake_tool(Path.join([sdk, "platform-tools", "adb"]), Path.join(support, "fake_adb.sh"))
+    fake_tool(Path.join([sdk, "emulator", "emulator"]), Path.join(support, "fake_emulator.sh"))
+
+    fake_tool(
+      Path.join([sdk, "cmdline-tools", "latest", "bin", "avdmanager"]),
+      Path.join(support, "fake_emulator.sh")
+    )
+
+    put_env("ANDROID_HOME", sdk)
+    Node.ensure(T3.Settings)
+    context
+  end
+
+  @doc "Sets an OS environment variable for the rest of the scenario, restoring it after."
+  def put_env(name, value) do
+    previous = System.get_env(name)
+    System.put_env(name, value)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous, do: System.put_env(name, previous), else: System.delete_env(name)
+    end)
+  end
+
+  defp fake_tool(path, source) do
+    File.mkdir_p!(Path.dirname(path))
+    File.cp!(source, path)
+    File.chmod!(path, 0o755)
+  end
+
+  @doc """
+  Puts `test/support/fake_text_cli.py` in place of the text generation CLIs in
+  `clis` (`:claude`, `:codex`); the others are missing. Each call is logged for
+  `text_calls/1`. Restored when the scenario ends; returns the context.
+  """
+  def fake_text_clis(context, clis) do
+    fake = Path.expand("fake_text_cli.py", __DIR__)
+
+    for {cli, key} <- [claude: :text_claude_command, codex: :text_codex_command] do
+      previous = Application.fetch_env(:t3, key)
+      Application.put_env(:t3, key, if(cli in clis, do: fake, else: "t3-test-no-#{cli}"))
+
+      ExUnit.Callbacks.on_exit(fn ->
+        case previous do
+          {:ok, value} -> Application.put_env(:t3, key, value)
+          :error -> Application.delete_env(:t3, key)
+        end
+      end)
+    end
+
+    put_env("FAKE_TEXT_LOG", Path.join(context.node.home, "text-calls.jsonl"))
+    Node.ensure(T3.Settings)
+    context
+  end
+
+  @doc "The text generation calls made so far: `%{\"argv\", \"cwd\", \"prompt\"}` each."
+  def text_calls(context) do
+    case File.read(Path.join(context.node.home, "text-calls.jsonl")) do
+      {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+      _ -> []
+    end
+  end
+
+  @doc """
+  Adds resource samples to `T3.Diagnostics` as if taken `ages` ms ago (newest
+  first is not required), each a copy of the latest sample's process tree with
+  `cpu` percent on the node's own process. Test setup for history that would
+  otherwise take real minutes to collect.
+  """
+  def add_resource_samples(ages, cpu \\ 0.0) do
+    now = System.system_time(:millisecond)
+
+    :sys.replace_state(T3.Diagnostics, fn state ->
+      [{_, rows} | _] = state.samples
+      rows = Enum.map(rows, &if(&1.depth == 0, do: %{&1 | cpu: cpu}, else: &1))
+      old = for age <- ages, do: {now - age, rows}
+      %{state | samples: Enum.sort_by(state.samples ++ old, &elem(&1, 0), :desc)}
+    end)
+
+    :ok
+  end
+
+  @doc """
+  Closes the named socket, as a client going offline, and drops what it had
+  left in the mailbox (a later `Node.connect/2` reads the mailbox while upgrading).
+  """
+  def disconnect(context, name \\ "default") do
+    case context.clients[name] do
+      nil ->
+        context
+
+      client ->
+        socket = Mint.HTTP.get_socket(client.conn)
+        Mint.HTTP.close(client.conn)
+        flush_socket(socket)
+        %{context | clients: Map.delete(context.clients, name)}
+    end
+  end
+
+  defp flush_socket(socket) do
+    receive do
+      {tag, ^socket, _} when tag in [:tcp, :ssl] -> flush_socket(socket)
+      {tag, ^socket} when tag in [:tcp_closed, :ssl_closed] -> flush_socket(socket)
+    after
+      0 -> :ok
+    end
+  end
+
+  @doc """
+  Imports agent history into the scenario's project with `agentSessions.import`,
+  first creating the project at `context.import_root` when the scenario has none.
+  Stores the result as `context.import_result` and `context.reply`.
+  """
+  def import_agent_sessions(context) do
+    context =
+      if (context[:projects] || %{}) == %{},
+        do: create_project(context, "imported", %{"workspaceRoot" => context.import_root}),
+        else: context
+
+    {result, context} =
+      call!(context, "agentSessions.import", %{"projectId" => project(context).id})
+
+    Map.merge(context, %{import_result: result, reply: {:ok, result}})
+  end
+
+  @doc "Sets a `:t3` application env key for the rest of the scenario, restoring it after."
+  def put_app_env(key, value) do
+    previous = Application.fetch_env(:t3, key)
+    Application.put_env(:t3, key, value)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:t3, key, value)
+        :error -> Application.delete_env(:t3, key)
+      end
+    end)
+  end
+
+  @doc """
+  Gives a project an `origin` on "github.com" (a bare repository under the
+  node's home) with `main` pushed and `origin/HEAD` set, so the node knows the
+  default branch and asks `gh` about its pull requests. Returns the context.
+  """
+  def github_origin(context, project \\ nil) do
+    %{id: id, root: root} = project(context, project)
+    origin = Path.join([context.node.home, "github.com", "acme", "#{id}.git"])
+    File.mkdir_p!(Path.dirname(origin))
+    git!(context.node.home, ["init", "-q", "--bare", "-b", "main", origin])
+    git!(root, ["remote", "add", "origin", origin])
+    git!(root, ~w(push -q origin main))
+    git!(root, ~w(fetch -q origin))
+    git!(root, ~w(remote set-head origin main))
+    context
+  end
+
+  @doc """
+  Creates the thread `title` on its own worktree, a new branch `t3/<slug>` off
+  `main` under `<home>/worktrees` as the node makes them, and records it as
+  `context.worktree` (`%{thread, path, branch, root}`). `fields` go on the
+  thread; `"branch"` and `"worktreePath"` there reuse an existing worktree.
+  """
+  def worktree_thread(context, title, project \\ nil, fields \\ %{}) do
+    Node.ensure(
+      Supervisor.child_spec({Registry, keys: :unique, name: T3.Vcs.Registry}, id: T3.Vcs.Registry)
+    )
+
+    %{root: root} = project(context, project)
+    branch = fields["branch"] || "t3/#{slug(title)}"
+
+    path =
+      fields["worktreePath"] ||
+        (
+          {:ok, %{"worktree" => %{"path" => path}}} =
+            T3.Vcs.create_worktree(%{"cwd" => root, "refName" => "main", "newRefName" => branch})
+
+          path
+        )
+
+    fields = Map.merge(%{"branch" => branch, "worktreePath" => path}, fields)
+
+    context
+    |> create_thread(title, project, fields)
+    |> Map.put(:worktree, %{thread: title, path: path, branch: branch, root: root})
+  end
+
+  @doc """
+  Starts `T3.StorageCleanup` and what it reads (settings, the provider session
+  and VCS registries) if the scenario has not, with its hourly timer off so
+  only the scenario sweeps. Returns the context.
+  """
+  def start_storage_cleanup(context) do
+    unless Process.whereis(T3.StorageCleanup), do: put_app_env(:storage_cleanup_first_ms, nil)
+    Node.ensure(T3.Settings)
+
+    for name <- [T3.Codex.Registry, T3.Claude.Registry, T3.Acp.Registry, T3.Vcs.Registry],
+        do: Node.ensure(Supervisor.child_spec({Registry, keys: :unique, name: name}, id: name))
+
+    Node.ensure(T3.StorageCleanup)
+    context
+  end
+
+  @doc "Runs one storage sweep now and waits for it (`start_storage_cleanup/1` first)."
+  def sweep_storage(context) do
+    context = start_storage_cleanup(context)
+    :ok = T3.StorageCleanup.sweep()
+    context
+  end
+
+  @doc """
+  Opens a real terminal shell (`/bin/sh`) for `thread_id` in `cwd`, starting the
+  terminal services if needed. Returns the shell's OS pid, killed when the
+  scenario ends.
+  """
+  def open_terminal(thread_id, cwd, terminal_id \\ "term-1") do
+    put_env("SHELL", "/bin/sh")
+
+    Node.ensure(
+      Supervisor.child_spec({Registry, keys: :unique, name: T3.Terminal.Registry},
+        id: T3.Terminal.Registry
+      )
+    )
+
+    Node.ensure({DynamicSupervisor, name: T3.Terminal.Supervisor, strategy: :one_for_one})
+    Node.ensure(T3.Terminal.Hub)
+
+    {:ok, %{"pid" => shell}} =
+      T3.Terminal.open(%{"threadId" => thread_id, "terminalId" => terminal_id, "cwd" => cwd})
+
+    ExUnit.Callbacks.on_exit(fn ->
+      System.cmd("kill", ["-9", "#{shell}"], stderr_to_stdout: true)
+    end)
+
+    shell
+  end
+
+  @doc "The output tokens a usage summary counts for `provider` across its buckets."
+  def usage_output(summary, provider) do
+    for(b <- summary["buckets"], b["provider"] == provider, do: b["totals"]["outputTokens"])
+    |> Enum.sum()
+  end
+
+  @doc """
+  Like `call/4`, but frames the node pushed before the reply (a `config.providers`
+  after a refresh, rows a command wrote) stay in the socket's inbox to be received.
+  """
+  def call_keeping(context, method, payload \\ %{}, name \\ "default") do
+    id = System.unique_integer([:positive])
+    client = Node.rpc(client(context, name), context.node.environment, id, method, payload)
+    {frame, skipped, client} = T3.Test.WsClient.recv_until(client, Node.reply?(id))
+    client = %{client | inbox: skipped ++ client.inbox}
+
+    reply =
+      case frame do
+        %{"t" => "rpc.result", "result" => result} -> {:ok, result}
+        %{"t" => "rpc.error", "error" => error} -> {:error, error, frame["detail"]}
+      end
+
+    {reply, put_client(context, name, client)}
+  end
 end

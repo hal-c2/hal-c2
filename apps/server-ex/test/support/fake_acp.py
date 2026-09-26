@@ -15,6 +15,21 @@ if len(sys.argv) > 1 and sys.argv[1] == "login":
         sys.exit(0)
     sys.exit(1)
 
+# With FAKE_ACP_STATE set (a JSON file), the agent remembers across runs what it was
+# asked: every method ("calls"), deleted sessions, and its configured model provider
+# ("provider", none until set; "headers" as last set).
+STATE = os.environ.get("FAKE_ACP_STATE")
+
+def load_state():
+    try:
+        return json.load(open(STATE))
+    except (OSError, ValueError):
+        return {"calls": [], "deleted": [], "provider": None}
+
+def save_state(state):
+    json.dump(state, open(STATE + ".tmp", "w"))
+    os.replace(STATE + ".tmp", STATE)
+
 def send(msg):
     msg["jsonrpc"] = "2.0"
     sys.stdout.write(json.dumps(msg) + "\n")
@@ -40,6 +55,10 @@ def finish_turn(pid, sid, allowed=True):
 for line in sys.stdin:
     msg = json.loads(line)
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
+    state = load_state() if STATE else None
+    if state is not None and method:
+        state["calls"].append(method)
+        save_state(state)
     if method is None and mid == "perm-1":
         outcome = msg["result"]["outcome"]
         pid, sid = pending
@@ -99,15 +118,29 @@ for line in sys.stdin:
         else:
             finish_turn(mid, sid)
     elif method == "session/list":
-        send({"id": mid, "result": {"nextCursor": None, "sessions": [
+        deleted = state["deleted"] if state else []
+        send({"id": mid, "result": {"nextCursor": None, "sessions": [s for s in [
             {"sessionId": "old-1", "cwd": params["cwd"], "title": "Earlier work", "updatedAt": "2026-09-01T10:00:00Z"},
-            {"sessionId": "old/2", "cwd": params["cwd"]}]}})
+            {"sessionId": "old/2", "cwd": params["cwd"]}] if s["sessionId"] not in deleted]}})
     elif method == "session/delete":
+        if state is not None:
+            state["deleted"].append(params["sessionId"])
+            save_state(state)
         send({"id": mid, "result": {}})
     elif method == "providers/list":
+        current = state["provider"] if state else {"apiType": "openai", "baseUrl": "https://api.example.com"}
         send({"id": mid, "result": {"providers": [{"providerId": "openai", "supported": ["openai"], "required": False,
-              "current": {"apiType": "openai", "baseUrl": "https://api.example.com"}}]}})
+              "current": current}]}})
     elif method in ("providers/set", "providers/disable", "logout"):
+        if state is not None and method == "providers/set":
+            state["provider"] = {"apiType": params["apiType"], "baseUrl": params["baseUrl"]}
+            state["headers"] = params.get("headers")
+        if state is not None and method == "providers/disable":
+            state["provider"] = None
+        if state is not None:
+            save_state(state)
+        if method == "logout" and AUTH_FILE and os.path.exists(AUTH_FILE):
+            os.remove(AUTH_FILE)
         send({"id": mid, "result": {}})
     elif method == "session/cancel" and waiting:
         send({"id": waiting[0], "result": {"stopReason": "cancelled"}})

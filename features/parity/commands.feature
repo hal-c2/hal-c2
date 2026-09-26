@@ -6,7 +6,7 @@
 #   apps/server-ex/lib/t3/import/v2.ex (how each Node event becomes an entity patch)
 #   apps/server/src/orchestration/decider.ts, apps/server/src/orchestration/projector.ts
 #   Counts: 47 commands (37 aligned, 0 backlog, 10 dropped);
-#   41 version 2 events (all aligned); 32 version 1 events (3 aligned, 29 backlog).
+#   41 version 2 events (all aligned); 32 version 1 events (all aligned).
 #   The node stores whole-entity changes as patches keyed by entity kind, so an event
 #   is aligned when the node records the same entity change and streams it to clients.
 #   Shared domain: node/orchestration/ holds what each command does to a thread.
@@ -155,15 +155,13 @@ Feature: Command and event parity with the TypeScript server
       | project.meta-updated | project | the project entity |
       | project.deleted      | project | the project entity |
 
-  # The importer reads only version 2 thread logs. A thread whose history exists only as
-  # version 1 events is not imported yet.
-  @backlog @node
+  @node
   Scenario Outline: Version 1 thread events are imported
     Given the TypeScript server logged <event> as a version 1 thread event
     When the node imports the log
     Then the thread's history includes the change
 
-    Examples: 29 version 1 thread events
+    Examples: 25 version 1 thread events
       | event                                | entity |
       | thread.created                       | thread |
       | thread.deleted                       | thread |
@@ -183,14 +181,24 @@ Feature: Command and event parity with the TypeScript server
       | thread.runtime-mode-set              | thread |
       | thread.interaction-mode-set          | thread |
       | thread.message-sent                  | thread |
-      | thread.turn-start-requested          | thread |
-      | thread.turn-interrupt-requested      | thread |
       | thread.approval-response-requested   | thread |
       | thread.user-input-response-requested | thread |
-      | thread.checkpoint-revert-requested   | thread |
       | thread.reverted                      | thread |
-      | thread.session-stop-requested        | thread |
       | thread.session-set                   | thread |
       | thread.proposed-plan-upserted        | thread |
       | thread.turn-diff-completed           | thread |
       | thread.activity-appended             | thread |
+
+  # Neither server changes a thread for these: they feed only v1 turn rows the v2 migration drops, and their results are later events.
+  @node
+  Scenario Outline: Version 1 request events are imported through their results
+    Given the TypeScript server logged <event> as a version 1 thread event
+    When the node imports the log
+    Then the imported thread is the same as without it
+
+    Examples: 4 version 1 request events
+      | event                              | entity |
+      | thread.turn-start-requested        | thread |
+      | thread.turn-interrupt-requested    | thread |
+      | thread.checkpoint-revert-requested | thread |
+      | thread.session-stop-requested      | thread |

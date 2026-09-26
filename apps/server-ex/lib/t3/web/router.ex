@@ -196,6 +196,15 @@ defmodule T3.Web.Router do
     end)
   end
 
+  # Clients forward their OTLP spans here; the node keeps them in its trace file.
+  post "/api/observability/v1/traces" do
+    with_scope(conn, "orchestration:operate", fn _session ->
+      with {:ok, payload} <- json_body(conn),
+           :ok <- T3.Traces.record(payload),
+           do: {204, nil}
+    end)
+  end
+
   get "/ws" do
     conn = fetch_query_params(conn)
 
@@ -232,6 +241,9 @@ defmodule T3.Web.Router do
       {:ok, session} ->
         if scope in session.scopes do
           case fun.(session) do
+            {204, nil} ->
+              send_resp(conn, 204, "")
+
             {status, body} when is_integer(status) ->
               json(conn, status, body)
 

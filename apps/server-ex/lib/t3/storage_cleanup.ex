@@ -3,7 +3,8 @@ defmodule T3.StorageCleanup do
   Removes what the user's storage settings say may go, as the Node server does:
   thread worktrees under `<home>/worktrees` (after days idle, once merged, once
   their thread is deleted, or when their branch is already in the default
-  branch), and browser artifacts past their age.
+  branch), and browser artifacts and rotated logs (`*.log.N`, `*.ndjson.N` under
+  `<home>/logs`) past their age.
 
   A sweep runs an hour apart and when the cleanup settings change. It is
   deliberately timid: a worktree goes only when exactly one thread uses it, that
@@ -46,7 +47,9 @@ defmodule T3.StorageCleanup do
   def init(nil) do
     T3.Settings.watch(self())
     schedule(Application.get_env(:t3, :storage_cleanup_first_ms, 60_000))
-    {:ok, %{policy: nil}}
+    # The policy in force now, so the first change after start sweeps too.
+    policy = if Process.whereis(T3.Settings), do: policy(T3.Settings.settings())
+    {:ok, %{policy: policy}}
   end
 
   @impl true
@@ -92,8 +95,11 @@ defmodule T3.StorageCleanup do
       error -> Logger.warning("worktree cleanup failed: #{Exception.message(error)}")
     end
 
-    days = get_in(settings, ["storageCleanup", "browserArtifactsAfterDays"])
-    files(Path.join(home(), "browser-artifacts"), days, now)
+    for {dir, key} <- [
+          {"browser-artifacts", "browserArtifactsAfterDays"},
+          {"logs", "logsAfterDays"}
+        ],
+        do: files(Path.join(home(), dir), key, get_in(settings, ["storageCleanup", key]), now)
   end
 
   # --- worktrees -----------------------------------------------------------------
@@ -354,18 +360,30 @@ defmodule T3.StorageCleanup do
 
   # --- files -----------------------------------------------------------------------
 
-  defp files(_dir, nil, _now), do: :ok
+  # Files past `days` old under `dir`; for logs only rotated ones, in any subfolder.
+  # The setting is read again before each removal.
+  defp files(_dir, _key, nil, _now), do: :ok
 
-  defp files(dir, days, now) do
+  defp files(dir, key, days, now) do
     with true <- File.dir?(dir),
          {:ok, ^dir} <- real(dir),
          {:ok, names} <- File.ls(dir) do
       for name <- names,
           path = Path.join(dir, name),
-          {:ok, %File.Stat{type: :regular, mtime: mtime}} <- [File.lstat(path, time: :posix)],
-          mtime * 1000 < now - days * @day_ms,
-          get_in(T3.Settings.settings(), ["storageCleanup", "browserArtifactsAfterDays"]) == days,
-          do: File.rm(path)
+          {:ok, stat} <- [File.lstat(path, time: :posix)] do
+        cond do
+          stat.type == :directory and key == "logsAfterDays" ->
+            files(path, key, days, now)
+
+          stat.type == :regular and stat.mtime * 1000 < now - days * @day_ms and
+            (key != "logsAfterDays" or Regex.match?(~r/\.(log|ndjson)\.\d+$/, name)) and
+              get_in(T3.Settings.settings(), ["storageCleanup", key]) == days ->
+            File.rm(path)
+
+          true ->
+            :ok
+        end
+      end
     end
 
     :ok

@@ -111,7 +111,9 @@ Feature: Integrations settings
 
     @node
     Scenario: A device tool update without network access fails
-      Given this node has no network access
+      # An update only reaches the network when the installed tool is behind the pinned version.
+      Given the device hub tool is older than the required version
+      And this node has no network access
       When the user updates the device hub tool
       Then the update fails with a device tool error
 

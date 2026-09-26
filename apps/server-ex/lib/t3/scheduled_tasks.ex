@@ -428,6 +428,14 @@ defmodule T3.ScheduledTasks do
        %{"_tag" => "ScheduledTaskError", "message" => message}
        |> then(&if(id, do: Map.put(&1, "taskId", id), else: &1))}
 
-  defp now, do: DateTime.utc_now() |> DateTime.truncate(:millisecond)
-  defp iso(%DateTime{} = at), do: DateTime.to_iso8601(at)
+  # The time runs are aimed and fired by; `:scheduled_tasks_clock` (a zero-arity
+  # function returning a UTC `DateTime`) lets tests move it.
+  defp now do
+    clock = Application.get_env(:t3, :scheduled_tasks_clock, &DateTime.utc_now/0)
+    clock.() |> DateTime.truncate(:millisecond)
+  end
+
+  # Millisecond precision like the TS server's `toISOString`, whatever the source.
+  defp iso(%DateTime{microsecond: {us, _}} = at),
+    do: DateTime.to_iso8601(%{at | microsecond: {div(us, 1000) * 1000, 3}})
 end

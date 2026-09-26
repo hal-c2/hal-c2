@@ -5,8 +5,8 @@
 #   apps/server-ex/lib/t3/rpc.ex, apps/server-ex/lib/t3/orchestration.ex, apps/server-ex/lib/t3/pull_requests.ex
 #   apps/server-ex/lib/t3/web/protocol.ex (shapes)
 #   packages/client-runtime/src/v3/clusterSocket.ts (protocol 3 client adapter)
-#   apps/server-ex/test/t3/features_backlog_test.exs (provider-install, t3-connect-relay-client, terminal-list)
-#   Counts: 168 contract methods; 158 aligned, 7 backlog, 3 dropped.
+#   apps/server-ex/test/t3/features_backlog_test.exs (provider-install, t3-connect-relay-client)
+#   Counts: 168 contract methods; 159 aligned, 6 backlog, 3 dropped.
 #   WS_METHODS also names projects.add, projects.list and projects.remove with no Rpc.make
 #   behind them; neither server routes them, so they are recorded as dropped names.
 #   "via" says how a protocol 3 client reaches the method: an rpc frame (under the node's
@@ -26,7 +26,7 @@ Feature: RPC parity with the TypeScript server
     When the client calls <method> through its <via>
     Then the node answers with the contract's response shape for <method>
 
-    Examples: 158 aligned methods
+    Examples: 159 aligned methods
       | method                                   | domain            | via                                                                       |
       | server.upsertKeybinding                  | server            | rpc as t3.upsertKeybinding                                                |
       | server.removeKeybinding                  | server            | rpc as t3.removeKeybinding                                                |
@@ -143,6 +143,7 @@ Feature: RPC parity with the TypeScript server
       | terminal.clear                           | terminal          | rpc                                                                       |
       | terminal.restart                         | terminal          | rpc                                                                       |
       | terminal.close                           | terminal          | rpc                                                                       |
+      | terminal.list                            | terminal          | rpc                                                                       |
       | preview.open                             | preview           | rpc                                                                       |
       | preview.navigate                         | preview           | rpc                                                                       |
       | preview.resize                           | preview           | rpc                                                                       |
@@ -192,7 +193,7 @@ Feature: RPC parity with the TypeScript server
     When the client calls <method>
     Then the node answers with the contract's response shape for <method>
 
-    Examples: 7 backlog methods, by backlog item
+    Examples: 6 backlog methods, by backlog item
       | method                     | domain   | backlog                 |
       | provider.install.start     | provider | provider-install        |
       | provider.install.cancel    | provider | provider-install        |
@@ -200,7 +201,6 @@ Feature: RPC parity with the TypeScript server
       | provider.install.remove    | provider | provider-install        |
       | cloud.getRelayClientStatus | cloud    | t3-connect-relay-client |
       | cloud.installRelayClient   | cloud    | t3-connect-relay-client |
-      | terminal.list              | terminal | terminal-list           |
 
   # The node refuses these as unserved methods: desktop update handoff is replaced by hot
   # upgrades, the archived-shell subscription has no subscriber, and terminal events arrive

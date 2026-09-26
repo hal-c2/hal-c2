@@ -94,6 +94,35 @@ defmodule T3.Terminal do
     {:ok, nil}
   end
 
+  @doc """
+  `terminal.list`: every terminal id the thread has, running or only kept as
+  scrollback on disk, with `term-<n>` ids in numeric order.
+  """
+  def list(%{"threadId" => thread_id}) do
+    running = Registry.select(@registry, [{{{thread_id, :"$1"}, :_, :_}, [], [:"$1"]}])
+    prefix = history_path(thread_id, "") |> Path.basename(".log")
+
+    saved =
+      for file <- Path.wildcard(history_path(thread_id, "*")),
+          {:ok, id} <- [
+            file
+            |> Path.basename(".log")
+            |> String.replace_prefix(prefix, "")
+            |> Base.url_decode64(padding: false)
+          ],
+          do: id
+
+    ids = Enum.uniq(running ++ saved) |> Enum.sort_by(&terminal_order/1)
+    {:ok, %{"terminalIds" => ids}}
+  end
+
+  defp terminal_order(id) do
+    case Regex.run(~r/^term-(\d+)$/, id) do
+      [_, n] -> {0, String.to_integer(n), id}
+      nil -> {1, 0, id}
+    end
+  end
+
   def start_link({thread_id, terminal_id}),
     do:
       GenServer.start_link(__MODULE__, {thread_id, terminal_id},

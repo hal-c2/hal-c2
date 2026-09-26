@@ -7,6 +7,11 @@ defmodule T3.Keybindings do
   """
 
   @max 256
+  @max_key 64
+  @max_when 256
+  @max_depth 64
+  @script ~r/^script\.([a-z0-9][a-z0-9-]*)\.run$/
+  @max_script_id 24
 
   @doc "The stored rules, skipping entries that are not rules."
   def rules do
@@ -26,11 +31,21 @@ defmodule T3.Keybindings do
     rule = rule(input)
     replace = input["replace"] && rule(input["replace"])
 
-    rules()
-    |> Enum.reject(&(&1 == rule or &1 == replace))
-    |> Kernel.++([rule])
-    |> Enum.take(-@max)
-    |> save()
+    case invalid(rule) do
+      nil ->
+        rules()
+        |> Enum.reject(&(&1 == rule or &1 == replace))
+        |> Kernel.++([rule])
+        |> Enum.take(-@max)
+        |> save()
+
+      reason ->
+        {:error,
+         %{
+           "_tag" => "KeybindingRuleInvalidError",
+           "message" => "Invalid keybinding rule: #{reason}"
+         }}
+    end
   end
 
   @doc "`server.removeKeybinding`: removes a rule."
@@ -41,6 +56,58 @@ defmodule T3.Keybindings do
 
   defp rule(input),
     do: input |> Map.take(~w(key command when)) |> Map.reject(fn {_, v} -> v == nil end)
+
+  # The limits of `KeybindingRule` in @t3tools/contracts. A condition nested past
+  # the parser's depth could never apply, so it is refused here rather than
+  # stored and dropped by every client.
+  defp invalid(rule) do
+    key = rule["key"]
+    command = rule["command"]
+    condition = rule["when"]
+
+    cond do
+      not is_binary(key) or String.trim(key) == "" or String.length(String.trim(key)) > @max_key ->
+        "the key must be 1 to #{@max_key} characters"
+
+      not is_binary(command) or String.trim(command) == "" ->
+        "the command is missing"
+
+      String.starts_with?(command, "script.") and not script_command?(command) ->
+        "a script id is 1 to #{@max_script_id} lowercase letters, digits and dashes, not starting with a dash"
+
+      condition != nil and
+          (not is_binary(condition) or String.trim(condition) == "" or
+             String.length(String.trim(condition)) > @max_when) ->
+        "the condition must be 1 to #{@max_when} characters"
+
+      condition != nil and depth(condition) > @max_depth ->
+        "the condition is nested deeper than #{@max_depth} levels"
+
+      true ->
+        nil
+    end
+  end
+
+  defp script_command?(command) do
+    case Regex.run(@script, command) do
+      [_, id] -> String.length(id) <= @max_script_id
+      _ -> false
+    end
+  end
+
+  # The deepest parenthesis nesting or run of negations in a condition.
+  defp depth(condition) do
+    condition
+    |> String.replace(~r/\s+/, "")
+    |> String.graphemes()
+    |> Enum.reduce({0, 0, 0}, fn
+      "(", {open, _nots, deepest} -> {open + 1, 0, max(deepest, open + 1)}
+      ")", {open, _nots, deepest} -> {open - 1, 0, deepest}
+      "!", {open, nots, deepest} -> {open, nots + 1, max(deepest, nots + 1)}
+      _, {open, _nots, deepest} -> {open, 0, deepest}
+    end)
+    |> elem(2)
+  end
 
   defp save(rules) do
     file = path()

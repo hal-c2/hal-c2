@@ -3,19 +3,21 @@ defmodule T3.ProviderUpdates do
   Whether a provider CLI is behind its latest release (`versionAdvisory` on its
   `ServerProvider` entry), and updating it (`server.updateProvider`).
 
-  The latest version is the npm registry's, read in the background at most hourly;
-  providers are re-announced when it arrives. The update runs whatever installed
+  The latest version is the npm registry's, read in the background at most hourly
+  unless the user turned off `enableProviderUpdateChecks`; providers are
+  re-announced when it arrives. The update runs whatever installed
   the CLI, told apart by where its executable really lives: Homebrew, a global npm
   prefix, or Claude Code's own `claude update`. Anything else is reported without
   an update command.
   """
 
   @packages %{"codex" => "@openai/codex", "claudeAgent" => "@anthropic-ai/claude-code"}
+  @names %{"codex" => "Codex", "claudeAgent" => "Claude"}
   @ttl :timer.hours(1)
 
   @doc "The `versionAdvisory` for a provider whose executable is at `path`."
   def advisory(driver, path, current) do
-    latest = latest(driver)
+    latest = if T3.Settings.settings()["enableProviderUpdateChecks"] != false, do: latest(driver)
     update = update_command(driver, path)
 
     %{
@@ -46,7 +48,7 @@ defmodule T3.ProviderUpdates do
       T3.Settings.notify_providers()
       {:ok, %{"providers" => T3.Environment.providers()}}
     else
-      {:path, _} -> error(driver, "#{driver} is not installed on this machine.")
+      {:path, _} -> error(driver, "#{@names[driver] || driver} is not installed on this machine.")
       {:command, _} -> error(driver, "This installation cannot be updated from here.")
       {out, _status} -> error(driver, out |> String.trim() |> String.slice(-500, 500))
     end

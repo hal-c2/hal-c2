@@ -120,7 +120,8 @@ defmodule T3.Vcs do
   def branch_pull_request(cwd, branch), do: pull_request(cwd, branch, false)
 
   defp pull_request(cwd, branch, default?) do
-    with gh when is_binary(gh) <- System.find_executable("gh"),
+    with gh when is_binary(gh) <-
+           System.find_executable(Application.get_env(:t3, :gh_command, "gh")),
          {:ok, url} <- Git.ok(cwd, ~w(remote get-url origin)),
          true <- String.contains?(url, "github.com"),
          [pr | _] <- gh_pr_list(gh, cwd, branch),

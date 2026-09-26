@@ -1,12 +1,19 @@
 #!/bin/sh
 # Runs the node under launchd, systemd or a terminal, and starts it again when it
 # stops to finish an update (exit status 75). bin/t3 reads releases/start_erl.data
-# each time, so the relaunch runs the version the update installed.
+# each time, so the relaunch runs the version the update installed. If that version
+# fails to boot, the start_erl.data it replaced is put back and the old one starts.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
+releases="$here/../releases"
 export T3_SERVICE=1
 while :; do
   "$here/t3" start "$@"
   status=$?
-  [ "$status" -eq 75 ] || exit "$status"
+  [ "$status" -eq 75 ] && continue
+  if [ "$status" -ne 0 ] && [ -f "$releases/start_erl.data.previous" ]; then
+    mv "$releases/start_erl.data.previous" "$releases/start_erl.data"
+    continue
+  fi
+  exit "$status"
 done

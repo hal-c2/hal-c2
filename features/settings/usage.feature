@@ -60,10 +60,11 @@ Feature: Usage and limits
       When a client asks for <granularity> usage in "<zone>"
       Then the buckets start at <boundary> in "<zone>"
 
+      # Hourly buckets start at the window start plus whole hours (both servers and the clients' minute-aligned 24-hour window), not at the top of the hour.
       Examples:
-        | granularity | zone             | boundary        |
-        | daily       | Atlantic/Reykjavik | midnight      |
-        | hourly      | America/New_York | the top of hour |
+        | granularity | zone               | boundary                        |
+        | daily       | Atlantic/Reykjavik | midnight                        |
+        | hourly      | America/New_York   | each hour from the window start |
 
     @node
     Scenario: An unknown time zone falls back to UTC

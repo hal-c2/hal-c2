@@ -77,7 +77,7 @@ Feature: Storage cleanup
       Then the capture is deleted
       And its old link no longer opens
 
-    @backlog @node
+    @node
     Scenario: Old rotated logs are deleted
       Given the user turned on deleting rotated logs after 30 days
       When the node sweeps storage
