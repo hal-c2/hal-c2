@@ -494,19 +494,37 @@ defmodule T3.Orchestration do
     released
   end
 
+  # A runtime runs under its provider plugin's sessions supervisor (`T3.Plugins`).
   defp stop_runtimes(thread_id) do
     for registry <- [T3.Codex.Registry, T3.Claude.Registry, T3.Acp.Registry],
         Process.whereis(registry) != nil,
-        {pid, _} <- Registry.lookup(registry, thread_id),
-        do: DynamicSupervisor.terminate_child(T3.Codex.Supervisor, pid)
+        {pid, _} <- Registry.lookup(registry, thread_id) do
+      try do
+        GenServer.stop(pid, :shutdown)
+      catch
+        :exit, _ -> :ok
+      end
+    end
 
     :ok
+  end
+
+  # The built-in runtimes, and the plugin adapters that can take a runtime call.
+  defp runtimes(callback, arity) do
+    builtin = [T3.Codex.ThreadRuntime, T3.Claude.ThreadRuntime, T3.Acp.ThreadRuntime]
+
+    builtin ++
+      for(
+        module <- T3.Plugins.adapters(),
+        function_exported?(module, callback, arity),
+        do: module
+      )
   end
 
   defp respond(thread_id, request_id, response) do
     result =
       Enum.find_value(
-        [T3.Codex.ThreadRuntime, T3.Claude.ThreadRuntime, T3.Acp.ThreadRuntime],
+        runtimes(:respond, 3),
         {:error, "no pending request"},
         fn runtime ->
           if runtime.respond(thread_id, request_id, response) == :ok, do: :ok
@@ -808,30 +826,63 @@ defmodule T3.Orchestration do
 
   # The provider driver for an instance: its own id for ACP agents.
   @doc "The driver behind a provider instance."
-  def driver_for("claudeAgent"), do: "claudeAgent"
-
+  # With plugins running, the provider plugin serving the instance decides both.
   def driver_for(instance) do
-    if T3.Acp.agent?(instance), do: instance, else: "codex"
+    case T3.Plugins.provider(instance) do
+      {:ok, driver, _module} -> driver
+      {:missing, driver} -> driver
+      _ -> builtin_driver(instance)
+    end
   end
 
-  @doc "The runtime module for a provider instance."
-  def runtime("claudeAgent"), do: T3.Claude.ThreadRuntime
+  defp builtin_driver("claudeAgent"), do: "claudeAgent"
+  defp builtin_driver(instance), do: if(T3.Acp.agent?(instance), do: instance, else: "codex")
 
-  def runtime(instance) when is_binary(instance) and instance != "codex" do
+  @doc "The runtime (a `T3.Plugins.ProviderAdapter`) for a provider instance."
+  def runtime(instance) do
+    case is_binary(instance) && T3.Plugins.provider(instance) do
+      {:ok, _driver, module} -> module
+      _ -> builtin_runtime(instance)
+    end
+  end
+
+  defp builtin_runtime("claudeAgent"), do: T3.Claude.ThreadRuntime
+
+  defp builtin_runtime(instance) when is_binary(instance) and instance != "codex" do
     if T3.Acp.agent?(instance), do: T3.Acp.ThreadRuntime, else: T3.Codex.ThreadRuntime
   end
 
-  def runtime(_codex), do: T3.Codex.ThreadRuntime
+  defp builtin_runtime(_codex), do: T3.Codex.ThreadRuntime
 
-  # A thread has at most one running turn; interrupt whichever runtime holds it.
+  # A thread has at most one running turn; interrupt whichever runtime holds it. A
+  # provider plugin that cannot stop a turn says so.
   defp interrupt_any(thread_id, run_id) do
     Enum.find_value(
-      [T3.Codex.ThreadRuntime, T3.Claude.ThreadRuntime, T3.Acp.ThreadRuntime],
-      {:error, "no running turn"},
+      runtimes(:interrupt, 2),
+      interrupt_refusal(thread_id, run_id),
       fn runtime ->
         if runtime.interrupt(thread_id, run_id) == :ok, do: :ok
       end
     )
+  end
+
+  defp interrupt_refusal(thread_id, run_id) do
+    state = T3.Streams.Server.state(T3.Streams.ensure(thread_id))
+    runs = StreamState.list(state, "run")
+
+    run =
+      Enum.find(runs, &(&1["id"] == run_id)) ||
+        Enum.find(runs, &(&1["status"] in @active_statuses))
+
+    instance = run && run["providerInstanceId"]
+
+    with instance when is_binary(instance) <- instance,
+         {:ok, driver, module} <- T3.Plugins.provider(instance),
+         false <- function_exported?(module, :interrupt, 2) do
+      {:error, "The provider \"#{driver}\" cannot stop a running turn."}
+    else
+      _ -> {:error, "no running turn"}
+    end
   end
 
   defp dispatch_message(thread_id, command) do
@@ -938,8 +989,14 @@ defmodule T3.Orchestration do
     )
   end
 
-  defp steerable?(run),
-    do: driver_for(run["providerInstanceId"] || "codex") in ["codex", "claudeAgent"]
+  defp steerable?(run) do
+    driver = driver_for(run["providerInstanceId"] || "codex")
+
+    case T3.Plugins.declared(driver) do
+      nil -> driver in ["codex", "claudeAgent"]
+      provider -> :active_steering in (provider[:capabilities] || [])
+    end
+  end
 
   # The provider takes the message first; only then does it join the run. If the turn
   # ended meanwhile, the message is sent like any other (queued or started).
@@ -1435,10 +1492,17 @@ defmodule T3.Orchestration do
         {[], {:error, "unknown thread #{thread_id}"}}
 
       # No other provider stands in for one this node no longer has.
+      missing_instance(thread, command) == :none ->
+        {[],
+         {:error, "No provider is set up on this node. Add a provider before starting a thread."}}
+
       missing = missing_instance(thread, command) ->
         {[],
          {:error,
           "The provider \"#{missing}\" is not available on this node; its plugin may have been removed. Pick another provider for this thread."}}
+
+      reason = model_locked(thread, command) ->
+        {[], {:error, reason}}
 
       get_in(command, ["dispatchMode", "type"]) == "defer_start" ->
         prepare_run(state, thread, runs, command)
@@ -1476,11 +1540,43 @@ defmodule T3.Orchestration do
   defp missing_instance(thread, command) do
     selection = command["modelSelection"] || thread["modelSelection"]
     instance = selection["instanceId"] || thread["providerInstanceId"] || "codex"
-    driver = get_in(T3.Settings.settings(), ["providerInstances", instance, "driver"])
 
-    unless instance in ["codex", "claudeAgent"] or driver in ["codex", "claudeAgent"] or
-             T3.Acp.agent?(instance),
-           do: instance
+    case T3.Plugins.provider(instance) do
+      {:ok, _driver, _module} ->
+        nil
+
+      {:missing, _driver} ->
+        instance
+
+      :none ->
+        :none
+
+      nil ->
+        driver = get_in(T3.Settings.settings(), ["providerInstances", instance, "driver"])
+
+        unless instance in ["codex", "claudeAgent"] or driver in ["codex", "claudeAgent"] or
+                 T3.Acp.agent?(instance),
+               do: instance
+    end
+  end
+
+  # A provider plugin that cannot switch models in a session keeps the thread's model
+  # once its session exists; a new thread takes the other model (as the Node server
+  # rejects the transition).
+  defp model_locked(thread, command) do
+    current = thread["modelSelection"] || %{}
+    target = command["modelSelection"] || %{}
+    instance = current["instanceId"]
+
+    with true <- thread["activeProviderThreadId"] != nil,
+         model when is_binary(model) <- target["model"],
+         true <- model != current["model"] and target["instanceId"] in [nil, instance],
+         %{} = provider <- T3.Plugins.declared(driver_for(instance || "codex")),
+         false <- :model_switching in (provider[:capabilities] || []) do
+      "#{provider[:name] || instance} cannot change the model of a running session. Start a new thread to use #{model}."
+    else
+      _ -> nil
+    end
   end
 
   # A message whose run waits for its workspace (`release_prepared/2`).

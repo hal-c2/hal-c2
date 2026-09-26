@@ -85,7 +85,8 @@ defmodule T3.Acp.ThreadRuntime do
   end
 
   defp ensure(thread_id) do
-    case DynamicSupervisor.start_child(T3.Codex.Supervisor, {__MODULE__, thread_id}) do
+    # Under its provider plugin, so a crash there stays with this provider.
+    case DynamicSupervisor.start_child(T3.Plugins.sessions("acp"), {__MODULE__, thread_id}) do
       {:ok, pid} -> pid
       {:error, {:already_started, pid}} -> pid
     end
@@ -325,6 +326,23 @@ defmodule T3.Acp.ThreadRuntime do
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
   def handle_info(_other, state), do: {:noreply, state}
 
+  # Its provider plugin's supervisor went down (a crash, not a stop): the turn it
+  # was running ends, so the thread shows the session is gone.
+  @impl true
+  def terminate(reason, %{turn: turn} = state) when turn != nil do
+    unless reason in [:normal, :shutdown] or match?({:shutdown, _}, reason),
+      do:
+        end_turn(
+          state,
+          "failed",
+          "#{T3.Acp.label(state.agent)}'s session ended: its plugin stopped."
+        )
+
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
+
   @impl true
   def code_change(_old, state, _extra), do: {:ok, migrate(state)}
 
@@ -507,56 +525,6 @@ defmodule T3.Acp.ThreadRuntime do
           "provider-thread",
           ids.provider_thread,
           &Map.put(&1, "nativeThreadRef", Entities.provider_ref(session_id, ids.driver))
-        )
-      ]
-    end)
-  end
-
-  defp started(state) do
-    %{turn: turn} = state
-    ids = turn.ids
-    at = Entities.now()
-
-    commit(state, fn stream ->
-      [
-        Orchestration.create(
-          "provider-turn",
-          ids.provider_turn,
-          Entities.provider_turn(ids, nil, turn.run_ordinal, at)
-        ),
-        Orchestration.upsert(
-          stream,
-          "run-attempt",
-          ids.attempt,
-          &Map.merge(&1, %{
-            "status" => "running",
-            "providerTurnId" => ids.provider_turn,
-            "startedAt" => at
-          })
-        ),
-        Orchestration.upsert(
-          stream,
-          "run",
-          ids.run,
-          &Map.merge(&1, %{"status" => "running", "startedAt" => at})
-        ),
-        Orchestration.upsert(
-          stream,
-          "node",
-          ids.root_node,
-          &Map.merge(&1, %{"status" => "running", "providerTurnId" => ids.provider_turn})
-        ),
-        Orchestration.upsert(
-          stream,
-          "provider-thread",
-          ids.provider_thread,
-          &Map.merge(&1, %{"status" => "active", "updatedAt" => at})
-        ),
-        Orchestration.upsert(
-          stream,
-          "thread",
-          ids.thread,
-          &Map.put(&1, "activeProviderThreadId", ids.provider_thread)
         )
       ]
     end)

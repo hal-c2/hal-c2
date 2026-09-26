@@ -444,6 +444,60 @@ defmodule T3.Orchestration.TurnWriter do
   end
 
   @doc """
+  Marks the turn as running: its provider turn (`ids.provider_turn`), attempt, run,
+  root node, and provider thread, which becomes the thread's active one.
+  """
+  def started(state) do
+    %{turn: turn} = state
+    ids = turn.ids
+    at = Entities.now()
+
+    commit(state, fn stream ->
+      [
+        Orchestration.create(
+          "provider-turn",
+          ids.provider_turn,
+          Entities.provider_turn(ids, nil, turn.run_ordinal, at)
+        ),
+        Orchestration.upsert(
+          stream,
+          "run-attempt",
+          ids.attempt,
+          &Map.merge(&1, %{
+            "status" => "running",
+            "providerTurnId" => ids.provider_turn,
+            "startedAt" => at
+          })
+        ),
+        Orchestration.upsert(
+          stream,
+          "run",
+          ids.run,
+          &Map.merge(&1, %{"status" => "running", "startedAt" => at})
+        ),
+        Orchestration.upsert(
+          stream,
+          "node",
+          ids.root_node,
+          &Map.merge(&1, %{"status" => "running", "providerTurnId" => ids.provider_turn})
+        ),
+        Orchestration.upsert(
+          stream,
+          "provider-thread",
+          ids.provider_thread,
+          &Map.merge(&1, %{"status" => "active", "updatedAt" => at})
+        ),
+        Orchestration.upsert(
+          stream,
+          "thread",
+          ids.thread,
+          &Map.put(&1, "activeProviderThreadId", ids.provider_thread)
+        )
+      ]
+    end)
+  end
+
+  @doc """
   Ends the run: provider turn, attempt, run, root node, and provider thread.
   `failure` is the provider's message, or a structured failure map that also becomes
   the run's error item. A completed run also captures its workspace checkpoint
@@ -493,6 +547,8 @@ defmodule T3.Orchestration.TurnWriter do
       Orchestration.start_next(thread_id)
       # A delegated task reports back to the thread that asked for it.
       T3.Orchestration.Delegation.finished(thread_id, ids.run, status)
+      # Notification channels hear about turns nobody was watching end.
+      T3.Plugins.turn_finished(thread_id, status)
     end)
 
     :ok

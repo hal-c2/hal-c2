@@ -1331,4 +1331,62 @@ defmodule T3.Steps.Common do
 
     Map.put(context, :reply, reply)
   end
+
+  # --- added by W14 ---
+
+  # A node plugin replaced by its newer version, as a client's update does: the
+  # plugin file a step staged in `context.plugin_updates` goes into the plugins
+  # directory (`T3.Plugins` picks it up on the rescan). Without a staged plugin it
+  # is a provider CLI update (`server.updateProvider`); the reply is `context.reply`
+  # and the pushes that follow stay to be received.
+  step "the user updates {string}", %{args: [id]} = context do
+    case context[:plugin_updates][id] do
+      nil ->
+        provider =
+          %{"Codex" => "codex", "Claude" => "claudeAgent"}[id] ||
+            flunk("no update of #{inspect(id)} was staged in this scenario")
+
+        {reply, context} =
+          World.call_keeping(context, "server.updateProvider", %{"provider" => provider})
+
+        Map.put(context, :reply, reply)
+
+      source ->
+        path = Path.join([context.node.home, "plugins", "#{id}.ex"])
+        File.mkdir_p!(Path.dirname(path))
+        File.write!(path, source)
+        Node.ensure(T3.Settings)
+        Node.ensure(T3.Plugins)
+        {:ok, _} = T3.Plugins.handle("rescan", %{})
+        context
+    end
+  end
+
+  # The provider list a client last read (`context.providers`), or the node's.
+  step ~r/^(Codex|Claude) is not offered as a provider$/, %{args: [name]} = context do
+    driver = %{"Codex" => "codex", "Claude" => "claudeAgent"}[name]
+    providers = context[:providers] || T3.Environment.providers()
+    refute Enum.any?(providers, &(&1["driver"] == driver or &1["instanceId"] == driver))
+    context
+  end
+
+  # The scenario's thread (`context.thread_id`, or the thread titled `context.thread`)
+  # moves to Claude with its next message.
+  step "the user switches the thread to Claude and sends a message", context do
+    thread_id = context[:thread_id] || World.thread_id(context, context.thread)
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "message.dispatch",
+        "threadId" => thread_id,
+        "messageId" => "switch-#{System.unique_integer([:positive])}",
+        "text" => "where are we",
+        "attachments" => [],
+        "modelSelection" => %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-5"},
+        "dispatchMode" => %{"type" => "start_immediately"},
+        "deliveryIntent" => "auto"
+      })
+
+    Map.put(context, :thread_id, thread_id)
+  end
 end

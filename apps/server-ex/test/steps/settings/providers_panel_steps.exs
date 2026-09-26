@@ -266,12 +266,7 @@ defmodule T3.Steps.Settings.ProvidersPanel do
     context
   end
 
-  step ~r/^the user updates "Codex"$/, context do
-    {reply, context} =
-      World.call_keeping(context, "server.updateProvider", %{"provider" => "codex"})
-
-    Map.put(context, :reply, reply)
-  end
+  # `the user updates "Codex"` is the common `the user updates {string}` step.
 
   step "the node runs the Codex updater", context do
     prefix = Path.join(context.node.home, "npm")

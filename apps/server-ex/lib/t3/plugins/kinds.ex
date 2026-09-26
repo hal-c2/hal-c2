@@ -23,8 +23,133 @@ defmodule T3.Plugins.Kind do
 end
 
 defmodule T3.Plugins.ProviderAdapter do
-  @moduledoc "A provider runtime. Discovered and listed; turns do not route to one yet."
+  @capabilities ~w(interrupt active_steering fork rollback approvals plan_updates model_switching interaction_mode text_generation native_sessions usage_limits sign_in)a
+  @moduledoc """
+  An agent provider. The orchestration runs every turn through the adapter behind
+  the thread's provider instance (`T3.Plugins.provider/1`); Codex, Claude and the
+  ACP agents are bundled adapters (`T3.Plugins.Bundled`), and a plugin file with
+  the same id replaces the bundled one.
+
+  An adapter writes its turn into the thread's log with `T3.Orchestration.TurnWriter`
+  (`started/1` when the turn runs, `finish/3` when it ends). `start_turn/2` returns
+  once the turn is under way; a process it starts for the thread belongs under
+  `T3.Plugins.sessions(driver)`, the plugin's own sessions supervisor.
+
+  The manifest's `provider:` map declares the rest (atom keys, all optional):
+
+    * `driver`: the driver instances name (default: the plugin id).
+    * `name`, `icon`, `accent_color`, `documentation_url`: how clients show it.
+    * `capabilities`: what it can do, from `#{inspect(@capabilities)}`;
+      anything left out is not offered (see `provider/3`, `session_capabilities/2`).
+    * `runtime_modes`: the access modes it supports (default: all).
+    * `models`: `[%{slug, name}]`.
+    * `instance_settings`: `[%{key, label, secret}]` an instance of it needs.
+
+  `providers/1` (optional) answers the `ServerProvider` snapshots itself; without
+  it they are built from the manifest.
+  """
   use T3.Plugins.Kind
+
+  @runtime_modes ~w(approval-required auto-accept-edits auto full-access)
+
+  @callback start_turn(thread_id :: String.t(), turn :: map) :: :ok
+  @callback interrupt(thread_id :: String.t(), run_id :: String.t() | nil) ::
+              :ok | {:error, String.t()}
+  @callback steer(thread_id :: String.t(), run_id :: String.t(), text :: String.t()) ::
+              :ok | {:error, String.t()}
+  @callback respond(thread_id :: String.t(), request_id :: String.t(), response :: map) ::
+              :ok | {:error, String.t()}
+  @callback rollback(thread_id :: String.t(), plan :: map) :: {:ok, map} | {:error, String.t()}
+  @callback providers(settings :: map) :: [map]
+  @optional_callbacks interrupt: 2, steer: 3, respond: 3, rollback: 2, providers: 1
+
+  @doc "The capabilities a plugin can declare."
+  def capabilities, do: @capabilities
+
+  @doc "The capabilities `module`'s manifest declares."
+  def declared(provider), do: MapSet.new(provider[:capabilities] || [])
+
+  @doc """
+  The `ServerProvider` snapshot of instance `instance_id` of a plugin that declares
+  `provider` (its manifest's `provider:` map).
+  """
+  def provider(provider, instance_id, driver) do
+    can = declared(provider)
+
+    %{
+      "instanceId" => instance_id,
+      "driver" => driver,
+      "displayName" => provider[:name],
+      "accentColor" => provider[:accent_color],
+      "iconUrl" => provider[:icon],
+      "showInteractionModeToggle" => :interaction_mode in can,
+      "supportedRuntimeModes" => provider[:runtime_modes] || @runtime_modes,
+      "requiresNewThreadForModelChange" => :model_switching not in can,
+      "supportsConversationRollback" => :rollback in can,
+      "supportsTextGeneration" => :text_generation in can,
+      "setup" => %{
+        "canAuthenticate" => :sign_in in can,
+        "canInstall" => false,
+        "documentationUrl" => provider[:documentation_url]
+      },
+      "enabled" => true,
+      "installed" => true,
+      "version" => nil,
+      "status" => "ready",
+      "availability" => "available",
+      "auth" => %{"status" => "unknown"},
+      "checkedAt" => T3.Orchestration.Entities.now(),
+      "models" =>
+        for(
+          {model, index} <- Enum.with_index(provider[:models] || []),
+          do: %{
+            "slug" => to_string(model[:slug]),
+            "name" => to_string(model[:name] || model[:slug]),
+            "isCustom" => false,
+            "isDefault" => index == 0,
+            "capabilities" => nil
+          }
+        ),
+      "slashCommands" => [],
+      "skills" => []
+    }
+    |> Map.reject(fn {_key, value} -> value == nil end)
+    |> then(fn entry ->
+      if :native_sessions in can,
+        do:
+          Map.put(entry, "nativeSessions", %{
+            "canList" => true,
+            "canLoad" => true,
+            "canResume" => true,
+            "canDelete" => false
+          }),
+        else: entry
+    end)
+  end
+
+  @doc """
+  A provider session's capabilities (`T3.Orchestration.Entities`) narrowed to what
+  a plugin declares, so the core offers only what works.
+  """
+  def session_capabilities(base, provider) do
+    can = declared(provider)
+    approvals = :approvals in can
+    plans = :plan_updates in can
+
+    base
+    |> put_in(["turns", "supportsInterrupt"], :interrupt in can)
+    |> put_in(["turns", "supportsActiveSteering"], :active_steering in can)
+    |> put_in(["turns", "supportsSteeringByInterruptRestart"], :active_steering not in can)
+    |> put_in(["threads", "canForkThread"], :fork in can)
+    |> put_in(["threads", "canForkFromTurn"], :fork in can)
+    |> put_in(["threads", "canRollbackThread"], :rollback in can)
+    |> put_in(["checkpointing", "providerCanRollbackConversation"], :rollback in can)
+    |> put_in(["sessions", "supportsModelSwitchInSession"], :model_switching in can)
+    |> put_in(["approvals", "supportsCommandApproval"], approvals)
+    |> put_in(["approvals", "supportsFileChangeApproval"], approvals)
+    |> put_in(["planning", "emitsPlanUpdated"], plans)
+    |> put_in(["planning", "emitsTodoList"], plans)
+  end
 end
 
 defmodule T3.Plugins.McpToolPack do
@@ -52,7 +177,11 @@ defmodule T3.Plugins.GitHost do
 end
 
 defmodule T3.Plugins.NotificationChannel do
-  @moduledoc "Delivers the node's notifications. Not called by the node yet."
+  @moduledoc """
+  Delivers the node's notifications (`T3.Plugins.notify/1`): a turn that finished
+  while no client had its thread in the foreground arrives as
+  `%{"type" => "turn.finished", "threadId", "title", "status"}`.
+  """
   use T3.Plugins.Kind
   @callback notify(notification :: map, settings :: map) :: :ok | {:error, String.t()}
 end

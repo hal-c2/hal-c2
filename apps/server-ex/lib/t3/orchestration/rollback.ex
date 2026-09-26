@@ -119,7 +119,15 @@ defmodule T3.Orchestration.Rollback do
   defp rewind(%{driver: "claudeAgent", target: target, head: nil}) when target > 0,
     do: {:error, "Cannot rewind this Claude thread: no message was recorded for that turn."}
 
-  defp rewind(plan), do: Orchestration.runtime(plan.instance).rollback(plan.thread_id, plan)
+  # A provider plugin that cannot roll its conversation back starts the next turn in
+  # a fresh context, marked as no longer matching the provider's own history.
+  defp rewind(plan) do
+    provider = T3.Plugins.declared(plan.driver)
+
+    if provider == nil or :rollback in (provider[:capabilities] || []),
+      do: Orchestration.runtime(plan.instance).rollback(plan.thread_id, plan),
+      else: {:ok, %{"nativeThreadRef" => nil, "contextDivergent" => true}}
+  end
 
   defp restore(plan) do
     result =

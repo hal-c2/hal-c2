@@ -348,6 +348,28 @@ defmodule T3.Test.Node do
 
   @doc "The scopes an administrator's session carries."
   def admin_scopes, do: T3.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
+
+  # --- added by W14 ---
+
+  @doc """
+  The environment id of `peer` (from `start_peer/1`) as this node's shell knows
+  it, waiting until the peer has announced itself; RPCs to the peer route by it.
+  """
+  def peer_environment(peer) do
+    :ok = T3.Shell.subscribe(self())
+
+    case List.keyfind(T3.Shell.environments(), peer, 0) do
+      {^peer, %{"environmentId" => environment}} ->
+        environment
+
+      nil ->
+        receive do
+          {:t3_shell, {:environment, ^peer, %{"environmentId" => environment}}} -> environment
+        after
+          10_000 -> ExUnit.Assertions.flunk("#{peer} never announced its environment")
+        end
+    end
+  end
 end
 
 defmodule T3.Test.Node.World do
