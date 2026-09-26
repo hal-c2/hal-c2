@@ -173,6 +173,10 @@ async function main(): Promise<void> {
     size: { columns: renderer.width, rows: renderer.height },
     onQuit: handleExit,
     log: appendLog,
+    copyToClipboard: (text) => {
+      renderer.copyToClipboardOSC52(text);
+      return renderer.isOsc52Supported();
+    },
   });
 
   try {

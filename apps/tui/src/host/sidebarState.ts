@@ -1,5 +1,6 @@
 import { canSnooze, snoozeWakeLabel } from "@t3tools/client-runtime/state/thread-settled";
 import type {
+  ShellSidebarDraft,
   ShellSidebarState,
   ShellSidebarThread,
   ShellSidebarThreadStatus,
@@ -53,7 +54,14 @@ export type TuiSidebarRow =
       readonly count: number;
       readonly expanded: boolean;
     }
-  | { readonly kind: "more"; readonly key: string; readonly hiddenCount: number };
+  | { readonly kind: "more"; readonly key: string; readonly hiddenCount: number }
+  | {
+      readonly kind: "draft";
+      readonly key: string;
+      readonly selected: boolean;
+      readonly draft: ShellSidebarDraft;
+      readonly projectName: string;
+    };
 
 /**
  * Published under `sidebar`: the desktop shell's contract, so shared bricks
@@ -62,6 +70,15 @@ export type TuiSidebarRow =
 export interface TuiSidebarState extends ShellSidebarState {
   readonly rows: ReadonlyArray<TuiSidebarRow>;
   readonly filter: string;
+  /** The slice of `rows` that fits the list's height, scrolled to keep the selection in view. */
+  readonly visibleRows: ReadonlyArray<TuiSidebarRow>;
+  /** Index into `rows` of the first visible row. */
+  readonly scrollTop: number;
+  /** Rows hidden above and below the visible slice. */
+  readonly hiddenAbove: number;
+  readonly hiddenBelow: number;
+  /** "All projects" or the scoped project's name. */
+  readonly scopeLabel: string;
 }
 
 export interface TuiSidebarStateInput {
@@ -72,6 +89,14 @@ export interface TuiSidebarStateInput {
   readonly projectScopeId: string | null;
   readonly filter: string;
   readonly now: string;
+  /** The server settles threads (`capabilities.threadSettlement`). */
+  readonly settlementSupported?: boolean;
+  /** An open new-thread draft, listed above the threads. */
+  readonly draft?: { readonly draftId: string; readonly projectId: string } | null;
+  /** Rows the list can show at once; unbounded when omitted. */
+  readonly viewportRows?: number;
+  /** The previous scroll offset, kept unless the selection left the view. */
+  readonly scrollTop?: number;
 }
 
 function sidebarStatus(thread: TuiThreadShell): ShellSidebarThreadStatus {
@@ -92,7 +117,11 @@ function sidebarStatus(thread: TuiThreadShell): ShellSidebarThreadStatus {
   }
 }
 
-function toSidebarThread(row: Extract<Row, { kind: "thread" }>, now: string): TuiSidebarThread {
+function toSidebarThread(
+  row: Extract<Row, { kind: "thread" }>,
+  now: string,
+  canSettle: boolean,
+): TuiSidebarThread {
   const { thread } = row;
   const status = resolveThreadStatus(thread);
   return {
@@ -116,11 +145,11 @@ function toSidebarThread(row: Extract<Row, { kind: "thread" }>, now: string): Tu
         ? snoozeWakeLabel(thread.snoozedUntil, { now })
         : null,
     wokeAt: null,
-    canSettle: true,
+    canSettle,
     canSnooze: canSnooze(thread, { now }),
     section: row.section,
     projectName: row.projectTitle,
-    age: relativeTime(row.timestamp),
+    age: relativeTime(row.timestamp, Date.parse(now)),
     glyph: status.glyph,
     glyphColor: status.color,
   };
@@ -135,10 +164,10 @@ export function buildTuiSidebarState(input: TuiSidebarStateInput): TuiSidebarSta
     settled: [],
   };
   let settledTotal = 0;
-  const rows: TuiSidebarRow[] = input.rows.map((row) => {
+  const listed: TuiSidebarRow[] = input.rows.map((row) => {
     switch (row.kind) {
       case "thread": {
-        const thread = toSidebarThread(row, now);
+        const thread = toSidebarThread(row, now, input.settlementSupported ?? true);
         byBucket[row.section].push(thread);
         return {
           kind: "thread",
@@ -161,6 +190,27 @@ export function buildTuiSidebarState(input: TuiSidebarStateInput): TuiSidebarSta
         return { kind: "more", key: `${row.id}:more`, hiddenCount: row.hiddenCount };
     }
   });
+
+  const draft = input.draft ?? null;
+  const drafts: ShellSidebarDraft[] = draft
+    ? [{ draftId: draft.draftId, projectKey: projectKey(draft.projectId), label: "New thread" }]
+    : [];
+  const projectTitle = (id: string) =>
+    shell?.projects.find((project) => project.id === id)?.title ?? id;
+  const rows: TuiSidebarRow[] = [
+    ...drafts.map((entry): TuiSidebarRow => ({
+      kind: "draft",
+      key: `draft:${entry.draftId}`,
+      selected: true,
+      draft: entry,
+      projectName: projectTitle(draft!.projectId),
+    })),
+    // With a draft open, no thread row reads as the open one.
+    ...(draft
+      ? listed.map((row) => (row.kind === "thread" ? { ...row, selected: false } : row))
+      : listed),
+  ];
+  const window = scrollWindow(rows, input.viewportRows, input.scrollTop ?? 0);
 
   const threadCount = new Map<string, number>();
   for (const thread of shell?.threads ?? []) {
@@ -194,10 +244,38 @@ export function buildTuiSidebarState(input: TuiSidebarStateInput): TuiSidebarSta
     snoozed: byBucket.snoozed,
     settled: byBucket.settled,
     settledTotal,
-    drafts: [],
-    activeThreadKey: input.selectedThreadId === null ? null : threadKey(input.selectedThreadId),
-    activeDraftId: null,
+    drafts,
+    activeThreadKey:
+      draft || input.selectedThreadId === null ? null : threadKey(input.selectedThreadId),
+    activeDraftId: draft?.draftId ?? null,
     rows,
     filter: input.filter,
+    ...window,
+    scopeLabel: input.projectScopeId === null ? "All projects" : projectTitle(input.projectScopeId),
+  };
+}
+
+/**
+ * Keep the selected row inside a `viewportRows`-tall window: scroll only when
+ * the selection would leave it, and never past the end of the list.
+ */
+export function scrollWindow(
+  rows: ReadonlyArray<TuiSidebarRow>,
+  viewportRows: number | undefined,
+  previousTop: number,
+): Pick<TuiSidebarState, "visibleRows" | "scrollTop" | "hiddenAbove" | "hiddenBelow"> {
+  const viewport = viewportRows === undefined ? rows.length : Math.max(1, viewportRows);
+  let top = Math.max(0, Math.min(previousTop, rows.length - viewport));
+  const selected = rows.findIndex((row) => "selected" in row && row.selected);
+  if (selected >= 0) {
+    if (selected < top) top = selected;
+    else if (selected >= top + viewport) top = selected - viewport + 1;
+  }
+  const visibleRows = rows.slice(top, top + viewport);
+  return {
+    visibleRows,
+    scrollTop: top,
+    hiddenAbove: top,
+    hiddenBelow: Math.max(0, rows.length - top - visibleRows.length),
   };
 }
