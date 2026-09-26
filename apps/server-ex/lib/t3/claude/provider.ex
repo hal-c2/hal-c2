@@ -18,7 +18,10 @@ defmodule T3.Claude.Provider do
       %{
         "instanceId" => "claudeAgent",
         "driver" => "claudeAgent",
-        "enabled" => true,
+        # Turned off in settings (`providers.claudeAgent.enabled`), it stays listed so it can be
+        # turned back on; clients leave it out of the model picker.
+        "enabled" =>
+          get_in(T3.Settings.settings(), ["providers", "claudeAgent", "enabled"]) != false,
         "installed" => true,
         "version" => version(path),
         "versionAdvisory" => T3.ProviderUpdates.advisory("claudeAgent", path, version(path)),
@@ -31,7 +34,12 @@ defmodule T3.Claude.Provider do
             m <- @models,
             do: Map.merge(m, %{"isCustom" => false, "capabilities" => nil})
           ),
-        "slashCommands" => [],
+        "slashCommands" => [
+          %{
+            "name" => "compact",
+            "description" => "Summarize the conversation and reduce context usage"
+          }
+        ],
         "skills" => []
       }
     else

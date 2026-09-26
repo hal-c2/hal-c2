@@ -150,6 +150,11 @@ defmodule T3.ProviderUsageLimits.Codex do
           Limits.unavailable(checked_at, "unsupported")
 
         {:ok, %{"account" => nil, "requiresOpenaiAuth" => true}} ->
+          Limits.remember_account("codex", %{
+            "status" => "unauthenticated",
+            "message" => "Codex CLI is not authenticated. Run `codex login` and try again."
+          })
+
           Limits.unavailable(checked_at, "probeFailed")
 
         {:ok, _} ->

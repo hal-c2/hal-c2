@@ -84,29 +84,44 @@ defmodule T3.Steps.Timeline.RunsAndQueue do
   # Either a follow-up sent to `context.running` (plugins and providers
   # scenarios) or a steer of the current thread.
   step "the message joins the running turn", context do
-    case context[:running] do
-      %{thread: thread_id, run: run_id} ->
-        item =
-          World.await_stream(thread_id, fn state ->
-            Enum.find(
-              T3.StreamState.list(state, "turn-item"),
-              &(&1["messageId"] == context.follow_up)
-            )
-          end)
+    if World.fakes_feature?(context) do
+      title = World.current_thread(context)
 
-        assert %{"inputIntent" => "steer", "runId" => ^run_id} = item
+      World.await_value(context, title, fn state ->
+        Enum.any?(
+          T3.StreamState.list(state, "message"),
+          &(&1["role"] == "assistant" and &1["text"] == "steered: one more thing")
+        )
+      end)
 
-        assert [%{"id" => ^run_id}] =
-                 T3.StreamState.list(
-                   T3.Streams.Server.state(T3.Streams.ensure(thread_id)),
-                   "run"
-                 )
+      # No second turn was queued for it.
+      assert [_] = World.runs(context, title)
+      context
+    else
+      case context[:running] do
+        %{thread: thread_id, run: run_id} ->
+          item =
+            World.await_stream(thread_id, fn state ->
+              Enum.find(
+                T3.StreamState.list(state, "turn-item"),
+                &(&1["messageId"] == context.follow_up)
+              )
+            end)
 
-      nil ->
-        assert_joined(context, context.steer_text)
+          assert %{"inputIntent" => "steer", "runId" => ^run_id} = item
+
+          assert [%{"id" => ^run_id}] =
+                   T3.StreamState.list(
+                     T3.Streams.Server.state(T3.Streams.ensure(thread_id)),
+                     "run"
+                   )
+
+        nil ->
+          assert_joined(context, context.steer_text)
+      end
+
+      context
     end
-
-    context
   end
 
   # OpenCode cannot take a steer: as in the Node server, its turn is interrupted and

@@ -199,22 +199,27 @@ defmodule T3.Steps.Common do
   # thread (`context.thread`), as the provider features set them up.
 
   step "a new thread needs a title", context do
-    Map.put(
-      context,
-      :title_result,
-      T3.TextGeneration.thread_title(World.project(context).root, "Fix the login form")
-    )
+    root =
+      if context[:projects] not in [nil, %{}], do: World.project(context).root, else: File.cwd!()
+
+    Map.put(context, :title_result, T3.TextGeneration.thread_title(root, "Fix the login form"))
   end
 
   step "the user is asked to approve it", context do
-    request = T3.Test.FakeAcp.await_request(context)
-    assert request["status"] == "pending"
-    assert request["kind"] in ~w(command file-change file-read permission)
+    if World.fakes_feature?(context) do
+      request = World.await_request(context, World.current_thread(context))
+      assert request["kind"] in ~w(command file-change file-read permission)
+      Map.put(context, :request, request)
+    else
+      request = T3.Test.FakeAcp.await_request(context)
+      assert request["status"] == "pending"
+      assert request["kind"] in ~w(command file-change file-read permission)
 
-    for {key, value} <- context[:expected_request] || %{},
-        do: assert(request[key] == value, "#{key} was #{inspect(request[key])}")
+      for {key, value} <- context[:expected_request] || %{},
+          do: assert(request[key] == value, "#{key} was #{inspect(request[key])}")
 
-    Map.put(context, :request, request)
+      Map.put(context, :request, request)
+    end
   end
 
   step "the user stops the turn", context do
@@ -229,7 +234,15 @@ defmodule T3.Steps.Common do
   end
 
   step "OpenCode asks to run a command", context do
-    T3.Test.FakeAcp.send_message(context, "please run a command")
+    if World.fakes_feature?(context) do
+      %{instance: "opencode", fields: fields} = context.pending_launch
+
+      context
+      |> Map.delete(:pending_launch)
+      |> World.launch_on("Work", "opencode", "approve", fields)
+    else
+      T3.Test.FakeAcp.send_message(context, "please run a command")
+    end
   end
 
   step "the user enables Grok", context do
@@ -237,15 +250,17 @@ defmodule T3.Steps.Common do
     T3.Test.FakeAcp.enable(context, "grok")
   end
 
-  step "Grok writes it with every tool refused", context do
-    assert {:ok, %{"title" => "Fake title"}} = context.title_result
-    T3.Test.FakeAcp.assert_tools_refused(context)
-    context
-  end
+  # The provider features on fakes: the fake asks to run a tool before answering and
+  # says what became of it.
+  step ~r/^(?<provider>Grok|OpenCode|Cursor) writes it with every tool refused$/,
+       %{args: [_provider]} = context do
+    if World.fakes_feature?(context) do
+      assert {:ok, %{"title" => "ACP title, tool cancelled"}} = context.title_result
+    else
+      assert {:ok, %{"title" => "Fake title"}} = context.title_result
+      T3.Test.FakeAcp.assert_tools_refused(context)
+    end
 
-  step "OpenCode writes it with every tool refused", context do
-    assert {:ok, %{"title" => "Fake title"}} = context.title_result
-    T3.Test.FakeAcp.assert_tools_refused(context)
     context
   end
 
@@ -269,43 +284,85 @@ defmodule T3.Steps.Common do
 
   # The provider list a client receives on its config subscription.
   step "the user opens the provider list", context do
-    T3.Test.FakeAcp.services()
-    {_, context} = T3.Test.FakeAcp.open_config(context)
-    context
+    if World.fakes_feature?(context) do
+      {providers, context} = World.provider_list(context)
+      Map.put(context, :providers, providers)
+    else
+      T3.Test.FakeAcp.services()
+      {_, context} = T3.Test.FakeAcp.open_config(context)
+      context
+    end
   end
 
   step "the plan is shown as a proposed plan", context do
-    plan =
-      World.await_stream(World.thread_id(context, context.thread), fn state ->
-        state
-        |> T3.StreamState.list("plan")
-        |> Enum.find(&(&1["kind"] == "proposed_plan" and &1["status"] == "active"))
-      end)
+    if World.fakes_feature?(context) do
+      title = World.current_thread(context)
 
-    if expected = context[:expected_plan], do: assert(plan["markdown"] == expected)
-    Map.put(context, :plan, plan)
+      plan =
+        World.await_value(context, title, fn state ->
+          Enum.find(
+            T3.StreamState.list(state, "plan"),
+            &(&1["kind"] == "proposed_plan" and &1["status"] == "active")
+          )
+        end)
+
+      assert plan["markdown"] =~ "Plan"
+      Map.put(context, :plan, plan)
+    else
+      plan =
+        World.await_stream(World.thread_id(context, context.thread), fn state ->
+          state
+          |> T3.StreamState.list("plan")
+          |> Enum.find(&(&1["kind"] == "proposed_plan" and &1["status"] == "active"))
+        end)
+
+      if expected = context[:expected_plan], do: assert(plan["markdown"] == expected)
+      Map.put(context, :plan, plan)
+    end
   end
 
   # Implementing sends a message that names the plan; that completes it.
   step "the user can implement it", context do
-    thread_id = World.thread_id(context, context.thread)
+    if World.fakes_feature?(context) do
+      title = World.current_thread(context)
+      # The plan shows before its turn ends; the user implements it once the turn is over.
+      World.await_idle(context, title)
+      count = length(World.runs(context, title))
+      ref = %{"threadId" => World.thread_id(context, title), "planId" => context.plan["id"]}
 
-    {:ok, _} =
-      T3.Orchestration.dispatch(%{
-        "type" => "message.dispatch",
-        "commandId" => "cmd-#{System.unique_integer([:positive])}",
-        "threadId" => thread_id,
-        "messageId" => "msg-#{System.unique_integer([:positive])}",
-        "text" => "Implement the plan.",
-        "attachments" => [],
-        "sourcePlanRef" => %{"threadId" => thread_id, "planId" => context.plan["id"]}
-      })
+      context =
+        World.post_message(context, title, "Go ahead.", %{
+          "sourcePlanRef" => ref,
+          "dispatchMode" => nil
+        })
 
-    World.await_stream(thread_id, fn state ->
-      T3.StreamState.get(state, "plan")[context.plan["id"]]["status"] == "completed"
-    end)
+      World.await_value(context, title, fn state ->
+        length(T3.StreamState.list(state, "run")) > count and
+          T3.StreamState.get(state, "plan")[ref["planId"]]["status"] == "completed"
+      end)
 
-    context
+      World.await_idle(context, title)
+      context
+    else
+      thread_id = World.thread_id(context, context.thread)
+
+      {:ok, _} =
+        T3.Orchestration.dispatch(%{
+          "type" => "message.dispatch",
+          "commandId" => "cmd-#{System.unique_integer([:positive])}",
+          "threadId" => thread_id,
+          "messageId" => "msg-#{System.unique_integer([:positive])}",
+          "text" => "Implement the plan.",
+          "attachments" => [],
+          "sourcePlanRef" => %{"threadId" => thread_id, "planId" => context.plan["id"]}
+        })
+
+      World.await_stream(thread_id, fn state ->
+        T3.StreamState.get(state, "plan")[context.plan["id"]]["status"] == "completed"
+      end)
+
+      context
+    end
   end
 
   # The tool went ahead: the turn finished without a pending approval, and an
@@ -334,17 +391,38 @@ defmodule T3.Steps.Common do
         "cancel" => "cancel"
       }[answer]
 
-    request = context[:request] || T3.Test.FakeAcp.await_request(context)
-    context = T3.Test.FakeAcp.respond(context, request["id"], %{"decision" => decision})
-    Map.put(context, :decision, decision)
+    if World.fakes_feature?(context) do
+      title = World.current_thread(context)
+      request = context[:request] || World.await_request(context, title)
+
+      {:ok, _} =
+        T3.Orchestration.dispatch(%{
+          "type" => "runtime-request.respond",
+          "threadId" => World.thread_id(context, title),
+          "requestId" => request["id"],
+          "decision" => decision
+        })
+
+      Map.put(context, :request, request)
+    else
+      request = context[:request] || T3.Test.FakeAcp.await_request(context)
+      context = T3.Test.FakeAcp.respond(context, request["id"], %{"decision" => decision})
+      Map.put(context, :decision, decision)
+    end
   end
 
   # The access modes the scenario's provider offers (`supportedRuntimeModes`).
   step "auto is not offered", context do
-    modes = T3.Test.FakeAcp.find(context.providers, context.provider)["supportedRuntimeModes"]
-    assert [_ | _] = modes
-    refute "auto" in modes
-    context
+    if World.fakes_feature?(context) do
+      assert context.permission_modes != []
+      refute "auto" in context.permission_modes
+      context
+    else
+      modes = T3.Test.FakeAcp.find(context.providers, context.provider)["supportedRuntimeModes"]
+      assert [_ | _] = modes
+      refute "auto" in modes
+      context
+    end
   end
 
   # What a client reads to show a thread: its provider in the provider list.
@@ -358,7 +436,7 @@ defmodule T3.Steps.Common do
       T3.Orchestration.dispatch(%{
         "type" => "thread.runtime-mode.set",
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
-        "threadId" => World.thread_id(context, context.thread),
+        "threadId" => World.thread_id(context, context[:current_thread] || context.thread),
         "runtimeMode" => "full-access"
       })
 
@@ -385,20 +463,28 @@ defmodule T3.Steps.Common do
   # A follow-up while `context.running` (`%{thread, run}`) has a turn going, sent
   # as the composer sends it; the node steers or queues it by the provider.
   step "the user sends a follow-up message", context do
-    message_id = "follow-up-#{System.unique_integer([:positive])}"
+    if World.fakes_feature?(context) do
+      title = World.current_thread(context)
 
-    {{:ok, _}, context} =
-      World.dispatch(context, %{
-        "type" => "message.dispatch",
-        "threadId" => context.running.thread,
-        "messageId" => message_id,
-        "text" => "look here instead",
-        "attachments" => [],
-        "dispatchMode" => %{"type" => "start_immediately"},
-        "deliveryIntent" => "auto"
-      })
+      context
+      |> World.post_message(title, "one more thing", %{"dispatchMode" => nil})
+      |> Map.put(:follow_up, "one more thing")
+    else
+      message_id = "follow-up-#{System.unique_integer([:positive])}"
 
-    Map.put(context, :follow_up, message_id)
+      {{:ok, _}, context} =
+        World.dispatch(context, %{
+          "type" => "message.dispatch",
+          "threadId" => context.running.thread,
+          "messageId" => message_id,
+          "text" => "look here instead",
+          "attachments" => [],
+          "dispatchMode" => %{"type" => "start_immediately"},
+          "deliveryIntent" => "auto"
+        })
+
+      Map.put(context, :follow_up, message_id)
+    end
   end
 
   # Node plugins (`T3.Plugins`) turned on or off as a client does; other features'
@@ -481,13 +567,39 @@ defmodule T3.Steps.Common do
     end
   end
 
+  @approval_choices ["Allow once", "Always allow this session", "Decline"]
+
   # A choice the user makes in whatever the scenario opened: an earlier step says
   # what choosing means with `context.on_choose` (`fn context, choice -> context end`).
+  # Without one, an approval choice a client shows (`ProviderApprovalDecision`)
+  # answers the pending request.
   step "the user chooses {string}", %{args: [choice]} = context do
     case context[:on_choose] do
+      nil when choice in @approval_choices -> choose_approval(context, choice)
       nil -> flunk("nothing in this scenario offers a choice of #{inspect(choice)}")
       choose -> choose.(context, choice)
     end
+  end
+
+  # Answers the pending request of the thread the scenario started.
+  defp choose_approval(context, choice) do
+    title = World.current_thread(context)
+    request = context[:request] || World.await_request(context, title)
+
+    {:ok, _} =
+      T3.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, title),
+        "requestId" => request["id"],
+        "decision" =>
+          %{
+            "Allow once" => "accept",
+            "Always allow this session" => "acceptForSession",
+            "Decline" => "decline"
+          }[choice]
+      })
+
+    Map.put(context, :request, request)
   end
 
   # The default socket drops and connects again. A scenario that follows the node
@@ -502,7 +614,13 @@ defmodule T3.Steps.Common do
   end
 
   step "the user imports its project", context do
-    World.import_agent_sessions(context)
+    if World.fakes_feature?(context) do
+      input = %{"projectId" => World.project(context).id}
+      {reply, context} = World.call(context, "agentSessions.import", input)
+      Map.put(context, :reply, reply)
+    else
+      World.import_agent_sessions(context)
+    end
   end
 
   # Whether the running step is a Then (or an And/But following one).
@@ -606,32 +724,81 @@ defmodule T3.Steps.Common do
   # `server.deleteAcpRegistrySession` for `context.acp_session` (instanceId, projectId,
   # sessionId); the reply is `context.reply`.
   step "the user deletes the native session", context do
-    {reply, context} =
-      World.call(context, "server.deleteAcpRegistrySession", context.acp_session)
+    if World.fakes_feature?(context) do
+      %{instance: instance, project: project, session: session} =
+        context[:acp_session] || flunk("no ACP session in this scenario")
 
-    Map.put(context, :reply, reply)
+      input = %{"instanceId" => instance, "projectId" => project, "sessionId" => session}
+      {reply, context} = World.call(context, "server.deleteAcpRegistrySession", input)
+      Map.put(context, :reply, reply)
+    else
+      {reply, context} =
+        World.call(context, "server.deleteAcpRegistrySession", context.acp_session)
+
+      Map.put(context, :reply, reply)
+    end
   end
 
   # Usage history: an earlier step leaves the latest `server.getUsageSummary` result in
   # `context.summary` and the history it expects in `context.history`
   # (`%{provider: "claude" | "codex" | "grok", output: output_tokens}`).
   step "that history is counted once", context do
-    %{provider: provider, output: output} = context.history
-    assert World.usage_output(context.summary, provider) == output
+    if World.fakes_feature?(context) do
+      %{provider: provider, model: model, output_tokens: tokens} = context.shared_history
+      summaries = context[:usage_summaries] || [context.usage]
 
-    assert [_] =
-             for(s <- context.summary["sources"], s["fingerprint"]["provider"] == provider, do: s),
-           "expected one #{provider} source in #{inspect(context.summary["sources"])}"
+      {owners, _claimed} =
+        Enum.reduce(summaries, {[], MapSet.new()}, fn summary, {owners, claimed} ->
+          keys =
+            for source <- summary["sources"],
+                source["status"] != "missing",
+                source["fingerprint"]["provider"] == provider,
+                do: source["fingerprint"]
 
-    context
+          assert keys == Enum.uniq(keys), "one summary lists a directory twice"
+          new = Enum.reject(keys, &MapSet.member?(claimed, &1))
+          owners = if new == [], do: owners, else: [summary | owners]
+          {owners, Enum.into(new, claimed)}
+        end)
+
+      counted =
+        for summary <- owners,
+            bucket <- summary["buckets"],
+            bucket["provider"] == provider and bucket["model"] == model,
+            do: bucket["totals"]["outputTokens"]
+
+      assert Enum.sum(counted) == tokens
+      context
+    else
+      %{provider: provider, output: output} = context.history
+      assert World.usage_output(context.summary, provider) == output
+
+      assert [_] =
+               for(
+                 s <- context.summary["sources"],
+                 s["fingerprint"]["provider"] == provider,
+                 do: s
+               ),
+             "expected one #{provider} source in #{inspect(context.summary["sources"])}"
+
+      context
+    end
   end
 
   # A line that changed before the resume point is not read again: only the lines
   # past it add to the counted output.
   step "only the new lines of that transcript are read", context do
-    %{provider: provider, output: output} = context.history
-    assert World.usage_output(context.summary, provider) == output
-    context
+    if World.fakes_feature?(context) do
+      %{path: path, provider: provider} = context.grown_transcript
+      assert [{^path, ^provider, resume}] = World.usage_reads()
+      assert {offset, _, _, _} = resume
+      assert offset > 0
+      context
+    else
+      %{provider: provider, output: output} = context.history
+      assert World.usage_output(context.summary, provider) == output
+      context
+    end
   end
 
   # An rpc answered by the catch-all for methods outside what the node carries.
@@ -721,31 +888,43 @@ defmodule T3.Steps.Common do
   # What the user was told: `context.told` when a step set it, else the failure of
   # the last git action (`context.git_events`) or RPC (`context.reply`).
   step "the user is told {string}", %{args: [message]} = context do
-    said =
-      cond do
-        context[:told] ->
-          List.wrap(context.told)
+    if World.fakes_feature?(context) do
+      text =
+        case context.reply do
+          {:error, text} when is_binary(text) -> text
+          {:error, tag, detail} -> "#{tag} #{inspect(detail)}"
+          other -> flunk("expected a refusal, got #{inspect(other)}")
+        end
 
-        match?([_ | _], context[:git_events]) ->
-          last = List.last(context.git_events)
-          [last["message"], get_in(last, ["result", "toast", "title"])]
+      assert text =~ message
+      context
+    else
+      said =
+        cond do
+          context[:told] ->
+            List.wrap(context.told)
 
-        match?({:error, _, _}, context[:reply]) ->
-          {:error, error, detail} = context.reply
-          [error, (detail || %{})["detail"], (detail || %{})["message"], inspect(detail)]
+          match?([_ | _], context[:git_events]) ->
+            last = List.last(context.git_events)
+            [last["message"], get_in(last, ["result", "toast", "title"])]
 
-        match?({:ok, _}, context[:reply]) ->
-          {:ok, result} = context.reply
-          [inspect(result)]
+          match?({:error, _, _}, context[:reply]) ->
+            {:error, error, detail} = context.reply
+            [error, (detail || %{})["detail"], (detail || %{})["message"], inspect(detail)]
 
-        true ->
-          flunk("nothing was said; last reply: #{inspect(context[:reply])}")
-      end
+          match?({:ok, _}, context[:reply]) ->
+            {:ok, result} = context.reply
+            [inspect(result)]
 
-    assert Enum.any?(said, &(is_binary(&1) and &1 =~ message)),
-           "expected #{inspect(message)} in #{inspect(said)}"
+          true ->
+            flunk("nothing was said; last reply: #{inspect(context[:reply])}")
+        end
 
-    context
+      assert Enum.any?(said, &(is_binary(&1) and &1 =~ message)),
+             "expected #{inspect(message)} in #{inspect(said)}"
+
+      context
+    end
   end
 
   # A client shows a thread of the project: it watches the project's checkout status.
@@ -935,39 +1114,56 @@ defmodule T3.Steps.Common do
   end
 
   step "the user disables Grok", context do
-    T3.Test.AcpFixtures.write_settings(context, fn settings ->
-      settings
-      |> put_in([Access.key("providers", %{}), Access.key("grok", %{}), "enabled"], false)
-      |> then(fn settings ->
-        if is_map(get_in(settings, ["providerInstances", "grok"])),
-          do: put_in(settings, ["providerInstances", "grok", "enabled"], false),
-          else: settings
+    if World.fakes_feature?(context) do
+      World.merge_settings(%{"providers" => %{"grok" => %{"enabled" => false}}})
+      context
+    else
+      T3.Test.AcpFixtures.write_settings(context, fn settings ->
+        settings
+        |> put_in([Access.key("providers", %{}), Access.key("grok", %{}), "enabled"], false)
+        |> then(fn settings ->
+          if is_map(get_in(settings, ["providerInstances", "grok"])),
+            do: put_in(settings, ["providerInstances", "grok", "enabled"], false),
+            else: settings
+        end)
       end)
-    end)
+    end
   end
 
   step "Claude was installed in a way the node cannot identify", context do
-    # An executable outside every installer's layout, behind the latest release.
-    ctx = T3.Test.AcpFixtures.ready(context)
-    fake_claude = Path.expand("../support/fake_claude.py", __DIR__)
-    path = Path.join(context.node.home, "odd/bin/claude")
-    File.mkdir_p!(Path.dirname(path))
+    if World.fakes_feature?(context) do
+      # A plain executable no installer's layout matches, behind the latest release.
+      context = World.fake_providers(context)
 
-    File.write!(path, """
-    #!/bin/sh
-    if [ "$1" = "--version" ]; then echo "2.0.0 (Claude Code)"; exit 0; fi
-    exec python3 -u #{fake_claude} "$@"
-    """)
+      :persistent_term.put(
+        {T3.ProviderUpdates, "claudeAgent"},
+        {"9.9.9", System.monotonic_time(:millisecond)}
+      )
 
-    File.chmod!(path, 0o755)
-    Application.put_env(:t3, :claude_command, [path])
+      context
+    else
+      # An executable outside every installer's layout, behind the latest release.
+      ctx = T3.Test.AcpFixtures.ready(context)
+      fake_claude = Path.expand("../support/fake_claude.py", __DIR__)
+      path = Path.join(context.node.home, "odd/bin/claude")
+      File.mkdir_p!(Path.dirname(path))
 
-    :persistent_term.put(
-      {T3.ProviderUpdates, "claudeAgent"},
-      {"9.9.9", System.monotonic_time(:millisecond)}
-    )
+      File.write!(path, """
+      #!/bin/sh
+      if [ "$1" = "--version" ]; then echo "2.0.0 (Claude Code)"; exit 0; fi
+      exec python3 -u #{fake_claude} "$@"
+      """)
 
-    ctx
+      File.chmod!(path, 0o755)
+      Application.put_env(:t3, :claude_command, [path])
+
+      :persistent_term.put(
+        {T3.ProviderUpdates, "claudeAgent"},
+        {"9.9.9", System.monotonic_time(:millisecond)}
+      )
+
+      ctx
+    end
   end
 
   # ACP Registry steps shared with `features/plugins/plugin-catalog.feature` (and, for
@@ -1069,18 +1265,36 @@ defmodule T3.Steps.Common do
   # `fields` such as "runtimeMode") with a message, and waits for its turn to end.
   # Without one, sends "Hello" to the scenario's existing FakeAcp thread.
   step "the user sends a message", context do
-    case context[:pending_launch] do
-      %{instance: instance, fields: fields} ->
-        ctx =
-          context
-          |> Map.delete(:pending_launch)
-          |> T3.Test.AcpFixtures.launch("Work", instance, "hello", mode: fields["runtimeMode"])
+    if World.fakes_feature?(context) do
+      # A thread the scenario described but has not started yet starts with this message.
+      context =
+        case context[:pending_launch] do
+          %{instance: instance, fields: fields} ->
+            context
+            |> Map.delete(:pending_launch)
+            |> World.launch_on("Work", instance, "hello", fields)
 
-        T3.Test.AcpFixtures.await_runs(ctx.threads["Work"], 1)
-        Map.put(ctx, :thread, "Work")
+          nil ->
+            title = World.current_thread(context)
+            World.post_message(context, title, "hello")
+        end
 
-      nil ->
-        T3.Test.FakeAcp.send_message(context, "Hello")
+      World.await_idle(context, World.current_thread(context))
+      context
+    else
+      case context[:pending_launch] do
+        %{instance: instance, fields: fields} ->
+          ctx =
+            context
+            |> Map.delete(:pending_launch)
+            |> T3.Test.AcpFixtures.launch("Work", instance, "hello", mode: fields["runtimeMode"])
+
+          T3.Test.AcpFixtures.await_runs(ctx.threads["Work"], 1)
+          Map.put(ctx, :thread, "Work")
+
+        nil ->
+          T3.Test.FakeAcp.send_message(context, "Hello")
+      end
     end
   end
 
@@ -1153,21 +1367,33 @@ defmodule T3.Steps.Common do
 
   # Used both to delete a thread and to observe that it was deleted.
   step "the user interrupts the turn", context do
-    title = World.current(context)
+    if World.fakes_feature?(context) do
+      title = World.current_thread(context)
 
-    run =
-      context |> World.runs(title) |> Enum.find(&(&1["status"] in ~w(starting running waiting)))
+      {:ok, _} =
+        T3.Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => World.thread_id(context, title)
+        })
 
-    assert run, "no running turn in #{title}"
+      context
+    else
+      title = World.current(context)
 
-    {:ok, _} =
-      T3.Orchestration.dispatch(%{
-        "type" => "run.interrupt",
-        "threadId" => World.thread_id(context, title),
-        "runId" => run["id"]
-      })
+      run =
+        context |> World.runs(title) |> Enum.find(&(&1["status"] in ~w(starting running waiting)))
 
-    Map.put(context, :interrupted_run, run["id"])
+      assert run, "no running turn in #{title}"
+
+      {:ok, _} =
+        T3.Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => World.thread_id(context, title),
+          "runId" => run["id"]
+        })
+
+      Map.put(context, :interrupted_run, run["id"])
+    end
   end
 
   step "the turn stops", context do
@@ -1377,21 +1603,35 @@ defmodule T3.Steps.Common do
   # The scenario's thread (`context.thread_id`, or the thread titled `context.thread`)
   # moves to Claude with its next message.
   step "the user switches the thread to Claude and sends a message", context do
-    thread_id = context[:thread_id] || World.thread_id(context, context.thread)
+    if World.fakes_feature?(context) do
+      title = World.current_thread(context)
+      count = length(World.runs(context, title))
 
-    {{:ok, _}, context} =
-      World.dispatch(context, %{
-        "type" => "message.dispatch",
-        "threadId" => thread_id,
-        "messageId" => "switch-#{System.unique_integer([:positive])}",
-        "text" => "where are we",
-        "attachments" => [],
-        "modelSelection" => %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-5"},
-        "dispatchMode" => %{"type" => "start_immediately"},
-        "deliveryIntent" => "auto"
-      })
+      context =
+        World.post_message(context, title, "where are we", %{
+          "modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}
+        })
 
-    Map.put(context, :thread_id, thread_id)
+      World.await_value(context, title, &(length(T3.StreamState.list(&1, "run")) > count))
+      World.await_idle(context, title)
+      context
+    else
+      thread_id = context[:thread_id] || World.thread_id(context, context.thread)
+
+      {{:ok, _}, context} =
+        World.dispatch(context, %{
+          "type" => "message.dispatch",
+          "threadId" => thread_id,
+          "messageId" => "switch-#{System.unique_integer([:positive])}",
+          "text" => "where are we",
+          "attachments" => [],
+          "modelSelection" => %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-5"},
+          "dispatchMode" => %{"type" => "start_immediately"},
+          "deliveryIntent" => "auto"
+        })
+
+      Map.put(context, :thread_id, thread_id)
+    end
   end
 
   # --- added by W7 ---
@@ -1564,10 +1804,73 @@ defmodule T3.Steps.Common do
   # Five minutes on the node's clock: its five-minute timers fire, as their message
   # arrives (the idle session check, `T3.Orchestration.IdleSessions`).
   step "five minutes pass", context do
-    pid = Node.ensure(T3.Orchestration.IdleSessions)
-    send(pid, :check)
-    # The check has run once the server answers the next call.
-    _ = :sys.get_state(pid)
+    if World.fakes_feature?(context) do
+      World.run_periodic_checks()
+      context
+    else
+      pid = Node.ensure(T3.Orchestration.IdleSessions)
+      send(pid, :check)
+      # The check has run once the server answers the next call.
+      _ = :sys.get_state(pid)
+      context
+    end
+  end
+
+  # --- added by W9 ---
+  # Providers run on the test fakes (`World.fake_providers/2`); the thread a step
+  # means is the one the scenario last started (`World.current_thread/1`).
+
+  step "the user opens the limits view", context do
+    context = World.fake_providers(context)
+    Node.ensure(T3.ProviderUsageLimits)
+    :ok = T3.ProviderUsageLimits.refresh()
+    # Accounts arrive as casts the probes sent; this call lands after them.
+    :sys.get_state(T3.ProviderUsageLimits)
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :providers, providers)
+  end
+
+  step "the user reverts to the end of the first turn", context do
+    # The thread works in the project root, which only an isolated worktree may reset:
+    # this rewinds the conversation, as the node offers for a shared checkout.
+    World.rollback(context, World.current_thread(context), 1, %{"restoreFiles" => false})
+  end
+
+  step "the user forks from the second turn", context do
+    World.fork(context, World.current_thread(context), 2, "fork")
+  end
+
+  step "the user starts a new thread in {string}", %{args: [project]} = context do
+    # The client fills a new thread from the project's settings over the
+    # environment's (`resolveProjectSettings`), which `T3.Settings.for_project/1` mirrors.
+    settings = T3.Settings.for_project(World.project(context, project).id)
+
+    fields =
+      %{
+        "modelSelection" => settings["defaultModelSelection"],
+        "runtimeMode" => settings["defaultRuntimeMode"]
+      }
+      |> Map.reject(fn {_key, value} -> value == nil end)
+
     context
+    |> World.create_thread("New thread", project, fields)
+    |> Map.put(:current_thread, "New thread")
+  end
+
+  step "the user starts a new thread", context do
+    # As in a project: the environment's defaults, over the client's full access.
+    project = if context[:projects] not in [nil, %{}], do: World.project(context).id
+    settings = T3.Settings.for_project(project)
+
+    fields =
+      %{
+        "modelSelection" => settings["defaultModelSelection"],
+        "runtimeMode" => settings["defaultRuntimeMode"] || "full-access"
+      }
+      |> Map.reject(fn {_key, value} -> value == nil end)
+
+    context
+    |> World.create_thread("New thread", nil, fields)
+    |> Map.put(:current_thread, "New thread")
   end
 end

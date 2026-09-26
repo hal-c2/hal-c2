@@ -1712,14 +1712,38 @@ defmodule T3.Steps.Threads do
   end
 
   step "Claude receives a transcript of the history ahead of the message", context do
-    assert context.where =~ "history True"
+    if World.fakes_feature?(context) do
+      title = World.current_thread(context)
 
-    assert [%{"strategy" => "full_thread_summary", "summaryText" => summary}] =
-             T3.StreamState.list(context.fork_state, "context-handoff")
+      sent =
+        for entry <- World.provider_log(context, "claude"),
+            content = get_in(entry, ["in", "message", "content"]),
+            content != nil,
+            # A message with attachments comes as content blocks.
+            do:
+              if(is_binary(content),
+                do: content,
+                else: Enum.map_join(content, &(&1["text"] || ""))
+              )
 
-    assert summary =~ "User: hello"
-    assert summary =~ "Assistant: Hello from codex"
-    context
+      text =
+        Enum.find(sent, &String.ends_with?(&1, "where are we")) ||
+          flunk("Claude got #{inspect(sent)}")
+
+      assert [_, rest] = String.split(text, "<conversation_history>", parts: 2)
+      assert rest =~ "User: hello"
+      assert Enum.any?(World.replies(context, title), &(&1 =~ "history True"))
+      context
+    else
+      assert context.where =~ "history True"
+
+      assert [%{"strategy" => "full_thread_summary", "summaryText" => summary}] =
+               T3.StreamState.list(context.fork_state, "context-handoff")
+
+      assert summary =~ "User: hello"
+      assert summary =~ "Assistant: Hello from codex"
+      context
+    end
   end
 
   step "{string} has more history than fits in a handoff", %{args: [title]} = context do

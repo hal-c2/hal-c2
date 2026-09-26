@@ -1,7 +1,9 @@
 # Fake ACP agent (like `opencode acp`) for tests. A prompt containing "wait" runs
 # until session/cancel; "approve" asks permission for a command first, offering
-# "Always allow" unless the prompt says "once only". With FAKE_ACP_LOG set, every
-# permission answer is appended to that file as one JSON line.
+# "Always allow" unless the prompt says "once only". Title and commit prompts (without
+# FAKE_TEXT_LOG) ask to run a tool, then answer JSON naming the permission outcome.
+# With FAKE_ACP_LOG set, every permission answer is appended to that file as a JSON line;
+# FAKE_ACP_TRACE collects the argv and every message read.
 import json, os, sys
 
 # With FAKE_AUTH_FILE set, sessions need a sign-in, which creates that file: the
@@ -31,6 +33,13 @@ def load_state():
 def save_state(state):
     json.dump(state, open(STATE + ".tmp", "w"))
     os.replace(STATE + ".tmp", STATE)
+
+# With FAKE_ACP_TRACE set, the argv and every message read are appended to it as JSON lines.
+TRACE = os.environ.get("FAKE_ACP_TRACE")
+def trace(entry):
+    if TRACE:
+        with open(TRACE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
 
 def send(msg):
     msg["jsonrpc"] = "2.0"
@@ -76,8 +85,10 @@ def answer_title():
                  "content": {"type": "text", "text": json.dumps(out)}})
     send({"id": pid, "result": {"stopReason": "end_turn"}})
 
+trace({"argv": sys.argv[1:]})
 for line in sys.stdin:
     msg = json.loads(line)
+    trace({"in": msg})
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
     state = load_state() if STATE else None
     if state is not None and method:
@@ -88,11 +99,20 @@ for line in sys.stdin:
         if len(titling["answers"]) == 2:
             answer_title()
         continue
+    if method is None and mid == "perm-text":
+        # Text generation's answer says what became of the tool it asked for.
+        pid, sid = pending
+        outcome = msg["result"]["outcome"]["outcome"] if "result" in msg else "error"
+        answer = json.dumps({"title": "ACP title, tool " + outcome, "needsRefinement": False,
+                             "subject": "ACP subject, tool " + outcome, "body": "ACP body"})
+        update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-1", "content": {"type": "text", "text": answer}})
+        send({"id": pid, "result": {"stopReason": "end_turn"}})
+        continue
     if method is None and str(mid).startswith("perm-"):
         outcome = msg["result"]["outcome"]
         if os.environ.get("FAKE_ACP_LOG"):
-            with open(os.environ["FAKE_ACP_LOG"], "a") as log:
-                log.write(json.dumps({"method": "response", "params": {"id": mid, "result": msg["result"]}}) + "\n")
+            with open(os.environ["FAKE_ACP_LOG"], "a") as f:
+                f.write(json.dumps({"method": "response", "params": {"id": mid, "result": msg["result"]}}) + "\n")
         pid, sid = pending
         finish_turn(pid, sid, outcome.get("optionId") in ("allow", "always"))
         continue
@@ -108,21 +128,24 @@ for line in sys.stdin:
         send({"id": "elic-1", "method": "elicitation/create", "params": {"mode": "url",
               "url": "https://example.com/login", "elicitationId": "e1", "message": "Sign in"}})
         continue
-    if method in ("session/new", "session/resume") and AUTH_FILE and not os.path.exists(AUTH_FILE):
+    if method in ("session/new", "session/resume", "session/list") and AUTH_FILE and not os.path.exists(AUTH_FILE):
         send({"id": mid, "error": {"code": -32000, "message": "Authentication required"}})
         continue
     if method == "initialize":
         send({"id": mid, "result": {"protocolVersion": 1, "agentInfo": {"name": "Fake", "version": "9.9"},
               "authMethods": [{"id": "browser", "name": "Browser login"},
                               {"id": "cli", "name": "CLI login", "type": "terminal", "args": ["login"]}],
-              "agentCapabilities": {"loadSession": True,
+              # FAKE_ACP_CAPS: a JSON object of agentCapabilities to report instead.
+              "agentCapabilities": json.loads(os.environ.get("FAKE_ACP_CAPS", "null")) or {"loadSession": True,
                   "sessionCapabilities": {"resume": {}, "list": {}, "delete": {}},
                   "providers": {}, "auth": {"logout": {}}}}})
     elif method in ("session/new", "session/resume"):
         sessions += 1
         sid = params.get("sessionId") or "acp-%d" % sessions
-        result = {"configOptions": [{"id": "model", "currentValue": "fake/one",
-                  "options": [{"value": "fake/one", "name": "Fake/One"}, {"value": "fake/two", "name": "Fake/Two"}]}]}
+        # FAKE_ACP_MODELS: a JSON list of model names to offer instead of the fake's own.
+        names = json.loads(os.environ.get("FAKE_ACP_MODELS", "null")) or ["Fake/One", "Fake/Two"]
+        options = [{"value": n.lower().replace(" ", "-"), "name": n} for n in names]
+        result = {"configOptions": [{"id": "model", "currentValue": options[0]["value"], "options": options}]}
         if method == "session/new": result["sessionId"] = sid
         cwds[sid] = params.get("cwd") or os.getcwd()
         send({"id": mid, "result": result})
@@ -134,8 +157,8 @@ for line in sys.stdin:
         text = params["prompt"][0]["text"]
         # FAKE_ACP_INPUT_LOG names a file each prompt's text is appended to, as JSON.
         if os.environ.get("FAKE_ACP_INPUT_LOG"):
-            with open(os.environ["FAKE_ACP_INPUT_LOG"], "a") as log:
-                log.write(json.dumps(text) + "\n")
+            with open(os.environ["FAKE_ACP_INPUT_LOG"], "a") as input_log:
+                input_log.write(json.dumps(text) + "\n")
         update(sid, {"sessionUpdate": "agent_thought_chunk", "messageId": "th-1", "content": {"type": "text", "text": "Let me look."}})
         update(sid, {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "bash", "kind": "execute", "status": "pending", "rawInput": {}})
         if "Return JSON with keys title and needsRefinement." in text and os.environ.get("FAKE_TEXT_LOG"):
@@ -152,6 +175,12 @@ for line in sys.stdin:
             for part in [answer[:12], answer[12:]]:
                 update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-1", "content": {"type": "text", "text": part}})
             send({"id": mid, "result": {"stopReason": "end_turn"}})
+        elif "Return JSON with keys title and needsRefinement" in text or "Return a JSON object with keys: subject" in text:
+            # A title or commit message: asks to run a tool first, then answers.
+            pending = (mid, sid)
+            send({"id": "perm-text", "method": "session/request_permission", "params": {"sessionId": sid,
+                  "toolCall": {"toolCallId": "call-1", "title": "ls", "kind": "execute", "rawInput": {"command": "ls"}},
+                  "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"}]}})
         elif "wait" in text:
             waiting = (mid, sid)
         elif "approve" in text:

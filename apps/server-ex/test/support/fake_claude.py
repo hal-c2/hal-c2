@@ -9,6 +9,13 @@
 # $FAKE_CLAUDE_LOG when it is set.
 import json, os, sys
 
+# With FAKE_CLAUDE_TRACE set, the argv and every message read are appended to it as JSON lines.
+TRACE = os.environ.get("FAKE_CLAUDE_TRACE")
+def trace(entry):
+    if TRACE:
+        with open(TRACE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+
 def send(msg):
     sys.stdout.write(json.dumps(msg) + "\n")
     sys.stdout.flush()
@@ -16,13 +23,18 @@ def send(msg):
 session = "fake-session-1"
 # FAKE_CLAUDE_ARGV_LOG names a file each start appends its arguments to, as one JSON list.
 if os.environ.get("FAKE_CLAUDE_ARGV_LOG"):
-    with open(os.environ["FAKE_CLAUDE_ARGV_LOG"], "a") as log:
-        log.write(json.dumps(sys.argv[1:]) + "\n")
+    with open(os.environ["FAKE_CLAUDE_ARGV_LOG"], "a") as f:
+        f.write(json.dumps(sys.argv[1:]) + "\n")
 turn = 0
 session_rules = []  # Bash commands the session allows without asking
 resume_at = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--resume-session-at=")), None)
+# The permission mode, from argv and then set_permission_mode; in auto Claude's own
+# classifier approves the command "approve" would otherwise ask about.
+mode = sys.argv[sys.argv.index("--permission-mode") + 1] if "--permission-mode" in sys.argv else "default"
+trace({"argv": sys.argv[1:]})
 for line in sys.stdin:
     msg = json.loads(line)
+    trace({"in": msg})
     if msg.get("type") == "control_response":
         reply = msg["response"]["response"]
         allowed = reply["behavior"] == "allow"
@@ -47,7 +59,11 @@ for line in sys.stdin:
             send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": usage}})
             continue
         # The account a signed-in Claude Code reports when it starts.
-        reply = {"account": {"email": "me@example.com", "subscriptionType": "max", "tokenSource": "claude.ai"}} if sub == "initialize" else {}
+        if sub == "set_permission_mode":
+            mode = msg["request"]["mode"]
+        # FAKE_CLAUDE_COMMANDS is a JSON list of the slash command names it reports.
+        reply = {"account": {"email": "me@example.com", "subscriptionType": "max", "tokenSource": "claude.ai"},
+                 "commands": [{"name": n, "description": "", "argumentHint": ""} for n in json.loads(os.environ.get("FAKE_CLAUDE_COMMANDS", "[]"))]} if sub == "initialize" else {}
         send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": reply}})
         if sub == "interrupt":
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session})
@@ -56,9 +72,9 @@ for line in sys.stdin:
         continue
     # $FAKE_CLAUDE_PROMPT_LOG records every user message's text, one JSON string per line.
     if os.environ.get("FAKE_CLAUDE_PROMPT_LOG"):
-        with open(os.environ["FAKE_CLAUDE_PROMPT_LOG"], "a") as log:
+        with open(os.environ["FAKE_CLAUDE_PROMPT_LOG"], "a") as prompt_log:
             content = msg["message"]["content"]
-            log.write(json.dumps(content if isinstance(content, str) else "".join(b.get("text", "") for b in content if isinstance(b, dict))) + "\n")
+            prompt_log.write(json.dumps(content if isinstance(content, str) else "".join(b.get("text", "") for b in content if isinstance(b, dict))) + "\n")
     # A steer cuts the running turn short and answers the new message in the same turn.
     if msg.get("priority") == "now":
         steer_text = msg["message"]["content"] if isinstance(msg["message"]["content"], str) else ""
@@ -73,8 +89,8 @@ for line in sys.stdin:
             f.write(json.dumps({"text": text}) + "\n")
     # FAKE_CLAUDE_INPUT_LOG names a file each user message's text is appended to, as JSON.
     if os.environ.get("FAKE_CLAUDE_INPUT_LOG"):
-        with open(os.environ["FAKE_CLAUDE_INPUT_LOG"], "a") as log:
-            log.write(json.dumps(text) + "\n")
+        with open(os.environ["FAKE_CLAUDE_INPUT_LOG"], "a") as f:
+            f.write(json.dumps(text) + "\n")
     send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku"})
     # "usage limit until EPOCH": the plan's five-hour window rejects the turn until then.
     if text.startswith("usage limit until "):
@@ -85,8 +101,18 @@ for line in sys.stdin:
         continue
     if "wait" in text:
         continue
+    # FAKE_CLAUDE_SIGNED_OUT: a CLI with no login answers every message with an auth error.
+    if os.environ.get("FAKE_CLAUDE_SIGNED_OUT"):
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "error": "authentication_failed", "message": {"id": f"m{turn}x", "role": "assistant", "content": [{"type": "text", "text": "Invalid API key · Please run /login"}]}})
+        send({"type": "result", "subtype": "success", "is_error": True, "result": "Invalid API key · Please run /login", "session_id": session})
+        continue
     if "where are we" in text:
         send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {'<conversation_history>' in text}"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
+    if "approve" in text and mode == "auto":
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}u", "role": "assistant", "content": [{"type": "tool_use", "id": f"tool-{turn}", "name": "Bash", "input": {"command": "touch x"}}]}})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"tool-{turn}", "content": "", "is_error": False}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     if "approve" in text:
@@ -110,6 +136,18 @@ for line in sys.stdin:
         send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [
             {"question": "Which color?", "header": "Color", "multiSelect": False,
              "options": [{"label": "Red", "description": "Warm"}, {"label": "Blue", "description": ""}]}]}}})
+        continue
+    # "use TOOL" calls that tool; "rate limit" reports a nearly used-up session window.
+    if text.startswith("use "):
+        tool = text.split()[1]
+        tool_input = {"command": "ls"} if tool == "Bash" else {"query": "elixir", "url": "https://example.com"} if tool.startswith("Web") else {"file_path": "a.txt", "content": "a"}
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}u", "role": "assistant", "content": [{"type": "tool_use", "id": f"tool-{turn}", "name": tool, "input": tool_input}]}})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"tool-{turn}", "content": "done", "is_error": False}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
+    if "rate limit" in text:
+        send({"type": "rate_limit_event", "session_id": session, "rate_limit_info": {"status": "allowed_warning", "rateLimitType": "five_hour", "utilization": 0.91, "resetsAt": 1790000000}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     ev = lambda e: send({"type": "stream_event", "session_id": session, "event": e})
     send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}a", "role": "assistant", "content": [{"type": "thinking", "thinking": "Let me look."}]}})

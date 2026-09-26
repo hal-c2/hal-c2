@@ -133,6 +133,7 @@ defmodule T3.ProviderUsageLimits.Claude do
         receive do
           {:claude, ^session, {:initialized, {:ok, init}}} ->
             Limits.remember_account("claudeAgent", account(init["account"]))
+            Limits.remember_commands("claudeAgent", commands(init["commands"]))
         after
           1_000 -> :ok
         end
@@ -173,6 +174,28 @@ defmodule T3.ProviderUsageLimits.Claude do
   end
 
   def account(_), do: %{}
+
+  @doc "The slash commands `initialize` reports (skills among them), as `ServerProviderSlashCommand`s."
+  def commands(commands) when is_list(commands) do
+    for %{"name" => name} = command <- commands, is_binary(name) and name != "" do
+      %{"name" => name}
+      |> Limits.put_present("description", blank_nil(command["description"]))
+      |> then(fn entry ->
+        case blank_nil(command["argumentHint"]) do
+          nil -> entry
+          hint -> Map.put(entry, "input", %{"hint" => hint})
+        end
+      end)
+    end
+    |> Enum.uniq_by(& &1["name"])
+  end
+
+  def commands(_), do: []
+
+  defp blank_nil(value) when is_binary(value),
+    do: if(String.trim(value) == "", do: nil, else: String.trim(value))
+
+  defp blank_nil(_), do: nil
 
   @plans %{
     "claudemaxsubscription" => "Max",

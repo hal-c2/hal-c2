@@ -117,14 +117,28 @@ defmodule T3.Steps.Timeline.ApprovalsAndQuestions do
   end
 
   step "the user dismisses the question", context do
-    assert {:ok, _} =
-             T3.Orchestration.dispatch(%{
-               "type" => "thread.user-input.dismiss",
-               "threadId" => World.thread_id(context, World.current(context)),
-               "requestId" => context.request_id
-             })
+    if World.fakes_feature?(context) do
+      title = World.current_thread(context)
+      request = context[:request] || World.await_request(context, title)
 
-    context
+      {:ok, _} =
+        T3.Orchestration.dispatch(%{
+          "type" => "thread.user-input.dismiss",
+          "threadId" => World.thread_id(context, title),
+          "requestId" => request["id"]
+        })
+
+      Map.put(context, :request, request)
+    else
+      assert {:ok, _} =
+               T3.Orchestration.dispatch(%{
+                 "type" => "thread.user-input.dismiss",
+                 "threadId" => World.thread_id(context, World.current(context)),
+                 "requestId" => context.request_id
+               })
+
+      context
+    end
   end
 
   step "the question is closed as dismissed", context do

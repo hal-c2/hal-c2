@@ -84,6 +84,17 @@ defmodule T3.Acp do
     end
   end
 
+  @doc """
+  A driver setting of an instance: its own `config` value, else the driver's in
+  `providers.<driver>`; blank strings count as unset.
+  """
+  def setting(id, key) do
+    with {driver, entry} <- instance(id) do
+      [get_in(entry, ["config", key]), get_in(T3.Settings.settings(), ["providers", driver, key])]
+      |> Enum.find(&(&1 not in [nil, ""] and not (is_binary(&1) and String.trim(&1) == "")))
+    end
+  end
+
   def label(instance) do
     case instance(instance) do
       {_, %{"displayName" => name}} when is_binary(name) -> name

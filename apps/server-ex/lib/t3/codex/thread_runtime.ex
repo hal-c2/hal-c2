@@ -22,12 +22,13 @@ defmodule T3.Codex.ThreadRuntime do
 
   @state_version 1
 
-  # runtimeMode -> {approvalPolicy, sandboxPolicy type}, as the Node adapter maps it.
+  # runtimeMode -> {approvalPolicy, approvalsReviewer, sandboxPolicy type}, as the Node
+  # adapter maps it. Auto lets Codex's own reviewer answer what it would ask the user.
   @runtime_policies %{
-    "approval-required" => {"untrusted", "readOnly"},
-    "auto-accept-edits" => {"on-request", "workspaceWrite"},
-    "auto" => {"on-request", "workspaceWrite"},
-    "full-access" => {"never", "dangerFullAccess"}
+    "approval-required" => {"untrusted", "user", "readOnly"},
+    "auto-accept-edits" => {"on-request", "user", "workspaceWrite"},
+    "auto" => {"on-request", "auto_review", "workspaceWrite"},
+    "full-access" => {"never", "user", "dangerFullAccess"}
   }
 
   def driver, do: "codex"
@@ -514,7 +515,7 @@ defmodule T3.Codex.ThreadRuntime do
   defp mcp(state, turn), do: T3.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids))
 
   defp start_native_turn(state, turn) do
-    {approval, sandbox} =
+    {approval, reviewer, sandbox} =
       Map.get(@runtime_policies, turn.runtime_mode, @runtime_policies["full-access"])
 
     params = %{
@@ -523,7 +524,7 @@ defmodule T3.Codex.ThreadRuntime do
       "cwd" => turn.cwd,
       "model" => turn.model,
       "approvalPolicy" => approval,
-      "approvalsReviewer" => "user",
+      "approvalsReviewer" => reviewer,
       "sandboxPolicy" => %{"type" => sandbox},
       "summary" => "detailed",
       # Always explicit: Codex keeps the last collaboration mode on a resumed thread.
@@ -537,6 +538,8 @@ defmodule T3.Codex.ThreadRuntime do
       }
     }
 
+    params = Map.merge(params, selected_options(Map.get(turn, :options, %{})))
+
     case Connection.call(state.conn, "turn/start", params) do
       {:ok, %{"turn" => %{"id" => id}}} -> {:ok, id}
       {:error, reason} -> {:error, reason, state}
@@ -546,9 +549,13 @@ defmodule T3.Codex.ThreadRuntime do
   # --- notifications ----------------------------------------------------------
 
   # Quota comes alongside token usage, mostly unchanged; it merges onto the provider entry.
+  # The merged snapshot is kept to name the used-up window when a turn stops on it.
   defp notification("account/rateLimits/updated", %{"rateLimits" => snapshot}, state) do
     T3.ProviderUsageLimits.update("codex", T3.ProviderUsageLimits.Codex.windows(snapshot))
-    state
+
+    if snapshot["limitId"] in [nil, "codex"],
+      do: Map.put(state, :rate_limits, Map.merge(Map.get(state, :rate_limits) || %{}, snapshot)),
+      else: state
   end
 
   defp notification(_method, _params, %{turn: nil} = state), do: state
@@ -626,9 +633,16 @@ defmodule T3.Codex.ThreadRuntime do
     do: complete_item(flush(state), item)
 
   defp notification("error", %{"error" => error} = params, state) do
-    if params["willRetry"] == true,
-      do: state,
-      else: %{state | failure: error["message"] || "Codex reported an error"}
+    cond do
+      params["willRetry"] == true ->
+        state
+
+      error_code(error["codexErrorInfo"]) in ["usageLimitExceeded", "rateLimitExceeded"] ->
+        %{state | failure: usage_limit_message(Map.get(state, :rate_limits), DateTime.utc_now())}
+
+      true ->
+        %{state | failure: error["message"] || "Codex reported an error"}
+    end
   end
 
   defp notification("turn/completed", %{"turn" => turn}, state) do
@@ -649,6 +663,81 @@ defmodule T3.Codex.ThreadRuntime do
   end
 
   defp notification(_method, _params, state), do: state
+
+  # The model options the user picked: reasoning effort and service tier.
+  defp selected_options(options) do
+    tier =
+      options["serviceTier"] || if(options["fastMode"] == true, do: "fast")
+
+    %{}
+    |> then(
+      &if is_binary(options["reasoningEffort"]),
+        do: Map.put(&1, "effort", options["reasoningEffort"]),
+        else: &1
+    )
+    |> then(&if is_binary(tier), do: Map.put(&1, "serviceTier", tier), else: &1)
+  end
+
+  defp error_code(code) when is_binary(code), do: code
+  defp error_code(%{} = info) when map_size(info) > 0, do: info |> Map.keys() |> hd()
+  defp error_code(_), do: nil
+
+  # Instead of Codex's own sentence (which on a workspace blames credits for a window
+  # that simply ran out): the used-up window resetting last, and what to do next.
+  defp usage_limit_message(snapshot, at) do
+    reset =
+      (snapshot || %{})
+      |> T3.ProviderUsageLimits.Codex.windows()
+      |> Enum.flat_map(fn window ->
+        with true <- window["usedPercent"] >= 100,
+             {:ok, resets, _} <- DateTime.from_iso8601(window["resetsAt"] || ""),
+             wait when wait > 0 <- DateTime.diff(resets, at, :millisecond),
+             do: [{wait, window["kind"]}],
+             else: (_ -> [])
+      end)
+      |> Enum.max_by(&elem(&1, 0), fn -> nil end)
+
+    reset =
+      case reset do
+        {wait, kind} -> " The #{kind} limit resets in #{wait_text(wait)}."
+        nil -> ""
+      end
+
+    next =
+      case (snapshot || %{})["rateLimitReachedType"] do
+        type
+        when type in ["workspace_owner_credits_depleted", "workspace_member_credits_depleted"] ->
+          " The workspace has no credits to continue sooner: ask your workspace owner to add " <>
+            "credits, or send the message again once the limit resets."
+
+        type
+        when type in [
+               "workspace_owner_usage_limit_reached",
+               "workspace_member_usage_limit_reached"
+             ] ->
+          " The workspace spend limit is reached: ask your workspace owner to raise it, or " <>
+            "send the message again once the limit resets."
+
+        _ ->
+          " Send the message again once the limit resets."
+      end
+
+    "Codex usage limit reached." <> reset <> next
+  end
+
+  # Coarse remaining wait, as the usage rows read: `5d 5h`, `3h 20m`, `12m`.
+  defp wait_text(ms) do
+    total = div(ms + 59_999, 60_000)
+    {days, hours, minutes} = {div(total, 1440), div(rem(total, 1440), 60), rem(total, 60)}
+
+    cond do
+      days > 0 and hours == 0 -> "#{days}d"
+      days > 0 -> "#{days}d #{hours}h"
+      hours == 0 -> "#{total}m"
+      minutes == 0 -> "#{hours}h"
+      true -> "#{hours}h #{minutes}m"
+    end
+  end
 
   defp complete_item(state, %{"type" => "agentMessage", "id" => native} = item) do
     finish_item(state, native, "completed", fn entity ->

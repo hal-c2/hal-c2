@@ -12,6 +12,14 @@
 # "answer" and replies with its contents, or with no message when it is empty.
 import json, os, sys, time
 
+# With FAKE_CODEX_TRACE set, every message read is appended to it as a JSON line.
+# FAKE_CODEX_MODELS is the JSON `data` model/list answers with.
+TRACE = os.environ.get("FAKE_CODEX_TRACE")
+def trace(entry):
+    if TRACE:
+        with open(TRACE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+
 def send(msg):
     sys.stdout.write(json.dumps(msg) + "\n")
     sys.stdout.flush()
@@ -58,21 +66,23 @@ paginated = os.environ.get("FAKE_CODEX_LEGACY") != "1"
 # FAKE_CODEX_PAGE_SIZE=N keeps N turns per history page; thread/revert only reaches the latest page.
 page_size = int(os.environ.get("FAKE_CODEX_PAGE_SIZE", "0"))
 turns = 0
+finishing = False  # "finishing": the turn ends as a steer for it arrives
 for line in sys.stdin:
     msg = json.loads(line)
+    trace({"in": msg})
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
     if os.environ.get("FAKE_CODEX_LOG") and method:
-        with open(os.environ["FAKE_CODEX_LOG"], "a") as log:
-            log.write(json.dumps({"method": method, "params": params}) + "\n")
+        with open(os.environ["FAKE_CODEX_LOG"], "a") as f:
+            f.write(json.dumps({"method": method, "params": params}) + "\n")
     elif os.environ.get("FAKE_CODEX_LOG") and "result" in msg:
-        with open(os.environ["FAKE_CODEX_LOG"], "a") as log:
-            log.write(json.dumps({"method": "response", "params": {"id": mid, "result": msg["result"]}}) + "\n")
+        with open(os.environ["FAKE_CODEX_LOG"], "a") as f:
+            f.write(json.dumps({"method": "response", "params": {"id": mid, "result": msg["result"]}}) + "\n")
     if mid is None:
         continue
     # FAKE_CODEX_REQUEST_LOG collects the method of every request, one per line.
     if method and os.environ.get("FAKE_CODEX_REQUEST_LOG"):
-        with open(os.environ["FAKE_CODEX_REQUEST_LOG"], "a") as log:
-            log.write(method + "\n")
+        with open(os.environ["FAKE_CODEX_REQUEST_LOG"], "a") as f:
+            f.write(method + "\n")
     # A reply to our question: say what was answered.
     if "result" in msg and mid == "input-1":
         ctx = pending_ctx
@@ -86,6 +96,10 @@ for line in sys.stdin:
         decision = msg["result"]["decision"]
         ctx = pending_ctx
         status = "completed" if decision in ("accept", "acceptForSession") else "declined"
+        if decision == "cancel":
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-1", "command": "touch x", "status": "declined", "aggregatedOutput": "", "exitCode": None}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "interrupted"}}})
+            continue
         if status == "completed":
             open("x", "w").write("approved\n")
         send({"method": "item/completed", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-1", "command": "touch x", "status": status, "aggregatedOutput": "", "exitCode": 0}}})
@@ -103,19 +117,24 @@ for line in sys.stdin:
         continue
     if method == "initialize":
         send({"id": mid, "result": {"userAgent": "fake", "platformOs": "test"}})
+    elif method == "model/list":
+        # FAKE_CODEX_MODELS replaces the default catalogue.
+        send({"id": mid, "result": {"data": json.loads(os.environ.get("FAKE_CODEX_MODELS") or "null") or [
+            {"id": "gpt-6-luna", "model": "gpt-6-luna", "displayName": "GPT-6 Luna", "isDefault": True},
+            {"id": "gpt-5.5", "model": "gpt-5.5", "displayName": "GPT-5.5", "isDefault": False}]}})
     elif method == "feedback/upload":
         send({"id": mid, "result": {"threadId": f"feedback-for-{params['threadId']}"}})
     elif method in ("thread/start", "thread/resume"):
         # FAKE_CODEX_SESSION_LOG collects each thread/start and thread/resume's params.
         if os.environ.get("FAKE_CODEX_SESSION_LOG"):
-            with open(os.environ["FAKE_CODEX_SESSION_LOG"], "a") as log:
-                log.write(json.dumps({"method": method, "params": params}) + "\n")
+            with open(os.environ["FAKE_CODEX_SESSION_LOG"], "a") as f:
+                f.write(json.dumps({"method": method, "params": params}) + "\n")
         send({"id": mid, "result": {"thread": {"id": thread_id}}})
     elif method == "turn/start":
         # FAKE_CODEX_INPUT_LOG collects every turn's input, one JSON line each.
         if os.environ.get("FAKE_CODEX_INPUT_LOG"):
-            with open(os.environ["FAKE_CODEX_INPUT_LOG"], "a") as log:
-                log.write(json.dumps(params["input"]) + "\n")
+            with open(os.environ["FAKE_CODEX_INPUT_LOG"], "a") as f:
+                f.write(json.dumps(params["input"]) + "\n")
         turns += 1
         turn_id = f"native-turn-{turns}"
         text = params["input"][0]["text"]
@@ -135,8 +154,9 @@ for line in sys.stdin:
                 send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-gate", "text": answer}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
             continue
-        if "wait" in text:
+        if "wait" in text or "finishing" in text:
             waiting_ctx = ctx
+            finishing = "finishing" in text
             continue
         if text.startswith("say "):
             say(ctx, text)
@@ -207,6 +227,42 @@ for line in sys.stdin:
             send({"id": "input-1", "method": "item/tool/requestUserInput", "params": {**ctx, "itemId": "ask-1", "questions": [
                 {"id": "color", "header": "Color", "question": text.split("ask: ", 1)[1] if "ask: " in text else "Which color?", "options": [{"label": "Red", "description": "Warm"}]}]}})
             continue
+        if "rate limit" in text:
+            send({"method": "account/rateLimits/updated", "params": {"rateLimits": {"limitId": "codex", "primary": {"usedPercent": 77, "windowDurationMins": 300}}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
+            continue
+        # "usage limit" stops the turn on a used-up weekly window resetting in 5d 5h;
+        # FAKE_CODEX_REACHED is the snapshot's rateLimitReachedType.
+        if "usage limit" in text:
+            import time
+            snapshot = {"limitId": "codex", "planType": "pro", "primary": {"usedPercent": 40, "windowDurationMins": 300, "resetsAt": int(time.time()) + 3600},
+                        "secondary": {"usedPercent": 100, "windowDurationMins": 10080, "resetsAt": int(time.time()) + 5 * 86400 + 5 * 3600 - 30}}
+            if os.environ.get("FAKE_CODEX_REACHED"):
+                snapshot["rateLimitReachedType"] = os.environ["FAKE_CODEX_REACHED"]
+            send({"method": "account/rateLimits/updated", "params": {"rateLimits": snapshot}})
+            send({"method": "error", "params": {**ctx, "willRetry": False, "error": {"message": "You've hit your usage limit.", "codexErrorInfo": "usageLimitExceeded"}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "failed", "error": {"message": "You've hit your usage limit."}}}})
+            continue
+        # "approve file" asks to change a file, "approve permissions" to widen the sandbox.
+        if "approve file" in text:
+            pending_ctx = ctx
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "fileChange", "id": "cmd-1", "changes": [{"path": "x", "kind": {"type": "add"}, "diff": "approved"}], "status": "inProgress"}}})
+            send({"id": "approval-1", "method": "item/fileChange/requestApproval", "params": {**ctx, "itemId": "cmd-1", "reason": "write x"}})
+            continue
+        if "approve permissions" in text:
+            pending_ctx = ctx
+            send({"id": "approval-1", "method": "item/permissions/requestApproval", "params": {**ctx, "itemId": "perm-1", "reason": "network access", "permissions": {"network": True}}})
+            continue
+        # In auto, Codex's own reviewer approves the command instead of asking the client.
+        if "approve" in text and params.get("approvalsReviewer") == "auto_review":
+            review = {**ctx, "reviewId": "review-1", "targetItemId": "cmd-1", "action": {"type": "command", "command": "touch x"}, "startedAtMs": 0}
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-1", "command": "touch x", "status": "inProgress"}}})
+            send({"method": "item/autoApprovalReview/started", "params": {**review, "review": {"status": "inProgress"}}})
+            send({"method": "item/autoApprovalReview/completed", "params": {**review, "review": {"status": "approved"}, "decisionSource": "agent", "completedAtMs": 0}})
+            open("x", "w").write("approved\n")
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-1", "command": "touch x", "status": "completed", "aggregatedOutput": "", "exitCode": 0}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
+            continue
         if "approve" in text:
             pending_ctx = ctx
             send({"method": "item/started", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-1", "command": "touch x", "status": "inProgress"}}})
@@ -222,6 +278,12 @@ for line in sys.stdin:
         send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
     elif method == "turn/steer":
         ctx = waiting_ctx
+        if finishing:
+            # The turn ended before the steer got there.
+            finishing = False
+            send({"id": mid, "error": {"code": -32600, "message": "no active turn to steer"}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
+            continue
         if params["expectedTurnId"] != ctx["turnId"] or os.path.exists(os.environ.get("FAKE_CODEX_REJECT_STEER", "/nonexistent")):
             send({"id": mid, "error": {"code": -32600, "message": "turn moved on"}})
             continue
@@ -230,6 +292,9 @@ for line in sys.stdin:
             say(ctx, params["input"][0]["text"])
             continue
         text = "steered: " + params["input"][0]["text"]
+        # A running turn passes on a new quota reading, as Codex does alongside token usage.
+        if "rate limit" in text:
+            send({"method": "account/rateLimits/updated", "params": {"rateLimits": {"limitId": "codex", "primary": {"usedPercent": 77, "windowDurationMins": 300}}}})
         send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-steer", "text": ""}}})
         send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-steer", "text": text}}})
         send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
@@ -257,35 +322,37 @@ for line in sys.stdin:
     # FAKE_CODEX_RESET_CREDITS sets how many reset credits are banked (default two);
     # FAKE_CODEX_CONSUME_OUTCOME is what a redemption answers (default "reset").
     elif method == "account/rateLimits/read":
+        # After a successful redemption the session window starts over and one credit is gone.
+        consumed = os.environ.get("FAKE_CODEX_CONSUME_LOG")
+        reset = bool(consumed) and os.path.exists(consumed + ".reset")
         count = os.environ.get("FAKE_CODEX_RESET_CREDITS")
         if count is None:
-            credits = {"availableCount": 2, "credits": [
+            credits = {"availableCount": 1 if reset else 2, "credits": [
                 {"status": "available", "expiresAt": 1800000000},
-                {"status": "available", "expiresAt": 1795000000},
+                {"status": "redeemed" if reset else "available", "expiresAt": 1795000000},
                 {"status": "redeemed", "expiresAt": 1700000000}]}
         else:
             credits = {"availableCount": int(count), "credits": [
                 {"status": "available", "expiresAt": 1800000000 + i} for i in range(int(count))]}
         main = {"limitId": "codex", "planType": "pro",
-                "primary": {"usedPercent": 42, "windowDurationMins": 300, "resetsAt": 1790000000},
+                "primary": {"usedPercent": 0 if reset else 42, "windowDurationMins": 300, "resetsAt": 1790000000},
                 "secondary": {"usedPercent": 10.5, "resetsAt": 1790500000}}
         send({"id": mid, "result": {
             "rateLimits": {"limitId": "codex_spark", "primary": {"usedPercent": 99}},
             "rateLimitsByLimitId": {"codex": main, "codex_spark": {"limitId": "codex_spark", "primary": {"usedPercent": 99}}},
             "rateLimitResetCredits": credits}})
     elif method == "account/rateLimitResetCredit/consume":
-        with open(os.environ["FAKE_CODEX_CONSUME_LOG"], "a") as log:
-            log.write(params["idempotencyKey"] + "\n")
+        with open(os.environ["FAKE_CODEX_CONSUME_LOG"], "a") as f:
+            f.write(params["idempotencyKey"] + "\n")
         flag = os.environ.get("FAKE_CODEX_CONSUME_FAIL", "")
         if flag and os.path.exists(flag):
             os.remove(flag)
             send({"id": mid, "error": {"code": -32000, "message": "upstream unavailable"}})
         else:
-            send({"id": mid, "result": {"outcome": os.environ.get("FAKE_CODEX_CONSUME_OUTCOME", "reset")}})
-    elif method == "model/list":
-        send({"id": mid, "result": {"data": [
-            {"id": "gpt-6-luna", "model": "gpt-6-luna", "displayName": "GPT-6 Luna", "isDefault": True},
-            {"id": "gpt-5.5", "model": "gpt-5.5", "displayName": "GPT-5.5", "isDefault": False}]}})
+            outcome = os.environ.get("FAKE_CODEX_CONSUME_OUTCOME", "reset")
+            if outcome == "reset":
+                open(os.environ["FAKE_CODEX_CONSUME_LOG"] + ".reset", "w").close()
+            send({"id": mid, "result": {"outcome": outcome}})
     elif method == "turn/interrupt":
         send({"id": mid, "result": {}})
         send({"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": params["turnId"], "status": "interrupted"}}})

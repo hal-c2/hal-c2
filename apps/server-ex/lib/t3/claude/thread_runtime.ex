@@ -22,12 +22,17 @@ defmodule T3.Claude.ThreadRuntime do
 
   @state_version 4
 
+  @signed_out "Claude could not authenticate. For subscription login, run `claude auth login` " <>
+                "on this environment's machine, then start a new thread. For API-key " <>
+                "authentication, check this instance's configured credentials."
+
   # runtimeMode -> the CLI's permission mode; prompts it raises become approval
-  # requests the user answers in the client.
+  # requests the user answers in the client. In auto, Claude Code's classifier
+  # decides what it would otherwise ask.
   @permission_modes %{
     "full-access" => "bypassPermissions",
     "auto-accept-edits" => "acceptEdits",
-    "auto" => "acceptEdits",
+    "auto" => "auto",
     "approval-required" => "default"
   }
 
@@ -497,6 +502,13 @@ defmodule T3.Claude.ThreadRuntime do
     # The last assistant message is where a rollback to this turn resumes.
     state = if message["uuid"], do: put_in(state.turn[:head], message["uuid"]), else: state
 
+    # A signed-out CLI answers with an auth error; the turn fails with how to sign in.
+    state =
+      if message["error"] == "authentication_failed" and message["parent_tool_use_id"] == nil and
+           state.turn != nil,
+         do: put_in(state.turn[:auth_failure], @signed_out),
+         else: state
+
     content
     |> Enum.with_index()
     |> Enum.reduce(flush(state), fn {block, index}, state ->
@@ -531,7 +543,9 @@ defmodule T3.Claude.ThreadRuntime do
         true -> "completed"
       end
 
-    failure = if status == "failed", do: failure(result, state.turn)
+    failure =
+      if status == "failed", do: state.turn[:auth_failure] || failure(result, state.turn)
+
     end_turn(state, status, failure)
   end
 
