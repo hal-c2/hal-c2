@@ -8,9 +8,24 @@ import type {
 } from "@hal-c2/contracts/shell";
 
 import type { OrchestrationShellSnapshot } from "../connection.ts";
-import type { Row, SidebarSection } from "../components/Sidebar.logic.ts";
+import { LIST_PANE_WIDTH } from "../components/ChatView.layout.ts";
+import {
+  type Row,
+  type Selection,
+  selectionEquals,
+  type SidebarSection,
+} from "../components/Sidebar.logic.ts";
+import { padClip } from "../format.ts";
 import type { TuiThreadShell } from "../orchestrationV2Adapter.ts";
-import { relativeTime, resolveProjectStatus, resolveThreadStatus } from "../theme.ts";
+import {
+  ansi,
+  relativeTime,
+  resolveProjectStatus,
+  resolveThreadStatus,
+  THEME,
+  type Palette,
+} from "../theme.ts";
+import { chunk, styled, type StyledText } from "./styledText.ts";
 
 /**
  * The TUI talks to one environment, so every key is scoped to this id. It
@@ -39,30 +54,69 @@ export interface TuiSidebarThread extends ShellSidebarThread {
   readonly glyphColor: string;
 }
 
-/** One visible sidebar line, in paint order, for a `Repeater`. */
-export type TuiSidebarRow =
-  | {
-      readonly kind: "thread";
-      readonly key: string;
-      readonly selected: boolean;
-      readonly thread: TuiSidebarThread;
-    }
-  | {
-      readonly kind: "section";
-      readonly key: string;
-      readonly section: Exclude<SidebarSection, "active">;
-      readonly title: string;
-      readonly count: number;
-      readonly expanded: boolean;
-    }
-  | { readonly kind: "more"; readonly key: string; readonly hiddenCount: number }
-  | {
-      readonly kind: "draft";
-      readonly key: string;
-      readonly selected: boolean;
-      readonly draft: ShellSidebarDraft;
-      readonly projectName: string;
-    };
+/** What every list row carries: its painted lines and where it sits in the list. */
+interface RowLines {
+  /** The row's lines as the OpenTUI client draws them (Sidebar.tsx). */
+  readonly lines: ReadonlyArray<StyledText>;
+  /** Its first line, counted from the top of the list. */
+  readonly top: number;
+}
+
+/** One sidebar row, in paint order: a thread (a card when active), a shelf header, "Show more". */
+export type TuiSidebarRow = RowLines &
+  (
+    | {
+        readonly kind: "thread";
+        readonly key: string;
+        readonly selected: boolean;
+        readonly thread: TuiSidebarThread;
+      }
+    | {
+        readonly kind: "section";
+        readonly key: string;
+        readonly selected: boolean;
+        readonly section: Exclude<SidebarSection, "active">;
+        readonly title: string;
+        readonly count: number;
+        readonly expanded: boolean;
+      }
+    | {
+        readonly kind: "more";
+        readonly key: string;
+        readonly selected: boolean;
+        readonly hiddenCount: number;
+      }
+    | {
+        readonly kind: "draft";
+        readonly key: string;
+        readonly selected: boolean;
+        readonly draft: ShellSidebarDraft;
+        readonly projectName: string;
+      }
+  );
+
+/** A row before it is placed in the list. */
+type UnplacedRow = TuiSidebarRow extends infer Placed
+  ? Placed extends TuiSidebarRow
+    ? Omit<Placed, "top">
+    : never
+  : never;
+
+/** One screen line of the list viewport, for the list's `Repeater`. */
+export interface TuiSidebarLine {
+  readonly kind: TuiSidebarRow["kind"];
+  /** The row's key: a thread key, a section id, the more row's or the draft's key. */
+  readonly key: string;
+  /** The shelf a section header toggles. */
+  readonly section: string | null;
+  /** Which line of its row this is (an active card has four). */
+  readonly part: number;
+  readonly text: StyledText;
+  /** Inside an active thread's card: padded one cell each side. */
+  readonly card: boolean;
+  /** The selected card's selection background. */
+  readonly highlight: boolean;
+}
 
 /** A project plus its most urgent thread status (null glyph when every thread is idle). */
 export interface TuiSidebarProject extends ShellSidebarProject {
@@ -79,15 +133,18 @@ export interface TuiSidebarState extends ShellSidebarState {
   readonly projects: ReadonlyArray<TuiSidebarProject>;
   readonly rows: ReadonlyArray<TuiSidebarRow>;
   readonly filter: string;
-  /** The slice of `rows` that fits the list's height, scrolled to keep the selection in view. */
+  /** The rows at least partly inside the list viewport. */
   readonly visibleRows: ReadonlyArray<TuiSidebarRow>;
-  /** Index into `rows` of the first visible row. */
+  /** The viewport's lines, scrolled to keep the selection in view. */
+  readonly lines: ReadonlyArray<TuiSidebarLine>;
+  /** The first line on screen, counted from the top of the list. */
   readonly scrollTop: number;
-  /** Rows hidden above and below the visible slice. */
-  readonly hiddenAbove: number;
-  readonly hiddenBelow: number;
+  /** The list viewport's height in lines. */
+  readonly listRows: number;
   /** "All projects" or the scoped project's name. */
   readonly scopeLabel: string;
+  /** The project row: "Project <scope> ▾", clipped to the pane. */
+  readonly scopeLine: StyledText;
 }
 
 export interface TuiSidebarStateInput {
@@ -95,6 +152,8 @@ export interface TuiSidebarStateInput {
   /** `buildRows` output: already filtered, bucketed and sorted. */
   readonly rows: ReadonlyArray<Row>;
   readonly selectedThreadId: string | null;
+  /** The store's selection, when it rests on a shelf header or "Show more". */
+  readonly selection?: Selection | null;
   readonly projectScopeId: string | null;
   readonly filter: string;
   readonly now: string;
@@ -102,10 +161,15 @@ export interface TuiSidebarStateInput {
   readonly settlementSupported?: boolean;
   /** An open new-thread draft, listed above the threads. */
   readonly draft?: { readonly draftId: string; readonly projectId: string } | null;
-  /** Rows the list can show at once; unbounded when omitted. */
+  /** Lines the list can show at once; unbounded when omitted. */
   readonly viewportRows?: number;
-  /** The previous scroll offset, kept unless the selection left the view. */
+  /** The previous scroll offset in lines, kept unless the selection left the view. */
   readonly scrollTop?: number;
+  /** Scroll the selection back into view (default); false keeps a wheel-scrolled offset. */
+  readonly followSelection?: boolean;
+  /** The sidebar's width in cells (the list pane's by default). */
+  readonly width?: number;
+  readonly palette?: Palette;
 }
 
 function sidebarStatus(thread: TuiThreadShell): ShellSidebarThreadStatus {
@@ -164,63 +228,163 @@ function toSidebarThread(
   };
 }
 
+/** The lines of one list row, as Sidebar.tsx draws them at `innerWidth` cells. */
+function rowLines(
+  row: Row,
+  selected: boolean,
+  innerWidth: number,
+  nowMs: number,
+  palette: Palette,
+): StyledText[] {
+  if (row.kind === "section") {
+    const fg = row.section === "snoozed" || selected ? palette.accent : palette.dim;
+    const count = row.expanded ? "" : ` (${row.count})`;
+    return [
+      styled(
+        chunk(`${selected ? "▌" : " "} ${row.expanded ? "▾" : "▸"} ${row.title}${count} ─`, { fg }),
+      ),
+    ];
+  }
+  if (row.kind === "more") {
+    return [
+      styled(
+        chunk(`  ${selected ? "▶" : "+"} Show ${Math.min(row.hiddenCount, 25)} more`, {
+          fg: selected ? palette.accent : palette.dim,
+        }),
+      ),
+    ];
+  }
+  const status = resolveThreadStatus(row.thread);
+  const time = relativeTime(row.timestamp, nowMs);
+  const marker = chunk(selected ? "▌ " : "  ", { fg: palette.accent });
+  const dot = chunk(status.glyph, { fg: ansi(status.color) });
+  if (row.section !== "active") {
+    const titleBudget = Math.max(1, innerWidth - 4 - time.length - 1);
+    return [
+      styled(
+        marker,
+        dot,
+        chunk(` ${padClip(row.thread.title, titleBudget)}`, { fg: palette.text }),
+        chunk(` ${time}`, { fg: palette.dim }),
+      ),
+    ];
+  }
+  const contentWidth = Math.max(6, innerWidth - 2);
+  const idle = status.key === "idle";
+  const topTrailing = idle ? time : status.label;
+  const projectBudget = Math.max(1, contentWidth - 5 - Bun.stringWidth(topTrailing));
+  const textBudget = Math.max(1, contentWidth - 2);
+  return [
+    styled(
+      marker,
+      dot,
+      chunk(` ${padClip(row.projectTitle, projectBudget)} `, { fg: palette.dim }),
+      chunk(topTrailing, { fg: idle ? palette.dim : ansi(status.color) }),
+    ),
+    styled(
+      chunk("  ", { fg: palette.text }),
+      chunk(padClip(row.thread.title, textBudget), { fg: palette.text, bold: true }),
+    ),
+    styled(
+      row.thread.branch
+        ? chunk(`  ${padClip(row.thread.branch, textBudget)}`, { fg: palette.dim })
+        : null,
+    ),
+    styled(),
+  ];
+}
+
 /** Port of the web's `buildShellSidebarState` onto the TUI's `buildRows`. */
 export function buildTuiSidebarState(input: TuiSidebarStateInput): TuiSidebarState {
   const { shell, now } = input;
+  const palette = input.palette ?? THEME;
+  const nowMs = Date.parse(now);
+  const innerWidth = Math.max(8, (input.width ?? LIST_PANE_WIDTH) - 4);
+  const draft = input.draft ?? null;
+  const selection = input.selection ?? null;
   const byBucket: Record<SidebarSection, TuiSidebarThread[]> = {
     active: [],
     snoozed: [],
     settled: [],
   };
   let settledTotal = 0;
-  const listed: TuiSidebarRow[] = input.rows.map((row) => {
+  // With a draft open, no thread row reads as the open one.
+  const isSelected = (row: Row) =>
+    row.kind === "thread"
+      ? !draft && row.id === input.selectedThreadId
+      : selectionEquals(selection, row);
+  const listed = input.rows.map((row): UnplacedRow => {
+    const selected = isSelected(row);
+    const lines = rowLines(row, selected, innerWidth, nowMs, palette);
     switch (row.kind) {
       case "thread": {
         const thread = toSidebarThread(row, now, input.settlementSupported ?? true);
         byBucket[row.section].push(thread);
-        return {
-          kind: "thread",
-          key: thread.key,
-          selected: row.id === input.selectedThreadId,
-          thread,
-        };
+        return { kind: "thread", key: thread.key, selected, thread, lines };
       }
       case "section":
         if (row.section === "settled") settledTotal = row.count;
         return {
           kind: "section",
           key: row.id,
+          selected,
           section: row.section,
           title: row.title,
           count: row.count,
           expanded: row.expanded,
+          lines,
         };
       case "more":
-        return { kind: "more", key: `${row.id}:more`, hiddenCount: row.hiddenCount };
+        return {
+          kind: "more",
+          key: `${row.id}:more`,
+          selected,
+          hiddenCount: row.hiddenCount,
+          lines,
+        };
     }
   });
 
-  const draft = input.draft ?? null;
   const drafts: ShellSidebarDraft[] = draft
     ? [{ draftId: draft.draftId, projectKey: projectKey(draft.projectId), label: "New thread" }]
     : [];
   const projectTitle = (id: string) =>
     shell?.projects.find((project) => project.id === id)?.title ?? id;
-  const rows: TuiSidebarRow[] = [
-    ...drafts.map((entry): TuiSidebarRow => ({
-      kind: "draft",
-      key: `draft:${entry.draftId}`,
-      selected: true,
-      draft: entry,
-      projectName: projectTitle(draft!.projectId),
-    })),
-    // With a draft open, no thread row reads as the open one.
-    ...(draft
-      ? listed.map((row) => (row.kind === "thread" ? { ...row, selected: false } : row))
-      : listed),
+  const unplaced: UnplacedRow[] = [
+    ...drafts.map((entry): UnplacedRow => {
+      const projectName = projectTitle(draft!.projectId);
+      return {
+        kind: "draft",
+        key: `draft:${entry.draftId}`,
+        selected: true,
+        draft: entry,
+        projectName,
+        lines: [
+          styled(
+            chunk(padClip(`▌+ ${entry.label} · ${projectName}`, innerWidth), {
+              fg: palette.accent,
+            }),
+          ),
+        ],
+      };
+    }),
+    ...listed,
   ];
-  const window = scrollWindow(rows, input.viewportRows, input.scrollTop ?? 0);
+  let top = 0;
+  const rows = unplaced.map((row): TuiSidebarRow => {
+    const placed = { ...row, top };
+    top += row.lines.length;
+    return placed;
+  });
+  const window = scrollWindow(
+    rows,
+    input.viewportRows,
+    input.scrollTop ?? 0,
+    input.followSelection ?? true,
+  );
 
+  const scopeLabel =
+    input.projectScopeId === null ? "All projects" : projectTitle(input.projectScopeId);
   const threadCount = new Map<string, number>();
   for (const thread of shell?.threads ?? []) {
     if (thread.archivedAt != null) continue;
@@ -270,31 +434,57 @@ export function buildTuiSidebarState(input: TuiSidebarStateInput): TuiSidebarSta
     rows,
     filter: input.filter,
     ...window,
-    scopeLabel: input.projectScopeId === null ? "All projects" : projectTitle(input.projectScopeId),
+    scopeLabel,
+    scopeLine: styled(
+      chunk("Project ", { fg: palette.dim }),
+      chunk(padClip(scopeLabel, Math.max(1, innerWidth - 12)), {
+        fg: scopeLabel === "All projects" ? palette.text : palette.accent,
+      }),
+      chunk(" ▾", { fg: palette.dim }),
+    ),
   };
 }
 
 /**
- * Keep the selected row inside a `viewportRows`-tall window: scroll only when
- * the selection would leave it, and never past the end of the list.
+ * The list viewport, scrolled like the OpenTUI client's scrollbox: only when
+ * the selected row would leave it (to its top edge going up, its bottom edge
+ * going down), and never past the end of the list.
  */
 export function scrollWindow(
   rows: ReadonlyArray<TuiSidebarRow>,
   viewportRows: number | undefined,
   previousTop: number,
-): Pick<TuiSidebarState, "visibleRows" | "scrollTop" | "hiddenAbove" | "hiddenBelow"> {
-  const viewport = viewportRows === undefined ? rows.length : Math.max(1, viewportRows);
-  let top = Math.max(0, Math.min(previousTop, rows.length - viewport));
-  const selected = rows.findIndex((row) => "selected" in row && row.selected);
-  if (selected >= 0) {
-    if (selected < top) top = selected;
-    else if (selected >= top + viewport) top = selected - viewport + 1;
+  followSelection = true,
+): Pick<TuiSidebarState, "visibleRows" | "lines" | "scrollTop" | "listRows"> {
+  const total = rows.reduce((sum, row) => sum + row.lines.length, 0);
+  const viewport = viewportRows === undefined ? Math.max(1, total) : Math.max(1, viewportRows);
+  let scrollTop = Math.max(0, Math.min(previousTop, total - viewport));
+  const selected = followSelection ? rows.find((row) => row.selected) : undefined;
+  if (selected) {
+    const bottom = selected.top + selected.lines.length;
+    if (selected.top < scrollTop) scrollTop = selected.top;
+    else if (bottom > scrollTop + viewport) scrollTop = bottom - viewport;
   }
-  const visibleRows = rows.slice(top, top + viewport);
-  return {
-    visibleRows,
-    scrollTop: top,
-    hiddenAbove: top,
-    hiddenBelow: Math.max(0, rows.length - top - visibleRows.length),
-  };
+  const end = scrollTop + viewport;
+  const visibleRows = rows.filter((row) => row.top < end && row.top + row.lines.length > scrollTop);
+  const lines: TuiSidebarLine[] = [];
+  for (const row of visibleRows) {
+    const card = row.kind === "thread" && row.thread.section === "active";
+    row.lines.forEach((text, part) => {
+      const at = row.top + part;
+      if (at < scrollTop || at >= end) return;
+      // The card's padded box is its first three lines; the fourth is a gap.
+      const inCard = card && part < 3;
+      lines.push({
+        kind: row.kind,
+        key: row.key,
+        section: row.kind === "section" ? row.section : null,
+        part,
+        text,
+        card: inCard,
+        highlight: inCard && row.selected,
+      });
+    });
+  }
+  return { visibleRows, lines, scrollTop, listRows: viewport };
 }

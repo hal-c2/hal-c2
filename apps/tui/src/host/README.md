@@ -15,10 +15,12 @@ groups and the web parity table), `plugins`, `problems`, `connection` (see
 "Plugins, problems and connection"), `graphics`, and the open thread's keys
 from `threadView.ts` (below).
 
-- `sidebar` adds the list viewport (`visibleRows`, `scrollTop`,
-  `hiddenAbove`/`hiddenBelow`), `scopeLabel`, and a `draft` row while a
-  new-thread draft is open. Section rows toggle their shelf; the "more" row
-  pages the settled shelf.
+- `sidebar` adds each row's painted `lines` (an active thread is a four-line
+  card, as in the OpenTUI client), the list viewport (`lines`, `listRows`,
+  `scrollTop`, counted in lines; `sidebar.scroll` moves it without following
+  the selection), `scopeLabel`/`scopeLine` for the project row, and a `draft`
+  row while a new-thread draft is open. Section rows toggle their shelf; the
+  "more" row pages the settled shelf.
 - `layout` adds the extension slots a shell fills: `rightPanel`
   (`visible`, `focused`, `kind`, `asMain`, `width`;
   `ShellWindow.rightPanelComponent`, which loads only while visible)

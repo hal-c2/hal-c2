@@ -5,7 +5,7 @@ import type { CapturedSpan } from "@opentui/core";
 
 import { findObject, snapshot, type World } from "./world.ts";
 
-interface Rect {
+export interface Rect {
   readonly x: number;
   readonly y: number;
   readonly width: number;
@@ -39,14 +39,40 @@ async function cells(ctx: World): Promise<Array<Array<{ text: string; span: Capt
 
 /** The rows the object covers, cut to its columns. */
 export async function objectRows(ctx: World, objectName: string): Promise<string[]> {
+  // Render first: the object's place is only current after the frame.
+  await cells(ctx);
+  return regionRows(ctx, rectOf(ctx, objectName));
+}
+
+/** The rows of a screen region, cut to its columns. */
+export async function regionRows(ctx: World, rect: Rect): Promise<string[]> {
   const rows = await cells(ctx);
-  const rect = rectOf(ctx, objectName);
   return rows.slice(rect.y, rect.y + rect.height).map((row) =>
     row
       .slice(rect.x, rect.x + rect.width)
       .map((cell) => cell.text)
       .join(""),
   );
+}
+
+/** Where `text` first starts inside a screen region, with the style of its first cell. */
+export async function textWithin(
+  ctx: World,
+  rect: Rect,
+  text: string,
+): Promise<{ x: number; y: number; span: CapturedSpan }> {
+  const rows = await cells(ctx);
+  for (let y = rect.y; y < rect.y + rect.height; y += 1) {
+    const row = rows[y] ?? [];
+    for (let x = rect.x; x < rect.x + rect.width; x += 1) {
+      const rest = row
+        .slice(x, x + text.length * 2)
+        .map((cell) => cell.text)
+        .join("");
+      if (rest.startsWith(text)) return { x, y, span: row[x]!.span };
+    }
+  }
+  throw new Error(`"${text}" is not inside ${JSON.stringify(rect)}`);
 }
 
 /** Right-trimmed, blank ends dropped, common indent removed. */

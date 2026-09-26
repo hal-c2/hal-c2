@@ -1,10 +1,22 @@
 // Thread list, selection and thread lifecycle from the sidebar:
 // features/tui/threads.feature and the @tui scenarios of features/threads/.
 import { expect } from "bun:test";
+import { TextAttributes } from "@opentui/core";
 
 import type { TuiNewThreadState, TuiSelectState } from "../../../src/host/composerState.ts";
 import type { TuiOverlayState } from "../../../src/host/threadActions.ts";
+import { ansi, THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
+import {
+  block,
+  cellAt,
+  expectColour,
+  objectRows,
+  rectOf,
+  regionRows,
+  textWithin,
+  type Rect,
+} from "../design.ts";
 import { focusPanel } from "../gitWorld.ts";
 import {
   addProject,
@@ -32,6 +44,8 @@ import {
   palette,
   rename,
   rightClick,
+  listOrigin,
+  rowLineYs,
   rowPosition,
   runCommand,
   selectThread,
@@ -399,7 +413,7 @@ async function expectOnlyFrom(ctx: World, project: string, match = ""): Promise<
   expect(expected.length).toBeGreaterThan(0);
   expect(listedTitles(ctx).toSorted()).toEqual(expected.toSorted());
   const screen = await snapshot(ctx);
-  expect(screen).toContain(`Threads · ${project}`);
+  expect(screen).toContain(`Project ${project}`);
   for (const other of env(ctx).threads.filter((thread) => !expected.includes(thread.title))) {
     expect(screen).not.toContain(other.title);
   }
@@ -486,7 +500,7 @@ step("more threads than fit on screen", (ctx: World) => {
 
 step("the user moves to the next thread past the bottom edge", async (ctx: World) => {
   await ui(ctx);
-  const visible = sidebar(ctx).visibleRows.length;
+  const visible = threadRows(ctx, sidebar(ctx).visibleRows).length;
   const firstSelected = threadRows(ctx).findIndex((row) => row.selected);
   for (let i = firstSelected; i < visible; i += 1) await pressKey(ctx, "Alt+Down");
   await flush(ctx);
@@ -630,9 +644,14 @@ step("a thread near the bottom right of the terminal", async (ctx: ThreadsWorld)
   await ui(ctx);
   // On a narrow terminal the list opens across the whole width.
   await pressKey(ctx, "Ctrl+F");
-  const rows = sidebar(ctx).visibleRows;
-  const last = rows[rows.length - 1]!;
-  if (last.kind !== "thread") throw new Error("the last row on screen is not a thread");
+  // The last thread whose title line is on screen (a card may be cut at the bottom).
+  const onScreen = new Set(sidebar(ctx).lines.map((line) => line.key));
+  const rows = threadRows(ctx, sidebar(ctx).visibleRows).filter((row) => {
+    const titlePart = row.thread.section === "active" ? 1 : 0;
+    return sidebar(ctx).lines.some((line) => line.key === row.key && line.part === titlePart);
+  });
+  const last = rows.at(-1);
+  if (!last || !onScreen.has(last.key)) throw new Error("no thread is on screen");
   ctx.subject = last.thread.title;
 });
 
@@ -1063,8 +1082,12 @@ step("the agent is working in {string}", (ctx: ThreadsWorld, title: string) => {
 
 step("the row for {string} reads {string}", async (ctx: World, title: string, label: string) => {
   expect(listedRow(ctx, title)?.thread.statusLabel).toBe(label);
-  const { y } = rowPosition(ctx, title);
-  expect((await snapshot(ctx)).split("\n")[y]).toContain(label);
+  const lines = (await snapshot(ctx)).split("\n");
+  expect(
+    rowLineYs(ctx, title)
+      .map((y) => lines[y])
+      .join("\n"),
+  ).toContain(label);
 });
 
 // --- New thread -------------------------------------------------------------
@@ -1102,7 +1125,7 @@ step("the draft is listed at the top of the thread list", async (ctx: World) => 
   const [first] = sidebar(ctx).rows;
   expect(first?.kind).toBe("draft");
   expect(sidebar(ctx).activeDraftId).toBe(draft(ctx)!.draftId);
-  expect((await snapshot(ctx)).split("\n")[2]).toContain("+ New thread");
+  expect((await snapshot(ctx)).split("\n")[listOrigin(ctx).y]).toContain("+ New thread");
 });
 
 step("the current thread is on the branch {string}", (ctx: ThreadsWorld, branch: string) => {
@@ -1237,4 +1260,298 @@ step("the thread is not started", (ctx: World) => {
 step("the user is told to pick a base branch", async (ctx: World) => {
   expect(statusText(ctx)).toBe("Select a base branch before creating a new worktree.");
   expect(await snapshot(ctx)).toContain("Select a base branch");
+});
+
+// --- The OpenTUI client's look ---------------------------------------------
+
+type Colour = keyof typeof THEME;
+const colour = (name: string) => THEME[name as Colour];
+const picker = (ctx: World) => ctx.host!.state.get("select") as TuiSelectState;
+
+/** The thread list's rows inside its border. */
+async function sidebarInner(ctx: World): Promise<string[]> {
+  const rows = await objectRows(ctx, "sidebar");
+  return rows.slice(1, -1).map((row) => [...row].slice(1, -1).join(""));
+}
+
+/** The region of `title`'s row on screen: a card's three lines, or one line. */
+function rowRegion(ctx: World, title: string, lines?: number): Rect {
+  const ys = rowLineYs(ctx, title);
+  if (ys.length === 0) throw new Error(`"${title}" is not on screen in the thread list`);
+  const list = rectOf(ctx, "sidebarList");
+  const card = listedRow(ctx, title)?.thread.section === "active";
+  return { x: list.x, y: ys[0]!, width: list.width, height: lines ?? (card ? 3 : 1) };
+}
+
+step("the top of the thread list reads:", async (ctx: World, expected: string) => {
+  await ui(ctx);
+  const inner = await sidebarInner(ctx);
+  const heading = inner.findIndex((row) => row.trim() === "Threads");
+  expect(heading).toBeGreaterThanOrEqual(0);
+  expect(block(inner.slice(0, heading + 1))).toBe(block(expected.split("\n")));
+});
+
+async function expectRoundedBorder(ctx: World, rect: Rect, name: string): Promise<void> {
+  const { x, y, width, height } = rect;
+  for (const [cx, cy, glyph] of [
+    [x, y, "╭"],
+    [x + width - 1, y, "╮"],
+    [x, y + height - 1, "╰"],
+    [x + width - 1, y + height - 1, "╯"],
+  ] as const) {
+    const cell = await cellAt(ctx, cx, cy);
+    expect(cell.text).toBe(glyph);
+    expectColour(cell.span.fg, colour(name));
+  }
+}
+
+step("the thread list has a rounded border in the faint colour", async (ctx: World) => {
+  await expectRoundedBorder(ctx, rectOf(ctx, "sidebar"), "faint");
+});
+
+step(/^"([^"]*)" is bold in the (\w+) colour$/, async (ctx: World, text: string, name: string) => {
+  const at = await textWithin(ctx, rectOf(ctx, "sidebar"), text);
+  expectColour(at.span.fg, colour(name));
+  expect(at.span.attributes & TextAttributes.BOLD).toBeTruthy();
+});
+
+step(
+  /^the search box's border and "([^"]*)" are in the accent colour$/,
+  async (ctx: World, glyph: string) => {
+    await settle(ctx);
+    const box = rectOf(ctx, "sidebarSearch");
+    await expectRoundedBorder(ctx, box, "accent");
+    expectColour((await textWithin(ctx, box, glyph)).span.fg, THEME.accent);
+  },
+);
+
+step(
+  /^the search field's placeholder reads "([^"]*)" in the dim colour$/,
+  async (ctx: World, text: string) => {
+    expectColour((await textWithin(ctx, rectOf(ctx, "sidebarFilter"), text)).span.fg, THEME.dim);
+  },
+);
+
+step("the search field has the keys", async (ctx: World) => {
+  expect(ctx.host!.state.get("mode")).toBe("filter");
+  await typeText(ctx, "Al");
+  await flush(ctx);
+  expect(sidebar(ctx).filter).toBe("Al");
+});
+
+step(
+  /^a "([^"]*)" picker offers "([^"]*)", "([^"]*)" and "([^"]*)"$/,
+  async (ctx: World, title: string, ...labels: string[]) => {
+    await settle(ctx);
+    const select = picker(ctx);
+    expect(select.open).toBe(true);
+    expect(select.title).toBe(title);
+    expect(select.options.map((option) => option.label)).toEqual(labels);
+    const screen = await snapshot(ctx);
+    for (const label of labels) expect(screen).toContain(label);
+  },
+);
+
+step("{string} is described as {string}", async (ctx: World, label: string, text: string) => {
+  expect(picker(ctx).options.find((option) => option.label === label)?.description).toBe(text);
+  expect(await snapshot(ctx)).toContain(text);
+});
+
+step("the user chooses {string} in the picker", async (ctx: World, label: string) => {
+  await settle(ctx);
+  const select = picker(ctx);
+  const index = select.options.findIndex((option) => option.label === label);
+  expect(index, `no "${label}" in the picker`).toBeGreaterThanOrEqual(0);
+  for (let i = select.index; i < index; i += 1) await pressKey(ctx, "Down");
+  for (let i = select.index; i > index; i -= 1) await pressKey(ctx, "Up");
+  await pressKey(ctx, "Enter");
+  await settle(ctx);
+});
+
+step(
+  "the project row reads {string} with {string} in the accent colour",
+  async (ctx: World, text: string, scope: string) => {
+    const row = rectOf(ctx, "sidebarProjectRow");
+    const [shown] = await regionRows(ctx, row);
+    expect(shown!.replace(/\s+/g, " ")).toContain(text);
+    const project = await textWithin(ctx, row, scope);
+    expectColour(project.span.fg, THEME.accent);
+  },
+);
+
+step("every thread is listed", async (ctx: World) => {
+  await settle(ctx);
+  expect(listedTitles(ctx).toSorted()).toEqual(
+    env(ctx)
+      .threads.filter((thread) => thread.archivedAt == null)
+      .map((thread) => thread.title)
+      .toSorted(),
+  );
+  expect(await snapshot(ctx)).toContain("Project All projects");
+});
+
+step('the user clicks the "+" on the project row', async (ctx: World) => {
+  await ui(ctx);
+  const add = rectOf(ctx, "sidebarAddProject");
+  await click(ctx, { x: add.x, y: add.y });
+  await settle(ctx);
+});
+
+step("the add project page opens", async (ctx: World) => {
+  expect((ctx.host!.state.get("addProject") as { open: boolean }).open).toBe(true);
+});
+
+step(
+  /^the thread "([^"]*)" was last active (\d+) minutes ago$/,
+  (ctx: World, title: string, minutes: string) => {
+    const at = iso(now(ctx) - Number(minutes) * 60_000);
+    Object.assign(threadNamed(ctx, title), { updatedAt: at, latestUserMessageAt: at });
+  },
+);
+
+step("the card for {string} reads:", async (ctx: World, title: string, expected: string) => {
+  await settle(ctx);
+  const rows = await regionRows(ctx, rowRegion(ctx, title));
+  expect(block(rows)).toBe(block(expected.split("\n")));
+});
+
+step("a blank line follows the card for {string}", async (ctx: World, title: string) => {
+  const [line] = await regionRows(ctx, {
+    ...rowRegion(ctx, title),
+    y: rowRegion(ctx, title).y + 3,
+    height: 1,
+  });
+  expect(line!.trim()).toBe("");
+});
+
+step(
+  /^on the card for "([^"]*)" "([^"]*)" and "([^"]*)" are in the (\w+) colour$/,
+  async (ctx: World, title: string, first: string, second: string, name: string) => {
+    for (const text of [first, second]) {
+      expectColour((await textWithin(ctx, rowRegion(ctx, title), text)).span.fg, colour(name));
+    }
+  },
+);
+
+step(
+  /^on the card for "([^"]*)" "([^"]*)" is (bold )?in the (\w+) colour$/,
+  async (ctx: World, title: string, text: string, bold: string | undefined, name: string) => {
+    const at = await textWithin(ctx, rowRegion(ctx, title), text);
+    expectColour(at.span.fg, colour(name));
+    if (bold) expect(at.span.attributes & TextAttributes.BOLD).toBeTruthy();
+  },
+);
+
+step(
+  "the card for {string} starts with {string} in the accent colour",
+  async (ctx: World, title: string, glyph: string) => {
+    await settle(ctx);
+    const region = rowRegion(ctx, title);
+    const [first] = await regionRows(ctx, { ...region, height: 1 });
+    expect(first!.trim().startsWith(glyph)).toBe(true);
+    expectColour((await textWithin(ctx, region, glyph)).span.fg, THEME.accent);
+  },
+);
+
+async function backgroundsOf(ctx: World, region: Rect) {
+  const found = [];
+  for (let y = region.y; y < region.y + region.height; y += 1) {
+    for (let x = region.x; x < region.x + region.width; x += 1) {
+      found.push((await cellAt(ctx, x, y)).span.bg);
+    }
+  }
+  return found;
+}
+
+step(
+  "the card for {string} has the selection background across the list",
+  async (ctx: World, title: string) => {
+    for (const bg of await backgroundsOf(ctx, rowRegion(ctx, title))) {
+      expectColour(bg, THEME.selectedBg);
+    }
+  },
+);
+
+step("the card for {string} has no background", async (ctx: World, title: string) => {
+  for (const bg of await backgroundsOf(ctx, rowRegion(ctx, title))) expectColour(bg, THEME.bg);
+});
+
+step(
+  /^the first line of the card for "([^"]*)" ends with "([^"]*)" in (\w+)$/,
+  async (ctx: World, title: string, text: string, name: string) => {
+    await ui(ctx);
+    const region = { ...rowRegion(ctx, title), height: 1 };
+    const [first] = await regionRows(ctx, region);
+    expect(first!.trimEnd().endsWith(text)).toBe(true);
+    expectColour((await textWithin(ctx, region, text)).span.fg, ansi(name));
+  },
+);
+
+step(
+  /^the row for "([^"]*)" is one line with its dot, its title and its age in the dim colour$/,
+  async (ctx: World, title: string) => {
+    await ui(ctx);
+    const row = listedRow(ctx, title)!;
+    expect(rowLineYs(ctx, title)).toHaveLength(1);
+    const region = rowRegion(ctx, title);
+    const [line] = await regionRows(ctx, region);
+    const shown = line!.trim();
+    expect(shown.startsWith(`${row.thread.glyph} ${title}`)).toBe(true);
+    expect(shown.endsWith(row.thread.age)).toBe(true);
+    const age = await textWithin(
+      ctx,
+      { ...region, x: region.x + region.width - row.thread.age.length - 2 },
+      row.thread.age,
+    );
+    expectColour(age.span.fg, THEME.dim);
+  },
+);
+
+async function expectShelfHeader(ctx: World, text: string, name: string): Promise<void> {
+  await ui(ctx);
+  const list = rectOf(ctx, "sidebarList");
+  const at = await textWithin(ctx, list, text);
+  expectColour(at.span.fg, colour(name));
+}
+
+step(
+  /^the (?:settled|snoozed) shelf's header reads "([^"]*)" in the (\w+) colour$/,
+  (ctx: World, text: string, name: string) => expectShelfHeader(ctx, text, name),
+);
+
+step("the list ends with {string} in the dim colour", async (ctx: World, text: string) => {
+  await ui(ctx);
+  expect(sidebar(ctx).rows.at(-1)?.kind).toBe("more");
+  // Scroll the list to its end, as the user does with the wheel.
+  const list = rectOf(ctx, "sidebarList");
+  for (let i = 0; i < sidebar(ctx).rows.length * 4; i += 1) {
+    await ctx.app!.mockMouse.scroll(list.x + 2, list.y + 1, "down");
+    await flush(ctx);
+  }
+  await flush(ctx);
+  const rows = await regionRows(ctx, list);
+  const last = rows
+    .map((row) => row.trim())
+    .filter((row) => row !== "")
+    .at(-1);
+  expect(last).toBe(text);
+  expectColour((await textWithin(ctx, list, text)).span.fg, THEME.dim);
+});
+
+step("a thread titled {string}", (ctx: ThreadsWorld, title: string) => {
+  addThread(ctx, title);
+  ctx.subject = title;
+});
+
+step("its card shows {string}", async (ctx: ThreadsWorld, text: string) => {
+  await ui(ctx);
+  const [, titleLine] = await regionRows(ctx, rowRegion(ctx, ctx.subject!));
+  expect(titleLine!.trim()).toBe(text);
+});
+
+step("the list reads {string} in the dim colour", async (ctx: World, text: string) => {
+  await settle(ctx);
+  expect(sidebar(ctx).rows).toHaveLength(0);
+  const at = await textWithin(ctx, rectOf(ctx, "sidebar"), text);
+  expectColour(at.span.fg, THEME.dim);
 });

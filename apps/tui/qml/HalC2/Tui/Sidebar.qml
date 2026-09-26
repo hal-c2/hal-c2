@@ -1,20 +1,21 @@
 import OpenTUI
 
-// The thread list: a filter field over the rows of `Shell.state.sidebar`.
-// Typing filters (`sidebar.filter.set`), Enter keeps the filter
-// (`sidebar.filter.commit`); the shell's Esc clears it. Plugins fill the
-// "sidebar.footer" slot at the bottom. With the list focused (mode "list"),
-// ShellKeymap's "list" keymap moves the selection.
+// The thread list, drawn like the OpenTUI client's Sidebar: the "HAL-C2 Code"
+// header, a search box (click or Ctrl+F; typing dispatches
+// `sidebar.filter.set`, Enter keeps the filter, the shell's Esc clears it),
+// the project row (the scope picker and "+" to add a project), the "Threads"
+// heading and the list. Plugins fill the "sidebar.footer" slot at the bottom.
 //
-// The host windows the rows (`visibleRows`) to the pane's height and scrolls
-// them to keep the selection in view, so every row here is one line.
+// The host draws each row's lines to the pane's width and windows them to the
+// list's height (`lines`), scrolled to keep the selection in view.
 Rectangle {
     id: bar
     property alias filter: filterInput
     property alias footerMode: footerSlot.mode
     // Bound by the shell to the host's mode, so the field follows the keys.
     property bool filterFocused: false
-    // The list has the keys (mode "list"): Esc hands them back.
+    // The list has the keys (mode "list"); the OpenTUI client's list has no
+    // focused look, so nothing changes here.
     property bool listFocused: false
 
     readonly property var sidebar: Shell.state.sidebar
@@ -24,69 +25,115 @@ Rectangle {
     onFilterQueryChanged: if (filterInput.text !== filterQuery) filterInput.text = filterQuery
 
     border.width: 1
-    border.color: filterFocused || listFocused ? Theme.colors.accent : Theme.colors.faint
-    title: sidebar.scopeProjectKey === null ? " Threads " : " Threads · " + sidebar.scopeLabel + " "
-    titleColor: Theme.colors.dim
+    border.style: "rounded"
+    border.color: Theme.colors.faint
     color: Theme.colors.bg
     flexDirection: "column"
     paddingX: 1
+    overflow: "hidden"
 
-    TextInput {
-        id: filterInput
-        objectName: "sidebarFilter"
+    Item {
+        objectName: "sidebarHeader"
         height: 1
-        focus: bar.filterFocused
-        placeholderText: "Filter threads (Ctrl+F)"
-        placeholderColor: Theme.colors.faint
-        color: Theme.colors.text
-        focusedColor: Theme.colors.text
-        backgroundColor: Theme.colors.bg
-        focusedBackgroundColor: Theme.colors.bg
-        onTextEdited: Shell.dispatch("sidebar.filter.set", { query: text })
-        onAccepted: Shell.dispatch("sidebar.filter.commit")
+        flexShrink: 0
+        flexDirection: "row"
+        Text { text: "HAL-C2"; font.bold: true; color: Theme.colors.text }
+        Text { text: " Code"; color: Theme.colors.dim }
     }
 
-    Repeater {
-        model: bar.sidebar.visibleRows
-        delegate: Item {
-            flexDirection: "column"
+    Rectangle {
+        objectName: "sidebarSearch"
+        marginTop: 1
+        flexShrink: 0
+        flexDirection: "row"
+        border.width: 1
+        border.style: "rounded"
+        border.color: bar.filterFocused ? Theme.colors.accent : Theme.colors.faint
+        color: Theme.colors.bg
+        paddingX: 1
+        onMouseDown: (mouse) => Shell.dispatch("sidebar.filter.focus")
+
+        Text {
+            objectName: "sidebarSearchIcon"
+            text: "⌕ "
+            color: bar.filterFocused ? Theme.colors.accent : Theme.colors.dim
+        }
+        TextInput {
+            id: filterInput
+            objectName: "sidebarFilter"
             height: 1
-            SidebarThreadRow {
-                visible: modelData.kind === "thread"
-                item: modelData.kind === "thread" ? modelData.thread : null
-                active: modelData.kind === "thread" && modelData.selected
-                section: modelData.kind === "thread" ? modelData.thread.section : ""
-            }
-            Text {
-                visible: modelData.kind === "draft"
-                text: modelData.kind === "draft"
-                    ? "▌+ " + modelData.draft.label + " · " + modelData.projectName
-                    : ""
-                color: Theme.colors.accent
-                truncate: true
-            }
-            Text {
-                visible: modelData.kind === "section"
-                text: modelData.kind === "section"
-                    ? "  " + (modelData.expanded ? "▾ " : "▸ ") + modelData.title
-                        + (modelData.expanded ? "" : " (" + modelData.count + ")") + " ─"
-                    : ""
-                color: modelData.section === "snoozed" ? Theme.colors.accent : Theme.colors.dim
-                onMouseDown: (mouse) => Shell.dispatch("sidebar.section.toggle", { section: modelData.section })
-            }
-            Text {
-                visible: modelData.kind === "more"
-                text: modelData.kind === "more" ? "  + Show " + Math.min(modelData.hiddenCount, 25) + " more" : ""
-                color: Theme.colors.dim
-                onMouseDown: (mouse) => Shell.dispatch("sidebar.more")
-            }
+            flexGrow: 1
+            focus: bar.filterFocused
+            placeholderText: "Search threads…"
+            placeholderColor: Theme.colors.dim
+            color: Theme.colors.text
+            focusedColor: Theme.colors.text
+            cursorColor: Theme.colors.accent
+            backgroundColor: Theme.colors.bg
+            focusedBackgroundColor: Theme.colors.bg
+            onTextEdited: Shell.dispatch("sidebar.filter.set", { query: text })
+            onAccepted: Shell.dispatch("sidebar.filter.commit")
+        }
+    }
+
+    Item {
+        objectName: "sidebarProjectRow"
+        marginTop: 1
+        marginBottom: 1
+        height: 1
+        flexShrink: 0
+        flexDirection: "row"
+
+        Text {
+            objectName: "sidebarProjectScope"
+            flexGrow: 1
+            flexShrink: 1
+            wrapMode: "none"
+            truncate: true
+            text: bar.sidebar.scopeLine
+            onMouseDown: (mouse) => Shell.dispatch("sidebar.scopePicker.toggle")
+        }
+        Text {
+            objectName: "sidebarAddProject"
+            marginLeft: 1
+            flexShrink: 0
+            text: "+"
+            color: Theme.colors.accent
+            onMouseDown: (mouse) => Shell.dispatch("project.add")
         }
     }
 
     Text {
+        height: 1
+        flexShrink: 0
+        text: "Threads"
+        color: Theme.colors.accent
+    }
+
+    Text {
         visible: bar.sidebar.rows.length === 0
-        text: bar.sidebar.filter.length > 0 ? "No matching threads" : "No threads yet"
-        color: Theme.colors.faint
+        flexShrink: 0
+        text: "No threads here. Press ^N."
+        color: Theme.colors.dim
+    }
+
+    Item {
+        id: list
+        objectName: "sidebarList"
+        visible: bar.sidebar.rows.length > 0
+        height: bar.sidebar.listRows
+        flexShrink: 0
+        flexDirection: "column"
+        overflow: "hidden"
+        onMouseScroll: (mouse) => {
+            if (mouse.scroll && mouse.scroll.direction === "up") Shell.dispatch("sidebar.scroll", { by: -1 })
+            else if (mouse.scroll && mouse.scroll.direction === "down") Shell.dispatch("sidebar.scroll", { by: 1 })
+        }
+
+        Repeater {
+            model: bar.sidebar.lines
+            delegate: SidebarThreadRow { line: modelData }
+        }
     }
 
     Item { flexGrow: 1 }

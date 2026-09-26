@@ -1,33 +1,40 @@
 import OpenTUI
 
-// One thread in the list: status dot, title, and the row's trailing fact (a
-// snooze wake time, the status label, or the age). `item` is a
-// `Shell.state.sidebar` thread (ShellSidebarThread plus glyph, age, project).
+// One line of the thread list, as the host drew it (`Shell.state.sidebar.lines`).
+// An active thread's card is three padded lines, on the selection background
+// when selected, and a gap line.
 //
-// Click opens the thread; right-click or a half-second press opens its
-// context menu (`thread.menu`) where the pointer is.
-Item {
+// On a thread, click opens it; right-click or a half-second press opens its
+// context menu (`thread.menu`) where the pointer is. A shelf header toggles
+// its shelf and "Show more" loads the rest.
+Rectangle {
     id: row
-    property var item: null
-    property bool active: false
-    // Which group the row sits in: active, snoozed or settled.
-    property string section: "active"
-    // Where a left press started, for the long-press menu.
+    property var line: null
+    // Where a left press on a thread started, for the long-press menu.
     property var pressAt: null
 
-    readonly property string trailing: item
-        ? (item.wakeLabel ?? item.statusLabel ?? item.age)
-        : ""
+    readonly property bool isThread: line !== null && line.kind === "thread"
 
-    flexDirection: "row"
     height: 1
+    flexShrink: 0
+    paddingX: line !== null && line.card ? 1 : 0
+    color: line !== null && line.highlight ? Theme.colors.selectedBg : Theme.colors.bg
 
     onMouseDown: (mouse) => {
-        if (!row.item) return
+        if (row.line === null) return
+        if (row.line.kind === "section") {
+            Shell.dispatch("sidebar.section.toggle", { section: row.line.section })
+            return
+        }
+        if (row.line.kind === "more") {
+            Shell.dispatch("sidebar.more")
+            return
+        }
+        if (!row.isThread) return
         mouse.accepted = true
         if (mouse.button === 2) {
             longPress.stop()
-            Shell.dispatch("thread.menu", { key: row.item.key, x: mouse.screenX, y: mouse.screenY })
+            Shell.dispatch("thread.menu", { key: row.line.key, x: mouse.screenX, y: mouse.screenY })
             return
         }
         if (mouse.button !== 0) return
@@ -35,13 +42,13 @@ Item {
         longPress.restart()
     }
     onMouseUp: (mouse) => {
-        if (!row.item || mouse.button !== 0) return
+        if (!row.isThread || mouse.button !== 0) return
         mouse.accepted = true
         // A press that already opened the menu does not also open the thread.
         if (row.pressAt === null) return
         row.pressAt = null
         longPress.stop()
-        Shell.dispatch("thread.open", { key: row.item.key })
+        Shell.dispatch("thread.open", { key: row.line.key })
     }
     onMouseDrag: (mouse) => {
         if (row.pressAt === null) return
@@ -50,40 +57,25 @@ Item {
             row.pressAt = null
         }
     }
+    onMouseOut: (mouse) => {
+        longPress.stop()
+        row.pressAt = null
+    }
 
     Timer {
         id: longPress
         interval: 500
         onTriggered: {
-            if (!row.item || row.pressAt === null) return
+            if (!row.isThread || row.pressAt === null) return
             const at = row.pressAt
             row.pressAt = null
-            Shell.dispatch("thread.menu", { key: row.item.key, x: at.x, y: at.y })
+            Shell.dispatch("thread.menu", { key: row.line.key, x: at.x, y: at.y })
         }
     }
 
     Text {
-        text: row.active ? "▌" : " "
-        color: Theme.colors.accent
-    }
-    Text {
-        text: row.item ? row.item.glyph + " " : ""
-        color: row.item ? Theme.ansi(row.item.glyphColor) : Theme.colors.faint
-    }
-    Text {
         flexGrow: 1
-        flexShrink: 1
         wrapMode: "none"
-        truncate: true
-        text: row.item ? row.item.title : ""
-        color: row.active ? Theme.colors.accent : Theme.colors.text
-        font.bold: row.active
-    }
-    Text {
-        flexShrink: 0
-        text: " " + row.trailing
-        color: row.item && row.item.statusLabel !== null && row.item.wakeLabel === null
-            ? Theme.ansi(row.item.glyphColor)
-            : Theme.colors.faint
+        text: row.line !== null ? row.line.text : ""
     }
 }

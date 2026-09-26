@@ -208,7 +208,13 @@ export interface TuiComposerState {
   readonly rows: number;
 }
 
-export type TuiSelectKind = "model" | "reasoning" | "runtime" | "workspace" | "branch";
+export type TuiSelectKind =
+  | "model"
+  | "reasoning"
+  | "runtime"
+  | "workspace"
+  | "branch"
+  | "project-scope";
 
 /** Published under `select`: the one open picker (or `{ open: false }`). */
 export interface TuiSelectState {
@@ -256,6 +262,8 @@ interface Picker {
 }
 
 const EMPTY_DRAFT: Draft = { text: "", images: [] };
+// The project-scope picker's "All projects" value.
+const ALL_PROJECTS = "__all__";
 const NEW_TARGET = "new";
 
 const threadTarget = (threadId: string) => `thread:${threadId}`;
@@ -842,6 +850,48 @@ export function createComposer(options: ComposerOptions): Composer {
         refs.findIndex((ref) => ref.name === newDraft!.branch),
       ),
     });
+  };
+
+  /** The thread list's project row: every project, or all of them. */
+  const openProjectScopePicker = () => {
+    if (toggles("project-scope")) return;
+    const current = store.getState();
+    const options: SelectOption[] = [
+      {
+        label: "All projects",
+        description: "Show threads from every project.",
+        value: ALL_PROJECTS,
+      },
+      ...(current.shell?.projects ?? []).map((project) => ({
+        label: project.title,
+        description: project.workspaceRoot,
+        value: project.id as string,
+      })),
+    ];
+    openPicker({
+      kind: "project-scope",
+      title: "project",
+      status: "ready",
+      options,
+      index: Math.max(
+        0,
+        current.projectScopeId === null
+          ? 0
+          : options.findIndex((option) => option.value === current.projectScopeId),
+      ),
+    });
+  };
+
+  const setProjectScope = (value: string) => {
+    const projectScopeId = value === ALL_PROJECTS ? null : value;
+    store.setProjectScope(projectScopeId);
+    const title =
+      store.getState().shell?.projects.find((project) => project.id === projectScopeId)?.title ??
+      projectScopeId;
+    store.setStatus(
+      projectScopeId === null ? "Showing all projects." : `Project → ${title}`,
+      "success",
+    );
   };
 
   // ── Controls ─────────────────────────────────────────────────────────────
@@ -1457,6 +1507,9 @@ export function createComposer(options: ComposerOptions): Composer {
       case "workspace":
         setWorkspaceMode(value as NewThreadWorkspaceMode);
         return;
+      case "project-scope":
+        setProjectScope(value);
+        return;
     }
   };
 
@@ -1588,6 +1641,9 @@ export function createComposer(options: ComposerOptions): Composer {
         return true;
       case "composer.branchPicker.toggle":
         openBranchPicker();
+        return true;
+      case "sidebar.scopePicker.toggle":
+        openProjectScopePicker();
         return true;
       case "newThread.workspaceMode": {
         const mode = field(payload, "mode");

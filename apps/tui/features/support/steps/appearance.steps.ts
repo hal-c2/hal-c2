@@ -34,6 +34,7 @@ import {
   contextMenu,
   findOnScreen,
   rightClick,
+  rowLineYs,
   rowPosition,
   sidebar,
   threadRows,
@@ -222,7 +223,11 @@ step(
 
 async function expectGlyph(ctx: World, glyph: string, colour: string): Promise<void> {
   await snapshot(ctx);
-  expectColour(spanOn(ctx, "Thread one", glyph).fg, ansi(colour));
+  // The status dot opens the row: a card's first line, above its title.
+  const [y] = rowLineYs(ctx, "Thread one");
+  const span = spans(ctx)[y!]?.find((candidate) => candidate.text.includes(glyph));
+  if (!span) throw new Error(`the row for "Thread one" has no "${glyph}"`);
+  expectColour(span.fg, ansi(colour));
 }
 
 step(
@@ -264,9 +269,10 @@ step(
 );
 
 step("its age reads {string}", async (ctx: World, label: string) => {
-  const rows = (await snapshot(ctx)).split("\n").filter((line) => line.includes("Thread one"));
-  // The list row ends with the age; the conversation header only has the title.
-  expect(rows.map((row) => row.split("│")[1]?.trim().split(/\s+/).at(-1))).toContain(label);
+  const lines = (await snapshot(ctx)).split("\n");
+  // The row's first line ends with the age (a card's, above its title).
+  const [y] = rowLineYs(ctx, "Thread one");
+  expect(lines[y!]?.split("│")[1]?.trim().split(/\s+/).at(-1)).toBe(label);
 });
 
 // --- status tones ---

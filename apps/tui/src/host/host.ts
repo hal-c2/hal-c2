@@ -5,7 +5,7 @@ import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@hal-c2/contracts";
 import { createPropertyMap, type PropertyMap } from "opentui-qml";
 
 import type { TuiClient, TuiConnectionPhase } from "../connection.ts";
-import { STATUS_ROWS } from "../components/ChatView.layout.ts";
+import { resolveSidebarListViewport, STATUS_ROWS } from "../components/ChatView.layout.ts";
 import {
   buildRows,
   nextSidebarRefreshAt,
@@ -203,9 +203,6 @@ const DECLINABLE_ACTIONS = new Set([
   "userInput.toggle",
 ]);
 
-// The list pane's chrome: its border and the filter field.
-const SIDEBAR_CHROME_ROWS = 3;
-
 const payloadField = (payload: unknown, field: string): unknown =>
   typeof payload === "object" && payload !== null
     ? (payload as Record<string, unknown>)[field]
@@ -313,6 +310,8 @@ export function createHost(options: HostOptions): Host {
       composerChromeRows: composer?.chromeRows(),
     });
     state.set("layout", layout);
+    // The list's rows are drawn to its width and windowed to its height.
+    if (JSON.stringify(sidebarSize()) !== sidebarSized) publishSidebar();
     threadView.setPaneWidth(layout.contentWidth);
     // The footer's compact form follows the conversation width.
     composer?.relayout();
@@ -328,21 +327,34 @@ export function createHost(options: HostOptions): Host {
       }),
     );
   };
-  const publishSidebar = () => {
+  // The thread list's width and height: the list pane, or the whole terminal
+  // when it opens over the conversation.
+  const sidebarSize = () => ({
+    width: layout?.sidebarAsMain ? size.columns : (layout?.listWidth ?? 0),
+    rows: size.rows - STATUS_ROWS,
+  });
+  let sidebarSized = "";
+  /** `follow`: scroll the selection back into view (not after the mouse wheel). */
+  const publishSidebar = (follow = true) => {
     const next = store.getState();
+    const box = sidebarSize();
+    sidebarSized = JSON.stringify(box);
     const selectedThreadId = next.selection?.kind === "thread" ? next.selection.id : null;
     const at = now();
     const sidebar = buildTuiSidebarState({
       shell: next.shell,
       rows: rowsNow(next),
       selectedThreadId,
+      selection: next.selection,
       projectScopeId: next.projectScopeId,
       filter: next.filter,
       now: at,
       settlementSupported,
       draft: sidebarDraft(),
-      viewportRows: Math.max(1, size.rows - STATUS_ROWS - SIDEBAR_CHROME_ROWS),
+      viewportRows: resolveSidebarListViewport(box.rows),
       scrollTop,
+      followSelection: follow,
+      ...(box.width > 0 ? { width: box.width } : {}),
     });
     scrollTop = sidebar.scrollTop;
     state.set("sidebar", sidebar);
@@ -749,6 +761,15 @@ export function createHost(options: HostOptions): Host {
       case "sidebar.more":
         store.loadMore(SIDEBAR_SETTLED_SECTION_ID);
         return true;
+      case "sidebar.scroll": {
+        // The mouse wheel scrolls the list without moving the selection.
+        const by = Number(payloadField(payload, "by"));
+        if (Number.isFinite(by)) {
+          scrollTop = Math.max(0, scrollTop + Math.trunc(by));
+          publishSidebar(false);
+        }
+        return true;
+      }
       case "sidebar.filter.focus":
         setMode("filter");
         return true;

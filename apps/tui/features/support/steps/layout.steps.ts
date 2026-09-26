@@ -16,7 +16,7 @@ import { step } from "../../steps.ts";
 import { cellAt, expectColour, objectRows, rectOf } from "../design.ts";
 import { addThread, flush, ui } from "../environment.ts";
 import { ready } from "../gitWorld.ts";
-import { sidebar, threadRows } from "../threadUi.ts";
+import { rowPosition, threadRows } from "../threadUi.ts";
 import {
   boot,
   findObject,
@@ -249,16 +249,12 @@ step(
   async (ctx: World) => {
     const lines = (await snapshot(ctx)).split("\n");
     const width = layout(ctx).listWidth;
-    const rowY = (title: string) =>
-      2 +
-      sidebar(ctx).visibleRows.findIndex(
-        (row) => row.kind === "thread" && row.thread.title === title,
-      );
+    const rowY = (title: string) => rowPosition(ctx, title).y;
     const wide = lines[rowY(WIDE_TITLE)]!;
     const plain = lines[rowY("Plain ascii title")]!;
     // The title is clipped: it does not fit whole in the list pane.
     expect(wide).toContain("修复登录");
-    expect(wide).toContain("...");
+    expect(wide).toContain("…");
     expect(wide).not.toContain(WIDE_TITLE);
     // The pane's right border sits in the same column on both rows.
     const borderAt = (line: string) => {

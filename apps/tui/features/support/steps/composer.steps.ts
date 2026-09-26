@@ -11,7 +11,7 @@ import type { TuiComposerState, TuiNewThreadState } from "../../../src/host/comp
 import { projectKey } from "../../../src/host/sidebarState.ts";
 import type { EditorCommand } from "../../../src/promptEditor.ts";
 import { clip } from "../../../src/format.ts";
-import type { Environment } from "../environment.ts";
+import { ui, type Environment } from "../environment.ts";
 import { PROVIDERS, project, shell, thread } from "../fakeClient.ts";
 import { THEME } from "../../../src/theme.ts";
 import { block, cellAt, cellOn, expectColour, objectRows, rectOf, textAt } from "../design.ts";
@@ -1056,6 +1056,8 @@ step("no new-thread form is shown", async (ctx: World) => {
 });
 
 step("the user clicks {string}", async (ctx: World, text: string) => {
+  // The app is up and connected before the user reaches for the mouse.
+  await ui(ctx);
   await clickText(ctx, text);
   await settle(ctx);
 });

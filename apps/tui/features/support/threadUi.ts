@@ -8,12 +8,7 @@ import type { TuiContextMenuState } from "../../src/host/threadActions.ts";
 import type { TuiPaletteState } from "../../src/host/paletteState.ts";
 import type { TuiSidebarRow, TuiSidebarState } from "../../src/host/sidebarState.ts";
 import { flush, ui } from "./environment.ts";
-import { pressKey, snapshot, typeText, type World } from "./world.ts";
-
-// The list pane's border and filter field sit above the first row.
-const FIRST_ROW_Y = 2;
-// Inside the row: the selection bar and the status dot come first.
-const ROW_TITLE_X = 4;
+import { findObject, pressKey, snapshot, typeText, type World } from "./world.ts";
 
 export const sidebar = (ctx: World) => ctx.host!.state.get("sidebar") as TuiSidebarState;
 export const contextMenu = (ctx: World) =>
@@ -34,13 +29,39 @@ export function listedRow(ctx: World, title: string): ThreadRow | undefined {
   return threadRows(ctx).find((row) => row.thread.title === title);
 }
 
-/** Where the row for `title` is on screen; fails when it is scrolled out or unlisted. */
+/** The list viewport's top-left cell. */
+export function listOrigin(ctx: World): { x: number; y: number } {
+  const { renderable } = findObject(ctx, "sidebarList") as unknown as {
+    renderable: { x: number; y: number };
+  };
+  return { x: renderable.x, y: renderable.y };
+}
+
+/** The screen rows of the thread `title`'s lines on screen (a card has four), top to bottom. */
+export function rowLineYs(ctx: World, title: string): number[] {
+  const row = listedRow(ctx, title);
+  if (!row) throw new Error(`"${title}" is not in the thread list`);
+  const origin = listOrigin(ctx);
+  const ys: number[] = [];
+  sidebar(ctx).lines.forEach((line, index) => {
+    if (line.key === row.key) ys.push(origin.y + index);
+  });
+  return ys;
+}
+
+/** Where the title of `title`'s row is on screen; fails when it is scrolled out or unlisted. */
 export function rowPosition(ctx: World, title: string): { x: number; y: number } {
-  const index = sidebar(ctx).visibleRows.findIndex(
-    (row) => row.kind === "thread" && row.thread.title === title,
+  const row = listedRow(ctx, title);
+  if (!row) throw new Error(`"${title}" is not in the thread list`);
+  // An active thread's card has its title on its second line, inside the card's padding;
+  // a shelved row's title follows the selection bar and the status dot.
+  const card = row.thread.section === "active";
+  const index = sidebar(ctx).lines.findIndex(
+    (line) => line.key === row.key && line.part === (card ? 1 : 0),
   );
   if (index < 0) throw new Error(`"${title}" is not on screen in the thread list`);
-  return { x: ROW_TITLE_X, y: FIRST_ROW_Y + index };
+  const origin = listOrigin(ctx);
+  return { x: origin.x + (card ? 3 : 4), y: origin.y + index };
 }
 
 /** The first screen cell showing `text` (display-width columns), or null. */
