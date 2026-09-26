@@ -10,6 +10,7 @@ import { step } from "../../steps.ts";
 import { SOCKET_TICKET_TIMEOUT_MS } from "../../../src/socketTicket.ts";
 import { threadKey } from "../../../src/host/sidebarState.ts";
 import { shell, thread } from "../fakeClient.ts";
+import type { LaunchWorld } from "../launchWorld.ts";
 import { startConnection, type ConnectionHarness, type ReconnectWorld } from "../reconnectWorld.ts";
 import {
   activity,
@@ -25,8 +26,9 @@ import {
   type ThreadWorld,
 } from "../threadWorld.ts";
 import { pressKey, snapshot } from "../world.ts";
+import { expectNodeReconnected } from "./launch.steps.ts";
 
-type World = ReconnectWorld & ThreadWorld;
+type World = ReconnectWorld & ThreadWorld & LaunchWorld;
 
 function connection(ctx: World): ConnectionHarness {
   if (!ctx.connection) throw new Error("the client is not connected");
@@ -63,6 +65,8 @@ step("the client asks its launcher for a new socket ticket", async (ctx: World) 
 });
 
 step("it reconnects without the user doing anything", async (ctx: World) => {
+  // A client started on its own against a node (launch.feature).
+  if (ctx.node) return expectNodeReconnected(ctx);
   const conn = connection(ctx);
   await conn.connected(2);
   expect(conn.phases).toEqual(["connecting", "connected", "reconnecting", "connected"]);

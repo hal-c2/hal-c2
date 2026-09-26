@@ -135,10 +135,11 @@ function historyToPage(history: ThreadHistoryMeta): TuiThreadPage {
 }
 
 /**
- * Connection inputs the host (the server CLI) provides. The TUI never talks to
- * the server's auth internals directly — the host issues a long-lived bearer
- * session and hands us a `mintSocketUrl` that returns a freshly-ticketed
- * `ws(s)://…/ws?wsTicket=…` URL on every (re)connect.
+ * Connection inputs the entry provides: from the `hal-c2 tui` launcher (a bearer
+ * session and socket URLs over IPC) or from `nodeDiscovery.ts` (the node's access
+ * token or a paired session, with socket tickets bought over HTTP). Either way
+ * `mintSocketUrl` returns a freshly-ticketed `ws(s)://…/ws?wsTicket=…` URL on
+ * every (re)connect.
  */
 export interface TuiOptions {
   /** Origin of the already-running local server, e.g. `http://127.0.0.1:5733`. */
@@ -151,9 +152,13 @@ export interface TuiOptions {
   readonly logPath: string;
   /** Pause between a dropped connection and the next attempt (2 seconds). */
   readonly reconnectDelay?: Duration.Input;
+  /** The node's environment id from its descriptor; a protocol-3 session addresses it. */
+  readonly environmentId?: string;
+  /** The node's wire protocol from its descriptor; absent is the Node server's. */
+  readonly orchestrationProtocolVersion?: number | undefined;
 }
 
-/** Stable id used to label this client's connection in traces/logs. */
+/** The id used when the host did not read the node's descriptor (the Node launcher). */
 const TUI_ENVIRONMENT_ID = EnvironmentId.make("local-tui");
 const TUI_LABEL = "HAL-C2";
 const RECONNECT_DELAY = Duration.seconds(2);
@@ -262,9 +267,12 @@ export const makeTuiSupervisor = (options: Omit<TuiOptions, "logPath">) =>
   Effect.gen(function* () {
     const factory = yield* RpcSessionFactory;
     const { origin } = options;
+    const environmentId = options.environmentId
+      ? EnvironmentId.make(options.environmentId)
+      : TUI_ENVIRONMENT_ID;
 
     const target = new PrimaryConnectionTarget({
-      environmentId: TUI_ENVIRONMENT_ID,
+      environmentId,
       label: TUI_LABEL,
       httpBaseUrl: origin,
       wsBaseUrl: origin,
@@ -282,12 +290,15 @@ export const makeTuiSupervisor = (options: Omit<TuiOptions, "logPath">) =>
         catch: (cause) => cause,
       });
       const prepared: PreparedConnection = {
-        environmentId: TUI_ENVIRONMENT_ID,
+        environmentId,
         label: TUI_LABEL,
         httpBaseUrl: origin,
         socketUrl,
         httpAuthorization: { _tag: "Bearer", token: options.bearerToken },
         target,
+        ...(options.orchestrationProtocolVersion === undefined
+          ? {}
+          : { orchestrationProtocolVersion: options.orchestrationProtocolVersion }),
       };
       yield* SubscriptionRef.set(preparedRef, Option.some(prepared));
       const session = yield* factory.connect(prepared);
@@ -840,7 +851,8 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
       runtime.runFork(
         Effect.gen(function* () {
           const controller = yield* ThreadHistoryController;
-          return yield* controller.loadEarlier(TUI_ENVIRONMENT_ID, threadId);
+          const supervisor = yield* EnvironmentSupervisor;
+          return yield* controller.loadEarlier(supervisor.target.environmentId, threadId);
         }),
       );
       return true;

@@ -157,39 +157,39 @@ Feature: Launching and leaving the terminal client
     Then the running turns keep going on the server
     And re-attaching later opens the same thread with the same focus
 
-  @backlog @tui
+  @tui
   Scenario: The terminal client launches against an Elixir node
     Given an Elixir node is running on this machine
     When the user starts the terminal client
     Then the terminal client connects to that node
     And it signs in with the node's access token
 
-  @backlog @tui
+  @tui
   Scenario: Starting the terminal client with no node running explains how to start one
     Given no Elixir node is running on this machine
     When the user starts the terminal client
     Then it exits saying "No running HAL-C2 node was found. Start one with `mise run node` first."
 
-  @backlog @tui
+  @tui
   Scenario: Starting the terminal client against a node that has since stopped says so
     Given the recorded Elixir node is no longer running
     When the user starts the terminal client
     Then it exits saying the recorded node is no longer running
 
-  @backlog @tui
+  @tui
   Scenario: Starting the terminal client against a node that does not answer says so
     Given the recorded Elixir node does not answer
     When the user starts the terminal client
     Then it exits saying the node at the recorded address could not be reached
 
-  @backlog @tui
+  @tui
   Scenario: Without a launcher the client buys its socket tickets over HTTP
     Given an Elixir node is running on this machine
     When the user starts the terminal client
     Then the client buys a socket ticket from the node over HTTP
     And the socket URL carries only that ticket
 
-  @backlog @tui
+  @tui
   Scenario: Without a launcher a dropped connection reconnects with a fresh ticket
     Given the terminal client is connected to an Elixir node
     When the node drops the connection
@@ -198,26 +198,26 @@ Feature: Launching and leaving the terminal client
 
   # --url <pairing link>. The session is saved for the environment's origin rather than
   # revoked on exit: a node does not let a session revoke itself, and a link works once.
-  @backlog @tui
+  @tui
   Scenario: The user pairs the terminal client with a remote environment
     Given a pairing link from a remote HAL-C2 environment
     When the user starts the terminal client with that pairing link
     Then the client connects to the remote environment
     And later launches reuse the paired credential
 
-  @backlog @tui
+  @tui
   Scenario: Pairing with an invalid or expired credential explains the failure
     Given a pairing credential that has expired
     When the user starts the terminal client with it
     Then the client says the credential expired and does not connect
 
-  @backlog @tui
+  @tui
   Scenario: Leaving keeps a paired remote session until the environment revokes it
     Given the terminal client paired with a remote environment
     When the user leaves the terminal client
     Then the environment still lists the "HAL-C2 TUI" session
 
-  @backlog @tui
+  @tui
   Scenario: A saved session the environment revoked asks for a new pairing link
     Given the terminal client paired with a remote environment
     And the environment revoked that session

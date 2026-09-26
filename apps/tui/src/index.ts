@@ -14,7 +14,15 @@ import { createHost } from "./host/host.ts";
 import { enginePluginPort } from "./host/plugins.ts";
 import { readUserConfig } from "./host/userConfig.ts";
 import { resolveShellConfigDir } from "./shellConfigDir.ts";
-import { makeSocketTicketMinter } from "./socketTicket.ts";
+import {
+  connectRemoteNode,
+  credentialsPath,
+  findLocalNode,
+  LaunchError,
+  parseLaunchArgs,
+  resolveNodeDirs,
+} from "./nodeDiscovery.ts";
+import { makeHttpSocketTicketMinter, makeSocketTicketMinter } from "./socketTicket.ts";
 import {
   ensureColorCapabilityEnv,
   prepareTerminalViewport,
@@ -22,19 +30,57 @@ import {
   TUI_RENDERER_CONFIG,
 } from "./terminalStartup.ts";
 
-// This is the Bun entry point spawned by the Node `hal-c2 tui` command. It receives
-// the server origin + a bearer token via env, and mints fresh websocket URLs by
-// asking the parent (which holds EnvironmentAuth) over the Node IPC channel —
-// the parent stays alive for the whole session and answers each request.
+// The Bun entry point. Started by the Node `hal-c2 tui` launcher it gets the
+// server origin and a bearer via env and mints websocket URLs over the IPC
+// channel to the launcher, which answers each request for the whole session.
+// Started on its own (`mise run tui`) it finds the Elixir node itself, or pairs
+// with a remote one from `--url` (nodeDiscovery.ts), and buys its socket tickets
+// over HTTP.
 
 const processSend = process.send as ((message: unknown) => boolean) | undefined;
-const socketTickets = makeSocketTicketMinter({
-  send:
-    typeof processSend === "function" ? (message) => processSend.call(process, message) : undefined,
-});
-process.on("message", socketTickets.receive);
-process.on("disconnect", socketTickets.disconnect);
-const mintSocketUrl = socketTickets.mint;
+const launcherTickets =
+  typeof processSend === "function"
+    ? makeSocketTicketMinter({ send: (message) => processSend.call(process, message) })
+    : null;
+if (launcherTickets) {
+  process.on("message", launcherTickets.receive);
+  process.on("disconnect", launcherTickets.disconnect);
+}
+
+/** Where to connect and as whom: the launcher's env, the local node, or a paired remote. */
+async function resolveConnection(): Promise<
+  Pick<TuiOptions, "origin" | "bearerToken" | "environmentId" | "orchestrationProtocolVersion">
+> {
+  const argv = process.argv.slice(2);
+  const origin = process.env.HAL_C2_TUI_ORIGIN;
+  const bearerToken = process.env.HAL_C2_TUI_BEARER;
+  // The launcher passes no flags (a wrapper may leave the entry's path in argv).
+  if (!argv.some((arg) => arg.startsWith("--")) && (origin || bearerToken)) {
+    if (!origin || !bearerToken) {
+      throw new LaunchError(
+        `${origin ? "HAL_C2_TUI_BEARER" : "HAL_C2_TUI_ORIGIN"} is missing: HAL_C2_TUI_ORIGIN and HAL_C2_TUI_BEARER go together.`,
+      );
+    }
+    return { origin, bearerToken };
+  }
+  const args = parseLaunchArgs(argv);
+  const dirs = {
+    baseDir: args.baseDir,
+    env: process.env,
+    homeDir: NodeOS.homedir(),
+    platform: process.platform,
+  };
+  const node =
+    args.url === undefined
+      ? await findLocalNode({ dirs: resolveNodeDirs(dirs) })
+      : await connectRemoteNode({ url: args.url, credentialsPath: credentialsPath(dirs) });
+  return {
+    origin: node.origin,
+    bearerToken: node.bearerToken,
+    environmentId: node.environmentId,
+    orchestrationProtocolVersion: node.orchestrationProtocolVersion,
+  };
+}
 
 /**
  * The `HalC2.Tui` bricks ship next to the bundle (`dist/qml`, copied by the build)
@@ -49,14 +95,16 @@ function resolveQmlDir(): string {
 }
 
 async function main(): Promise<void> {
-  const origin = process.env.HAL_C2_TUI_ORIGIN;
-  const bearerToken = process.env.HAL_C2_TUI_BEARER;
   const logPath = process.env.HAL_C2_TUI_LOG ?? "/tmp/hal-c2-tui.log";
-  if (!origin || !bearerToken) {
-    process.stderr.write("hal-c2 tui: missing HAL_C2_TUI_ORIGIN / HAL_C2_TUI_BEARER\n");
-    process.exitCode = 1;
-    return;
+  let connection: Awaited<ReturnType<typeof resolveConnection>>;
+  try {
+    connection = await resolveConnection();
+  } catch (error) {
+    if (!(error instanceof LaunchError)) throw error;
+    process.stderr.write(`hal-c2 tui: ${error.message}\n`);
+    process.exit(1);
   }
+  const { origin } = connection;
 
   const appendLog = (line: string) => {
     try {
@@ -80,7 +128,13 @@ async function main(): Promise<void> {
     warn: (message) => configWarnings.push(message),
   });
 
-  const options: TuiOptions = { origin, bearerToken, mintSocketUrl, logPath };
+  const options: TuiOptions = {
+    ...connection,
+    mintSocketUrl:
+      launcherTickets?.mint ??
+      makeHttpSocketTicketMinter({ origin, bearerToken: connection.bearerToken }),
+    logPath,
+  };
   const runtime = buildTuiRuntime(options);
   const client = makeTuiClient(runtime, origin);
 

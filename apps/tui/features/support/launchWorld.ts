@@ -1,5 +1,9 @@
 // Real processes for launch.feature, all on pipes (never a real terminal).
 //
+// Started directly the client finds a fake protocol-3 node (fakeNode.ts) through
+// the runtime record and access token under a temp `--base-dir`, or pairs with it
+// from `--url`.
+//
 // `hal-c2 tui` runs as the real Node launcher against a temp base dir and a fake
 // server (a descriptor endpoint plus the runtime file a running server writes).
 // A shim stands in for `bun`: it records what the launcher gave it and then runs
@@ -11,6 +15,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { Database } from "bun:sqlite";
 
+import { startFakeNode, type FakeNode } from "./fakeNode.ts";
 import type { World } from "./world.ts";
 
 const TUI_DIR = NodePath.resolve(import.meta.dir, "../..");
@@ -81,6 +86,13 @@ export interface LaunchWorld extends World {
   launched?: LaunchRun;
   /** A client started directly, without the launcher. */
   client?: ProcessRun;
+  /** The node a directly started client finds or pairs with. */
+  node?: FakeNode;
+  pairingLink?: string;
+  /** A directly started client that drew and is still open. */
+  direct?: DirectLaunch;
+  /** Tickets the node had issued when it dropped the connection. */
+  ticketsBeforeDrop?: number;
 }
 
 export function launchSetup(ctx: LaunchWorld): LaunchSetup {
@@ -136,7 +148,8 @@ function cleanEnv(ctx: LaunchWorld): Record<string, string> {
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined) continue;
     if (key.startsWith("HAL_C2_TUI_") || key.startsWith("TMUX") || key.startsWith("SSH_")) continue;
-    if (key === "HAL_C2_HOME" || key === "COLORTERM" || key === "TERM_PROGRAM") continue;
+    if (key === "HAL_C2_HOME" || key === "HAL_C2_NODE_HOME" || key.startsWith("XDG_")) continue;
+    if (key === "COLORTERM" || key === "TERM_PROGRAM") continue;
     env[key] = value;
   }
   const dir = home(ctx);
@@ -414,4 +427,98 @@ process.once = ((event, listener) => {
 `,
   );
   return path;
+}
+
+// --- a client that finds or pairs with a node itself ---
+
+/** The temp root a directly started client is given as `--base-dir`. */
+export function baseDir(ctx: LaunchWorld): string {
+  return home(ctx);
+}
+
+export function fakeNode(ctx: LaunchWorld, options: { pairingToken?: string } = {}): FakeNode {
+  const node = startFakeNode(options);
+  ctx.cleanups.push(() => node.stop());
+  ctx.node = node;
+  return node;
+}
+
+/** What a running Elixir node leaves under `<root>/{state,data}/elixir`. */
+export function writeNodeRecord(
+  ctx: LaunchWorld,
+  record: { pid: number; origin: string; accessToken?: string },
+): void {
+  const state = NodePath.join(home(ctx), "state/elixir");
+  const data = NodePath.join(home(ctx), "data/elixir");
+  NodeFS.mkdirSync(state, { recursive: true });
+  NodeFS.mkdirSync(data, { recursive: true });
+  const url = new URL(record.origin);
+  NodeFS.writeFileSync(
+    NodePath.join(state, "server-runtime.json"),
+    JSON.stringify({
+      version: 1,
+      pid: record.pid,
+      port: Number(url.port),
+      origin: record.origin,
+      startedAt: new Date().toISOString(),
+    }),
+  );
+  if (record.accessToken)
+    NodeFS.writeFileSync(NodePath.join(data, "access-token"), record.accessToken);
+}
+
+/** A pid that belonged to a process that has exited. */
+export const deadPid = exitedPid;
+
+/** An origin nothing listens on: a port that was free a moment ago. */
+export function closedOrigin(): string {
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+  const origin = `http://127.0.0.1:${server.port}`;
+  server.stop(true);
+  return origin;
+}
+
+/** The paired sessions the client saved under its `--base-dir`. */
+export function savedSessions(ctx: LaunchWorld): Record<string, unknown> {
+  const text = readText(NodePath.join(home(ctx), "data/tui/credentials.json"));
+  return text ? (JSON.parse(text) as { sessions: Record<string, unknown> }).sessions : {};
+}
+
+export interface DirectLaunch {
+  readonly spawned: Spawned;
+}
+
+/**
+ * Start the client's entry with `args` and no launcher. A client that draws stays
+ * open in `ctx.direct`; one that exits first is finished into `ctx.client`.
+ */
+export async function startDirect(ctx: LaunchWorld, args: ReadonlyArray<string>): Promise<void> {
+  const dir = home(ctx);
+  const env = withTerminal(cleanEnv(ctx), launchSetup(ctx).env);
+  env.HAL_C2_TUI_LOG = NodePath.join(dir, "client.log");
+  env.HAL_C2_TUI_SHELL_DIR = NodePath.join(dir, "shell");
+  const spawned = spawn(ctx, [process.execPath, CLIENT_ENTRY, ...args], { cwd: TUI_DIR, env });
+  const drew = await within(spawned.drawn, DRAW_TIMEOUT_MS, "the client", spawned);
+  if (drew) {
+    ctx.direct = { spawned };
+    return;
+  }
+  const code = await within(spawned.exited, EXIT_TIMEOUT_MS, "the client", spawned);
+  ctx.client = { code, stdout: spawned.output.stdout, stderr: spawned.output.stderr, drew };
+}
+
+/** Leave the open direct client with Ctrl+C and record how it went. */
+export async function leaveDirect(ctx: LaunchWorld): Promise<ProcessRun> {
+  const direct = ctx.direct;
+  if (!direct) throw new Error("no directly started client is open");
+  delete ctx.direct;
+  const code = await leave(direct.spawned, "ctrl+c");
+  const run = {
+    code,
+    stdout: direct.spawned.output.stdout,
+    stderr: direct.spawned.output.stderr,
+    drew: true,
+  };
+  ctx.client = run;
+  return run;
 }
