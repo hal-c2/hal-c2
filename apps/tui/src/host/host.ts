@@ -3,8 +3,15 @@ import { createPropertyMap, type PropertyMap } from "opentui-qml";
 import type { TuiClient } from "../connection.ts";
 import { buildRows } from "../components/Sidebar.logic.ts";
 import { createStore, type StatusKind, type StoreState } from "../store.ts";
-import { buildTuiLayoutState, type TuiMode, type TuiSize } from "./layoutState.ts";
+import {
+  buildTuiLayoutState,
+  type TuiLayoutState,
+  type TuiMode,
+  type TuiSize,
+} from "./layoutState.ts";
+import { buildTuiSettingsState } from "./settingsState.ts";
 import { buildTuiSidebarState, idFromKey, threadKey } from "./sidebarState.ts";
+import { createSourceControl, type TuiClipboard } from "./sourceControl.ts";
 import { createTuiTheme, TUI_THEME_STATE, type TuiTheme } from "./theme.ts";
 
 /** Published under `status`: the one-line status message and its tone. */
@@ -38,6 +45,8 @@ export interface HostOptions {
   readonly log: (message: string) => void;
   /** Clock for snooze partitioning; tests pin it. */
   readonly now?: () => string;
+  /** Where "View PR" copies its link (the renderer's OSC 52). */
+  readonly clipboard?: TuiClipboard;
 }
 
 export interface Host {
@@ -70,6 +79,7 @@ export function createHost(options: HostOptions): Host {
   let mode: TuiMode = "compose";
   let size = options.size;
   let sidebarCollapsed = false;
+  let settingsOpen = false;
 
   const state = createPropertyMap({
     mode,
@@ -81,11 +91,27 @@ export function createHost(options: HostOptions): Host {
   // Republish a key only when what it is derived from changed, so bindings
   // on other keys are not re-evaluated by every store emit.
   let last: StoreState | null = null;
-  const publishLayout = () =>
+  let layout: TuiLayoutState;
+  const publishLayout = () => {
+    layout = buildTuiLayoutState({
+      size,
+      sidebarCollapsed,
+      rightPanelVisible: sourceControl.panelOpen(),
+      mode,
+    });
+    state.set("layout", layout);
+  };
+  const publishSettings = () => {
+    const current = store.getState();
     state.set(
-      "layout",
-      buildTuiLayoutState({ size, sidebarCollapsed, rightPanelVisible: false, mode }),
+      "settings",
+      buildTuiSettingsState({
+        active: settingsOpen,
+        detail: current.detail,
+        vcsStatus: current.vcsStatus,
+      }),
     );
+  };
   const publish = () => {
     const next = store.getState();
     const prev = last;
@@ -132,6 +158,10 @@ export function createHost(options: HostOptions): Host {
     ) {
       state.set("page", pageFor(next, selectedThreadId));
     }
+    sourceControl.publish(prev, next);
+    if (!prev || prev.detail !== next.detail || prev.vcsStatus !== next.vcsStatus) {
+      publishSettings();
+    }
   };
 
   const setMode = (next: TuiMode) => {
@@ -140,6 +170,17 @@ export function createHost(options: HostOptions): Host {
     state.set("mode", mode);
     publishLayout();
   };
+
+  const sourceControl = createSourceControl({
+    store,
+    client,
+    state,
+    mode: () => mode,
+    setMode: (next) => setMode(next),
+    layout: () => layout,
+    panelChanged: () => publishLayout(),
+    ...(options.clipboard ? { clipboard: options.clipboard } : {}),
+  });
 
   const unknownActions = new Set<string>();
   const dispatch = (action: string, payload?: unknown) => {
@@ -181,10 +222,22 @@ export function createHost(options: HostOptions): Host {
         store.setFilter("");
         setMode("compose");
         return;
+      case "settings.open":
+        sourceControl.dispatch("diff.close");
+        settingsOpen = true;
+        publishSettings();
+        setMode("settings");
+        return;
+      case "settings.close":
+        settingsOpen = false;
+        publishSettings();
+        if (mode === "settings") setMode("compose");
+        return;
       case "app.quit":
         options.onQuit?.();
         return;
       default:
+        if (sourceControl.dispatch(action, payload)) return;
         if (unknownActions.has(action)) return;
         unknownActions.add(action);
         log(`t3 tui: unknown shell action "${action}"`);

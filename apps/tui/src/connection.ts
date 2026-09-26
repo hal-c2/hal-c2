@@ -24,6 +24,7 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
   RuntimeRequestId,
+  type GitRunStackedActionResult,
   type GitStackedAction,
   type FilesystemBrowseResult,
   type SourceControlCloneRepositoryResult,
@@ -523,13 +524,16 @@ export interface TuiClient {
     cwd: string,
     onStatus: (status: VcsStatusResult) => void,
   ) => () => void;
-  /** Run a stacked git action (commit/push/create_pr/…); resolves when it finishes. */
+  /**
+   * Run a stacked git action (commit/push/create_pr/…); resolves with the
+   * server's result (null if the stream ended without one) when it finishes.
+   */
   readonly runGitStackedAction: (input: {
     readonly cwd: string;
     readonly action: GitStackedAction;
     readonly commitMessage?: string;
     readonly featureBranch?: boolean;
-  }) => Promise<void>;
+  }) => Promise<GitRunStackedActionResult | null>;
   /** Pull the worktree's branch from its upstream. */
   readonly runGitPull: (cwd: string) => Promise<void>;
   /** Fetch the unified diff for the turn that produced the given checkpoint. */
@@ -1015,8 +1019,9 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
       return drainStreamUntilUnsubscribe(stream);
     },
 
-    runGitStackedAction: (input) =>
-      runtime.runPromise(
+    runGitStackedAction: (input) => {
+      let finished: GitRunStackedActionResult | null = null;
+      return runtime.runPromise(
         runStream(WS_METHODS.gitRunStackedAction, {
           actionId: `tui-action-${++gitActionSeq}`,
           cwd: input.cwd,
@@ -1026,12 +1031,15 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
         }).pipe(
           // The stream ends when the action completes; an action_failed event (or a
           // failed stream) surfaces as a rejected promise.
-          Stream.runForEach((event) =>
-            event.kind === "action_failed" ? Effect.fail(new Error(event.message)) : Effect.void,
-          ),
-          Effect.asVoid,
+          Stream.runForEach((event) => {
+            if (event.kind === "action_failed") return Effect.fail(new Error(event.message));
+            if (event.kind === "action_finished") finished = event.result;
+            return Effect.void;
+          }),
+          Effect.map(() => finished),
         ),
-      ),
+      );
+    },
 
     runGitPull: (cwd) =>
       runtime.runPromise(request(WS_METHODS.vcsPull, { cwd }).pipe(Effect.asVoid)),
