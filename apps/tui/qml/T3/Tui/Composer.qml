@@ -15,6 +15,8 @@ Rectangle {
     readonly property bool focused: Shell.state.mode === "compose" || Shell.state.mode === "newThread"
     property alias input: promptInput
     property alias footer: footerView
+    // How plugins' "composer.actions" contributions sit next to the built-in controls.
+    property alias actionsMode: footerView.actionsMode
 
     border.width: 1
     border.color: focused ? Theme.colors.accent : Theme.colors.faint

@@ -7,6 +7,9 @@ import OpenTUI
 // the shell. An action the host declines (`Shell.dispatch` is not true: no
 // approval to walk, the terminal hidden) lets the key through to the next
 // binding and then the focused field.
+//
+// The mode keymaps are unnamed, so a keymap.json top-level entry reaches every
+// mode; the thread list's is named "list" and takes the file's "list" section.
 Item {
     id: keys
     readonly property var layers: Shell.state.keybindings.layers
@@ -21,7 +24,7 @@ Item {
     Keymap { priority: 1; enabled: keys.mode === "newThread"; bindings: keys.layers.newThread; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "userInput"; bindings: keys.layers.userInput; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "revert"; bindings: keys.layers.revert; onActivated: (action, event) => keys.run(action, event) }
-    Keymap { priority: 1; enabled: keys.mode === "terminal"; bindings: keys.layers.terminal; onActivated: (action, event) => keys.run(action, event) }
+    Keymap { objectName: "terminalKeymap"; priority: 1; enabled: keys.mode === "terminal"; bindings: keys.layers.terminal; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "command"; bindings: keys.layers.command; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "select"; bindings: keys.layers.select; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "contextMenu"; bindings: keys.layers.contextMenu; onActivated: (action, event) => keys.run(action, event) }
@@ -34,5 +37,14 @@ Item {
     Keymap { priority: 1; enabled: keys.mode === "commit"; bindings: keys.layers.commit; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "project"; bindings: keys.layers.project; onActivated: (action, event) => keys.run(action, event) }
     Keymap { priority: 1; enabled: keys.mode === "filter"; bindings: keys.layers.filter; onActivated: (action, event) => keys.run(action, event) }
-    Keymap { enabled: keys.mode !== "terminal"; bindings: keys.layers.global; onActivated: (action, event) => keys.run(action, event) }
+    Keymap {
+        objectName: "listKeymap"
+        name: "list"
+        priority: 1
+        enabled: keys.mode === "list"
+        bindings: keys.layers.list
+        readonly property var hostActions: ({ next: "thread.next", previous: "thread.previous", leave: "sidebar.list.blur" })
+        onActivated: (action, event) => keys.run(hostActions[action] ?? action, event)
+    }
+    Keymap { objectName: "globalKeymap"; enabled: keys.mode !== "terminal"; bindings: keys.layers.global; onActivated: (action, event) => keys.run(action, event) }
 }

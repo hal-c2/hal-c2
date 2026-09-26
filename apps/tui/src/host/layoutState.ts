@@ -8,8 +8,9 @@ import {
 } from "../components/ChatView.layout.ts";
 import type { KeyBindingMode } from "../hooks/useKeyBindings.ts";
 
-/** Key-routing modes: the old TUI's focus modes plus the new-thread form. */
-export type TuiMode = KeyBindingMode | "newThread";
+/** Key-routing modes: the old TUI's focus modes, the new-thread form, and `list` (the thread list
+ * has the keys; its "list" keymap is live). */
+export type TuiMode = KeyBindingMode | "newThread" | "list";
 
 export interface TuiSize {
   readonly columns: number;

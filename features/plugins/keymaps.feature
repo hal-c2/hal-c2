@@ -80,7 +80,8 @@ Feature: Keymaps
       | PgDn      | page down               |
       | ctrl++    | control and plus        |
 
-  @tui
+  # opentui-qml keymaps accept "hyper" as a modifier (keymap-host MODIFIER_NAMES); only parseKeySequence rejects it.
+  @backlog @tui
   Scenario: A key sequence with an unknown modifier is reported and skipped
     Given a keymap file that binds "hyper+x" to "palette.open"
     When the keymap loads

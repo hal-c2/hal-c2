@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import { createPropertyMap, type PropertyMap } from "opentui-qml";
 
-import type { TuiClient } from "../connection.ts";
+import type { TuiClient, TuiConnectionPhase } from "../connection.ts";
 import { STATUS_ROWS } from "../components/ChatView.layout.ts";
 import {
   buildRows,
@@ -27,6 +27,7 @@ import {
   type TuiSize,
 } from "./layoutState.ts";
 import { createPalette, type PaletteCommand } from "./paletteState.ts";
+import type { PluginPort, TuiPluginsState } from "./plugins.ts";
 import { buildTuiSettingsState } from "./settingsState.ts";
 import { buildTuiSidebarState, idFromKey, projectKey, threadKey } from "./sidebarState.ts";
 import { createSourceControl, SOURCE_CONTROL_PANEL } from "./sourceControl.ts";
@@ -63,6 +64,31 @@ export type TuiPageState =
       readonly title: string;
       readonly projectTitle: string | null;
     };
+
+/** Published under `connection`: how the client reaches its environment. */
+export interface TuiConnectionState {
+  readonly state: TuiConnectionPhase;
+  /** The environments this client knows; the TUI has one, the local server it was launched for. */
+  readonly environments: ReadonlyArray<{
+    readonly id: string;
+    readonly label: string;
+    readonly kind: "local";
+    readonly connected: boolean;
+  }>;
+  /** How to reach another environment; null while the TUI only knows its launcher's server. */
+  readonly pairingHint: string | null;
+}
+
+/**
+ * Published under `problems`: what the QML runtime reported (plugin load,
+ * setup and render failures, bad keymap entries, config warnings), newest last.
+ */
+export interface TuiProblem {
+  readonly level: "error" | "warning";
+  readonly message: string;
+  /** The runtime's context: `plugin "clock" (render, slot "statusbar")`, `plugin directory "…"`. */
+  readonly where: string | null;
+}
 
 export interface TuiShellSingleton {
   readonly state: PropertyMap;
@@ -130,8 +156,17 @@ export interface Host {
    * tests wait on.
    */
   readonly settled: () => Promise<void>;
+  /** The QML engine is up: list its plugins and let `plugin.*` actions reach it. */
+  readonly attachPlugins: (port: PluginPort) => void;
+  /** A QML runtime error (`onError`): logged and published under `problems`. */
+  readonly reportError: (error: unknown, where?: string) => void;
+  /** A QML runtime or config warning (`onWarning`): logged and published under `problems`. */
+  readonly reportWarning: (message: string) => void;
   readonly destroy: () => void;
 }
+
+/** Problems kept for the user; older ones drop off. */
+const MAX_PROBLEMS = 50;
 
 /**
  * Actions that return false when they do not apply right now (an empty
@@ -197,7 +232,23 @@ export function createHost(options: HostOptions): Host {
     notifications: { items: [] },
     keybindings: { layers: KEYMAP_LAYERS, groups: KEYBINDING_GROUPS, parity: KEYMAP_PARITY },
     paneScroll,
+    plugins: { items: [] } satisfies TuiPluginsState,
+    problems: { items: [] },
+    connection: connectionState("connecting"),
   });
+
+  let pluginPort: PluginPort | null = null;
+  const refreshPlugins = () => {
+    if (pluginPort) state.set("plugins", { items: pluginPort.list() } satisfies TuiPluginsState);
+  };
+  let problems: ReadonlyArray<TuiProblem> = [];
+  const addProblem = (problem: TuiProblem) => {
+    log(`[qml ${problem.level}${problem.where ? ` ${problem.where}` : ""}] ${problem.message}`);
+    problems = [...problems, problem].slice(-MAX_PROBLEMS);
+    state.set("problems", { items: problems });
+    // A plugin that failed may have left the registry.
+    refreshPlugins();
+  };
 
   const rowsNow = (next = store.getState()) =>
     buildRows(
@@ -788,6 +839,29 @@ export function createHost(options: HostOptions): Host {
         publishLayout();
         return true;
       }
+      case "sidebar.list.focus":
+        setMode("list");
+        return true;
+      case "sidebar.list.blur":
+        if (mode === "list") setMode(restingMode());
+        return true;
+      case "plugins.refresh":
+        refreshPlugins();
+        return true;
+      case "plugin.remove": {
+        const id = payloadField(payload, "id");
+        if (typeof id !== "string" || !pluginPort) return true;
+        pluginPort.remove(id);
+        refreshPlugins();
+        return true;
+      }
+      case "plugin.load": {
+        const file = payloadField(payload, "file");
+        if (typeof file !== "string" || !pluginPort) return true;
+        void pluginPort.load(file).then(refreshPlugins);
+        return true;
+      }
+      case "quit":
       case "app.quit":
         options.onQuit?.();
         return true;
@@ -836,6 +910,9 @@ export function createHost(options: HostOptions): Host {
     composer!.sync();
     palette.sync();
   });
+  const unsubscribeConnection = client.subscribeConnection((phase) =>
+    state.set("connection", connectionState(phase)),
+  );
   store.start();
 
   return {
@@ -860,11 +937,33 @@ export function createHost(options: HostOptions): Host {
       await files.settled();
       await terminal.settled();
     },
+    attachPlugins: (port) => {
+      pluginPort = port;
+      refreshPlugins();
+    },
+    reportError: (error, where) =>
+      addProblem({
+        level: "error",
+        message: error instanceof Error ? error.message : String(error),
+        where: where ?? null,
+      }),
+    reportWarning: (message) => addProblem({ level: "warning", message, where: null }),
     destroy: () => {
+      unsubscribeConnection();
       unsubscribe();
       terminal.dispose();
       store.stop();
     },
+  };
+}
+
+function connectionState(phase: TuiConnectionPhase): TuiConnectionState {
+  return {
+    state: phase,
+    environments: [
+      { id: "local", label: "This machine", kind: "local", connected: phase === "connected" },
+    ],
+    pairingHint: null,
   };
 }
 

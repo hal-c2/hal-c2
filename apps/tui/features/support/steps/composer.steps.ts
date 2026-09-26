@@ -775,14 +775,15 @@ step("the draft carries {string}", async (ctx: ComposerWorld, name: string) => {
   expect(attachmentNames(ctx)).toEqual([name]);
 });
 
-step("the user removes {string}", async (ctx: World, name: string) => {
+/** Remove the named attachment from the draft (the palette's "remove last attachment"). */
+export async function removeAttachment(ctx: World, name: string): Promise<void> {
   expect(attachmentNames(ctx).at(-1)).toBe(name);
   await pressKey(ctx, "Ctrl+K");
   await typeText(ctx, "remove last attachment");
   await settle(ctx);
   await pressKey(ctx, "Enter");
   await settle(ctx);
-});
+}
 
 step("the draft carries no attachments", async (ctx: World) => {
   await settle(ctx);

@@ -44,6 +44,8 @@ Feature: Reconnecting and stale requests in the terminal client
     Then "Fix login" shows immediately from the warm cache
     And it refreshes from the server in the background
 
+  # Eviction itself happens inside makeTuiClient's warm thread state; the fake
+  # client stands in for the cache, so this checks what the user sees.
   @tui
   Scenario: A thread deleted elsewhere leaves the warm cache
     Given the thread "Old spike" is in the warm cache

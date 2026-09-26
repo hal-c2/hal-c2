@@ -694,6 +694,17 @@ step("a pager is running in the terminal", async (ctx: TerminalWorld) => {
   await openDrawer(ctx);
   await print(ctx, `${numbered(120)}\r\n(END)`);
 });
+// tui/launch.feature: the global keymap steps aside in the drawer, so ^C is the program's.
+step("a terminal tab has focus", openDrawer);
+step("the running shell program receives the interrupt", async (ctx: World) => {
+  await settle(ctx);
+  expect(fakeTerminal(ctx, state(ctx).activeId!).writes).toEqual(["\x03"]);
+});
+step("the terminal client stays open", (ctx: World) => {
+  expect(ctx.quitRequested ?? false).toBe(false);
+  expect(ctx.host!.state.get("mode")).toBe("terminal");
+});
+
 step("the pager receives the key", async (ctx: World) => {
   await settle(ctx);
   expect(fakeTerminal(ctx, state(ctx).activeId!).writes).toEqual(["\x1b[5~"]);

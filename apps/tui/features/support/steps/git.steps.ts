@@ -5,6 +5,8 @@ import { expect } from "bun:test";
 
 import type { TuiLayoutState } from "../../../src/host/layoutState.ts";
 import { step } from "../../steps.ts";
+import { runLaunch } from "../launchWorld.ts";
+import { runOpentuiQml } from "./qml-runtime.steps.ts";
 import {
   CHECKOUTS,
   PR_URL,
@@ -282,12 +284,21 @@ step(
 
 // --- running actions ---
 
-// One "the user runs" for every world: palette commands (T5's add-project
-// entries; later T6's) go through the palette, everything else is a git action.
+// One "the user runs" for every world: `t3 …` is the real launcher (only
+// `t3 tui` runs here), `opentui-qml …` the runtime's CLI, palette commands
+// (T5's add-project entries) go through the palette, everything else is a git
+// action.
 const PALETTE_COMMANDS = new Set(["Add project", "Open WSL folder"]);
-step("the user runs {string}", (ctx: World, label: string) =>
-  PALETTE_COMMANDS.has(label) ? chooseCommand(ctx, label) : runAction(ctx, label),
-);
+step("the user runs {string}", async (ctx: World, label: string) => {
+  if (label.startsWith("t3 ")) {
+    if (label !== "t3 tui")
+      throw new Error(`the user runs "${label}": only "t3 tui" launches here`);
+    await runLaunch(ctx);
+    return;
+  }
+  if (/^opentui-qml(?: |$)/.test(label)) return runOpentuiQml(ctx, label);
+  return PALETTE_COMMANDS.has(label) ? chooseCommand(ctx, label) : runAction(ctx, label);
+});
 step("the user runs {string} from the keyboard", (ctx: World, label: string) =>
   runFromPanel(ctx, label),
 );

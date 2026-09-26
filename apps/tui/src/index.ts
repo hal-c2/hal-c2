@@ -1,8 +1,8 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import { createCliRenderer } from "@opentui/core";
 import { installKittyClipboardExtension } from "@t3tools/opentui-image";
@@ -11,6 +11,9 @@ import { runShell } from "opentui-qml";
 import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
 import { detectKittyGraphicsTerminal } from "./terminalGraphics.ts";
 import { createHost } from "./host/host.ts";
+import { enginePluginPort } from "./host/plugins.ts";
+import { readUserConfig } from "./host/userConfig.ts";
+import { makeSocketTicketMinter } from "./socketTicket.ts";
 import {
   ensureColorCapabilityEnv,
   prepareTerminalViewport,
@@ -23,83 +26,32 @@ import {
 // asking the parent (which holds EnvironmentAuth) over the Node IPC channel —
 // the parent stays alive for the whole session and answers each request.
 
-interface SocketUrlReply {
-  readonly type: "socketUrl";
-  readonly id: number;
-  readonly url: string | null;
-  readonly error?: string;
-}
-
-let nextRequestId = 1;
-const pending = new Map<number, { resolve: (url: string) => void; reject: (e: Error) => void }>();
-
-process.on("message", (raw: unknown) => {
-  if (typeof raw !== "object" || raw === null) return;
-  const message = raw as Partial<SocketUrlReply>;
-  if (message.type !== "socketUrl" || typeof message.id !== "number") return;
-  const entry = pending.get(message.id);
-  if (!entry) return;
-  pending.delete(message.id);
-  if (typeof message.url === "string") entry.resolve(message.url);
-  else entry.reject(new Error(message.error ?? "failed to mint socket url"));
+const processSend = process.send as ((message: unknown) => boolean) | undefined;
+const socketTickets = makeSocketTicketMinter({
+  send:
+    typeof processSend === "function" ? (message) => processSend.call(process, message) : undefined,
 });
-
-// If the parent goes away mid-request, settle outstanding mints instead of
-// leaving them (and the reconnect loop that awaits them) hung forever.
-process.on("disconnect", () => {
-  for (const entry of pending.values()) {
-    entry.reject(new Error("t3 parent IPC channel closed"));
-  }
-  pending.clear();
-});
-
-const mintSocketUrl = (): Promise<string> =>
-  new Promise<string>((resolve, reject) => {
-    const send = process.send as ((message: unknown) => boolean) | undefined;
-    if (typeof send !== "function") {
-      reject(new Error("no IPC channel to the t3 parent process"));
-      return;
-    }
-    const id = nextRequestId++;
-    const timer = setTimeout(() => {
-      if (pending.delete(id)) reject(new Error("timed out minting a websocket url"));
-    }, 10_000);
-    timer.unref?.();
-    pending.set(id, {
-      resolve: (url) => {
-        clearTimeout(timer);
-        resolve(url);
-      },
-      reject: (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    });
-    try {
-      send.call(process, { type: "mintSocketUrl", id });
-    } catch (error) {
-      if (pending.delete(id)) {
-        clearTimeout(timer);
-        reject(error instanceof Error ? error : new Error(String(error)));
-      }
-    }
-  });
+process.on("message", socketTickets.receive);
+process.on("disconnect", socketTickets.disconnect);
+const mintSocketUrl = socketTickets.mint;
 
 /**
  * The `T3.Tui` bricks ship next to the bundle (`dist/qml`, copied by the build)
  * and live at `apps/tui/qml` when running from source.
  */
 function resolveQmlDir(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const bundled = join(here, "qml");
-  return NodeFS.existsSync(join(bundled, "T3/Tui/qmldir")) ? bundled : join(here, "../qml");
+  const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+  const bundled = NodePath.join(here, "qml");
+  return NodeFS.existsSync(NodePath.join(bundled, "T3/Tui/qmldir"))
+    ? bundled
+    : NodePath.join(here, "../qml");
 }
 
 /** Where a user's `shell.qml` (and extra `qml/` modules) override the default shell. */
 function resolveShellConfigDir(): string {
   return (
     process.env.T3_TUI_SHELL_DIR ??
-    join(process.env.T3CODE_HOME ?? join(homedir(), ".t3"), "shell", "tui")
+    NodePath.join(process.env.T3CODE_HOME ?? NodePath.join(NodeOS.homedir(), ".t3"), "shell", "tui")
   );
 }
 
@@ -120,6 +72,16 @@ async function main(): Promise<void> {
       // Diagnostics only — never let logging break the UI.
     }
   };
+
+  // Read the user's keymap and plugin locations before taking over the terminal,
+  // so a broken keymap.json stops here with a readable error.
+  const configDir = resolveShellConfigDir();
+  const configWarnings: string[] = [];
+  const userConfig = readUserConfig({
+    configDir,
+    pluginPaths: process.env.T3_TUI_PLUGINS,
+    warn: (message) => configWarnings.push(message),
+  });
 
   const options: TuiOptions = { origin, bearerToken, mintSocketUrl, logPath };
   const runtime = buildTuiRuntime(options);
@@ -183,6 +145,7 @@ async function main(): Promise<void> {
       }
     },
   });
+  for (const message of configWarnings) host.reportWarning(message);
 
   try {
     // Raw mode usually delivers Ctrl+C as a keystroke (the shell dispatches
@@ -194,19 +157,22 @@ async function main(): Promise<void> {
     renderer.on("resize", (columns: number, rows: number) => host.resize({ columns, rows }));
 
     const qmlDir = resolveQmlDir();
-    await runShell({
+    const app = await runShell({
       appId: "t3",
       renderer,
-      defaultShell: join(qmlDir, "T3/Tui/DefaultShell.qml"),
-      modules: { "T3.Tui": join(qmlDir, "T3/Tui") },
+      defaultShell: NodePath.join(qmlDir, "T3/Tui/DefaultShell.qml"),
+      modules: { "T3.Tui": NodePath.join(qmlDir, "T3/Tui") },
       importPaths: [qmlDir],
-      configDir: resolveShellConfigDir(),
+      configDir,
+      plugins: [...userConfig.plugins],
+      pluginDirs: [...userConfig.pluginDirs],
+      ...(userConfig.keymap ? { keymap: userConfig.keymap } : {}),
       singletons: { Shell: host.Shell, Theme: host.Theme },
       watch: process.env.T3_TUI_DEV === "1",
-      onWarning: (message) => appendLog(`[qml warning] ${message}`),
-      onError: (error, context) =>
-        appendLog(`[qml error${context ? ` ${context}` : ""}] ${String(error)}`),
+      onWarning: host.reportWarning,
+      onError: host.reportError,
     });
+    host.attachPlugins(enginePluginPort(app.engine));
 
     await done;
   } catch (error) {

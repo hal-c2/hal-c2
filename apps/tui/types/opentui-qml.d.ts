@@ -25,13 +25,34 @@ export interface QmlObject {
   readonly children: QmlObject[];
   readonly parent: QmlObject | null;
   readonly proxy: any;
+  readonly isDestroyed: boolean;
+  readonly component: { readonly ids: Map<string, QmlObject> };
   get(name: string): unknown;
+  /** Read without tracking (outside bindings). */
+  peek(name: string): unknown;
   set(name: string, value: unknown): void;
+  emit(signal: string, ...args: unknown[]): void;
+  destroy(): void;
 }
 
 export interface QmlEngine {
   readonly renderer: CliRenderer;
+  readonly isDestroyed: boolean;
 }
+
+export interface PluginInfo {
+  readonly id: string;
+  readonly order: number;
+  readonly kind: "ts" | "qml";
+  readonly file?: string;
+}
+
+export function listPlugins(engine: QmlEngine): PluginInfo[];
+export function unregisterPlugin(engine: QmlEngine, id: string): boolean;
+/** Register a plugin spec or load a QML plugin file; failures reach `onError`. */
+export function addPlugin(engine: QmlEngine, plugin: object | string): Promise<void>;
+export function parseQml(source: string, filename?: string): unknown;
+export class QmlSyntaxError extends Error {}
 
 export interface RunQmlOptions {
   renderer?: CliRenderer;

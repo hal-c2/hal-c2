@@ -2,15 +2,20 @@ import OpenTUI
 
 // The thread list: a filter field over the rows of `Shell.state.sidebar`.
 // Typing filters (`sidebar.filter.set`), Enter keeps the filter
-// (`sidebar.filter.commit`); the shell's Esc clears it.
+// (`sidebar.filter.commit`); the shell's Esc clears it. Plugins fill the
+// "sidebar.footer" slot at the bottom. With the list focused (mode "list"),
+// ShellKeymap's "list" keymap moves the selection.
 //
 // The host windows the rows (`visibleRows`) to the pane's height and scrolls
 // them to keep the selection in view, so every row here is one line.
 Rectangle {
     id: bar
     property alias filter: filterInput
+    property alias footerMode: footerSlot.mode
     // Bound by the shell to the host's mode, so the field follows the keys.
     property bool filterFocused: false
+    // The list has the keys (mode "list"): Esc hands them back.
+    property bool listFocused: false
 
     readonly property var sidebar: Shell.state.sidebar
     // Typing breaks a `text` binding, so follow the host's filter by hand
@@ -19,7 +24,7 @@ Rectangle {
     onFilterQueryChanged: if (filterInput.text !== filterQuery) filterInput.text = filterQuery
 
     border.width: 1
-    border.color: filterFocused ? Theme.colors.accent : Theme.colors.faint
+    border.color: filterFocused || listFocused ? Theme.colors.accent : Theme.colors.faint
     title: sidebar.scopeProjectKey === null ? " Threads " : " Threads · " + sidebar.scopeLabel + " "
     titleColor: Theme.colors.dim
     color: Theme.colors.bg
@@ -82,5 +87,14 @@ Rectangle {
         visible: bar.sidebar.rows.length === 0
         text: bar.sidebar.filter.length > 0 ? "No matching threads" : "No threads yet"
         color: Theme.colors.faint
+    }
+
+    Item { flexGrow: 1 }
+
+    Slot {
+        id: footerSlot
+        objectName: "sidebarFooterSlot"
+        name: "sidebar.footer"
+        flexDirection: "column"
     }
 }

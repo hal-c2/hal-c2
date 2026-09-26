@@ -228,6 +228,8 @@ Feature: T3 Connect
       | the installed client does not run          | validation_failed    |
       | the install folder cannot be written       | write_failed         |
 
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: The terminal client connects a relayed environment
     Given an environment the account can reach through T3 Connect

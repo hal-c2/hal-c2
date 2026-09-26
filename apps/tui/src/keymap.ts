@@ -99,6 +99,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "^P", description: "Back to the prompt from any pane", chords: ["ctrl+p"] },
       { keys: "s", description: "Diff: toggle split / stacked", chords: ["s"] },
       { keys: "y / n", description: "Delete a thread: confirm / keep", chords: ["y", "n"] },
+      {
+        keys: "j/k · ↑/↓ · Esc",
+        description: "Thread list: next / previous · back to the prompt",
+        chords: ["j", "k", "up", "down", "escape"],
+      },
     ],
   },
 ];
@@ -150,8 +155,11 @@ const COMPOSE: KeymapLayer = {
  * prompt or field when no chord takes them.
  */
 export const KEYMAP_LAYERS = {
-  /** Under every mode but the terminal drawer, which passes ^C to the shell. */
-  global: { "ctrl+c": "app.quit", "ctrl+p": "composer.focus" },
+  /**
+   * Under every mode but the terminal drawer, which passes ^C to the shell.
+   * "quit" is the action keymap.json files name (the host runs it as app.quit).
+   */
+  global: { "ctrl+c": "quit", "ctrl+p": "composer.focus" },
   compose: COMPOSE,
   newThread: COMPOSE,
   userInput: {
@@ -239,6 +247,12 @@ export const KEYMAP_LAYERS = {
     return: "sidebar.filter.commit",
     escape: "sidebar.filter.cancel",
   },
+  /**
+   * The thread list with the keys (`Keymap { name: "list" }`, so a keymap.json
+   * "list" section overrides it). Its actions are the list's own names; one
+   * chord per entry so a `"j": null` override frees just that key.
+   */
+  list: { j: "next", down: "next", k: "previous", up: "previous", escape: "leave" },
 } satisfies Record<string, KeymapLayer>;
 
 /** Every chord the layers bind, split into single chords ("up, k" → "up", "k"). */

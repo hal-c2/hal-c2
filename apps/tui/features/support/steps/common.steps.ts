@@ -3,6 +3,8 @@
 import { expect } from "bun:test";
 
 import { step } from "../../steps.ts";
+import { expectClientStatus } from "./launch.steps.ts";
+import { expectCliStatus } from "./qml-runtime.steps.ts";
 import { LIST_PANE_WIDTH } from "../../../src/components/ChatView.layout.ts";
 import { addProject, flush } from "../environment.ts";
 import { openOnThread } from "./composer.steps.ts";
@@ -106,11 +108,12 @@ step("a connected environment with the project {string}", (ctx: World, title: st
 });
 
 // Typing lands where the keys are (prompt, filter, add-project path, terminal);
-// the host's in-flight calls (T5's browse and terminal writes) settle first.
+// the host's in-flight calls (T5's browse and terminal writes) settle first. Raw QML
+// scenarios (qml-runtime.feature) have no host.
 step("the user types {string}", async (ctx: World, text: string) => {
   await boot(ctx);
   await typeText(ctx, text);
-  await ctx.host!.settled();
+  await ctx.host?.settled();
   await flush(ctx);
 });
 
@@ -165,3 +168,11 @@ step("the prompt has focus", async (ctx: World) => {
 step("the user presses escape", async (ctx: World) => {
   await pressKey(ctx, "Esc");
 });
+
+// --- added by T6 ---
+
+// "t3 tui" and "opentui-qml …" run programs; their exit status is the CLI's
+// (qml-runtime) when one ran, else the launched client's.
+step("it exits with status {int}", (ctx: World, status: number) =>
+  ctx.cli ? expectCliStatus(ctx, status) : expectClientStatus(ctx, status),
+);

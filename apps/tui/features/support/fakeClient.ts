@@ -9,7 +9,12 @@ import {
   type VcsStatusResult,
 } from "@t3tools/contracts";
 
-import type { OrchestrationShellSnapshot, TuiClient, TuiThreadPage } from "../../src/connection.ts";
+import type {
+  OrchestrationShellSnapshot,
+  TuiClient,
+  TuiConnectionPhase,
+  TuiThreadPage,
+} from "../../src/connection.ts";
 import { flattenModelOptions } from "../../src/models.ts";
 
 // Fixtures and an in-memory TuiClient, shared by the component tests and the
@@ -138,6 +143,7 @@ export interface FakeClientCall {
 
 // Streams and cache reads are plumbing, not commands a step asserts on.
 const UNRECORDED = new Set([
+  "subscribeConnection",
   "subscribeShell",
   "subscribeThread",
   "peekThread",
@@ -276,6 +282,8 @@ export function fakeClient({
   readonly client: TuiClient;
   readonly connect: () => void;
   readonly emitShell: (snapshot: OrchestrationShellSnapshot) => void;
+  /** The shell snapshot the client last delivered (or will deliver on connect). */
+  readonly latestShell: () => OrchestrationShellSnapshot;
   readonly subscribedThreadIds: string[];
   /** Every command the client was asked to run, in order (subscriptions and reads excluded). */
   readonly calls: FakeClientCall[];
@@ -298,7 +306,12 @@ export function fakeClient({
   readonly workspaceFiles: Map<string, Uint8Array>;
   /** The latest detail pushed or peeked for a thread. */
   readonly currentThread: (threadId: string) => OrchestrationThread | null;
+  /** Move the connection to a phase (the client starts "connecting"). */
+  readonly emitConnection: (phase: TuiConnectionPhase) => void;
 } {
+  let connectionPhase: TuiConnectionPhase = "connecting";
+  let latestShell = shellSnapshot;
+  const connectionSubscribers = new Set<(phase: TuiConnectionPhase) => void>();
   const terminals = new Map<string, FakeTerminal>();
   const terminalFor = (threadId: string, terminalId: string): FakeTerminal => {
     const key = `${threadId}:${terminalId}`;
@@ -353,12 +366,21 @@ export function fakeClient({
   };
   const client = {
     hostPlatform,
+    subscribeConnection: (onPhase: (phase: TuiConnectionPhase) => void) => {
+      connectionSubscribers.add(onPhase);
+      onPhase(connectionPhase);
+      return () => {
+        connectionSubscribers.delete(onPhase);
+      };
+    },
     browseFilesystem,
     discoverSourceControl,
     lookupRepository,
     cloneRepository,
     subscribeShell: (onSnapshot: (snapshot: OrchestrationShellSnapshot) => void) => {
       shellSubscriber = onSnapshot;
+      // Connected before anyone listened: the subscriber gets the snapshot right away.
+      if (connectionPhase === "connected") onSnapshot(latestShell);
       return () => {
         shellSubscriber = null;
       };
@@ -487,8 +509,17 @@ export function fakeClient({
   return {
     client: recorded as unknown as TuiClient,
     calls,
-    connect: () => shellSubscriber?.(shellSnapshot),
-    emitShell: (snapshot) => shellSubscriber?.(snapshot),
+    connect: () => {
+      connectionPhase = "connected";
+      latestShell = shellSnapshot;
+      for (const onPhase of connectionSubscribers) onPhase(connectionPhase);
+      shellSubscriber?.(shellSnapshot);
+    },
+    latestShell: () => latestShell,
+    emitShell: (snapshot) => {
+      latestShell = snapshot;
+      shellSubscriber?.(snapshot);
+    },
     subscribedThreadIds,
     emitTerminalMetadata: (event) => terminalMetadataSubscriber?.(event),
     terminals,
@@ -530,6 +561,10 @@ export function fakeClient({
     },
     workspaceFiles,
     currentThread,
+    emitConnection: (phase) => {
+      connectionPhase = phase;
+      for (const onPhase of connectionSubscribers) onPhase(phase);
+    },
   };
 }
 

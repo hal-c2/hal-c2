@@ -10,6 +10,7 @@ import type { QmlObject } from "opentui-qml";
 import { testQml, type QmlTestApp } from "opentui-qml/testing";
 
 import { createHost, type Host, type HostOptions } from "../../src/host/host.ts";
+import { enginePluginPort } from "../../src/host/plugins.ts";
 import type { StepContext } from "../steps.ts";
 import { fakeClient } from "./fakeClient.ts";
 
@@ -18,6 +19,19 @@ export const DEFAULT_SHELL = NodePath.join(QML_DIR, "T3/Tui/DefaultShell.qml");
 
 const DEFAULT_COLUMNS = 100;
 const DEFAULT_ROWS = 40;
+
+/** How the client starts: a user shell, plugins, keymap overrides, context values. */
+export interface BootOptions {
+  /** A user `shell.qml` booted instead of DefaultShell; `import T3.Tui` resolves. */
+  shellSource?: string;
+  /** Plugin files (paths) or script plugins (`{ id, slots, ... }`). */
+  plugins?: Array<string | object>;
+  pluginDirs?: string[];
+  keymap?: Record<string, unknown>;
+  context?: Record<string, unknown>;
+  /** Extra singletons next to Shell and Theme. */
+  singletons?: Record<string, unknown>;
+}
 
 export interface World extends StepContext {
   readonly tags: ReadonlyArray<string>;
@@ -55,6 +69,12 @@ export interface World extends StepContext {
    * to go idle, which it never would.
    */
   held?: number;
+  /** Start options (user shell, plugins, keymap overrides); set them before the first boot. */
+  qml?: BootOptions;
+  /** Runs right before the first boot, from whichever step boots (scenario start options). */
+  prepare?: () => void;
+  /** Plugin loads the host started (`plugin.load`); await them before asserting. */
+  pluginLoads?: Array<Promise<void>>;
 }
 
 /** Set up the fake client before boot; later calls replace it only if not booted. */
@@ -70,6 +90,7 @@ export async function boot(
   size: { columns?: number; rows?: number } = {},
 ): Promise<QmlTestApp> {
   if (ctx.app) return ctx.app;
+  ctx.prepare?.();
   const columns = size.columns ?? ctx.columns ?? DEFAULT_COLUMNS;
   const rows = size.rows ?? ctx.rows ?? DEFAULT_ROWS;
   const fake = ctx.fake ?? useClient(ctx);
@@ -94,17 +115,28 @@ export async function boot(
   });
   ctx.cleanups.push(() => host.destroy());
   await host.ready;
-  const app = await testQml(
-    { file: DEFAULT_SHELL },
-    {
-      width: columns,
-      height: rows,
-      importPaths: [QML_DIR],
-      ...(ctx.kittyKeyboard ? { renderer: { kittyKeyboard: true } } : {}),
-      singletons: { Shell: host.Shell, Theme: host.Theme },
-    },
-  );
+  const { shellSource, ...runOptions } = ctx.qml ?? {};
+  const app = await testQml(shellSource ?? { file: DEFAULT_SHELL }, {
+    ...runOptions,
+    width: columns,
+    height: rows,
+    importPaths: [QML_DIR],
+    ...(ctx.kittyKeyboard ? { renderer: { kittyKeyboard: true } } : {}),
+    singletons: { ...runOptions.singletons, Shell: host.Shell, Theme: host.Theme },
+    onError: host.reportError,
+    onWarning: host.reportWarning,
+  });
   ctx.cleanups.push(() => app.destroy());
+  const port = enginePluginPort(app.engine);
+  const pluginLoads = (ctx.pluginLoads ??= []);
+  host.attachPlugins({
+    ...port,
+    load: (file) => {
+      const loading = port.load(file);
+      pluginLoads.push(loading);
+      return loading;
+    },
+  });
   Object.assign(ctx, { columns, rows, host, app });
   if (ctx.connectOnBoot) fake.connect();
   return app;

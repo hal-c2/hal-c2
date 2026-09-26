@@ -74,6 +74,11 @@ Feature: The opentui-qml runtime
       | an item with visible set to false         | nothing for that item                       |
       | a TabBar with three tabs                  | the three tab labels                        |
       | an AsciiText                              | large ASCII lettering                       |
+
+    # Needs opentui-qml t3-port 3e840ed (default syntax palette); the installed build styles nothing.
+    @backlog
+    Examples:
+      | element                                   | result                                      |
       | a Markdown block                          | styled Markdown                             |
       | a Code block with a file type             | highlighted code                            |
 
@@ -281,7 +286,8 @@ Feature: The opentui-qml runtime
     Then every file there whose root is Plugin is loaded before "app.qml"
     And helper types in that directory are not treated as plugins
 
-  @tui
+  # Needs opentui-qml t3-port 77b74e3: failures before the root exists never reach pluginError.
+  @backlog @tui
   Scenario Outline: Plugin failures are isolated and reported
     Given a plugins directory with a good plugin and <failure>
     When the document loads

@@ -138,6 +138,7 @@ Feature: Launching and leaving the terminal client
     Then the terminal leaves the alternate screen with the cursor and input restored
     And the client exits with status 1
 
+  # No detach: the client is one process on the terminal and leaves with it.
   @backlog @tui
   Scenario: The user detaches and resumes the same terminal client later
     Given the terminal client is open on a thread
@@ -145,12 +146,16 @@ Feature: Launching and leaving the terminal client
     Then the running turns keep going on the server
     And re-attaching later opens the same thread with the same focus
 
+  # `t3 tui` finds servers through the Node server's runtime file; the Elixir node
+  # does not write one yet.
   @backlog @tui
   Scenario: The terminal client launches against an Elixir node
     Given an Elixir node is running on this machine
     When the user runs "t3 tui"
     Then the terminal client connects to that node
 
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: The user pairs the terminal client with a remote environment
     Given a pairing link from a remote T3 Code environment
@@ -158,12 +163,16 @@ Feature: Launching and leaving the terminal client
     Then the client connects to the remote environment
     And later launches reuse the paired credential
 
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: Pairing with an invalid or expired credential explains the failure
     Given a pairing credential that has expired
     When the user starts the terminal client with it
     Then the client says the credential expired and does not connect
 
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: The user lists environments and activates a reachable one
     Given local, remote and cloud environments are saved
@@ -171,12 +180,15 @@ Feature: Launching and leaving the terminal client
     Then every environment is listed with whether it is reachable
     And activating a reachable environment switches the client to it
 
+  # No relay status or install flow in the terminal client.
   @backlog @tui
   Scenario: The user checks the relay client and installs it
     Given the relay client is not installed
     When the user checks relay status from the terminal client
     Then the client says the relay is missing and offers to install it
 
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
   @backlog @tui
   Scenario: The user reviews and revokes other clients' access
     Given other clients are paired with this environment

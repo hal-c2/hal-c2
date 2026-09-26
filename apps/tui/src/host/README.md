@@ -11,7 +11,8 @@ desktop shell's contract names, extended for the terminal), `mode`, `status`,
 `newThread` (`composerState.ts`), `palette` (`paletteState.ts`), `clock`,
 `git`, `settings`, `paneScroll`, `terminal`, `files`, `addProject`,
 `keybindings` (`src/keymap.ts`: the chord layers per mode, the reference
-groups and the web parity table), and the open thread's keys from
+groups and the web parity table), `plugins`, `problems`, `connection` (see
+"Plugins, problems and connection"), and the open thread's keys from
 `threadView.ts` (below).
 
 - `sidebar` adds the list viewport (`visibleRows`, `scrollTop`,
@@ -41,14 +42,15 @@ groups and the web parity table), and the open thread's keys from
 
 Actions, by area (payloads use `key` / `projectKey` from `sidebarState.ts`):
 
-| Area        | Actions                                                                                                                                                                                                                       |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Thread list | `thread.open`, `thread.next`, `thread.previous`, `thread.jump {index}`, `sidebar.toggle`, `sidebar.filter.focus/set/commit/cancel`, `sidebar.section.toggle {section}`, `sidebar.more`, `sidebar.scope {projectKey}`          |
-| Thread rows | `thread.menu {key, x, y}`, `thread.rename {key, title?}`, `thread.archive`, `thread.unarchive`, `thread.delete` (asks), `thread.delete.confirm`, `thread.settle`, `thread.unsettle`, `thread.copy {key, what}`, `thread.stop` |
-| Menus       | `contextMenu.move {delta}`, `contextMenu.select {index?}`, `overlay.cancel`, `palette.open/close/query.set/next/previous/run {index? id?}`                                                                                    |
-| Composer    | `composer.text.set {text}`, `composer.submit`, `composer.escape`, `composer.paste`, `composer.history.previous/next`, `composer.grow/shrink`, `composer.*Picker.toggle`, `composer.editor.open`, `select.*`, `composer.focus` |
-| New thread  | `thread.new {projectKey?}`, `newThread.workspaceMode {mode}`, `newThread.branch {name}`, `newThread.submit {message?}`, `newThread.cancel`                                                                                    |
-| Layout      | `rightPanel.toggle/open {kind?}`, `rightPanel.focus/blur/close`, `terminal.*` (below), `layout.popover {rows}`, `clock.tick`, `app.quit`                                                                                      |
+| Area        | Actions                                                                                                                                                                                                                                         |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Thread list | `thread.open`, `thread.next`, `thread.previous`, `thread.jump {index}`, `sidebar.toggle`, `sidebar.filter.focus/set/commit/cancel`, `sidebar.list.focus/blur`, `sidebar.section.toggle {section}`, `sidebar.more`, `sidebar.scope {projectKey}` |
+| Thread rows | `thread.menu {key, x, y}`, `thread.rename {key, title?}`, `thread.archive`, `thread.unarchive`, `thread.delete` (asks), `thread.delete.confirm`, `thread.settle`, `thread.unsettle`, `thread.copy {key, what}`, `thread.stop`                   |
+| Menus       | `contextMenu.move {delta}`, `contextMenu.select {index?}`, `overlay.cancel`, `palette.open/close/query.set/next/previous/run {index? id?}`                                                                                                      |
+| Composer    | `composer.text.set {text}`, `composer.submit`, `composer.escape`, `composer.paste`, `composer.history.previous/next`, `composer.grow/shrink`, `composer.*Picker.toggle`, `composer.editor.open`, `select.*`, `composer.focus`                   |
+| New thread  | `thread.new {projectKey?}`, `newThread.workspaceMode {mode}`, `newThread.branch {name}`, `newThread.submit {message?}`, `newThread.cancel`                                                                                                      |
+| Layout      | `rightPanel.toggle/open {kind?}`, `rightPanel.focus/blur/close`, `terminal.*` (below), `layout.popover {rows}`, `clock.tick`, `app.quit` (or `quit`)                                                                                            |
+| Plugins     | `plugins.refresh`, `plugin.remove {id}`, `plugin.load {file}`                                                                                                                                                                                   |
 
 The palette (`paletteState.ts`) lists the composer's commands (new thread,
 plan mode, workspace, model, effort, access, editor, "Implement plan"), then
@@ -80,8 +82,9 @@ conversation: `settings.open`, `settings.close` (`mode: "settings"`).
 | `diff`                       | `diff.open`, `diff.all`, `diff.toggleView`, `diff.next`, `diff.previous`, `diff.close`                                                                                                                                        |
 | `notifications`              | `notification.dismiss`, `notification.action` (thread alerts from `notificationsState.ts`)                                                                                                                                    |
 
-`mode` gains `userInput` (a question waits; "compose" resolves to it), `revert`
-and `diff`. `diff.open {turnCount?, path?}` opens one turn (all changes
+`mode` gains `userInput` (a question waits; "compose" resolves to it), `revert`,
+`diff`, and `list` (the thread list has the keys: `sidebar.list.focus`, left
+with Esc or `sidebar.list.blur`; no chord enters it yet). `diff.open {turnCount?, path?}` opens one turn (all changes
 without one); the timeline's changed-file rows and the palette open it.
 
 `terminal` is the selected thread's drawer, painted in the `layout.drawer`
@@ -130,6 +133,44 @@ Some layer actions are aliases the host resolves (`handleAlias` in
 `project.add.previous/next`, `settings.scrollUp/scrollDown` and
 `diff.scrollUp/scrollDown`. A palette command is a host action too, so running
 one is the same as pressing its chord.
+
+The mode keymaps are unnamed, so a top-level entry in the user's
+`keymap.json` reaches every mode (`{"ctrl+p": "palette.open"}`,
+`{"ctrl+n": null}` unbinds). The thread list's keymap is named `list` (live
+only in mode `list`, actions `next`/`previous`/`leave`) and takes the file's
+`"list"` section, so its single-letter keys never fire while something else
+has the keys. The global layer names Ctrl+C `quit`, the action a keymap file
+uses; the host runs it as `app.quit`. Plugins can ship their own `Keymap`s;
+a higher `priority` wins a chord the shell binds.
+
+## Plugins, problems and connection
+
+- `plugins` lists what the QML engine registered (`{ items: [{ id, kind:
+"qml" | "script", file, order }] }`). The entry attaches the engine with
+  `attachPlugins(enginePluginPort(engine))`; actions `plugins.refresh`,
+  `plugin.remove { id }` and `plugin.load { file }` go through that port.
+- `problems` holds what the runtime reported through `onError`/`onWarning`
+  (plugin load, setup and render failures, bad keymap entries, missing plugin
+  directories), capped at 50. The runtime never throws for a plugin, so this is
+  the only place a failure shows.
+- `connection` is `{ state: "connecting" | "connected" | "reconnecting",
+environments, pairingHint }`, from the client's connection phase
+  (`TuiClient.subscribeConnection`, `connectionPhases()` in `connection.ts`).
+  The TUI knows one environment, the server that launched it; pairing lives in
+  the other clients, so `pairingHint` is null.
+
+Slots the bricks expose: `statusbar` (StatusLine, `replace`, data
+`{ status, title }`), `composer.actions` (ComposerFooter, around the model,
+effort, mode and access controls, `append`) and `sidebar.footer` (Sidebar,
+`replace`). A user `shell.qml` can change a mode:
+`DefaultShell { statusLine.slotMode: "append" }`, `composer.actionsMode`,
+`sidebar.footerMode`.
+
+User config lives in the TUI config dir (`userConfig.ts`), read before the
+terminal is taken over so a `keymap.json` that is not valid JSON stops the
+launch with a readable error: `plugins/` is loaded as a plugin directory,
+`T3_TUI_PLUGINS` adds files or directories (a path list), and `keymap.json`
+overrides keymaps (see "Keys and actions").
 
 ## Where the rest of ChatView's state goes
 
