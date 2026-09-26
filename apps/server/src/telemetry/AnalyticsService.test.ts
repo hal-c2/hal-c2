@@ -149,46 +149,53 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
     }),
   );
 
-  it.effect("does not send batch requests when telemetry is disabled", () =>
-    Effect.gen(function* () {
-      const capturedPaths: Array<string> = [];
-      const serverConfigLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
-        prefix: "hal-c2-telemetry-disabled-",
-      });
-      const telemetryLayer = AnalyticsService.layer.pipe(Layer.provideMerge(serverConfigLayer));
-      const configLayer = ConfigProvider.layer(
-        ConfigProvider.fromUnknown({
-          HALC2_TELEMETRY_ENABLED: false,
-          HALC2_POSTHOG_KEY: "phc_test_key",
-          HALC2_POSTHOG_HOST: "http://localhost",
-        }),
-      );
-      const batchServerLayer = HttpServer.serve(
-        Effect.gen(function* () {
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          capturedPaths.push(request.url);
-          return HttpServerResponse.jsonUnsafe({});
-        }),
-      );
-      const runtimeLayer = telemetryLayer.pipe(
-        Layer.provide(configLayer),
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.succeed(HostProcessPlatform, "linux"),
-            Layer.succeed(HostProcessArchitecture, "arm64"),
+  for (const [name, env] of [
+    [
+      "telemetry is disabled",
+      { HALC2_TELEMETRY_ENABLED: false, HALC2_POSTHOG_KEY: "phc_test_key" },
+    ],
+    ["no PostHog key is configured", { HALC2_TELEMETRY_ENABLED: true }],
+  ] as const) {
+    it.effect(`does not send batch requests when ${name}`, () =>
+      Effect.gen(function* () {
+        const capturedPaths: Array<string> = [];
+        const serverConfigLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+          prefix: "hal-c2-telemetry-disabled-",
+        });
+        const telemetryLayer = AnalyticsService.layer.pipe(Layer.provideMerge(serverConfigLayer));
+        const configLayer = ConfigProvider.layer(
+          ConfigProvider.fromUnknown({
+            ...env,
+            HALC2_POSTHOG_HOST: "http://localhost",
+          }),
+        );
+        const batchServerLayer = HttpServer.serve(
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            capturedPaths.push(request.url);
+            return HttpServerResponse.jsonUnsafe({});
+          }),
+        );
+        const runtimeLayer = telemetryLayer.pipe(
+          Layer.provide(configLayer),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(HostProcessPlatform, "linux"),
+              Layer.succeed(HostProcessArchitecture, "arm64"),
+            ),
           ),
-        ),
-        Layer.provideMerge(NodeHttpServer.layerTest),
-      );
+          Layer.provideMerge(NodeHttpServer.layerTest),
+        );
 
-      yield* Effect.gen(function* () {
-        yield* Layer.launch(batchServerLayer).pipe(Effect.forkScoped);
-        const analytics = yield* AnalyticsService.AnalyticsService;
-        yield* analytics.record("test.disabled", { index: 1 });
-        yield* analytics.flush;
-      }).pipe(Effect.provide(runtimeLayer));
+        yield* Effect.gen(function* () {
+          yield* Layer.launch(batchServerLayer).pipe(Effect.forkScoped);
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          yield* analytics.record("test.disabled", { index: 1 });
+          yield* analytics.flush;
+        }).pipe(Effect.provide(runtimeLayer));
 
-      assert.deepEqual(capturedPaths, []);
-    }),
-  );
+        assert.deepEqual(capturedPaths, []);
+      }),
+    );
+  }
 });

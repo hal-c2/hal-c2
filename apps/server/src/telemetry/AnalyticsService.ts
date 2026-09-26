@@ -29,9 +29,12 @@ interface BufferedAnalyticsEvent {
   readonly capturedAt: string;
 }
 
+// Telemetry has no baked-in project key: nothing is sent unless
+// HALC2_POSTHOG_KEY names a PostHog project you own.
 const TelemetryEnvConfig = Config.all({
   posthogKey: Config.String("HALC2_POSTHOG_KEY").pipe(
-    Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),
+    Config.withDefault(""),
+    Config.map((key) => key.trim()),
   ),
   posthogHost: Config.String("HALC2_POSTHOG_HOST").pipe(
     Config.withDefault("https://us.i.posthog.com"),
@@ -89,6 +92,7 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const identifier = yield* getTelemetryIdentifier;
   const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>([]);
+  const telemetryEnabled = telemetryConfig.enabled && telemetryConfig.posthogKey.length > 0;
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
   const hostPlatform = yield* HostProcessPlatform;
   const hostArchitecture = yield* HostProcessArchitecture;
@@ -123,7 +127,7 @@ export const make = Effect.gen(function* () {
   const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
   ) {
-    if (!telemetryConfig.enabled || !identifier) return;
+    if (!telemetryEnabled || !identifier) return;
 
     const payload = {
       api_key: telemetryConfig.posthogKey,
@@ -182,7 +186,7 @@ export const make = Effect.gen(function* () {
 
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
     function* (event, properties) {
-      if (!telemetryConfig.enabled || !identifier) return;
+      if (!telemetryEnabled || !identifier) return;
 
       const enqueueResult = yield* enqueueBufferedEvent(event, properties);
       if (enqueueResult.dropped) {
