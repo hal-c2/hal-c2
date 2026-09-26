@@ -25,7 +25,7 @@ defmodule HalC2.Steps.Parity.Rpc do
     World.put_client(context, Node.connect(context.node, "wsTicket=#{ticket}"))
   end
 
-  step ~r/^the client calls (?<method>[\w.]+) through its (?<via>.+)$/,
+  step ~r/^the client calls (?<method>[\w.-]+) through its (?<via>.+)$/,
        %{args: [method, via]} = context do
     context = Fixtures.setup(context)
 
@@ -60,12 +60,12 @@ defmodule HalC2.Steps.Parity.Rpc do
     end
   end
 
-  step ~r/^the client calls "?(?<method>[\w.]+)"?$/, %{args: [method]} = context do
+  step ~r/^the client calls "?(?<method>[\w.-]+)"?$/, %{args: [method]} = context do
     context = Fixtures.setup(context)
     rpc(context, method, method)
   end
 
-  step ~r/^the node answers with the contract's response shape for (?<method>[\w.]+)$/,
+  step ~r/^the node answers with the contract's response shape for (?<method>[\w.-]+)$/,
        %{args: [method]} = context do
     assert context.method == method
 

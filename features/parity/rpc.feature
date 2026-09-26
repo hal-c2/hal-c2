@@ -236,7 +236,7 @@ Feature: RPC parity with the TypeScript server
     Then the node answers with <result>
 
     Examples: node-only methods behind aligned contract methods
-      | method              | result                                                        |
+      | method                  | result                                                        |
       | hal-c2.readSettings     | the settings document with its version                        |
       | hal-c2.writeSettings    | the new version, or a stale-settings error for an old version |
       | hal-c2.threadRows       | one thread's stream rows with their offset and time           |
