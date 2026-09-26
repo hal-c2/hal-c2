@@ -46,9 +46,28 @@ defmodule T3.Search do
     :ok
   end
 
-  @spec threads(map) :: {:ok, map}
-  def threads(%{"query" => query} = input) do
-    limit = input["limit"] || 50
+  @doc """
+  Searches with `query` (trimmed, 2 to 200 characters) for up to `limit` (1 to 50,
+  default 50) threads, as the contract's `OrchestrationSearchThreadsInput` allows.
+  """
+  @spec threads(map) :: {:ok, map} | {:error, String.t()}
+  def threads(input) do
+    query = if is_binary(input["query"]), do: String.trim(input["query"])
+    limit = Map.get(input, "limit", 50)
+
+    cond do
+      query == nil or String.length(query) not in 2..200 ->
+        {:error, "Invalid search: the query must be 2 to 200 characters."}
+
+      not is_integer(limit) or limit not in 1..50 ->
+        {:error, "Invalid search: the limit must be 1 to 50."}
+
+      true ->
+        {:ok, %{"matches" => matches(query, limit)}}
+    end
+  end
+
+  defp matches(query, limit) do
     pattern = "%" <> String.replace(query, ~r/[!%_]/, "!\\0") <> "%"
 
     active =
@@ -57,30 +76,27 @@ defmodule T3.Search do
           into: %{},
           do: {id, row}
 
-    matches =
-      Store.path()
-      |> Store.search_messages(pattern, 2_000)
-      |> Enum.filter(fn {thread_id, _, _, _} -> Map.has_key?(active, thread_id) end)
-      |> Enum.group_by(&elem(&1, 0))
-      |> Enum.map(fn {thread_id, found} ->
-        # Newest first already; a user message wins over an assistant one.
-        {_, role, text, at} = Enum.find(found, &(elem(&1, 1) == "user")) || hd(found)
-        thread = active[thread_id]
+    Store.path()
+    |> Store.search_messages(pattern, 2_000)
+    |> Enum.filter(fn {thread_id, _, _, _} -> Map.has_key?(active, thread_id) end)
+    |> Enum.group_by(&elem(&1, 0))
+    |> Enum.map(fn {thread_id, found} ->
+      # Newest first already; a user message wins over an assistant one.
+      {_, role, text, at} = Enum.find(found, &(elem(&1, 1) == "user")) || hd(found)
+      thread = active[thread_id]
 
-        {thread["updatedAt"] || "",
-         %{
-           "threadId" => thread_id,
-           "projectId" => thread["projectId"],
-           "source" => role,
-           "snippet" => snippet(text, query),
-           "messageCreatedAt" => at
-         }}
-      end)
-      |> Enum.sort_by(&elem(&1, 0), :desc)
-      |> Enum.take(limit)
-      |> Enum.map(&elem(&1, 1))
-
-    {:ok, %{"matches" => matches}}
+      {thread["updatedAt"] || "",
+       %{
+         "threadId" => thread_id,
+         "projectId" => thread["projectId"],
+         "source" => role,
+         "snippet" => snippet(text, query),
+         "messageCreatedAt" => at
+       }}
+    end)
+    |> Enum.sort_by(&elem(&1, 0), :desc)
+    |> Enum.take(limit)
+    |> Enum.map(&elem(&1, 1))
   end
 
   # The text around the first match, cut to fit.

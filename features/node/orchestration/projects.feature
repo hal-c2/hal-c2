@@ -101,13 +101,13 @@ Feature: Projects on a node
     When a client reads it
     Then it has the same shape as a project created on the node
 
-  @node @backlog
+  @node
   Scenario: Two projects cannot share a folder
     Given project "p1" has the folder "~/code/app"
     When a client creates or moves another project to "~/code/app"
     Then it fails because the folder already belongs to a project
 
-  @node @backlog
+  @node
   Scenario: Deleting a project with threads needs force
     Given project "p1" has threads
     When a client deletes "p1" without force

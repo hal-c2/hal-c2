@@ -75,7 +75,7 @@ Feature: Searching threads by what was said
     When the node starts
     Then their finished messages can be searched
 
-  @node @backlog
+  @node
   Scenario Outline: Queries outside the allowed length are rejected
     When a client searches for <query>
     Then the request is rejected as invalid
@@ -86,13 +86,13 @@ Feature: Searching threads by what was said
       | "   "                         |
       | a query of 201 characters     |
 
-  @node @backlog
+  @node
   Scenario: Surrounding whitespace in the query is ignored
     Given thread "t1" has a message "parser"
     When a client searches for "  parser  "
     Then "t1" is found
 
-  @node @backlog
+  @node
   Scenario: A limit outside 1 to 50 is rejected
     When a client searches for "deploy" with limit 500
     Then the request is rejected as invalid

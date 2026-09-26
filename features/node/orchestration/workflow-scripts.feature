@@ -42,7 +42,7 @@ Feature: Reading the script a Claude workflow ran
       | the path is a folder named like a script                        | not-regular-file |
       | the file cannot be opened                                       | read-failed      |
 
-  @node @backlog
+  @node
   Scenario: A script replaced while it is being read is refused
     Given a workflow script is replaced between finding it and opening it
     When a client asks for that script

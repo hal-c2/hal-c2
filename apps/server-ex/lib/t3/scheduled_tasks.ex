@@ -290,7 +290,8 @@ defmodule T3.ScheduledTasks do
       })
 
     # An unchanged schedule keeps its pending run; a new one is aimed afresh.
-    keep = existing && existing["enabled"] && existing["schedule"] == task["schedule"]
+    keep =
+      existing && existing["enabled"] && same_schedule?(existing["schedule"], task["schedule"])
 
     next =
       cond do
@@ -300,6 +301,23 @@ defmodule T3.ScheduledTasks do
       end
 
     Map.put(task, "nextRunAt", next)
+  end
+
+  # Whether two schedules fire at the same times: "9:00" is "09:00", and no weekdays
+  # is every weekday.
+  defp same_schedule?(%{"type" => "fixed_time"} = a, %{"type" => "fixed_time"} = b) do
+    time_of_day(a["timeOfDay"]) != nil and
+      time_of_day(a["timeOfDay"]) == time_of_day(b["timeOfDay"]) and
+      weekday_key(a["weekdays"]) == weekday_key(b["weekdays"])
+  end
+
+  defp same_schedule?(a, b), do: a == b
+
+  defp weekday_key(weekdays) do
+    case weekdays |> List.wrap() |> Enum.uniq() |> Enum.sort() do
+      days when length(days) in [0, 7] -> :daily
+      days -> days
+    end
   end
 
   defp invalid_schedule?(%{"type" => "interval", "everyMs" => ms}),
@@ -428,6 +446,11 @@ defmodule T3.ScheduledTasks do
        %{"_tag" => "ScheduledTaskError", "message" => message}
        |> then(&if(id, do: Map.put(&1, "taskId", id), else: &1))}
 
-  defp now, do: DateTime.utc_now() |> DateTime.truncate(:millisecond)
+  # The wall clock. Tests pin it with `Application.put_env(:t3, :scheduled_tasks_clock, fun)`.
+  defp now,
+    do:
+      (Application.get_env(:t3, :scheduled_tasks_clock) || (&DateTime.utc_now/0)).()
+      |> DateTime.truncate(:millisecond)
+
   defp iso(%DateTime{} = at), do: DateTime.to_iso8601(at)
 end

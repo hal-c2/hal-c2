@@ -67,7 +67,7 @@ Feature: Changing model and provider mid-thread
     When the user switches thread "missing" to "claudeAgent"
     Then the command fails with "unknown thread missing"
 
-  @node @backlog
+  @node
   Scenario: The delta strategy hands over only what the target provider has not seen
     Given "t1" moved from "codex" to "claudeAgent" and back to "codex"
     When the next run starts on "codex"

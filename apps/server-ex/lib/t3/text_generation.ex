@@ -19,8 +19,6 @@ defmodule T3.TextGeneration do
   alias T3.JsonRpc.Connection
   alias T3.TextGeneration.Prompts
 
-  @timeout 180_000
-
   # Node's text generation defaults: the selection, and each provider's model.
   @default_selection %{
     "instanceId" => "codex",
@@ -37,6 +35,12 @@ defmodule T3.TextGeneration do
   # The order Node falls back through when the selected provider cannot be used.
   @fallback_order ~w(codex claudeAgent cursor grok pi opencode antigravity)
   @acp_drivers ~w(grok opencode cursor)
+
+  @doc """
+  How long a writing agent may take before it is stopped: 3 minutes, as in Node.
+  Tests shorten it with the `:text_generation_timeout` app env.
+  """
+  def timeout, do: Application.get_env(:t3, :text_generation_timeout, 180_000)
 
   @doc """
   A commit message for the staged changes: `%{"subject", "body"}`, and a
@@ -367,7 +371,7 @@ defmodule T3.TextGeneration do
         end
       end)
 
-    case Task.yield(task, @timeout) || Task.shutdown(task, :brutal_kill) do
+    case Task.yield(task, timeout()) || Task.shutdown(task, :brutal_kill) do
       {:ok, {:ok, text}} ->
         case JSON.decode(json_object(text)) do
           {:ok, %{} = out} -> {:ok, out}
@@ -494,7 +498,7 @@ defmodule T3.TextGeneration do
         end)
       end)
 
-    case Task.yield(task, @timeout) || Task.shutdown(task, :brutal_kill) do
+    case Task.yield(task, timeout()) || Task.shutdown(task, :brutal_kill) do
       {:ok, {out, _err, {:status, 0}}} ->
         {:ok, IO.iodata_to_binary(out)}
 

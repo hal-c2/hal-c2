@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # Fake `claude -p` and `codex exec` for text generation tests. Appends each call
-# (argv, cwd, prompt) to $FAKE_TEXT_LOG and answers every key its JSON schema asks
-# for with "<cli> <key>" (false for booleans).
-import json, os, sys
+# (argv, cwd, prompt, pid) to $FAKE_TEXT_LOG and answers every key its JSON schema asks
+# for with "<cli> <key>" (false for booleans). $FAKE_TEXT_ANSWER (a JSON object)
+# replaces answers by key, $FAKE_TEXT_FAIL makes the call fail with that message and
+# $FAKE_TEXT_HANG makes it never answer.
+import json, os, sys, time
 
 args = sys.argv[1:]
 prompt = sys.stdin.read()
@@ -11,16 +13,25 @@ codex = args[:1] == ["exec"]
 log = os.environ.get("FAKE_TEXT_LOG")
 if log:
     with open(log, "a") as f:
-        f.write(json.dumps({"argv": args, "cwd": os.getcwd(), "prompt": prompt}) + "\n")
+        f.write(json.dumps({"argv": args, "cwd": os.getcwd(), "prompt": prompt, "pid": os.getpid()}) + "\n")
 
 if codex:
     schema = json.load(open(args[args.index("--output-schema") + 1]))
 else:
     schema = json.loads(args[args.index("--json-schema") + 1])
 
+if os.environ.get("FAKE_TEXT_HANG"):
+    while True:
+        time.sleep(60)
+
+if os.environ.get("FAKE_TEXT_FAIL"):
+    sys.stderr.write(os.environ["FAKE_TEXT_FAIL"] + "\n")
+    sys.exit(1)
+
 name = "codex" if codex else "claude"
 out = {key: (False if spec["type"] == "boolean" else "%s %s" % (name, key))
        for key, spec in schema["properties"].items()}
+out.update(json.loads(os.environ.get("FAKE_TEXT_ANSWER") or "{}"))
 
 if codex:
     with open(args[args.index("--output-last-message") + 1], "w") as f:

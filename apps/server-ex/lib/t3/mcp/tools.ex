@@ -258,8 +258,13 @@ defmodule T3.Mcp.Tools do
   end
 
   def run("t3_thread_search", args, %{row: me}) do
-    {:ok, %{"matches" => matches}} = T3.Search.threads(Map.take(args, ["query", "limit"]))
-    {:ok, %{"matches" => Enum.filter(matches, &(&1["projectId"] == me["projectId"]))}}
+    case T3.Search.threads(Map.take(args, ["query", "limit"])) do
+      {:ok, %{"matches" => matches}} ->
+        {:ok, %{"matches" => Enum.filter(matches, &(&1["projectId"] == me["projectId"]))}}
+
+      {:error, message} ->
+        {:error, "invalid_request", message}
+    end
   end
 
   # --- environment and projects ------------------------------------------------------

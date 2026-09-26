@@ -42,6 +42,11 @@ for line in sys.stdin:
         continue
     if msg.get("type") != "user":
         continue
+    # $FAKE_CLAUDE_PROMPT_LOG records every user message's text, one JSON string per line.
+    if os.environ.get("FAKE_CLAUDE_PROMPT_LOG"):
+        with open(os.environ["FAKE_CLAUDE_PROMPT_LOG"], "a") as log:
+            content = msg["message"]["content"]
+            log.write(json.dumps(content if isinstance(content, str) else "".join(b.get("text", "") for b in content if isinstance(b, dict))) + "\n")
     # A steer cuts the running turn short and answers the new message in the same turn.
     if msg.get("priority") == "now":
         steer_text = msg["message"]["content"] if isinstance(msg["message"]["content"], str) else ""

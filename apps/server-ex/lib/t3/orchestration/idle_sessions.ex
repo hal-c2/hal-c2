@@ -55,6 +55,11 @@ defmodule T3.Orchestration.IdleSessions do
         do: thread_id
   end
 
+  # A deleted thread's process has nothing to wait for either.
+  defp idle?({"thread", %{"deletedAt" => deleted}}, _now, _idle_ms, _pinned_ms)
+       when is_binary(deleted),
+       do: true
+
   defp idle?({"thread", row}, now, idle_ms, pinned_ms) do
     quiet = now - last_activity(row)
     background = (row["pendingBackgroundTasks"] || []) != []

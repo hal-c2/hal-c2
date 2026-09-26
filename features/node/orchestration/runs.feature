@@ -39,9 +39,7 @@ Feature: Runs and turns
     When the user sends "Hi" to thread "missing"
     Then the command fails with "unknown thread missing"
 
-  # Today apps/server-ex driver_for/1 and runtime/1 (orchestration.ex) fall back to the Codex
-  # runtime for any instance id that is not Claude or a known ACP agent, so the turn runs on Codex.
-  @node @backlog
+  @node
   Scenario: A message to a thread whose provider instance is unknown is refused
     Given thread "t2" exists in "demo" with provider instance "removed_instance"
     And the node has no provider instance "removed_instance"

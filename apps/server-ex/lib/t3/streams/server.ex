@@ -74,8 +74,15 @@ defmodule T3.Streams.Server do
   @spec state(GenServer.server()) :: StreamState.t()
   def state(server), do: GenServer.call(server, :state)
 
+  @doc "Puts the stream's sidebar row now instead of after the debounce."
+  @spec flush_shell(GenServer.server()) :: :ok
+  def flush_shell(server), do: GenServer.call(server, :flush_shell)
+
   @impl true
   def init(stream_id) do
+    # A node stopping still writes the pending sidebar row (`terminate/2`), which is
+    # what boot recovery reads to find the turns it cut off.
+    Process.flag(:trap_exit, true)
     path = Store.path()
     state = StreamState.load(path, stream_id)
 
@@ -138,6 +145,13 @@ defmodule T3.Streams.Server do
 
   def handle_call(:state, _from, state), do: {:reply, state.stream, state, timeout(state)}
 
+  def handle_call(:flush_shell, _from, %{shell_scheduled: true} = state) do
+    {:noreply, state, _} = handle_info(:shell, state)
+    {:reply, :ok, state, timeout(state)}
+  end
+
+  def handle_call(:flush_shell, _from, state), do: {:reply, :ok, state, timeout(state)}
+
   @impl true
   def handle_cast({:unsubscribe, pid}, state) do
     {ref, subscribers} = Map.pop(state.subscribers, pid)
@@ -163,6 +177,10 @@ defmodule T3.Streams.Server do
   end
 
   def handle_info(:timeout, state), do: {:stop, :normal, state}
+
+  # Linked processes still take the stream down with them, as before it trapped exits.
+  def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state, timeout(state)}
+  def handle_info({:EXIT, _pid, reason}, state), do: {:stop, reason, state}
 
   @impl true
   def terminate(_reason, state) do

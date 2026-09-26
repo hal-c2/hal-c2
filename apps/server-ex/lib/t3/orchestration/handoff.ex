@@ -38,12 +38,12 @@ defmodule T3.Orchestration.Handoff do
     fresh =
       provider_thread == nil or get_in(provider_thread, ["nativeThreadRef", "nativeId"]) == nil
 
-    history =
+    {history, delta_changes} =
       cond do
-        fork != nil -> nil
-        fork_context != nil -> fork_context
-        fresh -> transcript(state, ordinal)
-        true -> nil
+        fork != nil -> {nil, []}
+        fork_context != nil -> {fork_context, []}
+        fresh -> {transcript(state, ordinal), []}
+        true -> delta(state, provider_thread, run_id, ordinal, at)
       end
 
     {merged, merge_changes} = merge_backs(state, transfers, driver, run_id, at)
@@ -51,8 +51,53 @@ defmodule T3.Orchestration.Handoff do
     %{
       fork: fork,
       context: wrap(history, merged),
-      changes: Enum.reject(fork_changes ++ merge_changes, &is_nil/1)
+      changes: Enum.reject(fork_changes ++ delta_changes ++ merge_changes, &is_nil/1)
     }
+  end
+
+  # A provider thread the thread comes back to gets only the turns other provider
+  # threads ran since it last ran (`delta_since_target_last_seen`).
+  defp delta(state, provider_thread, run_id, ordinal, at) do
+    seen = provider_thread["lastRunOrdinal"] || 0
+    own = provider_thread["id"]
+
+    unseen =
+      state
+      |> StreamState.list("run")
+      |> Enum.filter(
+        &(&1["ordinal"] > seen and &1["ordinal"] < ordinal and &1["status"] in @finished and
+            &1["providerThreadId"] not in [nil, own])
+      )
+
+    case Enum.min_max_by(unseen, & &1["ordinal"], fn -> nil end) do
+      nil ->
+        {nil, []}
+
+      {first, last} ->
+        text = transcript(state, last["ordinal"] + 1, first["ordinal"] - 1)
+        id = "context-handoff:#{run_id}"
+
+        handoff =
+          Orchestration.create("context-handoff", id, %{
+            "id" => id,
+            "transferId" => nil,
+            "threadId" => provider_thread["appThreadId"],
+            "targetRunId" => run_id,
+            "fromProviderThreadIds" =>
+              unseen |> Enum.map(& &1["providerThreadId"]) |> Enum.uniq(),
+            "toProviderThreadId" => own,
+            "coveredRunOrdinals" => %{"from" => first["ordinal"], "to" => last["ordinal"]},
+            "strategy" => "delta_since_target_last_seen",
+            "status" => "ready",
+            "summaryMessageId" => nil,
+            "summaryText" => text || "",
+            "createdByProviderInstanceId" => nil,
+            "createdAt" => at,
+            "updatedAt" => at
+          })
+
+        {text, [handoff]}
+    end
   end
 
   # Same provider: the run forks the source's native thread at the fork point.
@@ -190,10 +235,16 @@ defmodule T3.Orchestration.Handoff do
     end
   end
 
+  @omitted "[earlier messages omitted]\n\n"
+
+  # The note counts toward the limit.
   defp tail(text) do
-    if String.length(text) > @max_chars,
-      do: "[earlier messages omitted]\n\n" <> String.slice(text, -@max_chars, @max_chars),
-      else: text
+    if String.length(text) > @max_chars do
+      keep = @max_chars - String.length(@omitted)
+      @omitted <> String.slice(text, -keep, keep)
+    else
+      text
+    end
   end
 
   defp wrap(nil, ""), do: nil

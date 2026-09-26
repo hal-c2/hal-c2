@@ -199,7 +199,7 @@ Feature: Scheduled tasks
     When the agent of "caller" lists, updates, deletes or runs it
     Then it is not listed and every change is refused
 
-  @node @backlog
+  @node
   Scenario: A time that only differs in padding keeps the pending run
     Given task "a" at "9:00" is due at 09:00
     When a client saves it with time "09:00"

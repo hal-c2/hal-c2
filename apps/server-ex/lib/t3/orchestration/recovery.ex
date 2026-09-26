@@ -36,6 +36,9 @@ defmodule T3.Orchestration.Recovery do
           count > 0,
           do: {thread_id, continuable}
 
+    # Their sidebar rows too, or a client connecting right away would see "running".
+    for {thread_id, _} <- settled, do: T3.Streams.flush_shell(thread_id)
+
     :persistent_term.put(
       {__MODULE__, :continuable},
       for({thread_id, %{} = run} <- settled, do: {thread_id, run})
@@ -134,9 +137,18 @@ defmodule T3.Orchestration.Recovery do
            &if(&1["streaming"] == true,
              do: Map.merge(&1, %{"streaming" => false, "updatedAt" => at})
            )},
+          # The provider that asked is gone, so nobody can answer the request now.
           {"runtime-request",
            &if(&1["status"] == "pending",
-             do: Map.merge(&1, %{"status" => "cancelled", "resolvedAt" => at})
+             do:
+               Map.merge(&1, %{
+                 "status" => "expired",
+                 "responseCapability" => %{
+                   "type" => "not_resumable",
+                   "reason" => "The server restarted before this runtime request was resolved."
+                 },
+                 "resolvedAt" => at
+               })
            )},
           {"provider-thread",
            &if(&1["status"] == "active",
