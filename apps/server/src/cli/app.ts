@@ -26,7 +26,7 @@ import { Argument, Command } from "effect/unstable/cli";
 
 import { expandHomePath, resolveCliHalC2Location } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
-import { resolveDesktopAppControlSocket } from "./desktopAppControlSocket.ts";
+import { resolveDesktopAppControlSocket } from "@hal-c2/shared/desktopAppControlSocket";
 
 const CLI_RESPONSE_TIMEOUT_MS = 17_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;

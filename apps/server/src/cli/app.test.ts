@@ -28,7 +28,7 @@ import { Command } from "effect/unstable/cli";
 import { afterEach, describe, expect, vi } from "vite-plus/test";
 
 import { makeCli } from "../binCli.ts";
-import { resolveDesktopAppControlSocket } from "./desktopAppControlSocket.ts";
+import { resolveDesktopAppControlSocket } from "@hal-c2/shared/desktopAppControlSocket";
 
 vi.mock("node:os", async (importOriginal) => {
   const os = await importOriginal<typeof import("node:os")>();
