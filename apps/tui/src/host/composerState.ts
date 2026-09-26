@@ -1,0 +1,1582 @@
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import {
+  DEFAULT_SERVER_SETTINGS,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  type ModelSelection,
+  type OrchestrationThread,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+  type ServerSettings,
+  type VcsRef,
+} from "@t3tools/contracts";
+import {
+  getAddProjectInitialQuery,
+  resolveAddProjectPath,
+} from "@t3tools/client-runtime/operations/projects";
+import { findProjectByPath } from "@t3tools/client-runtime/state/projects";
+import type { ImagePreview } from "@t3tools/opentui-image";
+import { truncate } from "@t3tools/shared/String";
+import type { PropertyMap } from "opentui-qml";
+
+import { derivePendingApprovals } from "../approvals.ts";
+import {
+  extractPastedImagePath,
+  findPromptImagePathLines,
+  imageExtensionForMimeType,
+  imageMimeTypeForPath,
+  prepareComposerImage,
+  prepareComposerImageBytes,
+  replacePromptLines,
+  type ComposerImageAttachment,
+} from "../composerAttachments.ts";
+import {
+  CHAT_CONTENT_MAX_WIDTH,
+  COMPOSER_MAX_EDITOR_ROWS,
+  COMPOSER_MIN_EDITOR_ROWS,
+  countWrappedComposerLines,
+} from "../components/ChatView.layout.ts";
+import type { TuiClient } from "../connection.ts";
+import {
+  interactionModeLabel,
+  RUNTIME_MODE_META,
+  RUNTIME_MODES,
+  runtimeModeLabel,
+} from "../controls.ts";
+import {
+  currentModelIndex,
+  modelSelectionForOption,
+  reasoningChoicesForSelection,
+  resolveModelSelection,
+  withModelSelectionOption,
+  type ModelOption,
+} from "../models.ts";
+import {
+  newThreadValidationMessage,
+  resolveInitialBranch,
+  resolveNewThreadBranchSelection,
+  resolveNewThreadContext,
+  validateNewThread,
+  type NewThreadWorkspaceMode,
+} from "../newThread.logic.ts";
+import {
+  normalizeEditedPrompt,
+  resolveEditorCommand,
+  type EditorCommand,
+} from "../promptEditor.ts";
+import type { Selection } from "../components/Sidebar.logic.ts";
+import type { Store } from "../store.ts";
+import { isWorking } from "../timeline.ts";
+import { derivePendingUserInputs } from "../userInput.ts";
+import type { TuiMode } from "./layoutState.ts";
+
+// The composer, its pickers and the new-thread / add-project flows. Owns the
+// drafts (per target), the per-thread control overrides and the one select
+// overlay, and publishes them as `composer` and `select`. Ported from
+// ChatView's composer handlers; statuses read exactly as they did there.
+
+export const IMAGE_ONLY_PROMPT =
+  "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
+
+/** Below this conversation width the footer keeps only the model and the primary action. */
+const COMPACT_CHAT_WIDTH = 66;
+
+export type ImageDecoder = (encoded: Uint8Array) => Promise<ImagePreview>;
+
+export interface ComposerOptions {
+  readonly client: TuiClient;
+  readonly store: Store;
+  readonly state: PropertyMap;
+  readonly mode: () => TuiMode;
+  readonly setMode: (mode: TuiMode) => void;
+  readonly chatWidth: () => number;
+  /** `VISUAL` / `EDITOR` for Ctrl+G. */
+  readonly env: { readonly VISUAL?: string | undefined; readonly EDITOR?: string | undefined };
+  readonly homeDir: string;
+  /** Run the editor on a file and resolve when it exits (the entry suspends the renderer). */
+  readonly runEditor: (command: EditorCommand, file: string) => Promise<void>;
+  /** Read an image the user pasted as an absolute local path. */
+  readonly readLocalImage: (path: string) => Promise<Uint8Array>;
+  readonly decodeImage?: ImageDecoder;
+}
+
+/** One attachment chip: `id` is the path the image came from, `name` its file name. */
+export interface TuiComposerAttachment {
+  readonly id: string;
+  readonly name: string;
+}
+
+export interface TuiNewThreadState {
+  readonly projectId: string | null;
+  readonly projectTitle: string | null;
+  readonly workspaceMode: NewThreadWorkspaceMode;
+  readonly workspaceLabel: string;
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+  readonly switching: boolean;
+}
+
+/** Published under `composer` (the desktop contract's names plus the terminal's extras). */
+export interface TuiComposerState {
+  readonly target: string | null;
+  readonly routeKind: "server" | "draft";
+  readonly text: string;
+  readonly cursor: number;
+  readonly attachments: ReadonlyArray<TuiComposerAttachment>;
+  readonly placeholder: string;
+  readonly canSend: boolean;
+  readonly isRunning: boolean;
+  readonly isSendBusy: boolean;
+  readonly pendingApprovalCount: number;
+  readonly pendingUserInputCount: number;
+  readonly primaryAction: "Send" | "Stop" | "Submit answer";
+  readonly selectedInstanceId: string | null;
+  readonly selectedModel: string | null;
+  readonly effort: string | null;
+  readonly interactionMode: ProviderInteractionMode;
+  readonly interactionModeLabel: string;
+  readonly runtimeMode: RuntimeMode;
+  readonly runtimeModeLabel: string;
+  readonly runtimeModes: ReadonlyArray<{ value: string; label: string; description: string }>;
+  /** The footer shows only the model and the primary action. */
+  readonly compact: boolean;
+  /** Editor height in rows: grows with the text from 3 to 8, or as set by Ctrl+Up / Ctrl+Down. */
+  readonly rows: number;
+  readonly newThread: TuiNewThreadState | null;
+}
+
+export type TuiSelectKind =
+  | "model"
+  | "reasoning"
+  | "runtime"
+  | "workspace"
+  | "branch"
+  | "project-source"
+  | "project-path"
+  | "project-url"
+  | "project-destination";
+
+/** Published under `select`: the one open picker (or `{ open: false }`). */
+export interface TuiSelectState {
+  readonly open: boolean;
+  readonly kind: TuiSelectKind | null;
+  readonly title: string;
+  readonly status: "loading" | "ready" | "empty" | "error";
+  readonly options: ReadonlyArray<{ readonly label: string; readonly description: string }>;
+  readonly index: number;
+  /** Free-text entry (add-project paths and URLs); null for plain lists. */
+  readonly input: { readonly text: string; readonly placeholder: string } | null;
+}
+
+interface Draft {
+  readonly text: string;
+  readonly images: ReadonlyArray<ComposerImageAttachment>;
+}
+
+interface NewDraft {
+  readonly originKey: string;
+  readonly projectId: string | null;
+  readonly modelSelection: ModelSelection | null;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
+  readonly workspaceMode: NewThreadWorkspaceMode;
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+  readonly refs: ReadonlyArray<VcsRef>;
+}
+
+interface SelectOption {
+  readonly label: string;
+  readonly description: string;
+  readonly value: string;
+}
+
+interface Picker {
+  readonly kind: TuiSelectKind;
+  readonly title: string;
+  readonly status: TuiSelectState["status"];
+  readonly options: ReadonlyArray<SelectOption>;
+  readonly index: number;
+  readonly input: { readonly text: string; readonly placeholder: string } | null;
+  /** Add-project clone flow: the URL chosen in the previous step. */
+  readonly remoteUrl?: string;
+}
+
+const EMPTY_DRAFT: Draft = { text: "", images: [] };
+const NEW_TARGET = "new";
+
+const threadTarget = (threadId: string) => `thread:${threadId}`;
+
+const selectionKey = (selection: Selection | null) =>
+  selection ? `${selection.kind}:${selection.id}` : "none";
+
+const field = (payload: unknown, name: string): unknown =>
+  typeof payload === "object" && payload !== null
+    ? (payload as Record<string, unknown>)[name]
+    : undefined;
+
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+export interface Composer {
+  /** Handle a `composer.*`, `select.*`, `project.add`, `thread.new` or `workspace.*` action. */
+  readonly dispatch: (action: string, payload?: unknown) => boolean;
+  /** Re-derive after a store change (selection, detail, shell). */
+  readonly sync: () => void;
+  /** Re-derive after a layout change (compact footer). */
+  readonly relayout: () => void;
+  /** Resolves when every request the composer started has settled. */
+  readonly idle: () => Promise<void>;
+  /** For the palette: what the composer can offer right now. */
+  readonly context: () => {
+    readonly newDraft: boolean;
+    readonly workspaceMode: NewThreadWorkspaceMode | null;
+    readonly threadId: string | null;
+    readonly interactionMode: ProviderInteractionMode;
+    readonly attachmentCount: number;
+  };
+}
+
+export function createComposer(options: ComposerOptions): Composer {
+  const { client, store, state } = options;
+  const decode = options.decodeImage;
+
+  const drafts = new Map<string, Draft>();
+  const interactionOverrides = new Map<string, ProviderInteractionMode>();
+  const modelOverrides = new Map<string, ModelSelection>();
+  let modelOptions: ReadonlyArray<ModelOption> = [];
+  let settings: ServerSettings = DEFAULT_SERVER_SETTINGS;
+  let newDraft: NewDraft | null = null;
+  let picker: Picker | null = null;
+  /** Set by Ctrl+Up / Ctrl+Down; null follows the text. */
+  let rowsOverride: number | null = null;
+  let replyPending = false;
+  let createPending = false;
+  let projectPending = false;
+  let switchPending = false;
+  let switchToken = 0;
+  let imageLoads = 0;
+  let clipboardSequence = 0;
+  const inflight = new Set<Promise<unknown>>();
+
+  const track = <T>(promise: Promise<T>): Promise<T> => {
+    inflight.add(promise);
+    void promise.finally(() => inflight.delete(promise)).catch(() => {});
+    return promise;
+  };
+
+  // ── Derived context ──────────────────────────────────────────────────────
+
+  const projects = () => store.getState().shell?.projects ?? [];
+  const selectedDetail = (): OrchestrationThread | null => {
+    const current = store.getState();
+    const selection = current.selection;
+    if (selection?.kind !== "thread") return null;
+    return current.detail && current.detail.id === selection.id ? current.detail : null;
+  };
+  const target = (): string | null => {
+    if (newDraft) return NEW_TARGET;
+    const selection = store.getState().selection;
+    return selection?.kind === "thread" ? threadTarget(selection.id) : null;
+  };
+  const draftFor = (key: string | null): Draft =>
+    key ? (drafts.get(key) ?? EMPTY_DRAFT) : EMPTY_DRAFT;
+  const setDraft = (key: string | null, update: (draft: Draft) => Draft) => {
+    if (!key) return;
+    const next = update(draftFor(key));
+    if (next.text.length === 0 && next.images.length === 0) drafts.delete(key);
+    else drafts.set(key, next);
+    publish();
+  };
+  const threadInteraction = (detail: OrchestrationThread) =>
+    interactionOverrides.get(detail.id) ?? detail.interactionMode;
+  const threadModel = (detail: OrchestrationThread): ModelSelection | null =>
+    modelOverrides.get(detail.id) ??
+    resolveModelSelection(modelOptions, detail.modelSelection) ??
+    detail.modelSelection ??
+    null;
+  const newModel = (): ModelSelection | null =>
+    newDraft
+      ? (resolveModelSelection(modelOptions, newDraft.modelSelection) ?? newDraft.modelSelection)
+      : null;
+  const activeModel = () => {
+    if (newDraft) return newModel();
+    const detail = selectedDetail();
+    return detail ? threadModel(detail) : null;
+  };
+  const newProject = () =>
+    newDraft?.projectId
+      ? (projects().find((project) => project.id === newDraft!.projectId) ?? null)
+      : null;
+  const composerCwd = () => {
+    if (newDraft) {
+      return (
+        (newDraft.workspaceMode === "current" ? newDraft.worktreePath : null) ??
+        newProject()?.workspaceRoot ??
+        process.cwd()
+      );
+    }
+    const detail = selectedDetail();
+    if (!detail) return process.cwd();
+    return (
+      detail.worktreePath ??
+      projects().find((project) => project.id === detail.projectId)?.workspaceRoot ??
+      process.cwd()
+    );
+  };
+
+  // ── Publishing ───────────────────────────────────────────────────────────
+
+  const autoRows = (text: string) => {
+    const surface = Math.max(8, Math.min(CHAT_CONTENT_MAX_WIDTH, options.chatWidth() - 2));
+    return Math.min(
+      COMPOSER_MAX_EDITOR_ROWS,
+      Math.max(COMPOSER_MIN_EDITOR_ROWS, countWrappedComposerLines(text, Math.max(1, surface - 4))),
+    );
+  };
+
+  const composerState = (): TuiComposerState => {
+    const key = target();
+    const draft = draftFor(key);
+    const detail = newDraft ? null : selectedDetail();
+    const working = !!detail && isWorking(detail);
+    const pendingUserInputCount = detail ? derivePendingUserInputs(detail.activities).length : 0;
+    const pendingApprovalCount = detail ? derivePendingApprovals(detail.activities).length : 0;
+    const model = activeModel();
+    const effort = reasoningChoicesForSelection(modelOptions, model)?.selectedId ?? null;
+    const interactionMode: ProviderInteractionMode = newDraft
+      ? newDraft.interactionMode
+      : detail
+        ? threadInteraction(detail)
+        : "default";
+    const runtimeMode: RuntimeMode = newDraft
+      ? newDraft.runtimeMode
+      : (detail?.runtimeMode ?? "full-access");
+    const project = newProject();
+    return {
+      target: key,
+      routeKind: newDraft ? "draft" : "server",
+      text: draft.text,
+      cursor: draft.text.length,
+      attachments: draft.images.map((image) => ({
+        id: image.relativePath,
+        name: image.upload.name,
+      })),
+      placeholder: newDraft
+        ? project
+          ? `What should we build in ${project.title}?`
+          : "Add a project first (Ctrl+K → Add project)"
+        : detail
+          ? "Reply to the agent…"
+          : "Select a thread (Alt+↑/↓) to reply",
+      canSend:
+        (newDraft !== null || detail !== null) &&
+        !replyPending &&
+        !createPending &&
+        (draft.text.trim().length > 0 || draft.images.length > 0),
+      isRunning: working,
+      isSendBusy: replyPending || createPending,
+      pendingApprovalCount,
+      pendingUserInputCount,
+      primaryAction: working ? "Stop" : pendingUserInputCount > 0 ? "Submit answer" : "Send",
+      selectedInstanceId: model?.instanceId ?? null,
+      selectedModel: model?.model ?? null,
+      effort,
+      interactionMode,
+      interactionModeLabel: interactionModeLabel(interactionMode),
+      runtimeMode,
+      runtimeModeLabel: runtimeModeLabel(runtimeMode),
+      runtimeModes: RUNTIME_MODES.map((mode) => ({
+        value: mode,
+        label: RUNTIME_MODE_META[mode].label,
+        description: RUNTIME_MODE_META[mode].description,
+      })),
+      compact: options.chatWidth() < COMPACT_CHAT_WIDTH,
+      rows: rowsOverride ?? autoRows(draft.text),
+      newThread: newDraft
+        ? {
+            projectId: newDraft.projectId,
+            projectTitle: project?.title ?? null,
+            workspaceMode: newDraft.workspaceMode,
+            workspaceLabel:
+              newDraft.workspaceMode === "new-worktree"
+                ? "New worktree"
+                : newDraft.worktreePath
+                  ? "Current worktree"
+                  : "Current checkout",
+            branch: newDraft.branch,
+            worktreePath: newDraft.worktreePath,
+            switching: switchPending,
+          }
+        : null,
+    };
+  };
+
+  const selectState = (): TuiSelectState =>
+    picker
+      ? {
+          open: true,
+          kind: picker.kind,
+          title: picker.title,
+          status: picker.status,
+          options: picker.options.map(({ label, description }) => ({ label, description })),
+          index: picker.index,
+          input: picker.input,
+        }
+      : {
+          open: false,
+          kind: null,
+          title: "",
+          status: "empty",
+          options: [],
+          index: 0,
+          input: null,
+        };
+
+  let lastComposer = "";
+  let lastSelect = "";
+  const publish = () => {
+    const composer = composerState();
+    const composerJson = JSON.stringify(composer);
+    if (composerJson !== lastComposer) {
+      lastComposer = composerJson;
+      state.set("composer", composer);
+    }
+    const select = selectState();
+    const selectJson = JSON.stringify(select);
+    if (selectJson !== lastSelect) {
+      lastSelect = selectJson;
+      state.set("select", select);
+    }
+  };
+
+  // ── Pickers ──────────────────────────────────────────────────────────────
+
+  const openPicker = (next: Picker) => {
+    picker = next;
+    options.setMode("select");
+    publish();
+  };
+  const closePicker = () => {
+    if (!picker) return;
+    picker = null;
+    if (options.mode() === "select") options.setMode("compose");
+    publish();
+  };
+  /** Opening the picker that is already open closes it (clicking a control twice). */
+  const toggles = (kind: TuiSelectKind) => {
+    if (picker?.kind !== kind) return false;
+    closePicker();
+    return true;
+  };
+  const updatePicker = (kind: TuiSelectKind, update: (current: Picker) => Picker) => {
+    if (picker?.kind !== kind) return;
+    picker = update(picker);
+    publish();
+  };
+
+  const loadModels = () =>
+    track(
+      client.listModels().then((models) => {
+        modelOptions = models;
+        publish();
+        return models;
+      }),
+    );
+
+  const openModelPicker = () => {
+    if (toggles("model")) return;
+    if (!newDraft && !selectedDetail()) return;
+    const selection = activeModel();
+    openPicker({
+      kind: "model",
+      title: "model",
+      status: "loading",
+      options: [],
+      index: 0,
+      input: null,
+    });
+    // Reload on every open: the server's provider list may have changed.
+    void loadModels().then(
+      (models) =>
+        updatePicker("model", (current) => ({
+          ...current,
+          status: models.length > 0 ? "ready" : "empty",
+          options: models.map((model) => ({
+            label: model.label,
+            description: model.providerLabel,
+            value: JSON.stringify({ instanceId: model.instanceId, model: model.model }),
+          })),
+          index: currentModelIndex(models, selection),
+        })),
+      () => updatePicker("model", (current) => ({ ...current, status: "error" })),
+    );
+  };
+
+  const openReasoningPicker = () => {
+    const selection = activeModel();
+    if ((!newDraft && !selectedDetail()) || !selection) {
+      store.setStatus("Select a model first.", "info");
+      return;
+    }
+    if (toggles("reasoning")) return;
+    openPicker({
+      kind: "reasoning",
+      title: "effort",
+      status: "loading",
+      options: [],
+      index: 0,
+      input: null,
+    });
+    void loadModels().then(
+      (models) => {
+        const resolved = resolveModelSelection(models, selection) ?? selection;
+        const result = reasoningChoicesForSelection(models, resolved);
+        updatePicker("reasoning", (current) =>
+          !result || result.choices.length === 0
+            ? { ...current, status: "empty" }
+            : {
+                ...current,
+                status: "ready",
+                options: result.choices.map((choice) => ({
+                  label: choice.label,
+                  description: choice.description ?? result.descriptorId,
+                  value: JSON.stringify({ descriptorId: result.descriptorId, choiceId: choice.id }),
+                })),
+                index: Math.max(
+                  0,
+                  result.choices.findIndex((choice) => choice.id === result.selectedId),
+                ),
+              },
+        );
+      },
+      () => updatePicker("reasoning", (current) => ({ ...current, status: "error" })),
+    );
+  };
+
+  const openRuntimePicker = () => {
+    const detail = selectedDetail();
+    if (!newDraft && !detail) return;
+    if (toggles("runtime")) return;
+    const runtimeMode = newDraft ? newDraft.runtimeMode : (detail?.runtimeMode ?? "full-access");
+    openPicker({
+      kind: "runtime",
+      title: "access",
+      status: "ready",
+      options: RUNTIME_MODES.map((mode) => ({
+        label: RUNTIME_MODE_META[mode].label,
+        description: RUNTIME_MODE_META[mode].description,
+        value: mode,
+      })),
+      index: Math.max(0, RUNTIME_MODES.indexOf(runtimeMode)),
+      input: null,
+    });
+  };
+
+  const openWorkspacePicker = () => {
+    if (!newDraft) return;
+    if (toggles("workspace")) return;
+    openPicker({
+      kind: "workspace",
+      title: "workspace",
+      status: "ready",
+      options: [
+        {
+          label: newDraft.worktreePath ? "Current worktree" : "Current checkout",
+          description: newDraft.worktreePath
+            ? "Reuse the selected existing worktree."
+            : "Run in the project's current checkout.",
+          value: "current",
+        },
+        {
+          label: "New worktree",
+          description: `Create an isolated worktree from ${newDraft.branch ?? "the selected base"}.`,
+          value: "new-worktree",
+        },
+      ],
+      index: newDraft.workspaceMode === "current" ? 0 : 1,
+      input: null,
+    });
+  };
+
+  const branchOptions = (refs: ReadonlyArray<VcsRef>): SelectOption[] =>
+    refs.map((ref) => {
+      const badges = [
+        ref.current ? "current" : null,
+        ref.isDefault ? "default" : null,
+        ref.worktreePath ? "worktree" : null,
+        ref.isRemote ? "remote" : null,
+      ].filter((badge): badge is string => badge !== null);
+      return {
+        label: ref.name,
+        description: badges.length > 0 ? badges.join(" · ") : "local branch",
+        value: ref.name,
+      };
+    });
+
+  const openBranchPicker = () => {
+    if (!newDraft) return;
+    if (toggles("branch")) return;
+    const refs = newDraft.refs;
+    openPicker({
+      kind: "branch",
+      title: newDraft.workspaceMode === "new-worktree" ? "base branch" : "branch",
+      status: refs.length > 0 ? "ready" : "empty",
+      options: branchOptions(refs),
+      index: Math.max(
+        0,
+        refs.findIndex((ref) => ref.name === newDraft!.branch),
+      ),
+      input: null,
+    });
+  };
+
+  // ── Controls ─────────────────────────────────────────────────────────────
+
+  const setModel = (instanceId: string, model: string) => {
+    const option = modelOptions.find(
+      (candidate) => candidate.instanceId === instanceId && candidate.model === model,
+    );
+    if (!option) return;
+    const selection = modelSelectionForOption(option);
+    if (newDraft) newDraft = { ...newDraft, modelSelection: selection };
+    else {
+      const detail = selectedDetail();
+      if (!detail) return;
+      modelOverrides.set(detail.id, selection);
+    }
+    store.setStatus(`Model → ${option.model} (next turn)`, "success");
+    publish();
+  };
+
+  const setOption = (id: string, value: string | boolean) => {
+    const selection = activeModel();
+    if (!selection) {
+      store.setStatus("Select a model first.", "info");
+      return;
+    }
+    const next = withModelSelectionOption(selection, id, value);
+    if (newDraft) newDraft = { ...newDraft, modelSelection: next };
+    else {
+      const detail = selectedDetail();
+      if (!detail) return;
+      modelOverrides.set(detail.id, next);
+    }
+    store.setStatus(`Effort → ${String(value)} (next turn)`, "success");
+    publish();
+  };
+
+  const setRuntimeMode = (mode: RuntimeMode) => {
+    if (!RUNTIME_MODES.includes(mode)) return;
+    if (newDraft) {
+      newDraft = { ...newDraft, runtimeMode: mode };
+      store.setStatus(`Access → ${runtimeModeLabel(mode)}`, "success");
+      publish();
+      return;
+    }
+    const detail = selectedDetail();
+    if (!detail) return;
+    void track(
+      client
+        .setRuntimeMode(detail.id, mode)
+        .catch((error) => store.setStatus(`access change failed: ${String(error)}`, "error")),
+    );
+    store.setStatus(`Access → ${runtimeModeLabel(mode)}`, "success");
+  };
+
+  const setInteractionMode = (next: ProviderInteractionMode) => {
+    if (newDraft) {
+      newDraft = { ...newDraft, interactionMode: next };
+      store.setStatus(next === "plan" ? "Plan mode." : "Build mode.", "success");
+      publish();
+      return;
+    }
+    const detail = selectedDetail();
+    if (!detail) return;
+    const threadId = detail.id;
+    interactionOverrides.set(threadId, next);
+    store.setStatus(next === "plan" ? "Plan mode." : "Build mode.", "success");
+    publish();
+    void track(
+      client.setInteractionMode(threadId, next).catch((error) => {
+        if (interactionOverrides.get(threadId) === next) interactionOverrides.delete(threadId);
+        store.setStatus(`mode change failed: ${String(error)}`, "error");
+        publish();
+      }),
+    );
+  };
+
+  const toggleInteractionMode = () => {
+    const current = newDraft
+      ? newDraft.interactionMode
+      : (() => {
+          const detail = selectedDetail();
+          return detail ? threadInteraction(detail) : null;
+        })();
+    if (current === null) return;
+    setInteractionMode(current === "plan" ? "default" : "plan");
+  };
+
+  const setWorkspaceMode = (mode: NewThreadWorkspaceMode) => {
+    if (!newDraft) return;
+    let branch = newDraft.branch;
+    if (mode === "current") {
+      const project = newProject();
+      const worktreePath = newDraft.worktreePath;
+      const currentRef = worktreePath
+        ? newDraft.refs.find((ref) => ref.worktreePath === worktreePath)
+        : newDraft.refs.find(
+            (ref) => ref.current || (!!project && ref.worktreePath === project.workspaceRoot),
+          );
+      if (currentRef) branch = currentRef.name;
+    }
+    newDraft = { ...newDraft, workspaceMode: mode, branch };
+    store.setStatus(
+      mode === "new-worktree" ? "Workspace → New worktree" : "Workspace → Current checkout",
+      "success",
+    );
+    publish();
+  };
+
+  const selectBranch = (name: string) => {
+    const draft = newDraft;
+    const project = newProject();
+    if (!draft || !project || switchPending) return;
+    const ref = draft.refs.find((candidate) => candidate.name === name);
+    if (!ref) return;
+    const selection = resolveNewThreadBranchSelection({
+      workspaceMode: draft.workspaceMode,
+      projectCwd: project.workspaceRoot,
+      currentWorktreePath: draft.worktreePath,
+      ref,
+    });
+    if (selection.kind === "select-base") {
+      newDraft = { ...draft, branch: selection.branch };
+      store.setStatus(`Worktree base → ${selection.branch}`, "success");
+      publish();
+      return;
+    }
+    if (selection.kind === "reuse-worktree") {
+      newDraft = { ...draft, branch: selection.branch, worktreePath: selection.worktreePath };
+      store.setStatus(`Workspace → ${selection.branch}`, "success");
+      publish();
+      return;
+    }
+    switchPending = true;
+    const token = ++switchToken;
+    store.setStatus(`Switching checkout to ${ref.name}…`, "busy");
+    publish();
+    void track(
+      client
+        .switchRef(selection.checkoutCwd, ref.name)
+        .then(
+          (result) => {
+            if (switchToken !== token || !newDraft) return;
+            const branch = result.refName ?? selection.branch;
+            newDraft = { ...newDraft, branch, worktreePath: selection.worktreePath };
+            store.setStatus(`Branch → ${branch}`, "success");
+          },
+          (error) => {
+            if (switchToken !== token) return;
+            store.setStatus(`branch switch failed: ${String(error)}`, "error");
+          },
+        )
+        .finally(() => {
+          if (switchToken !== token) return;
+          switchPending = false;
+          publish();
+        }),
+    );
+  };
+
+  // ── New-thread drafts ────────────────────────────────────────────────────
+
+  const loadRefs = (projectId: string, cwd: string) =>
+    track(
+      client.listRefs(cwd).then(
+        (result) => {
+          if (newDraft?.projectId !== projectId) return;
+          newDraft = {
+            ...newDraft,
+            refs: result.refs,
+            branch: resolveInitialBranch(result.refs, newDraft.branch),
+          };
+          publish();
+        },
+        () => {},
+      ),
+    );
+
+  const openNewThread = () => {
+    if (newDraft) return;
+    const current = store.getState();
+    const detail = current.selection?.kind === "thread" ? selectedDetail() : null;
+    const selectedProjectId =
+      current.selection?.kind === "project"
+        ? current.selection.id
+        : (current.projectScopeId ?? detail?.projectId ?? null);
+    const list = projects();
+    const context = resolveNewThreadContext({
+      projects: list,
+      selectedProjectId,
+      thread: detail,
+      // Null means inherit; without a repository t3.json that resolves to local.
+      defaultEnvironmentMode: settings.defaultThreadEnvMode ?? "local",
+    });
+    const project = list[context.projectIndex] ?? null;
+    newDraft = {
+      originKey: selectionKey(current.selection),
+      projectId: project?.id ?? null,
+      modelSelection:
+        resolveModelSelection(modelOptions, project?.defaultModelSelection) ??
+        project?.defaultModelSelection ??
+        null,
+      runtimeMode: detail?.runtimeMode ?? "full-access",
+      interactionMode: "default",
+      workspaceMode: context.workspaceMode,
+      branch: context.branch,
+      worktreePath: context.worktreePath,
+      refs: [],
+    };
+    drafts.delete(NEW_TARGET);
+    closePicker();
+    if (options.mode() !== "compose") options.setMode("compose");
+    publish();
+    if (project) void loadRefs(project.id, project.workspaceRoot);
+  };
+
+  const closeNewThread = () => {
+    if (!newDraft) return;
+    newDraft = null;
+    switchToken += 1;
+    switchPending = false;
+    drafts.delete(NEW_TARGET);
+    if (picker && ["workspace", "branch"].includes(picker.kind)) closePicker();
+  };
+
+  const submitNewThread = () => {
+    const draft = newDraft;
+    if (!draft || createPending) return;
+    if (switchPending) {
+      store.setStatus("Wait for the branch switch to finish.", "info");
+      return;
+    }
+    const project = newProject();
+    const { text, images } = draftFor(NEW_TARGET);
+    const typed = text.trim();
+    const message = typed.length > 0 ? typed : images.length > 0 ? IMAGE_ONLY_PROMPT : "";
+    const modelSelection = newModel();
+    const invalid = validateNewThread({
+      hasProject: !!project,
+      message,
+      hasModelSelection: !!modelSelection,
+      workspaceMode: draft.workspaceMode,
+      branch: draft.branch,
+    });
+    if (invalid) {
+      store.setStatus(newThreadValidationMessage(invalid), "error");
+      return;
+    }
+    if (!project || !modelSelection) return;
+    createPending = true;
+    store.setStatus("Creating thread and starting its first turn…", "busy");
+    publish();
+    const createWorktree = draft.workspaceMode === "new-worktree";
+    void track(
+      client
+        .createThread({
+          projectId: project.id,
+          projectCwd: project.workspaceRoot,
+          title: typed.length > 0 ? truncate(typed) : "Image attachment",
+          modelSelection,
+          firstMessage: message,
+          attachments: images.map((image) => image.upload),
+          runtimeMode: draft.runtimeMode,
+          interactionMode: draft.interactionMode,
+          branch: draft.branch,
+          worktreePath: createWorktree ? null : draft.worktreePath,
+          createWorktree,
+          startFromOrigin: createWorktree && settings.newWorktreesStartFromOrigin,
+        })
+        .then(
+          (threadId) => {
+            createPending = false;
+            closeNewThread();
+            if (store.getState().projectScopeId !== project.id) store.setProjectScope(project.id);
+            store.select({ kind: "thread", id: threadId });
+            store.setStatus("Thread created.", "success");
+            publish();
+          },
+          (error) => {
+            createPending = false;
+            store.setStatus(`create failed: ${String(error)}`, "error");
+            publish();
+          },
+        ),
+    );
+  };
+
+  // ── Replies ──────────────────────────────────────────────────────────────
+
+  const sendReply = () => {
+    if (replyPending) return;
+    const detail = selectedDetail();
+    const key = target();
+    const draft = draftFor(key);
+    const typed = draft.text.trim();
+    if (typed.length === 0 && draft.images.length === 0) return;
+    if (!detail || !key) {
+      store.setStatus("Select a thread (Alt+↑/↓ or click) to send a message.");
+      return;
+    }
+    const text = typed.length > 0 ? typed : IMAGE_ONLY_PROMPT;
+    const submitted = draft;
+    replyPending = true;
+    store.setStatus("Sending reply…", "busy");
+    publish();
+    void track(
+      Promise.resolve()
+        .then(() =>
+          client.sendReply(
+            { ...detail, interactionMode: threadInteraction(detail) },
+            text,
+            submitted.images.map((image) => image.upload),
+            threadModel(detail) ?? undefined,
+          ),
+        )
+        .then(
+          () => {
+            replyPending = false;
+            // Clear only what was sent; text typed while sending stays.
+            setDraft(key, (current) => ({
+              text: current.text === submitted.text ? "" : current.text,
+              images: current.images.filter((image) => !submitted.images.includes(image)),
+            }));
+            store.setStatus("Reply sent.", "success");
+            publish();
+          },
+          (error) => {
+            replyPending = false;
+            store.setStatus(`send failed: ${String(error)}`, "error");
+            publish();
+          },
+        ),
+    );
+  };
+
+  const interrupt = () => {
+    const detail = selectedDetail();
+    if (!detail) return;
+    void track(client.interrupt(detail.id).catch(() => {}));
+    store.setStatus("Interrupt sent.", "success");
+  };
+
+  const escape = () => {
+    if (newDraft) {
+      if (createPending) return;
+      if (switchPending) {
+        store.setStatus("Wait for the branch switch to finish.", "info");
+        return;
+      }
+      setDraft(NEW_TARGET, () => EMPTY_DRAFT);
+      return;
+    }
+    const key = target();
+    const draft = draftFor(key);
+    if (draft.text.length > 0 || draft.images.length > 0) {
+      setDraft(key, () => EMPTY_DRAFT);
+      return;
+    }
+    const detail = selectedDetail();
+    if (detail && isWorking(detail)) interrupt();
+  };
+
+  // ── Attachments ──────────────────────────────────────────────────────────
+
+  const canAttach = (key: string | null): key is string => {
+    if (!key) {
+      store.setStatus("Select a thread before attaching an image.", "error");
+      return false;
+    }
+    const detail = selectedDetail();
+    if (!newDraft && detail && derivePendingUserInputs(detail.activities).length > 0) {
+      store.setStatus("Answer the pending question before attaching an image.", "error");
+      return false;
+    }
+    if (draftFor(key).images.length + imageLoads >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+      store.setStatus(
+        `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images.`,
+        "error",
+      );
+      return false;
+    }
+    return true;
+  };
+
+  const addImage = (key: string, image: ComposerImageAttachment) =>
+    setDraft(key, (current) =>
+      current.images.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS ||
+      current.images.some((entry) => entry.relativePath === image.relativePath)
+        ? current
+        : { ...current, images: [...current.images, image] },
+    );
+
+  const loadImage = async (key: string, imagePath: string): Promise<boolean> => {
+    if (draftFor(key).images.some((image) => image.relativePath === imagePath)) {
+      store.setStatus(`${NodePath.basename(imagePath)} is already attached.`, "info");
+      return true;
+    }
+    if (!canAttach(key)) return false;
+    imageLoads += 1;
+    store.setStatus(`Adding ${NodePath.basename(imagePath)}…`, "busy");
+    try {
+      const platformPath = client.hostPlatform === "win32" ? NodePath.win32 : NodePath.posix;
+      let image: ComposerImageAttachment;
+      if (platformPath.isAbsolute(imagePath)) {
+        const bytes = await options.readLocalImage(imagePath);
+        const mimeType = imageMimeTypeForPath(imagePath);
+        if (!mimeType) throw new Error("Select a supported image file.");
+        image = await prepareComposerImageBytes(imagePath, mimeType, bytes, decode);
+      } else {
+        const file = await client.readFileBase64(composerCwd(), imagePath);
+        if (!file) throw new Error("Could not read the pasted image path.");
+        image = await prepareComposerImage(imagePath, file, decode);
+      }
+      addImage(key, image);
+      store.setStatus(`Attached ${image.upload.name}.`, "success");
+      return true;
+    } catch (error) {
+      store.setStatus(errorText(error), "error");
+      return false;
+    } finally {
+      imageLoads = Math.max(0, imageLoads - 1);
+    }
+  };
+
+  const attachPath = (rawPath: string) => {
+    const key = target();
+    if (!key) {
+      store.setStatus("Select a thread before attaching an image.", "error");
+      return;
+    }
+    void track(loadImage(key, rawPath));
+  };
+
+  const pasteBytes = (bytes: Uint8Array, mimeType: string) => {
+    const key = target();
+    if (!canAttach(key)) return;
+    const extension = imageExtensionForMimeType(mimeType);
+    if (!extension) {
+      store.setStatus("Paste a supported image format.", "error");
+      return;
+    }
+    clipboardSequence += 1;
+    const name = `clipboard-image-${clipboardSequence}.${extension}`;
+    imageLoads += 1;
+    store.setStatus("Adding pasted image…", "busy");
+    void track(
+      prepareComposerImageBytes(name, mimeType, bytes, decode)
+        .then(
+          (image) => {
+            addImage(key, image);
+            store.setStatus(`Attached ${image.upload.name}.`, "success");
+          },
+          // A decoder failure means the bytes are not an image we can show.
+          () => store.setStatus("Paste a supported image format.", "error"),
+        )
+        .finally(() => {
+          imageLoads = Math.max(0, imageLoads - 1);
+        }),
+    );
+  };
+
+  /** A paste that names an image: attach it, then put the rest of the text in the prompt. */
+  const pastePath = (text: string): boolean => {
+    const key = target();
+    if (!key) return false;
+    const pasted = extractPastedImagePath(
+      text,
+      composerCwd(),
+      options.homeDir,
+      client.hostPlatform,
+    );
+    if (!pasted) return false;
+    void track(
+      loadImage(key, pasted.imagePath).then((attached) => {
+        const insert = attached ? pasted.remainingText : text;
+        if (insert.length > 0) setDraft(key, (draft) => ({ ...draft, text: draft.text + insert }));
+      }),
+    );
+    return true;
+  };
+
+  const removeAttachment = (id: unknown) => {
+    const key = target();
+    setDraft(key, (draft) => {
+      const images =
+        typeof id === "string"
+          ? draft.images.filter((image) => image.relativePath !== id)
+          : draft.images.slice(0, -1);
+      return { ...draft, images };
+    });
+  };
+
+  // ── $EDITOR ──────────────────────────────────────────────────────────────
+
+  const editInEditor = () => {
+    const key = target();
+    if (!key) return;
+    const original = draftFor(key).text;
+    void track(
+      (async () => {
+        let dir: string | null = null;
+        try {
+          dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-prompt-"));
+          const file = NodePath.join(dir, "prompt.md");
+          await NodeFSP.writeFile(file, original, "utf8");
+          await options.runEditor(resolveEditorCommand(options.env), file);
+          const edited = normalizeEditedPrompt(await NodeFSP.readFile(file, "utf8"));
+          const slots = Math.max(
+            0,
+            PROVIDER_SEND_TURN_MAX_ATTACHMENTS - draftFor(key).images.length,
+          );
+          const lines = findPromptImagePathLines(
+            edited,
+            composerCwd(),
+            options.homeDir,
+            client.hostPlatform,
+          ).slice(0, slots);
+          const replaced = new Map<number, string>();
+          for (const line of lines) {
+            const pasted = extractPastedImagePath(
+              line.text,
+              composerCwd(),
+              options.homeDir,
+              client.hostPlatform,
+            );
+            if (pasted && (await loadImage(key, pasted.imagePath))) {
+              replaced.set(line.lineIndex, pasted.remainingText);
+            }
+          }
+          const prompt = normalizeEditedPrompt(
+            replacePromptLines(edited, replaced)
+              .split("\n")
+              .filter((line, index) => !(replaced.has(index) && line.trim().length === 0))
+              .join("\n"),
+          );
+          setDraft(key, (draft) => ({ ...draft, text: prompt }));
+          store.setStatus(
+            replaced.size > 0
+              ? `Prompt updated; attached ${replaced.size} image path${replaced.size === 1 ? "" : "s"}.`
+              : "Prompt updated from $EDITOR.",
+            "success",
+          );
+        } catch {
+          store.setStatus("Could not open $EDITOR.", "error");
+        } finally {
+          if (dir) await NodeFSP.rm(dir, { recursive: true, force: true }).catch(() => {});
+        }
+      })(),
+    );
+  };
+
+  // ── Add project ──────────────────────────────────────────────────────────
+
+  const activateProject = (projectId: string, status: string, kind: "success" | "info") => {
+    closePicker();
+    closeNewThread();
+    store.setProjectScope(projectId);
+    store.select({ kind: "project", id: projectId });
+    store.setStatus(status, kind);
+    publish();
+  };
+
+  const currentProjectCwd = () => {
+    const current = store.getState();
+    const projectId =
+      current.selection?.kind === "project" ? current.selection.id : current.projectScopeId;
+    return projects().find((project) => project.id === projectId)?.workspaceRoot ?? null;
+  };
+
+  const registerProject = (rawPath: string) => {
+    if (projectPending) return;
+    const resolution = resolveAddProjectPath({
+      rawPath,
+      currentProjectCwd: currentProjectCwd(),
+      platform: client.hostPlatform,
+    });
+    if (!resolution.ok) {
+      store.setStatus(resolution.error, "error");
+      return;
+    }
+    const existing = findProjectByPath(projects(), resolution.path);
+    if (existing) {
+      activateProject(existing.id, "Project already added. What should we build?", "info");
+      return;
+    }
+    projectPending = true;
+    store.setStatus("Adding project…", "busy");
+    void track(
+      client.createProject(resolution.path).then(
+        (projectId) => {
+          projectPending = false;
+          if (projects().some((project) => project.id === projectId)) {
+            activateProject(projectId, "Project added. What should we build?", "success");
+            return;
+          }
+          // The shell snapshot carrying the project has not arrived yet.
+          closePicker();
+          pendingProjectId = projectId;
+          store.setStatus("Project added. Waiting for it to appear…", "busy");
+        },
+        (error) => {
+          projectPending = false;
+          store.setStatus(`add project failed: ${String(error)}`, "error");
+        },
+      ),
+    );
+  };
+  let pendingProjectId: string | null = null;
+
+  const openAddProject = () => {
+    openPicker({
+      kind: "project-source",
+      title: "add project",
+      status: "ready",
+      options: [
+        { label: "Local folder", description: "Add a folder on this machine.", value: "local" },
+        { label: "Git URL", description: "Clone a repository from a URL.", value: "url" },
+      ],
+      index: 0,
+      input: null,
+    });
+  };
+
+  const inputStep = (
+    kind: TuiSelectKind,
+    title: string,
+    text: string,
+    placeholder: string,
+    extra: Partial<Picker> = {},
+  ) =>
+    openPicker({
+      kind,
+      title,
+      status: "ready",
+      options: [],
+      index: 0,
+      input: { text, placeholder },
+      ...extra,
+    });
+
+  const confirmInput = (current: Picker) => {
+    const text = current.input?.text.trim() ?? "";
+    if (current.kind === "project-path") {
+      registerProject(text);
+      return;
+    }
+    if (current.kind === "project-url") {
+      if (text.length === 0) {
+        store.setStatus("Enter a repository or Git URL.", "error");
+        return;
+      }
+      inputStep(
+        "project-destination",
+        "clone into",
+        getAddProjectInitialQuery(settings.addProjectBaseDirectory),
+        "Folder to clone into",
+        { remoteUrl: text },
+      );
+      store.setStatus("Choose where to clone the repository.", "info");
+      return;
+    }
+    if (current.kind === "project-destination" && current.remoteUrl && !projectPending) {
+      const resolution = resolveAddProjectPath({
+        rawPath: text,
+        currentProjectCwd: currentProjectCwd(),
+        platform: client.hostPlatform,
+      });
+      if (!resolution.ok) {
+        store.setStatus(resolution.error, "error");
+        return;
+      }
+      projectPending = true;
+      store.setStatus("Cloning repository…", "busy");
+      void track(
+        client.cloneRepository(current.remoteUrl, resolution.path).then(
+          (result) => {
+            projectPending = false;
+            registerProject(result.cwd);
+          },
+          (error) => {
+            projectPending = false;
+            store.setStatus(`clone failed: ${String(error)}`, "error");
+          },
+        ),
+      );
+    }
+  };
+
+  // ── Select overlay ───────────────────────────────────────────────────────
+
+  const choose = (index: number) => {
+    const current = picker;
+    if (!current) return;
+    if (current.input) {
+      confirmInput(current);
+      return;
+    }
+    const value = current.options[index]?.value;
+    if (value === undefined) return;
+    if (current.kind === "branch") {
+      closePicker();
+      selectBranch(value);
+      return;
+    }
+    closePicker();
+    switch (current.kind) {
+      case "model": {
+        const parsed = JSON.parse(value) as { instanceId: string; model: string };
+        setModel(parsed.instanceId, parsed.model);
+        return;
+      }
+      case "reasoning": {
+        const parsed = JSON.parse(value) as { descriptorId: string; choiceId: string };
+        setOption(parsed.descriptorId, parsed.choiceId);
+        return;
+      }
+      case "runtime":
+        setRuntimeMode(value as RuntimeMode);
+        return;
+      case "workspace":
+        setWorkspaceMode(value as NewThreadWorkspaceMode);
+        return;
+      case "project-source":
+        if (value === "local") {
+          inputStep(
+            "project-path",
+            "local folder",
+            getAddProjectInitialQuery(settings.addProjectBaseDirectory),
+            "Path to the project folder",
+          );
+        } else {
+          inputStep("project-url", "git url", "", "https://github.com/owner/repo.git");
+        }
+        return;
+    }
+  };
+
+  const move = (delta: number) => {
+    if (!picker || picker.options.length === 0) return;
+    const count = picker.options.length;
+    picker = { ...picker, index: (picker.index + delta + count) % count };
+    publish();
+  };
+
+  // ── Store sync ───────────────────────────────────────────────────────────
+
+  const sync = () => {
+    const current = store.getState();
+    const key = selectionKey(current.selection);
+    if (newDraft && newDraft.originKey !== key) closeNewThread();
+    if (pendingProjectId && projects().some((project) => project.id === pendingProjectId)) {
+      const projectId = pendingProjectId;
+      pendingProjectId = null;
+      activateProject(projectId, "Project added. What should we build?", "success");
+      return;
+    }
+    // A selected project (or an empty list) is a new-thread draft, as in the web app.
+    if (!newDraft && current.selection?.kind === "project") openNewThread();
+    const detail = selectedDetail();
+    if (detail && interactionOverrides.get(detail.id) === detail.interactionMode) {
+      interactionOverrides.delete(detail.id);
+    }
+    publish();
+  };
+
+  const dispatch = (action: string, payload?: unknown): boolean => {
+    switch (action) {
+      case "composer.text.set": {
+        const text = field(payload, "text");
+        if (typeof text !== "string") return true;
+        setDraft(target(), (draft) => ({ ...draft, text }));
+        return true;
+      }
+      case "composer.submit":
+        if (newDraft) submitNewThread();
+        else sendReply();
+        return true;
+      case "composer.escape":
+        escape();
+        return true;
+      case "composer.interrupt":
+        interrupt();
+        return true;
+      case "composer.paste": {
+        const bytes = field(payload, "bytes");
+        const mimeType = field(payload, "mimeType");
+        if (
+          bytes instanceof Uint8Array &&
+          typeof mimeType === "string" &&
+          mimeType.startsWith("image/")
+        ) {
+          pasteBytes(bytes, mimeType);
+          return true;
+        }
+        const text = field(payload, "text");
+        return typeof text === "string" && pastePath(text);
+      }
+      case "composer.attach": {
+        const path = field(payload, "path");
+        if (typeof path === "string") attachPath(path);
+        return true;
+      }
+      case "composer.attachment.remove":
+        removeAttachment(field(payload, "id"));
+        return true;
+      case "composer.grow":
+      case "composer.shrink":
+        rowsOverride = Math.min(
+          COMPOSER_MAX_EDITOR_ROWS,
+          Math.max(
+            1,
+            (rowsOverride ?? autoRows(draftFor(target()).text)) +
+              (action === "composer.grow" ? 1 : -1),
+          ),
+        );
+        publish();
+        return true;
+      case "composer.editor.open":
+        editInEditor();
+        return true;
+      case "composer.interactionMode.toggle":
+        toggleInteractionMode();
+        return true;
+      case "composer.interactionMode.set": {
+        const mode = field(payload, "mode");
+        if (mode === "plan" || mode === "default") setInteractionMode(mode);
+        return true;
+      }
+      case "composer.runtimeMode.set":
+        setRuntimeMode(field(payload, "mode") as RuntimeMode);
+        return true;
+      case "composer.model.select": {
+        const instanceId = field(payload, "instanceId");
+        const model = field(payload, "model");
+        if (typeof instanceId === "string" && typeof model === "string") {
+          const known = modelOptions.some(
+            (option) => option.instanceId === instanceId && option.model === model,
+          );
+          if (known) setModel(instanceId, model);
+          else
+            void loadModels().then(
+              () => setModel(instanceId, model),
+              () => {},
+            );
+        }
+        return true;
+      }
+      case "composer.option.set": {
+        const id = field(payload, "id");
+        const value = field(payload, "value");
+        if (typeof id === "string" && (typeof value === "string" || typeof value === "boolean")) {
+          setOption(id, value);
+        }
+        return true;
+      }
+      case "composer.modelPicker.toggle":
+        openModelPicker();
+        return true;
+      case "composer.effortPicker.toggle":
+        openReasoningPicker();
+        return true;
+      case "composer.runtimePicker.toggle":
+        openRuntimePicker();
+        return true;
+      case "composer.workspacePicker.toggle":
+        openWorkspacePicker();
+        return true;
+      case "composer.branchPicker.toggle":
+        openBranchPicker();
+        return true;
+      case "workspace.envMode.set": {
+        const mode = field(payload, "mode");
+        if (mode === "current" || mode === "new-worktree") setWorkspaceMode(mode);
+        return true;
+      }
+      case "workspace.branch.select": {
+        const name = field(payload, "name");
+        if (typeof name === "string") selectBranch(name);
+        return true;
+      }
+      case "thread.new":
+        openNewThread();
+        return true;
+      case "project.add":
+        openAddProject();
+        return true;
+      case "select.next":
+        move(1);
+        return true;
+      case "select.previous":
+        move(-1);
+        return true;
+      case "select.confirm":
+        choose(picker?.index ?? 0);
+        return true;
+      case "select.choose": {
+        const index = field(payload, "index");
+        if (typeof index === "number") choose(index);
+        return true;
+      }
+      case "select.input.set": {
+        const text = field(payload, "text");
+        if (picker?.input && typeof text === "string") {
+          picker = { ...picker, input: { ...picker.input, text } };
+          publish();
+        }
+        return true;
+      }
+      case "select.close":
+        closePicker();
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  // Startup: models for the footer, settings for new-thread defaults.
+  void loadModels().catch(() => {});
+  void track(
+    client.getServerConfig().then(
+      (config) => {
+        settings = config.settings;
+      },
+      () => {},
+    ),
+  );
+
+  return {
+    dispatch,
+    sync,
+    relayout: publish,
+    idle: async () => {
+      while (inflight.size > 0) await Promise.allSettled([...inflight]);
+    },
+    context: () => {
+      const detail = selectedDetail();
+      return {
+        newDraft: newDraft !== null,
+        workspaceMode: newDraft?.workspaceMode ?? null,
+        threadId: detail?.id ?? null,
+        interactionMode: newDraft
+          ? newDraft.interactionMode
+          : detail
+            ? threadInteraction(detail)
+            : "default",
+        attachmentCount: draftFor(target()).images.length,
+      };
+    },
+  };
+}

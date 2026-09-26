@@ -1,10 +1,19 @@
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import { createPropertyMap, type PropertyMap } from "opentui-qml";
 
 import type { TuiClient } from "../connection.ts";
 import { buildRows } from "../components/Sidebar.logic.ts";
+import { KEYBINDING_GROUPS, KEYMAP_LAYERS, KEYMAP_PARITY } from "../keymap.ts";
+import type { EditorCommand } from "../promptEditor.ts";
+import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore, type StatusKind, type StoreState } from "../store.ts";
+import { createComposer, type ImageDecoder } from "./composerState.ts";
 import { buildTuiLayoutState, type TuiMode, type TuiSize } from "./layoutState.ts";
 import { buildTuiSidebarState, idFromKey, threadKey } from "./sidebarState.ts";
+import { createPalette } from "./paletteState.ts";
 import { createTuiTheme, TUI_THEME_STATE, type TuiTheme } from "./theme.ts";
 
 /** Published under `status`: the one-line status message and its tone. */
@@ -26,7 +35,8 @@ export type TuiPageState =
 
 export interface TuiShellSingleton {
   readonly state: PropertyMap;
-  readonly dispatch: (action: string, payload?: unknown) => void;
+  /** True when the host handled the action (a paste the prompt must not insert). */
+  readonly dispatch: (action: string, payload?: unknown) => boolean;
 }
 
 export interface HostOptions {
@@ -38,11 +48,36 @@ export interface HostOptions {
   readonly log: (message: string) => void;
   /** Clock for snooze partitioning; tests pin it. */
   readonly now?: () => string;
+  /** `VISUAL` / `EDITOR` for Ctrl+G (default: the process environment). */
+  readonly env?: { readonly VISUAL?: string | undefined; readonly EDITOR?: string | undefined };
+  /** Expands `~` in pasted image paths (default: the user's home). */
+  readonly homeDir?: string;
+  /** Ctrl+G: run the editor on a file; the entry suspends the renderer around it. */
+  readonly runEditor?: (command: EditorCommand, file: string) => Promise<void>;
+  /** Read an image pasted as an absolute path on this machine. */
+  readonly readLocalImage?: (path: string) => Promise<Uint8Array>;
+  /** Decode attached images for their preview (default: `@t3tools/opentui-image`). */
+  readonly decodeImage?: ImageDecoder;
+  /** Sees every action dispatched, from QML or from the palette (tests, debugging). */
+  readonly trace?: (action: string, payload: unknown) => void;
+}
+
+async function readLocalImageFile(path: string): Promise<Uint8Array> {
+  const stat = await NodeFSP.stat(path).catch(() => null);
+  if (!stat?.isFile()) throw new Error("The pasted image path is not a file.");
+  if (stat.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+    throw new Error("Image exceeds the 10MB attachment limit.");
+  }
+  return new Uint8Array(await NodeFSP.readFile(path));
 }
 
 export interface Host {
   readonly state: PropertyMap;
-  readonly dispatch: (action: string, payload?: unknown) => void;
+  readonly dispatch: (action: string, payload?: unknown) => boolean;
+  /** Move keyboard focus (the input mode); overlays owned elsewhere call this. */
+  readonly setMode: (mode: TuiMode) => void;
+  /** Resolves when every request an action started has settled (tests wait on it). */
+  readonly idle: () => Promise<void>;
   /** The terminal size changed (renderer "resize"). */
   readonly resize: (size: TuiSize) => void;
   /** QML singletons: `Shell.state.<key>`, `Shell.dispatch(action, payload)`, `Theme.*`. */
@@ -76,16 +111,18 @@ export function createHost(options: HostOptions): Host {
     size,
     theme: TUI_THEME_STATE,
     notifications: { items: [] },
+    keybindings: { layers: KEYMAP_LAYERS, groups: KEYBINDING_GROUPS, parity: KEYMAP_PARITY },
   });
 
   // Republish a key only when what it is derived from changed, so bindings
   // on other keys are not re-evaluated by every store emit.
   let last: StoreState | null = null;
-  const publishLayout = () =>
-    state.set(
-      "layout",
-      buildTuiLayoutState({ size, sidebarCollapsed, rightPanelVisible: false, mode }),
-    );
+  let layout = buildTuiLayoutState({ size, sidebarCollapsed, rightPanelVisible: false, mode });
+  const publishLayout = () => {
+    layout = buildTuiLayoutState({ size, sidebarCollapsed, rightPanelVisible: false, mode });
+    state.set("layout", layout);
+    composer?.relayout();
+  };
   const publish = () => {
     const next = store.getState();
     const prev = last;
@@ -141,64 +178,124 @@ export function createHost(options: HostOptions): Host {
     publishLayout();
   };
 
+  let composer: ReturnType<typeof createComposer> | null = null;
+  composer = createComposer({
+    client,
+    store,
+    state,
+    mode: () => mode,
+    setMode,
+    chatWidth: () => layout.chatWidth,
+    env: options.env ?? { VISUAL: process.env.VISUAL, EDITOR: process.env.EDITOR },
+    homeDir: options.homeDir ?? NodeOS.homedir(),
+    runEditor: options.runEditor ?? (() => Promise.reject(new Error("no editor runner"))),
+    readLocalImage: options.readLocalImage ?? readLocalImageFile,
+    ...(options.decodeImage ? { decodeImage: options.decodeImage } : {}),
+  });
+  const palette = createPalette({
+    state,
+    mode: () => mode,
+    setMode,
+    context: () => {
+      const context = composer!.context();
+      const detail = store.getState().detail;
+      return {
+        ...context,
+        hasProposedPlan:
+          context.threadId !== null &&
+          detail?.id === context.threadId &&
+          latestActionableProposedPlan(detail) !== null,
+      };
+    },
+    run: (action, payload) => {
+      dispatch(action, payload);
+    },
+  });
+
   const unknownActions = new Set<string>();
-  const dispatch = (action: string, payload?: unknown) => {
+  const dispatch = (action: string, payload?: unknown): boolean => {
+    options.trace?.(action, payload);
+    return handle(action, payload);
+  };
+  const handle = (action: string, payload?: unknown): boolean => {
+    if (palette.dispatch(action, payload)) return true;
+    if (action === "composer.paste") return composer!.dispatch(action, payload);
+    if (composer!.dispatch(action, payload)) return true;
+    const jump = /^thread\.jump\.([1-9])$/.exec(action);
+    if (jump) {
+      store.selectThreadByIndex(Number(jump[1]));
+      return true;
+    }
     switch (action) {
+      case "composer.focus":
+        palette.dispatch("palette.close");
+        composer!.dispatch("select.close");
+        setMode("compose");
+        return true;
       case "thread.open": {
         const key = payloadField(payload, "key");
-        if (typeof key !== "string") return;
+        if (typeof key !== "string") return true;
         store.select({ kind: "thread", id: idFromKey(key) });
         setMode("compose");
-        return;
+        return true;
       }
       case "thread.next":
         store.moveThreadSelection(1);
-        return;
+        return true;
       case "thread.previous":
         store.moveThreadSelection(-1);
-        return;
+        return true;
       case "sidebar.toggle":
         sidebarCollapsed = !sidebarCollapsed;
         publishLayout();
-        return;
+        return true;
       case "sidebar.scope": {
         const key = payloadField(payload, "projectKey");
         store.setProjectScope(typeof key === "string" ? idFromKey(key) : null);
-        return;
+        return true;
       }
       case "sidebar.filter.focus":
         setMode("filter");
-        return;
+        return true;
       case "sidebar.filter.set": {
         const query = payloadField(payload, "query");
         store.setFilter(typeof query === "string" ? query : "");
-        return;
+        return true;
       }
       case "sidebar.filter.commit":
         setMode("compose");
-        return;
+        return true;
       case "sidebar.filter.cancel":
         store.setFilter("");
         setMode("compose");
-        return;
+        return true;
       case "app.quit":
         options.onQuit?.();
-        return;
+        return true;
       default:
-        if (unknownActions.has(action)) return;
-        unknownActions.add(action);
-        log(`t3 tui: unknown shell action "${action}"`);
+        if (!unknownActions.has(action)) {
+          unknownActions.add(action);
+          log(`t3 tui: unknown shell action "${action}"`);
+        }
+        return false;
     }
   };
 
   publishLayout();
   publish();
-  const unsubscribe = store.subscribe(publish);
+  composer.sync();
+  const unsubscribe = store.subscribe(() => {
+    publish();
+    composer!.sync();
+    palette.sync();
+  });
   store.start();
 
   return {
     state,
     dispatch,
+    setMode,
+    idle: () => composer!.idle(),
     resize: (next) => {
       if (next.columns === size.columns && next.rows === size.rows) return;
       size = next;

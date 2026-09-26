@@ -7,3 +7,8 @@ Sidebar 1.0 Sidebar.qml
 SidebarThreadRow 1.0 SidebarThreadRow.qml
 StatusLine 1.0 StatusLine.qml
 Conversation 1.0 Conversation.qml
+Composer 1.0 Composer.qml
+ComposerFooter 1.0 ComposerFooter.qml
+CommandPalette 1.0 CommandPalette.qml
+SelectOverlay 1.0 SelectOverlay.qml
+ShellKeymap 1.0 ShellKeymap.qml

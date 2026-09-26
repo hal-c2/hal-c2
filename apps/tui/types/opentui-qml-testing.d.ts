@@ -24,6 +24,11 @@ export interface QmlTestApp {
   proxy: any;
   warnings: string[];
   errors: unknown[];
+  renderer: {
+    keyInput: {
+      processPaste(bytes: Uint8Array, metadata?: { mimeType?: string }): void;
+    };
+  };
   renderOnce(): Promise<void>;
   captureCharFrame(): string;
   snapshot(): Promise<string>;
