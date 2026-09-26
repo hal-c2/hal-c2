@@ -82,8 +82,9 @@ defmodule T3.Editors do
     end
   end
 
+  # `config :t3, os_type:` stands in for `:os.type()` in tests.
   defp file_manager do
-    case :os.type() do
+    case Application.get_env(:t3, :os_type, :os.type()) do
       {:unix, :darwin} ->
         "open"
 

@@ -34,6 +34,9 @@ defmodule T3.Streams.Server do
   # While a thread streams, its sidebar row is recomputed at most this often.
   @shell_debounce 250
 
+  @doc "How long a stream without subscribers stays up."
+  def idle_stop, do: @idle_stop
+
   def start_link(stream_id),
     do:
       GenServer.start_link(__MODULE__, stream_id,

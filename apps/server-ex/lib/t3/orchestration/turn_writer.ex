@@ -440,7 +440,14 @@ defmodule T3.Orchestration.TurnWriter do
     ids = state.turn.ids
     at = Entities.now()
     done = %{"status" => status, "completedAt" => at}
-    checkpoint = if status == "completed", do: capture_checkpoint(state.turn, at)
+
+    checkpoint =
+      if status == "completed",
+        do:
+          T3.Trace.span("checkpoint.capture", trace_attributes(state), fn ->
+            capture_checkpoint(state.turn, at)
+          end)
+
     # The turn may have changed the checkout; clients watching it see the result.
     T3.Vcs.Watch.refresh(state.turn.cwd)
     T3.Workspace.invalidate(state.turn.cwd)
@@ -473,6 +480,16 @@ defmodule T3.Orchestration.TurnWriter do
     # since starting a turn calls back into the runtime that is finishing this one.
     thread_id = state.thread_id
 
+    T3.Trace.finished(
+      "provider.turn",
+      Map.put(trace_attributes(state), "turn.status", status),
+      Map.get(state.turn, :started_ms, System.system_time(:millisecond)),
+      if(status == "failed",
+        do: %{"_tag" => "Failure", "cause" => failure_cause(failure)},
+        else: %{"_tag" => "Success"}
+      )
+    )
+
     Task.start(fn ->
       Orchestration.start_next(thread_id)
       # A delegated task reports back to the thread that asked for it.
@@ -481,6 +498,18 @@ defmodule T3.Orchestration.TurnWriter do
 
     :ok
   end
+
+  defp trace_attributes(state) do
+    %{
+      "thread.id" => state.thread_id,
+      "run.id" => state.turn.ids.run,
+      "provider.driver" => Entities.driver(state.turn.ids)
+    }
+  end
+
+  defp failure_cause(%{"message" => message}) when is_binary(message), do: message
+  defp failure_cause(failure) when is_binary(failure), do: failure
+  defp failure_cause(failure), do: inspect(failure)
 
   defp capture_checkpoint(%{scope_id: scope_id} = turn, at) do
     T3.Checkpoint.capture_run(

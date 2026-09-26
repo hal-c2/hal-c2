@@ -18,6 +18,8 @@ mix t3.pair                                      # one-time pairing URL for Sett
 ```
 
 State lives in the repo's `.t3/elixir` during development; set `T3_HOME` elsewhere.
+The node listens on loopback port 3780; `T3_PORT` and `T3CODE_HOST` (a LAN or tailnet
+address, for pairing other devices) change that.
 
 ## Release
 
@@ -36,6 +38,8 @@ A machine that has joined a cluster boots clustered: joining writes
 
 Run it as a service with `bin/t3-service` (under launchd, systemd, or a terminal): it
 is `bin/t3 start`, started again when the node restarts to finish an update.
+`bin/t3-service install` registers it as a systemd user unit (Linux) or launch agent
+(macOS) that starts on login; `status` and `uninstall` inspect and remove it.
 
 ## Upgrades
 

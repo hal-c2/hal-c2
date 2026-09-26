@@ -31,20 +31,26 @@ defmodule T3.Attachments do
     "image/heif" => ".heif",
     "image/tiff" => ".tiff"
   }
+  @image_extensions ~w(.png .jpg .jpeg .gif .webp .svg .bmp .avif .ico)
   # What a media URL may serve from outside a project.
   @media_extensions ~w(.png .jpg .jpeg .gif .webp .svg .bmp .avif .ico .mp4 .webm .mov .m4v .html .htm .pdf)
 
   # --- uploads ---------------------------------------------------------------------
 
-  @doc "`attachments.createUploadUrl`: an id for the upload and where to send it."
-  def create_upload_url(%{"name" => name, "mimeType" => mime, "sizeBytes" => size} = input) do
+  @doc """
+  `attachments.createUploadUrl`: an id for the upload and where to send it. `now`
+  (epoch ms) is when the URL counts as issued.
+  """
+  def create_upload_url(input, now \\ now_ms())
+
+  def create_upload_url(%{"name" => name, "mimeType" => mime, "sizeBytes" => size} = input, now) do
     type = input["type"] || "image"
     limit = if type == "file", do: @max_file_bytes, else: @max_image_bytes
 
     if is_integer(size) and size >= 1 and size <= limit do
       sweep_pending()
       id = "pending-#{T3.Environment.uuid4()}" <> id_suffix(type, name)
-      expires = now_ms() + @upload_ttl_ms
+      expires = now + @upload_ttl_ms
 
       claims = %{
         "kind" => "attachment-upload",
@@ -227,37 +233,219 @@ defmodule T3.Attachments do
 
   # --- asset URLs ------------------------------------------------------------------
 
-  @doc "`assets.createUrl`: a signed URL that serves an attachment or a file."
-  def create_url(%{"resource" => resource}) do
-    with {:ok, path, mime, name} <- resolve(resource) do
-      expires = now_ms() + @asset_ttl_ms
+  @doc """
+  `assets.createUrl`: a signed URL that serves an attachment, a file, a project's
+  favicon, an application's icon or GitHub media. The URL ends in the file's name, as
+  the Node server's does; a project without a favicon gets a URL ending in
+  `project-favicon-missing`, which answers 404 and tells the client to draw its
+  default icon. `now` (epoch ms) is when the URL counts as issued.
+  """
+  def create_url(%{"resource" => resource}, now \\ now_ms()) do
+    with {:ok, claims, name} <- asset_claims(resource, now) do
+      claims =
+        Map.merge(claims, %{
+          "kind" => "asset",
+          "fileName" => claims["fileName"] || name,
+          "expiresAt" => claims["expiresAt"] || now + @asset_ttl_ms
+        })
 
+      {:ok,
+       %{
+         "relativeUrl" =>
+           "/api/assets/" <> sign(claims) <> "/" <> URI.encode(name, &URI.char_unreserved?/1),
+         "expiresAt" => claims["expiresAt"]
+       }}
+    end
+  end
+
+  defp asset_claims(%{"_tag" => "project-favicon", "cwd" => cwd} = resource, now) do
+    if File.dir?(cwd) do
+      case T3.Attachments.Favicon.resolve(cwd, saved_favicon(cwd)) do
+        nil ->
+          {:ok, %{"path" => nil, "expiresAt" => favicon_expiry(now)}, "project-favicon-missing"}
+
+        path ->
+          if String.downcase(Path.extname(path)) in @image_extensions do
+            revision = :crypto.hash(:sha256, File.read!(path)) |> Base.encode16(case: :lower)
+
+            {:ok,
+             %{
+               "path" => path,
+               "mimeType" => MIME.from_path(path),
+               "disposition" => "inline",
+               "expiresAt" => favicon_expiry(now)
+             }, "v#{revision}-#{Path.basename(path)}"}
+          else
+            error("AssetPreviewTypeValidationError", resource, "Only images are served as icons.")
+          end
+      end
+    else
+      error("AssetWorkspaceContextNotFoundError", resource, "Workspace context was not found.")
+    end
+  end
+
+  defp asset_claims(%{"_tag" => "native-app-icon", "app" => app}, _now),
+    do:
+      {:ok, %{"source" => "native-app-icon", "app" => app, "disposition" => "inline"},
+       "native-app-icon.png"}
+
+  defp asset_claims(%{"_tag" => "github-media", "cwd" => cwd, "url" => url}, _now) do
+    case T3.Attachments.GitHubMedia.fetch_url(url) do
+      nil ->
+        {:error,
+         %{
+           "_tag" => "AssetGitHubMediaUrlValidationError",
+           "message" => "Only media hosted by GitHub can be fetched with a GitHub credential."
+         }}
+
+      fetch_url ->
+        {:ok, %{"source" => "github-media", "url" => fetch_url, "cwd" => cwd},
+         T3.Attachments.GitHubMedia.file_name(fetch_url)}
+    end
+  end
+
+  defp asset_claims(resource, _now) do
+    with {:ok, path, mime, name} <- resolve(resource) do
       claims = %{
-        "kind" => "asset",
         "path" => path,
         "mimeType" => mime,
         "fileName" => name,
         "disposition" =>
           resource["disposition"] ||
-            if(resource["_tag"] == "attachment", do: "attachment", else: "inline"),
-        "expiresAt" => expires
+            if(resource["_tag"] == "attachment", do: "attachment", else: "inline")
       }
 
-      {:ok, %{"relativeUrl" => "/api/assets/" <> sign(claims), "expiresAt" => expires}}
+      # A media file is served only while it is the file that was signed: one
+      # replaced under its name (a rename over it) needs a new URL.
+      {:ok,
+       if(resource["_tag"] == "media-file", do: Map.merge(claims, identity(path)), else: claims),
+       name}
     end
   end
 
-  @doc "Reads a signed asset on this node: `{:ok, bytes, mime, file_name, disposition}`."
-  def read(token) do
-    with {:ok, %{"kind" => "asset", "path" => path} = claims} <- verify(token),
-         {:ok, bytes} <- File.read(path) do
-      {:ok, bytes, claims["mimeType"], claims["fileName"], claims["disposition"]}
-    else
-      {:ok, _} -> {:error, 403, "Not an asset URL."}
-      {:error, message} when is_binary(message) -> {:error, 403, message}
-      {:error, _reason} -> {:error, 404, "The file is gone."}
+  # A favicon URL stays the same for half an hour, so clients cache one image.
+  defp favicon_expiry(now), do: (div(now, 30 * 60_000) + 2) * 30 * 60_000
+
+  defp saved_favicon(cwd) do
+    Enum.find_value(T3.Shell.rows(), fn
+      {{_node, _id}, {"project", %{"workspaceRoot" => ^cwd, "faviconPath" => path}}}
+      when is_binary(path) ->
+        path
+
+      _ ->
+        nil
+    end)
+  end
+
+  defp identity(path) do
+    case File.stat(path) do
+      {:ok, %File.Stat{major_device: device, inode: inode}} ->
+        %{"device" => device, "inode" => inode}
+
+      _ ->
+        %{}
     end
   end
+
+  @doc """
+  Serves a signed asset on this node for a request with `headers` (`range` and
+  `if-range`, lower-case): `{:ok, status, headers, body}` or `{:error, status, message}`.
+  A single byte range is answered with 206, so a player seeks a long video without
+  downloading it.
+  """
+  def serve(token, headers \\ %{}) do
+    case verify(token) do
+      {:ok, %{"kind" => "asset"} = claims} -> serve_claims(claims, headers)
+      {:ok, _} -> {:error, 403, "Not an asset URL."}
+      {:error, message} -> {:error, 403, message}
+    end
+  end
+
+  defp serve_claims(%{"source" => "native-app-icon", "app" => app} = claims, headers) do
+    case T3.Attachments.AppIcon.resolve(app) do
+      nil -> {:error, 404, "The application's icon was not found."}
+      path -> serve_file(path, Map.put(claims, "mimeType", MIME.from_path(path)), headers)
+    end
+  end
+
+  defp serve_claims(%{"source" => "github-media"} = claims, headers),
+    do: T3.Attachments.GitHubMedia.serve(claims, headers)
+
+  defp serve_claims(%{"path" => nil}, _headers), do: {:error, 404, "The project has no favicon."}
+
+  defp serve_claims(%{"path" => path} = claims, headers) do
+    if claims["inode"] == nil or identity(path) == Map.take(claims, ["device", "inode"]),
+      do: serve_file(path, claims, headers),
+      else: {:error, 404, "The file is gone."}
+  end
+
+  defp serve_file(path, claims, headers) do
+    with {:ok, %File.Stat{type: :regular, size: size}} <- File.stat(path),
+         {:ok, file} <- File.open(path, [:read, :binary, :raw]) do
+      name = String.replace(claims["fileName"] || Path.basename(path), ~s("), "")
+
+      base = [
+        {"content-type", claims["mimeType"] || "application/octet-stream"},
+        {"content-disposition", ~s(#{claims["disposition"] || "inline"}; filename="#{name}")},
+        {"cache-control", "private, max-age=3600"},
+        {"accept-ranges", "bytes"}
+      ]
+
+      try do
+        case byte_range(headers["range"], size) do
+          nil ->
+            {:ok, 200, base, read_span(file, 0, size)}
+
+          {first, last} ->
+            {:ok, 206, [{"content-range", "bytes #{first}-#{last}/#{size}"} | base],
+             read_span(file, first, last - first + 1)}
+
+          :unsatisfiable ->
+            {:ok, 416, [{"content-range", "bytes */#{size}"}], ""}
+        end
+      after
+        File.close(file)
+      end
+    else
+      _ -> {:error, 404, "The file is gone."}
+    end
+  end
+
+  defp read_span(_file, _offset, 0), do: ""
+
+  defp read_span(file, offset, length) do
+    case :file.pread(file, offset, length) do
+      {:ok, bytes} -> bytes
+      _ -> ""
+    end
+  end
+
+  # One `bytes=` range (`a-b`, `a-` or `-n`); anything else serves the whole file.
+  defp byte_range("bytes=" <> spec, size) do
+    case String.split(spec, "-", parts: 2) do
+      ["", suffix] ->
+        with {n, ""} when n > 0 <- Integer.parse(suffix),
+             do: if(size == 0, do: :unsatisfiable, else: {max(size - n, 0), size - 1}),
+             else: (_ -> nil)
+
+      [first, last] ->
+        with {a, ""} <- Integer.parse(first),
+             {b, ""} <- if(last == "", do: {size - 1, ""}, else: Integer.parse(last)) do
+          cond do
+            a >= size -> :unsatisfiable
+            b < a -> nil
+            true -> {a, min(b, size - 1)}
+          end
+        else
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp byte_range(_range, _size), do: nil
 
   defp resolve(%{"_tag" => "attachment", "attachmentId" => id} = resource) do
     case path(%{"id" => id}) do

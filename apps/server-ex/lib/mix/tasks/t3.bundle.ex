@@ -18,9 +18,9 @@ defmodule Mix.Tasks.T3.Bundle do
     Mix.shell().info(bundle(List.first(args)))
   end
 
-  @doc "Builds the bundle from the prod release; returns its path."
-  def bundle(out_dir \\ nil) do
-    root = Path.expand("_build/prod/rel/t3")
+  @doc "Builds the bundle from the prod release (or the release at `root`); returns its path."
+  def bundle(out_dir \\ nil, root \\ "_build/prod/rel/t3") do
+    root = Path.expand(root)
 
     [erts, version] =
       root |> Path.join("releases/start_erl.data") |> File.read!() |> String.split()

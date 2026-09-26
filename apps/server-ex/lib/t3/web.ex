@@ -6,7 +6,43 @@ defmodule T3.Web do
     port = Application.get_env(:t3, :port, 3780)
     host = Application.get_env(:t3, :host, "127.0.0.1")
     {:ok, ip} = :inet.parse_address(String.to_charlist(host))
-    Bandit.child_spec(plug: T3.Web.Router, ip: ip, port: port, startup_log: false)
+    # The token file exists from boot, so local tools can read it before any client connects.
+    _ = token()
+
+    [
+      plug: T3.Web.Router,
+      ip: ip,
+      port: port,
+      startup_log: false,
+      thousand_island_options: [supervisor_options: [name: T3.Web.Listener]]
+    ]
+    |> Bandit.child_spec()
+    # A fixed id, so the listener can be stopped and started by name.
+    |> Supervisor.child_spec(id: __MODULE__)
+  end
+
+  @doc "The port the listener is bound to, which the OS picks when `:port` is 0."
+  def port do
+    case ThousandIsland.listener_info(T3.Web.Listener) do
+      {:ok, {_ip, port}} -> port
+      _ -> Application.get_env(:t3, :port, 3780)
+    end
+  catch
+    :exit, _ -> Application.get_env(:t3, :port, 3780)
+  end
+
+  @doc """
+  The URL clients reach the listener at: its bind host, or `localhost` when it
+  listens on every interface (as the Node server's pairing links do).
+  """
+  def base_url(scheme \\ "http") do
+    host =
+      case Application.get_env(:t3, :host, "127.0.0.1") do
+        wildcard when wildcard in ["0.0.0.0", "::"] -> "localhost"
+        host -> if String.contains?(host, ":"), do: "[#{host}]", else: host
+      end
+
+    "#{scheme}://#{host}:#{port()}"
   end
 
   @doc """
@@ -27,8 +63,10 @@ defmodule T3.Web do
             {:error, :enoent} ->
               token = Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
               File.mkdir_p!(Path.dirname(path))
-              File.write!(path, token)
+              # Owner-only before the secret is written.
+              File.write!(path, "")
               File.chmod!(path, 0o600)
+              File.write!(path, token)
               token
           end
 

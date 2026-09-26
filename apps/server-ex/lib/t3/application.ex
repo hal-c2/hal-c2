@@ -11,7 +11,7 @@ defmodule T3.Application do
         home = Application.fetch_env!(:t3, :home)
 
         [
-          {T3.Store, path: Path.join(home, "t3.sqlite")},
+          {T3.Store, path: T3.Store.home_path()},
           T3.Auth,
           T3.Settings,
           T3.Streams,

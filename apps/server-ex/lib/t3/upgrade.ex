@@ -99,14 +99,18 @@ defmodule T3.Upgrade do
           String.contains?(path, "/_build/"),
           do: path
 
+    # The first directory on the code path that has a module is where it loads from:
+    # a consolidated protocol shadows its plain build in the application's ebin.
     beams =
       for dir <- dirs,
           file <- Path.wildcard(Path.join(dir, "*.beam")),
           mod = String.to_atom(Path.basename(file, ".beam")),
-          :code.is_loaded(mod),
-          bin = File.read!(file),
-          loaded_md5(mod) != beam_md5(bin),
-          do: {mod, bin}
+          :code.is_loaded(mod) do
+        {mod, file}
+      end
+      |> Enum.uniq_by(&elem(&1, 0))
+      |> Enum.map(fn {mod, file} -> {mod, File.read!(file)} end)
+      |> Enum.filter(fn {mod, bin} -> loaded_md5(mod) != beam_md5(bin) end)
 
     {restart, hot} = Enum.split_with(beams, &restart_module?/1)
 
@@ -183,10 +187,30 @@ defmodule T3.Upgrade do
     {:noreply, state}
   end
 
+  # One update at a time: it runs off this process, and a request while it does is
+  # refused rather than queued behind it.
   @impl true
-  def handle_call({:update, input, progress}, _from, state) do
-    {:reply, run(input, progress), state}
+  def handle_call({:update, _input, _progress}, _from, {:running, _, _} = state),
+    do: {:reply, failure("A server update is already in progress."), state}
+
+  def handle_call({:update, input, progress}, from, _state) do
+    {_pid, ref} = spawn_monitor(fn -> exit({:shutdown, {:update, run(input, progress)}}) end)
+    {:noreply, {:running, ref, from}}
   end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _, reason}, {:running, ref, from}) do
+    reply =
+      case reason do
+        {:shutdown, {:update, reply}} -> reply
+        reason -> failure("The update stopped: #{inspect(reason)}")
+      end
+
+    GenServer.reply(from, reply)
+    {:noreply, nil}
+  end
+
+  def handle_info(_message, state), do: {:noreply, state}
 
   defp run(%{"targetVersion" => target}, progress) do
     from = version()
@@ -245,7 +269,8 @@ defmodule T3.Upgrade do
       # After the reply has gone out.
       spawn(fn ->
         Process.sleep(500)
-        System.stop(@restart_status)
+        stop = Application.get_env(:t3, :upgrade_stop, &System.stop/1)
+        stop.(@restart_status)
       end)
 
       {:ok, result}

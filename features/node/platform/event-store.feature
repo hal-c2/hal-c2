@@ -40,10 +40,12 @@ Feature: The node's event store and projections
     Then the visit is recorded
     And the thread's last activity time does not move
 
+  # Neither server deletes a queued message (cancel marks its run cancelled); stopping
+  # a provider session is the node's entity delete.
   @node
   Scenario: Deleting an entity removes it from the folded state
-    Given a thread with a queued message
-    When the queued message is deleted
+    Given a thread with an attached provider session
+    When the provider session is stopped
     Then the thread's state no longer contains it
 
   @node
@@ -105,7 +107,7 @@ Feature: The node's event store and projections
     When a node opens its store
     Then the store carries the schema version it was written with
 
-  @backlog @node
+  @node
   Scenario: A store from a newer node is refused rather than misread
     Given a store written by a newer node schema
     When an older node opens it

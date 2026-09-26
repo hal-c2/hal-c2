@@ -533,17 +533,19 @@ defmodule T3.Vcs do
 
   # --- worktrees ------------------------------------------------------------------
 
+  @doc "Where a new worktree of the repository at `cwd` goes by default: under the T3 home."
+  def worktree_path(cwd, branch) do
+    home = Application.fetch_env!(:t3, :home)
+    Path.join([home, "worktrees", Path.basename(cwd), String.replace(branch, "/", "-")])
+  end
+
   @doc """
   `vcs.createWorktree`: checks out `refName` (or a new branch from it) in a new
   worktree, by default `<home>/worktrees/<repo>/<branch>`, with its submodules.
   """
   def create_worktree(%{"cwd" => cwd, "refName" => ref} = input) do
     branch = input["newRefName"] || ref
-    home = Application.fetch_env!(:t3, :home)
-
-    path =
-      input["path"] ||
-        Path.join([home, "worktrees", Path.basename(cwd), String.replace(branch, "/", "-")])
+    path = input["path"] || worktree_path(cwd, branch)
 
     args =
       if input["newRefName"],

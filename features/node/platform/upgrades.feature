@@ -135,7 +135,8 @@ Feature: Node self-update and hot upgrades
   Scenario: A maintainer rolls a release out to several nodes
     When a maintainer upgrades three nodes from a checkout
     Then the first node receives the bundle
-    And the other two fetch it from the first
+    # Each node takes the bundle from whichever peer offers it first, not only the first node.
+    And the other two fetch it from a peer that already has it
 
   @node
   Scenario: A developer reloads changed modules into running nodes

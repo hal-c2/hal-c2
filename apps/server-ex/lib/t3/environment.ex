@@ -141,13 +141,15 @@ defmodule T3.Environment do
       "issues" => [],
       "providers" => providers(),
       "availableEditors" => T3.Editors.available(),
-      "observability" => %{
-        "logsDirectoryPath" => Path.join(home, "logs"),
-        "localTracingEnabled" => false,
-        "otlpTracesEnabled" => false,
-        "otlpMetricsEnabled" => false,
-        "otlpLogsEnabled" => false
-      },
+      "observability" =>
+        %{
+          "logsDirectoryPath" => Path.join(home, "logs"),
+          "localTracingEnabled" => T3.Trace.enabled?(),
+          "otlpTracesEnabled" => T3.Trace.otlp_url() != nil,
+          "otlpMetricsEnabled" => false,
+          "otlpLogsEnabled" => false
+        }
+        |> then(&if(url = T3.Trace.otlp_url(), do: Map.put(&1, "otlpTracesUrl", url), else: &1)),
       "settings" => T3.Settings.settings()
     }
   end

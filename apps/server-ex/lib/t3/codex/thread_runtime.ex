@@ -415,7 +415,8 @@ defmodule T3.Codex.ThreadRuntime do
   defp connect(%{conn: nil} = state, turn) do
     cmd = Application.get_env(:t3, :codex_command, ["codex", "app-server"])
 
-    with {:ok, conn} <- Connection.start_link(cmd: cmd, handler: self(), cd: turn.cwd),
+    with {:ok, conn} <-
+           Connection.start_link(cmd: cmd, handler: self(), cd: turn.cwd, log: turn.ids.thread),
          {:ok, _} <-
            Connection.call(conn, "initialize", %{
              "clientInfo" => %{

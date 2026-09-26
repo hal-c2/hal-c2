@@ -55,56 +55,73 @@ defmodule T3.Web.Router do
     """)
   end
 
-  # Pairing: exchange a one-time pairing token for a bearer access token.
+  # Pairing: exchange a one-time pairing token for a bearer access token, or with a
+  # `DPoP` proof for a token bound to the client's key. `scope` asks for fewer scopes.
   post "/oauth/token" do
     params = conn.body_params
 
     with "urn:ietf:params:oauth:grant-type:token-exchange" <- params["grant_type"],
          "urn:t3:params:oauth:token-type:environment-bootstrap" <- params["subject_token_type"],
+         {:ok, requested} <- requested_scopes(params["scope"]),
+         {:ok, jkt} <- exchange_proof(conn),
          {:ok, access, expires_in, scopes} <-
            T3.Auth.exchange(params["subject_token"] || "", %{
              label: params["client_label"],
              device_type: params["client_device_type"],
              os: params["client_os"],
-             user_agent: conn |> get_req_header("user-agent") |> List.first()
+             user_agent: conn |> get_req_header("user-agent") |> List.first(),
+             scopes: requested,
+             jkt: jkt
            }) do
       json(conn, 200, %{
         "access_token" => access,
         "issued_token_type" => "urn:ietf:params:oauth:token-type:access_token",
-        "token_type" => "Bearer",
+        "token_type" => if(jkt, do: "DPoP", else: "Bearer"),
         "expires_in" => expires_in,
         "scope" => Enum.join(scopes, " ")
       })
     else
-      _ -> json(conn, 400, %{"error" => "invalid_grant"})
+      {:error, :invalid_scope} ->
+        json(conn, 400, %{"error" => "invalid_scope"})
+
+      {:error, :scope_not_granted} ->
+        json(conn, 400, %{"error" => "invalid_scope"})
+
+      {:error, :dpop, reason} ->
+        conn
+        |> put_resp_header("www-authenticate", "DPoP")
+        |> json(401, auth_invalid("invalid_credential", reason))
+
+      _ ->
+        json(conn, 400, %{"error" => "invalid_grant"})
     end
   end
 
   get "/api/auth/session" do
     auth = T3.Environment.server_config()["auth"]
 
-    case bearer_session(conn) do
+    case request_session(conn) do
       {:ok, session} ->
         json(conn, 200, %{
           "authenticated" => true,
           "auth" => auth,
           "scopes" => session.scopes,
-          "sessionMethod" => "bearer-access-token",
+          "sessionMethod" =>
+            if(session.jkt, do: "dpop-access-token", else: "bearer-access-token"),
           "expiresAt" => iso(session.expires_at)
         })
 
-      :error ->
+      {:error, _reason, _dpop} ->
         json(conn, 200, %{"authenticated" => false, "auth" => auth})
     end
   end
 
   post "/api/auth/websocket-ticket" do
-    with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
-         {:ok, ticket, expires_at} <- T3.Auth.issue_ticket(token) do
+    with {:ok, session} <- request_session(conn),
+         {:ok, ticket, expires_at} <- T3.Auth.session_ticket(session) do
       json(conn, 200, %{"ticket" => ticket, "expiresAt" => iso(expires_at)})
     else
-      _ ->
-        json(conn, 401, %{"_tag" => "EnvironmentAuthorizationError", "message" => "unauthorized"})
+      {:error, reason, dpop} -> json(conn, 401, auth_invalid(reason, dpop))
     end
   end
 
@@ -196,17 +213,53 @@ defmodule T3.Web.Router do
     end)
   end
 
+  # Client spans (OTLP JSON), kept in the node's trace file and forwarded to its
+  # collector (`T3.Trace.accept/1`).
+  post "/api/observability/v1/traces" do
+    with_scope(conn, "orchestration:operate", fn _session ->
+      with {:ok, payload} <- json_body(conn) do
+        case T3.Trace.accept(payload) do
+          :ok -> {204, ""}
+          {:error, :export} -> {502, "Trace export failed."}
+        end
+      end
+    end)
+  end
+
   get "/ws" do
     conn = fetch_query_params(conn)
 
-    case socket_session(conn.query_params) do
-      {:ok, session} ->
-        conn
-        |> WebSockAdapter.upgrade(T3.Web.Socket, %{session: session}, timeout: 60_000)
-        |> halt()
+    with :ok <- compatible_protocol(conn.query_params["protocol"]),
+         {:ok, session} <- socket_session(conn.query_params) do
+      conn
+      |> WebSockAdapter.upgrade(T3.Web.Socket, %{session: session}, timeout: 60_000)
+      |> halt()
+    else
+      {:incompatible, side} ->
+        version = T3.Web.Protocol.version()
+
+        json(conn, 426, %{
+          "code" => "protocol_incompatible",
+          "message" => "Update this #{side}: the node speaks protocol #{version}.",
+          "protocolVersion" => version
+        })
 
       :error ->
         send_resp(conn, 401, "unauthorized")
+    end
+  end
+
+  # A client may name the protocol it speaks (`?protocol=`); the side with the older
+  # one is the side to update.
+  defp compatible_protocol(nil), do: :ok
+
+  defp compatible_protocol(protocol) do
+    ours = T3.Web.Protocol.version()
+
+    case Integer.parse(protocol) do
+      {theirs, ""} when theirs > ours -> {:incompatible, "node"}
+      {theirs, ""} when theirs < ours -> {:incompatible, "client"}
+      _ -> :ok
     end
   end
 
@@ -228,10 +281,13 @@ defmodule T3.Web.Router do
   # Runs `fun.(session)` for a bearer whose session has `scope`; `fun` returns
   # `{status, body}` or `{:error, reason}`.
   defp with_scope(conn, scope, fun) do
-    case bearer_session(conn) do
+    case request_session(conn) do
       {:ok, session} ->
         if scope in session.scopes do
           case fun.(session) do
+            {status, body} when is_integer(status) and is_binary(body) ->
+              send_resp(conn, status, body)
+
             {status, body} when is_integer(status) ->
               json(conn, status, body)
 
@@ -250,18 +306,45 @@ defmodule T3.Web.Router do
           })
         end
 
-      :error ->
-        reason =
-          if get_req_header(conn, "authorization") == [],
-            do: "missing_credential",
-            else: "invalid_credential"
+      {:error, reason, dpop} ->
+        json(conn, 401, auth_invalid(reason, dpop))
+    end
+  end
 
-        json(conn, 401, %{
-          "_tag" => "EnvironmentAuthInvalidError",
-          "code" => "auth_invalid",
-          "reason" => reason,
-          "traceId" => trace_id()
-        })
+  defp auth_invalid(reason, dpop) do
+    %{
+      "_tag" => "EnvironmentAuthInvalidError",
+      "code" => "auth_invalid",
+      "reason" => reason,
+      "traceId" => trace_id()
+    }
+    |> then(&if(dpop, do: Map.put(&1, "dpopFailureReason", to_string(dpop)), else: &1))
+  end
+
+  @scopes ~w(orchestration:read orchestration:operate terminal:operate review:write access:read access:write relay:read relay:write)
+
+  # `scope` on a token exchange: space-separated, each one the node knows.
+  defp requested_scopes(nil), do: {:ok, nil}
+
+  defp requested_scopes(scope) do
+    requested = String.split(scope)
+
+    if requested != [] and Enum.all?(requested, &(&1 in @scopes)),
+      do: {:ok, Enum.uniq(requested)},
+      else: {:error, :invalid_scope}
+  end
+
+  # A DPoP proof on the exchange binds the token to the proof's key.
+  defp exchange_proof(conn) do
+    case get_req_header(conn, "dpop") do
+      [] ->
+        {:ok, nil}
+
+      [proof | _] ->
+        case T3.Auth.Dpop.verify(proof, conn.method, request_url(conn)) do
+          {:ok, thumbprint} -> {:ok, thumbprint}
+          {:error, reason} -> {:error, :dpop, reason}
+        end
     end
   end
 
@@ -276,10 +359,36 @@ defmodule T3.Web.Router do
 
   defp trace_id, do: Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
 
-  defp bearer_session(conn) do
+  # The session a request authenticates as: `{:ok, session}` or
+  # `{:error, reason, dpop_failure}`. A DPoP-bound token needs `Authorization: DPoP`
+  # and a valid proof; it is never accepted as a bearer.
+  defp request_session(conn) do
     case get_req_header(conn, "authorization") do
-      ["Bearer " <> token] -> T3.Auth.session(token)
-      _ -> :error
+      [] ->
+        {:error, "missing_credential", nil}
+
+      ["Bearer " <> token] ->
+        case T3.Auth.session(token) do
+          {:ok, session} -> {:ok, session}
+          :error -> {:error, "invalid_credential", nil}
+        end
+
+      ["DPoP " <> token] ->
+        with {:ok, session} <- T3.Auth.dpop_session(token),
+             proof = conn |> get_req_header("dpop") |> List.first(),
+             {:ok, _} <-
+               T3.Auth.Dpop.verify(proof, conn.method, request_url(conn),
+                 thumbprint: session.jkt,
+                 access_token: token
+               ) do
+          {:ok, session}
+        else
+          {:error, reason} -> {:error, "invalid_credential", reason}
+          :error -> {:error, "invalid_credential", :invalid_proof}
+        end
+
+      _ ->
+        {:error, "invalid_credential", nil}
     end
   end
 
@@ -320,17 +429,19 @@ defmodule T3.Web.Router do
     end
   end
 
-  get "/api/assets/:token" do
+  # The trailing segment is the file's name, for the client; the token decides what is served.
+  get "/api/assets/:token", do: serve_asset(conn, token)
+  get "/api/assets/:token/*_name", do: serve_asset(conn, token)
+
+  defp serve_asset(conn, token) do
+    headers = for {k, v} <- conn.req_headers, k in ["range", "if-range"], into: %{}, do: {k, v}
+
     with {:ok, node} <- T3.Attachments.issuer(token),
-         {:ok, bytes, mime, name, disposition} <- remote(node, T3.Attachments, :read, [token]) do
+         {:ok, status, resp_headers, body} <-
+           remote(node, T3.Attachments, :serve, [token, headers]) do
       conn
-      |> put_resp_content_type(mime || "application/octet-stream", nil)
-      |> put_resp_header(
-        "content-disposition",
-        ~s(#{disposition || "inline"}; filename="#{String.replace(name || "file", ~s("), "")}")
-      )
-      |> put_resp_header("cache-control", "private, max-age=3600")
-      |> send_resp(200, bytes)
+      |> merge_resp_headers(resp_headers)
+      |> send_resp(status, body)
     else
       {:error, status, message} -> send_resp(conn, status, message)
       _ -> send_resp(conn, 403, "The link is invalid or expired.")

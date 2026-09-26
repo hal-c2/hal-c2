@@ -54,7 +54,8 @@ defmodule T3.Claude.Session do
          next_id: 1,
          pending: %{},
          # Tool input is echoed back on "allow", so keep it until the prompt is answered.
-         permissions: %{}
+         permissions: %{},
+         log: Keyword.get(opts, :log)
        }}
     else
       {:error, reason} -> {:stop, reason}
@@ -109,6 +110,8 @@ defmodule T3.Claude.Session do
   def code_change(_old_vsn, state, _extra), do: {:ok, Map.put(state, :v, @state_version)}
 
   defp handle_line(line, state) do
+    T3.ProviderLog.native(Map.get(state, :log), line)
+
     case Protocol.decode(line) do
       {:control_response, "init", reply} ->
         notify(state, {:initialized, reply})

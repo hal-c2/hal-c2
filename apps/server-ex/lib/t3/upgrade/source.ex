@@ -91,7 +91,7 @@ defmodule T3.Upgrade.Source do
       :persistent_term.put({__MODULE__, token}, {path, System.monotonic_time(:millisecond)})
 
       %{
-        "port" => Application.get_env(:t3, :port, 3780),
+        "port" => T3.Web.port(),
         "path" => "/api/upgrade/#{token}",
         "sha256" => String.trim(sum)
       }

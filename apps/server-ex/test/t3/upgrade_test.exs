@@ -129,7 +129,8 @@ defmodule T3.UpgradeTest do
              T3.Web.Socket.handle_info({:t3_keybindings, node(), []}, old)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert state.v == 1
+    assert state.v == 2
+    assert state.scopes == :all
     assert state.by_terminal[{:settings, node()}] == [1]
   end
 end

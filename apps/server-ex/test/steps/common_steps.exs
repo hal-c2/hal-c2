@@ -115,4 +115,130 @@ defmodule T3.Steps.Common do
     {%{"t" => "pong"}, client} = T3.Test.WsClient.recv(client, 1_000)
     World.put_client(context, client)
   end
+
+  # --- added by W6 ---
+
+  # An HTTP answer a previous step stored as `context.response` (`{status, headers, body}`,
+  # as `T3.Test.Node.http/4` returns it).
+  step ~r/^the node answers (?<status>not found|unauthorized|service unavailable|bad gateway|\d{3})$/,
+       %{args: [status]} = context do
+    expected =
+      case status do
+        "not found" -> 404
+        "unauthorized" -> 401
+        "service unavailable" -> 503
+        "bad gateway" -> 502
+        code -> String.to_integer(code)
+      end
+
+    assert {^expected, _headers, _body} = context.response
+    context
+  end
+
+  # A second node joins this one; `context.peer` is `%{name, pid, environment, home}`.
+  step "a cluster of two nodes", context do
+    {node, peer} = Node.cluster(context.node)
+    %{context | node: node, clients: %{}} |> Map.put(:peer, peer)
+  end
+
+  # `filesystem.browse`. A `~` path is browsed in a scratch home (never the user's real
+  # one) holding dev/{api,tests,tools}, the hidden dev/.tmp and dev/.trash, and a file
+  # dev/todo.txt; `context.user_home` names it.
+  step "a client browses {string}", %{args: [partial]} = context do
+    context =
+      if String.starts_with?(partial, "~") do
+        home = Node.tmp_dir(context.node, "user-home")
+
+        for dir <- ~w(dev/tools dev/tests dev/api dev/.tmp dev/.trash),
+            do: File.mkdir_p!(Path.join(home, dir))
+
+        File.write!(Path.join(home, "dev/todo.txt"), "")
+        World.put_app_env(:user_home, home)
+        Map.put(context, :user_home, home)
+      else
+        context
+      end
+
+    {reply, context} = World.call(context, "filesystem.browse", %{"partialPath" => partial})
+    Map.put(context, :reply, reply)
+  end
+
+  # Stops the server a previous step started as `context.dev_server`.
+  step "that server stops", context do
+    Process.unlink(context.dev_server)
+    :ok = Supervisor.stop(context.dev_server)
+    context
+  end
+
+  # --- storage cleanup (settings/storage.feature, node/platform/background-and-cleanup.feature)
+
+  # A thread on its own worktree (`World.worktree_thread/3`, as `context.worktree`)
+  # in a state a cleanup rule looks for.
+  step ~r/^a thread's worktree (?<condition>has been idle for \d+ days|belongs to a merged pull request|has a merged pull request|belongs to a deleted thread|has a branch already in the default branch|has no commits beyond the default branch)$/,
+       %{args: [condition]} = context do
+    context = World.worktree_thread(context, "worktree thread")
+    thread = context.worktree.thread
+
+    cond do
+      String.starts_with?(condition, "has been idle for") ->
+        [days] = Regex.run(~r/\d+/, condition)
+        World.backdate_thread(context, thread, World.days(String.to_integer(days)))
+
+      String.ends_with?(condition, "merged pull request") ->
+        pr = %{
+          "number" => 7,
+          "title" => "Worktree thread",
+          "url" => "https://github.com/acme/api/pull/7",
+          "baseRefName" => "main",
+          "headRefName" => context.worktree.branch,
+          "state" => "MERGED",
+          "isDraft" => false,
+          "updatedAt" => World.iso_from_now(0)
+        }
+
+        World.gh_on_path(context, [
+          %{"args" => ["pr list", context.worktree.branch], "stdout" => [pr]}
+        ])
+
+        context
+
+      condition == "belongs to a deleted thread" ->
+        id = World.thread_id(context, thread)
+        {:ok, _} = T3.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})
+        World.await_row(id, &(&1["deletedAt"] != nil))
+        context
+
+      # The new branch is where `main` is: nothing on it beyond the default branch.
+      true ->
+        assert World.git!(context.worktree.path, ~w(rev-parse HEAD)) ==
+                 World.git!(context.worktree.repo, ~w(rev-parse origin/main))
+
+        context
+    end
+  end
+
+  step "the node sweeps storage", context do
+    World.storage_cleanup()
+    :ok = T3.StorageCleanup.sweep()
+    context
+  end
+
+  step "the worktree is removed", context do
+    path = context.worktree.path
+    refute File.exists?(path), "#{path} is still there"
+    refute World.git!(context.worktree.repo, ~w(worktree list --porcelain)) =~ path
+    context
+  end
+
+  # With `context.control` (a worktree the same sweep had to remove), also that the
+  # sweep did run.
+  step "the worktree is kept", context do
+    assert File.dir?(context.worktree.path)
+
+    # Still a checkout (whatever branch a scenario moved it to), not a leftover directory.
+    assert World.git!(context.worktree.path, ~w(rev-parse --is-inside-work-tree)) == "true"
+
+    if control = context[:control], do: refute(File.exists?(control), "the sweep did not run")
+    context
+  end
 end

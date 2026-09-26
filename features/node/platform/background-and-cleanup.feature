@@ -81,15 +81,16 @@ Feature: Background work and storage cleanup on the node
   @node
   Scenario: A client reads the policy the node applies
     When a client asks for the background policy
-    Then it receives the profile, the effective values and why work is paused if it is
+    # BackgroundPolicySnapshot (TS and node) carries no profile or pause reason.
+    Then it receives the host's power state, the active client leases and whether background work may run
 
-  @backlog @node
+  @node
   Scenario: A client following the background policy sees it change
     Given a client follows the background policy
     When the host goes onto battery
     Then the client receives the new policy
 
-  @backlog @node
+  @node
   Scenario: A node without a desktop host learns host power from the operating system
     Given a node started without the desktop app
     When the laptop it runs on switches to battery
@@ -151,7 +152,7 @@ Feature: Background work and storage cleanup on the node
     And a terminal opened in it during the sweep
     Then the worktree is kept
 
-  @backlog @node
+  @node
   Scenario: A removed worktree can be checked out again
     Given the sweep removed a thread's worktree
     When the user continues the thread

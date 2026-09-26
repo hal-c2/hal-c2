@@ -16,7 +16,7 @@ defmodule Mix.Tasks.T3.Import do
     Mix.Task.run("app.config")
     home = Application.fetch_env!(:t3, :home)
     {:ok, _} = Application.ensure_all_started(:exqlite)
-    {:ok, _} = T3.Store.start_link(path: Path.join(home, "t3.sqlite"))
+    {:ok, _} = T3.Store.start_link(path: T3.Store.home_path())
 
     {us, {:ok, report}} = :timer.tc(fn -> T3.Import.V2.run(Path.expand(source)) end)
 

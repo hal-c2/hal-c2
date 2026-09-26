@@ -29,7 +29,12 @@ defmodule T3.Orchestration do
 
   @doc "Handles one client RPC by method name; see `packages/contracts/src/orchestrationV2.ts`."
   @spec handle(String.t(), map) :: {:ok, term} | {:error, String.t()}
-  def handle("orchestration.dispatchCommand", command), do: dispatch(command)
+  def handle("orchestration.dispatchCommand", command) do
+    T3.Trace.span("orchestration.dispatchCommand", %{"command.type" => command["type"]}, fn ->
+      dispatch(command)
+    end)
+  end
+
   def handle("orchestration.launchThread", input), do: launch_thread(input)
   def handle("orchestration.searchThreads", input), do: T3.Search.threads(input)
   def handle("orchestration.getWorkflowScript", input), do: T3.WorkflowScripts.read(input)
@@ -322,7 +327,11 @@ defmodule T3.Orchestration do
                 {[], error}
 
               fields ->
-                change = upsert(state, "thread", thread_id, &Map.merge(&1, fields))
+                change =
+                  state
+                  |> upsert("thread", thread_id, &Map.merge(&1, fields))
+                  |> quiet_read_state(type)
+
                 {Enum.reject([change | archived_queue(type, state, at)], &is_nil/1), :ok}
             end
         end
@@ -508,6 +517,32 @@ defmodule T3.Orchestration do
 
   # A runtime that dies while starting the turn must not leave the run "starting"
   # forever: the run fails and the thread can take the next message.
+  defp begin_turn(thread_id, turn) do
+    restore_worktree(thread_id)
+    :ok = T3.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
+    start_turn(thread_id, turn)
+  end
+
+  # A worktree the storage sweep removed comes back at the same path from the
+  # thread's branch before a turn runs in it, as the Node server's turn start does.
+  defp restore_worktree(thread_id) do
+    with {"thread", %{"worktreePath" => path, "branch" => branch} = row}
+         when is_binary(path) and is_binary(branch) <- T3.Shell.row(node(), thread_id),
+         false <- File.exists?(path),
+         root when is_binary(root) <- project_root(row["projectId"]) do
+      require Logger
+      Logger.warning("recreating the missing worktree of #{thread_id} at #{path}")
+      _ = T3.Git.run(root, ~w(worktree prune))
+
+      with {:error, reason} <-
+             T3.Vcs.create_worktree(%{"cwd" => root, "refName" => branch, "path" => path}),
+           do:
+             Logger.warning("could not recreate the worktree of #{thread_id}: #{inspect(reason)}")
+    end
+
+    :ok
+  end
+
   defp start_turn(thread_id, turn) do
     :ok = runtime(turn.ids.instance).start_turn(thread_id, turn)
   catch
@@ -695,8 +730,7 @@ defmodule T3.Orchestration do
 
     case T3.Streams.transact(thread_id, :thread, decide) do
       {:ok, turn} ->
-        :ok = T3.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
-        start_turn(thread_id, turn)
+        begin_turn(thread_id, turn)
 
       {:error, _} = error ->
         error
@@ -763,8 +797,7 @@ defmodule T3.Orchestration do
         {:ok, %{"sequence" => sequence(thread_id)}}
 
       {:ok, turn} ->
-        :ok = T3.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
-        start_turn(thread_id, turn)
+        begin_turn(thread_id, turn)
         {:ok, %{"sequence" => sequence(thread_id)}}
 
       {:error, _} = error ->
@@ -1092,6 +1125,14 @@ defmodule T3.Orchestration do
     %{"linkedPullRequest" => linked, "pullRequests" => kept ++ added}
   end
 
+  # Visits and mark-unread change read state only, as in the TS server: the thread's
+  # last activity time stays where it is.
+  defp quiet_read_state({kind, id, patch}, type)
+       when type in ["thread.visit", "thread.mark-unread"],
+       do: {kind, id, Map.put(patch, "q", true)}
+
+  defp quiet_read_state(change, _type), do: change
+
   # Host state and branch discovery are not activity: they leave `updatedAt` where it is.
   defp quiet_update(thread_id, decide) do
     result =
@@ -1148,8 +1189,7 @@ defmodule T3.Orchestration do
   def start_next(thread_id) do
     case T3.Streams.transact(thread_id, :thread, &decide_next(&1, thread_id)) do
       {:ok, turn} ->
-        :ok = T3.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
-        start_turn(thread_id, turn)
+        begin_turn(thread_id, turn)
 
       _idle ->
         :ok
@@ -1465,6 +1505,7 @@ defmodule T3.Orchestration do
     turn = %{
       ids: ids,
       run_ordinal: ordinal,
+      started_ms: System.system_time(:millisecond),
       text:
         T3.Orchestration.Handoff.prompt(
           handoff.context,

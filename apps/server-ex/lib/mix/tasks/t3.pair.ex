@@ -6,7 +6,8 @@ defmodule Mix.Tasks.T3.Pair do
 
       mix t3.pair [BASE_URL]
 
-  `BASE_URL` defaults to the local listener, `http://127.0.0.1:3780`.
+  `BASE_URL` defaults to the node's own address (`T3.Web.base_url/1`), such as
+  `http://127.0.0.1:3780`, or the LAN or tailnet address it was bound to.
   """
 
   use Mix.Task
@@ -15,9 +16,8 @@ defmodule Mix.Tasks.T3.Pair do
   def run(args) do
     Mix.Task.run("app.config")
     {:ok, _} = Application.ensure_all_started(:exqlite)
-    home = Application.fetch_env!(:t3, :home)
-    base = List.first(args) || "http://127.0.0.1:#{Application.get_env(:t3, :port, 3780)}"
-    token = T3.Auth.create_pairing_token(Path.join(home, "t3.sqlite"))
+    base = List.first(args) || T3.Web.base_url()
+    token = T3.Auth.create_pairing_token(T3.Store.home_path())
     Mix.shell().info("#{String.trim_trailing(base, "/")}/?token=#{token}")
   end
 end

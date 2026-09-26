@@ -8,8 +8,9 @@ defmodule T3.Diagnostics do
   the resource monitor's live snapshots and timeline (`subscribeResourceTelemetry`,
   `server.getResourceTelemetryHistory`) and the process history
   (`server.getProcessResourceHistory`). `server.signalProcess` only signals a
-  process under the node that is still the one a client saw. `ps` has no I/O
-  counters, so I/O is reported as unavailable. Nodes record no trace files, and
+  process under the node that is still the one a client saw. I/O comes from
+  `/proc/<pid>/io` (storage bytes) where the platform has it, and is reported as
+  unavailable elsewhere. Traces are recorded only while `T3.Trace` is on, and
   there is no desktop host to supply power state.
 
   Watchers get `{:t3_resource_telemetry, node, snapshot}` after every sample.
@@ -81,35 +82,38 @@ defmodule T3.Diagnostics do
     end
   end
 
-  @doc "`server.getTraceDiagnostics`: nodes keep logs, not trace files."
+  @doc "`server.getTraceDiagnostics`: the trace files while tracing is on (`T3.Trace`)."
   def traces(_input \\ %{}) do
-    {:ok,
-     %{
-       "traceFilePath" =>
-         Path.join([Application.fetch_env!(:t3, :home), "logs", "server.trace.ndjson"]),
-       "scannedFilePaths" => [],
-       "readAt" => now(),
-       "recordCount" => 0,
-       "parseErrorCount" => 0,
-       "firstSpanAt" => none(),
-       "lastSpanAt" => none(),
-       "failureCount" => 0,
-       "interruptionCount" => 0,
-       "slowSpanThresholdMs" => 1_000,
-       "slowSpanCount" => 0,
-       "logLevelCounts" => %{},
-       "topSpansByCount" => [],
-       "slowestSpans" => [],
-       "commonFailures" => [],
-       "latestFailures" => [],
-       "latestWarningAndErrorLogs" => [],
-       "partialFailure" => none(),
-       "error" =>
-         some(%{
-           "kind" => "trace-file-not-found",
-           "message" => "This node does not record traces."
-         })
-     }}
+    if T3.Trace.enabled?(), do: {:ok, T3.Trace.diagnostics()}, else: {:ok, untraced()}
+  end
+
+  defp untraced do
+    %{
+      "traceFilePath" =>
+        Path.join([Application.fetch_env!(:t3, :home), "logs", "server.trace.ndjson"]),
+      "scannedFilePaths" => [],
+      "readAt" => now(),
+      "recordCount" => 0,
+      "parseErrorCount" => 0,
+      "firstSpanAt" => none(),
+      "lastSpanAt" => none(),
+      "failureCount" => 0,
+      "interruptionCount" => 0,
+      "slowSpanThresholdMs" => 1_000,
+      "slowSpanCount" => 0,
+      "logLevelCounts" => %{},
+      "topSpansByCount" => [],
+      "slowestSpans" => [],
+      "commonFailures" => [],
+      "latestFailures" => [],
+      "latestWarningAndErrorLogs" => [],
+      "partialFailure" => none(),
+      "error" =>
+        some(%{
+          "kind" => "trace-file-not-found",
+          "message" => "This node does not record traces."
+        })
+    }
   end
 
   @doc "`server.getHostResources`."
@@ -215,8 +219,13 @@ defmodule T3.Diagnostics do
     {at, rows} = List.first(state.samples, {System.system_time(:millisecond), []})
     first_seen = first_seen(state.samples)
 
+    previous = previous_sample(state.samples)
+
     processes =
       for row <- rows do
+        {io_read, io_write, semantics} = io(row)
+        {read_rate, write_rate} = io_rates(row, at, previous)
+
         %{
           "identity" => identity(row),
           "ppid" => row.ppid,
@@ -231,11 +240,11 @@ defmodule T3.Diagnostics do
           "residentBytes" => row.rss,
           "peakResidentBytes" => peak_rss(state.samples, key(row)),
           "virtualBytes" => row.vsz,
-          "ioReadBytes" => 0,
-          "ioWriteBytes" => 0,
-          "ioReadBytesPerSecond" => 0,
-          "ioWriteBytesPerSecond" => 0,
-          "ioSemantics" => "unavailable",
+          "ioReadBytes" => io_read,
+          "ioWriteBytes" => io_write,
+          "ioReadBytesPerSecond" => read_rate,
+          "ioWriteBytesPerSecond" => write_rate,
+          "ioSemantics" => semantics,
           "runTimeMs" => max(at - row.started, 0),
           "firstSeenAt" => iso(Map.get(first_seen, key(row), at)),
           "lastSeenAt" => iso(at)
@@ -272,8 +281,8 @@ defmodule T3.Diagnostics do
         samples
         |> Enum.map(fn {_, rows} -> rows |> Enum.map(& &1.rss) |> Enum.sum() end)
         |> Enum.max(fn -> 0 end),
-      "ioReadBytes" => 0,
-      "ioWriteBytes" => 0,
+      "ioReadBytes" => rows |> Enum.map(&elem(io(&1), 0)) |> Enum.sum(),
+      "ioWriteBytes" => rows |> Enum.map(&elem(io(&1), 1)) |> Enum.sum(),
       "ioReadBytesPerSecond" => 0,
       "ioWriteBytesPerSecond" => 0,
       "processStarts" => 0,
@@ -425,9 +434,9 @@ defmodule T3.Diagnostics do
       "cpuTimeMs" => row.cpu_time,
       "currentRssBytes" => row.rss,
       "peakRssBytes" => peak,
-      "ioReadBytes" => 0,
-      "ioWriteBytes" => 0,
-      "ioSemantics" => "unavailable"
+      "ioReadBytes" => elem(io(row), 0),
+      "ioWriteBytes" => elem(io(row), 1),
+      "ioSemantics" => elem(io(row), 2)
     })
   end
 
@@ -461,6 +470,29 @@ defmodule T3.Diagnostics do
   end
 
   defp key(row), do: "#{row.pid}:#{row.started}"
+
+  # `{read, write, semantics}` for a sampled row; rows without counters read as unavailable.
+  defp io(row) do
+    case Map.get(row, :io) do
+      {read, write} -> {read, write, "storage"}
+      nil -> {0, 0, "unavailable"}
+    end
+  end
+
+  defp previous_sample([_latest, {at, rows} | _]), do: {at, Map.new(rows, &{key(&1), &1})}
+  defp previous_sample(_), do: nil
+
+  defp io_rates(row, at, {before, rows}) when at > before do
+    with {read, write} <- Map.get(row, :io),
+         %{io: {read_before, write_before}} <- rows[key(row)] do
+      per_second = &max(round((&1 - &2) * 1000 / (at - before)), 0)
+      {per_second.(read, read_before), per_second.(write, write_before)}
+    else
+      _ -> {0, 0}
+    end
+  end
+
+  defp io_rates(_row, _at, _previous), do: {0, 0}
   defp identity(row), do: %{"pid" => row.pid, "startTimeMs" => max(row.started, 0)}
 
   defp diagnostics_entry(row) do
@@ -492,7 +524,7 @@ defmodule T3.Diagnostics do
 
         case Enum.find(rows, &(&1.pid == root)) do
           nil -> {:error, "The node's own process was not found."}
-          row -> {:ok, walk(row, 0, children)}
+          row -> {:ok, row |> walk(0, children) |> Enum.map(&Map.put(&1, :io, proc_io(&1.pid)))}
         end
 
       {out, _} ->
@@ -535,6 +567,18 @@ defmodule T3.Diagnostics do
     kids = Map.get(children, row.pid, [])
     row = Map.merge(row, %{depth: depth, children: Enum.map(kids, & &1.pid)})
     [row | Enum.flat_map(kids, &walk(&1, depth + 1, children))]
+  end
+
+  # Storage bytes from `/proc/<pid>/io` (Linux), or nil where there is none to read.
+  defp proc_io(pid) do
+    with {:ok, text} <-
+           File.read(Path.join([Application.get_env(:t3, :proc_dir, "/proc"), "#{pid}", "io"])),
+         [_, read] <- Regex.run(~r/^read_bytes:\s*(\d+)/m, text),
+         [_, write] <- Regex.run(~r/^write_bytes:\s*(\d+)/m, text) do
+      {String.to_integer(read), String.to_integer(write)}
+    else
+      _ -> nil
+    end
   end
 
   @months ~w(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec)

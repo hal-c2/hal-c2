@@ -4,6 +4,13 @@
 # each time, so the relaunch runs the version the update installed.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
+
+# `t3-service install|status|uninstall` registers this release with the user's
+# service manager (T3.Service).
+case "${1:-}" in
+  install | status | uninstall) exec "$here/t3" eval "T3.Service.main([\"$1\"])" ;;
+esac
+
 export T3_SERVICE=1
 while :; do
   "$here/t3" start "$@"

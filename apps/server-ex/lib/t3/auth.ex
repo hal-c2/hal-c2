@@ -9,6 +9,12 @@ defmodule T3.Auth do
     * The desktop app's bootstrap token (`T3.Desktop`) is exchanged the same way,
       as often as its window needs, for 24 hours from boot, with administrative
       scopes.
+    * A client that sends a DPoP proof with the exchange (`T3.Auth.Dpop`) gets a
+      1-hour token bound to its key, presented as `Authorization: DPoP` with a fresh
+      proof on every request; a bound token is never accepted as a bearer.
+    * With a reusable development credential (`T3CODE_DEV_AUTH_TOKEN`, dev builds
+      only), that credential is itself an administrative session in every node's
+      own store, so one browser signs in to every worktree on a host.
     * A bearer token buys a WebSocket ticket (5 minutes, single use), which the
       client puts in the socket URL so the long-lived token never appears there.
 
@@ -30,6 +36,9 @@ defmodule T3.Auth do
   @standard_scopes ~w(orchestration:read orchestration:operate terminal:operate review:write relay:read)
   @admin_scopes @standard_scopes ++ ~w(access:read access:write relay:write)
   @desktop_ttl :timer.hours(24)
+  @dpop_ttl :timer.hours(1)
+  # The dev credential's session never expires (the Node server's 9999-12-31).
+  @dev_expires_at 253_402_300_799_999
   @tickets __MODULE__.Tickets
 
   @schema [
@@ -55,7 +64,9 @@ defmodule T3.Auth do
     {"auth_sessions", "last_connected_at", "INTEGER"},
     {"auth_sessions", "device_type", "TEXT"},
     {"auth_sessions", "os", "TEXT"},
-    {"auth_sessions", "user_agent", "TEXT"}
+    {"auth_sessions", "user_agent", "TEXT"},
+    {"auth_sessions", "subject", "TEXT"},
+    {"auth_sessions", "jkt", "TEXT"}
   ]
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -72,26 +83,65 @@ defmodule T3.Auth do
 
   @doc """
   Exchanges a pairing token for `{:ok, access_token, expires_in_s, scopes}`.
-  `client` describes who asked: `label`, `device_type`, `os`, `user_agent`.
+  `client` describes who asked: `label`, `device_type`, `os`, `user_agent`, plus
+  `scopes` to ask for fewer than the credential grants (`{:error, :scope_not_granted}`
+  when it asks for more) and `jkt`, the thumbprint of a DPoP key to bind the token to.
   """
-  @spec exchange(String.t(), map) :: {:ok, String.t(), pos_integer, [String.t()]} | :error
+  @spec exchange(String.t(), map) ::
+          {:ok, String.t(), pos_integer, [String.t()]} | :error | {:error, :scope_not_granted}
   def exchange(pairing_token, client \\ %{}),
     do: GenServer.call(__MODULE__, {:exchange, pairing_token, client})
 
-  @doc "The session behind a bearer token, if valid."
+  @doc "The session behind a bearer token, if valid. DPoP-bound tokens are not bearers."
   @spec session(String.t()) ::
           {:ok, %{id: String.t(), scopes: [String.t()], expires_at: integer}} | :error
-  def session(access_token), do: GenServer.call(__MODULE__, {:session, access_token})
+  def session(access_token) do
+    case GenServer.call(__MODULE__, {:session, access_token}) do
+      {:ok, %{jkt: nil} = session} -> {:ok, session}
+      _ -> :error
+    end
+  end
+
+  @doc """
+  The session behind a DPoP-bound token, with the thumbprint (`jkt`) its proofs must
+  be signed with. Bearer tokens are not DPoP tokens.
+  """
+  def dpop_session(access_token) do
+    case GenServer.call(__MODULE__, {:session, access_token}) do
+      {:ok, %{jkt: jkt} = session} when is_binary(jkt) -> {:ok, session}
+      _ -> :error
+    end
+  end
 
   @spec issue_ticket(String.t()) :: {:ok, String.t(), integer} | :error
   def issue_ticket(access_token) do
-    with {:ok, session} <- session(access_token) do
-      ticket = random_token()
-      expires_at = now() + @ticket_ttl
-      :ets.insert(@tickets, {ticket, expires_at, session.id})
-      {:ok, ticket, expires_at}
-    end
+    with {:ok, session} <- session(access_token), do: session_ticket(session)
   end
+
+  @doc "A WebSocket ticket for an already authenticated session (`session/1`, `dpop_session/1`)."
+  def session_ticket(%{id: id}) do
+    ticket = random_token()
+    expires_at = now() + @ticket_ttl
+    :ets.insert(@tickets, {ticket, expires_at, id})
+    {:ok, ticket, expires_at}
+  end
+
+  @doc """
+  The client sessions in the store at `path`, as `GET /api/auth/clients` lists them
+  (without `connected`, which only the running node knows); usable from outside the node.
+  """
+  def list_sessions(path) do
+    with_db(path, fn db ->
+      ensure_schema(db)
+      session_rows(db, MapSet.new(), "expires_at > ?1", [now()])
+    end)
+  end
+
+  @doc """
+  Revokes the session `id` in the store at `path`; usable from outside the node. Its
+  next ticket or request fails; a running node's open sockets drop on their next check.
+  """
+  def revoke_session(path, id), do: revoke(path, "id = ?1", [id]) != []
 
   @doc "Consumes a WebSocket ticket; each ticket opens one socket, for its session."
   @spec take_ticket(String.t()) :: {:ok, String.t()} | :error
@@ -119,6 +169,10 @@ defmodule T3.Auth do
   end
 
   def standard_scopes, do: @standard_scopes
+
+  @doc "A session's scopes, while it is valid: `{:ok, scopes}`."
+  @spec session_scopes(String.t()) :: {:ok, [String.t()]} | :error
+  def session_scopes(session_id), do: GenServer.call(__MODULE__, {:scopes, session_id})
 
   @doc "Called by a socket of `session_id` once open; it counts as connected until it exits."
   def connected(session_id), do: GenServer.cast(__MODULE__, {:connected, session_id, self()})
@@ -150,8 +204,10 @@ defmodule T3.Auth do
   @impl true
   def init(_opts) do
     :ets.new(@tickets, [:named_table, :public, write_concurrency: true])
+    T3.Auth.Dpop.init()
     path = T3.Store.path()
     with_db(path, &ensure_schema/1)
+    dev = dev_credential(path)
 
     desktop =
       case Application.get_env(:t3, :desktop_token) do
@@ -160,38 +216,36 @@ defmodule T3.Auth do
       end
 
     # Open sockets: socket pid -> session id.
-    {:ok, %{path: path, desktop: desktop, revision: 0, watchers: %{}, sockets: %{}}}
+    {:ok, %{path: path, desktop: desktop, dev: dev, revision: 0, watchers: %{}, sockets: %{}}}
   end
 
   @impl true
-  def handle_call({:exchange, token, client}, _from, %{desktop: desktop} = state) do
-    {reply, events} =
+  def handle_call({:exchange, token, client}, _from, state) do
+    {reply, events, replaced} =
       with_db(state.path, fn db ->
-        cond do
-          desktop != nil and :crypto.hash_equals(hash(token), desktop.hash) ->
-            if desktop.expires_at > now(),
-              do: create_session(db, @admin_scopes, client, [], state),
-              else: {:error, []}
+        case grant(db, token, state) do
+          {:ok, granted, subject, events} ->
+            requested = client[:scopes] || granted
 
-          true ->
-            case query(
-                   db,
-                   "DELETE FROM auth_pairing WHERE token_hash = ?1 RETURNING expires_at, id, scopes",
-                   [hash(token)]
-                 ) do
-              [[expires_at, id, scopes]] when expires_at > 0 ->
-                removed = [event("pairingLinkRemoved", %{"id" => id})]
+            if Enum.all?(requested, &(&1 in granted)) do
+              # Desktop restarts forget the previous token, so its session is replaced.
+              replaced =
+                if subject == "desktop-bootstrap",
+                  do: revoke_rows(db, "subject = ?1", [subject]),
+                  else: []
 
-                if expires_at > now(),
-                  do: create_session(db, scopes(scopes), client, removed, state),
-                  else: {:error, removed}
-
-              _ ->
-                {:error, []}
+              {reply, created} = create_session(db, requested, subject, client, state)
+              {reply, events ++ removed_clients(replaced) ++ created, replaced}
+            else
+              {{:error, :scope_not_granted}, events, []}
             end
+
+          {:error, events} ->
+            {:error, events, []}
         end
       end)
 
+    close_sockets(state, replaced)
     {:reply, reply, broadcast(state, events)}
   end
 
@@ -200,12 +254,13 @@ defmodule T3.Auth do
       with_db(state.path, fn db ->
         case query(
                db,
-               "SELECT id, scopes, expires_at FROM auth_sessions WHERE token_hash = ?1",
+               "SELECT id, scopes, expires_at, jkt FROM auth_sessions WHERE token_hash = ?1",
                [hash(token)]
              ) do
-          [[id, scopes, expires_at]] ->
+          [[id, scopes, expires_at, jkt]] ->
             if expires_at > now(),
-              do: {:ok, %{id: id, scopes: String.split(scopes), expires_at: expires_at}},
+              do:
+                {:ok, %{id: id, scopes: String.split(scopes), expires_at: expires_at, jkt: jkt}},
               else: :error
 
           [] ->
@@ -259,11 +314,13 @@ defmodule T3.Auth do
 
   def handle_call({:revoke_client, id}, _from, state) do
     revoked = revoke(state.path, "id = ?1", [id])
+    close_sockets(state, revoked)
     {:reply, revoked != [], broadcast(state, removed_clients(revoked))}
   end
 
   def handle_call({:revoke_others, keep}, _from, state) do
     revoked = revoke(state.path, "id IS NOT ?1", [keep])
+    close_sockets(state, revoked)
     {:reply, length(revoked), broadcast(state, removed_clients(revoked))}
   end
 
@@ -322,27 +379,64 @@ defmodule T3.Auth do
     |> put_present("label", label)
   end
 
-  defp create_session(db, scopes, client, events, state) do
+  # What a credential grants: `{:ok, scopes, subject, events}` or `{:error, events}`.
+  defp grant(db, token, state) do
+    cond do
+      state.dev != nil and :crypto.hash_equals(hash(token), state.dev.hash) ->
+        # Revoking the dev session on this node stops it here, not on other nodes.
+        case query(db, "SELECT 1 FROM auth_sessions WHERE id = ?1", [state.dev.id]) do
+          [_] -> {:ok, @admin_scopes, "reusable-dev-token-child", []}
+          [] -> {:error, []}
+        end
+
+      state.desktop != nil and :crypto.hash_equals(hash(token), state.desktop.hash) ->
+        if state.desktop.expires_at > now(),
+          do: {:ok, @admin_scopes, "desktop-bootstrap", []},
+          else: {:error, []}
+
+      true ->
+        case query(
+               db,
+               "DELETE FROM auth_pairing WHERE token_hash = ?1 RETURNING expires_at, id, scopes",
+               [hash(token)]
+             ) do
+          [[expires_at, id, scopes]] when expires_at > 0 ->
+            removed = [event("pairingLinkRemoved", %{"id" => id})]
+
+            if expires_at > now(),
+              do: {:ok, scopes(scopes), "pairing", removed},
+              else: {:error, removed}
+
+          _ ->
+            {:error, []}
+        end
+    end
+  end
+
+  defp create_session(db, scopes, subject, client, state) do
     access = random_token()
     id = "session-" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
     created = now()
+    ttl = if client[:jkt], do: @dpop_ttl, else: @session_ttl
 
     exec(
       db,
       """
-      INSERT INTO auth_sessions (token_hash, scopes, label, created_at, expires_at, id, device_type, os, user_agent)
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+      INSERT INTO auth_sessions (token_hash, scopes, label, created_at, expires_at, id, device_type, os, user_agent, subject, jkt)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
       """,
       [
         hash(access),
         Enum.join(scopes, " "),
         client[:label],
         created,
-        created + @session_ttl,
+        created + ttl,
         id,
         client[:device_type],
         client[:os],
-        client[:user_agent]
+        client[:user_agent],
+        subject,
+        client[:jkt]
       ]
     )
 
@@ -350,7 +444,32 @@ defmodule T3.Auth do
       for client <- session_rows(db, online(state), "id = ?1", [id]),
           do: event("clientUpserted", client)
 
-    {{:ok, access, div(@session_ttl, 1000), scopes}, events ++ upserted}
+    {{:ok, access, div(ttl, 1000), scopes}, upserted}
+  end
+
+  # The reusable development credential, as a session of its own in this node's store
+  # (created once; a revoked one comes back on the next start, as on the Node server).
+  defp dev_credential(path) do
+    case Application.get_env(:t3, :dev_auth_token) do
+      token when is_binary(token) and token != "" ->
+        id = "dev-auth-" <> hash(token)
+
+        with_db(path, fn db ->
+          exec(
+            db,
+            """
+            INSERT OR IGNORE INTO auth_sessions (token_hash, scopes, label, created_at, expires_at, id, device_type, subject)
+            VALUES (?1, ?2, 'Reusable dev token', ?3, ?4, ?5, 'unknown', 'reusable-dev-token')
+            """,
+            [hash(token), Enum.join(@admin_scopes, " "), now(), @dev_expires_at, id]
+          )
+        end)
+
+        %{hash: hash(token), id: id}
+
+      _ ->
+        nil
+    end
   end
 
   defp links(path) do
@@ -379,17 +498,17 @@ defmodule T3.Auth do
   defp online(state), do: state.sockets |> Map.values() |> MapSet.new()
 
   defp session_rows(db, online, where, args) do
-    for [id, scopes, label, created, expires, last, device, os, agent] <-
+    for [id, scopes, label, created, expires, last, device, os, agent, jkt] <-
           query(
             db,
-            "SELECT id, scopes, label, created_at, expires_at, last_connected_at, device_type, os, user_agent FROM auth_sessions WHERE #{where} ORDER BY created_at",
+            "SELECT id, scopes, label, created_at, expires_at, last_connected_at, device_type, os, user_agent, jkt FROM auth_sessions WHERE #{where} ORDER BY created_at",
             args
           ) do
       %{
         "sessionId" => id,
         "subject" => "client",
         "scopes" => String.split(scopes),
-        "method" => "bearer-access-token",
+        "method" => if(jkt, do: "dpop-access-token", else: "bearer-access-token"),
         "client" =>
           %{"deviceType" => device || device_type(agent)}
           |> put_present("label", label)
@@ -405,10 +524,18 @@ defmodule T3.Auth do
   end
 
   # Deletes matching sessions, returning their ids.
-  defp revoke(path, where, args) do
-    with_db(path, fn db ->
-      for [id] <- query(db, "DELETE FROM auth_sessions WHERE #{where} RETURNING id", args), do: id
-    end)
+  defp revoke(path, where, args), do: with_db(path, &revoke_rows(&1, where, args))
+
+  defp revoke_rows(db, where, args),
+    do:
+      for(
+        [id] <- query(db, "DELETE FROM auth_sessions WHERE #{where} RETURNING id", args),
+        do: id
+      )
+
+  # A revoked session's open sockets close (`T3.Web.Socket`) rather than outlive it.
+  defp close_sockets(state, ids) do
+    for {socket, id} <- state.sockets, id in ids, do: send(socket, {:t3_session_revoked, id})
   end
 
   defp removed_clients(ids), do: for(id <- ids, do: event("clientRemoved", %{"sessionId" => id}))

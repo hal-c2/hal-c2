@@ -64,7 +64,8 @@ Feature: Node diagnostics
 
   @node
   Scenario: I/O counters are reported as unavailable
-    When a client reads a process sample
+    # The node reads I/O from /proc/<pid>/io; where that is missing it says so.
+    When a client reads a process sample on a platform that does not count I/O
     Then its I/O is marked unavailable rather than zero
 
   @node
@@ -95,31 +96,30 @@ Feature: Node diagnostics
     Then it names the directory the node writes its logs to
     And it says tracing export is off
 
-  @backlog @node
+  @node
   Scenario: The node records traces the user can inspect
     Given tracing is enabled on the node
     When a turn runs
     Then trace diagnostics list the turn's spans
 
-  @backlog @node
+  @node
   Scenario: The node accepts client spans
     Given client tracing is on
     When a client exports spans to its node
     Then the node accepts them instead of answering not found
 
-  @backlog @node
+  @node
   Scenario: The node forwards client spans to a configured collector
     Given an OTLP collector is configured on the node
     When client spans arrive
     Then the node forwards them to the collector
 
-  @backlog @node
+  @node
   Scenario: The node reports per-process I/O
     When a client reads a process sample on a platform that counts I/O
     Then the sample includes read and write bytes
 
-  # The node writes no native provider event logs yet, so there is nothing to budget.
-  @backlog @node
+  @node
   Scenario: A large provider payload is logged as a summary within 64 KiB
     Given provider event logging is on
     When a provider sends a response larger than 64 KiB or nested deeper than the log allows
@@ -127,7 +127,7 @@ Feature: Node diagnostics
     And the summary keeps the routing ids, method, status and error fields
     And the provider still receives and handles the full response
 
-  @backlog @node
+  @node
   Scenario: Streaming deltas are left out of provider event logs
     Given provider event logging is on
     When a provider streams text, command output and plan deltas
