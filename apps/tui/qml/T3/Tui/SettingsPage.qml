@@ -17,10 +17,12 @@ Rectangle {
     paddingX: 1
 
     Item {
-        flexDirection: "row"
         height: 1
-        Text { text: "settings"; color: Theme.colors.accent }
-        Text { text: "  ·  PgUp/PgDn scroll · Esc close"; color: Theme.colors.dim }
+        Text {
+            text: "settings"
+            color: Theme.colors.accent
+            Span { text: "  ·  PgUp/PgDn scroll · Esc close"; color: Theme.colors.dim }
+        }
     }
     ScrollView {
         id: body
@@ -36,13 +38,12 @@ Rectangle {
                 Repeater {
                     model: modelData.rows
                     delegate: Item {
-                        flexDirection: "row"
                         height: 1
                         Text {
                             text: "  " + modelData.label.padEnd(16)
                             color: modelData.keys ? Theme.colors.accent : Theme.colors.dim
+                            Span { text: modelData.value; color: Theme.colors.text }
                         }
-                        Text { text: modelData.value; color: Theme.colors.text }
                     }
                 }
             }

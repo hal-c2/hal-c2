@@ -14,17 +14,16 @@ Item {
     Text { text: "actions"; color: Theme.colors.dim }
     Repeater {
         model: list.git.actions
-        delegate: Item {
-            flexDirection: "row"
+        // One Text with a Span per row: a Text in a flex row keeps the width of
+        // its first content, so changing labels must not sit in sibling Texts.
+        delegate: Text {
             height: 1
             marginBottom: modelData.primary ? 1 : 0
             readonly property bool selected: index === list.git.selectedIndex
             onMouseDown: Shell.dispatch("git.activate", { index: index })
-            Text {
-                text: selected ? "▸ " : "  "
-                color: selected ? Theme.colors.accent : Theme.colors.dim
-            }
-            Text {
+            text: selected ? "▸ " : "  "
+            color: selected ? Theme.colors.accent : Theme.colors.dim
+            Span {
                 text: modelData.label + (modelData.kind === "url" ? " ↗" : "")
                 color: modelData.disabled
                     ? Theme.colors.faint

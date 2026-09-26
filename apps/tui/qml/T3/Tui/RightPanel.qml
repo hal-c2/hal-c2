@@ -33,11 +33,10 @@ Rectangle {
         objectName: "gitSummary"
         visible: panel.git.available
         flexDirection: "column"
-        Item {
-            flexDirection: "row"
-            height: 1
-            Text { text: "on "; color: Theme.colors.dim }
-            Text { text: panel.git.branch ?? "(detached)"; color: Theme.colors.text }
+        Text {
+            text: "on "
+            color: Theme.colors.dim
+            Span { text: panel.git.branch ?? "(detached)"; color: Theme.colors.text }
         }
         Text {
             visible: panel.git.syncLine.length > 0

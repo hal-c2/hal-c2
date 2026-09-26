@@ -17,11 +17,13 @@ Rectangle {
     flexDirection: "column"
     paddingX: 1
 
-    Item {
-        flexDirection: "row"
+    // One Text with Spans: a Text in a flex row keeps the width of its first content.
+    Text {
+        objectName: "diffScope"
         height: 1
-        Text { objectName: "diffScope"; text: "diff · " + viewer.diff.scopeLabel; color: Theme.colors.accent }
-        Text {
+        text: "diff · " + viewer.diff.scopeLabel
+        color: Theme.colors.accent
+        Span {
             text: "  " + viewer.diff.files.length + (viewer.diff.files.length === 1 ? " file" : " files")
                 + " · " + viewer.diff.view + " · ↑/↓ view · s "
                 + (viewer.diff.view === "unified" ? "split" : "stacked") + " · PgUp/PgDn scroll · Esc close"
@@ -47,14 +49,15 @@ Rectangle {
                 flexDirection: "column"
                 flexShrink: 0
                 marginBottom: 1
-                Item {
-                    flexDirection: "row"
+                Text {
                     height: 1
-                    Text { text: modelData.path; color: Theme.colors.text; font.bold: true }
-                    Text {
-                        visible: modelData.filetype.length > 0
-                        text: "  · " + modelData.filetype
+                    text: modelData.path
+                    color: Theme.colors.text
+                    font.bold: true
+                    Span {
+                        text: modelData.filetype.length > 0 ? "  · " + modelData.filetype : ""
                         color: Theme.colors.dim
+                        bold: false
                     }
                 }
                 Diff {
