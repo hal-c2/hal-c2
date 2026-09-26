@@ -5,6 +5,13 @@
 # says which message the session resumed at (--resume-session-at).
 import json, os, sys
 
+# With FAKE_CLAUDE_LOG set, the argv and every message read are appended to it as JSON lines.
+LOG = os.environ.get("FAKE_CLAUDE_LOG")
+def log(entry):
+    if LOG:
+        with open(LOG, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+
 def send(msg):
     sys.stdout.write(json.dumps(msg) + "\n")
     sys.stdout.flush()
@@ -12,8 +19,13 @@ def send(msg):
 session = "fake-session-1"
 turn = 0
 resume_at = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--resume-session-at=")), None)
+# The permission mode, from argv and then set_permission_mode; in auto Claude's own
+# classifier approves the command "approve" would otherwise ask about.
+mode = sys.argv[sys.argv.index("--permission-mode") + 1] if "--permission-mode" in sys.argv else "default"
+log({"argv": sys.argv[1:]})
 for line in sys.stdin:
     msg = json.loads(line)
+    log({"in": msg})
     if msg.get("type") == "control_response":
         reply = msg["response"]["response"]
         allowed = reply["behavior"] == "allow"
@@ -35,7 +47,11 @@ for line in sys.stdin:
             send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": usage}})
             continue
         # The account a signed-in Claude Code reports when it starts.
-        reply = {"account": {"email": "me@example.com", "subscriptionType": "max", "tokenSource": "claude.ai"}} if sub == "initialize" else {}
+        if sub == "set_permission_mode":
+            mode = msg["request"]["mode"]
+        # FAKE_CLAUDE_COMMANDS is a JSON list of the slash command names it reports.
+        reply = {"account": {"email": "me@example.com", "subscriptionType": "max", "tokenSource": "claude.ai"},
+                 "commands": [{"name": n, "description": "", "argumentHint": ""} for n in json.loads(os.environ.get("FAKE_CLAUDE_COMMANDS", "[]"))]} if sub == "initialize" else {}
         send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": reply}})
         if sub == "interrupt":
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session})
@@ -54,8 +70,18 @@ for line in sys.stdin:
     send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku"})
     if "wait" in text:
         continue
+    # FAKE_CLAUDE_SIGNED_OUT: a CLI with no login answers every message with an auth error.
+    if os.environ.get("FAKE_CLAUDE_SIGNED_OUT"):
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "error": "authentication_failed", "message": {"id": f"m{turn}x", "role": "assistant", "content": [{"type": "text", "text": "Invalid API key · Please run /login"}]}})
+        send({"type": "result", "subtype": "success", "is_error": True, "result": "Invalid API key · Please run /login", "session_id": session})
+        continue
     if "where are we" in text:
         send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {'<conversation_history>' in text}"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
+    if "approve" in text and mode == "auto":
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}u", "role": "assistant", "content": [{"type": "tool_use", "id": f"tool-{turn}", "name": "Bash", "input": {"command": "touch x"}}]}})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"tool-{turn}", "content": "", "is_error": False}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     if "approve" in text:
@@ -73,6 +99,18 @@ for line in sys.stdin:
         send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [
             {"question": "Which color?", "header": "Color", "multiSelect": False,
              "options": [{"label": "Red", "description": "Warm"}, {"label": "Blue", "description": ""}]}]}}})
+        continue
+    # "use TOOL" calls that tool; "rate limit" reports a nearly used-up session window.
+    if text.startswith("use "):
+        tool = text.split()[1]
+        tool_input = {"command": "ls"} if tool == "Bash" else {"query": "elixir", "url": "https://example.com"} if tool.startswith("Web") else {"file_path": "a.txt", "content": "a"}
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}u", "role": "assistant", "content": [{"type": "tool_use", "id": f"tool-{turn}", "name": tool, "input": tool_input}]}})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"tool-{turn}", "content": "done", "is_error": False}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
+    if "rate limit" in text:
+        send({"type": "rate_limit_event", "session_id": session, "rate_limit_info": {"status": "allowed_warning", "rateLimitType": "five_hour", "utilization": 0.91, "resetsAt": 1790000000}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     ev = lambda e: send({"type": "stream_event", "session_id": session, "event": e})
     send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}a", "role": "assistant", "content": [{"type": "thinking", "thinking": "Let me look."}]}})

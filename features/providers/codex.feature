@@ -177,19 +177,16 @@ Feature: Codex
     When the user declines
     Then the tool is told access was declined
 
-  @backlog
   Scenario: Codex stopping on a usage limit names the limit and the reset
     When Codex stops because the weekly limit is used up
     Then the thread says the weekly limit is used up and when it resets
     And it says to send the message again after the reset
 
-  @backlog
   Scenario: A workspace plan out of credits says who can fix it
     Given the Codex account is on a workspace plan with no credits left
     When Codex stops on a usage limit
     Then the thread says the workspace owner needs to add credits
 
-  @backlog
   Scenario Outline: Codex model options
     When the user opens the options for a Codex model that supports <option>
     Then the user can choose <choices>
@@ -205,13 +202,11 @@ Feature: Codex
     Then the subagent's work is shown as a child of the turn
     And the user can open the subagent's own thread
 
-  @backlog
   Scenario: Codex auto mode uses Codex's automatic reviewer
     Given the thread runs Codex in auto mode
     When Codex wants to run a command outside its sandbox
     Then Codex's automatic reviewer decides instead of asking the user
 
-  @backlog
   Scenario: A signed-out Codex explains how to sign in
     Given the Codex CLI on the node is not signed in
     When the user opens the provider list
@@ -227,7 +222,6 @@ Feature: Codex
     When Codex's usage has been checked
     Then Codex shows that it uses an OpenAI API key
 
-  @backlog
   Scenario: Codex offers its compact and feedback commands in the composer
     When the user types a slash in a Codex thread
     Then "/compact" and "/feedback" are offered

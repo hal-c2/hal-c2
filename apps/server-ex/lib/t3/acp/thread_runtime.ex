@@ -475,7 +475,9 @@ defmodule T3.Acp.ThreadRuntime do
   defp update(_update, state), do: state
 
   defp chunk(state, %{"content" => %{"type" => "text", "text" => text}} = u, kind) do
-    key = "#{kind}:#{u["messageId"] || "current"}"
+    # Message ids are optional and need only be unique within a turn, so each turn
+    # gets its own messages rather than overwriting an earlier turn's.
+    key = "#{kind}:#{state.turn.ids.run}:#{u["messageId"] || "current"}"
     state |> ensure_item(key, kind) |> buffer(key, "text", text)
   end
 

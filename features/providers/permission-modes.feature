@@ -31,6 +31,7 @@ Feature: Permission modes
     When the user starts a new thread in "shop"
     Then the thread is supervised
 
+  # auto was acceptEdits on the node; the Node server passes Claude's own auto mode.
   Scenario Outline: Each mode reaches Claude as its own permission mode
     Given a Claude thread in <mode>
     When the user sends a message
@@ -40,7 +41,7 @@ Feature: Permission modes
       | mode              | claude            |
       | supervised        | default           |
       | auto-accept edits | acceptEdits       |
-      | auto              | acceptEdits       |
+      | auto              | auto              |
       | full access       | bypassPermissions |
 
   Scenario Outline: Each mode reaches Codex as an approval policy and a sandbox
@@ -133,7 +134,6 @@ Feature: Permission modes
     When the agent delegates a task without naming modes
     Then the child thread runs in auto-accept edits and plan mode
 
-  @backlog
   Scenario Outline: Auto uses the provider's automatic review where it has one
     Given a <provider> thread in auto
     When the agent runs a routine action
@@ -143,8 +143,13 @@ Feature: Permission modes
       | provider    | outcome                                         |
       | Codex       | the provider's automatic reviewer approves it   |
       | Claude      | the provider's automatic reviewer approves it   |
-      | Cursor      | the provider's automatic reviewer approves it   |
       | OpenCode    | the user is asked, as in supervised             |
+
+    # Cursor and Antigravity rows split out: they still need node work.
+    @backlog
+    Examples: Not yet on the node
+      | provider    | outcome                                         |
+      | Cursor      | the provider's automatic reviewer approves it   |
       | Antigravity | the user is asked, as in supervised             |
 
   @backlog
@@ -160,7 +165,6 @@ Feature: Permission modes
     When Antigravity sends its own approval request
     Then the user is asked to approve it
 
-  @backlog
   Scenario: Pi does not offer auto
     Given a Pi thread
     When the user opens the permission mode choices

@@ -21,7 +21,9 @@ defmodule T3.Codex.Provider do
       %{
         "instanceId" => "codex",
         "driver" => "codex",
-        "enabled" => true,
+        # Turned off in settings (`providers.codex.enabled`), it stays listed so it can be
+        # turned back on; clients leave it out of the model picker.
+        "enabled" => get_in(T3.Settings.settings(), ["providers", "codex", "enabled"]) != false,
         "installed" => true,
         "version" => version(path),
         "versionAdvisory" => T3.ProviderUpdates.advisory("codex", path, version(path)),
@@ -31,7 +33,17 @@ defmodule T3.Codex.Provider do
         "checkedAt" => T3.Orchestration.Entities.now(),
         "models" =>
           for(model <- :persistent_term.get(@key, @default_models), do: model_entry(model)),
-        "slashCommands" => [],
+        "slashCommands" => [
+          %{
+            "name" => "compact",
+            "description" => "Summarize the conversation and reduce context usage"
+          },
+          %{
+            "name" => "feedback",
+            "description" => "Send this thread and Codex logs to OpenAI",
+            "input" => %{"hint" => "Describe the issue (optional)"}
+          }
+        ],
         "skills" => []
       }
     else
@@ -56,7 +68,8 @@ defmodule T3.Codex.Provider do
           do: %{
             "slug" => m["model"] || m["id"],
             "name" => m["displayName"] || m["model"] || m["id"],
-            "isDefault" => m["isDefault"] == true
+            "isDefault" => m["isDefault"] == true,
+            "capabilities" => capabilities(m)
           }
         )
       )
@@ -75,8 +88,89 @@ defmodule T3.Codex.Provider do
       "name" => model["name"],
       "isCustom" => false,
       "isDefault" => model["isDefault"] == true,
-      "capabilities" => nil
+      "capabilities" => model["capabilities"]
     }
+
+  @effort_labels %{
+    "none" => "None",
+    "minimal" => "Minimal",
+    "low" => "Low",
+    "medium" => "Medium",
+    "high" => "High",
+    "xhigh" => "Extra High",
+    "max" => "Max",
+    "ultra" => "Ultra"
+  }
+
+  # The reasoning levels and service tiers a model offers, as the composer's options.
+  defp capabilities(model) do
+    case Enum.reject([reasoning(model), service_tier(model)], &is_nil/1) do
+      [] -> nil
+      descriptors -> %{"optionDescriptors" => descriptors}
+    end
+  end
+
+  defp reasoning(%{"supportedReasoningEfforts" => [_ | _] = efforts} = model) do
+    default = model["defaultReasoningEffort"]
+
+    options =
+      for %{"reasoningEffort" => id} <- efforts do
+        option = %{"id" => id, "label" => @effort_labels[id] || id}
+        if id == default, do: Map.put(option, "isDefault", true), else: option
+      end
+
+    descriptor = %{
+      "id" => "reasoningEffort",
+      "label" => "Reasoning",
+      "type" => "select",
+      "options" => options
+    }
+
+    if Enum.any?(options, & &1["isDefault"]),
+      do: Map.put(descriptor, "currentValue", default),
+      else: descriptor
+  end
+
+  defp reasoning(_model), do: nil
+
+  # Standard ("default") plus the model's faster tiers; older CLIs only name speed tiers.
+  defp service_tier(model) do
+    tiers =
+      case model["serviceTiers"] do
+        [_ | _] = tiers ->
+          tiers
+
+        _ ->
+          for id <- model["additionalSpeedTiers"] || [],
+              do: %{"id" => id, "name" => if(id == "fast", do: "Fast", else: id)}
+      end
+
+    if tiers != [] do
+      default =
+        if Enum.any?(tiers, &(&1["id"] == model["defaultServiceTier"])),
+          do: model["defaultServiceTier"],
+          else: "default"
+
+      options =
+        for tier <- [%{"id" => "default", "name" => "Standard"} | tiers] do
+          %{"id" => tier["id"], "label" => tier["name"] || tier["id"]}
+          |> then(
+            &if tier["description"] in [nil, ""],
+              do: &1,
+              else: Map.put(&1, "description", tier["description"])
+          )
+          |> then(&if tier["id"] == default, do: Map.put(&1, "isDefault", true), else: &1)
+        end
+
+      %{
+        "id" => "serviceTier",
+        "label" => "Service Tier",
+        "type" => "select",
+        "options" => options,
+        "currentValue" => default
+      }
+    end
+  end
 
   defp command, do: Application.get_env(:t3, :codex_command, ["codex", "app-server"])
 

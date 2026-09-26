@@ -58,6 +58,25 @@ defmodule T3.Acp do
 
   defp builtin(id), do: if(Map.has_key?(@agents, id), do: {id, %{}})
 
+  @doc "The driver an instance runs (`grok`, `acpRegistry`, ...), or nil."
+  def driver(id) do
+    case instance(id) do
+      {driver, _} -> driver
+      nil -> nil
+    end
+  end
+
+  @doc """
+  A driver setting of an instance: its own `config` value, else the driver's in
+  `providers.<driver>`; blank strings count as unset.
+  """
+  def setting(id, key) do
+    with {driver, entry} <- instance(id) do
+      [get_in(entry, ["config", key]), get_in(T3.Settings.settings(), ["providers", driver, key])]
+      |> Enum.find(&(&1 not in [nil, ""] and not (is_binary(&1) and String.trim(&1) == "")))
+    end
+  end
+
   def label(instance) do
     case instance(instance) do
       {_, %{"displayName" => name}} when is_binary(name) -> name
@@ -161,6 +180,9 @@ defmodule T3.Acp do
     |> Enum.find(default, &(is_binary(&1) and String.trim(&1) != ""))
   end
 
+  # Pi has no automatic review, so clients do not offer auto for it.
+  @pi_modes ~w(approval-required auto-accept-edits full-access)
+
   @doc "Provider entries for the ACP instances on this node whose agent is available."
   def entries, do: for(id <- instances(), entry = entry(id), do: entry)
 
@@ -194,6 +216,7 @@ defmodule T3.Acp do
         base
       )
       |> then(&if(failure, do: Map.put(&1, "message", failure), else: &1))
+      |> then(&if(driver == "pi", do: Map.put(&1, "supportedRuntimeModes", @pi_modes), else: &1))
       |> Map.merge(capability_fields(capabilities(id)))
       |> Map.merge(access(id, base["setup"]))
     else

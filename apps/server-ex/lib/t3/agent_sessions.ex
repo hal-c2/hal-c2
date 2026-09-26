@@ -74,8 +74,11 @@ defmodule T3.AgentSessions do
     end
   end
 
-  # Transcripts of both agents, newest first, capped per source.
+  # Transcripts of both agents, newest first, capped per source (the cap is
+  # `:agent_sessions_max_transcripts` in the app env, for tests).
   defp transcripts do
+    max = Application.get_env(:t3, :agent_sessions_max_transcripts, @max_transcripts)
+
     for {source, files} <- [{"claudeAgent", claude_files()}, {"codex", codex_files()}],
         reduce: {[], false} do
       {acc, truncated} ->
@@ -84,8 +87,7 @@ defmodule T3.AgentSessions do
           |> Enum.flat_map(&stat(source, &1))
           |> Enum.sort_by(& &1.mtime, :desc)
 
-        {acc ++ Enum.take(newest, @max_transcripts),
-         truncated or length(newest) > @max_transcripts}
+        {acc ++ Enum.take(newest, max), truncated or length(newest) > max}
     end
   end
 

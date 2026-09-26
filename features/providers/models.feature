@@ -89,7 +89,6 @@ Feature: Models
     Then OpenCode's versions are judged by the fetched policy
     And the other provider keeps its bundled policy
 
-  @backlog
   Scenario: Adding a custom model
     When the user adds the custom model "my-model" to Claude
     Then "my-model" is offered in the model picker for Claude
@@ -106,7 +105,6 @@ Feature: Models
       | claude-fable-5-1      | That model is already built in.    |
       | my-model              | That custom model is already saved.|
 
-  @backlog
   Scenario: A custom model can have its own options
     When the user gives the custom model "my-model" a reasoning choice of low or high with high as default
     Then the composer offers low and high for "my-model" with high selected

@@ -113,7 +113,6 @@ Feature: Subscription limits
     When the user uses that reset credit
     Then the hub redeems it and the account's limits are read again
 
-  @backlog
   Scenario Outline: Other providers report their own windows
     Given <provider> is signed in with a subscription
     When the node checks limits
@@ -125,13 +124,11 @@ Feature: Subscription limits
       | Grok          | its billing period allowance and reset time |
       | OpenCode Go   | its session, weekly and monthly allowance  |
 
-  @backlog
   Scenario: Grok with an explicit API key reports no subscription limits
     Given Grok is connected with an explicit API key
     When the node checks limits
     Then Grok's limits are reported as not supported for this account
 
-  @backlog
   Scenario: An external OpenCode server reports no limits
     Given OpenCode runs on an external server
     When the node checks limits

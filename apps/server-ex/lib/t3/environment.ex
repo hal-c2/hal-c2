@@ -154,12 +154,59 @@ defmodule T3.Environment do
 
   @doc "`ServerConfig.providers`: the agents this node can run."
   def providers do
-    for(
-      entry <- [T3.Codex.Provider.entry(), T3.Claude.Provider.entry()],
-      entry != nil,
-      do: T3.ProviderUsageLimits.put(entry)
-    ) ++ T3.Acp.entries()
+    (for(
+       entry <- [T3.Codex.Provider.entry(), T3.Claude.Provider.entry()],
+       entry != nil,
+       do: entry
+     ) ++
+       T3.Acp.entries())
+    |> Enum.map(&(&1 |> with_custom_models() |> T3.ProviderUsageLimits.put()))
   end
+
+  # The model ids the user added in settings (`customModels`: bare slugs or
+  # `{slug, name, capabilities}`) follow the provider's own models; one it already
+  # lists is skipped.
+  defp with_custom_models(%{"instanceId" => id, "driver" => driver} = entry) do
+    custom =
+      if driver in ["codex", "claudeAgent"],
+        do: get_in(T3.Settings.settings(), ["providers", driver, "customModels"]),
+        else: T3.Acp.setting(id, "customModels")
+
+    models = entry["models"] || []
+
+    added =
+      for setting <- List.wrap(custom),
+          %{"slug" => slug} = model <- [custom_model(setting)],
+          reduce: [] do
+        added ->
+          if Enum.any?(models ++ added, &(&1["slug"] == slug)), do: added, else: added ++ [model]
+      end
+
+    if added == [], do: entry, else: Map.put(entry, "models", models ++ added)
+  end
+
+  defp with_custom_models(entry), do: entry
+
+  defp custom_model(slug) when is_binary(slug), do: custom_model(%{"slug" => slug})
+
+  defp custom_model(%{"slug" => slug} = setting) when is_binary(slug) do
+    case String.trim(slug) do
+      "" ->
+        nil
+
+      slug ->
+        name = if is_binary(setting["name"]), do: String.trim(setting["name"]), else: ""
+
+        %{
+          "slug" => slug,
+          "name" => if(name == "", do: slug, else: name),
+          "isCustom" => true,
+          "capabilities" => setting["capabilities"] || %{"optionDescriptors" => []}
+        }
+    end
+  end
+
+  defp custom_model(_), do: nil
 
   @spec id() :: String.t()
   def id do

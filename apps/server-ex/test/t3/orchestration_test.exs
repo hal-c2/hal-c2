@@ -112,6 +112,50 @@ defmodule T3.OrchestrationTest do
     assert Enum.all?(items, &Map.has_key?(nodes, &1["nodeId"]))
   end
 
+  test "the model options picked in the composer reach Codex's turn", %{tmp_dir: dir} do
+    log = Path.join(dir, "codex.log")
+
+    Application.put_env(:t3, :codex_command, [
+      "env",
+      "FAKE_CODEX_LOG=#{log}",
+      "python3",
+      "-u",
+      @fake_codex
+    ])
+
+    thread_id = "thread-options"
+    :ok = T3.Streams.subscribe(thread_id, self(), nil)
+
+    {:ok, _} =
+      Orchestration.launch_thread(%{
+        "commandId" => "cmd-1",
+        "threadId" => thread_id,
+        "projectId" => "project-1",
+        "title" => "Options",
+        "modelSelection" => %{
+          "instanceId" => "codex",
+          "model" => "gpt-5.4",
+          "options" => [
+            %{"id" => "reasoningEffort", "value" => "high"},
+            %{"id" => "serviceTier", "value" => "fast"}
+          ]
+        },
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default",
+        "workspaceStrategy" => %{"type" => "root"},
+        "initialMessage" => %{"messageId" => "msg-user-1", "text" => "hello", "attachments" => []}
+      })
+
+    await_run(thread_id, "completed")
+
+    [params] =
+      for line <- String.split(File.read!(log), "\n", trim: true),
+          %{"in" => %{"method" => "turn/start", "params" => params}} <- [JSON.decode!(line)],
+          do: params
+
+    assert %{"effort" => "high", "serviceTier" => "fast"} = params
+  end
+
   test "streamed text is stored as appends, not re-sent whole" do
     thread_id = launch("list the files")
     _ = await_run(thread_id, "completed")

@@ -156,25 +156,21 @@ Feature: Claude
     When Claude starts a subagent
     Then the subagent's work is grouped under the step that started it
 
-  @backlog
   Scenario: Claude skills and slash commands are offered in the composer
     Given Claude reports the skill "review" and the command "/init"
     When the user types a slash in the composer
     Then "review" and "/init" are offered
 
-  @backlog
   Scenario: Reverting a Claude thread is refused while a turn runs
     Given a Claude turn is running
     When the user tries to revert to an earlier turn
     Then the revert is refused until the turn ends
 
-  @backlog
   Scenario: A signed-out Claude CLI explains how to sign in
     Given the Claude CLI on the node is not signed in
     When the user sends a message to Claude
     Then the turn fails saying to run the Claude sign-in command on that machine
 
-  @backlog
   Scenario: Claude can be disabled and enabled again
     When the user disables Claude
     Then Claude is not offered in the model picker
@@ -188,7 +184,6 @@ Feature: Claude
     When the user sends a message with that model
     Then the turn runs through the router with that model
 
-  @backlog
   Scenario: Claude usage windows include a per-model weekly window
     Given Claude is signed in with a subscription
     When the user opens the limits view

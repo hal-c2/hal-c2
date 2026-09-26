@@ -1,12 +1,14 @@
 defmodule T3.ProviderUsageLimits do
   @moduledoc """
-  Subscription quota on this node's Codex and Claude provider entries
-  (`ServerProvider.usageLimits`), as the Node server reports it.
+  Subscription quota on this node's provider entries (`ServerProvider.usageLimits`),
+  as the Node server reports it.
 
   A probe reads the whole picture: Codex's `account/rateLimits/read` from a
   short-lived `codex app-server`, Claude's `get_usage` from a short-lived `claude`
-  session (`T3.ProviderUsageLimits.Codex`, `T3.ProviderUsageLimits.Claude`). Probes run
-  at boot, on `server.refreshProviders` (`refresh/1`), and every
+  session (`T3.ProviderUsageLimits.Codex`, `T3.ProviderUsageLimits.Claude`), and the
+  Grok, Cursor and OpenCode Go accounts from their vendors
+  (`T3.ProviderUsageLimits.Acp`). Probes run at boot, on `server.refreshProviders`
+  (`refresh/1`), and every
   `providerHealthRefreshInterval` while a client in front shows provider status. Turns
   fill in between: the thread runtimes pass on the rate-limit updates their
   providers stream (`update/2`, `claude_event/1`), which merge by window id.
@@ -24,7 +26,7 @@ defmodule T3.ProviderUsageLimits do
 
   require Logger
 
-  alias T3.ProviderUsageLimits.{Claude, Codex}
+  alias T3.ProviderUsageLimits.{Acp, Claude, Codex}
 
   @instances ["codex", "claudeAgent"]
   @kind_order %{"session" => 0, "weekly" => 1, "monthly" => 2, "other" => 3}
@@ -43,7 +45,8 @@ defmodule T3.ProviderUsageLimits do
   end
 
   @doc """
-  A provider entry with its published `usageLimits`, and the signed-in account's
+  A provider entry with its published `usageLimits`, the slash commands its CLI
+  reported, and the signed-in account's
   email, type and label on its `auth` (clients merge one account seen on several
   environments by its email).
   """
@@ -54,16 +57,37 @@ defmodule T3.ProviderUsageLimits do
         limits -> Map.put(entry, "usageLimits", limits)
       end
 
+    entry = put_commands(entry, lookup({:commands, instance}))
+
     case {lookup({:account, instance}), entry} do
       {%{} = account, %{"auth" => %{} = auth}} when map_size(account) > 0 ->
-        Map.put(entry, "auth", Map.merge(auth, account))
+        # A signed-out account carries the hint that puts the entry in error.
+        {hint, account} = Map.pop(account, "message")
+        entry = Map.put(entry, "auth", Map.merge(auth, account))
+        if hint, do: Map.merge(entry, %{"status" => "error", "message" => hint}), else: entry
 
       _ ->
         entry
     end
   end
 
-  @doc "Records the account a probe saw for `instance` (`auth` fields)."
+  # The CLI's own slash commands join the ones the entry always offers.
+  defp put_commands(entry, [_ | _] = commands) do
+    listed = Map.get(entry, "slashCommands", [])
+    names = MapSet.new(listed, & &1["name"])
+    Map.put(entry, "slashCommands", listed ++ Enum.reject(commands, &(&1["name"] in names)))
+  end
+
+  defp put_commands(entry, _), do: entry
+
+  @doc "Records the slash commands (and skills) a probe saw `instance`'s CLI report."
+  def remember_commands(instance, commands),
+    do: GenServer.cast(__MODULE__, {:commands, instance, commands})
+
+  @doc """
+  Records the account a probe saw for `instance` (`auth` fields); a signed-out one
+  also has the `message` telling the user how to sign in.
+  """
   def remember_account(instance, account),
     do: GenServer.cast(__MODULE__, {:account, instance, account})
 
@@ -77,8 +101,9 @@ defmodule T3.ProviderUsageLimits do
   end
 
   @doc "Probes the given instances now and publishes what they report."
-  def refresh(instances \\ @instances) do
-    GenServer.call(__MODULE__, {:refresh, Enum.filter(instances, &(&1 in @instances))}, 60_000)
+  def refresh(instances \\ nil) do
+    instances = if instances, do: Enum.filter(instances, &(&1 in all())), else: all()
+    GenServer.call(__MODULE__, {:refresh, instances}, 60_000)
   catch
     :exit, {:noproc, _} -> :ok
   end
@@ -230,7 +255,7 @@ defmodule T3.ProviderUsageLimits do
 
   @impl true
   def handle_continue(:boot, state) do
-    state = probe(state, @instances)
+    state = probe(state, all())
     schedule()
     {:noreply, state}
   end
@@ -270,9 +295,9 @@ defmodule T3.ProviderUsageLimits do
   end
 
   @impl true
-  def handle_cast({:account, instance, account}, state) do
-    if lookup({:account, instance}) != account do
-      :ets.insert(__MODULE__, {{:account, instance}, account})
+  def handle_cast({key, instance, value}, state) when key in [:account, :commands] do
+    if lookup({key, instance}) != value do
+      :ets.insert(__MODULE__, {{key, instance}, value})
       T3.Settings.notify_providers()
     end
 
@@ -296,7 +321,7 @@ defmodule T3.ProviderUsageLimits do
   @impl true
   def handle_info(:tick, state) do
     state =
-      if wanted?(@instances) and interval() != :off, do: probe(state, @instances), else: state
+      if wanted?(all()) and interval() != :off, do: probe(state, all()), else: state
 
     schedule()
     {:noreply, state}
@@ -339,9 +364,14 @@ defmodule T3.ProviderUsageLimits do
 
   defp probe_instance("codex", checked_at), do: Codex.probe(checked_at)
   defp probe_instance("claudeAgent", checked_at), do: Claude.probe(checked_at)
+  defp probe_instance(instance, checked_at), do: Acp.probe(instance, checked_at)
 
   defp installed?("codex"), do: Codex.installed?()
   defp installed?("claudeAgent"), do: Claude.installed?()
+  defp installed?(_acp), do: true
+
+  # Codex and Claude, and the enabled ACP agents whose vendors publish quota.
+  defp all, do: @instances ++ Acp.instances()
 
   defp publish(instance, limits) do
     if limits != get(instance) do

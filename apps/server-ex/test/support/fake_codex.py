@@ -5,6 +5,14 @@
 # handed-off history or merged work came with the message.
 import json, os, sys
 
+# With FAKE_CODEX_LOG set, every message read is appended to it as a JSON line.
+# FAKE_CODEX_MODELS is the JSON `data` model/list answers with.
+LOG = os.environ.get("FAKE_CODEX_LOG")
+def log(entry):
+    if LOG:
+        with open(LOG, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+
 def send(msg):
     sys.stdout.write(json.dumps(msg) + "\n")
     sys.stdout.flush()
@@ -13,8 +21,10 @@ thread_id = "native-thread-1"
 # Current Codex keeps paginated history, which only rewinds with thread/revert.
 paginated = os.environ.get("FAKE_CODEX_LEGACY") != "1"
 turns = 0
+finishing = False  # "finishing": the turn ends as a steer for it arrives
 for line in sys.stdin:
     msg = json.loads(line)
+    log({"in": msg})
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
     if mid is None:
         continue
@@ -31,6 +41,10 @@ for line in sys.stdin:
         decision = msg["result"]["decision"]
         ctx = pending_ctx
         status = "completed" if decision in ("accept", "acceptForSession") else "declined"
+        if decision == "cancel":
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-1", "command": "touch x", "status": "declined", "aggregatedOutput": "", "exitCode": None}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "interrupted"}}})
+            continue
         if status == "completed":
             open("x", "w").write("approved\n")
         send({"method": "item/completed", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-1", "command": "touch x", "status": status, "aggregatedOutput": "", "exitCode": 0}}})
@@ -38,6 +52,8 @@ for line in sys.stdin:
         continue
     if method == "initialize":
         send({"id": mid, "result": {"userAgent": "fake", "platformOs": "test"}})
+    elif method == "model/list":
+        send({"id": mid, "result": {"data": json.loads(os.environ.get("FAKE_CODEX_MODELS", "[]"))}})
     elif method == "feedback/upload":
         send({"id": mid, "result": {"threadId": f"feedback-for-{params['threadId']}"}})
     elif method in ("thread/start", "thread/resume"):
@@ -49,8 +65,9 @@ for line in sys.stdin:
         send({"id": mid, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
         ctx = {"threadId": thread_id, "turnId": turn_id}
         send({"method": "turn/started", "params": {**ctx, "turn": {"id": turn_id, "status": "inProgress"}}})
-        if "wait" in text:
+        if "wait" in text or "finishing" in text:
             waiting_ctx = ctx
+            finishing = "finishing" in text
             continue
         if "where are we" in text:
             where = f"on {thread_id} history {'<conversation_history>' in text} merged {'<merged_work>' in text}"
@@ -91,6 +108,42 @@ for line in sys.stdin:
             send({"id": "input-1", "method": "item/tool/requestUserInput", "params": {**ctx, "itemId": "ask-1", "questions": [
                 {"id": "color", "header": "Color", "question": "Which color?", "options": [{"label": "Red", "description": "Warm"}]}]}})
             continue
+        if "rate limit" in text:
+            send({"method": "account/rateLimits/updated", "params": {"rateLimits": {"limitId": "codex", "primary": {"usedPercent": 77, "windowDurationMins": 300}}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
+            continue
+        # "usage limit" stops the turn on a used-up weekly window resetting in 5d 5h;
+        # FAKE_CODEX_REACHED is the snapshot's rateLimitReachedType.
+        if "usage limit" in text:
+            import time
+            snapshot = {"limitId": "codex", "planType": "pro", "primary": {"usedPercent": 40, "windowDurationMins": 300, "resetsAt": int(time.time()) + 3600},
+                        "secondary": {"usedPercent": 100, "windowDurationMins": 10080, "resetsAt": int(time.time()) + 5 * 86400 + 5 * 3600 - 30}}
+            if os.environ.get("FAKE_CODEX_REACHED"):
+                snapshot["rateLimitReachedType"] = os.environ["FAKE_CODEX_REACHED"]
+            send({"method": "account/rateLimits/updated", "params": {"rateLimits": snapshot}})
+            send({"method": "error", "params": {**ctx, "willRetry": False, "error": {"message": "You've hit your usage limit.", "codexErrorInfo": "usageLimitExceeded"}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "failed", "error": {"message": "You've hit your usage limit."}}}})
+            continue
+        # "approve file" asks to change a file, "approve permissions" to widen the sandbox.
+        if "approve file" in text:
+            pending_ctx = ctx
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "fileChange", "id": "cmd-1", "changes": [{"path": "x", "kind": {"type": "add"}, "diff": "approved"}], "status": "inProgress"}}})
+            send({"id": "approval-1", "method": "item/fileChange/requestApproval", "params": {**ctx, "itemId": "cmd-1", "reason": "write x"}})
+            continue
+        if "approve permissions" in text:
+            pending_ctx = ctx
+            send({"id": "approval-1", "method": "item/permissions/requestApproval", "params": {**ctx, "itemId": "perm-1", "reason": "network access", "permissions": {"network": True}}})
+            continue
+        # In auto, Codex's own reviewer approves the command instead of asking the client.
+        if "approve" in text and params.get("approvalsReviewer") == "auto_review":
+            review = {**ctx, "reviewId": "review-1", "targetItemId": "cmd-1", "action": {"type": "command", "command": "touch x"}, "startedAtMs": 0}
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-1", "command": "touch x", "status": "inProgress"}}})
+            send({"method": "item/autoApprovalReview/started", "params": {**review, "review": {"status": "inProgress"}}})
+            send({"method": "item/autoApprovalReview/completed", "params": {**review, "review": {"status": "approved"}, "decisionSource": "agent", "completedAtMs": 0}})
+            open("x", "w").write("approved\n")
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-1", "command": "touch x", "status": "completed", "aggregatedOutput": "", "exitCode": 0}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
+            continue
         if "approve" in text:
             pending_ctx = ctx
             send({"method": "item/started", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-1", "command": "touch x", "status": "inProgress"}}})
@@ -106,11 +159,20 @@ for line in sys.stdin:
         send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
     elif method == "turn/steer":
         ctx = waiting_ctx
+        if finishing:
+            # The turn ended before the steer got there.
+            finishing = False
+            send({"id": mid, "error": {"code": -32600, "message": "no active turn to steer"}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
+            continue
         if params["expectedTurnId"] != ctx["turnId"]:
             send({"id": mid, "error": {"code": -32600, "message": "turn moved on"}})
             continue
         send({"id": mid, "result": {"turnId": ctx["turnId"]}})
         text = "steered: " + params["input"][0]["text"]
+        # A running turn passes on a new quota reading, as Codex does alongside token usage.
+        if "rate limit" in text:
+            send({"method": "account/rateLimits/updated", "params": {"rateLimits": {"limitId": "codex", "primary": {"usedPercent": 77, "windowDurationMins": 300}}}})
         send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-steer", "text": ""}}})
         send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-steer", "text": text}}})
         send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
@@ -134,15 +196,18 @@ for line in sys.stdin:
         account = None if kind == "none" else {"type": kind, "email": "me@example.com", "planType": "pro"}
         send({"id": mid, "result": {"account": account, "requiresOpenaiAuth": True}})
     elif method == "account/rateLimits/read":
+        # After a successful redemption the session window starts over and one credit is gone.
+        consumed = os.environ.get("FAKE_CODEX_CONSUME_LOG")
+        reset = bool(consumed) and os.path.exists(consumed + ".reset")
         main = {"limitId": "codex", "planType": "pro",
-                "primary": {"usedPercent": 42, "windowDurationMins": 300, "resetsAt": 1790000000},
+                "primary": {"usedPercent": 0 if reset else 42, "windowDurationMins": 300, "resetsAt": 1790000000},
                 "secondary": {"usedPercent": 10.5, "resetsAt": 1790500000}}
         send({"id": mid, "result": {
             "rateLimits": {"limitId": "codex_spark", "primary": {"usedPercent": 99}},
             "rateLimitsByLimitId": {"codex": main, "codex_spark": {"limitId": "codex_spark", "primary": {"usedPercent": 99}}},
-            "rateLimitResetCredits": {"availableCount": 2, "credits": [
+            "rateLimitResetCredits": {"availableCount": 1 if reset else 2, "credits": [
                 {"status": "available", "expiresAt": 1800000000},
-                {"status": "available", "expiresAt": 1795000000},
+                {"status": "redeemed" if reset else "available", "expiresAt": 1795000000},
                 {"status": "redeemed", "expiresAt": 1700000000}]}}})
     elif method == "account/rateLimitResetCredit/consume":
         with open(os.environ["FAKE_CODEX_CONSUME_LOG"], "a") as log:
@@ -152,6 +217,7 @@ for line in sys.stdin:
             os.remove(flag)
             send({"id": mid, "error": {"code": -32000, "message": "upstream unavailable"}})
         else:
+            open(os.environ["FAKE_CODEX_CONSUME_LOG"] + ".reset", "w").close()
             send({"id": mid, "result": {"outcome": "reset"}})
     elif method == "turn/interrupt":
         send({"id": mid, "result": {}})

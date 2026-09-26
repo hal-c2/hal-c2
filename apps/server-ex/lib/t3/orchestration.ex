@@ -1475,6 +1475,13 @@ defmodule T3.Orchestration do
       cwd: cwd,
       scope_id: scope_id,
       model: selection["model"],
+      # The model options picked in the composer: option id -> value.
+      options:
+        for(
+          %{"id" => id, "value" => value} <- List.wrap((selection || %{})["options"]),
+          into: %{},
+          do: {id, value}
+        ),
       runtime_mode: thread["runtimeMode"] || "full-access",
       # How assistant text is written as it streams (`TurnWriter.flush/2`).
       streaming_mode:
