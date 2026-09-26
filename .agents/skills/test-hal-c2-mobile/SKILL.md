@@ -20,7 +20,7 @@ and stop verification. Do not install or switch to another automation system.
 Reuse this task's healthy backend. Otherwise run `vp run dev` from the
 repository root, retain its terminal session, and read the actual backend port
 from the dev-runner output. Use the worktree's ignored `.hal-c2` state. Never run
-against `~/.hal-c2/userdata`. The Browser panel is not required for this workflow.
+against the live `~/.local/share/hal-c2` (or `~/.t3`, `~/.hal-c2`). The Browser panel is not required for this workflow.
 
 Test with meaningful project and thread data. Read the shared
 [SQLite fixture reference](../test-hal-c2-app/references/sqlite-fixtures.md) only

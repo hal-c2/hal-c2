@@ -4,7 +4,7 @@ Load this reference only when inspecting or seeding local HAL-C2 state directly.
 
 ## Select the correct database
 
-When `--base-dir` or `--home-dir` is explicit, runtime state lives under `<base-dir>/userdata` and the database path is `<base-dir>/userdata/state.sqlite`. The `<base-dir>/dev` state directory is only the fallback for an implicit development home, preventing an ordinary `vp run dev` from touching production state.
+When `--base-dir` or `--home-dir` is explicit, data lives under `<base-dir>/data` and the database path is `<base-dir>/data/statev2.sqlite`; a root has no `dev` or `userdata` level. A worktree's `.hal-c2` is such a root. Without one, `vp run dev` uses the `hal-c2-dev` directories (`~/.local/share/hal-c2-dev/statev2.sqlite`), so an ordinary dev run never touches the installed app's `~/.local/share/hal-c2`.
 
 Start the target runtime once before seeding so all migrations have run. Use an isolated base directory. Stop the server before writes to avoid racing application state or an active projection.
 
