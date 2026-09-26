@@ -1384,7 +1384,7 @@ async function main(): Promise<void> {
       // The server begins listening before the ServerEnvironment layer
       // persists the environment id, so poll rather than read once.
       const environmentId = await waitForFileContent(
-        NodePath.join(baseDir, "userdata", "environment-id"),
+        NodePath.join(baseDir, "data", "environment-id"),
         `${environment.label} environment id`,
       );
       showcaseEnvironments.push({ baseDir, environmentId, label: environment.label, port });

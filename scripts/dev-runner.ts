@@ -5,13 +5,12 @@ import * as NodeOS from "node:os";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@hal-c2/shared/Net";
+import { resolveGitWorktreePath, resolveHalC2Location } from "@hal-c2/shared/devHome";
 import {
-  configuredHalC2Home,
-  resolveGitWorktreePath,
-  resolveHalC2Home,
-  resolveWorktreeHalC2Home,
-} from "@hal-c2/shared/devHome";
-import { HostProcessEnvironment, HostProcessWorkingDirectory } from "@hal-c2/shared/hostProcess";
+  HostProcessEnvironment,
+  HostProcessPlatform,
+  HostProcessWorkingDirectory,
+} from "@hal-c2/shared/hostProcess";
 import { resolveSpawnCommand } from "@hal-c2/shared/shell";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -72,9 +71,6 @@ export function isProxiableBindHost(host: string): boolean {
     normalized === "[::]"
   );
 }
-
-/** `~/.hal-c2`, or an existing pre-rename `~/.t3` (see @hal-c2/shared/devHome). */
-export const DEFAULT_HAL_C2_HOME = resolveHalC2Home({ env: {}, homeDir: NodeOS.homedir() });
 
 const MODE_ARGS = {
   dev: [
@@ -271,21 +267,6 @@ export function resolveOffset(config: {
   return Effect.succeed({ offset: 0, source: "default ports" });
 }
 
-function resolveBaseDir(
-  baseDir: string | undefined,
-): Effect.Effect<string, never, FileSystem.FileSystem | Path.Path> {
-  return Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const configured = baseDir?.trim();
-
-    if (configured) {
-      return path.resolve(configured);
-    }
-
-    return yield* DEFAULT_HAL_C2_HOME;
-  });
-}
-
 interface CreateDevRunnerEnvInput {
   readonly mode: DevMode;
   readonly baseEnv: NodeJS.ProcessEnv;
@@ -321,9 +302,9 @@ export function createDevRunnerEnv({
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
     // Precedence (--home-dir > worktree .hal-c2 > ambient HAL_C2_HOME) is resolved
-    // by the caller; an unset halC2Home here genuinely means "use the default".
+    // by the caller; an unset halC2Home means the XDG directories, where the
+    // server picks the hal-c2-dev profile because it has a dev URL.
     const configuredBaseDir = halC2Home?.trim() || undefined;
-    const resolvedBaseDir = yield* resolveBaseDir(configuredBaseDir);
     const isDesktopMode = mode === "dev:desktop";
 
     const output: NodeJS.ProcessEnv = {
@@ -334,13 +315,14 @@ export function createDevRunnerEnv({
         `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
     };
 
+    // An ambient HAL_C2_HOME that the caller did not choose (an old ~/.t3 or
+    // ~/.hal-c2) must not reach the server. T3CODE_HOME stays: it only tells
+    // the server's first-start migration where an old home is.
     if (configuredBaseDir !== undefined) {
-      output.HAL_C2_HOME = resolvedBaseDir;
+      output.HAL_C2_HOME = (yield* Path.Path).resolve(configuredBaseDir);
     } else {
       delete output.HAL_C2_HOME;
     }
-    // The caller already folded a legacy T3CODE_HOME into halC2Home.
-    delete output.T3CODE_HOME;
 
     // A dev-runner server is never launcher-managed. When the shell that runs
     // this script was itself spawned by the machine's managed hal-c2 service (an
@@ -679,21 +661,22 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     const hostEnvironment = yield* HostProcessEnvironment;
     // A dev server started inside a worktree defaults to that worktree's own
     // (gitignored) `.hal-c2` — see @hal-c2/shared/devHome for why this must
-    // outrank an ambient HAL_C2_HOME. `--home-dir` still wins.
-    const worktreeHome = yield* resolveWorktreeHalC2Home(yield* HostProcessWorkingDirectory);
-    // Trim before choosing: `--home-dir ""` is not a selection, and treating it
-    // as one would skip the worktree default and land on the shared home —
-    // exactly the outcome this precedence exists to prevent.
-    const resolvedHalC2Home =
-      (input.halC2Home?.trim() || undefined) ??
-      worktreeHome ??
-      (yield* configuredHalC2Home(hostEnvironment));
+    // outrank an ambient HAL_C2_HOME. `--home-dir` still wins, and with no
+    // root at all the server uses the XDG hal-c2-dev profile.
+    const location = yield* resolveHalC2Location({
+      explicitRoot: input.halC2Home,
+      worktreeCwd: yield* HostProcessWorkingDirectory,
+      env: hostEnvironment,
+      homeDir: hostEnvironment.HOME?.trim() || NodeOS.homedir(),
+      platform: yield* HostProcessPlatform,
+      development: true,
+    });
     const env = yield* createDevRunnerEnv({
       mode: input.mode,
       baseEnv: hostEnvironment,
       serverOffset,
       webOffset,
-      halC2Home: resolvedHalC2Home,
+      halC2Home: location.root,
       browser: input.browser,
       autoBootstrapProjectFromCwd: input.autoBootstrapProjectFromCwd,
       logWebSocketEvents: input.logWebSocketEvents,
@@ -706,10 +689,8 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       serverOffset !== offset || webOffset !== offset
         ? ` selectedOffset(server=${serverOffset},web=${webOffset})`
         : "";
-    const baseDir = env.HAL_C2_HOME ?? (yield* DEFAULT_HAL_C2_HOME);
-
     yield* Effect.logInfo(
-      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.HAL_C2_PORT)} webPort=${String(env.PORT)} baseDir=${baseDir}`,
+      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.HAL_C2_PORT)} webPort=${String(env.PORT)} dataDir=${location.dirs.data}`,
     );
 
     // Before the share block: --dry-run only resolves and prints. Sharing would
@@ -863,7 +844,7 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   halC2Home: Flag.String("home-dir").pipe(
     Flag.withDescription(
-      "Explicit HAL-C2 data directory; runtime state is stored under userdata (equivalent to HAL_C2_HOME). Inside a git worktree this defaults to that worktree's own .hal-c2 so dev state stays off the shared home.",
+      "Keep every HAL-C2 file under this one directory (equivalent to HAL_C2_HOME). Inside a git worktree this defaults to that worktree's own .hal-c2; elsewhere dev state goes to the XDG hal-c2-dev profile, away from an installed HAL-C2.",
     ),
     Flag.optional,
     Flag.map(Option.getOrUndefined),

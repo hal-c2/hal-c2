@@ -1255,7 +1255,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         (root) => Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
       );
 
-      const spawnedHome = (input: {
+      const spawnedEnv = (input: {
         readonly halC2Home: string | undefined;
         readonly cwd: string;
         readonly ambientHome: string | undefined;
@@ -1280,6 +1280,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             Effect.provideService(HostProcessPlatform, "linux"),
             Effect.provideService(HostProcessWorkingDirectory, input.cwd),
             Effect.provideService(HostProcessEnvironment, {
+              HOME: "/home/user",
               ...(input.ambientHome === undefined ? {} : { HAL_C2_HOME: input.ambientHome }),
               ...(input.legacyAmbientHome === undefined
                 ? {}
@@ -1287,9 +1288,11 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             }),
           );
 
-          assert.equal(captured?.T3CODE_HOME, undefined);
-          return captured?.HAL_C2_HOME;
+          return captured;
         });
+
+      const spawnedHome = (input: Parameters<typeof spawnedEnv>[0]) =>
+        spawnedEnv(input).pipe(Effect.map((env) => env?.HAL_C2_HOME));
 
       it.effect("prefers an explicit --home-dir over the worktree default", () =>
         Effect.gen(function* () {
@@ -1298,7 +1301,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const home = yield* spawnedHome({
             halC2Home: "/tmp/explicit-home",
             cwd: root,
-            ambientHome: "/home/user/.hal-c2",
+            ambientHome: "/srv/hal-c2",
           });
           assert.equal(home, path.resolve("/tmp/explicit-home"));
         }).pipe(Effect.scoped),
@@ -1311,7 +1314,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const home = yield* spawnedHome({
             halC2Home: "   ",
             cwd: root,
-            ambientHome: "/home/user/.hal-c2",
+            ambientHome: "/srv/hal-c2",
           });
           assert.equal(home, path.join(path.resolve(root), ".hal-c2"));
         }).pipe(Effect.scoped),
@@ -1324,7 +1327,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const home = yield* spawnedHome({
             halC2Home: undefined,
             cwd: root,
-            ambientHome: "/home/user/.hal-c2",
+            ambientHome: "/srv/hal-c2",
           });
           assert.equal(home, path.join(path.resolve(root), ".hal-c2"));
         }).pipe(Effect.scoped),
@@ -1336,22 +1339,33 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const home = yield* spawnedHome({
             halC2Home: undefined,
             cwd: NodeOS.tmpdir(),
-            ambientHome: "/home/user/.hal-c2",
+            ambientHome: "/srv/hal-c2",
           });
-          assert.equal(home, path.resolve("/home/user/.hal-c2"));
+          assert.equal(home, path.resolve("/srv/hal-c2"));
         }),
       );
 
-      it.effect("carries a legacy ambient T3CODE_HOME forward as HAL_C2_HOME", () =>
+      it.effect("never takes T3CODE_HOME as a home, but passes it on to the migration", () =>
         Effect.gen(function* () {
-          const path = yield* Path.Path;
-          const home = yield* spawnedHome({
+          const env = yield* spawnedEnv({
             halC2Home: undefined,
             cwd: NodeOS.tmpdir(),
             ambientHome: undefined,
-            legacyAmbientHome: "/home/user/.t3",
+            legacyAmbientHome: "/srv/old-t3",
           });
-          assert.equal(home, path.resolve("/home/user/.t3"));
+          assert.equal(env?.HAL_C2_HOME, undefined);
+          assert.equal(env?.T3CODE_HOME, "/srv/old-t3");
+        }),
+      );
+
+      it.effect("does not use an ambient HAL_C2_HOME that names an old home", () =>
+        Effect.gen(function* () {
+          const home = yield* spawnedHome({
+            halC2Home: undefined,
+            cwd: NodeOS.tmpdir(),
+            ambientHome: "/home/user/.t3",
+          });
+          assert.equal(home, undefined);
         }),
       );
 

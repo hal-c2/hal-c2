@@ -649,7 +649,7 @@ export async function seedShowcaseEnvironment(input: {
   if (!primaryProject) throw new Error("The primary showcase workspace is not configured.");
   const workspaceRoot = workspaceRoots.get(primaryProject.id);
   if (!workspaceRoot) throw new Error("The primary showcase workspace is not configured.");
-  const dbPath = NodePath.join(input.baseDir, "userdata", "statev2.sqlite");
+  const dbPath = NodePath.join(input.baseDir, "data", "statev2.sqlite");
   if (primaryProject.id === SHOWCASE_PROJECT_ID) {
     await seedHalC2Workspace(workspaceRoot);
   }
@@ -672,7 +672,7 @@ export async function seedShowcaseEnvironment(input: {
   await waitForSeedableSchema(dbPath);
   seedDatabase(dbPath, workspaceRoots, projects, threads, now);
 
-  const terminalDirectory = NodePath.join(input.baseDir, "userdata", "logs", "terminals");
+  const terminalDirectory = NodePath.join(input.baseDir, "state", "logs", "terminals");
   if (selectedProjectIds.has(SHOWCASE_PROJECT_ID)) {
     const safeThreadId = Buffer.from(SHOWCASE_THREAD_ID).toString("base64url");
     await NodeFSP.mkdir(terminalDirectory, { recursive: true });

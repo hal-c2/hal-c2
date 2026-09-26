@@ -8,29 +8,37 @@
 #   HAL_C2_CHANNEL           release train to follow: stable, nightly, or preview
 #                            (default: stable; preview is a maintainers' test train)
 #   HAL_C2_VERSION           exact version to install (overrides HAL_C2_CHANNEL)
-#   HAL_C2_HOME              HAL-C2 home directory (default: ~/.hal-c2, or an
-#                            existing ~/.t3 from before the rename; the legacy
-#                            T3CODE_HOME is still honoured)
+#   HAL_C2_HOME              keep every HAL-C2 file under this one directory
+#                            (default: the XDG directories, see XDG_DATA_HOME)
+#   XDG_DATA_HOME            base for HAL-C2's data (default: ~/.local/share)
 #   HAL_C2_INSTALL_BIN_DIR   where the `hal-c2` symlink goes (default: ~/.local/bin)
 #   HAL_C2_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
-# The archive is unpacked into $HAL_C2_HOME/runtime/versions/<version>, the
+# The archive is unpacked into <data dir>/runtime/versions/<version>, where the
+# data dir is $XDG_DATA_HOME/hal-c2 (or $HAL_C2_HOME/data), the
 # same layout `hal-c2 service install` uses, so the service reuses this download
 # instead of fetching the release again.
 set -eu
 
 repo="hal-c2/hal-c2"
 base_url="${HAL_C2_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
-# Same order as @hal-c2/shared/devHome: an existing pre-rename ~/.t3 is used in place.
-if [ -n "${HAL_C2_HOME:-}" ]; then
-  hal_c2_home="$HAL_C2_HOME"
-elif [ -n "${T3CODE_HOME:-}" ]; then
-  printf 'hal-c2 install: T3CODE_HOME is deprecated; set HAL_C2_HOME instead.\n' >&2
-  hal_c2_home="$T3CODE_HOME"
-elif [ -d "$HOME/.hal-c2" ] || [ ! -d "$HOME/.t3" ]; then
-  hal_c2_home="$HOME/.hal-c2"
-else
-  hal_c2_home="$HOME/.t3"
+# Same rules as @hal-c2/shared/xdgDirs: an absolute HAL_C2_HOME is a single
+# root unless it names an old home (~/.t3, ~/.hal-c2), which HAL-C2 only
+# migrates from; relative XDG values are ignored.
+data_dir=
+case "${HAL_C2_HOME:-}" in
+  /*)
+    case "${HAL_C2_HOME%/}" in
+      "$HOME/.t3" | "$HOME/.hal-c2") ;;
+      *) data_dir="${HAL_C2_HOME%/}/data" ;;
+    esac
+    ;;
+esac
+if [ -z "$data_dir" ]; then
+  case "${XDG_DATA_HOME:-}" in
+    /*) data_dir="${XDG_DATA_HOME%/}/hal-c2" ;;
+    *) data_dir="$HOME/.local/share/hal-c2" ;;
+  esac
 fi
 bin_dir="${HAL_C2_INSTALL_BIN_DIR:-$HOME/.local/bin}"
 
@@ -180,7 +188,7 @@ esac
 
 stem="hal-c2-${version}-${platform}-${arch}"
 archive="${stem}.tar.gz"
-versions_dir="${hal_c2_home}/runtime/versions"
+versions_dir="${data_dir}/runtime/versions"
 target_dir="${versions_dir}/${version}"
 
 if [ -f "${target_dir}/.install-complete" ] && [ "$(cat "${target_dir}/.install-complete")" = "$version" ]; then

@@ -7,29 +7,33 @@
 #   HAL_C2_CHANNEL           release train to follow: stable, nightly, or preview
 #                            (default: stable; preview is a maintainers' test train)
 #   HAL_C2_VERSION           exact version to install (overrides HAL_C2_CHANNEL)
-#   HAL_C2_HOME              HAL-C2 home directory (default: ~\.hal-c2, or an
-#                            existing ~\.t3 from before the rename; the legacy
-#                            T3CODE_HOME is still honoured)
+#   HAL_C2_HOME              keep every HAL-C2 file under this one directory
+#                            (default: %LOCALAPPDATA%\hal-c2 and %APPDATA%\hal-c2)
 #   HAL_C2_INSTALL_BIN_DIR   where hal-c2.exe is linked (default: ~\.local\bin)
 #   HAL_C2_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
-# The archive is unpacked into $HAL_C2_HOME\runtime\versions\<version>, the
+# The archive is unpacked into <data dir>\runtime\versions\<version>, where the
+# data dir is %LOCALAPPDATA%\hal-c2\data (or $HAL_C2_HOME\data), the
 # same layout `hal-c2 service install` uses, so the service reuses this download.
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $repo = "hal-c2/hal-c2"
 $baseUrl = if ($env:HAL_C2_RELEASE_BASE_URL) { $env:HAL_C2_RELEASE_BASE_URL.TrimEnd("/") } else { "https://github.com/$repo/releases/download" }
-# Same order as @hal-c2/shared/devHome: an existing pre-rename ~\.t3 is used in place.
-$halC2Home = if ($env:HAL_C2_HOME) {
-  $env:HAL_C2_HOME
-} elseif ($env:T3CODE_HOME) {
-  Write-Warning "hal-c2 install: T3CODE_HOME is deprecated; set HAL_C2_HOME instead."
-  $env:T3CODE_HOME
-} elseif ((Test-Path (Join-Path $HOME ".hal-c2") -PathType Container) -or -not (Test-Path (Join-Path $HOME ".t3") -PathType Container)) {
-  Join-Path $HOME ".hal-c2"
-} else {
-  Join-Path $HOME ".t3"
+# Same rules as @hal-c2/shared/xdgDirs: an absolute HAL_C2_HOME is a single
+# root unless it names an old home (~\.t3, ~\.hal-c2), which HAL-C2 only
+# migrates from; a relative LOCALAPPDATA is ignored.
+$dataDir = $null
+if ($env:HAL_C2_HOME -and [IO.Path]::IsPathRooted($env:HAL_C2_HOME)) {
+  $root = $env:HAL_C2_HOME.TrimEnd("\", "/")
+  $legacyHomes = @((Join-Path $HOME ".t3"), (Join-Path $HOME ".hal-c2"))
+  if ($legacyHomes -notcontains $root) {
+    $dataDir = Join-Path $root "data"
+  }
+}
+if (-not $dataDir) {
+  $localAppData = if ($env:LOCALAPPDATA -and [IO.Path]::IsPathRooted($env:LOCALAPPDATA)) { $env:LOCALAPPDATA } else { Join-Path $HOME "AppData\Local" }
+  $dataDir = Join-Path $localAppData "hal-c2\data"
 }
 $binDir = if ($env:HAL_C2_INSTALL_BIN_DIR) { $env:HAL_C2_INSTALL_BIN_DIR } else { Join-Path $HOME ".local\bin" }
 
@@ -165,7 +169,7 @@ if ($version -match '-preview\.') {
 
 $stem = "hal-c2-$version-win32-$arch"
 $archive = "$stem.zip"
-$versionsDir = Join-Path $halC2Home "runtime\versions"
+$versionsDir = Join-Path $dataDir "runtime\versions"
 $targetDir = Join-Path $versionsDir $version
 $marker = Join-Path $targetDir ".install-complete"
 

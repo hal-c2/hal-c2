@@ -67,7 +67,8 @@ describe.skipIf(HostProcessPlatform.defaultValue() !== "linux")("installer termi
           TERM: "xterm",
           NO_COLOR: "1",
           HAL_C2_VERSION: version,
-          HAL_C2_HOME: NodePath.join(root, "home"),
+          HAL_C2_HOME: undefined,
+          XDG_DATA_HOME: NodePath.join(root, "data"),
           HAL_C2_INSTALL_BIN_DIR: NodePath.join(root, "bin"),
           HAL_C2_RELEASE_BASE_URL: `http://127.0.0.1:${address.port}`,
         },
@@ -87,7 +88,7 @@ describe.skipIf(HostProcessPlatform.defaultValue() !== "linux")("installer termi
           child.on("error", reject);
           child.on("close", resolve);
         });
-        const versions = NodePath.join(root, "home/runtime/versions");
+        const versions = NodePath.join(root, "data/hal-c2/runtime/versions");
         if (fail) {
           expect(code).not.toBe(0);
           expect(output).toContain("500");
