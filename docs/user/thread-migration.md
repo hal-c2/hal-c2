@@ -1,4 +1,4 @@
-# Threads from older HAL-C2 versions
+# Threads from older versions
 
 On your first V2 launch, HAL-C2 copies the V1 database, `state.sqlite`, into `statev2.sqlite`
 in the same data directory and migrates the copy. Your threads appear automatically, with full

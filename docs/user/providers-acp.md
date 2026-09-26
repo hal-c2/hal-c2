@@ -26,7 +26,7 @@ code; review an agent's source and license before adding it.
 ## Where agents run
 
 Registry agents always run on the machine that hosts your HAL-C2 server. That stays true when you
-connect through `app.hal-c2.example`, HAL-C2 Connect, or a relay.
+connect through a hosted web app, HAL-C2 Connect, or a relay.
 
 Agents install under `tools/<agent-id>/<version>/` inside HAL-C2 home. HAL-C2 verifies SHA-256 when the Registry entry
 provides one; entries without a checksum retain the Registry's HTTPS distribution guarantee.

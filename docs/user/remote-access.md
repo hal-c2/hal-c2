@@ -6,7 +6,14 @@ machine. That machine must stay running and reachable while you work.
 ## HAL-C2 Connect
 
 HAL-C2 Connect makes an environment available to your other devices without setting
-up router forwarding. In the desktop app on the host, open **Settings →
+up router forwarding. It runs through a relay you host yourself; there is no
+public HAL-C2 relay. Deploy one as described in
+[HAL-C2 Connect setup](../operations/connect-setup.md), then point the server at it
+with `HALC2_RELAY_URL` (for example `https://relay.hal-c2.example`, a placeholder for
+your own domain) and set `HALC2_HOSTED_APP_URL` to the web app that completes
+sign-in for headless hosts (placeholder `https://app.hal-c2.example`).
+
+In the desktop app on the host, open **Settings →
 Connections**, sign in, and enable **HAL-C2 Connect** for that environment.
 
 For a command-line host, run:
@@ -110,7 +117,8 @@ If that port is already in use, choose another with
 
 ### Hosted web app
 
-[app.hal-c2.example](https://app.hal-c2.example) needs an HTTPS endpoint. It connects directly
+A hosted copy of the web app (`app.hal-c2.example` stands in for wherever you host it)
+needs an HTTPS endpoint. It connects directly
 to your server; a hosted pairing link does not make an unreachable backend
 reachable or convert HTTP to HTTPS.
 

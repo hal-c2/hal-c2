@@ -10,14 +10,17 @@ launch HAL-C2 and configure providers afterwards.
 
 ## Command line
 
+The install script downloads the `hal-c2` archive for your platform from
+[GitHub Releases](https://github.com/hal-c2/hal-c2/releases) and verifies it:
+
 ```bash
-curl -fsSL https://hal-c2.example/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/hal-c2/hal-c2/main/scripts/install.sh | sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-irm https://hal-c2.example/install.ps1 | iex
+irm https://raw.githubusercontent.com/hal-c2/hal-c2/main/scripts/install.ps1 | iex
 ```
 
 This puts `hal-c2` in `~/.local/bin`. If your shell reports `command not found`
@@ -35,8 +38,8 @@ line to add. Set `HALC2_CHANNEL=nightly` to install the nightly train, or
 
 Run `hal-c2 --help` for the full reference.
 
-To try HAL-C2 once without installing it, run `npx hal-c2@latest` instead (needs
-Node.js for `npx`).
+The `hal-c2` npm package is not yet published, so `npx hal-c2` does not work
+yet.
 
 ### Intel Macs
 
@@ -53,17 +56,16 @@ node apps/server/dist/bin.mjs
 `hal-c2 update` and the background service do not apply to a server run this way;
 update it with `git pull` and a rebuild.
 
+### Coming from T3 Code
+
+If `~/.t3` exists from T3 Code, HAL-C2 uses it as its home in place of
+`~/.hal-c2`, keeping your projects, threads, and settings. Wherever these guides
+say `~/.hal-c2`, read `~/.t3`. Set `HALC2_HOME` to choose another directory.
+
 ## Desktop app
 
-Download a release from [GitHub Releases](https://github.com/hal-c2/hal-c2/releases),
-or use a package manager:
-
-| Platform           | Install                      |
-| ------------------ | ---------------------------- |
-| Windows            | `winget install HalC2.HalC2` |
-| macOS              | `brew install --cask hal-c2` |
-| Arch Linux         | `yay -S hal-c2-bin`          |
-| Arch Linux nightly | `yay -S hal-c2-nightly-bin`  |
+Download a release from [GitHub Releases](https://github.com/hal-c2/hal-c2/releases).
+Package-manager installs (winget, Homebrew, AUR) are not yet published for HAL-C2.
 
 ### Windows Subsystem for Linux
 
@@ -87,16 +89,14 @@ command cannot reach the app, start or update the desktop app and try again.
 
 ## Mobile app
 
-Install HAL-C2 from the
-[App Store](https://apps.apple.com/us/app/hal-c2-remote-claude-more/id6787819824) or
-[Google Play](https://play.google.com/store/apps/details?id=io.github.halc2.halc2).
-The phone connects to a server on another machine. Follow
+The HAL-C2 mobile app is not yet published to the App Store or Google Play;
+until it is, build it from source. The phone connects to a server on another machine. Follow
 [remote access](./remote-access.md) to link it through HAL-C2 Connect or a pairing URL.
 
 If the app crashes during launch, open Settings → Diagnostics on the next launch
 that succeeds. It lists startup crashes from the last 7 days with the error and
 component stack that store crash reports leave out. Copy the report and paste it
-into a GitHub issue. Error messages can quote values from the app, so read it over
+into an issue on [hal-c2/hal-c2](https://github.com/hal-c2/hal-c2/issues). Error messages can quote values from the app, so read it over
 before sharing.
 
 ## Providers

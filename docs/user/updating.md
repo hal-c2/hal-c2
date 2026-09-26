@@ -22,7 +22,7 @@ If you previously enabled continuation for updates, enable this setting once
 to allow recovery without a connected client.
 
 Updates from the previous orchestration system preserve conversation transcripts but cannot carry
-every kind of runtime history forward. Read [Threads from older HAL-C2 versions](./thread-migration.md)
+every kind of runtime history forward. Read [Threads from older versions](./thread-migration.md)
 before continuing an important older thread.
 
 ## When versions don't match
@@ -58,10 +58,6 @@ asks before restarting the background service; if you decline, run
 stop it and start it again afterwards with your usual options such as `--host`
 or `--tailscale-serve`.
 
-If you run the server with `npx` rather than an installed `hal-c2`, there is
-nothing to update on the host: stop the server and relaunch it as
-`npx hal-c2@<client-version>` with the same subcommand and options.
-
 ## If an update fails
 
 Keep the client open until it reconnects or reports a failure. A failed service
@@ -73,8 +69,9 @@ update can roll back to the previous version. If the update still fails:
 
 ## Mobile updates
 
-Install App Store or Google Play releases as usual. The mobile app can also
-download updates in the background and apply them when you next leave the app.
+The mobile app is not yet published to the App Store or Google Play, so install
+new builds the way you installed the first one. A build with over-the-air updates
+configured can also download updates in the background and apply them when you next leave the app.
 It saves drafts and queued messages before restarting. If you keep the app open
 for a long time, it may ask to install immediately; choosing **Later** leaves the
 update queued for the next suitable moment.
