@@ -6,7 +6,7 @@
 import type { OrchestrationThread } from "@t3tools/contracts";
 
 import type { TuiClient, TuiThreadPage } from "../../src/connection.ts";
-import { thread as baseThread } from "./fakeClient.ts";
+import { project, shell, thread as baseThread } from "./fakeClient.ts";
 import { boot, snapshot, useClient, type World } from "./world.ts";
 
 type Activity = OrchestrationThread["activities"][number];
@@ -27,6 +27,8 @@ export interface ThreadWorld extends World {
   thread?: OrchestrationThread;
   page?: TuiThreadPage;
   respond?: ClientResponses;
+  /** Title of the thread's project (Background "a connected environment with the project …"). */
+  projectTitle?: string;
 }
 
 /** Ten minutes ago: fixtures are relative to the host's real clock. */
@@ -214,6 +216,9 @@ export async function openThread(
   ctx.thread = detail;
   useClient(ctx, {
     detail,
+    ...(ctx.projectTitle !== undefined && {
+      shellSnapshot: shell(undefined, [{ ...project, title: ctx.projectTitle }] as never),
+    }),
     approve: (...args) => (respond.approve ?? (async () => {}))(...args),
     respondUserInput: (...args) => (respond.respondUserInput ?? (async () => {}))(...args),
     implementPlan: (...args) => (respond.implementPlan ?? (async () => {}))(...args),

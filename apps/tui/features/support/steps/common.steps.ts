@@ -84,3 +84,20 @@ step(
     expect(await app.snapshot()).not.toContain(text);
   },
 );
+
+// --- added by T2 ---
+// The status message: the host's `status` key and the status line both carry it.
+async function expectStatusLine(ctx: World, text: string) {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const frame = await snapshot(ctx);
+  expect((ctx.host!.state.get("status") as { text: string }).text).toBe(text);
+  expect(frame).toContain(text);
+}
+
+step("the status line says {string}", expectStatusLine);
+step("the user is told {string}", expectStatusLine);
+
+// The thread steps boot on a project with this title (see threadWorld.ts).
+step("a connected environment with the project {string}", (ctx: World, title: string) => {
+  (ctx as World & { projectTitle?: string }).projectTitle = title;
+});
