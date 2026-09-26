@@ -90,3 +90,31 @@ export function prepareTerminalViewport(
     // Best effort: tmux may disappear between environment detection and launch.
   }
 }
+
+/** How long the terminal gets to answer the capability handshake before the second log. */
+export const COLOR_CAPABILITY_SETTLE_MS = 2000;
+
+/**
+ * Colour bugs are environment-dependent (SSH drops COLORTERM, multiplexers
+ * rewrite TERM) and invisible in the output itself, so record what the
+ * renderer actually detected: once right after startup and once after the
+ * capability handshake has settled.
+ */
+export function scheduleColorCapabilityLog(input: {
+  readonly log: (line: string) => void;
+  readonly capabilities: () => unknown;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly schedule?: (run: () => void, ms: number) => void;
+}): void {
+  const env = input.env ?? process.env;
+  const schedule =
+    input.schedule ?? ((run: () => void, ms: number) => setTimeout(run, ms).unref?.());
+  const record = (stage: string) =>
+    input.log(
+      `[color-caps ${stage}] TERM=${env.TERM ?? ""} COLORTERM=${
+        env.COLORTERM ?? ""
+      } caps=${JSON.stringify(input.capabilities())}`,
+    );
+  record("startup");
+  schedule(() => record("settled"), COLOR_CAPABILITY_SETTLE_MS);
+}

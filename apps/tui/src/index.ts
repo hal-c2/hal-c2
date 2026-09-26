@@ -13,6 +13,7 @@ import { createHost } from "./host/host.ts";
 import {
   ensureColorCapabilityEnv,
   prepareTerminalViewport,
+  scheduleColorCapabilityLog,
   TUI_RENDERER_CONFIG,
 } from "./terminalStartup.ts";
 
@@ -136,18 +137,7 @@ async function main(): Promise<void> {
   const tmuxPassthrough = detectKittyGraphicsTerminal();
   const renderer = await createCliRenderer(TUI_RENDERER_CONFIG);
 
-  // Colour bugs are environment-dependent (SSH drops COLORTERM, multiplexers
-  // rewrite TERM) and invisible in the output itself, so record what the
-  // renderer actually detected: once right after startup and once after the
-  // capability handshake has settled.
-  const logColorCapabilities = (stage: string) =>
-    appendLog(
-      `[color-caps ${stage}] TERM=${process.env.TERM ?? ""} COLORTERM=${
-        process.env.COLORTERM ?? ""
-      } caps=${JSON.stringify(renderer.capabilities)}`,
-    );
-  logColorCapabilities("startup");
-  setTimeout(() => logColorCapabilities("settled"), 2000).unref?.();
+  scheduleColorCapabilityLog({ log: appendLog, capabilities: () => renderer.capabilities });
   installKittyClipboardExtension(renderer, {
     tmuxPassthrough,
   });

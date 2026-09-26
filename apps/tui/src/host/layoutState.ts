@@ -35,13 +35,14 @@ export interface TuiLayoutState extends ChatColumnLayout, ChatVerticalLayout {
    * The detail panel slot (`ShellWindow.rightPanelComponent`). `kind` names
    * the panel the host opened ("sourceControl", "files", …); `asMain` means
    * the main column is too narrow to share, so the panel replaces the
-   * conversation until it closes.
+   * conversation until it closes. `focused` says the panel has the keys.
    */
   readonly rightPanel: {
     readonly visible: boolean;
     readonly kind: string | null;
     readonly asMain: boolean;
     readonly width: number;
+    readonly focused: boolean;
   };
   /** The terminal drawer slot (`ShellWindow.drawerComponent`) under the conversation. */
   readonly drawer: { readonly open: boolean; readonly rows: number };
@@ -54,6 +55,7 @@ export interface TuiLayoutInput {
   readonly size: TuiSize;
   readonly sidebarCollapsed: boolean;
   readonly rightPanel: string | null;
+  readonly rightPanelFocused?: boolean;
   readonly mode: TuiMode;
   readonly drawerOpen?: boolean;
   /** The user's drawer height; defaults to 40% of the terminal. */
@@ -99,6 +101,7 @@ export function buildTuiLayoutState(input: TuiLayoutInput): TuiLayoutState {
       kind: input.rightPanel,
       asMain: columns.rightPanelAsMain,
       width: columns.rightPanelAsMain ? columns.mainWidth : columns.rightWidth,
+      focused: input.rightPanel !== null && input.rightPanelFocused === true,
     },
     drawer: { open: input.drawerOpen === true, rows: vertical.terminalRows },
     contentWidth,

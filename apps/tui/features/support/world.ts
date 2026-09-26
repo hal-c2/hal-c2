@@ -36,6 +36,8 @@ export interface World extends StepContext {
   clipboard?: string[];
   /** False makes the terminal refuse the clipboard (OSC 52 unsupported). */
   clipboardSupported?: boolean;
+  /** Deliver the first snapshot right after boot (scenarios that start on an open thread). */
+  connectOnBoot?: boolean;
 }
 
 /** Set up the fake client before boot; later calls replace it only if not booted. */
@@ -83,6 +85,7 @@ export async function boot(
   );
   ctx.cleanups.push(() => app.destroy());
   Object.assign(ctx, { columns, rows, host, app });
+  if (ctx.connectOnBoot) fake.connect();
   return app;
 }
 
@@ -116,8 +119,11 @@ const NAMED_KEYS: Record<string, string> = {
   right: "ARROW_RIGHT",
   home: "HOME",
   end: "END",
+  // KeyCodes has no page keys: the raw sequences parse to pageup / pagedown.
   pageup: "\x1b[5~",
   pagedown: "\x1b[6~",
+  pgup: "\x1b[5~",
+  pgdn: "\x1b[6~",
   space: " ",
 };
 

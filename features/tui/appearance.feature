@@ -49,7 +49,7 @@ Feature: Colour, icons, mouse and images in the terminal
       | failed                   | ✕     | red     |
       | ready                    | ○     | cyan    |
       | completed                | ✓     | green   |
-      | idle                     | ○     | gray    |
+      | sitting idle             | ○     | gray    |
 
   @tui
   Scenario: A pending approval outranks a running session

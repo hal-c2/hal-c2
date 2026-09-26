@@ -9,11 +9,29 @@ ShellWindow {
     property alias conversation: conversationView
     readonly property string mode: Shell.state.mode
 
+    // The source-control panel fills `layout.rightPanel` when that is its kind.
+    rightPanelComponent: Shell.state.layout.rightPanel.kind === "sourceControl" ? sourceControlPanel : null
+    Component {
+        id: sourceControlPanel
+        RightPanel {
+            flexGrow: 1
+            width: Shell.state.layout.rightPanel.asMain
+                ? Shell.state.layout.mainWidth
+                : Shell.state.layout.rightPanel.width
+        }
+    }
+
+    // The conversation, or the settings page in its place.
     Conversation {
         id: conversationView
-        visible: Shell.state.page.kind !== "draft"
+        visible: Shell.state.page.kind !== "draft" && !Shell.state.settings.active
         flexGrow: 1
         flexShrink: 1
+    }
+    Loader {
+        id: settingsLoader
+        active: Shell.state.settings.active
+        SettingsPage { flexGrow: 1 }
     }
     NewThreadForm { flexGrow: 1; flexShrink: 1 }
     CommandPalette {}
@@ -21,7 +39,9 @@ ShellWindow {
         height: Shell.state.layout.composerRows
     }
     PromptBox {
-        visible: Shell.state.overlay === null && Shell.state.page.kind !== "draft"
+        visible: Shell.state.overlay === null
+            && Shell.state.page.kind !== "draft"
+            && !Shell.state.settings.active
     }
 
     Shortcut {
@@ -46,7 +66,7 @@ ShellWindow {
     }
     Shortcut {
         sequence: "ctrl+l"
-        enabled: shell.mode === "compose"
+        enabled: shell.mode === "compose" || shell.mode === "panel"
         onActivated: Shell.dispatch("rightPanel.toggle", { kind: "sourceControl" })
     }
     Shortcut {
@@ -103,6 +123,27 @@ ShellWindow {
 
     // The new-thread form.
     Shortcut { sequence: "escape"; enabled: shell.mode === "newThread"; onActivated: Shell.dispatch("newThread.cancel") }
+
+    // The source-control panel: ↑/↓ move, Enter runs, Esc hands the keys
+    // back; in commit mode Esc cancels the message.
+    Shortcut { sequence: "up"; enabled: shell.mode === "panel"; onActivated: Shell.dispatch("git.previous") }
+    Shortcut { sequence: "down"; enabled: shell.mode === "panel"; onActivated: Shell.dispatch("git.next") }
+    Shortcut { sequence: "return"; enabled: shell.mode === "panel"; onActivated: Shell.dispatch("git.activate") }
+    Shortcut { sequence: "escape"; enabled: shell.mode === "panel"; onActivated: Shell.dispatch("rightPanel.blur") }
+    Shortcut { sequence: "escape"; enabled: shell.mode === "commit"; onActivated: Shell.dispatch("git.commit.cancel") }
+
+    // The settings page: PgUp/PgDn scroll, Esc closes. (DiffViewer keeps its own keys.)
+    Shortcut { sequence: "escape"; enabled: shell.mode === "settings"; onActivated: Shell.dispatch("settings.close") }
+    Shortcut {
+        sequence: "pagedown"
+        enabled: shell.mode === "settings"
+        onActivated: settingsLoader.item?.scroll(Math.max(1, Shell.state.size.rows - 4))
+    }
+    Shortcut {
+        sequence: "pageup"
+        enabled: shell.mode === "settings"
+        onActivated: settingsLoader.item?.scroll(-Math.max(1, Shell.state.size.rows - 4))
+    }
 
     // The renderer does not exit on Ctrl+C; the app tears down in order.
     Shortcut { sequence: "ctrl+c"; onActivated: Shell.dispatch("app.quit") }

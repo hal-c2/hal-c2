@@ -74,7 +74,7 @@ Window {
             width: win.layout.rightPanel.asMain ? win.layout.mainWidth : win.layout.rightPanel.width
             flexShrink: 0
             flexDirection: "column"
-            Loader { id: rightPanelLoader }
+            Loader { id: rightPanelLoader; active: win.layout.rightPanel.visible }
         }
     }
 

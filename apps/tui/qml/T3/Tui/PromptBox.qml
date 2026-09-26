@@ -24,6 +24,7 @@ Rectangle {
         focus: Shell.state.mode === "compose"
         wrapMode: "word"
         placeholderText: "Ask anything"
+        placeholderColor: Theme.colors.faint
         onTextEdited: Shell.dispatch("composer.text.set", { text: text })
     }
 }

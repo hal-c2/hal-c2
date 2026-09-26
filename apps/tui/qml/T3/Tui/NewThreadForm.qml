@@ -79,6 +79,7 @@ Rectangle {
             height: 1
             focus: form.draft !== null && Shell.state.mode === "newThread"
             placeholderText: "What should the agent do?"
+            placeholderColor: Theme.colors.faint
             color: Theme.colors.text
             focusedColor: Theme.colors.text
             backgroundColor: Theme.colors.bg

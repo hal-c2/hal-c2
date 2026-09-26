@@ -214,6 +214,7 @@ export const ShellRightPanelKind = Schema.Literals([
   "pull-request",
   "pull-requests",
   "device",
+  "source-control",
 ]);
 export type ShellRightPanelKind = typeof ShellRightPanelKind.Type;
 

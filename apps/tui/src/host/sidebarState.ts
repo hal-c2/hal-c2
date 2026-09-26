@@ -1,6 +1,7 @@
 import { canSnooze, snoozeWakeLabel } from "@t3tools/client-runtime/state/thread-settled";
 import type {
   ShellSidebarDraft,
+  ShellSidebarProject,
   ShellSidebarState,
   ShellSidebarThread,
   ShellSidebarThreadStatus,
@@ -9,7 +10,7 @@ import type {
 import type { OrchestrationShellSnapshot } from "../connection.ts";
 import type { Row, SidebarSection } from "../components/Sidebar.logic.ts";
 import type { TuiThreadShell } from "../orchestrationV2Adapter.ts";
-import { relativeTime, resolveThreadStatus } from "../theme.ts";
+import { relativeTime, resolveProjectStatus, resolveThreadStatus } from "../theme.ts";
 
 /**
  * The TUI talks to one environment, so every key is scoped to this id. It
@@ -63,11 +64,19 @@ export type TuiSidebarRow =
       readonly projectName: string;
     };
 
+/** A project plus its most urgent thread status (null glyph when every thread is idle). */
+export interface TuiSidebarProject extends ShellSidebarProject {
+  readonly glyph: string | null;
+  readonly glyphColor: string | null;
+  readonly statusLabel: string | null;
+}
+
 /**
  * Published under `sidebar`: the desktop shell's contract, so shared bricks
  * keep working, plus the flat `rows` the terminal list paints and the filter.
  */
 export interface TuiSidebarState extends ShellSidebarState {
+  readonly projects: ReadonlyArray<TuiSidebarProject>;
   readonly rows: ReadonlyArray<TuiSidebarRow>;
   readonly filter: string;
   /** The slice of `rows` that fits the list's height, scrolled to keep the selection in view. */
@@ -217,14 +226,24 @@ export function buildTuiSidebarState(input: TuiSidebarStateInput): TuiSidebarSta
     if (thread.archivedAt != null) continue;
     threadCount.set(thread.projectId, (threadCount.get(thread.projectId) ?? 0) + 1);
   }
-  const projects = (shell?.projects ?? []).map((project) => ({
-    key: projectKey(project.id),
-    displayName: project.title,
-    environmentId: TUI_ENVIRONMENT_ID,
-    projectId: project.id as string,
-    workspaceRoot: project.workspaceRoot,
-    threadCount: threadCount.get(project.id) ?? 0,
-  }));
+  const projects = (shell?.projects ?? []).map((project): TuiSidebarProject => {
+    const status = resolveProjectStatus(
+      (shell?.threads ?? []).filter(
+        (thread) => thread.projectId === project.id && thread.archivedAt == null,
+      ),
+    );
+    return {
+      key: projectKey(project.id),
+      displayName: project.title,
+      environmentId: TUI_ENVIRONMENT_ID,
+      projectId: project.id as string,
+      workspaceRoot: project.workspaceRoot,
+      threadCount: threadCount.get(project.id) ?? 0,
+      glyph: status?.glyph ?? null,
+      glyphColor: status?.color ?? null,
+      statusLabel: status?.label ?? null,
+    };
+  });
 
   return {
     projects,

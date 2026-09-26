@@ -8,9 +8,18 @@ import {
   SIDEBAR_SETTLED_SECTION_ID,
 } from "../components/Sidebar.logic.ts";
 import { createStore, type StatusKind, type StoreState } from "../store.ts";
-import { buildTuiLayoutState, type TuiMode, type TuiSize } from "./layoutState.ts";
+import { revertableCheckpoints } from "../timeline.ts";
+import { detailCommands } from "./detailCommands.ts";
+import {
+  buildTuiLayoutState,
+  type TuiLayoutState,
+  type TuiMode,
+  type TuiSize,
+} from "./layoutState.ts";
 import { createNewThreadFlow, type NewThreadSettings } from "./newThread.ts";
+import { buildTuiSettingsState } from "./settingsState.ts";
 import { buildTuiSidebarState, idFromKey, projectKey, threadKey } from "./sidebarState.ts";
+import { createSourceControl, SOURCE_CONTROL_PANEL } from "./sourceControl.ts";
 import { createThreadActions } from "./threadActions.ts";
 import { createTuiTheme, TUI_THEME_STATE, type TuiTheme } from "./theme.ts";
 import { createThreadView } from "./threadView.ts";
@@ -98,8 +107,11 @@ export function createHost(options: HostOptions): Host {
   let mode: TuiMode = "compose";
   let size = options.size;
   let sidebarCollapsed = false;
-  // The detail panel's kind ("sourceControl", …) or null when closed.
+  // The detail panel's kind ("sourceControl", …) or null when closed, and
+  // whether it has the keys (a focused source-control panel is "panel" mode).
   let rightPanel: string | null = null;
+  let rightPanelFocused = false;
+  let settingsOpen = false;
   let drawerOpen = false;
   let drawerRows: number | null = null;
   let composerText = "";
@@ -140,11 +152,13 @@ export function createHost(options: HostOptions): Host {
     setMode: (next) => setMode(next),
     nowMs: () => Date.parse(now()),
   });
+  let layout: TuiLayoutState;
   const publishLayout = () => {
-    const layout = buildTuiLayoutState({
+    layout = buildTuiLayoutState({
       size,
       sidebarCollapsed,
       rightPanel,
+      rightPanelFocused,
       mode,
       drawerOpen,
       drawerRows,
@@ -153,6 +167,17 @@ export function createHost(options: HostOptions): Host {
     });
     state.set("layout", layout);
     threadView.setPaneWidth(layout.contentWidth);
+  };
+  const publishSettings = () => {
+    const current = store.getState();
+    state.set(
+      "settings",
+      buildTuiSettingsState({
+        active: settingsOpen,
+        detail: current.detail,
+        vcsStatus: current.vcsStatus,
+      }),
+    );
   };
   const publishSidebar = () => {
     const next = store.getState();
@@ -220,6 +245,10 @@ export function createHost(options: HostOptions): Host {
       publishPage();
     }
     threadView.sync(next, prev);
+    sourceControl.publish(prev, next);
+    if (!prev || prev.detail !== next.detail || prev.vcsStatus !== next.vcsStatus) {
+      publishSettings();
+    }
   };
 
   /** "compose" means the prompt has the keys, or an open question when one waits. */
@@ -232,6 +261,29 @@ export function createHost(options: HostOptions): Host {
   };
   // Where keys go when a menu, prompt or palette closes.
   const restingMode = (): TuiMode => (newThread.draft() ? "newThread" : "compose");
+
+  /** Open `kind` in the detail panel (null closes it); a focused panel takes the keys. */
+  const setRightPanel = (kind: string | null, focused: boolean) => {
+    const wasSourceControl = rightPanel === SOURCE_CONTROL_PANEL;
+    rightPanel = kind;
+    rightPanelFocused = kind !== null && focused;
+    const isSourceControl = rightPanel === SOURCE_CONTROL_PANEL;
+    if (isSourceControl !== wasSourceControl) sourceControl.panelChanged(isSourceControl);
+    publishLayout();
+    if (rightPanelFocused && isSourceControl) setMode(sourceControl.focusMode());
+    else if (mode === "panel" || mode === "commit") setMode(restingMode());
+  };
+  const sourceControl = createSourceControl({
+    store,
+    state,
+    setMode: (next) => setMode(next),
+    panel: () => ({
+      open: rightPanel === SOURCE_CONTROL_PANEL,
+      focused: rightPanel === SOURCE_CONTROL_PANEL && rightPanelFocused,
+    }),
+    focusPanel: () => setRightPanel(SOURCE_CONTROL_PANEL, true),
+    copyToClipboard: options.copyToClipboard,
+  });
 
   const unknownActions = new Set<string>();
   const dispatch = (action: string, payload?: unknown) => {
@@ -293,15 +345,38 @@ export function createHost(options: HostOptions): Host {
         return;
       case "rightPanel.toggle": {
         const kind = payloadField(payload, "kind");
-        const next = typeof kind === "string" ? kind : "sourceControl";
-        rightPanel = rightPanel === next ? null : next;
-        publishLayout();
+        const next = typeof kind === "string" ? kind : SOURCE_CONTROL_PANEL;
+        if (rightPanel === next) setRightPanel(null, false);
+        else setRightPanel(next, true);
         return;
       }
+      case "rightPanel.open": {
+        const kind = payloadField(payload, "kind");
+        setRightPanel(typeof kind === "string" ? kind : SOURCE_CONTROL_PANEL, true);
+        return;
+      }
+      case "rightPanel.focus":
+        setRightPanel(rightPanel ?? SOURCE_CONTROL_PANEL, true);
+        return;
+      case "rightPanel.blur":
+        // A panel standing in for the conversation closes when it gives the keys back.
+        if (layout.rightPanel.asMain) setRightPanel(null, false);
+        else setRightPanel(rightPanel, false);
+        return;
       case "rightPanel.close":
         if (rightPanel === null) return;
-        rightPanel = null;
-        publishLayout();
+        setRightPanel(null, false);
+        return;
+      case "settings.open":
+        if (mode === "diff") dispatch("diff.close");
+        settingsOpen = true;
+        publishSettings();
+        setMode("settings");
+        return;
+      case "settings.close":
+        settingsOpen = false;
+        publishSettings();
+        if (mode === "settings") setMode(restingMode());
         return;
       case "terminal.toggle":
         drawerOpen = !drawerOpen;
@@ -331,6 +406,7 @@ export function createHost(options: HostOptions): Host {
         return;
       default:
         if (threadView.dispatch(action, payload)) return;
+        if (sourceControl.dispatch(action, payload)) return;
         if (unknownActions.has(action)) return;
         unknownActions.add(action);
         log(`t3 tui: unknown shell action "${action}"`);
@@ -348,6 +424,14 @@ export function createHost(options: HostOptions): Host {
     settlementSupported: () => settlementSupported,
     dispatch,
     copyToClipboard: options.copyToClipboard,
+    // The source-control panel, diff viewer and settings entries.
+    moreCommands: () =>
+      detailCommands({
+        panelOpen: rightPanel === SOURCE_CONTROL_PANEL,
+        hasCheckpoints:
+          revertableCheckpoints(store.getState().detail?.checkpoints ?? []).length > 0,
+        dispatch,
+      }),
   });
   const newThread = createNewThreadFlow({
     client,

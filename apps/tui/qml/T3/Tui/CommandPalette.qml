@@ -27,6 +27,7 @@ Rectangle {
         height: 1
         focus: palette.state.open && Shell.state.mode === "command"
         placeholderText: "Type a command"
+        placeholderColor: Theme.colors.faint
         color: Theme.colors.text
         focusedColor: Theme.colors.text
         backgroundColor: Theme.colors.bg

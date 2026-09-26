@@ -5,6 +5,7 @@ import { expect } from "bun:test";
 import type { TuiNewThreadState } from "../../../src/host/newThread.ts";
 import type { TuiOverlayState } from "../../../src/host/threadActions.ts";
 import { step } from "../../steps.ts";
+import { focusPanel } from "../gitWorld.ts";
 import {
   addProject,
   addThread,
@@ -940,6 +941,22 @@ step(
   },
 );
 
+step("{string} is offered", async (ctx: World, command: string) => {
+  expect(palette(ctx).items.map((item) => item.title)).toContain(command);
+  expect(await snapshot(ctx)).toContain(command);
+});
+
+step("the user chooses {string} from the command palette", async (ctx: World, command: string) => {
+  await ui(ctx);
+  await pressKey(ctx, "Ctrl+K");
+  await typeText(ctx, command);
+  const index = palette(ctx).items.findIndex((item) => item.title === command);
+  expect(index, `no "${command}" in the palette`).toBeGreaterThanOrEqual(0);
+  for (let i = 0; i < index; i += 1) await pressKey(ctx, "Down");
+  await pressKey(ctx, "Enter");
+  await flush(ctx);
+});
+
 step("the palette shows that there are no matching commands", async (ctx: World) => {
   expect(palette(ctx).items).toEqual([]);
   expect(await snapshot(ctx)).toContain("No matching commands");
@@ -977,7 +994,9 @@ step("the row for {string} reads {string}", async (ctx: World, title: string, la
 
 // --- New thread -------------------------------------------------------------
 
-step("the user is looking at a thread in {string}", (ctx: ThreadsWorld, project: string) => {
+step("the user is looking at a thread in {string}", async (ctx: ThreadsWorld, project: string) => {
+  // In a git world (source-control features) the thread is its checkout's; look at its panel.
+  if ((ctx as World & { scm?: unknown }).scm) return focusPanel(ctx);
   // This environment starts new threads in a new worktree unless told otherwise.
   env(ctx).defaultThreadEnvMode = "worktree";
   addThread(ctx, "Current work", { project, branch: "main" });

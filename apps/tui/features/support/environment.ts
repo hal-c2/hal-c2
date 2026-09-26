@@ -271,6 +271,12 @@ export async function flush(ctx: World): Promise<void> {
 
 /** The running client, connected to the environment (booted on first use). */
 export async function ui(ctx: World) {
+  // Another world (git, thread) brought its own client: boot on that instead.
+  if (ctx.fake && !(ctx as EnvWorld).env) {
+    const app = await boot(ctx);
+    await flush(ctx);
+    return app;
+  }
   const environment = env(ctx);
   if (!ctx.fake) installClient(ctx);
   const app = await boot(ctx);

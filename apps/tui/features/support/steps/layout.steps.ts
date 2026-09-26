@@ -13,6 +13,7 @@ import {
 import type { TuiLayoutState } from "../../../src/host/layoutState.ts";
 import { step } from "../../steps.ts";
 import { addThread, flush, ui } from "../environment.ts";
+import { ready } from "../gitWorld.ts";
 import { sidebar } from "../threadUi.ts";
 import {
   boot,
@@ -45,8 +46,10 @@ function longPrompt(ctx: World, lines: number): string {
 
 // --- Detail panel -----------------------------------------------------------
 
+// Shared with the git steps: a git world (gitWorld.ts `scm`) boots on its thread first.
 step("the user opens the source-control panel", async (ctx: World) => {
-  await boot(ctx);
+  if ((ctx as World & { scm?: unknown }).scm) await ready(ctx);
+  else await boot(ctx);
   await press(ctx, "Ctrl+L");
   expect(layout(ctx).rightPanel).toMatchObject({ visible: true, kind: "sourceControl" });
 });

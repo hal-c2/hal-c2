@@ -81,6 +81,8 @@ export interface ThreadActionsContext {
   /** Host dispatch, for palette commands that belong to other areas. */
   readonly dispatch: (action: string, payload?: unknown) => void;
   readonly copyToClipboard?: ((text: string) => boolean) | undefined;
+  /** Palette commands other areas contribute (source control, diffs, settings). */
+  readonly moreCommands?: () => Command[];
 }
 
 const field = (payload: unknown, name: string): unknown =>
@@ -304,6 +306,7 @@ export function createThreadActions(ctx: ThreadActionsContext) {
       keywords: "search",
       run: run("sidebar.filter.focus"),
     });
+    list.push(...(ctx.moreCommands?.() ?? []));
     return list;
   };
 

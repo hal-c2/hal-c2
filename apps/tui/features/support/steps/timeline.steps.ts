@@ -719,12 +719,16 @@ step("the diff viewer is open", async (ctx: ThreadWorld) => {
   expect(findObject(ctx, "diffViewer").get("visible")).toBe(true);
 });
 
+// After the diff viewer (here) or the settings page (settings.steps.ts) closes.
 step("the conversation is shown again", async (ctx: ThreadWorld) => {
   const screen = await snapshot(ctx);
   expect(hostState(ctx, "mode")).toBe("compose");
+  expect(hostState(ctx, "settings").active).toBe(false);
+  expect(() => findObject(ctx, "settingsPage")).toThrow();
   expect(findObject(ctx, "diffViewer").get("visible")).toBe(false);
+  expect(geometry(findObject(ctx, "conversation")).visible).toBe(true);
   expect(findObject(ctx, "timeline").get("visible")).toBe(true);
-  expect(screen).toContain("Done.");
+  if (ctx.thread) expect(screen).toContain("Done.");
   expect(screen).not.toContain("diff · ");
 });
 

@@ -130,3 +130,14 @@ step("the prompt is empty", async (ctx: World) => {
   const composer = ctx.host!.state.get("composer") as { text?: string } | undefined;
   expect(composer?.text ?? "").toBe("");
 });
+
+// --- added by T4 ---
+
+step("the prompt has focus", async (ctx: World) => {
+  await snapshot(ctx);
+  expect(ctx.host!.state.get("mode")).toBe("compose");
+});
+
+step("the user presses escape", async (ctx: World) => {
+  await pressKey(ctx, "Esc");
+});
