@@ -275,6 +275,16 @@ Feature: Reading a thread in the terminal
     When the user presses "Esc"
     Then the workspace is unchanged
 
+  @tui @backlog
+  Scenario: The revert picker sits above the prompt in the error colour
+    Given the revert picker is open
+    Then a box with a rounded border in the error colour sits above the prompt
+    And the box's first row reads "revert ▸ pick a checkpoint — discards changes made after it"
+    And "revert ▸ " is in the error colour and the rest of the row in the dim colour
+    And the box's second row reads "▸ turn 3 · 3 files" with "▸" in the accent colour and the rest in the text colour
+    And the box's third row is in the dim colour
+    And the box's last row reads "↑/↓ select · Enter revert · Esc cancel" in the dim colour
+
   @backlog @tui
   Scenario: The user compares against a base ref and hides whitespace
     When the user reviews the thread's changes against "main" ignoring whitespace

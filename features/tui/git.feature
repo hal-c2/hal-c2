@@ -4,6 +4,7 @@
 #   apps/tui/src/components/ChatView.tsx (onRunGitAction, commit mode, PR link copy)
 #   apps/tui/src/components/ChatView.layout.ts (panel replaces the main pane when narrow)
 #   apps/tui/src/hooks/useKeyBindings.ts (panel and commit modes)
+#   apps/tui/src/components/ChatComposer.tsx (commit mode)
 #   apps/tui/src/features.backlog.test.ts (branch-worktree-management, pull-request-checkout,
 #     repository-setup-publishing, git-operation-progress)
 #   Shared domain: source-control/ owns git status, refs, worktrees and pull requests.
@@ -152,6 +153,14 @@ Feature: Source control from the terminal
     Given the prompt is asking for a commit message
     When the user presses "Esc"
     Then no commit is made
+
+  @tui @backlog
+  Scenario: The commit prompt takes the prompt's place
+    Given the prompt is asking for a commit message
+    Then the prompt has a rounded border in the accent colour
+    And the prompt's first row reads "commit ▸ Commit message…"
+    And "commit ▸ " is in the accent colour and "Commit message…" in the dim colour
+    And the prompt's second row reads "Enter commit · Esc cancel" in the dim colour
 
   @tui
   Scenario: A commit-and-push with nothing to commit just pushes

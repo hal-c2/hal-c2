@@ -4,6 +4,7 @@
 #   apps/tui/src/components/ChatView.tsx (thread context menu, palette thread actions)
 #   apps/tui/src/components/ContextMenu.tsx, ContextMenu.test.tsx
 #   apps/tui/src/components/ThreadOverlays.tsx (confirm delete)
+#   apps/tui/src/components/ChatComposer.tsx (rename mode)
 #   apps/tui/src/commands.ts, commands.test.ts (palette fuzzy ranking)
 #   apps/tui/src/components/CommandPalette.tsx, CommandPalette.test.tsx
 #   apps/tui/src/features.backlog.test.ts (archived-threads)
@@ -212,6 +213,72 @@ Feature: Thread list and thread actions in the terminal
     Given the command palette is open
     When the user types "zzzz"
     Then the palette shows that there are no matching commands
+
+  # The OpenTUI client's overlays: the command palette (CommandPalette.tsx), the
+  # thread context menu (ContextMenu.tsx), the rename prompt (ChatComposer.tsx's
+  # rename mode) and the delete confirmation (ThreadOverlays.tsx).
+
+  @tui @backlog
+  Scenario: The command palette is a rounded box over the prompt
+    When the user opens the command palette
+    Then the palette has a rounded border in the accent colour
+    And the palette's first row reads "⌘ Type a command…"
+    And the palette's "⌘" is in the accent colour and "Type a command…" in the dim colour
+    And the palette's last row reads "↑/↓ select · Enter run · Esc close" in the dim colour
+    And the prompt is still shown under the palette
+
+  @tui @backlog
+  Scenario: The highlighted command is marked and shows its shortcut
+    When the user opens the command palette
+    Then the palette's second row reads "▸ New thread  ^N"
+    And that row has the selected background across the palette
+    And its "▸" is in the accent colour, "New thread" in the text colour and "^N" in the background colour
+    And the palette's third row is in the dim colour
+
+  @tui @backlog
+  Scenario: A palette with no matches says so in the dim colour
+    Given the command palette is open
+    When the user types "zzzz"
+    Then the palette's second row reads "no matching command" in the dim colour
+
+  @tui @backlog
+  Scenario: A long command list is windowed around the highlighted command
+    Given the terminal is 100 columns wide and 24 rows tall
+    And the command palette is open
+    When the user presses "Up"
+    Then the last command is highlighted and shown in the palette
+    And "New thread" is not shown in the palette
+
+  @tui @backlog
+  Scenario: The context menu is a rounded box whose items are dim until highlighted
+    When the user opens the menu for "Alpha"
+    Then the context menu has a rounded border in the faint colour
+    And the highlighted item is marked "▸" in the accent colour and reads in the text colour on the selected background
+    And the other enabled items are in the dim colour
+    And "Delete" is in the error colour
+    And every separator is a faint line as wide as the items
+
+  @tui @backlog
+  Scenario: Pointing at a context menu item highlights it
+    Given the user opened the menu for "Alpha"
+    When the pointer moves over "Copy thread ID"
+    Then "Copy thread ID" is highlighted
+
+  @tui @backlog
+  Scenario: The rename prompt takes the prompt's place
+    Given the user is renaming the thread "Alpha"
+    Then the prompt has a rounded border in the accent colour
+    And the prompt's first row reads "rename ▸ Alpha"
+    And "rename ▸ " is in the accent colour
+    And the prompt's second row reads "Enter rename · Esc cancel" in the dim colour
+
+  @tui @backlog
+  Scenario: The delete confirmation sits above the prompt
+    Given the client is asking to confirm deleting "Alpha"
+    Then a box with a rounded border in the error colour sits above the prompt
+    And the box's first row reads "delete Alpha — this can't be undone"
+    And "delete " is in the error colour, "Alpha" in the text colour and " — this can't be undone" in the dim colour
+    And the box's second row reads "y delete · n / Esc cancel" in the dim colour
 
   # The OpenTUI client's thread list (Sidebar.tsx): a rounded faint frame, the
   # "HAL-C2 Code" header, a search box, the project row and the "Threads" heading

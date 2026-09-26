@@ -254,3 +254,74 @@ Feature: Composer controls and new-thread drafts in the terminal
   Scenario: A thread in a repository names its checkout under the composer
     Given the thread works in the project's checkout on "main"
     Then under the composer "Local checkout" is on the left and "branch main" on the right in the dim colour
+
+  # The OpenTUI client's pickers (SelectOverlay.tsx) and add-project flow
+  # (AddProjectOverlay.tsx) float above the prompt, which stays in place.
+
+  @tui @backlog
+  Scenario: A picker is a rounded box above the prompt, headed by its title and keys
+    When the user opens the runtime access picker
+    Then the picker has a rounded border in the accent colour
+    And the picker's first row reads "access ▸ ↑/↓ or click · Enter apply · Esc cancel"
+    And "access ▸ " is in the accent colour and "↑/↓ or click · Enter apply · Esc cancel" in the dim colour
+    And the prompt is still shown under the picker
+
+  @tui @backlog
+  Scenario: Each picker option is its name over its description
+    When the user opens the runtime access picker
+    Then the picker's rows read:
+      | row                                                                |
+      |   Supervised                                                       |
+      |     Ask before commands and file changes.                          |
+      |   Auto-accept edits                                                |
+      |     Auto-approve edits, ask before other actions.                  |
+      |   Auto                                                             |
+      |     An AI reviewer approves routine actions; risky ones still ask. |
+      | ▸ Full access                                                      |
+      |     Allow commands and edits without prompts.                      |
+    And both rows of "Full access" have the selected background
+    And the description of "Full access" is in the background colour
+    And "Supervised" and its description are in the dim colour
+
+  @tui @backlog
+  Scenario Outline: A picker with nothing to show says why
+    Given the model list <condition>
+    When the user presses "Ctrl+Shift+M"
+    Then the picker's second row reads "<text>" in the <colour> colour
+
+    Examples:
+      | condition        | text              | colour |
+      | is still loading | loading…          | dim    |
+      | fails to load    | failed to load    | error  |
+      | is empty         | nothing to choose | dim    |
+
+  @tui @backlog
+  Scenario: Adding a project opens above the prompt with its sources listed
+    When the user chooses "Add project" from the command palette
+    Then the add-project box has a rounded border in the accent colour
+    And the prompt is still shown under the add-project box
+    And the add-project box's first row reads "＋ Search project sources…" with "Select" at its right end in the accent colour
+    And the add-project box's second row reads "New project · Source ▸ ↑/↓ navigate · Enter select · Tab edit · Esc back"
+    And the add-project box's next rows read "▸ Local folder" and "    Browse a folder on disk"
+
+  @tui @backlog
+  Scenario: A source that needs setup says so in the warning colour
+    When the user chooses "Add project" from the command palette
+    Then "GitHub repository" is followed by "  setup required" in the warning colour
+    And "GitHub repository" is in the faint colour
+
+  @tui @backlog
+  Scenario: Tab moves between the add-project field and its list
+    Given the user chose "Add project" from the command palette
+    When the user presses "Tab"
+    Then the add-project field has the keys
+    And the add-project box's second row reads "New project · Source ▸ Enter action · Tab browse · Esc back"
+    When the user presses "Tab"
+    Then the add-project list has the keys again
+
+  @tui @backlog
+  Scenario: Browsing a local folder names the path and its action
+    When the user chooses "Add project" from the command palette
+    And the user chooses the "Local folder" source
+    Then the add-project box's first row ends with "Add" in the accent colour
+    And the add-project box's second row reads "New project · Local folder ▸ Enter action · Tab browse · Esc back"
