@@ -5,7 +5,7 @@
 #   apps/server-ex/lib/hal_c2/provider_updates.ex (claudeAgent advisory, claude update)
 #   apps/server-ex/lib/hal_c2/provider_usage_limits/claude.ex (get_usage)
 #   apps/server-ex/lib/hal_c2/text_generation.ex (claude -p)
-#   apps/server/src/provider/Layers/ClaudeProvider.ts, apps/server/src/provider/ClaudeModelCatalog.ts, apps/server/src/provider/ClaudeModelManifest.ts
+#   apps/server/src/provider/Layers/ClaudeProvider.ts, apps/server/src/provider/ClaudeModelCatalog.ts, apps/server/src/provider/ClaudeModelManifest.ts, apps/server/src/provider/model-manifest.json
 #   apps/server/src/provider/Drivers/ClaudeDriver.ts, apps/server/src/provider/Drivers/ClaudeHome.ts
 #   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts
 #   apps/server/src/provider/Layers/claudeUsageLimits.ts
@@ -43,10 +43,15 @@ Feature: Claude
     When the user opens the update details for Claude
     Then the user is told to update Claude by hand
 
-  Scenario: Claude offers its model aliases
+  Scenario: Claude offers the models of the bundled model manifest
     When the user opens the model picker for Claude
-    Then Sonnet, Opus and Haiku are offered
-    And Sonnet is the default
+    Then the manifest's Claude models are offered in its order
+    And models the manifest marks as legacy are labelled legacy
+
+  Scenario: Claude models that need a newer CLI are not offered
+    Given the installed Claude is older than a model requires
+    When the user opens the model picker for Claude
+    Then that model is not offered
 
   Scenario: Claude shows the signed-in account
     Given the Claude CLI is signed in with a subscription
@@ -117,10 +122,9 @@ Feature: Claude
     Then each instance uses its own account and history
 
   @backlog
-  Scenario: Claude models come from the model manifest
+  Scenario: Claude models come from the fetched model manifest
     When the model manifest lists a new Claude model
     Then the new model is offered after the next refresh
-    And models the manifest marks as legacy are labelled legacy
 
   @backlog
   Scenario: A Claude model that needs a newer CLI is explained

@@ -100,15 +100,39 @@ defmodule HalC2.Steps.Providers.Claude do
     Map.put(context, :models, claude(providers)["models"])
   end
 
-  step "Sonnet, Opus and Haiku are offered", context do
-    assert ["Claude Sonnet", "Claude Opus", "Claude Haiku"] ==
-             Enum.map(context.models, & &1["name"])
+  step "the manifest's Claude models are offered in its order", context do
+    offered = Enum.map(context.models, & &1["slug"])
+    catalog = Enum.map(claude_manifest()["models"], & &1["slug"])
+    assert offered != [] and offered == Enum.filter(catalog, &(&1 in offered))
+    context
+  end
+
+  step "models the manifest marks as legacy are labelled legacy", context do
+    legacy = for m <- claude_manifest()["models"], m["status"] == "legacy", do: m["slug"]
+    assert Enum.any?(context.models, & &1["isLegacy"])
+
+    for model <- context.models,
+        do: assert(model["isLegacy"] == model["slug"] in legacy, model["slug"])
 
     context
   end
 
-  step "Sonnet is the default", context do
-    assert [%{"slug" => "sonnet"}] = Enum.filter(context.models, & &1["isDefault"])
+  step "the installed Claude is older than a model requires", context do
+    {providers, context} = World.provider_list(context)
+    version = claude(providers)["version"]
+
+    gated =
+      Enum.find(claude_manifest()["models"], fn m ->
+        min = get_in(m, ["adapter", "claudeCode", "minVersion"])
+        min && Version.compare(version, min) == :lt
+      end)
+
+    assert gated, "the fake Claude (#{version}) is new enough for every manifest model"
+    Map.put(context, :gated, gated["slug"])
+  end
+
+  step "that model is not offered", context do
+    refute Enum.any?(context.models, &(&1["slug"] == context.gated))
     context
   end
 
@@ -495,5 +519,12 @@ defmodule HalC2.Steps.Providers.Claude do
     )
 
     context
+  end
+
+  defp claude_manifest do
+    Path.expand("../../../../server/src/provider/model-manifest.json", __DIR__)
+    |> File.read!()
+    |> JSON.decode!()
+    |> get_in(["providers", "claudeAgent"])
   end
 end

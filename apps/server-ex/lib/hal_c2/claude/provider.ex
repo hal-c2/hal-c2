@@ -1,15 +1,13 @@
 defmodule HalC2.Claude.Provider do
   @moduledoc """
   The Claude entry in this node's `ServerConfig.providers`, present when the `claude`
-  CLI is on the node's PATH. Models are the CLI's aliases, which it resolves to the
-  current model of each family.
+  CLI is on the node's PATH. Models are the Claude catalog of the bundled model manifest,
+  read at compile time, less those the installed CLI is too old to run.
   """
 
-  @models [
-    %{"slug" => "sonnet", "name" => "Claude Sonnet", "isDefault" => true},
-    %{"slug" => "opus", "name" => "Claude Opus", "isDefault" => false},
-    %{"slug" => "haiku", "name" => "Claude Haiku", "isDefault" => false}
-  ]
+  @manifest Path.expand("../../../../server/src/provider/model-manifest.json", __DIR__)
+  @external_resource @manifest
+  @catalog @manifest |> File.read!() |> JSON.decode!() |> get_in(["providers", "claudeAgent"])
 
   @spec entry() :: map | nil
   def entry do
@@ -29,11 +27,7 @@ defmodule HalC2.Claude.Provider do
         "availability" => "available",
         "auth" => %{"status" => "authenticated"},
         "checkedAt" => HalC2.Orchestration.Entities.now(),
-        "models" =>
-          for(
-            m <- @models,
-            do: Map.merge(m, %{"isCustom" => false, "capabilities" => nil})
-          ),
+        "models" => models(version(path)),
         "slashCommands" => [
           %{
             "name" => "compact",
@@ -44,6 +38,32 @@ defmodule HalC2.Claude.Provider do
       }
     else
       _ -> nil
+    end
+  end
+
+  # The catalog's models the CLI at `version` can run, in manifest order.
+  defp models(version) do
+    for model <- @catalog["models"], runs?(model, version) do
+      %{
+        "slug" => model["slug"],
+        "name" => model["name"],
+        "aliases" => model["aliases"] || [],
+        "isCustom" => false,
+        "isDefault" => model["slug"] == @catalog["defaults"]["chat"],
+        "isLegacy" => model["status"] == "legacy",
+        # Reasoning, fast mode and context window need the session to pass them to the CLI.
+        "capabilities" => nil
+      }
+      |> then(&if model["badge"], do: Map.put(&1, "badge", model["badge"]), else: &1)
+    end
+  end
+
+  # A model gated on a CLI version is left out while the installed version is unknown.
+  defp runs?(model, version) do
+    case {get_in(model, ["adapter", "claudeCode", "minVersion"]), Version.parse(version)} do
+      {nil, _} -> true
+      {min, {:ok, v}} -> Version.compare(v, min) != :lt
+      {_, :error} -> false
     end
   end
 

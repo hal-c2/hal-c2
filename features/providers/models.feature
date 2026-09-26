@@ -1,5 +1,5 @@
 # Sources:
-#   apps/server-ex/lib/hal_c2/codex/provider.ex (model/list), apps/server-ex/lib/hal_c2/claude/provider.ex (aliases)
+#   apps/server-ex/lib/hal_c2/codex/provider.ex (model/list), apps/server-ex/lib/hal_c2/claude/provider.ex (the bundled manifest's Claude catalog)
 #   apps/server-ex/lib/hal_c2/acp.ex (models from the model config option, subProvider)
 #   apps/server-ex/lib/hal_c2/settings.ex (textGenerationModelSelection, defaultModelSelection dropped for disabled providers)
 #   apps/server-ex/lib/hal_c2/text_generation.ex (defaults and fallback)
