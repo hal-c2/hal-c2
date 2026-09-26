@@ -1,12 +1,18 @@
 defmodule Mix.Tasks.T3.Connect do
-  @shortdoc "Shows or turns off this node's T3 Connect setup"
+  @shortdoc "Sets up, shows or turns off this node's T3 Connect link"
   @moduledoc """
   The operator's side of T3 Connect on the host (`t3 connect`, `apps/server/src/cli/connect.ts`):
 
+      mix t3.connect            # sign in, link on next start, offer the background service
+      mix t3.connect login      # sign in only
+      mix t3.connect link       # sign in and link on next start
       mix t3.connect status     # the saved sign-in and link settings
       mix t3.connect unlink     # stops exposing the node; the sign-in stays
       mix t3.connect logout     # unlinks and forgets the sign-in
 
+  Signing in opens the hosted app in a browser on this machine; over SSH, or with
+  `--headless`, it prints a link and a short code to approve on another device
+  (`T3.Connect.OAuth`). The node links itself with the saved sign-in when it starts.
   `status` reads what is saved; it does not test whether the node is reachable.
   `unlink` and `logout` stop a running node's tunnel through its own
   `/api/connect/unlink`, revoke the link at the relay, and clear the saved link.
@@ -19,13 +25,201 @@ defmodule Mix.Tasks.T3.Connect do
     Mix.Task.run("app.config")
     {:ok, _} = Application.ensure_all_started([:exqlite, :inets, :crypto])
 
+    {opts, args} = OptionParser.parse!(args, strict: [headless: :boolean])
+
     case args do
-      ["status"] -> Mix.shell().info(status())
-      ["unlink"] -> disconnect(false)
-      ["logout"] -> disconnect(true)
-      _ -> Mix.raise("Usage: mix t3.connect status | unlink | logout")
+      [] ->
+        connect(opts)
+
+      ["login"] ->
+        login(opts)
+
+      ["link"] ->
+        link(opts)
+
+      ["status"] ->
+        Mix.shell().info(status())
+
+      ["unlink"] ->
+        disconnect(false)
+
+      ["logout"] ->
+        disconnect(true)
+
+      _ ->
+        Mix.raise("Usage: mix t3.connect [login | link | status | unlink | logout] [--headless]")
     end
   end
+
+  defp connect(opts) do
+    Mix.shell().info("T3 Connect\n")
+
+    with {:ok, identity} <- link_environment(opts) do
+      # Show which account was linked before the machine is brought online.
+      Mix.shell().info("✓ Authorized#{as(identity)}")
+
+      if offer_service() do
+        Mix.shell().info(
+          if match?({:unix, :darwin}, Application.get_env(:t3, :service_platform, :os.type())),
+            do:
+              "\n✓ Background service ready\n\nT3 Code is set to run while you are logged in to this Mac. The server establishes the T3 Connect link on startup.",
+            else:
+              "\n✓ Background service ready\n\nT3 Code is set to keep running after you log out. The server establishes the T3 Connect link on startup."
+        )
+      else
+        Mix.shell().info(
+          "\nNext\n  Start the server with `mix t3.server` to make this machine reachable."
+        )
+      end
+    end
+  end
+
+  defp login(opts) do
+    Mix.shell().info("T3 Connect\n")
+    with {:ok, identity} <- authorize(opts), do: Mix.shell().info("✓ Signed in#{as(identity)}")
+  end
+
+  defp link(opts) do
+    Mix.shell().info("T3 Connect\n")
+
+    with {:ok, identity} <- link_environment(opts) do
+      Mix.shell().info(
+        "✓ Authorized#{as(identity)}\n\nNext\n  Start the server with `mix t3.server` to make this machine reachable."
+      )
+    end
+  end
+
+  # The relay client first (the tunnel needs it), then the sign-in, then the wish to link.
+  defp link_environment(opts) do
+    with {:ok, version} <- relay_client_ready(),
+         Mix.shell().info("✓ Relay client ready · cloudflared #{version}"),
+         {:ok, identity} <- authorize(opts) do
+      T3.Connect.Secrets.put("cloud-cli-desired-link", "managed")
+      {:ok, identity}
+    end
+  end
+
+  defp relay_client_ready do
+    report = fn
+      %{"type" => "progress", "stage" => stage} ->
+        Mix.shell().info("Relay client: #{String.replace(stage, "_", " ")}...")
+
+      _ ->
+        :ok
+    end
+
+    install = fn ->
+      case T3.Connect.RelayClient.install(report) do
+        {:ok, %{"version" => version}} -> {:ok, version}
+        {:error, %{"message" => message}} -> Mix.raise(message)
+      end
+    end
+
+    case T3.Connect.RelayClient.resolve() do
+      %{"status" => "available", "version" => version} ->
+        {:ok, version}
+
+      %{"status" => "unsupported"} ->
+        install.()
+
+      %{"version" => version} ->
+        if Mix.shell().yes?(
+             "The T3 relay client is required for T3 Connect. Download and install version #{version}?"
+           ) do
+          install.()
+        else
+          Mix.shell().info("T3 Connect setup cancelled. The relay client was not installed.")
+          :cancelled
+        end
+    end
+  end
+
+  # A stored sign-in is reused; otherwise a browser here, or a device code over SSH.
+  defp authorize(opts) do
+    alias T3.Connect.OAuth
+
+    result =
+      cond do
+        token = OAuth.stored() ->
+          {:ok, token["identity"]}
+
+        opts[:headless] || OAuth.headless_session?() ->
+          OAuth.device(fn %{uri: uri, code: code, expires_in: expires_in} ->
+            Mix.shell().info(
+              Enum.join(
+                [
+                  "Headless authorization",
+                  "Open this URL on a device with a browser:",
+                  "  #{uri}",
+                  "",
+                  "Confirm this code when asked: #{code}",
+                  "",
+                  "Waiting for approval (expires in #{max(1, round(expires_in / 60))} min). Press Ctrl+C to cancel."
+                ],
+                "\n"
+              )
+            )
+          end)
+
+        true ->
+          OAuth.loopback(fn url ->
+            Mix.shell().info(
+              "Open this URL to authorize T3 Connect:\n  #{url}\n\nNo browser on this device? Run `mix t3.connect --headless` instead."
+            )
+          end)
+      end
+
+    case result do
+      {:ok, identity} -> {:ok, identity}
+      {:error, message} -> Mix.raise(message)
+    end
+  end
+
+  # `offerServiceDuringOnboarding` (`apps/server/src/cli/service.ts`): true once the
+  # node runs as a background service.
+  defp offer_service do
+    status = T3.Service.status()
+
+    cond do
+      not status["supported"] ->
+        false
+
+      status["installed"] and status["current"] ->
+        Mix.shell().info("T3 Code is already set up to run in the background on this machine.")
+        true
+
+      Mix.shell().yes?(service_question(status)) ->
+        case T3.Service.install() do
+          {:ok, result} ->
+            Mix.shell().info(
+              "Background service #{if result["previouslyInstalled"], do: "updated", else: "installed"}. Logs: #{result["logPath"]}"
+            )
+
+            true
+
+          {:error, message} ->
+            Mix.shell().error("Background setup did not finish: #{message}")
+            false
+        end
+
+      true ->
+        false
+    end
+  end
+
+  defp service_question(%{"installed" => true}),
+    do: "The installed T3 Code service needs an update or repair. Update it now?"
+
+  defp service_question(_) do
+    if match?({:unix, :darwin}, Application.get_env(:t3, :service_platform, :os.type())),
+      do:
+        "Run T3 Code in the background whenever you log in to this Mac? It stays reachable through T3 Connect while you are logged in.",
+      else:
+        "Run T3 Code in the background whenever this machine boots? It stays reachable through T3 Connect even after you log out."
+  end
+
+  defp as(nil), do: ""
+  defp as(identity), do: " as #{identity}"
 
   defp status do
     alias T3.Connect.Secrets

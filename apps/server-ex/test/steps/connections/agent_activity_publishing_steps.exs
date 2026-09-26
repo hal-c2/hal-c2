@@ -111,9 +111,7 @@ defmodule T3.Steps.Connections.AgentActivityPublishing do
   step "the node restarts without finishing it", context do
     ExUnit.Callbacks.stop_supervised(T3.Connect.Supervisor)
     node = Node.restart(context.node)
-    thread = World.thread_id(context, @thread)
-    assert thread in T3.Orchestration.Recovery.run()
-    World.await_row(thread, &(&1["status"] == "interrupted"))
+    World.await_row(World.thread_id(context, @thread), &(&1["status"] == "interrupted"))
     Node.ensure(T3.Connect.Supervisor)
     Map.put(context, :node, node)
   end

@@ -87,16 +87,22 @@ defmodule T3.Connect.Jwt do
 
   @doc """
   Checks a DPoP proof for `method` and `url`: `{:ok, %{thumbprint, jti}}` or
-  `{:error, code}` (`packages/shared/src/dpop.ts`).
+  `{:error, code}` (`packages/shared/src/dpop.ts`). With `access_token`, the proof
+  must name it (`ath`), as a request with a DPoP-bound token does.
   """
-  def verify_dpop(proof, method, url, now \\ System.os_time(:second)) do
+  def verify_dpop(proof, method, url, now \\ System.os_time(:second), access_token \\ nil) do
     with [h, p, s] <- String.split(proof || "", "."),
          {:ok, %{"typ" => "dpop+jwt", "alg" => "ES256", "jwk" => jwk}} <- decode(h),
-         {:ok, %{"htm" => htm, "htu" => htu, "jti" => jti, "iat" => iat}}
+         {:ok, %{"htm" => htm, "htu" => htu, "jti" => jti, "iat" => iat} = claims}
          when is_integer(iat) and is_binary(jti) <- decode(p),
          {:ok, point} <- ec_point(jwk),
          :ok <- check(String.upcase(htm) == String.upcase(method), :method_mismatch),
          :ok <- check(htu == htu(url), :url_mismatch),
+         :ok <-
+           check(
+             access_token == nil or claims["ath"] == b64(:crypto.hash(:sha256, access_token)),
+             :ath_mismatch
+           ),
          {:ok, <<r::256, s::256>>} <- Base.url_decode64(s, padding: false),
          der = :public_key.der_encode(:"ECDSA-Sig-Value", {:"ECDSA-Sig-Value", r, s}),
          :ok <-

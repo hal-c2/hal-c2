@@ -333,7 +333,11 @@ defmodule T3.Steps.Connections.T3Connect do
     {200, %{"credential" => credential}, _} = context.minted
     assert {200, %{"access_token" => access}} = exchange(context, credential, context.device)
 
-    assert {200, %{"authenticated" => true}} =
+    # The session is bound to the device's key: it needs a proof, not just the token.
+    assert {200, %{"authenticated" => true, "sessionMethod" => "dpop-access-token"}} =
+             dpop_request(base(context), :get, "/api/auth/session", access, context.device)
+
+    assert {200, %{"authenticated" => false}} =
              Node.http(context.node, :get, "/api/auth/session", bearer: access)
 
     # One use only.
@@ -509,10 +513,7 @@ defmodule T3.Steps.Connections.T3Connect do
   end
 
   step "a node linked from the command line", context do
-    context = cli_link(context)
-    context = %{context | node: Node.restart(context.node), clients: %{}}
-    assert %{"state" => "linked"} = T3.Connect.Link.status()
-    context
+    linked_from_command_line(context)
   end
 
   step "the node shuts down", context do
@@ -735,6 +736,566 @@ defmodule T3.Steps.Connections.T3Connect do
     context
   end
 
+  # --- reaching a node through its tunnel ------------------------------------------------
+
+  step "a device signed in to the same account chooses it", context do
+    choose(context)
+  end
+
+  step "the device connects through the node's tunnel address", context do
+    env = context.node.environment
+    %{"endpoint" => endpoint} = context.chosen
+    edge = context.relay.edge
+
+    # The account lists the node at its tunnel address, not the host's own origin.
+    assert endpoint["httpBaseUrl"] == edge
+    assert endpoint["wsBaseUrl"] == String.replace_prefix(edge, "http", "ws")
+    refute edge == base(context)
+
+    {:ok, {{_, 200, _}, _, reply}} =
+      :httpc.request(:get, {~c"#{edge}/.well-known/t3/environment", []}, [], body_format: :binary)
+
+    assert %{"environmentId" => ^env} = JSON.decode!(reply)
+    assert_receive {:fake_relay_edge, ^env}, 1_000
+
+    context = tunnel_session(context)
+    assert_receive {:fake_relay_edge, ^env}, 1_000
+    {settings, client} = Node.call!(context.tunnel_client, env, "server.getSettings")
+    assert is_map(settings)
+    Map.put(context, :tunnel_client, client)
+  end
+
+  step "a device connected through T3 Connect", context do
+    context |> link() |> choose() |> tunnel_session()
+  end
+
+  step "its access credential expires", context do
+    expire(context.tunnel_access)
+
+    # The next request finds the session gone; the socket it opened is not asked again.
+    assert {200, %{"authenticated" => false}} =
+             dpop_request(
+               context.relay.edge,
+               :get,
+               "/api/auth/session",
+               context.tunnel_access,
+               context.device
+             )
+
+    context
+  end
+
+  step "it is renewed without closing the connection", context do
+    env = context.node.environment
+    old = context.tunnel_access
+
+    # The client asks the relay for a fresh credential for its key and retries once.
+    assert {:ok, access} = renew(context)
+    refute access == old
+
+    assert {200, %{"authenticated" => false}} =
+             dpop_request(context.relay.edge, :get, "/api/auth/session", old, context.device)
+
+    assert {200, %{"authenticated" => true, "sessionMethod" => "dpop-access-token"}} =
+             dpop_request(context.relay.edge, :get, "/api/auth/session", access, context.device)
+
+    # The socket opened with the first session still answers on the same connection.
+    {_, client} = Node.call!(context.tunnel_client, env, "server.getSettings")
+    %{context | tunnel_client: client} |> Map.put(:tunnel_access, access)
+  end
+
+  step "a renewal that fails affects only that request", context do
+    env = context.node.environment
+    expire(context.tunnel_access)
+
+    FakeRelay.set(context.relay,
+      fail_once: [
+        {"/environments/#{env}/connect", 503,
+         relay_error("RelayEnvironmentUnavailableError", "Environment is unavailable")}
+      ]
+    )
+
+    assert {:error, 503} = renew(context)
+
+    # The connection stays open and working, and the next request renews.
+    {_, client} = Node.call!(context.tunnel_client, env, "server.getSettings")
+    assert {:ok, access} = renew(context)
+
+    assert {200, %{"authenticated" => true}} =
+             dpop_request(context.relay.edge, :get, "/api/auth/session", access, context.device)
+
+    {_, client} = Node.call!(client, env, "server.getSettings")
+    %{context | tunnel_client: client} |> Map.put(:tunnel_access, access)
+  end
+
+  # --- deregistering at the relay ----------------------------------------------------------
+
+  # The relay revokes the link before it tears the tunnel down, so a failure in
+  # between leaves a link that still works and can be removed again.
+  step "the relay's database refuses the change", context do
+    FakeRelay.set(context.relay,
+      fail_once: [
+        {"/environment-links/#{context.node.environment}", 500,
+         relay_error("RelayInternalError", "Could not update the environment link")}
+      ]
+    )
+
+    context
+  end
+
+  step "the user deregisters it from their account", context do
+    env = context.node.environment
+    credential = FakeRelay.get(context.relay, :links)[env]["credential"]
+    reply = T3.Connect.relay(:delete, relay_link_url(context), "clerk-token", nil)
+    Map.merge(context, %{deregistered: reply, env_credential: credential})
+  end
+
+  step "the link stays usable", context do
+    env = context.node.environment
+    assert {:error, 500, _} = context.deregistered
+    assert %{"user" => "user-1", "online" => true} = FakeRelay.get(context.relay, :links)[env]
+    assert {200, _, _} = FakeRelay.ask(context.relay, base(context), :health, env)
+    assert os_alive?(tunnel_pid())
+    assert %{"linked" => true} = link_state(context)
+    assert {200, %{"ok" => true}} = publish_activity(context, context.env_credential)
+    context
+  end
+
+  step "the unlink can be retried", context do
+    assert {:ok, %{"ok" => true}} =
+             T3.Connect.relay(:delete, relay_link_url(context), "clerk-token", nil)
+
+    assert FakeRelay.get(context.relay, :links)[context.node.environment] == nil
+    assert {401, _} = publish_activity(context, context.env_credential)
+    context
+  end
+
+  # Offline as after a normal shutdown: the relay keeps the link, without a tunnel.
+  step "a linked node that is offline", context do
+    context = linked_from_command_line(context)
+    FakeRelay.set(context.relay, limit: 1)
+    :ok = ExUnit.Callbacks.stop_supervised(T3.Connect.Supervisor)
+    env = context.node.environment
+    path = "/v1/client/environment-links/#{env}/tunnel"
+    assert_receive {:fake_relay, "DELETE", ^path, _}, 1_000
+    assert %{"online" => false} = FakeRelay.get(context.relay, :links)[env]
+
+    # Nothing answers at its address, and its place still counts.
+    {:ok, {{_, 530, _}, _, _}} =
+      :httpc.request(~c"#{context.relay.edge}/.well-known/t3/environment")
+
+    assert {409, %{"_tag" => "RelayEnvironmentLinkLimitExceededError"}} = link_other(context)
+    context
+  end
+
+  step "its cloud access is revoked", context do
+    env = context.node.environment
+    assert {:ok, %{"ok" => true}} = context.deregistered
+    assert {401, _} = publish_activity(context, context.env_credential)
+
+    {:ok, %{"environments" => environments}} =
+      T3.Connect.relay(:get, context.relay.url <> "/v1/environments", "clerk-token", nil)
+
+    refute Enum.any?(environments, &(&1["environmentId"] == env))
+
+    assert {:error, 404, _} =
+             T3.Connect.relay(
+               :post,
+               "#{context.relay.url}/v1/environments/#{env}/connect",
+               "clerk-token",
+               %{"clientProofKeyThumbprint" => device_key().jkt}
+             )
+
+    context
+  end
+
+  step "its place counts no longer toward the account's limit", context do
+    assert {200, %{"environmentCredential" => _}} = link_other(context)
+    context
+  end
+
+  # --- signing in on the host ----------------------------------------------------------------
+
+  step "an operator runs the connect command on the host", context do
+    context |> operator_host() |> Map.put(:connect, run_connect())
+  end
+
+  step "it asks the operator to sign in", context do
+    assert_receive {:mix_shell, :info, ["Open this URL to authorize T3 Connect:\n  " <> rest]},
+                   5_000
+
+    [url | _] = String.split(rest, "\n")
+    %URI{fragment: fragment} = URI.parse(url)
+    assert String.starts_with?(url, context.relay.url <> "/connect#")
+    %{"state" => state, "challenge" => challenge, "port" => port} = URI.decode_query(fragment)
+
+    # Nothing is saved until the browser comes back.
+    assert Task.yield(context.connect, 0) == nil
+    assert T3.Connect.OAuth.stored() == nil
+
+    code = FakeRelay.authorize(context.relay, challenge)
+
+    {:ok, {{_, 200, _}, _, _}} =
+      :httpc.request(~c"http://127.0.0.1:#{port}/callback?code=#{code}&state=#{state}")
+
+    assert :ok = Task.await(context.connect, 5_000)
+    signed_in(context, "authorization_code")
+  end
+
+  step "offers to install the background service", context do
+    printed = context.printed
+
+    assert "Run T3 Code in the background whenever this machine boots? It stays reachable through T3 Connect even after you log out." in context.asked
+
+    home = context.service_home
+    unit = Path.join([home, ".config", "systemd", "user", "t3code.service"])
+    assert File.read!(unit) =~ "ExecStart="
+    assert Enum.any?(printed, &String.starts_with?(&1, "Background service installed. Logs: "))
+    assert Enum.any?(printed, &String.starts_with?(&1, "\n✓ Background service ready"))
+
+    assert [
+             "systemctl --user daemon-reload",
+             "systemctl --user enable t3code.service",
+             "loginctl enable-linger " <> _,
+             "systemctl --user restart t3code.service"
+           ] = service_calls(context)
+
+    assert %{"installed" => true, "current" => true} = T3.Service.status()
+    context
+  end
+
+  step "an operator on the host over SSH", context do
+    previous = System.get_env("SSH_CONNECTION")
+    System.put_env("SSH_CONNECTION", "203.0.113.7 51234 192.0.2.10 22")
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous,
+        do: System.put_env("SSH_CONNECTION", previous),
+        else: System.delete_env("SSH_CONNECTION")
+    end)
+
+    FakeRelay.set(context.relay, device_interval: 0.05)
+    operator_host(context)
+  end
+
+  step "the operator runs the connect command", context do
+    Map.put(context, :connect, run_connect())
+  end
+
+  step "it prints a browser link and a short code", context do
+    assert_receive {:mix_shell, :info, ["Headless authorization\n" <> _ = text]}, 5_000
+
+    assert text =~
+             "Open this URL on a device with a browser:\n  #{context.relay.url}/oauth/device"
+
+    assert [_, code] = Regex.run(~r/Confirm this code when asked: (\S+)/, text)
+    refute_received {:mix_shell, :info, ["Open this URL to authorize T3 Connect:" <> _]}
+    Map.put(context, :user_code, code)
+  end
+
+  step "continues once the code is approved on another device", context do
+    grant = "urn:ietf:params:oauth:grant-type:device_code"
+
+    # It keeps asking while the code waits for approval.
+    assert_receive {:fake_relay, "POST", "/oauth/token", %{"grant_type" => ^grant}}, 5_000
+    assert_receive {:fake_relay, "POST", "/oauth/token", %{"grant_type" => ^grant}}, 5_000
+    assert Task.yield(context.connect, 0) == nil
+    assert T3.Connect.OAuth.stored() == nil
+
+    FakeRelay.approve_device(context.relay, context.user_code)
+    assert :ok = Task.await(context.connect, 5_000)
+    signed_in(context, grant)
+  end
+
+  # --- signing out on the host -----------------------------------------------------------------
+
+  step "the operator logs out from the command line", context do
+    context = operator_host(context)
+    assert {:ok, _} = T3.Service.install()
+    File.rm!(Path.join(context.service_bin, "calls.log"))
+
+    Secrets.put(
+      "cloud-cli-oauth-token",
+      JSON.encode!(%{
+        "accessToken" => "cli-token",
+        "refreshToken" => "r",
+        "expiresAtEpochMs" => 0
+      })
+    )
+
+    pid = tunnel_pid()
+    printed = Node.run_task(Mix.Tasks.T3.Connect, ["logout"])
+    Map.merge(context, %{printed: printed, tunnel_pid: pid})
+  end
+
+  step "the stored cloud credential is removed", context do
+    assert Secrets.get("cloud-cli-oauth-token") == nil
+    assert T3.Connect.cli_token() == nil
+
+    assert "Signed out of T3 Connect locally.\nThe background service is managed separately with `t3 service`." in context.printed
+
+    context
+  end
+
+  step "exposure is disabled", context do
+    assert "T3 Connect is disabled locally." in context.printed
+    assert T3.Connect.desired_link() == nil
+    refute os_alive?(context.tunnel_pid)
+    assert FakeRelay.get(context.relay, :links)[context.node.environment] == nil
+    assert %{"linked" => false, "managedTunnelActive" => false} = link_state(context)
+    context
+  end
+
+  step "the background service stays installed", context do
+    assert %{"installed" => true, "current" => true} = T3.Service.status()
+    # Signing out asked the service manager for nothing.
+    assert service_calls(context) == []
+    context
+  end
+
+  # --- tunnel and relay helpers -------------------------------------------------------------
+
+  # A device on the account picks the node from the relay's list and asks for access.
+  defp choose(context) do
+    env = context.node.environment
+    relay = context.relay
+
+    {:ok, %{"environments" => environments}} =
+      T3.Connect.relay(:get, relay.url <> "/v1/environments", "clerk-token", nil)
+
+    assert %{"endpoint" => _} = Enum.find(environments, &(&1["environmentId"] == env))
+    device = device_key()
+
+    {:ok, chosen} =
+      T3.Connect.relay(:post, "#{relay.url}/v1/environments/#{env}/connect", "clerk-token", %{
+        "clientProofKeyThumbprint" => device.jkt
+      })
+
+    assert chosen["environmentId"] == env
+    Map.merge(context, %{device: device, chosen: chosen})
+  end
+
+  # Redeems the chosen credential through the tunnel and opens a socket there.
+  defp tunnel_session(context) do
+    edge = context.relay.edge
+    device = context.device
+
+    assert {200, %{"access_token" => access, "token_type" => "DPoP"}} =
+             exchange(context, context.chosen["credential"], device, edge)
+
+    assert {200, %{"authenticated" => true, "sessionMethod" => "dpop-access-token"}} =
+             dpop_request(edge, :get, "/api/auth/session", access, device)
+
+    assert {200, %{"ticket" => ticket}} =
+             dpop_request(edge, :post, "/api/auth/websocket-ticket", access, device)
+
+    client = Node.connect(%{port: URI.parse(edge).port}, "wsTicket=" <> ticket)
+    Map.merge(context, %{tunnel_access: access, tunnel_client: client})
+  end
+
+  # What the client does when the node rejects its token: a fresh credential from
+  # the relay, redeemed through the tunnel.
+  defp renew(context) do
+    env = context.node.environment
+
+    case T3.Connect.relay(
+           :post,
+           "#{context.relay.url}/v1/environments/#{env}/connect",
+           "clerk-token",
+           %{"clientProofKeyThumbprint" => context.device.jkt}
+         ) do
+      {:ok, %{"credential" => credential}} ->
+        {200, %{"access_token" => access}} =
+          exchange(context, credential, context.device, context.relay.edge)
+
+        {:ok, access}
+
+      {:error, status, _} ->
+        {:error, status}
+    end
+  end
+
+  # Stands in for the session's hour running out.
+  defp expire(access) do
+    {:ok, %{id: id}} = T3.Auth.session(access)
+    {:ok, db} = Exqlite.Sqlite3.open(T3.Store.path())
+
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(db, "UPDATE auth_sessions SET expires_at = 0 WHERE id = ?1")
+
+    :ok = Exqlite.Sqlite3.bind(stmt, [id])
+    :done = Exqlite.Sqlite3.step(db, stmt)
+    :ok = Exqlite.Sqlite3.release(db, stmt)
+    :ok = Exqlite.Sqlite3.close(db)
+    assert T3.Auth.session(access) == :error
+  end
+
+  # A request with a DPoP-bound token and a fresh proof for it.
+  defp dpop_request(origin, method, path, access, device) do
+    url = origin <> path
+    proof = dpop(device, method |> Atom.to_string() |> String.upcase(), url, access)
+
+    headers = [
+      {~c"authorization", ~c"DPoP " ++ String.to_charlist(access)},
+      {~c"dpop", String.to_charlist(proof)}
+    ]
+
+    req =
+      if method == :post,
+        do: {String.to_charlist(url), headers, ~c"application/json", "{}"},
+        else: {String.to_charlist(url), headers}
+
+    {:ok, {{_, status, _}, _, reply}} =
+      :httpc.request(method, req, [timeout: 5_000], body_format: :binary)
+
+    {status, JSON.decode!(reply)}
+  end
+
+  defp relay_link_url(context),
+    do: "#{context.relay.url}/v1/client/environment-links/#{context.node.environment}"
+
+  # A raw relay request, keeping the status and the error body.
+  defp relay_raw(url, bearer, body) do
+    {:ok, {{_, status, _}, _, reply}} =
+      :httpc.request(
+        :post,
+        {String.to_charlist(url),
+         [{~c"authorization", ~c"Bearer " ++ String.to_charlist(bearer)}], ~c"application/json",
+         JSON.encode!(body)},
+        [timeout: 5_000],
+        body_format: :binary
+      )
+
+    {status, JSON.decode!(reply)}
+  end
+
+  # Agent activity sent with an environment credential, as a linked node publishes it.
+  defp publish_activity(context, credential) do
+    relay_raw(
+      "#{context.relay.url}/v1/environments/#{context.node.environment}/threads/thread-1/agent-activity",
+      credential,
+      %{"proof" => "activity-#{System.unique_integer([:positive])}"}
+    )
+  end
+
+  # Another host of the same account linking its own environment.
+  defp link_other(context) do
+    %{"challenge" => challenge} =
+      relay_post(context, "/v1/client/environment-link-challenges", %{})
+
+    {public, private} = :crypto.generate_key(:eddsa, :ed25519)
+    now = System.os_time(:second)
+
+    proof =
+      T3.Connect.Jwt.sign(
+        %{
+          "iss" => "t3-env:env-other",
+          "aud" => context.relay.url,
+          "environmentId" => "env-other",
+          "environmentPublicKey" => T3.Connect.Jwt.public_pem(public),
+          "challenge" => challenge,
+          "iat" => now,
+          "exp" => now + 60
+        },
+        "t3-env-link+jwt",
+        private
+      )
+
+    relay_raw(context.relay.url <> "/v1/client/environment-links", "clerk-token", %{
+      "proof" => proof
+    })
+  end
+
+  # --- host operator helpers ------------------------------------------------------------------
+
+  # The host as the connect command sees it: the relay client on the PATH, the
+  # account's sign-in at the fake relay, and a Linux service manager that only
+  # records what it is asked (`calls.log`), under a home of its own.
+  defp operator_host(context) do
+    relay = context.relay
+    relay_host(context, %{"PATH" => context.relay_bin})
+    home = Node.tmp_dir(context.node, "service-home")
+    bin = Node.tmp_dir(context.node, "service-bin")
+
+    for exe <- ~w(systemctl loginctl) do
+      path = Path.join(bin, exe)
+
+      File.write!(path, ~S"""
+      #!/bin/sh
+      echo "$(basename "$0") $*" >> "$(dirname "$0")/calls.log"
+      """)
+
+      File.chmod!(path, 0o755)
+      Application.put_env(:t3, :"#{exe}_command", path)
+    end
+
+    Application.put_env(:t3, :service_platform, {:unix, :linux})
+    Application.put_env(:t3, :service_user_home, home)
+
+    Application.put_env(:t3, :connect_oauth,
+      token_endpoint: relay.url <> "/oauth/token",
+      device_authorization_endpoint: relay.url <> "/oauth/device_authorization",
+      client_id: "t3-cli",
+      hosted_app_url: relay.url,
+      loopback_port: 0
+    )
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for key <-
+            ~w(systemctl_command loginctl_command service_platform service_user_home connect_oauth)a,
+          do: Application.delete_env(:t3, key)
+    end)
+
+    Map.merge(context, %{service_home: home, service_bin: bin})
+  end
+
+  # `mix t3.connect` in its own process, as the operator's terminal; its output
+  # comes here, and it answers yes to the one question it asks (the service).
+  defp run_connect do
+    previous = Mix.shell()
+    Mix.shell(Mix.Shell.Process)
+    ExUnit.Callbacks.on_exit(fn -> Mix.shell(previous) end)
+
+    Task.async(fn ->
+      send(self(), {:mix_shell_input, :yes?, true})
+      Mix.Tasks.T3.Connect.run([])
+      :ok
+    end)
+  end
+
+  # The command finished signed in with `grant` and set the node to link.
+  defp signed_in(context, grant) do
+    {printed, asked} = shell_output([], [])
+
+    assert_received {:fake_relay, "POST", "/oauth/token",
+                     %{"grant_type" => ^grant, "client_id" => "t3-cli"}}
+
+    assert Enum.any?(printed, &String.starts_with?(&1, "✓ Relay client ready · cloudflared "))
+    assert "✓ Authorized as operator@example.com" in printed
+
+    assert %{"identity" => "operator@example.com", "refreshToken" => "refresh-" <> _} =
+             T3.Connect.OAuth.stored()
+
+    assert T3.Connect.desired_link() == "managed"
+    Map.merge(context, %{printed: printed, asked: asked})
+  end
+
+  defp shell_output(printed, asked) do
+    receive do
+      {:mix_shell, :info, [line]} -> shell_output([line | printed], asked)
+      {:mix_shell, :yes?, [question]} -> shell_output(printed, [question | asked])
+    after
+      0 -> {Enum.reverse(printed), Enum.reverse(asked)}
+    end
+  end
+
+  defp service_calls(context) do
+    case File.read(Path.join(context.service_bin, "calls.log")) do
+      {:ok, log} -> String.split(log, "\n", trim: true)
+      {:error, :enoent} -> []
+    end
+  end
+
   # --- link helpers ------------------------------------------------------------------------
 
   # Links the node as the web client does (`linkEnvironment.ts`): a relay challenge,
@@ -810,6 +1371,13 @@ defmodule T3.Steps.Connections.T3Connect do
     context
   end
 
+  defp linked_from_command_line(context) do
+    context = cli_link(context)
+    context = %{context | node: Node.restart(context.node), clients: %{}}
+    assert %{"state" => "linked"} = T3.Connect.Link.status()
+    context
+  end
+
   defp link_state(context) do
     {200, state} = request(context, :get, "/api/connect/link-state", admin(context), nil)
     state
@@ -851,18 +1419,20 @@ defmodule T3.Steps.Connections.T3Connect do
     %{jwk: jwk, private: private, jkt: T3.Connect.Jwt.thumbprint(jwk)}
   end
 
-  defp dpop(device, method, url) do
+  defp dpop(device, method, url, access \\ nil) do
     b64 = &Base.url_encode64(&1, padding: false)
     header = b64.(JSON.encode!(%{"typ" => "dpop+jwt", "alg" => "ES256", "jwk" => device.jwk}))
 
     payload =
       b64.(
-        JSON.encode!(%{
+        %{
           "htm" => method,
           "htu" => url,
           "jti" => "dpop-#{System.unique_integer([:positive])}",
           "iat" => System.os_time(:second)
-        })
+        }
+        |> Map.merge(if access, do: %{"ath" => b64.(:crypto.hash(:sha256, access))}, else: %{})
+        |> JSON.encode!()
       )
 
     der = :crypto.sign(:ecdsa, :sha256, header <> "." <> payload, [device.private, :prime256v1])
@@ -871,8 +1441,8 @@ defmodule T3.Steps.Connections.T3Connect do
   end
 
   # `/oauth/token` as a device redeems a credential, with a DPoP proof when it has a key.
-  defp exchange(context, credential, device) do
-    url = base(context) <> "/oauth/token"
+  defp exchange(context, credential, device, origin \\ nil) do
+    url = (origin || base(context)) <> "/oauth/token"
     headers = if device, do: [{~c"dpop", String.to_charlist(dpop(device, "POST", url))}], else: []
 
     form =

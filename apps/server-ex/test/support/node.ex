@@ -69,11 +69,12 @@ defmodule T3.Test.Node do
     stop(node)
     ensured = Process.get({__MODULE__, :ensured}, [])
     node = start(dir, port)
-    Enum.each(ensured, &ensure/1)
-    # The boot tasks the application runs once its services are up.
-    :ok = T3.Projects.auto_pull()
+    # In the application's order: cut-off turns settle before the optional
+    # services (T3 Connect among them) are back, then the boot tasks run.
     T3.Orchestration.Recovery.run()
+    Enum.each(ensured, &ensure/1)
     :ok = T3.Orchestration.Recovery.continue()
+    :ok = T3.Projects.auto_pull()
     node
   end
 
