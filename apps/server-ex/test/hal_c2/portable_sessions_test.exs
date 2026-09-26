@@ -48,11 +48,16 @@ defmodule HalC2.PortableSessionsTest do
     ]
 
     assert {%{"carriedSession" => carried}, []} =
-             PortableSessions.place(session("codex", "abc", [{name, lines}], from), to, %{})
+             PortableSessions.place(
+               session("codex", "abc", [{name, lines}], from),
+               to,
+               %{"thread" => %{"machine" => "laptop"}}
+             )
 
     path = Path.join([dir, "codex", name])
 
     assert carried == %{
+             "from" => "laptop",
              "driver" => "codex",
              "instanceId" => "codex",
              "nativeId" => "abc",
