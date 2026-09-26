@@ -67,8 +67,9 @@ the default and published themes.
 
 ### Publish a theme
 
-Save a theme exported from HAL-C2 into `~/.hal-c2/userdata/themes/` on the server, or the `themes`
-directory under your custom state directory. The filename supplies the theme ID: `nightfall.json`
+Save a theme exported from HAL-C2 into the `themes` directory of HAL-C2's
+[config directory](./install.md#where-hal-c2-keeps-its-files) on the server, `~/.config/hal-c2/themes/`
+by default. The filename supplies the theme ID: `nightfall.json`
 can be selected with `hal-c2 theme set nightfall`. Keep the filename stable when updating its colors.
 Do not use `system`, `light`, `dark`, or a built-in theme's ID.
 

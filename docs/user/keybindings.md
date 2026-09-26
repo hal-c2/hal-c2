@@ -58,8 +58,9 @@ behavior in Settings → Keyboard.
 
 ## Edit the configuration file
 
-Keybindings live on the environment's machine, in
-`~/.hal-c2/userdata/keybindings.json` by default. You can edit this file directly.
+Keybindings live on the environment's machine, in `keybindings.json` in HAL-C2's
+[config directory](./install.md#where-hal-c2-keeps-its-files), `~/.config/hal-c2/keybindings.json`
+by default. You can edit this file directly.
 It is a JSON array of rules:
 
 ```json

@@ -56,11 +56,48 @@ node apps/server/dist/bin.mjs
 `hal-c2 update` and the background service do not apply to a server run this way;
 update it with `git pull` and a rebuild.
 
+## Where HAL-C2 keeps its files
+
+HAL-C2 follows the XDG Base Directory layout on every platform, macOS included,
+and keeps four kinds of files apart:
+
+| Kind   | What it holds                                                      | Linux and macOS         | Windows                       |
+| ------ | ------------------------------------------------------------------ | ----------------------- | ----------------------------- |
+| config | Settings, keybindings, themes, and your desktop shell              | `~/.config/hal-c2`      | `%APPDATA%\hal-c2\config`     |
+| data   | Threads and projects, secrets, attachments, and new worktrees      | `~/.local/share/hal-c2` | `%LOCALAPPDATA%\hal-c2\data`  |
+| state  | Logs and service state                                             | `~/.local/state/hal-c2` | `%LOCALAPPDATA%\hal-c2\state` |
+| cache  | Downloaded tools and anything else HAL-C2 can fetch or build again | `~/.cache/hal-c2`       | `%LOCALAPPDATA%\hal-c2\cache` |
+
+To back up HAL-C2, copy its config and data directories. Deleting the cache
+directory loses nothing you made. The HAL-C2 node keeps its own files in an
+`elixir` directory inside each of these.
+
+Set `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, or `XDG_CACHE_HOME` to
+an absolute path to move one kind. Set `HAL_C2_HOME` to keep all four under one
+directory instead, as its `config`, `data`, `state`, and `cache` subdirectories.
+
 ### Coming from T3 Code
 
-If `~/.t3` exists from T3 Code, HAL-C2 uses it as its home in place of
-`~/.hal-c2`, keeping your projects, threads, and settings. Wherever these guides
-say `~/.hal-c2`, read `~/.t3`. Set `HAL_C2_HOME` to choose another directory.
+The first time HAL-C2 starts with no data of its own, it copies your projects,
+threads, settings, secrets, and logs from T3 Code's `~/.t3` into the directories
+above. If you moved T3 Code with `T3CODE_HOME`, it copies from there instead,
+and if an earlier HAL-C2 release left a `~/.hal-c2`, from that.
+
+This happens once. HAL-C2 never changes `~/.t3` and never reads it again, so T3
+Code keeps working, and changes you make in either app afterwards stay in that
+app. Caches and downloaded tools are not copied; HAL-C2 fetches them again when
+it needs them.
+
+Worktrees your threads already use stay where they are, such as under
+`~/.t3/worktrees`, and keep working. New worktrees go to HAL-C2's data
+directory. Keep the old worktrees as long as a thread still works in one of
+them.
+
+To start fresh instead, start HAL-C2 the first time with `HAL_C2_NO_MIGRATE=1`.
+HAL-C2 remembers the choice and does not copy later either. To copy again, stop
+HAL-C2 and delete its data directory and `~/.local/state/hal-c2/migrated-from.json`.
+If the copy fails, HAL-C2 starts empty and logs why; your old directory is left
+as it was.
 
 ## Desktop app
 

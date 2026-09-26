@@ -20,6 +20,14 @@ Uninstalling the service leaves your projects, threads, and settings intact.
 Running `hal-c2 service install` again repairs a service that `hal-c2 service status`
 reports as broken.
 
+A service installed by T3 Code or an earlier HAL-C2 release still shows up in
+`hal-c2 service status` and can be removed with `hal-c2 service uninstall`. On its
+next start it copies your data once, as described in
+[Coming from T3 Code](./install.md#coming-from-t3-code), and then runs from the new
+directories. Run `hal-c2 service install` to rewrite it for the current release.
+A new service uses the [usual directories](./install.md#where-hal-c2-keeps-its-files)
+and names `HAL_C2_HOME` only if it was set when you installed the service.
+
 `hal-c2 update` downloads the newest release on your channel and switches `hal-c2`
 and the service to it. Restarting interrupts running agent turns, terminals,
 and remote clients, so it asks first; answer no and the service keeps running
@@ -37,8 +45,8 @@ installing one.
 
 `hal-c2 uninstall` removes the background service, the `hal-c2` launcher, and the
 downloaded versions after showing you the list and asking once. Your projects,
-threads, and settings under `~/.hal-c2/userdata` are kept. Pass `--yes` from a
-script.
+threads, and settings in HAL-C2's [data and config directories](./install.md#where-hal-c2-keeps-its-files)
+are kept. Pass `--yes` from a script.
 
 ## Platform support
 

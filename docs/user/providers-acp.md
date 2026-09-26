@@ -28,7 +28,8 @@ code; review an agent's source and license before adding it.
 Registry agents always run on the machine that hosts your HAL-C2 server. That stays true when you
 connect through a hosted web app, HAL-C2 Connect, or a relay.
 
-Agents install under `tools/<agent-id>/<version>/` inside HAL-C2 home. HAL-C2 verifies SHA-256 when the Registry entry
+Agents install under `tools/<agent-id>/<version>/` in HAL-C2's
+[cache directory](./install.md#where-hal-c2-keeps-its-files). HAL-C2 verifies SHA-256 when the Registry entry
 provides one; entries without a checksum retain the Registry's HTTPS distribution guarantee.
 Registry `npx` and `uvx` packages use HAL-C2-owned npm prefixes and Python tool directories at the exact
 version published by the Registry. Their commands are available in a new server terminal for
