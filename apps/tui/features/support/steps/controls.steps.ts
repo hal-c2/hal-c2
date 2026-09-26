@@ -6,11 +6,13 @@ import { expect } from "bun:test";
 import {
   DEFAULT_SERVER_SETTINGS,
   type OrchestrationThread,
+  type RuntimeMode,
   type ServerProvider,
   type VcsRef,
 } from "@t3tools/contracts";
 
 import { step } from "../../steps.ts";
+import { RUNTIME_MODE_META } from "../../../src/controls.ts";
 import { flattenModelOptions } from "../../../src/models.ts";
 import type { TuiSelectState } from "../../../src/host/composerState.ts";
 import type { TuiPaletteState } from "../../../src/host/paletteState.ts";
@@ -32,6 +34,7 @@ import {
   callsTo,
   composer,
   openOnThread,
+  running,
   typeIntoPrompt,
   updateThread,
   type ComposerWorld,
@@ -741,3 +744,237 @@ step("the user adds {string} again", async (ctx: World, path: string) => {
 });
 
 void PNG;
+
+// --- Model, effort and permissions for the next turn ----------------------
+
+const withProvider = (provider: Record<string, unknown>) =>
+  [...PROVIDERS, provider] as unknown as ReadonlyArray<ServerProvider>;
+
+const RUNTIME_BY_LABEL = new Map(
+  (Object.entries(RUNTIME_MODE_META) as Array<[RuntimeMode, { label: string }]>).map(
+    ([mode, meta]) => [meta.label.toLowerCase(), mode],
+  ),
+);
+
+const RUNTIME_LABELS = [...RUNTIME_BY_LABEL.keys()].join("|");
+
+const runtimeModeNamed = (name: string): RuntimeMode => {
+  const mode = RUNTIME_BY_LABEL.get(name.trim().toLowerCase());
+  expect(mode).toBeDefined();
+  return mode!;
+};
+
+/** Send a reply and return what reached the client: the thread and the model selection. */
+async function sendNextTurn(ctx: World) {
+  if (composer(ctx).isRunning) await updateThread(ctx, finished);
+  const before = callsTo(ctx, "sendReply").length;
+  await typeIntoPrompt(ctx, "Next step");
+  await pressKey(ctx, "Enter");
+  await settle(ctx);
+  const sent = callsTo(ctx, "sendReply");
+  expect(sent).toHaveLength(before + 1);
+  const [detail, , , model] = sent.at(-1)!.args as [
+    OrchestrationThread,
+    string,
+    unknown,
+    { instanceId: string; model: string; options?: ReadonlyArray<{ id: string; value: unknown }> },
+  ];
+  return { detail, model };
+}
+
+const finished = (detail: OrchestrationThread) =>
+  ({
+    ...detail,
+    session: { ...(detail.session as object), status: "ready" },
+  }) as OrchestrationThread;
+
+async function setPermissions(ctx: World, name: string): Promise<void> {
+  await pressKey(ctx, "Ctrl+O");
+  await settle(ctx);
+  expect(select(ctx).kind).toBe("runtime");
+  await chooseInPicker(ctx, RUNTIME_MODE_META[runtimeModeNamed(name)].label);
+}
+
+step("a connected environment with the project {string}", async (ctx: World, title: string) => {
+  await openOnThread(ctx, thread(), {
+    shellSnapshot: shell(undefined, [{ ...SHOP, title }] as never),
+  });
+});
+
+step("a project with an open thread on Codex", async (ctx: World) => {
+  await openOnThread(ctx);
+  expect(composer(ctx).selectedModel).toBe("gpt-5");
+});
+
+step("the user chooses the model {string}", async (ctx: World, slug: string) => {
+  await openModelPicker(ctx);
+  const option = flattenModelOptions(PROVIDERS).find((candidate) => candidate.model === slug);
+  expect(option).toBeDefined();
+  await chooseInPicker(ctx, option!.label);
+});
+
+step("the next turn runs on {string}", async (ctx: World, slug: string) => {
+  expect(composer(ctx).selectedModel).toBe(slug);
+  const { model } = await sendNextTurn(ctx);
+  expect(model).toMatchObject({ instanceId: "codex", model: slug });
+});
+
+step("the Cursor provider is not installed", async (ctx: ControlsWorld) => {
+  await restartClient(ctx, {
+    providers: withProvider({
+      instanceId: "cursor",
+      driver: "cursor",
+      displayName: "Cursor",
+      enabled: true,
+      installed: false,
+      availability: "unavailable",
+      models: [{ slug: "composer-1", name: "Composer 1", isCustom: false, capabilities: null }],
+    }),
+  });
+});
+
+step("the user looks through the models", openModelPicker);
+
+step("Cursor's models cannot be chosen", async (ctx: World) => {
+  const listed = select(ctx).options;
+  expect(listed.map((option) => option.description)).not.toContain("Cursor");
+  expect(listed.map((option) => option.label)).not.toContain("Composer 1");
+  expect(await snapshot(ctx)).not.toContain("Composer 1");
+});
+
+step(/^the user sets the effort to (low|medium|high)$/, async (ctx: World, effort: string) => {
+  await pressKey(ctx, "Ctrl+Shift+E");
+  await settle(ctx);
+  expect(select(ctx).kind).toBe("reasoning");
+  await chooseInPicker(ctx, effort[0]!.toUpperCase() + effort.slice(1));
+});
+
+step(/^the next turn runs with (low|medium|high) effort$/, async (ctx: World, effort: string) => {
+  expect(composer(ctx).effort).toBe(effort);
+  const { model } = await sendNextTurn(ctx);
+  expect(model.options).toEqual(expect.arrayContaining([{ id: "reasoningEffort", value: effort }]));
+});
+
+step(new RegExp(`^the user sets the permissions to (${RUNTIME_LABELS})$`, "i"), setPermissions);
+
+step(/^the user switches the thread to (supervised|full access)$/, setPermissions);
+
+// The mode is a thread setting: the server echoes it and the next turn carries it.
+step(
+  new RegExp(`^the next turn runs in (${RUNTIME_LABELS})$`, "i"),
+  async (ctx: World, name: string) => {
+    const mode = runtimeModeNamed(name);
+    await settle(ctx);
+    expect(ctx.fake!.currentThread("t1")?.runtimeMode).toBe(mode);
+    expect(footerText(ctx, "composerAccess")).toContain(RUNTIME_MODE_META[mode].label);
+    const { detail } = await sendNextTurn(ctx);
+    expect(detail.runtimeMode).toBe(mode);
+  },
+);
+
+step(
+  /^an? (supervised|full access) thread( with a running turn)?$/,
+  async (ctx: World, name, busy) => {
+    const mode = runtimeModeNamed(name);
+    await updateThread(ctx, (detail) => ({
+      ...(busy ? running(detail) : detail),
+      runtimeMode: mode,
+    }));
+    expect(composer(ctx).runtimeMode).toBe(mode);
+    expect(composer(ctx).isRunning).toBe(Boolean(busy));
+  },
+);
+
+step("the running turn keeps supervised", async (ctx: World) => {
+  await settle(ctx);
+  expect(composer(ctx).isRunning).toBe(true);
+  expect(callsTo(ctx, "interrupt")).toHaveLength(0);
+  expect(callsTo(ctx, "sendReply")).toHaveLength(0);
+  expect(callsTo(ctx, "setRuntimeMode").map((call) => call.args[1])).toEqual(["full-access"]);
+});
+
+step("the next turn asks before commands and file changes", async (ctx: World) => {
+  expect(RUNTIME_MODE_META["approval-required"].description).toBe(
+    "Ask before commands and file changes.",
+  );
+  const { detail } = await sendNextTurn(ctx);
+  expect(detail.runtimeMode).toBe("approval-required");
+});
+
+step("the thread is building", async (ctx: World) => {
+  await settle(ctx);
+  expect(composer(ctx).interactionMode).toBe("default");
+  expect(footerText(ctx, "composerMode")).toContain("Build");
+});
+
+step(/^the user toggles (to planning|back)$/, async (ctx: World) => {
+  await pressKey(ctx, "Ctrl+B");
+  await settle(ctx);
+});
+
+step("the next turn plans instead of making changes", async (ctx: World) => {
+  expect(footerText(ctx, "composerMode")).toContain("Plan");
+  const { detail } = await sendNextTurn(ctx);
+  expect(detail.interactionMode).toBe("plan");
+});
+
+step("the next turn builds again", async (ctx: World) => {
+  expect(footerText(ctx, "composerMode")).toContain("Build");
+  const { detail } = await sendNextTurn(ctx);
+  expect(detail.interactionMode).toBe("default");
+  expect(callsTo(ctx, "setInteractionMode").map((call) => call.args[1])).toEqual([
+    "plan",
+    "default",
+  ]);
+});
+
+// --- providers/models.feature (TUI pickers) --------------------------------
+
+step("Codex and Claude are enabled and Grok is disabled", async (ctx: ControlsWorld) => {
+  await restartClient(ctx, {
+    providers: withProvider({
+      instanceId: "grok",
+      driver: "grok",
+      displayName: "Grok",
+      enabled: false,
+      models: [{ slug: "grok-4", name: "Grok 4", isCustom: false, capabilities: null }],
+    }),
+  });
+});
+
+step("the user opens the model picker in the TUI", openModelPicker);
+
+step("Codex and Claude models are listed with their provider names", async (ctx: World) => {
+  const listed = select(ctx).options.map((option) => [option.label, option.description]);
+  expect(listed).toEqual([
+    ["GPT-5", "Codex"],
+    ["GPT-5 Codex", "Codex"],
+    ["Opus", "Claude"],
+  ]);
+  const text = await snapshot(ctx);
+  expect(text).toMatch(/GPT-5 Codex\s+Codex/);
+  expect(text).toMatch(/Opus\s+Claude/);
+});
+
+step("no Grok model is listed", async (ctx: World) => {
+  expect(select(ctx).options.map((option) => option.description)).not.toContain("Grok");
+  expect(await snapshot(ctx)).not.toContain("Grok 4");
+});
+
+step("the selected model offers reasoning levels", async (ctx: World) => {
+  await settle(ctx);
+  expect(composer(ctx).selectedModel).toBe("gpt-5");
+  expect(composer(ctx).effort).toBe("medium");
+});
+
+step("the user opens the effort picker in the TUI", async (ctx: World) => {
+  await pressKey(ctx, "Ctrl+Shift+E");
+  await settle(ctx);
+  expect(select(ctx)).toMatchObject({ open: true, kind: "reasoning" });
+});
+
+step("the model's reasoning levels are offered", async (ctx: World) => {
+  expect(select(ctx).options.map((option) => option.label)).toEqual(["Low", "Medium", "High"]);
+  const text = await snapshot(ctx);
+  for (const label of ["Low", "Medium", "High"]) expect(text).toContain(label);
+});
