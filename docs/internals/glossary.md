@@ -15,7 +15,7 @@ Terms whose meaning matters across HAL-C2. Architecture and lifecycle constraint
 | Thread         | The durable conversation and work history for a project. It survives provider process exits.                                                                                   |
 | Turn           | One user-to-agent work cycle. Provider work can finish before checkpoint and diff work settles.                                                                                |
 | Activity       | A non-message timeline item, such as a tool action, approval, or failure.                                                                                                      |
-| HAL-C2 home    | The base data directory: `$HAL_C2_HOME`, default `~/.hal-c2`, or an existing `~/.t3` in its place. Node server state lives under `userdata`, the Elixir node's under `elixir`. |
+| HAL-C2 home    | Where an environment keeps its files: XDG config, data, state, and cache directories named `hal-c2`, or all four under one root (`$HAL_C2_HOME`). See [storage](./storage.md). |
 
 ## Orchestration
 

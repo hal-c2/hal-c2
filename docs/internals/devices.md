@@ -9,7 +9,7 @@ Device panel work over Tailscale and HAL-C2 Connect, including when an SSH host 
 
 [expo-device-hub](../../apps/server/src/device/LocalDeviceHost.ts) streams and
 [agent-device](../../apps/server/src/device/AgentDeviceShim.ts) drives. Each is
-npm-installed at a pinned version into the HAL-C2 home after its matching Device
+npm-installed at a pinned version into HAL-C2's data directory after its matching Device
 panel consent step. Manual setup installs and starts only expo-device-hub;
 agent-device remains absent and stopped until agent access is granted. Both run
 with the server's Node; `npx` would make the first `device_open` after a reboot

@@ -4,7 +4,7 @@
 compiled Qt 6 / QML binary (`hal-c2-qt`) that hosts the web app in a
 `WebEngineView` and makes everything around the web view - window, chrome,
 layout, colours - a set of QML "bricks" a user can rearrange and restyle from
-`~/.hal-c2/shell/`. It coexists with `apps/desktop`; nothing in `apps/web` or
+`~/.config/hal-c2/shell/`. It coexists with `apps/desktop`; nothing in `apps/web` or
 `apps/server` may become Qt-specific.
 
 ## Process model
@@ -40,8 +40,8 @@ running dev server; this is what `vp run dev:qt` uses.
 
 - **One profile.** `src/WebProfile.cpp` configures Qt WebEngine's default
   profile and registers it as the `WebProfile` singleton: storage and a 64 MiB
-  disk HTTP cache under `<HAL-C2 home>/userdata/shell-web` (`--home-dir`, then
-  `HAL_C2_HOME`, then `~/.hal-c2` or an existing `~/.t3`), cookies forced persistent, permissions stored.
+  disk HTTP cache under `shell-web` in the cache directory (`~/.cache/hal-c2/shell-web`, or
+  `<root>/cache/shell-web` under `--home-dir` or `HAL_C2_HOME`), cookies forced persistent, permissions stored.
   Every `WebSurface` shares it, so the embed surfaces reuse the primary's
   session and the bundle comes from cache on the next start. Chromium cannot
   share a profile directory between processes: a second shell on the same
@@ -139,10 +139,10 @@ vp run dev        # terminal 1: server + web (single origin)
 vp run dev:qt     # terminal 2: cmake configure/build, `hal-c2 pair`, launch with --url
 ```
 
-`dev:qt` resolves the data directory the way `vp run dev` does (`--home-dir`,
-else the worktree's own `.hal-c2`, else `HAL_C2_HOME`, else `~/.hal-c2` or an existing `~/.t3`), pairs with
-the server running there, and launches the shell with that directory as its
-`HAL_C2_HOME` so it rices from the matching `shell/`. Pass the same
+`dev:qt` resolves its directories the way `vp run dev` does (`--home-dir`,
+else the worktree's own `.hal-c2`, else `HAL_C2_HOME`, else the XDG directories), pairs with
+the server running there, and launches the shell on the same directories so it
+rices from the matching `config/shell/`. Pass the same
 `--home-dir` to both commands if you set one. Its other flags are `--url` (skip
 pairing), `--release` (no disk QML loading) and `--configure-only` (build, do
 not launch); everything else is forwarded to the binary, so
@@ -164,8 +164,9 @@ apart, so a key test can open a thread first); env `HAL_C2_HOME`,
 
 ## Ricing contract
 
-Config dir: `$HAL_C2_HOME/shell/`, so `~/.hal-c2/shell/` by default on every
-platform and `<worktree>/.hal-c2/shell/` for a sandboxed dev run; `--config-dir`
+Config dir: `shell/` in the config directory, so `~/.config/hal-c2/shell/` by
+default (`%APPDATA%\hal-c2\config\shell\` on Windows) and
+`<worktree>/.hal-c2/config/shell/` for a sandboxed dev run; `--config-dir`
 overrides it.
 
 ### `theme.json`
@@ -216,7 +217,7 @@ the Settings → Theme editor exports it) plus a shell-only `window` section:
 
 ### `shell.qml`
 
-If `~/.hal-c2/shell/shell.qml` exists it is loaded as the root instead of the
+If `~/.config/hal-c2/shell/shell.qml` exists it is loaded as the root instead of the
 built-in `DefaultShell.qml`. It composes bricks from `HalC2.Bricks` and reads the
 `HalC2.Shell` singletons:
 
@@ -226,7 +227,7 @@ built-in `DefaultShell.qml`. It composes bricks from `HalC2.Bricks` and reads th
 - `Runtime.configDir`, `Runtime.userShellPath`, `Runtime.usingUserShell`,
   `Runtime.lastError`, `Runtime.reload()`.
 
-Extra QML modules can live under `~/.hal-c2/shell/qml/` (it is on the import
+Extra QML modules can live under `~/.config/hal-c2/shell/qml/` (it is on the import
 path). If `shell.qml` fails to load, the default shell takes over with
 `ShellErrorOverlay` showing the error; a broken rice never locks the app.
 
