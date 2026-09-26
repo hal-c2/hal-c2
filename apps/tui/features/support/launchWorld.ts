@@ -95,7 +95,8 @@ function home(ctx: LaunchWorld): string {
   if (!ctx.launchHome) {
     const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hal-c2-tui-launch-"));
     ctx.cleanups.push(() => NodeFS.rmSync(dir, { recursive: true, force: true }));
-    NodeFS.mkdirSync(NodePath.join(dir, "userdata"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(dir, "data"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(dir, "state"), { recursive: true });
     NodeFS.mkdirSync(NodePath.join(dir, "bin"), { recursive: true });
     NodeFS.writeFileSync(
       NodePath.join(dir, "bin/tmux"),
@@ -232,7 +233,7 @@ async function leave(spawned: Spawned, how: "ctrl+c" | "SIGINT" | "SIGTERM"): Pr
 }
 
 function readSessions(ctx: LaunchWorld): SessionRow[] {
-  const path = NodePath.join(home(ctx), "userdata/statev2.sqlite");
+  const path = NodePath.join(home(ctx), "data/statev2.sqlite");
   if (!NodeFS.existsSync(path)) return [];
   const db = new Database(path, { readonly: true });
   try {
@@ -294,7 +295,7 @@ async function writeRuntimeFile(ctx: LaunchWorld, server: LaunchSetup["server"])
     startedAt: new Date().toISOString(),
   };
   NodeFS.writeFileSync(
-    NodePath.join(home(ctx), "userdata/server-runtime.json"),
+    NodePath.join(home(ctx), "state/server-runtime.json"),
     JSON.stringify(state),
   );
 }
@@ -352,7 +353,7 @@ export async function finishLaunch(ctx: LaunchWorld, open: OpenLaunch): Promise<
     sessionsAfter: readSessions(ctx),
     tmuxBeforeDraw: open.tmuxBeforeDraw,
     tmux: lines(readText(NodePath.join(dir, "tmux.log"))),
-    log: readText(NodePath.join(dir, "userdata/server-runtime.json.tui.log")),
+    log: readText(NodePath.join(dir, "state/server-runtime.json.tui.log")),
   };
 }
 
