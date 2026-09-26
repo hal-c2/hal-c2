@@ -72,7 +72,8 @@ Feature: Reviewing a pull request
   @node
   Scenario: Editing one's own comment
     Given the user commented "Looks god" on pull request 42
-    When the user edits it to "Looks good"
+    # "edits it to" is the composer's queued-message step; this one edits a PR comment.
+    When the user edits the comment to "Looks good"
     Then the comment reads "Looks good"
 
   @node

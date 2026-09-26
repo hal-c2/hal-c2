@@ -46,6 +46,9 @@ defmodule T3.PullRequests.Checkout do
             error(operation, cwd, "gh answered in an unexpected shape.")
         end
 
+      {:error, {:not_found, _detail}} ->
+        error(operation, cwd, "Pull request not found. Check the PR number or URL and try again.")
+
       {:error, {_reason, detail}} ->
         error(operation, cwd, detail)
     end

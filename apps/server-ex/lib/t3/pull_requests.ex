@@ -955,18 +955,20 @@ defmodule T3.PullRequests do
   defp ctx(project, number),
     do: %{cwd: project.root, host: project.host, repository: project.repository, number: number}
 
-  # Who is signed in to the project's host, believed for ten minutes.
+  # Who is signed in to the project's host, believed for ten minutes per credential:
+  # signing in as someone else is noticed at once.
   defp identity(%{host: host, root: root}) do
     now = System.monotonic_time(:millisecond)
     held = :persistent_term.get(@viewers, %{})
+    key = {host, GitHub.credential_fingerprint(root, host)}
 
-    case held[host] do
+    case held[key] do
       {at, identity} when now - at < @viewer_ttl ->
         {:ok, identity}
 
       _ ->
         with {:ok, identity} <- GitHub.viewer(root, host) do
-          :persistent_term.put(@viewers, Map.put(held, host, {now, identity}))
+          :persistent_term.put(@viewers, Map.put(held, key, {now, identity}))
           {:ok, identity}
         end
     end

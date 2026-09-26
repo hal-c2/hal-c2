@@ -437,6 +437,23 @@ defmodule T3.PullRequests.GitHub do
 
   # --- identity ----------------------------------------------------------------------
 
+  @doc """
+  A digest of the token `gh` holds for `host`, or nil when it cannot be read; it tells
+  one signed-in account from another without keeping the token.
+  """
+  def credential_fingerprint(cwd, host) do
+    case gh(cwd, ["auth", "token", "--hostname", host]) do
+      {:ok, out} ->
+        case String.trim(out) do
+          "" -> nil
+          token -> :crypto.hash(:sha256, token) |> Base.encode16(case: :lower)
+        end
+
+      _ ->
+        nil
+    end
+  end
+
   @doc "Who `gh` is signed in as on `host`: `%{\"id\" => id, \"login\" => login}`."
   def viewer(cwd, host) do
     case gh_json(cwd, ["api", "user", "--hostname", host]) do

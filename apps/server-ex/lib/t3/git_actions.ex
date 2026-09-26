@@ -42,6 +42,7 @@ defmodule T3.GitActions do
 
     try do
       result = run_action(input, emit)
+      link_created(input["threadId"], result["pr"])
       emit.(%{"kind" => "action_finished", "result" => result})
       {:ok, result}
     catch
@@ -57,6 +58,34 @@ defmodule T3.GitActions do
       Vcs.Watch.refresh(cwd)
     end
   end
+
+  # The pull request an action opened or found is linked to the thread it ran beside
+  # (`source: "created"`). The action has already succeeded, so a link that cannot be
+  # made is only logged.
+  defp link_created(thread_id, %{"status" => status, "url" => url})
+       when is_binary(thread_id) and status in ["created", "opened_existing"] do
+    with %{} = key <- T3.Projection.PullRequests.parse_change_request_url(url),
+         {:ok, _} <-
+           T3.Orchestration.dispatch(
+             Map.merge(Map.take(key, [:host, :repository, :number]) |> stringify(), %{
+               "type" => "thread.pull-request.link",
+               "commandId" => "server:pr-created-link:#{T3.Environment.uuid4()}",
+               "threadId" => thread_id,
+               "url" => url,
+               "source" => "created"
+             })
+           ) do
+      :ok
+    else
+      other ->
+        require Logger
+        Logger.warning("failed to link created pull request to #{thread_id}: #{inspect(other)}")
+    end
+  end
+
+  defp link_created(_thread_id, _pr), do: :ok
+
+  defp stringify(map), do: Map.new(map, fn {k, v} -> {to_string(k), v} end)
 
   defp fail!(message), do: throw({:git_action_error, message})
 
@@ -178,25 +207,127 @@ defmodule T3.GitActions do
         phase!(emit, "commit", "Committing...")
         args = ["commit", "-m", subject] ++ if(body == "", do: [], else: ["-m", body])
 
-        case Git.run(cwd, args, max_bytes: 256 * 1024) do
-          {:ok, %{status: 0, out: out}} ->
-            hook_output(out, emit)
+        case traced_commit(cwd, args, emit) do
+          {0, _err} ->
             {:ok, sha} = Git.ok(cwd, ~w(rev-parse HEAD))
             %{"status" => "created", "commitSha" => String.trim(sha), "subject" => subject}
 
-          {:ok, %{out: out, err: err}} ->
-            hook_output(out <> err, emit)
+          {_status, err} ->
             fail!("git commit failed: #{last_lines(err)}")
         end
     end
   end
 
-  # Hooks print to the commit's output; show it the way the Node server does.
-  defp hook_output(text, emit) do
-    for line <- String.split(text, "\n"), (line = String.trim(line)) != "" do
-      emit.(%{"kind" => "hook_output", "hookName" => nil, "stream" => "stderr", "text" => line})
+  # Runs `git commit` with a trace2 event log, so hooks are reported as they start
+  # and finish (`hook_started`, `hook_finished`) around the output lines they print
+  # (`hook_output`), the way the Node server does. Returns `{exit status, stderr}`.
+  defp traced_commit(cwd, args, emit) do
+    trace = Path.join(System.tmp_dir!(), "t3-git-trace2-#{System.unique_integer([:positive])}")
+    File.write!(trace, "")
+    Process.put(:git_trace, %{path: trace, offset: 0, hook: nil})
+
+    {status, err, pending} =
+      ["git" | args]
+      |> Exile.stream(
+        cd: cwd,
+        env: [{"GIT_TRACE2_EVENT", trace}],
+        stderr: :consume,
+        ignore_epipe: true
+      )
+      |> Enum.reduce({nil, [], %{}}, fn
+        {:exit, {:status, status}}, {_, err, pending} ->
+          {status, err, pending}
+
+        {:exit, _}, {_, err, pending} ->
+          {1, err, pending}
+
+        {stream, data}, {status, err, pending} ->
+          trace_events(emit)
+          buffer = Map.get(pending, stream, "") <> IO.iodata_to_binary(data)
+          [rest | lines] = buffer |> String.split("\n") |> Enum.reverse()
+          for line <- Enum.reverse(lines), do: hook_line(emit, stream, line)
+          err = if stream == :stderr, do: [err, data], else: err
+          {status, err, Map.put(pending, stream, rest)}
+      end)
+
+    trace_events(emit)
+    for {stream, rest} <- pending, do: hook_line(emit, stream, rest)
+    trace_events(emit)
+
+    with %{hook: hook} when hook != nil <- Process.get(:git_trace) do
+      emit.(%{
+        "kind" => "hook_finished",
+        "hookName" => hook,
+        "exitCode" => 0,
+        "durationMs" => nil
+      })
+    end
+
+    File.rm(trace)
+    {status, IO.iodata_to_binary(err)}
+  end
+
+  defp hook_line(emit, stream, line) do
+    if (line = String.trim(line)) != "" do
+      emit.(%{
+        "kind" => "hook_output",
+        "hookName" => Process.get(:git_trace).hook,
+        "stream" => Atom.to_string(stream),
+        "text" => line
+      })
     end
   end
+
+  # Emits the hook starts and exits git has traced since the last call.
+  defp trace_events(emit) do
+    %{path: path, offset: offset} = trace = Process.get(:git_trace)
+    {:ok, contents} = File.read(path)
+    complete = contents |> binary_part(offset, byte_size(contents) - offset)
+
+    case :binary.matches(complete, "\n") do
+      [] ->
+        :ok
+
+      matches ->
+        {last, 1} = List.last(matches)
+        chunk = binary_part(complete, 0, last)
+        Process.put(:git_trace, %{trace | offset: offset + last + 1})
+
+        for line <- String.split(chunk, "\n", trim: true),
+            {:ok, record} <- [JSON.decode(line)],
+            record["child_class"] == "hook" or record["category"] == "hook" do
+          trace_event(emit, record)
+        end
+    end
+  end
+
+  defp trace_event(emit, %{"event" => "child_start"} = record) do
+    hook = record["hook_name"]
+    Process.put(:git_trace, %{Process.get(:git_trace) | hook: hook})
+    Process.put({:git_hook_started, hook}, System.monotonic_time(:millisecond))
+    emit.(%{"kind" => "hook_started", "hookName" => hook})
+  end
+
+  defp trace_event(emit, %{"event" => "child_exit"} = record) do
+    hook = record["hook_name"] || Process.get(:git_trace).hook
+    started = Process.delete({:git_hook_started, hook})
+    Process.put(:git_trace, %{Process.get(:git_trace) | hook: nil})
+
+    emit.(%{
+      "kind" => "hook_finished",
+      "hookName" => hook,
+      "exitCode" => record["exitCode"],
+      "durationMs" => started && System.monotonic_time(:millisecond) - started
+    })
+  end
+
+  # Newer git runs hooks in parallel and logs only the region's end, not the child's exit.
+  defp trace_event(emit, %{"event" => "region_leave", "label" => hook}) do
+    if Process.get(:git_trace).hook == hook,
+      do: trace_event(emit, %{"event" => "child_exit", "hook_name" => hook, "child_id" => nil})
+  end
+
+  defp trace_event(_emit, _record), do: :ok
 
   # Stages the chosen files (or everything) and writes the message; nil when
   # nothing is staged.
@@ -285,7 +416,9 @@ defmodule T3.GitActions do
 
   # GitHub pull requests through `gh`: the open one for this branch, or a new one.
   defp pull_request(cwd, branch) do
-    gh = System.find_executable("gh") || fail!("Creating a PR needs the GitHub CLI (gh).")
+    gh =
+      System.find_executable(Application.get_env(:t3, :gh_command, "gh")) ||
+        fail!("Creating a PR needs the GitHub CLI (gh).")
 
     base =
       (Git.base_branch(cwd, branch) || "main")

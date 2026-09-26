@@ -23,7 +23,8 @@ Feature: Pushing, pulling and guarding the default branch
     Given "feature/tax" tracks "origin/feature/tax" and is 1 commit ahead
     When the user pushes
     Then "origin/feature/tax" has the new commit
-    And the user is told which commit was pushed where
+    # Both servers name only the upstream for a plain push: "Pushed to origin/feature/tax" (GitManager.ts, git_actions.ex).
+    And the user is told where the branch was pushed
 
   @node
   Scenario: The first push sets the upstream on the primary remote

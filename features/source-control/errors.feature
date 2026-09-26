@@ -23,10 +23,11 @@ Feature: When source control goes wrong
     When the user runs "<action>"
     Then the action fails with "<message>"
 
+    # Both servers say "Cannot push from detached HEAD." for a push (GitManager.ts, git_actions.ex).
     Examples:
       | condition                                     | action           | message                                                          |
       | the thread's folder is not a git repository   | Commit           | is not a git repository.                                         |
-      | the checkout is on a detached HEAD            | Push             | Cannot push/create a pull request from detached HEAD.            |
+      | the checkout is on a detached HEAD            | Push             | Cannot push from detached HEAD.                                  |
       | the repository has no remote                  | Push             | Cannot push because no git remote is configured for this repository. |
       | the working tree has uncommitted changes      | Create PR        | Commit local changes before creating a PR.                       |
       | the GitHub CLI is not installed               | Create PR        | Creating a PR needs the GitHub CLI (gh).                         |

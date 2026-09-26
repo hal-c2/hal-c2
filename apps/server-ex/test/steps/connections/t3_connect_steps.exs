@@ -680,7 +680,8 @@ defmodule T3.Steps.Connections.T3Connect do
     cli_link(context)
   end
 
-  step ~r/^it reports (?<recovery>.+)$/, %{args: [recovery]} = context do
+  step ~r/^it reports (?<recovery>deregister an unused environment, then restart|sign in again, then restart|check the host's clock and update|check relay access, proxies and firewall rules)$/,
+       %{args: [recovery]} = context do
     hint =
       case recovery do
         "deregister an unused environment, then restart" ->

@@ -28,6 +28,8 @@ Feature: Picking, switching and creating branches
 
   @node @desktop
   Scenario: Searching narrows the branch list
+    # The scenario needs "feature/old" to exist before it can find it.
+    Given "shop" has the branches "main", "feature/tax" and "feature/old"
     When the user searches the branch list for "old"
     Then only "feature/old" is listed
 
