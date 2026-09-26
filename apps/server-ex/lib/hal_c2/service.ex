@@ -17,7 +17,7 @@ defmodule HalC2.Service do
   """
 
   @unit "hal-c2.service"
-  @label "io.github.halc2.halc2.service"
+  @label "io.github.halc2.service"
 
   @doc "Runs a `bin/hal-c2-service` subcommand and prints its outcome; exits 1 on failure."
   def main(args) do
