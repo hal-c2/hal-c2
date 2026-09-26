@@ -35,6 +35,8 @@ function pairingHttpLayer(
   calls: Array<{ readonly url: string; readonly init: RequestInit }>,
   options?: {
     readonly failDescriptor?: boolean;
+    /** The node serves plain HTTP only: an HTTPS request cannot connect. */
+    readonly plainHttpOnly?: boolean;
     readonly protocolVersion?: number;
     readonly cluster?: ReadonlyArray<{ readonly environmentId: string; readonly label: string }>;
   },
@@ -42,6 +44,10 @@ function pairingHttpLayer(
   const fetchFn = ((input, init = {}) => {
     const url = String(input);
     calls.push({ url, init });
+
+    if (options?.plainHttpOnly === true && url.startsWith("https:")) {
+      return Promise.reject(new TypeError("fetch failed"));
+    }
 
     if (url.endsWith("/.well-known/hal-c2/environment")) {
       if (options?.failDescriptor === true) {
@@ -219,6 +225,55 @@ describe("connection onboarding", () => {
 
       expect(calls.map((call) => call.url)).toEqual([
         "https://remote.example.test/.well-known/hal-c2/environment",
+      ]);
+    }),
+  );
+
+  it.effect("a host typed without a scheme reaches a plain-HTTP node over HTTP", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const registration = yield* preparePairingRegistration({
+        host: "ai-beast:3780",
+        pairingCode: "pairing-token",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CLIENT_PRESENTATION_LAYER,
+            pairingHttpLayer(calls, { plainHttpOnly: true }),
+          ),
+        ),
+      );
+
+      expect(registration.profile).toMatchObject({
+        httpBaseUrl: "http://ai-beast:3780/",
+        wsBaseUrl: "ws://ai-beast:3780/",
+      });
+      expect(calls.map((call) => call.url)).toEqual([
+        "https://ai-beast:3780/.well-known/hal-c2/environment",
+        "http://ai-beast:3780/.well-known/hal-c2/environment",
+        "http://ai-beast:3780/oauth/token",
+      ]);
+    }),
+  );
+
+  it.effect("a host typed with https is not retried over HTTP", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      yield* preparePairingRegistration({
+        host: "https://ai-beast:3780",
+        pairingCode: "pairing-token",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CLIENT_PRESENTATION_LAYER,
+            pairingHttpLayer(calls, { plainHttpOnly: true }),
+          ),
+        ),
+        Effect.flip,
+      );
+
+      expect(calls.map((call) => call.url)).toEqual([
+        "https://ai-beast:3780/.well-known/hal-c2/environment",
       ]);
     }),
   );

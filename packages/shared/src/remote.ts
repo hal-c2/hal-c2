@@ -72,6 +72,9 @@ export type RemotePairingTargetError = typeof RemotePairingTargetError.Type;
 const hasSupportedRemoteBackendProtocol = (url: URL): boolean =>
   SUPPORTED_REMOTE_BACKEND_PROTOCOLS.has(url.protocol);
 
+const hasScheme = (value: string): boolean =>
+  /^[a-zA-Z][a-zA-Z\d+-]*:\/\//.test(value.trim().replace(/^\/+/, ""));
+
 const normalizeRemoteBaseUrl = (
   rawValue: string,
   source: RemoteBackendUrlInvalidError["source"],
@@ -82,7 +85,7 @@ const normalizeRemoteBaseUrl = (
   }
 
   const withoutLeadingSlashes = trimmed.replace(/^\/+/, "");
-  const normalizedInput = /^[a-zA-Z][a-zA-Z\d+-]*:\/\//.test(withoutLeadingSlashes)
+  const normalizedInput = hasScheme(withoutLeadingSlashes)
     ? withoutLeadingSlashes
     : `https://${withoutLeadingSlashes}`;
   let url: URL;
@@ -133,6 +136,11 @@ export interface ResolvedRemotePairingTarget {
   readonly credential: string;
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
+  /**
+   * The same host over plain HTTP, when it was typed without a scheme: HTTPS is
+   * tried first, and a node on the LAN or tailnet that serves no TLS answers here.
+   */
+  readonly httpFallback?: { readonly httpBaseUrl: string; readonly wsBaseUrl: string };
 }
 
 export interface HostedPairingRequest {
@@ -237,9 +245,19 @@ export const resolveRemotePairingTarget = (input: {
     throw new RemotePairingCodeMissingError({ host: normalizedHost.host });
   }
 
+  const plainHost = new URL(normalizedHost.toString());
+  plainHost.protocol = "http:";
   return {
     credential: pairingCode,
     httpBaseUrl: toHttpBaseUrl(normalizedHost),
     wsBaseUrl: toWsBaseUrl(normalizedHost),
+    ...(hasScheme(host)
+      ? {}
+      : {
+          httpFallback: {
+            httpBaseUrl: toHttpBaseUrl(plainHost),
+            wsBaseUrl: toWsBaseUrl(plainHost),
+          },
+        }),
   };
 };

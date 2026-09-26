@@ -7,6 +7,8 @@
 #   apps/web/src/components/settings/ConnectionsSettings.tsx (Add environment, Create pairing link,
 #     pairing link scopes, QR code, hosted app link, pairing code)
 #   apps/web/src/components/settings/pairingUrls.ts
+#   packages/shared/src/remote.ts, packages/client-runtime/src/connection/onboarding.ts
+#     (a host without a scheme: HTTPS, then plain HTTP)
 #   apps/web/src/components/auth/PairingRouteSurface.tsx
 #   apps/mobile/src/features/connection/pairing.ts (host and code, QR payloads)
 #   apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx
@@ -71,6 +73,14 @@ Feature: Pairing a client with an environment
   Scenario: The user pairs by entering a host and a pairing code
     When the user adds an environment with host "192.168.1.20:3780" and a pairing code
     Then the client pairs with that environment
+
+  # The TUI reaches only the server that launched it: the host has no environment
+  # list, pairing or access management (`connection.environments` is that one server).
+  @backlog @tui
+  Scenario: A host typed without a scheme reaches a node that serves plain HTTP
+    Given a node on the LAN that serves plain HTTP
+    When the user adds an environment with host "ai-beast:3780" and a pairing code
+    Then the client tries HTTPS first and pairs over HTTP when that cannot connect
 
   # The TUI reaches only the server that launched it: the host has no environment
   # list, pairing or access management (`connection.environments` is that one server).

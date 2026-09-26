@@ -69,6 +69,10 @@ describe("remote", () => {
       credential: "pairing-token",
       httpBaseUrl: "https://remote.example.com/",
       wsBaseUrl: "wss://remote.example.com/",
+      httpFallback: {
+        httpBaseUrl: "http://remote.example.com/",
+        wsBaseUrl: "ws://remote.example.com/",
+      },
     });
   });
 
@@ -82,6 +86,10 @@ describe("remote", () => {
       credential: "pairing-token",
       httpBaseUrl: "https://remote.example.com:3000/",
       wsBaseUrl: "wss://remote.example.com:3000/",
+      httpFallback: {
+        httpBaseUrl: "http://remote.example.com:3000/",
+        wsBaseUrl: "ws://remote.example.com:3000/",
+      },
     });
   });
 
@@ -108,6 +116,10 @@ describe("remote", () => {
       credential: "pairing-token",
       httpBaseUrl: "https://example.com/",
       wsBaseUrl: "wss://example.com/",
+      httpFallback: {
+        httpBaseUrl: "http://example.com/",
+        wsBaseUrl: "ws://example.com/",
+      },
     });
   });
 
@@ -134,6 +146,10 @@ describe("remote", () => {
       credential: "pairing-token",
       httpBaseUrl: "https://myserver.com:3000/",
       wsBaseUrl: "wss://myserver.com:3000/",
+      httpFallback: {
+        httpBaseUrl: "http://myserver.com:3000/",
+        wsBaseUrl: "ws://myserver.com:3000/",
+      },
     });
   });
 

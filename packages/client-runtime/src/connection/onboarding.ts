@@ -3,7 +3,10 @@ import type {
   EnvironmentId,
   ExecutionEnvironmentDescriptor,
 } from "@hal-c2/contracts";
-import { resolveRemotePairingTarget } from "@hal-c2/shared/remote";
+import {
+  resolveRemotePairingTarget,
+  type ResolvedRemotePairingTarget,
+} from "@hal-c2/shared/remote";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -91,15 +94,33 @@ const resolvePairingTarget = Effect.fn("clientRuntime.connection.onboarding.reso
   },
 );
 
+/**
+ * The descriptor of the environment being paired, and the target that reached it. A
+ * host typed without a scheme that cannot be reached over HTTPS is tried over plain
+ * HTTP, as a node on the LAN or tailnet serves; any other failure stands.
+ */
+const fetchPairingDescriptor = (target: ResolvedRemotePairingTarget) =>
+  fetchRemoteEnvironmentDescriptor({ httpBaseUrl: target.httpBaseUrl }).pipe(
+    Effect.map((descriptor) => ({ descriptor, target })),
+    Effect.catchTag("RemoteEnvironmentAuthFetchError", (error) => {
+      const fallback = target.httpFallback;
+      if (fallback === undefined) return Effect.fail(error);
+      return fetchRemoteEnvironmentDescriptor({ httpBaseUrl: fallback.httpBaseUrl }).pipe(
+        Effect.map((descriptor) => ({ descriptor, target: { ...target, ...fallback } })),
+        Effect.mapError(() => error),
+      );
+    }),
+  );
+
 /** The paired environment's registration, plus the rest of its cluster (protocol 3). */
 export const preparePairingRegistrations = Effect.fn(
   "clientRuntime.connection.onboarding.preparePairingRegistrations",
 )(function* (input: PairingConnectionInput) {
-  const target = yield* resolvePairingTarget(input);
+  const resolved = yield* resolvePairingTarget(input);
   const presentation = yield* ClientCapabilities.ClientPresentation;
-  const descriptor = yield* fetchRemoteEnvironmentDescriptor({
-    httpBaseUrl: target.httpBaseUrl,
-  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+  const { descriptor, target } = yield* fetchPairingDescriptor(resolved).pipe(
+    Effect.mapError(mapRemoteEnvironmentError),
+  );
   const compatibilityError = orchestrationProtocolCompatibilityError(descriptor);
   if (compatibilityError !== null) return yield* compatibilityError;
   const access = yield* bootstrapRemoteBearerSession({
