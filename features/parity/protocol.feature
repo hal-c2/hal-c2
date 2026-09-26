@@ -45,6 +45,8 @@ Feature: Protocol 3 wire parity
     And later changes arrive as <later frames>
     And the shape stands in for <replaces>
 
+    # previewAutomation: the node's broker and the TypeScript PreviewAutomationBroker both
+    # send the host a connected event as it subscribes, before any agent request.
     Examples: 20 shape forms
       | shape                | fields             | first frame                                           | later frames                                                                              | replaces                                            |
       | shell                | none               | a shell frame with every node and every row           | shell.rows, shell.environment and shell.node frames                                       | orchestration.subscribeShell                        |
@@ -63,7 +65,7 @@ Feature: Protocol 3 wire parity
       | resourceTelemetry    | node               | a resourceTelemetry frame                             | a resourceTelemetry frame every few seconds while subscribed                              | subscribeResourceTelemetry                          |
       | localServers         | node               | a localServers frame with the current list            | localServers frames whenever the list changes                                             | subscribeDiscoveredLocalServers                     |
       | devices              | node               | a devices frame with the whole device state           | devices frames with the whole state                                                       | subscribeDeviceState                                |
-      | previewAutomation    | node, host         | nothing until an agent drives the browser             | previewAutomation frames                                                                  | previewAutomation.connect                           |
+      | previewAutomation    | node, host         | a previewAutomation frame saying it is connected      | previewAutomation frames                                                                  | previewAutomation.connect                           |
       | pullRequestRefreshes | node               | a pullRequestRefreshes frame with the revision        | pullRequestRefreshes frames with each new revision                                        | pullRequests.subscribeRefreshes                     |
       | gitAction            | node, input        | a gitAction frame as the action starts                | gitAction progress frames                                                                 | git.runStackedAction                                |
       | serverUpdate         | node, input        | a serverUpdate frame as the update starts             | serverUpdate progress frames                                                              | server.updateServerWithProgress                     |

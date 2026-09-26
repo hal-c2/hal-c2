@@ -39,8 +39,20 @@ defmodule T3.Codex.Provider do
     end
   end
 
-  @doc "Reads the model list from `codex app-server`; run once at boot."
+  @doc """
+  Reads the model list from `codex app-server`; run once at boot and on a model
+  refresh. A missing binary stops the connection in `init`, which would take the
+  linked caller with it, so the read runs in its own process.
+  """
   def load do
+    {_pid, ref} = spawn_monitor(&read_models/0)
+
+    receive do
+      {:DOWN, ^ref, :process, _, _} -> :ok
+    end
+  end
+
+  defp read_models do
     with [_ | _] = cmd <- command(),
          {:ok, conn} <- Connection.start_link(cmd: cmd, handler: self()),
          {:ok, _} <-

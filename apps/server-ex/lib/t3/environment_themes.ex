@@ -156,4 +156,63 @@ defmodule T3.EnvironmentThemes do
     do: palette?(variants["light"]) and palette?(variants["dark"])
 
   defp variants?(_), do: false
+
+  # --- the environment's theme (`mix t3.theme`) -----------------------------------
+
+  @built_in ~w(t3-chat grove ocean ember iris)
+
+  @doc """
+  Sets the theme connected web and desktop clients switch to: `defaultTheme`, with
+  `defaultThemeSetAt` so setting the same theme again still acts. Clients apply
+  each set once, so a theme the user picks afterwards sticks until the next set.
+  The id is a built-in theme or one this machine publishes.
+  """
+  def set_default(id) do
+    id = String.trim(id)
+    known = Enum.sort(@built_in ++ Enum.map(read(), & &1["id"]))
+
+    cond do
+      id == "" ->
+        {:error, "Provide a theme id, or run `mix t3.theme clear` to remove the theme."}
+
+      id not in known ->
+        {:error,
+         ~s(No theme named "#{id}". Available: #{Enum.join(known, ", ")}. ) <>
+           "Publish one by writing its file into #{dir()}."}
+
+      true ->
+        set_at = DateTime.to_iso8601(DateTime.utc_now())
+
+        T3.Settings.update(&Map.merge(&1, %{"defaultTheme" => id, "defaultThemeSetAt" => set_at}))
+        |> saved()
+    end
+  end
+
+  @doc "Removes the environment's theme; clients keep the theme they have."
+  def clear_default,
+    do: T3.Settings.update(&Map.drop(&1, ~w(defaultTheme defaultThemeSetAt))) |> saved()
+
+  @doc "The environment's theme (or nil) and the ids this machine publishes."
+  def show do
+    settings =
+      if Process.whereis(T3.Settings) do
+        T3.Settings.settings()
+      else
+        case T3.Settings.saved() do
+          {:ok, settings} -> settings
+          _ -> %{}
+        end
+      end
+
+    default = settings["defaultTheme"]
+
+    %{
+      "defaultTheme" => if(is_binary(default) and default != "", do: default),
+      "published" => read() |> Enum.map(& &1["id"]) |> Enum.sort(),
+      "themesDirectory" => dir()
+    }
+  end
+
+  defp saved({:error, _} = error), do: error
+  defp saved(_), do: :ok
 end

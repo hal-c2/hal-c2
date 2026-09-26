@@ -9,8 +9,8 @@ defmodule T3.Diagnostics do
   `server.getResourceTelemetryHistory`) and the process history
   (`server.getProcessResourceHistory`). `server.signalProcess` only signals a
   process under the node that is still the one a client saw. `ps` has no I/O
-  counters, so I/O is reported as unavailable. Nodes record no trace files, and
-  there is no desktop host to supply power state.
+  counters, so I/O is reported as unavailable. Traces are the ones clients
+  forward (`T3.Traces`), and there is no desktop host to supply power state.
 
   Watchers get `{:t3_resource_telemetry, node, snapshot}` after every sample.
   """
@@ -81,45 +81,18 @@ defmodule T3.Diagnostics do
     end
   end
 
-  @doc "`server.getTraceDiagnostics`: nodes keep logs, not trace files."
-  def traces(_input \\ %{}) do
-    {:ok,
-     %{
-       "traceFilePath" =>
-         Path.join([Application.fetch_env!(:t3, :home), "logs", "server.trace.ndjson"]),
-       "scannedFilePaths" => [],
-       "readAt" => now(),
-       "recordCount" => 0,
-       "parseErrorCount" => 0,
-       "firstSpanAt" => none(),
-       "lastSpanAt" => none(),
-       "failureCount" => 0,
-       "interruptionCount" => 0,
-       "slowSpanThresholdMs" => 1_000,
-       "slowSpanCount" => 0,
-       "logLevelCounts" => %{},
-       "topSpansByCount" => [],
-       "slowestSpans" => [],
-       "commonFailures" => [],
-       "latestFailures" => [],
-       "latestWarningAndErrorLogs" => [],
-       "partialFailure" => none(),
-       "error" =>
-         some(%{
-           "kind" => "trace-file-not-found",
-           "message" => "This node does not record traces."
-         })
-     }}
-  end
+  @doc "`server.getTraceDiagnostics`: the spans clients forwarded (`T3.Traces`)."
+  def traces(_input \\ %{}), do: {:ok, T3.Traces.diagnostics()}
 
-  @doc "`server.getHostResources`."
+  @doc "`server.getHostResources`: CPU use comes from two readings of the CPU counters 200ms apart."
   def host(_input \\ %{}) do
     {total, available} = memory()
+    cpu = cpu_utilization()
 
     {:ok,
      %{
        "sampledAt" => System.system_time(:millisecond),
-       "cpuUtilization" => nil,
+       "cpuUtilization" => cpu,
        "cpuCount" =>
          case :erlang.system_info(:logical_processors) do
            count when is_integer(count) -> count
@@ -576,6 +549,31 @@ defmodule T3.Diagnostics do
     case Float.parse(String.replace(text, ",", ".")) do
       {value, _} -> value
       :error -> 0.0
+    end
+  end
+
+  # Busy share of all CPUs (0..1) between two readings of /proc/stat; nil where there is none.
+  defp cpu_utilization do
+    with {:ok, {idle1, total1}} <- cpu_times(),
+         :ok <- Process.sleep(200),
+         {:ok, {idle2, total2}} <- cpu_times(),
+         total when total > 0 <- total2 - total1,
+         idle when idle >= 0 <- idle2 - idle1 do
+      min(1.0, max(0.0, 1 - idle / total))
+    else
+      _ -> nil
+    end
+  end
+
+  defp cpu_times do
+    with {:ok, stat} <- File.read("/proc/stat"),
+         ["cpu" <> _ | fields] <- stat |> String.split("\n", parts: 2) |> hd() |> String.split() do
+      [user, nice, system, idle, iowait, irq, softirq, steal | _] =
+        fields |> Enum.map(&String.to_integer/1) |> Kernel.++(List.duplicate(0, 8))
+
+      {:ok, {idle + iowait, user + nice + system + idle + iowait + irq + softirq + steal}}
+    else
+      _ -> :error
     end
   end
 

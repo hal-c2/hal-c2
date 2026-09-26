@@ -33,7 +33,7 @@ defmodule Mix.Tasks.T3.Upgrade do
     if opts[:dev], do: Mix.Task.run("compile"), else: build()
     connect(nodes, opts[:cookie])
 
-    if opts[:dev], do: dev(nodes), else: release(nodes)
+    if opts[:dev], do: dev(nodes), else: release(nodes, Mix.Tasks.T3.Bundle.bundle())
   end
 
   defp build do
@@ -61,8 +61,9 @@ defmodule Mix.Tasks.T3.Upgrade do
     end
   end
 
-  defp release([first | _] = nodes) do
-    path = Mix.Tasks.T3.Bundle.bundle()
+  @doc false
+  # Sends the bundle at `path` to the first node and has every node update to it.
+  def release([first | _] = nodes, path) do
     manifest = path |> manifest()
     version = manifest["version"]
     platform = manifest["platform"]

@@ -23,6 +23,8 @@ defmodule T3.AgentSessions do
   @max_line 4 * 1024 * 1024
   @window_ms 30 * 24 * 60 * 60 * 1000
   @max_imports 100
+  # Screenshot-heavy transcripts reach GiBs; lines past @max_line are skipped unread.
+  @max_import_bytes 4 * 1024 * 1024 * 1024
   @max_messages 200
   @default_models %{"codex" => "gpt-6-astra", "claudeAgent" => "claude-fable-5-1"}
   @claude_session ~r/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -84,18 +86,28 @@ defmodule T3.AgentSessions do
           |> Enum.flat_map(&stat(source, &1))
           |> Enum.sort_by(& &1.mtime, :desc)
 
-        {acc ++ Enum.take(newest, @max_transcripts),
-         truncated or length(newest) > @max_transcripts}
+        max = max_transcripts()
+        {acc ++ Enum.take(newest, max), truncated or length(newest) > max}
     end
   end
 
+  # Whose agent history this is; a test points it at a fixture home.
+  defp user_home, do: Application.get_env(:t3, :agent_sessions_home) || System.user_home!()
+
+  # Configurable so a test can reach the limits without writing thousands of files.
+  defp max_transcripts,
+    do: Application.get_env(:t3, :agent_sessions_max_transcripts, @max_transcripts)
+
+  defp max_import_bytes,
+    do: Application.get_env(:t3, :agent_sessions_max_import_bytes, @max_import_bytes)
+
   defp claude_files do
-    home = System.get_env("CLAUDE_CONFIG_DIR") || Path.join(System.user_home!(), ".claude")
+    home = System.get_env("CLAUDE_CONFIG_DIR") || Path.join(user_home(), ".claude")
     Path.wildcard(Path.join([Path.expand(home), "projects", "*", "*.jsonl"]))
   end
 
   defp codex_files do
-    home = System.get_env("CODEX_HOME") || Path.join(System.user_home!(), ".codex")
+    home = System.get_env("CODEX_HOME") || Path.join(user_home(), ".codex")
     Path.wildcard(Path.join([Path.expand(home), "sessions", "*", "*", "*", "rollout-*.jsonl"]))
   end
 
@@ -109,10 +121,10 @@ defmodule T3.AgentSessions do
     end
   end
 
-  # Reads each transcript's working directory, a few files at a time.
+  # Reads each transcript's working directory and session id, a few files at a time.
   defp with_cwds(transcripts) do
     transcripts
-    |> Task.async_stream(&Map.put(&1, :cwd, read_cwd(&1.path)),
+    |> Task.async_stream(&Map.merge(&1, read_header(&1)),
       max_concurrency: 16,
       ordered: false,
       timeout: 30_000
@@ -123,15 +135,25 @@ defmodule T3.AgentSessions do
     end)
   end
 
-  @doc false
-  def read_cwd(path) do
-    each_record(path, nil, @cwd_scan_bytes, fn record, _ ->
-      case cwd(record) do
-        nil -> {:cont, nil}
-        cwd -> {:halt, cwd}
-      end
-    end)
+  # The working directory and, as far as the header tells, the session id (Claude
+  # names the file after it).
+  defp read_header(%{source: source, path: path}) do
+    fallback = if source == "claudeAgent", do: Path.basename(path, ".jsonl")
+
+    header =
+      each_record(path, %{cwd: nil, session_id: nil}, @cwd_scan_bytes, fn record, acc ->
+        acc = %{acc | session_id: acc.session_id || session_id(record)}
+        if cwd = cwd(record), do: {:halt, %{acc | cwd: cwd}}, else: {:cont, acc}
+      end)
+
+    %{header | session_id: header.session_id || fallback}
   end
+
+  defp session_id(%{"type" => "session_meta", "payload" => %{} = p}),
+    do: trimmed(p["id"]) || trimmed(p["session_id"])
+
+  defp session_id(%{"sessionId" => id}), do: trimmed(id)
+  defp session_id(_), do: nil
 
   defp cwd(%{"cwd" => cwd}) when is_binary(cwd) and cwd != "", do: cwd
   defp cwd(%{"payload" => %{"cwd" => cwd}}) when is_binary(cwd) and cwd != "", do: cwd
@@ -140,7 +162,7 @@ defmodule T3.AgentSessions do
   # The user's home, temp folders, downloads, Codex scratch folders, and T3's own
   # worktrees are never projects.
   defp excluded?(path) do
-    home = System.user_home!()
+    home = user_home()
     t3_home = Path.expand(Application.get_env(:t3, :home, Path.join(home, ".t3")))
 
     path in [home, Path.expand(System.tmp_dir!()), "/tmp", "/private/tmp"] or
@@ -307,6 +329,8 @@ defmodule T3.AgentSessions do
   @doc """
   `agentSessions.import`: threads for a project from its transcripts of the last 30
   days. Sessions already imported count as imported; unreadable ones as skipped.
+  One run reads at most #{@max_imports} transcripts, newest first; sessions already
+  imported do not count, so running it again imports the rest.
   """
   def import_project(%{"projectId" => project_id} = input) do
     # Read from the project's own stream: the wizard imports right after creating
@@ -356,33 +380,51 @@ defmodule T3.AgentSessions do
       |> Enum.filter(&(Path.expand(&1.cwd) == root))
       |> Enum.sort_by(& &1.mtime, :desc)
 
-    {eligible, over_budget} = Enum.split(recent, @max_imports)
+    {done, pending} = Enum.split_with(recent, &imported?(&1, project_id))
+    {too_big, pending} = Enum.split_with(pending, &(&1.size > max_import_bytes()))
+    {eligible, over_budget} = Enum.split(pending, @max_imports)
+    already = done |> Enum.map(&"import:#{&1.source}:#{&1.session_id}") |> MapSet.new()
 
     {imported, skipped, _seen} =
-      Enum.reduce(eligible, {0, length(over_budget), MapSet.new()}, fn transcript,
-                                                                       {imported, skipped, seen} ->
-        case parse(transcript) do
-          nil ->
-            {imported, skipped + 1, seen}
+      Enum.reduce(
+        eligible,
+        {MapSet.size(already), length(too_big) + length(over_budget), already},
+        fn transcript, {imported, skipped, seen} ->
+          case parse(transcript) do
+            nil ->
+              {imported, skipped + 1, seen}
 
-          thread ->
-            thread_id = "import:#{thread.source}:#{thread.session_id}"
+            thread ->
+              thread_id = "import:#{thread.source}:#{thread.session_id}"
 
-            cond do
-              MapSet.member?(seen, thread_id) ->
-                {imported, skipped, seen}
+              cond do
+                MapSet.member?(seen, thread_id) ->
+                  {imported, skipped, seen}
 
-              write_thread(thread_id, project_id, thread) == :ok ->
-                {imported + 1, skipped, MapSet.put(seen, thread_id)}
+                write_thread(thread_id, project_id, thread) == :ok ->
+                  {imported + 1, skipped, MapSet.put(seen, thread_id)}
 
-              true ->
-                {imported, skipped + 1, seen}
-            end
+                true ->
+                  {imported, skipped + 1, seen}
+              end
+          end
         end
-      end)
+      )
 
     %{"importedCount" => imported, "skippedCount" => skipped}
   end
+
+  # A session this project already holds, which does not count against the budget.
+  # The thread's row can trail its write by a moment; such a session is read again
+  # and found in its stream.
+  defp imported?(%{source: source, session_id: id}, project_id) when is_binary(id) do
+    match?(
+      {"thread", %{"projectId" => ^project_id}},
+      T3.Shell.row(node(), "import:#{source}:#{id}")
+    )
+  end
+
+  defp imported?(_transcript, _project_id), do: false
 
   # Creates the thread unless it exists; an existing import counts as done.
   defp write_thread(thread_id, project_id, thread) do

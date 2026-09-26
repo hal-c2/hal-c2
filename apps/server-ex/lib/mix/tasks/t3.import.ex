@@ -5,6 +5,9 @@ defmodule Mix.Tasks.T3.Import do
 
       mix t3.import PATH/TO/state.sqlite
 
+  Threads the Node server never migrated to orchestration v2 are imported from their
+  version 1 events (`T3.Import.V1Thread`), as its `LegacyV1ThreadImporter` would.
+
   The source is opened read-only, but it must not be a database a running server has
   open for writing: snapshot it first with `VACUUM INTO` (see AGENTS.md, Test data).
   """

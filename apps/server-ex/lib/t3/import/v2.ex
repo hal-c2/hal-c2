@@ -16,6 +16,9 @@ defmodule T3.Import.V2 do
   Two more Node projection rules are made explicit in the log: a provider thread
   update for this thread (other than a queued placeholder) makes it the thread's
   `activeProviderThreadId`, and visits and mark-unread are quiet patches.
+
+  A thread logged only as version 1 events (before the Node server moved to v2) is
+  folded by `T3.Import.V1Thread` into the v2 entities the Node server migrates it to.
   """
 
   @quiet_events ["thread.visited", "thread.marked-unread"]
@@ -41,8 +44,8 @@ defmodule T3.Import.V2 do
       totals = %{streams: 0, source_events: 0, events: 0, source_bytes: 0, bytes: 0}
 
       report =
-        Enum.reduce(streams, totals, fn {aggregate, stream_id}, totals ->
-          stream_report = import_stream(db, store, aggregate, stream_id)
+        Enum.reduce(streams, totals, fn {aggregate, stream_id, legacy?}, totals ->
+          stream_report = import_stream(db, store, aggregate, stream_id, legacy?)
 
           Map.merge(totals, stream_report, fn _k, a, b -> a + b end)
           |> Map.update!(:streams, &(&1 + 1))
@@ -73,31 +76,38 @@ defmodule T3.Import.V2 do
   defp source_streams(db, only) do
     {:ok, stmt} =
       Sqlite3.prepare(db, """
-      SELECT aggregate_kind, stream_id FROM orchestration_events
-      WHERE aggregate_kind = 'project' OR application_event_version = 2
+      SELECT aggregate_kind, stream_id, MAX(application_event_version IS 2)
+      FROM orchestration_events
+      WHERE aggregate_kind IN ('project', 'thread') OR application_event_version = 2
       GROUP BY aggregate_kind, stream_id ORDER BY MIN(sequence)
       """)
 
     {:ok, rows} = Sqlite3.fetch_all(db, stmt)
-    for [aggregate, id] <- rows, only == nil or id in only, do: {aggregate, id}
+
+    for [aggregate, id, v2] <- rows,
+        only == nil or id in only,
+        do: {aggregate, id, aggregate == "thread" and v2 == 0}
   end
 
-  defp import_stream(db, store, aggregate, stream_id) do
+  # A thread with any v2 event was migrated by the Node server; its v1 events are
+  # history the v2 ones already carry.
+  defp import_stream(db, store, aggregate, stream_id, legacy?) do
     {:ok, stmt} =
       Sqlite3.prepare(db, """
       SELECT event_type, payload_json, occurred_at FROM orchestration_events
       WHERE aggregate_kind = ?1 AND stream_id = ?2
-        AND (aggregate_kind = 'project' OR application_event_version = 2)
+        AND (?3 OR aggregate_kind = 'project' OR application_event_version = 2)
       ORDER BY sequence
       """)
 
-    :ok = Sqlite3.bind(stmt, [aggregate, stream_id])
+    :ok = Sqlite3.bind(stmt, [aggregate, stream_id, if(legacy?, do: 1, else: 0)])
     stream_kind = if aggregate == "project", do: :project, else: :thread
 
     acc = %{
       stream_id: stream_id,
       latest: %{},
       bound_sessions: MapSet.new(),
+      v1: if(legacy?, do: T3.Import.V1Thread.new(stream_id)),
       pending: [],
       pending_count: 0,
       source_events: 0,
@@ -127,7 +137,7 @@ defmodule T3.Import.V2 do
             source_bytes: acc.source_bytes + byte_size(json)
         }
 
-        acc = diff_event(acc, type, JSON.decode!(json), unix_ms(occurred_at))
+        acc = diff_event(acc, type, JSON.decode!(json), occurred_at)
         if acc.pending_count >= @batch, do: flush(acc, store, stream_kind, stream_id), else: acc
       end)
 
@@ -139,7 +149,20 @@ defmodule T3.Import.V2 do
     DateTime.to_unix(dt, :millisecond)
   end
 
-  defp diff_event(acc, "provider-session.detached", payload, at) do
+  defp diff_event(%{v1: %{} = v1} = acc, type, payload, occurred_at) do
+    {v1, changes} = T3.Import.V1Thread.apply(v1, type, payload, occurred_at)
+    at = unix_ms(occurred_at)
+
+    Enum.reduce(changes, %{acc | v1: v1}, fn
+      {kind, id, nil}, acc -> remove(acc, kind, id, at)
+      {kind, id, entity}, acc -> upsert(acc, kind, id, entity, at)
+    end)
+  end
+
+  defp diff_event(acc, type, payload, occurred_at),
+    do: diff_v2(acc, type, payload, unix_ms(occurred_at))
+
+  defp diff_v2(acc, "provider-session.detached", payload, at) do
     case entity("provider-session.detached", payload) do
       {kind, id, _} ->
         if MapSet.member?(acc.bound_sessions, id) do
@@ -156,19 +179,19 @@ defmodule T3.Import.V2 do
     end
   end
 
-  defp diff_event(acc, "provider-session.updated", %{"id" => id} = payload, at) do
+  defp diff_v2(acc, "provider-session.updated", %{"id" => id} = payload, at) do
     if MapSet.member?(acc.bound_sessions, id),
       do: upsert(acc, "provider-session", id, payload, at),
       else: acc
   end
 
-  defp diff_event(acc, "provider-session.attached", %{"id" => id} = payload, at) do
+  defp diff_v2(acc, "provider-session.attached", %{"id" => id} = payload, at) do
     acc
     |> Map.update!(:bound_sessions, &MapSet.put(&1, id))
     |> upsert("provider-session", id, payload, at)
   end
 
-  defp diff_event(acc, "provider-thread.updated", %{"id" => id} = payload, at) do
+  defp diff_v2(acc, "provider-thread.updated", %{"id" => id} = payload, at) do
     acc = upsert(acc, "provider-thread", id, payload, at)
     thread = Map.get(acc.latest, {"thread", acc.stream_id})
 
@@ -177,7 +200,14 @@ defmodule T3.Import.V2 do
       else: acc
   end
 
-  defp diff_event(acc, type, payload, at) do
+  # Version 1 project events after the first carry only the fields they change.
+  defp diff_v2(acc, type, %{"projectId" => id} = payload, at)
+       when type in ["project.meta-updated", "project.deleted"] do
+    project = Map.get(acc.latest, {"project", id}, %{})
+    upsert(acc, "project", id, Map.merge(project, payload), at)
+  end
+
+  defp diff_v2(acc, type, payload, at) do
     case entity(type, payload) do
       nil -> acc
       {kind, id, entity} -> upsert(acc, kind, id, entity, at, type in @quiet_events)
@@ -195,6 +225,15 @@ defmodule T3.Import.V2 do
         patch = if quiet?, do: Map.put(patch, "q", true), else: patch
         acc |> Map.update!(:latest, &Map.put(&1, key, entity)) |> push({kind, id, patch, at})
     end
+  end
+
+  defp remove(acc, kind, id, at) do
+    if Map.has_key?(acc.latest, {kind, id}),
+      do:
+        acc
+        |> Map.update!(:latest, &Map.delete(&1, {kind, id}))
+        |> push({kind, id, T3.Patch.delete(), at}),
+      else: acc
   end
 
   # A provider thread queued for a future run; it does not become the active one.

@@ -21,7 +21,8 @@ Feature: Project defaults settings
   Scenario: A project's override wins over the environment's value
     Given "laptop" uses the default workspace "local"
     And "shop" overrides the default workspace to "worktree"
-    When a client asks for the settings that apply to "shop"
+    # Neither server serves project-resolved settings; the node resolves them (T3.Settings.for_project).
+    When the node resolves the settings for "shop"
     Then the default workspace is "worktree"
 
   # Same behaviour as "A project model override on a disabled provider falls back to the
@@ -30,7 +31,8 @@ Feature: Project defaults settings
   Scenario: A project's model override on a disabled provider falls back to the environment's
     Given "laptop" uses the default model "Sonnet"
     And "shop" overrides the default model with a model from a disabled provider
-    When a client asks for the settings that apply to "shop"
+    # Neither server serves project-resolved settings; the node resolves them (T3.Settings.for_project).
+    When the node resolves the settings for "shop"
     Then the default model is "Sonnet"
 
   @backlog @desktop @mobile

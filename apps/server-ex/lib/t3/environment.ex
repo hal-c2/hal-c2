@@ -78,11 +78,13 @@ defmodule T3.Environment do
   end
 
   @doc """
-  `server.refreshProviders`: reads models again when the user asks
-  (`refreshModels`), for one instance or all, then returns the provider list.
+  `server.refreshProviders`: probes the providers again, for one instance or all,
+  and announces the new list to every client, then returns it. As the Node
+  server's registry refresh does, each ACP agent is started again to read its
+  version, sign-in and models; `refreshModels` also reads Codex's model list again.
   Subscription quota is read again too (`T3.ProviderUsageLimits`), and an untargeted
   refresh re-reads the usage-limit sources, as the Node server's status probe does;
-  a workspace refresh (with a `cwd`) leaves quota alone.
+  a workspace refresh (with a `cwd`) leaves quota and probes alone.
   """
   def refresh_providers(input) do
     case input do
@@ -91,29 +93,27 @@ defmodule T3.Environment do
 
       %{"instanceId" => id} when is_binary(id) ->
         T3.ProviderUsageLimits.refresh([id])
+        probe([id], input["refreshModels"] == true)
 
       _ ->
         T3.ProviderUsageLimits.refresh()
         T3.UsageLimitSources.refresh()
-    end
-
-    if input["refreshModels"] == true do
-      case input["instanceId"] do
-        nil ->
-          T3.Codex.Provider.load()
-          for id <- T3.Acp.instances(), do: T3.Acp.reload(id)
-
-        "codex" ->
-          T3.Codex.Provider.load()
-
-        id ->
-          if T3.Acp.agent?(id), do: T3.Acp.reload(id)
-      end
-
-      T3.Settings.notify_providers()
+        probe(["codex" | T3.Acp.instances()], input["refreshModels"] == true)
     end
 
     {:ok, %{"providers" => providers()}}
+  end
+
+  # Agents are probed apart, so one slow agent does not hold up the others.
+  defp probe(ids, models?) do
+    if models? and "codex" in ids, do: T3.Codex.Provider.load()
+
+    ids
+    |> Enum.filter(&T3.Acp.agent?/1)
+    |> Task.async_stream(&T3.Acp.reload/1, timeout: :infinity, max_concurrency: 4)
+    |> Stream.run()
+
+    T3.Settings.notify_providers()
   end
 
   @doc """

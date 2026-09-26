@@ -14,11 +14,14 @@ defmodule T3.Upgrade do
     * Anything else: the bundle is installed, `releases/start_erl.data` names it,
       and the node exits with status 75, which `bin/t3-service` answers by starting
       it again, now on the new version. Turns cut off go on where the project asks
-      for that (`T3.Orchestration.Recovery`).
+      for that (`T3.Orchestration.Recovery`). The previous `start_erl.data` is kept
+      beside it until the new version boots; if it cannot, `bin/t3-service` puts it
+      back and starts the old version again.
 
   Either way the next boot runs the new version. The outcome is kept in
   `<home>/upgrades/outcome.json` and reported with the node's next `ready`, so a
-  client that asked can tell success from a rollback. One update runs at a time.
+  client that asked can tell success from a rollback. One update runs at a time;
+  another asked for meanwhile is refused.
   """
 
   use GenServer
@@ -155,6 +158,7 @@ defmodule T3.Upgrade do
 
   # --- server --------------------------------------------------------------------
 
+  # The state is nil while idle, and the running update's task and caller otherwise.
   @impl true
   def init(nil) do
     {:ok, nil, {:continue, :outcome}}
@@ -177,6 +181,7 @@ defmodule T3.Upgrade do
             })
 
       record(outcome)
+      if root = release_root(), do: File.rm(previous_start(root))
     else
       {:ok, %{} = done} -> :persistent_term.put({__MODULE__, :outcome}, done)
       _ -> :ok
@@ -186,8 +191,19 @@ defmodule T3.Upgrade do
   end
 
   @impl true
-  def handle_call({:update, input, progress}, _from, state) do
-    {:reply, run(input, progress), state}
+  def handle_call({:update, _input, _progress}, _from, %{} = running),
+    do: {:reply, failure("A server update is already in progress."), running}
+
+  def handle_call({:update, input, progress}, from, nil) do
+    task = Task.async(fn -> run(input, progress) end)
+    {:noreply, %{ref: task.ref, from: from}}
+  end
+
+  @impl true
+  def handle_info({ref, result}, %{ref: ref, from: from}) do
+    Process.demonitor(ref, [:flush])
+    GenServer.reply(from, result)
+    {:noreply, nil}
   end
 
   defp run(%{"targetVersion" => target}, progress) do
@@ -241,13 +257,16 @@ defmodule T3.Upgrade do
 
   defp restart(root, target, outcome, result, why) do
     if System.get_env("T3_SERVICE") == "1" do
+      File.cp!(start_data(root), previous_start(root))
       set_start_version(root, target)
       record(Map.put(outcome, "status", "restarting"))
       Logger.info("restarting into #{target}: #{why}")
-      # After the reply has gone out.
+      # After the reply has gone out. Tests stand in for `System.stop/1` with `:restart_exit`.
+      exit = Application.get_env(:t3, :restart_exit, &System.stop/1)
+
       spawn(fn ->
         Process.sleep(500)
-        Application.get_env(:t3, :restart_exit, &System.stop/1).(@restart_status)
+        exit.(@restart_status)
       end)
 
       {:ok, result}
@@ -313,12 +332,17 @@ defmodule T3.Upgrade do
   end
 
   defp set_start_version(root, target) do
-    path = Path.join([root, "releases", "start_erl.data"])
+    path = start_data(root)
     [erts | _] = path |> File.read!() |> String.split()
     erts = (manifest_of(root, target) || %{})["erts"] || erts
     File.write!(path <> ".new", "#{erts} #{target}\n")
     File.rename!(path <> ".new", path)
   end
+
+  defp start_data(root), do: Path.join([root, "releases", "start_erl.data"])
+
+  # The release before an update restart, for `bin/t3-service` to go back to.
+  defp previous_start(root), do: start_data(root) <> ".previous"
 
   # --- load in place -----------------------------------------------------------------
 

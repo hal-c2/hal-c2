@@ -11,6 +11,9 @@ defmodule T3.Settings do
   and `{:t3_providers_changed, node}` when something else changes the node's
   provider list (`notify_providers/0`).
 
+  Another process may edit the file too (`mix t3.theme`), so it is checked every
+  couple of seconds and a change is pushed to watchers like a `put/2`.
+
   Hub management keys never stay in the document: `T3.UsageLimitSources.seal_keys/2`
   moves them to the secret store on every write, so nothing a client reads carries one.
   """
@@ -85,6 +88,28 @@ defmodule T3.Settings do
 
   def unwatch(pid), do: GenServer.cast(__MODULE__, {:unwatch, pid})
 
+  @doc """
+  Saves `fun.(settings)` as one step, whatever the version. Without a running
+  settings server (a mix task beside a live node) it edits settings.json
+  directly, keeping keys it does not know; the node's file check picks it up.
+  """
+  def update(fun) do
+    GenServer.call(__MODULE__, {:update, fun})
+  catch
+    :exit, {:noproc, _} ->
+      path = path()
+
+      case read(path) do
+        {:ok, settings} ->
+          write!(path, fun.(settings))
+          :ok
+
+        {:error, reason} ->
+          {:error,
+           "Could not read #{path} (#{inspect(reason)}). Fix or remove it, then run this again."}
+      end
+  end
+
   @doc "Tells watchers to read the provider list again, such as after a model probe."
   def notify_providers, do: GenServer.cast(__MODULE__, :providers_changed)
 
@@ -103,40 +128,68 @@ defmodule T3.Settings do
 
   @impl true
   def init(nil) do
-    path = Path.join(Application.fetch_env!(:t3, :home), "settings.json")
+    path = path()
 
     settings =
-      with {:ok, text} <- File.read(path),
-           {:ok, %{} = settings} <- JSON.decode(text) do
-        settings
-      else
-        {:error, :enoent} ->
-          %{}
+      case read(path) do
+        {:ok, settings} ->
+          settings
 
-        other ->
-          Logger.warning("ignoring unreadable #{path}: #{inspect(other)}")
+        {:error, reason} ->
+          Logger.warning("ignoring unreadable #{path}: #{inspect(reason)}")
           %{}
       end
 
     # A key written in plain text (by hand, or before keys were sealed) moves out now.
     {settings, changed} = T3.UsageLimitSources.seal_keys(settings, %{})
     if changed, do: write!(path, settings)
+    schedule_check()
 
-    {:ok, %{path: path, settings: settings, version: 0, watchers: %{}}}
+    {:ok, %{path: path, settings: settings, version: 0, watchers: %{}, stamp: stamp(path)}}
+  end
+
+  @doc "The document as settings.json holds it, for tools running beside a node."
+  def saved, do: read(path())
+
+  defp path, do: Path.join(Application.fetch_env!(:t3, :home), "settings.json")
+
+  defp read(path) do
+    with {:ok, text} <- File.read(path),
+         {:ok, %{} = settings} <- JSON.decode(text) do
+      {:ok, settings}
+    else
+      {:error, :enoent} -> {:ok, %{}}
+      {:ok, _not_an_object} -> {:error, :not_an_object}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp schedule_check do
+    case Application.get_env(:t3, :settings_check_ms, 2_000) do
+      nil -> :ok
+      ms -> Process.send_after(self(), :check, ms)
+    end
+  end
+
+  # Writes rename a new file into place, so the inode changes with every save.
+  defp stamp(path) do
+    case File.stat(path, time: :posix) do
+      {:ok, stat} -> {stat.inode, stat.size, stat.mtime}
+      _ -> nil
+    end
   end
 
   @impl true
   def handle_call(:get, _from, state), do: {:reply, {state.settings, state.version}, state}
 
   def handle_call({:put, settings, version}, _from, %{version: version} = state) do
-    {settings, keys_changed} = T3.UsageLimitSources.seal_keys(settings, state.settings)
-    write!(state.path, settings)
+    state = save(state, settings, true)
+    {:reply, {:ok, state.version}, state}
+  end
 
-    if keys_changed or settings["usageLimitSources"] != state.settings["usageLimitSources"],
-      do: T3.UsageLimitSources.refresh_async()
-
-    for {pid, _} <- state.watchers, do: send(pid, {:t3_settings, node(), settings})
-    {:reply, {:ok, version + 1}, %{state | settings: settings, version: version + 1}}
+  def handle_call({:update, fun}, _from, state) do
+    state = save(state, fun.(state.settings), true)
+    {:reply, {:ok, state.version}, state}
   end
 
   def handle_call({:put, _settings, _version}, _from, state),
@@ -182,6 +235,36 @@ defmodule T3.Settings do
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _}, state),
     do: {:noreply, %{state | watchers: Map.delete(state.watchers, pid)}}
+
+  # The file changed under the node: adopt it unless it is unreadable.
+  def handle_info(:check, state) do
+    schedule_check()
+    stamp = stamp(state.path)
+
+    with true <- stamp != state.stamp,
+         {:ok, settings} when settings != state.settings <- read(state.path) do
+      {:noreply, save(state, settings, false)}
+    else
+      _ -> {:noreply, %{state | stamp: stamp}}
+    end
+  end
+
+  defp save(state, settings, write?) do
+    {settings, keys_changed} = T3.UsageLimitSources.seal_keys(settings, state.settings)
+    if write? or keys_changed, do: write!(state.path, settings)
+
+    if keys_changed or settings["usageLimitSources"] != state.settings["usageLimitSources"],
+      do: T3.UsageLimitSources.refresh_async()
+
+    for {pid, _} <- state.watchers, do: send(pid, {:t3_settings, node(), settings})
+
+    %{
+      state
+      | settings: settings,
+        version: state.version + 1,
+        stamp: stamp(state.path)
+    }
+  end
 
   # Written to a temporary file and renamed, so a crash never leaves half a file.
   defp write!(path, settings) do

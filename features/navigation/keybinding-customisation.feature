@@ -95,7 +95,7 @@ Feature: Customising keybindings
       When the user presses mod+alt+r
       Then the "test" script runs
 
-    @backlog @node
+    @node
     Scenario Outline: Rules beyond the limits are rejected
       When a client adds a rule whose <part> is <size>
       Then the rule is rejected

@@ -69,10 +69,11 @@ defmodule T3.Test.WsClient do
       else: recv_until(client, fun, timeout, [frame | skipped])
   end
 
+  # Only this connection's socket messages, so a scenario's other mail (closed
+  # sockets of earlier clients, service subscriptions) stays in the mailbox.
   defp recv_http(conn, acc) do
     socket = Mint.HTTP.get_socket(conn)
 
-    # Only this connection's socket messages; the test process gets others too.
     receive do
       message
       when is_tuple(message) and tuple_size(message) >= 2 and elem(message, 1) == socket ->

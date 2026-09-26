@@ -137,7 +137,7 @@ Feature: Updating the server, the desktop app and providers
         | is not installed                       | Codex is not installed on this machine.         |
         | was installed in a way the node cannot update | This installation cannot be updated from here. |
 
-    @backlog @node
+    @node
     Scenario: The user turns off provider update checks
       Given the user turned off provider update checks
       When the node would check provider versions

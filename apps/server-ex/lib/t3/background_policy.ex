@@ -149,6 +149,7 @@ defmodule T3.BackgroundPolicy do
     monitors =
       Map.put_new_lazy(state.monitors, pid, fn -> Process.monitor(pid) end)
 
+    Process.send_after(self(), {:expire, key, lease.expires_ms}, ttl)
     {:noreply, %{state | leases: leases, monitors: monitors}}
   end
 
@@ -165,7 +166,18 @@ defmodule T3.BackgroundPolicy do
     {:noreply, if(newer, do: %{state | power: snapshot}, else: state)}
   end
 
+  # A lease not renewed by the time it expires goes.
   @impl true
+  def handle_info({:expire, key, expires_ms}, state) do
+    case state.leases do
+      %{^key => %{expires_ms: ^expires_ms}} ->
+        {:noreply, %{state | leases: Map.delete(state.leases, key)}}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
   def handle_info({:DOWN, _ref, :process, pid, _}, state) do
     leases = Map.reject(state.leases, fn {{owner, _}, _} -> owner == pid end)
     {:noreply, %{state | leases: leases, monitors: Map.delete(state.monitors, pid)}}

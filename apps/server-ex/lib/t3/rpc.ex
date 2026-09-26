@@ -120,6 +120,9 @@ defmodule T3.Rpc do
 
   def handle("t3.upsertKeybinding", input), do: T3.Keybindings.upsert(input)
   def handle("t3.removeKeybinding", input), do: T3.Keybindings.remove(input)
+  # The contract names take the same payload; the client adapter resolves `rules`.
+  def handle("server.upsertKeybinding", input), do: T3.Keybindings.upsert(input)
+  def handle("server.removeKeybinding", input), do: T3.Keybindings.remove(input)
   def handle("projects.searchEntries", input), do: T3.Workspace.search_entries(input)
   def handle("attachments.createUploadUrl", input), do: T3.Attachments.create_upload_url(input)
   def handle("attachments.delete", input), do: T3.Attachments.delete(input)

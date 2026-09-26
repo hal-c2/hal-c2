@@ -1,5 +1,6 @@
 # Sources:
 #   apps/server-ex/lib/t3/diagnostics.ex (process list, history, signals, traces)
+#   apps/server-ex/lib/t3/traces.ex (client trace forwarding, trace diagnostics)
 #   apps/server-ex/test/node_parity_test.exs (diagnostics RPCs aligned)
 #   apps/server-ex/test/features_backlog_test.exs (client trace forwarding)
 #   packages/contracts/src/rpc.ts (server.getProcessDiagnostics, server.getProcessResourceHistory, server.signalProcess, server.getTraceDiagnostics)
@@ -60,16 +61,17 @@ Feature: Diagnostics
     When the user asks for trace diagnostics
     Then the user is told "This node does not record traces."
 
-  @backlog @node
+  @node
   Scenario: Trace diagnostics list the latest and slowest failures
     Given the node recorded failing and slow spans
     When the user asks for trace diagnostics
     Then the latest failures, most common failures and slowest spans are listed
 
-  @backlog @node
+  @node
   Scenario: Clients forward their traces to the node
     When a client sends its traces to the node
-    Then the node records them with its own
+    # The node traces none of its own work; the file holds what clients send.
+    Then the node records them in its trace file
 
   @backlog @shared
   Scenario: Force killing a process asks first
