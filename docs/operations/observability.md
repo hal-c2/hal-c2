@@ -36,7 +36,7 @@ SSH-managed launch persistence stay unchanged either way.
 
 Completed spans are written as NDJSON records to `serverTracePath`. The default depends on how the
 server starts: production and explicitly configured homes use
-`<home>/userdata/logs/server.trace.ndjson` (so `~/.hal-c2/userdata/...` by default, or
+`<home>/userdata/logs/server.trace.ndjson` (so `~/.hal-c2/userdata/...` by default, `~/.t3/userdata/...` where `~/.t3` already exists, or
 `/custom/path/userdata/...` with `--home-dir /custom/path`), a linked worktree dev run uses
 `<worktree>/.hal-c2/userdata/logs/server.trace.ndjson`, and an implicit dev run outside a linked
 worktree uses `~/.hal-c2/dev/logs/server.trace.ndjson`.

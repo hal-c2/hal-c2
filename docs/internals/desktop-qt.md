@@ -41,7 +41,7 @@ running dev server; this is what `vp run dev:qt` uses.
 - **One profile.** `src/WebProfile.cpp` configures Qt WebEngine's default
   profile and registers it as the `WebProfile` singleton: storage and a 64 MiB
   disk HTTP cache under `<HAL-C2 home>/userdata/shell-web` (`--home-dir`, then
-  `HALC2_HOME`, then `~/.hal-c2`), cookies forced persistent, permissions stored.
+  `HALC2_HOME`, then `~/.hal-c2` or an existing `~/.t3`), cookies forced persistent, permissions stored.
   Every `WebSurface` shares it, so the embed surfaces reuse the primary's
   session and the bundle comes from cache on the next start. Chromium cannot
   share a profile directory between processes: a second shell on the same
@@ -140,7 +140,7 @@ vp run dev:qt     # terminal 2: cmake configure/build, `hal-c2 pair`, launch wit
 ```
 
 `dev:qt` resolves the data directory the way `vp run dev` does (`--home-dir`,
-else the worktree's own `.hal-c2`, else `HALC2_HOME`, else `~/.hal-c2`), pairs with
+else the worktree's own `.hal-c2`, else `HALC2_HOME`, else `~/.hal-c2` or an existing `~/.t3`), pairs with
 the server running there, and launches the shell with that directory as its
 `HALC2_HOME` so it rices from the matching `shell/`. Pass the same
 `--home-dir` to both commands if you set one. Its other flags are `--url` (skip

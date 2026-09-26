@@ -6,14 +6,15 @@ provisioning instructions.
 
 ## Public application configuration
 
-HAL-C2 Connect is disabled in a fresh clone. To build against the production deployment, copy the
-repository-root example:
+HAL-C2 Connect is disabled in a fresh clone. HAL-C2 has no public deployment of its own: the
+repository-root example still carries upstream T3 Code's public identifiers, with the relay URL
+replaced by the `relay.hal-c2.example` placeholder. Copy it as a starting point:
 
 ```sh
 cp .env.example .env
 ```
 
-For another deployment, set these values in the repository-root `.env` or `.env.local`:
+For your own deployment, set these values in the repository-root `.env` or `.env.local`:
 
 ```dotenv
 HALC2_CLERK_PUBLISHABLE_KEY=<publishable key>
