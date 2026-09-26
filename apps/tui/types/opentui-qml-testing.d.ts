@@ -15,6 +15,8 @@ export interface TestQmlOptions extends Omit<RunQmlOptions, "renderer" | "render
   height?: number;
   filename?: string;
   render?: boolean;
+  /** Test renderer options (e.g. `kittyKeyboard` to tell Shift+Enter from Enter). */
+  renderer?: { kittyKeyboard?: boolean; otherModifiersMode?: boolean };
 }
 
 export interface QmlTestApp {

@@ -84,3 +84,15 @@ step(
     expect(await app.snapshot()).not.toContain(text);
   },
 );
+
+// --- added by T3 ---
+
+/** The status line reads (or contains) this text. */
+step("the status line says {string}", async (ctx: World, text: string) => {
+  const app = await boot(ctx);
+  for (let round = 0; round < 5; round += 1) {
+    await ctx.host!.idle();
+    await app.advance(0);
+  }
+  expect(String(findObject(ctx, "statusText").get("text"))).toContain(text);
+});

@@ -48,6 +48,12 @@ Rectangle {
         focus: composer.focused
         placeholderText: composer.model.placeholder
         wrapMode: "word"
+        // Plain Enter is taken by Keys.onPressed (send); Shift+Enter and Ctrl+J add a line.
+        keyBindings: [
+            { name: "return", shift: true, action: "newline" },
+            { name: "kpenter", shift: true, action: "newline" },
+            { name: "linefeed", action: "newline" }
+        ]
         color: Theme.colors.text
         focusedColor: Theme.colors.text
         backgroundColor: Theme.colors.bg
@@ -69,5 +75,5 @@ Rectangle {
         }
     }
 
-    ComposerFooter { id: footerView; objectName: "composerFooter"; composer: composer.model }
+    ComposerFooter { id: footerView; objectName: "composerFooter" }
 }

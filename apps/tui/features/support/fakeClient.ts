@@ -1,15 +1,27 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   type OrchestrationThread,
+  type ServerProvider,
   type TerminalMetadataStreamEvent,
   type VcsStatusResult,
 } from "@t3tools/contracts";
 
 import type { OrchestrationShellSnapshot, TuiClient, TuiThreadPage } from "../../src/connection.ts";
+import { flattenModelOptions } from "../../src/models.ts";
 
 // Fixtures and an in-memory TuiClient, shared by the component tests and the
 // Gherkin world. Feed it with `connect()` (the default shell snapshot),
 // `emitShell(snapshot)` and `emitThread(detail)`.
+//
+// Every request method is recorded in `calls` (subscriptions and peeks are
+// not), so steps assert on what the client was asked. `override(method, fn)`
+// swaps one method's behaviour after boot. `workspaceFiles` backs
+// `readFileBase64` unless a scenario passes its own.
+
+export interface FakeCall {
+  readonly method: string;
+  readonly args: ReadonlyArray<unknown>;
+}
 
 export const project = {
   id: "p1",
@@ -92,7 +104,7 @@ export function fakeClient({
   terminalRestart = async () => {},
   terminalClose = async () => {},
   approve = async () => {},
-  setInteractionMode = async () => {},
+  setInteractionMode,
   renameThread = async () => {},
   archiveThread = async () => {},
   unarchiveThread = async () => {},
@@ -103,7 +115,8 @@ export function fakeClient({
   runGitPull = async () => {},
   getAttachmentUrl = async () => null,
   getAttachmentImage = async () => null,
-  readFileBase64 = async () => null,
+  readFileBase64,
+  providers,
   listRefs = async () =>
     ({
       refs: [
@@ -121,16 +134,18 @@ export function fakeClient({
     }) as never,
   switchRef = async (_cwd: string, refName: string) => ({ refName }) as never,
   getServerConfig = async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
-  listModels = async () =>
-    [
-      {
-        instanceId: "codex",
-        model: "gpt-5",
-        label: "GPT-5",
-        providerLabel: "Codex",
-        capabilities: null,
-      },
-    ] as never,
+  listModels = providers
+    ? async () => flattenModelOptions(providers)
+    : async () =>
+        [
+          {
+            instanceId: "codex",
+            model: "gpt-5",
+            label: "GPT-5",
+            providerLabel: "Codex",
+            capabilities: null,
+          },
+        ] as never,
   listTerminalIds = async () => [],
 }: {
   readonly detail?: OrchestrationThread;
@@ -159,6 +174,8 @@ export function fakeClient({
   readonly getAttachmentUrl?: TuiClient["getAttachmentUrl"];
   readonly getAttachmentImage?: TuiClient["getAttachmentImage"];
   readonly readFileBase64?: TuiClient["readFileBase64"];
+  /** Providers whose usable models `listModels` reports (flattened like the server). */
+  readonly providers?: ReadonlyArray<ServerProvider>;
   readonly listRefs?: TuiClient["listRefs"];
   readonly switchRef?: TuiClient["switchRef"];
   readonly getServerConfig?: TuiClient["getServerConfig"];
@@ -172,6 +189,14 @@ export function fakeClient({
   readonly emitTerminalMetadata: (event: TerminalMetadataStreamEvent) => void;
   /** Push live detail to whoever subscribed to that thread. */
   readonly emitThread: (detail: OrchestrationThread, page?: TuiThreadPage) => void;
+  /** Requests made so far, oldest first. */
+  readonly calls: FakeCall[];
+  /** Replace one client method (still recorded). */
+  readonly override: <K extends keyof TuiClient>(method: K, fn: TuiClient[K]) => void;
+  /** Workspace files (relative path → bytes) served by the default `readFileBase64`. */
+  readonly workspaceFiles: Map<string, Uint8Array>;
+  /** The latest detail pushed or peeked for a thread. */
+  readonly currentThread: (threadId: string) => OrchestrationThread | null;
 } {
   let shellSubscriber: ((snapshot: OrchestrationShellSnapshot) => void) | null = null;
   let terminalMetadataSubscriber: ((event: TerminalMetadataStreamEvent) => void) | null = null;
@@ -180,6 +205,24 @@ export function fakeClient({
     string,
     (thread: OrchestrationThread, page: TuiThreadPage) => void
   >();
+  const details = new Map<string, OrchestrationThread>();
+  if (detail) details.set(detail.id, detail);
+  const workspaceFiles = new Map<string, Uint8Array>();
+  const currentThread = (threadId: string) => details.get(threadId) ?? null;
+  const emitThread = (
+    next: OrchestrationThread,
+    page: TuiThreadPage = { hasMore: false, loadingOlder: false },
+  ) => {
+    details.set(next.id, next);
+    threadSubscribers.get(next.id)?.(next, page);
+  };
+  // The server echoes a thread setting back through the live detail.
+  const echo =
+    (patch: (mode: never) => Partial<OrchestrationThread>) =>
+    async (threadId: string, mode: never) => {
+      const current = details.get(threadId);
+      if (current) emitThread({ ...current, ...patch(mode) });
+    };
   const client = {
     hostPlatform: "linux",
     browseFilesystem,
@@ -202,7 +245,7 @@ export function fakeClient({
         if (threadSubscribers.get(threadId) === onThread) threadSubscribers.delete(threadId);
       };
     },
-    peekThread: () => detail ?? null,
+    peekThread: (threadId: string) => details.get(threadId) ?? detail ?? null,
     subscribeVcsStatus: (_cwd: string, onStatus: (status: VcsStatusResult) => void) => {
       if (vcsStatus) onStatus(vcsStatus);
       return () => {};
@@ -222,7 +265,12 @@ export function fakeClient({
     terminalResize: async () => {},
     terminalClear,
     terminalRestart,
-    setInteractionMode,
+    setInteractionMode:
+      setInteractionMode ?? echo((interactionMode) => ({ interactionMode }) as never),
+    setRuntimeMode: echo((runtimeMode) => ({ runtimeMode }) as never),
+    interrupt: async () => {},
+    implementPlan: async () => {},
+    stopSession: async () => {},
     renameThread,
     archiveThread,
     unarchiveThread,
@@ -238,17 +286,42 @@ export function fakeClient({
     switchRef,
     getAttachmentUrl,
     getAttachmentImage,
-    readFileBase64,
+    readFileBase64:
+      readFileBase64 ??
+      (async (_cwd: string, relativePath: string) => {
+        const bytes = workspaceFiles.get(relativePath);
+        if (!bytes) return null;
+        return {
+          contents: Buffer.from(bytes).toString("base64"),
+          byteLength: bytes.byteLength,
+          truncated: false,
+        };
+      }),
     runGitStackedAction: async () => {},
     runGitPull,
   } as unknown as TuiClient;
+  const calls: FakeCall[] = [];
+  const impls = client as unknown as Record<string, unknown>;
+  const recorded = { ...impls } as Record<string, unknown>;
+  for (const [method, impl] of Object.entries(impls)) {
+    if (typeof impl !== "function" || /^(subscribe|peek)/.test(method)) continue;
+    recorded[method] = (...args: unknown[]) => {
+      calls.push({ method, args });
+      return (impls[method] as (...values: unknown[]) => unknown)(...args);
+    };
+  }
   return {
-    client,
+    client: recorded as unknown as TuiClient,
     connect: () => shellSubscriber?.(shellSnapshot),
     emitShell: (snapshot) => shellSubscriber?.(snapshot),
     subscribedThreadIds,
     emitTerminalMetadata: (event) => terminalMetadataSubscriber?.(event),
-    emitThread: (next, page = { hasMore: false, loadingOlder: false }) =>
-      threadSubscribers.get(next.id)?.(next, page),
+    emitThread,
+    calls,
+    override: (method, fn) => {
+      impls[method] = fn;
+    },
+    workspaceFiles,
+    currentThread,
   };
 }

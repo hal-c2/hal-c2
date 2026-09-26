@@ -9,7 +9,7 @@ import * as NodePath from "node:path";
 import type { QmlObject } from "opentui-qml";
 import { testQml, type QmlTestApp } from "opentui-qml/testing";
 
-import { createHost, type Host } from "../../src/host/host.ts";
+import { createHost, type Host, type HostOptions } from "../../src/host/host.ts";
 import type { StepContext } from "../steps.ts";
 import { fakeClient } from "./fakeClient.ts";
 
@@ -30,6 +30,17 @@ export interface World extends StepContext {
   /** What the host logged (unknown actions). */
   logs?: string[];
   quitRequested?: boolean;
+  /** Extra host options (editor runner, env, local files) set before boot. */
+  hostOptions?: Partial<HostOptions>;
+  /** Every action the host saw, oldest first. */
+  dispatched?: Array<{ action: string; payload: unknown }>;
+  /**
+   * Encode keys with the Kitty keyboard protocol, as modern terminals do, so
+   * Shift+Enter and Ctrl+Shift+M differ from Enter and Ctrl+M. Set before boot.
+   */
+  kittyKeyboard?: boolean;
+  /** The current step's kind (the runner sets it): Given is "Context", Then is "Outcome". */
+  stepType?: "Context" | "Action" | "Outcome" | "Unknown";
 }
 
 /** Set up the fake client before boot; later calls replace it only if not booted. */
@@ -49,13 +60,16 @@ export async function boot(
   const rows = size.rows ?? ctx.rows ?? DEFAULT_ROWS;
   const fake = ctx.fake ?? useClient(ctx);
   const logs: string[] = (ctx.logs ??= []);
+  const dispatched = (ctx.dispatched ??= []);
   const host = createHost({
+    ...ctx.hostOptions,
     client: fake.client,
     size: { columns, rows },
     log: (message) => logs.push(message),
     onQuit: () => {
       ctx.quitRequested = true;
     },
+    trace: (action, payload) => dispatched.push({ action, payload }),
   });
   ctx.cleanups.push(() => host.destroy());
   const app = await testQml(
@@ -64,6 +78,7 @@ export async function boot(
       width: columns,
       height: rows,
       importPaths: [QML_DIR],
+      ...(ctx.kittyKeyboard ? { renderer: { kittyKeyboard: true } } : {}),
       singletons: { Shell: host.Shell, Theme: host.Theme },
     },
   );
@@ -96,6 +111,10 @@ const NAMED_KEYS: Record<string, string> = {
   tab: "TAB",
   backspace: "BACKSPACE",
   delete: "DELETE",
+  pgup: "\x1b[5~",
+  pageup: "\x1b[5~",
+  pgdn: "\x1b[6~",
+  pagedown: "\x1b[6~",
   up: "ARROW_UP",
   down: "ARROW_DOWN",
   left: "ARROW_LEFT",
@@ -163,4 +182,37 @@ export function geometry(object: QmlObject): Geometry {
     width: Number(object.get("layoutWidth")),
     height: Number(object.get("layoutHeight")),
   };
+}
+
+/** Let every request the host started settle, then render. */
+export async function settle(ctx: World): Promise<void> {
+  const app = await boot(ctx);
+  for (let round = 0; round < 5; round += 1) {
+    await ctx.host!.idle();
+    await app.advance(0);
+  }
+}
+
+/** A bracketed text paste into whatever has focus. */
+export async function pasteText(ctx: World, text: string): Promise<void> {
+  await (await boot(ctx)).paste(text);
+  await settle(ctx);
+}
+
+/** A clipboard image paste (Kitty OSC 5522 delivers bytes with a MIME type). */
+export async function pasteBytes(ctx: World, bytes: Uint8Array, mimeType: string): Promise<void> {
+  const app = await boot(ctx);
+  app.renderer.keyInput.processPaste(bytes, { mimeType });
+  await settle(ctx);
+}
+
+/** Click the first cell of a named object. */
+export async function clickObject(ctx: World, objectName: string): Promise<void> {
+  const app = await boot(ctx);
+  await app.snapshot();
+  const renderable = (
+    findObject(ctx, objectName) as unknown as { renderable: { x: number; y: number } }
+  ).renderable;
+  await app.click(renderable.x, renderable.y);
+  await settle(ctx);
 }
