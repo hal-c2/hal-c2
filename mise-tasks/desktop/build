@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Build the Qt desktop shell without launching it (--release for a Release build)"
+#MISE dir="{{config_root}}/apps/desktop-qt"
+set -euo pipefail
+exec node scripts/dev-qt.mjs --configure-only "$@"

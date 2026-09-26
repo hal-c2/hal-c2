@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+#MISE description="Run the Elixir node in the foreground (mix hal_c2.server); --cluster boots it clustered"
+#MISE dir="{{config_root}}/apps/server-ex"
+set -euo pipefail
+if [[ ${1:-} == --cluster ]]; then
+  shift
+  exec elixir --erl "$(mix hal_c2.cluster vm-args)" -S mix hal_c2.server "$@"
+fi
+exec mix hal_c2.server "$@"

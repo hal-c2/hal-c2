@@ -12,8 +12,23 @@ mise run deps:check
 ```
 
 `deps:check` also reports cmake and Qt 6.9+, which the Qt desktop needs from the system package
-manager. Without mise: `vp i` at the root, `mix deps.get` in `apps/server-ex`. `vp run dev`
-starts the legacy Node server and web app.
+manager. Without mise: `vp i` at the root, `mix deps.get` in `apps/server-ex`.
+
+## Running the target surfaces
+
+```sh
+mise run node              # Elixir node in the foreground; --cluster boots it clustered
+mise run node:pair         # one-time pairing URL for that node (--tailscale to publish it)
+mise run desktop           # build the Qt shell, pair with the running dev server, launch
+mise run desktop:build     # build only (--release for a Release build)
+mise run tui               # bundle apps/tui and open it on the running server
+```
+
+Arguments pass straight through (`mise run desktop -- --help` for the Qt script's own
+flags). The Qt shell and the TUI still attach to the legacy Node server, which `vp run dev`
+starts; the TUI task points `hal-c2 tui` at this checkout's `.hal-c2` when that directory
+exists, since that is where `vp run dev` keeps a worktree's server record. Pair the Elixir
+node into a client from Settings → Connections with the URL `node:pair` prints.
 
 Open the pairing URL printed by the dev runner. The bare origin does not authenticate
 a new browser.

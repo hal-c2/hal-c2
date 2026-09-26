@@ -1,4 +1,4 @@
-# Tools for the feature runners and `mise run install`; the tasks live in mise-tasks/.
+# Tools for the run tasks, feature runners and `mise run install`; the tasks live in mise-tasks/.
 # Qt 6.9+ and cmake come from the system package manager, `vp` from the Vite+
 # installer (README.md, "Install vp"). `mise run deps:check` reports all of them.
 [tools]

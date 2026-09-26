@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Print a one-time pairing URL for the running Elixir node (mix hal_c2.pair [BASE_URL] or --tailscale)"
+#MISE dir="{{config_root}}/apps/server-ex"
+set -euo pipefail
+exec mix hal_c2.pair "$@"

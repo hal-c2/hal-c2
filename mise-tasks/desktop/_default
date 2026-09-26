@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Build the Qt desktop shell, pair it with the running dev server, and launch it (args go to dev-qt.mjs and hal-c2-qt)"
+#MISE dir="{{config_root}}/apps/desktop-qt"
+set -euo pipefail
+# Attaches to the server `vp run dev` started (or the one --url names). Run without
+# --url and with no dev server to get the hint the pairing step prints.
+exec node scripts/dev-qt.mjs "$@"

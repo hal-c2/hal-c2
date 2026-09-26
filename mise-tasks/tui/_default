@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+#MISE description="Bundle the terminal client and open it on the running server (hal-c2 tui; --base-dir defaults to ./.hal-c2)"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+# The launcher spawns apps/tui/dist/index.js under Bun, so bundle first (well under a second).
+(cd apps/tui && bun run --silent build >/dev/null)
+args=("$@")
+if [[ -d .hal-c2 ]] && [[ " $* " != *" --base-dir"* ]] && [[ -z ${HAL_C2_HOME:-} ]]; then
+  # A worktree's dev server keeps its record in <checkout>/.hal-c2, where
+  # `vp run dev` put it; the launcher itself only knows --base-dir and HAL_C2_HOME.
+  args=(--base-dir "$PWD/.hal-c2" "${args[@]}")
+fi
+exec node apps/server/src/bin.ts tui "${args[@]}"
