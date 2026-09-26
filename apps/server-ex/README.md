@@ -17,8 +17,10 @@ mix hal_c2.server                                    # prints ws://127.0.0.1:378
 mix hal_c2.pair                                      # one-time pairing URL for Settings → Connections
 ```
 
-State lives in the repo's `.hal-c2/elixir` during development; set `HAL_C2_NODE_HOME` to put
-it elsewhere. The node listens on loopback port 3780; `HAL_C2_NODE_PORT` and
+During development the node keeps its files inside the checkout's `.hal-c2`, in the
+`elixir` directory of each kind (`.hal-c2/data/elixir`, `.hal-c2/state/elixir/logs`), even
+when `HAL_C2_HOME` is set; set `HAL_C2_NODE_HOME` to put them elsewhere. The node
+listens on loopback port 3780; `HAL_C2_NODE_PORT` and
 `HAL_C2_NODE_HOST` (a LAN or tailnet address, for pairing other devices; `HAL_C2_HOST` also
 works) change that.
 
@@ -26,13 +28,18 @@ works) change that.
 
 ```sh
 MIX_ENV=prod mix release        # _build/prod/rel/hal_c2, about 80 MB with ERTS
-_build/prod/rel/hal_c2/bin/hal_c2 start # foreground; state in ~/.hal-c2/elixir
+_build/prod/rel/hal_c2/bin/hal_c2 start # foreground; data in ~/.local/share/hal-c2/elixir
 ```
 
-A release keeps its state in the `elixir` directory of the HAL-C2 home it shares with
-the Node server (`HAL_C2_HOME`, default `~/.hal-c2`), or in `HAL_C2_NODE_HOME` when that is
-set. An install from before the rename keeps using `~/.t3/elixir`, and `T3_HOME` and
-`T3CODE_HOME` are still read (`rel/env.sh.eex`).
+A release shares the XDG directories with the Node server
+([where HAL-C2 keeps its files](../../docs/user/install.md#where-hal-c2-keeps-its-files)) and
+keeps its own files one `elixir` level down in each, such as `~/.local/share/hal-c2/elixir`
+for its database and `~/.local/state/hal-c2/elixir/logs`; `HAL_C2_HOME` moves all four under
+one root. `HAL_C2_NODE_HOME` is a root for the node alone, with no `elixir` level, and
+outranks `HAL_C2_HOME`. On first start with no data, a node copies its files once from an old
+home's `elixir` directory (`T3CODE_HOME` or `T3_HOME`, else `~/.hal-c2`, else `~/.t3`), turning
+`t3.sqlite` into `hal-c2.sqlite`, and never reads the old home again
+([storage-migration.feature](../../features/node/platform/storage-migration.feature)).
 
 The release carries the Cursor sidecar (`packages/cursor-acp`, bundled with its
 dependencies for the build machine's platform), so building one needs `pnpm`, and
@@ -40,7 +47,7 @@ running Cursor needs Node 22+ on the machine. The desktop app runs it on its own
 Electron binary instead (`HAL_C2_NODE_COMMAND`).
 
 A machine that has joined a cluster boots clustered: joining writes
-`cluster/vm.args` in its state directory, which the release reads at start.
+`cluster/vm.args` in its data directory, which the release reads at start.
 
 Run it as a service with `bin/hal-c2-service` (under launchd, systemd, or a terminal): it
 is `bin/hal_c2 start`, started again when the node restarts to finish an update.

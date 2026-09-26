@@ -1,7 +1,7 @@
 # @hal-c2/desktop-qt
 
 Qt/QML shell for HAL-C2. Hosts the web app in a `WebEngineView` and lets the
-window chrome be rearranged and themed from `~/.hal-c2/shell/`.
+window chrome be rearranged and themed from `~/.config/hal-c2/shell/`.
 
 Architecture, setup, and the QML/theme contracts: `docs/internals/desktop-qt.md`.
 

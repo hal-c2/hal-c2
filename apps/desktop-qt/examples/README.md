@@ -6,7 +6,7 @@ shell-only `window`, `radius` and `fonts` keys). Copy one into your config dir
 and the app reloads on save:
 
 ```sh
-cp examples/glass/*.* ~/.hal-c2/shell/
+cp examples/glass/*.* ~/.config/hal-c2/shell/
 ```
 
 | Example     | Idea                                                                                                                                                                                                                                                                                                                                                    |
@@ -17,11 +17,11 @@ cp examples/glass/*.* ~/.hal-c2/shell/
 | `terminal`  | Status line with the wordmark, a prompt mark, counts and the model; mono type, sharp corners. Made for a tiling desktop such as Omarchy, with flags at the top of `shell.qml` for a clock, window buttons and a chip of the palette's sixteen colours. Its `theme.json` is Tokyo Night as `vp run theme:qt` writes it from a terminal in those colours. |
 
 Pick up your own terminal's colours (it asks the terminal for its palette and
-writes `theme.json` into the shell directory, `~/.hal-c2/shell` by default):
+writes `theme.json` into the shell directory, `~/.config/hal-c2/shell` by default):
 
 ```sh
 vp run theme:qt
-vp run theme:qt ~/.hal-c2/shell
+vp run theme:qt ~/.config/hal-c2/shell
 ```
 
 On macOS, `glass-macos` follows the system light/dark appearance, with real window traffic lights,
