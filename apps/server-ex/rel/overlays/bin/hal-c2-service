@@ -6,10 +6,10 @@
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 
-# `hal-c2-service install|status|uninstall` registers this release with the user's
+# `hal-c2-service install|status|restart|uninstall` manages this release with the user's
 # service manager (`HalC2.Service.main/1`).
 case "${1:-}" in
-  install | status | uninstall) exec "$here/hal_c2" eval "HalC2.Service.main([\"$1\"])" ;;
+  install | status | restart | uninstall) exec "$here/hal_c2" eval "HalC2.Service.main([\"$1\"])" ;;
 esac
 
 releases="$here/../releases"

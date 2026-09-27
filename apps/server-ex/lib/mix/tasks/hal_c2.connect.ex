@@ -185,6 +185,10 @@ defmodule Mix.Tasks.HalC2.Connect do
   defp offer_service do
     status = HalC2.Service.status()
 
+    # What is wrong with an installed service is said before offering to repair it.
+    unless status["current"],
+      do: for(problem <- status["problems"], do: warn_problem(problem))
+
     cond do
       not status["supported"] ->
         false
@@ -211,6 +215,9 @@ defmodule Mix.Tasks.HalC2.Connect do
         false
     end
   end
+
+  defp warn_problem(problem),
+    do: Mix.shell().error("[#{problem}] #{HalC2.Service.problem_message(problem)}")
 
   defp service_question(%{"installed" => true}),
     do: "The installed HAL-C2 service needs an update or repair. Update it now?"

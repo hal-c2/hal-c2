@@ -960,10 +960,11 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     assert Enum.any?(printed, &String.starts_with?(&1, "Background service installed. Logs: "))
     assert Enum.any?(printed, &String.starts_with?(&1, "\n✓ Background service ready"))
 
+    # Lingering is switched on before anything about the service changes.
     assert [
+             "loginctl enable-linger --no-ask-password " <> _,
              "systemctl --user daemon-reload",
              "systemctl --user enable hal-c2.service",
-             "loginctl enable-linger " <> _,
              "systemctl --user restart hal-c2.service"
            ] = service_calls(context)
 
@@ -1224,17 +1225,10 @@ defmodule HalC2.Steps.Connections.HalC2Connect do
     home = Node.tmp_dir(context.node, "service-home")
     bin = Node.tmp_dir(context.node, "service-bin")
 
-    for exe <- ~w(systemctl loginctl) do
-      path = Path.join(bin, exe)
+    HalC2.Test.Storage.fake_service_manager(bin)
 
-      File.write!(path, ~S"""
-      #!/bin/sh
-      echo "$(basename "$0") $*" >> "$(dirname "$0")/calls.log"
-      """)
-
-      File.chmod!(path, 0o755)
-      Application.put_env(:hal_c2, :"#{exe}_command", path)
-    end
+    for exe <- ~w(systemctl loginctl),
+        do: Application.put_env(:hal_c2, :"#{exe}_command", Path.join(bin, exe))
 
     Application.put_env(:hal_c2, :service_platform, {:unix, :linux})
     Application.put_env(:hal_c2, :service_user_home, home)

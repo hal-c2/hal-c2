@@ -172,6 +172,9 @@ defmodule HalC2.Upgrade do
   # A restart for an update ends here: the version that booted says how it went.
   @impl true
   def handle_continue(:outcome, state) do
+    # A version installed while the service ran (`hal-c2 update`, answered no) runs now.
+    if System.get_env("HAL_C2_SERVICE") == "1", do: HalC2.Service.clear_restart_pending()
+
     with {:ok, text} <- File.read(outcome_path()),
          {:ok, %{"status" => "restarting"} = pending} <- JSON.decode(text) do
       booted = version()

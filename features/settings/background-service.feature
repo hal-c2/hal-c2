@@ -8,6 +8,8 @@
 #   apps/web/src/components/settings/SettingsPanels.tsx (background activity profile and dialog)
 #   apps/server/src/cli (hal-c2 service install, status, restart, uninstall)
 #   apps/server/src/serviceLauncher.ts
+#   apps/server/src/cloud/bootService.ts (status problems, the lingering prerequisite, restart-pending)
+#   apps/server-ex/lib/hal_c2/service.ex
 
 Feature: Background activity and the background service
   The node does periodic work such as fetching git and checking providers only
@@ -72,14 +74,14 @@ Feature: Background activity and the background service
       When the node stops to finish an update
       Then the service starts it again on the new version
 
-    @backlog @node
+    @node
     Scenario: The user installs and removes the background service
       When the user installs the background service
       Then the server starts at login and runs without a client
       When the user uninstalls the service
       Then the server no longer starts at login
 
-    @backlog @node
+    @node
     Scenario Outline: Service status explains what needs fixing
       Given the service <problem>
       When the user checks the service status
@@ -92,7 +94,7 @@ Feature: Background activity and the background service
         | is stopped                               |
         | is waiting for a restart                 |
 
-    @backlog @node
+    @node
     Scenario: Reinstalling repairs a broken service
       Given the service definition was damaged
       When the user installs the background service again

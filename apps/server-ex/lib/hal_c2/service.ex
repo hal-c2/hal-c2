@@ -18,8 +18,17 @@ defmodule HalC2.Service do
   app env first, so tests can stand in for the service manager; `:service_user_home`
   replaces the user's home directory the unit is written under.
 
-  A release reaches it as `bin/hal-c2-service install|status|uninstall` (`main/1`), a
-  checkout as `mix hal_c2.service`.
+  On Linux, `status` also asks systemd whether the user manager answers, whether the
+  user may linger after logout, and whether the unit is enabled and running, and
+  names each problem with its fix (`problem_message/1`, the codes
+  `docs/user/background-service.md` lists). `install` switches lingering on itself
+  when it is only switched off, and refuses before changing anything when systemd
+  cannot run user services at all. A version installed without restarting the
+  service leaves a `restart-pending` marker in the state directory
+  (`mark_restart_pending/1`) until the service starts on it or `restart` runs.
+
+  A release reaches it as `bin/hal-c2-service install|status|restart|uninstall`
+  (`main/1`), a checkout as `mix hal_c2.service`.
   """
 
   @unit "hal-c2.service"
@@ -40,7 +49,7 @@ defmodule HalC2.Service do
     end
   end
 
-  @doc "`install`, `status` or `uninstall` as `{:ok, text}` or `{:error, message}`."
+  @doc "`install`, `status`, `restart` or `uninstall` as `{:ok, text}` or `{:error, message}`."
   def command(["install"]) do
     with {:ok, result} <- install() do
       verb = if result["previouslyInstalled"], do: "updated", else: "installed"
@@ -48,50 +57,107 @@ defmodule HalC2.Service do
     end
   end
 
-  def command(["status"]) do
-    status = status()
+  def command(["status"]), do: {:ok, format_status(status())}
 
-    {:ok,
-     cond do
-       not status["supported"] ->
-         "Background service: not supported on this platform"
-
-       not status["installed"] ->
-         "Background service: not installed"
-
-       status["current"] ->
-         "Background service: installed\n  Unit: #{status["unitPath"]}\n  Logs: #{status["logPath"]}"
-
-       true ->
-         "Background service: installed, needs an update (run install again)"
-     end}
+  def command(["restart"]) do
+    case restart() do
+      {:ok, true} -> {:ok, "Background service restarted."}
+      {:ok, false} -> {:ok, "Background service: not installed"}
+      error -> error
+    end
   end
 
   def command(["uninstall"]) do
     with :ok <- uninstall(), do: {:ok, "Background service removed."}
   end
 
-  def command(_), do: {:error, "usage: hal-c2-service install | status | uninstall"}
+  def command(_), do: {:error, "usage: hal-c2-service install | status | restart | uninstall"}
+
+  @doc "What `hal-c2 service status` prints for a `status/0`."
+  def format_status(status) do
+    cond do
+      not status["supported"] ->
+        "Background service: not supported on this platform"
+
+      not status["installed"] ->
+        "Background service: not installed"
+
+      true ->
+        headline =
+          if status["current"],
+            do: "Background service: installed",
+            else: "Background service: installed, needs an update or repair"
+
+        problems =
+          for problem <- status["problems"], do: "  [#{problem}] #{problem_message(problem)}"
+
+        next =
+          if status["current"],
+            do: [],
+            else: ["  Next: Run `hal-c2 service install` to repair it."]
+
+        Enum.join(
+          [headline, "  Unit: #{status["unitPath"]}", "  Logs: #{status["logPath"]}"] ++
+            problems ++ next,
+          "\n"
+        )
+    end
+  end
+
+  @doc "How to fix a status problem; `docs/user/background-service.md` lists the codes."
+  def problem_message("user-manager-unavailable"),
+    do:
+      "Cannot reach the systemd user manager. Run `systemctl --user status` in a login session for the service user. Install your distribution's systemd user-session support if it is missing; do not run HAL-C2 with sudo."
+
+  def problem_message("linger-unavailable"),
+    do:
+      ~S|Cannot check whether this user can run services after logout. Run `loginctl show-user "$(id -un)" --property=Linger` and check that systemd-logind is available.|
+
+  def problem_message("linger-disabled"),
+    do:
+      ~S|Lingering is disabled. HAL-C2 will stop when your last login session ends and will not start at boot. Run `sudo loginctl enable-linger "$(id -un)"` on this machine, then retry the service command as your normal user.|
+
+  def problem_message("service-disabled"),
+    do:
+      "The service is not enabled to start automatically. Run `hal-c2 service install` to repair it."
+
+  def problem_message("service-stopped"),
+    do:
+      "The service is not running. Check the service log and `systemctl --user status hal-c2.service`, then run `hal-c2 service install`."
+
+  def problem_message("restart-pending"),
+    do:
+      "A newer version is installed but the service is still running the previous one. Run `hal-c2 service restart` to switch."
 
   @doc """
-  `%{"supported", "installed", "current", "unitPath", "logPath"}`: whether this
-  platform has a service manager, whether the unit exists, and whether it is the
-  one this node would write.
+  `%{"supported", "installed", "current", "problems", "unitPath", "logPath"}`: whether
+  this platform has a service manager, whether the unit exists, what keeps it from
+  running (`problem_message/1`), and whether it is the one this node would write
+  with nothing in its way.
   """
   def status do
     case manager() do
       nil ->
-        %{"supported" => false, "installed" => false, "current" => false, "logPath" => log_path()}
+        %{
+          "supported" => false,
+          "installed" => false,
+          "current" => false,
+          "problems" => [],
+          "logPath" => log_path()
+        }
 
       manager ->
         path = unit_path(manager)
         installed = installed(manager)
+        problems = if installed == [], do: [], else: problems(manager)
 
         %{
           "supported" => true,
           "installed" => installed != [],
           "current" =>
-            installed == [{name(manager), path}] and File.read(path) == {:ok, render(manager)},
+            problems == [] and installed == [{name(manager), path}] and
+              File.read(path) == {:ok, render(manager)},
+          "problems" => problems,
           "unitPath" => if(installed == [], do: path, else: installed |> hd() |> elem(1)),
           "logPath" => log_path()
         }
@@ -103,7 +169,9 @@ defmodule HalC2.Service do
   `{:ok, %{"previouslyInstalled" => boolean, ...status}}` or `{:error, message}`.
   """
   def install do
-    with manager when manager != nil <- manager() || {:error, unsupported()} do
+    with manager when manager != nil <- manager() || {:error, unsupported()},
+         # A service systemd could not keep running is refused before anything changes.
+         :ok <- prerequisites(manager) do
       before = status()
       path = unit_path(manager)
 
@@ -117,11 +185,52 @@ defmodule HalC2.Service do
         end
 
       case result do
-        :ok -> {:ok, Map.put(status(), "previouslyInstalled", before["installed"])}
-        error -> error
+        :ok ->
+          clear_restart_pending()
+          {:ok, Map.put(status(), "previouslyInstalled", before["installed"])}
+
+        error ->
+          error
       end
     end
   end
+
+  @doc """
+  Starts the installed service again, on whatever version is installed now.
+  `{:ok, true}`, `{:ok, false}` when no service is installed, or `{:error, message}`.
+  """
+  def restart do
+    with manager when manager != nil <- manager() || {:error, unsupported()} do
+      path = unit_path(manager)
+
+      if File.exists?(path) do
+        with :ok <- run_all(activate(manager, path)) do
+          clear_restart_pending()
+          {:ok, true}
+        end
+      else
+        {:ok, false}
+      end
+    end
+  end
+
+  @doc """
+  Marks the running service as behind `version`, which was installed without
+  restarting it. `status` reports `restart-pending` until the service starts again
+  (`clear_restart_pending/0`), or `restart/0` or `install/0` runs.
+  """
+  def mark_restart_pending(version) do
+    File.mkdir_p!(Path.dirname(restart_pending_path()))
+    File.write!(restart_pending_path(), version <> "\n")
+  end
+
+  @doc "The service runs the installed version now."
+  def clear_restart_pending do
+    File.rm(restart_pending_path())
+    :ok
+  end
+
+  defp restart_pending_path, do: Path.join(HalC2.Paths.state_dir(), ".restart-pending")
 
   @doc "Stops the service and removes it from startup. Projects and settings stay."
   def uninstall do
@@ -151,6 +260,75 @@ defmodule HalC2.Service do
         path = unit_path(manager, name),
         File.exists?(path),
         do: {name, path}
+  end
+
+  # --- problems ----------------------------------------------------------------------
+
+  # What keeps the installed service from running.
+  defp problems(:systemd), do: systemd_problems(true) ++ restart_pending()
+  defp problems(:launchd), do: restart_pending()
+
+  defp restart_pending,
+    do: if(File.exists?(restart_pending_path()), do: ["restart-pending"], else: [])
+
+  defp systemd_problems(include_service) do
+    manager_up = probe("systemctl", ["--user", "show-environment"]) != :error
+
+    linger =
+      case probe("loginctl", ["show-user", uid(), "--property=Linger", "--value"]) do
+        {:ok, "yes"} -> []
+        {:ok, "no"} -> ["linger-disabled"]
+        _ -> ["linger-unavailable"]
+      end
+
+    service =
+      if include_service and manager_up do
+        enabled = probe("systemctl", ["--user", "is-enabled", @unit])
+        active = probe("systemctl", ["--user", "is-active", @unit])
+
+        if(enabled == {:ok, "enabled"}, do: [], else: ["service-disabled"]) ++
+          if(active == :error, do: ["service-stopped"], else: [])
+      else
+        []
+      end
+
+    if(manager_up, do: [], else: ["user-manager-unavailable"]) ++ linger ++ service
+  end
+
+  # A systemd that cannot run user services, or cannot say whether this user may
+  # linger, is refused; lingering that is only switched off is switched on.
+  defp prerequisites(:launchd), do: :ok
+
+  defp prerequisites(:systemd) do
+    problems = systemd_problems(false)
+
+    cond do
+      problems == [] ->
+        :ok
+
+      problems != ["linger-disabled"] ->
+        refuse(problems -- ["linger-disabled"])
+
+      run("loginctl", ["enable-linger", "--no-ask-password", uid()]) == :ok ->
+        refuse(systemd_problems(false))
+
+      true ->
+        refuse(problems)
+    end
+  end
+
+  defp refuse([]), do: :ok
+  defp refuse([problem | _]), do: {:error, "[#{problem}] #{problem_message(problem)}"}
+
+  # `{:ok, trimmed output}` when a read-only question to the service manager
+  # succeeded, `:error` otherwise.
+  defp probe(exe, args) do
+    with path when is_binary(path) <- executable(exe),
+         {out, 0} <- System.cmd(path, args) do
+      {:ok, String.trim(out)}
+    else
+      _ -> :error
+    end
   end
 
   # --- platform ----------------------------------------------------------------------
@@ -192,14 +370,12 @@ defmodule HalC2.Service do
         do: {name, String.trim(dir)}
   end
 
-  # Linger keeps the user manager, and so the service, running after logout.
+  # Lingering, which keeps the user manager and so the service running after
+  # logout, is a prerequisite (`prerequisites/1`).
   defp activate(:systemd, _path) do
-    user = System.get_env("USER") || System.get_env("LOGNAME") || ""
-
     [
       {"systemctl", ["--user", "daemon-reload"]},
       {"systemctl", ["--user", "enable", @unit]},
-      {"loginctl", ["enable-linger", user]},
       {"systemctl", ["--user", "restart", @unit]}
     ]
   end
@@ -334,10 +510,11 @@ defmodule HalC2.Service do
     end)
   end
 
-  defp run(exe, args) do
-    command = Application.get_env(:hal_c2, :"#{exe}_command", exe)
+  defp executable(exe),
+    do: System.find_executable(Application.get_env(:hal_c2, :"#{exe}_command", exe))
 
-    case System.find_executable(command) do
+  defp run(exe, args) do
+    case executable(exe) do
       nil ->
         {:error, "#{exe} is not available on this machine."}
 

@@ -291,35 +291,61 @@ defmodule HalC2.Test.Storage do
   # --- background services ---------------------------------------------------------
 
   @doc """
-  systemctl, loginctl and launchctl stand-ins on PATH: they log their arguments to
-  the returned file and keep the unit's enabled and active state beside it.
+  systemctl, loginctl and launchctl stand-ins on PATH (`fake_service_manager/1`).
+  Returns their call log.
   """
   def service_manager(%{service_tools: log} = _context), do: log
 
   def service_manager(context) do
     bin = Node.tmp_dir(context.node, "service-bin")
+    log = fake_service_manager(bin)
+    World.put_os_env("PATH", bin <> ":" <> System.get_env("PATH"))
+    log
+  end
+
+  @doc """
+  Writes systemctl, loginctl and launchctl stand-ins into `bin` and returns the file
+  they log each call that changes something to. Read-only questions (the user
+  manager's environment, linger, is-enabled, is-active) are answered from state
+  files beside them and not logged: `enabled`, `active` and `linger` follow what
+  the service manager was asked to do, and `service_state/3` can set or clear
+  them, or `no-user-manager` and `no-logind` to make those questions fail.
+  """
+  def fake_service_manager(bin) do
     log = Path.join(bin, "calls.log")
 
     File.write!(Path.join(bin, "systemctl"), """
     #!/bin/sh
-    echo "systemctl $*" >> "#{log}"
     state="#{bin}"
+    case "$2" in
+      show-environment) [ -f "$state/no-user-manager" ] && exit 1; exit 0 ;;
+      is-enabled) [ -f "$state/enabled" ] && { echo enabled; exit 0; }; echo disabled; exit 1 ;;
+      is-active) [ -f "$state/active" ] && { echo active; exit 0; }; echo inactive; exit 3 ;;
+    esac
+    echo "systemctl $*" >> "#{log}"
     case "$2" in
       enable) touch "$state/enabled" ;;
       restart) touch "$state/active" ;;
+      stop) rm -f "$state/active" ;;
       disable) rm -f "$state/enabled" "$state/active" ;;
-      is-enabled) [ -f "$state/enabled" ] || exit 1 ;;
-      is-active) [ -f "$state/active" ] || exit 3 ;;
     esac
     exit 0
     """)
 
     File.write!(Path.join(bin, "loginctl"), """
     #!/bin/sh
+    state="#{bin}"
     case "$1" in
-      enable-linger) touch "#{bin}/linger" ;;
-      show-user) [ -f "#{bin}/linger" ] && echo Linger=yes || echo Linger=no ;;
+      show-user)
+        [ -f "$state/no-logind" ] && exit 1
+        [ -f "$state/linger" ] && echo yes || echo no
+        exit 0 ;;
     esac
+    echo "loginctl $*" >> "#{log}"
+    case "$1" in
+      enable-linger) touch "$state/linger" ;;
+    esac
+    exit 0
     """)
 
     File.write!(Path.join(bin, "launchctl"), """
@@ -331,7 +357,13 @@ defmodule HalC2.Test.Storage do
     for tool <- ["systemctl", "loginctl", "launchctl"],
         do: File.chmod!(Path.join(bin, tool), 0o755)
 
-    World.put_os_env("PATH", bin <> ":" <> System.get_env("PATH"))
+    log
+  end
+
+  @doc "Sets (`true`) or clears a state file of the service manager stand-ins."
+  def service_state(log, name, on?) do
+    path = Path.join(Path.dirname(log), name)
+    if on?, do: File.write!(path, ""), else: File.rm(path)
     log
   end
 
@@ -351,12 +383,17 @@ defmodule HalC2.Test.Storage do
   def service(context, command) do
     context = user(context)
     log = service_manager(context)
+    {:ok, text} = as_release(fn -> HalC2.Service.command([command]) end)
+    Map.merge(context, %{service_output: text, service_tools: log})
+  end
+
+  @doc "Runs `fun` with the node's directories resolved as an installed release's."
+  def as_release(fun) do
     previous = Application.get_env(:hal_c2, :home)
     Application.put_env(:hal_c2, :home, release_spec())
 
     try do
-      {:ok, text} = HalC2.Service.command([command])
-      Map.merge(context, %{service_output: text, service_tools: log})
+      fun.()
     after
       Application.put_env(:hal_c2, :home, previous)
     end
