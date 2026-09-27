@@ -209,29 +209,25 @@ defmodule HalC2.Web.Socket do
   def handle_info({:hal_c2_themes, node, themes}, state),
     do: config_push(state, node, &%{"t" => "config.themes", "id" => &1, "themes" => themes})
 
-  def handle_info({:hal_c2_usage_limit_sources, node, sources}, state),
-    do:
-      config_push(
-        state,
-        node,
-        &%{"t" => "config.usageLimitSources", "id" => &1, "sources" => sources}
-      )
+  def handle_info({:hal_c2_usage_limit_sources, node, sources}, state) do
+    state = remember_sources(state, node, sources)
+
+    config_push(
+      state,
+      node,
+      &%{"t" => "config.usageLimitSources", "id" => &1, "sources" => sources}
+    )
+  end
 
   def handle_info({:hal_c2_keybindings, node, rules}, state),
     do: config_push(state, node, &%{"t" => "config.keybindings", "id" => &1, "rules" => rules})
 
-  def handle_info({:hal_c2_providers_changed, node}, state) do
-    with [_ | _] <- config_ids(state, node),
-         {:ok, providers} <- remote(node, HalC2.Environment, :providers, []) do
-      config_push(
-        state,
-        node,
-        &%{"t" => "config.providers", "id" => &1, "providers" => providers}
-      )
-    else
-      _ -> {:ok, state}
-    end
-  end
+  def handle_info({:hal_c2_providers_changed, node}, state),
+    do: push_providers(state, node, config_ids(state, node))
+
+  # The hubs now cover other drivers: only `/usage-limits` clients see a change.
+  def handle_info({:hal_c2_usage_limits_command, node}, state),
+    do: push_providers(state, node, Enum.filter(config_ids(state, node), &command?(state, &1)))
 
   def handle_info({:hal_c2_auth_access, event}, state) do
     case state.by_terminal do
@@ -520,12 +516,15 @@ defmodule HalC2.Web.Socket do
   end
 
   # A node's ServerConfig, fetched once; it is small and changes with settings.
-  defp subscribe(state, id, {:config_for, environment_id}, offset) do
+  defp subscribe(state, id, {:config_for, environment_id}, offset),
+    do: subscribe(state, id, {:config_for, environment_id, nil}, offset)
+
+  defp subscribe(state, id, {:config_for, environment_id, command}, offset) do
     case Enum.find(HalC2.Shell.environments(), fn {_node, d} ->
            d["environmentId"] == environment_id
          end) do
       {node, _} ->
-        subscribe(state, id, {:config, node}, offset)
+        subscribe(state, id, {:config, node, command}, offset)
 
       nil ->
         {:push, Protocol.encode(%{"t" => "error", "id" => id, "reason" => "unknown environment"}),
@@ -533,19 +532,16 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  # The node's config, then its settings as they change.
-  defp subscribe(state, id, {:config, node} = shape, _offset) do
+  defp subscribe(state, id, {:config, node}, offset),
+    do: subscribe(state, id, {:config, node, nil}, offset)
+
+  # The node's config, then its settings as they change. A client that answers
+  # `/usage-limits` itself (`:usage_limits_command`) gets providers that offer it.
+  defp subscribe(state, id, {:config, node, command}, _offset) do
+    shape = {:config, node}
+
     with {:ok, :ok} <- remote(node, HalC2.Settings, :watch, [self()]),
          {:ok, config} <- remote(node, HalC2.Environment, :server_config, []) do
-      frame = %{"t" => "config", "id" => id, "node" => Atom.to_string(node), "config" => config}
-
-      # How the node's last update went, so a client reconnecting after one can tell.
-      frame =
-        case remote(node, HalC2.Upgrade, :outcome, []) do
-          {:ok, %{} = outcome} -> Map.put(frame, "updateOutcome", outcome)
-          _ -> frame
-        end
-
       # Published themes follow the snapshot, as the Node server streams them.
       themes =
         case remote(node, HalC2.EnvironmentThemes, :current, []) do
@@ -564,14 +560,32 @@ defmodule HalC2.Web.Socket do
 
       sources_frame = %{"t" => "config.usageLimitSources", "id" => id, "sources" => sources}
 
+      state =
+        %{
+          state
+          | subs: Map.put(state.subs, id, shape),
+            # One node's config may be watched by several subscriptions (config, lifecycle).
+            by_terminal:
+              state.by_terminal
+              |> Map.update({:settings, node}, [id], &[id | &1])
+              |> Map.put({:usage_limit_sources, node}, sources)
+        }
+
+      state = if command, do: update_commands(state, &MapSet.put(&1, id)), else: state
+
+      config = Map.update(config, "providers", [], &providers_for(state, node, id, &1))
+      frame = %{"t" => "config", "id" => id, "node" => Atom.to_string(node), "config" => config}
+
+      # How the node's last update went, so a client reconnecting after one can tell.
+      frame =
+        case remote(node, HalC2.Upgrade, :outcome, []) do
+          {:ok, %{} = outcome} -> Map.put(frame, "updateOutcome", outcome)
+          _ -> frame
+        end
+
       {:push,
        [Protocol.encode(frame), Protocol.encode(themes_frame), Protocol.encode(sources_frame)],
-       %{
-         state
-         | subs: Map.put(state.subs, id, shape),
-           # One node's config may be watched by several subscriptions (config, lifecycle).
-           by_terminal: Map.update(state.by_terminal, {:settings, node}, [id], &[id | &1])
-       }}
+       state}
     else
       {_, reason} -> {:push, Protocol.encode(error_frame(id, reason)), state}
     end
@@ -1015,6 +1029,64 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  # `config.providers` for the subscriptions `ids` watching `node`.
+  defp push_providers(state, _node, []), do: {:ok, state}
+
+  defp push_providers(state, node, ids) do
+    case remote(node, HalC2.Environment, :providers, []) do
+      {:ok, providers} ->
+        frames =
+          for id <- ids do
+            Protocol.encode(%{
+              "t" => "config.providers",
+              "id" => id,
+              "providers" => providers_for(state, node, id, providers)
+            })
+          end
+
+        {:push, frames, state}
+
+      _ ->
+        {:ok, state}
+    end
+  end
+
+  # The subscriptions of clients that answer `/usage-limits` themselves.
+  defp command?(state, id), do: id in Map.get(state.by_terminal, :usage_limits_command, [])
+
+  defp update_commands(state, fun) do
+    commands = fun.(Map.get(state.by_terminal, :usage_limits_command, MapSet.new()))
+    %{state | by_terminal: Map.put(state.by_terminal, :usage_limits_command, commands)}
+  end
+
+  defp providers_for(state, node, id, providers) do
+    if command?(state, id) do
+      sources = Map.get(state.by_terminal, {:usage_limit_sources, node}, [])
+      HalC2.ProviderUsageLimits.with_command(providers, sources)
+    else
+      providers
+    end
+  end
+
+  # Keeps `node`'s latest usage-limit sources for the `/usage-limits` providers, and
+  # has those re-sent when the drivers the sources cover change.
+  defp remember_sources(state, node, sources) do
+    case config_ids(state, node) do
+      [] ->
+        state
+
+      ids ->
+        key = {:usage_limit_sources, node}
+        before = HalC2.ProviderUsageLimits.command_coverage(Map.get(state.by_terminal, key, []))
+
+        if Enum.any?(ids, &command?(state, &1)) and
+             before != HalC2.ProviderUsageLimits.command_coverage(sources),
+           do: send(self(), {:hal_c2_usage_limits_command, node})
+
+        %{state | by_terminal: Map.put(state.by_terminal, key, sources)}
+    end
+  end
+
   defp error_frame(id, reason), do: %{"t" => "error", "id" => id, "reason" => to_string(reason)}
 
   defp unsubscribe(state, id) do
@@ -1045,10 +1117,16 @@ defmodule HalC2.Web.Socket do
         }
 
       {{:config, node}, subs} ->
+        state = update_commands(state, &MapSet.delete(&1, id))
+
         case List.delete(config_ids(state, node), id) do
           [] ->
             :erpc.cast(node, HalC2.Settings, :unwatch, [self()])
-            %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:settings, node})}
+
+            by_terminal =
+              Map.drop(state.by_terminal, [{:settings, node}, {:usage_limit_sources, node}])
+
+            %{state | subs: subs, by_terminal: by_terminal}
 
           ids ->
             %{state | subs: subs, by_terminal: Map.put(state.by_terminal, {:settings, node}, ids)}

@@ -9,7 +9,9 @@ defmodule HalC2.Web.Protocol do
       summary on it
     * `{"type": "stream", "node": n, "stream": id}`: one project or thread
     * `{"type": "config", "node": n}` or `{"type": "config", "environment": id}`:
-      that node's `ServerConfig` and name, then its settings and providers as they change
+      that node's `ServerConfig` and name, then its settings and providers as they change;
+      with `"usageLimitsCommand": true` (a client that answers `/usage-limits` itself),
+      every provider with limits to show offers that command
     * `{"type": "terminal", "node": n, "input": TerminalAttachInput}`: one terminal,
       opened if needed; a snapshot, then its events
     * `{"type": "terminals", "node": n}`: that node's terminal summaries, then changes
@@ -116,8 +118,11 @@ defmodule HalC2.Web.Protocol do
   def version, do: @version
 
   @type request ::
-          {:sub, integer, :shell | {:stream, node, String.t()} | {:config, node},
-           non_neg_integer | nil}
+          {:sub, integer,
+           :shell
+           | {:stream, node, String.t()}
+           | {:config, node}
+           | {:config, node, :usage_limits_command}, non_neg_integer | nil}
           | {:unsub, integer}
           | {:rpc, integer, String.t(), String.t(), term}
           | :ping
@@ -155,6 +160,11 @@ defmodule HalC2.Web.Protocol do
       nil -> {:error, "unknown node"}
       node -> {:ok, {:stream, node, id}}
     end
+  end
+
+  defp decode_shape(%{"type" => "config", "usageLimitsCommand" => true} = shape, nodes) do
+    with {:ok, config} <- decode_shape(Map.delete(shape, "usageLimitsCommand"), nodes),
+         do: {:ok, Tuple.insert_at(config, 2, :usage_limits_command)}
   end
 
   defp decode_shape(%{"type" => "config", "environment" => environment_id}, _nodes)
