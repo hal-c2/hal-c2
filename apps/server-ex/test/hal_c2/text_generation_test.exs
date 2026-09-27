@@ -325,4 +325,32 @@ defmodule HalC2.TextGenerationTest do
     refute text =~ "hidden"
     assert [%{"id" => "i1"}] = attachments
   end
+
+  test "an Antigravity profile with global hooks or MCP servers cannot write text", %{
+    tmp_dir: dir
+  } do
+    profile = Path.join(dir, "profile")
+    config = Path.join(profile, "config")
+    File.mkdir_p!(config)
+    write = fn name, body -> File.write!(Path.join(config, name), body) end
+
+    # Nothing configured, or configured empty, either as the key or the whole file.
+    assert TextGeneration.antigravity_available?(Path.join(dir, "missing"))
+    write.("hooks.json", ~s({"hooks": {}}))
+    write.("mcp_config.json", "{}")
+    assert TextGeneration.antigravity_available?(profile)
+
+    write.("mcp_config.json", ~s({"mcpServers": {"docs": {"command": "docs-mcp"}}}))
+    refute TextGeneration.antigravity_available?(profile)
+
+    write.("mcp_config.json", ~s({"mcpServers": {}}))
+    write.("hooks.json", ~s({"hooks": {"PreToolUse": []}}))
+    refute TextGeneration.antigravity_available?(profile)
+
+    # A file it cannot read as settings, or one too large to trust, counts as configured.
+    write.("hooks.json", "not json")
+    refute TextGeneration.antigravity_available?(profile)
+    write.("hooks.json", ~s({"hooks": {}, "pad": "#{String.duplicate("x", 64_000)}"}))
+    refute TextGeneration.antigravity_available?(profile)
+  end
 end

@@ -150,13 +150,13 @@ Feature: Generated titles, branch names and source control text
       | 100 letters                  | the first 64 letters     |
       | "!!!"                        | "update"                 |
 
-  @node @backlog @plugin-pi
+  @node @plugin-pi
   Scenario: Pi can write titles and branch names
     Given the text model is on a "pi" instance
     When a title is generated
     Then "pi" writes it
 
-  @node @backlog @plugin-antigravity
+  @node @plugin-antigravity
   Scenario: Antigravity can write titles and branch names
     Given the text model is on an "antigravity" instance
     When a title is generated
