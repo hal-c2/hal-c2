@@ -612,12 +612,14 @@ export const ShellAction = Schema.Union([
     text: Schema.String,
   }),
   Schema.Struct({ type: Schema.Literal("composer.suggest.dismiss") }),
-  // `text` rides along so the send is atomic with the latest edit.
+  // `text` rides along so the send is atomic with the latest edit. `alternate`
+  // (mod+Enter during a turn) does the opposite of the follow-up setting;
+  // `background` starts a new thread without opening it.
   Schema.Struct({
     type: Schema.Literal("composer.submit"),
     edit: Schema.optional(ShellComposerEdit),
     text: Schema.optional(Schema.String),
-    intent: Schema.optional(Schema.Literals(["foreground", "background"])),
+    intent: Schema.optional(Schema.Literals(["foreground", "background", "alternate"])),
   }),
   Schema.Struct({ type: Schema.Literal("composer.interrupt") }),
   Schema.Struct({

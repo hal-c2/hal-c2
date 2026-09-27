@@ -4127,7 +4127,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             dispatchMode ??
               resolveComposerDispatchMode({
                 running: phase === "running",
-                alternateModifier: false,
+                alternateModifier: submissionIntent === "alternate",
                 activeTurnDefault: settings.followUpBehavior,
               }),
             submissionIntent,
