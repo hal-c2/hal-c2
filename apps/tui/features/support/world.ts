@@ -6,6 +6,7 @@
 // snapshot) or `ctx.fake.emitShell(snapshot)` when the scenario has data.
 // Configure the fake before the first render with `useClient(ctx, options)`.
 import * as NodePath from "node:path";
+import { KeyEvent } from "@opentui/core";
 import type { QmlObject } from "opentui-qml";
 import { testQml, type QmlTestApp } from "opentui-qml/testing";
 
@@ -198,6 +199,34 @@ export async function pressKey(ctx: World, spelled: string): Promise<void> {
     modifiers.shift = true;
   }
   await app.pressKey(key, modifiers);
+}
+
+/**
+ * Hold a key past the terminal's repeat delay: one press, then `repeats`
+ * auto-repeat events (what kitty-protocol terminals report while a key is held).
+ */
+export async function holdKey(ctx: World, name: string, repeats = 2): Promise<void> {
+  const app = await boot(ctx);
+  const event = (eventType: "press" | "repeat") =>
+    new KeyEvent({
+      name,
+      ctrl: false,
+      meta: false,
+      shift: false,
+      option: false,
+      sequence: name === "escape" ? "\x1b" : name,
+      number: false,
+      raw: name === "escape" ? "\x1b" : name,
+      eventType,
+      source: "kitty",
+      repeated: eventType === "repeat",
+    });
+  app.renderer.keyInput.emit("keypress", event("press"));
+  await app.renderOnce();
+  for (let i = 0; i < repeats; i += 1) {
+    app.renderer.keyInput.emit("keypress", event("repeat"));
+    await app.renderOnce();
+  }
 }
 
 export async function typeText(ctx: World, text: string): Promise<void> {
