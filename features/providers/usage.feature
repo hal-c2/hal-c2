@@ -7,7 +7,6 @@
 #   apps/web/src/routes/usage.tsx, apps/web/src/components/usage/ (environment filter, model prices dialog)
 #   packages/contracts/src/usage.ts (UsageSummary, UsageReadError, cost sources)
 
-@node
 Feature: Usage
   Usage adds up token use and estimated API-equivalent cost from the provider CLIs' own
   session history, so work done outside HAL-C2 counts too. Each provider plugin that
@@ -17,14 +16,17 @@ Feature: Usage
   Background:
     Given a connected environment with Codex, Claude and Grok history
 
+  @node
   Scenario: Usage totals tokens and cost per day, provider and model
     When the user opens Usage for the last seven days
     Then tokens, cache savings and estimated cost are shown per day, provider and model
 
+  @node
   Scenario: Usage can be read per hour for up to a day
     When the user asks for hourly usage over the last twelve hours
     Then usage is shown per hour
 
+  @node
   Scenario Outline: A usage window that cannot be read is refused
     When the user asks for usage <window>
     Then the request is refused with "<detail>"
@@ -37,90 +39,107 @@ Feature: Usage
       | per hour without start and end instants | Hourly usage requires valid sinceTime and untilTime instants            |
       | without a time zone                     | sinceDay, untilDay, and timeZone are required                            |
 
+  @node
   Scenario: Work done in the CLI outside HAL-C2 is counted
     Given the user ran Claude Code directly in a terminal yesterday
     When the user opens Usage
     Then yesterday's Claude usage includes that session
 
+  @node
   Scenario: Grok turns without a completed-turn record are not counted
     Given a Grok session whose last turn never completed
     When the user opens Usage
     Then that turn is missing from the totals
 
+  @node
   Scenario: A cost reported by the provider is used as is
     Given a Grok turn that reported its own cost
     When the user opens Usage
     Then that turn's cost is the provider's reported cost
 
+  @node
   Scenario: Models without a known price are marked unpriced
     Given a turn on a model missing from the price table
     When the user opens Usage
     Then that model's cost is marked unpriced
 
+  @node
   Scenario: Usage uses a saved copy of prices when the price table cannot be fetched
     Given the node fetched the price table before
     And the price table cannot be fetched now
     When the user opens Usage
     Then costs use the saved price table
 
+  @node
   Scenario: Without any price table every model is unpriced
     Given the node has never fetched the price table and cannot fetch it now
     When the user opens Usage
     Then every model is marked unpriced
 
+  @node
   Scenario: Refreshing fetches new prices ahead of the daily refresh
     Given a new model appeared with no cost
     When the user refreshes Usage
     Then the price table is fetched again
     And the new model is priced when the table knows it
 
+  @node
   Scenario: A custom model price replaces automatic pricing
     Given the user saved a custom price for "my-model" of 1 USD input and 2 USD output per million tokens
     When the user opens Usage
     Then "my-model" is priced with the custom rates
     And a provider-reported cost for "my-model" is replaced by the custom price
 
+  @node
   Scenario: Blank cache rates use the input rate
     Given the user saved a custom price for "my-model" without cache rates
     When the user opens Usage
     Then cache reads and writes of "my-model" are priced at its input rate
 
+  @node
   Scenario: Resetting a custom price returns the model to automatic pricing
     Given the user saved a custom price for "claude-sonnet"
     When the user resets "claude-sonnet" to automatic
     Then "claude-sonnet" is priced from the price table again
 
+  @node
   Scenario: Each account's history counts, including disabled accounts
     Given two Claude accounts with their own homes, one of them disabled
     When the user opens Usage
     Then both accounts' history is counted
 
+  @node
   Scenario: A home set through the account's environment is followed
     Given a Codex account whose CODEX_HOME points at "~/work-codex"
     When the user opens Usage
     Then history under "~/work-codex" is counted
 
+  @node
   Scenario: A history directory shared by two accounts counts once
     Given two accounts that read the same history directory
     When the user opens Usage
     Then that history is counted once
 
+  @node
   Scenario: A history directory seen by two environments counts once
     Given two environments on the same machine that read the same history directory
     When the user opens Usage with both environments selected
     Then that history is counted once
 
+  @node
   Scenario: A repeat scan reads only what changed
     Given the user opened Usage a minute ago
     And one transcript grew since
     When the user opens Usage again
     Then only the new lines of that transcript are read
 
+  @node
   Scenario: History cleaned up by the CLI still counts for 90 days
     Given a transcript that was counted last week and has since been deleted by the CLI
     When the user opens Usage
     Then last week's totals still include it
 
+  @node
   Scenario: A scan that fails is reported
     Given the transcripts cannot be scanned
     When the user opens Usage

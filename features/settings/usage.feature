@@ -192,15 +192,5 @@ Feature: Usage and limits
       When the user opens limits
       Then the limits are not checked again
 
-    # apps/server-ex reads limits for Codex and Claude only (provider_usage_limits/). The same
-    # backlog, plus the /usage-limits composer command, is in providers/usage-limits.feature.
-    @backlog @node
-    Scenario Outline: Other providers report their limits
-      Given <provider> is signed in <how>
-      Then its <window> limits are shown
-
-      Examples:
-        | provider    | how                   | window        |
-        | Grok        | with grok login       | allowance     |
-        | Cursor      | with a login file     | monthly       |
-        | OpenCode Go | on this machine       | usage         |
+    # Grok, Cursor and OpenCode Go limits, and the /usage-limits composer command, are in
+    # providers/usage-limits.feature.
