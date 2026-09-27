@@ -35,6 +35,7 @@ function baseInput() {
     terminalAvailable: true,
     terminalOpen: false,
     terminalHeight: 320,
+    terminalFocusRequestId: 0,
     terminalEmbedPath: "/embed/env/thread?surface=terminal",
     availableEditors: ["vscode", "zed"] as EditorId[],
     preferredEditorId: "zed" as EditorId,

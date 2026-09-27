@@ -321,6 +321,53 @@ private slots:
     bridge.publish("rightPanel", QVariant());
   }
 
+  void terminalDrawerTakesAndReturnsTheKeyboard() {
+    QFile source(directory.filePath("shell.qml"));
+    QVERIFY(source.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    source.write("import QtQuick\nimport QtQuick.Controls\nimport QtQuick.Layouts\nimport HalC2.Bricks\n"
+                 "ShellWindow { width: 600; height: 600; ColumnLayout { anchors.fill: parent\n"
+                 "  TextField { objectName: 'composerField'; Layout.fillWidth: true; focus: true }\n"
+                 "  TerminalDrawer { objectName: 'terminalDrawer'; Layout.fillWidth: true } } }");
+    source.close();
+    bridge.setPageUrl(QUrl("http://127.0.0.1:9/"));
+    auto workspace = initialState.value("workspace").toMap();
+    workspace["terminalAvailable"] = true;
+    workspace["terminalOpen"] = false;
+    workspace["terminalHeight"] = 240;
+    workspace["terminalEmbedPath"] = "/embed?surface=terminal";
+    workspace["terminalFocusRequestId"] = 0;
+    bridge.publish("workspace", workspace);
+    runtime->reload();
+    QVERIFY2(runtime->lastError().isEmpty(), qPrintable(runtime->lastError()));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    QVERIFY(engine);
+    auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
+    QVERIFY(window);
+    window->requestActivate();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    auto* composer = window->findChild<QQuickItem*>("composerField");
+    auto* drawer = window->findChild<QQuickItem*>("terminalDrawer");
+    QVERIFY(composer);
+    QVERIFY(drawer);
+    composer->forceActiveFocus();
+    QTRY_COMPARE(window->activeFocusItem(), composer);
+
+    // The page opened the drawer from its toggle: the terminal gets the keys.
+    workspace["terminalOpen"] = true;
+    workspace["terminalFocusRequestId"] = 1;
+    bridge.publish("workspace", workspace);
+    QTRY_VERIFY(window->activeFocusItem() && drawer->isAncestorOf(window->activeFocusItem()));
+
+    // Closing it hands them back to the composer.
+    workspace["terminalOpen"] = false;
+    bridge.publish("workspace", workspace);
+    QTRY_COMPARE(window->activeFocusItem(), composer);
+
+    bridge.publish("workspace", initialState.value("workspace"));
+    bridge.setPageUrl(QUrl("about:blank"));
+  }
+
   void dashboardDimmerPreservesRoundedCorners() {
     const QDir source(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/examples/dashboard"));
     for (const auto& file : source.entryList(QDir::Files)) {

@@ -351,10 +351,14 @@ export const ShellWorkspaceState = Schema.Struct({
    * surface (loading `terminalEmbedPath`): whether one can open here, whether
    * it is open, and its height in CSS pixels. `terminal.resize` hands a
    * dragged height back so the page persists it with the drawer's other state.
+   * `terminalFocusRequestId` changes whenever the page would focus its
+   * terminal (opened, a terminal added or closed), so the shell can move
+   * keyboard focus into the drawer.
    */
   terminalAvailable: Schema.Boolean,
   terminalOpen: Schema.Boolean,
   terminalHeight: Schema.Number,
+  terminalFocusRequestId: Schema.Number,
   terminalEmbedPath: Schema.String,
   editors: Schema.Array(Schema.Struct({ id: Schema.String, label: Schema.String })),
   preferredEditorId: Schema.NullOr(Schema.String),

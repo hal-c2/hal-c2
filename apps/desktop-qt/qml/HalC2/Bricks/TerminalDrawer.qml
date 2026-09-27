@@ -34,6 +34,17 @@ Item {
 
     property bool focusPending: false
 
+    // The page's terminal focus requests already acted on; a new one (the
+    // drawer opened, a terminal added or closed) moves the keyboard in here.
+    property int handledFocusRequest: 0
+
+    // What had the keyboard before the drawer took it (usually the composer),
+    // and whether the drawer still held it when it last was open: closing
+    // hands focus back, as the page returns it to its composer.
+    property Item focusBefore: null
+    property bool hadFocus: false
+    readonly property bool bodyFocused: body.item !== null && body.item.activeFocus
+
     function focusTerminal() {
         if (!drawer.available) return;
         drawer.focusPending = true;
@@ -43,12 +54,24 @@ Item {
 
     function applyPendingFocus() {
         if (drawer.focusPending && drawer.open && body.status === Loader.Ready && !body.item.loading) {
+            const previous = drawer.Window.activeFocusItem;
+            if (previous !== null && previous !== body.item) drawer.focusBefore = previous;
             body.item.forceActiveFocus();
             drawer.focusPending = false;
         }
     }
 
-    onOpenChanged: if (drawer.open) Qt.callLater(drawer.applyPendingFocus)
+    onOpenChanged: {
+        if (drawer.open) {
+            Qt.callLater(drawer.applyPendingFocus);
+        } else if (drawer.hadFocus) {
+            drawer.hadFocus = false;
+            if (drawer.focusBefore !== null && drawer.focusBefore.visible && drawer.focusBefore.enabled)
+                drawer.focusBefore.forceActiveFocus();
+            drawer.focusBefore = null;
+        }
+    }
+    onBodyFocusedChanged: if (drawer.open) drawer.hadFocus = drawer.bodyFocused
 
     // The page clamps the same way: never shorter than a few rows, never
     // more than three quarters of the window.
@@ -63,6 +86,14 @@ Item {
     onModelChanged: {
         if (!edgeDrag.active) {
             localHeight = -1;
+        }
+        const request = available ? model.terminalFocusRequestId ?? 0 : 0;
+        if (request !== handledFocusRequest) {
+            handledFocusRequest = request;
+            if (request > 0 && model.terminalOpen === true) {
+                focusPending = true;
+                Qt.callLater(applyPendingFocus);
+            }
         }
     }
 

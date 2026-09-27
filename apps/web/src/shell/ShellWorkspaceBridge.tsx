@@ -55,6 +55,7 @@ export interface ShellWorkspaceBridgeProps {
   readonly terminalAvailable: boolean;
   readonly terminalOpen: boolean;
   readonly terminalHeight: number;
+  readonly terminalFocusRequestId: number;
   readonly availableEditors: ReadonlyArray<EditorId>;
   readonly scripts: ReadonlyArray<ProjectScript>;
   readonly preferredScriptId: string | null;
@@ -137,6 +138,7 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
         terminalAvailable: props.terminalAvailable,
         terminalOpen: props.terminalOpen,
         terminalHeight: props.terminalHeight,
+        terminalFocusRequestId: props.terminalFocusRequestId,
         terminalEmbedPath: buildEmbedPath(
           props.threadRef.environmentId,
           props.threadRef.threadId,

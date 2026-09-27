@@ -9204,6 +9204,7 @@ export default function ChatView(props: ChatViewProps) {
           terminalAvailable={activeProject !== null}
           terminalOpen={terminalUiState.terminalOpen}
           terminalHeight={terminalUiState.terminalHeight}
+          terminalFocusRequestId={terminalFocusRequestId}
           availableEditors={availableEditors}
           scripts={activeProjectScripts}
           preferredScriptId={

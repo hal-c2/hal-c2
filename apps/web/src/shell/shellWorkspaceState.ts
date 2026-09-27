@@ -29,6 +29,7 @@ export interface ShellWorkspaceStateInput {
   readonly terminalAvailable: boolean;
   readonly terminalOpen: boolean;
   readonly terminalHeight: number;
+  readonly terminalFocusRequestId: number;
   readonly terminalEmbedPath: string;
   readonly availableEditors: ReadonlyArray<EditorId>;
   readonly preferredEditorId: EditorId | null;
@@ -86,6 +87,7 @@ export function buildShellWorkspaceState(input: ShellWorkspaceStateInput): Shell
     terminalAvailable: input.terminalAvailable,
     terminalOpen: input.terminalOpen,
     terminalHeight: input.terminalHeight,
+    terminalFocusRequestId: input.terminalFocusRequestId,
     terminalEmbedPath: input.terminalEmbedPath,
     editors: input.availableEditors.map((id) => ({ id, label: editorLabelById.get(id) ?? id })),
     preferredEditorId: input.preferredEditorId,
