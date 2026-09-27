@@ -17,6 +17,9 @@ Item {
     height: 0
 
     function run(action, event) {
+        // A held Esc repeats: the press closes the picker or page, and a repeat
+        // landing on the prompt must not go on to clear the draft or stop the turn.
+        if (event.isAutoRepeat && event.key === "escape") return
         if (Shell.dispatch(action) !== true) event.accepted = false
     }
 

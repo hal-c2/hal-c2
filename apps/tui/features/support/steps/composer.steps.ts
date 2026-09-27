@@ -21,6 +21,7 @@ import { shownText } from "../threadWorld.ts";
 import {
   boot,
   findObject,
+  holdKey,
   pasteBytes,
   pasteText,
   pressKey,
@@ -567,6 +568,11 @@ step("the user has typed {string}", async (ctx: ComposerWorld, text: string) => 
 
 step(/^the user presses (Enter|Escape)( again)?$/, async (ctx: World, key: string) => {
   await pressKey(ctx, key === "Escape" ? "Esc" : key);
+  await settle(ctx);
+});
+
+step("the user holds Escape", async (ctx: World) => {
+  await holdKey(ctx, "escape");
   await settle(ctx);
 });
 

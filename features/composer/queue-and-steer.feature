@@ -5,6 +5,7 @@
 #   apps/web/src/components/chat/ComposerPrimaryActions.tsx (queue, steer, stop)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (stop while running)
 #   apps/tui/src/components/ChatView.tsx (Esc interrupts)
+#   apps/tui/qml/HalC2/Tui/ShellKeymap.qml (a held Esc does not repeat)
 #   packages/shared/src/keybindings.ts (composer.sendAlternate, thread.steerQueuedMessage, thread.editQueuedMessage)
 #   packages/contracts/src/orchestrationV2.ts (queued-run.cancel, queued-run.edit, queued-run.reorder, queued-message.promote-to-steer, queue.resume, run.interrupt)
 #   packages/contracts/src/settings.ts (followUpBehavior)
@@ -127,3 +128,9 @@ Feature: Follow-ups while the agent is working
     And the turn is still running
     When the user presses Escape again
     Then the running turn is interrupted
+
+  @tui
+  Scenario: Holding Escape to close a picker leaves the turn running
+    When the user clicks "All projects"
+    And the user holds Escape
+    Then the turn is still running
