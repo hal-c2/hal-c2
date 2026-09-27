@@ -1133,13 +1133,16 @@ defmodule HalC2.Steps.Providers.Antigravity do
       <<Bitwise.bxor(byte, 0xFF)>> <> binary_part(data, at + 1, byte_size(data) - at - 1)
   end
 
-  defp installer(context) do
+  # The install helpers below are public for provider-setup.feature, whose managed
+  # runtime is this one.
+  @doc false
+  def installer(context) do
     Node.ensure(Installation)
     context
   end
 
   # An install started and halfway through its download.
-  defp downloading(context) do
+  def downloading(context) do
     fetch(context, :gate)
     context = context |> installer() |> watch_install()
     {_, context} = World.call!(context, "provider.install.start", %{"instanceId" => @instance})
@@ -1157,7 +1160,7 @@ defmodule HalC2.Steps.Providers.Antigravity do
     context |> Map.put(:fetch_worker, worker) |> Map.put(:install_state, List.last(states))
   end
 
-  defp previous_unchanged(context) do
+  def previous_unchanged(context) do
     old = context.old_release
     assert %{"releaseId" => ^old} = Antigravity.active_path() |> File.read!() |> JSON.decode!()
     assert {:ok, %{version: @old}} = Antigravity.resolve(nil)
@@ -1171,9 +1174,9 @@ defmodule HalC2.Steps.Providers.Antigravity do
   end
 
   # Subscribes the scenario's socket to the install state; keeps the first snapshot.
-  defp watch_install(%{install_sub: _} = context), do: context
+  def watch_install(%{install_sub: _} = context), do: context
 
-  defp watch_install(context) do
+  def watch_install(context) do
     id = System.unique_integer([:positive])
 
     client =
@@ -1192,7 +1195,7 @@ defmodule HalC2.Steps.Providers.Antigravity do
   end
 
   # Install states pushed until one satisfies `done?`; returns `{states, context}`.
-  defp collect_install(context, done?, acc \\ []) do
+  def collect_install(context, done?, acc \\ []) do
     id = context.install_sub
 
     {frame, client} =

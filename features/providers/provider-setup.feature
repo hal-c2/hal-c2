@@ -95,23 +95,26 @@ Feature: Provider setup, updates and sign-in
     When the user opens the provider list
     Then Codex is not offered an update to that release
 
-  # The managed-install RPCs (provider.install.start, provider.install.subscribe,
-  # provider.install.cancel, provider.install.remove) are not routed by apps/server-ex.
-  @backlog
+  # Antigravity is the one provider whose runtime the node installs itself
+  # (apps/server/src/provider/AntigravityInstallation.ts, installation.ex).
+  @plugin-antigravity
   Scenario: A managed runtime reports install progress to every client
-    Given two clients are connected to the node
+    Given Antigravity is enabled on that environment
+    And two clients are connected to the node
     When the user installs a managed provider runtime on one client
     Then both clients show the download progress
 
-  @backlog
+  @plugin-antigravity
   Scenario: A managed installation can be cancelled
-    Given a managed provider runtime is downloading
+    Given Antigravity is enabled on that environment
+    And a managed provider runtime is downloading
     When the user cancels the installation
     Then the download stops and the previous runtime is unchanged
 
-  @backlog
+  @plugin-antigravity
   Scenario: A managed runtime can be removed and installed again
-    Given a managed provider runtime is installed and not in use
+    Given Antigravity is enabled on that environment
+    And a managed provider runtime is installed and not in use
     When the user removes it
     Then the provider shows that it is not installed
     When the user installs it again

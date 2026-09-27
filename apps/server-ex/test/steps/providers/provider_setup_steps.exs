@@ -12,6 +12,7 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
 
   import ExUnit.Assertions
 
+  alias HalC2.Steps.Providers.Antigravity
   alias HalC2.Test.AcpFixtures, as: Acp
   alias HalC2.Test.Node
   alias HalC2.Test.Node.World
@@ -453,5 +454,113 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     refute shown =~ "WXYZ-9876"
     refute shown =~ "acme.test"
     context
+  end
+
+  # --- managed runtimes ---------------------------------------------------------------
+  #
+  # Antigravity is the provider whose runtime the node installs itself; its release,
+  # download and the older runtime already active come from antigravity_steps.exs.
+
+  step "the user installs a managed provider runtime on one client", context do
+    ctx = Antigravity.installer(context)
+    ctx = Enum.reduce(["first", "second"], ctx, &watch_install(&2, &1))
+    input = %{"instanceId" => "antigravity"}
+    {_, ctx} = World.call!(ctx, "provider.install.start", input, "first")
+    ctx
+  end
+
+  step "both clients show the download progress", context do
+    total = context.release.archive_bytes
+
+    Enum.reduce(["first", "second"], context, fn name, ctx ->
+      {states, ctx} = install_states(ctx, name, &(&1["phase"] in ~w(succeeded failed)))
+      downloading = Enum.filter(states, &(&1["phase"] == "downloading"))
+      assert Enum.any?(downloading, &(&1["downloadedBytes"] == total))
+      assert Enum.all?(downloading, &(&1["totalBytes"] == total))
+      assert %{"phase" => "succeeded"} = List.last(states)
+      ctx
+    end)
+  end
+
+  step "a managed provider runtime is downloading", context do
+    Antigravity.downloading(context)
+  end
+
+  step "the download stops and the previous runtime is unchanged", context do
+    assert {:ok, %{"phase" => "cancelled", "operationId" => op}} = context.reply
+    assert op == context.install_state["operationId"]
+    ref = Process.monitor(context.fetch_worker)
+    assert_receive {:DOWN, ^ref, :process, _, reason} when reason in [:killed, :noproc], 5_000
+    Antigravity.previous_unchanged(context)
+  end
+
+  step "a managed provider runtime is installed and not in use", context do
+    ctx = Antigravity.installer(context)
+
+    assert %{"installedVersion" => "agy_acp_server_1.1.0", "canRemove" => true} =
+             HalC2.Acp.Antigravity.Installation.state()
+
+    assert HalC2.Acp.Antigravity.sessions("antigravity") == []
+    ctx
+  end
+
+  step "the user removes it", context do
+    input = %{"instanceId" => "antigravity"}
+    {reply, ctx} = World.call(context, "provider.install.remove", input)
+    Map.put(ctx, :reply, reply)
+  end
+
+  step "the provider shows that it is not installed", context do
+    assert {:ok, %{"installedVersion" => nil, "canRemove" => false}} = context.reply
+    {providers, ctx} = opened_providers(context)
+    assert %{"installed" => false} = Enum.find(providers, &(&1["instanceId"] == "antigravity"))
+    ctx
+  end
+
+  step "the user installs it again", context do
+    ctx = Antigravity.watch_install(context)
+    {_, ctx} = World.call!(ctx, "provider.install.start", %{"instanceId" => "antigravity"})
+    {states, ctx} = Antigravity.collect_install(ctx, &(&1["phase"] in ~w(succeeded failed)))
+    Map.put(ctx, :install_states, states)
+  end
+
+  step "the provider is installed", context do
+    assert %{"phase" => "succeeded", "installedVersion" => "agy_acp_server_1.1.1"} =
+             List.last(context.install_states)
+
+    {providers, ctx} = opened_providers(context)
+    assert %{"installed" => true} = Enum.find(providers, &(&1["instanceId"] == "antigravity"))
+    ctx
+  end
+
+  # Subscribes client `name` to the Antigravity install state.
+  defp watch_install(ctx, name) do
+    sub = 3000 + System.unique_integer([:positive])
+
+    shape = %{
+      "type" => "providerInstall",
+      "node" => Atom.to_string(node()),
+      "instanceId" => "antigravity"
+    }
+
+    client = Node.sub(World.client(ctx, name), sub, shape)
+    {_, client} = Node.await(client, &(&1["t"] == "providerInstall" and &1["id"] == sub))
+
+    ctx
+    |> World.put_client(name, client)
+    |> Map.update(:install_subs, %{name => sub}, &Map.put(&1, name, sub))
+  end
+
+  # The install states client `name` receives until one satisfies `done?`.
+  defp install_states(ctx, name, done?, acc \\ []) do
+    sub = ctx.install_subs[name]
+    match = &(&1["t"] == "providerInstall" and &1["id"] == sub)
+    {frame, client} = Node.await(World.client(ctx, name), match, 15_000)
+    ctx = World.put_client(ctx, name, client)
+    acc = [frame["state"] | acc]
+
+    if done?.(frame["state"]),
+      do: {Enum.reverse(acc), ctx},
+      else: install_states(ctx, name, done?, acc)
   end
 end
