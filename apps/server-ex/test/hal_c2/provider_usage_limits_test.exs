@@ -236,4 +236,65 @@ defmodule HalC2.ProviderUsageLimitsTest do
              nil
            ) == nil
   end
+
+  describe "with_command/2" do
+    @limits %{"windows" => []}
+
+    defp provider(driver, extra \\ %{}) do
+      Map.merge(
+        %{
+          "instanceId" => driver,
+          "driver" => driver,
+          "enabled" => true,
+          "installed" => true,
+          "availability" => "available",
+          "slashCommands" => [%{"name" => "review"}]
+        },
+        extra
+      )
+    end
+
+    defp names(entry), do: Enum.map(entry["slashCommands"] || [], & &1["name"])
+
+    test "a provider showing limits offers the command once, in its workspaces too" do
+      codex =
+        provider("codex", %{
+          "usageLimits" => @limits,
+          "slashCommands" => [%{"name" => "usage-limits", "description" => "old"}],
+          "workspaceSnapshots" => [%{"cwd" => "/w", "slashCommands" => []}]
+        })
+
+      [codex] = Limits.with_command([codex], [])
+      assert names(codex) == ["usage-limits"]
+      assert hd(codex["slashCommands"])["description"] == "Show this provider's usage limits"
+      assert [%{"slashCommands" => [%{"name" => "usage-limits"}]}] = codex["workspaceSnapshots"]
+    end
+
+    test "providers that cannot show limits are left alone" do
+      providers = [
+        provider("codex"),
+        provider("claudeAgent", %{"usageLimits" => @limits, "enabled" => false}),
+        provider("grok", %{"usageLimits" => @limits, "availability" => "unavailable"}),
+        provider("cursor", %{"usageLimits" => @limits, "installed" => false})
+      ]
+
+      assert Limits.with_command(providers, []) == providers
+    end
+
+    test "a hub account covers its driver, and a failed hub covers every driver" do
+      providers = [provider("codex"), provider("pi")]
+      hub = %{"accounts" => [%{"driver" => "codex"}], "error" => nil}
+
+      assert [["review", "usage-limits"], ["review"]] =
+               Enum.map(Limits.with_command(providers, [hub]), &names/1)
+
+      failed = %{"accounts" => [], "error" => "No management key configured."}
+
+      assert [["review", "usage-limits"], ["review", "usage-limits"]] =
+               Enum.map(Limits.with_command(providers, [failed]), &names/1)
+
+      assert Limits.command_coverage([hub, failed]) == MapSet.new(["codex", :any])
+      assert Limits.command_coverage(nil) == MapSet.new()
+    end
+  end
 end

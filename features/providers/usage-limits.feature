@@ -7,6 +7,8 @@
 #   apps/web/src/components/usage/UsageLimits.tsx, apps/web/src/components/usage/UsageLimitsPooled.tsx
 #   apps/web/src/components/settings/UsageProviderSettings.tsx, apps/web/src/components/settings/AddUsageLimitSourceDialog.tsx
 #   packages/contracts/src/providerUsageLimits.ts, packages/contracts/src/usageLimitSourceId.ts
+#   apps/server/src/ws.ts, packages/shared/src/usageLimits.ts (usageLimitsCommand, withUsageLimitsCommands)
+#   apps/server-ex/lib/hal_c2/web/socket.ex (config shape with usageLimitsCommand)
 
 @node
 Feature: Subscription limits
@@ -145,6 +147,23 @@ Feature: Subscription limits
     Given the user opened Limits two minutes ago
     When the user opens Limits again
     Then the environment is not checked again yet
+
+  Scenario: Providers with limits offer /usage-limits to clients that answer it themselves
+    Given Pi, which reports no limits, is set up too
+    When a client that answers "/usage-limits" itself reads the providers
+    Then Codex and Claude offer "/usage-limits"
+    And Pi does not offer "/usage-limits"
+
+  # An older client would send the command to the agent as an ordinary prompt.
+  Scenario: Clients that do not answer /usage-limits themselves are not offered it
+    When a client that does not answer "/usage-limits" itself reads the providers
+    Then no provider offers "/usage-limits"
+
+  Scenario: A hub that cannot be read offers /usage-limits for every provider
+    Given Pi, which reports no limits, is set up too
+    And a client that answers "/usage-limits" itself reads the providers
+    When a hub that cannot be read is added
+    Then Pi offers "/usage-limits" so the hub's error can be shown
 
   @backlog @desktop @mobile @tui
   Scenario: The /usage-limits command shows the current model's limits

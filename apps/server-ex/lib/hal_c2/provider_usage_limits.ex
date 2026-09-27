@@ -19,7 +19,8 @@ defmodule HalC2.ProviderUsageLimits do
   again (`HalC2.Settings.notify_providers/0`).
 
   `provider.consumeResetCredit` redeems a Codex reset credit here, or a hub
-  account's through `HalC2.UsageLimitSources`.
+  account's through `HalC2.UsageLimitSources`. Clients that answer `/usage-limits`
+  themselves see it offered by every provider with limits to show (`with_command/2`).
   """
 
   use GenServer
@@ -193,6 +194,72 @@ defmodule HalC2.ProviderUsageLimits do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # --- the /usage-limits command -------------------------------------------------
+
+  @usage_limits_command %{
+    "name" => "usage-limits",
+    "description" => "Show this provider's usage limits"
+  }
+
+  @doc """
+  The provider entries as a client that answers `/usage-limits` itself sees them (a
+  config subscription with `usageLimitsCommand`): every driver with limits to show,
+  its own or a hub account's (`sources`), offers the command, in its workspace
+  catalogs too. Other clients would send it to the agent as a prompt, so they never
+  get it.
+  """
+  def with_command(providers, sources) do
+    covered = command_coverage(sources)
+    native = for entry <- providers, shows_limits?(entry), into: MapSet.new(), do: entry["driver"]
+
+    Enum.map(providers, fn entry ->
+      if :any in covered or entry["driver"] in covered or entry["driver"] in native,
+        do: offer_command(entry),
+        else: entry
+    end)
+  end
+
+  @doc """
+  The drivers the usage-limit sources offer the command to. A source that failed to
+  read has no accounts and counts for every driver (`:any`), so its error stays one
+  command away. Two snapshots with the same coverage need no new provider list.
+  """
+  def command_coverage(sources) do
+    Enum.reduce(List.wrap(sources), MapSet.new(), fn source, covered ->
+      case {source["accounts"] || [], source["error"]} do
+        {[], error} when error != nil -> MapSet.put(covered, :any)
+        {accounts, _} -> Enum.into(accounts, covered, & &1["driver"])
+      end
+    end)
+  end
+
+  # An entry the Limits view would show: on, installed, usable, and reporting limits.
+  defp shows_limits?(entry),
+    do:
+      entry["enabled"] == true and entry["installed"] == true and
+        entry["availability"] != "unavailable" and entry["usageLimits"] != nil
+
+  defp offer_command(entry) do
+    add = fn commands ->
+      Enum.reject(commands || [], &(&1["name"] == @usage_limits_command["name"])) ++
+        [@usage_limits_command]
+    end
+
+    entry = Map.update(entry, "slashCommands", add.([]), add)
+
+    case entry["workspaceSnapshots"] do
+      [_ | _] = snapshots ->
+        Map.put(
+          entry,
+          "workspaceSnapshots",
+          Enum.map(snapshots, &Map.update(&1, "slashCommands", add.([]), add))
+        )
+
+      _ ->
+        entry
     end
   end
 

@@ -552,6 +552,76 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     context
   end
 
+  # --- /usage-limits ----------------------------------------------------------------
+
+  step "Pi, which reports no limits, is set up too", context do
+    World.merge_settings(%{
+      "providers" => %{"pi" => %{"enabled" => true, "binaryPath" => context.fakes.acp}}
+    })
+
+    context
+  end
+
+  step ~r/^a client that (?<answers>answers|does not answer) "\/usage-limits" itself reads the providers$/,
+       %{args: [answers]} = context do
+    context = limits(context)
+    id = System.unique_integer([:positive])
+    shape = %{"type" => "config", "node" => Atom.to_string(node())}
+    shape = if answers == "answers", do: Map.put(shape, "usageLimitsCommand", true), else: shape
+
+    {frame, client} =
+      World.client(context)
+      |> Node.sub(id, shape)
+      |> Node.await(&(&1["t"] == "config" and &1["id"] == id))
+
+    context
+    |> World.put_client(client)
+    |> Map.merge(%{config_sub: id, providers: frame["config"]["providers"]})
+  end
+
+  step "Codex and Claude offer {string}", %{args: [command]} = context do
+    for instance <- ["codex", "claudeAgent"],
+        do: assert(offers?(context.providers, instance, command), instance)
+
+    context
+  end
+
+  step "Pi does not offer {string}", %{args: [command]} = context do
+    assert Enum.any?(context.providers, &(&1["instanceId"] == "pi")), "Pi is not listed"
+    refute offers?(context.providers, "pi", command)
+    context
+  end
+
+  step "no provider offers {string}", %{args: [command]} = context do
+    offering = for p <- context.providers, offers?([p], p["instanceId"], command), do: p
+    assert offering == []
+    context
+  end
+
+  step "a hub that cannot be read is added", context do
+    context = add_hub(context, %{"managementKey" => ""})
+    read_hubs()
+    context
+  end
+
+  step "Pi offers {string} so the hub's error can be shown", %{args: [command]} = context do
+    id = context.config_sub
+
+    {_frame, client} =
+      Node.await(
+        World.client(context),
+        &(&1["t"] == "config.providers" and &1["id"] == id and
+            offers?(&1["providers"], "pi", command))
+      )
+
+    World.put_client(context, client)
+  end
+
+  defp offers?(providers, instance, "/" <> name) do
+    entry = Enum.find(providers, &(&1["instanceId"] == instance))
+    Enum.any?((entry || %{})["slashCommands"] || [], &(&1["name"] == name))
+  end
+
   # --- helpers -----------------------------------------------------------------------
 
   # Starts the node's usage-limit service (if it is not running yet) and waits for its
