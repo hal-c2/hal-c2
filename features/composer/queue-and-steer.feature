@@ -39,11 +39,12 @@ Feature: Follow-ups while the agent is working
       | Grok     | the running turn is interrupted and "use the new API" runs next          |
 
   @node
-  Scenario: A steer the provider rejects falls back to the queue
+  Scenario: A steer the provider rejects is refused, not quietly queued
     Given the provider rejects the steer
-    When the user steers the running turn with "stop and summarize"
-    Then "stop and summarize" is queued to run after the active turn
-    And the message is not lost
+    When the user tries to steer the running turn with "stop and summarize"
+    Then the user is told the provider did not take the message
+    And "stop and summarize" is neither queued nor part of the running turn
+    And the running turn keeps working
 
   @node
   Scenario: Restarting with a message interrupts the turn and runs the message next

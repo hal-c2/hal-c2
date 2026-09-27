@@ -45,12 +45,25 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
-  @doc "Adds a message to the running turn of `run_id` (`turn/steer`)."
-  @spec steer(String.t(), String.t(), String.t()) :: :ok | {:error, String.t()}
-  def steer(thread_id, run_id, text) do
+  @doc """
+  Adds a message (`%{text, attachments}`) to the running turn of `run_id` (`turn/steer`).
+
+  When Codex refuses, whatever it said before refusing (a `turn/completed`, say) is
+  applied before this returns, so the caller sees whether the turn is still running.
+  """
+  @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
+  def steer(thread_id, run_id, message) do
     case Registry.lookup(HalC2.Codex.Registry, thread_id) do
-      [{pid, _}] -> GenServer.call(pid, {:steer, run_id, text}, 30_000)
-      [] -> {:error, "no running turn"}
+      [{pid, _}] ->
+        with {:error, _} = error <- GenServer.call(pid, {:steer, run_id, message}, 30_000) do
+          # Notifications that preceded the refusal sit in the runtime's mailbox ahead
+          # of this call.
+          GenServer.call(pid, :settle, 30_000)
+          error
+        end
+
+      [] ->
+        {:error, "no running turn"}
     end
   end
 
@@ -151,19 +164,19 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # Codex refuses the steer if its turn has moved on, so a late steer fails cleanly.
   def handle_call(
-        {:steer, run_id, text},
+        {:steer, run_id, message},
         _from,
         %{turn: %{ids: %{run: run_id}, native_turn_id: turn_id}} = state
       ) do
     params = %{
       "threadId" => state.native_thread_id,
       "expectedTurnId" => turn_id,
-      "input" => [%{"type" => "text", "text" => text}]
+      "input" => codex_input(message)
     }
 
     case Connection.call(state.conn, "turn/steer", params) do
       {:ok, _} -> {:reply, :ok, state}
-      {:error, reason} -> {:reply, {:error, inspect(reason)}, state}
+      {:error, reason} -> {:reply, {:error, rpc_message(reason)}, state}
     end
   end
 
@@ -209,8 +222,10 @@ defmodule HalC2.Codex.ThreadRuntime do
     {:reply, reply, state}
   end
 
-  def handle_call({:steer, _run_id, _text}, _from, state),
+  def handle_call({:steer, _run_id, _message}, _from, state),
     do: {:reply, {:error, "no running turn"}, state}
+
+  def handle_call(:settle, _from, state), do: {:reply, :ok, state}
 
   def handle_call({:respond, request_id, response}, _from, state) do
     case Map.pop(state.requests, request_id) do

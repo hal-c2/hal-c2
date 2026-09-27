@@ -55,11 +55,11 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
-  @doc "Adds a message to the running turn of `run_id`; Claude takes it at once."
-  @spec steer(String.t(), String.t(), String.t()) :: :ok | {:error, String.t()}
-  def steer(thread_id, run_id, text) do
+  @doc "Adds a message (`%{text, attachments}`) to the running turn of `run_id`; Claude takes it at once."
+  @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
+  def steer(thread_id, run_id, message) do
     case Registry.lookup(HalC2.Claude.Registry, thread_id) do
-      [{pid, _}] -> GenServer.call(pid, {:steer, run_id, text})
+      [{pid, _}] -> GenServer.call(pid, {:steer, run_id, message})
       [] -> {:error, "no running turn"}
     end
   end
@@ -221,10 +221,11 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   def handle_call(:interrupt, _from, state), do: {:reply, {:error, "no running turn"}, state}
 
-  def handle_call({:steer, run_id, text}, _from, %{turn: %{ids: %{run: run_id}}} = state)
+  # The message reads like the turn's own: its effort prefix, files and images.
+  def handle_call({:steer, run_id, message}, _from, %{turn: %{ids: %{run: run_id}}} = state)
       when state.session != nil do
-    text = Provider.prompt(text, state.turn.launch.prompt_effort)
-    Session.send_message(state.session, text, priority: "now")
+    content = claude_content(Map.put(message, :launch, state.turn.launch))
+    Session.send_message(state.session, content, priority: "now")
     {:reply, :ok, %{state | steered: true}}
   end
 
@@ -236,7 +237,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   def handle_call(:rollback, _from, state),
     do: {:reply, {:error, "Interrupt the current turn before rewinding."}, state}
 
-  def handle_call({:steer, _run_id, _text}, _from, state),
+  def handle_call({:steer, _run_id, _message}, _from, state),
     do: {:reply, {:error, "no running turn"}, state}
 
   def handle_call({:respond, request_id, response}, _from, state) do

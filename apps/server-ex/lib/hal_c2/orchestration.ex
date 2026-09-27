@@ -5,9 +5,10 @@ defmodule HalC2.Orchestration do
   ACP agent such as OpenCode;
   plus the diffs of their checkpoints.
 
-  A message sent while a run is active is queued: its run waits as `queued` with a
-  queue position and starts when the thread is next idle (`start_next/1`). Nodes do
-  not steer a running turn; "restart" interrupts it and puts the message first.
+  A message sent while a run is active steers it when its provider can take the
+  message mid-turn (`steer/3`), or is queued: its run waits as `queued` with a queue
+  position and starts when the thread is next idle (`start_next/1`). "restart"
+  interrupts the running turn and puts the message first.
 
   Each command is decided inside the thread's stream process (`HalC2.Streams.transact/3`),
   so reading the thread and writing its new entities is atomic. Starting the provider
@@ -483,7 +484,11 @@ defmodule HalC2.Orchestration do
 
     if queued && message && target && target["status"] in @active_statuses &&
          steerable?(target) &&
-         runtime(target["providerInstanceId"]).steer(thread_id, target["id"], message["text"]) ==
+         runtime(target["providerInstanceId"]).steer(
+           thread_id,
+           target["id"],
+           steer_input(message)
+         ) ==
            :ok do
       HalC2.Streams.transact(thread_id, :thread, fn state ->
         at = Entities.now()
@@ -1345,11 +1350,14 @@ defmodule HalC2.Orchestration do
   end
 
   # The provider takes the message first; only then does it join the run. If the turn
-  # ended meanwhile, the message is sent like any other (queued or started).
+  # ended meanwhile, the message is sent like any other (started, or queued behind a
+  # newer run), as the Node server delivers a steer that lost the race with the turn's
+  # end. A provider that refuses while its turn still runs is an error for the sender:
+  # the message was not delivered, so it is neither shown in the turn nor queued.
   defp steer(thread_id, run, command) do
-    text = HalC2.ComposerContext.for_provider(command["text"] || "", command["context"])
+    instance = run["providerInstanceId"] || "codex"
 
-    case runtime(run["providerInstanceId"] || "codex").steer(thread_id, run["id"], text) do
+    case runtime(instance).steer(thread_id, run["id"], steer_input(command)) do
       :ok ->
         HalC2.Streams.transact(thread_id, :thread, fn state ->
           at = Entities.now()
@@ -1371,12 +1379,43 @@ defmodule HalC2.Orchestration do
 
         {:ok, %{"sequence" => sequence(thread_id)}}
 
-      {:error, _reason} ->
-        command
-        |> Map.put("dispatchMode", %{"type" => "queue_after_active"})
-        |> Map.delete("deliveryIntent")
-        |> dispatch()
+      {:error, reason} ->
+        if run_active?(thread_id, run["id"]) do
+          {:error,
+           "#{HalC2.ThreadMove.provider_name(instance)} did not take the message into its running turn (#{reason}). Send it again, or stop the turn first."}
+        else
+          command
+          |> Map.put("dispatchMode", %{"type" => "queue_after_active"})
+          |> Map.delete("deliveryIntent")
+          |> dispatch()
+        end
     end
+  end
+
+  defp run_active?(thread_id, run_id) do
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+    (StreamState.get(state, "run")[run_id] || %{})["status"] in @active_statuses
+  end
+
+  # What a runtime's `steer/3` is handed: the text the provider reads (with its composer
+  # context) and the message's files, as a turn carries them.
+  defp steer_input(message) do
+    %{
+      text: HalC2.ComposerContext.for_provider(message["text"] || "", message["context"]),
+      attachments: provider_attachments(message["attachments"])
+    }
+  end
+
+  # The files providers read, from this node's attachment store.
+  defp provider_attachments(attachments) do
+    for attachment <- attachments || [],
+        path = HalC2.Attachments.path(attachment),
+        do: %{
+          type: attachment["type"],
+          name: attachment["name"],
+          mime_type: attachment["mimeType"],
+          path: path
+        }
   end
 
   # The steered message's place in the transcript, inside the run it joined.
@@ -2340,18 +2379,7 @@ defmodule HalC2.Orchestration do
       streaming_mode:
         HalC2.Settings.for_project(thread["projectId"])["responseStreamingMode"] || "paragraph",
       interaction_mode: thread["interactionMode"] || "default",
-      # The files providers read, from this node's attachment store.
-      attachments:
-        for(
-          attachment <- command["attachments"] || [],
-          path = HalC2.Attachments.path(attachment),
-          do: %{
-            type: attachment["type"],
-            name: attachment["name"],
-            mime_type: attachment["mimeType"],
-            path: path
-          }
-        ),
+      attachments: provider_attachments(command["attachments"]),
       native_thread_id: get_in(provider_thread || %{}, ["nativeThreadRef", "nativeId"]),
       head: get_in(provider_thread || %{}, ["nativeConversationHeadRef", "nativeId"])
     }

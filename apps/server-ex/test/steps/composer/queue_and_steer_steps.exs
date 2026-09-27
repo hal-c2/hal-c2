@@ -93,20 +93,32 @@ defmodule HalC2.Steps.Composer.QueueAndSteer do
     context
   end
 
-  step "{string} is queued to run after the active turn", %{args: [text]} = context do
-    title = World.current(context)
-    assert [{^text, _}] = World.queued(context, title)
-    assert %{"status" => "running"} = running_run(context)
+  step "the user tries to steer the running turn with {string}", %{args: [text]} = context do
+    {reply, context} =
+      World.send_message(context, World.current(context), text, %{
+        "deliveryIntent" => "steer",
+        "dispatchMode" => %{"type" => "steer_active"}
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the user is told the provider did not take the message", context do
+    assert {:error, message} = context.reply
+    assert message =~ "did not take the message into its running turn"
     context
   end
 
-  step "the message is not lost", context do
+  step "{string} is neither queued nor part of the running turn", %{args: [text]} = context do
     title = World.current(context)
-    message = StreamState.get(World.stream(context, title), "message")[context.last_message_id]
-    assert message["text"] == "stop and summarize"
-    interrupt(context)
-    World.await_runs(context, title, ["interrupted", "completed"])
-    assert List.last(World.started_turns(context)) == "stop and summarize"
+    assert World.queued(context, title) == []
+    refute StreamState.get(World.stream(context, title), "message")[context.last_message_id]
+    refute text in World.started_turns(context)
+    context
+  end
+
+  step "the running turn keeps working", context do
+    assert %{"status" => "running"} = running_run(context)
     context
   end
 

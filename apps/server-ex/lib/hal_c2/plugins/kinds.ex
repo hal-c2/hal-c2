@@ -64,6 +64,10 @@ defmodule HalC2.Plugins.ProviderAdapter do
 
   Without them, or when either fails, the thread moves and its next run there gets
   a summary of the conversation.
+
+  An adapter that declares `active_steering` implements `steer/3`: it hands
+  `%{text, attachments}` (attachments shaped like a turn's) to the turn running as
+  `run_id`, or answers `{:error, reason}` when the provider does not take it.
   """
   use HalC2.Plugins.Kind
 
@@ -72,7 +76,11 @@ defmodule HalC2.Plugins.ProviderAdapter do
   @callback start_turn(thread_id :: String.t(), turn :: map) :: :ok
   @callback interrupt(thread_id :: String.t(), run_id :: String.t() | nil) ::
               :ok | {:error, String.t()}
-  @callback steer(thread_id :: String.t(), run_id :: String.t(), text :: String.t()) ::
+  @callback steer(
+              thread_id :: String.t(),
+              run_id :: String.t(),
+              message :: %{text: String.t(), attachments: [map]}
+            ) ::
               :ok | {:error, String.t()}
   @callback respond(thread_id :: String.t(), request_id :: String.t(), response :: map) ::
               :ok | {:error, String.t()}

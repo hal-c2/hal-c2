@@ -2,6 +2,7 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
+  alias HalC2.StreamState
   alias HalC2.Test.Node
   alias HalC2.Test.Node.World
 
@@ -163,24 +164,61 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     context
   end
 
-  step "the provider refuses the steer because the turn just ended", context do
-    # The app-server's turn moved on: the fake refuses a steer for any other turn.
+  step "the provider refuses the steer", context do
+    # The node names a turn the app-server does not have; the fake refuses a steer for it
+    # while its own turn keeps running.
     {pid, _} = World.codex_runtime(context, context.thread)
-    :sys.replace_state(pid, &put_in(&1.turn.native_turn_id, "turn-that-ended"))
+    :sys.replace_state(pid, &put_in(&1.turn.native_turn_id, "turn-elsewhere"))
     context
   end
 
-  step "{string} is sent as a queued message instead", %{args: [text]} = context do
-    assert [%{"expectedTurnId" => "turn-that-ended"}] =
-             World.codex_requests(context, "turn/steer")
+  step "the user tries to send {string} to {string} as a steer",
+       %{args: [text, thread]} = context do
+    context
+    |> Map.put(:thread, thread)
+    |> World.dispatch_message(thread, text, %{"deliveryIntent" => "steer"})
+    |> Map.put(:sent, text)
+  end
 
-    assert %{"status" => "queued", "queuePosition" => 1} = run_for(context, text)
+  step "the send fails saying Codex did not take the message into its running turn", context do
+    assert {:error, message, _} = context.reply
+    assert message =~ "Codex did not take the message into its running turn"
+    assert message =~ "turn moved on"
+    context
+  end
 
-    refute Enum.any?(
-             World.entities(context, context.thread, "turn-item"),
-             &(&1["inputIntent"] == "steer")
-           )
+  step "{string} is neither queued nor added to the running turn", %{args: [text]} = context do
+    assert [%{"expectedTurnId" => "turn-elsewhere"}] = World.codex_requests(context, "turn/steer")
+    refute Enum.any?(World.entities(context, context.thread, "message"), &(&1["text"] == text))
+    assert [%{"id" => id, "status" => "running"}] = World.entities(context, context.thread, "run")
+    assert id == context.running
+    context
+  end
 
+  step "the user steers {string} with {string} and an attached screenshot",
+       %{args: [thread, text]} = context do
+    context =
+      context
+      |> Map.put(:thread, thread)
+      |> World.dispatch_message(thread, text, %{
+        "deliveryIntent" => "steer",
+        "attachments" => [upload("screenshot.png")]
+      })
+
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    Map.put(context, :sent, text)
+  end
+
+  step "the running turn answers {string} having seen the screenshot",
+       %{args: [text]} = context do
+    # The fakes answer a steer with its text (which names where the file is saved) and
+    # how many images came inline.
+    World.await_state(context, context.thread, fn state ->
+      Enum.any?(StreamState.list(state, "message"), &steered_with_screenshot?(&1, text))
+    end)
+
+    assert %{"runId" => run_id} = user_item(context, text, "steer")
+    assert run_id == context.running
     context
   end
 
@@ -420,6 +458,13 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     context = %{context | node: Node.restart(context.node), clients: %{}}
     assert run(context, "run-1")["status"] == "interrupted"
     context
+  end
+
+  defp steered_with_screenshot?(message, text) do
+    reply = message["text"] || ""
+
+    message["role"] == "assistant" and String.starts_with?(reply, "steered: " <> text) and
+      reply =~ ~s("screenshot.png" is saved at) and String.ends_with?(reply, "(+1 image)")
   end
 
   defp quoted(texts), do: for([_, text] <- Regex.scan(~r/"([^"]+)"/, texts), do: text)

@@ -4,6 +4,11 @@
 #     queue.resume, run.updated, message.updated, turn-item.updated)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (decide_message, queue_run, steer, restart_promoted)
 #   apps/server/src/orchestration-v2/ (dispatch mode resolution)
+#   apps/server/src/orchestration-v2/Orchestrator.ts (dispatchSteerIntoRun; a steer for a
+#     completed run starts immediately)
+#   apps/server/src/orchestration-v2/EffectWorker.ts (provider-turn.steer failure handling)
+#   apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts, ClaudeAdapterV2.ts (steerTurn
+#     with attachments)
 #   docs/user/ (composer queue and steer guidance)
 Feature: Queueing, steering and restarting
   While a turn is active, a new message either steers it, waits in the thread's
@@ -67,11 +72,23 @@ Feature: Queueing, steering and restarting
       | to restart the active turn   |
 
   @node
-  Scenario: A steer the provider refuses falls back to the queue
+  Scenario: A steer the provider refuses while its turn runs is reported to the sender
     Given "t1" has a running turn on "codex"
-    And the provider refuses the steer because the turn just ended
-    When the user sends "Also" to "t1" as a steer
-    Then "Also" is sent as a queued message instead
+    And the provider refuses the steer
+    When the user tries to send "Also" to "t1" as a steer
+    Then the send fails saying Codex did not take the message into its running turn
+    And "Also" is neither queued nor added to the running turn
+
+  @node
+  Scenario Outline: A steer carries the message's files and images to the provider
+    Given "t1" has a running turn on "<provider>"
+    When the user steers "t1" with "Look at this" and an attached screenshot
+    Then the running turn answers "Look at this" having seen the screenshot
+
+    Examples:
+      | provider    |
+      | codex       |
+      | claudeAgent |
 
   @node
   Scenario: Queued messages keep their own run ids and ordinals when they start

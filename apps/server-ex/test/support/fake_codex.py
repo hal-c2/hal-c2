@@ -351,8 +351,8 @@ for line in sys.stdin:
         if finishing:
             # The turn ended before the steer got there.
             finishing = False
-            send({"id": mid, "error": {"code": -32600, "message": "no active turn to steer"}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
+            send({"id": mid, "error": {"code": -32600, "message": "no active turn to steer"}})
             continue
         if params["expectedTurnId"] != ctx["turnId"] or os.path.exists(os.environ.get("FAKE_CODEX_REJECT_STEER", "/nonexistent")):
             send({"id": mid, "error": {"code": -32600, "message": "turn moved on"}})
@@ -362,6 +362,9 @@ for line in sys.stdin:
             say(ctx, params["input"][0]["text"])
             continue
         text = "steered: " + params["input"][0]["text"]
+        images = sum(1 for i in params["input"] if i["type"] == "image")
+        if images:
+            text += f" (+{images} image)"
         # A running turn passes on a new quota reading, as Codex does alongside token usage.
         if "rate limit" in text:
             send({"method": "account/rateLimits/updated", "params": {"rateLimits": {"limitId": "codex", "primary": {"usedPercent": 77, "windowDurationMins": 300}}}})
