@@ -580,12 +580,21 @@ defmodule HalC2.GitActions do
     if String.starts_with?(fragment, "feature/"), do: fragment, else: "feature/#{fragment}"
   end
 
+  # A name no branch has, and no branch sits on the path of: a branch `feature` blocks
+  # every `feature/…`, so the name is flattened to `feature-…` there.
   defp unique_branch(existing, name) do
-    if MapSet.member?(existing, name),
+    name =
+      if Enum.any?(existing, &String.starts_with?(name, &1 <> "/")),
+        do: String.replace(name, "/", "-"),
+        else: name
+
+    taken? = &(MapSet.member?(existing, &1) or Git.branch_path_taken_by?(existing, &1))
+
+    if taken?.(name),
       do:
         Enum.find_value(
           Stream.iterate(2, &(&1 + 1)),
-          &(not MapSet.member?(existing, "#{name}-#{&1}") && "#{name}-#{&1}")
+          &(not taken?.("#{name}-#{&1}") && "#{name}-#{&1}")
         ),
       else: name
   end

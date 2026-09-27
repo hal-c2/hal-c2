@@ -5,7 +5,8 @@ defmodule HalC2.WorktreeSetup do
 
   A thread launched with the `worktree` strategy gets a `preparing` run; a worker then
   fetches the base branch when asked, adds the worktree on a temporary
-  `hal-c2/<hex>` branch (renamed in the background from the first message), fills
+  `hal-c2/<hex>` branch (`temporary_branch/2`, renamed in the background from the
+  first message), fills
   its submodules, runs the project's setup script in a terminal, and releases the run
   (`HalC2.Orchestration.release_prepared/2`). Its progress is a `WorktreeSetupSnapshot`
   that subscribers get on every change. Until the agent starts the setup can be
@@ -259,8 +260,16 @@ defmodule HalC2.WorktreeSetup do
       end
 
     status.("checkout", "running", %{})
-    temporary = "hal-c2/" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
-    branch = strategy["branch"] || temporary
+
+    # A client may name the worktree's temporary branch itself (the terminal client
+    # does); it is renamed like the node's own.
+    temporary =
+      case strategy["branch"] do
+        nil -> temporary_branch(root, nil)
+        requested -> if temporary?(requested), do: temporary_branch(root, requested)
+      end
+
+    branch = temporary || strategy["branch"]
 
     path = HalC2.Vcs.worktree_path(root, branch)
     unless File.exists?(path), do: GenServer.call(server, {:claim, thread_id, path})
@@ -340,6 +349,26 @@ defmodule HalC2.WorktreeSetup do
   end
 
   defp origin?(root), do: match?({:ok, _}, HalC2.Git.ok(root, ~w(remote get-url origin)))
+
+  # `hal-c2/<8 hex>`, or `hal-c2-<8 hex>` in a repository with a branch named `hal-c2`,
+  # where git cannot put a branch under `hal-c2/`. Clients generate `hal-c2/<uuid>` too.
+  @temporary ~r/^hal-c2[\/-](?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/
+
+  @doc "Whether `branch` is a worktree's temporary branch, renamed from the first message."
+  def temporary?(branch), do: Regex.match?(@temporary, String.downcase(String.trim(branch)))
+
+  @doc """
+  A temporary branch git can create in `root`: `requested` (a client's) when nothing is
+  in its way, else `hal-c2/<hex>`, else `hal-c2-<hex>`.
+  """
+  def temporary_branch(root, requested) do
+    hex = Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
+
+    [requested, "hal-c2/" <> hex, "hal-c2-" <> hex]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.find(&(not HalC2.Git.branch_path_taken?(root, &1)))
+    |> Kernel.||("hal-c2-" <> hex)
+  end
 
   # The project's script marked to run on a new worktree.
   defp setup_script(project),
@@ -469,7 +498,7 @@ defmodule HalC2.WorktreeSetup do
       match?(
         {:error, _},
         HalC2.Git.ok(path, ["rev-parse", "--verify", "refs/heads/#{candidate}"])
-      )
+      ) and not HalC2.Git.branch_path_taken?(path, candidate)
     end) || ""
   end
 

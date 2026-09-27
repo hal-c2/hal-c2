@@ -7,7 +7,8 @@ defmodule HalC2.PullRequests.Checkout do
   its own (`worktree`). A worktree that already holds the branch is reused and moved
   forward when it can be.
 
-  A fork's branch is fetched under `hal-c2/pr-<n>/<branch>` and gets no upstream.
+  A fork's branch is fetched under `hal-c2/pr-<n>/<branch>` (`hal-c2-pr-<n>/…` where a
+  branch named `hal-c2` is in the way) and gets no upstream.
   The project's setup script is not run for the new worktree.
   """
 
@@ -80,12 +81,19 @@ defmodule HalC2.PullRequests.Checkout do
     end
   end
 
+  # `hal-c2/pr-<n>/<branch>`, or `hal-c2-pr-<n>/<branch>` in a repository with a branch
+  # named `hal-c2`, which git cannot put a branch under.
+  defp fork_branch(cwd, number, fragment) do
+    branch = "hal-c2/pr-#{number}/#{fragment}"
+    if Git.branch_path_taken?(cwd, branch), do: "hal-c2-pr-#{number}/#{fragment}", else: branch
+  end
+
   defp worktree(cwd, pr) do
     fork? = pr["isCrossRepository"] == true
 
     branch =
       if fork?,
-        do: "hal-c2/pr-#{pr["number"]}/#{fragment(pr["headRefName"])}",
+        do: fork_branch(cwd, pr["number"], fragment(pr["headRefName"])),
         else: pr["headRefName"]
 
     remote = Git.primary_remote(cwd) || "origin"

@@ -5,7 +5,9 @@
 #   packages/contracts/src/worktreeMcp.ts (hal_c2_worktree_handoff, hal_c2_worktree_status, hal_c2_worktree_list)
 #   packages/contracts/src/rpc.ts (vcs.createWorktree, vcs.removeWorktree, subscribeWorktreeSetup, worktreeSetup.cancel)
 #   apps/server-ex/lib/hal_c2/vcs.ex (create_worktree, remove_worktree)
-#   apps/server-ex/lib/hal_c2/worktree_setup.ex
+#   apps/server-ex/lib/hal_c2/worktree_setup.ex (temporary_branch, temporary?)
+#   apps/server/src/orchestration-v2/ThreadLaunchService.ts (temporary branch rename)
+#   packages/shared/src/git.ts (WORKTREE_BRANCH_PREFIX, isTemporaryWorktreeBranch)
 #   apps/server-ex/lib/hal_c2/mcp/tools/projects.ex (hal_c2_worktree_handoff, hal_c2_worktree_status, hal_c2_worktree_list)
 #   apps/web/src/components/BranchToolbarEnvModeSelector.tsx
 #   apps/web/src/components/BranchToolbar.logic.ts (Previous worktree, worktree submodules)
@@ -65,6 +67,19 @@ Feature: Worktrees and setup scripts
     When the user sends "Add tax to the cart" as the first message of a thread in a new worktree
     Then the worktree first sits on a temporary branch
     And the branch is renamed to a name the writer model derives from the message
+
+  @node
+  Scenario: A client that names the temporary branch itself gets it renamed too
+    Given the client names the new worktree's temporary branch "hal-c2/42a5d641"
+    When the user sends "Add tax to the cart" as the first message of a thread in a new worktree
+    Then the worktree first sits on the temporary branch "hal-c2/42a5d641"
+    And the branch is renamed to a name the writer model derives from the message
+
+  @node
+  Scenario: A branch named "hal-c2" does not stop a new worktree
+    Given "shop" has a branch named "hal-c2"
+    When the user sends the first message of a thread in a new worktree
+    Then the worktree is made on a temporary branch beside "hal-c2"
 
   @node
   Scenario Outline: Setup reports each stage as it runs

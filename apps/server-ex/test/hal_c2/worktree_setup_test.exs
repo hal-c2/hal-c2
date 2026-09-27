@@ -61,7 +61,7 @@ defmodule HalC2.WorktreeSetupTest do
     end
   end
 
-  defp launch(text) do
+  defp launch(text, strategy \\ %{}) do
     thread_id = "thread-#{System.unique_integer([:positive])}"
     :ok = HalC2.WorktreeSetup.subscribe(thread_id, self()) |> then(fn _ -> :ok end)
     :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
@@ -75,7 +75,7 @@ defmodule HalC2.WorktreeSetupTest do
         "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
         "runtimeMode" => "full-access",
         "interactionMode" => "default",
-        "workspaceStrategy" => %{"type" => "worktree", "baseRef" => "main"},
+        "workspaceStrategy" => Map.merge(%{"type" => "worktree", "baseRef" => "main"}, strategy),
         "initialMessage" => %{"messageId" => "m1", "text" => text, "attachments" => []}
       })
 
@@ -113,6 +113,33 @@ defmodule HalC2.WorktreeSetupTest do
     assert %{"worktreePath" => ^path} = StreamState.get(state, "thread")[thread_id]
     assert [%{"status" => "completed"}] = StreamState.list(state, "run")
     assert [%{"cwd" => ^path}] = StreamState.list(state, "checkpoint-scope")
+  end
+
+  test "a branch named hal-c2 does not stop a new worktree", %{repo: repo} do
+    {_, 0} = System.cmd("git", ~w(branch hal-c2), cd: repo)
+    project(repo, [])
+
+    snapshot = launch("list the files") |> await_phase("done")
+    assert snapshot["branch"] =~ ~r/^hal-c2-[0-9a-f]{8}$/
+    assert HalC2.WorktreeSetup.temporary?(snapshot["branch"])
+
+    # A client that names the temporary branch itself gets a free one instead.
+    snapshot = launch("list the files", %{"branch" => "hal-c2/42a5d641"}) |> await_phase("done")
+    assert snapshot["branch"] =~ ~r/^hal-c2-[0-9a-f]{8}$/
+  end
+
+  test "a client's temporary branch is kept when git can create it", %{repo: repo} do
+    project(repo, [])
+    snapshot = launch("list the files", %{"branch" => "hal-c2/42a5d641"}) |> await_phase("done")
+    assert snapshot["branch"] == "hal-c2/42a5d641"
+  end
+
+  test "which branches sit on another's path" do
+    assert HalC2.Git.branch_path_taken_by?(["hal-c2"], "hal-c2/42a5d641")
+    assert HalC2.Git.branch_path_taken_by?(["hal-c2/pr-1/x"], "hal-c2")
+    refute HalC2.Git.branch_path_taken_by?(["hal-c2"], "hal-c2")
+    refute HalC2.Git.branch_path_taken_by?(["hal-c2-old", "hal-c2x/y"], "hal-c2/42a5d641")
+    refute HalC2.Git.branch_path_taken_by?(["hal-c2/other"], "hal-c2/42a5d641")
   end
 
   test "a blocking setup script runs in the worktree before the agent", %{repo: repo} do

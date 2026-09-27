@@ -151,6 +151,32 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     Map.put(context, :worktree, %{path: snapshot["worktreePath"], branch: snapshot["branch"]})
   end
 
+  step "the client names the new worktree's temporary branch {string}",
+       %{args: [branch]} = context do
+    Map.update(context, :strategy, %{"branch" => branch}, &Map.put(&1, "branch", branch))
+  end
+
+  step "the worktree first sits on the temporary branch {string}", %{args: [branch]} = context do
+    {snapshot, context} = World.await_setup(context, & &1["worktreePath"])
+    assert snapshot["branch"] == branch
+    Map.put(context, :worktree, %{path: snapshot["worktreePath"], branch: branch})
+  end
+
+  step "{string} has a branch named {string}", %{args: [title, branch]} = context do
+    World.git!(World.project(context, title).root, ["branch", branch])
+    context
+  end
+
+  # Branches are files under refs/heads, so none can be made under a branch's own name.
+  step "the worktree is made on a temporary branch beside {string}", %{args: [taken]} = context do
+    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    assert snapshot["phase"] == "done", inspect(snapshot)
+    assert snapshot["branch"] =~ ~r/^hal-c2-[0-9a-f]{8}$/
+    assert World.git!(snapshot["worktreePath"], ~w(branch --show-current)) == snapshot["branch"]
+    assert World.git!(World.project(context).root, ["rev-parse", "--verify", taken]) != ""
+    context
+  end
+
   step "the branch is renamed to a name the writer model derives from the message", context do
     %{path: path, branch: temporary} = context.worktree
     thread = await_thread(context.setup_thread, &(&1["branch"] not in [nil, temporary]))

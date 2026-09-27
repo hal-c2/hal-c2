@@ -115,6 +115,27 @@ defmodule HalC2.Git do
     end
   end
 
+  @doc """
+  Whether another branch sits on `name`'s path, so git cannot create it: branches are
+  files under `refs/heads`, and `hal-c2` and `hal-c2/x` would need one path to be both
+  a file and a folder. A branch named exactly `name` is not in the way.
+  """
+  def branch_path_taken?(root, name) do
+    [first | _] = String.split(name, "/")
+
+    case ok(root, ["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads/#{first}"]) do
+      {:ok, out} -> out |> String.split("\n", trim: true) |> branch_path_taken_by?(name)
+      _ -> false
+    end
+  end
+
+  @doc "Whether any of `branches` sits on `name`'s path (`branch_path_taken?/2`)."
+  def branch_path_taken_by?(branches, name) do
+    Enum.any?(branches, fn branch ->
+      String.starts_with?(name, branch <> "/") or String.starts_with?(branch, name <> "/")
+    end)
+  end
+
   defp ref?(root, ref),
     do: match?({:ok, _}, ok(root, ["show-ref", "--verify", "--quiet", ref]))
 
