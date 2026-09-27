@@ -182,10 +182,12 @@ defmodule HalC2.Steps.Parity.Protocol do
     "a web server starts or stops on the host" => "localServers",
     "a simulator, emulator or device session changes" => "devices",
     "a git action progresses" => "gitAction",
-    "a version move progresses" => "serverUpdate"
+    "a version move progresses" => "serverUpdate",
+    "a managed runtime installation progresses" => "providerInstall",
+    "the relay client install progresses" => "relayClientInstall"
   }
 
-  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one node change|a node's environment descriptor changes|a node joins or leaves the cluster|a stream subscription starts or falls too far behind|stream entities change|a stream has caught up|a client falls behind|a shape is over|a config subscription opens|the node moves to another version in place|the node's settings change|the node's published themes change|the node's usage limit sources change|the node's keybinding rules change|the node's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses)$/,
+  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one node change|a node's environment descriptor changes|a node joins or leaves the cluster|a stream subscription starts or falls too far behind|stream entities change|a stream has caught up|a client falls behind|a shape is over|a config subscription opens|the node moves to another version in place|the node's settings change|the node's published themes change|the node's usage limit sources change|the node's keybinding rules change|the node's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|the relay client install progresses)$/,
        %{args: [text]} = context do
     frame = Map.fetch!(@whens, text)
 
@@ -246,6 +248,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     "config.keybindings" => ~w(id rules),
     "config.providers" => ~w(id providers),
     "providerAuth" => ~w(id state),
+    "providerInstall" => ~w(id state),
     "scheduledTasks" => ~w(id tasks),
     "projectClones" => ~w(id clones),
     "pullRequestRefreshes" => ~w(id revision),
@@ -286,7 +289,7 @@ defmodule HalC2.Steps.Parity.Protocol do
 
   # --- shapes that end on their own ------------------------------------------------
 
-  step ~r/^(?<ending>the action finishes or fails|the update completes|the update fails|the node drops the client as its host)$/,
+  step ~r/^(?<ending>the action finishes or fails|the update completes|the update fails|the node drops the client as its host|the relay client is found or installed)$/,
        %{args: [ending]} = context do
     id = context.shape.id
 
@@ -312,12 +315,17 @@ defmodule HalC2.Steps.Parity.Protocol do
         "the node drops the client as its host" ->
           {frame, context} = Shapes.trigger(context, "end")
           {[frame], context}
+
+        "the relay client is found or installed" ->
+          {complete, context} = Shapes.trigger(context, "relayClientInstall")
+          {frame, client} = Node.await(World.client(context), &(&1["id"] == id), 2_000)
+          {[complete, frame], World.put_client(context, client)}
       end
 
     Map.put(context, :last, last)
   end
 
-  step ~r/^the node sends (?<last>a gitAction frame with action_finished or action_failed|a serverUpdate frame with complete, then an end frame|an error frame with the reason and its detail|an end frame)$/,
+  step ~r/^the node sends (?<last>a gitAction frame with action_finished or action_failed|a serverUpdate frame with complete, then an end frame|an error frame with the reason and its detail|an end frame|a relayClientInstall frame with complete, then an end frame)$/,
        %{args: [last]} = context do
     id = context.shape.id
 
@@ -339,6 +347,11 @@ defmodule HalC2.Steps.Parity.Protocol do
 
       {"an end frame", [frame]} ->
         assert frame == %{"t" => "end", "id" => id}
+
+      {"a relayClientInstall frame with complete, then an end frame", [complete, ending]} ->
+        assert %{"t" => "relayClientInstall", "event" => %{"type" => "complete"}} = complete
+        assert %{"status" => %{"status" => "available"}} = complete["event"]
+        assert ending == %{"t" => "end", "id" => id}
     end
 
     context
@@ -359,6 +372,9 @@ defmodule HalC2.Steps.Parity.Protocol do
 
         "previewAutomation" ->
           {:hal_c2_preview_automation, node(), "parity-host", %{"type" => "x"}}
+
+        "relayClientInstall" ->
+          {:hal_c2_relay_client_install, node(), %{"type" => "progress", "stage" => "checking"}}
       end
 
     send(socket, late)
@@ -482,7 +498,9 @@ defmodule HalC2.Steps.Parity.Shapes do
     "previewAutomation" => 16,
     "pullRequestRefreshes" => 17,
     "gitAction" => 18,
-    "serverUpdate" => 19
+    "serverUpdate" => 19,
+    "providerInstall" => 20,
+    "relayClientInstall" => 21
   }
 
   # The services a node-wide shape reads, as `HalC2.Application` starts them.
@@ -498,6 +516,7 @@ defmodule HalC2.Steps.Parity.Shapes do
   }
 
   @gone :"gone@127.0.0.1"
+  @fake_cloudflared Path.expand("../../support/fake_cloudflared.sh", __DIR__)
   @target "0.0.0-parity"
 
   @doc "The frame types a shape's first frames can be."
@@ -663,6 +682,12 @@ defmodule HalC2.Steps.Parity.Shapes do
 
       {"serverUpdate", [frame]} ->
         assert %{"event" => %{"type" => "progress", "stage" => "downloading"}} = frame
+
+      {"providerInstall", [frame]} ->
+        assert %{"t" => "providerInstall", "state" => %{"driver" => "antigravity"}} = frame
+
+      {"relayClientInstall", [frame]} ->
+        assert %{"event" => %{"type" => "progress", "stage" => "checking"}} = frame
     end
   end
 
@@ -734,6 +759,19 @@ defmodule HalC2.Steps.Parity.Shapes do
 
       "serverUpdate" ->
         {Map.put(node, "input", %{"targetVersion" => @target}), update_gate(context)}
+
+      "providerInstall" ->
+        ensure(Fixtures.provider_auth() ++ [HalC2.Acp.Antigravity.Installation])
+        {Map.put(node, "instanceId", "antigravity"), Fixtures.managed_install(context)}
+
+      # A relay client already on the PATH: the install checks, finds it and completes.
+      "relayClientInstall" ->
+        bin = Node.tmp_dir(context.node, "relay-bin")
+        File.cp!(@fake_cloudflared, Path.join(bin, "cloudflared"))
+        File.chmod!(Path.join(bin, "cloudflared"), 0o755)
+        World.put_app_env(:relay_client_env, %{"PATH" => bin})
+        World.put_app_env(:relay_client_target, {"linux", "x64"})
+        {node, context}
 
       _ ->
         ensure([Map.fetch!(@services, type)])
@@ -920,6 +958,14 @@ defmodule HalC2.Steps.Parity.Shapes do
 
       "gitAction" ->
         await(context, t, id, &(&1["event"]["kind"] == "phase_started"), 5_000)
+
+      "providerInstall" ->
+        input = %{"instanceId" => "antigravity"}
+        {_, context} = World.call(context, "provider.install.start", input, "caller")
+        await(context, t, id, &(&1["state"]["phase"] == "downloading"))
+
+      "relayClientInstall" ->
+        await(context, t, id, &(&1["event"]["type"] == "complete"))
 
       "serverUpdate" ->
         serve_bundle()

@@ -3,12 +3,13 @@
 #   apps/server-ex/lib/hal_c2/web/socket.ex (hello, snapshot, events, live, resync, end, shell.*, config.*, rpc.*)
 #   apps/server-ex/lib/hal_c2/web/router.ex (GET /ws)
 #   apps/server-ex/lib/hal_c2/web/wire.ex (snapshot rows and event patches on the wire)
-#   packages/client-runtime/src/v3/clusterSocket.ts (the 19 shape types, hello, resync, end)
+#   packages/client-runtime/src/v3/clusterSocket.ts (19 of the shape types, hello, resync, end)
 #   packages/client-runtime/src/v3/session.ts (methods a protocol 3 environment does not serve yet)
 #   packages/client-runtime/src/connection/compatibility.ts (SHAPE_PROTOCOL_VERSION, negotiation)
 #   packages/contracts/src/rpc.ts (the subscription methods each shape replaces)
-#   Counts: 4 client frames, 19 shape types (20 rows: config has a node and an environment form),
-#   37 server frame types, 8 refusal reasons; all aligned, 1 dropped.
+#   Counts: 4 client frames, 21 shape types (22 rows: config has a node and an environment form),
+#   39 server frame types, 8 refusal reasons; all aligned, 1 dropped. The legacy client adapter
+#   carries neither providerInstall nor relayClientInstall.
 #   Behaviour of a single subscription (resume, merge, resync timing) lives in
 #   node/platform/websocket-protocol.feature. This file is the frame-by-frame ledger.
 
@@ -47,7 +48,7 @@ Feature: Protocol 3 wire parity
 
     # previewAutomation: the node's broker and the TypeScript PreviewAutomationBroker both
     # send the host a connected event as it subscribes, before any agent request.
-    Examples: 20 shape forms
+    Examples: 22 shape forms
       | shape                | fields             | first frame                                           | later frames                                                                              | replaces                                            |
       | shell                | none               | a shell frame with every node and every row           | shell.rows, shell.environment and shell.node frames                                       | orchestration.subscribeShell                        |
       | stream               | node, stream       | snapshot parts, the first with part 0                 | events frames after a live frame, or a resync                                             | orchestration.subscribeThread                       |
@@ -69,6 +70,8 @@ Feature: Protocol 3 wire parity
       | pullRequestRefreshes | node               | a pullRequestRefreshes frame with the revision        | pullRequestRefreshes frames with each new revision                                        | pullRequests.subscribeRefreshes                     |
       | gitAction            | node, input        | a gitAction frame as the action starts                | gitAction progress frames                                                                 | git.runStackedAction                                |
       | serverUpdate         | node, input        | a serverUpdate frame as the update starts             | serverUpdate progress frames                                                              | server.updateServerWithProgress                     |
+      | providerInstall      | node, instanceId   | a providerInstall frame with the install state        | providerInstall frames                                                                    | provider.install.subscribe                          |
+      | relayClientInstall   | node               | a relayClientInstall frame as the install checks      | relayClientInstall frames, then an end frame                                              | cloud.installRelayClient                            |
 
   @node
   Scenario Outline: A <shape> subscription ends on its own
@@ -78,11 +81,12 @@ Feature: Protocol 3 wire parity
     And the node forgets the subscription
 
     Examples: shapes with an end
-      | shape             | ending                                    | last frames                                                  |
-      | gitAction         | the action finishes or fails              | a gitAction frame with action_finished or action_failed      |
-      | serverUpdate      | the update completes                      | a serverUpdate frame with complete, then an end frame        |
-      | serverUpdate      | the update fails                          | an error frame with the reason and its detail                |
-      | previewAutomation | the node drops the client as its host     | an end frame                                                 |
+      | shape              | ending                                 | last frames                                                 |
+      | gitAction          | the action finishes or fails           | a gitAction frame with action_finished or action_failed     |
+      | serverUpdate       | the update completes                   | a serverUpdate frame with complete, then an end frame       |
+      | serverUpdate       | the update fails                       | an error frame with the reason and its detail               |
+      | previewAutomation  | the node drops the client as its host  | an end frame                                                |
+      | relayClientInstall | the relay client is found or installed | a relayClientInstall frame with complete, then an end frame |
 
   @node
   Scenario Outline: The node sends <frame> frames
@@ -90,7 +94,7 @@ Feature: Protocol 3 wire parity
     When <when>
     Then the client receives a <frame> frame carrying <fields>
 
-    Examples: 30 socket, stream, config and node frames
+    Examples: 31 socket, stream, config and node frames
       | frame                      | when                                                   | fields                                                    |
       | hello                      | the socket opens                                       | protocol, node                                            |
       | pong                       | the client pings                                       | nothing else                                              |
@@ -117,6 +121,7 @@ Feature: Protocol 3 wire parity
       | terminals                  | terminal summaries change                              | id, event                                                 |
       | vcs                        | a checkout's status changes                            | id, event                                                 |
       | providerAuth               | a provider's sign-in state changes                     | id, state                                                 |
+      | providerInstall            | a managed runtime installation progresses              | id, state                                                 |
       | worktreeSetup              | a thread's worktree setup progresses                   | id, event                                                 |
       | scheduledTasks             | a scheduled task changes                               | id, tasks                                                 |
       | authAccess                 | a pairing link or paired client changes                | id, event                                                 |
@@ -130,14 +135,15 @@ Feature: Protocol 3 wire parity
     Then the client receives a <frame> frame carrying <fields>
 
     Examples: host frames
-      | frame             | shape             | when                                        | fields         |
-      | preview           | preview           | a preview tab changes                       | id, event      |
-      | previewAutomation | previewAutomation | an agent drives the client's browser        | id, event      |
-      | resourceTelemetry | resourceTelemetry | the resource monitor takes a sample         | id, snapshot   |
-      | localServers      | localServers      | a web server starts or stops on the host    | id, list       |
-      | devices           | devices           | a simulator, emulator or device session changes | id, state  |
-      | gitAction         | gitAction         | a git action progresses                     | id, event      |
-      | serverUpdate      | serverUpdate      | a version move progresses                   | id, event      |
+      | frame              | shape              | when                                            | fields       |
+      | preview            | preview            | a preview tab changes                           | id, event    |
+      | previewAutomation  | previewAutomation  | an agent drives the client's browser            | id, event    |
+      | resourceTelemetry  | resourceTelemetry  | the resource monitor takes a sample             | id, snapshot |
+      | localServers       | localServers       | a web server starts or stops on the host        | id, list     |
+      | devices            | devices            | a simulator, emulator or device session changes | id, state    |
+      | gitAction          | gitAction          | a git action progresses                         | id, event    |
+      | serverUpdate       | serverUpdate       | a version move progresses                       | id, event    |
+      | relayClientInstall | relayClientInstall | the relay client install progresses             | id, event    |
 
   @node
   Scenario Outline: The node refuses <case> with "<reason>"

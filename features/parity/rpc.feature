@@ -5,8 +5,8 @@
 #   apps/server-ex/lib/hal_c2/rpc.ex, apps/server-ex/lib/hal_c2/orchestration.ex, apps/server-ex/lib/hal_c2/pull_requests.ex
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (shapes)
 #   packages/client-runtime/src/v3/clusterSocket.ts (protocol 3 client adapter)
-#   apps/server-ex/test/hal_c2/features_backlog_test.exs (provider-install, hal-c2-connect-relay-client)
-#   Counts: 168 contract methods; 159 aligned, 6 backlog, 3 dropped.
+#   apps/server-ex/lib/hal_c2/acp/antigravity/installation.ex (provider.install.*), apps/server-ex/lib/hal_c2/connect/relay_client.ex (cloud.*)
+#   Counts: 168 contract methods; 165 aligned, 3 dropped.
 #   WS_METHODS also names projects.add, projects.list and projects.remove with no Rpc.make
 #   behind them; neither server routes them, so they are recorded as dropped names.
 #   "via" says how a protocol 3 client reaches the method: an rpc frame (under the node's
@@ -26,7 +26,7 @@ Feature: RPC parity with the TypeScript server
     When the client calls <method> through its <via>
     Then the node answers with the contract's response shape for <method>
 
-    Examples: 159 aligned methods
+    Examples: 165 aligned methods
       | method                                   | domain            | via                                                                       |
       | server.upsertKeybinding                  | server            | rpc as hal-c2.upsertKeybinding                                                |
       | server.removeKeybinding                  | server            | rpc as hal-c2.removeKeybinding                                                |
@@ -41,6 +41,10 @@ Feature: RPC parity with the TypeScript server
       | provider.auth.cancel                     | provider          | rpc                                                                       |
       | provider.auth.logout                     | provider          | rpc                                                                       |
       | provider.auth.subscribe                  | provider          | shape providerAuth                                                        |
+      | provider.install.start                   | provider          | rpc                                                                       |
+      | provider.install.cancel                  | provider          | rpc                                                                       |
+      | provider.install.remove                  | provider          | rpc                                                                       |
+      | provider.install.subscribe               | provider          | shape providerInstall                                                     |
       | server.updateServer                      | server            | rpc                                                                       |
       | server.updateServerWithProgress          | server            | shape serverUpdate                                                        |
       | server.getSettings                       | server            | rpc                                                                       |
@@ -187,20 +191,8 @@ Feature: RPC parity with the TypeScript server
       | subscribeAuthAccess                      | auth              | shape authAccess                                                          |
       | subscribeBackgroundPolicy                | server            | client adapter: reads server.getBackgroundPolicy once, then holds         |
       | subscribeResourceTelemetry               | server            | shape resourceTelemetry                                                   |
-
-  @backlog @node
-  Scenario Outline: The node does not serve <method> yet
-    When the client calls <method>
-    Then the node answers with the contract's response shape for <method>
-
-    Examples: 6 backlog methods, by backlog item
-      | method                     | domain   | backlog                 |
-      | provider.install.start     | provider | provider-install        |
-      | provider.install.cancel    | provider | provider-install        |
-      | provider.install.subscribe | provider | provider-install        |
-      | provider.install.remove    | provider | provider-install        |
-      | cloud.getRelayClientStatus | cloud    | hal-c2-connect-relay-client |
-      | cloud.installRelayClient   | cloud    | hal-c2-connect-relay-client |
+      | cloud.getRelayClientStatus               | cloud             | rpc                                                                       |
+      | cloud.installRelayClient                 | cloud             | shape relayClientInstall                                                  |
 
   # The node refuses these as unserved methods: desktop update handoff is replaced by hot
   # upgrades, the archived-shell subscription has no subscriber, and terminal events arrive

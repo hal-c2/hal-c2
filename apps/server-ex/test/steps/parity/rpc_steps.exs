@@ -225,6 +225,18 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "provider.auth." <> _ ->
         {%{"instanceId" => "opencode", "flowId" => "hal-c2-none"}, context}
 
+      # Started against a download that fails at once: the reply is the new state.
+      "provider.install.start" ->
+        {%{"instanceId" => "antigravity"}, managed_install(context)}
+
+      # No install is running, so the node refuses the stale operation.
+      "provider.install.cancel" ->
+        {%{"instanceId" => "antigravity", "operationId" => "hal-c2-none"},
+         managed_install(context)}
+
+      "provider.install.remove" ->
+        {%{"instanceId" => "antigravity"}, managed_install(context)}
+
       "server.updateServer" ->
         {%{}, context}
 
@@ -574,6 +586,9 @@ defmodule HalC2.Steps.Parity.Fixtures do
         "provider.auth." <> _ ->
           provider_auth()
 
+        "provider.install." <> _ ->
+          provider_auth() ++ [HalC2.Acp.Antigravity.Installation]
+
         "provider.uploadFeedback" ->
           [registry_child(HalC2.Codex.Registry)]
 
@@ -654,6 +669,20 @@ defmodule HalC2.Steps.Parity.Fixtures do
   # A unique registry named `name`, with its own child id so several can start.
   defp registry_child(name),
     do: Supervisor.child_spec({Registry, keys: :unique, name: name}, id: name)
+
+  @doc """
+  An Antigravity instance whose runtime download fails at once, so a managed
+  install never reaches the network or leaves anything behind.
+  """
+  def managed_install(context) do
+    World.put_app_env(:antigravity_platform, {"linux", "x64"})
+    World.put_app_env(:antigravity_free_space, fn _ -> nil end)
+    World.put_app_env(:antigravity_fetch, fn _url, _dest, _progress -> {:error, "offline"} end)
+
+    World.update_settings(context, %{
+      "providerInstances" => %{"antigravity" => %{"driver" => "antigravity", "enabled" => false}}
+    })
+  end
 
   @doc false
   def keybinding, do: %{"key" => "mod+shift+j", "command" => "terminal.toggle"}
