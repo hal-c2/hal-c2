@@ -434,7 +434,10 @@ Rectangle {
                                 return;
                             }
                             event.accepted = true;
-                            composer.submit((event.modifiers & (Qt.ControlModifier | Qt.MetaModifier)) ? "background" : "foreground");
+                            // mod+Enter does the opposite of the follow-up setting during a
+                            // turn, and starts a background thread otherwise.
+                            const modified = event.modifiers & (Qt.ControlModifier | Qt.MetaModifier);
+                            composer.submit(!modified ? "foreground" : composer.model.isRunning ? "alternate" : "background");
                         }
                     }
                 }
