@@ -83,15 +83,48 @@ defmodule HalC2.Steps.Settings.ResourceTelemetry do
     context
   end
 
-  step ~r/^host power state and application I\/O are shown as unavailable$/, context do
+  step "host power state is shown as unavailable", context do
     snapshot = context.snapshot
     assert %{"source" => "unknown", "onBattery" => "unknown", "stale" => true} = snapshot["power"]
     assert snapshot["health"]["desktop"]["status"] == "unavailable"
     assert snapshot["processes"] != []
-    # Application I/O is the instrumented, per-operation attribution. The storage
-    # counters each process reports from /proc/<pid>/io are separate
-    # (node/platform/diagnostics.feature, "The node reports per-process I/O").
-    assert snapshot["attribution"]["entries"] == []
+    context
+  end
+
+  # Through the node's own writers: a span while tracing is on, and a provider's
+  # line while provider event logging is on.
+  step "the node has written trace records and provider event logs", context do
+    Node.ensure(HalC2.Diagnostics)
+    World.put_app_env(:trace, true)
+    World.put_app_env(:provider_event_log, true)
+
+    for _ <- 1..2,
+        do: HalC2.Traces.finished("monitor.test", %{}, System.system_time(:millisecond))
+
+    line = JSON.encode!(%{"method" => "turn/completed", "params" => %{"turnId" => "turn-1"}})
+    HalC2.ProviderLog.native("thread-1", line)
+    context
+  end
+
+  # Application I/O is the instrumented, per-operation attribution. The storage
+  # counters each process reports from /proc/<pid>/io are separate
+  # (node/platform/diagnostics.feature, "The node reports per-process I/O").
+  step "logical bytes read and written are shown per operation", context do
+    entries = context.snapshot["attribution"]["entries"]
+
+    trace = Enum.find(entries, &(&1["component"] == "server-trace"))
+    provider = Enum.find(entries, &(&1["component"] == "provider-event-log"))
+
+    assert %{"operation" => "append", "count" => 2, "logicalReadBytes" => 0} = trace
+    assert %{"operation" => "native.append", "count" => 1} = provider
+
+    trace_file = File.stat!(HalC2.Traces.path()).size
+    assert trace["logicalWriteBytes"] == trace_file
+    assert provider["logicalWriteBytes"] == File.stat!(HalC2.ProviderLog.path("thread-1")).size
+
+    # The most written first.
+    writes = Enum.map(entries, & &1["logicalWriteBytes"])
+    assert writes == Enum.sort(writes, :desc)
     context
   end
 

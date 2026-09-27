@@ -8,10 +8,11 @@ defmodule HalC2.Diagnostics do
   the resource monitor's live snapshots and timeline (`subscribeResourceTelemetry`,
   `server.getResourceTelemetryHistory`) and the process history
   (`server.getProcessResourceHistory`). `server.signalProcess` only signals a
-  process under the node that is still the one a client saw. I/O comes from
-  `/proc/<pid>/io` (storage bytes) where the platform has it, and is reported as
-  unavailable elsewhere. Traces are recorded only while `HalC2.Traces` is on, and
-  there is no desktop host to supply power state.
+  process under the node that is still the one a client saw. Each process's I/O
+  comes from `/proc/<pid>/io` (storage bytes) where the platform has it, and is
+  reported as unavailable elsewhere; the node's own writes by operation are
+  `HalC2.Diagnostics.Attribution`. Traces are recorded only while `HalC2.Traces`
+  is on, and there is no desktop host to supply power state.
 
   Watchers get `{:hal_c2_resource_telemetry, node, snapshot}` after every sample.
   """
@@ -153,6 +154,7 @@ defmodule HalC2.Diagnostics do
 
   @impl true
   def init(nil) do
+    HalC2.Diagnostics.Attribution.create()
     send(self(), :sample)
     {:ok, %{samples: [], watchers: %{}, timer: nil}}
   end
@@ -266,7 +268,10 @@ defmodule HalC2.Diagnostics do
       },
       "power" => power(),
       "speedLimitPercent" => none(),
-      "attribution" => %{"readAt" => iso(at), "entries" => []},
+      "attribution" => %{
+        "readAt" => iso(at),
+        "entries" => HalC2.Diagnostics.Attribution.entries()
+      },
       "health" => health(state, length(rows))
     }
   end

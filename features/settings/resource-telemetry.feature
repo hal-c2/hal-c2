@@ -1,6 +1,8 @@
 # Sources:
 #   docs/internals/resource-telemetry.md
 #   apps/server-ex/lib/hal_c2/diagnostics.ex (ps sampling, one hour of samples, retry)
+#   apps/server-ex/lib/hal_c2/diagnostics/attribution.ex (application I/O by operation)
+#   apps/server/src/resourceTelemetry/ResourceAttribution.ts, apps/server/src/observability/Layers/Observability.ts, apps/server/src/provider/Layers/EventNdjsonLogger.ts (what records application I/O)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (resourceTelemetry subscription)
 #   packages/contracts/src/resourceTelemetry.ts
 #   packages/contracts/src/rpc.ts (subscribeResourceTelemetry, server.getResourceTelemetryHistory, server.retryResourceTelemetry)
@@ -28,9 +30,9 @@ Feature: Resource monitor
     Then a new snapshot is taken immediately
 
   @node
-  Scenario: Host power and I/O are reported as unavailable on the node
+  Scenario: Host power is reported as unavailable on the node
     When the user watches the resource monitor
-    Then host power state and application I/O are shown as unavailable
+    Then host power state is shown as unavailable
 
   @backlog @desktop
   Scenario: The desktop app reports host power to the monitor
@@ -44,7 +46,8 @@ Feature: Resource monitor
     Then processes are grouped as server, provider and terminal
     And each group can be collapsed and expanded again
 
-  @backlog @node
+  @node
   Scenario: Application I/O is broken down by operation
+    Given the node has written trace records and provider event logs
     When the user watches the resource monitor
     Then logical bytes read and written are shown per operation

@@ -77,7 +77,14 @@ defmodule HalC2.ProviderLog do
     at = DateTime.utc_now() |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()
     path = path(thread_id)
     File.mkdir_p!(Path.dirname(path))
-    File.write!(path, ["[", at, "] NTIVE: ", payload, ?\n], [:append])
+    line = ["[", at, "] NTIVE: ", payload, ?\n]
+
+    HalC2.Diagnostics.Attribution.write(
+      "provider-event-log",
+      "native.append",
+      IO.iodata_length(line),
+      fn -> File.write!(path, line, [:append]) end
+    )
   end
 
   @doc "Whether a native event belongs in the log: streaming deltas do not."

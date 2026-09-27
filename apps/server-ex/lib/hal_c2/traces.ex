@@ -216,7 +216,11 @@ defmodule HalC2.Traces do
     path = path()
     File.mkdir_p!(Path.dirname(path))
     rotate(path)
-    File.write!(path, [JSON.encode!(record), ?\n], [:append])
+    line = [JSON.encode!(record), ?\n]
+
+    HalC2.Diagnostics.Attribution.write("server-trace", "append", IO.iodata_length(line), fn ->
+      File.write!(path, line, [:append])
+    end)
   rescue
     error -> Logger.warning("Failed to write a trace record: #{Exception.message(error)}")
   end
