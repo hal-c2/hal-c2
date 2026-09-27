@@ -12,10 +12,15 @@ defmodule HalC2.TextGeneration do
   the first usable provider, with that provider's default model, as Node does.
 
   Claude runs `claude -p` with a JSON schema and no tools; Codex runs `codex exec`
-  in a read-only sandbox; Grok, OpenCode, and Cursor answer one ACP prompt in an
-  empty directory, with every tool and permission request refused.
+  in a read-only sandbox; Grok, OpenCode, Cursor, and Antigravity answer one ACP
+  prompt in an empty directory, with every tool and permission request refused
+  (Antigravity fails outright on one, as `AntigravityTextGeneration.ts` does); Pi
+  answers one prompt in an ephemeral `pi --mode rpc --no-session` without
+  extensions or tools (`PiTextGeneration.ts`).
   """
 
+  alias HalC2.Acp.Antigravity
+  alias HalC2.Acp.Antigravity.Session, as: AntigravitySession
   alias HalC2.JsonRpc.Connection
   alias HalC2.TextGeneration.Prompts
 
@@ -30,11 +35,16 @@ defmodule HalC2.TextGeneration do
     "claudeAgent" => "claude-haiku-4-5",
     "cursor" => "composer-2",
     "grok" => "grok-build",
-    "opencode" => "openai/gpt-5"
+    "opencode" => "openai/gpt-5",
+    # Pi's and Antigravity's own default model.
+    "pi" => "default",
+    "antigravity" => "antigravity-default"
   }
   # The order Node falls back through when the selected provider cannot be used.
   @fallback_order ~w(codex claudeAgent cursor grok pi opencode antigravity)
-  @acp_drivers ~w(grok opencode cursor)
+  @acp_drivers ~w(grok opencode cursor antigravity)
+  # What Antigravity may answer before text generation is refused, in characters.
+  @antigravity_max_output 128_000
 
   @doc """
   How long a writing agent may take before it is stopped: 3 minutes, as in Node.
@@ -166,6 +176,7 @@ defmodule HalC2.TextGeneration do
     case driver(id) do
       "codex" -> enabled?(settings, id) and executable?(codex_command())
       "claudeAgent" -> enabled?(settings, id) and executable?(claude_command())
+      "pi" -> HalC2.Acp.enabled?(id) and executable?(HalC2.Acp.binary_path(id) || "pi")
       driver when driver in @acp_drivers -> HalC2.Acp.enabled?(id) and acp_installed?(id)
       # A text-generation backend plugin (`HalC2.Plugins.TextGeneration`) by its id.
       _ -> HalC2.Plugins.text_backend?(id)
@@ -223,6 +234,9 @@ defmodule HalC2.TextGeneration do
 
         "codex" ->
           {"Codex", codex(cwd, prompt, json_schema, selection, opts[:images] || [])}
+
+        "pi" ->
+          {"Pi", pi(selection, if(opts[:isolate], do: nil, else: cwd), prompt)}
 
         driver when driver in @acp_drivers ->
           label = HalC2.Acp.label(selection["instanceId"])
@@ -352,6 +366,7 @@ defmodule HalC2.TextGeneration do
   # One ACP prompt in its own process, which outlives neither the agent nor the timeout.
   defp acp(selection, prompt, label) do
     id = selection["instanceId"]
+    antigravity = driver(id) == "antigravity"
 
     task =
       Task.async(fn ->
@@ -359,21 +374,26 @@ defmodule HalC2.TextGeneration do
 
         try do
           in_dir(nil, fn dir ->
-            if driver(id) == "cursor" and
-                 File.exists?(Path.join(System.user_home!(), ".cursor/sandbox.json")) do
-              # Cursor's own sandbox settings could widen what the agent may write.
-              {:error,
-               "Cursor text generation cannot enforce workspace isolation with a custom ~/.cursor/sandbox.json. Use another text-generation provider."}
-            else
-              # Cursor plans read-only there, without the user's Cursor settings or tools.
-              mode = if driver(id) == "cursor", do: "text-generation"
+            cond do
+              driver(id) == "cursor" and
+                  File.exists?(Path.join(System.user_home!(), ".cursor/sandbox.json")) ->
+                # Cursor's own sandbox settings could widen what the agent may write.
+                {:error,
+                 "Cursor text generation cannot enforce workspace isolation with a custom ~/.cursor/sandbox.json. Use another text-generation provider."}
 
-              HalC2.Acp.with_agent(
-                id,
-                dir,
-                fn conn, _init -> acp_prompt(conn, dir, selection["model"], prompt) end,
-                mode
-              )
+              antigravity ->
+                antigravity(id, dir, selection["model"], prompt)
+
+              true ->
+                # Cursor plans read-only there, without the user's Cursor settings or tools.
+                mode = if driver(id) == "cursor", do: "text-generation"
+
+                HalC2.Acp.with_agent(
+                  id,
+                  dir,
+                  fn conn, _init -> acp_prompt(conn, dir, selection["model"], prompt) end,
+                  mode
+                )
             end
           end)
         catch
@@ -397,39 +417,65 @@ defmodule HalC2.TextGeneration do
       {:ok, {:error, reason}} ->
         {:error, "#{label} request failed: #{inspect(reason)}"}
 
+      nil when antigravity ->
+        {:error, "Antigravity text generation timed out."}
+
       nil ->
         {:error, "#{label} request timed out."}
     end
   end
 
-  defp acp_prompt(conn, dir, model, prompt) do
+  defp acp_prompt(conn, dir, model, prompt, antigravity \\ false) do
     with {:ok, %{"sessionId" => session_id} = session} <-
            Connection.call(conn, "session/new", %{"cwd" => dir, "mcpServers" => []}, 60_000),
-         :ok <- acp_model(conn, session_id, session, model) do
+         :ok <- acp_mode(conn, session_id, antigravity),
+         :ok <- acp_model(conn, session_id, session, model, antigravity) do
       params = %{"sessionId" => session_id, "prompt" => [%{"type" => "text", "text" => prompt}]}
       task = Task.async(fn -> Connection.call(conn, "session/prompt", params, :infinity) end)
-      acp_collect(conn, task.ref, [])
+      acp_collect(conn, task.ref, [], antigravity)
     end
   end
 
-  # Picks the model when the agent offers it; an alias such as `grok-build` keeps the session's.
-  defp acp_model(conn, session_id, session, model) do
+  # Antigravity runs in its default (asking) mode, never a thread's access mode.
+  defp acp_mode(_conn, _session_id, false), do: :ok
+
+  defp acp_mode(conn, session_id, true) do
+    params = %{"sessionId" => session_id, "modeId" => "default"}
+
+    case Connection.call(conn, "session/set_mode", params) do
+      {:ok, _} -> :ok
+      error -> error
+    end
+  end
+
+  # Picks the model when the agent offers it; an alias such as `grok-build` keeps the
+  # session's. Antigravity refuses a model its account does not list.
+  defp acp_model(conn, session_id, session, model, antigravity) do
     option = Enum.find(session["configOptions"] || [], &(&1["id"] == "model")) || %{}
     offered = for %{"value" => value} <- option["options"] || [], do: value
 
-    if model in offered and model != option["currentValue"] do
-      params = %{"sessionId" => session_id, "configId" => "model", "value" => model}
+    cond do
+      model in offered and model != option["currentValue"] ->
+        params = %{"sessionId" => session_id, "configId" => "model", "value" => model}
 
-      case Connection.call(conn, "session/set_config_option", params) do
-        {:ok, _} -> :ok
-        error -> error
-      end
-    else
-      :ok
+        case Connection.call(conn, "session/set_config_option", params) do
+          {:ok, _} -> :ok
+          error -> error
+        end
+
+      antigravity and is_binary(model) and model not in ["", "default", "antigravity-default"] and
+          model not in offered ->
+        {:error,
+         "Antigravity model '#{model}' is unavailable for this Google account. Select an available model."}
+
+      true ->
+        :ok
     end
   end
 
-  defp acp_collect(conn, ref, text) do
+  # Other agents have their tool and permission requests refused and go on. Antigravity
+  # fails at the first one, or at tool work it reports: its global hooks could act first.
+  defp acp_collect(conn, ref, text, antigravity) do
     receive do
       {:json_rpc, ^conn,
        {:notification, "session/update",
@@ -439,11 +485,22 @@ defmodule HalC2.TextGeneration do
             "content" => %{"type" => "text", "text" => chunk}
           }
         }}} ->
-        acp_collect(conn, ref, [text, chunk])
+        if antigravity and
+             String.length(IO.iodata_to_binary([text, chunk])) > @antigravity_max_output,
+           do: {:error, "Antigravity text generation exceeded the output limit."},
+           else: acp_collect(conn, ref, [text, chunk], antigravity)
+
+      {:json_rpc, ^conn,
+       {:notification, "session/update", %{"update" => %{"sessionUpdate" => update}}}}
+      when antigravity and update in ["tool_call", "tool_call_update"] ->
+        {:error, "Antigravity attempted tool work during text generation."}
 
       {:json_rpc, ^conn, {:request, id, "session/request_permission", _params}} ->
         Connection.respond(conn, id, {:ok, %{"outcome" => %{"outcome" => "cancelled"}}})
-        acp_collect(conn, ref, text)
+
+        if antigravity,
+          do: {:error, "Antigravity text generation requested a tool permission or user input."},
+          else: acp_collect(conn, ref, text, antigravity)
 
       {:json_rpc, ^conn, {:request, id, method, _params}} ->
         Connection.respond(
@@ -452,20 +509,184 @@ defmodule HalC2.TextGeneration do
           {:error, %{"code" => -32601, "message" => "#{method} is disabled for text generation"}}
         )
 
-        acp_collect(conn, ref, text)
+        cond do
+          not antigravity ->
+            acp_collect(conn, ref, text, antigravity)
+
+          method == "elicitation/create" ->
+            {:error, "Antigravity text generation requested user input."}
+
+          true ->
+            {:error, "Antigravity text generation requested a tool or user input."}
+        end
 
       {^ref, reply} ->
         Process.demonitor(ref, [:flush])
 
         case {reply, text |> IO.iodata_to_binary() |> String.trim()} do
-          {{:ok, %{"stopReason" => "cancelled"}}, _} -> {:error, "The request was cancelled."}
-          {{:ok, _}, ""} -> {:error, "The agent returned empty output."}
-          {{:ok, _}, output} -> {:ok, output}
-          {error, _} -> error
+          {{:ok, %{"stopReason" => "cancelled"}}, _} when antigravity ->
+            {:error, "Antigravity text generation was cancelled."}
+
+          {{:ok, %{"stopReason" => "cancelled"}}, _} ->
+            {:error, "The request was cancelled."}
+
+          {{:ok, _}, ""} when antigravity ->
+            {:error, "Antigravity returned empty text generation output."}
+
+          {{:ok, _}, ""} ->
+            {:error, "The agent returned empty output."}
+
+          {{:ok, _}, output} ->
+            {:ok, output}
+
+          {error, _} ->
+            error
         end
 
       _other ->
-        acp_collect(conn, ref, text)
+        acp_collect(conn, ref, text, antigravity)
+    end
+  end
+
+  # Antigravity signs in with the instance's own login, answers in an empty directory,
+  # and leaves neither files there nor its session in the profile.
+  defp antigravity(id, dir, model, prompt) do
+    if antigravity_available?(Antigravity.profile(id)) do
+      prompt =
+        "Use only the input below. Do not use tools, read or write files, run commands, or ask questions.\n" <>
+          "Return only the requested JSON object.\n\n" <> prompt
+
+      result =
+        HalC2.Acp.with_agent(id, dir, fn conn, _init ->
+          with :ok <- AntigravitySession.authenticate(conn, id),
+               do: acp_prompt(conn, dir, model, prompt, true)
+        end)
+
+      remove_antigravity_session(id, dir)
+
+      if File.ls!(dir) == [],
+        do: result,
+        else: {:error, "Antigravity wrote files during text generation."}
+    else
+      {:error,
+       "Antigravity text generation is unavailable for profiles with global hooks or MCP configuration. Select another system model."}
+    end
+  end
+
+  @doc """
+  Whether an Antigravity profile can write text. Its global hooks and MCP servers
+  would run before a tool request could be refused, so a profile with any cannot.
+  """
+  def antigravity_available?(profile) do
+    Enum.all?([{"hooks.json", "hooks"}, {"mcp_config.json", "mcpServers"}], fn {name, key} ->
+      path = Path.join([profile, "config", name])
+
+      case File.stat(path) do
+        {:error, :enoent} ->
+          true
+
+        {:ok, %File.Stat{type: :regular, size: size}} when size <= 64_000 ->
+          case JSON.decode(File.read!(path)) do
+            {:ok, %{} = config} -> Map.get(config, key, config) == %{}
+            _ -> false
+          end
+
+        _ ->
+          false
+      end
+    end)
+  end
+
+  # The conversation files a text prompt's session left in the profile, known by the
+  # unique directory it ran in (`AntigravitySessionFiles.ts`).
+  defp remove_antigravity_session(id, dir) do
+    acp = Path.join(Antigravity.profile(id), "antigravity-acp")
+
+    for meta <- Path.wildcard(Path.join([acp, "conversations", "*.meta"])),
+        {:ok, body} <- [File.read(meta)],
+        {:ok, %{"cwd" => ^dir}} <- [JSON.decode(body)] do
+      base = String.replace_suffix(meta, ".meta", "")
+      for suffix <- ~w(.db .db-wal .db-shm .db-journal .meta), do: File.rm(base <> suffix)
+      File.rm_rf(Path.join([acp, "brain", Path.basename(base)]))
+    end
+
+    :ok
+  end
+
+  # One prompt to an ephemeral Pi without extensions or tools, in its own process.
+  defp pi(selection, cwd, prompt) do
+    id = selection["instanceId"]
+
+    task =
+      Task.async(fn ->
+        Process.flag(:trap_exit, true)
+
+        try do
+          in_dir(cwd, fn dir -> pi_prompt(id, dir, selection["model"], prompt) end)
+        catch
+          _kind, reason -> {:error, reason}
+        end
+      end)
+
+    case Task.yield(task, timeout()) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {:ok, text}} ->
+        case JSON.decode(json_object(text)) do
+          {:ok, %{} = out} -> {:ok, out}
+          _ -> {:error, "Pi returned invalid structured output."}
+        end
+
+      {:ok, {:error, reason}} when is_binary(reason) ->
+        {:error, reason}
+
+      {:ok, {:error, _reason}} ->
+        {:error, "Pi text generation failed."}
+
+      nil ->
+        {:error, "Pi request timed out."}
+    end
+  end
+
+  defp pi_prompt(id, dir, model, prompt) do
+    with {:ok, argv, env} <- HalC2.Pi.launch(id, bare: true, ephemeral: true),
+         {:ok, conn} <-
+           Connection.start_link(cmd: argv, handler: self(), cd: dir, env: env, dialect: :pi) do
+      try do
+        with :ok <- pi_model(conn, model),
+             {:ok, _} <- Connection.call(conn, "prompt", %{"message" => prompt}, :infinity),
+             :ok <- pi_settled(conn),
+             {:ok, data} <- Connection.call(conn, "get_last_assistant_text", %{}, 60_000) do
+          case String.trim((is_map(data) && is_binary(data["text"]) && data["text"]) || "") do
+            "" -> {:error, "Pi returned empty output."}
+            text -> {:ok, text}
+          end
+        end
+      after
+        Connection.stop(conn)
+      end
+    end
+  end
+
+  # Pi's own default model is kept; any other must be a `provider/model` slug, since
+  # running the default instead would report success for a model nobody asked for.
+  defp pi_model(_conn, model) when model in [nil, "", "default"], do: :ok
+
+  defp pi_model(conn, model) do
+    case String.split(model, "/", parts: 2) do
+      [provider, model_id] when provider != "" and model_id != "" ->
+        case Connection.call(conn, "set_model", %{"provider" => provider, "modelId" => model_id}) do
+          {:ok, _} -> :ok
+          error -> error
+        end
+
+      _ ->
+        {:error, "Pi model '#{model}' must use provider/model format."}
+    end
+  end
+
+  defp pi_settled(conn) do
+    receive do
+      {:json_rpc, ^conn, {:notification, "agent_settled", _event}} -> :ok
+      {:EXIT, ^conn, reason} -> {:error, reason}
     end
   end
 

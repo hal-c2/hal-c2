@@ -9,6 +9,8 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
+  alias HalC2.Acp.Antigravity
+  alias HalC2.Test.FakeAcp
   alias HalC2.TextGeneration
   alias HalC2.TextGeneration.Style
   alias HalC2.Test.Node.World
@@ -149,6 +151,41 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
   # --- who wrote -----------------------------------------------------------------------
 
   step "{string} writes it", %{args: [provider]} = context do
+    if provider in ["pi", "antigravity"],
+      do: fake_wrote(context, provider),
+      else: cli_wrote(context, provider)
+  end
+
+  defp fake_wrote(context, provider) do
+    assert {:ok, %{"title" => title}} = context.reply,
+           "text generation failed: #{inspect(context.reply)}"
+
+    assert title == "#{provider} title"
+    assert [start] = FakeAcp.starts(context, provider)
+
+    if provider == "pi" do
+      # An ephemeral Pi without extensions or tools, given the prompt once.
+      assert ~w(--mode rpc --no-session --no-extensions --no-tools) --
+               start["argv"] == []
+
+      assert [%{"message" => prompt}] =
+               for(
+                 %{"recv" => %{"type" => "prompt"} = recv} <- FakeAcp.log(context, "pi"),
+                 do: recv
+               )
+
+      assert prompt =~ "Fix the login redirect loop"
+    else
+      # In an empty folder that is gone afterwards, told to use nothing but the input.
+      assert [prompt] = fake_prompts(context, "antigravity")
+      assert prompt =~ "Use only the input below. Do not use tools"
+      refute File.exists?(start["cwd"])
+    end
+
+    context
+  end
+
+  defp cli_wrote(context, provider) do
     assert {:ok, _} = context.reply, "text generation failed: #{inspect(context.reply)}"
     assert [_ | _] = calls = calls(context)
     assert Enum.map(calls, &writer/1) |> Enum.uniq() == [provider]
@@ -487,13 +524,60 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     })
   end
 
-  defp plugin_text_model(context, driver) do
+  # Pi is the scripted Pi RPC fake; Antigravity the scripted ACP fake as a custom
+  # executable, signed in. Each answers any prompt with a title naming it.
+  defp plugin_text_model(context, "pi") do
     context
     |> install()
+    |> FakeAcp.install_pi(%{"turns" => [answer_turn("pi")]}, enabled: true)
     |> World.update_settings(%{
-      "providerInstances" => %{driver => %{"driver" => driver, "enabled" => true}},
-      "textGenerationModelSelection" => %{"instanceId" => driver, "model" => "default"}
+      "textGenerationModelSelection" => %{"instanceId" => "pi", "model" => "default"}
     })
+  end
+
+  defp plugin_text_model(context, "antigravity") do
+    context =
+      context
+      |> install()
+      |> FakeAcp.install(
+        "antigravity",
+        %{"googleAuth" => true, "turns" => [answer_turn("antigravity")]},
+        binary: "agy_acp_server.par",
+        enabled: true
+      )
+
+    harness =
+      Path.join(Path.dirname(FakeAcp.fake(context, "antigravity").bin), "localharness_external")
+
+    File.write!(harness, "#!/bin/sh\n")
+    File.chmod!(harness, 0o755)
+    token = Antigravity.token_path("antigravity")
+    File.mkdir_p!(Path.dirname(token))
+    File.write!(token, JSON.encode!(%{"account" => "user@example.com"}))
+
+    World.update_settings(context, %{
+      "textGenerationModelSelection" => %{
+        "instanceId" => "antigravity",
+        "model" => "antigravity-default"
+      }
+    })
+  end
+
+  defp answer_turn(driver) do
+    answer = JSON.encode!(%{"title" => "#{driver} title", "needsRefinement" => false})
+    %{"match" => "", "steps" => [%{"text" => answer}]}
+  end
+
+  # The prompts a fake Pi or Antigravity received.
+  defp fake_prompts(context, driver) do
+    for %{
+          "recv" => %{
+            "method" => "session/prompt",
+            "params" => %{"prompt" => [%{"text" => text}]}
+          }
+        } <-
+          FakeAcp.log(context, driver),
+        do: text
   end
 
   defp selection(provider, model \\ nil),

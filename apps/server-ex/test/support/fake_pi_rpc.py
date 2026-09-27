@@ -365,6 +365,9 @@ def command(msg):
         session.path, session.entries = new_path(), session.entries[:index]
         session.save()
         respond(msg, {"text": text, "cancelled": False})
+    elif kind == "get_last_assistant_text":
+        said = [e["message"]["content"] for e in session.entries if e["message"]["role"] == "assistant"]
+        respond(msg, {"text": said[-1] if said else None})
     elif kind == "compact":
         respond(msg, {"summary": "Compacted.", "tokensBefore": 1000})
     elif kind == "prompt":
