@@ -166,6 +166,8 @@ defmodule HalC2.Acp.Auth do
       :stdin,
       :stdout,
       :pty,
+      # Echo on, as in a real terminal; password prompts turn it off themselves.
+      :pty_echo,
       :link,
       :monitor,
       {:winsz, {24, 80}},

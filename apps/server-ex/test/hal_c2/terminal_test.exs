@@ -69,6 +69,8 @@ defmodule HalC2.TerminalTest do
       {:ok, nil} = Terminal.write(Map.put(input, "data", "stty size; echo hi-$((1+2))\n"))
       output = await_output("hi-3")
       assert output =~ "24 80"
+      # What the user types is echoed back, as in any terminal.
+      assert output =~ "echo hi-$((1+2))"
 
       {:ok, nil} = Terminal.resize(Map.merge(input, %{"cols" => 100, "rows" => 30}))
       {:ok, nil} = Terminal.write(Map.put(input, "data", "stty size\n"))

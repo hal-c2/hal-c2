@@ -478,7 +478,7 @@ defmodule HalC2.Steps.Terminal.Reconnect do
   # --- helpers ----------------------------------------------------------------------
 
   # A line of output reading exactly `text`.
-  defp line(text), do: ~r/(^|\n)#{Regex.escape(text)}\r?\n/
+  defp line(text), do: ~r/(^|[\r\n])#{Regex.escape(text)}\r?\n/
 
   defp session(context), do: Map.take(context.terminal, ["threadId", "terminalId"])
   defp attach_input(context), do: Map.delete(context.terminal, "cwd")

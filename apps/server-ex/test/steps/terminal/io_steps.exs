@@ -42,7 +42,7 @@ defmodule HalC2.Steps.Terminal.Io do
   step "every client attached to the terminal receives {string}", %{args: [text]} = context do
     for name <- @clients, reduce: context do
       context ->
-        {_, _, context} = Terminal.await_output(context, name, ~r/(^|\n)#{text}\r?\n/)
+        {_, _, context} = Terminal.await_output(context, name, ~r/(^|[\r\n])#{text}\r?\n/)
         context
     end
   end
@@ -60,7 +60,7 @@ defmodule HalC2.Steps.Terminal.Io do
   end
 
   step "no output is lost", context do
-    [_, lines] = Regex.run(~r/(?:^|\n)(1\r?\n.*?)__seq_done__/s, context.printed)
+    [_, lines] = Regex.run(~r/(?:^|[\r\n])(1\r?\n.*?)__seq_done__/s, context.printed)
     assert String.split(lines, ~r/\r?\n/, trim: true) == Enum.map(1..1000, &to_string/1)
     context
   end
@@ -76,7 +76,7 @@ defmodule HalC2.Steps.Terminal.Io do
 
   step "the running program sees {int} columns and {int} rows", %{args: [cols, rows]} = context do
     {output, context} = Terminal.run(context, "default", "stty size")
-    assert output =~ ~r/(^|\n)#{rows} #{cols}\r?\n/
+    assert output =~ ~r/(^|[\r\n])#{rows} #{cols}\r?\n/
     context
   end
 
@@ -100,7 +100,7 @@ defmodule HalC2.Steps.Terminal.Io do
   step "the shell keeps running", context do
     assert Terminal.session(context.terminal)
     {output, context} = Terminal.run(context, "default", "echo $$")
-    assert output =~ ~r/(^|\n)#{context.snapshot["pid"]}\r?\n/
+    assert output =~ ~r/(^|[\r\n])#{context.snapshot["pid"]}\r?\n/
     context
   end
 
@@ -142,7 +142,7 @@ defmodule HalC2.Steps.Terminal.Io do
     context = await_all(context, "cleared")
     # The shell reads its input in order, so this runs after the command did.
     {output, context} = Terminal.run(context, "default", "test -f #{context.marker} && echo ran")
-    assert output =~ ~r/(^|\n)ran\r?\n/
+    assert output =~ ~r/(^|[\r\n])ran\r?\n/
     context
   end
 
@@ -179,7 +179,7 @@ defmodule HalC2.Steps.Terminal.Io do
   step "the terminal's output is still readable", context do
     {snapshot, context} = Terminal.attach!(context, "later", Map.delete(context.terminal, "cwd"))
     assert snapshot["status"] == "exited"
-    assert snapshot["history"] =~ ~r/(^|\n)last-words\r?\n/
+    assert snapshot["history"] =~ ~r/(^|[\r\n])last-words\r?\n/
     context
   end
 

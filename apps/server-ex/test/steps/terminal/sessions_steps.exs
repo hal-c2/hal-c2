@@ -121,7 +121,7 @@ defmodule HalC2.Steps.Terminal.Sessions do
   step "the shell sees a window of {int} columns and {int} rows",
        %{args: [cols, rows]} = context do
     {output, context} = Terminal.run(context, "default", "stty size")
-    assert output =~ ~r/(^|\n)#{rows} #{cols}\r?\n/
+    assert output =~ ~r/(^|[\r\n])#{rows} #{cols}\r?\n/
     context
   end
 
@@ -235,7 +235,7 @@ defmodule HalC2.Steps.Terminal.Sessions do
 
   step "its window becomes {int} columns and {int} rows", %{args: [cols, rows]} = context do
     {output, context} = Terminal.run(context, "default", "stty size")
-    assert output =~ ~r/(^|\n)#{rows} #{cols}\r?\n/
+    assert output =~ ~r/(^|[\r\n])#{rows} #{cols}\r?\n/
     context
   end
 

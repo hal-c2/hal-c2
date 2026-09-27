@@ -489,6 +489,9 @@ defmodule HalC2.Terminal do
       # otherwise it prints no prompt and Ctrl-C ends the shell itself.
       {:stderr, :stdout},
       :pty,
+      # erlexec turns the pty's echo off by default, and readline follows it,
+      # so nothing the user typed would show.
+      :pty_echo,
       :monitor,
       {:winsz, {state.rows, state.cols}},
       {:cd, String.to_charlist(state.cwd)},
