@@ -34,6 +34,7 @@ const defaults = {
   hasSendableContent: true,
   sendDisabledReason: null,
   phase: "ready",
+  followUpBehavior: "steer",
   isSendBusy: false,
   isConnecting: false,
   environmentUnavailable: false,

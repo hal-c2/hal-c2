@@ -251,6 +251,8 @@ export const ShellComposerState = Schema.Struct({
   canSend: Schema.Boolean,
   sendDisabledReason: Schema.NullOr(Schema.String),
   isRunning: Schema.Boolean,
+  // What a plain send does while `isRunning`: join the turn or wait behind it.
+  followUpBehavior: Schema.Literals(["queue", "steer"]),
   isSendBusy: Schema.Boolean,
   isConnecting: Schema.Boolean,
   pendingApprovalCount: Schema.Number,

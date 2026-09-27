@@ -48,6 +48,7 @@ export interface ShellComposerStateInput {
   readonly hasSendableContent: boolean;
   readonly sendDisabledReason: string | null;
   readonly isRunning: boolean;
+  readonly followUpBehavior: "queue" | "steer";
   readonly isSendBusy: boolean;
   readonly isConnecting: boolean;
   readonly environmentUnavailable: boolean;
@@ -246,6 +247,7 @@ export function buildShellComposerState(input: ShellComposerStateInput): ShellCo
             ? "Choose a project first"
             : null),
     isRunning: input.isRunning,
+    followUpBehavior: input.followUpBehavior,
     isSendBusy: input.isSendBusy,
     isConnecting: input.isConnecting,
     pendingApprovalCount: input.pendingApprovalCount,

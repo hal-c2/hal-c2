@@ -7442,6 +7442,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 hasSendableContent={composerSendState.hasSendableContent}
                 sendDisabledReason={sendDisabledReason}
                 phase={phase}
+                followUpBehavior={settings.followUpBehavior}
                 isSendBusy={isSendBusy}
                 isConnecting={isConnecting}
                 environmentUnavailable={environmentUnavailable !== null}

@@ -38,7 +38,8 @@ QtObject {
             interactionMode: "default",
             pendingApprovalCount: 0,
             showPlanFollowUpPrompt: false,
-            isRunning: false
+            isRunning: false,
+            followUpBehavior: "steer"
         };
     }
 

@@ -58,6 +58,29 @@ Item {
             tryCompare(input, "text", "");
         }
 
+        function test_sendDuringTurnFollowsFollowUpSetting() {
+            let composer = createTemporaryObject(composerComponent, root);
+            let input = findChild(composer, "input");
+            let primary = findChild(composer, "primaryAction");
+            verify(!!input && !!primary, "Objects exist");
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, { isRunning: true, followUpBehavior: "queue" })
+            });
+            compare(primary.Accessible.name, "Stop");
+
+            input.text = "Also check the tests";
+            compare(primary.Accessible.name, "Queue");
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, { followUpBehavior: "steer" })
+            });
+            compare(primary.Accessible.name, "Steer");
+
+            mouseClick(primary);
+            const sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(sent.action, "composer.submit");
+            compare(sent.payload.intent, "foreground");
+        }
+
         function test_textDispatchIncludesTarget() {
             let composer = createTemporaryObject(composerComponent, root);
             verify(!!composer, "Component exists");

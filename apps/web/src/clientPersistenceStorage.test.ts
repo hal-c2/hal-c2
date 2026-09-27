@@ -52,28 +52,49 @@ describe("clientPersistenceStorage", () => {
     expect(readBrowserClientSettings()).toEqual(settings);
   });
 
+  it("reads older saved settings with the current follow-up default", async () => {
+    const testWindow = getTestWindow();
+    testWindow.localStorage.setItem(
+      "hal-c2:client-settings:v1",
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        followUpBehavior: "queue",
+        diffLayout: "split",
+      }),
+    );
+    const { readBrowserClientSettings, writeBrowserClientSettings } =
+      await import("./clientPersistenceStorage");
+
+    expect(readBrowserClientSettings()).toEqual(
+      expect.objectContaining({ followUpBehavior: "steer", diffLayout: "split" }),
+    );
+
+    writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, followUpBehavior: "queue" });
+    expect(readBrowserClientSettings()?.followUpBehavior).toBe("queue");
+  });
+
   it.each(["not-json", '{"wordWrap":"invalid"}'])(
     "does not treat invalid saved settings as absent: %s",
     async (value) => {
       const testWindow = getTestWindow();
-      testWindow.localStorage.setItem("hal-c2:client-settings:v1", value);
+      testWindow.localStorage.setItem("hal-c2:client-settings:v2", value);
       const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
 
       expect(() => readBrowserClientSettings()).toThrow(
         expect.objectContaining({
           _tag: "LocalStorageOperationError",
           operation: "decode",
-          storageKey: "hal-c2:client-settings:v1",
+          storageKey: "hal-c2:client-settings:v2",
         }),
       );
-      expect(testWindow.localStorage.getItem("hal-c2:client-settings:v1")).toBe(value);
+      expect(testWindow.localStorage.getItem("hal-c2:client-settings:v2")).toBe(value);
     },
   );
 
   it("preserves saved settings across a transient read failure", async () => {
     const testWindow = getTestWindow();
     const settings = { ...DEFAULT_CLIENT_SETTINGS, timestampFormat: "12-hour" as const };
-    testWindow.localStorage.setItem("hal-c2:client-settings:v1", JSON.stringify(settings));
+    testWindow.localStorage.setItem("hal-c2:client-settings:v2", JSON.stringify(settings));
     const write = vi.spyOn(testWindow.localStorage, "setItem");
     const failure = new Error("storage unavailable");
     vi.spyOn(testWindow.localStorage, "getItem").mockImplementationOnce(() => {
@@ -85,7 +106,7 @@ describe("clientPersistenceStorage", () => {
       expect.objectContaining({
         _tag: "LocalStorageOperationError",
         operation: "read",
-        storageKey: "hal-c2:client-settings:v1",
+        storageKey: "hal-c2:client-settings:v2",
         cause: failure,
       }),
     );
@@ -96,7 +117,7 @@ describe("clientPersistenceStorage", () => {
   it("defaults word wrap on and discards obsolete wrapping preferences", async () => {
     const testWindow = getTestWindow();
     testWindow.localStorage.setItem(
-      "hal-c2:client-settings:v1",
+      "hal-c2:client-settings:v2",
       JSON.stringify({
         chatWordWrap: false,
         diffWordWrap: false,
@@ -119,7 +140,7 @@ describe("clientPersistenceStorage", () => {
     const { readBrowserClientSettings, writeBrowserClientSettings } =
       await import("./clientPersistenceStorage");
 
-    testWindow.localStorage.setItem("hal-c2:client-settings:v1", JSON.stringify({}));
+    testWindow.localStorage.setItem("hal-c2:client-settings:v2", JSON.stringify({}));
     expect(readBrowserClientSettings()?.diffFilesCollapsed).toBe(true);
 
     writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true });
@@ -135,7 +156,7 @@ describe("clientPersistenceStorage", () => {
       await import("./clientPersistenceStorage");
 
     expect(readBrowserClientSettings()).toBeNull();
-    testWindow.localStorage.setItem("hal-c2:client-settings:v1", JSON.stringify({}));
+    testWindow.localStorage.setItem("hal-c2:client-settings:v2", JSON.stringify({}));
     expect(readBrowserClientSettings()?.diffLayout).toBe("stacked");
 
     writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, diffLayout: "split" });

@@ -560,6 +560,9 @@ Rectangle {
                         objectName: "primaryAction"
 
                         readonly property bool stopMode: composer.ready && composer.model.isRunning && input.text.trim().length === 0
+                        // A send during a turn joins it or waits behind it, per the
+                        // follow-up setting; the button says which before the click.
+                        readonly property string followUp: composer.model.isRunning && !stopMode ? (composer.model.followUpBehavior ?? "steer") : ""
 
                         implicitWidth: 32
                         implicitHeight: 32
@@ -568,7 +571,12 @@ Rectangle {
                         opacity: enabled ? 1 : 0.3
                         scale: down ? 0.97 : hovered ? 1.05 : 1
                         Accessible.role: Accessible.Button
-                        Accessible.name: stopMode ? qsTr("Stop") : qsTr("Send")
+                        Accessible.name: stopMode ? qsTr("Stop") : followUp === "steer" ? qsTr("Steer") : followUp === "queue" ? qsTr("Queue") : qsTr("Send")
+                        ToolTip.visible: hovered && followUp.length > 0
+                        ToolTip.delay: 400
+                        ToolTip.text: followUp === "steer"
+                            ? qsTr("Steer the running turn (%1+Enter to queue)").arg(Qt.platform.os === "osx" ? "⌘" : "Ctrl")
+                            : qsTr("Queue after the running turn (%1+Enter to steer)").arg(Qt.platform.os === "osx" ? "⌘" : "Ctrl")
                         onClicked: stopMode ? Shell.dispatch("composer.interrupt") : composer.submit("foreground")
 
                         Behavior on scale {
@@ -593,7 +601,7 @@ Rectangle {
                             ShellIcon {
                                 anchors.centerIn: parent
                                 visible: !primaryAction.stopMode
-                                name: "arrow-up"
+                                name: primaryAction.followUp === "steer" ? "corner-down-right" : primaryAction.followUp === "queue" ? "list-plus" : "arrow-up"
                                 size: 16
                                 strokeWidth: 2.5
                                 color: Theme.palette.color("messageActionForeground", "#ffffff")

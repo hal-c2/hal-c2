@@ -61,6 +61,7 @@ function baseInput() {
     hasSendableContent: true,
     sendDisabledReason: null,
     isRunning: false,
+    followUpBehavior: "steer" as const,
     isSendBusy: false,
     isConnecting: false,
     environmentUnavailable: false,

@@ -69,6 +69,7 @@ export interface ShellComposerBridgeProps {
   readonly hasSendableContent: boolean;
   readonly sendDisabledReason: string | null;
   readonly phase: SessionPhase;
+  readonly followUpBehavior: "queue" | "steer";
   readonly isSendBusy: boolean;
   readonly isConnecting: boolean;
   readonly environmentUnavailable: boolean;
@@ -166,6 +167,7 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
         hasSendableContent: props.hasSendableContent,
         sendDisabledReason: props.sendDisabledReason,
         isRunning: props.phase === "running",
+        followUpBehavior: props.followUpBehavior,
         isSendBusy: props.isSendBusy,
         isConnecting: props.isConnecting,
         environmentUnavailable: props.environmentUnavailable,
