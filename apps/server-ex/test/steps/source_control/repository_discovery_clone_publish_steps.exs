@@ -135,20 +135,40 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
     context
   end
 
-  step "both fj and tea are installed", context do
+  # fj's keys.json names the server without a scheme; a server under a subpath keeps
+  # its path, which fj 0.6 cannot serve. The account lookup after `whoami` finds
+  # nothing listening, which leaves fj reported with an unknown account.
+  step ~r/^both fj and tea are installed and fj holds a login for "(?<server>[^"]+)"$/,
+       %{args: [server]} = context do
+    server = if server == "codeberg.org", do: "127.0.0.1:1", else: server
+    keys = Path.join(Node.tmp_dir(context.node, "forgejo-cli"), "keys.json")
+
+    File.write!(
+      keys,
+      JSON.encode!(%{
+        "hosts" => %{server => %{"type" => "Application", "token" => "fj-token"}},
+        "aliases" => %{}
+      })
+    )
+
+    previous = Application.get_env(:hal_c2, :fj_keys_paths)
+    Application.put_env(:hal_c2, :fj_keys_paths, [keys])
+    ExUnit.Callbacks.on_exit(fn -> Application.put_env(:hal_c2, :fj_keys_paths, previous) end)
+
     context
     |> World.fake_cli(["fj", "tea"])
     |> World.cli_rules([
       %{"cmd" => "fj", "args" => ["version"], "stdout" => "fj v0.6.0\n"},
+      %{"cmd" => "fj", "args" => ["whoami"], "stdout" => "octocat\n"},
       %{"cmd" => "tea", "args" => ["--version"], "stdout" => "Version: 0.10.1\n"},
       %{"cmd" => "tea", "args" => ["login list"], "stdout" => []}
     ])
   end
 
-  step "Forgejo is reported through fj, except for servers under a subpath which use tea",
-       context do
+  step ~r/^Forgejo is reported through (?<cli>fj|tea)$/, %{args: [cli]} = context do
     item = discovered(context, "Forgejo / Gitea")
-    assert item["executable"] == "fj"
+    assert item["executable"] == cli
+    assert item["status"] == "available"
     context
   end
 

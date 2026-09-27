@@ -3,8 +3,8 @@ defmodule HalC2.SourceControl do
   Source control hosts through their own CLIs: which are installed and signed in
   (`server.discoverSourceControl`), and repository lookup, clone, and publish
   (`sourceControl.*`) for GitHub (`gh`) and GitLab (`glab`). Forgejo / Gitea
-  (`tea`), Azure DevOps (`az`) and Bitbucket (its REST API) are discovered and
-  looked up only.
+  (`fj` or `tea`, see `HalC2.SourceControl.Forgejo`), Azure DevOps (`az`) and
+  Bitbucket (its REST API) are discovered and looked up only.
 
   `Option` fields travel in their JSON encoding: `%{"_tag" => "Some", "value" => v}`
   or `%{"_tag" => "None"}`.
@@ -24,8 +24,6 @@ defmodule HalC2.SourceControl do
      "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`)."},
     {"gitlab", "GitLab", "glab", ~w(auth status),
      "Install the GitLab command-line tool (`glab`) from https://gitlab.com/gitlab-org/cli or your package manager (for example `brew install glab`)."},
-    {"forgejo", "Forgejo / Gitea", "tea", ~w(login list --output json),
-     "Install the Gitea/Forgejo command-line tool (`tea`) from https://gitea.com/gitea/tea."},
     {"azure-devops", "Azure DevOps", "az", ~w(account show --query user.name -o tsv),
      "Install the Azure command-line tools (`az`), then enable Azure DevOps support with `az extension add --name azure-devops`."}
   ]
@@ -49,10 +47,15 @@ defmodule HalC2.SourceControl do
         Map.merge(item, %{"kind" => kind, "auth" => auth})
       end)
 
+    # Like the Node server, Forgejo reads the node's own checkout for its remote.
+    forgejo = Task.async(fn -> HalC2.SourceControl.Forgejo.discover(File.cwd!()) end)
+    {github_gitlab, azure} = Enum.split(for({:ok, item} <- providers, do: item), 2)
+
     {:ok,
      %{
        "versionControlSystems" => for({:ok, item} <- vcs, do: item),
-       "sourceControlProviders" => for({:ok, item} <- providers, do: item) ++ [bitbucket()]
+       "sourceControlProviders" =>
+         github_gitlab ++ [Task.await(forgejo, 60_000)] ++ azure ++ [bitbucket()]
      }}
   end
 
@@ -190,30 +193,6 @@ defmodule HalC2.SourceControl do
     end
   end
 
-  # tea lists its logins; the default one (else the first) is the account.
-  defp auth("forgejo", {:ok, out, _}) do
-    logins =
-      case JSON.decode(out) do
-        {:ok, list} when is_list(list) -> Enum.filter(list, &is_map/1)
-        _ -> []
-      end
-
-    case Enum.find(logins, &(&1["default"] in ["true", true])) || List.first(logins) do
-      %{} = login ->
-        status = if login["valid"] in ["true", true], do: "authenticated", else: "unauthenticated"
-        host = with url when is_binary(url) <- login["url"], do: URI.parse(url).host
-        auth_json(status, login["user"], host, nil)
-
-      nil ->
-        auth_json(
-          "unauthenticated",
-          nil,
-          nil,
-          "Run `tea login add` to authenticate a Forgejo or Gitea server."
-        )
-    end
-  end
-
   defp auth("azure-devops", {:ok, out, _}) do
     case first_line(out) do
       nil ->
@@ -323,43 +302,17 @@ defmodule HalC2.SourceControl do
     end
   end
 
-  # Through `tea`: its default login (or its only one) reads the repository from the
-  # server's API. tea answers HTTP failures with exit 0, so the status line decides.
+  # Through fj's token or `tea api` (`HalC2.SourceControl.Forgejo`).
   defp forgejo_lookup(repository, cwd) do
-    logins =
-      case cmd("tea", ~w(login list --output json), cd: cwd) do
-        {:ok, out, _} ->
-          case JSON.decode(out) do
-            {:ok, list} when is_list(list) -> list
-            _ -> []
-          end
+    alias HalC2.SourceControl.Forgejo
+    path = "repos/" <> Forgejo.encode_repository(repository)
 
-        _ ->
-          []
-      end
-
-    login =
-      Enum.find(logins, &(&1["default"] in ["true", true])) ||
-        if(length(logins) == 1, do: hd(logins))
-
-    with %{"name" => name, "url" => base} <-
-           login || {:error, "No Forgejo login. Use `tea login add` for this server."},
-         path = repository |> String.split("/") |> Enum.map_join("/", &URI.encode/1),
-         url = String.trim_trailing(base, "/") <> "/api/v1/repos/" <> path,
-         {:ok, out, err} <-
-           cmd("tea", ["api", "--include", "--login", name, "--method", "GET", url], cd: cwd),
-         [_, status] when status < "400" <-
-           Regex.run(~r/^HTTP\/\S+ (\d{3})/m, err) ||
-             {:error, "Forgejo did not answer."},
+    with {:ok, out, _} <- Forgejo.api(cwd, [repository: repository], path),
          {:ok, %{"full_name" => full_name} = info} <- JSON.decode(out) do
       {:ok, repo("forgejo", full_name, info["clone_url"], info["ssh_url"])}
     else
-      [_, status] ->
-        repository_error(
-          "forgejo",
-          "lookupRepository",
-          {:error, "Forgejo answered HTTP #{status}."}
-        )
+      {:error, {_reason, detail}} ->
+        repository_error("forgejo", "lookupRepository", {:error, detail})
 
       error ->
         repository_error("forgejo", "lookupRepository", error)

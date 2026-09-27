@@ -18,3 +18,7 @@ config :hal_c2, usage_rates_url: "hal-c2-test-no-usage-rates.json"
 # The background policy never reads this machine's power supplies; tests that do
 # point this at a directory of fake ones.
 config :hal_c2, power_supply_dir: nil
+
+# fj's stored credentials are never read from this machine; tests that need them
+# point this at their own keys.json.
+config :hal_c2, fj_keys_paths: []

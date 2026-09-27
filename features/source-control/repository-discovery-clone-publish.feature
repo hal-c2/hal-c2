@@ -3,6 +3,9 @@
 #   packages/contracts/src/sourceControl.ts (SourceControlDiscoveryResult, SourceControlRepositoryLookupInput, SourceControlCloneRepositoryInput, SourceControlPublishRepositoryInput)
 #   packages/contracts/src/rpc.ts (server.discoverSourceControl, sourceControl.lookupRepository, sourceControl.cloneRepository, sourceControl.publishRepository, projectClone.start, projectClone.retry, projectClone.cancel, subscribeProjectClones)
 #   apps/server-ex/lib/hal_c2/source_control.ex
+#   apps/server-ex/lib/hal_c2/source_control/forgejo.ex (fj preferred over tea)
+#   apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (discovery probe)
+#   apps/server/src/sourceControl/ForgejoCli.ts (fj keys.json logins, subpath servers left to tea)
 #   apps/server-ex/lib/hal_c2/project_clones.ex
 #   apps/web/src/components/GitActionsControl.tsx (publish repository)
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (Publish repository)
@@ -48,11 +51,16 @@ Feature: Finding hosting tools, cloning and publishing repositories
     When the user asks which source control tools are available
     Then Bitbucket is reported available and signed in
 
-  @backlog @node
-  Scenario: The Forgejo CLI is preferred over tea
-    Given both fj and tea are installed
+  @node
+  Scenario Outline: The Forgejo CLI is preferred over tea
+    Given both fj and tea are installed and fj holds a login for "<server>"
     When the user asks which source control tools are available
-    Then Forgejo is reported through fj, except for servers under a subpath which use tea
+    Then Forgejo is reported through <cli>
+
+    Examples:
+      | server                  | cli |
+      | codeberg.org            | fj  |
+      | git.example.com/forgejo | tea |
 
   @node
   Scenario Outline: Looking up a repository on a host
