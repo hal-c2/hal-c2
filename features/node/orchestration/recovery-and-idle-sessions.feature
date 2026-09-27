@@ -5,6 +5,7 @@
 #   packages/contracts/src/settings.ts (continueThreadsAfterServerUpdate)
 #   apps/server-ex/lib/hal_c2/orchestration/recovery.ex
 #   apps/server-ex/lib/hal_c2/orchestration/idle_sessions.ex
+#   apps/server-ex/lib/hal_c2/orchestration/limit_recovery.ex
 #   apps/server/src/orchestration-v2/ (startup recovery, idle session reaper)
 #   apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts (limit recovery at the reset time)
 #   packages/contracts/src/orchestrationV2.ts (OrchestrationV2LimitRecovery)
@@ -107,9 +108,8 @@ Feature: Recovering from restarts and releasing idle sessions
     When the user sends "Back" to "t1"
     Then the provider starts again and resumes its conversation
 
-  # The node stores a thread's limit recovery choice but nothing acts on it at the reset.
   # The user-facing flow, cancelling and dropping a resume are in threads/limited-threads.feature.
-  @node @backlog
+  @node
   Scenario: A thread stopped by a usage limit is resumed at the reset time
     Given the latest run of "t1" failed on a usage limit that resets at 14:00
     And "t1" records a limit recovery with auto-resume for that run and reset
