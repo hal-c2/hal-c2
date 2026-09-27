@@ -143,6 +143,26 @@ Rectangle {
         });
     }
 
+    // What Enter with these modifiers sends, as the page resolves it from the
+    // send shortcut setting and the keybindings (composer.enterIntents); ""
+    // leaves the key to the editor as a newline.
+    function enterIntent(modifiers) {
+        // Qt calls the Command key Control on macOS, where the page calls it meta.
+        const mac = Qt.platform.os === "osx";
+        const held = [];
+        if (modifiers & (mac ? Qt.MetaModifier : Qt.ControlModifier)) held.push("ctrl");
+        if (modifiers & (mac ? Qt.ControlModifier : Qt.MetaModifier)) held.push("meta");
+        if (modifiers & Qt.AltModifier) held.push("alt");
+        if (modifiers & Qt.ShiftModifier) held.push("shift");
+        const mod = mac ? "meta" : "ctrl";
+        // A page from before enterIntents: Enter sends, mod+Enter the alternative.
+        const table = composer.model.enterIntents ?? {
+            singleLine: { "": "foreground", [mod]: composer.model.isRunning ? "alternate" : "background" }
+        };
+        const intents = /[\r\n]/.test(input.text) ? table.multiline ?? table.singleLine : table.singleLine;
+        return intents[held.join("+")] ?? "";
+    }
+
     function submit(intent) {
         if (!composer.ready) {
             return;
@@ -401,6 +421,12 @@ Rectangle {
                                 textDebounce.restart();
                             }
                         }
+                        // The page's keybindings are window shortcuts too (ShellWindow);
+                        // an Enter chord that sends is the composer's, not theirs.
+                        Keys.onShortcutOverride: event => {
+                            event.accepted = (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                                && composer.enterIntent(event.modifiers) !== "";
+                        }
                         Keys.onPressed: event => {
                             event.accepted = false;
                             composer.editorKeyPressed(event);
@@ -430,14 +456,12 @@ Rectangle {
                             if (event.key !== Qt.Key_Return && event.key !== Qt.Key_Enter) {
                                 return;
                             }
-                            if (event.modifiers & Qt.ShiftModifier) {
+                            const intent = composer.enterIntent(event.modifiers);
+                            if (intent === "") {
                                 return;
                             }
                             event.accepted = true;
-                            // mod+Enter does the opposite of the follow-up setting during a
-                            // turn, and starts a background thread otherwise.
-                            const modified = event.modifiers & (Qt.ControlModifier | Qt.MetaModifier);
-                            composer.submit(!modified ? "foreground" : composer.model.isRunning ? "alternate" : "background");
+                            composer.submit(intent);
                         }
                     }
                 }

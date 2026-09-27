@@ -3,7 +3,8 @@
 #   apps/server-ex/lib/hal_c2/orchestration.ex (queued runs, steer, restart dispatch, queue hold)
 #   apps/web/src/components/chat/QueuedRunsControl.tsx
 #   apps/web/src/components/chat/ComposerPrimaryActions.tsx (queue, steer, stop)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (stop while running)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (stop while running, steer or queue, mod+Enter)
+#   apps/desktop-qt/tests/tst_Composer.qml
 #   apps/tui/src/components/ChatView.tsx (Esc interrupts)
 #   apps/tui/qml/HalC2/Tui/ShellKeymap.qml (a held Esc does not repeat)
 #   packages/shared/src/keybindings.ts (composer.sendAlternate, thread.steerQueuedMessage, thread.editQueuedMessage)
@@ -50,7 +51,7 @@ Feature: Follow-ups while the agent is working
     Then the running turn is interrupted
     And "start over with tests first" runs before "later"
 
-  @backlog @desktop @mobile
+  @desktop
   Scenario Outline: The follow-up setting decides what sending during a turn does
     Given the follow-up behaviour setting is "<setting>"
     When the user <action> "<message>"
@@ -62,6 +63,12 @@ Feature: Follow-ups while the agent is working
       | queue   | sends the opposite way    | tweak   | steers the running turn     |
       | steer   | sends                     | tweak   | steers the running turn     |
       | steer   | sends the opposite way    | tweak   | is queued                   |
+
+  @backlog @mobile
+  Scenario: The phone sends a follow-up the other way than its setting
+    Given the follow-up behaviour setting is "queue"
+    When the user sends "tweak" the opposite way from the phone
+    Then "tweak" steers the running turn
 
   @node
   Scenario: Reordering the queue changes what runs next

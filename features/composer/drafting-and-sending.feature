@@ -32,20 +32,35 @@ Feature: Drafting and sending a message
     Then the draft holds two lines
     And nothing has been sent
 
-  @backlog @desktop @mobile
+  @desktop
   Scenario Outline: The send shortcut setting decides what Enter does
     Given the send shortcut setting is "<setting>"
-    And the user has typed "hello"
+    And the user has typed <draft>
     When the user presses <keys>
     Then <outcome>
 
     Examples:
-      | setting                    | keys           | outcome                          |
-      | Enter                      | Enter          | the message is sent              |
-      | Mod+Enter, multiline Enter | Enter          | a new line is added to the draft |
-      | Mod+Enter, multiline Enter | Mod+Enter      | the message is sent              |
-      | Mod+Enter                  | Enter          | the message is not sent          |
-      | Mod+Enter                  | Mod+Enter      | the message is sent              |
+      | setting                          | draft               | keys      | outcome                          |
+      | Enter                            | "hello"             | Enter     | the message is sent              |
+      | Mod+Enter for multiline prompts  | "hello"             | Enter     | the message is sent              |
+      | Mod+Enter for multiline prompts  | two lines           | Enter     | a new line is added to the draft |
+      | Mod+Enter for multiline prompts  | two lines           | Mod+Enter | the message is sent              |
+      | Mod+Enter                        | "hello"             | Enter     | a new line is added to the draft |
+      | Mod+Enter                        | "hello"             | Mod+Enter | the message is sent              |
+
+  @backlog @mobile
+  Scenario: A hardware keyboard on the phone follows the send shortcut setting
+    Given the send shortcut setting is "Mod+Enter"
+    And the user has typed "hello" on a hardware keyboard
+    When the user presses Enter
+    Then a new line is added to the draft
+
+  @desktop
+  Scenario: mod+alt+Enter starts a new thread in the background
+    Given the user is writing the first message of a new thread
+    When the user presses mod+alt+Enter
+    Then a new thread starts with that message in the background
+    And no window shortcut takes the key instead
 
   @desktop
   Scenario: The draft stays until the send is confirmed

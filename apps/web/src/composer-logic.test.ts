@@ -16,6 +16,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
+  composerEnterIntents,
   composerSubmissionIntentForKey,
   composerStateAtPromptEnd,
   detectComposerTrigger,
@@ -65,6 +66,44 @@ describe("formatAssistantCitationForComposer", () => {
     expect(text).toBe(`${serializeAssistantCitation(boundCitation)} `);
     expect(collectAssistantCitations(text).map((entry) => entry.citation)).toEqual([boundCitation]);
     expect(expandAssistantCitationsForProvider(text)).toMatch(/^\[assistant-quote-1\] \n\n/);
+  });
+});
+
+describe("composerEnterIntents", () => {
+  const input = {
+    keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
+    platform: "Linux",
+    isMobileViewport: false,
+  };
+
+  it("maps each Enter chord to what the page would do with it", () => {
+    const sendOrBackground = {
+      "": "foreground",
+      ctrl: "foreground",
+      meta: "foreground",
+      "ctrl+meta": "foreground",
+      "ctrl+alt": "background",
+    };
+    expect(composerEnterIntents({ ...input, isDraftThread: true, sendShortcut: "enter" })).toEqual({
+      singleLine: sendOrBackground,
+      multiline: sendOrBackground,
+    });
+    expect(
+      composerEnterIntents({
+        ...input,
+        isDraftThread: false,
+        isRunning: true,
+        sendShortcut: "mod-enter-multiline",
+      }),
+    ).toEqual({
+      singleLine: {
+        "": "foreground",
+        ctrl: "alternate",
+        meta: "foreground",
+        "ctrl+meta": "foreground",
+      },
+      multiline: { ctrl: "alternate", meta: "foreground", "ctrl+meta": "foreground" },
+    });
   });
 });
 

@@ -39,7 +39,11 @@ QtObject {
             pendingApprovalCount: 0,
             showPlanFollowUpPrompt: false,
             isRunning: false,
-            followUpBehavior: "steer"
+            followUpBehavior: "steer",
+            enterIntents: {
+                singleLine: { "": "foreground", "ctrl+alt": "background" },
+                multiline: { "": "foreground", "ctrl+alt": "background" }
+            }
         };
     }
 

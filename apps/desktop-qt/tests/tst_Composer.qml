@@ -8,6 +8,15 @@ Item {
     width: 900
     height: 700
 
+    // The page's keybindings arrive as window shortcuts (ShellWindow), mod+Enter
+    // and mod+alt+Enter among them.
+    property int stolenChords: 0
+    Shortcut {
+        sequences: ["Ctrl+Alt+Return", "Ctrl+Return", "Meta+Return"]
+        context: Qt.WindowShortcut
+        onActivated: root.stolenChords++
+    }
+
     Component {
         id: composerComponent
 
@@ -79,6 +88,41 @@ Item {
             const sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
             compare(sent.action, "composer.submit");
             compare(sent.payload.intent, "foreground");
+        }
+
+        function test_enterFollowsThePagesSendKeys() {
+            let composer = createTemporaryObject(composerComponent, root);
+            let input = findChild(composer, "input");
+            verify(!!input, "Object exists");
+            input.forceActiveFocus();
+            input.text = "Start a side thread";
+            keyClick(Qt.Key_Return, Qt.ControlModifier | Qt.AltModifier);
+            let sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(sent.action, "composer.submit");
+            compare(sent.payload.intent, "background");
+            compare(root.stolenChords, 0);
+
+            // A chord the page does not send with is a newline.
+            const count = Shell.dispatchCount;
+            keyClick(Qt.Key_Return, Qt.ShiftModifier);
+            verify(Shell.dispatchedActions.slice(count).every(entry => entry.action !== "composer.submit"));
+
+            // Send with mod+Enter once the draft has several lines.
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, {
+                    isRunning: true,
+                    enterIntents: { singleLine: { "": "foreground", ctrl: "alternate" }, multiline: { ctrl: "alternate" } }
+                })
+            });
+            input.text = "Steer this\nwith two lines";
+            input.cursorPosition = input.text.length;
+            keyClick(Qt.Key_Return);
+            verify(Shell.dispatchedActions.slice(count).every(entry => entry.action !== "composer.submit"));
+            keyClick(Qt.Key_Return, Qt.platform.os === "osx" ? Qt.MetaModifier : Qt.ControlModifier);
+            sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(sent.action, "composer.submit");
+            compare(sent.payload.intent, "alternate");
+            compare(root.stolenChords, 0);
         }
 
         function test_textDispatchIncludesTarget() {

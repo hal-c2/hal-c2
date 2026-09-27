@@ -146,20 +146,6 @@ Feature: Desktop shell gaps
   Rule: Known shell keyboard bugs
 
     @backlog @desktop
-    Scenario: The opposite follow-up action is sent from the native composer
-      Given a turn is running and follow-ups are queued by default
-      And the native composer has a draft and keyboard focus
-      When the user presses mod+Enter
-      Then the draft is sent as a steer instead of being queued
-
-    @backlog @desktop
-    Scenario: Starting a new thread in the background from the native composer
-      Given a new thread's native composer has a draft and keyboard focus
-      When the user presses mod+alt+Enter
-      Then the thread starts in the background
-      And the composer is empty and ready for another thread
-
-    @backlog @desktop
     Scenario: Thread number shortcuts work in the native desktop shell
       Given the thread list shows at least three threads
       When the user presses mod+3

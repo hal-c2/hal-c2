@@ -10,7 +10,7 @@ import type {
   ScopedThreadRef,
   ServerProviderModel,
 } from "@hal-c2/contracts";
-import type { UnifiedSettings } from "@hal-c2/contracts/settings";
+import type { ClientSettings, UnifiedSettings } from "@hal-c2/contracts/settings";
 import { useMemo, useState } from "react";
 import type { ShellComposerState } from "@hal-c2/contracts/shell";
 
@@ -23,7 +23,7 @@ import {
   normalizeTerminalContextSelection,
   type TerminalContextSelection,
 } from "../lib/terminalContext";
-import { expandCollapsedComposerCursor } from "../composer-logic";
+import { composerEnterIntents, expandCollapsedComposerCursor } from "../composer-logic";
 import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import type { AppModelOption } from "../modelSelection";
 import type { ProviderInstanceEntry } from "../providerInstances";
@@ -70,6 +70,7 @@ export interface ShellComposerBridgeProps {
   readonly sendDisabledReason: string | null;
   readonly phase: SessionPhase;
   readonly followUpBehavior: "queue" | "steer";
+  readonly sendShortcut: ClientSettings["sendShortcut"];
   readonly isSendBusy: boolean;
   readonly isConnecting: boolean;
   readonly environmentUnavailable: boolean;
@@ -140,6 +141,20 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
     ],
   );
 
+  const isRunning = props.phase === "running";
+  const enterIntents = useMemo(
+    () =>
+      composerEnterIntents({
+        keybindings: props.keybindings,
+        platform: navigator.platform,
+        isMobileViewport: false,
+        isDraftThread: props.routeKind === "draft",
+        isRunning,
+        sendShortcut: props.sendShortcut,
+      }),
+    [isRunning, props.keybindings, props.routeKind, props.sendShortcut],
+  );
+
   const state = useMemo(
     () =>
       buildShellComposerState({
@@ -168,6 +183,7 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
         sendDisabledReason: props.sendDisabledReason,
         isRunning: props.phase === "running",
         followUpBehavior: props.followUpBehavior,
+        enterIntents,
         isSendBusy: props.isSendBusy,
         isConnecting: props.isConnecting,
         environmentUnavailable: props.environmentUnavailable,
@@ -184,7 +200,7 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
         interactionMode: props.interactionMode,
         showInteractionModeToggle: props.showInteractionModeToggle,
       }),
-    [optionDescriptors, props],
+    [enterIntents, optionDescriptors, props],
   );
 
   useShellPublish("composer", {

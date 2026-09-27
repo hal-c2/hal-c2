@@ -25,26 +25,6 @@ Feature: Desktop shell gaps: composer
       Then the composer contains "Run the tests"
 
     @backlog @desktop
-    Scenario: mod+alt+Enter sends in the background from the composer
-      Given a new thread's composer has a draft and keyboard focus
-      When the user presses mod+alt+Enter
-      Then the thread starts in the background
-      And the window shortcut does not take the key
-
-    @backlog @desktop
-    Scenario Outline: mod+Enter during a turn does the opposite of the follow-up setting
-      Given follow-ups are set to <setting>
-      And a turn is running
-      And the composer has a draft with keyboard focus
-      When the user presses mod+Enter
-      Then the draft is <result>
-
-      Examples:
-        | setting | result  |
-        | Queue   | steered |
-        | Steer   | queued  |
-
-    @backlog @desktop
     Scenario: mod+shift+E opens the effort picker
       Given the composer has keyboard focus
       When the user presses mod+shift+E

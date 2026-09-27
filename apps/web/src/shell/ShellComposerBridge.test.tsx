@@ -35,6 +35,7 @@ const defaults = {
   sendDisabledReason: null,
   phase: "ready",
   followUpBehavior: "steer",
+  sendShortcut: "enter",
   isSendBusy: false,
   isConnecting: false,
   environmentUnavailable: false,

@@ -49,6 +49,7 @@ export interface ShellComposerStateInput {
   readonly sendDisabledReason: string | null;
   readonly isRunning: boolean;
   readonly followUpBehavior: "queue" | "steer";
+  readonly enterIntents: ShellComposerState["enterIntents"];
   readonly isSendBusy: boolean;
   readonly isConnecting: boolean;
   readonly environmentUnavailable: boolean;
@@ -248,6 +249,7 @@ export function buildShellComposerState(input: ShellComposerStateInput): ShellCo
             : null),
     isRunning: input.isRunning,
     followUpBehavior: input.followUpBehavior,
+    enterIntents: input.enterIntents,
     isSendBusy: input.isSendBusy,
     isConnecting: input.isConnecting,
     pendingApprovalCount: input.pendingApprovalCount,

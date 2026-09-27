@@ -62,6 +62,7 @@ function baseInput() {
     sendDisabledReason: null,
     isRunning: false,
     followUpBehavior: "steer" as const,
+    enterIntents: { singleLine: { "": "foreground" as const }, multiline: {} },
     isSendBusy: false,
     isConnecting: false,
     environmentUnavailable: false,

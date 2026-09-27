@@ -222,6 +222,8 @@ const ShellComposerEdit = Schema.Struct({
   revision: Schema.Number,
 });
 
+export const ShellComposerSubmitIntent = Schema.Literals(["foreground", "background", "alternate"]);
+
 /** Published under the `composer` key while a thread or draft route is open. */
 export const ShellComposerState = Schema.Struct({
   /** `<environmentId>:<threadId>` or a draft id; null between routes. */
@@ -253,6 +255,14 @@ export const ShellComposerState = Schema.Struct({
   isRunning: Schema.Boolean,
   // What a plain send does while `isRunning`: join the turn or wait behind it.
   followUpBehavior: Schema.Literals(["queue", "steer"]),
+  // What Enter does with each set of modifiers held ("ctrl+meta+alt+shift",
+  // in that order, "" for none), for a one-line and a multi-line draft. It
+  // follows the send shortcut setting and the keybindings; a missing entry is
+  // a newline.
+  enterIntents: Schema.Struct({
+    singleLine: Schema.Record(Schema.String, ShellComposerSubmitIntent),
+    multiline: Schema.Record(Schema.String, ShellComposerSubmitIntent),
+  }),
   isSendBusy: Schema.Boolean,
   isConnecting: Schema.Boolean,
   pendingApprovalCount: Schema.Number,
@@ -625,7 +635,7 @@ export const ShellAction = Schema.Union([
     type: Schema.Literal("composer.submit"),
     edit: Schema.optional(ShellComposerEdit),
     text: Schema.optional(Schema.String),
-    intent: Schema.optional(Schema.Literals(["foreground", "background", "alternate"])),
+    intent: Schema.optional(ShellComposerSubmitIntent),
   }),
   Schema.Struct({ type: Schema.Literal("composer.interrupt") }),
   Schema.Struct({

@@ -69,6 +69,40 @@ export function composerSubmissionIntentForKey(input: {
   return "foreground";
 }
 
+const ENTER_MODIFIERS = ["ctrl", "meta", "alt", "shift"] as const;
+
+/**
+ * What Enter submits for every set of modifiers held, keyed by the held
+ * modifiers joined in `ENTER_MODIFIERS` order ("" for none), for a one-line
+ * and a multi-line draft. Lets a composer outside the page (the Qt shell's)
+ * follow the page's send shortcut and keybindings; a missing entry is a
+ * newline.
+ */
+export function composerEnterIntents(
+  input: Omit<Parameters<typeof composerSubmissionIntentForKey>[0], "event" | "prompt">,
+) {
+  const table = (prompt: string) => {
+    const intents: Record<string, ComposerSubmissionIntent> = {};
+    for (let mask = 0; mask < 1 << ENTER_MODIFIERS.length; mask++) {
+      const held = ENTER_MODIFIERS.filter((_, bit) => mask & (1 << bit));
+      const intent = composerSubmissionIntentForKey({
+        ...input,
+        prompt,
+        event: {
+          key: "Enter",
+          ctrlKey: held.includes("ctrl"),
+          metaKey: held.includes("meta"),
+          altKey: held.includes("alt"),
+          shiftKey: held.includes("shift"),
+        },
+      });
+      if (intent) intents[held.join("+")] = intent;
+    }
+    return intents;
+  };
+  return { singleLine: table(""), multiline: table("\n") };
+}
+
 const isInlineTokenSegment = (segment: ComposerPromptSegment): boolean => segment.type !== "text";
 
 function clampCursor(text: string, cursor: number): number {
