@@ -2,6 +2,7 @@
 #   /home/olafura/dev/opentui-qml src/runtime/plugins.ts (listPlugins, unregisterPlugin)
 #   apps/server-ex/lib/hal_c2/acp/catalog.ex (registry search, install, checksums, uninstall refused while referenced)
 #   apps/server-ex/lib/hal_c2/usage_limit_sources.ex (secrets sealed in the node, marker shown to clients)
+#   apps/server-ex/lib/hal_c2/plugins.ex (plugins.list per environment, permissions with their grant)
 #   apps/web/src/components/settings/AcpRegistrySearchStep.tsx (search, Add, Added)
 #   packages/contracts/src/rpc.ts (server.searchAcpRegistry, server.prepareAcpRegistryAgent, server.uninstallAcpRegistryManagedBinary)
 
@@ -56,11 +57,17 @@ Feature: Plugin catalog
     When the user opens the plugin list
     Then each plugin shows its version and where it came from
 
-  @backlog @node @desktop @mobile
+  @node
   Scenario: The node's plugins are listed per environment
     Given two environments with different node plugins
     When the user opens the plugin list for the second environment
     Then only that environment's node plugins are listed
+
+  @backlog @desktop @mobile
+  Scenario: The plugin list has a section for each environment's node plugins
+    Given two environments with different node plugins
+    When the user opens the plugin list
+    Then each environment's node plugins are listed under that environment
 
   @backlog @desktop @mobile @tui
   Scenario: An available update is shown next to the installed version
@@ -146,11 +153,17 @@ Feature: Plugin catalog
     When the user revokes that permission
     Then "team-status" can no longer reach the network
 
-  @backlog @node @desktop @mobile
-  Scenario: Node plugins show the permissions they were granted on that environment
+  @node
+  Scenario: Node plugins report the permissions they were granted on that environment
     Given the node plugin "gitea" was granted access to project remotes
     When the user opens "gitea" in the plugin list
     Then the granted permissions are shown
+
+  @backlog @desktop @mobile
+  Scenario: The plugin list shows a node plugin's granted permissions
+    Given the node plugin "gitea" was granted access to project remotes
+    When the user opens "gitea" in the plugin list
+    Then "Read project remotes" is shown as granted
 
   @backlog @desktop @mobile @tui
   Scenario: Removing a plugin from the catalog deletes it and its settings
