@@ -324,7 +324,102 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  # --- limit recovery ------------------------------------------------------------------
+  # The fake Claude stops on a usage limit resetting at the epoch its message names; the
+  # recovery sweep (`HalC2.Orchestration.LimitRecovery`) runs with the clock a step names.
+
+  step ~r/^the latest run of "(?<thread>[^"]+)" failed on a usage limit that resets at (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, time]} = context do
+    reset = next_clock(time)
+
+    context =
+      context
+      |> World.agents()
+      |> World.create_thread(thread, nil, %{
+        "modelSelection" => %{"instanceId" => "claudeAgent", "model" => "claude-haiku-4-5"}
+      })
+
+    {{:ok, _}, context} =
+      World.send_message(context, thread, "usage limit until #{div(reset, 1000)}")
+
+    World.await_runs(context, thread, ["failed"])
+    World.await_row(World.thread_id(context, thread), &(&1["lastErrorClass"] == "usage_limit"))
+    Map.merge(context, %{thread: thread, limit_reset: reset})
+  end
+
+  step "{string} records a limit recovery with auto-resume for that run and reset",
+       %{args: [thread]} = context do
+    row = World.row(context, thread)
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "thread.metadata.update",
+        "threadId" => row["id"],
+        "limitRecovery" => %{
+          "runId" => row["latestRunId"],
+          "resetAt" => row["usageLimitResetAt"],
+          "autoResume" => true
+        }
+      })
+
+    World.await_row(row["id"], &(&1["limitRecovery"]["autoResume"] == true))
+    Map.put(context, :failed_run, row["latestRunId"])
+  end
+
+  step ~r/^(?<time>\d{1,2}:\d{2}) passes$/, %{args: [time]} = context do
+    at = next_clock(time)
+    assert at == context.limit_reset
+    # Nothing is sent a moment before the reset.
+    assert resumes(context, context.thread, at - 1) == []
+    Map.put(context, :resumed, resumes(context, context.thread, at))
+  end
+
+  step "the engine continues {string} once, without a new message from the user",
+       %{args: [thread]} = context do
+    run_id = context.failed_run
+    assert [%{"usageLimitContinuationOfRunId" => ^run_id}] = context.resumed
+
+    state =
+      World.await_thread(context, thread, fn state ->
+        state |> HalC2.StreamState.list("run") |> length() == 2
+      end)
+
+    # The continuation is the server's, not a message the user typed.
+    assert [_first, %{"text" => @continuation}] =
+             state
+             |> HalC2.StreamState.list("message")
+             |> Enum.filter(&(&1["role"] == "user"))
+             |> Enum.sort_by(& &1["createdAt"])
+
+    # A later sweep sends nothing more.
+    assert resumes(context, thread, context.limit_reset + 60_000) == []
+    context
+  end
+
   # --- helpers -----------------------------------------------------------------------
+
+  # The continuation messages a recovery sweep at `at` sends to the thread.
+  defp resumes(context, thread, at) do
+    id = World.thread_id(context, thread)
+
+    for %{"type" => "message.dispatch", "threadId" => ^id} = command <-
+          HalC2.Orchestration.LimitRecovery.sweep(at),
+        do: command
+  end
+
+  # The next time the wall clock (UTC) shows `time`, at least a minute ahead.
+  defp next_clock(time) do
+    [hour, minute] = time |> String.split(":") |> Enum.map(&String.to_integer/1)
+
+    today =
+      Date.utc_today()
+      |> DateTime.new!(Time.new!(hour, minute, 0))
+      |> DateTime.to_unix(:millisecond)
+
+    if today > System.system_time(:millisecond) + 60_000,
+      do: today,
+      else: today + 24 * 60 * 60 * 1_000
+  end
 
   defp item(type, id, fields), do: %{"item" => Map.merge(%{"type" => type, "id" => id}, fields)}
 
