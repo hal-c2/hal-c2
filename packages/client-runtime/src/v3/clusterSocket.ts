@@ -16,9 +16,12 @@ export type StreamShape = {
   readonly node: string;
   readonly stream: string;
 };
-export type ConfigShape =
+// `usageLimitsCommand`: the client answers `/usage-limits` itself, so providers with
+// limits offer it.
+export type ConfigShape = (
   | { readonly type: "config"; readonly node: string }
-  | { readonly type: "config"; readonly environment: string };
+  | { readonly type: "config"; readonly environment: string }
+) & { readonly usageLimitsCommand?: true };
 export type TerminalShape = {
   readonly type: "terminal";
   readonly node: string;

@@ -389,10 +389,15 @@ export function makeV3Session(input: {
     const serverConfig = (request: {
       readonly environmentThemes?: boolean | undefined;
       readonly usageLimitSources?: boolean | undefined;
+      readonly usageLimitsCommand?: boolean | undefined;
     }) =>
       shapeStream(
         socket,
-        { type: "config", node },
+        {
+          type: "config",
+          node,
+          ...(request.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+        },
         (frame): ReadonlyArray<ServerConfigStreamEvent> => {
           if (frame.t === "config")
             return [
