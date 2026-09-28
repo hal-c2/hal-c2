@@ -11,6 +11,7 @@
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ToastController.h"
+#include "WorkspaceController.h"
 
 namespace {
 
@@ -291,14 +292,15 @@ TerminalController::TerminalController(ShellBridge* bridge, NodeClient* client, 
                                        QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_tabs(this) {
   connect(store, &ShellStore::changed, this, &TerminalController::refresh);
-  connect(bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key) {
-    if (key == QLatin1String("workspace")) refresh();
-  });
 }
 
 void TerminalController::activate() {
   if (m_active) return;
   m_active = true;
+  // Built after this one ("terminals" < "workspace"), so found here.
+  if (auto* workspace = NativeShell::of(this)->controller<WorkspaceController>()) {
+    connect(workspace, &WorkspaceController::placeChanged, this, &TerminalController::refresh);
+  }
   refresh();
 }
 
@@ -345,45 +347,37 @@ bool TerminalController::handle(const QString& action, const QVariant& payload) 
     if (terminalIds().contains(terminalId)) closeTerminal(terminalId);
     return true;
   }
-  if (action == QLatin1String("workspace.runScript")) {
-    if (!m_place) return false;
-    runScript(args.value(QStringLiteral("scriptId")).toString());
-    return true;
-  }
   return false;
 }
 
-// Where the page's thread (a draft too) runs its terminals, from what the page
-// resolved for its header: the thread, its project root, worktree and scripts.
-std::optional<TerminalPlace> TerminalController::placeFor(const QVariantMap& workspace) const {
-  if (!workspace.value(QStringLiteral("terminalAvailable")).toBool()) return std::nullopt;
-  const QString threadKey = workspace.value(QStringLiteral("threadKey")).toString();
-  const qsizetype colon = threadKey.indexOf(QLatin1Char(':'));
-  const QString root = workspace.value(QStringLiteral("projectRoot")).toString();
-  if (colon <= 0 || root.isEmpty()) return std::nullopt;
+// Where the route's thread (a draft too) runs its terminals: its project root,
+// worktree and scripts, on an environment the node reaches.
+std::optional<TerminalPlace> TerminalController::placeOfWorkspace() const {
+  auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
+  if (!workspace || !workspace->place()) return std::nullopt;
+  const WorkspaceController::Place& at = *workspace->place();
+  if (at.root.isEmpty() || at.threadId.isEmpty() || !m_store->reaches(at.environmentId)) return std::nullopt;
   TerminalPlace place;
-  place.environmentId = threadKey.left(colon);
-  place.threadId = threadKey.mid(colon + 1);
-  if (!m_store->reaches(place.environmentId) || place.threadId.isEmpty()) return std::nullopt;
-  place.worktreePath = workspace.value(QStringLiteral("worktreePath")).toString();
-  place.cwd = place.worktreePath.isEmpty() ? root : place.worktreePath;
+  place.environmentId = at.environmentId;
+  place.threadId = at.threadId;
+  place.worktreePath = at.worktreePath;
+  place.cwd = at.cwd();
   // packages/shared projectScriptRuntimeEnv; T3CODE_ is what older scripts read.
   place.env = {
-      {QStringLiteral("HAL_C2_PROJECT_ROOT"), root},
-      {QStringLiteral("T3CODE_PROJECT_ROOT"), root},
+      {QStringLiteral("HAL_C2_PROJECT_ROOT"), at.root},
+      {QStringLiteral("T3CODE_PROJECT_ROOT"), at.root},
   };
   if (!place.worktreePath.isEmpty()) {
     place.env.insert(QStringLiteral("HAL_C2_WORKTREE_PATH"), place.worktreePath);
     place.env.insert(QStringLiteral("T3CODE_WORKTREE_PATH"), place.worktreePath);
   }
-  place.scripts = QJsonArray::fromVariantList(workspace.value(QStringLiteral("scripts")).toList());
+  place.scripts = at.scripts;
   return place;
 }
 
 void TerminalController::refresh() {
   if (!m_active) return;
-  const QVariantMap workspace = m_bridge->state()->value(QStringLiteral("workspace")).toMap();
-  auto place = placeFor(workspace);
+  auto place = placeOfWorkspace();
   const QString threadKey = place ? place->environmentId + QLatin1Char(':') + place->threadId : QString();
   if (place) watch(place->environmentId);
   // Another thread, or the same one launching elsewhere: start over.
@@ -541,14 +535,13 @@ void TerminalController::closeTerminal(const QString& terminalId) {
   if (ui.open) emit focusRequested();
 }
 
-// As the page's runProjectScript: in the active terminal, or a new one when
-// that one is busy running something.
-void TerminalController::runScript(const QString& scriptId) {
+bool TerminalController::runScript(const QString& scriptId) {
+  if (!m_active || !m_place) return false;
   QJsonObject script;
   for (const QJsonValue& value : std::as_const(m_place->scripts)) {
     if (value.toObject().value(QLatin1String("id")).toString() == scriptId) script = value.toObject();
   }
-  if (script.isEmpty()) return;
+  if (script.isEmpty()) return false;
   const QString name = script.value(QLatin1String("name")).toString();
   const QStringList ids = terminalIds();
   const QString active = activeTerminalId();
@@ -556,7 +549,7 @@ void TerminalController::runScript(const QString& scriptId) {
   if (m_known.value(m_threadKey).value(terminalId).busy) {
     if (ids.size() >= maxTerminals) {
       toast(QStringLiteral("At most %1 terminals per thread.").arg(maxTerminals), QString());
-      return;
+      return true;
     }
     terminalId = nextTerminalId();
   }
@@ -593,6 +586,7 @@ void TerminalController::runScript(const QString& scriptId) {
                                     if (error) toast(failed, *error);
                                   });
                  });
+  return true;
 }
 
 // The lowest free `term-N`, as packages/shared nextTerminalId; ids still

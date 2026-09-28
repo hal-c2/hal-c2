@@ -16,6 +16,7 @@
 #include "NativeShell.h"
 #include "ShellBridge.h"
 #include "ThemeStore.h"
+#include "WorkspaceController.h"
 
 struct PageAction {
   QString type;
@@ -61,9 +62,6 @@ public:
   void startNewThread(const QVariantMap& payload);
   // The key of the sidebar's project named `name`; `name` itself when none is.
   QString projectKey(const QString& name) const;
-  // What the page's header shows for a thread (ShellWorkspaceState), from the
-  // node's project; a thread whose project the node does not know has none.
-  void publishWorkspace(const QString& threadKey, const QJsonObject& project, const QString& worktreePath, bool draft);
   void publishComposer() { m_bridge->publish(QStringLiteral("composer"), composer); }
   // The page reports that its own navigation took it to `route` (`route.open`).
   void pageOpens(const QVariantMap& route, bool replace = false);

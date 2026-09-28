@@ -209,6 +209,10 @@ const QStringList kDefaultGlobs{
     QStringLiteral("files/removing-and-listing-projects.feature:Confirming removal*"),
     QStringLiteral("files/removing-and-listing-projects.feature:Cancelling removal*"),
     QStringLiteral("files/removing-and-listing-projects.feature:A removal the environment refuses*"),
+    QStringLiteral("threads/titles.feature"),
+    QStringLiteral("source-control/refs-and-branches.feature"),
+    QStringLiteral("source-control/worktrees-and-setup-scripts.feature"),
+    QStringLiteral("files/project-scripts-and-actions.feature"),
 };
 
 QRegularExpression wildcard(const QString& glob) {

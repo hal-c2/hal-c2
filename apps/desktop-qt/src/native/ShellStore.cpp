@@ -96,6 +96,52 @@ std::optional<sidebar::Thread> ShellStore::thread(const QString& key) const {
   return std::nullopt;
 }
 
+QJsonObject ShellStore::threadRow(const QString& key) const {
+  const qsizetype colon = key.indexOf(QLatin1Char(':'));
+  if (colon <= 0) return {};
+  const QString environmentId = key.left(colon);
+  for (const Node& node : m_nodes) {
+    if (node.environmentId == environmentId) return node.threads.value(key.mid(colon + 1));
+  }
+  return {};
+}
+
+QJsonObject ShellStore::projectRow(const QString& environmentId, const QString& projectId) const {
+  for (const Node& node : m_nodes) {
+    if (node.environmentId == environmentId) return node.projects.value(projectId);
+  }
+  return {};
+}
+
+QList<QJsonObject> ShellStore::projectRows(const QString& environmentId) const {
+  for (const Node& node : m_nodes) {
+    if (node.environmentId == environmentId) return node.projects.values();
+  }
+  return {};
+}
+
+QStringList ShellStore::environments() const {
+  QStringList result;
+  for (const Node& node : m_nodes) {
+    if (!node.environmentId.isEmpty()) result.append(node.environmentId);
+  }
+  return result;
+}
+
+QJsonObject ShellStore::environment(const QString& environmentId) const {
+  for (const Node& node : m_nodes) {
+    if (node.environmentId == environmentId) return node.environment;
+  }
+  return {};
+}
+
+QString ShellStore::nodeServing(const QString& environmentId) const {
+  for (auto it = m_nodes.cbegin(); it != m_nodes.cend(); ++it) {
+    if (it->environmentId == environmentId) return it.key();
+  }
+  return {};
+}
+
 QString ShellStore::nodeOf(const QString& threadKey) const {
   const qsizetype colon = threadKey.indexOf(QLatin1Char(':'));
   if (colon <= 0) return {};
@@ -121,6 +167,7 @@ void ShellStore::setEnvironment(const QString& node, const QJsonObject& environm
   Node& entry = m_nodes[node];
   entry.environmentId = environment.value(QLatin1String("environmentId")).toString();
   entry.capabilities = environment.value(QLatin1String("capabilities")).toObject();
+  entry.environment = environment;
 }
 
 void ShellStore::onFrame(const QJsonObject& frame) {
