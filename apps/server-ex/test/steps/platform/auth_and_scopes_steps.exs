@@ -46,6 +46,13 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     session.id
   end
 
+  # An RPC from the administrator's socket that must succeed: `{result, context}`.
+  defp admin_call!(context, method, payload \\ %{}) do
+    {reply, context} = World.call(context, method, payload, "admin")
+    assert {:ok, result} = reply
+    {result, context}
+  end
+
   # A socket opened the way clients open one: a ticket bought with the session.
   defp socket!(context, access) do
     assert {200, _, %{"ticket" => ticket}} =
@@ -797,6 +804,109 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   step "the node reports how many it revoked", context do
     assert {200, _, %{"revokedCount" => 2}} = context.response
+    context
+  end
+
+  # --- access over the socket ------------------------------------------------------
+
+  step ~r/^it calls (?<method>hal-c2\.\w+) on the node$/, %{args: [method]} = context do
+    {reply, context} = World.call(context, method, %{}, "device")
+    Map.put(context, :refusal, reply)
+  end
+
+  step ~r/^only that call fails saying (?<scope>\S+) is required$/, %{args: [scope]} = context do
+    assert {:error, "#{scope} is required",
+            %{"_tag" => "EnvironmentScopeRequiredError", "requiredScope" => scope}} ==
+             context.refusal
+
+    context
+  end
+
+  step "an administrator's socket", context do
+    access = admin!(context)
+
+    context
+    |> World.put_client("admin", socket!(context, access))
+    |> Map.put(:admin, access)
+  end
+
+  step ~r/^it creates a pairing link labelled "(?<label>[^"]+)" through hal-c2.createPairingLink$/,
+       %{args: [label]} = context do
+    payload = %{"label" => label, "scopes" => ["orchestration:read"]}
+    {link, context} = admin_call!(context, "hal-c2.createPairingLink", payload)
+    assert %{"id" => _, "credential" => _, "label" => ^label, "expiresAt" => _} = link
+    Map.merge(context, %{link: link, token: link["credential"]})
+  end
+
+  step "hal-c2.pairingLinks lists the link without its credential", context do
+    {links, context} = admin_call!(context, "hal-c2.pairingLinks")
+    id = context.link["id"]
+
+    assert [%{"label" => "Tablet", "scopes" => ["orchestration:read"]}] =
+             for(%{"id" => ^id} = l <- links, do: l)
+
+    refute JSON.encode!(links) =~ context.link["credential"]
+    context
+  end
+
+  step "it revokes the link through hal-c2.revokePairingLink", context do
+    payload = %{"id" => context.link["id"]}
+
+    assert {%{"revoked" => true}, context} =
+             admin_call!(context, "hal-c2.revokePairingLink", payload)
+
+    context
+  end
+
+  step "hal-c2.pairingLinks no longer lists it", context do
+    {links, context} = admin_call!(context, "hal-c2.pairingLinks")
+    refute Enum.any?(links, &(&1["id"] == context.link["id"]))
+    context
+  end
+
+  step "two other paired clients", context do
+    Map.put(context, :others, [standard!(context), standard!(context)])
+  end
+
+  step "hal-c2.clients marks the administrator's own session as current", context do
+    {clients, context} = admin_call!(context, "hal-c2.clients")
+    own = session_id(context.admin)
+    assert [%{"sessionId" => ^own}] = Enum.filter(clients, & &1["current"])
+    assert length(clients) == 3
+    context
+  end
+
+  step "hal-c2.revokeClient refuses the administrator's own session", context do
+    payload = %{"sessionId" => session_id(context.admin)}
+    {reply, context} = World.call(context, "hal-c2.revokeClient", payload, "admin")
+
+    assert {:error, _,
+            %{
+              "_tag" => "EnvironmentOperationForbiddenError",
+              "reason" => "current_session_revoke_not_allowed"
+            }} = reply
+
+    assert {:ok, _} = HalC2.Auth.session(context.admin)
+    context
+  end
+
+  step "it revokes one of the others through hal-c2.revokeClient", context do
+    [first, _] = context.others
+    payload = %{"sessionId" => session_id(first)}
+    assert {%{"revoked" => true}, context} = admin_call!(context, "hal-c2.revokeClient", payload)
+    assert HalC2.Auth.session(first) == :error
+    context
+  end
+
+  step "it revokes every other client through hal-c2.revokeOtherClients", context do
+    assert {%{"revokedCount" => 1}, context} = admin_call!(context, "hal-c2.revokeOtherClients")
+    context
+  end
+
+  step "hal-c2.clients lists only the administrator's session", context do
+    {clients, context} = admin_call!(context, "hal-c2.clients")
+    own = session_id(context.admin)
+    assert [%{"sessionId" => ^own, "current" => true}] = clients
     context
   end
 

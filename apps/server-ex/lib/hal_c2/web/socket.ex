@@ -502,10 +502,16 @@ defmodule HalC2.Web.Socket do
             {:ok, nil}
 
           node ->
+            # The paired-clients methods answer for this socket's session.
+            args =
+              if method in HalC2.Rpc.session_methods(),
+                do: [method, payload || %{}, state.session],
+                else: [method, payload || %{}]
+
             try do
               # Each call runs in its own task; some (a provider update, a
               # scheduled task run) take minutes.
-              :erpc.call(node, HalC2.Rpc, :handle, [method, payload || %{}], timeout)
+              :erpc.call(node, HalC2.Rpc, :handle, args, timeout)
             catch
               :error, {:erpc, :timeout} -> {:error, "#{method} timed out"}
               :error, {:erpc, reason} -> {:error, "node unavailable: #{reason}"}

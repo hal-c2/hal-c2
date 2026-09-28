@@ -135,6 +135,35 @@ defmodule HalC2.Steps.Parity.Rpc do
     context
   end
 
+  step "the node answers with a pairing link and its credential", context do
+    {:rpc, _, {:ok, link}} = context.answer
+    assert %{"id" => _, "credential" => _, "label" => "Parity", "expiresAt" => _} = link
+    context
+  end
+
+  step "the node answers with the pairing links without their credentials", context do
+    {:rpc, _, {:ok, links}} = context.answer
+    assert is_list(links) and Enum.all?(links, &(not Map.has_key?(&1, "credential")))
+    context
+  end
+
+  step ~r/^the node answers with whether the (?:link|client) was revoked$/, context do
+    {:rpc, _, {:ok, %{"revoked" => false}}} = context.answer
+    context
+  end
+
+  step "the node answers with the paired clients, the caller's own marked current", context do
+    {:rpc, _, {:ok, clients}} = context.answer
+    assert [%{"sessionId" => _, "connected" => true}] = Enum.filter(clients, & &1["current"])
+    context
+  end
+
+  step "the node answers with how many other clients it revoked", context do
+    {:rpc, _, {:ok, %{"revokedCount" => count}}} = context.answer
+    assert is_integer(count)
+    context
+  end
+
   defp rpc(context, method, name) do
     {payload, context} = Fixtures.payload(context, name)
     {reply, context} = World.call(context, name, payload)
@@ -260,6 +289,15 @@ defmodule HalC2.Steps.Parity.Fixtures do
 
       "server.removeKeybinding" ->
         {keybinding(), with_keybinding(context)}
+
+      "hal-c2.createPairingLink" ->
+        {%{"label" => "Parity", "scopes" => HalC2.Auth.standard_scopes()}, context}
+
+      "hal-c2.revokePairingLink" ->
+        {%{"id" => "pairing-missing"}, context}
+
+      "hal-c2.revokeClient" ->
+        {%{"sessionId" => "session-missing"}, context}
 
       "server.searchAcpRegistry" ->
         {%{"query" => ""}, registry(context)}

@@ -126,6 +126,65 @@ defmodule HalC2.AuthTest do
     assert {200, %{"authenticated" => false}} = request(:get, base <> "/api/auth/session", phone)
   end
 
+  test "an administrator manages pairing links and clients over the socket, as over HTTP",
+       %{port: port} do
+    admin_scopes = HalC2.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
+    {admin, admin_session} = paired_socket(port, admin_scopes, "Admin")
+    {phone, phone_session} = paired_socket(port, HalC2.Auth.standard_scopes(), "Phone")
+
+    # A standard session is refused before anything runs.
+    for {method, scope} <- [
+          {"hal-c2.createPairingLink", "access:write"},
+          {"hal-c2.pairingLinks", "access:read"},
+          {"hal-c2.revokePairingLink", "access:write"},
+          {"hal-c2.clients", "access:read"},
+          {"hal-c2.revokeClient", "access:write"},
+          {"hal-c2.revokeOtherClients", "access:write"}
+        ],
+        reduce: phone do
+      phone ->
+        {reply, phone} = call(phone, method, %{})
+        assert {:error, %{"_tag" => "EnvironmentScopeRequiredError"} = detail} = reply
+        assert detail["requiredScope"] == scope
+        phone
+    end
+
+    input = %{"label" => "Tablet", "scopes" => ["orchestration:read", "not-a-scope"]}
+    {{:ok, link}, admin} = call(admin, "hal-c2.createPairingLink", input)
+    assert %{"id" => link_id, "credential" => credential, "label" => "Tablet"} = link
+    assert Enum.sort(Map.keys(link)) == ~w(credential expiresAt id label)
+
+    {{:ok, [listed]}, admin} = call(admin, "hal-c2.pairingLinks", %{})
+    assert %{"id" => ^link_id, "scopes" => ["orchestration:read"]} = listed
+    refute Map.has_key?(listed, "credential")
+
+    {reply, admin} = call(admin, "hal-c2.revokePairingLink", %{"id" => link_id})
+    assert {:ok, %{"revoked" => true}} = reply
+    {{:ok, []}, admin} = call(admin, "hal-c2.pairingLinks", %{})
+    refute match?({:ok, _, _, _}, HalC2.Auth.exchange(credential, %{"label" => "Tablet"}))
+
+    {{:ok, clients}, admin} = call(admin, "hal-c2.clients", %{})
+    assert [^admin_session] = for(%{"current" => true} = c <- clients, do: c["sessionId"])
+    assert Enum.any?(clients, &(&1["sessionId"] == phone_session))
+
+    {reply, admin} = call(admin, "hal-c2.revokeClient", %{"sessionId" => admin_session})
+
+    assert {:error,
+            %{
+              "_tag" => "EnvironmentOperationForbiddenError",
+              "reason" => "current_session_revoke_not_allowed"
+            }} = reply
+
+    {_laptop, laptop_session} = paired_socket(port, HalC2.Auth.standard_scopes(), "Laptop")
+    {reply, admin} = call(admin, "hal-c2.revokeClient", %{"sessionId" => laptop_session})
+    assert {:ok, %{"revoked" => true}} = reply
+
+    # The phone is the only other session left.
+    {reply, admin} = call(admin, "hal-c2.revokeOtherClients", %{})
+    assert {:ok, %{"revokedCount" => 1}} = reply
+    assert {{:ok, [%{"sessionId" => ^admin_session}]}, _} = call(admin, "hal-c2.clients", %{})
+  end
+
   test "a desktop bootstrap line sets where the node listens and keeps its state" do
     previous = for key <- [:home, :port, :host], do: {key, Application.fetch_env(:hal_c2, key)}
 
@@ -162,6 +221,40 @@ defmodule HalC2.AuthTest do
   test "a pairing link opened in a browser explains where to paste it", %{port: port} do
     {:ok, {{_, 200, _}, _, body}} = :httpc.request(~c"http://127.0.0.1:#{port}/?token=abc")
     assert :binary.list_to_bin(body) =~ "Settings → Connections"
+  end
+
+  # A socket opened with a ticket from a session paired with `scopes`, and that session's id.
+  defp paired_socket(port, scopes, label) do
+    {:ok, %{"credential" => credential}} =
+      HalC2.Auth.create_pairing_link(%{"label" => label, "scopes" => scopes})
+
+    {:ok, access, _expires, _scopes} = HalC2.Auth.exchange(credential, %{"label" => label})
+    {:ok, session} = HalC2.Auth.session(access)
+    {:ok, ticket, _} = HalC2.Auth.issue_ticket(access)
+    {:ok, client} = WsClient.connect(port, "/ws?wsTicket=#{ticket}")
+    {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
+    {client, session.id}
+  end
+
+  # One RPC on this node's environment: `{:ok, result}` or `{:error, detail or message}`,
+  # and the client.
+  defp call(client, method, payload) do
+    id = System.unique_integer([:positive])
+    frame = %{"t" => "rpc", "id" => id, "environment" => HalC2.Environment.id()}
+
+    client =
+      WsClient.send_json(client, Map.merge(frame, %{"method" => method, "payload" => payload}))
+
+    {frame, _, client} = WsClient.recv_until(client, &(&1["id"] == id and &1["t"] =~ "rpc."))
+
+    reply =
+      case frame do
+        %{"t" => "rpc.result", "result" => result} -> {:ok, result}
+        %{"t" => "rpc.error", "detail" => detail} -> {:error, detail}
+        %{"t" => "rpc.error", "error" => error} -> {:error, error}
+      end
+
+    {reply, client}
   end
 
   defp post_form(url, form) do
