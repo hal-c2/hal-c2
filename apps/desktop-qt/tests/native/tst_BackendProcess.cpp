@@ -43,6 +43,32 @@ private slots:
              QStringLiteral("Cannot reach the node at http://127.0.0.1:1"));
   }
 
+  void theNodeTheHostStartedReachesTheShellsOwnClient() {
+    BackendProcess backend(host(
+        "echo '{\"type\":\"ready\",\"url\":\"http://127.0.0.1:5/pair\",\"node\":{\"origin\":\"http://127.0.0.1:6\",\"token\":\"secret\"}}'\n"
+        "sleep 5\n"));
+    QSignalSpy node(&backend, &BackendProcess::nodeAvailable);
+    QSignalSpy ready(&backend, &BackendProcess::ready);
+    backend.start();
+    QTRY_COMPARE(ready.size(), 1);
+    QCOMPARE(node.size(), 1);
+    QCOMPARE(node.first().at(0).toUrl(), QUrl(QStringLiteral("http://127.0.0.1:6")));
+    QCOMPARE(node.first().at(1).toString(), QStringLiteral("secret"));
+    backend.stop();
+  }
+
+  void anAttachedHostGivesTheShellNoNode() {
+    BackendProcess backend(host(
+        "echo '{\"type\":\"ready\",\"url\":\"http://127.0.0.1:5/\"}'\n"
+        "sleep 5\n"));
+    QSignalSpy node(&backend, &BackendProcess::nodeAvailable);
+    QSignalSpy ready(&backend, &BackendProcess::ready);
+    backend.start();
+    QTRY_COMPARE(ready.size(), 1);
+    QCOMPARE(node.size(), 0);
+    backend.stop();
+  }
+
   void aHostThatExitsSilentlySaysSo() {
     BackendProcess backend(host("exit 3\n"));
     QSignalSpy failed(&backend, &BackendProcess::failed);

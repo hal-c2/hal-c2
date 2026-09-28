@@ -31,6 +31,12 @@ Feature: The desktop app runs its own node
       And the user is not asked to pair
 
     @desktop
+    Scenario: The desktop's own client is given the node and its access token
+      When the user starts the desktop app
+      Then the shell is told the desktop node's address and the node's own access token
+      And that token is not the bootstrap token the app pairs with
+
+    @desktop
     Scenario: The app is served from this machine, not by the node
       When the user starts the desktop app
       Then the app's pages come from a loopback address on this machine

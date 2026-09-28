@@ -10,7 +10,10 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+
+import { resolveHalC2Dirs } from "@hal-c2/shared/xdgDirs";
 
 import { HostError } from "./hostError.ts";
 
@@ -85,6 +88,44 @@ export async function nodePort(env: NodeJS.ProcessEnv): Promise<number> {
   throw new HostError(
     `No free port for the node in ${DEFAULT_NODE_PORT}-${DEFAULT_NODE_PORT + PORT_SCAN - 1}. Set HAL_C2_NODE_PORT.`,
   );
+}
+
+/**
+ * The node's data directory, resolved the way `HalC2.Paths` resolves it for this
+ * launch: the desktop's HAL-C2 home, `HAL_C2_NODE_HOME`, a checkout's own
+ * `.hal-c2` (config/config.exs), else HAL-C2's XDG data directory.
+ */
+export function nodeDataDir(input: {
+  readonly launch: NodeLaunch;
+  readonly home: string | undefined;
+  readonly env: NodeJS.ProcessEnv;
+  readonly homeDir?: string;
+}): string {
+  if (input.home !== undefined) return NodePath.join(input.home, "data", "elixir");
+  const nodeHome = input.env.HAL_C2_NODE_HOME?.trim();
+  if (nodeHome) return NodePath.join(nodeHome, "data");
+  if (input.launch.cwd !== undefined) {
+    return NodePath.resolve(input.launch.cwd, "../..", ".hal-c2", "data", "elixir");
+  }
+  const dirs = resolveHalC2Dirs({
+    env: input.env,
+    homeDir: input.homeDir ?? NodeOS.homedir(),
+    platform: process.platform,
+  });
+  return NodePath.join(dirs.data, "elixir");
+}
+
+/**
+ * The node's own access token (`HalC2.Web.token/0`, written at boot), which the
+ * shell's native client puts on its socket. Undefined when the file is not there.
+ */
+export function readAccessToken(dataDir: string): string | undefined {
+  try {
+    const token = NodeFS.readFileSync(NodePath.join(dataDir, "access-token"), "utf8").trim();
+    return token === "" ? undefined : token;
+  } catch {
+    return undefined;
+  }
 }
 
 export interface NodeExit {

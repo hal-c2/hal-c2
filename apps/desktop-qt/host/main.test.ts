@@ -42,6 +42,14 @@ if (process.env.FAKE_NODE_FAIL) {
 }
 const home = bootstrap.halC2Home ?? dir;
 fs.mkdirSync(home, { recursive: true });
+// HalC2.Web writes its access token at boot, under the home or the XDG data directory.
+// The tests always point XDG_DATA_HOME at a temporary directory.
+const dataDir = bootstrap.halC2Home
+  ? path.join(home, "data", "elixir")
+  : path.join(process.env.XDG_DATA_HOME ?? dir, "hal-c2", "elixir");
+fs.mkdirSync(dataDir, { recursive: true });
+if (!fs.existsSync(path.join(dataDir, "access-token")))
+  fs.writeFileSync(path.join(dataDir, "access-token"), "node-access-" + Math.random().toString(36).slice(2) + "\n");
 const idFile = path.join(home, "environment-id");
 if (!fs.existsSync(idFile)) fs.writeFileSync(idFile, "env-" + Math.random().toString(36).slice(2));
 const environmentId = fs.readFileSync(idFile, "utf8");
@@ -148,7 +156,11 @@ async function occupy(port = 0): Promise<number | undefined> {
 }
 
 type HostMessage =
-  | { readonly type: "ready"; readonly url: string }
+  | {
+      readonly type: "ready";
+      readonly url: string;
+      readonly node?: { readonly origin: string; readonly token: string };
+    }
   | { readonly type: "error"; readonly message: string }
   | { readonly type: "exit"; readonly code: number | null };
 
@@ -169,6 +181,10 @@ function startHost(input: {
       ...process.env,
       HAL_C2_NODE_PORT: undefined,
       HAL_C2_WEB_PORT: undefined,
+      HAL_C2_HOME: undefined,
+      HAL_C2_NODE_HOME: undefined,
+      // Never the user's own data directory.
+      XDG_DATA_HOME: temporaryDirectory(),
       HAL_C2_NODE_RELEASE: undefined,
       HAL_C2_WEB_DIST: undefined,
       ...input.env,
@@ -193,10 +209,14 @@ function startHost(input: {
   };
 }
 
-async function ready(host: Host): Promise<URL> {
+async function readyMessage(host: Host) {
   const message = await host.message;
   if (message.type !== "ready") throw new Error(`expected ready, got ${JSON.stringify(message)}`);
-  return new URL(message.url);
+  return message;
+}
+
+async function ready(host: Host): Promise<URL> {
+  return new URL((await readyMessage(host)).url);
 }
 
 async function errorMessage(host: Host): Promise<string> {
@@ -258,7 +278,7 @@ async function runningNode() {
   const port = await freePort();
   const child = NodeChildProcess.spawn(NodePath.join(release, "bin/hal_c2"), ["start"], {
     // oxlint-disable-next-line hal-c2/no-global-process-runtime -- The fake inherits the test's PATH.
-    env: { ...process.env, HAL_C2_BOOTSTRAP_STDIN: "1" },
+    env: { ...process.env, HAL_C2_BOOTSTRAP_STDIN: "1", XDG_DATA_HOME: temporaryDirectory() },
     stdio: ["pipe", "pipe", "inherit"],
   });
   cleanups.push(() => child.kill("SIGKILL"));
@@ -297,6 +317,33 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       expect(target.node).toBe(`http://127.0.0.1:${record?.bootstrap.port}`);
       expect(target.token).toBe(record?.bootstrap.desktopBootstrapToken);
       expect(await exchange(target.node, target.token)).toBe(200);
+      await host.quit();
+    });
+
+    it("The desktop's own client is given the node and its access token", async () => {
+      const home = temporaryDirectory();
+      const release = fakeRelease();
+      const host = startHost({
+        args: [`--base-dir=${home}`],
+        env: {
+          HAL_C2_NODE_RELEASE: release,
+          HAL_C2_WEB_DIST: webBundle(),
+          HAL_C2_NODE_PORT: String(await freePort()),
+          HAL_C2_WEB_PORT: String(await freePort()),
+        },
+      });
+      const message = await readyMessage(host);
+      const record = readRecord(release);
+      const accessToken = NodeFS.readFileSync(
+        NodePath.join(home, "data/elixir/access-token"),
+        "utf8",
+      ).trim();
+
+      expect(message.node).toEqual({
+        origin: `http://127.0.0.1:${record?.bootstrap.port}`,
+        token: accessToken,
+      });
+      expect(message.node?.token).not.toBe(record?.bootstrap.desktopBootstrapToken);
       await host.quit();
     });
 
