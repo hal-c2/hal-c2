@@ -70,6 +70,7 @@ QList<Scenario> parseFeature(const QString& path) {
   };
   std::optional<Current> current;
   Table* examples = nullptr;
+  bool outcome = false;
 
   const auto flush = [&] {
     if (!current) return;
@@ -146,7 +147,9 @@ QList<Scenario> parseFeature(const QString& path) {
         steps->last().table.append(tableCells(line));
       }
     } else if (const auto match = stepKeyword.match(line); match.hasMatch() && steps) {
-      steps->append({match.captured(2), {}, static_cast<int>(index + 1)});
+      const QString keyword = match.captured(1);
+      if (keyword != QLatin1String("And") && keyword != QLatin1String("But")) outcome = keyword == QLatin1String("Then");
+      steps->append({match.captured(2), {}, static_cast<int>(index + 1), outcome});
     }
     // Anything else is a description.
   }
@@ -167,6 +170,7 @@ void runStep(World& world, const Step& step) {
     match = candidate;
   }
   if (!found) fail(QStringLiteral("undefined step: ") + step.text);
+  world.checking = step.outcome;
   Captures captures = match.capturedTexts();
   captures.removeFirst();
   found->run(world, captures, step.table);
@@ -181,6 +185,16 @@ const QStringList kDefaultGlobs{
     QStringLiteral("timeline/plans-and-subagents.feature"),
     QStringLiteral("navigation/environment-themes.feature"),
     QStringLiteral("navigation/appearance.feature:System appearance follows*"),
+    QStringLiteral("navigation/appearance.feature:Choosing an appearance mode*"),
+    QStringLiteral("navigation/appearance.feature:The appearance shortcut cycles*"),
+    QStringLiteral("navigation/appearance.feature:Choosing a theme"),
+    QStringLiteral("navigation/appearance.feature:Different themes for light and dark"),
+    QStringLiteral("navigation/appearance.feature:A theme with only one appearance*"),
+    QStringLiteral("navigation/appearance.feature:A theme choice that cannot be saved*"),
+    QStringLiteral("navigation/appearance.feature:An appearance setting can be put back*"),
+    QStringLiteral("navigation/appearance.feature:A font preference can be reset*"),
+    QStringLiteral("navigation/theme-editor.feature"),
+    QStringLiteral("settings/general.feature"),
     QStringLiteral("settings/connections.feature"),
     QStringLiteral("connections/links.feature"),
     QStringLiteral("connections/pairing.feature"),

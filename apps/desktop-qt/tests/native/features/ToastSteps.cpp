@@ -28,6 +28,7 @@ QVariantMap waitForToast(World& world, const QString& title) {
 const Steps steps([] {
   const QString q = kQuoted;
 
+  step(QStringLiteral("the user is told %1").arg(q), [](World& world, const Captures& c, const Table&) { waitForToast(world, c[0]); });
   step(QStringLiteral("the user sees an? %1 toast %1 saying %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QVariantMap toast = waitForToast(world, c[1]);
     expect(toast.value(QStringLiteral("type")) == c[0] && toast.value(QStringLiteral("description")) == c[2],

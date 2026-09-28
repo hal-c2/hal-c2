@@ -29,6 +29,9 @@ struct Step {
   QString text;
   Table table;
   int line = 0;
+  // A Then (or an And or But after one): a step both sets and checks, such as
+  // "the appearance is Light", checks here (World::checking).
+  bool outcome = false;
 };
 
 struct Scenario {

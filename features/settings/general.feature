@@ -84,7 +84,7 @@ Feature: General settings
       When the node sweeps threads
       Then the thread is not settled
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: Turning inactive settling on starts from the default number of days
       Given "Auto-settle inactive threads" is off
       When the user turns it on
@@ -345,14 +345,14 @@ Feature: General settings
 
   Rule: Resetting rows
 
-    @backlog @desktop
+    @desktop
     Scenario: A changed row can be reset to its default
       Given the user turned project grouping off
       When the user resets project grouping
       Then project grouping is back to its default
       And the row no longer offers a reset
 
-    @backlog @desktop
+    @desktop
     Scenario: A row at its default offers no reset
       Given auto-settle on merge is at its default
       Then the row offers no reset
