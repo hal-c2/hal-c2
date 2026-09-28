@@ -612,7 +612,12 @@ types into a drawer terminal the shell launched itself. Its shapes name the
 environment, not a node, so the node routes them to the cluster member that serves
 it or through a link (`HalC2.Links`) to an environment outside the cluster; the
 drawer is available for any environment the `shell` snapshot lists in `nodes` or
-`links` (`features/desktop/native-terminal.feature`).
+`links` (`features/desktop/native-terminal.feature`). The only credential for an
+environment the user paired from the page lives in the page, so the page publishes
+`environmentAccess` (origin and bearer token per saved environment) and
+`NativeShell` lends it to the node (`hal-c2.linkEnvironment` with `origin` and
+`token`), which keeps the link only in memory and gives it back when the page
+forgets the environment. Nothing is paired twice.
 
 - **Launch context.** Every attach and open sends the thread's cwd (worktree,
   else project root) and the same `HAL_C2_*`/`T3CODE_*` root variables as the

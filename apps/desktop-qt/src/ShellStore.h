@@ -29,6 +29,8 @@ public:
   bool servesEnvironment(const QString& environmentId) const;
   // Whether the node reaches this environment: served by the cluster or linked.
   bool reaches(const QString& environmentId) const;
+  // The environment `node` serves, empty until its descriptor arrives.
+  QString environmentOf(const QString& node) const { return m_nodes.value(node).environmentId; }
   bool synchronized() const { return m_synchronized; }
 
 signals:

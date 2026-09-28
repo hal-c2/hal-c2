@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QObject>
 #include <QUrl>
 
@@ -18,6 +19,11 @@ class ShellBridge;
 // (and a `shell.native` action to the page) says which keys and actions the
 // shell now owns. The sidebar stays with the page while it groups projects
 // from outside the node's cluster.
+//
+// The page's saved environments outside the cluster (`environmentAccess`:
+// origin and access token per environment the page is connected to) are lent
+// to the node (HalC2.Links.borrow), so the node reaches them with what the
+// page already paired, and taken back when the page forgets one.
 class NativeShell : public QObject {
   Q_OBJECT
 
@@ -34,8 +40,12 @@ public:
 private:
   void update();
   void announce();
+  void lend();
 
   ShellBridge* m_bridge;
+  // Environment id -> the token lent to the node over the current connection.
+  // Before m_client, which still reports its calls and readiness as it goes.
+  QHash<QString, QString> m_lent;
   NodeClient m_client;
   ShellStore m_store;
   SidebarController m_sidebar;

@@ -227,8 +227,10 @@ public:
   };
   bool holdSnapshot = false;
   bool holdAnswers = false;
-  // Environments outside the cluster the node is linked to (HalC2.Links).
+  // Environments outside the cluster the node is linked to (HalC2.Links), and
+  // the tokens clients lent it for them.
   QStringList linked;
+  QHash<QString, QString> lent;
 
   void sendSnapshot() {
     if (!m_socket || m_shellSubscription < 0) return;
@@ -259,7 +261,16 @@ public:
 
   // The node pairs with an environment outside its cluster, announced as `shell.links`.
   void link(const QString& environment) {
-    linked.append(environment);
+    if (!linked.contains(environment)) linked.append(environment);
+    sendLinks();
+  }
+
+  void unlink(const QString& environment) {
+    linked.removeAll(environment);
+    sendLinks();
+  }
+
+  void sendLinks() {
     if (!m_socket || m_shellSubscription < 0) return;
     send({{QStringLiteral("t"), QStringLiteral("shell.links")}, {QStringLiteral("id"), m_shellSubscription}, {QStringLiteral("links"), links()}});
   }
@@ -382,6 +393,17 @@ private:
       if (method.startsWith(QLatin1String("terminal."))) {
         terminalCall(socket, id, method, message.value(QLatin1String("payload")).toObject());
         return;
+      }
+      // Lent access links the environment at the origin (`http://<env>:3780`); taking
+      // it back unlinks it.
+      const QJsonObject payload = message.value(QLatin1String("payload")).toObject();
+      if (method == QLatin1String("hal-c2.linkEnvironment")) {
+        const QString environment = QUrl(payload.value(QLatin1String("origin")).toString()).host();
+        lent.insert(environment, payload.value(QLatin1String("token")).toString());
+        link(environment);
+      } else if (method == QLatin1String("hal-c2.unlinkEnvironment")) {
+        lent.remove(payload.value(QLatin1String("environmentId")).toString());
+        unlink(payload.value(QLatin1String("environmentId")).toString());
       }
       if (method != QLatin1String("orchestration.dispatchCommand")) {
         send({{QStringLiteral("t"), QStringLiteral("rpc.result")}, {QStringLiteral("id"), id}, {QStringLiteral("result"), QJsonValue::Null}});
@@ -809,6 +831,39 @@ void defineSteps() {
   step(QStringLiteral("the node is linked to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.node.link(c[0]);
     world.sync();
+  });
+  step(QStringLiteral("the page has access to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QVariantList access = world.state(QStringLiteral("environmentAccess")).toList();
+    access.append(QVariantMap{
+        {QStringLiteral("environmentId"), c[0]},
+        {QStringLiteral("origin"), QStringLiteral("http://") + c[0] + QStringLiteral(":3780")},
+        {QStringLiteral("token"), QStringLiteral("page-token-") + c[0]},
+    });
+    world.bridge().publish(QStringLiteral("environmentAccess"), access);
+    world.sync();
+  });
+  step(QStringLiteral("the page loses its connection to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QVariantList access;
+    for (const QVariant& entry : world.state(QStringLiteral("environmentAccess")).toList()) {
+      const QString id = entry.toMap().value(QStringLiteral("environmentId")).toString();
+      access.append(id == c[0] ? QVariant(QVariantMap{{QStringLiteral("environmentId"), id}}) : entry);
+    }
+    world.bridge().publish(QStringLiteral("environmentAccess"), access);
+    world.sync();
+  });
+  step(QStringLiteral("the node is linked to %1 with the page's access").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(world.node.linked.contains(c[0]), QStringLiteral("the node is linked to %1").arg(world.node.linked.join(u", ")));
+    expect(world.node.lent.value(c[0]) == QStringLiteral("page-token-") + c[0],
+           QStringLiteral("the node was lent %1").arg(world.node.lent.value(c[0])));
+  });
+  step(QStringLiteral("the page forgets %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QVariantList access = world.state(QStringLiteral("environmentAccess")).toList();
+    access.removeIf([&](const QVariant& entry) { return entry.toMap().value(QStringLiteral("environmentId")) == c[0]; });
+    world.bridge().publish(QStringLiteral("environmentAccess"), access);
+    world.sync();
+  });
+  step(QStringLiteral("the node is not linked to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(!world.node.linked.contains(c[0]), QStringLiteral("the node is linked to %1").arg(world.node.linked.join(u", ")));
   });
   step(QStringLiteral("the node's environment does not track visits"), [](World& world, const Captures&, const Table&) {
     world.node.capabilities.remove(QStringLiteral("threadVisitedTracking"));
