@@ -97,6 +97,37 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
+  # --- lent access ----------------------------------------------------------------
+
+  step "a client of the node that already has access to {string}",
+       %{args: [label]} = context do
+    base = Machines.on(context, label, HalC2.Web, :base_url, [])
+    home = Machines.on(context, label, HalC2.Store, :home_path, [])
+    token = Machines.on(context, label, HalC2.Auth, :create_pairing_token, [home])
+
+    assert {200, %{"access_token" => access}} =
+             Node.exchange(%{port: URI.parse(base).port}, token)
+
+    Map.put(context, :lent, {label, base, access})
+  end
+
+  step "it lends that access to the node", context do
+    {label, base, access} = context.lent
+    payload = %{"origin" => base, "token" => access}
+    {reply, context} = call(context, label, "hal-c2.linkEnvironment", payload, :own)
+    assert {:ok, %{"environmentId" => _}} = reply
+    await_link(environment(context, label), true)
+    context
+  end
+
+  step "it takes that access back", context do
+    {label, _base, _access} = context.lent
+    payload = %{"environmentId" => environment(context, label), "borrowed" => true}
+    {reply, context} = call(context, label, "hal-c2.unlinkEnvironment", payload, :own)
+    assert {:ok, nil} = reply
+    context
+  end
+
   # --- terminals through the link ---------------------------------------------------
 
   step "a client of the node attaches a terminal on {string}", %{args: [label]} = context do
@@ -176,11 +207,11 @@ defmodule HalC2.Steps.Connections.Links do
     dir
   end
 
-  # An RPC from the default client, naming the linked environment.
-  defp call(context, label, method, payload) do
-    {reply, client} =
-      Node.call(World.client(context), environment(context, label), method, payload)
-
+  # An RPC from the default client, naming the linked environment, or with `:own`
+  # the node's own.
+  defp call(context, label, method, payload, on \\ :linked) do
+    env = if on == :own, do: HalC2.Environment.id(), else: environment(context, label)
+    {reply, client} = Node.call(World.client(context), env, method, payload)
     {reply, World.put_client(context, client)}
   end
 

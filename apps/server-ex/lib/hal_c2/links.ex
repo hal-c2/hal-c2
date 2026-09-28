@@ -6,7 +6,13 @@ defmodule HalC2.Links do
   so a client that only talks to this node reaches the linked environment too
   (`HalC2.Web.Socket`).
 
-  Links persist in the `environment-links` secret. Subscribers get
+  A client can also lend this node the access it already holds on an environment
+  (`borrow/2`): the desktop shell passes on what its page paired with, so nothing is
+  paired twice. A borrowed link lives only as long as this node runs; the client
+  lends it again on every connection and takes it back when the page forgets the
+  environment.
+
+  Paired links persist in the `environment-links` secret. Subscribers get
   `{:hal_c2_links, links}` with the whole list (`list/0`) whenever a link is added,
   removed, or goes on- or offline.
   """
@@ -49,9 +55,31 @@ defmodule HalC2.Links do
     end
   end
 
+  @doc """
+  Links the environment at `origin` with `token`, an access token a client already
+  holds there, without persisting it. Returns the environment's descriptor.
+  """
+  @spec borrow(String.t(), String.t()) :: {:ok, map} | {:error, String.t()}
+  def borrow(origin, token) do
+    with {:ok, origin} <- parse_origin(origin),
+         {:ok, descriptor} <- fetch_descriptor(origin),
+         :ok <- not_reachable(descriptor) do
+      link = %{"origin" => origin, "token" => token, "environment" => descriptor}
+      :ok = GenServer.call(__MODULE__, {:put, Map.put(link, "borrowed", true)})
+      {:ok, descriptor}
+    end
+  end
+
   @doc "Forgets the link to `environment_id`."
   @spec remove(String.t()) :: :ok | {:error, String.t()}
-  def remove(environment_id), do: GenServer.call(__MODULE__, {:remove, environment_id})
+  def remove(environment_id), do: GenServer.call(__MODULE__, {:remove, environment_id, :any})
+
+  @doc "Takes back what `borrow/2` lent for `environment_id`; a paired link stays."
+  @spec give_back(String.t()) :: :ok
+  def give_back(environment_id) do
+    _ = GenServer.call(__MODULE__, {:remove, environment_id, :borrowed})
+    :ok
+  end
 
   @doc "Runs a client RPC on a linked environment, as `HalC2.Rpc.handle/2` answers."
   @spec rpc(String.t(), String.t(), term, timeout) :: {:ok, term} | {:error, String.t() | map}
@@ -111,6 +139,17 @@ defmodule HalC2.Links do
 
       true ->
         {:ok, "#{uri.scheme}://#{uri.authority}", token}
+    end
+  end
+
+  defp parse_origin(origin) do
+    case URI.parse(String.trim(origin)) do
+      %URI{scheme: scheme, host: host} = uri
+      when scheme in ["http", "https"] and host not in [nil, ""] ->
+        {:ok, "#{scheme}://#{uri.authority}"}
+
+      _ ->
+        {:error, "not an environment origin"}
     end
   end
 
@@ -209,7 +248,40 @@ defmodule HalC2.Links do
     {:reply, :ok, %{state | subscribers: subscribers}}
   end
 
-  def handle_call({:put, link}, _from, state) do
+  # A borrowed token never replaces a paired link, nor the same loan again.
+  def handle_call({:put, %{"borrowed" => true, "token" => token} = link}, _from, state) do
+    case state.links[link["environment"]["environmentId"]] do
+      %{"borrowed" => true, "token" => ^token} -> {:reply, :ok, state}
+      %{} = paired when not is_map_key(paired, "borrowed") -> {:reply, :ok, state}
+      _ -> put(link, state)
+    end
+  end
+
+  def handle_call({:put, link}, _from, state), do: put(link, state)
+
+  def handle_call({:remove, id, which}, _from, state) do
+    case state.links[id] do
+      nil ->
+        {:reply, {:error, "no link to #{id}"}, state}
+
+      link when which == :borrowed and not is_map_key(link, "borrowed") ->
+        {:reply, {:error, "the link to #{id} was paired"}, state}
+
+      _ ->
+        stop_connection(id)
+
+        state = %{
+          state
+          | links: Map.delete(state.links, id),
+            online: MapSet.delete(state.online, id)
+        }
+
+        persist(state)
+        {:reply, :ok, notify(state)}
+    end
+  end
+
+  defp put(link, state) do
     id = link["environment"]["environmentId"]
     stop_connection(id)
 
@@ -222,23 +294,6 @@ defmodule HalC2.Links do
     persist(state)
     start_connection(link)
     {:reply, :ok, notify(state)}
-  end
-
-  def handle_call({:remove, id}, _from, state) do
-    if Map.has_key?(state.links, id) do
-      stop_connection(id)
-
-      state = %{
-        state
-        | links: Map.delete(state.links, id),
-          online: MapSet.delete(state.online, id)
-      }
-
-      persist(state)
-      {:reply, :ok, notify(state)}
-    else
-      {:reply, {:error, "no link to #{id}"}, state}
-    end
   end
 
   @impl true
@@ -272,7 +327,10 @@ defmodule HalC2.Links do
     state
   end
 
-  defp persist(state), do: Secrets.put(@secret, JSON.encode!(Map.values(state.links)))
+  defp persist(state) do
+    paired = for {_, link} <- state.links, !link["borrowed"], do: link
+    Secrets.put(@secret, JSON.encode!(paired))
+  end
 
   defp start_connection(link) do
     {:ok, _} = DynamicSupervisor.start_child(HalC2.Links.Supervisor, {Connection, link})

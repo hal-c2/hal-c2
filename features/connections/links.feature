@@ -10,7 +10,8 @@
 Feature: Linking a node to environments outside its cluster
   A node can pair with another node it is not clustered with and keep that link. Its
   clients then reach the linked environment through it, so a client that only talks to
-  its own node still works with threads that run elsewhere.
+  its own node still works with threads that run elsewhere. A client that already has
+  access to an environment can lend it to its node instead, so nothing is paired twice.
 
   Background:
     Given a running node
@@ -55,6 +56,35 @@ Feature: Linking a node to environments outside its cluster
     When the user removes the link to "beast"
     Then the node has no links
     And a client of the node calling "beast" is told the environment is unknown
+
+  @node
+  Scenario: A client lends the node the access it already has
+    Given a client of the node that already has access to "beast"
+    When it lends that access to the node
+    Then the node lists "beast" as a linked environment that is online
+    And a client of the node attaches a terminal on "beast"
+
+  @node
+  Scenario: Lent access lasts only while the node runs
+    Given a client of the node that already has access to "beast"
+    And it lends that access to the node
+    When the node restarts
+    Then the node has no links
+
+  @node
+  Scenario: Taking lent access back leaves a paired link alone
+    Given the node is linked to "beast"
+    And a client of the node that already has access to "beast"
+    When it lends that access to the node
+    And it takes that access back
+    Then the node lists "beast" as a linked environment that is online
+
+  @node
+  Scenario: Taking lent access back removes the link
+    Given a client of the node that already has access to "beast"
+    And it lends that access to the node
+    When it takes that access back
+    Then the node has no links
 
   @backlog @shared
   Scenario: The user links the node from its connection settings
