@@ -29,8 +29,12 @@ bound during startup.
 
 ## Renderer ownership
 
-Android and web use the same `libghostty-vt` C ABI for terminal behavior. Platform
-adapters own drawing and input integration, and React stays out of terminal frames.
+Android, web and the Qt desktop use the same `libghostty-vt` C ABI for terminal
+behavior. Platform adapters own drawing and input integration, and React stays out of
+terminal frames. The Qt desktop draws with
+[qml-ghostty](https://github.com/hal-c2/qml-ghostty), whose own Ghostty pin
+[`cmake/QmlGhostty.cmake`](../../apps/desktop-qt/cmake/QmlGhostty.cmake) checks
+against ours at configure time.
 The web adapter shares one WebAssembly instance per browser tab while each terminal
 owns and frees its own handles. The canonical upstream pin is
 [`native/libghostty-vt/VERSION`](../../native/libghostty-vt/VERSION); both native and
@@ -41,4 +45,5 @@ Restoring scrollback must not send terminal replies to the current shell. Histor
 device queries can otherwise provoke fresh replies that appear as junk at the
 prompt. The server strips query/response traffic from retained history, and the
 [web renderer](../../apps/web/src/terminal/ghostty/core.ts) detaches its PTY writer
-during replay. Preserve both protections when changing retention or renderer code.
+during replay; the Qt drawer replays through qml-ghostty's `restore()`, which answers
+nothing. Preserve both protections when changing retention or renderer code.

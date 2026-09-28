@@ -15,6 +15,8 @@ defmodule HalC2.Web.Protocol do
     * `{"type": "terminal", "node": n, "input": TerminalAttachInput}`: one terminal,
       opened if needed; a snapshot, then its events
     * `{"type": "terminals", "node": n}`: that node's terminal summaries, then changes
+    * either terminal shape with `"environment": id` instead of `"node"`: on the
+      cluster member serving that environment, or through this node's link to it
     * `{"type": "vcs", "node": n, "cwd": dir}`: a checkout's git status, then changes
     * `{"type": "worktreeSetup", "node": n, "threadId": id}`: a new thread's worktree
       setup (`WorktreeSetupStreamEvent`: null, or a snapshot), then changes
@@ -63,7 +65,9 @@ defmodule HalC2.Web.Protocol do
   Server to client:
 
       {"t": "hello", "protocol": 3, "node": n}
-      {"t": "shell", "id", "nodes": [{"node", "online", "environment"}], "rows": [[node, id, kind, row]]}
+      {"t": "shell", "id", "nodes": [{"node", "online", "environment"}], "rows": [[node, id, kind, row]],
+        "links": [{"environment", "origin", "online"}]}
+      {"t": "shell.links", "id", "links"}   (environments this node links to; the whole list)
       {"t": "shell.environment", "id", "node", "environment"}
       {"t": "shell.rows", "id", "node", "rows": [[id, kind, row]]}
       {"t": "shell.node", "id", "node", "online"}
@@ -177,6 +181,14 @@ defmodule HalC2.Web.Protocol do
       node -> {:ok, {:config, node}}
     end
   end
+
+  # By environment: a cluster member's, or one this node links to (`HalC2.Links`).
+  defp decode_shape(%{"type" => "terminal", "environment" => env, "input" => %{} = input}, _)
+       when is_binary(env),
+       do: {:ok, {:environment, env, %{"type" => "terminal", "input" => input}}}
+
+  defp decode_shape(%{"type" => "terminals", "environment" => env}, _) when is_binary(env),
+    do: {:ok, {:environment, env, %{"type" => "terminals"}}}
 
   defp decode_shape(%{"type" => "terminal", "node" => node, "input" => %{} = input}, nodes) do
     with {:ok, node} <- known_node(node, nodes), do: {:ok, {:terminal, node, input}}

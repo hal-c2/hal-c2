@@ -92,6 +92,20 @@ Nodes find each other on the tailnet (`HalC2.Cluster.Tailscale`) or through
 `HAL_C2_PEERS=hal_c2@host,...`, and only connect when both certificates come from the
 cluster's CA.
 
+## Link a node you do not cluster with
+
+```sh
+mix hal_c2.link "https://beast.tailnet.ts.net/?token=..."  # from `mix hal_c2.pair --tailscale` on the other node
+mix hal_c2.link                                      # list links and whether they are online
+mix hal_c2.link --remove ENVIRONMENT_ID
+```
+
+A link keeps the other node's access token, and this node forwards its clients'
+RPCs and terminal shapes for that environment over one socket (`HalC2.Links`). The
+desktop shell reaches its terminals that way, since it only talks to its own node.
+The desktop also lends its node the access its page already has to the environments
+the user paired there, so those need no link of their own.
+
 ## Test
 
 `mix test` runs the suite. `--include codex` / `--include claude` drive the real

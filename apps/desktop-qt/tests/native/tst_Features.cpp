@@ -190,7 +190,9 @@ void setField(QJsonObject& row, const QString& name, const QString& value) {
 
 // One node of protocol 3 (apps/server-ex lib/hal_c2/web/protocol.ex): hello,
 // the shell shape, and `orchestration.dispatchCommand`, which it records and
-// answers (or refuses, or holds until told to answer).
+// answers (or refuses, or holds until told to answer). Terminals attach with
+// the `terminal` shape and are listed by `terminals`; `terminal.*` calls are
+// recorded and act on them the way the node's terminal manager does.
 class FakeNode : public QObject {
 public:
   FakeNode() : m_server(QStringLiteral("fake-node"), QWebSocketServer::NonSecureMode) {
@@ -201,9 +203,19 @@ public:
 
   QUrl origin() const { return QUrl(QStringLiteral("http://127.0.0.1:%1").arg(m_port)); }
 
+  struct Terminal {
+    QJsonObject summary;
+    QString history;
+  };
+
   QString name = QStringLiteral("node-a");
   QString environmentId = QStringLiteral("env-a");
   QMap<QString, QJsonObject> threads;
+  QMap<QString, QJsonObject> projects;
+  // By "threadId/terminalId".
+  QMap<QString, Terminal> terminals;
+  // Every terminal.* call, as {method, payload}.
+  QList<QJsonObject> terminalCalls;
   QList<QUrl> connections;
   QList<QJsonObject> subscriptions;
   QList<QJsonObject> commands;
@@ -215,12 +227,19 @@ public:
   };
   bool holdSnapshot = false;
   bool holdAnswers = false;
+  // Environments outside the cluster the node is linked to (HalC2.Links), and
+  // the tokens clients lent it for them.
+  QStringList linked;
+  QHash<QString, QString> lent;
 
   void sendSnapshot() {
     if (!m_socket || m_shellSubscription < 0) return;
     QJsonArray rows;
     for (auto it = threads.cbegin(); it != threads.cend(); ++it) {
       rows.append(QJsonArray{name, it.key(), QStringLiteral("thread"), *it});
+    }
+    for (auto it = projects.cbegin(); it != projects.cend(); ++it) {
+      rows.append(QJsonArray{name, it.key(), QStringLiteral("project"), *it});
     }
     send({
         {QStringLiteral("t"), QStringLiteral("shell")},
@@ -236,6 +255,46 @@ public:
               }},
          }}},
         {QStringLiteral("rows"), rows},
+        {QStringLiteral("links"), links()},
+    });
+  }
+
+  // The node pairs with an environment outside its cluster, announced as `shell.links`.
+  void link(const QString& environment) {
+    if (!linked.contains(environment)) linked.append(environment);
+    sendLinks();
+  }
+
+  void unlink(const QString& environment) {
+    linked.removeAll(environment);
+    sendLinks();
+  }
+
+  void sendLinks() {
+    if (!m_socket || m_shellSubscription < 0) return;
+    send({{QStringLiteral("t"), QStringLiteral("shell.links")}, {QStringLiteral("id"), m_shellSubscription}, {QStringLiteral("links"), links()}});
+  }
+
+  QJsonArray links() const {
+    QJsonArray result;
+    for (const QString& environment : linked) {
+      result.append(QJsonObject{
+          {QStringLiteral("environment"), QJsonObject{{QStringLiteral("environmentId"), environment}}},
+          {QStringLiteral("origin"), QStringLiteral("http://") + environment + QStringLiteral(":3780")},
+          {QStringLiteral("online"), true},
+      });
+    }
+    return result;
+  }
+
+  // Another node joins this one's cluster, announced as the shell announces it on nodeup.
+  void join(const QString& peer, const QString& peerEnvironment) {
+    send({
+        {QStringLiteral("t"), QStringLiteral("shell.environment")},
+        {QStringLiteral("id"), m_shellSubscription},
+        {QStringLiteral("node"), peer},
+        {QStringLiteral("environment"),
+         QJsonObject{{QStringLiteral("environmentId"), peerEnvironment}, {QStringLiteral("capabilities"), capabilities}}},
     });
   }
 
@@ -248,6 +307,33 @@ public:
         {QStringLiteral("rows"), QJsonArray{QJsonArray{id, QStringLiteral("thread"), row}}},
     });
   }
+
+  // A terminal the node already runs, as another client left it.
+  void addTerminal(const QString& threadId, const QString& terminalId, const QString& label, bool busy) {
+    QJsonObject summary = terminalSummary(threadId, terminalId, QStringLiteral("/work"));
+    summary.insert(QStringLiteral("label"), label);
+    summary.insert(QStringLiteral("hasRunningSubprocess"), busy);
+    terminals.insert(threadId + QLatin1Char('/') + terminalId, {summary, QString()});
+    sendTerminals({{QStringLiteral("type"), QStringLiteral("upsert")}, {QStringLiteral("terminal"), summary}});
+  }
+
+  void print(const QString& threadId, const QString& terminalId, const QString& data) {
+    const QString key = threadId + QLatin1Char('/') + terminalId;
+    terminals[key].history += data;
+    sendTerminal(key, {{QStringLiteral("type"), QStringLiteral("output")}, {QStringLiteral("data"), data}});
+  }
+
+  void closeTerminal(const QString& threadId, const QString& terminalId) {
+    const QString key = threadId + QLatin1Char('/') + terminalId;
+    if (!terminals.remove(key)) return;
+    sendTerminal(key, {{QStringLiteral("type"), QStringLiteral("closed")}});
+    sendTerminals({{QStringLiteral("type"), QStringLiteral("remove")},
+                   {QStringLiteral("threadId"), threadId},
+                   {QStringLiteral("terminalId"), terminalId}});
+  }
+
+  // The `terminal` subscriptions still attached, by terminal key.
+  QStringList attached() const { return m_terminalSubscriptions.values(); }
 
   void answerHeld() {
     const auto held = std::exchange(m_held, {});
@@ -267,6 +353,8 @@ private:
       connections.append(socket->requestUrl());
       m_socket = socket;
       m_shellSubscription = -1;
+      m_terminalsSubscription = -1;
+      m_terminalSubscriptions.clear();
       QObject::connect(socket, &QWebSocket::textMessageReceived, this,
                        [this, socket](const QString& text) { onMessage(socket, text); });
       QObject::connect(socket, &QWebSocket::disconnected, socket, &QObject::deleteLater);
@@ -281,14 +369,42 @@ private:
     const int id = message.value(QLatin1String("id")).toInt();
     if (type == QLatin1String("sub")) {
       subscriptions.append(message);
-      if (message.value(QLatin1String("shape")).toObject().value(QLatin1String("type")) == QLatin1String("shell")) {
+      const QJsonObject shape = message.value(QLatin1String("shape")).toObject();
+      const QString kind = shape.value(QLatin1String("type")).toString();
+      if (kind == QLatin1String("shell")) {
         m_shellSubscription = id;
         if (!holdSnapshot) sendSnapshot();
+      } else if (kind == QLatin1String("terminals")) {
+        // Only its own environment's list; another environment's goes to the node serving it.
+        if (shape.value(QLatin1String("environment")) != environmentId) return;
+        m_terminalsSubscription = id;
+        QJsonArray list;
+        for (const Terminal& terminal : std::as_const(terminals)) list.append(terminal.summary);
+        sendTerminals({{QStringLiteral("type"), QStringLiteral("snapshot")}, {QStringLiteral("terminals"), list}});
+      } else if (kind == QLatin1String("terminal")) {
+        attach(id, shape.value(QLatin1String("input")).toObject());
       }
+    } else if (type == QLatin1String("unsub")) {
+      m_terminalSubscriptions.remove(id);
     } else if (type == QLatin1String("ping")) {
       send({{QStringLiteral("t"), QStringLiteral("pong")}});
     } else if (type == QLatin1String("rpc")) {
       const QString method = message.value(QLatin1String("method")).toString();
+      if (method.startsWith(QLatin1String("terminal."))) {
+        terminalCall(socket, id, method, message.value(QLatin1String("payload")).toObject());
+        return;
+      }
+      // Lent access links the environment at the origin (`http://<env>:3780`); taking
+      // it back unlinks it.
+      const QJsonObject payload = message.value(QLatin1String("payload")).toObject();
+      if (method == QLatin1String("hal-c2.linkEnvironment")) {
+        const QString environment = QUrl(payload.value(QLatin1String("origin")).toString()).host();
+        lent.insert(environment, payload.value(QLatin1String("token")).toString());
+        link(environment);
+      } else if (method == QLatin1String("hal-c2.unlinkEnvironment")) {
+        lent.remove(payload.value(QLatin1String("environmentId")).toString());
+        unlink(payload.value(QLatin1String("environmentId")).toString());
+      }
       if (method != QLatin1String("orchestration.dispatchCommand")) {
         send({{QStringLiteral("t"), QStringLiteral("rpc.result")}, {QStringLiteral("id"), id}, {QStringLiteral("result"), QJsonValue::Null}});
         return;
@@ -319,10 +435,87 @@ private:
     if (m_socket) m_socket->sendTextMessage(QString::fromUtf8(QJsonDocument(frame).toJson(QJsonDocument::Compact)));
   }
 
+  QJsonObject terminalSummary(const QString& threadId, const QString& terminalId, const QString& cwd) const {
+    return {
+        {QStringLiteral("threadId"), threadId},
+        {QStringLiteral("terminalId"), terminalId},
+        {QStringLiteral("cwd"), cwd},
+        {QStringLiteral("worktreePath"), QJsonValue::Null},
+        {QStringLiteral("status"), QStringLiteral("running")},
+        {QStringLiteral("pid"), 100},
+        {QStringLiteral("exitCode"), QJsonValue::Null},
+        {QStringLiteral("exitSignal"), QJsonValue::Null},
+        {QStringLiteral("hasRunningSubprocess"), false},
+        {QStringLiteral("label"), QString()},
+        {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T10:00:00Z")},
+    };
+  }
+
+  // Opens the terminal when the input says where (as terminal.open does);
+  // returns false when it does not exist and cannot be opened.
+  bool ensureTerminal(const QJsonObject& input) {
+    const QString threadId = input.value(QLatin1String("threadId")).toString();
+    const QString terminalId = input.value(QLatin1String("terminalId")).toString();
+    const QString key = threadId + QLatin1Char('/') + terminalId;
+    if (terminals.contains(key)) return true;
+    if (!input.contains(QLatin1String("cwd"))) return false;
+    const QJsonObject summary = terminalSummary(threadId, terminalId, input.value(QLatin1String("cwd")).toString());
+    terminals.insert(key, {summary, QString()});
+    sendTerminals({{QStringLiteral("type"), QStringLiteral("upsert")}, {QStringLiteral("terminal"), summary}});
+    return true;
+  }
+
+  void attach(int id, const QJsonObject& input) {
+    if (!ensureTerminal(input)) {
+      send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("Unknown terminal")}});
+      return;
+    }
+    const QString key = input.value(QLatin1String("threadId")).toString() + QLatin1Char('/') +
+                        input.value(QLatin1String("terminalId")).toString();
+    m_terminalSubscriptions.insert(id, key);
+    const Terminal& terminal = terminals[key];
+    QJsonObject snapshot = terminal.summary;
+    snapshot.insert(QStringLiteral("history"), terminal.history);
+    send({{QStringLiteral("t"), QStringLiteral("terminal")},
+          {QStringLiteral("id"), id},
+          {QStringLiteral("event"), QJsonObject{{QStringLiteral("type"), QStringLiteral("snapshot")}, {QStringLiteral("snapshot"), snapshot}}}});
+  }
+
+  void terminalCall(QWebSocket* socket, int id, const QString& method, const QJsonObject& payload) {
+    terminalCalls.append({{QStringLiteral("method"), method}, {QStringLiteral("payload"), payload}});
+    const QString threadId = payload.value(QLatin1String("threadId")).toString();
+    const QString terminalId = payload.value(QLatin1String("terminalId")).toString();
+    if (method == QLatin1String("terminal.open")) ensureTerminal(payload);
+    QPointer<QWebSocket> target = socket;
+    auto answer = [this, target, id, method, threadId, terminalId] {
+      if (target != m_socket) return;
+      if (method == QLatin1String("terminal.close")) closeTerminal(threadId, terminalId);
+      send({{QStringLiteral("t"), QStringLiteral("rpc.result")}, {QStringLiteral("id"), id}, {QStringLiteral("result"), QJsonValue::Null}});
+    };
+    if (holdAnswers) {
+      m_held.append(answer);
+    } else {
+      answer();
+    }
+  }
+
+  void sendTerminal(const QString& key, const QJsonObject& event) {
+    for (auto it = m_terminalSubscriptions.cbegin(); it != m_terminalSubscriptions.cend(); ++it) {
+      if (*it == key) send({{QStringLiteral("t"), QStringLiteral("terminal")}, {QStringLiteral("id"), it.key()}, {QStringLiteral("event"), event}});
+    }
+  }
+
+  void sendTerminals(const QJsonObject& event) {
+    if (m_terminalsSubscription < 0) return;
+    send({{QStringLiteral("t"), QStringLiteral("terminals")}, {QStringLiteral("id"), m_terminalsSubscription}, {QStringLiteral("event"), event}});
+  }
+
   QWebSocketServer m_server;
   quint16 m_port = 0;
   QPointer<QWebSocket> m_socket;
   int m_shellSubscription = -1;
+  int m_terminalsSubscription = -1;
+  QHash<int, QString> m_terminalSubscriptions;
   QList<std::function<void()>> m_held;
 };
 
@@ -390,6 +583,20 @@ public:
   }
 
   void publishSidebarInput() { m_bridge.publish(QStringLiteral("sidebarInput"), sidebarInput); }
+  // What the page's header shows for a thread (ShellWorkspaceState), from the
+  // node's project; a thread whose project the node does not know has none.
+  void publishWorkspace(const QString& threadKey, const QJsonObject& project, const QString& worktreePath, bool draft) {
+    const bool known = !project.isEmpty();
+    m_bridge.publish(QStringLiteral("workspace"),
+                     QVariantMap{
+                         {QStringLiteral("threadKey"), threadKey},
+                         {QStringLiteral("isDraft"), draft},
+                         {QStringLiteral("projectRoot"), known ? project.value(QLatin1String("workspaceRoot")).toVariant() : QVariant()},
+                         {QStringLiteral("worktreePath"), worktreePath.isEmpty() ? QVariant() : QVariant(worktreePath)},
+                         {QStringLiteral("scripts"), project.value(QLatin1String("scripts")).toArray().toVariantList()},
+                         {QStringLiteral("terminalAvailable"), known},
+                     });
+  }
   void publishComposer() { m_bridge.publish(QStringLiteral("composer"), composer); }
 
   void connect(const QString& token = QStringLiteral("node-token")) {
@@ -540,6 +747,75 @@ QVariantMap plainSend(const QString& prompt, const QString& runtimeMode, const Q
   };
 }
 
+// Gherkin cells and strings spell control characters as `\r` and `\n`.
+QString unescaped(QString text) {
+  return text.replace(QStringLiteral("\\r"), QStringLiteral("\r")).replace(QStringLiteral("\\n"), QStringLiteral("\n"));
+}
+
+QString tabLabels(World& world) {
+  QStringList labels;
+  for (const TerminalTabs::Row& row : world.native().terminals()->tabs()->rows()) labels.append(row.label);
+  return labels.join(QStringLiteral(", "));
+}
+
+TerminalSession* terminalSession(World& world, const QString& terminalId) {
+  for (const TerminalTabs::Row& row : world.native().terminals()->tabs()->rows()) {
+    if (row.terminalId == terminalId) return row.session;
+  }
+  fail(QStringLiteral("no tab for %1; the tabs are %2").arg(terminalId, tabLabels(world)));
+}
+
+// The latest `terminal` subscription for the terminal: {type, environment, input}.
+std::optional<QJsonObject> terminalShape(World& world, const QString& threadId, const QString& terminalId) {
+  for (qsizetype index = world.node.subscriptions.size() - 1; index >= 0; --index) {
+    const QJsonObject shape = world.node.subscriptions.at(index).value(QLatin1String("shape")).toObject();
+    const QJsonObject input = shape.value(QLatin1String("input")).toObject();
+    if (shape.value(QLatin1String("type")) == QLatin1String("terminal") &&
+        input.value(QLatin1String("threadId")) == threadId && input.value(QLatin1String("terminalId")) == terminalId) {
+      return shape;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<QJsonObject> terminalAttach(World& world, const QString& threadId, const QString& terminalId) {
+  const auto shape = terminalShape(world, threadId, terminalId);
+  if (!shape) return std::nullopt;
+  return shape->value(QLatin1String("input")).toObject();
+}
+
+std::optional<QJsonObject> terminalCall(World& world, const QString& method, const QString& threadId,
+                                        const QString& terminalId) {
+  for (const QJsonObject& call : world.node.terminalCalls) {
+    const QJsonObject payload = call.value(QLatin1String("payload")).toObject();
+    if (call.value(QLatin1String("method")) == method && payload.value(QLatin1String("threadId")) == threadId &&
+        payload.value(QLatin1String("terminalId")) == terminalId) {
+      return payload;
+    }
+  }
+  return std::nullopt;
+}
+
+QString describeTerminalCalls(World& world) {
+  QStringList lines;
+  for (const QJsonObject& call : world.node.terminalCalls) {
+    lines.append(QString::fromUtf8(QJsonDocument(call).toJson(QJsonDocument::Compact)));
+  }
+  return lines.isEmpty() ? QStringLiteral("(none)") : lines.join(QStringLiteral("; "));
+}
+
+QStringList terminalWrites(World& world, const QString& terminalId) {
+  QStringList writes;
+  for (const QJsonObject& call : world.node.terminalCalls) {
+    const QJsonObject payload = call.value(QLatin1String("payload")).toObject();
+    if (call.value(QLatin1String("method")) == QLatin1String("terminal.write") &&
+        payload.value(QLatin1String("terminalId")) == terminalId) {
+      writes.append(payload.value(QLatin1String("data")).toString());
+    }
+  }
+  return writes;
+}
+
 void defineSteps() {
   const QString q = QStringLiteral("\"([^\"]*)\"");
 
@@ -547,6 +823,47 @@ void defineSteps() {
   step(QStringLiteral("the desktop's node %1 serves the environment %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.node.name = c[0];
     world.node.environmentId = c[1];
+  });
+  step(QStringLiteral("the node is clustered with %1, which serves %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.node.join(c[0], c[1]);
+    world.sync();
+  });
+  step(QStringLiteral("the node is linked to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.node.link(c[0]);
+    world.sync();
+  });
+  step(QStringLiteral("the page has access to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QVariantList access = world.state(QStringLiteral("environmentAccess")).toList();
+    access.append(QVariantMap{
+        {QStringLiteral("environmentId"), c[0]},
+        {QStringLiteral("origin"), QStringLiteral("http://") + c[0] + QStringLiteral(":3780")},
+        {QStringLiteral("token"), QStringLiteral("page-token-") + c[0]},
+    });
+    world.bridge().publish(QStringLiteral("environmentAccess"), access);
+    world.sync();
+  });
+  step(QStringLiteral("the page loses its connection to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QVariantList access;
+    for (const QVariant& entry : world.state(QStringLiteral("environmentAccess")).toList()) {
+      const QString id = entry.toMap().value(QStringLiteral("environmentId")).toString();
+      access.append(id == c[0] ? QVariant(QVariantMap{{QStringLiteral("environmentId"), id}}) : entry);
+    }
+    world.bridge().publish(QStringLiteral("environmentAccess"), access);
+    world.sync();
+  });
+  step(QStringLiteral("the node is linked to %1 with the page's access").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(world.node.linked.contains(c[0]), QStringLiteral("the node is linked to %1").arg(world.node.linked.join(u", ")));
+    expect(world.node.lent.value(c[0]) == QStringLiteral("page-token-") + c[0],
+           QStringLiteral("the node was lent %1").arg(world.node.lent.value(c[0])));
+  });
+  step(QStringLiteral("the page forgets %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QVariantList access = world.state(QStringLiteral("environmentAccess")).toList();
+    access.removeIf([&](const QVariant& entry) { return entry.toMap().value(QStringLiteral("environmentId")) == c[0]; });
+    world.bridge().publish(QStringLiteral("environmentAccess"), access);
+    world.sync();
+  });
+  step(QStringLiteral("the node is not linked to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(!world.node.linked.contains(c[0]), QStringLiteral("the node is linked to %1").arg(world.node.linked.join(u", ")));
   });
   step(QStringLiteral("the node's environment does not track visits"), [](World& world, const Captures&, const Table&) {
     world.node.capabilities.remove(QStringLiteral("threadVisitedTracking"));
@@ -582,6 +899,19 @@ void defineSteps() {
   step(QStringLiteral("the page shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sidebarInput.insert(QStringLiteral("activeThreadKey"), c[0]);
     world.publishSidebarInput();
+    const QJsonObject thread = world.node.threads.value(c[0].mid(c[0].indexOf(QLatin1Char(':')) + 1));
+    world.publishWorkspace(c[0], world.node.projects.value(thread.value(QLatin1String("projectId")).toString()),
+                           thread.value(QLatin1String("worktreePath")).toString(), false);
+  });
+  step(QStringLiteral("the page shows %1 with its project at %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sidebarInput.insert(QStringLiteral("activeThreadKey"), c[0]);
+    world.publishSidebarInput();
+    world.publishWorkspace(c[0], {{QStringLiteral("workspaceRoot"), c[1]}}, QString(), false);
+  });
+  step(QStringLiteral("the page shows the draft %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sidebarInput.insert(QStringLiteral("activeThreadKey"), QVariant());
+    world.publishSidebarInput();
+    world.publishWorkspace(world.node.environmentId + QLatin1Char(':') + c[0], world.node.projects.value(c[1]), QString(), true);
   });
   step(QStringLiteral("the page's sidebar is scoped to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sidebarInput.insert(QStringLiteral("scopeProjectKey"), c[0]);
@@ -949,6 +1279,140 @@ void defineSteps() {
          world.sync();
          expect(!textSet(world, c[0], c[1]), QStringLiteral("the page got %1").arg(world.describePage()));
        });
+  // The terminal drawer.
+  const auto terminals = [](World& world) { return world.native().terminals(); };
+  step(QStringLiteral("the node has the project %1 at %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.node.projects.insert(c[0], {{QStringLiteral("id"), c[0]}, {QStringLiteral("title"), c[0]}, {QStringLiteral("workspaceRoot"), c[1]}, {QStringLiteral("scripts"), QJsonArray()}});
+  });
+  step(QStringLiteral("the project %1 has these scripts:").arg(q), [](World& world, const Captures& c, const Table& table) {
+    QJsonArray scripts;
+    for (qsizetype row = 1; row < table.size(); ++row) {
+      QJsonObject script;
+      for (qsizetype column = 0; column < table.first().size(); ++column) script.insert(table.first().at(column), table.at(row).value(column));
+      scripts.append(script);
+    }
+    world.node.projects[c[0]].insert(QStringLiteral("scripts"), scripts);
+  });
+  step(QStringLiteral("the node runs these terminals for %1:").arg(q), [](World& world, const Captures& c, const Table& table) {
+    const QStringList& header = table.first();
+    for (qsizetype row = 1; row < table.size(); ++row) {
+      const QStringList& cells = table.at(row);
+      world.node.addTerminal(c[0], cells.value(header.indexOf(QStringLiteral("terminal"))),
+                             header.contains(QStringLiteral("label")) ? cells.value(header.indexOf(QStringLiteral("label"))) : QString(),
+                             header.contains(QStringLiteral("busy")) && cells.value(header.indexOf(QStringLiteral("busy"))) == QLatin1String("yes"));
+    }
+    world.sync();
+  });
+  step(QStringLiteral("the node prints %1 in %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.node.print(c[2], c[1], unescaped(c[0]));
+    world.sync();
+  });
+  step(QStringLiteral("the node closes %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.node.closeTerminal(c[1], c[0]);
+    world.sync();
+  });
+  step(QStringLiteral("the user toggles the terminal drawer"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("terminal.toggle"));
+    world.sync();  // what it asked of the node has been answered
+  });
+  step(QStringLiteral("the user opens a new terminal"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("terminal.new"));
+    world.sync();  // what it asked of the node has been answered
+  });
+  step(QStringLiteral("the user selects %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("terminal.select"), QVariantMap{{QStringLiteral("terminalId"), c[0]}});
+    world.sync();  // what it asked of the node has been answered
+  });
+  step(QStringLiteral("the user closes the active terminal"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("terminal.close"));
+    world.sync();  // what it asked of the node has been answered
+  });
+  step(QStringLiteral("the user runs the script %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("workspace.runScript"), QVariantMap{{QStringLiteral("scriptId"), c[0]}});
+    world.sync();  // what it asked of the node has been answered
+  });
+  step(QStringLiteral("the user types %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    terminalSession(world, c[1])->write(unescaped(c[0]));
+  });
+  step(QStringLiteral("the terminal drawer is unavailable"), [terminals](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(!terminals(world)->available(), QStringLiteral("the terminal drawer is available"));
+  });
+  step(QStringLiteral("the terminal drawer is closed"), [terminals](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !terminals(world)->isOpen(); }, QStringLiteral("the terminal drawer to close"));
+  });
+  step(QStringLiteral("the terminal drawer shows the tabs %1").arg(q), [terminals](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return terminals(world)->isOpen() && tabLabels(world) == c[0]; },
+                  [&] { return QStringLiteral("the tabs %1; the drawer is %2 with %3").arg(c[0], terminals(world)->isOpen() ? QStringLiteral("open") : QStringLiteral("closed"), tabLabels(world)); });
+  });
+  step(QStringLiteral("the active terminal is %1").arg(q), [terminals](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return terminals(world)->activeTerminalId() == c[0]; },
+                  [&] { return QStringLiteral("%1 to be active; it is %2").arg(c[0], terminals(world)->activeTerminalId()); });
+  });
+  step(QStringLiteral("the node attaches %1 of %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      const auto input = terminalAttach(world, c[1], c[0]);
+      return input && input->value(QLatin1String("cwd")) == c[2];
+    }, QStringLiteral("%1 of %2 to attach in %3").arg(c[0], c[1], c[2]));
+  });
+  step(QStringLiteral("%1 attaches %1 of %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      const auto shape = terminalShape(world, c[2], c[1]);
+      return shape && shape->value(QLatin1String("environment")) == c[0] &&
+             shape->value(QLatin1String("input")).toObject().value(QLatin1String("cwd")) == c[3];
+    }, [&] {
+      const auto shape = terminalShape(world, c[2], c[1]);
+      return QStringLiteral("%1 to attach %2 of %3 in %4; got %5").arg(c[0], c[1], c[2], c[3], shape ? QString::fromUtf8(QJsonDocument(*shape).toJson(QJsonDocument::Compact)) : QStringLiteral("nothing"));
+    });
+  });
+  step(QStringLiteral("%1 of %1 starts with %1 set to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto input = terminalAttach(world, c[1], c[0]);
+    expect(input.has_value(), QStringLiteral("%1 of %2 never attached").arg(c[0], c[1]));
+    const QString value = input->value(QLatin1String("env")).toObject().value(c[2]).toString();
+    expect(value == c[3], QStringLiteral("%1 is \"%2\"").arg(c[2], value));
+  });
+  step(QStringLiteral("%1 of %1 is still attached").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(world.node.attached().contains(c[1] + QLatin1Char('/') + c[0]), QStringLiteral("%1 of %2 was let go").arg(c[0], c[1]));
+  });
+  step(QStringLiteral("the node is asked to open %1 of %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      const auto payload = terminalCall(world, QStringLiteral("terminal.open"), c[1], c[0]);
+      return payload && payload->value(QLatin1String("cwd")) == c[2];
+    }, [&] { return QStringLiteral("terminal.open; the node got %1").arg(describeTerminalCalls(world)); });
+  });
+  step(QStringLiteral("the node is not asked to open a terminal"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    for (const QJsonObject& call : world.node.terminalCalls) {
+      expect(call.value(QLatin1String("method")) != QLatin1String("terminal.open"), QStringLiteral("the node got %1").arg(describeTerminalCalls(world)));
+    }
+  });
+  step(QStringLiteral("the node is asked to close %1 of %1 and delete its history").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      const auto payload = terminalCall(world, QStringLiteral("terminal.close"), c[1], c[0]);
+      return payload && payload->value(QLatin1String("deleteHistory")).toBool();
+    }, [&] { return QStringLiteral("terminal.close; the node got %1").arg(describeTerminalCalls(world)); });
+  });
+  step(QStringLiteral("the node receives these writes to %1:").arg(q), [](World& world, const Captures& c, const Table& table) {
+    QStringList wanted;
+    for (qsizetype row = 1; row < table.size(); ++row) wanted.append(unescaped(table.at(row).value(0)));
+    world.waitFor([&] { return terminalWrites(world, c[0]).size() >= wanted.size(); },
+                  [&] { return QStringLiteral("%1 writes; the node got %2").arg(wanted.size()).arg(describeTerminalCalls(world)); });
+    world.sync();
+    expect(terminalWrites(world, c[0]) == wanted, QStringLiteral("the node got %1").arg(describeTerminalCalls(world)));
+  });
+  step(QStringLiteral("%1 shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString transcript = terminalSession(world, c[0])->transcript();
+    expect(transcript.contains(unescaped(c[1])), QStringLiteral("%1 shows \"%2\"").arg(c[0], transcript));
+  });
+  step(QStringLiteral("the page shows an? %1 toast %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      for (const PageAction& toast : world.actionsOf(QStringLiteral("toast.show"))) {
+        if (toast.payload.value(QStringLiteral("toastType")) == c[0] && toast.payload.value(QStringLiteral("title")) == c[1]) return true;
+      }
+      return false;
+    }, [&] { return QStringLiteral("the toast; the page got %1").arg(world.describePage()); });
+  });
 }
 
 void runStep(World& world, const Step& step) {

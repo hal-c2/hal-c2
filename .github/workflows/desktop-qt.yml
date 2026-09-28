@@ -80,6 +80,17 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ninja
 
+      # The first configure builds libghostty-vt (the terminal drawer's
+      # emulator) with Zig from a Ghostty checkout; both are cached here, and
+      # Zig's own cache holds Ghostty's dependencies.
+      - name: Cache libghostty-vt toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/qml-ghostty
+            ~/.cache/zig
+          key: qml-ghostty-${{ runner.os }}-${{ hashFiles('native/libghostty-vt/VERSION') }}
+
       - name: Configure
         run: >
           cmake -S apps/desktop-qt -B apps/desktop-qt/build/release -G Ninja

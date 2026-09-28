@@ -157,6 +157,12 @@ async function attach(url: string, home: string | undefined): Promise<Launched> 
   // A node on this machine lets the shell's own client in with its access
   // token; a remote one leaves every RPC with the page.
   const token = findLocalNodeToken({ origin: link.origin, home, env: process.env });
+  if (token === undefined) {
+    // Without it the native sidebar, composer and terminal drawer stay off.
+    process.stderr.write(
+      `no node on this machine records ${link.origin} as its origin; the shell's native client stays off\n`,
+    );
+  }
   return token === undefined ? { url: page } : { url: page, node: { origin: link.origin, token } };
 }
 

@@ -6,9 +6,10 @@
 #   apps/server-ex/lib/hal_c2/storage_cleanup.ex (busy? keeps worktrees with a running terminal)
 #   apps/server-ex/test/hal_c2/terminal_test.exs
 #   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml (terminal.toggle, terminal.resize, focusTerminal)
-#   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (terminal toggle, terminalAvailable)
+#   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (terminal toggle)
+#   apps/desktop-qt/src/TerminalController.cpp (launch context, availability)
 #   apps/desktop-qt/tests/tst_Scenarios.qml (terminal toggle)
-#   apps/desktop-qt/parity/features.backlog.test.ts (terminal-drawer-launch-context)
+#   features/desktop/native-terminal.feature (the desktop's launch-context scenarios, run natively)
 #   apps/tui/src/components/ChatView.tsx (toggleTerminal, initialTabs)
 #   apps/tui/src/components/ThreadTerminalDrawer.tsx
 #   apps/web/src/components/ThreadTerminalDrawer.tsx
@@ -167,13 +168,13 @@ Feature: Terminal sessions
       Then focus returns to the prompt
       And the shell keeps running on the server
 
-    @backlog @desktop
+    @desktop
     Scenario: A new terminal opened from the drawer uses the thread's launch context
       Given a thread working in a worktree
       When the user opens another terminal from the drawer
       Then it starts in the same folder and worktree as the thread
 
-    @backlog @desktop
+    @desktop
     Scenario: A terminal started by a project script shares that script's launch context
       Given a project script is running in a terminal
       When the user opens another terminal next to it

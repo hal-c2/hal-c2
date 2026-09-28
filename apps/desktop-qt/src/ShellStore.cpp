@@ -39,6 +39,18 @@ bool ShellStore::servesEnvironment(const QString& environmentId) const {
   return false;
 }
 
+bool ShellStore::reaches(const QString& environmentId) const {
+  return m_linked.contains(environmentId) || servesEnvironment(environmentId);
+}
+
+void ShellStore::setLinks(const QJsonArray& links) {
+  m_linked.clear();
+  for (const QJsonValue& link : links) {
+    m_linked.insert(
+        link.toObject().value(QLatin1String("environment")).toObject().value(QLatin1String("environmentId")).toString());
+  }
+}
+
 std::optional<sidebar::Thread> ShellStore::thread(const QString& key) const {
   const qsizetype colon = key.indexOf(QLatin1Char(':'));
   if (colon <= 0) return std::nullopt;
@@ -85,6 +97,7 @@ void ShellStore::onFrame(const QJsonObject& frame) {
       if (!isThreadRow(row.at(2).toString()) || removed(fields)) continue;
       m_nodes[row.at(0).toString()].threads.insert(row.at(1).toString(), fields);
     }
+    setLinks(frame.value(QLatin1String("links")).toArray());
     m_synchronized = true;
   } else if (type == QLatin1String("shell.environment")) {
     setEnvironment(frame.value(QLatin1String("node")).toString(),
@@ -92,6 +105,8 @@ void ShellStore::onFrame(const QJsonObject& frame) {
   } else if (type == QLatin1String("shell.node")) {
     m_nodes[frame.value(QLatin1String("node")).toString()].online =
         frame.value(QLatin1String("online")).toBool();
+  } else if (type == QLatin1String("shell.links")) {
+    setLinks(frame.value(QLatin1String("links")).toArray());
   } else if (type == QLatin1String("shell.rows")) {
     Node& node = m_nodes[frame.value(QLatin1String("node")).toString()];
     for (const QJsonValue& value : frame.value(QLatin1String("rows")).toArray()) {

@@ -36,6 +36,10 @@ class ShellExamplesTest : public QObject {
   std::unique_ptr<WebProfile> profile;
   std::unique_ptr<ShellRuntime> runtime;
 
+  static QObject* terminalsOf(QQmlEngine* engine) {
+    return engine->singletonInstance<QObject*>("HalC2.Shell", "Terminals");
+  }
+
 private slots:
   void initTestCase() {
     QVERIFY(directory.isValid());
@@ -43,6 +47,8 @@ private slots:
     theme = std::make_unique<ThemeStore>(directory.path());
     profile = std::make_unique<WebProfile>(directory.filePath("web"));
     qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", profile->profile());
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Terminals.qml")),
+                             "HalC2.Shell", 1, 0, "Terminals");
     runtime = std::make_unique<ShellRuntime>(
         ShellRuntime::Options{directory.path(), QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/qml")},
         &bridge, theme.get());
@@ -51,7 +57,7 @@ private slots:
       "workspace": {
         "projectTitle": "Example project", "threadTitle": "Fix TUI Readability Issue",
         "isDraft": false, "renameRequestId": 0, "scripts": [], "editors": [],
-        "terminalAvailable": false, "branch": "feature/a-descriptive-branch-name-that-needs-to-fit",
+        "branch": "feature/a-descriptive-branch-name-that-needs-to-fit",
         "environments": [], "environmentChangeable": false, "activeEnvironmentId": null,
         "envMode": "local", "envModeLabel": "Local checkout", "envModeChangeable": false,
         "canOpenPullRequest": false, "branchChangeable": false, "branchSwitchPending": false,
@@ -200,7 +206,7 @@ private slots:
         QTRY_VERIFY(content->hasActiveFocus());
         bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}});
       }
-      // The terminal drawer folds open to the page's height and back to nothing.
+      // The terminal drawer folds open to its height and back to nothing.
       // The slot stays visible at zero height (an invisible item gets no layout
       // height, so it could never open); the drawer inside it is what hides.
       auto* terminal = window->findChild<QQuickItem*>("macTerminal");
@@ -209,21 +215,18 @@ private slots:
       auto* drawer = terminal->childItems().first();
       QCOMPARE(terminal->height(), 0);
       QVERIFY(!drawer->isVisible());
-      auto workspace = initialState.value("workspace").toMap();
-      workspace["terminalAvailable"] = true;
-      workspace["terminalOpen"] = true;
-      workspace["terminalHeight"] = 280;
-      workspace["terminalEmbedPath"] = "/embed/env/thread?surface=terminal";
+      QObject* terminals = terminalsOf(engine);
+      QVERIFY(terminals);
       const qreal beforeTerminal = content->height();
-      bridge.publish("workspace", workspace);
+      terminals->setProperty("available", true);
+      terminals->setProperty("open", true);
       QTRY_COMPARE(terminal->height(), 280);
       QVERIFY(drawer->isVisible());
       QCOMPARE(content->height(), beforeTerminal);
-      workspace["terminalOpen"] = false;
-      bridge.publish("workspace", workspace);
+      terminals->setProperty("open", false);
       QTRY_COMPARE(terminal->height(), 0);
       QVERIFY(!drawer->isVisible());
-      bridge.publish("workspace", initialState.value("workspace"));
+      QMetaObject::invokeMethod(terminals, "reset");
     }
 
     if (example == "folders") {
@@ -329,19 +332,17 @@ private slots:
                  "  TextField { objectName: 'composerField'; Layout.fillWidth: true; focus: true }\n"
                  "  TerminalDrawer { objectName: 'terminalDrawer'; Layout.fillWidth: true } } }");
     source.close();
-    bridge.setPageUrl(QUrl("http://127.0.0.1:9/"));
-    auto workspace = initialState.value("workspace").toMap();
-    workspace["terminalAvailable"] = true;
-    workspace["terminalOpen"] = false;
-    workspace["terminalHeight"] = 240;
-    workspace["terminalEmbedPath"] = "/embed?surface=terminal";
-    workspace["terminalFocusRequestId"] = 0;
-    bridge.publish("workspace", workspace);
     runtime->reload();
     QVERIFY2(runtime->lastError().isEmpty(), qPrintable(runtime->lastError()));
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     auto* engine = runtime->findChild<QQmlApplicationEngine*>();
     QVERIFY(engine);
+    QObject* terminals = terminalsOf(engine);
+    QVERIFY(terminals);
+    terminals->setProperty("available", true);
+    terminals->setProperty("height", 240);
+    QMetaObject::invokeMethod(terminals, "addTab", Q_ARG(QVariant, "term-1"), Q_ARG(QVariant, "Terminal 1"));
+    terminals->setProperty("activeTerminalId", "term-1");
     auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
     QVERIFY(window);
     window->requestActivate();
@@ -353,19 +354,24 @@ private slots:
     composer->forceActiveFocus();
     QTRY_COMPARE(window->activeFocusItem(), composer);
 
-    // The page opened the drawer from its toggle: the terminal gets the keys.
-    workspace["terminalOpen"] = true;
-    workspace["terminalFocusRequestId"] = 1;
-    bridge.publish("workspace", workspace);
+    // The toggle opened the drawer and asked for focus: the terminal gets the keys.
+    terminals->setProperty("open", true);
+    QMetaObject::invokeMethod(terminals, "focusRequested");
     QTRY_VERIFY(window->activeFocusItem() && drawer->isAncestorOf(window->activeFocusItem()));
+    QCOMPARE(window->activeFocusItem()->objectName(), QString("HalC2Terminal"));
+
+    // What is typed there goes to the terminal's session.
+    QTest::keyClick(window, Qt::Key_A);
+    auto* session = qvariant_cast<QObject*>(
+        window->activeFocusItem()->property("session"));
+    QVERIFY(session);
+    QTRY_COMPARE(session->property("written").toStringList(), QStringList{"a"});
 
     // Closing it hands them back to the composer.
-    workspace["terminalOpen"] = false;
-    bridge.publish("workspace", workspace);
+    terminals->setProperty("open", false);
     QTRY_COMPARE(window->activeFocusItem(), composer);
 
-    bridge.publish("workspace", initialState.value("workspace"));
-    bridge.setPageUrl(QUrl("about:blank"));
+    QMetaObject::invokeMethod(terminals, "reset");
   }
 
   void dashboardDimmerPreservesRoundedCorners() {
