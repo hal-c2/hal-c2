@@ -63,7 +63,6 @@ import {
   type KeybindingCommand,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode,
-  ProviderDriverKind,
   resolveEnvironmentMachineKind,
   RuntimeMode,
   type WorktreeSetupSnapshot,
@@ -99,11 +98,7 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@hal-c2/client-runtime/environment";
-import {
-  applyClaudePromptEffortPrefix,
-  createModelSelection,
-  resolvePromptInjectedEffort,
-} from "@hal-c2/shared/model";
+import { createModelSelection } from "@hal-c2/shared/model";
 import {
   projectScriptCwd,
   projectScriptRuntimeEnv,
@@ -286,7 +281,7 @@ import {
 } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
-import { getProviderModelCapabilities } from "../providerModels";
+import { formatOutgoingPrompt } from "../providerModels";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -739,18 +734,6 @@ const draftFanoutStateAtom = Atom.family((_routeKey: string) =>
     uncertainSubmissions: { current: new Map<string, ThreadId>() },
   }).pipe(Atom.keepAlive),
 );
-
-function formatOutgoingPrompt(params: {
-  provider: ProviderDriverKind;
-  model: string | null;
-  models: ReadonlyArray<ServerProvider["models"][number]>;
-  effort: string | null;
-  text: string;
-}): string {
-  const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
-  const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
-  return applyClaudePromptEffortPrefix(params.text, promptEffort);
-}
 
 function isCompactCommandMessage(message: ChatMessage): boolean {
   const text = message.text.trim().toLowerCase();
