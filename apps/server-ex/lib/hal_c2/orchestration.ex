@@ -764,7 +764,9 @@ defmodule HalC2.Orchestration do
   end
 
   # A runtime that dies while starting the turn must not leave the run "starting"
-  # forever: the run fails and the thread can take the next message.
+  # forever: the run fails and the thread can take the next message. Once the turn
+  # was claimed, `HalC2.Orchestration.TurnWatch` may be ending it too; only the
+  # first to abandon it does.
   defp start_turn(thread_id, turn) do
     :ok = runtime(turn.ids.instance).start_turn(thread_id, turn)
   catch
@@ -772,8 +774,9 @@ defmodule HalC2.Orchestration do
       require Logger
       Logger.warning("turn failed to start in #{thread_id}: #{inspect(reason)}")
 
-      HalC2.Orchestration.TurnWriter.finish(
-        %{thread_id: thread_id, turn: turn},
+      HalC2.Orchestration.TurnWriter.abandon(
+        thread_id,
+        turn.ids.run,
         "failed",
         HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
       )
@@ -1189,18 +1192,22 @@ defmodule HalC2.Orchestration do
   defp builtin_runtime(_codex), do: HalC2.Codex.ThreadRuntime
 
   # A thread has at most one running turn; interrupt whichever runtime holds it. A
-  # provider plugin that cannot stop a turn says so.
+  # started turn nothing drives any more (its runtime stopped without ending it) ends
+  # here, and a provider plugin that cannot stop a turn says so.
   defp interrupt_any(thread_id, run_id) do
-    Enum.find_value(
-      runtimes(:interrupt, 2),
-      interrupt_refusal(thread_id, run_id),
-      fn runtime ->
-        if runtime.interrupt(thread_id, run_id) == :ok, do: :ok
-      end
-    )
+    Enum.find_value(runtimes(:interrupt, 2), fn runtime ->
+      if interrupted?(runtime, thread_id, run_id), do: :ok
+    end) || interrupt_undriven(thread_id, run_id)
   end
 
-  defp interrupt_refusal(thread_id, run_id) do
+  # A runtime that dies as it is asked leaves its turn to `interrupt_undriven/2`.
+  defp interrupted?(runtime, thread_id, run_id) do
+    runtime.interrupt(thread_id, run_id) == :ok
+  catch
+    :exit, _ -> false
+  end
+
+  defp interrupt_undriven(thread_id, run_id) do
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
     runs = StreamState.list(state, "run")
 
@@ -1208,6 +1215,13 @@ defmodule HalC2.Orchestration do
       Enum.find(runs, &(&1["id"] == run_id)) ||
         Enum.find(runs, &(&1["status"] in @active_statuses))
 
+    if run != nil and run["status"] in ~w(running waiting) and
+         not HalC2.Orchestration.TurnWatch.driven?(run["id"]),
+       do: HalC2.Orchestration.TurnWriter.abandon(thread_id, run["id"], "interrupted", nil),
+       else: interrupt_refusal(run)
+  end
+
+  defp interrupt_refusal(run) do
     instance = run && run["providerInstanceId"]
 
     with instance when is_binary(instance) <- instance,

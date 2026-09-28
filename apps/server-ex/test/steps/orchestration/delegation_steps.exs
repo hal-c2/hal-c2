@@ -65,6 +65,22 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     Map.put(context, :delegate_input, %{"interactionMode" => "default"})
   end
 
+  step "the turn of {string} fails", %{args: [thread]} = context do
+    World.await_runs(context, thread, ["failed"])
+    context
+  end
+
+  step "the task, its node and its turn item are {string}", %{args: [status]} = context do
+    state = World.state(context, context.task_parent)
+    assert task(context)["status"] == status
+    assert StreamState.get(state, "node")[context.task_id]["status"] == status
+
+    assert StreamState.get(state, "turn-item")["turn-item:subagent:#{context.task_id}"]["status"] ==
+             status
+
+    context
+  end
+
   step "the turn of {string} ended", %{args: [thread]} = context do
     {:ok, _} =
       HalC2.Orchestration.dispatch(%{

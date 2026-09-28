@@ -10,10 +10,12 @@ defmodule HalC2.Orchestration.TurnWriter do
   """
 
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.Entities
+  alias HalC2.Orchestration.{Entities, TurnWatch}
   alias HalC2.StreamState
 
   @flush_ms 50
+  @active_runs ~w(preparing starting running waiting)
+  @open ~w(pending running waiting)
   @text_ms 400
 
   @doc """
@@ -448,12 +450,15 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   @doc """
   Marks the turn as running: its provider turn (`ids.provider_turn`), attempt, run,
-  root node, and provider thread, which becomes the thread's active one.
+  root node, and provider thread, which becomes the thread's active one. The calling
+  process drives the turn from here: if it crashes before `finish/3`, the turn ends
+  as failed (`HalC2.Orchestration.TurnWatch`).
   """
   def started(state) do
     %{turn: turn} = state
     ids = turn.ids
     at = Entities.now()
+    TurnWatch.claim(state.thread_id, ids.run)
 
     commit(state, fn stream ->
       [
@@ -508,9 +513,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   (`HalC2.Orchestration.start_next/1`).
   """
   def finish(state, status, failure) do
-    ids = state.turn.ids
     at = Entities.now()
-    done = %{"status" => status, "completedAt" => at}
 
     checkpoint =
       if status == "completed",
@@ -521,36 +524,53 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     baselines = if checkpoint, do: baselines(state.turn, at), else: []
 
-    # The turn may have changed the checkout; clients watching it see the result.
-    HalC2.Vcs.Watch.refresh(state.turn.cwd)
-    HalC2.Workspace.invalidate(state.turn.cwd)
-    run_done = if checkpoint, do: Map.put(done, "checkpointId", checkpoint["id"]), else: done
-
     commit(state, fn stream ->
-      # A turn that failed while starting has not created all of these yet.
-      settle = fn kind, id, changes ->
-        StreamState.get(stream, kind)[id] &&
-          Orchestration.upsert(stream, kind, id, &Map.merge(&1, changes))
-      end
-
       baseline_changes(stream, baselines) ++
         checkpoint_changes(stream, state.turn, checkpoint, at) ++
-        [
-          Map.has_key?(ids, :provider_turn) && settle.("provider-turn", ids.provider_turn, done),
-          settle.("run-attempt", ids.attempt, done),
-          settle.("run", ids.run, run_done),
-          settle.("node", ids.root_node, done),
-          settle.("provider-thread", ids.provider_thread, %{"status" => "idle", "updatedAt" => at}),
-          status == "interrupted" && interrupt_result(stream, ids, at),
-          failure && status == "failed" &&
-            settle.(
-              "provider-session",
-              "provider-session:#{Entities.driver(ids)}:#{ids.thread}",
-              %{"lastError" => failure_message(failure), "updatedAt" => at}
-            ),
-          is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at)
-        ]
+        ended(stream, state.turn.ids, status, failure, checkpoint, at)
     end)
+
+    finished(state, status, failure)
+  end
+
+  # The changes that end the run.
+  defp ended(stream, ids, status, failure, checkpoint, at) do
+    done = %{"status" => status, "completedAt" => at}
+    run_done = if checkpoint, do: Map.put(done, "checkpointId", checkpoint["id"]), else: done
+
+    # A turn that failed while starting has not created all of these yet.
+    settle = fn kind, id, changes ->
+      StreamState.get(stream, kind)[id] &&
+        Orchestration.upsert(stream, kind, id, &Map.merge(&1, changes))
+    end
+
+    [
+      Map.has_key?(ids, :provider_turn) && settle.("provider-turn", ids.provider_turn, done),
+      settle.("run-attempt", ids.attempt, done),
+      settle.("run", ids.run, run_done),
+      settle.("node", ids.root_node, done),
+      settle.("provider-thread", ids.provider_thread, %{"status" => "idle", "updatedAt" => at}),
+      status == "interrupted" && interrupt_result(stream, ids, at),
+      failure && status == "failed" &&
+        settle.(
+          "provider-session",
+          "provider-session:#{Entities.driver(ids)}:#{ids.thread}",
+          %{"lastError" => failure_message(failure), "updatedAt" => at}
+        ),
+      is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at)
+    ]
+  end
+
+  # What follows a run ending, once it has.
+  defp finished(state, status, failure) do
+    ids = state.turn.ids
+    TurnWatch.release(ids.run)
+
+    # The turn may have changed the checkout; clients watching it see the result.
+    if cwd = state.turn.cwd do
+      HalC2.Vcs.Watch.refresh(cwd)
+      HalC2.Workspace.invalidate(cwd)
+    end
 
     # The thread is idle now: its next queued message can start. Off this process,
     # since starting a turn calls back into the runtime that is finishing this one.
@@ -575,6 +595,97 @@ defmodule HalC2.Orchestration.TurnWriter do
     end)
 
     :ok
+  end
+
+  @doc """
+  Ends run `run_id` of `thread_id` with `status` when nothing drives it any more: its
+  runtime crashed, or stopped without ending it. What the run left open ends with it,
+  from what the thread recorded, in the same transaction as the run, so of two
+  callers racing (a crash and a stop) only the first ends it.
+  """
+  def abandon(thread_id, run_id, status, failure) do
+    at = Entities.now()
+
+    abandoned =
+      HalC2.Streams.transact(thread_id, :thread, fn stream ->
+        case StreamState.get(stream, "run")[run_id] do
+          %{"status" => active} = run when active in @active_runs ->
+            state = abandoned_turn(stream, thread_id, run)
+
+            changes =
+              left_open(stream, run, status, at) ++
+                ended(stream, state.turn.ids, status, failure, nil, at)
+
+            {Enum.filter(changes, &is_tuple/1), state}
+
+          _ ->
+            {[], nil}
+        end
+      end)
+
+    if abandoned, do: finished(abandoned, status, failure), else: :ok
+  end
+
+  # The runtime state `finish/3` needs, rebuilt from the run.
+  defp abandoned_turn(stream, thread_id, run) do
+    instance = run["providerInstanceId"]
+    driver = Orchestration.driver_for(instance)
+    attempt = StreamState.get(stream, "run-attempt")[run["activeAttemptId"]] || %{}
+    session_id = "provider-session:#{driver}:#{thread_id}"
+
+    ids =
+      %{
+        thread: thread_id,
+        run: run["id"],
+        attempt: run["activeAttemptId"],
+        root_node: run["rootNodeId"],
+        provider_thread: run["providerThreadId"],
+        driver: driver,
+        instance: instance
+      }
+      |> then(
+        &if(turn = attempt["providerTurnId"], do: Map.put(&1, :provider_turn, turn), else: &1)
+      )
+
+    cwd = (StreamState.get(stream, "provider-session")[session_id] || %{})["cwd"]
+    %{thread_id: thread_id, turn: %{ids: ids, cwd: cwd, run_ordinal: run["ordinal"]}}
+  end
+
+  # The items, nodes, provider subagents and prompts a run left open, and its message
+  # still streaming. Its root node ends with the run. A task it delegated runs on in its
+  # own thread and settles when that ends (`Delegation.finished/3`).
+  defp left_open(stream, %{"id" => run_id, "rootNodeId" => root}, status, at) do
+    nodes =
+      for {id, %{"runId" => ^run_id}} <- StreamState.get(stream, "node"),
+          into: MapSet.new(),
+          do: id
+
+    delegated =
+      for {id, %{"runId" => ^run_id, "origin" => "app_owned"}} <-
+            StreamState.get(stream, "subagent"),
+          into: MapSet.new(),
+          do: id
+
+    for {kind, open?, changes} <- [
+          {"turn-item",
+           &(&1["runId"] == run_id and &1["nodeId"] not in delegated and &1["status"] in @open),
+           %{"status" => status, "streaming" => false, "completedAt" => at, "updatedAt" => at}},
+          {"node",
+           &(&1["runId"] == run_id and &1["id"] != root and &1["id"] not in delegated and
+               &1["status"] in @open), %{"status" => status, "completedAt" => at}},
+          {"subagent",
+           &(&1["runId"] == run_id and &1["origin"] == "provider_native" and
+               &1["status"] in @open),
+           %{"status" => status, "completedAt" => at, "updatedAt" => at}},
+          {"message", &(&1["runId"] == run_id and &1["streaming"] == true),
+           %{"streaming" => false, "updatedAt" => at}},
+          {"runtime-request", &(&1["nodeId"] in nodes and &1["status"] == "pending"),
+           %{"status" => "cancelled", "resolvedAt" => at}}
+        ],
+        {id, entity} <- StreamState.get(stream, kind),
+        open?.(entity),
+        change = Orchestration.upsert(stream, kind, id, &Map.merge(&1, changes)),
+        do: change
   end
 
   defp trace_attributes(state) do

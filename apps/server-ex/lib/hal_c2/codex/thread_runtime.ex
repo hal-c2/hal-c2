@@ -17,7 +17,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   import HalC2.Orchestration.TurnWriter
 
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.Entities
+  alias HalC2.Orchestration.{Entities, TurnWatch}
   alias HalC2.JsonRpc.Connection
 
   @state_version 1
@@ -113,6 +113,9 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   @impl true
   def init(thread_id) do
+    # The app-server exiting ends the turn it was running (`{:EXIT, conn, _}`).
+    Process.flag(:trap_exit, true)
+
     {:ok,
      %{
        v: @state_version,
@@ -321,6 +324,12 @@ defmodule HalC2.Codex.ThreadRuntime do
     {:noreply, state}
   end
 
+  def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
+    state = if state.turn, do: end_turn(state, "failed", "Codex exited unexpectedly"), else: state
+    # The native thread was loaded in that app-server; the next one resumes it.
+    {:noreply, %{state | conn: nil, native_thread_id: nil}}
+  end
+
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
   def handle_info(_other, state), do: {:noreply, state}
 
@@ -377,6 +386,8 @@ defmodule HalC2.Codex.ThreadRuntime do
       at = Entities.now()
       ids = Map.put(turn.ids, :provider_turn, "provider-turn:codex:#{native_turn}")
       turn = %{turn | ids: ids} |> Map.put(:native_turn_id, native_turn)
+      # As `started/1` does, with Codex's native turn and thread.
+      TurnWatch.claim(state.thread_id, ids.run)
 
       commit(state, fn stream ->
         [
@@ -743,23 +754,27 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp notification("turn/completed", %{"turn" => turn}, state) do
-    state = flush(state)
-
     status =
       if turn["status"] in ["completed", "interrupted", "failed"],
         do: turn["status"],
         else: "failed"
+
+    end_turn(state, status, state.failure || get_in(turn, ["error", "message"]))
+  end
+
+  defp notification(_method, _params, state), do: state
+
+  defp end_turn(state, status, failure) do
+    state = flush(state)
 
     state =
       Enum.reduce(Map.keys(state.requests), state, &resolve_request(&2, &1, nil, "cancelled"))
 
     # Items the provider left running end with the turn, as with Claude and ACP.
     state = close_open_items(state, status)
-    finish(state, status, state.failure || get_in(turn, ["error", "message"]))
+    finish(state, status, failure)
     %{state | turn: nil, items: %{}, requests: %{}}
   end
-
-  defp notification(_method, _params, state), do: state
 
   # The model options the user picked: reasoning effort and service tier.
   defp selected_options(options) do

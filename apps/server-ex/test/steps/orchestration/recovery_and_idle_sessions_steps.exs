@@ -196,6 +196,59 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  # --- a runtime crashing mid-turn ---------------------------------------------------------
+
+  # A call no runtime handles crashes it, as a bug in any of its callbacks would.
+  step "the runtime running the turn of {string} crashes", %{args: [thread]} = context do
+    pid = runtime(context, thread)
+    ref = Process.monitor(pid)
+    catch_exit(GenServer.call(pid, :crash))
+    assert_receive {:DOWN, ^ref, :process, _, {:function_clause, _}}
+    context
+  end
+
+  # As a thread's deletion stops it, but with its turn still running.
+  step "the runtime running the turn of {string} stops without ending it",
+       %{args: [thread]} = context do
+    :ok = GenServer.stop(runtime(context, thread), :shutdown)
+    assert World.state(context, thread).entities["run"][context.running]["status"] == "running"
+    context
+  end
+
+  step "the user stops {string}", %{args: [thread]} = context do
+    {reply, context} =
+      World.dispatch(context, %{
+        "type" => "run.interrupt",
+        "commandId" => "command:stop-#{thread}",
+        "threadId" => World.thread_id(context, thread)
+      })
+
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "the run of {string} is interrupted", %{args: [thread]} = context do
+    World.await_run(
+      context,
+      thread,
+      &(&1["id"] == context.running and &1["status"] == "interrupted")
+    )
+
+    context
+  end
+
+  step "the run of {string} fails saying the session ended unexpectedly",
+       %{args: [thread]} = context do
+    World.await_run(context, thread, &(&1["id"] == context.running and &1["status"] == "failed"))
+
+    assert Enum.any?(
+             World.entities(context, thread, "provider-session"),
+             &(&1["lastError"] =~ "session ended unexpectedly")
+           )
+
+    context
+  end
+
   # --- idle sessions ---------------------------------------------------------------------
 
   step ~r/^thread "(?<thread>[^"]+)" has a live provider process and no activity for (?<n>\d+) (?<unit>minutes|hours)$/,
@@ -424,6 +477,17 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   defp item(type, id, fields), do: %{"item" => Map.merge(%{"type" => type, "id" => id}, fields)}
 
   # Kills the thread's Codex process, as a node stop does, so nothing settles the turn.
+  defp runtime(context, thread) do
+    id = World.thread_id(context, thread)
+
+    [pid] =
+      for registry <- [HalC2.Codex.Registry, HalC2.Claude.Registry, HalC2.Acp.Registry],
+          {pid, _} <- Registry.lookup(registry, id),
+          do: pid
+
+    pid
+  end
+
   defp kill_provider(context, thread) do
     {pid, _} = World.codex_runtime(context, thread)
     ref = Process.monitor(pid)

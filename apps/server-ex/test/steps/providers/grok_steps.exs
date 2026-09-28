@@ -658,6 +658,54 @@ defmodule HalC2.Steps.Providers.Grok do
     })
   end
 
+  # Grok's turn stays open until it is cancelled, with its subagent still working.
+  step "Grok is running a subagent", context do
+    call = %{
+      "sessionUpdate" => "tool_call",
+      "toolCallId" => "task-1",
+      "title" => "task",
+      "kind" => "other",
+      "status" => "in_progress",
+      "rawInput" => %{"description" => "Survey the modules", "prompt" => "List the modules"}
+    }
+
+    turns = [
+      %{"match" => "survey the code", "steps" => [%{"update" => call}, %{"waitCancel" => true}]}
+      | FakeAcp.turns()
+    ]
+
+    context =
+      context
+      |> FakeAcp.install("grok", Map.put(signed_in_config(), "turns", turns), enabled: true)
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("survey the code")
+
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "subagent"), &(&1["status"] == "running"))
+    end)
+
+    Map.put(
+      context,
+      :running,
+      hd(HalC2.StreamState.list(FakeAcp.await_run(context, "running"), "run"))["id"]
+    )
+  end
+
+  step "the subagent, its node and its turn item have failed", context do
+    state = FakeAcp.await_run(context, "failed")
+    [subagent] = HalC2.StreamState.list(state, "subagent")
+    assert subagent["status"] == "failed"
+    assert HalC2.StreamState.get(state, "node")[subagent["id"]]["status"] == "failed"
+
+    assert [%{"status" => "failed"}] =
+             Enum.filter(
+               HalC2.StreamState.list(state, "turn-item"),
+               &(&1["subagentId"] == subagent["id"])
+             )
+
+    context
+  end
+
   # The agent has started answering: the prompt reached it.
   defp await_answer(context) do
     World.await_stream(World.thread_id(context, context.thread), fn state ->
