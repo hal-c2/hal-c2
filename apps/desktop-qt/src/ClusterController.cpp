@@ -94,6 +94,8 @@ bool ClusterController::handle(const QString& action, const QVariant& payload) {
 void ClusterController::refresh() {
   call(QStringLiteral("cluster.status"), {}, [this](const QJsonValue& result, const std::optional<QString>& error) {
     if (error) {
+      // What was read before may no longer hold; the page shows why instead.
+      m_state.insert(QStringLiteral("status"), QVariant::fromValue(nullptr));
       set(QStringLiteral("error"), *error);
       return;
     }

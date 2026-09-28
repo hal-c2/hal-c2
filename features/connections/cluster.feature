@@ -260,6 +260,16 @@ Feature: Clustering one person's machines
     And the cluster page says "Removed laptop from the cluster."
 
   @desktop
+  Scenario: A cluster the node can no longer read is not shown as it was
+    Given this machine is clustered with "laptop", which is connected
+    And the desktop shell is connected to its node
+    When the user opens Cluster in the desktop's settings
+    And the node can no longer read its cluster, saying "The node is shutting down."
+    And the user goes back from settings
+    And the user opens Cluster in the desktop's settings
+    Then the cluster page shows the error "The node is shutting down." instead of the machines
+
+  @desktop
   Scenario: Back leaves the desktop's cluster page without the page
     Given the desktop shell is connected to its node
     When the user opens Cluster in the desktop's settings

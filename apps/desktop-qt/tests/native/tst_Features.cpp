@@ -235,9 +235,10 @@ public:
   QStringList linked;
   QHash<QString, QString> lent;
   // This machine's cluster: the other members, whether it listens only on
-  // loopback, and why it refuses joins (when it does).
+  // loopback, and why it refuses to read the cluster or join (when it does).
   QJsonArray members;
   bool loopbackOnly = false;
+  QString statusRefusal;
   QString joinRefusal;
   QList<QPair<QString, QJsonObject>> clusterCalls;
 
@@ -460,7 +461,18 @@ private:
 
   void answerCluster(int id, const QString& method, const QJsonObject& payload) {
     clusterCalls.append({method, payload});
+    const auto refuse = [this, id](const QString& message, const QString& reason) {
+      send({{QStringLiteral("t"), QStringLiteral("rpc.error")},
+            {QStringLiteral("id"), id},
+            {QStringLiteral("error"), message},
+            {QStringLiteral("detail"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("ClusterError")},
+                                                   {QStringLiteral("reason"), reason}}}});
+    };
     QJsonValue result = clusterStatus();
+    if (method == QLatin1String("cluster.status") && !statusRefusal.isEmpty()) {
+      refuse(statusRefusal, QStringLiteral("request_failed"));
+      return;
+    }
     if (method == QLatin1String("cluster.invite")) {
       const QString host = loopbackOnly ? QStringLiteral("127.0.0.1") : QStringLiteral("desk");
       result = QJsonObject{
@@ -470,11 +482,7 @@ private:
       };
     } else if (method == QLatin1String("cluster.join")) {
       if (!joinRefusal.isEmpty()) {
-        send({{QStringLiteral("t"), QStringLiteral("rpc.error")},
-              {QStringLiteral("id"), id},
-              {QStringLiteral("error"), joinRefusal},
-              {QStringLiteral("detail"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("ClusterError")},
-                                                     {QStringLiteral("reason"), QStringLiteral("link_lacks_access")}}}});
+        refuse(joinRefusal, QStringLiteral("link_lacks_access"));
         return;
       }
       const QString host = QUrl(payload.value(QLatin1String("link")).toString()).host();
@@ -1285,6 +1293,9 @@ void defineSteps() {
     world.sync();
     expect(cluster(world).value(QStringLiteral("open")).toBool(), QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
   });
+  step(QStringLiteral("the node can no longer read its cluster, saying %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.node.statusRefusal = c[0];
+  });
   step(QStringLiteral("the user makes a cluster invite"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("cluster.invite"), {});
   });
@@ -1352,6 +1363,12 @@ void defineSteps() {
       }
       expect(found, QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
     }
+  });
+  step(QStringLiteral("the cluster page shows the error %1 instead of the machines").arg(q), [cluster](World& world, const Captures& c, const Table&) {
+    world.sync();
+    const QVariantMap page = cluster(world);
+    expect(page.value(QStringLiteral("error")).toString() == c[0] && page.value(QStringLiteral("status")).isNull(),
+           QStringLiteral("the cluster page is %1").arg(show(page)));
   });
   step(QStringLiteral("the cluster page closes"), [cluster](World& world, const Captures&, const Table&) {
     world.sync();
