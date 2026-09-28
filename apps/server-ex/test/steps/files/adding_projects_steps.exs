@@ -471,7 +471,12 @@ defmodule HalC2.Steps.Files.AddingProjects do
       %{
         "args" => ["login list"],
         "stdout" => [
-          %{"name" => "codeberg", "url" => "https://codeberg.org", "default" => "true"}
+          %{
+            "name" => "codeberg",
+            "url" => "https://codeberg.org",
+            "user" => "sam",
+            "default" => "true"
+          }
         ]
       },
       %{
