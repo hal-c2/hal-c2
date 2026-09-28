@@ -2,6 +2,7 @@
 #   docs/user/thread-sidebar.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml
 #   apps/desktop-qt/tests/tst_Sidebar.qml
+#   apps/desktop-qt/src/native/SidebarModel.cpp (the desktop's port of the grouping and order)
 #   apps/web/src/components/Sidebar.tsx
 #   apps/web/src/components/Sidebar.logic.ts
 #   apps/web/src/hooks/useSidebarProjectGroups.ts
@@ -140,19 +141,19 @@ Feature: The thread list
       | the environment has no projects       | No projects yet      |
       | the scoped project has no threads     | No threads yet       |
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Projects are ordered by recent use unless arranged by hand
     Given the user last wrote in "docs" after "shop"
     When the user looks at the projects
     Then "docs" is listed above "shop"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Projects with the same name on two environments stay separate
     Given the environments "home" and "work" both have a project "shop"
     When the user looks at the projects
     Then "shop" is listed once for each environment
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Threads started by other agents are not listed
     Given the agent in "Alpha" started a helper agent thread
     When the user looks at the thread list

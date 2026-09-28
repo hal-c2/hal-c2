@@ -42,3 +42,4 @@ SettingsRow 1.0 SettingsRow.qml
 GeneralSettings 1.0 GeneralSettings.qml
 AppearanceSettings 1.0 AppearanceSettings.qml
 ThemeEditor 1.0 ThemeEditor.qml
+ProjectRemovalDialog 1.0 ProjectRemovalDialog.qml

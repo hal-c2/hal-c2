@@ -61,15 +61,18 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   client takes (below).
 - **The shell's own node client** does what the TUI's does: the page is
   legacy, so RPC moves out of it key by key. In every mode the host's
-  `ready` line carries the node's origin and access token, and `NativeShell` opens one protocol-3 socket (`NodeClient`) and
-  folds the `shell` snapshot and row deltas (`ShellStore`). On the first
-  snapshot it builds `sidebar` itself from those rows plus the page's
-  `sidebarInput` (project grouping and drafts) and its own `route`, claims the
-  key so the page's publishes to it are dropped, and intercepts the row
-  actions and the composer's plain sends. It announces this as `native`
-  and a `shell.native` action; a page that loads later asks with
-  `shell.native.query`. Environments outside the node's cluster are reached
-  through the node's links (`ConnectionsController`). The hello frame names the environment the node
+  `ready` line carries the node's origin and access token, and `NativeShell`
+  opens one protocol-3 socket (`NodeClient`) and folds the `shell` snapshot and
+  row deltas (`ShellStore`, projects and threads). On the first snapshot it
+  builds `sidebar` itself from those rows, its own drafts and its own `route`,
+  claims the key so anything the page still publishes to it is dropped, and
+  intercepts the row, project and draft actions and the composer's plain sends;
+  it announces this as `native` and a `shell.native` action, and a page that
+  loads later asks with `shell.native.query`. Nothing it builds reads
+  page-published state. Environments outside the node's cluster are reached
+  through the node's links (`ConnectionsController`); their rows are not asked
+  for yet (the node sends them to a `{"type":"shell","links":true}`
+  subscription), so the sidebar lists the cluster's environments only. The hello frame names the environment the node
   serves, which is where the shell sends calls about the node itself (its
   cluster). Pieces that never existed on the page, such as the cluster
   settings (`ClusterController`), have no page counterpart at all. The
@@ -352,14 +355,13 @@ only while the explorer is visible, the primary loopback environment is
 connected, and native local-folder permission allows access. No native
 filesystem methods are exposed to the web page.
 
-The page publishes every primary-local checkout in `sidebar.localProjects`,
-independently of grouped sidebar representatives, and clears the list on
-disconnect or a non-loopback connection. "Remove from HAL-C2" sends
-`project.remove {projectKey}` for one physical checkout and opens the existing
-project-settings confirmation. Confirming permanently deletes that entry's
-conversation history, including archived threads, and cleans up its drafts;
-it leaves files on disk. This is separate from Trash, not a safe workaround
-for renaming or moving a registered project root.
+`sidebar.localProjects` lists every checkout of the environment the shell's
+node serves, independently of grouped sidebar representatives. "Remove from
+HAL-C2" sends `project.remove {projectKey}` for one physical checkout, which
+opens the shell's own confirmation (below). Confirming permanently deletes
+that entry's conversation history, including archived threads, and its
+drafts; it leaves files on disk. This is separate from Trash, not a safe
+workaround for renaming or moving a registered project root.
 
 ### Independent views and windows
 
@@ -461,25 +463,52 @@ wraps each one in `React.lazy`, and only a shell-hosted document ever imports
 
 ### `sidebar`
 
-`apps/web/src/shell/HalC2ShellBridge.tsx` (mounted from the root route when
-`isHalC2Shell`) publishes `ShellSidebarState` until the shell's own client
-takes the key (then `SidebarController` builds the same shape and the page
-only publishes `sidebarInput`): project groups, the current scope,
-and the thread list already bucketed (`pinned`/`active`/`snoozed`/`settled`),
-sorted, and annotated with status, status label, unread, branch, the snooze
-wake label, the woke timestamp and whether settle/snooze apply (`wakeLabel`,
-`wokeAt`, `canSettle`, `canSnooze`). It is derived
-with the same code as the HTML sidebar — `partitionSidebarThreads` and
-`useSidebarProjectGroups` are shared — so the two never disagree. `settled` is
-capped at 50 rows with `settledTotal` carrying the real count. When hosted,
-`AppSidebarLayout` renders no thread sidebar.
+`SidebarController` publishes `ShellSidebarState` from the shell's node rows
+(`SidebarModel`, a port of the web sidebar's logic): project groups, the
+current scope, the drafts, and the thread list already bucketed
+(`pinned`/`active`/`snoozed`/`settled`), sorted, and annotated with status,
+status label, unread, branch, the snooze wake label, the woke timestamp and
+whether settle/snooze apply (`wakeLabel`, `wokeAt`, `canSettle`,
+`canSnooze`). `settled` is capped at 50 rows with `settledTotal` carrying the
+real count. Projects are grouped and ordered by this device's preferences
+(`sidebarProjectGroupingMode`, `sidebarProjectGroupingOverrides`,
+`sidebarProjectSortOrder`, `timestampFormat`, read through
+`SettingsController`): folders sharing a repository identity are one project
+unless grouping is separate, and a folder with none groups by
+`<environment>:<root>`. There is no manual project order yet. The page
+publishes no sidebar; when hosted, `AppSidebarLayout` renders none either.
+
+Projects are added and removed through `projects.mutate` by
+`ProjectController`. `project.add {path}` (the sidebar's folder picker) and
+`project.folder.open {path}` (a folder dropped on the window) register a local
+folder, or open its latest thread if it already is a project, and otherwise
+start the new project's draft once its row arrives; a failure is a toast.
+Without a path, or where the page may not reach local folders,
+`project.add` still falls through to the page's palette. `project.remove
+{projectKey}` publishes `projectRemoval {projectKey, title, workspaceRoot,
+threadCount}`, which `ProjectRemovalDialog` asks about; `project.remove.confirm`
+deletes with `force` and `project.remove.cancel` closes it, as does the
+project going away.
+
+Drafts are the shell's (`DraftController`), kept in `shell-drafts.json` in
+the shell's data directory: one per project folder, each with the thread id
+it will become. `thread.new {projectKey?}` opens the project's draft (the
+scope's or the open route's project without a key), `draft.open`,
+`draft.menu {draftId, x, y}` and `draft.delete` open and delete it, and the
+first send promotes it (`ComposerController`); a draft whose thread row
+arrives, or whose project goes, is dropped. The page is told the draft's
+`environmentId`, `projectId` and `threadId` with `route.follow`, and draws
+the composer for that thread id; a draft the page opened itself comes back
+the same way with `route.open` and is adopted. The draft's text still lives
+in the page's composer.
 
 The QML sidebar reconciles publications into a keyed `ListModel`, updating
 and moving existing rows instead of replacing the list. This preserves row
 hover, keyboard focus and scroll position while thread state changes.
 
 Actions (`Shell.dispatch(name, payload)` in QML → `ShellAction` on the page):
-`sidebar.scope {projectKey|null}`, `project.add`, `palette.open`, and the
+`sidebar.scope {projectKey|null}`, `project.add {path?}`, `project.remove
+{projectKey}`, `draft.menu {draftId, x, y}`, `palette.open`, and the
 navigation ones `route` takes once the shell has its node (`thread.open {key}`,
 `draft.open {draftId}`, `thread.new {projectKey?}`, `settings.open`,
 `pullRequests.open`, `usage.open`). The active row is the route's. Row actions run the
@@ -722,7 +751,8 @@ directory; the next launch reopens it unless the thread was deleted or the
 user clicked somewhere in the page before the node answered.
 
 The page still draws the centre, so it follows: the shell sends
-`route.follow {kind, …}` for every route the page is not already on (and to a
+`route.follow {kind, …}` (with the draft's thread for a draft) for every route
+the page is not already on (and to a
 page that reloads), and `HalC2ShellBridge` navigates there. Where the page's
 own links, redirects and history take it comes back as `route.open {kind, …,
 replace}` (`shellRoute.ts` maps paths), and the shell adopts it; a page

@@ -17,24 +17,28 @@ class ShellBridge;
 class ShellStore;
 class ToastController;
 
-// Owns the `sidebar` key once the shell has its own node connection: rows
-// come from ShellStore, project groups and drafts from the page's
-// `sidebarInput`, and the row actions (settle, snooze, wake, mark unread,
-// dismiss the woke pill) go straight to the node.
+// Owns the `sidebar` key once the shell has its node's first snapshot: rows
+// and projects come from ShellStore, grouped as the page groups them
+// (sidebar::groupProjects), drafts from DraftController, and the row actions
+// (settle, snooze, wake, mark unread, dismiss the woke pill) and the project
+// scope stay here.
 class SidebarController : public QObject {
   Q_OBJECT
 
 public:
   SidebarController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 
-  // Starts publishing `sidebar` and claiming its actions, from the page's scope.
+  // Starts publishing `sidebar` and claiming its actions.
   void activate();
-  // Leaves `sidebar` and its actions to the page again.
-  void deactivate() { m_active = false; }
   bool isActive() const { return m_active; }
-  // Whether every project the page groups lives on the node's cluster; rows
-  // from any other environment exist only in the page.
-  bool coversPage() const;
+
+  // The logical projects, in sidebar order.
+  const QList<sidebar::ProjectGroup>& groups() const { return m_groups; }
+  const sidebar::ProjectGroup* group(const QString& key) const;
+  // The logical project `<environmentId>:<projectId>` belongs to.
+  std::optional<QString> logicalProjectKey(const QString& environmentId, const QString& projectId) const;
+  // The project the list is scoped to, if any.
+  const sidebar::Nullable& scope() const { return m_scope; }
 
   // Tests pin the clock and locale; the app uses the system's.
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
@@ -52,9 +56,11 @@ private:
   void openSnoozeMenu(const QString& key, double x, double y);
   void selectSnooze(const QString& id);
   ToastController* toasts() const;
+  // The client settings grouping, ordering and time labels read, from this
+  // device's preferences (SettingsController), else their defaults.
+  void readSettings();
   // The open thread, from the shell's route.
   QString activeThreadKey() const;
-  std::optional<QString> logicalProjectKey(const sidebar::Thread& thread) const;
 
   ShellBridge* m_bridge;
   NodeClient* m_client;
@@ -63,8 +69,9 @@ private:
   QLocale m_locale;
   QTimer m_minute;
   bool m_active = false;
-  bool m_inputReceived = false;
-  sidebar::Input m_input;
+  sidebar::GroupingSettings m_grouping;
+  QString m_timestampFormat = QStringLiteral("locale");
+  QList<sidebar::ProjectGroup> m_groups;
   sidebar::Nullable m_scope;
   sidebar::View m_view;
   QSet<QString> m_pending;

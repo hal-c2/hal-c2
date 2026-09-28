@@ -1,6 +1,7 @@
 // What the node holds (threads, projects) and does (updates, refusals, held
 // answers), and the orchestration commands it receives.
 
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -8,6 +9,7 @@
 #include <optional>
 
 #include "Harness.h"
+#include "NodeClient.h"
 #include "World.h"
 
 namespace {
@@ -24,6 +26,25 @@ QJsonObject threadRow(const QStringList& header, const QStringList& cells) {
   if (!row.contains(QLatin1String("createdAt"))) row.insert(QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z"));
   if (!row.contains(QLatin1String("updatedAt"))) row.insert(QStringLiteral("updatedAt"), row.value(QLatin1String("createdAt")));
   return row;
+}
+
+QJsonObject projectRow(const QString& id, const QString& title, const QString& workspaceRoot) {
+  return {
+      {QStringLiteral("id"), id},
+      {QStringLiteral("title"), title},
+      {QStringLiteral("workspaceRoot"), workspaceRoot},
+      {QStringLiteral("createdAt"), QStringLiteral("2026-09-01T09:00:00Z")},
+      {QStringLiteral("updatedAt"), QStringLiteral("2026-09-01T09:00:00Z")},
+      {QStringLiteral("scripts"), QJsonArray()},
+  };
+}
+
+// Before the shell connects the project is in the snapshot; after, it arrives as a row.
+void addProject(World& world, const QJsonObject& row) {
+  const QString id = row.value(QLatin1String("id")).toString();
+  world.node.projects.insert(id, row);
+  world.node.sendRow(id, row, QStringLiteral("project"));
+  if (world.native().client()->isReady()) world.sync();
 }
 
 void setField(QJsonObject& row, const QString& name, const QString& value) {
@@ -156,6 +177,35 @@ const Steps steps([] {
   // The node's projects.
   step(QStringLiteral("the node has the project %1 at %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.node.projects.insert(c[0], {{QStringLiteral("id"), c[0]}, {QStringLiteral("title"), c[0]}, {QStringLiteral("workspaceRoot"), c[1]}, {QStringLiteral("scripts"), QJsonArray()}});
+  });
+  step(QStringLiteral("the node has the project %1 titled %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    addProject(world, projectRow(c[0], c[1], QStringLiteral("/work/") + c[1]));
+  });
+  step(QStringLiteral("the node has these projects:"), [](World& world, const Captures&, const Table& table) {
+    const QStringList& header = table.first();
+    for (qsizetype line = 1; line < table.size(); ++line) {
+      QHash<QString, QString> cells;
+      for (qsizetype column = 0; column < header.size(); ++column) cells.insert(header.at(column), table.at(line).value(column));
+      const QString title = cells.value(QStringLiteral("title"));
+      QJsonObject row = projectRow(cells.value(QStringLiteral("id")), title,
+                                   cells.value(QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + title));
+      if (!cells.value(QStringLiteral("createdAt")).isEmpty()) {
+        row.insert(QStringLiteral("createdAt"), cells.value(QStringLiteral("createdAt")));
+        row.insert(QStringLiteral("updatedAt"), cells.value(QStringLiteral("createdAt")));
+      }
+      if (!cells.value(QStringLiteral("repository")).isEmpty()) {
+        row.insert(QStringLiteral("repositoryIdentity"), QJsonObject{
+                                                             {QStringLiteral("canonicalKey"), cells.value(QStringLiteral("repository"))},
+                                                             {QStringLiteral("name"), cells.value(QStringLiteral("repository")).section(u'/', -1)},
+                                                         });
+      }
+      addProject(world, row);
+    }
+  });
+  step(QStringLiteral("the node removes the project %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.node.projects.remove(c[0]);
+    world.node.sendRow(c[0], QJsonObject{{QStringLiteral("deletedAt"), QStringLiteral("2026-09-23T10:00:00Z")}}, QStringLiteral("project"));
+    world.sync();
   });
   step(QStringLiteral("the project %1 has these scripts:").arg(q), [](World& world, const Captures& c, const Table& table) {
     QJsonArray scripts;

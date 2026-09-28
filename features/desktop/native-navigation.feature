@@ -20,7 +20,7 @@ Feature: The desktop shell decides where the window is
       | id | project | title  | createdAt            |
       | t1 | p1      | First  | 2026-09-23T09:50:00Z |
       | t2 | p1      | Second | 2026-09-23T09:40:00Z |
-    And the page groups "env-a:p1" as the project "proj-1"
+    And the node has the project "p1" titled "proj-1"
     And the desktop shell is connected to its node
 
   Rule: The shell moves the window and the page follows
@@ -35,20 +35,27 @@ Feature: The desktop shell decides where the window is
 
     @desktop
     Scenario: Opening a draft from the sidebar
-      When the user opens the draft "d1" from the sidebar
-      Then the window shows the draft "d1"
-      And the page is asked to open the draft "d1"
+      Given the user starts a new thread in "proj-1"
+      And the user opens "env-a:t1" from the sidebar
+      When the user opens the draft from the sidebar
+      Then the window shows the draft
+      And the page is asked to open the draft for its thread in "p1"
       And the window is titled "New thread"
-      And the sidebar marks the draft "d1" as open
+      And the sidebar marks the draft as open
 
     @desktop
-    Scenario: A new thread lands in the page's draft
+    Scenario: A new thread opens the project's draft
       When the user starts a new thread in "proj-1"
-      Then the window shows a new thread in "proj-1"
-      And the page is asked to open a new thread in "proj-1"
-      When the page lands on the new draft "d9"
+      Then the window shows a new draft in "proj-1"
+      And the page is asked to open the draft for its thread in "p1"
+      And the sidebar marks the draft as open
+
+    @desktop
+    Scenario: A draft the page opens by itself is the shell's too
+      When the page lands on its own draft "d9" for the thread "t9" in "p1"
       Then the window shows the draft "d9"
       And the sidebar marks the draft "d9" as open
+      And the sidebar lists the draft "d9"
 
     @desktop
     Scenario: Opening pull requests
@@ -129,7 +136,7 @@ Feature: The desktop shell decides where the window is
     Scenario: Reopening the desktop returns to the last thread
       Given the user opens "env-a:t2" from the sidebar
       When the desktop quits and starts again
-      And the page lands on the new draft "d9"
+      And the page lands on its own draft "d9" for the thread "t9" in "p1"
       And the desktop shell is connected to its node
       Then the window shows "env-a:t2"
       And the page is asked to open "env-a:t2"
@@ -139,7 +146,7 @@ Feature: The desktop shell decides where the window is
       Given the user opens "env-a:t2" from the sidebar
       When the desktop quits and starts again
       And the node deletes the thread "t2"
-      And the page lands on the new draft "d9"
+      And the page lands on its own draft "d9" for the thread "t9" in "p1"
       And the desktop shell is connected to its node
       Then the window shows the draft "d9"
       And the page is not told where to go

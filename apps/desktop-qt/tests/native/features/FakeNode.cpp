@@ -141,13 +141,13 @@ void FakeNode::join(const QString& peer, const QString& peerEnvironment) {
   });
 }
 
-void FakeNode::sendRow(const QString& id, const QJsonObject& row) {
+void FakeNode::sendRow(const QString& id, const QJsonObject& row, const QString& kind) {
   if (!m_socket || m_shellSubscription < 0) return;
   send({
       {QStringLiteral("t"), QStringLiteral("shell.rows")},
       {QStringLiteral("id"), m_shellSubscription},
       {QStringLiteral("node"), name},
-      {QStringLiteral("rows"), QJsonArray{QJsonArray{id, QStringLiteral("thread"), row}}},
+      {QStringLiteral("rows"), QJsonArray{QJsonArray{id, kind, row}}},
   });
 }
 

@@ -16,11 +16,11 @@ class ShellBridge;
 // The shell's own client of its node: one protocol-3 connection, the shell
 // shape folded into rows, the sidebar, and the registered controllers
 // (NativeController.h) that take the composer's turn RPCs, the terminal drawer,
-// this machine's cluster settings and whatever moves next off the page. Until the first shell snapshot lands the page keeps doing
-// everything; after it, `native` (and a `shell.native` action to the page) says
-// which keys and actions the shell now owns. The sidebar stays with the page
-// while it groups projects from outside the node's cluster. Environments
-// outside the cluster are the node's links (ConnectionsController).
+// this machine's cluster settings and whatever moves next off the page. Until
+// the first shell snapshot lands the page keeps doing everything; after it the
+// sidebar, and every controller, is the shell's, and `native` (and a
+// `shell.native` action to the page) says which keys and actions it owns.
+// Environments outside the cluster are the node's links (ConnectionsController).
 class NativeShell : public QObject {
   Q_OBJECT
 
@@ -52,8 +52,7 @@ private:
   ShellBridge* m_bridge;
   NodeClient m_client;
   ShellStore m_store;
-  // Not registered: it is the one piece that goes back to the page, while the
-  // page groups projects from outside the node's cluster.
+  // Not registered: the interceptor asks it first, before the controllers.
   SidebarController m_sidebar;
   struct Controller {
     // Owned here rather than by QObject parenting, so they go before the

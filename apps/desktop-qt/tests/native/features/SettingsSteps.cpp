@@ -222,6 +222,11 @@ const Steps steps([] {
     if (!file.open(QIODevice::WriteOnly)) fail(QStringLiteral("cannot write %1").arg(file.fileName()));
     file.write(QJsonDocument(QJsonObject{{c[0], c[1]}}).toJson());
   });
+  step(QStringLiteral("this device's %1 is set to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QJsonObject device = settings(world)->deviceSettings();
+    device.insert(c[0], c[1]);
+    expect(settings(world)->setDeviceSettings(device), QStringLiteral("the preferences were not saved"));
+  });
   step(QStringLiteral("this device's preferences cannot be saved"), [](World& world, const Captures&, const Table&) {
     // A file where the preferences' directory would be.
     const QString blocker = QDir(world.configDir()).filePath(QStringLiteral("blocked"));

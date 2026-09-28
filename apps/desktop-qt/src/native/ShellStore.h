@@ -12,10 +12,13 @@
 
 class NodeClient;
 
-// The node's `shell` shape folded into thread rows: every node of the cluster,
-// its environment descriptor, and its live threads, plus the environments the
-// node reaches through links (HalC2.Links). Projects stay with the page, which
-// groups them by its own settings.
+// The node's `shell` shape folded into rows: every node of the cluster, its
+// environment descriptor, its live projects and threads, plus the environments
+// the node reaches through links (HalC2.Links). The node sends linked
+// environments' rows only to a `{"type":"shell","links":true}` subscription
+// (shell.linkRows, shell.linkEnvironment, shell.linkNode), and the shell does
+// not ask yet; when it does they fold in here as more projects and threads
+// keyed by their environment, and the sidebar groups them like any other.
 class ShellStore : public QObject {
   Q_OBJECT
 
@@ -23,6 +26,8 @@ public:
   explicit ShellStore(NodeClient* client, QObject* parent = nullptr);
 
   QList<sidebar::Thread> threads() const;
+  QList<sidebar::Project> projects() const;
+  std::optional<sidebar::Project> project(const QString& key) const;
   std::optional<sidebar::Thread> thread(const QString& key) const;
   sidebar::Capabilities capabilities(const QString& environmentId) const;
   // Whether a node of the cluster serves this environment.
@@ -53,6 +58,7 @@ private:
     QJsonObject capabilities;
     bool online = false;
     QHash<QString, QJsonObject> threads;
+    QHash<QString, QJsonObject> projects;
   };
 
   QHash<QString, Node> m_nodes;

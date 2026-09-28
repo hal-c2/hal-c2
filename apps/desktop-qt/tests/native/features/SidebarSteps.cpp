@@ -36,7 +36,7 @@ const Steps steps([] {
     world.bridge().dispatch(c[0], keyed(c[1]));
   });
   step(QStringLiteral("the user scopes the sidebar to %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.bridge().dispatch(QStringLiteral("sidebar.scope"), QVariantMap{{QStringLiteral("projectKey"), c[0]}});
+    world.bridge().dispatch(QStringLiteral("sidebar.scope"), QVariantMap{{QStringLiteral("projectKey"), world.projectKey(c[0])}});
   });
   step(QStringLiteral("the user clears the sidebar's scope"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("sidebar.scope"),
@@ -74,7 +74,7 @@ const Steps steps([] {
   step(QStringLiteral("the page is told the sidebar is scoped to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
     const QList<PageAction> scopes = world.actionsOf(QStringLiteral("sidebar.scope"));
-    expect(!scopes.isEmpty() && scopes.last().payload.value(QStringLiteral("projectKey")) == c[0],
+    expect(!scopes.isEmpty() && scopes.last().payload.value(QStringLiteral("projectKey")) == world.projectKey(c[0]),
            QStringLiteral("the page got %1").arg(world.describePage()));
   });
   step(QStringLiteral("the sidebar is not scoped"), [](World& world, const Captures&, const Table&) {
