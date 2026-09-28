@@ -49,13 +49,14 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   @doc """
   ACP has no way to add to a running prompt, but OpenCode's running loop takes a
-  second `session/prompt` into the turn; both answer when the turn ends.
+  second `session/prompt` (`%{text, attachments}`, built like a turn's) into the
+  turn; both answer when the turn ends.
   """
-  @spec steer(String.t(), String.t(), String.t()) :: :ok | {:error, String.t()}
-  def steer(thread_id, run_id, text) do
+  @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
+  def steer(thread_id, run_id, message) do
     case lookup(thread_id) do
       nil -> {:error, "no active ACP turn in this thread"}
-      pid -> GenServer.call(pid, {:steer, run_id, text})
+      pid -> GenServer.call(pid, {:steer, run_id, message})
     end
   end
 
@@ -199,16 +200,17 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   def handle_call(:interrupt, _from, state), do: {:reply, {:error, "no running turn"}, state}
 
-  def handle_call({:steer, run_id, text}, _from, %{agent: "opencode", prompt: ref} = state)
+  def handle_call({:steer, run_id, message}, _from, %{agent: "opencode", prompt: ref} = state)
       when ref != nil and not state.interrupted and state.turn.ids.run == run_id do
     conn = state.conn
-    params = %{"sessionId" => state.session_id, "prompt" => [%{"type" => "text", "text" => text}]}
+    prompt = acp_prompt(Map.put(message, :ids, state.turn.ids), state.capabilities, false)
+    params = %{"sessionId" => state.session_id, "prompt" => prompt}
     # Its answer is the turn's, which the first prompt's already ends.
     Task.start(fn -> Connection.call(conn, "session/prompt", params, :infinity) end)
     {:reply, :ok, state}
   end
 
-  def handle_call({:steer, _run_id, _text}, _from, state),
+  def handle_call({:steer, _run_id, _message}, _from, state),
     do: {:reply, {:error, "this agent cannot be steered now"}, state}
 
   # The instance's sessions stop (sign-out, a new sign-in method): a running turn

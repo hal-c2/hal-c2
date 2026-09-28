@@ -41,14 +41,15 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   @doc """
-  A `prompt` with `streamingBehavior: "steer"`: Pi delivers it before the running
-  turn's next model call, or starts a run if the turn settled meanwhile.
+  A `prompt` with `streamingBehavior: "steer"`, built from `%{text, attachments}`
+  like a turn's: Pi delivers it before the running turn's next model call, or
+  starts a run if the turn settled meanwhile.
   """
-  @spec steer(String.t(), String.t(), String.t()) :: :ok | {:error, String.t()}
-  def steer(thread_id, run_id, text) do
+  @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
+  def steer(thread_id, run_id, message) do
     case lookup(thread_id) do
       nil -> {:error, "no active Pi turn in this thread"}
-      pid -> GenServer.call(pid, {:steer, run_id, text})
+      pid -> GenServer.call(pid, {:steer, run_id, message})
     end
   end
 
@@ -166,9 +167,12 @@ defmodule HalC2.Pi.ThreadRuntime do
   def handle_call(:interrupt, _from, state), do: {:reply, {:error, "no running turn"}, state}
 
   # A `/compact` turn is not a prompt Pi can steer.
-  def handle_call({:steer, run_id, text}, _from, %{turn: turn, compact: nil} = state)
+  def handle_call({:steer, run_id, steer}, _from, %{turn: turn, compact: nil} = state)
       when turn != nil and not state.interrupted and turn.ids.run == run_id do
-    message = HalC2.Pi.expand_skills(text, state.skills)
+    message =
+      steer.text
+      |> HalC2.Pi.expand_skills(state.skills)
+      |> HalC2.Attachments.prompt_text(steer.attachments)
 
     Connection.notify(state.conn, "prompt", %{
       "message" => message,
@@ -178,7 +182,7 @@ defmodule HalC2.Pi.ThreadRuntime do
     {:reply, :ok, state}
   end
 
-  def handle_call({:steer, _run_id, _text}, _from, state),
+  def handle_call({:steer, _run_id, _message}, _from, state),
     do: {:reply, {:error, "Pi cannot be steered now"}, state}
 
   def handle_call({:rollback, _plan}, _from, %{turn: turn} = state) when turn != nil,
