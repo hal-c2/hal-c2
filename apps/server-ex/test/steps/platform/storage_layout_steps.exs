@@ -319,10 +319,10 @@ defmodule HalC2.Steps.Platform.StorageLayout do
         assert under.(HalC2.Acp.Antigravity.profile("antigravity"))
 
       "cluster membership" ->
-        # `mix hal_c2.cluster init` does this with the node's data directory.
-        :ok = HalC2.Cluster.init(Paths.data_dir(), "100.64.0.9")
+        # The node makes its cluster certificate when `HalC2.Cluster` starts.
+        Node.ensure(HalC2.Cluster)
         assert HalC2.Cluster.dir(Paths.data_dir()) == expected
-        assert File.regular?(Path.join(expected, "ca.pem"))
+        assert File.regular?(Path.join(expected, "node.pem"))
 
       "staged upgrades" ->
         assert under.(HalC2.Upgrade.Source.cache_dir("9.9.9"))
