@@ -37,6 +37,10 @@ defmodule HalC2.Steps.Orchestration.Migration do
   # --- importing ---------------------------------------------------------------------
 
   step "the operator imports the snapshot into a node", context do
+    import_snapshot(context)
+  end
+
+  defp import_snapshot(context) do
     source = snapshot(context)
     dir = Path.dirname(source)
     before = {File.read!(source), File.ls!(dir)}
@@ -261,7 +265,175 @@ defmodule HalC2.Steps.Orchestration.Migration do
     %{context | node: node, clients: %{}}
   end
 
+  # --- version 1 threads -------------------------------------------------------------
+  # A thread the Node server never moved to v2 has only version 1 events in the log;
+  # the import folds them (`HalC2.Import.V1Thread`) into a thread whose messages sit
+  # outside any run.
+
+  step "the snapshot holds a thread logged by the version 1 orchestrator", context do
+    image = %{"type" => "image", "id" => "img-1", "name" => "cart.png", "mimeType" => "image/png"}
+
+    context
+    |> v1_thread([{"user", "Fix the cart", [image]}, {"assistant", "Fixed the cart total", []}])
+    |> event("thread", "v1-thread", "thread.meta-updated", %{
+      "threadId" => "v1-thread",
+      "linkedPullRequest" => %{
+        "projectId" => "p-v1",
+        "repository" => "acme/shop",
+        "url" => "https://github.com/acme/shop/pull/7",
+        "number" => 7
+      },
+      "updatedAt" => iso(@start + 60_000)
+    })
+  end
+
+  step "the thread is migrated with its transcript, pull request link and attachments",
+       context do
+    thread = entity("v1-thread", "thread", "v1-thread")
+    assert %{"title" => "Legacy work", "historyOrigin" => "v1_import"} = thread
+    assert [%{"number" => 7}] = HalC2.Projection.PullRequests.of(thread)
+
+    messages =
+      state("v1-thread")
+      |> HalC2.StreamState.list("message")
+      |> Enum.sort_by(& &1["createdAt"])
+      |> Enum.map(&{&1["role"], &1["text"], Enum.map(&1["attachments"], fn a -> a["name"] end)})
+
+    assert messages == [
+             {"user", "Fix the cart", ["cart.png"]},
+             {"assistant", "Fixed the cart total", []}
+           ]
+
+    context
+  end
+
+  step "a thread was migrated from the version 1 orchestrator", context do
+    context
+    |> v1_thread([
+      {"user", "Fix the cart", []},
+      {"assistant", "Fixed the cart total", []},
+      {"user", "Now the discount", []},
+      {"assistant", "The discount applies after tax", []}
+    ])
+    |> import_snapshot()
+    |> World.agents()
+  end
+
+  step "a migrated version 1 thread whose newest messages already fill most of 32,000 characters",
+       context do
+    context
+    |> v1_thread([
+      {"user", "the oldest question", []},
+      {"user", Enum.map_join(1..4_000, " ", &"word#{&1}"), []},
+      {"assistant", "reply " <> String.duplicate("n", 20_000), []}
+    ])
+    |> import_snapshot()
+    |> World.agents()
+  end
+
+  step "the user sends its first message after the migration", context do
+    {{:ok, _}, context} = World.send_message(context, "Legacy work", "carry on")
+    World.await_runs(context, "Legacy work", ["completed"])
+    context
+  end
+
+  step "the provider receives the imported conversation as context, keeping the newest messages that fit in 32,000 characters",
+       context do
+    summary = imported_history(context)
+    assert String.length(summary) <= 32_000
+
+    assert summary ==
+             Enum.join(
+               [
+                 "Imported conversation history from the previous HAL-C2 orchestrator. Use it as context; do not repeat it unless the user asks.",
+                 "User:\nFix the cart",
+                 "Assistant:\nFixed the cart total",
+                 "User:\nNow the discount",
+                 "Assistant:\nThe discount applies after tax"
+               ],
+               "\n\n"
+             )
+
+    context
+  end
+
+  step "the newest message that no longer fits whole keeps its end, cut at a word, and is marked as cut",
+       context do
+    summary = imported_history(context)
+    assert String.length(summary) <= 32_000
+
+    assert [_header, "User:\n... " <> kept, "Assistant:\nreply " <> _] =
+             String.split(summary, "\n\n")
+
+    assert kept =~ ~r/^word\d+ .* word4000$/s
+    context |> Map.put(:summary, summary)
+  end
+
+  step "messages older than that are left out", context do
+    refute context.summary =~ "the oldest question"
+    context
+  end
+
   # --- helpers -----------------------------------------------------------------------
+
+  # A version 1 thread "Legacy work" in a project of its own, with `messages`
+  # (`{role, text, attachments}`), oldest first.
+  defp v1_thread(context, messages) do
+    root = Node.tmp_dir(context.node, "legacy-work")
+
+    context =
+      context
+      |> event("project", "p-v1", "project.created", %{
+        "projectId" => "p-v1",
+        "title" => "Legacy",
+        "workspaceRoot" => root,
+        "scripts" => []
+      })
+      |> event("thread", "v1-thread", "thread.created", %{
+        "threadId" => "v1-thread",
+        "projectId" => "p-v1",
+        "title" => "Legacy work",
+        "createdAt" => iso(@start),
+        "updatedAt" => iso(@start)
+      })
+
+    messages
+    |> Enum.with_index(1)
+    |> Enum.reduce(context, fn {{role, text, attachments}, n}, context ->
+      at = iso(@start + n * 1_000)
+
+      event(context, "thread", "v1-thread", "thread.message-sent", %{
+        "threadId" => "v1-thread",
+        "messageId" => "v1-m#{n}",
+        "role" => role,
+        "text" => text,
+        "attachments" => attachments,
+        "turnId" => nil,
+        "streaming" => false,
+        "createdAt" => at,
+        "updatedAt" => at
+      })
+    end)
+    |> Map.put(:v1_streams, ["v1-thread"])
+    |> Map.update(
+      :threads,
+      %{"Legacy work" => "v1-thread"},
+      &Map.put(&1, "Legacy work", "v1-thread")
+    )
+  end
+
+  # The imported history ahead of the message the provider got.
+  defp imported_history(context) do
+    [%{"input" => [%{"text" => prompt} | _]}] = World.codex_requests(context, "turn/start")
+
+    assert [_, summary] =
+             Regex.run(
+               ~r/\A<imported_history>\n(.*)\n<\/imported_history>\n\ncarry on\z/s,
+               prompt
+             )
+
+    summary
+  end
 
   defp event(context, aggregate, stream, type, payload) do
     at = @start + length(context.snapshot) * 1_000
@@ -296,6 +468,19 @@ defmodule HalC2.Steps.Orchestration.Migration do
   defp snapshot(context) do
     path = Path.join(Node.tmp_dir(context.node, "node-server"), "state.sqlite")
     World.node_log(path, context.snapshot)
+    Enum.each(context[:v1_streams] || [], &version_1(path, &1))
+    path
+  end
+
+  # Marks a thread's events as logged before the Node server's v2 orchestrator.
+  defp version_1(path, stream) do
+    {:ok, db} = Sqlite3.open(path)
+    sql = "UPDATE orchestration_events SET application_event_version = 1 WHERE stream_id = ?1"
+    {:ok, stmt} = Sqlite3.prepare(db, sql)
+    :ok = Sqlite3.bind(stmt, [stream])
+    :done = Sqlite3.step(db, stmt)
+    :ok = Sqlite3.release(db, stmt)
+    :ok = Sqlite3.close(db)
   end
 
   # `mix hal_c2.import` as the operator runs it; returns what it printed.

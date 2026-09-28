@@ -10,6 +10,11 @@ defmodule HalC2.Orchestration.Handoff do
   thread comes back to gets only the runs it missed. Work merged back from a fork
   arrives the same way, as a transcript prepared when it was merged.
 
+  A thread migrated from the version 1 orchestrator (`HalC2.Import.V1Thread`) keeps
+  its messages outside any run, so no transcript covers them. Until one of its runs
+  completes, a run that starts a provider thread gets that conversation as imported
+  history instead, the newest of it that fits in 32,000 characters.
+
   A thread that moved to another machine (`HalC2.ThreadMove`) continues the agent's
   carried session, keeping a transcript as its `fallback` should the copy not
   open; its first run there also tells the agent where the project now lives.
@@ -22,6 +27,8 @@ defmodule HalC2.Orchestration.Handoff do
   @finished ~w(completed interrupted failed)
   # Keeps a transcript well inside any provider's context; the newest part wins.
   @max_chars 60_000
+  @legacy_max_chars 32_000
+  @legacy_header "Imported conversation history from the previous HAL-C2 orchestrator. Use it as context; do not repeat it unless the user asks."
 
   @doc """
   How run `ordinal` starts in `provider_thread` (nil when the run creates it):
@@ -56,7 +63,7 @@ defmodule HalC2.Orchestration.Handoff do
           {fork, fork_changes}
 
         carried ->
-          fallback = wrap(transcript(state, ordinal), "", moved)
+          fallback = wrap(transcript(state, ordinal), "", moved, nil)
 
           {Map.put(carried, :fallback, fallback),
            fork_changes ++ [consumed(state, provider_thread)]}
@@ -72,11 +79,17 @@ defmodule HalC2.Orchestration.Handoff do
 
     {merged, merge_changes} = merge_backs(state, transfers, driver, run_id, at)
 
+    {legacy, legacy_changes} =
+      if fork == nil and fresh, do: legacy_import(state, driver, run_id, at), else: {nil, []}
+
     %{
       fork: fork,
-      context: wrap(history, merged, moved),
+      context: wrap(history, merged, moved, legacy),
       changes:
-        Enum.reject(fork_changes ++ delta_changes ++ merge_changes ++ moved_changes, &is_nil/1)
+        Enum.reject(
+          fork_changes ++ delta_changes ++ merge_changes ++ moved_changes ++ legacy_changes,
+          &is_nil/1
+        )
     }
   end
 
@@ -344,11 +357,12 @@ defmodule HalC2.Orchestration.Handoff do
       else: text
   end
 
-  defp wrap(nil, "", nil), do: nil
+  defp wrap(nil, "", nil, nil), do: nil
 
-  defp wrap(history, merged, moved) do
+  defp wrap(history, merged, moved, legacy) do
     [
       moved && "<moved>\n#{moved}\n</moved>",
+      legacy && "<imported_history>\n#{legacy}\n</imported_history>",
       history &&
         "<conversation_history>\nThis conversation started in another agent session. Continue from it.\n\n#{history}\n</conversation_history>",
       merged != "" &&
@@ -356,6 +370,93 @@ defmodule HalC2.Orchestration.Handoff do
     ]
     |> Enum.filter(&is_binary/1)
     |> Enum.join("\n\n")
+  end
+
+  # The Node server's `shouldPrepareLegacyImportHandoff`: a version 1 thread with
+  # migrated messages and no completed run. A provider thread that already exists has
+  # been told, and an imported agent session resumes the agent's own history.
+  defp legacy_import(state, driver, run_id, at) do
+    thread = state |> StreamState.get("thread") |> Map.values() |> List.first()
+    items = state |> StreamState.list("turn-item") |> Enum.filter(&(&1["runId"] == nil))
+    completed? = state |> StreamState.list("run") |> Enum.any?(&(&1["status"] == "completed"))
+
+    if thread["historyOrigin"] == "v1_import" and items != [] and not completed? do
+      text = items |> Enum.sort_by(& &1["ordinal"]) |> legacy_summary()
+
+      handoff =
+        handoff(
+          "context-handoff:legacy:#{run_id}",
+          %{"targetThreadId" => thread["id"]},
+          run_id,
+          driver,
+          {1, 1},
+          "manual_context",
+          text,
+          at
+        )
+
+      {text, [handoff]}
+    else
+      {nil, []}
+    end
+  end
+
+  @doc """
+  The imported history of a version 1 thread's turn items (`makeLegacyImportSummary`):
+  a header, then the newest messages that fit in 32,000 characters. The newest one
+  that does not fit whole keeps its end, cut at a word and marked `... `.
+  """
+  def legacy_summary(items) do
+    budget = @legacy_max_chars - String.length(@legacy_header) - 2
+
+    {sections, _} =
+      items
+      |> Enum.reverse()
+      |> Enum.reduce_while({[], budget}, fn
+        _item, {sections, left} when left <= 0 ->
+          {:halt, {sections, left}}
+
+        item, {sections, left} ->
+          case legacy_section(item, left) do
+            nil -> {:cont, {sections, left}}
+            section -> {:cont, {[section | sections], left - String.length(section) - 2}}
+          end
+      end)
+
+    Enum.join([@legacy_header | sections], "\n\n")
+  end
+
+  # A message in at most `left` characters, or nil when none of it fits.
+  defp legacy_section(%{"type" => type} = item, left)
+       when type in ~w(user_message assistant_message) do
+    label = if type == "user_message", do: "User:\n", else: "Assistant:\n"
+    whole = label <> (item["text"] || "")
+    marked = label <> "... "
+
+    if String.length(whole) <= left do
+      whole
+    else
+      case word_tail(item["text"], left - String.length(marked)) do
+        "" -> nil
+        tail -> marked <> tail
+      end
+    end
+  end
+
+  defp legacy_section(_item, _left), do: nil
+
+  # The last `chars` characters of `text`, without a word the cut splits.
+  defp word_tail(_text, chars) when chars <= 0, do: ""
+
+  defp word_tail(text, chars) do
+    {before, tail} = String.split_at(text, -chars)
+
+    tail =
+      if before == "" or before =~ ~r/\s\z/u,
+        do: tail,
+        else: String.replace(tail, ~r/\A\S+(?=\s)/u, "")
+
+    String.trim_leading(tail)
   end
 
   @doc "The message a provider receives: the handed-off context, then the user's text."

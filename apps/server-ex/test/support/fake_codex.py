@@ -10,7 +10,7 @@
 # names exists, turn/steer is refused. "stream ..." turns pace themselves by gate files
 # in FAKE_CODEX_GATE (see stream_reply); "answer from gate" waits for the gate file
 # "answer" and replies with its contents, or with no message when it is empty.
-import glob, json, os, sys, time, uuid
+import glob, json, os, re, sys, time, uuid
 
 # With FAKE_CODEX_TRACE set, every message read is appended to it as a JSON line.
 # FAKE_CODEX_MODELS is the JSON `data` model/list answers with.
@@ -203,9 +203,12 @@ for line in sys.stdin:
                 f.write(json.dumps(params["input"]) + "\n")
         turns += 1
         turn_id = f"native-turn-{turns}"
-        text = params["input"][0]["text"]
+        prompt = params["input"][0]["text"]
+        # The script plays from the user's message, not from the context the node hands
+        # off ahead of it (`<conversation_history>`, `<imported_history>`, ...).
+        text = re.sub(r"\A(?:<(\w+)>\n.*?\n</\1>\n\n)+", "", prompt, flags=re.S)
         rollout_append({"type": "turn_context", "payload": {"cwd": params.get("cwd"), "model": params.get("model")}})
-        rollout_append({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}})
+        rollout_append({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": prompt}]}})
         if "exit before starting" in text:
             sys.exit(1)
         send({"id": mid, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
@@ -230,7 +233,7 @@ for line in sys.stdin:
             say(ctx, text)
             continue
         if "where are we" in text:
-            where = f"on {thread_id} history {'<conversation_history>' in text} merged {'<merged_work>' in text}"
+            where = f"on {thread_id} history {'<conversation_history>' in prompt} merged {'<merged_work>' in prompt}"
             if SESSIONS:
                 where += " earlier [" + " | ".join(rollout_history()[:-1]) + "]"
             send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-where", "text": ""}}})

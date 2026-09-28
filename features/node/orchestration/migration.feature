@@ -1,6 +1,8 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/import/v2.ex (Node V2 orchestration_events import)
 #   apps/server-ex/lib/mix/tasks/hal_c2.import.ex (the manual import task)
+#   apps/server-ex/lib/hal_c2/import/v1_thread.ex (version 1 threads)
+#   apps/server-ex/lib/hal_c2/orchestration/handoff.ex (legacy_summary, the imported history)
 #   apps/server/src/orchestration-v2/LegacyV1ThreadImporter.ts,
 #     apps/server/src/serverRuntimeStartup.ts (legacyThreadMigration startup phase),
 #     apps/server/src/orchestration-v2/ContextHandoffService.ts (legacy import summary)
@@ -74,6 +76,15 @@ Feature: Bringing history over from the Node server
     Given a node starts next to a Node server's database
     Then nothing is imported until the operator runs the import
 
+  @node
+  Scenario: Threads the Node server kept as version 1 events are migrated by the import
+    Given the snapshot holds a thread logged by the version 1 orchestrator
+    When the operator imports the snapshot into a node
+    Then the thread is migrated with its transcript, pull request link and attachments
+
+  # The Node server migrates version 1 threads as it starts and reports progress to
+  # clients. The node imports only when the operator runs the import (above), so this
+  # conflicts with that decision; a maintainer should keep or drop it.
   @node @backlog
   Scenario: A version 1 database is migrated on startup
     Given the Node server's database holds threads from the version 1 orchestrator
@@ -81,13 +92,13 @@ Feature: Bringing history over from the Node server
     Then the threads are migrated with their transcripts, pull request links and attachments
     And clients see migration progress with the number of threads while it runs
 
-  @node @backlog
+  @node
   Scenario: A migrated version 1 thread hands its history to the next run
     Given a thread was migrated from the version 1 orchestrator
     When the user sends its first message after the migration
     Then the provider receives the imported conversation as context, keeping the newest messages that fit in 32,000 characters
 
-  @node @backlog
+  @node
   Scenario: An older message that does not fit the handoff budget is shortened from its start
     Given a migrated version 1 thread whose newest messages already fill most of 32,000 characters
     When the user sends its first message after the migration
