@@ -122,7 +122,8 @@ const Steps steps([] {
   step(QStringLiteral("the user opens Cluster in the desktop's settings"), [cluster](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("cluster.open"), {});
     world.sync();
-    expect(cluster(world).value(QStringLiteral("open")).toBool(), QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
+    const QVariant route = world.state(QStringLiteral("route"));
+    expect(at(route, QStringLiteral("section")) == QStringLiteral("/settings/cluster"), QStringLiteral("the route is %1").arg(show(route)));
   });
   step(QStringLiteral("the node can no longer read its cluster, saying %1").arg(q), [](World& world, const Captures& c, const Table&) {
     fake(world).statusRefusal = c[0];
@@ -211,9 +212,10 @@ const Steps steps([] {
     expect(page.value(QStringLiteral("error")).toString() == c[0] && page.value(QStringLiteral("status")).isNull(),
            QStringLiteral("the cluster page is %1").arg(show(page)));
   });
-  step(QStringLiteral("the cluster page closes"), [cluster](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the cluster page closes"), [](World& world, const Captures&, const Table&) {
     world.sync();
-    expect(!cluster(world).value(QStringLiteral("open")).toBool(), QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
+    const QVariant route = world.state(QStringLiteral("route"));
+    expect(at(route, QStringLiteral("section")) != QStringLiteral("/settings/cluster"), QStringLiteral("the route is %1").arg(show(route)));
   });
 });
 

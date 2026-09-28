@@ -44,6 +44,9 @@ public:
     }
     return nullptr;
   }
+  // The shell that built `controller` (its parent), for reaching a sibling:
+  // NativeShell::of(this)->controller<ToastController>().
+  static NativeShell* of(const QObject* controller) { return qobject_cast<NativeShell*>(controller->parent()); }
   // Registers the controllers that name one as `HalC2.Shell` singletons.
   void registerQmlSingletons() const;
 

@@ -19,6 +19,12 @@ void composerOn(World& world, const QString& target, const QString& routeKind, c
       {QStringLiteral("nativeSend"), nativeSend},
   };
   world.publishComposer();
+  // The page's composer is the one for the route it shows.
+  if (routeKind == QLatin1String("draft")) {
+    world.pageOpens({{QStringLiteral("kind"), QStringLiteral("draft")}, {QStringLiteral("draftId"), target}});
+  } else {
+    world.pageOpens({{QStringLiteral("kind"), QStringLiteral("thread")}, {QStringLiteral("threadKey"), target}});
+  }
 }
 
 QVariantMap plainSend(const QString& prompt, const QString& runtimeMode, const QString& interactionMode) {

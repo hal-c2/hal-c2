@@ -5,6 +5,8 @@
 #include <QJsonObject>
 #include <QQmlPropertyMap>
 
+#include "NativeShell.h"
+#include "NavigationController.h"
 #include "NodeClient.h"
 #include "ShellBridge.h"
 
@@ -23,7 +25,6 @@ ClusterController::ClusterController(ShellBridge* bridge, NodeClient* client, QO
       m_bridge(bridge),
       m_client(client),
       m_state{
-          {QStringLiteral("open"), false},
           {QStringLiteral("busy"), false},
           {QStringLiteral("status"), QVariant::fromValue(nullptr)},
           {QStringLiteral("error"), QVariant::fromValue(nullptr)},
@@ -36,31 +37,27 @@ void ClusterController::activate() {
   m_active = true;
   m_bridge->claimKey(QStringLiteral("cluster"));
   publish();
+  // Opening the page (NavigationController takes cluster.open) reads it afresh.
+  auto* navigation = NativeShell::of(this)->controller<NavigationController>();
+  auto opened = [navigation] { return navigation->route() == NavigationController::Route::settings(NavigationController::kClusterSection); };
+  m_open = opened();
+  if (m_open) refresh();
+  connect(navigation, &NavigationController::changed, this, [this, opened] {
+    const bool open = opened();
+    if (open == m_open) return;
+    m_open = open;
+    if (!open) return;
+    m_state.insert(QStringLiteral("notice"), QVariant::fromValue(nullptr));
+    publish();
+    refresh();
+  });
 }
 
 bool ClusterController::handle(const QString& action, const QVariant& payload) {
   if (!m_active) return false;
-  const bool open = m_state.value(QStringLiteral("open")).toBool();
-  // Back leaves this page for wherever the user was; another settings section
-  // (still the page's) takes its place.
-  if (action == QLatin1String("settings.back") && open) {
-    set(QStringLiteral("open"), false);
-    return true;
-  }
-  if (action == QLatin1String("settings.open") || action == QLatin1String("settings.navigate") ||
-      action == QLatin1String("settings.openResult")) {
-    if (open) set(QStringLiteral("open"), false);
-    return false;
-  }
   if (!action.startsWith(QLatin1String("cluster."))) return false;
   const QVariantMap input = payload.toMap();
-  if (action == QLatin1String("cluster.open")) {
-    m_state.insert(QStringLiteral("notice"), QVariant::fromValue(nullptr));
-    set(QStringLiteral("open"), true);
-    refresh();
-  } else if (action == QLatin1String("cluster.close")) {
-    set(QStringLiteral("open"), false);
-  } else if (action == QLatin1String("cluster.refresh")) {
+  if (action == QLatin1String("cluster.refresh")) {
     refresh();
   } else if (action == QLatin1String("cluster.invite")) {
     invite(input.value(QStringLiteral("tailscale")).toBool());

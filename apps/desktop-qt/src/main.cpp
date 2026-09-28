@@ -16,6 +16,7 @@
 #include "LocalTranscriber.h"
 #include "NativeNotifications.h"
 #include "NativeShell.h"
+#include "NavigationController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
 #include "StoragePaths.h"
@@ -167,6 +168,8 @@ int main(int argc, char* argv[]) {
   qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
   NativeShell native(&bridge);
   native.registerQmlSingletons();
+  // The window reopens where the user left it.
+  native.controller<NavigationController>()->setStorePath(QDir(storage.state).filePath(QStringLiteral("shell-route.json")));
   ThemeStore theme(configDir);
   ShellRuntime runtime({configDir, qmlSourceDir}, &bridge, &theme);
   // The page publishes its resolved theme; without a theme.json it is the

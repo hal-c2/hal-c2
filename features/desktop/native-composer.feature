@@ -59,7 +59,7 @@ Feature: The desktop shell sends plain turns to its node
       And the node refuses "run.interrupt" with "Run already finished"
       And the composer shows "env-a:t1"
       When the user stops the turn
-      Then the page shows an "error" toast "Failed to interrupt the current turn." saying "Run already finished"
+      Then the user sees an "error" toast "Failed to interrupt the current turn." saying "Run already finished"
 
   Rule: A plain send goes to the node
 
@@ -92,7 +92,7 @@ Feature: The desktop shell sends plain turns to its node
       Given the node refuses "message.dispatch" with "Provider unavailable"
       And the composer shows "env-a:t1" with the plain prompt "Fix the tests"
       When the user sends "Fix the tests"
-      Then the page shows an "error" toast "Failed to send message" saying "Provider unavailable"
+      Then the user sees an "error" toast "Failed to send message" saying "Provider unavailable"
       And the page is asked to set the composer text for "env-a:t1" to "Fix the tests"
 
     @desktop

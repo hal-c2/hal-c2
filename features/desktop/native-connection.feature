@@ -137,4 +137,4 @@ Feature: The desktop shell talks to its node itself
       And the node stops accepting connections
       When the node drops the connection
       And the user settles "env-a:t1"
-      Then the page shows an "error" toast "Failed to settle thread" saying "not connected"
+      Then the user sees an "error" toast "Failed to settle thread" saying "not connected"

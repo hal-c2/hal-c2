@@ -10,11 +10,12 @@ import {
 import type { EnvironmentId } from "@hal-c2/contracts";
 import type {
   ShellNativeState,
+  ShellRoute,
   ShellSidebarDraft,
   ShellSidebarState,
 } from "@hal-c2/contracts/shell";
 import { useParams, useRouter } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { partitionSidebarThreads, resolveAdjacentThreadId } from "../components/Sidebar.logic";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -31,7 +32,6 @@ import {
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { requestShellRename } from "./shellRenameRequest";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { useThreadShells } from "../state/entities";
@@ -39,6 +39,8 @@ import { usePrimaryEnvironment } from "../state/environments";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
 import { buildShellKeybindings } from "./shellKeybindings";
+import { sameShellRoute, shellRouteFromPath } from "./shellRoute";
+import { isSettingsPath } from "./shellSettingsState";
 import {
   buildLogicalProjectKeyMap,
   buildShellSidebarInput,
@@ -321,8 +323,86 @@ export function HalC2ShellBridge() {
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [activeThreadKey, keybindings, orderedThreadKeys, router]);
 
+  const newThreadIn = (projectKey: string | undefined) => {
+    const group =
+      projectKey === undefined
+        ? projectGroups[0]
+        : projectGroups.find((item) => item.projectKey === projectKey);
+    if (group === undefined) {
+      // A stale key (project removed, environment gone) must not land
+      // the thread in whichever project sorts first.
+      if (projectKey === undefined) openCommandPalette({ open: "add-project" });
+      return;
+    }
+    void handleNewThread(scopeProjectRef(group.environmentId, group.id));
+  };
+
+  // The shell owns the route once it has its node (`route.follow`); the page
+  // reports where its own links and redirects take it (`route.open`), except
+  // to the route it was just told to show.
+  const shownRouteRef = useRef<ShellRoute | null>(null);
+  useEffect(() => {
+    if (isHalC2ShellEmbed) return;
+    return router.history.subscribe(({ location, action }) => {
+      const route = shellRouteFromPath(location.pathname);
+      if (route === null) return;
+      if (shownRouteRef.current !== null && sameShellRoute(route, shownRouteRef.current)) return;
+      shownRouteRef.current = route;
+      void window.halC2Shell?.dispatch("route.open", {
+        ...route,
+        replace: action.type === "REPLACE",
+      });
+    });
+  }, [router]);
+  const followRoute = (route: ShellRoute) => {
+    // Pairing and onboarding finish before the page shows anything else.
+    if (isHalC2ShellEmbed || shellRouteFromPath(router.state.location.pathname) === null) return;
+    shownRouteRef.current = route;
+    switch (route.kind) {
+      case "home":
+        void router.navigate({ to: "/" });
+        return;
+      case "thread": {
+        const threadRef = route.threadKey === null ? null : parseScopedThreadKey(route.threadKey);
+        if (threadRef === null) return;
+        void router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        });
+        return;
+      }
+      case "draft":
+        if (route.draftId === null) return;
+        void router.navigate({
+          to: "/draft/$draftId",
+          params: { draftId: DraftId.make(route.draftId) },
+        });
+        return;
+      case "newThread":
+        newThreadIn(route.projectKey ?? undefined);
+        return;
+      case "settings":
+        void router.navigate({
+          to: route.section !== null && isSettingsPath(route.section) ? route.section : "/settings",
+        });
+        return;
+      case "pullRequests":
+        void router.navigate({
+          to: "/pull-requests",
+          search: { involvement: "all", state: "open" },
+        });
+        return;
+      case "usage":
+        void router.navigate({ to: "/usage" });
+        return;
+    }
+  };
+
   useShellActions((action) => {
     switch (action.type) {
+      case "route.follow":
+        followRoute(action);
+        return;
       case "thread.open": {
         const threadRef = parseScopedThreadKey(action.key);
         if (threadRef === null) return;
@@ -338,20 +418,9 @@ export function HalC2ShellBridge() {
           params: { draftId: DraftId.make(action.draftId) },
         });
         return;
-      case "thread.new": {
-        const group =
-          action.projectKey === undefined
-            ? projectGroups[0]
-            : projectGroups.find((item) => item.projectKey === action.projectKey);
-        if (group === undefined) {
-          // A stale key (project removed, environment gone) must not land
-          // the thread in whichever project sorts first.
-          if (action.projectKey === undefined) openCommandPalette({ open: "add-project" });
-          return;
-        }
-        void handleNewThread(scopeProjectRef(group.environmentId, group.id));
+      case "thread.new":
+        newThreadIn(action.projectKey);
         return;
-      }
       case "sidebar.scope":
         setScopeProjectKey(action.projectKey);
         return;
@@ -436,30 +505,6 @@ export function HalC2ShellBridge() {
             : { sidebar: action.sidebar, composer: action.composer },
         );
         return;
-      case "toast.show": {
-        const button = action.action;
-        toastManager.add(
-          stackedThreadToast({
-            type: action.toastType,
-            title: action.title,
-            ...(action.description !== undefined ? { description: action.description } : {}),
-            ...(action.timeout !== undefined ? { timeout: action.timeout } : {}),
-            ...(button !== undefined
-              ? {
-                  actionProps: {
-                    children: button.label,
-                    onClick: () =>
-                      void window.halC2Shell?.dispatch(
-                        button.dispatch.type,
-                        button.dispatch.payload,
-                      ),
-                  },
-                }
-              : {}),
-          }),
-        );
-        return;
-      }
     }
   });
   // Declared after the action subscription so the answer finds it: a page
