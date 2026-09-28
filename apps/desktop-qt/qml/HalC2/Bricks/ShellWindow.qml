@@ -1,5 +1,6 @@
 import QtQuick
 import HalC2.Shell
+import "js/settingsPages.js" as Pages
 
 // The window every rice starts from: theme-driven colour, opacity and frame,
 // the shell's own context menus and error overlay, and the page's window
@@ -16,11 +17,15 @@ Window {
     // Where the window is (NavigationController); the page's own settings
     // state until the shell has its node.
     readonly property var route: Shell.state.route ?? null
-    // A settings page the shell renders itself is open (ClusterController):
-    // layouts put ClusterSettings where the page would be.
+    // Cluster, the first page the shell rendered itself.
     readonly property bool clusterOpen: route !== null && route.kind === "settings" && route.section === "/settings/cluster"
     // Settings show, from the page's sections or the shell's own pages.
     readonly property bool settingsActive: route !== null ? route.kind === "settings" : (Shell.state.settings ? Shell.state.settings.active : false)
+    // The settings section showing, and whether the shell renders it itself
+    // (js/settingsPages.js): layouts put SettingsHost where the page would be
+    // and hide the page and composer.
+    readonly property string settingsSection: !settingsActive ? "" : Pages.resolve(route !== null ? route.section : Shell.state.settings.activeSection)
+    readonly property bool nativeSettingsOpen: settingsActive && Pages.brickFor(settingsSection).length > 0
     // The page's keybindings (the configurable ones from Settings), as Qt
     // sequences. They fire only while the chrome owns the keyboard: a
     // focused page sees its own keydowns and handles them itself.

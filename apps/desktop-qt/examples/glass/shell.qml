@@ -148,14 +148,15 @@ ShellWindow {
                         color: root.line
                     }
 
-                    ClusterSettings {
+                    SettingsHost {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        visible: root.clusterOpen
+                        section: root.settingsSection
+                        visible: root.nativeSettingsOpen
                     }
 
                     WebSurface {
-                        visible: !root.clusterOpen
+                        visible: !root.nativeSettingsOpen
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         url: Shell.pageUrl
@@ -164,7 +165,7 @@ ShellWindow {
 
                     Composer {
                         Layout.fillWidth: true
-                        visible: ready && !root.clusterOpen
+                        visible: ready && !root.nativeSettingsOpen
                         color: "transparent"
                     }
 

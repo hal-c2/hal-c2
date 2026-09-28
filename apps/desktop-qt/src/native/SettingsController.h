@@ -101,6 +101,8 @@ public:
   Q_INVOKABLE QVariant setting(const QString& key) const;
   Q_INVOKABLE QVariant defaultOf(const QString& key) const;
   Q_INVOKABLE bool isDefault(const QString& key) const;
+  // Whether a row is kept on this device rather than by the node.
+  Q_INVOKABLE bool onDevice(const QString& key) const;
   Q_INVOKABLE void set(const QString& key, const QVariant& value);
   Q_INVOKABLE void reset(const QString& key);
 

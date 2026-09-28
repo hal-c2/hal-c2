@@ -527,16 +527,17 @@ ShellWindow {
 
                     WebSurface {
                         anchors.fill: parent
-                        visible: !root.clusterOpen
+                        visible: !root.nativeSettingsOpen
                         url: Shell.pageUrl
                         radius: surfaceCard.radius - surfaceCard.border.width
                     }
 
-                    ClusterSettings {
+                    SettingsHost {
                         anchors.fill: parent
                         anchors.margins: surfaceCard.border.width
                         radius: surfaceCard.radius - surfaceCard.border.width
-                        visible: root.clusterOpen
+                        section: root.settingsSection
+                        visible: root.nativeSettingsOpen
                     }
 
                     // The page dims under the drawer; clicking it closes the drawer.
@@ -1109,7 +1110,7 @@ ShellWindow {
                     id: composer
 
                     Layout.fillWidth: true
-                    visible: ready && !root.clusterOpen
+                    visible: ready && !root.nativeSettingsOpen
                     color: "transparent"
                 }
 

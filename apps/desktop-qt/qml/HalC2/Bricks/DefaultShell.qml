@@ -95,10 +95,11 @@ ShellWindow {
                 }
 
                 // The shell's own settings pages take the page's place.
-                ClusterSettings {
+                SettingsHost {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    visible: root.clusterOpen
+                    section: root.settingsSection
+                    visible: root.nativeSettingsOpen
                 }
 
                 WebSurface {
@@ -106,7 +107,7 @@ ShellWindow {
 
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    visible: !root.clusterOpen
+                    visible: !root.nativeSettingsOpen
                     url: Shell.pageUrl
                 }
 
@@ -114,7 +115,7 @@ ShellWindow {
                     id: composerView
 
                     Layout.fillWidth: true
-                    visible: ready && !root.clusterOpen
+                    visible: ready && !root.nativeSettingsOpen
                 }
 
                 TerminalDrawer {

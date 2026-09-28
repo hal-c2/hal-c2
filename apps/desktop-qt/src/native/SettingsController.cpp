@@ -269,6 +269,11 @@ bool SettingsController::isDefault(const QString& key) const {
   return !store.contains(key) || store.value(key) == row->fallback;
 }
 
+bool SettingsController::onDevice(const QString& key) const {
+  const Row* row = rowOf(key);
+  return row && row->device;
+}
+
 void SettingsController::set(const QString& key, const QVariant& value) {
   const Row* row = rowOf(key);
   if (!row) return;
