@@ -984,9 +984,18 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
     context
   end
 
-  step "the plugin {string} is running a turn", %{args: [id]} = context do
+  step "the plugin {string} is running a turn with a message queued behind it",
+       %{args: [id]} = context do
     context = launch(context, id, "wait")
     [_] = Turns.await_runs(context.thread_id, ["running"])
+
+    queued =
+      context.thread_id
+      |> Turns.message("m2", "hello again")
+      |> Map.put("dispatchMode", %{"type" => "queue_after_active"})
+
+    {{:ok, _}, context} = World.dispatch(context, queued)
+    [_, _] = Turns.await_runs(context.thread_id, ["running", "queued"])
     context
   end
 
@@ -999,7 +1008,7 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
   end
 
   step "the run fails saying the provider's session ended unexpectedly", context do
-    [_] = Turns.await_runs(context.thread_id, ["failed"])
+    World.await_stream(context.thread_id, &match?([%{"status" => "failed"} | _], Turns.runs(&1)))
 
     assert session(context.thread_id)["lastError"] ==
              "The provider's session ended unexpectedly."
@@ -1007,10 +1016,7 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
     context
   end
 
-  step "the thread takes its next message", context do
-    {{:ok, _}, context} =
-      World.dispatch(context, Turns.message(context.thread_id, "m2", "hello again"))
-
+  step "the queued message runs", context do
     [_, _] = Turns.await_runs(context.thread_id, ["failed", "completed"])
     context
   end

@@ -79,10 +79,10 @@ Feature: Agent providers are plugins
   Scenario: A plugin's turn ends as failed when the process running it crashes
     Given a provider plugin "acme-native" that implements the adapter contract directly
     And the plugin is installed and enabled
-    And the plugin "acme-native" is running a turn
+    And the plugin "acme-native" is running a turn with a message queued behind it
     When the process running that turn crashes
     Then the run fails saying the provider's session ended unexpectedly
-    And the thread takes its next message
+    And the queued message runs
 
   @node
   Scenario: A turn on an instance whose plugin is missing is refused clearly

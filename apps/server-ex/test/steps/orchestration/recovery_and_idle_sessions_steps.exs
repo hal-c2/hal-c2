@@ -211,7 +211,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   step "the runtime running the turn of {string} stops without ending it",
        %{args: [thread]} = context do
     :ok = GenServer.stop(runtime(context, thread), :shutdown)
-    assert %{"status" => "running"} = World.latest_run(context, thread)
+    assert World.state(context, thread).entities["run"][context.running]["status"] == "running"
     context
   end
 
@@ -228,13 +228,18 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   end
 
   step "the run of {string} is interrupted", %{args: [thread]} = context do
-    World.await_latest_run(context, thread, "interrupted")
+    World.await_run(
+      context,
+      thread,
+      &(&1["id"] == context.running and &1["status"] == "interrupted")
+    )
+
     context
   end
 
   step "the run of {string} fails saying the session ended unexpectedly",
        %{args: [thread]} = context do
-    World.await_latest_run(context, thread, "failed")
+    World.await_run(context, thread, &(&1["id"] == context.running and &1["status"] == "failed"))
 
     assert Enum.any?(
              World.entities(context, thread, "provider-session"),
@@ -243,10 +248,6 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     context
   end
-
-  step("{string} takes its next message", %{args: [thread]} = context,
-    do: World.running_turn(context, thread)
-  )
 
   # --- idle sessions ---------------------------------------------------------------------
 

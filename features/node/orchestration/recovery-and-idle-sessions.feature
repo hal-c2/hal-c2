@@ -72,10 +72,10 @@ Feature: Recovering from restarts and releasing idle sessions
   @node
   Scenario Outline: A turn whose runtime crashes ends as failed
     Given thread "t1" exists in "demo"
-    And "t1" has a running turn on "<provider>"
+    And "t1" has a running turn on "<provider>" and a queued message "Next"
     When the runtime running the turn of "t1" crashes
     Then the run of "t1" fails saying the session ended unexpectedly
-    And "t1" takes its next message
+    And a run for "Next" starts
 
     Examples:
       | provider    |
@@ -87,11 +87,11 @@ Feature: Recovering from restarts and releasing idle sessions
   @node
   Scenario: Stopping a turn whose runtime is gone ends it
     Given thread "t1" exists in "demo"
-    And "t1" has a running turn on "codex"
+    And "t1" has a running turn on "codex" and a queued message "Next"
     And the runtime running the turn of "t1" stops without ending it
     When the user stops "t1"
     Then the run of "t1" is interrupted
-    And "t1" takes its next message
+    And a run for "Next" starts
 
   @node
   Scenario: Idle provider sessions are released after 30 minutes
