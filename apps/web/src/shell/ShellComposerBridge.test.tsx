@@ -71,6 +71,9 @@ const defaults = {
   onRuntimeModeChange: () => {},
   onInteractionModeChange: () => {},
   onInterrupt: () => {},
+  nativeSendAllowed: false,
+  promptEffort: null,
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
 } satisfies Partial<ShellComposerBridgeProps>;
 
 let renderer: ReactTestRenderer | null = null;

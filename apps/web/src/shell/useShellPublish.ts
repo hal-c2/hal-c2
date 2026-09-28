@@ -5,13 +5,14 @@ import { useEffect, useRef } from "react";
  * whose JSON is unchanged (the bridges rebuild their state on every parent
  * render, and each publish re-evaluates every QML binding on `Shell.state`).
  * Unmounting publishes `null`: leaving the route (settings, no thread) must
- * not leave stale chrome behind.
+ * not leave stale chrome behind. `undefined` publishes nothing, for a key the
+ * shell has taken over (it drops the page's publishes to it anyway).
  */
 export function useShellPublish(key: string, state: unknown) {
   const lastJson = useRef("");
   useEffect(() => {
     const shell = window.halC2Shell;
-    if (!shell) return;
+    if (!shell || state === undefined) return;
     const json = JSON.stringify(state);
     if (json === lastJson.current) return;
     lastJson.current = json;

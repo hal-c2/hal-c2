@@ -5312,6 +5312,23 @@ export default function ChatView(props: ChatViewProps) {
         : null,
     [activeThreadBranch, activeWorktreePath, envMode, gitStatusQuery.data?.refName, isServerThread],
   );
+  // The shell may send a plain turn itself only when `onSend` would do nothing
+  // but dispatch it: no bootstrap, branch fix-up, queued edit or machine choice
+  // first. The composer adds the checks it owns.
+  const shellNativeSendAllowed =
+    isHalC2Shell &&
+    isServerThread &&
+    activeThread != null &&
+    activeProject !== null &&
+    clientSettingsHydrated &&
+    !threadDetailLoading &&
+    !isRevertingCheckpoint &&
+    !needsLoadBalancing &&
+    !activeEnvironmentUnavailable &&
+    !activePendingProgress &&
+    editingQueuedRun === null &&
+    localCheckoutBranchMismatch === null &&
+    !(activeMessageCount === 0 && sendEnvMode === "worktree" && !activeThread.worktreePath);
   const publishComposerOverlayHeight = useCallback(
     (height: number) => {
       const nextHeight = Math.ceil(height);
@@ -9567,6 +9584,7 @@ export default function ChatView(props: ChatViewProps) {
                             isConnecting={isConnecting}
                             isSendBusy={isSendBusy || isSavingQueuedEdit}
                             isRevertingCheckpoint={isRevertingCheckpoint}
+                            shellNativeSendAllowed={shellNativeSendAllowed}
                             sendDisabledReason={
                               isRevertingCheckpoint
                                 ? "Rewinding conversation"

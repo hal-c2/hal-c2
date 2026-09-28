@@ -1527,6 +1527,8 @@ export interface ChatComposerProps {
   isConnecting: boolean;
   isSendBusy: boolean;
   isRevertingCheckpoint?: boolean;
+  /** ChatView's half of whether the Qt shell may send a plain turn itself. */
+  shellNativeSendAllowed?: boolean;
   sendDisabledReason: string | null;
   isPreparingWorktree: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
@@ -1699,6 +1701,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isConnecting,
     isSendBusy,
     isRevertingCheckpoint = false,
+    shellNativeSendAllowed = false,
     sendDisabledReason: externalSendDisabledReason,
     isPreparingWorktree,
     environmentUnavailable,
@@ -7489,6 +7492,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 onInteractionModeChange={handleInteractionModeChange}
                 onSend={(event, intent) => submitComposer(event, undefined, intent)}
                 onInterrupt={onInterrupt}
+                nativeSendAllowed={
+                  shellNativeSendAllowed &&
+                  routeKind === "server" &&
+                  phase !== "running" &&
+                  !isConnecting &&
+                  !isSendBusy &&
+                  environmentUnavailable === null &&
+                  !noProviderAvailable &&
+                  sendDisabledReason === null &&
+                  multipleModelSelections === null &&
+                  pendingApprovals.length === 0 &&
+                  pendingUserInputs.length === 0 &&
+                  !activePendingProgress &&
+                  !showPlanFollowUpPrompt &&
+                  composerImages.length === 0 &&
+                  composerFiles.length === 0 &&
+                  composerTerminalContexts.length === 0 &&
+                  composerPreviewAnnotations.length === 0 &&
+                  composerReviewComments.length === 0 &&
+                  composerThreadContexts.length === 0
+                }
+                promptEffort={selectedPromptEffort}
+                modelSelection={selectedModelSelection}
               />
             ) : null}
 

@@ -2,6 +2,7 @@ import type {
   ModelSelection,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderInteractionMode,
   ProviderOptionDescriptor,
   ProviderOptionSelection,
   RuntimeMode,
@@ -9,16 +10,21 @@ import type {
 } from "@hal-c2/contracts";
 import type {
   ShellComposerInstance,
+  ShellComposerNativeSend,
   ShellComposerOption,
   ShellComposerState,
   ShellComposerSuggestion,
 } from "@hal-c2/contracts/shell";
 import { providerInstanceInitials } from "@hal-c2/client-runtime/state/provider-instance-display";
+import { assistantCitationsToPlainText } from "@hal-c2/shared/assistantCitations";
+import { collectComposerContextReferences } from "@hal-c2/shared/composerContextReferences";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@hal-c2/shared/model";
+import { truncate } from "@hal-c2/shared/String";
 
+import { getComposerSubmissionValidationMessage } from "../components/chat/composerSubmission";
 import { shouldIncludeModelPickerOption } from "../components/chat/ModelPickerContent";
 import { describeUnavailableInstance } from "../components/chat/ModelPickerSidebar";
 import { resolveProviderInstanceAcpRegistryIconUrl } from "../components/chat/ProviderInstanceIcon";
@@ -31,7 +37,7 @@ import {
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../providerInstances";
-import { getProviderModelCapabilities } from "../providerModels";
+import { formatOutgoingPrompt, getProviderModelCapabilities } from "../providerModels";
 
 export interface ShellComposerStateInput {
   readonly target: string | null;
@@ -262,5 +268,61 @@ export function buildShellComposerState(input: ShellComposerStateInput): ShellCo
     runtimeModes: input.runtimeModes,
     interactionMode: input.interactionMode,
     showInteractionModeToggle: input.showInteractionModeToggle,
+  };
+}
+
+export interface ShellComposerNativeSendInput {
+  /**
+   * Every check outside the prompt passed: a server thread with nothing to
+   * prepare, nothing pending, and no attachments or contexts aboard.
+   */
+  readonly allowed: boolean;
+  readonly prompt: string;
+  readonly provider: ProviderDriverKind;
+  readonly model: string | null;
+  readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly effort: string | null;
+  readonly modelSelection: ModelSelection;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
+}
+
+/**
+ * The turn the shell may send for the current draft, or null when the draft
+ * needs the page's send (slash commands, inline contexts, attachments, an
+ * over-long prompt). It carries exactly what the page's plain send would.
+ */
+export function buildShellComposerNativeSend(
+  input: ShellComposerNativeSendInput,
+): ShellComposerNativeSend | null {
+  if (!input.allowed) return null;
+  const trimmed = input.prompt.trim();
+  if (
+    trimmed.length === 0 ||
+    trimmed.startsWith("/") ||
+    collectComposerContextReferences(trimmed).length > 0
+  ) {
+    return null;
+  }
+  const text = formatOutgoingPrompt({
+    provider: input.provider,
+    model: input.model,
+    models: input.models,
+    effort: input.effort,
+    text: trimmed,
+  });
+  const validationMessage = getComposerSubmissionValidationMessage({
+    prompt: input.prompt,
+    providerInput: text,
+    submissionTarget: "provider-turn",
+  });
+  if (validationMessage !== null) return null;
+  return {
+    prompt: input.prompt,
+    text,
+    titleSeed: truncate(assistantCitationsToPlainText(trimmed).trim() || "New thread"),
+    modelSelection: input.modelSelection,
+    runtimeMode: input.runtimeMode,
+    interactionMode: input.interactionMode,
   };
 }

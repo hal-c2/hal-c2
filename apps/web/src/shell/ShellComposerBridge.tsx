@@ -32,6 +32,7 @@ import type { SessionPhase } from "../types";
 import {
   applyComposerOptionChange,
   buildShellComposerInstances,
+  buildShellComposerNativeSend,
   buildShellComposerState,
   resolveComposerOptionDescriptors,
   toggleFavoriteModel,
@@ -104,6 +105,13 @@ export interface ShellComposerBridgeProps {
   readonly onRuntimeModeChange: (mode: RuntimeMode) => void;
   readonly onInteractionModeChange: (mode: ProviderInteractionMode) => void;
   readonly onSend: (e?: { preventDefault: () => void }, intent?: ComposerSubmissionIntent) => void;
+  /**
+   * The page's send would only dispatch the prompt (see
+   * `buildShellComposerNativeSend`), so the shell may send it itself.
+   */
+  readonly nativeSendAllowed: boolean;
+  readonly promptEffort: string | null;
+  readonly modelSelection: ModelSelection;
   readonly onInterrupt: () => void;
 }
 
@@ -205,9 +213,36 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
     [enterIntents, optionDescriptors, props],
   );
 
+  const nativeSend = useMemo(
+    () =>
+      buildShellComposerNativeSend({
+        allowed: props.nativeSendAllowed,
+        prompt: props.prompt,
+        provider: props.selectedProvider,
+        model: props.selectedModel,
+        models: props.selectedProviderModels,
+        effort: props.promptEffort,
+        modelSelection: props.modelSelection,
+        runtimeMode: props.runtimeMode,
+        interactionMode: props.interactionMode,
+      }),
+    [
+      props.interactionMode,
+      props.modelSelection,
+      props.nativeSendAllowed,
+      props.prompt,
+      props.promptEffort,
+      props.runtimeMode,
+      props.selectedModel,
+      props.selectedProvider,
+      props.selectedProviderModels,
+    ],
+  );
+
   useShellPublish("composer", {
     ...state,
     edit: appliedEdit?.target === target ? (appliedEdit.edit ?? null) : null,
+    nativeSend,
   });
 
   // Memoised on the catalogue alone so typing never rebuilds or resends it.

@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ProviderInstanceId, ProviderOptionDescriptor, RuntimeMode } from "@hal-c2/contracts";
+import type {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderOptionDescriptor,
+  RuntimeMode,
+  ServerProviderModel,
+} from "@hal-c2/contracts";
+import { createModelCapabilities } from "@hal-c2/shared/model";
 
 import type { ProviderInstanceEntry } from "../providerInstances";
 import {
   applyComposerOptionChange,
   buildShellComposerInstances,
+  buildShellComposerNativeSend,
   buildShellComposerState,
   toggleFavoriteModel,
 } from "./shellComposerState";
@@ -283,5 +291,68 @@ describe("applyComposerOptionChange", () => {
     expect(applyComposerOptionChange([thinkingDescriptor], "thinking", "yes")).toEqual([
       { id: "thinking", value: false },
     ]);
+  });
+});
+
+describe("buildShellComposerNativeSend", () => {
+  const opus: ServerProviderModel = {
+    slug: "claude-opus",
+    name: "Claude Opus",
+    isCustom: false,
+    capabilities: createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Effort",
+          type: "select",
+          options: [
+            { id: "high", label: "High", isDefault: true },
+            { id: "ultrathink", label: "Ultrathink" },
+          ],
+          promptInjectedValues: ["ultrathink"],
+        },
+      ],
+    }),
+  };
+  const input = {
+    allowed: true,
+    prompt: "  Fix the flaky test  ",
+    provider: "claudeAgent" as ProviderDriverKind,
+    model: "claude-opus",
+    models: [opus],
+    effort: "high",
+    modelSelection: { instanceId: "claudeAgent" as ProviderInstanceId, model: "claude-opus" },
+    runtimeMode: "full-access" as RuntimeMode,
+    interactionMode: "default" as const,
+  };
+
+  it("sends what the page's plain send would", () => {
+    expect(buildShellComposerNativeSend(input)).toEqual({
+      prompt: "  Fix the flaky test  ",
+      text: "Fix the flaky test",
+      titleSeed: "Fix the flaky test",
+      modelSelection: input.modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    });
+  });
+
+  it("carries the effort a model takes in the prompt", () => {
+    expect(buildShellComposerNativeSend({ ...input, effort: "ultrathink" })?.text).toBe(
+      "Ultrathink:\nFix the flaky test",
+    );
+  });
+
+  it("leaves commands, inline contexts and over-long prompts to the page", () => {
+    for (const prompt of ["", "   ", "/plan", "/usage-limits", "x".repeat(120_001)]) {
+      expect(buildShellComposerNativeSend({ ...input, prompt })).toBeNull();
+    }
+    expect(
+      buildShellComposerNativeSend({
+        ...input,
+        prompt: "Look at [terminal 1](hal-c2-context://v1/terminal/ctx-1)",
+      }),
+    ).toBeNull();
+    expect(buildShellComposerNativeSend({ ...input, allowed: false })).toBeNull();
   });
 });
