@@ -7,6 +7,7 @@
 #   apps/tui/src/components/ThreadOverlays.tsx
 #   packages/contracts/src/orchestrationV2.ts (thread.metadata.update, thread.title.regeneration.complete, thread.metadata-updated)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (metadata.update, title generation)
+#   apps/desktop-qt/src/native/WorkspaceController.cpp (the header's rename)
 
 Feature: Thread titles
   Threads get a title from their first message. The user or the agent can rename a
@@ -21,18 +22,18 @@ Feature: Thread titles
     Then the thread is listed as "Fix OAuth login"
     And every connected client shows the new title
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Renaming a thread from the desktop and phone
     When the user renames "Fix login" to "Fix OAuth login"
     Then the thread is listed as "Fix OAuth login"
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: A thread title cannot be empty
     When the user renames "Fix login" to an empty title
     Then the title stays "Fix login"
     And the user is told "Thread title cannot be empty"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A rename that the environment rejects keeps the old title
     Given the environment rejects the rename
     When the user renames "Fix login" to "Fix OAuth login"

@@ -181,6 +181,10 @@ const QStringList kDefaultGlobs{
     QStringLiteral("timeline/plans-and-subagents.feature"),
     QStringLiteral("navigation/environment-themes.feature"),
     QStringLiteral("navigation/appearance.feature:System appearance follows*"),
+    QStringLiteral("threads/titles.feature"),
+    QStringLiteral("source-control/refs-and-branches.feature"),
+    QStringLiteral("source-control/worktrees-and-setup-scripts.feature"),
+    QStringLiteral("files/project-scripts-and-actions.feature"),
 };
 
 QRegularExpression wildcard(const QString& glob) {

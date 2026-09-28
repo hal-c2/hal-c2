@@ -2,7 +2,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/DefaultShell.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (sidebarCollapsed, settingsActive)
 #   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (header strip: run action, open in editor, git actions)
-#   apps/web/src/shell/ShellWorkspaceBridge.tsx (workspace.runScript, workspace.openInEditor)
+#   apps/desktop-qt/src/native/WorkspaceController.cpp (workspace.runScript, workspace.openInEditor)
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml
 #   apps/desktop-qt/tests/tst_Workspace.qml
 #   apps/web/src/components/AppSidebarLayout.tsx (sidebar width)
