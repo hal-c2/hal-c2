@@ -161,6 +161,23 @@ Feature: Node authentication and scopes
     And it revokes every other client through hal-c2.revokeOtherClients
     Then hal-c2.clients lists only the administrator's session
 
+  # A session lives on the node that paired it; on another member the caller has none, so
+  # every session there would count as "other".
+  @node
+  Scenario Outline: Paired clients are managed only on the node the caller's session lives on
+    Given an administrator's socket
+    And two other paired clients
+    And another member of the node's cluster
+    When the administrator calls <method> on that member
+    Then the call is refused because the caller's session lives on another node
+    And no client was revoked
+
+    Examples:
+      | method                    |
+      | hal-c2.clients            |
+      | hal-c2.revokeClient       |
+      | hal-c2.revokeOtherClients |
+
   @node
   Scenario: Access requests without a bearer are refused as missing credentials
     When a client calls an access route without a bearer token

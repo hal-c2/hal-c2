@@ -484,6 +484,14 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  @session_methods HalC2.Rpc.session_methods()
+  @session_elsewhere %{
+    "_tag" => "EnvironmentOperationForbiddenError",
+    "code" => "operation_forbidden",
+    "reason" => "session_on_another_node",
+    "message" => "paired clients are managed on the node the caller's session belongs to"
+  }
+
   defp run_rpc(state, id, environment, method, payload) do
     socket = self()
     timeout = rpc_timeout()
@@ -501,10 +509,14 @@ defmodule HalC2.Web.Socket do
             :erpc.cast(node, HalC2.BackgroundPolicy, :report_client_activity, args)
             {:ok, nil}
 
+          # The paired-clients methods answer for this socket's session, which only
+          # this node knows: on another member every session would be "other".
+          node when node != node() and method in @session_methods ->
+            {:error, @session_elsewhere}
+
           node ->
-            # The paired-clients methods answer for this socket's session.
             args =
-              if method in HalC2.Rpc.session_methods(),
+              if method in @session_methods,
                 do: [method, payload || %{}, state.session],
                 else: [method, payload || %{}]
 

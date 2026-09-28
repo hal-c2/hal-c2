@@ -910,6 +910,44 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     context
   end
 
+  # A member as its environment reaches the shell; nothing answers there, so a call
+  # that got past the node would fail as unavailable instead.
+  step "another member of the node's cluster", context do
+    member = %{"environmentId" => "env-member", "label" => "Member"}
+    GenServer.cast(HalC2.Shell, {:peer_environment, :member@nowhere, member})
+    :sys.get_state(HalC2.Shell)
+    Map.put(context, :member, "env-member")
+  end
+
+  step ~r/^the administrator calls (?<method>hal-c2\.\w+) on that member$/,
+       %{args: [method]} = context do
+    [first, _] = context.others
+    payload = %{"sessionId" => session_id(first)}
+    client = World.client(context, "admin")
+    {reply, client} = Node.call(client, context.member, method, payload)
+    context |> World.put_client("admin", client) |> Map.put(:refusal, reply)
+  end
+
+  step "the call is refused because the caller's session lives on another node", context do
+    assert {:error, _,
+            %{
+              "_tag" => "EnvironmentOperationForbiddenError",
+              "reason" => "session_on_another_node"
+            }} =
+             context.refusal
+
+    context
+  end
+
+  step "no client was revoked", context do
+    assert length(HalC2.Auth.clients()) == 3
+
+    for access <- [context.admin | context.others],
+        do: assert({:ok, _} = HalC2.Auth.session(access))
+
+    context
+  end
+
   # --- older stores --------------------------------------------------------------
 
   step "a node store written before client metadata was recorded", context do

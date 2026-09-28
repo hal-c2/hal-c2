@@ -185,6 +185,38 @@ defmodule HalC2.AuthTest do
     assert {{:ok, [%{"sessionId" => ^admin_session}]}, _} = call(admin, "hal-c2.clients", %{})
   end
 
+  test "paired clients are only managed on the node the caller's session belongs to",
+       %{port: port} do
+    admin_scopes = HalC2.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
+    {admin, _admin_session} = paired_socket(port, admin_scopes, "Admin")
+    {_phone, phone_session} = paired_socket(port, HalC2.Auth.standard_scopes(), "Phone")
+
+    # Another member of the cluster, as its environment reaches the shell.
+    member = %{"environmentId" => "env-member", "label" => "Member"}
+    GenServer.cast(HalC2.Shell, {:peer_environment, :member@nowhere, member})
+    :sys.get_state(HalC2.Shell)
+
+    for {method, payload} <- [
+          {"hal-c2.clients", %{}},
+          {"hal-c2.revokeClient", %{"sessionId" => phone_session}},
+          {"hal-c2.revokeOtherClients", %{}}
+        ],
+        reduce: admin do
+      admin ->
+        {reply, admin} = call(admin, method, payload, "env-member")
+
+        assert {:error,
+                %{
+                  "_tag" => "EnvironmentOperationForbiddenError",
+                  "reason" => "session_on_another_node"
+                }} = reply
+
+        admin
+    end
+
+    assert length(HalC2.Auth.clients()) == 2
+  end
+
   test "a desktop bootstrap line sets where the node listens and keeps its state" do
     previous = for key <- [:home, :port, :host], do: {key, Application.fetch_env(:hal_c2, key)}
 
@@ -238,9 +270,9 @@ defmodule HalC2.AuthTest do
 
   # One RPC on this node's environment: `{:ok, result}` or `{:error, detail or message}`,
   # and the client.
-  defp call(client, method, payload) do
+  defp call(client, method, payload, environment \\ HalC2.Environment.id()) do
     id = System.unique_integer([:positive])
-    frame = %{"t" => "rpc", "id" => id, "environment" => HalC2.Environment.id()}
+    frame = %{"t" => "rpc", "id" => id, "environment" => environment}
 
     client =
       WsClient.send_json(client, Map.merge(frame, %{"method" => method, "payload" => payload}))
