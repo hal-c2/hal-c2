@@ -94,11 +94,19 @@ ShellWindow {
                     visible: active
                 }
 
+                // The shell's own settings pages take the page's place.
+                ClusterSettings {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    visible: root.clusterOpen
+                }
+
                 WebSurface {
                     id: primaryView
 
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    visible: !root.clusterOpen
                     url: Shell.pageUrl
                 }
 
@@ -106,7 +114,7 @@ ShellWindow {
                     id: composerView
 
                     Layout.fillWidth: true
-                    visible: ready
+                    visible: ready && !root.clusterOpen
                 }
 
                 TerminalDrawer {

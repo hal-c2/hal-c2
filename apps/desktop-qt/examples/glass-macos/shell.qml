@@ -169,7 +169,14 @@ ShellWindow {
                     Layout.preferredHeight: 1
                     color: root.hairline
                 }
+                ClusterSettings {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    visible: root.clusterOpen
+                }
+
                 WebSurface {
+                    visible: !root.clusterOpen
                     Layout.fillHeight: true
                     Layout.fillWidth: true
                     backgroundColor: root.canvas
@@ -178,7 +185,7 @@ ShellWindow {
                 Composer {
                     Layout.fillWidth: true
                     color: root.canvas
-                    visible: ready
+                    visible: ready && !root.clusterOpen
                 }
                 // The drawer folds open under the composer. It keeps its open
                 // height while the slot around it animates, so the document

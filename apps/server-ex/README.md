@@ -94,7 +94,9 @@ bin/hal-c2-service cluster                   # this machine and the members it i
 bin/hal-c2-service cluster remove LABEL      # no member admits that machine any more
 ```
 
-From a checkout, `mix hal_c2.cluster` takes the same arguments. Every node boots ready to
+From a checkout, `mix hal_c2.cluster` takes the same arguments. The desktop app (Settings →
+Cluster) and the terminal client (settings and the command palette) do the same through the
+node's `cluster.*` RPCs. Every node boots ready to
 cluster (`rel/env.sh.eex`, `mise run node`): it has its own certificate, and members pin
 each other's and talk Erlang distribution over mutual TLS on port 4370
 ([cluster.feature](../../features/connections/cluster.feature)). The joining machine has to

@@ -148,7 +148,14 @@ ShellWindow {
                         color: root.line
                     }
 
+                    ClusterSettings {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        visible: root.clusterOpen
+                    }
+
                     WebSurface {
+                        visible: !root.clusterOpen
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         url: Shell.pageUrl
@@ -157,7 +164,7 @@ ShellWindow {
 
                     Composer {
                         Layout.fillWidth: true
-                        visible: ready
+                        visible: ready && !root.clusterOpen
                         color: "transparent"
                     }
 

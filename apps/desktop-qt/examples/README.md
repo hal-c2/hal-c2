@@ -51,16 +51,17 @@ The original `glass` keeps its existing blur. The native controls are macOS-only
 so use `glass` on other platforms.
 
 What you can reach from `shell.qml`: `ShellWindow` as the root (window
-colour, opacity and frame from the theme, `sidebarCollapsed` and
-`settingsActive` from the page, the error overlay and the page's window
+colour, opacity and frame from the theme, `sidebarCollapsed`,
+`settingsActive` and `clusterOpen`, the error overlay and the page's window
 commands built in), the bricks (`TitleBar`, `Sidebar`, `SettingsNav`,
-`Workspace`, `GitActions`, `WebSurface`, `Composer`, `RightPanel`, `TerminalDrawer`,
-`Notifications`), the themed controls (`ShellCard`, `ShellButton`,
+`ClusterSettings`, `Workspace`, `GitActions`, `WebSurface`, `Composer`,
+`RightPanel`, `TerminalDrawer`, `Notifications`), the themed controls (`ShellCard`, `ShellButton`,
 `ShellComboBox`, `ShellTextField`, `ShellMenu`, `ShellMenuItem`, `ShellIcon`,
 `WindowControls`), and the `HalC2.Shell` singletons: `Shell.state.<key>` for
-everything the page publishes, `Shell.dispatch(action, payload)` to act,
+everything the shell and the page publish, `Shell.dispatch(action, payload)` to act,
 `Theme.palette.color(role, fallback)` / `Theme.radius` / `Theme.fontUi` /
-`Theme.fontMono`, and `Runtime.reload()`.
+`Theme.fontMono`, and `Runtime.reload()`. Place `ClusterSettings` where the
+page would be while `clusterOpen`, as the examples do.
 
 A broken `shell.qml` never locks you out: the built-in shell takes over with
 the error shown in an overlay.

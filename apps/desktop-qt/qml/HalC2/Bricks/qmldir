@@ -3,6 +3,7 @@ FolderExplorer 1.0 FolderExplorer.qml
 FolderOperationDialog 1.0 FolderOperationDialog.qml
 AppView 1.0 AppView.qml
 AppWindow 1.0 AppWindow.qml
+ClusterSettings 1.0 ClusterSettings.qml
 Composer 1.0 Composer.qml
 ModelPicker 1.0 ModelPicker.qml
 ProviderIcon 1.0 ProviderIcon.qml

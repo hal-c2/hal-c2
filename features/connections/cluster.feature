@@ -10,6 +10,7 @@
 #   apps/server-ex/lib/hal_c2/web/router.ex (/api/cluster, /.well-known/hal-c2/environment, forwarded uploads)
 #   apps/server-ex/lib/hal_c2/rpc.ex, packages/contracts/src/cluster.ts (cluster.status/invite/join/remove)
 #   apps/tui/src/host/clusterState.ts, apps/tui/src/host/settingsState.ts (the terminal's cluster)
+#   apps/desktop-qt/src/ClusterController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ClusterSettings.qml (the desktop's cluster)
 #   apps/server-ex/lib/hal_c2/devices/proxy.ex (device hub of any node)
 #   packages/client-runtime/src/v3/clusterSocket.ts (one socket per cluster)
 #   packages/client-runtime/src/v3/clusterMembers.ts (registering members that join later)
@@ -206,6 +207,73 @@ Feature: Clustering one person's machines
     When the user picks "Remove laptop from the cluster" in the command palette
     Then the node is asked to remove "env-laptop"
     And the status line says "Removed laptop from the cluster."
+
+  @desktop
+  Scenario: The desktop's settings show this machine's cluster
+    Given this machine is clustered with "studio", which is connected, and "laptop", which is offline
+    And the desktop shell is connected to its node
+    When the user opens Cluster in the desktop's settings
+    Then the node is asked for its cluster status
+    And the cluster page lists "studio" as connected and "laptop" as offline
+
+  @desktop
+  Scenario: A user invites a machine from the desktop
+    Given the desktop shell is connected to its node
+    When the user opens Cluster in the desktop's settings
+    And the user makes a cluster invite
+    Then the node is asked for a cluster invite
+    And the invite link is copied
+    And the cluster page shows the invite link
+
+  @desktop
+  Scenario: The desktop says when only this machine can open an invite
+    Given the node listens only on loopback
+    And the desktop shell is connected to its node
+    When the user opens Cluster in the desktop's settings
+    And the user makes a cluster invite
+    Then the user is warned that only this machine can open the invite
+
+  @desktop
+  Scenario: A user joins the desktop's machine to another's cluster with an invite
+    Given the desktop shell is connected to its node
+    When the user opens Cluster in the desktop's settings
+    And the user joins with "http://studio:3773/pair#token=abc"
+    Then the node is asked to join with "http://studio:3773/pair#token=abc"
+    And the cluster page says "Joined the cluster."
+    And the cluster page lists "studio" as connected
+
+  @desktop
+  Scenario: A join the node refuses says why on the desktop
+    Given the node refuses joins saying "The pairing link cannot add machines to a cluster; make a cluster invite instead."
+    And the desktop shell is connected to its node
+    When the user opens Cluster in the desktop's settings
+    And the user joins with "http://studio:3773/pair#token=abc"
+    Then the cluster page says "Join failed: The pairing link cannot add machines to a cluster; make a cluster invite instead."
+
+  @desktop
+  Scenario: A user removes a member from the desktop
+    Given this machine is clustered with "laptop", which is connected
+    And the desktop shell is connected to its node
+    When the user opens Cluster in the desktop's settings
+    And the user removes "laptop" from the cluster
+    Then the node is asked to remove "env-laptop"
+    And the cluster page says "Removed laptop from the cluster."
+
+  @desktop
+  Scenario: Back leaves the desktop's cluster page without the page
+    Given the desktop shell is connected to its node
+    When the user opens Cluster in the desktop's settings
+    And the user goes back from settings
+    Then the cluster page closes
+    And nothing reaches the page
+
+  @desktop
+  Scenario: Another settings section takes the cluster page's place
+    Given the desktop shell is connected to its node
+    When the user opens Cluster in the desktop's settings
+    And the user picks the settings section "/settings/general"
+    Then the cluster page closes
+    And the action "settings.navigate" reaches the page
 
   @backlog @shared
   Scenario: A member that joins later appears in the client without pairing again

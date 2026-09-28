@@ -1,8 +1,10 @@
-// Runs the desktop shell's native scenarios (features/desktop/native-*.feature)
-// against a fake protocol-3 node: a small Gherkin reader, a table of step
+// Runs the desktop shell's native scenarios (features/desktop/native-*.feature
+// and the @desktop ones in features/connections/cluster.feature) against a fake
+// protocol-3 node: a small Gherkin reader, a table of step
 // definitions, and one QTest row per scenario. HAL_C2_FEATURES narrows the run
 // to other globs under features/ (space separated).
 
+#include <QClipboard>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -192,7 +194,8 @@ void setField(QJsonObject& row, const QString& name, const QString& value) {
 // the shell shape, and `orchestration.dispatchCommand`, which it records and
 // answers (or refuses, or holds until told to answer). Terminals attach with
 // the `terminal` shape and are listed by `terminals`; `terminal.*` calls are
-// recorded and act on them the way the node's terminal manager does.
+// recorded and act on them the way the node's terminal manager does. Its
+// cluster (`cluster.*`) is answered as apps/server-ex lib/hal_c2/rpc.ex does.
 class FakeNode : public QObject {
 public:
   FakeNode() : m_server(QStringLiteral("fake-node"), QWebSocketServer::NonSecureMode) {
@@ -231,6 +234,23 @@ public:
   // the tokens clients lent it for them.
   QStringList linked;
   QHash<QString, QString> lent;
+  // This machine's cluster: the other members, whether it listens only on
+  // loopback, and why it refuses joins (when it does).
+  QJsonArray members;
+  bool loopbackOnly = false;
+  QString joinRefusal;
+  QList<QPair<QString, QJsonObject>> clusterCalls;
+
+  QJsonObject clusterStatus() const {
+    return {
+        {QStringLiteral("clustered"), true},
+        {QStringLiteral("id"), environmentId},
+        {QStringLiteral("label"), QStringLiteral("desk")},
+        {QStringLiteral("node"), name},
+        {QStringLiteral("addresses"), QJsonArray{QStringLiteral("desk:4369")}},
+        {QStringLiteral("members"), members},
+    };
+  }
 
   void sendSnapshot() {
     if (!m_socket || m_shellSubscription < 0) return;
@@ -358,7 +378,10 @@ private:
       QObject::connect(socket, &QWebSocket::textMessageReceived, this,
                        [this, socket](const QString& text) { onMessage(socket, text); });
       QObject::connect(socket, &QWebSocket::disconnected, socket, &QObject::deleteLater);
-      send({{QStringLiteral("t"), QStringLiteral("hello")}, {QStringLiteral("node"), name}});
+      send({{QStringLiteral("t"), QStringLiteral("hello")},
+            {QStringLiteral("protocol"), 3},
+            {QStringLiteral("node"), name},
+            {QStringLiteral("environment"), environmentId}});
     }
   }
 
@@ -390,6 +413,10 @@ private:
       send({{QStringLiteral("t"), QStringLiteral("pong")}});
     } else if (type == QLatin1String("rpc")) {
       const QString method = message.value(QLatin1String("method")).toString();
+      if (method.startsWith(QLatin1String("cluster."))) {
+        answerCluster(id, method, message.value(QLatin1String("payload")).toObject());
+        return;
+      }
       if (method.startsWith(QLatin1String("terminal."))) {
         terminalCall(socket, id, method, message.value(QLatin1String("payload")).toObject());
         return;
@@ -429,6 +456,41 @@ private:
         answer();
       }
     }
+  }
+
+  void answerCluster(int id, const QString& method, const QJsonObject& payload) {
+    clusterCalls.append({method, payload});
+    QJsonValue result = clusterStatus();
+    if (method == QLatin1String("cluster.invite")) {
+      const QString host = loopbackOnly ? QStringLiteral("127.0.0.1") : QStringLiteral("desk");
+      result = QJsonObject{
+          {QStringLiteral("link"), QStringLiteral("http://%1:3773/pair#token=invite-1").arg(host)},
+          {QStringLiteral("expiresAt"), QStringLiteral("2026-09-23T10:15:00Z")},
+          {QStringLiteral("localOnly"), loopbackOnly},
+      };
+    } else if (method == QLatin1String("cluster.join")) {
+      if (!joinRefusal.isEmpty()) {
+        send({{QStringLiteral("t"), QStringLiteral("rpc.error")},
+              {QStringLiteral("id"), id},
+              {QStringLiteral("error"), joinRefusal},
+              {QStringLiteral("detail"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("ClusterError")},
+                                                     {QStringLiteral("reason"), QStringLiteral("link_lacks_access")}}}});
+        return;
+      }
+      const QString host = QUrl(payload.value(QLatin1String("link")).toString()).host();
+      members.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("env-") + host},
+                                 {QStringLiteral("label"), host},
+                                 {QStringLiteral("addresses"), QJsonArray{host + QStringLiteral(":4369")}},
+                                 {QStringLiteral("connected"), true}});
+      result = clusterStatus();
+    } else if (method == QLatin1String("cluster.remove")) {
+      const QString removed = payload.value(QLatin1String("id")).toString();
+      for (qsizetype index = members.size() - 1; index >= 0; --index) {
+        if (members.at(index).toObject().value(QLatin1String("id")).toString() == removed) members.removeAt(index);
+      }
+      result = clusterStatus();
+    }
+    send({{QStringLiteral("t"), QStringLiteral("rpc.result")}, {QStringLiteral("id"), id}, {QStringLiteral("result"), result}});
   }
 
   void send(const QJsonObject& frame) {
@@ -1193,6 +1255,109 @@ void defineSteps() {
     expect(menu.isNull(), QStringLiteral("the menu is %1").arg(show(menu)));
   });
 
+  // The cluster settings page.
+  const auto cluster = [](World& world) { return world.state(QStringLiteral("cluster")).toMap(); };
+  const auto clusterCall = [](World& world, const QString& method) -> std::optional<QJsonObject> {
+    world.sync();
+    for (const auto& [called, payload] : world.node.clusterCalls) {
+      if (called == method) return payload;
+    }
+    return std::nullopt;
+  };
+  step(QStringLiteral("this machine is clustered with (.*)"), [](World& world, const Captures& c, const Table&) {
+    static const QRegularExpression member(QStringLiteral("\"([^\"]*)\", which is (connected|offline)"));
+    for (auto it = member.globalMatch(c[0]); it.hasNext();) {
+      const QRegularExpressionMatch match = it.next();
+      world.node.members.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("env-") + match.captured(1)},
+                                            {QStringLiteral("label"), match.captured(1)},
+                                            {QStringLiteral("addresses"), QJsonArray()},
+                                            {QStringLiteral("connected"), match.captured(2) == QLatin1String("connected")}});
+    }
+  });
+  step(QStringLiteral("the node listens only on loopback"), [](World& world, const Captures&, const Table&) {
+    world.node.loopbackOnly = true;
+  });
+  step(QStringLiteral("the node refuses joins saying %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.node.joinRefusal = c[0];
+  });
+  step(QStringLiteral("the user opens Cluster in the desktop's settings"), [cluster](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("cluster.open"), {});
+    world.sync();
+    expect(cluster(world).value(QStringLiteral("open")).toBool(), QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
+  });
+  step(QStringLiteral("the user makes a cluster invite"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("cluster.invite"), {});
+  });
+  step(QStringLiteral("the user joins with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("cluster.join"), QVariantMap{{QStringLiteral("link"), c[0]}});
+  });
+  step(QStringLiteral("the user removes %1 from the cluster").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("cluster.remove"), QVariantMap{{QStringLiteral("id"), QStringLiteral("env-") + c[0]}});
+  });
+  step(QStringLiteral("the user goes back from settings"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("settings.back"), {});
+  });
+  step(QStringLiteral("the user picks the settings section %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("settings.navigate"), QVariantMap{{QStringLiteral("to"), c[0]}});
+  });
+  step(QStringLiteral("the node is asked for its cluster status"), [clusterCall](World& world, const Captures&, const Table&) {
+    expect(clusterCall(world, QStringLiteral("cluster.status")).has_value(), QStringLiteral("the node was not asked"));
+  });
+  step(QStringLiteral("the node is asked for a cluster invite"), [clusterCall](World& world, const Captures&, const Table&) {
+    expect(clusterCall(world, QStringLiteral("cluster.invite")).has_value(), QStringLiteral("the node was not asked"));
+  });
+  step(QStringLiteral("the node is asked to join with %1").arg(q), [clusterCall](World& world, const Captures& c, const Table&) {
+    const auto payload = clusterCall(world, QStringLiteral("cluster.join"));
+    expect(payload && payload->value(QLatin1String("link")).toString() == c[0],
+           QStringLiteral("the node was asked %1").arg(payload ? show(payload->toVariantMap()) : QStringLiteral("nothing")));
+  });
+  step(QStringLiteral("the node is asked to remove %1").arg(q), [clusterCall](World& world, const Captures& c, const Table&) {
+    const auto payload = clusterCall(world, QStringLiteral("cluster.remove"));
+    expect(payload && payload->value(QLatin1String("id")).toString() == c[0],
+           QStringLiteral("the node was asked %1").arg(payload ? show(payload->toVariantMap()) : QStringLiteral("nothing")));
+  });
+  step(QStringLiteral("the invite link is copied"), [cluster](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QString link = at(cluster(world), QStringLiteral("invite.link")).toString();
+    const QString copied = QGuiApplication::clipboard()->text();
+    expect(!link.isEmpty() && copied == link, QStringLiteral("copied \"%1\", the invite is %2").arg(copied, show(cluster(world))));
+  });
+  step(QStringLiteral("the cluster page shows the invite link"), [cluster](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(at(cluster(world), QStringLiteral("invite.link")).toString().startsWith(QLatin1String("http")),
+           QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
+  });
+  step(QStringLiteral("the cluster page says %1").arg(q), [cluster](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(at(cluster(world), QStringLiteral("notice.text")).toString() == c[0],
+           QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
+  });
+  step(QStringLiteral("the user is warned that only this machine can open the invite"), [cluster](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QVariantMap notice = cluster(world).value(QStringLiteral("notice")).toMap();
+    expect(notice.value(QStringLiteral("kind")) == QLatin1String("error") &&
+               notice.value(QStringLiteral("text")).toString().contains(QLatin1String("Only this machine can open it")),
+           QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
+  });
+  step(QStringLiteral("the cluster page lists (.*)"), [cluster](World& world, const Captures& c, const Table&) {
+    world.sync();
+    static const QRegularExpression member(QStringLiteral("\"([^\"]*)\" as (connected|offline)"));
+    const QVariantList listed = at(cluster(world), QStringLiteral("status.members")).toList();
+    for (auto it = member.globalMatch(c[0]); it.hasNext();) {
+      const QRegularExpressionMatch match = it.next();
+      bool found = false;
+      for (const QVariant& row : listed) {
+        found = found || (row.toMap().value(QStringLiteral("label")).toString() == match.captured(1) &&
+                          row.toMap().value(QStringLiteral("connected")).toBool() == (match.captured(2) == QLatin1String("connected")));
+      }
+      expect(found, QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
+    }
+  });
+  step(QStringLiteral("the cluster page closes"), [cluster](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(!cluster(world).value(QStringLiteral("open")).toBool(), QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
+  });
+
   // What the page is asked to do.
   step(QStringLiteral("nothing reaches the page"), [](World& world, const Captures&, const Table&) {
     world.sync();
@@ -1433,7 +1598,7 @@ void runStep(World& world, const Step& step) {
 
 QList<Scenario> collectScenarios() {
   const QDir root(QStringLiteral(HAL_C2_FEATURES_DIR));
-  QStringList globs{QStringLiteral("desktop/native-*.feature")};
+  QStringList globs{QStringLiteral("desktop/native-*.feature"), QStringLiteral("connections/cluster.feature")};
   if (const QString requested = qEnvironmentVariable("HAL_C2_FEATURES"); !requested.isEmpty()) {
     globs = requested.split(QLatin1Char(' '), Qt::SkipEmptyParts);
   }

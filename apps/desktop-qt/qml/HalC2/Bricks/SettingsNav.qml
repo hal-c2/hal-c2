@@ -3,13 +3,38 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// Settings navigation: sections, search, and a way back. The settings pages
-// stay HTML in the primary web surface; this only drives navigation.
+// Settings navigation: sections, search, and a way back. Pages the shell
+// renders itself (Cluster, from ClusterController) sit beside the sections the
+// embedded page still renders until they move to QML; picking one of those
+// hands navigation to the page.
 Rectangle {
     id: nav
 
     readonly property var model: Shell.state.settings ?? null
     readonly property bool active: model !== null && model.active
+    readonly property var cluster: Shell.state.cluster ?? null
+    readonly property bool clusterOpen: cluster !== null && cluster.open
+    readonly property string query: search.text.trim().toLowerCase()
+    // The shell's own pages, as rows shaped like the page's sections and
+    // search results; `action` is what picking one dispatches. Every row
+    // says whether it is a search result, so a row never reads the other
+    // shape while the query and the rows change together.
+    readonly property var nativeRows: cluster === null ? [] : [{
+            label: qsTr("Cluster"),
+            title: qsTr("Cluster"),
+            sectionLabel: qsTr("Machines, invites and joining"),
+            keywords: "cluster machines invite join remove tailscale",
+            action: "cluster.open",
+            current: clusterOpen
+        }]
+    readonly property var rows: {
+        const searching = query.length > 0;
+        const pageRows = model === null ? [] : searching ? model.searchResults : model.sections;
+        const own = searching ? nativeRows.filter(row => row.keywords.includes(query) || row.title.toLowerCase().includes(query)) : nativeRows;
+        return pageRows.concat(own).map(row => Object.assign({
+                result: searching
+            }, row));
+    }
     readonly property color foreground: Theme.palette.color("sidebarForeground", "#e4e4e7")
     readonly property color muted: Theme.palette.color("sidebarMutedForeground", "#8b8b93")
 
@@ -69,14 +94,14 @@ Rectangle {
         ListView {
             id: list
 
-            readonly property bool searching: nav.model !== null && nav.model.searchQuery.trim().length > 0
+            readonly property bool searching: nav.query.length > 0
 
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.topMargin: 8
             clip: true
             boundsBehavior: Flickable.StopAtBounds
-            model: nav.model === null ? [] : searching ? nav.model.searchResults : nav.model.sections
+            model: nav.rows
 
             delegate: ItemDelegate {
                 id: row
@@ -85,8 +110,9 @@ Rectangle {
                 required property int index
                 objectName: "settingsRow" + index
 
-                readonly property bool isResult: list.searching
-                readonly property bool current: !isResult && nav.model.activeSection === modelData.to
+                readonly property bool isResult: modelData.result
+                readonly property bool isNative: modelData.action !== undefined
+                readonly property bool current: isNative ? !isResult && modelData.current : !isResult && !nav.clusterOpen && nav.model.activeSection === modelData.to
 
                 width: ListView.view.width
                 implicitHeight: isResult ? 48 : 36
@@ -95,7 +121,7 @@ Rectangle {
                 Keys.onEnterPressed: clicked()
                 Keys.onDownPressed: nav.focusRow(index + 1)
                 Keys.onUpPressed: nav.focusRow(index - 1)
-                onClicked: row.isResult ? Shell.dispatch("settings.openResult", {
+                onClicked: row.isNative ? Shell.dispatch(row.modelData.action) : row.isResult ? Shell.dispatch("settings.openResult", {
                     to: row.modelData.to,
                     targetId: row.modelData.targetId
                 }) : Shell.dispatch("settings.navigate", {

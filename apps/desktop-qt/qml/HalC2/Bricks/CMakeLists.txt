@@ -10,6 +10,7 @@ qt_add_qml_module(hal_c2_bricks
   QML_FILES
     AppView.qml
     AppWindow.qml
+    ClusterSettings.qml
     Composer.qml
     ModelPicker.qml
     ProviderIcon.qml

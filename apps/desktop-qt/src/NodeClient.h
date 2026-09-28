@@ -36,6 +36,9 @@ public:
   void close();
   bool isReady() const { return m_ready; }
   QString node() const { return m_node; }
+  // The environment the node itself serves, for calls about the node (its
+  // cluster); empty until the first hello.
+  QString environment() const { return m_environment; }
 
   int subscribe(const QJsonObject& shape, FrameHandler onFrame);
   void unsubscribe(int id);
@@ -69,6 +72,7 @@ private:
   QTimer m_retryTimer;
   QTimer m_pingTimer;
   QString m_node;
+  QString m_environment;
   int m_nextId = 1;
   int m_attempt = 0;
   bool m_ready = false;
