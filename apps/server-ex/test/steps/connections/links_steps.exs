@@ -97,34 +97,41 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
-  # --- lent access ----------------------------------------------------------------
+  # --- failures -------------------------------------------------------------------
 
-  step "a client of the node that already has access to {string}",
-       %{args: [label]} = context do
-    base = Machines.on(context, label, HalC2.Web, :base_url, [])
-    home = Machines.on(context, label, HalC2.Store, :home_path, [])
-    token = Machines.on(context, label, HalC2.Auth, :create_pairing_token, [home])
-
-    assert {200, %{"access_token" => access}} =
-             Node.exchange(%{port: URI.parse(base).port}, token)
-
-    Map.put(context, :lent, {label, base, access})
-  end
-
-  step "it lends that access to the node", context do
-    {label, base, access} = context.lent
-    payload = %{"origin" => base, "token" => access}
-    {reply, context} = call(context, label, "hal-c2.linkEnvironment", payload, :own)
-    assert {:ok, %{"environmentId" => _}} = reply
-    await_link(environment(context, label), true)
+  step "{string} revokes every paired client", %{args: [label]} = context do
+    Machines.on(context, label, HalC2.Auth, :revoke_other_clients, [nil])
     context
   end
 
-  step "it takes that access back", context do
-    {label, _base, _access} = context.lent
-    payload = %{"environmentId" => environment(context, label), "borrowed" => true}
-    {reply, context} = call(context, label, "hal-c2.unlinkEnvironment", payload, :own)
-    assert {:ok, nil} = reply
+  step "{string} stops", %{args: [label]} = context do
+    Machines.stop(Machines.machine(context, label))
+    context
+  end
+
+  step "the node lists {string} as a linked environment whose access is refused",
+       %{args: [label]} = context do
+    await_link(environment(context, label), &(&1["problem"] == "refused" and !&1["online"]))
+    context
+  end
+
+  step "the node lists {string} as a linked environment that is unreachable",
+       %{args: [label]} = context do
+    await_link(environment(context, label), &(&1["problem"] == "unreachable" and !&1["online"]))
+    context
+  end
+
+  step "a client of the node calling {string} is told to pair it again",
+       %{args: [label]} = context do
+    {reply, context} =
+      call(context, label, "terminal.write", %{
+        "threadId" => "th-link",
+        "terminalId" => "term-1",
+        "data" => "\n"
+      })
+
+    assert {:error, message, _} = reply
+    assert message =~ "pair it again"
     context
   end
 
@@ -294,23 +301,27 @@ defmodule HalC2.Steps.Connections.Links do
     {reply, World.put_client(context, client)}
   end
 
-  # The link to `id` once it is `online`, as the node's links notify it.
-  defp await_link(id, online) do
+  # The link to `id` once it is `online` (or matches the predicate), as the node's
+  # links notify it.
+  defp await_link(id, online) when is_boolean(online),
+    do: await_link(id, &(&1["online"] == online))
+
+  defp await_link(id, matches) do
     :ok = HalC2.Links.subscribe(self())
-    await_link(id, online, HalC2.Links.list())
+    await_link(id, matches, HalC2.Links.list())
   end
 
-  defp await_link(id, online, links) do
-    case Enum.find(links, &(&1["environment"]["environmentId"] == id)) do
-      %{"online" => ^online} = link ->
-        link
+  defp await_link(id, matches, links) do
+    link = Enum.find(links, &(&1["environment"]["environmentId"] == id))
 
-      _ ->
-        receive do
-          {:hal_c2_links, links} -> await_link(id, online, links)
-        after
-          10_000 -> flunk("no link to #{id} with online #{online}: #{inspect(links)}")
-        end
+    if link != nil and matches.(link) do
+      link
+    else
+      receive do
+        {:hal_c2_links, links} -> await_link(id, matches, links)
+      after
+        10_000 -> flunk("no such link to #{id}: #{inspect(links)}")
+      end
     end
   end
 end

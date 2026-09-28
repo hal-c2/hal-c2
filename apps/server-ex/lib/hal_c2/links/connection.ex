@@ -5,7 +5,9 @@ defmodule HalC2.Links.Connection do
   RPCs and subscriptions. After a drop it reconnects with backoff and subscribes
   again, so subscribers get a fresh snapshot, as after their own reconnect; a stream
   resumes from the last offset it passed on instead. RPCs fail while it is down
-  rather than wait for it.
+  rather than wait for it. When the environment no longer accepts the link's token
+  it stops trying: only pairing again can fix that. It tells `HalC2.Links` why it is
+  down (`"unreachable"` or `"refused"`).
   """
 
   use GenServer
@@ -60,11 +62,15 @@ defmodule HalC2.Links.Connection do
        pending: %{},
        # ref => %{pid, monitor, shape, id, offset}
        subs: %{},
-       backoff: @min_backoff
+       backoff: @min_backoff,
+       refused: false
      }}
   end
 
   @impl true
+  def handle_call({:rpc, _method, _payload}, _from, %{node: nil, refused: true} = state),
+    do: {:reply, {:error, refused(state)}, state}
+
   def handle_call({:rpc, _method, _payload}, _from, %{node: nil} = state),
     do: {:reply, {:error, unreachable(state)}, state}
 
@@ -101,8 +107,14 @@ defmodule HalC2.Links.Connection do
       {:ok, conn, request} ->
         {:noreply, %{state | conn: conn, request: request, upgrade: %{responses: []}}}
 
+      {:error, :refused} ->
+        Logger.warning("link to #{label(state)}: its token is no longer accepted")
+        problem(state, "refused")
+        {:noreply, %{state | refused: true}}
+
       {:error, reason} ->
         Logger.warning("link to #{label(state)}: #{reason}")
+        problem(state, "unreachable")
         {:noreply, retry(state)}
     end
   end
@@ -163,7 +175,7 @@ defmodule HalC2.Links.Connection do
            Mint.WebSocket.upgrade(if(uri.scheme == "https", do: :wss, else: :ws), conn, path, []) do
       {:ok, conn, request}
     else
-      {:ticket, {:ok, 401, _}} -> {:error, "its token is no longer accepted"}
+      {:ticket, {:ok, 401, _}} -> {:error, :refused}
       {:ticket, {:ok, status, _}} -> {:error, "ticket refused (#{status})"}
       {:ticket, {:error, reason}} -> {:error, "unreachable (#{inspect(reason)})"}
       {:error, reason} -> {:error, "unreachable (#{inspect(reason)})"}
@@ -339,6 +351,9 @@ defmodule HalC2.Links.Connection do
 
   defp next_id(state), do: {state.next_id, %{state | next_id: state.next_id + 1}}
 
+  defp problem(state, kind), do: GenServer.cast(HalC2.Links, {:problem, state.environment, kind})
+
   defp label(state), do: state.link["environment"]["label"] || state.link["origin"]
+  defp refused(state), do: "#{label(state)} no longer accepts this node's access; pair it again"
   defp unreachable(state), do: "#{label(state)} is unreachable"
 end

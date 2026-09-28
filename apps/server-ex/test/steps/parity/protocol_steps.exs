@@ -822,15 +822,15 @@ defmodule HalC2.Steps.Parity.Shapes do
         await(context, t, id, &(&1["online"] == false))
 
       "shell.links" ->
-        # A loan of access to an environment nobody serves; taken back once the frame lands.
+        # A link to an environment nobody serves; removed once the frame lands.
         environment = %{"environmentId" => "env-linked", "label" => "Linked"}
         link = %{"origin" => "http://127.0.0.1:9", "token" => "t", "environment" => environment}
-        :ok = GenServer.call(HalC2.Links, {:put, Map.put(link, "borrowed", true)})
+        :ok = GenServer.call(HalC2.Links, {:put, link})
 
         result =
-          await(context, t, id, &match?([%{"origin" => "http://127.0.0.1:9"}], &1["links"]))
+          await(context, t, id, &match?([%{"origin" => "http://127.0.0.1:9"} | _], &1["links"]))
 
-        HalC2.Links.give_back("env-linked")
+        HalC2.Links.remove("env-linked")
         result
 
       "live" ->

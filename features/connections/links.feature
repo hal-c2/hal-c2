@@ -10,8 +10,8 @@
 Feature: Linking a node to environments outside its cluster
   A node can pair with another node it is not clustered with and keep that link. Its
   clients then reach the linked environment through it, so a client that only talks to
-  its own node still works with threads that run elsewhere. A client that already has
-  access to an environment can lend it to its node instead, so nothing is paired twice.
+  its own node still works with threads that run elsewhere. A link whose token the other
+  environment stops accepting says so and waits to be paired again.
 
   Background:
     Given a running node
@@ -74,21 +74,24 @@ Feature: Linking a node to environments outside its cluster
     Then the node has no links
     And a client of the node calling "beast" is told the environment is unknown
 
-  @node
+  # Lending: the desktop shell passed its page's saved environments to the node, which held the
+  # links only in memory. The shell pairs environments as node links itself now, so nothing is
+  # lent (desktop/native-terminal.feature).
+  @dropped @node
   Scenario: A client lends the node the access it already has
     Given a client of the node that already has access to "beast"
     When it lends that access to the node
     Then the node lists "beast" as a linked environment that is online
     And a client of the node attaches a terminal on "beast"
 
-  @node
+  @dropped @node
   Scenario: Lent access lasts only while the node runs
     Given a client of the node that already has access to "beast"
     And it lends that access to the node
     When the node restarts
     Then the node has no links
 
-  @node
+  @dropped @node
   Scenario: Taking lent access back leaves a paired link alone
     Given the node is linked to "beast"
     And a client of the node that already has access to "beast"
@@ -96,14 +99,35 @@ Feature: Linking a node to environments outside its cluster
     And it takes that access back
     Then the node lists "beast" as a linked environment that is online
 
-  @node
+  @dropped @node
   Scenario: Taking lent access back removes the link
     Given a client of the node that already has access to "beast"
     And it lends that access to the node
     When it takes that access back
     Then the node has no links
 
-  @backlog @shared
+  @node
+  Scenario: A link whose token is no longer accepted waits to be paired again
+    Given the node is linked to "beast"
+    When "beast" revokes every paired client
+    Then the node lists "beast" as a linked environment whose access is refused
+    And a client of the node calling "beast" is told to pair it again
+
+  @node
+  Scenario: Pairing a refused link again brings it back online
+    Given the node is linked to "beast"
+    And "beast" revokes every paired client
+    And the node lists "beast" as a linked environment whose access is refused
+    When the node is linked to "beast"
+    Then the node lists "beast" as a linked environment that is online
+
+  @node
+  Scenario: A link to an environment that stops answering is reported unreachable
+    Given the node is linked to "beast"
+    When "beast" stops
+    Then the node lists "beast" as a linked environment that is unreachable
+
+  @shared @backlog-mobile @backlog-tui
   Scenario: The user links the node from its connection settings
     Given the user has a pairing link from "beast"
     When the user adds it as a linked environment in the connection settings
