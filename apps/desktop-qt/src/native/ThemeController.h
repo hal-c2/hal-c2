@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -37,12 +38,17 @@ class ThemeController : public QObject, public NativeController {
   // [{id, label, appearance, appearances, source}], source one of builtIn,
   // custom, environment: what a picker offers.
   Q_PROPERTY(QVariantList available READ available NOTIFY changed)
+  // The colour roles a theme sets, in the order an editor lists them.
+  Q_PROPERTY(QStringList roles READ roles CONSTANT)
 
 public:
   ThemeController(ShellBridge* bridge, NodeClient* client, QObject* parent = nullptr);
 
   void activate() override {}
-  bool handle(const QString&, const QVariant&) override { return false; }
+  // The page forwards its own theme commands here (`appearance.cycle`,
+  // `theme.mode {mode}`, `theme.choose {id}`, `theme.chooseHalf {appearance,
+  // id}`), so its shortcut and palette change the desktop's theme.
+  bool handle(const QString& action, const QVariant& payload) override;
 
   QString mode() const;
   QString themeId() const;
@@ -50,15 +56,31 @@ public:
   QString appearance() const { return m_appearance; }
   QString resolvedId() const { return m_resolvedId; }
   QVariantList available() const;
+  QStringList roles() const;
 
   // Each saves to this device's preferences and returns false when that fails,
-  // leaving the theme as it was.
+  // leaving the theme as it was and telling the user.
   Q_INVOKABLE bool setMode(const QString& mode);
   // A theme with one appearance takes that half and leaves the other alone;
   // any other replaces the choice, halves included. Empty is the standard look.
   Q_INVOKABLE bool choose(const QString& id);
   // Empty `id` clears that half.
   Q_INVOKABLE bool chooseHalf(const QString& appearance, const QString& id);
+  // The appearance shortcut (appearance.cycle): system, light, dark and round
+  // again, saying where it landed.
+  Q_INVOKABLE bool cycleAppearance();
+
+  // This device's own themes. A draft is what the editor starts from:
+  // {id, label, appearance, colors} with every role of `id` drawn in its
+  // appearance (the active theme's for an empty id), and `id` empty for a new
+  // theme. Saving one (a new id is made from its label) adds or replaces it
+  // and applies it; the saved id, or empty when it could not be saved.
+  Q_INVOKABLE QVariantMap draft(const QString& id = {}) const;
+  Q_INVOKABLE QString saveCustom(const QVariantMap& theme);
+  // Saves an editable copy ("<label> copy") of any theme offered; its id.
+  Q_INVOKABLE QString duplicate(const QString& id);
+  // Removes a saved theme; a choice that named it goes back to the standard look.
+  Q_INVOKABLE bool removeCustom(const QString& id);
 
   // The operating system's appearance, followed in system mode. Tracked from
   // QStyleHints; tests set it.
@@ -84,7 +106,8 @@ private:
   std::optional<Definition> find(const QString& id) const;
   // The palette a definition draws in `appearance`, or empty when it has none.
   static QJsonObject colorsFor(const Definition& definition, const QString& appearance);
-  bool save(QJsonObject device);
+  // Saves the choice; a failure is toasted as `failure`.
+  bool save(const QJsonObject& device, const QString& failure = {});
   void resolve();
 
   ShellBridge* m_bridge;
@@ -92,4 +115,5 @@ private:
   bool m_systemDark = false;
   QString m_appearance;
   QString m_resolvedId;
+  QString m_cycleToast;
 };

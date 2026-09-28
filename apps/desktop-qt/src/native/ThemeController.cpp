@@ -13,6 +13,7 @@
 #include "NativeShell.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
+#include "ToastController.h"
 
 namespace {
 
@@ -24,6 +25,20 @@ const QString kDark = QStringLiteral("dark");
 // The standard look's id on the page (packages/shared MOBILE_DEFAULT_THEME_ID):
 // any non-empty id makes it paint the `--app-theme-*` variables it is given.
 const QString kStandardId = QStringLiteral("hal-c2");
+
+const QString kSystem = QStringLiteral("system");
+const QString kCustomThemes = QStringLiteral("customThemes");
+// The page's wording (apps/web CommandPalette, ThemeSettings).
+const QString kSaveFailed = QStringLiteral("Couldn't save theme selection");
+const QString kRemoveFailed = QStringLiteral("Couldn’t remove theme");
+
+// apps/web themeIdFromName.
+QString idFromName(const QString& name) {
+  static const QRegularExpression other(QStringLiteral("[^a-z0-9]+"));
+  static const QRegularExpression edges(QStringLiteral("^-+|-+$"));
+  const QString id = name.trimmed().toLower().replace(other, QStringLiteral("-")).remove(edges).left(48);
+  return id.isEmpty() ? QStringLiteral("custom-theme") : id;
+}
 
 QString appearanceOf(const QJsonValue& value) {
   return value.toString() == kDark ? kDark : kLight;
@@ -261,15 +276,130 @@ QVariantList ThemeController::available() const {
   return result;
 }
 
-bool ThemeController::save(QJsonObject device) {
-  return m_settings->setDeviceSettings(device);
+QStringList ThemeController::roles() const {
+  QStringList result;
+  for (const QJsonValue& role : builtIns().roles) result.append(role.toString());
+  return result;
+}
+
+bool ThemeController::handle(const QString& action, const QVariant& payload) {
+  const QVariantMap map = payload.toMap();
+  if (action == QLatin1String("appearance.cycle")) cycleAppearance();
+  else if (action == QLatin1String("theme.mode")) setMode(map.value(QStringLiteral("mode")).toString());
+  else if (action == QLatin1String("theme.choose")) choose(map.value(QStringLiteral("id")).toString());
+  else if (action == QLatin1String("theme.chooseHalf"))
+    chooseHalf(map.value(QStringLiteral("appearance")).toString(), map.value(QStringLiteral("id")).toString());
+  else return false;
+  return true;
+}
+
+bool ThemeController::save(const QJsonObject& device, const QString& failure) {
+  if (m_settings->setDeviceSettings(device)) return true;
+  // Built after this one: looked up when needed.
+  if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) {
+    toasts->error(failure.isEmpty() ? kSaveFailed : failure, QStringLiteral("Try again."));
+  }
+  return false;
 }
 
 bool ThemeController::setMode(const QString& mode) {
-  if (mode != kLight && mode != kDark && mode != QLatin1String("system")) return false;
+  if (mode != kLight && mode != kDark && mode != kSystem) return false;
   QJsonObject device = m_settings->deviceSettings();
   device.insert(QStringLiteral("appearance"), mode);
   return save(device);
+}
+
+bool ThemeController::cycleAppearance() {
+  const QString current = mode();
+  const QString next = current == kSystem ? kLight : current == kLight ? kDark : kSystem;
+  if (!setMode(next)) return false;
+  if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) {
+    // One toast however fast the shortcut is pressed.
+    if (!m_cycleToast.isEmpty()) toasts->dismiss(m_cycleToast);
+    QString label = next;
+    label[0] = label[0].toUpper();
+    m_cycleToast = toasts->show(QStringLiteral("info"), QStringLiteral("Appearance: %1").arg(label), {}, {}, 1500);
+  }
+  return true;
+}
+
+QVariantMap ThemeController::draft(const QString& id) const {
+  const auto definition = find(id.isEmpty() ? m_resolvedId : id);
+  const QString appearance = definition && !colorsFor(*definition, m_appearance).isEmpty()
+                                 ? m_appearance
+                                 : (definition ? definition->appearance : m_appearance);
+  QJsonObject colors = builtIns().standard.value(appearance).toObject();
+  if (definition) {
+    const QJsonObject own = colorsFor(*definition, appearance);
+    for (auto it = own.begin(); it != own.end(); ++it) colors.insert(it.key(), it.value());
+  }
+  const bool editable = definition && definition->source == QLatin1String("custom");
+  return {{QStringLiteral("id"), editable ? definition->id : QString()},
+          {QStringLiteral("label"), definition ? definition->label : QStringLiteral("HAL-C2")},
+          {QStringLiteral("appearance"), appearance},
+          {QStringLiteral("colors"), colors.toVariantMap()}};
+}
+
+QString ThemeController::saveCustom(const QVariantMap& theme) {
+  const QString label = theme.value(QStringLiteral("label")).toString().trimmed();
+  if (label.isEmpty()) return {};
+  QJsonObject device = m_settings->deviceSettings();
+  QJsonArray saved = device.value(kCustomThemes).toArray();
+  const auto indexOf = [&saved](const QString& id) {
+    for (qsizetype i = 0; i < saved.size(); ++i) {
+      if (saved.at(i).toObject().value(QLatin1String("id")).toString() == id) return i;
+    }
+    return qsizetype(-1);
+  };
+  QString id = theme.value(QStringLiteral("id")).toString();
+  if (indexOf(id) < 0) {
+    // A new theme: an id from its name no other theme or the standard look has.
+    const QString base = idFromName(label);
+    id = base;
+    for (int n = 2; builtIns().reserved.contains(id) || find(id); ++n) id = QStringLiteral("%1-%2").arg(base).arg(n);
+  }
+  const QJsonObject colors = canonicalColors(QJsonObject::fromVariantMap(theme.value(QStringLiteral("colors")).toMap()));
+  const QJsonObject entry{{QStringLiteral("id"), id},
+                          {QStringLiteral("label"), label},
+                          {QStringLiteral("appearance"), appearanceOf(theme.value(QStringLiteral("appearance")).toString())},
+                          {QStringLiteral("colors"), colors}};
+  const qsizetype at = indexOf(id);
+  if (at < 0) saved.append(entry);
+  else saved.replace(at, entry);
+  device.insert(kCustomThemes, saved);
+  // Saved and applied at once, as the page's editor does.
+  device.insert(QStringLiteral("theme"), id);
+  device.remove(QStringLiteral("themeHalves"));
+  return save(device) ? id : QString();
+}
+
+QString ThemeController::duplicate(const QString& id) {
+  const auto definition = find(id);
+  if (!definition) return {};
+  QVariantMap copy = draft(id);
+  copy.insert(QStringLiteral("id"), QString());
+  copy.insert(QStringLiteral("label"), QStringLiteral("%1 copy").arg(definition->label));
+  return saveCustom(copy);
+}
+
+bool ThemeController::removeCustom(const QString& id) {
+  QJsonObject device = m_settings->deviceSettings();
+  QJsonArray saved = device.value(kCustomThemes).toArray();
+  QJsonArray kept;
+  for (const QJsonValue& value : saved) {
+    if (value.toObject().value(QLatin1String("id")).toString() != id) kept.append(value);
+  }
+  if (kept.size() == saved.size()) return false;
+  if (kept.isEmpty()) device.remove(kCustomThemes);
+  else device.insert(kCustomThemes, kept);
+  if (device.value(QLatin1String("theme")).toString() == id) device.remove(QStringLiteral("theme"));
+  QJsonObject halves = device.value(QLatin1String("themeHalves")).toObject();
+  for (const QString& appearance : {kLight, kDark}) {
+    if (halves.value(appearance).toString() == id) halves.remove(appearance);
+  }
+  if (halves.isEmpty()) device.remove(QStringLiteral("themeHalves"));
+  else device.insert(QStringLiteral("themeHalves"), halves);
+  return save(device, kRemoveFailed);
 }
 
 bool ThemeController::choose(const QString& id) {
