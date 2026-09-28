@@ -135,5 +135,26 @@ Item {
             mouseClick(grove.children[0]);
             compare(Themes.themeId, "grove");
         }
+
+        function test_aNewThemeStartsFromTheActiveOneAndSavesItsEdits() {
+            const page = createTemporaryObject(appearanceComponent, root);
+            verify(!!page);
+            mouseClick(findChild(page, "newTheme"));
+            const editor = page.editor;
+            tryVerify(() => editor.opened);
+            compare(findChild(editor.contentItem, "name").text, "HAL-C2 copy");
+            let accent = null;
+            tryVerify(() => (accent = findChild(editor.contentItem, "color:accent")) !== null);
+            accent.text = "#ff0000";
+            accent.editingFinished();
+            mouseClick(findChild(editor.contentItem, "save"));
+            const saved = Themes.calls.filter(call => call.name === "saveCustom");
+            compare(saved.length, 1);
+            compare(saved[0].args[0].label, "HAL-C2 copy");
+            compare(saved[0].args[0].appearance, "dark");
+            compare(saved[0].args[0].colors.accent, "#ff0000");
+            compare(saved[0].args[0].colors.canvas, "#000000");
+            tryVerify(() => !editor.visible);
+        }
     }
 }

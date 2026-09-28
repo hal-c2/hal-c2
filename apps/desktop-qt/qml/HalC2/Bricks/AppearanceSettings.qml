@@ -5,7 +5,8 @@ import HalC2.Shell
 import "js/settingsRows.js" as Rows
 
 // Settings → Appearance, natively: the appearance mode and theme this device
-// draws with (Themes), and the interface, font and motion rows.
+// draws with (Themes), its own themes (created, edited, duplicated and
+// removed here), and the interface, font and motion rows.
 SettingsPage {
     id: page
 
@@ -14,6 +15,8 @@ SettingsPage {
     rows: Rows.appearance
 
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    // The theme editor, opened over the window.
+    readonly property alias editor: editor
     readonly property var modes: [
         { mode: "system", label: qsTr("System") },
         { mode: "light", label: qsTr("Light") },
@@ -92,6 +95,7 @@ SettingsPage {
             id: themeRow
 
             required property var modelData
+            readonly property bool custom: modelData.source === "custom"
             readonly property bool active: Themes.resolvedId === modelData.id
 
             objectName: "theme:" + modelData.id
@@ -113,6 +117,50 @@ SettingsPage {
                 color: page.muted
                 font.pixelSize: 12
             }
+
+            ShellButton {
+                subtle: true
+                iconName: "copy"
+                Accessible.name: qsTr("Duplicate %1").arg(themeRow.modelData.label)
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Duplicate")
+                onClicked: Themes.duplicate(themeRow.modelData.id)
+            }
+
+            ShellButton {
+                visible: themeRow.custom
+                subtle: true
+                iconName: "pencil-ruler"
+                Accessible.name: qsTr("Edit %1").arg(themeRow.modelData.label)
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Edit")
+                onClicked: editor.edit(Themes.draft(themeRow.modelData.id))
+            }
+
+            ShellButton {
+                visible: themeRow.custom
+                subtle: true
+                iconName: "x"
+                Accessible.name: qsTr("Remove %1").arg(themeRow.modelData.label)
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Remove")
+                onClicked: {
+                    removal.theme = themeRow.modelData;
+                    removal.open();
+                }
+            }
+        }
+    }
+
+    ShellButton {
+        objectName: "newTheme"
+        iconName: "plus"
+        text: qsTr("New theme")
+        onClicked: {
+            // A new theme starts from the active one.
+            const draft = Themes.draft("");
+            draft.label = qsTr("%1 copy").arg(draft.label);
+            editor.edit(draft);
         }
     }
 
@@ -157,6 +205,39 @@ SettingsPage {
                 }
                 Accessible.name: halfRow.modelData.label
                 onActivated: index => Themes.chooseHalf(halfRow.modelData.appearance, halfRow.options[index].id)
+            }
+        }
+    }
+
+    ThemeEditor {
+        id: editor
+
+        parent: Overlay.overlay
+    }
+
+    Dialog {
+        id: removal
+
+        property var theme: null
+
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        title: theme ? qsTr("Remove “%1”?").arg(theme.label) : ""
+        onAccepted: Themes.removeCustom(theme.id)
+
+        Label {
+            text: qsTr("This device will no longer offer it.")
+        }
+
+        footer: DialogButtonBox {
+            Button {
+                text: qsTr("Remove")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+            Button {
+                text: qsTr("Cancel")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
             }
         }
     }

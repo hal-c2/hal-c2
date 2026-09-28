@@ -49,6 +49,7 @@ qt_add_qml_module(hal_c2_bricks
     SettingsRow.qml
     GeneralSettings.qml
     AppearanceSettings.qml
+    ThemeEditor.qml
     js/lucide.js
     js/modelPicker.js
     js/providerIcons.js
