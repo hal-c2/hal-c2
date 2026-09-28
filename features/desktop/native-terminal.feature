@@ -59,6 +59,13 @@ Feature: The desktop shell runs the terminal drawer against its node
       And the node attaches "term-1" of "d1" in "/work/p1"
 
     @desktop
+    Scenario: A thread on a node clustered with the desktop's node has its terminal there
+      Given the node is clustered with "node-b", which serves "env-b"
+      And the page shows "env-b:t9" with its project at "/work/p9"
+      When the user toggles the terminal drawer
+      Then "node-b" attaches "term-1" of "t9" in "/work/p9"
+
+    @desktop
     Scenario: The drawer shows the terminals the thread already has
       Given the node runs these terminals for "t1":
         | terminal | label      |
@@ -183,7 +190,8 @@ Feature: The desktop shell runs the terminal drawer against its node
 
   Rule: What the page's drawer did that the native drawer does not yet
 
-    @backlog @desktop
+    # The shell only talks to its own node; a machine it should reach joins that node's cluster.
+    @dropped @desktop
     Scenario: A thread on an environment outside the node's cluster has a terminal
       Given the page shows a thread on an environment the desktop reaches without its node
       When the user toggles the terminal drawer

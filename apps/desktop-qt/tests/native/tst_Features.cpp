@@ -254,6 +254,17 @@ public:
     });
   }
 
+  // Another node joins this one's cluster, announced as the shell announces it on nodeup.
+  void join(const QString& peer, const QString& peerEnvironment) {
+    send({
+        {QStringLiteral("t"), QStringLiteral("shell.environment")},
+        {QStringLiteral("id"), m_shellSubscription},
+        {QStringLiteral("node"), peer},
+        {QStringLiteral("environment"),
+         QJsonObject{{QStringLiteral("environmentId"), peerEnvironment}, {QStringLiteral("capabilities"), capabilities}}},
+    });
+  }
+
   void sendRow(const QString& id, const QJsonObject& row) {
     if (!m_socket || m_shellSubscription < 0) return;
     send({
@@ -528,8 +539,7 @@ public:
   void publishSidebarInput() { m_bridge.publish(QStringLiteral("sidebarInput"), sidebarInput); }
   // What the page's header shows for a thread (ShellWorkspaceState), from the
   // node's project; a thread whose project the node does not know has none.
-  void publishWorkspace(const QString& threadKey, const QString& projectId, const QString& worktreePath, bool draft) {
-    const QJsonObject project = node.projects.value(projectId);
+  void publishWorkspace(const QString& threadKey, const QJsonObject& project, const QString& worktreePath, bool draft) {
     const bool known = !project.isEmpty();
     m_bridge.publish(QStringLiteral("workspace"),
                      QVariantMap{
@@ -710,16 +720,23 @@ TerminalSession* terminalSession(World& world, const QString& terminalId) {
 }
 
 // The `input` of the latest `terminal` subscription for this terminal.
-std::optional<QJsonObject> terminalAttach(World& world, const QString& threadId, const QString& terminalId) {
+// The latest `terminal` subscription for the terminal: {type, node, input}.
+std::optional<QJsonObject> terminalShape(World& world, const QString& threadId, const QString& terminalId) {
   for (qsizetype index = world.node.subscriptions.size() - 1; index >= 0; --index) {
     const QJsonObject shape = world.node.subscriptions.at(index).value(QLatin1String("shape")).toObject();
     const QJsonObject input = shape.value(QLatin1String("input")).toObject();
     if (shape.value(QLatin1String("type")) == QLatin1String("terminal") &&
         input.value(QLatin1String("threadId")) == threadId && input.value(QLatin1String("terminalId")) == terminalId) {
-      return input;
+      return shape;
     }
   }
   return std::nullopt;
+}
+
+std::optional<QJsonObject> terminalAttach(World& world, const QString& threadId, const QString& terminalId) {
+  const auto shape = terminalShape(world, threadId, terminalId);
+  if (!shape) return std::nullopt;
+  return shape->value(QLatin1String("input")).toObject();
 }
 
 std::optional<QJsonObject> terminalCall(World& world, const QString& method, const QString& threadId,
@@ -762,6 +779,10 @@ void defineSteps() {
     world.node.name = c[0];
     world.node.environmentId = c[1];
   });
+  step(QStringLiteral("the node is clustered with %1, which serves %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.node.join(c[0], c[1]);
+    world.sync();
+  });
   step(QStringLiteral("the node's environment does not track visits"), [](World& world, const Captures&, const Table&) {
     world.node.capabilities.remove(QStringLiteral("threadVisitedTracking"));
   });
@@ -797,13 +818,18 @@ void defineSteps() {
     world.sidebarInput.insert(QStringLiteral("activeThreadKey"), c[0]);
     world.publishSidebarInput();
     const QJsonObject thread = world.node.threads.value(c[0].mid(c[0].indexOf(QLatin1Char(':')) + 1));
-    world.publishWorkspace(c[0], thread.value(QLatin1String("projectId")).toString(),
+    world.publishWorkspace(c[0], world.node.projects.value(thread.value(QLatin1String("projectId")).toString()),
                            thread.value(QLatin1String("worktreePath")).toString(), false);
+  });
+  step(QStringLiteral("the page shows %1 with its project at %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sidebarInput.insert(QStringLiteral("activeThreadKey"), c[0]);
+    world.publishSidebarInput();
+    world.publishWorkspace(c[0], {{QStringLiteral("workspaceRoot"), c[1]}}, QString(), false);
   });
   step(QStringLiteral("the page shows the draft %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sidebarInput.insert(QStringLiteral("activeThreadKey"), QVariant());
     world.publishSidebarInput();
-    world.publishWorkspace(world.node.environmentId + QLatin1Char(':') + c[0], c[1], QString(), true);
+    world.publishWorkspace(world.node.environmentId + QLatin1Char(':') + c[0], world.node.projects.value(c[1]), QString(), true);
   });
   step(QStringLiteral("the page's sidebar is scoped to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sidebarInput.insert(QStringLiteral("scopeProjectKey"), c[0]);
@@ -1246,6 +1272,16 @@ void defineSteps() {
       const auto input = terminalAttach(world, c[1], c[0]);
       return input && input->value(QLatin1String("cwd")) == c[2];
     }, QStringLiteral("%1 of %2 to attach in %3").arg(c[0], c[1], c[2]));
+  });
+  step(QStringLiteral("%1 attaches %1 of %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      const auto shape = terminalShape(world, c[2], c[1]);
+      return shape && shape->value(QLatin1String("node")) == c[0] &&
+             shape->value(QLatin1String("input")).toObject().value(QLatin1String("cwd")) == c[3];
+    }, [&] {
+      const auto shape = terminalShape(world, c[2], c[1]);
+      return QStringLiteral("%1 to attach %2 of %3 in %4; got %5").arg(c[0], c[1], c[2], c[3], shape ? QString::fromUtf8(QJsonDocument(*shape).toJson(QJsonDocument::Compact)) : QStringLiteral("nothing"));
+    });
   });
   step(QStringLiteral("%1 of %1 starts with %1 set to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const auto input = terminalAttach(world, c[1], c[0]);
