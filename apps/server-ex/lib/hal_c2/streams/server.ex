@@ -56,10 +56,13 @@ defmodule HalC2.Streams.Server do
     end
   end
 
+  # Writes wait as long as the store does (its own write timeout bounds them): a
+  # caller that gave up sooner would be wrong about what landed, and a turn would
+  # die over a slow disk.
   @spec commit(GenServer.server(), Store.stream_kind(), [Store.change()]) ::
           {:ok, non_neg_integer}
   def commit(server, stream_kind, changes),
-    do: GenServer.call(server, {:commit, stream_kind, changes})
+    do: GenServer.call(server, {:commit, stream_kind, changes}, :infinity)
 
   @doc """
   Runs `fun` against the stream's current state inside the stream process and
@@ -72,7 +75,7 @@ defmodule HalC2.Streams.Server do
           reply
         when reply: term
   def transact(server, stream_kind, fun),
-    do: GenServer.call(server, {:transact, stream_kind, fun}, 30_000)
+    do: GenServer.call(server, {:transact, stream_kind, fun}, :infinity)
 
   @spec state(GenServer.server()) :: StreamState.t()
   def state(server), do: GenServer.call(server, :state)

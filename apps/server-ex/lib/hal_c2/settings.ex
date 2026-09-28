@@ -14,6 +14,10 @@ defmodule HalC2.Settings do
   Another process may edit the file too (`mix hal_c2.theme`), so it is checked every
   couple of seconds and a change is pushed to watchers like a `put/2`.
 
+  Reads come from a table the server keeps current, not from a call: nearly every
+  service reads settings, and a server slow to answer (a machine deep in swap) would
+  otherwise time them all out at once and exhaust the node's restart budget.
+
   Hub management keys never stay in the document: `HalC2.UsageLimitSources.seal_keys/2`
   moves them to the secret store on every write, so nothing a client reads carries one.
   """
@@ -81,10 +85,10 @@ defmodule HalC2.Settings do
 
   @doc "`{settings, version}`."
   def get do
-    GenServer.call(__MODULE__, :get)
-  catch
+    :ets.lookup_element(__MODULE__, :settings, 2)
+  rescue
     # A node started without settings (tests, tools) has defaults.
-    :exit, {:noproc, _} -> {%{}, 0}
+    ArgumentError -> {%{}, 0}
   end
 
   @doc "Replaces the document if it is still at `version`; returns the new version."
@@ -155,6 +159,9 @@ defmodule HalC2.Settings do
     if changed, do: write!(path, settings)
     schedule_check()
 
+    :ets.new(__MODULE__, [:named_table, :protected, read_concurrency: true])
+    publish(settings, 0)
+
     {:ok, %{path: path, settings: settings, version: 0, watchers: %{}, stamp: stamp(path)}}
   end
 
@@ -190,8 +197,6 @@ defmodule HalC2.Settings do
   end
 
   @impl true
-  def handle_call(:get, _from, state), do: {:reply, {state.settings, state.version}, state}
-
   def handle_call({:put, settings, version}, _from, %{version: version} = state) do
     state = save(state, settings, true)
     {:reply, {:ok, state.version}, state}
@@ -277,6 +282,7 @@ defmodule HalC2.Settings do
     pi = &((get_in(&1, ["providers", "pi"]) || %{}) |> Map.take(["binaryPath", "launchArgs"]))
     if pi.(settings) != pi.(state.settings), do: HalC2.Acp.forget("pi")
 
+    publish(settings, state.version + 1)
     for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_settings, node(), settings})
 
     %{
@@ -286,6 +292,8 @@ defmodule HalC2.Settings do
         stamp: stamp(state.path)
     }
   end
+
+  defp publish(settings, version), do: :ets.insert(__MODULE__, {:settings, {settings, version}})
 
   # Written to a temporary file and renamed, so a crash never leaves half a file.
   defp write!(path, settings) do

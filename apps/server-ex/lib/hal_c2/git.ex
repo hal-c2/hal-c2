@@ -8,14 +8,23 @@ defmodule HalC2.Git do
 
   @doc """
   Runs `git args` in `cwd`. Options: `:env` (`[{name, value}]`), `:input` (stdin),
-  and `:max_bytes` (default 50 MB). Fails only when git cannot be started.
+  and `:max_bytes` (default 50 MB). Fails only when git cannot be started or will
+  not exit.
   """
   @spec run(Path.t(), [String.t()], keyword) :: {:ok, result} | {:error, String.t()}
   def run(cwd, args, opts \\ []) do
     max = Keyword.get(opts, :max_bytes, 50_000_000)
 
+    # Git that closed its output gets time to exit before it is killed: on a machine
+    # deep in swap that takes longer than Exile's default.
     exile_opts =
-      [cd: cwd, env: Keyword.get(opts, :env, []), stderr: :consume, ignore_epipe: true] ++
+      [
+        cd: cwd,
+        env: Keyword.get(opts, :env, []),
+        stderr: :consume,
+        ignore_epipe: true,
+        exit_timeout: 30_000
+      ] ++
         if(input = opts[:input], do: [input: [input]], else: [])
 
     {out, err, size, status} =
@@ -46,6 +55,9 @@ defmodule HalC2.Git do
      }}
   rescue
     error -> {:error, Exception.message(error)}
+  catch
+    # Exile exits the caller when git outlives every signal (`:kill_timeout`).
+    :exit, reason -> {:error, "git did not exit: #{inspect(reason)}"}
   end
 
   @doc "Runs git and returns its stdout when it exits 0."

@@ -31,6 +31,15 @@ defmodule HalC2.SettingsTest do
     assert {^doc, 0} = Settings.get()
   end
 
+  test "settings stay readable while the settings server cannot answer" do
+    doc = %{"enableAssistantStreaming" => false}
+    assert {:ok, 1} = Settings.put(doc, 0)
+
+    :ok = :sys.suspend(Settings)
+    assert {^doc, 1} = Settings.get()
+    :ok = :sys.resume(Settings)
+  end
+
   test "a project's overrides apply over the environment's, except models on disabled providers" do
     settings = %{
       "enableAgentBrowserAccess" => true,

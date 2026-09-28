@@ -100,6 +100,8 @@ defmodule HalC2.BackgroundPolicy do
   catch
     # A node without the policy (tools, tests) does its work.
     :exit, {:noproc, _} -> true
+    # A node too slow to answer skips this round.
+    :exit, {:timeout, _} -> false
   end
 
   @doc """
@@ -111,6 +113,7 @@ defmodule HalC2.BackgroundPolicy do
     GenServer.call(__MODULE__, {:watched, %{"type" => "thread", "threadId" => thread_id}})
   catch
     :exit, {:noproc, _} -> false
+    :exit, {:timeout, _} -> false
   end
 
   # --- server ------------------------------------------------------------------------
