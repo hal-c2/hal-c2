@@ -5,7 +5,8 @@
 #     thread.pin-reordered, thread.active.reorder, thread.active-reordered)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (thread field updates)
 #   apps/server/src/orchestration-v2/ (projector for organization fields)
-#   apps/server/src/orchestration-v2/Orchestrator.ts (thread.snooze and thread.archive guards)
+#   apps/server/src/orchestration-v2/Orchestrator.ts (thread mutation guards and field updates,
+#     message.dispatch unsettling and unsnoozing its thread)
 #   apps/web/src/hooks/useThreadActions.ts (ThreadSnoozeBlockedError, ThreadArchiveBlockedError)
 #   docs/user/thread-sidebar.md
 Feature: Organizing threads in the engine
@@ -78,6 +79,73 @@ Feature: Organizing threads in the engine
     Then thread "t1" has active order key "c0"
     And a thread-active-reordered event is recorded
 
+  @node
+  Scenario: Only a pinned thread can be reordered among the pinned
+    When a client moves pinned thread "t1" to order key "b0"
+    Then the command fails with "Thread t1 is not pinned and cannot be reordered."
+
+  @node
+  Scenario Outline: Only an active thread can be reordered among the active
+    Given thread "t1" <state>
+    When a client moves active thread "t1" to order key "c0"
+    Then the command fails with "Thread t1 is not active and cannot be reordered."
+
+    Examples:
+      | state                         |
+      | is pinned with order key "a0" |
+      | is settled                    |
+
+  @node
+  Scenario: Settling a pinned thread takes it out of the pinned threads
+    Given thread "t1" is pinned with order key "a0"
+    When a client settles "t1"
+    Then thread "t1" is settled by override
+    And thread "t1" is not pinned and has no pinned order key
+
+  @node
+  Scenario Outline: Pinning a settled or snoozed thread brings it back
+    Given thread "t1" <parked>
+    When a client pins "t1" with order key "a0"
+    Then thread "t1" is pinned with order key "a0"
+    And thread "t1" is neither settled nor snoozed
+
+    Examples:
+      | parked                          |
+      | is settled                      |
+      | is snoozed until tomorrow 09:00 |
+
+  @node
+  Scenario Outline: A new message brings a settled or snoozed thread back
+    Given thread "t1" <parked>
+    When the user sends a message to "t1"
+    Then thread "t1" is neither settled nor snoozed
+
+    Examples:
+      | parked                          |
+      | is settled                      |
+      | is snoozed until tomorrow 09:00 |
+
+  @node
+  Scenario Outline: The engine refuses to settle a thread that is still working
+    Given thread "t1" <state>
+    When a client settles "t1"
+    Then the command fails with "Thread t1 has active or blocked work and cannot be settled."
+
+    Examples:
+      | state                                 |
+      | has a running turn                    |
+      | waits for an approval                 |
+      | waits for an answer to a question     |
+      | has a queued run that has not started |
+
+  # A delegated task's result only wakes the agent; it is not the user's work.
+  @node
+  Scenario: Settling cancels a delegated task result waiting to wake the agent
+    Given thread "t1" has a delegated task result queued
+    When a client settles "t1"
+    Then thread "t1" is settled by override
+    And the queued delegated task result is cancelled
+
   # The web and TUI clients also hide the action.
   @node
   Scenario Outline: The engine refuses to snooze a thread that cannot rest
@@ -108,6 +176,28 @@ Feature: Organizing threads in the engine
     Then the command fails with "Thread t1 is already archived."
 
   @node
+  Scenario: Unarchiving a thread that is not archived is refused
+    When a client unarchives "t1"
+    Then the command fails with "Thread t1 is not archived."
+
+  @node
+  Scenario Outline: An archived thread is not organized until it is unarchived
+    Given thread "t1" is archived
+    When a client sends "<command>" for thread "t1"
+    Then the command fails with "Thread t1 is archived."
+
+    Examples:
+      | command               |
+      | thread.settle         |
+      | thread.unsettle       |
+      | thread.snooze         |
+      | thread.unsnooze       |
+      | thread.pin            |
+      | thread.unpin          |
+      | thread.pin.reorder    |
+      | thread.active.reorder |
+
+  @node
   Scenario Outline: Organization commands on an unknown thread are refused
     When a client sends "<command>" for thread "missing"
     Then the command fails with "unknown thread missing"
@@ -123,8 +213,12 @@ Feature: Organizing threads in the engine
       | thread.pin.reorder    |
       | thread.active.reorder |
 
+  # Settling clears a pin and pinning clears a settle, so no one thread holds all three.
   @node
   Scenario: Organization state is per thread and survives a node restart
-    Given thread "t1" is pinned, snoozed and settled
+    Given thread "t1" is pinned and snoozed
+    And thread "t2" exists in "demo"
+    And thread "t2" is snoozed and settled
     When the node restarts
-    Then thread "t1" is still pinned, snoozed and settled
+    Then thread "t1" is still pinned and snoozed
+    And thread "t2" is still snoozed and settled

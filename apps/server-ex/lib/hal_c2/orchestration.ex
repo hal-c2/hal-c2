@@ -30,6 +30,9 @@ defmodule HalC2.Orchestration do
                      thread.runtime-mode.set thread.interaction-mode.set thread.model-selection.set
                      provider.switch thread.pull-request.link thread.pull-request.unlink
                      thread.title.regeneration.complete)
+  # Commands that arrange a thread in the lists; an archived thread takes none of them.
+  @organizing ~w(thread.settle thread.unsettle thread.snooze thread.unsnooze thread.pin
+                 thread.unpin thread.pin.reorder thread.active.reorder)
 
   @doc "Handles one client RPC by method name; see `packages/contracts/src/orchestrationV2.ts`."
   @spec handle(String.t(), map) :: {:ok, term} | {:error, String.t()}
@@ -1217,7 +1220,17 @@ defmodule HalC2.Orchestration do
   end
 
   defp dispatch_message(thread_id, command) do
-    case HalC2.Streams.transact(thread_id, :thread, &decide_message(&1, thread_id, command)) do
+    decide = fn state ->
+      case decide_message(state, thread_id, command) do
+        {changes, {:ok, _} = result} ->
+          {Enum.reject([woken(state, thread_id) | changes], &is_nil/1), result}
+
+        refused ->
+          refused
+      end
+    end
+
+    case HalC2.Streams.transact(thread_id, :thread, decide) do
       {:ok, :queued} ->
         {:ok, %{"sequence" => sequence(thread_id)}}
 
@@ -1236,6 +1249,31 @@ defmodule HalC2.Orchestration do
       {:error, _} = error ->
         error
     end
+  end
+
+  # A message brings a settled or snoozed thread back to the active list, as in the Node
+  # server: it is neither settled nor held active by hand any more.
+  defp woken(state, thread_id) do
+    thread = StreamState.get(state, "thread")[thread_id]
+
+    unsettled =
+      case thread["settledOverride"] do
+        nil ->
+          %{}
+
+        "settled" ->
+          %{"settledOverride" => nil, "settledAt" => nil, "unsettledAt" => Entities.now()}
+
+        _ ->
+          %{"settledOverride" => nil, "settledAt" => nil}
+      end
+
+    unsnoozed =
+      if thread["snoozedUntil"] != nil,
+        do: %{"snoozedUntil" => nil, "snoozedAt" => nil},
+        else: %{}
+
+    upsert(state, "thread", thread_id, &(&1 |> Map.merge(unsettled) |> Map.merge(unsnoozed)))
   end
 
   defp sequence(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id)).seq
@@ -1451,19 +1489,64 @@ defmodule HalC2.Orchestration do
   defp thread_fields("thread.unarchive", _, _, _), do: %{"archivedAt" => nil}
   defp thread_fields("thread.delete", _, _, at), do: %{"deletedAt" => at}
 
-  defp thread_fields("thread.settle", command, _, at),
-    do: %{"settledOverride" => "settled", "settledAt" => command["settledAt"] || at}
+  # Settling is "I'm done with this": it parks the thread and clears its pinned and
+  # active places.
+  # Settling a settled thread again keeps the time it was settled.
+  defp thread_fields("thread.settle", command, thread, at) do
+    kept =
+      thread["settledOverride"] == "settled" and thread["pinnedAt"] == nil and
+        thread["settledAt"]
 
-  defp thread_fields("thread.unsettle", _, _, at),
-    do: %{"settledOverride" => "active", "settledAt" => nil, "unsettledAt" => at}
+    %{
+      "settledOverride" => "settled",
+      "settledAt" => kept || command["settledAt"] || at,
+      "unsettledAt" => nil,
+      "pinnedAt" => nil,
+      "pinOrderKey" => nil,
+      "activeOrderKey" => nil
+    }
+  end
 
-  defp thread_fields("thread.snooze", command, _, at),
-    do: %{"snoozedUntil" => command["snoozedUntil"], "snoozedAt" => at}
+  defp thread_fields("thread.unsettle", _, thread, at) do
+    unsettled_at = if thread["settledOverride"] == "active", do: thread["unsettledAt"], else: at
+    %{"settledOverride" => "active", "settledAt" => nil, "unsettledAt" => unsettled_at}
+  end
+
+  # Snoozing again until the same time keeps when it was snoozed. A snooze the user
+  # chose replaces the one a usage limit asked for.
+  defp thread_fields("thread.snooze", command, thread, at) do
+    until = command["snoozedUntil"]
+
+    same? =
+      thread["snoozedUntil"] != nil and JS.epoch_ms(thread["snoozedUntil"]) == JS.epoch_ms(until)
+
+    fields = %{"snoozedUntil" => until, "snoozedAt" => (same? && thread["snoozedAt"]) || at}
+
+    case thread["limitRecovery"] do
+      %{} = recovery -> Map.put(fields, "limitRecovery", Map.put(recovery, "snooze", false))
+      _ -> fields
+    end
+  end
 
   defp thread_fields("thread.unsnooze", _, _, _), do: %{"snoozedUntil" => nil, "snoozedAt" => nil}
 
-  defp thread_fields("thread.pin", command, _, at),
-    do: %{"pinnedAt" => at, "pinOrderKey" => command["orderKey"]}
+  # Pinning is a promotion: a settled thread is active again and a snooze is spent. A
+  # re-pin keeps its place, so a raced duplicate cannot move a thread the user placed.
+  defp thread_fields("thread.pin", command, thread, at) do
+    unsettled =
+      if thread["settledOverride"] == "settled",
+        do: %{"settledOverride" => "active", "settledAt" => nil},
+        else: %{}
+
+    placed =
+      if thread["pinnedAt"] == nil and Map.has_key?(command, "orderKey"),
+        do: %{"pinOrderKey" => command["orderKey"]},
+        else: %{}
+
+    %{"pinnedAt" => thread["pinnedAt"] || at, "snoozedUntil" => nil, "snoozedAt" => nil}
+    |> Map.merge(unsettled)
+    |> Map.merge(placed)
+  end
 
   defp thread_fields("thread.unpin", _, _, _), do: %{"pinnedAt" => nil, "pinOrderKey" => nil}
 
@@ -1695,6 +1778,44 @@ defmodule HalC2.Orchestration do
        when archived != nil,
        do: {:error, "Thread #{command["threadId"]} is already archived."}
 
+  defp refusal("thread.unarchive", command, thread, _state) do
+    if thread["archivedAt"] == nil, do: {:error, "Thread #{command["threadId"]} is not archived."}
+  end
+
+  # An archived thread is out of the lists these arrange; unarchiving brings it back.
+  defp refusal(type, command, %{"archivedAt" => archived}, _state)
+       when type in @organizing and archived != nil,
+       do: {:error, "Thread #{command["threadId"]} is archived."}
+
+  # Only a pinned thread has a place among the pinned, so a reorder that races an unpin
+  # cannot pin the thread again; only an active thread has a place in the active list.
+  defp refusal("thread.pin.reorder", command, thread, _state) do
+    if thread["pinnedAt"] == nil,
+      do: {:error, "Thread #{command["threadId"]} is not pinned and cannot be reordered."}
+  end
+
+  defp refusal("thread.active.reorder", command, thread, _state) do
+    if thread["pinnedAt"] != nil or thread["settledOverride"] == "settled",
+      do: {:error, "Thread #{command["threadId"]} is not active and cannot be reordered."}
+  end
+
+  # A thread settles once its work is done: nothing running or queued, and nothing
+  # waiting on the user. A queued delegated-task result only wakes the agent, so it does
+  # not count; settling cancels it (`archived_queue/3`).
+  defp refusal("thread.settle", command, _thread, state) do
+    busy? =
+      Enum.any?(StreamState.list(state, "run"), fn run ->
+        run["status"] in @active_statuses or
+          (run["status"] == "queued" and not automatic?(state, run))
+      end)
+
+    if busy? or
+         Enum.any?(StreamState.list(state, "runtime-request"), &(&1["status"] == "pending")),
+       do:
+         {:error,
+          "Thread #{command["threadId"]} has active or blocked work and cannot be settled."}
+  end
+
   # A snoozed thread rests until its wake time, so it must be able to: nothing may be
   # waiting on the user and no queued run may be about to start.
   defp refusal("thread.snooze", command, _thread, state) do
@@ -1773,7 +1894,21 @@ defmodule HalC2.Orchestration do
     runs ++ attempts ++ requests
   end
 
+  defp archived_queue("thread.settle", state, at) do
+    for run <- queued_runs(state), automatic?(state, run) do
+      upsert(
+        state,
+        "run",
+        run["id"],
+        &Map.merge(&1, %{"status" => "cancelled", "queuePosition" => nil, "completedAt" => at})
+      )
+    end
+  end
+
   defp archived_queue(_type, _state, _at), do: []
+
+  defp automatic?(state, run),
+    do: StreamState.get(state, "message")[run["userMessageId"]]["delegatedCompletion"] != nil
 
   # A deleted thread's provider sessions stop in the commit that deletes it; the
   # dispatcher then stops their processes.
@@ -1841,10 +1976,10 @@ defmodule HalC2.Orchestration do
     %{"linkedPullRequest" => linked, "pullRequests" => kept ++ added}
   end
 
-  # Visits and mark-unread change read state only, as in the TS server: the thread's
-  # last activity time stays where it is.
+  # Visits and mark-unread change read state only, and arranging the active list is not
+  # activity either, as in the TS server: the thread's last activity time stays put.
   defp quiet_read_state({kind, id, patch}, type)
-       when type in ["thread.visit", "thread.mark-unread"],
+       when type in ["thread.visit", "thread.mark-unread", "thread.active.reorder"],
        do: {kind, id, Map.put(patch, "q", true)}
 
   defp quiet_read_state(change, _type), do: change

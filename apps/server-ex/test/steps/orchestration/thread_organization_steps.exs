@@ -167,6 +167,39 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
     context
   end
 
+  step "thread {string} is neither settled nor snoozed", %{args: [thread]} = context do
+    organized = World.thread(context, thread)
+    refute organized["settledOverride"] == "settled"
+    assert [nil, nil, nil] == Enum.map(~w(settledAt snoozedUntil snoozedAt), &organized[&1])
+    context
+  end
+
+  step "the user sends a message to {string}", %{args: [thread]} = context do
+    context |> World.providers() |> World.dispatch_message(thread, "carry on") |> ok!()
+  end
+
+  step "thread {string} has a delegated task result queued", %{args: [thread]} = context do
+    message = "msg-delegated-result"
+
+    context
+    |> World.add_message(thread, "user", "<delegated_task_result/>", nil, %{
+      "id" => message,
+      "createdBy" => "system",
+      "delegatedCompletion" => %{"taskIds" => ["task-1"], "acceptedAt" => nil}
+    })
+    |> World.add_run(thread, "queued", nil, %{"userMessageId" => message, "queuePosition" => 1})
+    |> Map.put(:delegated_result, message)
+  end
+
+  step "the queued delegated task result is cancelled", context do
+    assert [%{"status" => "cancelled", "queuePosition" => nil}] =
+             context
+             |> World.entities(context.thread, "run")
+             |> Enum.filter(&(&1["userMessageId"] == context.delegated_result))
+
+    context
+  end
+
   # --- states a thread cannot rest in -----------------------------------------------
 
   step "thread {string} waits for an approval", %{args: [thread]} = context do
@@ -217,27 +250,47 @@ defmodule HalC2.Steps.Orchestration.ThreadOrganization do
     })
   end
 
-  step "thread {string} is pinned, snoozed and settled", %{args: [thread]} = context do
+  step "thread {string} is pinned and snoozed", %{args: [thread]} = context do
     context
     |> organize(thread, "thread.pin", %{"orderKey" => "a0"})
     |> ok!()
     |> organize(thread, "thread.snooze", %{"snoozedUntil" => wake_time("tomorrow 09:00")})
     |> ok!()
-    |> organize(thread, "thread.settle")
-    |> ok!()
-    |> Map.put(:organized, World.thread(context, thread))
+    |> then(&Map.put(&1, {:organized, thread}, World.thread(&1, thread)))
   end
 
-  step "thread {string} is still pinned, snoozed and settled", %{args: [thread]} = context do
+  step "thread {string} is snoozed and settled", %{args: [thread]} = context do
+    context
+    |> organize(thread, "thread.snooze", %{"snoozedUntil" => wake_time("tomorrow 09:00")})
+    |> ok!()
+    |> organize(thread, "thread.settle")
+    |> ok!()
+    |> then(&Map.put(&1, {:organized, thread}, World.thread(&1, thread)))
+  end
+
+  step "thread {string} is still pinned and snoozed", %{args: [thread]} = context do
+    organized = still_organized(context, thread)
+    assert %{"pinOrderKey" => "a0"} = organized
+    assert organized["pinnedAt"] != nil
+    assert organized["snoozedUntil"] == wake_time("tomorrow 09:00")
+    context
+  end
+
+  step "thread {string} is still snoozed and settled", %{args: [thread]} = context do
+    organized = still_organized(context, thread)
+    assert %{"settledOverride" => "settled"} = organized
+    assert organized["snoozedUntil"] == wake_time("tomorrow 09:00")
+    context
+  end
+
+  defp still_organized(context, thread) do
     organized =
       Map.take(
         World.thread(context, thread),
         ~w(pinnedAt pinOrderKey snoozedUntil snoozedAt settledOverride settledAt)
       )
 
-    assert %{"pinOrderKey" => "a0", "settledOverride" => "settled"} = organized
-    assert organized["snoozedUntil"] == wake_time("tomorrow 09:00")
-    assert organized == Map.take(context.organized, Map.keys(organized))
-    context
+    assert organized == Map.take(context[{:organized, thread}], Map.keys(organized))
+    organized
   end
 end
