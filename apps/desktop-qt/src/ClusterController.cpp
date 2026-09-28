@@ -92,7 +92,10 @@ bool ClusterController::handle(const QString& action, const QVariant& payload) {
 }
 
 void ClusterController::refresh() {
-  call(QStringLiteral("cluster.status"), {}, [this](const QJsonValue& result, const std::optional<QString>& error) {
+  const quint64 generation = ++m_generation;
+  call(QStringLiteral("cluster.status"), {}, [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
+    // RPCs answer concurrently: a read sent before a join or remove may land after it.
+    if (generation != m_generation) return;
     if (error) {
       // What was read before may no longer hold; the page shows why instead.
       m_state.insert(QStringLiteral("status"), QVariant::fromValue(nullptr));
@@ -127,11 +130,13 @@ void ClusterController::invite(bool tailscale) {
 // Join and remove answer with the cluster as it now is.
 void ClusterController::change(const QString& method, const QJsonObject& payload, const QString& success,
                                const QString& failure) {
+  ++m_generation;
   set(QStringLiteral("busy"), true);
   call(method, payload, [this, success, failure](const QJsonValue& result, const std::optional<QString>& error) {
     m_state.insert(QStringLiteral("busy"), false);
     if (error) {
       setNotice(QStringLiteral("error"), QStringLiteral("%1: %2").arg(failure, *error));
+      refresh();  // in place of any read this change overtook
       return;
     }
     m_state.insert(QStringLiteral("status"), result.toObject().toVariantMap());

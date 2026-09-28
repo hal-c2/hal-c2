@@ -5,10 +5,12 @@ import { expect } from "bun:test";
 
 import { step } from "../../steps.ts";
 import { LOCAL_ONLY_HINT } from "../../../src/host/clusterState.ts";
+import type { TuiClusterState } from "../../../src/host/clusterState.ts";
 import type { TuiSettingsState } from "../../../src/host/settingsState.ts";
 import type { FakeCluster } from "../fakeClient.ts";
 import { runPaletteCommand } from "./controls.steps.ts";
 import {
+  boot,
   findObject,
   geometry,
   pressKey,
@@ -156,4 +158,38 @@ step("the node was not asked to join", (ctx: World) => {
 step("the node is asked to remove {string}", async (ctx: World, id: string) => {
   await settle(ctx);
   expect(callsTo(ctx, "clusterRemove").map((call) => call.args[0])).toEqual([id]);
+});
+
+/** Cluster reads the node holds back, answered by "the node answers". */
+const heldReads = new WeakMap<World, Array<() => void>>();
+
+step("the terminal has read the cluster", async (ctx: World) => {
+  await boot(ctx);
+  ctx.host!.dispatch("cluster.refresh");
+  await settle(ctx);
+});
+
+step("the node is slow to read its cluster", async (ctx: World) => {
+  // Every read from now on answers with the cluster as it is now, once released.
+  const earlier = await ctx.fake!.client.clusterStatus();
+  const held: Array<() => void> = [];
+  heldReads.set(ctx, held);
+  ctx.fake!.override(
+    "clusterStatus",
+    () => new Promise((resolve) => held.push(() => resolve(earlier))),
+  );
+  ctx.held = (ctx.held ?? 0) + 1;
+});
+
+step("the node answers", async (ctx: World) => {
+  for (const release of heldReads.get(ctx)?.splice(0) ?? []) release();
+  ctx.held = (ctx.held ?? 1) - 1;
+  await settle(ctx);
+});
+
+step("the terminal's cluster no longer lists {string}", async (ctx: World, label: string) => {
+  await settle(ctx);
+  const cluster = ctx.host!.state.get("cluster") as TuiClusterState;
+  const members = cluster.status?.clustered ? cluster.status.members : [];
+  expect(members.map((member) => member.label)).not.toContain(label);
 });

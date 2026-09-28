@@ -42,4 +42,6 @@ private:
   NodeClient* m_client;
   QVariantMap m_state;
   bool m_active = false;
+  // Bumped by every read and change; a read's answer lands only if nothing was asked since.
+  quint64 m_generation = 0;
 };

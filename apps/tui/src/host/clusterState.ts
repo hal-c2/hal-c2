@@ -59,13 +59,22 @@ export function createClusterController(ctx: {
     return promise;
   };
 
-  const refresh = () =>
-    track(
+  // Bumped by every read and change: RPCs answer concurrently, so a read sent
+  // before a join or remove may land after it, and only the latest request counts.
+  let generation = 0;
+  const refresh = () => {
+    const asked = ++generation;
+    return track(
       client.clusterStatus().then(
-        (status) => set({ status, error: null }),
-        (error: unknown) => set({ error: errorText(error) }),
+        (status) => {
+          if (asked === generation) set({ status, error: null });
+        },
+        (error: unknown) => {
+          if (asked === generation) set({ error: errorText(error) });
+        },
       ),
     );
+  };
 
   const invite = (tailscale: boolean) => {
     store.setStatus("Making a cluster invite…");
@@ -85,16 +94,22 @@ export function createClusterController(ctx: {
     );
   };
 
-  const change = (promise: Promise<ClusterStatus>, success: string, failure: string) =>
+  const change = (promise: Promise<ClusterStatus>, success: string, failure: string) => {
+    generation += 1;
     void track(
       promise.then(
         (status) => {
           set({ status, error: null });
           store.setStatus(success, "success");
         },
-        (error: unknown) => store.setStatus(`${failure}: ${errorText(error)}`, "error"),
+        (error: unknown) => {
+          store.setStatus(`${failure}: ${errorText(error)}`, "error");
+          // In place of any read this change overtook.
+          void refresh();
+        },
       ),
     );
+  };
 
   const closeJoin = () => {
     set({ joining: false });

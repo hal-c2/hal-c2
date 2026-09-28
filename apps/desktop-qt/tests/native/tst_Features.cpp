@@ -234,6 +234,8 @@ public:
   // the tokens clients lent it for them.
   QStringList linked;
   QHash<QString, QString> lent;
+  // Cluster reads are answered with the cluster as it was when asked, once told to.
+  bool holdStatus = false;
   // This machine's cluster: the other members, whether it listens only on
   // loopback, and why it refuses to read the cluster or join (when it does).
   QJsonArray members;
@@ -471,6 +473,12 @@ private:
     QJsonValue result = clusterStatus();
     if (method == QLatin1String("cluster.status") && !statusRefusal.isEmpty()) {
       refuse(statusRefusal, QStringLiteral("request_failed"));
+      return;
+    }
+    if (method == QLatin1String("cluster.status") && holdStatus) {
+      m_held.append([this, id, result] {
+        send({{QStringLiteral("t"), QStringLiteral("rpc.result")}, {QStringLiteral("id"), id}, {QStringLiteral("result"), result}});
+      });
       return;
     }
     if (method == QLatin1String("cluster.invite")) {
@@ -1101,6 +1109,7 @@ void defineSteps() {
   step(QStringLiteral("the node answers"), [](World& world, const Captures&, const Table&) {
     world.sync();  // every held command has reached the node
     world.node.holdAnswers = false;
+    world.node.holdStatus = false;
     world.node.answerHeld();
     world.sync();
   });
@@ -1296,6 +1305,9 @@ void defineSteps() {
   step(QStringLiteral("the node can no longer read its cluster, saying %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.node.statusRefusal = c[0];
   });
+  step(QStringLiteral("the node is slow to read its cluster"), [](World& world, const Captures&, const Table&) {
+    world.node.holdStatus = true;
+  });
   step(QStringLiteral("the user makes a cluster invite"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("cluster.invite"), {});
   });
@@ -1362,6 +1374,13 @@ void defineSteps() {
                           row.toMap().value(QStringLiteral("connected")).toBool() == (match.captured(2) == QLatin1String("connected")));
       }
       expect(found, QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
+    }
+  });
+  step(QStringLiteral("the cluster page does not list %1").arg(q), [cluster](World& world, const Captures& c, const Table&) {
+    world.sync();
+    for (const QVariant& row : at(cluster(world), QStringLiteral("status.members")).toList()) {
+      expect(row.toMap().value(QStringLiteral("label")).toString() != c[0],
+             QStringLiteral("the cluster page is %1").arg(show(cluster(world))));
     }
   });
   step(QStringLiteral("the cluster page shows the error %1 instead of the machines").arg(q), [cluster](World& world, const Captures& c, const Table&) {

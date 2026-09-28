@@ -208,6 +208,15 @@ Feature: Clustering one person's machines
     Then the node is asked to remove "env-laptop"
     And the status line says "Removed laptop from the cluster."
 
+  @tui
+  Scenario: A cluster read that lands after a removal does not bring the member back in the terminal
+    Given this machine is clustered with "laptop", which is connected
+    And the terminal has read the cluster
+    And the node is slow to read its cluster
+    When the user picks "Remove laptop from the cluster" in the command palette
+    And the node answers
+    Then the terminal's cluster no longer lists "laptop"
+
   @desktop
   Scenario: The desktop's settings show this machine's cluster
     Given this machine is clustered with "studio", which is connected, and "laptop", which is offline
@@ -258,6 +267,16 @@ Feature: Clustering one person's machines
     And the user removes "laptop" from the cluster
     Then the node is asked to remove "env-laptop"
     And the cluster page says "Removed laptop from the cluster."
+
+  @desktop
+  Scenario: A cluster read that lands after a removal does not bring the member back
+    Given this machine is clustered with "laptop", which is connected
+    And the desktop shell is connected to its node
+    And the node is slow to read its cluster
+    When the user opens Cluster in the desktop's settings
+    And the user removes "laptop" from the cluster
+    And the node answers
+    Then the cluster page does not list "laptop"
 
   @desktop
   Scenario: A cluster the node can no longer read is not shown as it was
