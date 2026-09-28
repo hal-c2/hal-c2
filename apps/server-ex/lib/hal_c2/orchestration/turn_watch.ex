@@ -49,15 +49,22 @@ defmodule HalC2.Orchestration.TurnWatch do
   @impl true
   def handle_call({:claim, pid, thread_id, run_id}, _from, runs) do
     runs = forget(runs, run_id)
-    {:reply, :ok, Map.put(runs, run_id, {Process.monitor(pid), thread_id})}
+    {:reply, :ok, Map.put(runs, run_id, {Process.monitor(pid), pid, thread_id})}
   end
 
-  def handle_call({:driven?, run_id}, _from, runs), do: {:reply, Map.has_key?(runs, run_id), runs}
+  # A process that has exited no longer drives its run, though its `:DOWN` may still
+  # be queued behind this call.
+  def handle_call({:driven?, run_id}, _from, runs) do
+    case runs do
+      %{^run_id => {_, pid, _}} -> {:reply, Process.alive?(pid), runs}
+      _ -> {:reply, false, runs}
+    end
+  end
 
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, reason}, runs) do
-    case Enum.find(runs, fn {_run_id, {run_ref, _}} -> run_ref == ref end) do
-      {run_id, {_, thread_id}} ->
+    case Enum.find(runs, fn {_run_id, {run_ref, _, _}} -> run_ref == ref end) do
+      {run_id, {_, _, thread_id}} ->
         if crashed?(reason) do
           Logger.warning("run #{run_id} lost its runtime: #{inspect(reason)}")
 
