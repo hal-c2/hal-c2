@@ -117,7 +117,8 @@ QJsonArray FakeNode::links() const {
   for (const QString& environment : linked) {
     result.append(QJsonObject{
         {QStringLiteral("environment"),
-         QJsonObject{{QStringLiteral("environmentId"), environment}, {QStringLiteral("label"), environment}}},
+         QJsonObject{{QStringLiteral("environmentId"), environment},
+                     {QStringLiteral("label"), linkLabels.value(environment, environment)}}},
         {QStringLiteral("origin"), QStringLiteral("http://") + environment + QStringLiteral(":3780")},
         {QStringLiteral("online"), !linkProblems.contains(environment)},
     });

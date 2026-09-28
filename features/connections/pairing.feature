@@ -7,6 +7,7 @@
 #   apps/web/src/components/settings/ConnectionsSettings.tsx (Add environment, Create pairing link,
 #     pairing link scopes, QR code, hosted app link, pairing code)
 #   apps/web/src/components/settings/pairingUrls.ts
+#   apps/desktop-qt/src/native/ConnectionsController.cpp (a created link's secret lives only while the page is open)
 #   packages/shared/src/remote.ts, packages/client-runtime/src/connection/onboarding.ts
 #     (a host without a scheme: HTTPS, then plain HTTP)
 #   apps/web/src/components/auth/PairingRouteSurface.tsx
@@ -99,7 +100,7 @@ Feature: Pairing a client with an environment
     Then the client says the connection failed
     And offers the trace id for a bug report
 
-  @backlog @desktop
+  @desktop
   Scenario: A new pairing link can only be copied while its page is open
     Given the user created a pairing link
     When the user leaves the Connections page and comes back

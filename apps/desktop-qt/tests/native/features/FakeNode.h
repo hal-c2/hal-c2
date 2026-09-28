@@ -109,6 +109,8 @@ public:
   // why a link is down ("unreachable", "refused"; absent while it is online).
   QStringList linked;
   QHash<QString, QString> linkProblems;
+  // Each linked environment's label, when it is not its id.
+  QHash<QString, QString> linkLabels;
 
   void sendSnapshot();
   // The node pairs with an environment outside its cluster, announced as `shell.links`.

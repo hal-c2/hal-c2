@@ -2,6 +2,7 @@
 #   apps/server-ex/lib/hal_c2/links.ex, apps/server-ex/lib/hal_c2/links/connection.ex,
 #   apps/server-ex/lib/hal_c2/links/rows.ex (linked rows in the shell)
 #   apps/server-ex/lib/mix/tasks/hal_c2.link.ex
+#   apps/desktop-qt/src/native/ConnectionsController.cpp (linking from the desktop's Connections settings)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (rpc and shapes by environment, shell links)
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (stream and terminal shapes by environment, shell.links)
 #   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.linkEnvironment, hal-c2.unlinkEnvironment, hal-c2.environmentLinks)
