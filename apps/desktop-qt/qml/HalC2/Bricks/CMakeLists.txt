@@ -11,6 +11,7 @@ qt_add_qml_module(hal_c2_bricks
     AppView.qml
     AppWindow.qml
     ClusterSettings.qml
+    ConnectionsSettings.qml
     Composer.qml
     ModelPicker.qml
     ProviderIcon.qml
@@ -45,6 +46,7 @@ qt_add_qml_module(hal_c2_bricks
     WindowControls.qml
     Workspace.qml
     Timeline.qml
+    ProjectRemovalDialog.qml
     js/lucide.js
     js/modelPicker.js
     js/providerIcons.js

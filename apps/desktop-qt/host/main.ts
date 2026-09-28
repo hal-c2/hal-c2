@@ -6,16 +6,18 @@
  * from a loopback port (webBundle.ts), starts the desktop app's own Elixir node
  * (elixirNode.ts), and announces a `/pair` URL that pairs the app with that node
  * and opens it. With `--attach=<url>` it starts no node: a node pairing link
- * opens the app paired with that node, any other URL is announced unchanged.
+ * pairs the shell (and the app) with that node, any other URL is announced
+ * unchanged.
  *
  * Arguments: `--base-dir=<HAL-C2 home>` (the node's home and the app's port key),
  * `--attach=<url>`.
  *
  * Protocol (stdout, newline-delimited JSON):
  *   {"type":"ready","url":"http://...","node":{"origin","token"}}
- *                                          load this URL; `node` (only for the node the
- *                                          host started) is where the shell's own client
- *                                          connects, with the node's access token
+ *                                          load this URL; `node` is where the shell's own
+ *                                          client connects and its bearer. Every node
+ *                                          launch carries it; only a URL that is not a
+ *                                          node comes without one
  *   {"type":"error","message":"..."}       fatal, the host is exiting
  *   {"type":"exit","code":n}               the node ended on its own
  * stdin closing means the shell is gone: stop the node and exit.
@@ -25,8 +27,10 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import {
+  exchangePairingToken,
   fetchDescriptor,
   findLocalNodeToken,
+  mintPairingToken,
   nodeDataDir,
   nodePort,
   readAccessToken,
@@ -134,7 +138,10 @@ async function standalone(home: string | undefined): Promise<Launched> {
   // Exchanging the bootstrap token again would replace the page's session
   // (HalC2.Auth), so the shell's client uses the node's own token instead.
   const access = readAccessToken(nodeDataDir({ launch, home, env: process.env }));
-  return access === undefined ? { url } : { url, node: { origin: started.origin, token: access } };
+  if (access === undefined) {
+    throw new HostError("The node started but wrote no access token for the desktop app.");
+  }
+  return { url, node: { origin: started.origin, token: access } };
 }
 
 async function attach(url: string, home: string | undefined): Promise<Launched> {
@@ -150,20 +157,32 @@ async function attach(url: string, home: string | undefined): Promise<Launched> 
   // server that serves its own app) is loaded as it is.
   if (descriptor === undefined) return { url };
   const app = await serveApp(home);
-  const page =
-    link.token === undefined
-      ? `${app.origin}/`
-      : appPairingUrl(app.origin, link.origin, link.token);
   // A node on this machine lets the shell's own client in with its access
-  // token; a remote one leaves every RPC with the page.
-  const token = findLocalNodeToken({ origin: link.origin, home, env: process.env });
-  if (token === undefined) {
-    // Without it the native sidebar, composer and terminal drawer stay off.
-    process.stderr.write(
-      `no node on this machine records ${link.origin} as its origin; the shell's native client stays off\n`,
+  // token, and the page keeps the pairing link.
+  const local = findLocalNodeToken({ origin: link.origin, home, env: process.env });
+  if (local !== undefined) {
+    const page =
+      link.token === undefined
+        ? `${app.origin}/`
+        : appPairingUrl(app.origin, link.origin, link.token);
+    return { url: page, node: { origin: link.origin, token: local } };
+  }
+  // Any other node pairs the shell with the link's token. It is single use, so
+  // the page gets a link of its own when the session may mint one (access:write),
+  // and otherwise opens unpaired with whatever environments it saved before.
+  if (link.token === undefined) {
+    throw new HostError(
+      `The link to ${link.origin} has no pairing token, and no node on this machine records that origin.`,
     );
   }
-  return token === undefined ? { url: page } : { url: page, node: { origin: link.origin, token } };
+  const token = await exchangePairingToken(link.origin, link.token).catch(() => undefined);
+  if (token === undefined) {
+    throw new HostError(`The pairing link for ${link.origin} is invalid or expired.`);
+  }
+  const pageToken = await mintPairingToken(link.origin, token, "HAL-C2 desktop app");
+  const page =
+    pageToken === undefined ? `${app.origin}/` : appPairingUrl(app.origin, link.origin, pageToken);
+  return { url: page, node: { origin: link.origin, token } };
 }
 
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {

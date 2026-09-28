@@ -78,14 +78,8 @@ void KeybindingController::registerCommands() {
     m_commands.add(command, keybindings::commandLabel(command), std::move(run));
   };
   add(QStringLiteral("navigation.back"), [navigation] { navigation->back(); });
-  add(QStringLiteral("chat.new"), [shell, navigation] {
-    // In the open thread's project, or the one a new thread was started in.
-    QString projectKey = navigation->route().projectKey;
-    if (const QString key = navigation->threadKey(); !key.isEmpty()) {
-      projectKey = shell->sidebar()->projectKeyOf(key).value_or(QString());
-    }
-    navigation->open(NavigationController::Route::newThread(projectKey));
-  });
+  // DraftController starts it in the project the window shows.
+  add(QStringLiteral("chat.new"), [this] { m_bridge->dispatch(QStringLiteral("thread.new")); });
   add(QStringLiteral("thread.previous"), [this] { traverse(false); });
   add(QStringLiteral("thread.next"), [this] { traverse(true); });
   for (int n = 1; n <= 9; ++n) {

@@ -527,7 +527,7 @@ ShellWindow {
 
                     WebSurface {
                         anchors.fill: parent
-                        visible: !root.clusterOpen && !root.keybindingsOpen
+                        visible: !root.nativeSettingsOpen
                         url: Shell.pageUrl
                         radius: surfaceCard.radius - surfaceCard.border.width
                     }
@@ -538,6 +538,7 @@ ShellWindow {
                         radius: surfaceCard.radius - surfaceCard.border.width
                         visible: root.clusterOpen
                     }
+                    ConnectionsSettings { anchors.fill: parent; anchors.margins: surfaceCard.border.width; radius: surfaceCard.radius - surfaceCard.border.width; visible: root.connectionsOpen }
 
                     KeybindingsSettings {
                         anchors.fill: parent
@@ -1116,7 +1117,7 @@ ShellWindow {
                     id: composer
 
                     Layout.fillWidth: true
-                    visible: ready && !root.clusterOpen && !root.keybindingsOpen
+                    visible: ready && !root.nativeSettingsOpen
                     color: "transparent"
                 }
 

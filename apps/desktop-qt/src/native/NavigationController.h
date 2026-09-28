@@ -16,12 +16,14 @@ class ShellStore;
 // Where the window is: the shell's route, its back stack, and the last route
 // kept across restarts (setStorePath). Publishes `route`: {kind, threadKey,
 // draftId, projectKey, section, title, canGoBack}, where kind is one of home,
-// thread, draft, newThread, settings (section: the settings path, or
-// "/settings/cluster" for the shell's own cluster page), pullRequests, usage.
+// thread, draft, newThread, settings (section: the settings path, or one of
+// the shell's own pages, "/settings/cluster" and "/settings/connections"),
+// pullRequests, usage.
 //
 // The page still renders the centre, so it follows: every route the page does
 // not already show goes to it as `route.follow {kind, threadKey, draftId,
-// projectKey, section}`, and the page reports where its own links and
+// projectKey, section}` (a draft adds its environmentId, projectId and
+// threadId, from DraftController), and the page reports where its own links and
 // redirects took it as `route.open {..., replace}`. The page is not the source
 // of truth; this is.
 class NavigationController : public QObject, public NativeController {
@@ -48,6 +50,11 @@ public:
   // The shell's own settings pages, which the page does not show.
   static inline const QString kClusterSection = QStringLiteral("/settings/cluster");
   static inline const QString kKeybindingsSection = QStringLiteral("/settings/keybindings");
+  static inline const QString kConnectionsSection = QStringLiteral("/settings/connections");
+  static bool isNativeSection(const Route& route) {
+    return route == Route::settings(kClusterSection) || route == Route::settings(kConnectionsSection) ||
+           route == Route::settings(kKeybindingsSection);
+  }
 
   NavigationController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 
@@ -59,6 +66,9 @@ public:
   QString threadKey() const { return m_route.kind == QLatin1String("thread") ? m_route.threadKey : QString(); }
   // Moves to `route`, keeping where the user was on the back stack.
   void open(const Route& route) { go(route, false, true); }
+  // Moves to `route` in place of the current one (a draft that became a
+  // thread, or went away).
+  void replace(const Route& route) { go(route, true, true); }
   // Back to where the user was before, or home.
   void back();
 
@@ -73,9 +83,6 @@ signals:
 private:
   void go(const Route& route, bool replace, bool follow);
   // On one of the shell's own settings pages.
-  bool onShellPage() const {
-    return m_route == Route::settings(kClusterSection) || m_route == Route::settings(kKeybindingsSection);
-  }
   void follow();
   void publish();
   void save() const;

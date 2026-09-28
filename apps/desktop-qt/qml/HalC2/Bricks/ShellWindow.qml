@@ -21,6 +21,10 @@ Window {
     readonly property bool clusterOpen: route !== null && route.kind === "settings" && route.section === "/settings/cluster"
     // Settings → Keybindings is the shell's own too (KeybindingsSettings).
     readonly property bool keybindingsOpen: route !== null && route.kind === "settings" && route.section === "/settings/keybindings"
+    // ConnectionsController's page, placed the same way (ConnectionsSettings).
+    readonly property bool connectionsOpen: route !== null && route.kind === "settings" && route.section === "/settings/connections"
+    // Either: the page and composer stand aside.
+    readonly property bool nativeSettingsOpen: clusterOpen || connectionsOpen || keybindingsOpen
     // Settings show, from the page's sections or the shell's own pages.
     readonly property bool settingsActive: route !== null ? route.kind === "settings" : (Shell.state.settings ? Shell.state.settings.active : false)
     readonly property bool webFocused: isWebItem(root.activeFocusItem)
@@ -60,6 +64,8 @@ Window {
     ContextMenuHost {
         surfaceId: "shell"
     }
+
+    ProjectRemovalDialog {}
 
     ShellErrorOverlay {
         anchors.fill: parent

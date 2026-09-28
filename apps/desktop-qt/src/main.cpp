@@ -12,6 +12,7 @@
 #include <QtWebEngineQuick/qtwebenginequickglobal.h>
 
 #include "BackendProcess.h"
+#include "DraftController.h"
 #include "LocalFolderModel.h"
 #include "LocalTranscriber.h"
 #include "NativeNotifications.h"
@@ -172,6 +173,8 @@ int main(int argc, char* argv[]) {
   // The window reopens where the user left it.
   native.controller<NavigationController>()->setStorePath(QDir(storage.state).filePath(QStringLiteral("shell-route.json")));
   native.controller<SettingsController>()->setDevicePath(QDir(configDir).filePath(QStringLiteral("preferences.json")));
+  // Drafts are the user's unsent work: data, not state.
+  native.controller<DraftController>()->setStorePath(QDir(storage.data).filePath(QStringLiteral("shell-drafts.json")));
   ThemeStore theme(configDir);
   // ThemeController's resolved theme is the palette under theme.json.
   theme.applyBaseTheme(bridge.state()->value(QStringLiteral("theme")));
@@ -191,8 +194,8 @@ int main(int argc, char* argv[]) {
   if (!storage.root.isEmpty()) {
     backendOptions.hostArguments.prepend(QStringLiteral("--base-dir=%1").arg(storage.root));
   }
-  // Attach mode: the host starts no node; it serves the app paired with the
-  // linked node, or hands back any other URL unchanged.
+  // Attach mode: the host starts no node; it pairs the shell (and the app) with
+  // the linked node, or hands back any other URL unchanged.
   if (parser.isSet(urlOption)) {
     backendOptions.hostArguments.prepend(
         QStringLiteral("--attach=%1").arg(QUrl::fromUserInput(parser.value(urlOption)).toString(QUrl::FullyEncoded)));

@@ -153,6 +153,7 @@ ShellWindow {
                         Layout.fillHeight: true
                         visible: root.clusterOpen
                     }
+                    ConnectionsSettings { Layout.fillWidth: true; Layout.fillHeight: true; visible: root.connectionsOpen }
 
                     KeybindingsSettings {
                         Layout.fillWidth: true
@@ -161,7 +162,7 @@ ShellWindow {
                     }
 
                     WebSurface {
-                        visible: !root.clusterOpen && !root.keybindingsOpen
+                        visible: !root.nativeSettingsOpen
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         url: Shell.pageUrl
@@ -170,7 +171,7 @@ ShellWindow {
 
                     Composer {
                         Layout.fillWidth: true
-                        visible: ready && !root.clusterOpen && !root.keybindingsOpen
+                        visible: ready && !root.nativeSettingsOpen
                         color: "transparent"
                     }
 

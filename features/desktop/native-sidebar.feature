@@ -1,15 +1,18 @@
 # Sources:
 #   apps/desktop-qt/src/native/SidebarController.cpp (row actions, scope, parking, snooze menu, toasts)
-#   apps/desktop-qt/src/native/SidebarModel.cpp (the port of the page's sidebar rules)
+#   apps/desktop-qt/src/native/SidebarModel.cpp (the port of the page's sidebar rules and project grouping)
+#   apps/desktop-qt/src/native/ShellStore.cpp (the node's project and thread rows)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
-#   apps/web/src/shell/HalC2ShellBridge.tsx (publishes sidebarInput)
+#   packages/client-runtime/src/state/projectGrouping.ts (the grouping this ports)
+#   apps/web/src/components/Sidebar.logic.ts (sortLogicalProjectsForSidebar, the order this ports)
 #   apps/web/src/threadParking.ts (the navigation this ports)
 #   Shared domain: threads/settle.feature, threads/snooze.feature and threads/sidebar-list.feature
 #   own what these actions mean; this file owns that the Qt shell sends them itself.
 
 Feature: The desktop shell runs the sidebar against its node
-  Once connected, the Qt shell builds the sidebar from the node's threads and the page's project
-  groups, and sends the row actions (settle, snooze, wake, mark unread) to the node itself.
+  Once connected, the Qt shell builds the sidebar from the node's projects and threads, grouped
+  and ordered by this device's settings, and sends the row actions (settle, snooze, wake, mark
+  unread) to the node itself.
   Toasts are the shell's own, and so is the route; the page still draws the centre, so it follows.
 
   Background:
@@ -22,8 +25,8 @@ Feature: The desktop shell runs the sidebar against its node
       | t3 | p2      | Third  | 2026-09-23T09:30:00Z |                 |                      |
       | t4 | p1      | Done   | 2026-09-23T09:20:00Z | settled         |                      |
       | t5 | p2      | Later  | 2026-09-23T09:10:00Z |                 | 2026-09-24T09:00:00Z |
-    And the page groups "env-a:p1" as the project "proj-1"
-    And the page groups "env-a:p2" as the project "proj-2"
+    And the node has the project "p1" titled "proj-1"
+    And the node has the project "p2" titled "proj-2"
     And the desktop shell is connected to its node
 
   Rule: The sidebar is built from the node's threads
@@ -44,7 +47,7 @@ Feature: The desktop shell runs the sidebar against its node
     @desktop
     Scenario: A scope whose project goes away shows everything again
       Given the user scopes the sidebar to "proj-2"
-      When the page stops grouping "env-a:p2"
+      When the node removes the project "p2"
       Then the sidebar is not scoped
       And the sidebar's "active" section lists "First, Second, Third"
 
@@ -53,6 +56,59 @@ Feature: The desktop shell runs the sidebar against its node
       Given the user scopes the sidebar to "proj-2"
       When the user clears the sidebar's scope
       Then the sidebar's "active" section lists "First, Second, Third"
+
+  Rule: Projects are the node's, grouped and ordered on this device
+
+    @desktop
+    Scenario: Projects are listed by their latest thread
+      Then the sidebar lists the projects "proj-1, proj-2"
+      When the node updates the thread "t3" with:
+        | latestUserMessageAt | 2026-09-23T09:55:00Z |
+      Then the sidebar lists the projects "proj-2, proj-1"
+
+    @desktop
+    Scenario: Projects can be ordered by when their threads were started
+      Given the node has these projects:
+        | id | title  |
+        | p3 | proj-3 |
+      And the node updates the thread "t6" with:
+        | projectId           | p3                   |
+        | title               | Sixth                |
+        | createdAt           | 2026-09-23T09:00:00Z |
+        | updatedAt           | 2026-09-23T09:00:00Z |
+        | latestUserMessageAt | 2026-09-23T09:58:00Z |
+      And the sidebar lists the projects "proj-3, proj-1, proj-2"
+      When this device's "sidebarProjectSortOrder" is set to "created_at"
+      Then the sidebar lists the projects "proj-1, proj-2, proj-3"
+
+    @desktop
+    Scenario: Folders of one repository are one project
+      Given the node has these projects:
+        | id | title  | workspaceRoot  | repository             |
+        | p3 | shop   | /work/shop     | github.com/acme/shop   |
+        | p4 | shop-2 | /work/shop-2   | github.com/acme/shop   |
+      Then the sidebar lists the projects "proj-1, proj-2, shop"
+
+    @desktop
+    Scenario: Folders of one repository stay apart when this device does not group them
+      Given the node has these projects:
+        | id | title  | workspaceRoot  | repository             |
+        | p3 | shop   | /work/shop     | github.com/acme/shop   |
+        | p4 | shop-2 | /work/shop-2   | github.com/acme/shop   |
+      When this device's "sidebarProjectGroupingMode" is set to "separate"
+      Then the sidebar lists the projects "proj-1, proj-2, shop, shop-2"
+
+    @desktop
+    Scenario: A project the node adds is listed
+      When the node has these projects:
+        | id | title  | createdAt            |
+        | p3 | proj-3 | 2026-09-23T09:59:00Z |
+      Then the sidebar lists the projects "proj-3, proj-1, proj-2"
+
+    @desktop
+    Scenario: A project the node removes is no longer listed
+      When the node removes the project "p2"
+      Then the sidebar lists the projects "proj-1"
 
   Rule: Row actions go to the node
 
@@ -124,7 +180,7 @@ Feature: The desktop shell runs the sidebar against its node
       Given the user scopes the sidebar to "proj-2"
       And the page shows "env-a:t3"
       When the user settles "env-a:t3"
-      Then the page is asked to open a new thread in "proj-2"
+      Then the window shows a new draft in "proj-2"
 
     @desktop
     Scenario: Moving elsewhere before the node answers keeps the user where they went
@@ -147,7 +203,7 @@ Feature: The desktop shell runs the sidebar against its node
 
     @desktop
     Scenario: The snooze menu offers the presets for now
-      Given the page's timestamps are "24-hour"
+      Given this device's "timestampFormat" is set to "24-hour"
       When the user opens the snooze menu for "env-a:t1" at 40, 120
       Then the shell shows a menu at 40, 120 with:
         | id                | label                      |
@@ -159,7 +215,7 @@ Feature: The desktop shell runs the sidebar against its node
 
     @desktop
     Scenario: Picking a preset snoozes the thread and offers Undo
-      Given the page's timestamps are "24-hour"
+      Given this device's "timestampFormat" is set to "24-hour"
       And the user opens the snooze menu for "env-a:t1" at 40, 120
       When the user picks "snooze:hour"
       Then the menu closes
@@ -169,7 +225,7 @@ Feature: The desktop shell runs the sidebar against its node
 
     @desktop
     Scenario: Undo from the toast wakes the thread
-      Given the page's timestamps are "24-hour"
+      Given this device's "timestampFormat" is set to "24-hour"
       And the user opens the snooze menu for "env-a:t1" at 40, 120
       And the user picks "snooze:hour"
       And the node receives a "thread.snooze" command for "t1"

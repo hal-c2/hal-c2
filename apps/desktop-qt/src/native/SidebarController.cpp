@@ -1,9 +1,11 @@
 #include "SidebarController.h"
 
+#include "DraftController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "NodeClient.h"
 #include "ShellBridge.h"
+#include "SettingsController.h"
 #include "ShellStore.h"
 #include "ToastController.h"
 
@@ -26,42 +28,59 @@ SidebarController::SidebarController(ShellBridge* bridge, NodeClient* client, Sh
   // Snoozes wake and "2h" labels tick over on the minute, as the page's nowMinute.
   connect(&m_minute, &QTimer::timeout, this, &SidebarController::refresh);
   connect(store, &ShellStore::changed, this, &SidebarController::refresh);
-  connect(bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key, const QVariant& value) {
-    if (key != QLatin1String("sidebarInput")) return;
-    m_input = sidebar::Input::fromVariant(value);
-    m_inputReceived = true;
-    refresh();
-  });
 }
 
 void SidebarController::activate() {
   m_active = true;
-  m_scope = m_input.scopeProjectKey;
   refresh();
 }
 
-bool SidebarController::coversPage() const {
-  for (const sidebar::ProjectGroup& group : m_input.projects) {
-    for (const QString& member : group.memberKeys) {
-      if (!m_store->servesEnvironment(member.section(QLatin1Char(':'), 0, 0))) return false;
-    }
+const sidebar::ProjectGroup* SidebarController::group(const QString& key) const {
+  for (const sidebar::ProjectGroup& group : m_groups) {
+    if (group.key == key) return &group;
   }
-  return true;
+  return nullptr;
+}
+
+std::optional<QString> SidebarController::logicalProjectKey(const QString& environmentId,
+                                                            const QString& projectId) const {
+  const QString physicalKey = environmentId + QLatin1Char(':') + projectId;
+  for (const sidebar::ProjectGroup& group : m_groups) {
+    if (group.memberKeys.contains(physicalKey)) return group.key;
+  }
+  return std::nullopt;
 }
 
 void SidebarController::refresh() {
   if (!m_active) return;
+  readSettings();
+  const QList<sidebar::Thread> threads = m_store->threads();
+  const QString ownEnvironment = m_store->environmentOf(m_client->node());
+  m_groups = sidebar::groupProjects(m_store->projects(), m_grouping, ownEnvironment, threads);
   // A scope whose project went away (removed, regrouped) shows everything again.
-  if (m_inputReceived && m_scope && m_input.group(*m_scope) == nullptr) m_scope.reset();
+  if (m_scope && group(*m_scope) == nullptr) m_scope.reset();
   const QDateTime now = m_now();
-  // The window's route marks the open thread or draft, not the page's.
-  sidebar::Input input = m_input;
+  sidebar::Input input;
+  input.projects = m_groups;
+  if (!ownEnvironment.isEmpty()) input.localEnvironmentId = ownEnvironment;
+  if (const auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
+    for (const DraftController::Draft& draft : drafts->drafts()) {
+      const QString physical = draft.environmentId + QLatin1Char(':') + draft.projectId;
+      input.drafts.append(QVariantMap{
+          {QStringLiteral("draftId"), draft.id},
+          {QStringLiteral("projectKey"), logicalProjectKey(draft.environmentId, draft.projectId).value_or(physical)},
+          {QStringLiteral("label"), QStringLiteral("Draft")},
+      });
+    }
+  }
+  // The window's route marks the open thread or draft.
+  input.activeDraftId = QVariant::fromValue(nullptr);
   if (const auto* navigation = NativeShell::of(this)->controller<NavigationController>()) {
     const NavigationController::Route& route = navigation->route();
-    input.activeThreadKey = route.kind == QLatin1String("thread") ? sidebar::Nullable(route.threadKey) : std::nullopt;
-    input.activeDraftId = route.kind == QLatin1String("draft") ? QVariant(route.draftId) : QVariant::fromValue(nullptr);
+    if (route.kind == QLatin1String("thread")) input.activeThreadKey = route.threadKey;
+    if (route.kind == QLatin1String("draft")) input.activeDraftId = route.draftId;
   }
-  m_view = sidebar::build(m_store->threads(), input, m_scope,
+  m_view = sidebar::build(threads, input, m_scope,
                           [this](const QString& environmentId) { return m_store->capabilities(environmentId); },
                           now.toMSecsSinceEpoch());
   m_bridge->publish(QStringLiteral("sidebar"), m_view.state);
@@ -188,10 +207,10 @@ void SidebarController::park(const QString& key, QJsonObject parkCommand, const 
       navigate = [this, next = *next] {
         NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::thread(next));
       };
-    } else if (const auto projectKey = logicalProjectKey(*thread)) {
-      navigate = [this, projectKey = *projectKey] {
-        NativeShell::of(this)->controller<NavigationController>()->open(
-            NavigationController::Route::newThread(projectKey));
+    } else {
+      // Nothing left to show: a new thread in the same project.
+      navigate = [this, environmentId = thread->environmentId, projectId = thread->projectId] {
+        if (auto* drafts = NativeShell::of(this)->controller<DraftController>()) drafts->start(environmentId, projectId);
       };
     }
   }
@@ -211,21 +230,8 @@ void SidebarController::park(const QString& key, QJsonObject parkCommand, const 
       });
 }
 
-std::optional<QString> SidebarController::projectKeyOf(const QString& threadKey) const {
-  const auto thread = m_store->thread(threadKey);
-  return thread ? logicalProjectKey(*thread) : std::nullopt;
-}
-
-std::optional<QString> SidebarController::logicalProjectKey(const sidebar::Thread& thread) const {
-  const QString physicalKey = thread.environmentId + QLatin1Char(':') + thread.projectId;
-  for (const sidebar::ProjectGroup& group : m_input.projects) {
-    if (group.memberKeys.contains(physicalKey)) return group.key;
-  }
-  return std::nullopt;
-}
-
 void SidebarController::openSnoozeMenu(const QString& key, double x, double y) {
-  const QList<sidebar::SnoozePreset> presets = sidebar::snoozePresets(m_now(), m_input.timestampFormat, m_locale);
+  const QList<sidebar::SnoozePreset> presets = sidebar::snoozePresets(m_now(), m_timestampFormat, m_locale);
   QVariantList items;
   for (const sidebar::SnoozePreset& preset : presets) {
     items.append(QVariantMap{
@@ -256,7 +262,7 @@ void SidebarController::selectSnooze(const QString& id) {
           {QStringLiteral("threadId"), thread->id},
           {QStringLiteral("snoozedUntil"), snoozedUntil}},
          QStringLiteral("Failed to snooze thread"), [this, key, snoozedUntil] {
-           const QString when = sidebar::wakeDescription(snoozedUntil, m_now(), m_input.timestampFormat, m_locale);
+           const QString when = sidebar::wakeDescription(snoozedUntil, m_now(), m_timestampFormat, m_locale);
            toasts()->show(QStringLiteral("success"), QStringLiteral("Snoozed until ") + when, QString(),
                           ToastController::Action{QStringLiteral("Undo"), [this, key] {
                                                     m_bridge->dispatch(QStringLiteral("thread.unsnooze"),
@@ -273,4 +279,23 @@ QString SidebarController::activeThreadKey() const {
 
 ToastController* SidebarController::toasts() const {
   return NativeShell::of(this)->controller<ToastController>();
+}
+
+void SidebarController::readSettings() {
+  m_grouping = {};
+  m_timestampFormat = QStringLiteral("locale");
+  const auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  if (!settings) return;
+  const QJsonObject device = settings->deviceSettings();
+  const auto text = [&device](const char* key, QString& into) {
+    const QJsonValue value = device.value(QLatin1String(key));
+    if (value.isString() && !value.toString().isEmpty()) into = value.toString();
+  };
+  text("sidebarProjectGroupingMode", m_grouping.mode);
+  text("sidebarProjectSortOrder", m_grouping.sortOrder);
+  text("timestampFormat", m_timestampFormat);
+  const QJsonObject overrides = device.value(QLatin1String("sidebarProjectGroupingOverrides")).toObject();
+  for (auto it = overrides.constBegin(); it != overrides.constEnd(); ++it) {
+    if (it.value().isString()) m_grouping.overrides.insert(it.key(), it.value().toString());
+  }
 }
