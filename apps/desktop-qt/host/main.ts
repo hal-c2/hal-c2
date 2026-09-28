@@ -26,6 +26,7 @@ import * as NodeURL from "node:url";
 
 import {
   fetchDescriptor,
+  findLocalNodeToken,
   nodeDataDir,
   nodePort,
   readAccessToken,
@@ -136,9 +137,9 @@ async function standalone(home: string | undefined): Promise<Launched> {
   return access === undefined ? { url } : { url, node: { origin: started.origin, token: access } };
 }
 
-async function attach(url: string, home: string | undefined): Promise<string> {
+async function attach(url: string, home: string | undefined): Promise<Launched> {
   const link = readPairingLink(url);
-  if (link === undefined) return url;
+  if (link === undefined) return { url };
   const descriptor = await fetchDescriptor(link.origin).catch((error: unknown) => {
     const reason = error instanceof Error && error.cause instanceof Error ? error.cause : error;
     throw new HostError(
@@ -147,11 +148,16 @@ async function attach(url: string, home: string | undefined): Promise<string> {
   });
   // Anything that is not a protocol-3 node (a web dev server, a legacy
   // server that serves its own app) is loaded as it is.
-  if (descriptor === undefined) return url;
+  if (descriptor === undefined) return { url };
   const app = await serveApp(home);
-  return link.token === undefined
-    ? `${app.origin}/`
-    : appPairingUrl(app.origin, link.origin, link.token);
+  const page =
+    link.token === undefined
+      ? `${app.origin}/`
+      : appPairingUrl(app.origin, link.origin, link.token);
+  // A node on this machine lets the shell's own client in with its access
+  // token; a remote one leaves every RPC with the page.
+  const token = findLocalNodeToken({ origin: link.origin, home, env: process.env });
+  return token === undefined ? { url: page } : { url: page, node: { origin: link.origin, token } };
 }
 
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
@@ -167,7 +173,7 @@ try {
   const launched =
     args.attach === undefined
       ? await standalone(args.baseDir)
-      : { url: await attach(args.attach, args.baseDir) };
+      : await attach(args.attach, args.baseDir);
   if (!stopping) emit({ type: "ready", ...launched });
 } catch (error) {
   if (!stopping) {

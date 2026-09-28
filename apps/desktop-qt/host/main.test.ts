@@ -183,8 +183,9 @@ function startHost(input: {
       HAL_C2_WEB_PORT: undefined,
       HAL_C2_HOME: undefined,
       HAL_C2_NODE_HOME: undefined,
-      // Never the user's own data directory.
+      // Never the user's own data or state directory.
       XDG_DATA_HOME: temporaryDirectory(),
+      XDG_STATE_HOME: temporaryDirectory(),
       HAL_C2_NODE_RELEASE: undefined,
       HAL_C2_WEB_DIST: undefined,
       ...input.env,
@@ -289,6 +290,25 @@ async function runningNode() {
     NodeReadline.createInterface({ input: child.stdout }).once("line", resolve),
   );
   return { origin: `http://127.0.0.1:${port}`, release };
+}
+
+/** The hal-c2-dev profile's node directories under temporary XDG data and state homes. */
+function devNodeDirs(xdg: { readonly data: string; readonly state: string }) {
+  const dirs = {
+    data: NodePath.join(xdg.data, "hal-c2-dev", "elixir"),
+    state: NodePath.join(xdg.state, "hal-c2-dev", "elixir"),
+  };
+  NodeFS.mkdirSync(dirs.data, { recursive: true });
+  NodeFS.mkdirSync(dirs.state, { recursive: true });
+  return dirs;
+}
+
+/** A runtime record as HalC2.RuntimeRecord writes it, for a process that is alive. */
+function writeRuntimeRecord(stateDir: string, origin: string): void {
+  NodeFS.writeFileSync(
+    NodePath.join(stateDir, "server-runtime.json"),
+    JSON.stringify({ origin, pid: process.pid, port: Number(new URL(origin).port) }),
+  );
 }
 
 describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own node", () => {
@@ -451,6 +471,52 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       expect(target).toEqual({ node: node.origin, token: "pairing-token" });
       expect(await exchange(target.node, target.token)).toBe(200);
       expect(readRecord(ownRelease)).toBeUndefined();
+      await host.quit();
+    });
+
+    it("An attached desktop's own client is given the token of a node on this machine", async () => {
+      const node = await runningNode();
+      const data = temporaryDirectory();
+      const state = temporaryDirectory();
+      // Where `mise run node` keeps its files: the hal-c2-dev profile's elixir level.
+      const nodeDirs = devNodeDirs({ data, state });
+      writeRuntimeRecord(nodeDirs.state, node.origin);
+      NodeFS.writeFileSync(NodePath.join(nodeDirs.data, "access-token"), "local-node-token\n");
+      const host = startHost({
+        args: [`--attach=${node.origin}/?token=pairing-token`],
+        env: {
+          XDG_DATA_HOME: data,
+          XDG_STATE_HOME: state,
+          HAL_C2_WEB_DIST: webBundle(),
+          HAL_C2_WEB_PORT: String(await freePort()),
+        },
+      });
+
+      expect((await readyMessage(host)).node).toEqual({
+        origin: node.origin,
+        token: "local-node-token",
+      });
+      await host.quit();
+    });
+
+    it("An attached desktop leaves a node it has no files for to the app", async () => {
+      const node = await runningNode();
+      const data = temporaryDirectory();
+      const state = temporaryDirectory();
+      const nodeDirs = devNodeDirs({ data, state });
+      writeRuntimeRecord(nodeDirs.state, `http://127.0.0.1:${await freePort()}`);
+      NodeFS.writeFileSync(NodePath.join(nodeDirs.data, "access-token"), "other-node-token\n");
+      const host = startHost({
+        args: [`--attach=${node.origin}/?token=pairing-token`],
+        env: {
+          XDG_DATA_HOME: data,
+          XDG_STATE_HOME: state,
+          HAL_C2_WEB_DIST: webBundle(),
+          HAL_C2_WEB_PORT: String(await freePort()),
+        },
+      });
+
+      expect((await readyMessage(host)).node).toBeUndefined();
       await host.quit();
     });
 
