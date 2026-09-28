@@ -1,8 +1,10 @@
 #pragma once
 
 #include <QDateTime>
+#include <QHash>
+#include <QJsonObject>
+#include <QList>
 #include <QObject>
-#include <QSet>
 #include <QVariant>
 
 #include <functional>
@@ -28,8 +30,16 @@ public:
   bool handle(const QString& action, const QVariant& payload);
 
 private:
+  struct Send {
+    QString environmentId;
+    QList<QJsonObject> commands;
+    QString prompt;
+    std::function<void(const QString&)> setText;
+  };
+
   bool interrupt();
   bool submit(const QVariantMap& payload);
+  void sendNext(const QString& target);
   void toast(const QString& title, const QString& description);
 
   ShellBridge* m_bridge;
@@ -37,6 +47,7 @@ private:
   ShellStore* m_store;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
   bool m_active = false;
-  // Threads with a send still in flight; each thread sends one at a time.
-  QSet<QString> m_sending;
+  // Each thread's sends, the one in flight first: a thread sends one at a
+  // time, in the order the user sent them.
+  QHash<QString, QList<Send>> m_queues;
 };

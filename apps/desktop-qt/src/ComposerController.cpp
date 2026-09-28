@@ -71,8 +71,6 @@ bool ComposerController::submit(const QVariantMap& payload) {
   if (composer.value(QStringLiteral("routeKind")).toString() != QLatin1String("server")) return false;
   const auto thread = m_store->thread(target);
   if (!thread) return false;
-  if (m_sending.contains(target)) return true;
-  m_sending.insert(target);
 
   const QString createdAt = sidebar::formatIso(m_now());
   const QString runtimeMode = nativeSend.value(QStringLiteral("runtimeMode")).toString();
@@ -122,31 +120,46 @@ bool ComposerController::submit(const QVariantMap& payload) {
   };
   setText(QString());
 
-  const QString environmentId = thread->environmentId;
+  // A send made while an earlier one is still in flight waits its turn.
+  QList<Send>& queue = m_queues[target];
+  queue.append({thread->environmentId, commands, prompt, setText});
+  if (queue.size() == 1) sendNext(target);
+  return true;
+}
+
+// Dispatches the thread's oldest send, command by command, then the next one.
+void ComposerController::sendNext(const QString& target) {
+  const Send send = m_queues.value(target).constFirst();
   auto next = std::make_shared<std::function<void(qsizetype)>>();
-  *next = [this, commands, environmentId, next, prompt, target, setText](qsizetype index) {
+  *next = [this, send, next, target](qsizetype index) {
     m_client->dispatchCommand(
-        environmentId, commands.at(index),
-        [this, commands, index, next, prompt, target, setText](const QJsonValue&, const std::optional<QString>& error) {
-          if (!error && index + 1 < commands.size()) {
+        send.environmentId, send.commands.at(index),
+        [this, send, index, next, target](const QJsonValue&, const std::optional<QString>& error) {
+          if (!error && index + 1 < send.commands.size()) {
             (*next)(index + 1);
             return;
           }
-          m_sending.remove(target);
           // Break the self-reference once the chain is done.
           const auto done = std::move(*next);
-          if (!error) return;
-          toast(QStringLiteral("Failed to send message"), *error);
-          const QVariantMap now = m_bridge->state()->value(QStringLiteral("composer")).toMap();
-          // Only into an untouched composer: newer typing is the user's.
-          if (now.value(QStringLiteral("target")).toString() == target &&
-              now.value(QStringLiteral("text")).toString().isEmpty()) {
-            setText(prompt);
+          if (error) {
+            toast(QStringLiteral("Failed to send message"), *error);
+            const QVariantMap now = m_bridge->state()->value(QStringLiteral("composer")).toMap();
+            // Only into an untouched composer: newer typing is the user's.
+            if (now.value(QStringLiteral("target")).toString() == target &&
+                now.value(QStringLiteral("text")).toString().isEmpty()) {
+              send.setText(send.prompt);
+            }
+          }
+          QList<Send>& queue = m_queues[target];
+          queue.removeFirst();
+          if (queue.isEmpty()) {
+            m_queues.remove(target);
+          } else {
+            sendNext(target);
           }
         });
   };
   (*next)(0);
-  return true;
 }
 
 void ComposerController::toast(const QString& title, const QString& description) {

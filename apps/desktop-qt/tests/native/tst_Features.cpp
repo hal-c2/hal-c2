@@ -789,6 +789,22 @@ void defineSteps() {
       world.checkedCommands.insert(row - 1);
     }
   });
+  step(QStringLiteral("the node receives these messages in order:"), [](World& world, const Captures&, const Table& table) {
+    const auto texts = [&] {
+      QStringList texts;
+      for (const QJsonObject& command : world.node.commands) {
+        if (command.value(QLatin1String("type")).toString() == QLatin1String("message.dispatch")) {
+          texts.append(command.value(QLatin1String("text")).toString());
+        }
+      }
+      return texts;
+    };
+    QStringList wanted;
+    for (qsizetype row = 1; row < table.size(); ++row) wanted.append(table.at(row).value(0));
+    world.waitFor([&] { return texts().size() >= wanted.size(); }, QStringLiteral("%1 messages").arg(wanted.size()));
+    world.sync();
+    expect(texts() == wanted, QStringLiteral("the node has the messages %1").arg(texts().join(QStringLiteral(", "))));
+  });
   step(QStringLiteral("the node receives no commands"), [](World& world, const Captures&, const Table&) {
     world.sync();
     expect(world.node.commands.isEmpty(), QStringLiteral("the node has %1").arg(world.describeCommands()));

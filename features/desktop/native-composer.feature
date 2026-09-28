@@ -106,6 +106,19 @@ Feature: The desktop shell sends plain turns to its node
       Then the page is not asked to set the composer text for "env-a:t1" to "Fix the tests"
 
     @desktop
+    Scenario: A second send on a thread goes out after the first
+      Given the node holds its answers
+      And the composer shows "env-a:t1" with the plain prompt "First"
+      And the user sends "First"
+      And the composer shows "env-a:t1" with the plain prompt "Second"
+      When the user sends "Second"
+      And the node answers
+      Then the node receives these messages in order:
+        | text   |
+        | First  |
+        | Second |
+
+    @desktop
     Scenario: A send on one thread does not wait for another thread's send
       Given the node holds its answers
       And the composer shows "env-a:t1" with the plain prompt "First"
