@@ -99,6 +99,9 @@ public:
   QList<QJsonObject> subscriptions;
   QList<QJsonObject> commands;
   QHash<QString, QString> refusals;
+  // What an accepted command does to the node's rows (the real node's
+  // projection), run before it is answered.
+  QList<std::function<void(const QJsonObject& command)>> effects;
   QJsonObject capabilities{
       {QStringLiteral("threadSettlement"), true},
       {QStringLiteral("threadSnooze"), true},
@@ -120,7 +123,11 @@ public:
   void sendLinks();
   // Another node joins this one's cluster, announced as the shell announces it on nodeup.
   void join(const QString& peer, const QString& peerEnvironment);
+  // The cluster member serving each environment that joined, by environment.
+  QHash<QString, QString> peers;
   void sendRow(const QString& id, const QJsonObject& row, const QString& kind = QStringLiteral("thread"));
+  // Rows of the cluster member `node` as `shell.rows`: each [id, kind, fields].
+  void sendRows(const QString& node, const QJsonArray& rows);
 
   void drop() {
     if (m_socket) m_socket->close();

@@ -835,6 +835,16 @@ export const ShellAction = Schema.Union([
     y: Schema.Number,
   }),
   Schema.Struct({ type: Schema.Literal("workspace.rename"), title: Schema.String }),
+  /** The thread list asks the header to start editing that thread's title. */
+  Schema.Struct({ type: Schema.Literal("workspace.rename.begin"), threadKey: Schema.String }),
+  /** A native shell changed a draft's checkout; the page keeps its draft in step. */
+  Schema.Struct({
+    type: Schema.Literal("workspace.checkout.follow"),
+    draftId: Schema.String,
+    branch: Schema.NullOr(Schema.String),
+    worktreePath: Schema.NullOr(Schema.String),
+    envMode: ShellWorkspaceEnvMode,
+  }),
   Schema.Struct({ type: Schema.Literal("git.quick") }),
   Schema.Struct({
     type: Schema.Literal("git.menu"),

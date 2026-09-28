@@ -10,6 +10,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (branch line)
 #   packages/contracts/src/shell.ts (workspace.branch.search, workspace.branch.select, workspace.branch.create)
 #   apps/tui/src/features.backlog.test.ts (branch-worktree-management)
+#   apps/desktop-qt/src/native/WorkspaceController.cpp (the ref list, switching and creating)
 
 Feature: Picking, switching and creating branches
   The user moves a thread's checkout between refs, or makes a new one, from the thread
