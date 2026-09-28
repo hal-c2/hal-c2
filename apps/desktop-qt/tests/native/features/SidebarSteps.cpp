@@ -4,6 +4,7 @@
 #include <QVariantList>
 
 #include "Harness.h"
+#include "Turn.h"
 #include "World.h"
 
 namespace {
@@ -55,7 +56,11 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("contextMenu.select"),
                             QVariantMap{{QStringLiteral("requestId"), at(menu, QStringLiteral("requestId"))}, {QStringLiteral("id"), id}});
   };
-  step(QStringLiteral("the user picks %1").arg(q), [choose](World& world, const Captures& c, const Table&) { choose(world, c[0]); });
+  step(QStringLiteral("the user picks %1").arg(q), [choose](World& world, const Captures& c, const Table&) {
+    // With no menu open, the pick is an answer to the agent's question.
+    if (world.state(QStringLiteral("contextMenu")).typeId() != QMetaType::QVariantMap) return pickAnswer(world, c[0]);
+    choose(world, c[0]);
+  });
   step(QStringLiteral("the user dismisses the menu"), [choose](World& world, const Captures&, const Table&) {
     choose(world, QVariant::fromValue(nullptr));
   });

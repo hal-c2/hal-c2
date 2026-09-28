@@ -75,7 +75,7 @@ Feature: Drafting and sending a message
     When the user switches to thread B before the draft is saved
     Then thread B's draft does not contain "for thread A"
 
-  @backlog @desktop @tui @mobile
+  @desktop @tui @mobile @backlog-tui @backlog-mobile
   Scenario: Each thread keeps its own draft
     Given the user has typed "draft for A" in thread A
     When the user switches to thread B and back to thread A
@@ -96,7 +96,7 @@ Feature: Drafting and sending a message
     Then the message is not sent
     And the user is told the prompt is 10 characters over the limit and to shorten or split it
 
-  @backlog @desktop @tui @mobile
+  @desktop @tui @mobile @backlog-tui @backlog-mobile
   Scenario: Sending while disconnected keeps the draft
     Given the environment is disconnected
     And the user has typed "are you there"
@@ -104,7 +104,7 @@ Feature: Drafting and sending a message
     Then the user is told the message was not sent because they are not connected
     And the draft still reads "are you there"
 
-  @backlog @desktop @tui @mobile
+  @desktop @tui @mobile @backlog-tui @backlog-mobile
   Scenario: A send the node rejects restores the draft
     Given the user has typed "do the thing"
     When the user sends it and the node rejects the message
