@@ -924,6 +924,14 @@ void defineSteps() {
     world.waitFor([&] { return textSet(world, c[0], c[1]); },
                   [&] { return QStringLiteral("the composer text; the page got %1").arg(world.describePage()); });
   });
+  step(QStringLiteral("the page is asked to set the composer text for %1 to the prompts:").arg(q),
+       [textSet](World& world, const Captures& c, const Table& table) {
+         QStringList prompts;
+         for (qsizetype row = 1; row < table.size(); ++row) prompts.append(table.at(row).value(0));
+         const QString text = prompts.join(QStringLiteral("\n\n"));
+         world.waitFor([&] { return textSet(world, c[0], text); },
+                       [&] { return QStringLiteral("the composer text; the page got %1").arg(world.describePage()); });
+       });
   step(QStringLiteral("the page is not asked to set the composer text for %1 to %1").arg(q),
        [textSet](World& world, const Captures& c, const Table&) {
          world.sync();

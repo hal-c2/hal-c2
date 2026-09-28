@@ -119,6 +119,23 @@ Feature: The desktop shell sends plain turns to its node
         | Second |
 
     @desktop
+    Scenario: A refused send keeps the sends queued behind it
+      Given the node holds its answers
+      And the node refuses "message.dispatch" with "Provider unavailable"
+      And the composer shows "env-a:t1" with the plain prompt "First"
+      And the user sends "First"
+      And the composer shows "env-a:t1" with the plain prompt "Second"
+      When the user sends "Second"
+      And the node answers
+      Then the node receives these messages in order:
+        | text  |
+        | First |
+      And the page is asked to set the composer text for "env-a:t1" to the prompts:
+        | prompt |
+        | First  |
+        | Second |
+
+    @desktop
     Scenario: A send on one thread does not wait for another thread's send
       Given the node holds its answers
       And the composer shows "env-a:t1" with the plain prompt "First"

@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQmlPropertyMap>
+#include <QStringList>
 #include <QUuid>
 
 #include <memory>
@@ -143,12 +144,19 @@ void ComposerController::sendNext(const QString& target) {
           const auto done = std::move(*next);
           if (error) {
             toast(QStringLiteral("Failed to send message"), *error);
+            // The sends queued behind it would reach the node out of order, so
+            // they stop too and come back with it.
+            const QList<Send> unsent = m_queues.take(target);
+            QStringList prompts;
+            for (const Send& queued : unsent) prompts.append(queued.prompt);
             const QVariantMap now = m_bridge->state()->value(QStringLiteral("composer")).toMap();
-            // Only into an untouched composer: newer typing is the user's.
+            // Only into an untouched composer: newer typing is the user's. The
+            // last send's edit, since the brick ignores echoes older than it.
             if (now.value(QStringLiteral("target")).toString() == target &&
                 now.value(QStringLiteral("text")).toString().isEmpty()) {
-              send.setText(send.prompt);
+              unsent.constLast().setText(prompts.join(QStringLiteral("\n\n")));
             }
+            return;
           }
           QList<Send>& queue = m_queues[target];
           queue.removeFirst();
