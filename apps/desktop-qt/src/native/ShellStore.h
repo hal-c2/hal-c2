@@ -7,15 +7,16 @@
 #include <QObject>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 
 #include "SidebarModel.h"
 
 class NodeClient;
 
-// The node's `shell` shape folded into thread rows: every node of the cluster,
-// its environment descriptor, and its live threads, plus the environments the
-// node reaches through links (HalC2.Links). Projects stay with the page, which
-// groups them by its own settings.
+// The node's `shell` shape folded into rows: every node of the cluster, its
+// environment descriptor, its live projects and threads, plus the environments
+// the node reaches through links (HalC2.Links). Grouping projects stays with
+// the page, which groups them by its own settings.
 class ShellStore : public QObject {
   Q_OBJECT
 
@@ -24,6 +25,15 @@ public:
 
   QList<sidebar::Thread> threads() const;
   std::optional<sidebar::Thread> thread(const QString& key) const;
+  // The raw rows, empty when the cluster has none by that key.
+  QJsonObject threadRow(const QString& key) const;
+  QJsonObject projectRow(const QString& environmentId, const QString& projectId) const;
+  QList<QJsonObject> projectRows(const QString& environmentId) const;
+  // The environments the cluster serves, and each one's descriptor.
+  QStringList environments() const;
+  QJsonObject environment(const QString& environmentId) const;
+  // The node serving `environmentId`, empty when none does.
+  QString nodeServing(const QString& environmentId) const;
   sidebar::Capabilities capabilities(const QString& environmentId) const;
   // Whether a node of the cluster serves this environment.
   bool servesEnvironment(const QString& environmentId) const;
@@ -44,8 +54,10 @@ private:
   struct Node {
     QString environmentId;
     QJsonObject capabilities;
+    QJsonObject environment;
     bool online = false;
     QHash<QString, QJsonObject> threads;
+    QHash<QString, QJsonObject> projects;
   };
 
   QHash<QString, Node> m_nodes;
