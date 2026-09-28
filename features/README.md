@@ -115,6 +115,6 @@ to fail there.
 Node globs are required; `features:node:all` runs the suite one top-level directory at a time,
 because one run of everything is slow. `features:tui:all` runs every file with a `@tui` or
 `@shared` scenario. On the desktop, the native tests' `tst_Features` runs the `@desktop` scenarios
-of `desktop/native-*.feature` against a fake node (`HAL_C2_FEATURES="<globs>"` picks other files);
+of `desktop/native-*.feature` and the desktop-passing `@shared` timeline scenarios against a fake node (`HAL_C2_FEATURES="<globs>"` picks other files);
 `apps/desktop-qt/tests/tst_Scenarios.qml` still mirrors the `qt-scenarios.feature` files by hand. `mise run features` runs all three and reports
 each. Step definitions live in `apps/server-ex/test/steps/` and `apps/tui/features/`.

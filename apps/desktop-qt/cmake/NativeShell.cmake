@@ -4,6 +4,8 @@
 # publish through. A new file there is picked up on the next build, no list to
 # edit.
 #
+# themes.json, generated from packages/shared, is compiled in as a resource.
+#
 # OBJECT, not STATIC: controllers register themselves from static
 # initialisers (NativeControllerRegistrar), which an archive would drop.
 #
@@ -17,4 +19,7 @@ function(hal_c2_add_native_library webchannel_script_url)
   target_include_directories(hal_c2_native PUBLIC "${_hal_c2_src}" "${_hal_c2_src}/native")
   target_compile_definitions(hal_c2_native PRIVATE HAL_C2_WEBCHANNEL_SCRIPT_URL="${webchannel_script_url}")
   target_link_libraries(hal_c2_native PUBLIC Qt6::Core Qt6::Gui Qt6::Qml Qt6::Network Qt6::WebSockets)
+  # The built-in palettes (scripts/gen-themes.mjs), as :/hal-c2/themes.json.
+  qt_add_resources(hal_c2_native hal_c2_native_themes PREFIX "/hal-c2" BASE "${_hal_c2_src}/native"
+                   FILES "${_hal_c2_src}/native/themes.json")
 endfunction()

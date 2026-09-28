@@ -21,11 +21,19 @@ Feature: Tool calls and file changes
     And the user is looking at a thread in "shop"
 
   # TUI: implemented in apps/tui/src/timeline.ts
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: Consecutive tool calls in a running turn show only the latest
     Given the agent has run five tool calls in a row in the running turn
     Then the latest tool call is shown
     And the other four are behind "+4 previous tool calls"
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: The previous tool calls can be shown and hidden again
+    Given the agent has run five tool calls in a row in the running turn
+    When the user shows the previous tool calls
+    Then all five tool calls are shown
+    When the user hides them again
+    Then the other four are behind "+4 previous tool calls"
 
   @shared @backlog
   Scenario: A group of tool calls reads as a summary of what the agent did
@@ -55,7 +63,7 @@ Feature: Tool calls and file changes
     Then the calls collapse back into the summary
 
   # TUI: implemented in apps/tui/src/worklog.ts
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: A tool call shows how it ended
     Given the agent's tool call <ended>
     Then the call is marked "<status>"
@@ -68,7 +76,7 @@ Feature: Tool calls and file changes
       | was interrupted          | Stopped  |
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: Files changed by a turn are listed under its reply
     Given the agent changed "src/cart.ts" and "src/checkout.ts" in one turn
     When the turn completes

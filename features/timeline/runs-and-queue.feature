@@ -78,7 +78,7 @@ Feature: Runs, interruptions and the queue
     Then "A" joins the running turn
     And the queue is empty
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: A sent message says how it reached the agent
     When the user's message was <how>
     Then the message is marked "<marker>"

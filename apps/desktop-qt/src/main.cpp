@@ -17,6 +17,7 @@
 #include "NativeNotifications.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
+#include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
 #include "StoragePaths.h"
@@ -170,16 +171,17 @@ int main(int argc, char* argv[]) {
   native.registerQmlSingletons();
   // The window reopens where the user left it.
   native.controller<NavigationController>()->setStorePath(QDir(storage.state).filePath(QStringLiteral("shell-route.json")));
+  native.controller<SettingsController>()->setDevicePath(QDir(configDir).filePath(QStringLiteral("preferences.json")));
   ThemeStore theme(configDir);
-  ShellRuntime runtime({configDir, qmlSourceDir}, &bridge, &theme);
-  // The page publishes its resolved theme; without a theme.json it is the
-  // shell's palette.
+  // ThemeController's resolved theme is the palette under theme.json.
+  theme.applyBaseTheme(bridge.state()->value(QStringLiteral("theme")));
   QObject::connect(&bridge, &ShellBridge::stateEntryChanged, &theme,
                    [&theme](const QString& key, const QVariant& value) {
                      if (key == QStringLiteral("theme")) {
-                       theme.applyPageTheme(value);
+                       theme.applyBaseTheme(value);
                      }
                    });
+  ShellRuntime runtime({configDir, qmlSourceDir}, &bridge, &theme);
 
   BackendProcess::Options backendOptions;
   backendOptions.nodeExecutable = parser.value(nodeOption);

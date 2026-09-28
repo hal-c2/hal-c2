@@ -7,6 +7,8 @@ defmodule HalC2.Web.Protocol do
 
     * `{"type": "shell"}`: every node's environment and every project and thread
       summary on it
+    * `{"type": "shell", "links": true}`: the same, with each link also carrying its
+      environment's nodes and rows (`HalC2.Links.Rows`), then their changes
     * `{"type": "stream", "node": n, "stream": id}`: one project or thread
     * `{"type": "config", "node": n}` or `{"type": "config", "environment": id}`:
       that node's `ServerConfig` and name, then its settings and providers as they change;
@@ -73,6 +75,13 @@ defmodule HalC2.Web.Protocol do
       {"t": "shell.environment", "id", "node", "environment"}
       {"t": "shell.rows", "id", "node", "rows": [[id, kind, row]]}
       {"t": "shell.node", "id", "node", "online"}
+      {"t": "shell.linkRows", "id", "link", "node", "rows": [[id, kind, row]]}
+      {"t": "shell.linkEnvironment", "id", "link", "node", "environment"}
+      {"t": "shell.linkNode", "id", "link", "node", "online"}
+        (with "links": true: the shell.* changes of the environment `link` names, whose
+        nodes are its own; in the snapshot each link has "nodes" and "rows" as the shell
+        does; a node that appears is offline until shell.linkNode; a link that leaves
+        shell.links takes its nodes and rows with it)
       {"t": "snapshot", "id", "offset", "at", "part", "rows": [[kind, id, entity]], "done"}
       {"t": "events", "id", "offset", "events": [[seq, kind, id, patch, at]]}
       {"t": "live", "id", "offset"}     (caught up; later events are live)
@@ -157,6 +166,7 @@ defmodule HalC2.Web.Protocol do
     _ -> {:error, "invalid json"}
   end
 
+  defp decode_shape(%{"type" => "shell", "links" => true}, _nodes), do: {:ok, {:shell, :links}}
   defp decode_shape(%{"type" => "shell"}, _nodes), do: {:ok, :shell}
 
   defp decode_shape(%{"type" => "stream", "node" => node, "stream" => id}, nodes)

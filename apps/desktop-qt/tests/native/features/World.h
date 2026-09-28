@@ -15,6 +15,7 @@
 #include "FakeNode.h"
 #include "NativeShell.h"
 #include "ShellBridge.h"
+#include "ThemeStore.h"
 
 struct PageAction {
   QString type;
@@ -43,6 +44,10 @@ public:
 
   ShellBridge& bridge() { return *m_bridge; }
   NativeShell& native() { return *m_native; }
+  // The shell's config directory (theme.json, preferences.json), fresh per
+  // scenario and kept across restarts, and the palette main.cpp builds over it.
+  QString configDir() const { return m_home.filePath(QStringLiteral("config")); }
+  ThemeStore& theme() { return *m_theme; }
   QVariant state(const QString& key) const { return m_bridge->state()->value(key); }
   // The desktop quits and starts again: a new shell and page, the same files.
   void restart();
@@ -80,9 +85,10 @@ private:
   void start();
 
   QDateTime m_now;
-  // Where the shell keeps its files (the last route), across restarts.
+  // Where the shell keeps its files (the last route, config), across restarts.
   QTemporaryDir m_home;
   // Declared in teardown order: the shell goes before the bridge it intercepts.
   std::unique_ptr<ShellBridge> m_bridge;
   std::unique_ptr<NativeShell> m_native;
+  std::unique_ptr<ThemeStore> m_theme;
 };
