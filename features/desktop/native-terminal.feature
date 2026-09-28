@@ -140,7 +140,7 @@ Feature: The desktop shell runs the terminal drawer against its node
         | term-6   |
       When the user toggles the terminal drawer
       And the user opens a new terminal
-      Then the page shows an "error" toast "At most 6 terminals per thread."
+      Then the user sees an "error" toast "At most 6 terminals per thread."
       And the terminal drawer shows the tabs "Terminal 1, Terminal 2, Terminal 3, Terminal 4, Terminal 5, Terminal 6"
 
     @desktop

@@ -6,9 +6,11 @@
 
 #include <algorithm>
 
+#include "NativeShell.h"
 #include "NodeClient.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "ToastController.h"
 
 namespace {
 
@@ -610,10 +612,5 @@ TerminalSession* TerminalController::session(const QString& terminalId) const {
 }
 
 void TerminalController::toast(const QString& title, const QString& description) {
-  QVariantMap toast{
-      {QStringLiteral("toastType"), QStringLiteral("error")},
-      {QStringLiteral("title"), title},
-  };
-  if (!description.isEmpty()) toast.insert(QStringLiteral("description"), description);
-  m_bridge->sendToPage(QStringLiteral("toast.show"), toast);
+  NativeShell::of(this)->controller<ToastController>()->show(QStringLiteral("error"), title, description);
 }

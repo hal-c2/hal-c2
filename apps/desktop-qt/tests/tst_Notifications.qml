@@ -26,6 +26,44 @@ Item {
             Theme.radius = 8;
         }
 
+        function toast(id, title, actions) {
+            return {
+                id: id,
+                type: "info",
+                title: title,
+                description: null,
+                updateKey: 0,
+                actions: actions
+            };
+        }
+
+        function test_shellToastsStackAbovePageToasts() {
+            Shell.state = {
+                toasts: {
+                    items: [toast("native:1", "Snoozed until 6 PM", [
+                            {
+                                id: "primary",
+                                label: "Undo",
+                                primary: true
+                            }
+                        ])]
+                },
+                notifications: {
+                    items: [toast("page-1", "Pushing", [])]
+                }
+            };
+            const host = createTemporaryObject(notificationsComponent, root);
+            compare(host.items.map(item => item.id), ["native:1", "page-1"]);
+
+            const undo = findChild(host, "notificationAction-native:1-primary");
+            verify(undo !== null);
+            mouseClick(undo);
+            const dismiss = findChild(host, "notificationDismiss-page-1");
+            verify(dismiss !== null);
+            mouseClick(dismiss);
+            compare(Shell.dispatchedActions.map(entry => entry.action + " " + entry.payload.id), ["notification.action native:1", "notification.dismiss page-1"]);
+        }
+
         function test_accentClearsRoundedCorners_data() {
             return [
                 {

@@ -8,6 +8,7 @@
 
 #include "ComposerController.h"
 #include "Harness.h"
+#include "ToastController.h"
 
 World::World() {
   m_native.client()->setRetryDelays({20});
@@ -18,9 +19,16 @@ World::World() {
 }
 
 void World::setTime(const QString& iso) {
-  const QDateTime now = QDateTime::fromString(iso, Qt::ISODate).toLocalTime();
+  setTime(QDateTime::fromString(iso, Qt::ISODate));
+}
+
+void World::setTime(const QDateTime& time) {
+  const QDateTime now = time.toLocalTime();
+  m_now = now;
   m_native.sidebar()->setClock([now] { return now; });
   m_native.controller<ComposerController>()->setClock([now] { return now.toUTC(); });
+  m_native.controller<ToastController>()->setClock([now] { return now.toUTC(); });
+  m_native.controller<ToastController>()->expire();
 }
 
 void World::publishWorkspace(const QString& threadKey, const QJsonObject& project, const QString& worktreePath,

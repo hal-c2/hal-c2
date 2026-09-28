@@ -8,9 +8,11 @@
 
 #include <memory>
 
+#include "NativeShell.h"
 #include "NodeClient.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "ToastController.h"
 #include "SidebarModel.h"
 
 namespace {
@@ -175,11 +177,5 @@ void ComposerController::sendNext(const QString& target) {
 }
 
 void ComposerController::toast(const QString& title, const QString& description) {
-  m_bridge->sendToPage(QStringLiteral("toast.show"),
-                       QVariantMap{
-                           {QStringLiteral("toastType"), QStringLiteral("error")},
-                           {QStringLiteral("title"), title},
-                           {QStringLiteral("description"),
-                            description.isEmpty() ? QStringLiteral("An error occurred.") : description},
-                       });
+  NativeShell::of(this)->controller<ToastController>()->error(title, description);
 }

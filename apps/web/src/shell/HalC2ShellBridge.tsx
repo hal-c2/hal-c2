@@ -31,7 +31,6 @@ import {
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { requestShellRename } from "./shellRenameRequest";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { useThreadShells } from "../state/entities";
@@ -436,30 +435,6 @@ export function HalC2ShellBridge() {
             : { sidebar: action.sidebar, composer: action.composer },
         );
         return;
-      case "toast.show": {
-        const button = action.action;
-        toastManager.add(
-          stackedThreadToast({
-            type: action.toastType,
-            title: action.title,
-            ...(action.description !== undefined ? { description: action.description } : {}),
-            ...(action.timeout !== undefined ? { timeout: action.timeout } : {}),
-            ...(button !== undefined
-              ? {
-                  actionProps: {
-                    children: button.label,
-                    onClick: () =>
-                      void window.halC2Shell?.dispatch(
-                        button.dispatch.type,
-                        button.dispatch.payload,
-                      ),
-                  },
-                }
-              : {}),
-          }),
-        );
-        return;
-      }
     }
   });
   // Declared after the action subscription so the answer finds it: a page

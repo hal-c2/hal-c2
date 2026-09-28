@@ -767,7 +767,10 @@ as `notifications` and runs a toast's button or dismissal on
 `notification.action {id, actionId}` / `notification.dismiss {id}` — the
 same `onClick`/`onClose` the HTML buttons call. Toasts with React-element
 bodies or anchored positioning stay in the page. The `Notifications` brick
-renders the rest.
+renders the rest, below the shell's own `toasts`: `ToastController` is what
+native controllers call (`show`, `error`), with its own timing and actions,
+and its ids start with `native:` so dismiss and action clicks stop there
+instead of reaching the page.
 
 ### `contextMenu`
 

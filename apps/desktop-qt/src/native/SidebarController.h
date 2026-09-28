@@ -15,12 +15,12 @@
 class NodeClient;
 class ShellBridge;
 class ShellStore;
+class ToastController;
 
 // Owns the `sidebar` key once the shell has its own node connection: rows
 // come from ShellStore, project groups and drafts from the page's
 // `sidebarInput`, and the row actions (settle, snooze, wake, mark unread,
-// dismiss the woke pill) go straight to the node. Navigation and toasts
-// still render in the page, so they travel back to it as actions.
+// dismiss the woke pill) go straight to the node.
 class SidebarController : public QObject {
   Q_OBJECT
 
@@ -51,8 +51,7 @@ private:
             std::function<void()> onSuccess = {});
   void openSnoozeMenu(const QString& key, double x, double y);
   void selectSnooze(const QString& id);
-  void toast(const QString& type, const QString& title, const QString& description = {},
-             const QVariantMap& extra = {});
+  ToastController* toasts() const;
   std::optional<QString> logicalProjectKey(const sidebar::Thread& thread) const;
 
   ShellBridge* m_bridge;

@@ -823,20 +823,6 @@ export const ShellAction = Schema.Union([
     sidebar: Schema.Boolean,
     composer: Schema.Boolean,
   }),
-  /** Shell → page: show a toast; its action button dispatches a shell action back. */
-  Schema.Struct({
-    type: Schema.Literal("toast.show"),
-    toastType: Schema.Literals(["error", "success", "info", "warning"]),
-    title: Schema.String,
-    description: Schema.optional(Schema.String),
-    timeout: Schema.optional(Schema.Number),
-    action: Schema.optional(
-      Schema.Struct({
-        label: Schema.String,
-        dispatch: Schema.Struct({ type: Schema.String, payload: Schema.Unknown }),
-      }),
-    ),
-  }),
 ]);
 export type ShellAction = typeof ShellAction.Type;
 

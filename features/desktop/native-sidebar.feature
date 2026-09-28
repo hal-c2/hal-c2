@@ -1,8 +1,8 @@
 # Sources:
-#   apps/desktop-qt/src/SidebarController.cpp (row actions, scope, parking, snooze menu, toasts)
-#   apps/desktop-qt/src/SidebarModel.cpp (the port of the page's sidebar rules)
+#   apps/desktop-qt/src/native/SidebarController.cpp (row actions, scope, parking, snooze menu, toasts)
+#   apps/desktop-qt/src/native/SidebarModel.cpp (the port of the page's sidebar rules)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
-#   apps/web/src/shell/HalC2ShellBridge.tsx (publishes sidebarInput, handles toast.show)
+#   apps/web/src/shell/HalC2ShellBridge.tsx (publishes sidebarInput)
 #   apps/web/src/threadParking.ts (the navigation this ports)
 #   Shared domain: threads/settle.feature, threads/snooze.feature and threads/sidebar-list.feature
 #   own what these actions mean; this file owns that the Qt shell sends them itself.
@@ -10,7 +10,7 @@
 Feature: The desktop shell runs the sidebar against its node
   Once connected, the Qt shell builds the sidebar from the node's threads and the page's project
   groups, and sends the row actions (settle, snooze, wake, mark unread) to the node itself.
-  Navigation and toasts still render in the page, so the shell asks the page for them.
+  Toasts are the shell's own; navigation still renders in the page, so the shell asks the page for it.
 
   Background:
     Given the time is "2026-09-23T10:00:00Z"
@@ -97,7 +97,7 @@ Feature: The desktop shell runs the sidebar against its node
     Scenario: A refused action shows why in a toast
       Given the node refuses "thread.unsettle" with "Thread is busy"
       When the user un-settles "env-a:t1"
-      Then the page shows an "error" toast "Failed to un-settle thread" saying "Thread is busy"
+      Then the user sees an "error" toast "Failed to un-settle thread" saying "Thread is busy"
 
     @desktop
     Scenario: A thread the node's cluster does not know stays with the page
@@ -140,7 +140,7 @@ Feature: The desktop shell runs the sidebar against its node
       Given the node refuses "thread.settle" with "No"
       And the page shows "env-a:t1"
       When the user settles "env-a:t1"
-      Then the page shows an "error" toast "Failed to settle thread" saying "No"
+      Then the user sees an "error" toast "Failed to settle thread" saying "No"
       And the page is not asked to open anything
 
   Rule: Snoozing picks a time from the shell's menu
@@ -165,12 +165,17 @@ Feature: The desktop shell runs the sidebar against its node
       Then the menu closes
       And the node receives a "thread.snooze" command for "t1"
       And the command's "snoozedUntil" is "2026-09-23T11:00:00.000Z"
-      And the page shows a "success" toast "Snoozed until 11:00" with an "Undo" action that dispatches "thread.unsnooze" for "env-a:t1"
+      And the user sees a "success" toast "Snoozed until 11:00" offering "Undo"
 
     @desktop
     Scenario: Undo from the toast wakes the thread
-      When the user dispatches "thread.unsnooze" for "env-a:t1"
+      Given the page's timestamps are "24-hour"
+      And the user opens the snooze menu for "env-a:t1" at 40, 120
+      And the user picks "snooze:hour"
+      And the node receives a "thread.snooze" command for "t1"
+      When the user chooses "Undo" on the toast "Snoozed until 11:00"
       Then the node receives a "thread.unsnooze" command for "t1"
+      And the toast "Snoozed until 11:00" is gone
 
     @desktop
     Scenario: Dismissing the menu snoozes nothing

@@ -1,8 +1,10 @@
 #include "SidebarController.h"
 
+#include "NativeShell.h"
 #include "NodeClient.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "ToastController.h"
 
 namespace {
 
@@ -145,8 +147,7 @@ void SidebarController::command(const QString& environmentId, QJsonObject comman
         if (!error) {
           if (onSuccess) onSuccess();
         } else if (!failureTitle.isEmpty()) {
-          toast(QStringLiteral("error"), failureTitle,
-                error->isEmpty() ? QStringLiteral("An error occurred.") : *error);
+          toasts()->error(failureTitle, *error);
         }
       });
 }
@@ -190,8 +191,7 @@ void SidebarController::park(const QString& key, QJsonObject parkCommand, const 
           const QJsonValue&, const std::optional<QString>& error) {
         m_pending.remove(key);
         if (error) {
-          toast(QStringLiteral("error"), failureTitle,
-                error->isEmpty() ? QStringLiteral("An error occurred.") : *error);
+          toasts()->error(failureTitle, *error);
           return;
         }
         // A navigation made while the command was pending wins over the plan.
@@ -241,29 +241,16 @@ void SidebarController::selectSnooze(const QString& id) {
           {QStringLiteral("snoozedUntil"), snoozedUntil}},
          QStringLiteral("Failed to snooze thread"), [this, key, snoozedUntil] {
            const QString when = sidebar::wakeDescription(snoozedUntil, m_now(), m_input.timestampFormat, m_locale);
-           toast(QStringLiteral("success"), QStringLiteral("Snoozed until ") + when, QString(),
-                 {
-                     {QStringLiteral("timeout"), 5000},
-                     {QStringLiteral("action"),
-                      QVariantMap{
-                          {QStringLiteral("label"), QStringLiteral("Undo")},
-                          {QStringLiteral("dispatch"),
-                           QVariantMap{
-                               {QStringLiteral("type"), QStringLiteral("thread.unsnooze")},
-                               {QStringLiteral("payload"), QVariantMap{{QStringLiteral("key"), key}}},
-                           }},
-                      }},
-                 });
+           toasts()->show(QStringLiteral("success"), QStringLiteral("Snoozed until ") + when, QString(),
+                          ToastController::Action{QStringLiteral("Undo"), [this, key] {
+                                                    m_bridge->dispatch(QStringLiteral("thread.unsnooze"),
+                                                                       QVariantMap{{QStringLiteral("key"), key}});
+                                                  }});
          });
     return;
   }
 }
 
-void SidebarController::toast(const QString& type, const QString& title, const QString& description,
-                              const QVariantMap& extra) {
-  QVariantMap payload = extra;
-  payload.insert(QStringLiteral("toastType"), type);
-  payload.insert(QStringLiteral("title"), title);
-  if (!description.isEmpty()) payload.insert(QStringLiteral("description"), description);
-  m_bridge->sendToPage(QStringLiteral("toast.show"), payload);
+ToastController* SidebarController::toasts() const {
+  return NativeShell::of(this)->controller<ToastController>();
 }

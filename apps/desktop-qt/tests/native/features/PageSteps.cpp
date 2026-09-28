@@ -1,5 +1,5 @@
 // The legacy page: what it publishes to the shell (grouping, the route, the
-// workspace) and what the shell asks of it (navigation, toasts).
+// workspace) and what the shell asks of it (navigation).
 
 #include <QJsonObject>
 #include <QVariantList>
@@ -77,32 +77,6 @@ const Steps steps([] {
     world.sync();
     expect(!world.actionsOf(c[0]).isEmpty(), QStringLiteral("the page got %1").arg(world.describePage()));
   });
-  step(QStringLiteral("the page shows an? %1 toast %1 saying %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] {
-      for (const PageAction& toast : world.actionsOf(QStringLiteral("toast.show"))) {
-        if (toast.payload.value(QStringLiteral("toastType")) == c[0] && toast.payload.value(QStringLiteral("title")) == c[1] &&
-            toast.payload.value(QStringLiteral("description")) == c[2]) {
-          return true;
-        }
-      }
-      return false;
-    }, [&] { return QStringLiteral("the toast; the page got %1").arg(world.describePage()); });
-  });
-  step(QStringLiteral("the page shows an? %1 toast %1 with an %1 action that dispatches %1 for %1").arg(q),
-       [](World& world, const Captures& c, const Table&) {
-         world.waitFor([&] { return !world.actionsOf(QStringLiteral("toast.show")).isEmpty(); }, QStringLiteral("a toast"));
-         const QVariantMap toast = world.actionsOf(QStringLiteral("toast.show")).last().payload;
-         const QVariantMap expected{
-             {QStringLiteral("toastType"), c[0]},
-             {QStringLiteral("title"), c[1]},
-             {QStringLiteral("action.label"), c[2]},
-             {QStringLiteral("action.dispatch.type"), c[3]},
-             {QStringLiteral("action.dispatch.payload.key"), c[4]},
-         };
-         for (auto it = expected.cbegin(); it != expected.cend(); ++it) {
-           expect(at(toast, it.key()).toString() == it->toString(), QStringLiteral("the toast is %1").arg(show(toast)));
-         }
-       });
   const auto opened = [](World& world, const QString& type, const QString& field, const QString& value) {
     world.waitFor([&] {
       for (const PageAction& action : world.actionsOf(type)) {
@@ -121,14 +95,6 @@ const Steps steps([] {
     world.sync();
     expect(world.actionsOf(QStringLiteral("thread.open")).isEmpty() && world.actionsOf(QStringLiteral("thread.new")).isEmpty(),
            QStringLiteral("the page got %1").arg(world.describePage()));
-  });
-  step(QStringLiteral("the page shows an? %1 toast %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] {
-      for (const PageAction& toast : world.actionsOf(QStringLiteral("toast.show"))) {
-        if (toast.payload.value(QStringLiteral("toastType")) == c[0] && toast.payload.value(QStringLiteral("title")) == c[1]) return true;
-      }
-      return false;
-    }, [&] { return QStringLiteral("the toast; the page got %1").arg(world.describePage()); });
   });
 });
 

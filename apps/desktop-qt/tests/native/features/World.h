@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDateTime>
 #include <QJsonObject>
 #include <QList>
 #include <QQmlPropertyMap>
@@ -42,6 +43,8 @@ public:
   QVariant state(const QString& key) const { return m_bridge.state()->value(key); }
 
   void setTime(const QString& iso);
+  void setTime(const QDateTime& now);
+  QDateTime now() const { return m_now; }
 
   void publishSidebarInput() { m_bridge.publish(QStringLiteral("sidebarInput"), sidebarInput); }
   // What the page's header shows for a thread (ShellWorkspaceState), from the
@@ -67,6 +70,7 @@ public:
 private:
   void onPageAction(const QString& type, const QVariantMap& payload);
 
+  QDateTime m_now;
   // Declared in teardown order: the shell goes before the bridge it intercepts.
   ShellBridge m_bridge;
   NativeShell m_native{&m_bridge};
