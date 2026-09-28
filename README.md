@@ -1,4 +1,8 @@
-# HAL-C2
+<p align="center">
+  <img src="./assets/brand/hal-c2-avatar.svg" width="160" alt="" />
+</p>
+
+<h1 align="center"><img src="./assets/brand/hal-c2-logotype.svg" height="44" alt="HAL-C2" /></h1>
 
 HAL-C2 is an "agent harness control surface". It enables control of the agents on your machine).
 
@@ -34,10 +38,10 @@ and runs on [Bun](https://bun.sh), so install Bun on the box first:
 ```bash
 ssh my-remote-box
 curl -fsSL https://bun.sh/install | bash   # if Bun isn't already installed
-t3 tui                                      # or: npx t3@latest tui
+hal-c2 tui
 ```
 
-`t3 tui` (Node) bootstraps auth and launches the UI in a Bun subprocess; if Bun
+`hal-c2 tui` (Node) bootstraps auth and launches the UI in a Bun subprocess; if Bun
 isn't on `PATH` it prints an install hint and exits.
 
 The prompt is always ready: pick a thread with `↑`/`↓` and just start typing,
@@ -45,7 +49,7 @@ then press `Enter` to send. Conversations render as Markdown and follow the
 latest reply; scroll with `PgUp`/`PgDn`. The TUI also lets you approve/deny tool
 prompts (`^A`/`^R`), interrupt a running turn (`^G`), start new threads (`^N`),
 and attach to a thread's terminal (`^E`; `Ctrl-Q` detaches). Start a server
-first with `t3 serve` if one isn't already running. Long conversations stay
+first with `hal-c2 serve` if one isn't already running. Long conversations stay
 responsive by showing a bounded page; use the earlier/newer rows to move through
 older history.
 
