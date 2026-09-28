@@ -53,6 +53,14 @@ is `bin/hal_c2 start`, started again when the node restarts to finish an update.
 `bin/hal-c2-service install` registers it as a systemd user unit (Linux) or launch agent
 (macOS) that starts on login; `status` and `uninstall` inspect and remove it.
 
+A machine without Elixir or Erlang runs the single-file node published beside each bundle,
+`hal-c2-node-<version>-<platform>`: a shell script with the bundle appended
+(`rel/hal-c2-node.sh`). Its first run unpacks the release into `release/` in the node's data
+directory; every run then starts `bin/hal-c2-service` there with the file's arguments, so
+`hal-c2-node-… install` registers the unpacked release as the service. Upgrades install into
+that same release, and running the file again starts whatever version the node last moved to.
+A file of a version not yet installed moves the node to it.
+
 ## Upgrades
 
 A node carries the HAL-C2 version (`apps/server/package.json`, or `HAL_C2_NODE_VERSION` for a
@@ -69,7 +77,7 @@ Nodes get a version's bundle from a cluster peer that has it, or else from the
 ```sh
 HAL_C2_NODE_VERSION=0.0.43-mine mix hal_c2.upgrade hal_c2@host     # build a release, send it, update
 mix hal_c2.upgrade --dev hal_c2_a@my-mac hal_c2_b@my-mac        # nodes run with `mix run`: reload changes
-MIX_ENV=prod mix hal_c2.bundle                        # just pack _build/prod/rel/hal_c2
+MIX_ENV=prod mix hal_c2.bundle                        # just pack _build/prod/rel/hal_c2 and its single file
 ```
 
 A process that holds state across an upgrade migrates it: OTP processes in

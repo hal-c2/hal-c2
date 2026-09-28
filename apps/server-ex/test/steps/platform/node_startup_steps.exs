@@ -438,21 +438,9 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   # --- release packaging and sidecars -----------------------------------------------------
 
   step "a maintainer builds a release bundle", context do
-    root = Node.tmp_dir(context.node, "rel")
     version = HalC2.Upgrade.version()
-
-    for dir <- ["bin", "lib/hal_c2-#{version}/ebin", "releases/#{version}", "erts-17.0.5/bin"],
-        do: File.mkdir_p!(Path.join(root, dir))
-
-    File.write!(Path.join(root, "releases/start_erl.data"), "17.0.5 #{version}\n")
-
-    File.write!(
-      Path.join([root, "releases", version, "upgrade.json"]),
-      JSON.encode!(Node.manifest(version))
-    )
-
     out = Node.tmp_dir(context.node, "out")
-    path = Mix.Tasks.HalC2.Bundle.bundle(out, root)
+    path = Mix.Tasks.HalC2.Bundle.bundle(out, fake_release(context, version))
     Map.merge(context, %{bundle: path, bundle_out: out, bundle_version: version})
   end
 
@@ -467,11 +455,102 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     context
   end
 
-  step "a SHA-256 file beside it", context do
-    sum = :crypto.hash(:sha256, File.read!(context.bundle)) |> Base.encode16(case: :lower)
+  step "an executable single-file node named the same without the extension", context do
+    single = String.replace_suffix(context.bundle, ".tar.gz", "")
+    assert File.stat!(single).mode |> Bitwise.band(0o111) != 0
+    # The bundle rides unchanged behind the script.
+    assert String.ends_with?(File.read!(single), File.read!(context.bundle))
+    context
+  end
 
-    assert File.read!(context.bundle <> ".sha256") ==
-             "#{sum}  #{Path.basename(context.bundle)}\n"
+  step "a SHA-256 file beside each", context do
+    for path <- [context.bundle, String.replace_suffix(context.bundle, ".tar.gz", "")] do
+      sum = :crypto.hash(:sha256, File.read!(path)) |> Base.encode16(case: :lower)
+      assert File.read!(path <> ".sha256") == "#{sum}  #{Path.basename(path)}\n"
+    end
+
+    context
+  end
+
+  # --- the single-file node ---------------------------------------------------------------
+
+  step "the single-file node of a release", context do
+    Map.merge(context, single_file(context, HalC2.Upgrade.version()))
+  end
+
+  step "a user ran the single-file node of a release", context do
+    context = Map.merge(context, single_file(context, HalC2.Upgrade.version()))
+    run_single(context, context.single, [])
+    File.write!(context.starts, "")
+    # A file the release did not ship, to tell whether it is unpacked again.
+    File.write!(Path.join([context.release_root, "bin", "local"]), "")
+    context
+  end
+
+  step "the node has since upgraded itself to {string}", %{args: [version]} = context do
+    # What `HalC2.Upgrade` leaves behind after installing a version.
+    File.mkdir_p!(Path.join([context.release_root, "releases", version]))
+
+    File.write!(
+      Path.join([context.release_root, "releases/start_erl.data"]),
+      "17.0.5 #{version}\n"
+    )
+
+    context
+  end
+
+  step "a user runs it with {string}", %{args: [arg]} = context do
+    run_single(context, context.single, [arg])
+  end
+
+  step "a user runs the single-file node of {string}", %{args: [version]} = context do
+    %{single: single} = single_file(context, version)
+    run_single(context, single, [])
+  end
+
+  step "the release and its runtime are unpacked in the node's data directory", context do
+    root = context.release_root
+    assert root == Path.join([context.single_home, "data", "release"])
+    version = HalC2.Upgrade.version()
+
+    for dir <- ["lib/hal_c2-#{version}/ebin", "releases/#{version}", "erts-17.0.5/bin"],
+        do: assert(File.dir?(Path.join(root, dir)), "#{dir} is not unpacked")
+
+    assert File.read!(Path.join(root, "releases/start_erl.data")) == "17.0.5 #{version}\n"
+    # bin/hal_c2 reads the cookie even with distribution off; the bundle has none.
+    cookie = Path.join(root, "releases/COOKIE")
+    assert File.read!(cookie) =~ ~r/^[0-9a-f]{64}$/
+    assert Bitwise.band(File.stat!(cookie).mode, 0o077) == 0
+    # Nothing is left half-unpacked beside it.
+    assert File.ls!(Path.join(context.single_home, "data")) == ["release"]
+    context
+  end
+
+  step "the service wrapper starts the release with {string}", %{args: [arg]} = context do
+    assert starts(context) == ["#{HalC2.Upgrade.version()} #{arg}"]
+    context
+  end
+
+  step "the service wrapper starts {string} with {string}", %{args: [version, arg]} = context do
+    assert starts(context) == [String.trim("#{version} #{arg}")]
+    context
+  end
+
+  step "the installed release is left as it was", context do
+    assert File.exists?(Path.join([context.release_root, "bin", "local"]))
+    context
+  end
+
+  step "the versions installed before are kept", context do
+    version = HalC2.Upgrade.version()
+
+    for dir <- [
+          "releases/#{version}",
+          "lib/hal_c2-#{version}",
+          "releases/9.9.9",
+          "lib/hal_c2-9.9.9"
+        ],
+        do: assert(File.dir?(Path.join(context.release_root, dir)), "#{dir} is missing")
 
     context
   end
@@ -748,6 +827,75 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   @home_env ~w(HAL_C2_NODE_HOME HAL_C2_HOME T3_HOME T3CODE_HOME XDG_DATA_HOME)
 
   defp clear_home_env, do: for(name <- @home_env, do: World.put_os_env(name, nil))
+
+  # A release root as `mix release` lays one out, for `version` on ERTS 17.0.5. Its
+  # bin/hal-c2-service stands in for the wrapper and logs which version it would start
+  # (from start_erl.data, as bin/hal_c2 reads it) and its arguments to `starts.log` in
+  # the scenario's home.
+  defp fake_release(context, version) do
+    root = Node.tmp_dir(context.node, "rel")
+
+    for dir <- ["bin", "lib/hal_c2-#{version}/ebin", "releases/#{version}", "erts-17.0.5/bin"],
+        do: File.mkdir_p!(Path.join(root, dir))
+
+    File.write!(Path.join(root, "releases/start_erl.data"), "17.0.5 #{version}\n")
+
+    File.write!(
+      Path.join([root, "releases", version, "upgrade.json"]),
+      JSON.encode!(Node.manifest(version))
+    )
+
+    File.cp!(
+      Path.join(project_dir(), "rel/overlays/bin/hal-c2-data-dir"),
+      Path.join(root, "bin/hal-c2-data-dir")
+    )
+
+    wrapper = Path.join(root, "bin/hal-c2-service")
+
+    File.write!(wrapper, """
+    #!/bin/sh
+    here="$(cd "$(dirname "$0")" && pwd)"
+    echo "$(cut -d' ' -f2 "$here/../releases/start_erl.data") $*" >> "#{starts_log(context)}"
+    """)
+
+    File.chmod!(wrapper, 0o755)
+    root
+  end
+
+  defp starts_log(context), do: Path.join(context.node.home, "starts.log")
+
+  defp starts(context),
+    do:
+      context
+      |> starts_log()
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.map(&String.trim/1)
+
+  # The single-file node built from a fake release of `version`, and the node home it
+  # runs in (HAL_C2_NODE_HOME).
+  defp single_file(context, version) do
+    out = Node.tmp_dir(context.node, "out")
+    bundle = Mix.Tasks.HalC2.Bundle.bundle(out, fake_release(context, version))
+    home = context[:single_home] || Node.tmp_dir(context.node, "node-home")
+
+    %{
+      single: String.replace_suffix(bundle, ".tar.gz", ""),
+      single_home: home,
+      release_root: Path.join([home, "data", "release"]),
+      starts: starts_log(context)
+    }
+  end
+
+  defp run_single(context, single, args) do
+    env =
+      [{"HAL_C2_NODE_HOME", context.single_home}] ++
+        for(name <- @home_env -- ["HAL_C2_NODE_HOME"], do: {name, nil})
+
+    {out, status} = System.cmd(single, args, env: env, stderr_to_stdout: true)
+    assert status == 0, out
+    context
+  end
 
   # What rel/env.sh.eex exports, sourced the way the release script does, with
   # `node_home` as the node's root (HAL_C2_NODE_HOME).
