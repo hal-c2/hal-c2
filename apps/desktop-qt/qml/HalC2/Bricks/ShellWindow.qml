@@ -19,6 +19,10 @@ Window {
     // A settings page the shell renders itself is open (ClusterController):
     // layouts put ClusterSettings where the page would be.
     readonly property bool clusterOpen: route !== null && route.kind === "settings" && route.section === "/settings/cluster"
+    // ConnectionsController's page, placed the same way (ConnectionsSettings).
+    readonly property bool connectionsOpen: route !== null && route.kind === "settings" && route.section === "/settings/connections"
+    // Either: the page and composer stand aside.
+    readonly property bool nativeSettingsOpen: clusterOpen || connectionsOpen
     // Settings show, from the page's sections or the shell's own pages.
     readonly property bool settingsActive: route !== null ? route.kind === "settings" : (Shell.state.settings ? Shell.state.settings.active : false)
     // The page's keybindings (the configurable ones from Settings), as Qt

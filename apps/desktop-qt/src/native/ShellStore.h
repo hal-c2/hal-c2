@@ -36,6 +36,9 @@ public:
   QString nodeOf(const QString& threadKey) const;
   bool online(const QString& node) const { return m_nodes.value(node).online; }
   bool synchronized() const { return m_synchronized; }
+  // The node's links as `shell.links` carries them: {environment, origin,
+  // online, problem?}, where problem is "unreachable" or "refused".
+  const QJsonArray& links() const { return m_links; }
 
 signals:
   void changed();
@@ -56,5 +59,6 @@ private:
   // Environments outside the cluster the node is linked to. Their threads stay
   // with the page; the node only forwards their RPCs and shapes.
   QSet<QString> m_linked;
+  QJsonArray m_links;
   bool m_synchronized = false;
 };

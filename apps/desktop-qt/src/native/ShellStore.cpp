@@ -44,6 +44,7 @@ bool ShellStore::reaches(const QString& environmentId) const {
 }
 
 void ShellStore::setLinks(const QJsonArray& links) {
+  m_links = links;
   m_linked.clear();
   for (const QJsonValue& link : links) {
     m_linked.insert(

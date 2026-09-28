@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // Settings navigation: sections, search, and a way back. Pages the shell
-// renders itself (Cluster, from ClusterController) sit beside the sections the
+// renders itself (Cluster and Connections, from their controllers) sit beside the sections the
 // embedded page still renders until they move to QML; picking one of those
 // hands navigation to the page.
 Rectangle {
@@ -13,26 +13,36 @@ Rectangle {
     readonly property var model: Shell.state.settings ?? null
     readonly property bool active: model !== null && model.active
     readonly property var cluster: Shell.state.cluster ?? null
+    readonly property var connections: Shell.state.connections ?? null
     // The section showing: the shell's route once it has one, else the page's.
     readonly property var route: Shell.state.route ?? null
     readonly property string currentSection: route !== null && route.section ? route.section : model !== null && model.activeSection ? model.activeSection : ""
     readonly property bool clusterOpen: currentSection === "/settings/cluster"
+    readonly property bool connectionsOpen: currentSection === "/settings/connections"
     readonly property string query: search.text.trim().toLowerCase()
     // The shell's own pages, as rows shaped like the page's sections and
     // search results; `action` is what picking one dispatches. Every row
     // says whether it is a search result, so a row never reads the other
     // shape while the query and the rows change together.
-    readonly property var nativeRows: cluster === null ? [] : [{
-            label: qsTr("Cluster"),
-            title: qsTr("Cluster"),
-            sectionLabel: qsTr("Machines, invites and joining"),
-            keywords: "cluster machines invite join remove tailscale",
-            action: "cluster.open",
-            current: clusterOpen
-        }]
+    readonly property var nativeRows: (cluster === null ? [] : [{
+                label: qsTr("Cluster"),
+                title: qsTr("Cluster"),
+                sectionLabel: qsTr("Machines, invites and joining"),
+                keywords: "cluster machines invite join remove tailscale",
+                action: "cluster.open",
+                current: clusterOpen
+            }]).concat(connections === null ? [] : [{
+                label: qsTr("Connections"),
+                title: qsTr("Connections"),
+                sectionLabel: qsTr("Environments, pairing links and clients"),
+                keywords: "connections environments pairing link code clients revoke access remote",
+                action: "connections.open",
+                current: connectionsOpen
+            }])
     readonly property var rows: {
         const searching = query.length > 0;
-        const pageRows = model === null ? [] : searching ? model.searchResults : model.sections;
+        // The page's own Connections section gives way to the shell's.
+        const pageRows = (model === null ? [] : searching ? model.searchResults : model.sections).filter(row => !(connections !== null && row.to && row.to.startsWith("/settings/connections")));
         const own = searching ? nativeRows.filter(row => row.keywords.includes(query) || row.title.toLowerCase().includes(query)) : nativeRows;
         return pageRows.concat(own).map(row => Object.assign({
                 result: searching
