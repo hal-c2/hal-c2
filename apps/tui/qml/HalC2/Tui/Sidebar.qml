@@ -1,7 +1,8 @@
 import OpenTUI
 
-// The thread list, drawn like the OpenTUI client's Sidebar: the "HAL-C2 Code"
-// header, a search box (click or Ctrl+F; typing dispatches
+// The thread list, drawn like the OpenTUI client's Sidebar: the "HAL-C2"
+// header (the logotype's orange and blue as the terminal's yellow and blue), a
+// search box (click or Ctrl+F; typing dispatches
 // `sidebar.filter.set`, Enter keeps the filter, the shell's Esc clears it),
 // the project row (the scope picker and "+" to add a project), the "Threads"
 // heading and the list. Plugins fill the "sidebar.footer" slot at the bottom.
@@ -37,8 +38,8 @@ Rectangle {
         height: 1
         flexShrink: 0
         flexDirection: "row"
-        Text { text: "HAL-C2"; font.bold: true; color: Theme.colors.text }
-        Text { text: " Code"; color: Theme.colors.dim }
+        Text { text: "HAL-"; font.bold: true; color: Theme.ansi("yellow") }
+        Text { text: "C2"; font.bold: true; color: Theme.ansi("blue") }
     }
 
     Rectangle {

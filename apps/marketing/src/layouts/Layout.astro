@@ -1,6 +1,8 @@
 ---
 import { getImage, Image } from "astro:assets";
 import appIcon from "../assets/icon.webp";
+import Avatar from "../assets/hal-c2-avatar.svg";
+import Logotype from "../assets/hal-c2-logotype.svg";
 import desktopScreenshot from "../assets/app-desktop.webp";
 import dmSansLatinUrl from "../assets/fonts/dm-sans-latin.woff2?url";
 import "../styles/fonts.css";
@@ -50,7 +52,6 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="The HAL-C2 desktop app with a thread open." />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:site" content="@t3dotgg" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={socialImageUrl} />
@@ -72,7 +73,8 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
       <nav class="nav">
         <div class="nav-inner">
           <a href="/" class="nav-brand" aria-label="HAL-C2 home">
-            <span class="nav-brand-name">HAL-C2</span>
+            <Avatar class="nav-brand-avatar" aria-hidden="true" />
+            <Logotype class="nav-brand-name" aria-hidden="true" />
           </a>
           <div class="nav-right">
             <a class="nav-link" href="/download">Download</a>
@@ -356,19 +358,17 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
   .nav-brand {
     display: inline-flex;
     align-items: center;
-    color: var(--fg);
-    transition: color 0.2s ease;
+    gap: 10px;
   }
 
-  .nav-brand:hover {
-    color: #fff;
+  .nav-brand-avatar {
+    width: auto;
+    height: 30px;
   }
 
   .nav-brand-name {
-    font-size: 16px;
-    font-weight: 650;
-    letter-spacing: -0.025em;
-    line-height: 1;
+    width: auto;
+    height: 15px;
   }
 
   .nav-right {
@@ -500,6 +500,10 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
   @media (max-width: 420px) {
     .nav-inner {
       gap: 12px;
+    }
+
+    .nav-brand-name {
+      display: none;
     }
 
     .nav-stars {

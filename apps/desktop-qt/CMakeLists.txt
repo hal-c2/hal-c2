@@ -107,6 +107,11 @@ else()
   target_compile_definitions(hal-c2-qt PRIVATE HAL_C2_WEBCHANNEL_SCRIPT_URL="qrc:///qtwebchannel/qwebchannel.js")
 endif()
 
+# The window icon; packaged builds also install it for the desktop entry.
+set(HAL_C2_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../../assets/prod/black-universal-1024.png")
+set_source_files_properties("${HAL_C2_APP_ICON}" PROPERTIES QT_RESOURCE_ALIAS "app-icon.png")
+qt_add_resources(hal-c2-qt "hal_c2_app_icon" PREFIX "/hal-c2" FILES "${HAL_C2_APP_ICON}")
+
 target_compile_definitions(hal-c2-qt PRIVATE
   HAL_C2_QML_SOURCE_DIR="${HAL_C2_QML_SOURCE_DIR}"
   HAL_C2_HOST_ENTRY="${HAL_C2_HOST_ENTRY}"

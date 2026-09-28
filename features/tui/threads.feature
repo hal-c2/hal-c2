@@ -281,14 +281,14 @@ Feature: Thread list and thread actions in the terminal
     And the box's second row reads "y delete · n / Esc cancel" in the dim colour
 
   # The OpenTUI client's thread list (Sidebar.tsx): a rounded faint frame, the
-  # "HAL-C2 Code" header, a search box, the project row and the "Threads" heading
+  # "HAL-C2" header, a search box, the project row and the "Threads" heading
   # over the list. Active threads are three-line cards; shelved ones are one line.
 
   @tui
   Scenario: The thread list reads like the OpenTUI client
     Then the top of the thread list reads:
       """
-      HAL-C2 Code
+      HAL-C2
 
       ╭────────────────────────────╮
       │ ⌕ Search threads…          │
@@ -299,8 +299,8 @@ Feature: Thread list and thread actions in the terminal
       Threads
       """
     And the thread list has a rounded border in the faint colour
-    And "HAL-C2" is bold in the text colour
-    And " Code" is in the dim colour
+    And "HAL-" is bold in the yellow colour
+    And "C2" is bold in the blue colour
     And "⌕ Search threads…" is in the dim colour
     And "All projects" is in the text colour
     And "+" is in the accent colour

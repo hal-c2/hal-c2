@@ -6,18 +6,9 @@
     {
       "layers": [
         {
-          "glass": true,
-          "image-name": "text.svg",
-          "name": "Text",
-          "position": {
-            "scale": 8.5,
-            "translation-in-points": [0, 0]
-          }
-        },
-        {
           "glass": false,
-          "image-name": "annotations.svg",
-          "name": "Annotations",
+          "image-name": "text.svg",
+          "name": "Avatar",
           "position": {
             "scale": 8.5,
             "translation-in-points": [0, 0]
@@ -38,7 +29,7 @@
         "opacity": 0.6
       },
       "translucency": {
-        "enabled": true,
+        "enabled": false,
         "value": 0.2
       }
     }
