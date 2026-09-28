@@ -20,7 +20,8 @@ defmodule HalC2.OrchestrationTest do
     Application.put_env(:hal_c2, :home, dir)
     Application.put_env(:hal_c2, :codex_command, ["python3", "-u", @fake_codex])
     Application.put_env(:hal_c2, :claude_command, ["python3", "-u", @fake_claude])
-    Application.put_env(:hal_c2, :acp_commands, %{"opencode" => ["python3", "-u", @fake_acp]})
+    fake_acp = ["python3", "-u", @fake_acp]
+    Application.put_env(:hal_c2, :acp_commands, %{"opencode" => fake_acp, "grok" => fake_acp})
 
     on_exit(fn ->
       Application.delete_env(:hal_c2, :codex_command)
@@ -691,7 +692,7 @@ defmodule HalC2.OrchestrationTest do
     end
 
     test "an agent that cannot be steered is interrupted, and the steered message goes next" do
-      thread_id = launch("wait for it", "opencode")
+      thread_id = launch("wait for it", "grok")
       _ = await_run(thread_id, "running")
       {:ok, _} = send_message(thread_id, "m2", "second")
       {:ok, _} = send_message(thread_id, "m3", "third")

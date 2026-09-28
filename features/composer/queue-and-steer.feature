@@ -35,7 +35,8 @@ Feature: Follow-ups while the agent is working
       | provider | outcome                                                                  |
       | Codex    | the running turn receives "use the new API"                              |
       | Claude   | the running turn receives "use the new API"                              |
-      | OpenCode | the running turn is interrupted and "use the new API" runs next          |
+      | OpenCode | the running turn receives "use the new API"                              |
+      | Grok     | the running turn is interrupted and "use the new API" runs next          |
 
   @node
   Scenario: A steer the provider rejects falls back to the queue
@@ -105,7 +106,8 @@ Feature: Follow-ups while the agent is working
       | provider | outcome                                                          |
       | Codex    | the running turn receives "check the logs"                       |
       | Claude   | the running turn receives "check the logs"                       |
-      | OpenCode | the running turn is interrupted and "check the logs" runs next   |
+      | OpenCode | the running turn receives "check the logs"                       |
+      | Grok     | the running turn is interrupted and "check the logs" runs next   |
 
   @node
   Scenario: Removing a queued message cancels it

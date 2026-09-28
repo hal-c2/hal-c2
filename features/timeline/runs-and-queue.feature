@@ -49,7 +49,8 @@ Feature: Runs, interruptions and the queue
       | provider | outcome                           |
       | Codex    | joins the running turn            |
       | Claude   | joins the running turn            |
-      | OpenCode | is queued behind the running turn |
+      | OpenCode | joins the running turn            |
+      | Grok     | is queued behind the running turn |
 
   @node
   Scenario: Restarting puts the new message first

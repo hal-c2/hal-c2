@@ -1,5 +1,6 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/orchestration.ex (steerable?, driver_for, follow-up queueing)
+#   apps/server-ex/lib/hal_c2/orchestration/entities.ex (steers?), apps/server-ex/lib/hal_c2/pi/thread_runtime.ex (steer)
 #   apps/server-ex/lib/hal_c2/orchestration/handoff.ex (native forks for codex/claudeAgent, transcript otherwise, 60 000 character cap)
 #   apps/server-ex/lib/hal_c2/orchestration/fork.ex (thread.fork, thread.merge_back)
 #   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (rollback starts a fresh session, refuses while a turn runs)
@@ -28,9 +29,9 @@ Feature: Provider capabilities
       | Codex    | the message joins the running turn               |
       | Claude   | the message joins the running turn               |
       | Grok     | the message waits until the running turn ends    |
-      | OpenCode | the message waits until the running turn ends    |
+      | OpenCode | the message joins the running turn               |
       | Cursor   | the message waits until the running turn ends    |
-      | Pi       | the message waits until the running turn ends    |
+      | Pi       | the message joins the running turn               |
 
   Scenario: A steer that arrives after the turn ended is sent as a normal message
     Given a Codex thread whose turn is finishing
@@ -123,12 +124,6 @@ Feature: Provider capabilities
       | provider    |
       | Cursor      |
       | Antigravity |
-
-  @backlog
-  Scenario: OpenCode follow-ups join the running turn
-    Given an OpenCode thread with a running turn
-    When the user sends a follow-up message
-    Then the message joins the running turn
 
   @backlog
   Scenario: Antigravity refuses a rewind of the conversation

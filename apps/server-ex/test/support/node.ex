@@ -1834,6 +1834,7 @@ defmodule HalC2.Test.Node.World do
 
     Application.put_env(:hal_c2, :acp_commands, %{
       "opencode" => fake.("fake_acp.py"),
+      "grok" => fake.("fake_acp.py"),
       "cursor" => fake.("fake_acp.py")
     })
 
@@ -2429,9 +2430,8 @@ defmodule HalC2.Test.Node.World do
     if Application.get_env(:hal_c2, :acp_commands) == nil do
       log = "FAKE_ACP_INPUT_LOG=" <> Path.join(context.node.home, "acp-inputs.jsonl")
 
-      Application.put_env(:hal_c2, :acp_commands, %{
-        "opencode" => ["env", log, "python3", "-u", @fake_acp]
-      })
+      fake = ["env", log, "python3", "-u", @fake_acp]
+      Application.put_env(:hal_c2, :acp_commands, %{"opencode" => fake, "grok" => fake})
 
       ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :acp_commands) end)
     end

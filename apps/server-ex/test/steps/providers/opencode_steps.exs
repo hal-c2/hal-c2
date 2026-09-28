@@ -25,6 +25,8 @@ defmodule HalC2.Steps.Providers.Opencode do
       ]
     }
 
+  @thread "Work"
+
   @connected [
     {"openai/gpt-5", "OpenAI/GPT-5"},
     {"anthropic/claude-sonnet-4", "Anthropic/Claude Sonnet 4"}
@@ -666,6 +668,31 @@ defmodule HalC2.Steps.Providers.Opencode do
                  &1["params"]["value"] == "anthropic/claude-sonnet-4")
            )
 
+    context
+  end
+
+  step "an OpenCode turn is running", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "opencode", "wait for me")
+
+    World.await_running(context, @thread)
+    # The shared follow-up step sends to `running.thread` outside the provider features.
+    Map.put(context, :running, %{thread: World.thread_id(context, @thread)})
+  end
+
+  # OpenCode's running loop takes a second `session/prompt` into the turn.
+  step "OpenCode receives the message during the running turn", context do
+    World.await_provider_log(
+      context,
+      "acp",
+      &(get_in(&1, ["in", "method"]) == "session/prompt" and
+          get_in(&1, ["in", "params", "prompt"]) == [
+            %{"type" => "text", "text" => "look here instead"}
+          ])
+    )
+
+    World.await_runs(context, @thread, ["completed"])
+    assert "steered: look here instead" in World.replies(context, @thread)
     context
   end
 end

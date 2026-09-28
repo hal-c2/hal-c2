@@ -1339,7 +1339,7 @@ defmodule HalC2.Orchestration do
     driver = driver_for(run["providerInstanceId"] || "codex")
 
     case HalC2.Plugins.declared(driver) do
-      nil -> driver in ["codex", "claudeAgent"]
+      nil -> Entities.steers?(driver)
       provider -> :active_steering in (provider[:capabilities] || [])
     end
   end

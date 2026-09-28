@@ -29,7 +29,7 @@ Feature: Queueing, steering and restarting
 
   @node
   Scenario: An automatic message queues behind a turn whose provider cannot be steered
-    Given "t1" has a running turn on "opencode"
+    Given "t1" has a running turn on "grok"
     When the user sends "Next" to "t1" with automatic delivery
     Then "Next" waits in the queue at position 1
 
@@ -47,7 +47,7 @@ Feature: Queueing, steering and restarting
 
   @node
   Scenario: An explicit steer that the provider cannot take interrupts and goes first
-    Given "t1" has a running turn on "opencode" and a queued message "Old"
+    Given "t1" has a running turn on "grok" and a queued message "Old"
     When the user sends "Now" to "t1" as a steer
     Then "Now" is first in the queue and "Old" moves to position 2
     And the running turn is interrupted
@@ -132,7 +132,7 @@ Feature: Queueing, steering and restarting
 
   @node
   Scenario: Promoting a queued message on a provider that cannot steer interrupts and goes first
-    Given "t1" has a running turn on "opencode" and queued messages "A" and "Hurry"
+    Given "t1" has a running turn on "grok" and queued messages "A" and "Hurry"
     When the user promotes "Hurry" to a steer
     Then "Hurry" is first in the queue
     And the running turn is interrupted

@@ -9,7 +9,12 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   # keeps its turn running until it is completed or interrupted. Messages are found by
   # their text; a queued message's run is the one its `runId` names.
 
-  @models %{"codex" => "gpt-5.4", "claudeAgent" => "claude-haiku", "opencode" => "fake/one"}
+  @models %{
+    "codex" => "gpt-5.4",
+    "claudeAgent" => "claude-haiku",
+    "opencode" => "fake/one",
+    "grok" => "fake/one"
+  }
   @started ~w(starting running waiting completed failed interrupted)
 
   # --- active turns --------------------------------------------------------------------

@@ -185,7 +185,8 @@ defmodule HalC2.Steps.Plugins.Turns do
     ])
 
     Application.put_env(:hal_c2, :acp_commands, %{
-      "opencode" => ["python3", "-u", Path.join(@support, "fake_acp.py")]
+      "opencode" => ["python3", "-u", Path.join(@support, "fake_acp.py")],
+      "grok" => ["python3", "-u", Path.join(@support, "fake_acp.py")]
     })
 
     ExUnit.Callbacks.on_exit(fn ->
@@ -669,11 +670,12 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
   # --- follow-ups during a turn --------------------------------------------------------
 
   step "a turn is running on an ACP agent", context do
-    # The fake agent holds a turn that asks for approval until it is answered.
+    # The fake agent holds a turn that asks for approval until it is answered. Grok, as
+    # ACP gives no way to add to a running prompt (OpenCode takes one; see its feature).
     context = Turns.providers(context)
 
     {thread_id, context} =
-      Turns.send_first(context, "opencode", "approve ls", %{"runtimeMode" => "approval-required"})
+      Turns.send_first(context, "grok", "approve ls", %{"runtimeMode" => "approval-required"})
 
     request =
       World.await_stream(thread_id, fn state ->

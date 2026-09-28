@@ -110,14 +110,20 @@ defmodule HalC2.Orchestration.Entities do
   def driver(ids), do: Map.get(ids, :driver, "codex")
   def instance(ids), do: Map.get(ids, :instance, driver(ids))
 
-  # Codex (turn/steer) and Claude (a "now" message) take a message mid-turn, and
-  # fork their own threads; other agents fork through a transcript.
+  @doc """
+  Whether a built-in driver takes a message mid-turn: Codex (`turn/steer`), Claude (a
+  "now" message), OpenCode (another `session/prompt`, which its running loop picks up)
+  and Pi (a `steer` prompt).
+  """
+  def steers?(driver), do: driver in ["codex", "claudeAgent", "opencode", "pi"]
+
+  # Codex and Claude fork their own threads; other agents fork through a transcript.
   defp capabilities(driver) do
     native = driver in ["codex", "claudeAgent"]
 
     base =
       @codex_capabilities
-      |> put_in(["turns", "supportsActiveSteering"], native)
+      |> put_in(["turns", "supportsActiveSteering"], steers?(driver))
       |> put_in(["threads", "canForkThread"], native)
       |> put_in(["threads", "canForkFromTurn"], native)
 

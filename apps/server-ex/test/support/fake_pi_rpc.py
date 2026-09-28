@@ -18,7 +18,8 @@
 # Turn steps: {"text": s[, "usage": {...}]}, {"thinking": s}, {"tool": name, "args": {},
 # "output": s} (HAL-C2's extension gate first: see `allowed`), {"select": {"title",
 # "options"}} (waits for the answer, then says it), {"event": {...}} (sent as is),
-# {"mcp": {"name", "arguments"}} (a HAL-C2 MCP tool call), {"waitAbort": true}, {"exit": code}.
+# {"mcp": {"name", "arguments"}} (a HAL-C2 MCP tool call), {"waitAbort": true} (until an
+# abort, or a steer prompt, which it answers), {"exit": code}.
 # Without a match the reply names the conversation so far.
 import json, os, sys, time, urllib.request, uuid
 
@@ -191,6 +192,10 @@ def wait_for(pred):
             return msg
 
 
+def steer(msg):
+    return msg.get("type") == "prompt" and msg.get("streamingBehavior") == "steer"
+
+
 def respond(msg, data=None, error=None):
     out = {"type": "response", "command": msg.get("type"), "success": error is None}
     if msg.get("id") is not None:
@@ -291,7 +296,16 @@ def run_turn(text):
                 log({"mcp": json.loads(res.read())})
         elif "waitAbort" in step:
             if not aborted[0]:
-                wait_for(lambda m: m.get("type") == "abort")
+                msg = wait_for(lambda m: m.get("type") == "abort" or steer(m))
+                if steer(msg):
+                    # Pi hands the steer to the model's next call, which answers it.
+                    respond(msg)
+                    session.append("user", msg["message"])
+                    send({"type": "message_end", "message": assistant("".join(said))})
+                    send({"type": "message_start", "message": {"role": "assistant"}})
+                    said = ["steered: " + msg["message"]]
+                    send({"type": "message_update", "message": assistant(said[0]),
+                          "assistantMessageEvent": {"type": "text_delta", "delta": said[0]}})
         elif "exit" in step:
             os._exit(step["exit"])
     if aborted[0]:

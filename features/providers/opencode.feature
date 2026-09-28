@@ -120,7 +120,6 @@ Feature: OpenCode
     When the user switches an OpenCode thread to plan mode
     Then the turn runs with OpenCode's plan agent
 
-  @backlog
   Scenario: An OpenCode turn can be steered while it runs
     Given an OpenCode turn is running
     When the user sends a follow-up message
