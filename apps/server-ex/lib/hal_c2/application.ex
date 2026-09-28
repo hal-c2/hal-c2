@@ -77,7 +77,14 @@ defmodule HalC2.Application do
         []
       end
 
-    Supervisor.start_link(children, strategy: :one_for_one, name: HalC2.Supervisor)
+    # The services are independent, so one stall that times several out at once (a
+    # machine deep in swap) must not spend the default budget of 3 and stop the node.
+    Supervisor.start_link(children,
+      strategy: :one_for_one,
+      name: HalC2.Supervisor,
+      max_restarts: 20,
+      max_seconds: 10
+    )
   end
 
   @doc """

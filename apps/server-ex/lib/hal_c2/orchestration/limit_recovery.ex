@@ -32,7 +32,14 @@ defmodule HalC2.Orchestration.LimitRecovery do
 
   @impl true
   def handle_info(:tick, interval) do
-    sweep()
+    # A node too slow to answer (a machine deep in swap) skips a sweep; the next finds the same work.
+    try do
+      sweep()
+    catch
+      :exit, {:timeout, _} = reason ->
+        Logger.warning("limit recovery skipped: #{inspect(reason)}")
+    end
+
     Process.send_after(self(), :tick, interval)
     {:noreply, interval}
   end
