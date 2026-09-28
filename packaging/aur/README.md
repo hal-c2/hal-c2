@@ -6,10 +6,9 @@ repackage the official x86_64 AppImage from GitHub Releases.
 
 ## Publishing
 
-The release workflow calls `.github/workflows/publish-aur.yml` after publishing a GitHub release;
-the workflow can also be run manually for a specific tag. It selects the stable or nightly
-package, then updates its version and checksums, builds it, regenerates `.SRCINFO`, and pushes it
-to the AUR.
+Nothing publishes these automatically since the Electron release workflow was removed.
+`packaging/aur/scripts/release.sh` selects the stable or nightly package for a release tag, then
+updates its version and checksums, builds it, regenerates `.SRCINFO`, and pushes it to the AUR.
 
 To validate a release on Arch Linux:
 
