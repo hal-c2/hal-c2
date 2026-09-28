@@ -19,6 +19,7 @@ manager. Without mise: `vp i` at the root, `mix deps.get` in `apps/server-ex`.
 ```sh
 mise run node              # Elixir node in the foreground, ready to cluster (`mix hal_c2.cluster`)
 mise run node:pair         # one-time pairing URL for that node (--tailscale to publish it)
+mise run node:reload       # compile and load what changed into that node; sockets and agents stay up
 mise run desktop           # build the web app and the Qt shell, pair it with the running node, launch
 mise run desktop:build     # build only (--release for a Release build)
 mise run tui               # bundle apps/tui and open it on the running node

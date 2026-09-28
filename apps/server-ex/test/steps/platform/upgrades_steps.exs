@@ -473,6 +473,23 @@ defmodule HalC2.Steps.Platform.Upgrades do
     Map.put(context, :report, Upgrade.reload_checkout())
   end
 
+  step "a developer reloads the local node with its own access token", context do
+    assert {200, _, body} = reload(context, HalC2.Web.token())
+    modules = &Enum.map(body[&1], fn name -> Module.concat([name]) end)
+    report = %{changed: modules.("changed"), needs_restart: modules.("needsRestart")}
+    Map.put(context, :report, {:ok, report})
+  end
+
+  step "someone asks the local node to reload with another token", context do
+    Map.put(context, :response, reload(context, "not-the-node-token"))
+  end
+
+  step "the node refuses and loads nothing", context do
+    assert {401, _, _} = context.response
+    refute function_exported?(HalC2.Patch, :__hal_c2_variant__, 0)
+    context
+  end
+
   step "only modules whose code changed are loaded", context do
     assert {:ok, %{changed: [HalC2.Patch]}} = context.report
     assert function_exported?(HalC2.Patch, :__hal_c2_variant__, 0)
@@ -557,6 +574,9 @@ defmodule HalC2.Steps.Platform.Upgrades do
   end
 
   # --- helpers ---------------------------------------------------------------------------
+
+  defp reload(context, token),
+    do: Node.request(context.node, :post, "/api/dev/reload", bearer: token)
 
   defp target, do: "#{Upgrade.version()}-t#{System.unique_integer([:positive])}"
 

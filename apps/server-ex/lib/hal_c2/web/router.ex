@@ -452,6 +452,35 @@ defmodule HalC2.Web.Router do
     end
   end
 
+  # A node run from a checkout loads what `mix compile` changed since it started
+  # (`mix hal_c2.upgrade --dev` with no node names). Only the node's own token may ask.
+  post "/api/dev/reload" do
+    bearer = conn |> get_req_header("authorization") |> List.first("")
+
+    cond do
+      HalC2.Upgrade.release_root() != nil ->
+        send_resp(conn, 404, "")
+
+      not Plug.Crypto.secure_compare(bearer, "Bearer " <> HalC2.Web.token()) ->
+        send_resp(conn, 401, "")
+
+      true ->
+        case HalC2.Upgrade.reload_checkout() do
+          {:ok, report} ->
+            names = &Enum.map(&1, fn mod -> inspect(mod) end)
+
+            json(conn, 200, %{
+              "changed" => names.(report.changed),
+              "needsRestart" => names.(report.needs_restart),
+              "lingering" => names.(report.lingering)
+            })
+
+          {:error, reason} ->
+            json(conn, 409, %{"reason" => inspect(reason)})
+        end
+    end
+  end
+
   # The trailing segment is the file's name, for the client; the token decides what is served.
   get "/api/assets/:token", do: serve_asset(conn, token)
   get "/api/assets/:token/*_name", do: serve_asset(conn, token)
