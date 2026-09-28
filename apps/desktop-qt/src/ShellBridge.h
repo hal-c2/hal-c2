@@ -2,16 +2,21 @@
 
 #include <QObject>
 #include <QQmlPropertyMap>
+#include <QSet>
 #include <QUrl>
 #include <QVariant>
 #include <QVariantMap>
 
+#include <functional>
+
 class ShellChannel;
 
 // The `Shell` singleton QML bricks read from. State flows web -> QML through
-// `publish`; actions flow QML -> web through `dispatch`/`actionRequested`. Qt
-// holds no domain logic: it stores whatever the web app publishes and relays
-// it. Pages reach it through `channel`, never through this object directly.
+// `publish`; actions flow QML -> web through `dispatch`/`actionRequested`.
+// The bridge itself holds no domain logic: it stores what is published and
+// relays actions, except those an interceptor (NativeShell's controllers,
+// which talk to the node themselves) claims first. Pages reach it through
+// `channel`, never through this object directly.
 class ShellBridge : public QObject {
   Q_OBJECT
   Q_PROPERTY(int protocolVersion READ protocolVersion CONSTANT)
@@ -46,8 +51,21 @@ public:
   Q_INVOKABLE void setColorScheme(const QString& scheme);
   Q_INVOKABLE void windowCommand(const QString& command);
 
-  // Called by QML bricks; delivered to the web app as `actionRequested`.
+  // Called by QML bricks; delivered to the web app as `actionRequested`
+  // unless an interceptor (the native controllers) claims it first.
   Q_INVOKABLE void dispatch(const QString& action, const QVariant& payload = QVariant());
+  using Interceptor = std::function<bool(const QString& action, const QVariant& payload)>;
+  void addInterceptor(Interceptor interceptor) { m_interceptors.append(std::move(interceptor)); }
+  // Native code asking the page to do something (navigate, toast): bypasses
+  // the interceptors, which would otherwise see their own requests.
+  void sendToPage(const QString& action, const QVariant& payload = QVariant()) {
+    emit actionRequested(action, payload);
+  }
+  // A key native code now publishes itself: pages' publishes to it are dropped,
+  // so a page that has not caught up (or unmounts, publishing null) cannot
+  // overwrite it.
+  void claimKey(const QString& key) { m_claimedKeys.insert(key); }
+  bool isClaimed(const QString& key) const { return m_claimedKeys.contains(key); }
   // Reads image files for the composer: [{name, mimeType, base64}], skipping
   // anything that is not an image or is over the page's size limit.
   Q_INVOKABLE QVariantList readImageFiles(const QList<QUrl>& urls) const;
@@ -69,6 +87,8 @@ signals:
 private:
   QQmlPropertyMap* m_state;
   ShellChannel* m_channel;
+  QList<Interceptor> m_interceptors;
+  QSet<QString> m_claimedKeys;
   QUrl m_pageUrl;
   QString m_colorScheme = QStringLiteral("system");
   bool m_localFolderImportEnabled = false;

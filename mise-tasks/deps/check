@@ -64,7 +64,7 @@ if ((${#missing[@]})); then
   cat >&2 <<MSG
 
 The Qt desktop tests ($require) need: ${missing[*]}.
-Install Qt 6.9+ (Quick, QuickTest, WebEngine, WebChannel, DBus) and cmake from your
+Install Qt 6.9+ (Quick, QuickTest, WebEngine, WebChannel, WebSockets, DBus) and cmake from your
 system package manager, or point QT_ROOT_DIR or CMAKE_PREFIX_PATH at a Qt install.
 See apps/desktop-qt/README.md.
 MSG

@@ -22,6 +22,9 @@ cmake --build apps/desktop-qt/build/tests/native
 ctest --test-dir apps/desktop-qt/build/tests/native --output-on-failure
 ```
 
+`Features` runs the `@desktop` scenarios in `features/desktop/native-*.feature` against a fake
+node; `HAL_C2_FEATURES="desktop/native-sidebar.feature"` narrows it. The shell's own node client
+needs the Qt WebSockets module (`qt6-websockets` on most distributions).
 `ShellRuntime` covers reload and theme ownership. `ShellExamples` loads all
 the examples at 640, 1000, and 1400 pixels (including `glass-macos` on macOS), checking header text and dashboard
 card bounds, long branch names, clipped icons, and scrolling to the last card. It uses a local

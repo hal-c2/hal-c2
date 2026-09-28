@@ -14,6 +14,7 @@
 #include "LocalFolderModel.h"
 #include "LocalTranscriber.h"
 #include "NativeNotifications.h"
+#include "NativeShell.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
 #include "StoragePaths.h"
@@ -188,6 +189,9 @@ int main(int argc, char* argv[]) {
         QStringLiteral("--attach=%1").arg(QUrl::fromUserInput(parser.value(urlOption)).toString(QUrl::FullyEncoded)));
   }
   BackendProcess backend(backendOptions);
+  // Announced before `ready`, so the shell's own connection starts with the page.
+  NativeShell native(&bridge);
+  QObject::connect(&backend, &BackendProcess::nodeAvailable, &native, &NativeShell::open);
   QObject::connect(&backend, &BackendProcess::ready, &bridge, &ShellBridge::setPageUrl);
   QObject::connect(&backend, &BackendProcess::failed, &bridge, [&bridge](const QString& message) {
     qCritical().noquote() << "[shell]" << message;

@@ -9,11 +9,12 @@
 namespace {
 
 // Everything the web app publishes (see apps/web/src/shell/*Bridge.tsx) plus
-// the shell's own `backendError`.
+// the shell's own `backendError` and `native`. `sidebar` comes from the page
+// or, once `native.sidebar` is set, from SidebarController.
 constexpr const char* kStateKeys[] = {
     "backendError", "composer", "contextMenu", "git",   "keybindings", "layout",
     "notifications", "rightPanel", "settings", "sidebar", "theme",     "workspace",
-    "desktopNotifications", "modelPicker",
+    "desktopNotifications", "modelPicker", "native", "sidebarInput",
 };
 
 // Qt 6.11 deprecates the public constructor in favour of create(); the
@@ -103,6 +104,9 @@ void ShellBridge::windowCommand(const QString& command) {
 }
 
 void ShellBridge::dispatch(const QString& action, const QVariant& payload) {
+  for (const Interceptor& interceptor : std::as_const(m_interceptors)) {
+    if (interceptor(action, payload)) return;
+  }
   if (action == QStringLiteral("project.remove") && !m_localFolderImportEnabled) return;
   if (action == QStringLiteral("project.folder.open")) {
     auto request = payload.toMap();
@@ -164,6 +168,7 @@ ShellChannel::ShellChannel(ShellBridge* bridge) : QObject(bridge), m_bridge(brid
 }
 
 void ShellChannel::publish(const QString& key, const QVariant& value) {
+  if (m_bridge->isClaimed(key)) return;
   m_bridge->publish(key, value);
 }
 
