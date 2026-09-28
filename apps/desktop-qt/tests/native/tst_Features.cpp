@@ -1,6 +1,7 @@
 // Runs the desktop shell's native scenarios (the @desktop and @shared ones in
-// features/desktop/native-*.feature and features/connections/cluster.feature) against a fake
-// protocol-3 node: a small Gherkin reader, the step definitions the files in
+// features/desktop/native-*.feature, features/connections/cluster.feature and the thread
+// timeline's features/timeline/{streaming,tool-calls,runs-and-queue,plans-and-subagents}.feature)
+// against a fake protocol-3 node: a small Gherkin reader, the step definitions the files in
 // features/ register (Harness.h), and one QTest row per scenario.
 // HAL_C2_FEATURES narrows the run to other globs under features/ (space
 // separated).
@@ -171,7 +172,9 @@ void runStep(World& world, const Step& step) {
 
 QList<Scenario> collectScenarios() {
   const QDir root(QStringLiteral(HAL_C2_FEATURES_DIR));
-  QStringList globs{QStringLiteral("desktop/native-*.feature"), QStringLiteral("connections/cluster.feature")};
+  QStringList globs{QStringLiteral("desktop/native-*.feature"),       QStringLiteral("connections/cluster.feature"),
+                    QStringLiteral("timeline/streaming.feature"),     QStringLiteral("timeline/tool-calls.feature"),
+                    QStringLiteral("timeline/runs-and-queue.feature"), QStringLiteral("timeline/plans-and-subagents.feature")};
   if (const QString requested = qEnvironmentVariable("HAL_C2_FEATURES"); !requested.isEmpty()) {
     globs = requested.split(QLatin1Char(' '), Qt::SkipEmptyParts);
   }

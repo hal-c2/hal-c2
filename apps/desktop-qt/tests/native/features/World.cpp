@@ -8,6 +8,7 @@
 
 #include "ComposerController.h"
 #include "Harness.h"
+#include "ThreadStore.h"
 
 World::World() {
   m_native.client()->setRetryDelays({20});
@@ -21,6 +22,7 @@ void World::setTime(const QString& iso) {
   const QDateTime now = QDateTime::fromString(iso, Qt::ISODate).toLocalTime();
   m_native.sidebar()->setClock([now] { return now; });
   m_native.controller<ComposerController>()->setClock([now] { return now.toUTC(); });
+  m_native.controller<ThreadStore>()->setClock([now] { return now.toUTC(); });
 }
 
 void World::publishWorkspace(const QString& threadKey, const QJsonObject& project, const QString& worktreePath,

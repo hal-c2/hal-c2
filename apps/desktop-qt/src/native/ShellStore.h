@@ -31,6 +31,10 @@ public:
   bool reaches(const QString& environmentId) const;
   // The environment `node` serves, empty until its descriptor arrives.
   QString environmentOf(const QString& node) const { return m_nodes.value(node).environmentId; }
+  // The node of the cluster whose row this thread ("environmentId:threadId")
+  // is, empty while none lists it.
+  QString nodeOf(const QString& threadKey) const;
+  bool online(const QString& node) const { return m_nodes.value(node).online; }
   bool synchronized() const { return m_synchronized; }
 
 signals:
