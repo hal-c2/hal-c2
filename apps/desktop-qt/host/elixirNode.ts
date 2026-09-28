@@ -317,6 +317,59 @@ export async function fetchDescriptor(
 }
 
 /**
+ * Exchanges a node pairing token for a bearer at `/oauth/token`, as a desktop
+ * client. Pairing tokens are single use, so the token is spent afterwards.
+ * Undefined when the node refuses it (invalid, expired or already used).
+ */
+export async function exchangePairingToken(
+  origin: string,
+  token: string,
+  timeoutMs = 5_000,
+): Promise<string | undefined> {
+  const response = await fetch(new URL("/oauth/token", origin), {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      subject_token_type: "urn:hal-c2:params:oauth:token-type:environment-bootstrap",
+      subject_token: token,
+      client_label: "HAL-C2 desktop",
+      client_device_type: "desktop",
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) return undefined;
+  const body = (await response.json().catch(() => undefined)) as
+    | { readonly access_token?: unknown }
+    | undefined;
+  return typeof body?.access_token === "string" ? body.access_token : undefined;
+}
+
+/**
+ * A fresh one-time pairing credential minted with `bearer`
+ * (`POST /api/auth/pairing-token`, access:write). Undefined when the session
+ * may not mint one.
+ */
+export async function mintPairingToken(
+  origin: string,
+  bearer: string,
+  label: string,
+  timeoutMs = 5_000,
+): Promise<string | undefined> {
+  const response = await fetch(new URL("/api/auth/pairing-token", origin), {
+    method: "POST",
+    headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+    body: JSON.stringify({ label }),
+    signal: AbortSignal.timeout(timeoutMs),
+  }).catch(() => undefined);
+  if (response === undefined || !response.ok) return undefined;
+  const body = (await response.json().catch(() => undefined)) as
+    | { readonly credential?: unknown }
+    | undefined;
+  return typeof body?.credential === "string" ? body.credential : undefined;
+}
+
+/**
  * Waits until the node answers its descriptor. Fails when the node exits first
  * or does not answer within `timeoutMs` (a checkout may compile first).
  */
