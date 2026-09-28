@@ -22,7 +22,8 @@ class ShellStore;
 //
 // The page still renders the centre, so it follows: every route the page does
 // not already show goes to it as `route.follow {kind, threadKey, draftId,
-// projectKey, section}`, and the page reports where its own links and
+// projectKey, section}` (a draft adds its environmentId, projectId and
+// threadId, from DraftController), and the page reports where its own links and
 // redirects took it as `route.open {..., replace}`. The page is not the source
 // of truth; this is.
 class NavigationController : public QObject, public NativeController {
@@ -63,6 +64,9 @@ public:
   QString threadKey() const { return m_route.kind == QLatin1String("thread") ? m_route.threadKey : QString(); }
   // Moves to `route`, keeping where the user was on the back stack.
   void open(const Route& route) { go(route, false, true); }
+  // Moves to `route` in place of the current one (a draft that became a
+  // thread, or went away).
+  void replace(const Route& route) { go(route, true, true); }
   // Back to where the user was before, or home.
   void back();
 

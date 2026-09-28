@@ -17,7 +17,7 @@ Feature: The desktop shell shows its own toasts
     And the node has these threads:
       | id | project | title | createdAt            |
       | t1 | p1      | First | 2026-09-23T09:50:00Z |
-    And the page groups "env-a:p1" as the project "proj-1"
+    And the node has the project "p1" titled "proj-1"
     And the desktop shell is connected to its node
     And the node refuses "thread.settle" with "No"
 

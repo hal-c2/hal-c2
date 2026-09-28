@@ -36,3 +36,4 @@ WebSurface 1.0 WebSurface.qml
 WindowControls 1.0 WindowControls.qml
 Workspace 1.0 Workspace.qml
 Timeline 1.0 Timeline.qml
+ProjectRemovalDialog 1.0 ProjectRemovalDialog.qml

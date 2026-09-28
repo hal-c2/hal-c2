@@ -8,6 +8,7 @@
 #include <QTest>
 
 #include "ComposerController.h"
+#include "DraftController.h"
 #include "Harness.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
@@ -27,6 +28,9 @@ void World::start() {
   m_native->client()->setRetryDelays({20});
   m_native->sidebar()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
   m_native->controller<NavigationController>()->setStorePath(m_home.filePath(QStringLiteral("state/shell-route.json")));
+  m_native->controller<DraftController>()->setStorePath(m_home.filePath(QStringLiteral("data/shell-drafts.json")));
+  // The shell runs its own local node, so local folders are its to open.
+  m_bridge->setLocalFolderImportEnabled(true);
   m_native->controller<SettingsController>()->setDevicePath(QDir(configDir()).filePath(QStringLiteral("preferences.json")));
   m_theme = std::make_unique<ThemeStore>(configDir());
   m_theme->applyBaseTheme(state(QStringLiteral("theme")));
@@ -46,8 +50,20 @@ void World::restart() {
   follows.clear();
   pageNative = QVariant();
   start();
-  // The page loads again and publishes what it publishes.
-  publishSidebarInput();
+}
+
+void World::startNewThread(const QVariantMap& payload) {
+  m_bridge->dispatch(QStringLiteral("thread.new"), payload);
+  const QVariantMap route = state(QStringLiteral("route")).toMap();
+  if (route.value(QStringLiteral("kind")) == QLatin1String("draft")) draftId = route.value(QStringLiteral("draftId")).toString();
+}
+
+QString World::projectKey(const QString& name) const {
+  for (const QVariant& project : state(QStringLiteral("sidebar")).toMap().value(QStringLiteral("projects")).toList()) {
+    const QVariantMap map = project.toMap();
+    if (map.value(QStringLiteral("displayName")).toString() == name) return map.value(QStringLiteral("key")).toString();
+  }
+  return name;
 }
 
 void World::pageOpens(const QVariantMap& route, bool replace) {

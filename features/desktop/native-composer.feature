@@ -18,7 +18,7 @@ Feature: The desktop shell sends plain turns to its node
       | id | project | title | runtimeMode  | interactionMode |
       | t1 | p1      | One   | full-access  | default         |
       | t2 | p1      | Two   | full-access  | default         |
-    And the page groups "env-a:p1" as the project "proj-1"
+    And the node has the project "p1" titled "proj-1"
     And the desktop shell is connected to its node
 
   Rule: Stop interrupts the thread's run
