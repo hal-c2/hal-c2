@@ -895,10 +895,8 @@ addressed by the cluster node whose shell row lists it, in
 one-line change. A part-0 snapshot after a reconnect or `resync` replaces the
 entities but not the rows: row ids are stable, streamed text only emits
 `dataChanged` for its row, and structural changes are applied as inserts,
-moves and removes, so the `Timeline` brick keeps its scroll position. Until a
-native navigation controller exists, the active thread comes from the page's
-`sidebarInput.activeThreadKey` (the `SEAM(navigation)` connection in
-`ThreadStore.cpp`), the one place the store reads page state.
+moves and removes, so the `Timeline` brick keeps its scroll position. The
+active thread is the navigation route's.
 
 What the shell still lacks next to web and mobile is tracked as Gherkin, not
 prose. The repository's `features/` tree tags every scenario with the surface it
