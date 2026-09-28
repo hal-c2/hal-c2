@@ -146,7 +146,8 @@ chrome and read one key of `Shell.state`: `Sidebar`, `Workspace` (the header
 strip), `Composer`, `RightPanel`, `SettingsNav`, `ClusterSettings`,
 `GitActions`, `Notifications`, `ContextMenuHost`, plus `WebSurface`,
 `DefaultShell` and `ShellErrorOverlay`. `TerminalDrawer` reads the native
-`Terminals` controller instead (see the terminal drawer below). A rice that
+`Terminals` controller instead (see the terminal drawer below), and `Timeline`
+renders a native `Threads` timeline (see the thread store below). A rice that
 cards a surface passes the card's inner radius as `WebSurface.radius`
 (`RightPanel` forwards its own; `TerminalDrawer` insets its terminal from its
 own `radius`): the page clips itself to the curve and drops its own backdrop
@@ -866,8 +867,9 @@ on this machine.
 The embedded page is legacy and leaves the shell piece by piece. Every piece
 of the original chrome has a brick (`Sidebar`, `Composer`, `RightPanel`,
 `TerminalDrawer`, `Workspace`, `SettingsNav`), but several still get their
-state from the page. The timeline, the right panel's terminal tab and most
-settings pages are still HTML because they have not moved yet, not by design.
+state from the page. The right panel's terminal tab and most settings pages
+are still HTML because they have not moved yet, not by design. The timeline
+has a native store and brick but the layouts still show the page's.
 
 A piece has moved when a native controller (`src/native/`, registered with
 `NativeControllerRegistrar`) builds its state from the shell's own node client
@@ -880,6 +882,23 @@ scenarios run by `tst_Features`. They are never hosted in or over
 `WebSurface`, and never gated on state the page publishes. The embed route
 behind `RightPanel` (a second `WebEngineView` on its own connection) is a
 stopgap for HTML that must sit where QML decides, not a pattern for new work.
+
+### Thread store and timeline
+
+`ThreadStore` (`Threads`) follows each open thread through the node's `stream`
+shape, folded into a `TimelineModel` per thread: the active one plus a few
+recently active ones stay subscribed. The fold is
+`packages/client-runtime/src/v3/threadShape.ts` in C++; the rows follow the
+TUI's timeline (folds of settled turns, tool call groups, markers). A thread is
+addressed by the cluster node whose shell row lists it, in
+`ThreadStore::streamShape` alone, so addressing by environment later is a
+one-line change. A part-0 snapshot after a reconnect or `resync` replaces the
+entities but not the rows: row ids are stable, streamed text only emits
+`dataChanged` for its row, and structural changes are applied as inserts,
+moves and removes, so the `Timeline` brick keeps its scroll position. Until a
+native navigation controller exists, the active thread comes from the page's
+`sidebarInput.activeThreadKey` (the `SEAM(navigation)` connection in
+`ThreadStore.cpp`), the one place the store reads page state.
 
 What the shell still lacks next to web and mobile is tracked as Gherkin, not
 prose. The repository's `features/` tree tags every scenario with the surface it

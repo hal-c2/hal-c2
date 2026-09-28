@@ -9,6 +9,7 @@
 #include "ComposerController.h"
 #include "Harness.h"
 #include "NavigationController.h"
+#include "ThreadStore.h"
 #include "ToastController.h"
 
 World::World() {
@@ -61,6 +62,7 @@ void World::setTime(const QDateTime& time) {
   m_native->sidebar()->setClock([now] { return now; });
   m_native->controller<ComposerController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ToastController>()->setClock([now] { return now.toUTC(); });
+  m_native->controller<ThreadStore>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ToastController>()->expire();
 }
 
