@@ -499,6 +499,14 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     context
   end
 
+  step "the install was cut off before it named the release to start", context do
+    # The release is in place, but start_erl.data and the finished mark never landed.
+    releases = Path.join(context.release_root, "releases")
+    File.rm!(Path.join(releases, "start_erl.data"))
+    File.rm!(Path.join(releases, "#{HalC2.Upgrade.version()}.installed"))
+    context
+  end
+
   step "a user runs it with {string}", %{args: [arg]} = context do
     run_single(context, context.single, [arg])
   end

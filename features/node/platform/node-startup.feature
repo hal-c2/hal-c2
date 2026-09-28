@@ -200,6 +200,14 @@ Feature: Starting the node
     And the installed release is left as it was
 
   @node
+  Scenario: An install cut off before it finished runs again
+    Given a user ran the single-file node of a release
+    And the install was cut off before it named the release to start
+    When a user runs it with "--flag"
+    Then the release and its runtime are unpacked in the node's data directory
+    And the service wrapper starts the release with "--flag"
+
+  @node
   Scenario: The single file of another version moves the node to it
     Given a user ran the single-file node of a release
     When a user runs the single-file node of "9.9.9"

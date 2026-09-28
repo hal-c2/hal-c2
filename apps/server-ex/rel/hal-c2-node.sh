@@ -12,15 +12,16 @@ erts="@ERTS@"
 @DATA_DIR@
 
 root="$hal_c2_data/release"
-if [ ! -d "$root/releases/$version" ]; then
+installed="$root/releases/$version.installed"
+if [ ! -f "$installed" ]; then
   mkdir -p "$hal_c2_data"
   tmp="$(mktemp -d "$hal_c2_data/.release.XXXXXX")"
   tail -n +@PAYLOAD_LINE@ "$0" | tar -xzf - -C "$tmp"
   mkdir -p "$root/bin" "$root/lib" "$root/releases"
   # Versioned directories never change once written; only missing ones move in. Every
-  # file lands by rename and the release directory moves in last, as the mark of a
-  # finished install, so an interrupted unpack runs again.
-  for dir in "$tmp"/lib/* "$tmp"/erts-*; do
+  # file lands by rename, start_erl.data names the version only once all of it is in
+  # place, and the marker written last means an interrupted install runs again.
+  for dir in "$tmp"/lib/* "$tmp"/erts-* "$tmp/releases/$version"; do
     target="$root/${dir#"$tmp"/}"
     [ -e "$target" ] || mv "$dir" "$target"
   done
@@ -31,7 +32,7 @@ if [ ! -d "$root/releases/$version" ]; then
   fi
   printf '%s %s\n' "$erts" "$version" >"$tmp/start_erl.data"
   mv -f "$tmp/start_erl.data" "$root/releases/start_erl.data"
-  mv "$tmp/releases/$version" "$root/releases/$version"
+  : >"$installed"
   rm -rf "$tmp"
 fi
 exec "$root/bin/hal-c2-service" "$@"
