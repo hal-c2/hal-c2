@@ -13,7 +13,7 @@
 
 include(FetchContent)
 
-set(HAL_C2_QML_GHOSTTY_REVISION 598cdb9a3e695a018843141c6e57b762bbda11c1)
+set(HAL_C2_QML_GHOSTTY_REVISION 1c90f80e4bb22bc8c7f33cf6d193e62412a40e56)
 set(HAL_C2_GHOSTTY_VT_LIBRARY "" CACHE FILEPATH
   "Prebuilt libghostty-vt static library; empty builds it from source")
 
