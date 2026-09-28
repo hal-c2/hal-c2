@@ -190,6 +190,10 @@ for line in sys.stdin:
                   "toolCall": {"toolCallId": "call-1", "title": "ls", "kind": "execute", "rawInput": {"command": "ls"}},
                   "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"}]}})
         elif "wait" in text:
+            # OpenCode names the command once it runs, with its output so far.
+            update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "in_progress",
+                         "kind": "execute", "title": "ls", "rawInput": {"command": "ls"},
+                         "content": [{"type": "content", "content": {"type": "text", "text": "a.txt\n"}}]})
             waiting = (mid, sid)
         elif "approve" in text:
             pending = (mid, sid)

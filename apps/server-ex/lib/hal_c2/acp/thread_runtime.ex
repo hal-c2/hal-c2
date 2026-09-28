@@ -735,7 +735,30 @@ defmodule HalC2.Acp.ThreadRuntime do
             tool_shape(call)
           )
 
-    if call["status"] in ["completed", "failed"], do: finish_tool(state, id, call), else: state
+    if call["status"] in ["completed", "failed"],
+      do: finish_tool(state, id, call),
+      else: running_command(state, id, call)
+  end
+
+  # OpenCode names a command only once it runs (`rawInput` on an in-progress update)
+  # and sends its output so far with each update.
+  defp running_command(state, id, call) do
+    with %{kind: :command, id: item_id} = item <- state.items[id],
+         fields =
+           %{
+             "input" => command_text(call["rawInput"] || %{}, nil),
+             "output" => content_text(call["content"])
+           }
+           |> Map.reject(fn {key, value} -> value in [nil, ""] or item[key] == value end),
+         true <- fields != %{} do
+      commit(state, fn stream ->
+        [Orchestration.upsert(stream, "turn-item", item_id, &Map.merge(&1, fields))]
+      end)
+
+      %{state | items: Map.put(state.items, id, Map.merge(item, fields))}
+    else
+      _ -> state
+    end
   end
 
   # --- provider subagents -----------------------------------------------------------

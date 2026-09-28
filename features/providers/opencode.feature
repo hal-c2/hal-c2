@@ -125,6 +125,10 @@ Feature: OpenCode
     When the user sends a follow-up message
     Then OpenCode receives the message during the running turn
 
+  Scenario: A running OpenCode command shows what it runs and its output so far
+    Given an OpenCode turn is running
+    Then the running command reads "ls" with the output "a.txt"
+
   @backlog
   Scenario: Reverting an OpenCode turn rewinds OpenCode's session
     Given an OpenCode thread with three turns

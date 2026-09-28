@@ -7,6 +7,7 @@ defmodule HalC2.Steps.Providers.Opencode do
 
   import ExUnit.Assertions
 
+  alias HalC2.StreamState
   alias HalC2.Test.FakeAcp
   alias HalC2.Test.Node.World
 
@@ -693,6 +694,20 @@ defmodule HalC2.Steps.Providers.Opencode do
 
     World.await_runs(context, @thread, ["completed"])
     assert "steered: look here instead" in World.replies(context, @thread)
+    context
+  end
+
+  # OpenCode names the command, and sends its output, only in in-progress updates.
+  step "the running command reads {string} with the output {string}",
+       %{args: [input, output]} = context do
+    World.await_stream(World.thread_id(context, @thread), fn state ->
+      Enum.any?(
+        StreamState.list(state, "turn-item"),
+        &(match?(%{"type" => "command_execution", "status" => "running", "input" => ^input}, &1) and
+            String.trim(&1["output"]) == output)
+      )
+    end)
+
     context
   end
 end
