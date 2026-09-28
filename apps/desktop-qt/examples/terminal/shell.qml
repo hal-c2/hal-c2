@@ -237,8 +237,14 @@ ShellWindow {
                         visible: root.clusterOpen
                     }
 
+                    KeybindingsSettings {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        visible: root.keybindingsOpen
+                    }
+
                     WebSurface {
-                        visible: !root.clusterOpen
+                        visible: !root.clusterOpen && !root.keybindingsOpen
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         url: Shell.pageUrl
@@ -246,7 +252,7 @@ ShellWindow {
 
                     Composer {
                         Layout.fillWidth: true
-                        visible: ready && !root.clusterOpen
+                        visible: ready && !root.clusterOpen && !root.keybindingsOpen
                     }
 
                     TerminalDrawer {

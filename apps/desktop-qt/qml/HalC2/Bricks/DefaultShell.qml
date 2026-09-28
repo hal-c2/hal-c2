@@ -101,12 +101,18 @@ ShellWindow {
                     visible: root.clusterOpen
                 }
 
+                KeybindingsSettings {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    visible: root.keybindingsOpen
+                }
+
                 WebSurface {
                     id: primaryView
 
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    visible: !root.clusterOpen
+                    visible: !root.clusterOpen && !root.keybindingsOpen
                     url: Shell.pageUrl
                 }
 
@@ -114,7 +120,7 @@ ShellWindow {
                     id: composerView
 
                     Layout.fillWidth: true
-                    visible: ready && !root.clusterOpen
+                    visible: ready && !root.clusterOpen && !root.keybindingsOpen
                 }
 
                 TerminalDrawer {

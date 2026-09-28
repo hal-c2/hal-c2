@@ -527,7 +527,7 @@ ShellWindow {
 
                     WebSurface {
                         anchors.fill: parent
-                        visible: !root.clusterOpen
+                        visible: !root.clusterOpen && !root.keybindingsOpen
                         url: Shell.pageUrl
                         radius: surfaceCard.radius - surfaceCard.border.width
                     }
@@ -537,6 +537,13 @@ ShellWindow {
                         anchors.margins: surfaceCard.border.width
                         radius: surfaceCard.radius - surfaceCard.border.width
                         visible: root.clusterOpen
+                    }
+
+                    KeybindingsSettings {
+                        anchors.fill: parent
+                        anchors.margins: surfaceCard.border.width
+                        radius: surfaceCard.radius - surfaceCard.border.width
+                        visible: root.keybindingsOpen
                     }
 
                     // The page dims under the drawer; clicking it closes the drawer.
@@ -1109,7 +1116,7 @@ ShellWindow {
                     id: composer
 
                     Layout.fillWidth: true
-                    visible: ready && !root.clusterOpen
+                    visible: ready && !root.clusterOpen && !root.keybindingsOpen
                     color: "transparent"
                 }
 

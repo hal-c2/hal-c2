@@ -17,22 +17,31 @@ Rectangle {
     readonly property var route: Shell.state.route ?? null
     readonly property string currentSection: route !== null && route.section ? route.section : model !== null && model.activeSection ? model.activeSection : ""
     readonly property bool clusterOpen: currentSection === "/settings/cluster"
+    readonly property bool keybindingsOpen: currentSection === "/settings/keybindings"
     readonly property string query: search.text.trim().toLowerCase()
     // The shell's own pages, as rows shaped like the page's sections and
     // search results; `action` is what picking one dispatches. Every row
     // says whether it is a search result, so a row never reads the other
     // shape while the query and the rows change together.
-    readonly property var nativeRows: cluster === null ? [] : [{
-            label: qsTr("Cluster"),
-            title: qsTr("Cluster"),
-            sectionLabel: qsTr("Machines, invites and joining"),
-            keywords: "cluster machines invite join remove tailscale",
-            action: "cluster.open",
-            current: clusterOpen
-        }]
+    readonly property var nativeRows: (cluster === null ? [] : [{
+                label: qsTr("Cluster"),
+                title: qsTr("Cluster"),
+                sectionLabel: qsTr("Machines, invites and joining"),
+                keywords: "cluster machines invite join remove tailscale",
+                action: "cluster.open",
+                current: clusterOpen
+            }]).concat([{
+                label: qsTr("Keybindings"),
+                title: qsTr("Keybindings"),
+                sectionLabel: qsTr("Shortcuts and when they apply"),
+                keywords: "keybindings shortcuts keys hotkeys conditions",
+                action: "keybindings.open",
+                current: keybindingsOpen
+            }])
     readonly property var rows: {
         const searching = query.length > 0;
-        const pageRows = model === null ? [] : searching ? model.searchResults : model.sections;
+        // The page's own Keybindings section is the shell's now.
+        const pageRows = (model === null ? [] : searching ? model.searchResults : model.sections).filter(row => !String(row.to ?? "").startsWith("/settings/keybindings"));
         const own = searching ? nativeRows.filter(row => row.keywords.includes(query) || row.title.toLowerCase().includes(query)) : nativeRows;
         return pageRows.concat(own).map(row => Object.assign({
                 result: searching
