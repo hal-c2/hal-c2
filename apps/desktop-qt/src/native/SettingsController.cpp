@@ -68,7 +68,7 @@ void SettingsController::onConfig(const QJsonObject& frame) {
     m_config.insert(QStringLiteral("providers"), frame.value(QLatin1String("providers")));
     emit configChanged();
   } else if (type == QLatin1String("config.keybindings")) {
-    m_config.insert(QStringLiteral("keybindings"), frame.value(QLatin1String("rules")));
+    m_config.insert(QStringLiteral("keybindingRules"), frame.value(QLatin1String("rules")));
     emit configChanged();
   } else if (type == QLatin1String("config.themes")) {
     setThemes(frame.value(QLatin1String("themes")).toArray());
