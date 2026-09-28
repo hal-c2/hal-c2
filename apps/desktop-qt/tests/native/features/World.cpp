@@ -93,20 +93,6 @@ void World::setTime(const QDateTime& time) {
   m_native->controller<ToastController>()->expire();
 }
 
-void World::publishWorkspace(const QString& threadKey, const QJsonObject& project, const QString& worktreePath,
-                             bool draft) {
-  const bool known = !project.isEmpty();
-  m_bridge->publish(QStringLiteral("workspace"),
-                   QVariantMap{
-                       {QStringLiteral("threadKey"), threadKey},
-                       {QStringLiteral("isDraft"), draft},
-                       {QStringLiteral("projectRoot"), known ? project.value(QLatin1String("workspaceRoot")).toVariant() : QVariant()},
-                       {QStringLiteral("worktreePath"), worktreePath.isEmpty() ? QVariant() : QVariant(worktreePath)},
-                       {QStringLiteral("scripts"), project.value(QLatin1String("scripts")).toArray().toVariantList()},
-                       {QStringLiteral("terminalAvailable"), known},
-                   });
-}
-
 void World::connect(const QString& token) {
   m_native->open(node.origin(), token);
   waitFor([this] { return shellSubscriptions() >= 1; }, QStringLiteral("the shell to subscribe"));

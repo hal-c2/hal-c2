@@ -637,39 +637,44 @@ is unavailable under the shell.
 
 ### `workspace`
 
-`ShellWorkspaceBridge` (mounted by `ChatView` when hosted) publishes
-`ShellWorkspaceState`: project and thread titles, checkout mode (and whether
-it can still change), branch and worktree, a git summary (dirty, ahead/behind,
-linked PR), the environments the logical project spans, available editors
-with the preferred one, and project scripts. `ChatHeader` keeps only the git
+`WorkspaceController` builds `workspace` from the node, in the page's
+`ShellWorkspaceState` shape: the thread and its project are `ShellStore` rows,
+the git summary the node's `vcs` shape for the checkout, the refs
+`vcs.listRefs`, the editors each environment's `config`. It keeps
+`useThreadBranchSelection`'s rules (optimistic branch, `switchRef` /
+`createRef`, then `thread.metadata.update` with the new branch and worktree),
+and renames through `thread.metadata.update`. `ChatHeader` keeps only the git
 control (`shellHosted`), since commit/push/PR flows carry dialogs and progress
 UI that live with that control; the branch toolbar under the composer is not
 rendered. The `Workspace` brick renders the breadcrumb and the run / open
 pills; the branch toolbar's contents (environment, checkout mode, branch
-picker, PR badge) are the context strip under the `Composer` brick, where the
-page puts them, and the terminal and panel toggles from the page's header.
-Actions: `workspace.newThread`, `workspace.openInEditor {editorId?}` (same command and preference as the HTML
-picker), `workspace.runScript {scriptId}`, `workspace.envMode.set {mode}`,
-`workspace.startFromOrigin.set {enabled}`, `workspace.openPullRequest`,
-`workspace.environment.set {environmentId}`.
+picker, PR badge) are the context strip under the `Composer` brick.
+
+Three actions still open page UI and go on to it: `workspace.newThread`,
+`workspace.titleMenu {x, y}` and `workspace.openPullRequest`. A draft's first
+message is still the page's too, so a draft's checkout (mode, start from
+origin, branch, worktree, the machine it runs on) is kept natively by draft
+id and the page is told each change: `workspace.envMode.set`,
+`.startFromOrigin.set` and `.environment.set` go on to it after they land, and
+a branch picked for a draft as `workspace.checkout.follow {draftId, branch,
+worktreePath, envMode}`. Which thread a draft is, `NativeShell` asks
+`DraftController` (`setDraftResolver`). Environments reached only through a link have no
+shell rows, so their threads have no header yet.
 
 The terminal drawer is native: `TerminalDrawer` draws each of the thread's
 terminals with [qml-ghostty](https://github.com/hal-c2/qml-ghostty)'s
 `Terminal` item (libghostty-vt, built as described in the app's README), and
 `TerminalController` (the `Terminals` singleton) talks to the node for it over
-the shell's own `NodeClient`, as the sidebar and composer do. The page's only
-part is `workspace`: the controller takes the thread (drafts included), its
-project root, worktree and scripts from what the header shows, because the
-node's shell rows know no drafts. The page still publishes its old drawer
-fields, which the shell ignores. The controller intercepts `terminal.*` and
-`workspace.runScript` before they reach the page, so the header's run pill
-types into a drawer terminal the shell launched itself. Its shapes name the
+the shell's own `NodeClient`, as the sidebar and composer do. It takes the thread (drafts included), its
+project root, worktree and scripts from `WorkspaceController::place()`, and
+the header's run pill (`workspace.runScript`, handled by the workspace) types
+into a drawer terminal it launched itself. Its shapes name the
 environment, not a node, so the node routes them to the cluster member that serves
 it or through a link (`HalC2.Links`) to an environment outside the cluster; the
-drawer is available for any environment the `shell` snapshot lists in `nodes` or
-`links` (`features/desktop/native-terminal.feature`). Environments outside the
-cluster are paired natively, as node links (see `connections` below); the page's
-saved environments are not lent to the node.
+drawer is available wherever the header is, which today means environments the
+`shell` snapshot has rows for (`features/desktop/native-terminal.feature`).
+Environments outside the cluster are paired natively, as node links (see
+`connections` below); the page's saved environments are not lent to the node.
 
 - **Launch context.** Every attach and open sends the thread's cwd (worktree,
   else project root) and the same `HAL_C2_*`/`T3CODE_*` root variables as the
@@ -685,19 +690,6 @@ saved environments are not lent to the node.
 - **Hidden is not detached.** Once opened, the drawer stays attached while
   hidden, like the page's drawer did, so output keeps arriving and switching
   back costs nothing.
-
-Branch switching is native too: the selector's brain moved into
-`hooks/useThreadBranchSelection.ts` (thread/draft resolution, paginated ref
-list for a query, optimistic active branch, `selectBranch`/`createRef` which
-stop a live session and rewrite the thread's checkout), and both the HTML
-`BranchToolbarBranchSelector` and the bridge consume it. The state carries
-`branches` for the current `branchQuery` plus `branchesTotal`,
-`branchesLoading`, `branchSwitchPending`; actions `workspace.branch.search
-{query}`, `workspace.branch.select {name}`, `workspace.branch.create {name}`.
-
-Renaming is native too (`workspace.rename {title}`, with `renameRequestId`
-bumping when the page asks the brick to start editing) and the title's
-context menu comes from `workspace.titleMenu {x, y}`.
 
 ### `settings`, `cluster` and `connections`
 
@@ -903,7 +895,8 @@ window coordinates from native chrome) and the choice returns as
 the app native; the thread title menu (`workspace.titleMenu {x, y}`) and
 sidebar rows (`thread.menu {key, x, y}`) open the thread action menu through
 it, and `workspace.rename {title}` / `renameRequestId` drive an inline rename
-in the strip via the shared `useRenameThread` hook.
+in the header; the page's "Rename" asks for it with `workspace.rename.begin
+{threadKey}`.
 
 ### `git`
 

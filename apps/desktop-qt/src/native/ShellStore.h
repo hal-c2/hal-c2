@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 
 #include "SidebarModel.h"
 
@@ -29,6 +30,15 @@ public:
   QList<sidebar::Project> projects() const;
   std::optional<sidebar::Project> project(const QString& key) const;
   std::optional<sidebar::Thread> thread(const QString& key) const;
+  // The raw rows, empty when the cluster has none by that key.
+  QJsonObject threadRow(const QString& key) const;
+  QJsonObject projectRow(const QString& environmentId, const QString& projectId) const;
+  QList<QJsonObject> projectRows(const QString& environmentId) const;
+  // The environments the cluster serves, and each one's descriptor.
+  QStringList environments() const;
+  QJsonObject environment(const QString& environmentId) const;
+  // The node serving `environmentId`, empty when none does.
+  QString nodeServing(const QString& environmentId) const;
   sidebar::Capabilities capabilities(const QString& environmentId) const;
   // Whether a node of the cluster serves this environment.
   bool servesEnvironment(const QString& environmentId) const;
@@ -56,6 +66,7 @@ private:
   struct Node {
     QString environmentId;
     QJsonObject capabilities;
+    QJsonObject environment;
     bool online = false;
     QHash<QString, QJsonObject> threads;
     QHash<QString, QJsonObject> projects;

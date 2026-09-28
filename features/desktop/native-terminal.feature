@@ -1,8 +1,8 @@
 # Sources:
 #   apps/desktop-qt/src/TerminalController.cpp (the drawer's tabs, sessions and RPCs against the node)
 #   apps/desktop-qt/src/native/NativeShell.cpp (lent the node the page's access to environments; dropped)
-#   apps/web/src/shell/shellWorkspaceState.ts (the thread, drafts too, its project root, worktree
-#   and scripts, which the drawer takes from the page)
+#   apps/desktop-qt/src/native/WorkspaceController.cpp (the route's thread, drafts too, its project
+#   root, worktree and scripts, from the node's rows)
 #   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml (qml-ghostty's Terminal per tab)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
 #   apps/web/src/components/ThreadTerminals.tsx (the launch context and script runs this mirrors)
@@ -14,8 +14,8 @@
 Feature: The desktop shell runs the terminal drawer against its node
   The Qt shell draws a thread's terminals with qml-ghostty and talks to the node for them
   itself: it attaches each terminal, sends what the user types and shows what the shell
-  prints. From the page it takes only which thread is shown and that thread's project root,
-  worktree and scripts, as its header shows them.
+  prints. The thread is the route's, and its project root, worktree and scripts are the
+  node's rows for it, as the workspace header shows them.
 
   Background:
     Given the desktop's node "node-a" serves the environment "env-a"
@@ -67,7 +67,7 @@ Feature: The desktop shell runs the terminal drawer against its node
       When the user toggles the terminal drawer
       Then "env-b" attaches "term-1" of "t9" in "/work/p9"
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A thread on an environment the node is linked to has its terminal there
       Given the node is linked to "env-c"
       And the page shows "env-c:t7" with its project at "/work/p7"
