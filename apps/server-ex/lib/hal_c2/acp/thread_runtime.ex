@@ -399,8 +399,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
   def handle_info(_other, state), do: {:noreply, state}
 
-  # Its provider plugin's supervisor went down (a crash, not a stop): the turn it
-  # was running ends, so the thread shows the session is gone.
+  # The runtime or its provider plugin's supervisor crashed (not a stop): the turn
+  # it was running ends, with what was buffered, so the thread shows the session is gone.
   @impl true
   def terminate(reason, %{turn: turn} = state) when turn != nil do
     unless reason in [:normal, :shutdown] or match?({:shutdown, _}, reason),
@@ -408,7 +408,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         end_turn(
           state,
           "failed",
-          "#{HalC2.Acp.label(state.agent)}'s session ended: its plugin stopped."
+          "#{HalC2.Acp.label(state.agent)}'s session ended unexpectedly."
         )
 
     :ok

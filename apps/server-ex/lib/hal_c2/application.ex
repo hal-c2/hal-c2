@@ -18,6 +18,7 @@ defmodule HalC2.Application do
           HalC2.Shell,
           # Turns this node was running when it stopped end as interrupted.
           %{id: :recovery, start: {HalC2.Orchestration.Recovery, :start_link, []}},
+          HalC2.Orchestration.TurnWatch,
           Supervisor.child_spec({Task, &HalC2.Search.backfill/0}, id: :search_backfill),
           {Registry, keys: :unique, name: HalC2.Codex.Registry},
           {Registry, keys: :unique, name: HalC2.Claude.Registry},

@@ -220,6 +220,25 @@ defmodule HalC2.Steps.Providers.Codex do
     context
   end
 
+  # The app-server's own pid, from its connection (never found by name).
+  step "the Codex app-server exits unexpectedly", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    context
+  end
+
+  step "the turn fails saying Codex exited unexpectedly", context do
+    state = World.await_runs(context, @thread, ["failed"])
+
+    assert Enum.any?(
+             StreamState.list(state, "provider-session"),
+             &(&1["lastError"] == "Codex exited unexpectedly")
+           )
+
+    context
+  end
+
   step "Codex receives the message during the running turn", context do
     steer =
       World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/steer"))

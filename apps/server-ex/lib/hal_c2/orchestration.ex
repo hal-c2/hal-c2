@@ -1189,18 +1189,15 @@ defmodule HalC2.Orchestration do
   defp builtin_runtime(_codex), do: HalC2.Codex.ThreadRuntime
 
   # A thread has at most one running turn; interrupt whichever runtime holds it. A
-  # provider plugin that cannot stop a turn says so.
+  # started turn nothing drives any more (its runtime stopped without ending it) ends
+  # here, and a provider plugin that cannot stop a turn says so.
   defp interrupt_any(thread_id, run_id) do
-    Enum.find_value(
-      runtimes(:interrupt, 2),
-      interrupt_refusal(thread_id, run_id),
-      fn runtime ->
-        if runtime.interrupt(thread_id, run_id) == :ok, do: :ok
-      end
-    )
+    Enum.find_value(runtimes(:interrupt, 2), fn runtime ->
+      if runtime.interrupt(thread_id, run_id) == :ok, do: :ok
+    end) || interrupt_undriven(thread_id, run_id)
   end
 
-  defp interrupt_refusal(thread_id, run_id) do
+  defp interrupt_undriven(thread_id, run_id) do
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
     runs = StreamState.list(state, "run")
 
@@ -1208,6 +1205,13 @@ defmodule HalC2.Orchestration do
       Enum.find(runs, &(&1["id"] == run_id)) ||
         Enum.find(runs, &(&1["status"] in @active_statuses))
 
+    if run != nil and run["status"] in ~w(running waiting) and
+         not HalC2.Orchestration.TurnWatch.driven?(run["id"]),
+       do: HalC2.Orchestration.TurnWriter.abandon(thread_id, run["id"], "interrupted", nil),
+       else: interrupt_refusal(run)
+  end
+
+  defp interrupt_refusal(run) do
     instance = run && run["providerInstanceId"]
 
     with instance when is_binary(instance) <- instance,

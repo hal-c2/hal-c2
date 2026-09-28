@@ -6,6 +6,7 @@
 #   apps/server-ex/lib/hal_c2/orchestration/recovery.ex
 #   apps/server-ex/lib/hal_c2/orchestration/idle_sessions.ex
 #   apps/server-ex/lib/hal_c2/orchestration/limit_recovery.ex
+#   apps/server-ex/lib/hal_c2/orchestration/turn_watch.ex
 #   apps/server/src/orchestration-v2/ (startup recovery, idle session reaper)
 #   apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts (limit recovery at the reset time)
 #   packages/contracts/src/orchestrationV2.ts (OrchestrationV2LimitRecovery)
@@ -13,7 +14,9 @@
 Feature: Recovering from restarts and releasing idle sessions
   Provider processes die with the node. At boot the engine ends every turn that
   was cut off, so no thread is stuck running, and can ask cut-off threads to
-  continue. While running it stops provider processes that sat idle.
+  continue. While the node runs, a turn whose runtime crashes ends as failed, and
+  stopping a turn nothing drives any more ends it. The node also stops provider
+  processes that sat idle.
 
   Background:
     Given a node with a project "demo"
@@ -63,6 +66,32 @@ Feature: Recovering from restarts and releasing idle sessions
       | a newer message was sent to "t1" after that run         |
       | the run was waiting on the user rather than running     |
       | the provider conversation has no native thread to resume |
+
+  # The runtime is the node's process driving the provider; its provider process
+  # goes down with it.
+  @node
+  Scenario Outline: A turn whose runtime crashes ends as failed
+    Given thread "t1" exists in "demo"
+    And "t1" has a running turn on "<provider>"
+    When the runtime running the turn of "t1" crashes
+    Then the run of "t1" fails saying the session ended unexpectedly
+    And "t1" takes its next message
+
+    Examples:
+      | provider    |
+      | codex       |
+      | claudeAgent |
+      | opencode    |
+
+  # Nothing is left to interrupt, so the stop ends the run itself.
+  @node
+  Scenario: Stopping a turn whose runtime is gone ends it
+    Given thread "t1" exists in "demo"
+    And "t1" has a running turn on "codex"
+    And the runtime running the turn of "t1" stops without ending it
+    When the user stops "t1"
+    Then the run of "t1" is interrupted
+    And "t1" takes its next message
 
   @node
   Scenario: Idle provider sessions are released after 30 minutes

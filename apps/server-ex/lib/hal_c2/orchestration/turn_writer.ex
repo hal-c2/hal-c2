@@ -10,10 +10,12 @@ defmodule HalC2.Orchestration.TurnWriter do
   """
 
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.Entities
+  alias HalC2.Orchestration.{Entities, TurnWatch}
   alias HalC2.StreamState
 
   @flush_ms 50
+  @active_runs ~w(preparing starting running waiting)
+  @open ~w(pending running waiting)
   @text_ms 400
 
   @doc """
@@ -448,12 +450,15 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   @doc """
   Marks the turn as running: its provider turn (`ids.provider_turn`), attempt, run,
-  root node, and provider thread, which becomes the thread's active one.
+  root node, and provider thread, which becomes the thread's active one. The calling
+  process drives the turn from here: if it crashes before `finish/3`, the turn ends
+  as failed (`HalC2.Orchestration.TurnWatch`).
   """
   def started(state) do
     %{turn: turn} = state
     ids = turn.ids
     at = Entities.now()
+    TurnWatch.claim(state.thread_id, ids.run)
 
     commit(state, fn stream ->
       [
@@ -510,6 +515,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   def finish(state, status, failure) do
     ids = state.turn.ids
     at = Entities.now()
+    TurnWatch.release(ids.run)
     done = %{"status" => status, "completedAt" => at}
 
     checkpoint =
@@ -522,8 +528,11 @@ defmodule HalC2.Orchestration.TurnWriter do
     baselines = if checkpoint, do: baselines(state.turn, at), else: []
 
     # The turn may have changed the checkout; clients watching it see the result.
-    HalC2.Vcs.Watch.refresh(state.turn.cwd)
-    HalC2.Workspace.invalidate(state.turn.cwd)
+    if cwd = state.turn.cwd do
+      HalC2.Vcs.Watch.refresh(cwd)
+      HalC2.Workspace.invalidate(cwd)
+    end
+
     run_done = if checkpoint, do: Map.put(done, "checkpointId", checkpoint["id"]), else: done
 
     commit(state, fn stream ->
@@ -575,6 +584,77 @@ defmodule HalC2.Orchestration.TurnWriter do
     end)
 
     :ok
+  end
+
+  @doc """
+  Ends run `run_id` of `thread_id` with `status` when nothing drives it any more: its
+  runtime crashed, or stopped without ending it. What the run left open ends with it,
+  from what the thread recorded, then `finish/3`. A run that already ended is left
+  alone.
+  """
+  def abandon(thread_id, run_id, status, failure) do
+    at = Entities.now()
+
+    abandoned =
+      HalC2.Streams.transact(thread_id, :thread, fn stream ->
+        case StreamState.get(stream, "run")[run_id] do
+          %{"status" => active} = run when active in @active_runs ->
+            {left_open(stream, run_id, status, at), abandoned_turn(stream, thread_id, run)}
+
+          _ ->
+            {[], nil}
+        end
+      end)
+
+    if abandoned, do: finish(abandoned, status, failure), else: :ok
+  end
+
+  # The runtime state `finish/3` needs, rebuilt from the run.
+  defp abandoned_turn(stream, thread_id, run) do
+    instance = run["providerInstanceId"]
+    driver = Orchestration.driver_for(instance)
+    attempt = StreamState.get(stream, "run-attempt")[run["activeAttemptId"]] || %{}
+    session_id = "provider-session:#{driver}:#{thread_id}"
+
+    ids =
+      %{
+        thread: thread_id,
+        run: run["id"],
+        attempt: run["activeAttemptId"],
+        root_node: run["rootNodeId"],
+        provider_thread: run["providerThreadId"],
+        driver: driver,
+        instance: instance
+      }
+      |> then(
+        &if(turn = attempt["providerTurnId"], do: Map.put(&1, :provider_turn, turn), else: &1)
+      )
+
+    cwd = (StreamState.get(stream, "provider-session")[session_id] || %{})["cwd"]
+    %{thread_id: thread_id, turn: %{ids: ids, cwd: cwd, run_ordinal: run["ordinal"]}}
+  end
+
+  # The items, nodes and prompts a run left open, and its message still streaming.
+  defp left_open(stream, run_id, status, at) do
+    nodes =
+      for {id, %{"runId" => ^run_id}} <- StreamState.get(stream, "node"),
+          into: MapSet.new(),
+          do: id
+
+    for {kind, open?, changes} <- [
+          {"turn-item", &(&1["runId"] == run_id and &1["status"] in @open),
+           %{"status" => status, "streaming" => false, "completedAt" => at, "updatedAt" => at}},
+          {"node", &(&1["runId"] == run_id and &1["status"] in @open),
+           %{"status" => status, "completedAt" => at}},
+          {"message", &(&1["runId"] == run_id and &1["streaming"] == true),
+           %{"streaming" => false, "updatedAt" => at}},
+          {"runtime-request", &(&1["nodeId"] in nodes and &1["status"] == "pending"),
+           %{"status" => "cancelled", "resolvedAt" => at}}
+        ],
+        {id, entity} <- StreamState.get(stream, kind),
+        open?.(entity),
+        change = Orchestration.upsert(stream, kind, id, &Map.merge(&1, changes)),
+        do: change
   end
 
   defp trace_attributes(state) do

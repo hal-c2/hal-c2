@@ -291,6 +291,7 @@ defmodule HalC2.Steps.Plugins.Fixtures do
   def ensure(context) do
     Node.ensure(HalC2.Settings)
     Node.ensure(HalC2.Plugins)
+    Node.ensure(HalC2.Orchestration.TurnWatch)
     context
   end
 
@@ -980,6 +981,37 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
     [%{"providerInstanceId" => instance}] = Turns.await_runs(context.thread_id, ["completed"])
     assert instance == context.plugin
     assert answers(context.thread_id) == ["Hello from #{context.plugin}"]
+    context
+  end
+
+  step "the plugin {string} is running a turn", %{args: [id]} = context do
+    context = launch(context, id, "wait")
+    [_] = Turns.await_runs(context.thread_id, ["running"])
+    context
+  end
+
+  step "the process running that turn crashes", context do
+    pid = GenServer.call(Fixtures.module(context.plugin), {:turn, context.thread_id})
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, :killed}
+    context
+  end
+
+  step "the run fails saying the provider's session ended unexpectedly", context do
+    [_] = Turns.await_runs(context.thread_id, ["failed"])
+
+    assert session(context.thread_id)["lastError"] ==
+             "The provider's session ended unexpectedly."
+
+    context
+  end
+
+  step "the thread takes its next message", context do
+    {{:ok, _}, context} =
+      World.dispatch(context, Turns.message(context.thread_id, "m2", "hello again"))
+
+    [_, _] = Turns.await_runs(context.thread_id, ["failed", "completed"])
     context
   end
 
