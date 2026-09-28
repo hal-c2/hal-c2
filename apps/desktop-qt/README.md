@@ -13,6 +13,9 @@ mise run desktop    # terminal 2: build the web app (apps/web/dist) and the shel
 `mise run desktop -- --standalone` skips the pairing and lets the shell start its own node,
 as the installed app does.
 
+Besides Qt Quick and WebEngine, the shell needs the Qt WebSockets module for its own node
+client: `qt6-websockets` on Arch and Fedora, `qt6-websockets-dev` on Debian and Ubuntu.
+
 Focused native checks use temporary data and run offscreen:
 
 ```sh
@@ -23,8 +26,7 @@ ctest --test-dir apps/desktop-qt/build/tests/native --output-on-failure
 ```
 
 `Features` runs the `@desktop` scenarios in `features/desktop/native-*.feature` against a fake
-node; `HAL_C2_FEATURES="desktop/native-sidebar.feature"` narrows it. The shell's own node client
-needs the Qt WebSockets module (`qt6-websockets` on most distributions).
+node; `HAL_C2_FEATURES="desktop/native-sidebar.feature"` narrows it.
 `ShellRuntime` covers reload and theme ownership. `ShellExamples` loads all
 the examples at 640, 1000, and 1400 pixels (including `glass-macos` on macOS), checking header text and dashboard
 card bounds, long branch names, clipped icons, and scrolling to the last card. It uses a local

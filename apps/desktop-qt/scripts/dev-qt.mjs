@@ -153,7 +153,9 @@ function resolveRoot() {
 }
 
 function build() {
-  if (!NodeFS.existsSync(NodePath.join(buildDir, "CMakeCache.txt"))) {
+  // build.ninja, not CMakeCache.txt: a configure that failed (a missing Qt
+  // module, say) leaves the cache behind, and must run again next time.
+  if (!NodeFS.existsSync(NodePath.join(buildDir, "build.ninja"))) {
     const qtPrefix = resolveQtPrefix();
     process.stderr.write(`[dev-qt] configuring (${buildType}) with Qt at ${qtPrefix}\n`);
     run("cmake", [
