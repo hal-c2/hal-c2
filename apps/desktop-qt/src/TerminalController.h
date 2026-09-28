@@ -18,10 +18,10 @@ class NodeClient;
 class ShellBridge;
 class ShellStore;
 
-// Where a thread's terminals run: the node that owns the thread, and the
-// launch context every terminal of the thread starts with.
+// Where a thread's terminals run: the environment that owns the thread (the
+// node routes its shapes and RPCs there), and the launch context every terminal
+// of the thread starts with.
 struct TerminalPlace {
-  QString node;
   QString environmentId;
   QString threadId;
   QString cwd;
@@ -178,7 +178,7 @@ private:
   void refresh();
   void syncTabs();
   QStringList terminalIds() const;
-  void watch(const QString& node, const QString& environmentId);
+  void watch(const QString& environmentId);
   void onTerminals(const QString& environmentId, const QJsonObject& event);
   bool setOpen(bool open);
   void openTerminal(const QString& terminalId);
@@ -202,7 +202,7 @@ private:
   QHash<QString, ThreadUi> m_ui;
   // Terminals the node lists, per thread key.
   QHash<QString, QMap<QString, Summary>> m_known;
-  // The `terminals` subscription per node name.
+  // The `terminals` subscription per environment.
   QHash<QString, int> m_watched;
   TerminalTabs m_tabs;
 };

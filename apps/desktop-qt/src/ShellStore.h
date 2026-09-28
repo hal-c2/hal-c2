@@ -1,9 +1,11 @@
 #pragma once
 
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
 #include <QObject>
+#include <QSet>
 #include <QString>
 
 #include "SidebarModel.h"
@@ -11,8 +13,9 @@
 class NodeClient;
 
 // The node's `shell` shape folded into thread rows: every node of the cluster,
-// its environment descriptor, and its live threads. Projects stay with the
-// page, which groups them by its own settings.
+// its environment descriptor, and its live threads, plus the environments the
+// node reaches through links (HalC2.Links). Projects stay with the page, which
+// groups them by its own settings.
 class ShellStore : public QObject {
   Q_OBJECT
 
@@ -24,8 +27,8 @@ public:
   sidebar::Capabilities capabilities(const QString& environmentId) const;
   // Whether a node of the cluster serves this environment.
   bool servesEnvironment(const QString& environmentId) const;
-  // The name of the node serving this environment, for shapes addressed by node.
-  QString nodeOf(const QString& environmentId) const;
+  // Whether the node reaches this environment: served by the cluster or linked.
+  bool reaches(const QString& environmentId) const;
   bool synchronized() const { return m_synchronized; }
 
 signals:
@@ -34,6 +37,7 @@ signals:
 private:
   void onFrame(const QJsonObject& frame);
   void setEnvironment(const QString& node, const QJsonObject& environment);
+  void setLinks(const QJsonArray& links);
 
   struct Node {
     QString environmentId;
@@ -43,5 +47,8 @@ private:
   };
 
   QHash<QString, Node> m_nodes;
+  // Environments outside the cluster the node is linked to. Their threads stay
+  // with the page; the node only forwards their RPCs and shapes.
+  QSet<QString> m_linked;
   bool m_synchronized = false;
 };

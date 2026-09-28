@@ -6,7 +6,8 @@
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
 #   apps/web/src/components/ThreadTerminals.tsx (the launch context and script runs this mirrors)
 #   packages/shared/src/terminalLabels.ts (terminal ids and tab labels)
-#   Shared domain: terminal/ owns what a thread's terminals do; this file owns that the Qt shell
+#   Shared domain: terminal/ owns what a thread's terminals do; connections/links.feature owns
+#   how the node reaches an environment outside its cluster; this file owns that the Qt shell
 #   runs its drawer against the node itself.
 
 Feature: The desktop shell runs the terminal drawer against its node
@@ -63,7 +64,19 @@ Feature: The desktop shell runs the terminal drawer against its node
       Given the node is clustered with "node-b", which serves "env-b"
       And the page shows "env-b:t9" with its project at "/work/p9"
       When the user toggles the terminal drawer
-      Then "node-b" attaches "term-1" of "t9" in "/work/p9"
+      Then "env-b" attaches "term-1" of "t9" in "/work/p9"
+
+    @desktop
+    Scenario: A thread on an environment the node is linked to has its terminal there
+      Given the node is linked to "env-c"
+      And the page shows "env-c:t7" with its project at "/work/p7"
+      When the user toggles the terminal drawer
+      Then "env-c" attaches "term-1" of "t7" in "/work/p7"
+
+    @desktop
+    Scenario: A thread on an environment the node does not reach has no terminal
+      Given the page shows "env-x:t8" with its project at "/work/p8"
+      Then the terminal drawer is unavailable
 
     @desktop
     Scenario: The drawer shows the terminals the thread already has
@@ -189,13 +202,6 @@ Feature: The desktop shell runs the terminal drawer against its node
       And the terminal drawer shows the tabs "Terminal 1, Terminal 2"
 
   Rule: What the page's drawer did that the native drawer does not yet
-
-    # The shell only talks to its own node; a machine it should reach joins that node's cluster.
-    @dropped @desktop
-    Scenario: A thread on an environment outside the node's cluster has a terminal
-      Given the page shows a thread on an environment the desktop reaches without its node
-      When the user toggles the terminal drawer
-      Then that environment attaches the thread's first terminal
 
     @backlog @desktop
     Scenario: The drawer follows the user's own terminal chords

@@ -227,6 +227,8 @@ public:
   };
   bool holdSnapshot = false;
   bool holdAnswers = false;
+  // Environments outside the cluster the node is linked to (HalC2.Links).
+  QStringList linked;
 
   void sendSnapshot() {
     if (!m_socket || m_shellSubscription < 0) return;
@@ -251,7 +253,27 @@ public:
               }},
          }}},
         {QStringLiteral("rows"), rows},
+        {QStringLiteral("links"), links()},
     });
+  }
+
+  // The node pairs with an environment outside its cluster, announced as `shell.links`.
+  void link(const QString& environment) {
+    linked.append(environment);
+    if (!m_socket || m_shellSubscription < 0) return;
+    send({{QStringLiteral("t"), QStringLiteral("shell.links")}, {QStringLiteral("id"), m_shellSubscription}, {QStringLiteral("links"), links()}});
+  }
+
+  QJsonArray links() const {
+    QJsonArray result;
+    for (const QString& environment : linked) {
+      result.append(QJsonObject{
+          {QStringLiteral("environment"), QJsonObject{{QStringLiteral("environmentId"), environment}}},
+          {QStringLiteral("origin"), QStringLiteral("http://") + environment + QStringLiteral(":3780")},
+          {QStringLiteral("online"), true},
+      });
+    }
+    return result;
   }
 
   // Another node joins this one's cluster, announced as the shell announces it on nodeup.
@@ -342,6 +364,8 @@ private:
         m_shellSubscription = id;
         if (!holdSnapshot) sendSnapshot();
       } else if (kind == QLatin1String("terminals")) {
+        // Only its own environment's list; another environment's goes to the node serving it.
+        if (shape.value(QLatin1String("environment")) != environmentId) return;
         m_terminalsSubscription = id;
         QJsonArray list;
         for (const Terminal& terminal : std::as_const(terminals)) list.append(terminal.summary);
@@ -719,8 +743,7 @@ TerminalSession* terminalSession(World& world, const QString& terminalId) {
   fail(QStringLiteral("no tab for %1; the tabs are %2").arg(terminalId, tabLabels(world)));
 }
 
-// The `input` of the latest `terminal` subscription for this terminal.
-// The latest `terminal` subscription for the terminal: {type, node, input}.
+// The latest `terminal` subscription for the terminal: {type, environment, input}.
 std::optional<QJsonObject> terminalShape(World& world, const QString& threadId, const QString& terminalId) {
   for (qsizetype index = world.node.subscriptions.size() - 1; index >= 0; --index) {
     const QJsonObject shape = world.node.subscriptions.at(index).value(QLatin1String("shape")).toObject();
@@ -781,6 +804,10 @@ void defineSteps() {
   });
   step(QStringLiteral("the node is clustered with %1, which serves %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.node.join(c[0], c[1]);
+    world.sync();
+  });
+  step(QStringLiteral("the node is linked to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.node.link(c[0]);
     world.sync();
   });
   step(QStringLiteral("the node's environment does not track visits"), [](World& world, const Captures&, const Table&) {
@@ -1276,7 +1303,7 @@ void defineSteps() {
   step(QStringLiteral("%1 attaches %1 of %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {
       const auto shape = terminalShape(world, c[2], c[1]);
-      return shape && shape->value(QLatin1String("node")) == c[0] &&
+      return shape && shape->value(QLatin1String("environment")) == c[0] &&
              shape->value(QLatin1String("input")).toObject().value(QLatin1String("cwd")) == c[3];
     }, [&] {
       const auto shape = terminalShape(world, c[2], c[1]);

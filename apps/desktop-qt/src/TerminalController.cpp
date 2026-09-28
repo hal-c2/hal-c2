@@ -77,7 +77,7 @@ TerminalSession::TerminalSession(NodeClient* client, const TerminalPlace& place,
   m_subscription = client->subscribe(
       {
           {QStringLiteral("type"), QStringLiteral("terminal")},
-          {QStringLiteral("node"), place.node},
+          {QStringLiteral("environment"), place.environmentId},
           {QStringLiteral("input"), input},
       },
       [this](const QJsonObject& frame) { onFrame(frame); });
@@ -359,8 +359,7 @@ std::optional<TerminalPlace> TerminalController::placeFor(const QVariantMap& wor
   TerminalPlace place;
   place.environmentId = threadKey.left(colon);
   place.threadId = threadKey.mid(colon + 1);
-  place.node = m_store->nodeOf(place.environmentId);
-  if (place.node.isEmpty() || place.threadId.isEmpty()) return std::nullopt;
+  if (!m_store->reaches(place.environmentId) || place.threadId.isEmpty()) return std::nullopt;
   place.worktreePath = workspace.value(QStringLiteral("worktreePath")).toString();
   place.cwd = place.worktreePath.isEmpty() ? root : place.worktreePath;
   // packages/shared projectScriptRuntimeEnv; T3CODE_ is what older scripts read.
@@ -381,10 +380,9 @@ void TerminalController::refresh() {
   const QVariantMap workspace = m_bridge->state()->value(QStringLiteral("workspace")).toMap();
   auto place = placeFor(workspace);
   const QString threadKey = place ? place->environmentId + QLatin1Char(':') + place->threadId : QString();
-  if (place) watch(place->node, place->environmentId);
+  if (place) watch(place->environmentId);
   // Another thread, or the same one launching elsewhere: start over.
-  const bool moved = threadKey != m_threadKey || !place || !m_place || place->node != m_place->node ||
-                     place->cwd != m_place->cwd;
+  const bool moved = threadKey != m_threadKey || !place || !m_place || place->cwd != m_place->cwd;
   if (moved) {
     m_tabs.clear();
     m_attached = false;
@@ -444,16 +442,15 @@ void TerminalController::syncTabs() {
   }
 }
 
-// Follows a node's terminals list once a thread there is shown.
-void TerminalController::watch(const QString& node, const QString& environmentId) {
-  if (m_watched.contains(node)) return;
-  m_watched.insert(node, m_client->subscribe({{QStringLiteral("type"), QStringLiteral("terminals")},
-                                              {QStringLiteral("node"), node}},
-                                             [this, environmentId](const QJsonObject& frame) {
-                                               if (frame.value(QLatin1String("t")) != QLatin1String("terminals"))
-                                                 return;
-                                               onTerminals(environmentId, frame.value(QLatin1String("event")).toObject());
-                                             }));
+// Follows an environment's terminals list once a thread there is shown.
+void TerminalController::watch(const QString& environmentId) {
+  if (m_watched.contains(environmentId)) return;
+  const QJsonObject shape{{QStringLiteral("type"), QStringLiteral("terminals")},
+                          {QStringLiteral("environment"), environmentId}};
+  m_watched.insert(environmentId, m_client->subscribe(shape, [this, environmentId](const QJsonObject& frame) {
+    if (frame.value(QLatin1String("t")) != QLatin1String("terminals")) return;
+    onTerminals(environmentId, frame.value(QLatin1String("event")).toObject());
+  }));
 }
 
 void TerminalController::onTerminals(const QString& environmentId, const QJsonObject& event) {

@@ -608,8 +608,11 @@ project root, worktree and scripts from what the header shows, because the
 node's shell rows know no drafts. The page still publishes its old drawer
 fields, which the shell ignores. The controller intercepts `terminal.*` and
 `workspace.runScript` before they reach the page, so the header's run pill
-types into a drawer terminal the shell launched itself; environments outside
-the node's cluster are not covered yet (`features/desktop/native-terminal.feature`).
+types into a drawer terminal the shell launched itself. Its shapes name the
+environment, not a node, so the node routes them to the cluster member that serves
+it or through a link (`HalC2.Links`) to an environment outside the cluster; the
+drawer is available for any environment the `shell` snapshot lists in `nodes` or
+`links` (`features/desktop/native-terminal.feature`).
 
 - **Launch context.** Every attach and open sends the thread's cwd (worktree,
   else project root) and the same `HAL_C2_*`/`T3CODE_*` root variables as the
