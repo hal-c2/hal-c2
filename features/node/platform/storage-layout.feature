@@ -7,7 +7,7 @@
 #   apps/server/src/cli/config.ts (--base-dir, a dev URL picks the dev profile)
 #   apps/server/src/cli/pair.ts (probes both profiles)
 #   apps/server/src/device/SshDeviceHost.ts, packages/ssh/src/tunnel.ts (ssh-launch on remote hosts)
-#   apps/server-ex/config/config.exs (a worktree's .hal-c2, the main checkout's hal-c2-dev profile)
+#   apps/server-ex/config/config.exs (the hal-c2-dev profile for a dev node)
 #   apps/server-ex/config/runtime.exs (HAL_C2_NODE_HOME, HAL_C2_HOME)
 #   apps/server-ex/rel/env.sh.eex (the release's home)
 #   apps/server-ex/README.md (Run, Release: where the node keeps its state)
@@ -144,7 +144,9 @@ Feature: Where HAL-C2 keeps its files
         | XDG_DATA_HOME   | /xdg/data      | data    | /srv/hal-c2/data  |
         | XDG_RUNTIME_DIR | /run/user/1000 | runtime | /srv/hal-c2/state |
 
-    @node
+    # A dev node keeps its state in the hal-c2-dev profile from a worktree too
+    # (node-startup.feature); only the TypeScript dev runner gives a worktree its own root.
+    @dropped @node
     Scenario: A worktree's own directory outranks an ambient HAL_C2_HOME
       Given HAL_C2_HOME is "/srv/hal-c2" in the developer's shell
       When a developer starts HAL-C2 from a linked git worktree
@@ -173,7 +175,7 @@ Feature: Where HAL-C2 keeps its files
     @node
     Scenario Outline: A development server with no root uses the development profile
       Given no HAL-C2 home is configured
-      When a developer starts a development server from the main checkout
+      When a developer starts a development server from a linked git worktree
       Then its <kind> directory is "<path>"
       And the installed app's "<installed>" is not touched
 
@@ -191,7 +193,9 @@ Feature: Where HAL-C2 keeps its files
       Then its data directory is <path>
       And there is no "dev" or "userdata" level inside it
 
-      Examples:
+      # A dev node has no worktree root (node-startup.feature).
+      @dropped
+      Examples: Dropped on the node
         | root                                         | path                          |
         | the server is started from a linked worktree | the worktree's ".hal-c2/data" |
 

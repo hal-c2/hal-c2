@@ -19,9 +19,9 @@ mix hal_c2.pair                                      # one-time pairing URL for 
 
 During development the node keeps its files in the XDG `hal-c2-dev` profile, in the
 `elixir` directory of each kind (`~/.local/share/hal-c2-dev/elixir`,
-`~/.local/state/hal-c2-dev/elixir/logs`), apart from the installed app's. From a linked git
-worktree it uses the worktree's own `.hal-c2` instead (`.hal-c2/data/elixir`), as the dev
-runner does. It ignores `HAL_C2_HOME`; set `HAL_C2_NODE_HOME` to put them elsewhere. The node
+`~/.local/state/hal-c2-dev/elixir/logs`), apart from the installed app's, whichever checkout
+or worktree it runs from. It ignores `HAL_C2_HOME`; set `HAL_C2_NODE_HOME` to put them
+elsewhere. The node
 listens on loopback port 3780; `HAL_C2_NODE_PORT` and
 `HAL_C2_NODE_HOST` (a LAN or tailnet address, for pairing other devices; `HAL_C2_HOST` also
 works) change that.

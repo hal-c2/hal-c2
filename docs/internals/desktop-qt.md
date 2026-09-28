@@ -170,8 +170,7 @@ mise run desktop                    # terminal 2: cmake build, `mix hal_c2.pair`
 ```
 
 `mise run desktop` runs `scripts/dev-qt.mjs`. It uses `--home-dir`, else the
-checkout's `.hal-c2` (the root a linked worktree's node uses), as the shell's
-`HAL_C2_HOME`, so the shell rices from `<root>/config/shell/` and keeps its web
+checkout's `.hal-c2`, as the shell's `HAL_C2_HOME`, so the shell rices from `<root>/config/shell/` and keeps its web
 profile under `<root>/cache`. Its other flags are `--url` (attach to that link
 instead of pairing), `--standalone` (start the shell's own node from source, as
 the installed app does; not next to `mise run node` on the same home),

@@ -109,8 +109,8 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     context |> Storage.user() |> Map.put(:checkout_kind, :worktree)
   end
 
-  step "a developer starts a development server from the main checkout", context do
-    Storage.start_checkout(context, :checkout)
+  step "a developer starts a development server from a linked git worktree", context do
+    Storage.start_checkout(context, :worktree)
   end
 
   step "the installed app's {string} is not touched", %{args: [dir]} = context do

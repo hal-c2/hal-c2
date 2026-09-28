@@ -9,8 +9,8 @@
  *   --home-dir <dir>   the shell's HAL-C2 home (HAL_C2_HOME for hal-c2-qt): where it
  *                      rices from (<dir>/config/shell) and keeps its web profile, and
  *                      the home a --standalone node gets. Defaults to the checkout's
- *                      .hal-c2 (the shell has no development profile, so a main
- *                      checkout's shell does not share `mise run node`'s hal-c2-dev).
+ *                      .hal-c2 (the shell has no development profile, so it does not
+ *                      share `mise run node`'s hal-c2-dev).
  *   --url <url>        skip pairing and attach to this URL (a node pairing link, or
  *                      any page to load as it is)
  *   --standalone       no pairing: the shell starts its own node from source, as the
@@ -144,7 +144,7 @@ function expandHome(raw) {
   return trimmed;
 }
 
-/** `--home-dir`, else the checkout's `.hal-c2`, the root a linked worktree's node uses (config.exs). */
+/** `--home-dir`, else the checkout's `.hal-c2`. */
 function resolveRoot() {
   const explicit = options.homeDir?.trim() ?? "";
   return explicit.length > 0

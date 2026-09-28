@@ -1,5 +1,5 @@
 # Sources:
-#   apps/server-ex/config/config.exs (a worktree's .hal-c2, the main checkout's hal-c2-dev profile)
+#   apps/server-ex/config/config.exs (the hal-c2-dev profile for a dev node)
 #   apps/server-ex/config/runtime.exs (HAL_C2_NODE_HOME, HAL_C2_HOME, T3_HOME, T3CODE_HOME, HAL_C2_NODE_PORT, HAL_C2_NODE_HOST, HAL_C2_HOST)
 #   apps/server-ex/README.md (Run, Release: where the node keeps its state)
 #   apps/server/src/cli/config.ts (HAL_C2_HOST)
@@ -64,26 +64,23 @@ Feature: Starting the node
     Then its database, logs and worktrees live under "/srv/t3/elixir"
 
   @node
-  Scenario: The main checkout keeps its state in the development profile
+  Scenario Outline: A dev node keeps its state in the development profile, from any checkout
     Given no home directory is configured
-    When a developer starts the node from the main checkout
+    When a developer starts the node from <checkout>
     Then its database, secrets and worktrees are in "~/.local/share/hal-c2-dev/elixir"
     And its logs are in "~/.local/state/hal-c2-dev/elixir/logs"
     And nothing is written to the user's XDG directories
 
-  @node
-  Scenario: A linked worktree keeps its state inside the worktree
-    Given no home directory is configured
-    When a developer starts the node from a linked git worktree
-    Then its database, secrets and worktrees are in the checkout's ".hal-c2/data/elixir"
-    And its logs are in the checkout's ".hal-c2/state/elixir/logs"
-    And nothing is written to the user's XDG directories
+    Examples:
+      | checkout              |
+      | the main checkout     |
+      | a linked git worktree |
 
   @node
-  Scenario: A linked worktree keeps its state inside the worktree even when HAL_C2_HOME is set
+  Scenario: A dev node ignores HAL_C2_HOME
     Given HAL_C2_HOME is "/srv/hal-c2" in the developer's shell
     When a developer starts the node from a linked git worktree
-    Then its database is in the checkout's ".hal-c2/data/elixir"
+    Then its database is in "~/.local/share/hal-c2-dev/elixir"
     And nothing is written under "/srv/hal-c2"
 
   @node

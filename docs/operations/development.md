@@ -34,7 +34,7 @@ changed. The Qt shell serves the built web app itself and pairs with the node on
 combine it with `mise run node` on the same home.
 
 The TUI finds the node through the runtime record and access token the node keeps in the
-XDG `hal-c2-dev` profile (a linked worktree's own `.hal-c2`), so start `mise run node` first;
+XDG `hal-c2-dev` profile, so start `mise run node` first;
 `mise run tui -- --url <link>` pairs it with another node from a `node:pair` link instead and
 keeps that session for the next `--url <origin>`. Pair the Elixir node into a web client from Settings → Connections with the
 URL `node:pair` prints.

@@ -69,7 +69,7 @@ The most common defect in this repo is a change that works on the path you teste
 - Ports derive from the worktree path and are stable across restarts, but read the real ones from the `[dev-runner]` line since occupied ports shift.
 - Sharing over the tailnet is three steps: run `vp run dev --share` in the background, wait for the `pairingUrl:` line in its output, then give that full URL to an unpaired browser. Do not wire up `tailscale serve` by hand, open the URL yourself, or consume the user's pairing link. A browser with the reusable dev cookie can use the bare origin. If a normal one-time token was consumed, mint a fresh one with `node apps/server/src/bin.ts pair`. It carries standard scopes, while the startup URL carries admin scopes needed for Connections settings.
 - To reuse web dev auth across worktrees, configure one fixed `HAL_C2_DEV_AUTH_TOKEN` in the main checkout's gitignored `.env`. The `hal-c2.json` setup links that file into worktrees. Never commit or publish the token or a startup URL. See [Reusable dev credential](docs/operations/development.md#reusable-dev-credential).
-- The node runs from `apps/server-ex` through mise: `mise exec -- mix hal_c2.server`. It keeps dev state in the `elixir` level of the repo's `.hal-c2`.
+- The node runs from `apps/server-ex` through mise: `mise exec -- mix hal_c2.server`. From any checkout or worktree it keeps dev state in the `elixir` level of the XDG `hal-c2-dev` directories, which are the developer's (rule 2). To run your own node, set `HAL_C2_NODE_HOME` to a scratch directory and `HAL_C2_NODE_PORT` to a free port.
 - Stop what you started, by the PID you tracked. See rule 1.
 
 ## Test data
