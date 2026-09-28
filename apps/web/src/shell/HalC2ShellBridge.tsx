@@ -49,7 +49,6 @@ import {
 import { useShellActions } from "./useShellActions";
 import { useShellPublish } from "./useShellPublish";
 import { useShellDesktopNotifications } from "./useShellDesktopNotifications";
-import { useShellEnvironmentAccess } from "./useShellEnvironmentAccess";
 import { useShellThreadRowActions } from "./useShellThreadRowActions";
 import { resolveShellLocalEnvironmentId } from "./shellLocalProjects";
 import { requestShellProjectRemoval } from "./shellProjectRemovalRequest";
@@ -73,7 +72,6 @@ export function HalC2ShellBridge() {
   });
   const threads = useThreadShells();
   useShellDesktopNotifications(threads);
-  useShellEnvironmentAccess();
   const { projectGroups } = useSidebarProjectGroups(threads);
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);

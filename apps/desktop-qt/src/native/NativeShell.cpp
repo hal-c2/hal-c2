@@ -2,7 +2,6 @@
 
 #include <QJsonObject>
 #include <QQmlEngine>
-#include <QTimer>
 #include <QtLogging>
 
 #include <algorithm>
@@ -50,63 +49,15 @@ NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)
     connect(navigation, &NavigationController::changed, &m_sidebar, &SidebarController::refresh);
   }
   connect(&m_store, &ShellStore::changed, this, &NativeShell::update);
-  connect(&m_store, &ShellStore::changed, this, &NativeShell::lend);
-  // A new connection may be to a restarted node, which forgot every loan.
-  connect(&m_client, &NodeClient::readyChanged, this, [this](bool ready) {
-    if (!ready) m_lent.clear();
-  });
   // After m_sidebar's own handler, so it has read the new input.
   connect(bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key) {
     if (key == QLatin1String("sidebarInput")) update();
-    if (key == QLatin1String("environmentAccess")) lend();
   });
 }
 
 void NativeShell::registerQmlSingletons() const {
   for (const Controller& entry : m_controllers) {
     if (entry.qmlName) qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, entry.qmlName, entry.object.get());
-  }
-}
-
-void NativeShell::lend() {
-  const QString own = m_store.environmentOf(m_client.node());
-  if (!m_client.isReady() || own.isEmpty()) return;
-  QHash<QString, QString> wanted;
-  QHash<QString, QString> origins;
-  for (const QVariant& value : m_bridge->state()->value(QStringLiteral("environmentAccess")).toList()) {
-    const QVariantMap access = value.toMap();
-    const QString id = access.value(QStringLiteral("environmentId")).toString();
-    if (id.isEmpty() || m_store.servesEnvironment(id)) continue;
-    const QString token = access.value(QStringLiteral("token")).toString();
-    // Listed without access: the page is not connected there now, so what was
-    // lent stays lent.
-    if (token.isEmpty()) {
-      if (m_lent.contains(id)) wanted.insert(id, m_lent.value(id));
-      continue;
-    }
-    wanted.insert(id, token);
-    origins.insert(id, access.value(QStringLiteral("origin")).toString());
-  }
-  for (auto it = wanted.cbegin(); it != wanted.cend(); ++it) {
-    if (m_lent.value(it.key()) == it.value()) continue;
-    const QString id = it.key();
-    m_lent.insert(id, it.value());
-    const QJsonObject payload{{QStringLiteral("origin"), origins.value(id)}, {QStringLiteral("token"), it.value()}};
-    m_client.call(own, QStringLiteral("hal-c2.linkEnvironment"), payload,
-                  [this, id, token = it.value()](const QJsonValue&, const std::optional<QString>& error) {
-                    // A dropped connection lends everything again once it is back.
-                    if (!error || !m_client.isReady() || m_lent.value(id) != token) return;
-                    // The environment is offline for now: lend it again later.
-                    qWarning("hal-c2-desktop: the node cannot reach %s: %s", qPrintable(id), qPrintable(*error));
-                    m_lent.remove(id);
-                    QTimer::singleShot(30'000, this, &NativeShell::lend);
-                  });
-  }
-  for (const QString& id : m_lent.keys()) {
-    if (wanted.contains(id)) continue;
-    m_lent.remove(id);
-    const QJsonObject payload{{QStringLiteral("environmentId"), id}, {QStringLiteral("borrowed"), true}};
-    m_client.call(own, QStringLiteral("hal-c2.unlinkEnvironment"), payload, [](auto&&...) {});
   }
 }
 

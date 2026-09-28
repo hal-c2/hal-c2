@@ -1,5 +1,5 @@
 // Connecting the shell to its node, who owns what once it has, and the
-// environments the page lends the node (features/desktop/native-connection.feature).
+// environments the node is linked to (features/desktop/native-connection.feature).
 
 #include <QUrl>
 #include <QUrlQuery>
@@ -24,36 +24,6 @@ const Steps steps([] {
   });
   step(QStringLiteral("the node is linked to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.node.link(c[0]);
-    world.sync();
-  });
-  step(QStringLiteral("the page has access to %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    QVariantList access = world.state(QStringLiteral("environmentAccess")).toList();
-    access.append(QVariantMap{
-        {QStringLiteral("environmentId"), c[0]},
-        {QStringLiteral("origin"), QStringLiteral("http://") + c[0] + QStringLiteral(":3780")},
-        {QStringLiteral("token"), QStringLiteral("page-token-") + c[0]},
-    });
-    world.bridge().publish(QStringLiteral("environmentAccess"), access);
-    world.sync();
-  });
-  step(QStringLiteral("the page loses its connection to %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    QVariantList access;
-    for (const QVariant& entry : world.state(QStringLiteral("environmentAccess")).toList()) {
-      const QString id = entry.toMap().value(QStringLiteral("environmentId")).toString();
-      access.append(id == c[0] ? QVariant(QVariantMap{{QStringLiteral("environmentId"), id}}) : entry);
-    }
-    world.bridge().publish(QStringLiteral("environmentAccess"), access);
-    world.sync();
-  });
-  step(QStringLiteral("the node is linked to %1 with the page's access").arg(q), [](World& world, const Captures& c, const Table&) {
-    expect(world.node.linked.contains(c[0]), QStringLiteral("the node is linked to %1").arg(world.node.linked.join(u", ")));
-    expect(world.node.lent.value(c[0]) == QStringLiteral("page-token-") + c[0],
-           QStringLiteral("the node was lent %1").arg(world.node.lent.value(c[0])));
-  });
-  step(QStringLiteral("the page forgets %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    QVariantList access = world.state(QStringLiteral("environmentAccess")).toList();
-    access.removeIf([&](const QVariant& entry) { return entry.toMap().value(QStringLiteral("environmentId")) == c[0]; });
-    world.bridge().publish(QStringLiteral("environmentAccess"), access);
     world.sync();
   });
   step(QStringLiteral("the node is not linked to %1").arg(q), [](World& world, const Captures& c, const Table&) {
