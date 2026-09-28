@@ -27,9 +27,10 @@ QtObject {
     function chooseHalf(appearance, id) {
         return record("chooseHalf", [appearance, id]);
     }
+    // The active theme here is one of this device's own, so its draft carries its id.
     function draft(id) {
         record("draft", [id]);
-        return { id: "", label: "HAL-C2", appearance: "dark", colors: { canvas: "#000000", accent: "#ffffff" } };
+        return { id: id || "active-custom", label: "HAL-C2", appearance: "dark", colors: { canvas: "#000000", accent: "#ffffff" } };
     }
     function saveCustom(theme) {
         record("saveCustom", [theme]);

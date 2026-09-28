@@ -157,8 +157,9 @@ SettingsPage {
         iconName: "plus"
         text: qsTr("New theme")
         onClicked: {
-            // A new theme starts from the active one.
+            // A new theme starts from the active one, saved as a theme of its own.
             const draft = Themes.draft("");
+            draft.id = "";
             draft.label = qsTr("%1 copy").arg(draft.label);
             editor.edit(draft);
         }

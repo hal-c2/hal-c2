@@ -154,6 +154,7 @@ Item {
             const saved = Themes.calls.filter(call => call.name === "saveCustom");
             compare(saved.length, 1);
             compare(saved[0].args[0].label, "HAL-C2 copy");
+            compare(saved[0].args[0].id, "");
             compare(saved[0].args[0].appearance, "dark");
             compare(saved[0].args[0].colors.accent, "#ff0000");
             compare(saved[0].args[0].colors.canvas, "#000000");
