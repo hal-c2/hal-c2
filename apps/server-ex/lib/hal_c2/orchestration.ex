@@ -1196,8 +1196,15 @@ defmodule HalC2.Orchestration do
   # here, and a provider plugin that cannot stop a turn says so.
   defp interrupt_any(thread_id, run_id) do
     Enum.find_value(runtimes(:interrupt, 2), fn runtime ->
-      if runtime.interrupt(thread_id, run_id) == :ok, do: :ok
+      if interrupted?(runtime, thread_id, run_id), do: :ok
     end) || interrupt_undriven(thread_id, run_id)
+  end
+
+  # A runtime that dies as it is asked leaves its turn to `interrupt_undriven/2`.
+  defp interrupted?(runtime, thread_id, run_id) do
+    runtime.interrupt(thread_id, run_id) == :ok
+  catch
+    :exit, _ -> false
   end
 
   defp interrupt_undriven(thread_id, run_id) do
