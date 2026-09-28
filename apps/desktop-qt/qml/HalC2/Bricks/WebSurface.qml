@@ -56,7 +56,7 @@ WebEngineView {
     }
 
     function syncThemeScript() {
-        const source = Theme.loaded ? Theme.injectionScript : "";
+        const source = Theme.loaded || Theme.baseLoaded ? Theme.injectionScript : "";
         if (source === view.installedThemeScript) {
             return false;
         }

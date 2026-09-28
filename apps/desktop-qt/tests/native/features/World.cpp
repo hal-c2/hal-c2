@@ -1,6 +1,7 @@
 #include "World.h"
 
 #include <QDateTime>
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocale>
@@ -9,26 +10,36 @@
 #include "ComposerController.h"
 #include "Harness.h"
 #include "NavigationController.h"
+#include "SettingsController.h"
 #include "ThreadStore.h"
 #include "ToastController.h"
 
 World::World() {
   m_now = QDateTime::fromString(QStringLiteral("2026-09-23T10:00:00Z"), Qt::ISODate);
+  QDir(m_home.path()).mkpath(QStringLiteral("config"));
   start();
 }
 
+// As main.cpp wires them.
 void World::start() {
   m_bridge = std::make_unique<ShellBridge>();
   m_native = std::make_unique<NativeShell>(m_bridge.get());
   m_native->client()->setRetryDelays({20});
   m_native->sidebar()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
   m_native->controller<NavigationController>()->setStorePath(m_home.filePath(QStringLiteral("state/shell-route.json")));
+  m_native->controller<SettingsController>()->setDevicePath(QDir(configDir()).filePath(QStringLiteral("preferences.json")));
+  m_theme = std::make_unique<ThemeStore>(configDir());
+  m_theme->applyBaseTheme(state(QStringLiteral("theme")));
+  QObject::connect(m_bridge.get(), &ShellBridge::stateEntryChanged, m_theme.get(), [this](const QString& key, const QVariant& value) {
+    if (key == QLatin1String("theme")) m_theme->applyBaseTheme(value);
+  });
   setTime(m_now);
   QObject::connect(m_bridge.get(), &ShellBridge::actionRequested, m_bridge.get(),
                    [this](const QString& type, const QVariant& payload) { onPageAction(type, payload.toMap()); });
 }
 
 void World::restart() {
+  m_theme.reset();
   m_native.reset();
   m_bridge.reset();
   pageActions.clear();

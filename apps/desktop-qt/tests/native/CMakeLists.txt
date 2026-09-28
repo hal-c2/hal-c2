@@ -41,7 +41,7 @@ add_test(NAME BackendProcess COMMAND tst_BackendProcess)
 # The native scenarios of features/, against a fake node: the harness, the fake
 # node, and one steps file per domain (features/*.cpp, picked up on the next build).
 file(GLOB _feature_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/features/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/features/*.h")
-add_executable(tst_Features tst_Features.cpp ${_feature_sources})
+add_executable(tst_Features tst_Features.cpp ${_feature_sources} ../../src/ThemeStore.cpp)
 target_compile_definitions(tst_Features PRIVATE
   HAL_C2_FEATURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../../features"
 )
@@ -90,3 +90,8 @@ if(UNIX AND NOT APPLE)
   target_link_libraries(tst_NativeNotifications PRIVATE Qt6::Core Qt6::Test Qt6::DBus)
   add_test(NAME NativeNotifications COMMAND "${HAL_C2_DBUS_RUN_SESSION}" -- $<TARGET_FILE:tst_NativeNotifications>)
 endif()
+# How the shell resolves its theme: the lookup order, the halves, the fallbacks.
+add_executable(tst_ThemeResolution tst_ThemeResolution.cpp)
+target_link_libraries(tst_ThemeResolution PRIVATE hal_c2_native Qt6::Test)
+add_test(NAME ThemeResolution COMMAND tst_ThemeResolution)
+set_tests_properties(ThemeResolution PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")

@@ -8,8 +8,9 @@
 #include <QTimer>
 #include <QVariantMap>
 
-// Loads `<configDir>/theme.json`, watches it, and exposes it to QML (the
-// `Theme` singleton) and to the web view. The file is the web app's own
+// The shell's palette for QML (the `Theme` singleton) and the web view: the
+// theme ThemeController resolves (the base), with `<configDir>/theme.json`,
+// watched, on top. The file is the web app's own
 // ThemeFile format (`{version, id, name, appearance, colors, variants}`, role
 // names such as `canvas`, `chrome`, `text`, `sidebar`) plus a shell-only
 // `window` section, so one file themes both halves and the web's Theme Editor
@@ -28,7 +29,7 @@ class ThemeStore : public QObject {
   Q_PROPERTY(qreal radius READ radius NOTIFY themeChanged)
   Q_PROPERTY(QString fontUi READ fontUi NOTIFY themeChanged)
   Q_PROPERTY(QString fontMono READ fontMono NOTIFY themeChanged)
-  Q_PROPERTY(bool pageThemeLoaded READ pageThemeLoaded NOTIFY themeChanged)
+  Q_PROPERTY(bool baseLoaded READ baseLoaded NOTIFY themeChanged)
   Q_PROPERTY(qreal windowOpacity READ windowOpacity NOTIFY themeChanged)
   Q_PROPERTY(bool windowTransparent READ windowTransparent NOTIFY themeChanged)
   Q_PROPERTY(bool windowBlur READ windowBlur NOTIFY themeChanged)
@@ -44,13 +45,13 @@ public:
   QString path() const { return m_path; }
   QString id() const { return m_id; }
   QString name() const { return m_name; }
-  QString appearance() const { return m_loaded ? m_appearance : m_pageAppearance; }
+  QString appearance() const { return m_loaded ? m_appearance : m_baseAppearance; }
   QVariantMap colors() const { return m_colors; }
   QObject* palette() { return this; }
   qreal radius() const;
   QString fontUi() const;
   QString fontMono() const;
-  bool pageThemeLoaded() const { return !m_pageColors.isEmpty(); }
+  bool baseLoaded() const { return !m_baseTheme.isEmpty(); }
   qreal windowOpacity() const { return m_windowOpacity; }
   bool windowTransparent() const { return m_windowTransparent; }
   bool windowBlur() const { return m_windowBlur; }
@@ -61,13 +62,13 @@ public:
   QString lastError() const { return m_lastError; }
 
   // Resolved colour for a role (`canvas`, `text`, ...): theme.json first, then
-  // the page's published theme, then `fallback`.
+  // the base theme, then `fallback`.
   Q_INVOKABLE QColor color(const QString& role, const QColor& fallback) const;
   Q_INVOKABLE void reload();
 
 public slots:
-  // The page's resolved theme (ShellThemeState) published under `theme`.
-  void applyPageTheme(const QVariant& theme);
+  // The resolved theme ThemeController publishes as `theme` (ShellThemeState).
+  void applyBaseTheme(const QVariant& theme);
 
 signals:
   void themeChanged();
@@ -76,7 +77,7 @@ private:
   void watch();
   void scheduleReload();
   void applyDefaults();
-  void resolveColors(Qt::ColorScheme colorScheme);
+  void resolveColors();
 
   QString m_configDir;
   QString m_path;
@@ -88,18 +89,19 @@ private:
   QString m_id;
   QString m_name;
   QString m_appearance;
-  QJsonObject m_baseColors;
+  QJsonObject m_fileColors;
   QJsonObject m_variants;
   bool m_followsSystemAppearance = false;
   QVariantMap m_colors;
   QString m_radius;
   QString m_fontUi;
   QString m_fontMono;
-  QVariantMap m_pageColors;
-  QString m_pageAppearance;
-  qreal m_pageRadius = 8;
-  QString m_pageFontUi;
-  QString m_pageFontMono;
+  QVariantMap m_baseTheme;
+  QVariantMap m_baseColors;
+  QString m_baseAppearance;
+  qreal m_baseRadius = 8;
+  QString m_baseFontUi;
+  QString m_baseFontMono;
   qreal m_windowOpacity = 1.0;
   bool m_windowTransparent = false;
   bool m_windowBlur = false;
