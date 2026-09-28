@@ -6,7 +6,10 @@
 #include <QJsonDocument>
 #include <QSaveFile>
 
+#include "NativeShell.h"
 #include "NodeClient.h"
+#include "ShellBridge.h"
+#include "ToastController.h"
 
 namespace {
 
@@ -27,10 +30,79 @@ QJsonObject withPath(QJsonObject object, const QStringList& path, const QJsonVal
   return object;
 }
 
+// The rows of the settings pages: the store a key is in and its default.
+// Device rows are the web's ClientSettings, which the page follows; node rows
+// its ServerSettings, which the node's document leaves out while at default.
+struct Row {
+  const char* key;
+  bool device;
+  QJsonValue fallback;
+};
+
+const QList<Row>& rows() {
+  static const QList<Row> list = {
+      // General (packages/contracts settings.ts).
+      {"sidebarProjectGroupingMode", true, QStringLiteral("repository")},
+      {"autoResumeLimitedThreads", false, false},
+      {"snoozeLimitedThreads", false, false},
+      {"sidebarAutoSettleOnMerge", false, true},
+      {"sidebarAutoSettleAfterDays", false, 3},
+      {"inAppNotificationsEnabled", true, false},
+      {"timestampFormat", true, QStringLiteral("locale")},
+      {"responseStreamingMode", false, QStringLiteral("paragraph")},
+      {"diffIgnoreWhitespace", true, true},
+      {"diffFilesCollapsed", true, true},
+      {"diffLayout", true, QStringLiteral("stacked")},
+      {"proactivePanelsEnabled", true, false},
+      {"showSkillsInSlashMenu", true, true},
+      {"composerRichTextEnabled", true, true},
+      {"composerCollapseOnScroll", true, true},
+      {"sendShortcut", true, QStringLiteral("enter")},
+      {"followUpBehavior", true, QStringLiteral("steer")},
+      {"enableProviderUpdateChecks", false, true},
+      {"continueThreadsAfterServerUpdate", false, false},
+      {"newWorktreesStartFromOrigin", false, true},
+      {"addProjectBaseDirectory", false, QString()},
+      {"confirmThreadUnpin", true, false},
+      {"confirmThreadArchive", true, false},
+      {"confirmThreadDelete", true, true},
+      {"confirmQuit", true, QStringLiteral("hold")},
+      {"planModeEnabled", true, false},
+      {"contextWindowMeterEnabled", true, false},
+      {"legacySidebarEnabled", true, false},
+      // Appearance.
+      {"appearanceContrast", true, 100},
+      {"glassOpacity", true, 80},
+      {"environmentIdentificationMode", true, QStringLiteral("artwork")},
+      {"diffColorScheme", true, QStringLiteral("red-green")},
+      {"persistComposerContextStrip", true, false},
+      {"panelAnimationDurationMs", true, 0},
+      {"fontSizeInterface", true, 16},
+      {"fontSizePrompt", true, 14},
+      {"fontSizeCode", true, 13},
+      {"fontSizeTerminal", true, 12},
+      {"fontFamilySans", true, QString()},
+      {"fontFamilyComposer", true, QString()},
+      {"fontFamilyCode", true, QString()},
+      {"fontFamilyTerminal", true, QString()},
+      {"fontSmoothing", true, true},
+      {"wordWrap", true, true},
+  };
+  return list;
+}
+
+const Row* rowOf(const QString& key) {
+  for (const Row& row : rows()) {
+    if (key == QLatin1String(row.key)) return &row;
+  }
+  return nullptr;
+}
+
 }  // namespace
 
-SettingsController::SettingsController(ShellBridge*, NodeClient* client, QObject* parent)
-    : QObject(parent), m_client(client) {
+SettingsController::SettingsController(ShellBridge* bridge, NodeClient* client, QObject* parent)
+    : QObject(parent), m_client(client), m_bridge(bridge) {
+  connect(this, &SettingsController::deviceChanged, this, [this] { follow(); });
   // A reconnect may reach a restarted node, whose versions start again; the
   // config snapshot that follows the re-sent subscription reads them afresh.
   connect(m_client, &NodeClient::readyChanged, this, [this](bool ready) {
@@ -171,7 +243,80 @@ void SettingsController::write(const QString& path, const QVariant& value) {
   const QStringList keys = path.split(QLatin1Char('.'), Qt::SkipEmptyParts);
   if (keys.isEmpty()) return;
   const QJsonValue json = QJsonValue::fromVariant(value);
-  change([keys, json](const QJsonObject& settings) { return withPath(settings, keys, json); });
+  change([keys, json](const QJsonObject& settings) { return withPath(settings, keys, json); },
+         [this](const std::optional<QString>& error) {
+           if (error) toast(QStringLiteral("Setting not saved"), *error);
+         });
+}
+
+QVariant SettingsController::defaultOf(const QString& key) const {
+  const Row* row = rowOf(key);
+  return row ? row->fallback.toVariant() : QVariant();
+}
+
+QVariant SettingsController::setting(const QString& key) const {
+  const Row* row = rowOf(key);
+  if (!row) return {};
+  const QJsonObject& store = row->device ? m_device : m_settings;
+  // An explicit null is a value (inactive settling off), an absent key is not.
+  return store.contains(key) ? store.value(key).toVariant() : row->fallback.toVariant();
+}
+
+bool SettingsController::isDefault(const QString& key) const {
+  const Row* row = rowOf(key);
+  if (!row) return true;
+  const QJsonObject& store = row->device ? m_device : m_settings;
+  return !store.contains(key) || store.value(key) == row->fallback;
+}
+
+void SettingsController::set(const QString& key, const QVariant& value) {
+  const Row* row = rowOf(key);
+  if (!row) return;
+  // The default is stored as absence, so a row at its default offers no reset.
+  QJsonValue json = QJsonValue::fromVariant(value);
+  const bool absent = json == row->fallback;
+  if (row->device) {
+    QJsonObject device = m_device;
+    if (absent) device.remove(key);
+    else device.insert(key, json);
+    if (!setDeviceSettings(device)) toast(QStringLiteral("Setting not saved"), m_deviceError);
+    return;
+  }
+  change(
+      [key, json, absent](QJsonObject settings) {
+        if (absent) settings.remove(key);
+        else settings.insert(key, json);
+        return settings;
+      },
+      [this](const std::optional<QString>& error) {
+        if (error) toast(QStringLiteral("Setting not saved"), *error);
+      });
+}
+
+void SettingsController::reset(const QString& key) {
+  if (const Row* row = rowOf(key)) set(key, row->fallback.toVariant());
+}
+
+void SettingsController::toast(const QString& title, const QString& reason) {
+  // Toasts are built after this controller: looked up when needed.
+  if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) toasts->error(title, reason);
+}
+
+void SettingsController::pageReady() {
+  follow(true);
+}
+
+void SettingsController::follow(bool force) {
+  QJsonObject settings;
+  for (const Row& row : rows()) {
+    if (!row.device) continue;
+    const QString key = QLatin1String(row.key);
+    settings.insert(key, m_device.contains(key) ? m_device.value(key) : row.fallback);
+  }
+  if (!force && settings == m_followed) return;
+  m_followed = settings;
+  m_bridge->sendToPage(QStringLiteral("clientSettings.follow"),
+                       QVariantMap{{QStringLiteral("settings"), settings.toVariantMap()}});
 }
 
 void SettingsController::setDevicePath(const QString& path) {
@@ -215,5 +360,7 @@ bool SettingsController::setDeviceSettings(const QJsonObject& device) {
 }
 
 bool SettingsController::writeDevice(const QString& key, const QVariant& value) {
-  return setDeviceSettings(withPath(m_device, {key}, QJsonValue::fromVariant(value)));
+  if (setDeviceSettings(withPath(m_device, {key}, QJsonValue::fromVariant(value)))) return true;
+  toast(QStringLiteral("Setting not saved"), m_deviceError);
+  return false;
 }

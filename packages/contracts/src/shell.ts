@@ -706,6 +706,11 @@ export const ShellAction = Schema.Union([
     appearance: Schema.Literals(["light", "dark"]),
     id: Schema.String,
   }),
+  /** Shell → page: this device's client settings, which the page follows. */
+  Schema.Struct({
+    type: Schema.Literal("clientSettings.follow"),
+    settings: Schema.Record(Schema.String, Schema.Unknown),
+  }),
   Schema.Struct({ type: Schema.Literal("pullRequests.open") }),
   Schema.Struct({ type: Schema.Literal("usage.open") }),
   /** Shell → page: show this route (the shell owns where the window is). */

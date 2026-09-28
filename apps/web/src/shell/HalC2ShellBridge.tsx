@@ -8,6 +8,7 @@ import {
   scopedThreadKey,
 } from "@hal-c2/client-runtime/environment";
 import type { EnvironmentId } from "@hal-c2/contracts";
+import { ClientSettingsPatch } from "@hal-c2/contracts/settings";
 import type {
   ShellNativeState,
   ShellRoute,
@@ -15,6 +16,8 @@ import type {
   ShellSidebarState,
 } from "@hal-c2/contracts/shell";
 import { useParams, useRouter } from "@tanstack/react-router";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { partitionSidebarThreads, resolveAdjacentThreadId } from "../components/Sidebar.logic";
@@ -23,7 +26,7 @@ import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../
 import { isHalC2ShellEmbed } from "../env";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
-import { useClientSettings } from "../hooks/useSettings";
+import { persistClientSettingsPatch, useClientSettings } from "../hooks/useSettings";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
 import {
@@ -53,6 +56,8 @@ import { useShellEnvironmentAccess } from "./useShellEnvironmentAccess";
 import { useShellThreadRowActions } from "./useShellThreadRowActions";
 import { resolveShellLocalEnvironmentId } from "./shellLocalProjects";
 import { requestShellProjectRemoval } from "./shellProjectRemovalRequest";
+
+const decodeClientSettingsPatch = Schema.decodeUnknownOption(ClientSettingsPatch);
 
 /**
  * Feeds the native shell (window.halC2Shell) the sidebar view model and turns
@@ -403,6 +408,12 @@ export function HalC2ShellBridge() {
       case "route.follow":
         followRoute(action);
         return;
+      case "clientSettings.follow": {
+        // The shell keeps this device's client settings; the page follows them.
+        const patch = decodeClientSettingsPatch(action.settings);
+        if (Option.isSome(patch)) void persistClientSettingsPatch(patch.value);
+        return;
+      }
       case "thread.open": {
         const threadRef = parseScopedThreadKey(action.key);
         if (threadRef === null) return;
