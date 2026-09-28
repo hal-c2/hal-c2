@@ -8,8 +8,9 @@ defmodule HalC2.ProviderUsageLimits do
   session (`HalC2.ProviderUsageLimits.Codex`, `HalC2.ProviderUsageLimits.Claude`), and the
   Grok, Cursor and OpenCode Go accounts from their vendors
   (`HalC2.ProviderUsageLimits.Acp`). Probes run at boot, on `server.refreshProviders`
-  (`refresh/1`), and every
-  `providerHealthRefreshInterval` while a client in front shows provider status. Turns
+  (`refresh/1`), when an instance's settings change, and every
+  `providerHealthRefreshInterval` while a client in front shows provider status. A
+  disabled or missing provider is not probed and shows no limits. Turns
   fill in between: the thread runtimes pass on the rate-limit updates their
   providers stream (`update/2`, `claude_event/1`), which merge by window id.
 
@@ -360,7 +361,22 @@ defmodule HalC2.ProviderUsageLimits do
   def init(nil) do
     Process.flag(:trap_exit, true)
     :ets.new(__MODULE__, [:named_table, :protected, read_concurrency: true])
-    {:ok, %{claude_names: nil, redeem_key: nil}, {:continue, :boot}}
+    HalC2.Settings.watch(self())
+
+    {:ok,
+     %{
+       claude_names: nil,
+       redeem_key: nil,
+       providers: provider_settings(HalC2.Settings.settings())
+     }, {:continue, :boot}}
+  end
+
+  # A process from before settings were watched starts watching them. Settings may be
+  # suspended for the same upgrade, so the call waits for the next message.
+  @impl true
+  def code_change(_old_vsn, state, _extra) do
+    unless Map.has_key?(state, :providers), do: send(self(), :watch_settings)
+    {:ok, Map.put_new(state, :providers, nil)}
   end
 
   @impl true
@@ -437,7 +453,41 @@ defmodule HalC2.ProviderUsageLimits do
     {:noreply, state}
   end
 
+  # An instance whose settings changed (enabled, binary, home, endpoint) is read again
+  # at once, as the Node server re-probes a provider on its settings change; one that
+  # was turned off loses its limits in `probe/2`.
+  def handle_info({:hal_c2_settings, _node, settings}, state) do
+    now = provider_settings(settings)
+    changed = changed_ids(state.providers, now)
+    affected = for id <- all(), id in changed or HalC2.Acp.driver(id) in changed, do: id
+    state = %{state | providers: now}
+    {:noreply, if(changed == [], do: state, else: probe(state, affected))}
+  end
+
+  def handle_info(:watch_settings, state) do
+    HalC2.Settings.watch(self())
+    {:noreply, %{state | providers: provider_settings(HalC2.Settings.settings())}}
+  end
+
   def handle_info(_other, state), do: {:noreply, state}
+
+  defp provider_settings(settings),
+    do: Map.take(settings, ["providers", "providerInstances"])
+
+  # The instance ids (or drivers) whose `providers` or `providerInstances` entry changed.
+  defp changed_ids(before, now) do
+    for section <- ["providers", "providerInstances"],
+        old = before[section] || %{},
+        new = now[section] || %{},
+        id <- Enum.uniq(Map.keys(old) ++ Map.keys(new)),
+        old[id] != new[id],
+        uniq: true,
+        do: id
+  end
+
+  # The instances with published limits.
+  defp published,
+    do: :ets.select(__MODULE__, [{{:"$1", :_}, [{:is_binary, :"$1"}], [:"$1"]}])
 
   defp schedule do
     ms = with :off <- interval(), do: 60_000
@@ -446,9 +496,16 @@ defmodule HalC2.ProviderUsageLimits do
 
   defp probe(state, instances) do
     checked_at = HalC2.Orchestration.Entities.now()
+    all = all()
+
+    # Limits of a provider that was disabled or went missing are not shown.
+    for instance <- published(), instance not in all or not probed?(instance) do
+      :ets.delete(__MODULE__, instance)
+      HalC2.Settings.notify_providers()
+    end
 
     probes =
-      for instance <- instances, installed?(instance) do
+      for instance <- instances, probed?(instance) do
         {instance, Task.async(fn -> probe_instance(instance, checked_at) end)}
       end
 
@@ -476,9 +533,13 @@ defmodule HalC2.ProviderUsageLimits do
   defp probe_instance("claudeAgent", checked_at), do: Claude.probe(checked_at)
   defp probe_instance(instance, checked_at), do: Acp.probe(instance, checked_at)
 
-  defp installed?("codex"), do: Codex.installed?()
-  defp installed?("claudeAgent"), do: Claude.installed?()
-  defp installed?(_acp), do: true
+  # ACP agents in `all/0` are enabled already.
+  defp probed?("codex"), do: enabled?("codex") and Codex.installed?()
+  defp probed?("claudeAgent"), do: enabled?("claudeAgent") and Claude.installed?()
+  defp probed?(_acp), do: true
+
+  defp enabled?(instance),
+    do: get_in(HalC2.Settings.settings(), ["providers", instance, "enabled"]) != false
 
   # Codex and Claude, and the enabled ACP agents whose vendors publish quota.
   defp all, do: @instances ++ Acp.instances()

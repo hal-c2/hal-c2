@@ -21,6 +21,9 @@ defmodule HalC2.Steps.Providers.UsageLimits.Hub do
     end
   end
 
+  defp route(conn, "/v0/management/auth-files", _, %{unlisted: true}, _),
+    do: send_resp(conn, 500, "")
+
   defp route(conn, "/v0/management/auth-files", _, _, _) do
     json(conn, %{
       "files" => [
@@ -491,12 +494,30 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     context
   end
 
-  step ~r/^a hub (?<problem>without a management key|whose management request crashes)$/,
+  step ~r/^a hub (?<problem>without a management key|that cannot list its accounts)$/,
        %{args: [problem]} = context do
     case problem do
       "without a management key" -> add_hub(context, %{"managementKey" => ""})
-      "whose management request crashes" -> context |> add_hub() |> put_hub(:crash, true)
+      "that cannot list its accounts" -> context |> add_hub() |> put_hub(:unlisted, true)
     end
+  end
+
+  step "a hub whose Codex account reports usage the node cannot read", context do
+    context |> add_hub() |> put_hub(:crash, true)
+  end
+
+  step "the Codex account is reported as not read, beside the hub's other accounts", context do
+    assert [%{"error" => nil, "accounts" => accounts}] =
+             Enum.map(context.hubs, &Map.put_new(&1, "error", nil))
+
+    assert %{
+             "reason" => "probeFailed",
+             "message" => "The hub could not read this account's usage."
+           } =
+             Enum.find(accounts, &(&1["id"] == "codex-a"))["usageLimits"]["unavailable"]
+
+    assert [_ | _] = Enum.find(accounts, &(&1["id"] == "claude-b"))["usageLimits"]["windows"]
+    context
   end
 
   step "the node reads the hub", context do
@@ -549,6 +570,41 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     assert %{"availableCount" => 1, "nextCreditId" => "c2"} =
              account["usageLimits"]["resetCredits"]
 
+    context
+  end
+
+  # --- enabling and disabling ------------------------------------------------------
+
+  step "Codex and Claude reported their limits", context do
+    context = limits(context)
+    assert HalC2.ProviderUsageLimits.get("codex") && HalC2.ProviderUsageLimits.get("claudeAgent")
+    Map.put(context, :checks_before, checks(context))
+  end
+
+  step ~r/^the user turns Claude (?<action>off|back on)$/,
+       %{args: [action]} = context do
+    World.merge_settings(%{
+      "providers" => %{"claudeAgent" => %{"enabled" => action == "back on"}}
+    })
+
+    # The settings change is in the service's mailbox before this call.
+    :sys.get_state(HalC2.ProviderUsageLimits)
+    context
+  end
+
+  step "Claude reports no limits and is not checked", context do
+    {limits, context} = usage_limits(context, "claudeAgent")
+    assert limits == nil
+    assert HalC2.ProviderUsageLimits.get("codex")
+    :ok = HalC2.ProviderUsageLimits.refresh()
+    assert checks(context).claude == context.checks_before.claude
+    context
+  end
+
+  step "Claude's limits are read again at once", context do
+    assert checks(context).claude == context.checks_before.claude + 1
+    {limits, context} = usage_limits(context, "claudeAgent")
+    assert [_ | _] = limits["windows"]
     context
   end
 

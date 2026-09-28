@@ -33,11 +33,13 @@ defmodule HalC2.UsageLimitSources.Cliproxy do
           |> Task.async_stream(&read_account(config, key, &1),
             max_concurrency: 4,
             timeout: 60_000,
-            on_timeout: :kill_task
+            on_timeout: :kill_task,
+            zip_input_on_exit: true
           )
-          |> Enum.flat_map(fn
-            {:ok, account} -> [account]
-            _ -> []
+          |> Enum.map(fn
+            {:ok, account} -> account
+            # A hub too slow to answer keeps the account's row, as a failed read.
+            {:exit, {account, _}} -> read_failed(account, HalC2.Orchestration.Entities.now())
           end)
 
         {:ok, accounts}
@@ -119,25 +121,30 @@ defmodule HalC2.UsageLimitSources.Cliproxy do
   defp read_account(config, key, account) do
     checked_at = HalC2.Orchestration.Entities.now()
 
-    base =
-      %{"id" => account["id"], "driver" => driver(account)}
-      |> Limits.put_present("email", present(account["email"]))
-
     case read_usage(config, key, account, checked_at) do
-      {:ok, fields} ->
-        Map.merge(base, fields)
-
-      _ ->
-        Map.put(
-          base,
-          "usageLimits",
-          Limits.unavailable(
-            checked_at,
-            "probeFailed",
-            "The hub could not read this account's usage."
-          )
-        )
+      {:ok, fields} -> Map.merge(account_base(account), fields)
+      _ -> read_failed(account, checked_at)
     end
+  rescue
+    # Usage in a shape this reader does not know fails that account, not the hub.
+    _ -> read_failed(account, HalC2.Orchestration.Entities.now())
+  end
+
+  defp read_failed(account, checked_at) do
+    Map.put(
+      account_base(account),
+      "usageLimits",
+      Limits.unavailable(
+        checked_at,
+        "probeFailed",
+        "The hub could not read this account's usage."
+      )
+    )
+  end
+
+  defp account_base(account) do
+    %{"id" => account["id"], "driver" => driver(account)}
+    |> Limits.put_present("email", present(account["email"]))
   end
 
   defp read_usage(config, key, %{"provider" => "claude"} = account, checked_at) do
