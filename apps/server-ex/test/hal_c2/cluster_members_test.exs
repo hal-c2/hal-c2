@@ -57,6 +57,13 @@ defmodule HalC2.ClusterMembersTest do
     assert Cluster.merge(theirs, ours, "a") == Cluster.merge(ours, theirs, "a")
   end
 
+  test "updates made in the same millisecond settle on one entry whichever side merges" do
+    ours = %{"b" => entry(label: "box", updatedAt: 4)}
+    theirs = %{"b" => entry(label: "laptop", addresses: ["10.0.0.9:4370"], updatedAt: 4)}
+
+    assert Cluster.merge(ours, theirs, "a") == Cluster.merge(theirs, ours, "a")
+  end
+
   test "only a machine speaks for itself, and malformed entries are dropped" do
     own = %{"a" => entry(label: "me")}
     incoming = %{"a" => entry(removedAt: 9, updatedAt: 9), "c" => %{"fingerprint" => 1}}

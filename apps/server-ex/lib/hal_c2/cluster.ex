@@ -204,7 +204,8 @@ defmodule HalC2.Cluster do
   end
 
   defp merge_entry(ours, theirs) do
-    newer = if theirs["updatedAt"] > ours["updatedAt"], do: theirs, else: ours
+    # Same-millisecond updates fall back to comparing the entries, so both sides pick one.
+    newer = if {theirs["updatedAt"], theirs} > {ours["updatedAt"], ours}, do: theirs, else: ours
 
     Map.merge(newer, %{
       "admittedAt" => max(ours["admittedAt"], theirs["admittedAt"]),
