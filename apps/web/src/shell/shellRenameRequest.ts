@@ -9,6 +9,9 @@ let pending: string | null = null;
  * request waits for it; a view for any other thread mounting drops it.
  */
 export function requestShellRename(threadKey: string): void {
+  // A native shell header edits the title itself.
+  if (typeof window !== "undefined")
+    void window.halC2Shell?.dispatch("workspace.rename.begin", { threadKey });
   const targets = listeners.get(threadKey);
   if (targets !== undefined && targets.size > 0) {
     for (const listener of targets) listener();

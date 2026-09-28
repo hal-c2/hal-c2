@@ -8,6 +8,7 @@
 
 #include <optional>
 
+#include "NavigationController.h"
 #include "TerminalController.h"
 #include "Harness.h"
 #include "World.h"
@@ -26,6 +27,8 @@ struct FakeTerminals {
   QMap<QString, Terminal> terminals;
   // Every terminal.* call, as {method, payload}.
   QList<QJsonObject> calls;
+  // Why terminal.open fails, when it does.
+  QString refuseOpen;
 };
 
 QString terminalKey(const QJsonObject& input) {
@@ -102,7 +105,7 @@ bool ensureTerminal(FakeNode& node, const QJsonObject& input) {
   FakeTerminals& fake = node.part<FakeTerminals>();
   const QString key = terminalKey(input);
   if (fake.terminals.contains(key)) return true;
-  if (!input.contains(QLatin1String("cwd"))) return false;
+  if (!input.contains(QLatin1String("cwd")) || !fake.refuseOpen.isEmpty()) return false;
   const QJsonObject summary = terminalSummary(input.value(QLatin1String("threadId")).toString(),
                                               input.value(QLatin1String("terminalId")).toString(),
                                               input.value(QLatin1String("cwd")).toString());
@@ -140,7 +143,13 @@ const FakeNode::Extension extension([](FakeNode& node) {
   });
   node.onRpc(QStringLiteral("terminal."), [&node](const FakeNode::Rpc& rpc) {
     node.part<FakeTerminals>().calls.append({{QStringLiteral("method"), rpc.method}, {QStringLiteral("payload"), rpc.payload}});
-    if (rpc.method == QLatin1String("terminal.open")) ensureTerminal(node, rpc.payload);
+    if (rpc.method == QLatin1String("terminal.open")) {
+      if (const QString refusal = node.part<FakeTerminals>().refuseOpen; !refusal.isEmpty()) {
+        node.refuse(rpc, refusal);
+        return;
+      }
+      ensureTerminal(node, rpc.payload);
+    }
     auto answer = [&node, rpc] {
       if (!node.current(rpc)) return;
       if (rpc.method == QLatin1String("terminal.close")) {
@@ -226,6 +235,53 @@ QStringList terminalWrites(World& world, const QString& terminalId) {
   return writes;
 }
 
+// A project action's id, as the settings' action editor makes it.
+QString actionId(const QString& name) {
+  return name.toLower();
+}
+
+void addAction(World& world, const QString& project, const QString& name, const QString& command) {
+  QJsonObject row = world.node.projects.value(project);
+  QJsonArray scripts = row.value(QLatin1String("scripts")).toArray();
+  scripts.append(QJsonObject{{QStringLiteral("id"), actionId(name)},
+                             {QStringLiteral("name"), name},
+                             {QStringLiteral("command"), command},
+                             {QStringLiteral("icon"), QStringLiteral("play")},
+                             {QStringLiteral("runOnWorktreeCreate"), false}});
+  row.insert(QStringLiteral("scripts"), scripts);
+  world.node.projects.insert(project, row);
+  QJsonArray rows;
+  rows.append(QJsonArray{project, QStringLiteral("project"), row});
+  world.node.sendRows(world.node.name, rows);
+  world.sync();
+}
+
+// Shows a thread of the project, on a worktree when given one.
+void showThread(World& world, const QString& project, const QString& worktree = {}) {
+  const QString threadId = QStringLiteral("thread-in-") + project;
+  QJsonObject row{{QStringLiteral("id"), threadId}, {QStringLiteral("title"), QStringLiteral("Cart")}, {QStringLiteral("projectId"), project},
+                  {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}};
+  if (!worktree.isEmpty()) row.insert(QStringLiteral("worktreePath"), worktree);
+  world.node.threads.insert(threadId, row);
+  world.node.sendRow(threadId, row);
+  const QString key = world.node.environmentId + QLatin1Char(':') + threadId;
+  world.native().controller<NavigationController>()->open(NavigationController::Route::thread(key));
+  world.waitFor([&] { return at(world.state(QStringLiteral("workspace")), QStringLiteral("threadKey")) == key; },
+                [&] { return QStringLiteral("the header to show %1; it shows %2").arg(key, show(world.state(QStringLiteral("workspace")))); });
+}
+
+// The id of the thread the header shows.
+QString shownThread(World& world) {
+  const QString key = at(world.state(QStringLiteral("workspace")), QStringLiteral("threadKey")).toString();
+  return key.mid(key.indexOf(QLatin1Char(':')) + 1);
+}
+
+// The thread the header shows, or one of the node's first project shown now.
+QString ensureThread(World& world) {
+  if (shownThread(world).isEmpty()) showThread(world, world.node.projects.firstKey());
+  return shownThread(world);
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
 
@@ -268,6 +324,77 @@ const Steps steps([] {
   step(QStringLiteral("the user runs the script %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.bridge().dispatch(QStringLiteral("workspace.runScript"), QVariantMap{{QStringLiteral("scriptId"), c[0]}});
     world.sync();  // what it asked of the node has been answered
+  });
+
+  // Project actions (files/project-scripts-and-actions.feature): the header's
+  // action menu runs them in the drawer.
+  step(QStringLiteral("%1 has the action %1 running %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    addAction(world, c[0], c[1], c[2]);
+  });
+  step(QStringLiteral("%1 also has the action %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    addAction(world, c[0], c[1], QStringLiteral("bun ") + c[1].toLower());
+  });
+  step(QStringLiteral("the user is looking at a thread in %1 on a worktree").arg(q), [](World& world, const Captures& c, const Table&) {
+    showThread(world, c[0], QStringLiteral("/work/") + c[0] + QStringLiteral("-wt"));
+  });
+  step(QStringLiteral("the thread's terminal is running a command"), [](World& world, const Captures&, const Table&) {
+    const QString threadId = ensureThread(world);
+    addTerminal(world.node, threadId, QStringLiteral("term-1"), QString(), true);
+    world.sync();
+  });
+  step(QStringLiteral("terminals cannot be opened for the thread"), [](World& world, const Captures&, const Table&) {
+    world.node.part<FakeTerminals>().refuseOpen = QStringLiteral("Terminal limit reached on this machine");
+  });
+  step(QStringLiteral("the user runs the action %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    ensureThread(world);
+    world.bridge().dispatch(QStringLiteral("workspace.runScript"), QVariantMap{{QStringLiteral("scriptId"), actionId(c[0])}});
+    world.sync();  // what it asked of the node has been answered
+  });
+  step(QStringLiteral("a terminal in the worktree runs %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString worktree = at(world.state(QStringLiteral("workspace")), QStringLiteral("worktreePath")).toString();
+    const QString threadId = shownThread(world);
+    world.waitFor([&] {
+      const auto open = terminalCall(world, QStringLiteral("terminal.open"), threadId, QStringLiteral("term-1"));
+      return open && open->value(QLatin1String("cwd")) == worktree && terminalWrites(world, QStringLiteral("term-1")) == QStringList{c[0] + QLatin1Char('\r')};
+    }, [&] { return QStringLiteral("%1 in %2; the node got %3").arg(c[0], worktree, describeTerminalCalls(world)); });
+  });
+  step(QStringLiteral("the command knows the project folder and the worktree folder"), [](World& world, const Captures&, const Table&) {
+    const QVariant workspace = world.state(QStringLiteral("workspace"));
+    const auto open = terminalCall(world, QStringLiteral("terminal.open"), shownThread(world), QStringLiteral("term-1"));
+    expect(open.has_value(), QStringLiteral("the node got %1").arg(describeTerminalCalls(world)));
+    const QJsonObject env = open->value(QLatin1String("env")).toObject();
+    expect(env.value(QLatin1String("HAL_C2_PROJECT_ROOT")).toString() == at(workspace, QStringLiteral("projectRoot")).toString() &&
+               env.value(QLatin1String("HAL_C2_WORKTREE_PATH")).toString() == at(workspace, QStringLiteral("worktreePath")).toString(),
+           QStringLiteral("the command starts with %1").arg(QString::fromUtf8(QJsonDocument(env).toJson(QJsonDocument::Compact))));
+  });
+  step(QStringLiteral("%1 runs in a new terminal").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      return terminalCall(world, QStringLiteral("terminal.open"), shownThread(world), QStringLiteral("term-2")) &&
+             terminalWrites(world, QStringLiteral("term-2")) == QStringList{c[0] + QLatin1Char('\r')};
+    }, [&] { return QStringLiteral("%1 in term-2; the node got %2").arg(c[0], describeTerminalCalls(world)); });
+  });
+  step(QStringLiteral("the busy terminal keeps running"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QString threadId = shownThread(world);
+    expect(!terminalCall(world, QStringLiteral("terminal.close"), threadId, QStringLiteral("term-1")) && terminalWrites(world, QStringLiteral("term-1")).isEmpty() &&
+               world.node.part<FakeTerminals>().terminals.contains(threadId + QStringLiteral("/term-1")),
+           QStringLiteral("the node got %1").arg(describeTerminalCalls(world)));
+  });
+  step(QStringLiteral("%1 is offered first the next time the user runs an action in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    const QVariant workspace = world.state(QStringLiteral("workspace"));
+    expect(at(workspace, QStringLiteral("projectTitle")) == c[1] && at(workspace, QStringLiteral("preferredScriptId")) == actionId(c[0]),
+           QStringLiteral("the header shows %1").arg(show(workspace)));
+  });
+  step(QStringLiteral("the user is told the action %1 failed to run").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString title = QStringLiteral("Failed to run script \"%1\".").arg(c[0]);
+    const auto shown = [&] {
+      for (const QVariant& item : at(world.state(QStringLiteral("toasts")), QStringLiteral("items")).toList()) {
+        if (item.toMap().value(QStringLiteral("title")) == title) return true;
+      }
+      return false;
+    };
+    world.waitFor(shown, [&] { return QStringLiteral("the toast %1; the shell shows %2").arg(title, show(world.state(QStringLiteral("toasts")))); });
   });
   step(QStringLiteral("the user types %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     terminalSession(world, c[1])->write(unescaped(c[0]));

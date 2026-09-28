@@ -20,7 +20,7 @@ import {
   environmentOptionLabel,
   findActiveEnvironmentOption,
 } from "../components/BranchToolbar.logic";
-import { type DraftId } from "../composerDraftStore";
+import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { resolveAndPersistPreferredEditor, usePreferredEditor } from "../editorPreferences";
 import { useRenameThread } from "../hooks/useRenameThread";
 import { useThreadBranchSelection } from "../hooks/useThreadBranchSelection";
@@ -177,6 +177,8 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
     ],
   );
 
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+
   useShellPublish("workspace", state);
 
   useShellActions((action) => {
@@ -225,6 +227,15 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
         return;
       case "workspace.rename":
         renameThread(action.title);
+        return;
+      case "workspace.checkout.follow":
+        if (props.draftId !== undefined && props.draftId === action.draftId) {
+          setDraftThreadContext(props.draftId, {
+            branch: action.branch,
+            worktreePath: action.worktreePath,
+            envMode: action.envMode,
+          });
+        }
         return;
       case "workspace.branch.search":
         setBranchQuery(action.query);

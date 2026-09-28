@@ -9,6 +9,7 @@
 #include "DraftController.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
+#include "WorkspaceController.h"
 #include "ShellBridge.h"
 
 QList<NativeControllerRegistration>& nativeControllerRegistry() {
@@ -54,6 +55,15 @@ NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)
   // The sidebar lists the drafts.
   if (auto* drafts = controller<DraftController>()) {
     connect(drafts, &DraftController::changed, &m_sidebar, &SidebarController::refresh);
+    // The header (and the terminal) of a draft route is the draft's thread.
+    if (auto* workspace = controller<WorkspaceController>()) {
+      workspace->setDraftResolver([drafts](const QString& id) -> std::optional<WorkspaceController::DraftPlace> {
+        const auto draft = drafts->draft(id);
+        if (!draft) return std::nullopt;
+        return WorkspaceController::DraftPlace{draft->environmentId, draft->projectId, draft->threadId};
+      });
+      connect(drafts, &DraftController::changed, workspace, &WorkspaceController::refresh);
+    }
   }
   // And groups, orders and dates them as this device's preferences say.
   if (auto* settings = controller<SettingsController>()) {
