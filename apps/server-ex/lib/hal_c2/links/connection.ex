@@ -152,12 +152,17 @@ defmodule HalC2.Links.Connection do
               {"application/json", "{}"}
             )},
          path = "/ws?" <> URI.encode_query(%{"wsTicket" => ticket, "protocol" => 3}),
-         {:ok, conn} <- Mint.HTTP.connect(String.to_existing_atom(uri.scheme), uri.host, uri.port),
+         # HTTP/1.1 only: over HTTP/2 a websocket needs extended CONNECT, which
+         # proxies such as `tailscale serve` do not offer.
+         {:ok, conn} <-
+           Mint.HTTP.connect(String.to_existing_atom(uri.scheme), uri.host, uri.port,
+             protocols: [:http1]
+           ),
          {:ok, conn, request} <-
            Mint.WebSocket.upgrade(if(uri.scheme == "https", do: :wss, else: :ws), conn, path, []) do
       {:ok, conn, request}
     else
-      {:ticket, {:ok, 401, _}} -> {:error, "its token is no longer accepted; pair again"}
+      {:ticket, {:ok, 401, _}} -> {:error, "its token is no longer accepted"}
       {:ticket, {:ok, status, _}} -> {:error, "ticket refused (#{status})"}
       {:ticket, {:error, reason}} -> {:error, "unreachable (#{inspect(reason)})"}
       {:error, reason} -> {:error, "unreachable (#{inspect(reason)})"}
