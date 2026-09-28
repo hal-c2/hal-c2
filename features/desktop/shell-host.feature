@@ -56,6 +56,12 @@ Feature: The desktop app runs its own node
       Then the node runs from the checkout's source
 
     @desktop
+    Scenario: A node run from source keeps its access token in the development profile
+      Given no HAL-C2 home is set for the desktop app
+      When the desktop app starts its node from a checkout
+      Then the shell looks for the node's access token in the "hal-c2-dev" data directory
+
+    @desktop
     Scenario: The node's JavaScript sidecars run on the desktop app's Node
       When the user starts the desktop app
       Then the node is told to run its JavaScript sidecars with the Node that runs the desktop host

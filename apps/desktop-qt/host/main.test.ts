@@ -15,7 +15,7 @@ import * as NodeReadline from "node:readline";
 import * as NodeURL from "node:url";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { resolveNodeLaunch } from "./elixirNode.ts";
+import { nodeDataDir, resolveNodeLaunch } from "./elixirNode.ts";
 
 const hostEntry = NodeURL.fileURLToPath(new URL("./main.ts", import.meta.url));
 // oxlint-disable-next-line hal-c2/no-global-process-runtime -- Spawns the host with the Node that runs the tests.
@@ -403,6 +403,23 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
         args: ["hal_c2.server"],
         cwd: "/checkout/apps/server-ex",
       });
+    });
+
+    it("A node run from source keeps its access token in the development profile", () => {
+      const launch = { command: "mix", args: ["hal_c2.server"], cwd: "/checkout/apps/server-ex" };
+      const env = { XDG_DATA_HOME: "/xdg/data" };
+
+      expect(nodeDataDir({ launch, home: undefined, env, homeDir: "/home/user" })).toBe(
+        "/xdg/data/hal-c2-dev/elixir",
+      );
+      expect(
+        nodeDataDir({
+          launch: { command: "/release/bin/hal_c2", args: ["start"] },
+          home: undefined,
+          env,
+          homeDir: "/home/user",
+        }),
+      ).toBe("/xdg/data/hal-c2/elixir");
     });
 
     it("The node's JavaScript sidecars run on the desktop app's Node", async () => {

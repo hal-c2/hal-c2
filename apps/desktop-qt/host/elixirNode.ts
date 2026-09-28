@@ -92,8 +92,9 @@ export async function nodePort(env: NodeJS.ProcessEnv): Promise<number> {
 
 /**
  * The node's data directory, resolved the way `HalC2.Paths` resolves it for this
- * launch: the desktop's HAL-C2 home, `HAL_C2_NODE_HOME`, a checkout's own
- * `.hal-c2` (config/config.exs), else HAL-C2's XDG data directory.
+ * launch: the desktop's HAL-C2 home, `HAL_C2_NODE_HOME`, else HAL-C2's XDG data
+ * directory, in the `hal-c2-dev` profile for a node run from a checkout
+ * (config/config.exs).
  */
 export function nodeDataDir(input: {
   readonly launch: NodeLaunch;
@@ -104,13 +105,11 @@ export function nodeDataDir(input: {
   if (input.home !== undefined) return NodePath.join(input.home, "data", "elixir");
   const nodeHome = input.env.HAL_C2_NODE_HOME?.trim();
   if (nodeHome) return NodePath.join(nodeHome, "data");
-  if (input.launch.cwd !== undefined) {
-    return NodePath.resolve(input.launch.cwd, "../..", ".hal-c2", "data", "elixir");
-  }
   const dirs = resolveHalC2Dirs({
     env: input.env,
     homeDir: input.homeDir ?? NodeOS.homedir(),
     platform: process.platform,
+    profile: input.launch.cwd === undefined ? HAL_C2_APP_DIR : HAL_C2_DEV_APP_DIR,
   });
   return NodePath.join(dirs.data, "elixir");
 }
