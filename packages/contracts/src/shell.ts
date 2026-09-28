@@ -114,6 +114,29 @@ export const ShellNativeState = Schema.Struct({
 export type ShellNativeState = typeof ShellNativeState.Type;
 
 /**
+ * Where the desktop window is, owned by the shell (published as `route`, with
+ * a title and whether back goes anywhere). The page follows it
+ * (`route.follow`) and reports its own navigation (`route.open`). `section` is
+ * a settings path; the shell's own settings pages have paths the page lacks.
+ */
+export const ShellRoute = Schema.Struct({
+  kind: Schema.Literals([
+    "home",
+    "thread",
+    "draft",
+    "newThread",
+    "settings",
+    "pullRequests",
+    "usage",
+  ]),
+  threadKey: Schema.NullOr(Schema.String),
+  draftId: Schema.NullOr(Schema.String),
+  projectKey: Schema.NullOr(Schema.String),
+  section: Schema.NullOr(Schema.String),
+});
+export type ShellRoute = typeof ShellRoute.Type;
+
+/**
  * Published under the `sidebarInput` key: what only the page knows that the
  * shell's own sidebar needs (project grouping, drafts, the route, settings).
  */
@@ -672,6 +695,14 @@ export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("settings.open") }),
   Schema.Struct({ type: Schema.Literal("pullRequests.open") }),
   Schema.Struct({ type: Schema.Literal("usage.open") }),
+  /** Shell → page: show this route (the shell owns where the window is). */
+  Schema.Struct({ type: Schema.Literal("route.follow"), ...ShellRoute.fields }),
+  /** Page → shell: the page's own links or redirects moved it here. */
+  Schema.Struct({
+    type: Schema.Literal("route.open"),
+    ...ShellRoute.fields,
+    replace: Schema.Boolean,
+  }),
   Schema.Struct({ type: Schema.Literal("palette.open") }),
   Schema.Struct({
     type: Schema.Literal("composer.text.set"),
