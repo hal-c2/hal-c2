@@ -17,6 +17,7 @@ Feature: The desktop shell sends plain turns to its node
     And the node has these threads:
       | id | project | title | runtimeMode  | interactionMode |
       | t1 | p1      | One   | full-access  | default         |
+      | t2 | p1      | Two   | full-access  | default         |
     And the page groups "env-a:p1" as the project "proj-1"
     And the desktop shell is connected to its node
 
@@ -103,6 +104,16 @@ Feature: The desktop shell sends plain turns to its node
       And the user types "Something else" into the composer
       And the node answers
       Then the page is not asked to set the composer text for "env-a:t1" to "Fix the tests"
+
+    @desktop
+    Scenario: A send on one thread does not wait for another thread's send
+      Given the node holds its answers
+      And the composer shows "env-a:t1" with the plain prompt "First"
+      When the user sends "First"
+      And the composer shows "env-a:t2" with the plain prompt "Second"
+      And the user sends "Second"
+      Then the node receives a "message.dispatch" command for "t1"
+      And the node receives a "message.dispatch" command for "t2"
 
   Rule: Anything the page has not vouched for stays with the page
 

@@ -49,7 +49,8 @@ sidebar::Capabilities ShellStore::capabilities(const QString& environmentId) con
   for (const Node& node : m_nodes) {
     if (node.environmentId != environmentId) continue;
     return {node.capabilities.value(QLatin1String("threadSettlement")).toBool(),
-            node.capabilities.value(QLatin1String("threadSnooze")).toBool()};
+            node.capabilities.value(QLatin1String("threadSnooze")).toBool(),
+            node.capabilities.value(QLatin1String("threadVisitedTracking")).toBool()};
   }
   return {};
 }

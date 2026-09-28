@@ -93,6 +93,8 @@ Nullable visibleWokeAt(const Thread& thread, qint64 nowMs);
 struct Capabilities {
   bool settlement = false;
   bool snooze = false;
+  // The node keeps the visited watermark; without it the page keeps unread markers.
+  bool visitedTracking = false;
 };
 using CapabilitiesFor = std::function<Capabilities(const QString& environmentId)>;
 

@@ -208,6 +208,11 @@ public:
   QList<QJsonObject> subscriptions;
   QList<QJsonObject> commands;
   QHash<QString, QString> refusals;
+  QJsonObject capabilities{
+      {QStringLiteral("threadSettlement"), true},
+      {QStringLiteral("threadSnooze"), true},
+      {QStringLiteral("threadVisitedTracking"), true},
+  };
   bool holdSnapshot = false;
   bool holdAnswers = false;
 
@@ -227,8 +232,7 @@ public:
              {QStringLiteral("environment"),
               QJsonObject{
                   {QStringLiteral("environmentId"), environmentId},
-                  {QStringLiteral("capabilities"),
-                   QJsonObject{{QStringLiteral("threadSettlement"), true}, {QStringLiteral("threadSnooze"), true}}},
+                  {QStringLiteral("capabilities"), capabilities},
               }},
          }}},
         {QStringLiteral("rows"), rows},
@@ -543,6 +547,9 @@ void defineSteps() {
   step(QStringLiteral("the desktop's node %1 serves the environment %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.node.name = c[0];
     world.node.environmentId = c[1];
+  });
+  step(QStringLiteral("the node's environment does not track visits"), [](World& world, const Captures&, const Table&) {
+    world.node.capabilities.remove(QStringLiteral("threadVisitedTracking"));
   });
   step(QStringLiteral("the node has these threads:"), [](World& world, const Captures&, const Table& table) {
     for (qsizetype row = 1; row < table.size(); ++row) {

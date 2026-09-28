@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QObject>
+#include <QSet>
 #include <QVariant>
 
 #include <functional>
@@ -36,5 +37,6 @@ private:
   ShellStore* m_store;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
   bool m_active = false;
-  bool m_sending = false;
+  // Threads with a send still in flight; each thread sends one at a time.
+  QSet<QString> m_sending;
 };

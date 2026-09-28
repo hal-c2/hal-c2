@@ -74,6 +74,19 @@ Feature: The desktop shell runs the sidebar against its node
       Then the node receives a "thread.mark-unread" command for "t1"
 
     @desktop
+    Scenario Outline: An environment that does not track visits keeps unread markers in the page
+      Given the node's environment does not track visits
+      And the node sends its snapshot
+      When the user dispatches "<action>" for "env-a:t1"
+      Then the action "<action>" for "env-a:t1" reaches the page
+      And the node receives no commands
+
+      Examples:
+        | action             |
+        | thread.markUnread  |
+        | thread.wokeDismiss |
+
+    @desktop
     Scenario: Settling a thread that is not open settles it without navigating
       Given the page shows "env-a:t2"
       When the user settles "env-a:t1"

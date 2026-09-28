@@ -84,6 +84,11 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
   // by itself) stays with the page.
   const auto thread = m_store->thread(key);
   if (!thread) return false;
+  // An environment without visit tracking keeps unread and woke markers in the page.
+  if ((action == QLatin1String("thread.markUnread") || action == QLatin1String("thread.wokeDismiss")) &&
+      !m_store->capabilities(thread->environmentId).visitedTracking) {
+    return false;
+  }
   const QJsonObject target{{QStringLiteral("threadId"), thread->id}};
   auto with = [&target](std::initializer_list<std::pair<QString, QJsonValue>> fields) {
     QJsonObject command = target;

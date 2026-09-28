@@ -71,8 +71,8 @@ bool ComposerController::submit(const QVariantMap& payload) {
   if (composer.value(QStringLiteral("routeKind")).toString() != QLatin1String("server")) return false;
   const auto thread = m_store->thread(target);
   if (!thread) return false;
-  if (m_sending) return true;
-  m_sending = true;
+  if (m_sending.contains(target)) return true;
+  m_sending.insert(target);
 
   const QString createdAt = sidebar::formatIso(m_now());
   const QString runtimeMode = nativeSend.value(QStringLiteral("runtimeMode")).toString();
@@ -132,7 +132,7 @@ bool ComposerController::submit(const QVariantMap& payload) {
             (*next)(index + 1);
             return;
           }
-          m_sending = false;
+          m_sending.remove(target);
           // Break the self-reference once the chain is done.
           const auto done = std::move(*next);
           if (!error) return;
