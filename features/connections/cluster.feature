@@ -9,6 +9,7 @@
 #   apps/server-ex/lib/hal_c2/environment.ex (descriptor cluster list)
 #   apps/server-ex/lib/hal_c2/web/router.ex (/api/cluster, /.well-known/hal-c2/environment, forwarded uploads)
 #   apps/server-ex/lib/hal_c2/rpc.ex, packages/contracts/src/cluster.ts (cluster.status/invite/join/remove)
+#   apps/tui/src/host/clusterState.ts, apps/tui/src/host/settingsState.ts (the terminal's cluster)
 #   apps/server-ex/lib/hal_c2/devices/proxy.ex (device hub of any node)
 #   packages/client-runtime/src/v3/clusterSocket.ts (one socket per cluster)
 #   packages/client-runtime/src/v3/clusterMembers.ts (registering members that join later)
@@ -157,6 +158,54 @@ Feature: Clustering one person's machines
     Given a simulator running on the second member
     When a client connected to the first member watches it
     Then the first member relays the stream from the second
+
+  @tui
+  Scenario: Settings show this machine's cluster
+    Given this machine is clustered with "studio", which is connected, and "laptop", which is offline
+    When the user opens settings in the terminal client
+    Then the cluster group lists "studio" as connected and "laptop" as offline
+
+  @tui
+  Scenario: A user invites a machine from the terminal
+    When the user picks "Invite a machine to this cluster" in the command palette
+    Then the node is asked for a cluster invite
+    And the invite link is copied
+    And settings show the invite link
+
+  @tui
+  Scenario: An invite only this machine can open says so
+    Given the node listens only on loopback
+    When the user picks "Invite a machine to this cluster" in the command palette
+    Then the user is warned that only this machine can open the invite
+
+  @tui
+  Scenario: A user joins this machine to another's cluster with an invite
+    When the user picks "Join another machine's cluster…" in the command palette
+    And the user pastes the invite "http://studio:3773/pair#token=abc" and presses Enter
+    Then the node is asked to join with "http://studio:3773/pair#token=abc"
+    And the status line says "Joined the cluster."
+    And settings list "studio" as connected
+
+  @tui
+  Scenario: A join the node refuses says why
+    Given the node refuses joins saying "The pairing link cannot add machines to a cluster; make a cluster invite instead."
+    When the user picks "Join another machine's cluster…" in the command palette
+    And the user pastes the invite "http://studio:3773/pair#token=abc" and presses Enter
+    Then the status line says "Join failed: The pairing link cannot add machines to a cluster; make a cluster invite instead."
+
+  @tui
+  Scenario: Esc leaves the join prompt without joining
+    When the user picks "Join another machine's cluster…" in the command palette
+    And the user presses "Esc"
+    Then the prompt has the keys again
+    And the node was not asked to join
+
+  @tui
+  Scenario: A user removes a member from the terminal
+    Given this machine is clustered with "laptop", which is connected
+    When the user picks "Remove laptop from the cluster" in the command palette
+    Then the node is asked to remove "env-laptop"
+    And the status line says "Removed laptop from the cluster."
 
   @backlog @shared
   Scenario: A member that joins later appears in the client without pairing again

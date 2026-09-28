@@ -211,6 +211,7 @@ export const KEYMAP_LAYERS = {
     escape: "contextMenu.close",
   },
   rename: { escape: "overlay.cancel" },
+  join: { escape: "cluster.join.cancel" },
   imagePreview: { escape: "image.close" },
   confirmDelete: { y: "thread.delete.confirm", "n, escape": "overlay.cancel" },
   diff: {

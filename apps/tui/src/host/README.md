@@ -82,8 +82,15 @@ panel focused (`mode: "panel"`, or `"commit"` while a commit message is asked
 for): `git.next`, `git.previous`, `git.select {index}`, `git.activate
 {index?}`, `git.run {action, label?}`, `git.pull`, `git.openPr` (copies the PR
 link), `git.commit {message}`, `git.commit.cancel`. `settings`
-(`settingsState.ts`) is the read-only settings page in place of the
-conversation: `settings.open`, `settings.close` (`mode: "settings"`).
+(`settingsState.ts`) is the settings page in place of the conversation:
+`settings.open`, `settings.close` (`mode: "settings"`).
+
+`cluster` (`clusterState.ts`) is this machine's cluster as the node reports
+it (`cluster.status`, read again when settings or the palette open), the last
+invite, and `joining` while the one-line join prompt has the keys (`mode:
+"join"`). Settings list it; the palette runs `cluster.invite {tailscale?}`
+(copies the link), `cluster.join.open`, `cluster.join {link}`,
+`cluster.join.cancel` and `cluster.remove {id}`.
 
 `threadView.ts` publishes the open thread's keys and handles their actions
 (the timeline wraps at `layout.contentWidth`):
