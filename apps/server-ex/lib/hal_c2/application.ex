@@ -9,6 +9,8 @@ defmodule HalC2.Application do
       if Application.fetch_env!(:hal_c2, :start_node) do
         :ok = HalC2.Desktop.configure()
         :ok = prepare_files()
+        # Provider programs a halted node left running stop before any thread resumes.
+        :ok = HalC2.Subprocess.Orphans.reap()
 
         [
           # Distribution starts here, before anything reads `node()`.

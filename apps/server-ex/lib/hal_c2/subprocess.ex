@@ -11,25 +11,35 @@ defmodule HalC2.Subprocess do
 
   Reader loops recurse through fully qualified calls, so a hot code load moves them
   onto the new module version at the next chunk.
+
+  A program outlives a VM that halts, so each one is recorded until `stop/2` for the
+  next node to stop (`HalC2.Subprocess.Orphans`). On Linux it is also started under
+  `setpriv --pdeathsig TERM`, which execs it in place (the pid stays the program's) and
+  has the kernel send it SIGTERM as soon as the VM's child spawner is gone.
   """
 
   alias Exile.Process, as: Proc
+  alias HalC2.Subprocess.Orphans
 
   @enforce_keys [:proc, :reader]
-  defstruct [:proc, :reader]
+  defstruct [:proc, :reader, :os_pid]
 
-  @type t :: %__MODULE__{proc: Proc.t(), reader: pid}
+  @type t :: %__MODULE__{proc: Proc.t(), reader: pid, os_pid: pos_integer | nil}
 
   @read_size 65_535
 
   @spec start([String.t()], keyword) :: {:ok, t} | {:error, term}
-  def start(cmd, opts \\ []) do
-    with {:ok, proc} <- Proc.start_link(cmd, Keyword.put_new(opts, :stderr, :disable)) do
+  def start([program | _] = cmd, opts \\ []) do
+    with {:ok, proc} <-
+           Proc.start_link(with_death_signal(cmd), Keyword.put_new(opts, :stderr, :disable)) do
       owner = self()
       reader = spawn_link(fn -> reader_init(proc, owner) end)
       :ok = Proc.change_pipe_owner(proc, :stdout, reader)
       send(reader, :owned)
-      {:ok, %__MODULE__{proc: proc, reader: reader}}
+      # A program that already exited has no pid, and nothing to record.
+      os_pid = with {:ok, pid} <- Proc.os_pid(proc), do: pid, else: (_ -> nil)
+      if os_pid, do: :ok = Orphans.record(os_pid, program)
+      {:ok, %__MODULE__{proc: proc, reader: reader, os_pid: os_pid}}
     end
   end
 
@@ -43,16 +53,43 @@ defmodule HalC2.Subprocess do
   end
 
   @spec os_pid(t) :: pos_integer
-  def os_pid(%__MODULE__{proc: proc}) do
-    {:ok, pid} = Proc.os_pid(proc)
-    pid
+  def os_pid(%__MODULE__{proc: proc} = sub) do
+    # A struct from before a hot upgrade has no `os_pid`.
+    with nil <- Map.get(sub, :os_pid) do
+      {:ok, pid} = Proc.os_pid(proc)
+      pid
+    end
   end
 
   @doc "Closes stdin and waits for the program to exit, escalating to signals after `timeout`."
   @spec stop(t, timeout) :: {:ok, non_neg_integer} | term
-  def stop(%__MODULE__{proc: proc}, timeout \\ 2_000) do
+  def stop(%__MODULE__{proc: proc} = sub, timeout \\ 2_000) do
     Proc.close_stdin(proc)
-    Proc.await_exit(proc, timeout)
+    result = Proc.await_exit(proc, timeout)
+    if os_pid = Map.get(sub, :os_pid), do: Orphans.forget(os_pid)
+    result
+  end
+
+  # A program Exile cannot find is left for it to report as not found.
+  defp with_death_signal([program | args] = cmd) do
+    with setpriv when is_binary(setpriv) <- setpriv(),
+         path when is_binary(path) <- System.find_executable(program) do
+      [setpriv, "--pdeathsig", "TERM", "--", path | args]
+    else
+      _ -> cmd
+    end
+  end
+
+  defp setpriv do
+    case :persistent_term.get({__MODULE__, :setpriv}, :unknown) do
+      :unknown ->
+        setpriv = if :os.type() == {:unix, :linux}, do: System.find_executable("setpriv")
+        :persistent_term.put({__MODULE__, :setpriv}, setpriv)
+        setpriv
+
+      setpriv ->
+        setpriv
+    end
   end
 
   @doc false

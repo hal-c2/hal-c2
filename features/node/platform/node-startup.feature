@@ -10,6 +10,7 @@
 #   apps/server-ex/lib/hal_c2/desktop.ex (HAL_C2_BOOTSTRAP_STDIN), acp.ex (HAL_C2_NODE_COMMAND, HAL_C2_NODE_ELECTRON)
 #   apps/server-ex/lib/hal_c2/web.ex (access-token), environment.ex (environment-id, HAL_C2_LABEL, descriptor)
 #   apps/server-ex/lib/hal_c2/runtime_record.ex (server-runtime.json)
+#   apps/server-ex/lib/hal_c2/subprocess.ex, subprocess/orphans.ex (programs a halted node left running)
 #   apps/server/src/serverRuntimeState.ts (the record's fields, as the Node server writes them)
 #   apps/server-ex/lib/hal_c2/import/v2.ex
 #   packages/contracts/src/desktopBootstrap.ts
@@ -144,6 +145,42 @@ Feature: Starting the node
     Given the node is serving clients
     When the node stops
     Then its state directory holds no runtime record
+
+  # A node that halts (a second Ctrl-C, a VM abort) runs no shutdown, and its provider
+  # programs only lose their pipes. A provider CLI mid-turn keeps editing the checkout,
+  # so the next node must stop it before a thread resumes that session with a new one.
+  @node
+  Scenario: A node stops the provider programs a halted node left running
+    Given a node on this state halted while its provider program kept working
+    When the node starts again
+    Then that provider program has been stopped
+    And the node records no running programs
+
+  @node
+  Scenario: On Linux a provider program stops as soon as its node halts
+    Given a node on this state halted while its provider program was mid-turn
+    Then that provider program stops without waiting for the next node
+
+  @node
+  Scenario: A node never signals a program that only reuses a recorded process id
+    Given a halted node recorded a provider program whose process id another program now has
+    When the node starts again
+    Then that other program is still running
+    And the node records no running programs
+
+  @node
+  Scenario: A node leaves the programs of a node still running on the same state alone
+    Given the node is running a provider program
+    When another node starts on the same state
+    Then that provider program is still running
+    And the node's record still names it
+
+  @node
+  Scenario: A provider program the node stops leaves no record
+    Given the node is running a provider program
+    And the node's record names it by process id and start
+    When the node stops the provider program
+    Then the node records no running programs
 
   @node
   Scenario: The environment id survives restarts

@@ -37,6 +37,8 @@ defmodule HalC2.Test.Node do
       :ok = HalC2.Application.prepare_files(Keyword.get(opts, :migration, []))
     end
 
+    :ok = HalC2.Subprocess.Orphans.reap()
+
     store = HalC2.Store.home_path()
     start_supervised!({HalC2.Store, path: store})
     start_supervised!(HalC2.Auth)
@@ -254,6 +256,22 @@ defmodule HalC2.Test.Node do
   first use. Returns the peer's node name; the peer stops when the scenario ends.
   """
   def start_peer(node) do
+    name = start_vm()
+
+    # A peer node does not read Mix config, so it gets the node settings directly.
+    for {key, value} <- [start_node: true, home: Path.join(node.home, "peer"), port: 0],
+        do: :ok = :erpc.call(name, Application, :put_env, [:hal_c2, key, value])
+
+    {:ok, _} = :erpc.call(name, Application, :ensure_all_started, [:hal_c2])
+    name
+  end
+
+  @doc """
+  Starts a bare `:peer` VM with this VM's code and nothing running, and returns its node
+  name. This VM becomes distributed on first use. The peer stops when the scenario
+  ends, unless it halted first.
+  """
+  def start_vm do
     unless :erlang.is_alive() do
       {_, 0} = System.cmd("epmd", ["-daemon"])
       name = :"hal_c2_features#{System.unique_integer([:positive])}@127.0.0.1"
@@ -268,13 +286,14 @@ defmodule HalC2.Test.Node do
         args: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
       })
 
-    ExUnit.Callbacks.on_exit(fn -> :peer.stop(peer) end)
+    ExUnit.Callbacks.on_exit(fn ->
+      try do
+        :peer.stop(peer)
+      catch
+        :exit, _ -> :ok
+      end
+    end)
 
-    # A peer node does not read Mix config, so it gets the node settings directly.
-    for {key, value} <- [start_node: true, home: Path.join(node.home, "peer"), port: 0],
-        do: :ok = :erpc.call(name, Application, :put_env, [:hal_c2, key, value])
-
-    {:ok, _} = :erpc.call(name, Application, :ensure_all_started, [:hal_c2])
     name
   end
 

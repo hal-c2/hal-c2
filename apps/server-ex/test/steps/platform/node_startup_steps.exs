@@ -242,6 +242,155 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     context
   end
 
+  # --- programs a halted node left running ------------------------------------------------
+
+  @fake_program Path.expand("../../support/fake_provider_program.py", __DIR__)
+
+  # A second VM on the scenario's state starts the program, owned by an Agent as a
+  # provider session owns its CLI, and then halts with no shutdown at all.
+  step "a node on this state halted while its provider program kept working", context do
+    context = halt_with_program(context, ["--keep-working", "--ignore-term"])
+    assert running?(context.program)
+    context
+  end
+
+  step "a node on this state halted while its provider program was mid-turn", context do
+    halt_with_program(context, ["--keep-working"])
+  end
+
+  step "that provider program has been stopped", context do
+    await_gone(context.program)
+    context
+  end
+
+  # `setpriv --pdeathsig` is Linux's; elsewhere only the next node stops the program.
+  step "that provider program stops without waiting for the next node", context do
+    if match?({:unix, :linux}, :os.type()), do: await_gone(context.program)
+    context
+  end
+
+  # This VM's program, under an entry that names another start and a node that is gone.
+  step "a halted node recorded a provider program whose process id another program now has",
+       context do
+    {:ok, sub} = HalC2.Subprocess.start([@fake_program, "--keep-working"])
+    pid = HalC2.Subprocess.os_pid(sub)
+    path = Path.join(HalC2.Subprocess.Orphans.dir(), "#{pid}.json")
+    halted = %{"pid" => String.to_integer(System.pid()), "started" => "a node that halted"}
+    entry = %{JSON.decode!(File.read!(path)) | "started" => "another program", "node" => halted}
+    File.write!(path, JSON.encode!(entry))
+    Map.merge(context, %{sub: sub, program: pid})
+  end
+
+  step "that other program is still running", context do
+    assert running?(context.program)
+    context
+  end
+
+  step "the node is running a provider program", context do
+    {:ok, sub} = HalC2.Subprocess.start([@fake_program])
+    Map.merge(context, %{sub: sub, program: HalC2.Subprocess.os_pid(sub)})
+  end
+
+  # The other node's boot step that stops what a halted node left running.
+  step "another node starts on the same state", context do
+    vm = Node.start_vm()
+    :ok = :erpc.call(vm, Application, :put_env, [:hal_c2, :home, context.node.home])
+    :ok = :erpc.call(vm, HalC2.Subprocess.Orphans, :reap, [])
+    context
+  end
+
+  step "that provider program is still running", context do
+    assert running?(context.program)
+    context
+  end
+
+  step "the node's record still names it", context do
+    assert Enum.any?(recorded(), &(&1["pid"] == context.program))
+    context
+  end
+
+  step "the node's record names it by process id and start", context do
+    node_pid = String.to_integer(System.pid())
+
+    assert [entry] = recorded()
+    assert entry["pid"] == context.program
+    assert entry["started"] == HalC2.Subprocess.Orphans.identity(context.program)
+    assert entry["program"] == @fake_program
+
+    assert entry["node"] == %{
+             "pid" => node_pid,
+             "started" => HalC2.Subprocess.Orphans.identity(node_pid)
+           }
+
+    context
+  end
+
+  step "the node stops the provider program", context do
+    assert {:ok, 0} = HalC2.Subprocess.stop(context.sub)
+    context
+  end
+
+  step "the node records no running programs", context do
+    assert recorded() == []
+    context
+  end
+
+  defp halt_with_program(context, flags) do
+    vm = Node.start_vm()
+    :ok = :erpc.call(vm, Application, :put_env, [:hal_c2, :home, context.node.home])
+    {:ok, _} = :erpc.call(vm, Application, :ensure_all_started, [:exile])
+    cmd = [@fake_program | flags]
+    {:ok, agent} = :erpc.call(vm, Agent, :start, [HalC2.Subprocess, :start, [cmd]])
+    {:ok, %HalC2.Subprocess{os_pid: pid}} = :erpc.call(vm, :sys, :get_state, [agent])
+
+    # A program the scenario fails to see stopped does not outlive it.
+    started = HalC2.Subprocess.Orphans.identity(pid)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if started && HalC2.Subprocess.Orphans.identity(pid) == started,
+        do: System.cmd("kill", ["-KILL", to_string(pid)])
+    end)
+
+    assert [%{"pid" => ^pid}] = recorded()
+    true = :erlang.monitor_node(vm, true)
+    :erpc.cast(vm, :erlang, :halt, [])
+    assert_receive {:nodedown, ^vm}, 5_000
+    Map.put(context, :program, pid)
+  end
+
+  defp recorded do
+    dir = HalC2.Subprocess.Orphans.dir()
+
+    case File.ls(dir) do
+      {:ok, names} -> for name <- names, do: JSON.decode!(File.read!(Path.join(dir, name)))
+      {:error, :enoent} -> []
+    end
+  end
+
+  defp running?(pid),
+    do: match?({_, 0}, System.cmd("kill", ["-0", to_string(pid)], stderr_to_stdout: true))
+
+  # Waits on a pidfd for a process that is not this VM's child to end; one that has
+  # already ended returns at once.
+  defp await_gone(pid) do
+    wait = """
+    import os, select, sys
+    try:
+        fd = os.pidfd_open(int(sys.argv[1]))
+    except ProcessLookupError:
+        sys.exit(0)
+    select.select([fd], [], [])
+    """
+
+    port =
+      Port.open({:spawn_executable, System.find_executable("python3")}, [
+        :exit_status,
+        args: ["-c", wait, to_string(pid)]
+      ])
+
+    assert_receive {^port, {:exit_status, 0}}, 5_000
+  end
+
   # --- identity ---------------------------------------------------------------------------
 
   step "the node starts for the first time", context do
