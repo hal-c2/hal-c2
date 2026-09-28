@@ -1266,7 +1266,8 @@ step("the user is told to pick a base branch", async (ctx: World) => {
 // --- The OpenTUI client's look ---------------------------------------------
 
 type Colour = keyof typeof THEME;
-const colour = (name: string) => THEME[name as Colour];
+// A theme colour ("dim", "accent") or an ANSI one ("yellow", "blue").
+const colour = (name: string) => THEME[name as Colour] ?? ansi(name);
 const picker = (ctx: World) => ctx.host!.state.get("select") as TuiSelectState;
 
 /** The thread list's rows inside its border. */
