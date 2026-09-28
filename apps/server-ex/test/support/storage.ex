@@ -96,13 +96,13 @@ defmodule HalC2.Test.Storage do
 
   @doc "HAL-C2's own directories for the node's current `:home` and environment."
   def app_dirs do
-    root =
-      case Application.get_env(:hal_c2, :home) do
-        {:root, dir} -> dir
-        _ -> nil
-      end
+    env = System.get_env()
 
-    Paths.app_dirs(root, System.get_env(), Paths.user_home())
+    case Application.get_env(:hal_c2, :home) do
+      {:root, dir} -> Paths.app_dirs(dir, env, Paths.user_home())
+      :dev -> Paths.app_dirs(nil, env, Paths.user_home(), Paths.platform(), "hal-c2-dev")
+      _ -> Paths.app_dirs(nil, env, Paths.user_home())
+    end
   end
 
   @doc "The `:hal_c2` config a node boots with in `env` (`:dev` a checkout, `:prod` a release)."

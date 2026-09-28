@@ -109,6 +109,15 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     context |> Storage.user() |> Map.put(:checkout_kind, :worktree)
   end
 
+  step "a developer starts a development server from the main checkout", context do
+    Storage.start_checkout(context, :checkout)
+  end
+
+  step "the installed app's {string} is not touched", %{args: [dir]} = context do
+    Storage.assert_untouched(context, Storage.path(context, dir))
+    context
+  end
+
   step "a developer starts a development server", context do
     Storage.start_checkout(context, context[:checkout_kind] || :worktree)
   end

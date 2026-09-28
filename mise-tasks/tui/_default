@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-#MISE description="Open the terminal client on the running Elixir node (--base-dir defaults to ./.hal-c2, --url <pairing link> for a remote one)"
+#MISE description="Open the terminal client on the running Elixir node (this checkout's mise run node, --base-dir <root>, or --url <pairing link> for a remote one)"
 #MISE dir="{{config_root}}"
 #MISE depends=["tui:build"]
 set -euo pipefail
 args=("$@")
-if [[ " $* " != *" --base-dir"* && " $* " != *" --url"* && -z ${HAL_C2_NODE_HOME:-} ]]; then
-  # A checkout's node (`mise run node`) keeps its runtime record and access token
-  # under <checkout>/.hal-c2 (apps/server-ex/config/config.exs).
-  args=(--base-dir "$PWD/.hal-c2" ${args[@]+"${args[@]}"})
+if [[ " $* " != *" --base-dir"* && -z ${HAL_C2_NODE_HOME:-} ]]; then
+  # Where this checkout's node keeps its runtime record and access token
+  # (apps/server-ex/config/config.exs): a linked git worktree's own .hal-c2, else the
+  # XDG hal-c2-dev profile. Only a linked worktree has a git dir apart from the common one.
+  if [[ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ]]; then
+    args=(--base-dir "$PWD/.hal-c2" ${args[@]+"${args[@]}"})
+  else
+    args=(--dev ${args[@]+"${args[@]}"})
+  fi
 fi
 # ${args[@]+…}: an empty array under set -u is an error on macOS bash 3.2.
 exec bun apps/tui/dist/index.js ${args[@]+"${args[@]}"}

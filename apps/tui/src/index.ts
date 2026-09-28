@@ -66,6 +66,7 @@ async function resolveConnection(): Promise<
   const args = parseLaunchArgs(argv);
   const dirs = {
     baseDir: args.baseDir,
+    dev: args.dev,
     env: process.env,
     homeDir: NodeOS.homedir(),
     platform: process.platform,

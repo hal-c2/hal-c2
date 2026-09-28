@@ -7,7 +7,7 @@
 #   apps/server/src/cli/config.ts (--base-dir, a dev URL picks the dev profile)
 #   apps/server/src/cli/pair.ts (probes both profiles)
 #   apps/server/src/device/SshDeviceHost.ts, packages/ssh/src/tunnel.ts (ssh-launch on remote hosts)
-#   apps/server-ex/config/config.exs (the checkout's .hal-c2 sandbox)
+#   apps/server-ex/config/config.exs (a worktree's .hal-c2, the main checkout's hal-c2-dev profile)
 #   apps/server-ex/config/runtime.exs (HAL_C2_NODE_HOME, HAL_C2_HOME)
 #   apps/server-ex/rel/env.sh.eex (the release's home)
 #   apps/server-ex/README.md (Run, Release: where the node keeps its state)
@@ -170,7 +170,7 @@ Feature: Where HAL-C2 keeps its files
 
   Rule: Development keeps its own directories
 
-    @backlog @node
+    @node
     Scenario Outline: A development server with no root uses the development profile
       Given no HAL-C2 home is configured
       When a developer starts a development server from the main checkout
@@ -195,8 +195,8 @@ Feature: Where HAL-C2 keeps its files
         | root                                         | path                          |
         | the server is started from a linked worktree | the worktree's ".hal-c2/data" |
 
-      # A node from a checkout always keeps its files in the checkout's .hal-c2, whatever
-      # HAL_C2_HOME says, and --base-dir is the TypeScript server's.
+      # A dev node ignores HAL_C2_HOME (only a release reads it), and --base-dir is the
+      # TypeScript server's.
       @backlog
       Examples: Not yet on the node
         | root                                          | path                |

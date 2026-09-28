@@ -13,6 +13,8 @@ defmodule HalC2.Paths do
   The `:home` application env picks the layout:
 
   - `nil`: the XDG Base Directory layout, `~/.config/hal-c2/elixir` and so on.
+  - `:dev`: the same layout in the development profile, `~/.config/hal-c2-dev/elixir`
+    and so on, so a dev node never opens the installed app's files.
   - `{:root, dir}`: one HAL-C2 root, `<dir>/{config,data,state,cache}/elixir`
     (`HAL_C2_HOME`, a checkout's `.hal-c2`, the desktop app's home).
   - `{:node, dir}`: a root for the node alone, `<dir>/{config,data,state,cache}`
@@ -25,6 +27,7 @@ defmodule HalC2.Paths do
   """
 
   @app "hal-c2"
+  @dev_app "hal-c2-dev"
   @node "elixir"
   @kinds [:config, :data, :state, :cache]
   @legacy [".hal-c2", ".t3"]
@@ -92,13 +95,13 @@ defmodule HalC2.Paths do
   end
 
   def node_dirs(spec, env, user_home, platform) do
-    root =
+    app =
       case spec do
-        {:root, dir} -> dir
-        nil -> nil
+        {:root, dir} -> app_dirs(dir, env, user_home, platform)
+        :dev -> app_dirs(nil, env, user_home, platform, @dev_app)
+        nil -> app_dirs(nil, env, user_home, platform)
       end
 
-    app = app_dirs(root, env, user_home, platform)
     Map.new(@kinds, &{&1, join(platform, [Map.fetch!(app, &1), @node])})
   end
 
@@ -107,10 +110,10 @@ defmodule HalC2.Paths do
   `%{config, data, state, cache, runtime}`. `root` puts them all under one directory;
   otherwise the XDG variables in `env` (only when absolute) and the platform
   defaults decide, with Windows under `APPDATA\\hal-c2\\config` and
-  `LOCALAPPDATA\\hal-c2\\<kind>`. A root that is
-  relative or an old home is ignored.
+  `LOCALAPPDATA\\hal-c2\\<kind>`; `app` swaps `hal-c2` for a profile such as
+  `hal-c2-dev`. A root that is relative or an old home is ignored.
   """
-  def app_dirs(root, env, user_home, platform \\ platform()) do
+  def app_dirs(root, env, user_home, platform \\ platform(), app \\ @app) do
     if root && root?(root, :root, user_home, platform) do
       state = join(platform, [root, "state"])
 
@@ -122,11 +125,11 @@ defmodule HalC2.Paths do
         runtime: state
       }
     else
-      xdg_dirs(env, user_home, platform)
+      xdg_dirs(env, user_home, platform, app)
     end
   end
 
-  defp xdg_dirs(env, user_home, :windows) do
+  defp xdg_dirs(env, user_home, :windows, app) do
     app_data =
       absolute(env["APPDATA"], :windows) || join(:windows, [user_home, "AppData", "Roaming"])
 
@@ -137,8 +140,8 @@ defmodule HalC2.Paths do
     # under the app dir. An XDG variable is a base for its kind alone and needs no nesting.
     kind = fn var, default, kind ->
       case absolute(env[var], :windows) do
-        nil -> join(:windows, [default, @app, kind])
-        base -> join(:windows, [base, @app])
+        nil -> join(:windows, [default, app, kind])
+        base -> join(:windows, [base, app])
       end
     end
 
@@ -149,13 +152,13 @@ defmodule HalC2.Paths do
       data: kind.("XDG_DATA_HOME", local, "data"),
       state: state,
       cache: kind.("XDG_CACHE_HOME", local, "cache"),
-      runtime: runtime(env, state, :windows)
+      runtime: runtime(env, state, :windows, app)
     }
   end
 
-  defp xdg_dirs(env, user_home, :unix) do
+  defp xdg_dirs(env, user_home, :unix, app) do
     kind = fn var, default ->
-      join(:unix, [absolute(env[var], :unix) || join(:unix, [user_home | default]), @app])
+      join(:unix, [absolute(env[var], :unix) || join(:unix, [user_home | default]), app])
     end
 
     state = kind.("XDG_STATE_HOME", [".local", "state"])
@@ -165,14 +168,14 @@ defmodule HalC2.Paths do
       data: kind.("XDG_DATA_HOME", [".local", "share"]),
       state: state,
       cache: kind.("XDG_CACHE_HOME", [".cache"]),
-      runtime: runtime(env, state, :unix)
+      runtime: runtime(env, state, :unix, app)
     }
   end
 
-  defp runtime(env, state, platform) do
+  defp runtime(env, state, platform, app) do
     case absolute(env["XDG_RUNTIME_DIR"], platform) do
       nil -> state
-      base -> join(platform, [base, @app])
+      base -> join(platform, [base, app])
     end
   end
 

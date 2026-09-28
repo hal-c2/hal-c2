@@ -26,6 +26,14 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     end
   end
 
+  step "a developer starts the node from the main checkout", context do
+    Storage.start_checkout(context, :checkout)
+  end
+
+  step "a developer starts the node from a linked git worktree", context do
+    Storage.start_checkout(context, :worktree)
+  end
+
   step "it prints a WebSocket URL on loopback with the node's own access token", context do
     assert [_, port, token] =
              Regex.run(~r{ws://127\.0\.0\.1:(\d+)/ws\?token=(\S+)$}, context.printed),

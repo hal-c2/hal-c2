@@ -12,6 +12,13 @@ describe("parseLaunchArgs", () => {
     });
   });
 
+  it("reads --dev as a switch", () => {
+    expect(parseLaunchArgs(["--dev", "--url=https://node.example"])).toEqual({
+      dev: true,
+      url: "https://node.example",
+    });
+  });
+
   it("rejects an unknown flag and a flag without a value", () => {
     expect(() => parseLaunchArgs(["--port", "1"])).toThrow(LaunchError);
     expect(() => parseLaunchArgs(["--url"])).toThrow("--url needs a value.");
@@ -26,6 +33,16 @@ describe("resolveNodeDirs", () => {
       state: "/w/.hal-c2/state/elixir",
       data: "/w/.hal-c2/data/elixir",
     });
+  });
+
+  it("finds a dev node in the hal-c2-dev profile, unless a base dir is given", () => {
+    expect(resolveNodeDirs({ ...base, dev: true, env: {} })).toEqual({
+      state: "/home/u/.local/state/hal-c2-dev/elixir",
+      data: "/home/u/.local/share/hal-c2-dev/elixir",
+    });
+    expect(resolveNodeDirs({ ...base, dev: true, baseDir: "/w/.hal-c2", env: {} }).data).toBe(
+      "/w/.hal-c2/data/elixir",
+    );
   });
 
   it("uses HAL_C2_NODE_HOME directly, unless a base dir is given", () => {

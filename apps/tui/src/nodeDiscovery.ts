@@ -28,6 +28,7 @@ import { remoteHttpClientLayer } from "@hal-c2/client-runtime/rpc";
 import { resolveRemotePairingTarget } from "@hal-c2/shared/remote";
 import {
   absoluteEnvPath,
+  HAL_C2_DEV_APP_DIR,
   isLegacyHome,
   resolveHalC2Dirs,
   type HalC2DirsEnvironment,
@@ -55,17 +56,23 @@ export interface NodeTarget {
 export interface LaunchArgs {
   readonly url?: string;
   readonly baseDir?: string;
+  /** The development profile, `hal-c2-dev`: where a main checkout's `mise run node` lives. */
+  readonly dev?: boolean;
 }
 
-/** `[--url <pairing link or origin>] [--base-dir <root>]`, `--flag=value` too. */
+/** `[--url <pairing link or origin>] [--base-dir <root>] [--dev]`, `--flag=value` too. */
 export function parseLaunchArgs(argv: ReadonlyArray<string>): LaunchArgs {
-  const args: { url?: string; baseDir?: string } = {};
+  const args: { url?: string; baseDir?: string; dev?: boolean } = {};
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!;
+    if (arg === "--dev") {
+      args.dev = true;
+      continue;
+    }
     const [flag, inline] = arg.startsWith("--") ? splitOnce(arg, "=") : [arg, undefined];
     if (flag !== "--url" && flag !== "--base-dir") {
       throw new LaunchError(
-        `Unknown argument ${arg}. Usage: hal-c2-tui [--url <pairing link>] [--base-dir <dir>]`,
+        `Unknown argument ${arg}. Usage: hal-c2-tui [--url <pairing link>] [--base-dir <dir>] [--dev]`,
       );
     }
     const value = inline ?? argv[++index];
@@ -85,6 +92,7 @@ function splitOnce(value: string, separator: string): [string, string | undefine
 
 export interface DirsInput {
   readonly baseDir?: string | undefined;
+  readonly dev?: boolean | undefined;
   readonly env: HalC2DirsEnvironment & Readonly<Record<string, string | undefined>>;
   readonly homeDir: string;
   readonly platform: NodeJS.Platform;
@@ -92,8 +100,9 @@ export interface DirsInput {
 
 /**
  * The Elixir node's state and data dirs, as `HalC2.Paths` lays them out: a root
- * (`--base-dir`, `HAL_C2_HOME`) or the XDG dirs with an `elixir` level, or
- * `HAL_C2_NODE_HOME` holding `state` and `data` directly.
+ * (`--base-dir`, `HAL_C2_HOME`) or the XDG dirs (the `hal-c2-dev` profile with
+ * `--dev`) with an `elixir` level, or `HAL_C2_NODE_HOME` holding `state` and
+ * `data` directly.
  */
 export function resolveNodeDirs(input: DirsInput): { state: string; data: string } {
   const path = input.platform === "win32" ? NodePath.win32 : NodePath.posix;
@@ -101,15 +110,21 @@ export function resolveNodeDirs(input: DirsInput): { state: string; data: string
   if (input.baseDir === undefined && nodeHome !== undefined && !isLegacyHome(nodeHome, input)) {
     return { state: path.join(nodeHome, "state"), data: path.join(nodeHome, "data") };
   }
-  const dirs = resolveHalC2Dirs({ ...input, root: input.baseDir });
+  const dirs = halC2Dirs(input);
   return { state: path.join(dirs.state, NODE_DIR), data: path.join(dirs.data, NODE_DIR) };
 }
 
 /** Where paired sessions are saved: HAL-C2's (not the node's) data dir. */
 export function credentialsPath(input: DirsInput): string {
-  const dirs = resolveHalC2Dirs({ ...input, root: input.baseDir });
-  return NodePath.join(dirs.data, "tui", "credentials.json");
+  return NodePath.join(halC2Dirs(input).data, "tui", "credentials.json");
 }
+
+const halC2Dirs = (input: DirsInput) =>
+  resolveHalC2Dirs({
+    ...input,
+    root: input.baseDir,
+    profile: input.dev ? HAL_C2_DEV_APP_DIR : undefined,
+  });
 
 /** `kill(pid, 0)`: EPERM still means the process exists. */
 export function isProcessAlive(pid: number): boolean {
