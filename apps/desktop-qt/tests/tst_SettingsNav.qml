@@ -15,7 +15,7 @@ Item {
             Shell.state = { settings: {
                 active: true, activeSection: "/settings/general", searchQuery: query,
                 sections: [{ to: "/settings/general", label: "General" }, { to: "/settings/providers", label: "Providers" }],
-                searchResults: [{ to: "/settings/general", title: "Theme", sectionLabel: "General", targetId: "theme" }]
+                searchResults: [{ to: "/settings/providers", title: "Theme", sectionLabel: "Providers", targetId: "theme" }]
             } };
         }
         function init() { Shell.reset(); publish(""); }
@@ -102,6 +102,21 @@ Item {
             compare(Shell.dispatchedActions[0].action, "settings.navigate");
             compare(Shell.dispatchedActions[0].payload.to, "/settings/appearance");
             verify(findChild(nav, "settingsRow0").current, "a bare settings route shows General");
+        }
+        function test_connectionsRowTakesThePageSectionsPlace() {
+            let settings = Shell.state.settings;
+            settings.sections = settings.sections.concat([{ to: "/settings/connections", label: "Connections" }]);
+            Shell.state = { settings: settings, connections: {}, route: { kind: "settings", section: "/settings/connections" } };
+            let nav = createTemporaryObject(component, root);
+            verify(!!nav, "Component exists");
+            tryVerify(() => findChild(nav, "settingsRow3") !== null, 1000, "Connections is listed");
+            verify(!findChild(nav, "settingsRow4"), "the page's own Connections section is not");
+            let row = findChild(nav, "settingsRow3");
+            compare(row.Accessible.name, "Connections");
+            verify(row.current, "Connections is current");
+            row.forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            compare(Shell.dispatchedActions[0].action, "connections.open");
         }
         function test_keyboardSearchResult() {
             publish("theme");

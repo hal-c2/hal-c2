@@ -15,7 +15,7 @@ namespace {
 constexpr const char* kStateKeys[] = {
     "backendError", "composer", "contextMenu", "git",   "keybindings", "layout",
     "notifications", "rightPanel", "settings", "sidebar", "theme",     "workspace",
-    "desktopNotifications", "modelPicker", "native", "sidebarInput", "environmentAccess",
+    "desktopNotifications", "modelPicker", "native", "sidebarInput",
 };
 
 // Qt 6.11 deprecates the public constructor in favour of create(); the

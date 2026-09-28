@@ -53,6 +53,7 @@ if (!fs.existsSync(path.join(dataDir, "access-token")))
 const idFile = path.join(home, "environment-id");
 if (!fs.existsSync(idFile)) fs.writeFileSync(idFile, "env-" + Math.random().toString(36).slice(2));
 const environmentId = fs.readFileSync(idFile, "utf8");
+const minted = new Set();
 const server = http.createServer((req, res) => {
   res.setHeader("access-control-allow-origin", "*");
   if (req.url === "/.well-known/hal-c2/environment") {
@@ -65,11 +66,22 @@ const server = http.createServer((req, res) => {
     req.on("data", (chunk) => (body += chunk));
     req.on("end", () => {
       const params = new URLSearchParams(body);
-      const ok = params.get("subject_token") === bootstrap.desktopBootstrapToken;
+      const subject = params.get("subject_token");
+      const ok = subject === bootstrap.desktopBootstrapToken || minted.has(subject);
       res.statusCode = ok ? 200 : 400;
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify(ok ? { access_token: "access", token_type: "Bearer", scope: "admin" } : { error: "invalid_grant" }));
     });
+    return;
+  }
+  // Minting a pairing link needs access:write, which a standard-scope pairing does not carry.
+  if (req.method === "POST" && req.url === "/api/auth/pairing-token") {
+    const admin = req.headers.authorization === "Bearer access" && !bootstrap.standardScopes;
+    res.statusCode = admin ? 200 : 403;
+    res.setHeader("content-type", "application/json");
+    const credential = "minted-" + Math.random().toString(36).slice(2);
+    if (admin) minted.add(credential);
+    res.end(JSON.stringify(admin ? { id: "link", credential } : { error: "access:write is required" }));
     return;
   }
   res.statusCode = 404;
@@ -274,7 +286,7 @@ async function descriptorOf(origin: string): Promise<{ environmentId: string }> 
 }
 
 /** A fake node the test starts itself, as `mise run node` would. */
-async function runningNode() {
+async function runningNode(options: { readonly standardScopes?: boolean } = {}) {
   const release = fakeRelease();
   const port = await freePort();
   const child = NodeChildProcess.spawn(NodePath.join(release, "bin/hal_c2"), ["start"], {
@@ -284,7 +296,7 @@ async function runningNode() {
   });
   cleanups.push(() => child.kill("SIGKILL"));
   child.stdin.end(
-    `${JSON.stringify({ port, host: "127.0.0.1", desktopBootstrapToken: "pairing-token" })}\n`,
+    `${JSON.stringify({ port, host: "127.0.0.1", desktopBootstrapToken: "pairing-token", standardScopes: options.standardScopes })}\n`,
   );
   await new Promise((resolve) =>
     NodeReadline.createInterface({ input: child.stdout }).once("line", resolve),
@@ -485,7 +497,9 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       const target = pairingTarget(url);
 
       expect(url.pathname).toBe("/pair");
-      expect(target).toEqual({ node: node.origin, token: "pairing-token" });
+      expect(target.node).toBe(node.origin);
+      // The link's own token paired the shell; the app gets a fresh one.
+      expect(target.token).toMatch(/^minted-/);
       expect(await exchange(target.node, target.token)).toBe(200);
       expect(readRecord(ownRelease)).toBeUndefined();
       await host.quit();
@@ -516,7 +530,7 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       await host.quit();
     });
 
-    it("An attached desktop leaves a node it has no files for to the app", async () => {
+    it("An attached desktop's own client pairs with a node it has no files for", async () => {
       const node = await runningNode();
       const data = temporaryDirectory();
       const state = temporaryDirectory();
@@ -524,7 +538,7 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
       writeRuntimeRecord(nodeDirs.state, `http://127.0.0.1:${await freePort()}`);
       NodeFS.writeFileSync(NodePath.join(nodeDirs.data, "access-token"), "other-node-token\n");
       const host = startHost({
-        args: [`--attach=${node.origin}/?token=pairing-token`],
+        args: [`--attach=${node.origin}/#token=pairing-token`],
         env: {
           XDG_DATA_HOME: data,
           XDG_STATE_HOME: state,
@@ -533,8 +547,34 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own nod
         },
       });
 
-      expect((await readyMessage(host)).node).toBeUndefined();
+      expect((await readyMessage(host)).node).toEqual({ origin: node.origin, token: "access" });
       await host.quit();
+    });
+
+    it("A pairing link without access to pairing opens the app unpaired", async () => {
+      const node = await runningNode({ standardScopes: true });
+      const host = startHost({
+        args: [`--attach=${node.origin}/?token=pairing-token`],
+        env: { HAL_C2_WEB_DIST: webBundle(), HAL_C2_WEB_PORT: String(await freePort()) },
+      });
+      const message = await readyMessage(host);
+
+      expect(message.node).toEqual({ origin: node.origin, token: "access" });
+      expect(new URL(message.url).pathname).toBe("/");
+      await host.quit();
+    });
+
+    it("Attaching with a pairing link the node refuses", async () => {
+      const node = await runningNode();
+      const host = startHost({
+        args: [`--attach=${node.origin}/?token=spent`],
+        env: { HAL_C2_WEB_DIST: webBundle(), HAL_C2_WEB_PORT: String(await freePort()) },
+      });
+
+      expect(await errorMessage(host)).toBe(
+        `The pairing link for ${node.origin} is invalid or expired.`,
+      );
+      expect(await host.exited).toBe(1);
     });
 
     it("An address that is not a node is loaded as it is", async () => {

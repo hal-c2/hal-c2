@@ -21,7 +21,9 @@ var sections = [
     { to: "/settings/scheduled-tasks", label: "Scheduled Tasks" },
     { to: "/settings/source-control", label: "Source Control" },
     { to: "/settings/storage", label: "Storage" },
-    { to: "/settings/connections", label: "Connections" },
+    { to: "/settings/connections", label: "Connections", brick: "ConnectionsSettings", action: "connections.open",
+      requires: "connections", detail: "Environments, pairing links and clients",
+      keywords: "connections environments pairing link code clients revoke access remote" },
     { to: "/settings/archived", label: "Archive" },
     { to: "/settings/cluster", label: "Cluster", brick: "ClusterSettings", action: "cluster.open", requires: "cluster",
       detail: "Machines, invites and joining", keywords: "cluster machines invite join remove tailscale" },
@@ -58,13 +60,17 @@ function navRows(pageSections, state) {
     });
 }
 
-// Native sections matching `query` (lower case) that the page's own results
-// do not already reach.
-function searchRows(query, pageResults, state) {
-    var reached = {};
-    for (var i = 0; i < pageResults.length; ++i) reached[pageResults[i].to] = true;
+// The page's search results in the sections it still renders: a result in a
+// native section would open that section at nothing.
+function pageResults(results) {
+    return results.filter(function (result) {
+        return brickFor(result.to) === "";
+    });
+}
+
+// The native sections matching `query` (lower case) by label or keywords.
+function searchRows(query, state) {
     return navRows([], state).filter(function (section) {
-        if (reached[section.to]) return false;
         return section.label.toLowerCase().indexOf(query) >= 0 || (section.keywords || "").indexOf(query) >= 0;
     });
 }

@@ -16,8 +16,9 @@ class ShellStore;
 // Where the window is: the shell's route, its back stack, and the last route
 // kept across restarts (setStorePath). Publishes `route`: {kind, threadKey,
 // draftId, projectKey, section, title, canGoBack}, where kind is one of home,
-// thread, draft, newThread, settings (section: the settings path, or
-// "/settings/cluster" for the shell's own cluster page), pullRequests, usage.
+// thread, draft, newThread, settings (section: the settings path, or one of
+// the shell's own pages, "/settings/cluster" and "/settings/connections"),
+// pullRequests, usage.
 //
 // The page still renders the centre, so it follows: every route the page does
 // not already show goes to it as `route.follow {kind, threadKey, draftId,
@@ -45,8 +46,12 @@ public:
     bool operator==(const Route&) const = default;
   };
 
-  // The shell's own settings page, which the page cannot show.
+  // The shell's own settings pages, which the page does not show.
   static inline const QString kClusterSection = QStringLiteral("/settings/cluster");
+  static inline const QString kConnectionsSection = QStringLiteral("/settings/connections");
+  static bool isNativeSection(const Route& route) {
+    return route == Route::settings(kClusterSection) || route == Route::settings(kConnectionsSection);
+  }
 
   NavigationController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 

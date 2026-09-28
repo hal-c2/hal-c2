@@ -181,6 +181,9 @@ const QStringList kDefaultGlobs{
     QStringLiteral("timeline/plans-and-subagents.feature"),
     QStringLiteral("navigation/environment-themes.feature"),
     QStringLiteral("navigation/appearance.feature:System appearance follows*"),
+    QStringLiteral("settings/connections.feature"),
+    QStringLiteral("connections/links.feature"),
+    QStringLiteral("connections/pairing.feature"),
 };
 
 QRegularExpression wildcard(const QString& glob) {

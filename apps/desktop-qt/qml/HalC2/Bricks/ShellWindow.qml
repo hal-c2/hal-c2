@@ -17,8 +17,6 @@ Window {
     // Where the window is (NavigationController); the page's own settings
     // state until the shell has its node.
     readonly property var route: Shell.state.route ?? null
-    // Cluster, the first page the shell rendered itself.
-    readonly property bool clusterOpen: route !== null && route.kind === "settings" && route.section === "/settings/cluster"
     // Settings show, from the page's sections or the shell's own pages.
     readonly property bool settingsActive: route !== null ? route.kind === "settings" : (Shell.state.settings ? Shell.state.settings.active : false)
     // The settings section showing, and whether the shell renders it itself

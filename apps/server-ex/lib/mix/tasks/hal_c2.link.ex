@@ -43,7 +43,14 @@ defmodule Mix.Tasks.HalC2.Link do
 
   defp describe(link) do
     env = link["environment"]
-    state = if link["online"], do: "online", else: "offline"
+
+    state =
+      cond do
+        link["online"] -> "online"
+        link["problem"] == "refused" -> "refused (pair it again)"
+        true -> link["problem"] || "offline"
+      end
+
     "#{env["label"]}  #{env["environmentId"]}  #{link["origin"]}  #{state}"
   end
 

@@ -5,7 +5,8 @@ import HalC2.Shell
 import "js/settingsPages.js" as Pages
 
 // Settings navigation: sections, search, and a way back. The sections are
-// js/settingsPages.js: the shell's own pages are always listed, the ones the
+// js/settingsPages.js: the shell's own pages (General, Appearance, Cluster,
+// Connections, ...) are listed once their state is there, the ones the
 // embedded page still renders while it lists them. Picking a native section
 // with an `action` dispatches it; any other navigates the route, which the
 // page follows.
@@ -30,8 +31,8 @@ Rectangle {
                         action: section.action
                     }));
         }
-        const pageResults = model === null ? [] : model.searchResults;
-        const own = Pages.searchRows(query, pageResults, state).map(section => ({
+        const pageResults = Pages.pageResults(model === null ? [] : model.searchResults);
+        const own = Pages.searchRows(query, state).map(section => ({
                     result: true,
                     to: section.to,
                     title: section.label,

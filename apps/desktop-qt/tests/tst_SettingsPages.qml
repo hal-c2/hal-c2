@@ -47,6 +47,7 @@ Item {
             compare(Pages.brickFor(""), "GeneralSettings");
             compare(Pages.brickFor("/settings/appearance"), "AppearanceSettings");
             compare(Pages.brickFor("/settings/cluster"), "ClusterSettings");
+            compare(Pages.brickFor("/settings/connections"), "ConnectionsSettings");
             compare(Pages.brickFor("/settings/providers"), "", "the page still renders Providers");
             compare(Pages.brickFor("/settings/nowhere"), "");
         }
@@ -57,11 +58,13 @@ Item {
             compare(labels(Pages.navRows([{ to: "/settings/providers" }], { cluster: {} })), ["General", "Appearance", "Providers", "Cluster"]);
         }
 
-        function test_searchAddsOnlyWhatThePageDoesNotReach() {
-            const found = Pages.searchRows("theme", [], {});
-            compare(found.map(section => section.label), ["Appearance"]);
-            compare(Pages.searchRows("theme", [{ to: "/settings/appearance" }], {}).length, 0);
-            compare(Pages.searchRows("invite", [], { cluster: {} })[0].label, "Cluster");
+        function test_searchFindsNativeSectionsAndDropsThePagesResultsInThem() {
+            compare(Pages.searchRows("theme", {}).map(section => section.label), ["Appearance"]);
+            compare(Pages.searchRows("invite", { cluster: {} })[0].label, "Cluster");
+            compare(Pages.searchRows("pairing", {}).length, 0, "Connections waits for its state");
+            compare(Pages.searchRows("pairing", { connections: {} })[0].label, "Connections");
+            const kept = Pages.pageResults([{ to: "/settings/appearance" }, { to: "/settings/providers" }, { to: "/settings/connections" }]);
+            compare(kept.map(result => result.to), ["/settings/providers"]);
         }
 
         function test_projectGroupingRestoresTheModeUsedBefore() {
