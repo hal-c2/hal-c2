@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import HalC2.Shell
 
@@ -306,7 +307,21 @@ Rectangle {
                     iconSize: 16
                     iconTint: sidebar.iconColor
                     Accessible.name: qsTr("Add project")
-                    onClicked: Shell.dispatch("project.add")
+                    // A local folder is picked here; without local folders the page's palette asks.
+                    onClicked: Shell.localFolderImportEnabled && (sidebar.model?.localEnvironmentId ?? null) !== null ? addProjectDialog.open() : Shell.dispatch("project.add")
+                }
+
+                FolderDialog {
+                    id: addProjectDialog
+                    title: qsTr("Add a project folder")
+                    onAccepted: {
+                        const path = Shell.localDirectoryPath(selectedFolder);
+                        if (path.length > 0) {
+                            Shell.dispatch("project.add", {
+                                path: path
+                            });
+                        }
+                    }
                 }
             }
         }

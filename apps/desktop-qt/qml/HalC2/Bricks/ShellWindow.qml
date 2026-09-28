@@ -66,6 +66,8 @@ Window {
         surfaceId: "shell"
     }
 
+    ProjectRemovalDialog {}
+
     ShellErrorOverlay {
         anchors.fill: parent
     }
