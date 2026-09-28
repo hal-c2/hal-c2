@@ -75,5 +75,25 @@ Item {
             mouseMove(root, 380, 150);
             tryCompare(row, "showActions", false);
         }
+
+        function test_multiLineTitleHoldsStillOnHover() {
+            let row = createTemporaryObject(rowComponent, root, {
+                item: {
+                    title: "We need to integrate:\nhttps://example.com/one",
+                    status: "ready",
+                    canSettle: true,
+                    canSnooze: true,
+                    branch: "main",
+                    updatedAt: "2026-09-07T12:00:00Z"
+                }
+            });
+            verify(!!row, "Component exists");
+            let title = findChild(row, "cardTitle");
+            compare(title.lineCount, 1);
+            const restY = title.mapToItem(row, 0, 0).y;
+            mouseMove(row, 100, 40);
+            tryCompare(row, "showActions", true);
+            compare(title.mapToItem(row, 0, 0).y, restY);
+        }
     }
 }
