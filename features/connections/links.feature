@@ -109,3 +109,16 @@ Feature: Linking a node to environments outside its cluster
     When the user adds it as a linked environment in the connection settings
     Then the connection settings list "beast" as linked and online
     And the user can remove the link there
+
+  # Linked environments' rows are not in the node's shell: clients list them from their own
+  # connection to that environment and follow its threads by environment. Rows through the
+  # node need an opt-in shell ("links": true) whose links carry the linked environment's
+  # nodes and rows under the link, since its node names can collide with the cluster's.
+  @backlog @node
+  Scenario: A client sees a linked environment's threads in its node's shell
+    Given the node is linked to "beast"
+    And a thread that lives on "beast"
+    When a client of the node asks for the shell with its links' rows
+    Then the thread is listed under the link to "beast"
+    And a rename of the thread on "beast" reaches the client
+    And the thread stays listed as offline while "beast" is unreachable
