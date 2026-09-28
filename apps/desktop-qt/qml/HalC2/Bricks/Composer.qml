@@ -876,13 +876,14 @@ Rectangle {
                         width: 320
                         height: 360
                         padding: 4
+                        // Opening loads the refs afresh, unfiltered.
                         onOpened: {
                             branchSearch.text = "";
                             branchSearch.forceActiveFocus();
+                            Shell.dispatch("workspace.branch.search", {
+                                query: ""
+                            });
                         }
-                        onClosed: Shell.dispatch("workspace.branch.search", {
-                            query: ""
-                        })
 
                         enter: Transition {
                             NumberAnimation {

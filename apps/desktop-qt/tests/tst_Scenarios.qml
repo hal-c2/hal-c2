@@ -318,6 +318,39 @@ Item {
             tryCompare(picker.popup ?? picker, "visible", true);
         }
 
+        function test_given_a_thread_on_a_branch_when_the_branch_picker_opens_then_the_refs_are_loaded_unfiltered() {
+            const composer = createComposer({});
+            Shell.state = Object.assign({}, Shell.state, {
+                workspace: {
+                    environments: [],
+                    activeEnvironmentId: "here",
+                    environmentChangeable: false,
+                    envMode: "local",
+                    envModeLabel: "Local checkout",
+                    envModeChangeable: false,
+                    git: null,
+                    canOpenPullRequest: false,
+                    branch: "feature/tax",
+                    branchChangeable: true,
+                    branchSwitchPending: false,
+                    branchQuery: "old",
+                    branches: [],
+                    branchesTotal: 0,
+                    branchesLoading: false
+                }
+            });
+            const picker = findChild(composer, "branchPicker");
+            verify(!!picker, "branchPicker");
+            const searches = () => Shell.dispatchedActions.filter(entry => entry.action === "workspace.branch.search");
+            picker.open();
+            tryCompare(picker, "opened", true);
+            compare(searches().length, 1);
+            compare(searches()[0].payload.query, "");
+            picker.close();
+            tryCompare(picker, "visible", false);
+            compare(searches().length, 1);
+        }
+
         function test_given_a_running_turn_and_an_empty_draft_when_the_primary_button_is_clicked_then_the_turn_is_interrupted() {
             const composer = createComposer({
                 isRunning: true,
