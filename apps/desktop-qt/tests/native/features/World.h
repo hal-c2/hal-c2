@@ -33,10 +33,8 @@ public:
   QList<PageAction> pageActions;
   QVariant pageNative;  // what the last `shell.native` told the page
   QList<QVariantMap> follows;  // every `route.follow` the page was sent
-  QVariantMap sidebarInput{{QStringLiteral("projects"), QVariantList()},
-                           {QStringLiteral("drafts"), QVariantList()},
-                           {QStringLiteral("localProjects"), QVariantList()},
-                           {QStringLiteral("timestampFormat"), QStringLiteral("locale")}};
+  // The draft the last new thread opened.
+  QString draftId;
   QVariantMap composer;
   std::optional<qsizetype> command;  // the command the last "receives" step found
   QSet<qsizetype> checkedCommands;
@@ -56,7 +54,10 @@ public:
   void setTime(const QDateTime& now);
   QDateTime now() const { return m_now; }
 
-  void publishSidebarInput() { m_bridge->publish(QStringLiteral("sidebarInput"), sidebarInput); }
+  // Dispatches `thread.new`; the draft it opens (if any) becomes draftId.
+  void startNewThread(const QVariantMap& payload);
+  // The key of the sidebar's project named `name`; `name` itself when none is.
+  QString projectKey(const QString& name) const;
   // What the page's header shows for a thread (ShellWorkspaceState), from the
   // node's project; a thread whose project the node does not know has none.
   void publishWorkspace(const QString& threadKey, const QJsonObject& project, const QString& worktreePath, bool draft);

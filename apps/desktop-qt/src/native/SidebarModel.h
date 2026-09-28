@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QHash>
 #include <QJsonObject>
 #include <QList>
 #include <QLocale>
@@ -109,26 +110,70 @@ struct Partition {
 Partition partition(const QList<Thread>& threads, const std::optional<QSet<QString>>& scopedProjectKeys,
                     const CapabilitiesFor& capabilitiesFor, qint64 nowMs);
 
-// What the page publishes under `sidebarInput`: the project groups (they come
-// from client settings and the page's own ordering), drafts and the route.
+// One project row of the node's shell shape.
+struct RepositoryIdentity {
+  QString canonicalKey;
+  Nullable rootPath;
+  Nullable displayName;
+  Nullable name;
+};
+
+struct Project {
+  QString environmentId;
+  QString id;
+  QString title;
+  QString workspaceRoot;
+  QString createdAt;
+  QString updatedAt;
+  std::optional<RepositoryIdentity> repositoryIdentity;
+
+  QString key() const { return environmentId + QLatin1Char(':') + id; }
+};
+
+Project projectFromRow(const QString& environmentId, const QJsonObject& row);
+
+// A workspace path in the form two paths compare in: trimmed, without trailing
+// separators, and Windows paths case- and separator-folded (@hal-c2/shared/path).
+QString normalizePath(const QString& path);
+// `<environmentId>:<normalized workspace root>`: one folder on one machine.
+QString physicalKey(const Project& project);
+
+// The client settings grouping and ordering read: sidebarProjectGroupingMode
+// ("repository", "repository_path" or "separate"), its per-folder overrides
+// keyed by physical key, and sidebarProjectSortOrder ("updated_at",
+// "created_at" or "manual").
+struct GroupingSettings {
+  QString mode = QStringLiteral("repository");
+  QHash<QString, QString> overrides;
+  QString sortOrder = QStringLiteral("updated_at");
+};
+
+// A logical project: the folders grouped as one, across environments.
 struct ProjectGroup {
   QString key;
   QVariantMap summary;  // key, displayName, environmentId, projectId, workspaceRoot
+  // Every `<environmentId>:<projectId>` the group covers.
   QStringList memberKeys;
+  // One winning project per folder, the navigation and creation targets.
+  QList<Project> members;
 };
+
+// The page's logical grouping (client-runtime's state/projectGrouping.ts) and
+// sidebar order (Sidebar.logic.ts sortLogicalProjectsForSidebar), from every
+// project the shell sees. Linked environments' projects are just more rows.
+QList<ProjectGroup> groupProjects(const QList<Project>& projects, const GroupingSettings& settings,
+                                  const QString& preferredEnvironmentId, const QList<Thread>& threads);
 
 struct Input {
   QList<ProjectGroup> projects;
-  QVariant localEnvironmentId;
-  QVariantList localProjects;
+  // The environment of the node the shell runs against; its folders are the
+  // ones the folder explorer lists.
+  Nullable localEnvironmentId;
+  // Drafts as the sidebar lists them: draftId, projectKey (logical), label.
   QVariantList drafts;
   Nullable activeThreadKey;
   QVariant activeDraftId;
-  QString timestampFormat;
-  // The page's scope, which the shell starts from when it takes over.
-  Nullable scopeProjectKey;
 
-  static Input fromVariant(const QVariant& value);
   const ProjectGroup* group(const QString& key) const;
 };
 

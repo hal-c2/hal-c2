@@ -3,9 +3,9 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// The thread sidebar, rendered from the view model the web app publishes
+// The thread sidebar, rendered from the view model the native shell publishes
 // under Shell.state.sidebar (see packages/contracts/src/shell.ts). Every
-// click is dispatched back to the page; nothing here talks to the server.
+// click is dispatched as a shell action; nothing here talks to the server.
 Rectangle {
     id: sidebar
 
@@ -378,10 +378,18 @@ Rectangle {
             function menuAtCursor() {
                 const row = sidebar.rows[cursorIndex];
                 const item = itemAtIndex(cursorIndex);
-                if (!row || !item || row.kind === "header" || row.kind === "draft") {
+                if (!row || !item || row.kind === "header") {
                     return;
                 }
                 const p = item.mapToItem(null, item.width / 2, item.height / 2);
+                if (row.kind === "draft") {
+                    Shell.dispatch("draft.menu", {
+                        draftId: row.item.draftId,
+                        x: p.x,
+                        y: p.y
+                    });
+                    return;
+                }
                 Shell.dispatch("thread.menu", {
                     key: row.item.key,
                     x: p.x,
@@ -581,7 +589,13 @@ Rectangle {
                             }
                         }
                         onMenuRequested: (windowX, windowY) => {
-                            if (entry.kind !== "draft") {
+                            if (entry.kind === "draft") {
+                                Shell.dispatch("draft.menu", {
+                                    draftId: entry.modelData.item.draftId,
+                                    x: windowX,
+                                    y: windowY
+                                });
+                            } else {
                                 Shell.dispatch("thread.menu", {
                                     key: entry.modelData.item.key,
                                     x: windowX,

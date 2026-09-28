@@ -116,7 +116,7 @@ public:
   void unlink(const QString& environment);
   // Another node joins this one's cluster, announced as the shell announces it on nodeup.
   void join(const QString& peer, const QString& peerEnvironment);
-  void sendRow(const QString& id, const QJsonObject& row);
+  void sendRow(const QString& id, const QJsonObject& row, const QString& kind = QStringLiteral("thread"));
 
   void drop() {
     if (m_socket) m_socket->close();

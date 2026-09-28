@@ -7,7 +7,9 @@
 
 #include <algorithm>
 
+#include "DraftController.h"
 #include "NavigationController.h"
+#include "SettingsController.h"
 #include "ShellBridge.h"
 
 QList<NativeControllerRegistration>& nativeControllerRegistry() {
@@ -55,9 +57,15 @@ NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)
   connect(&m_client, &NodeClient::readyChanged, this, [this](bool ready) {
     if (!ready) m_lent.clear();
   });
-  // After m_sidebar's own handler, so it has read the new input.
+  // The sidebar lists the drafts.
+  if (auto* drafts = controller<DraftController>()) {
+    connect(drafts, &DraftController::changed, &m_sidebar, &SidebarController::refresh);
+  }
+  // And groups, orders and dates them as this device's preferences say.
+  if (auto* settings = controller<SettingsController>()) {
+    connect(settings, &SettingsController::deviceChanged, &m_sidebar, &SidebarController::refresh);
+  }
   connect(bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key) {
-    if (key == QLatin1String("sidebarInput")) update();
     if (key == QLatin1String("environmentAccess")) lend();
   });
 }
@@ -111,18 +119,11 @@ void NativeShell::lend() {
 }
 
 void NativeShell::update() {
-  if (!m_store.synchronized()) return;
-  const bool sidebar = m_sidebar.coversPage();
-  if (m_active && sidebar == m_sidebar.isActive()) return;
+  if (m_active || !m_store.synchronized()) return;
   m_active = true;
   for (const Controller& entry : m_controllers) entry.native->activate();
-  if (sidebar) {
-    m_bridge->claimKey(QStringLiteral("sidebar"));
-    m_sidebar.activate();
-  } else {
-    m_bridge->releaseKey(QStringLiteral("sidebar"));
-    m_sidebar.deactivate();
-  }
+  m_bridge->claimKey(QStringLiteral("sidebar"));
+  m_sidebar.activate();
   announce();
 }
 

@@ -8,6 +8,7 @@
 
 #include <memory>
 
+#include "DraftController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "NodeClient.h"
@@ -168,6 +169,9 @@ void ComposerController::sendNext(const QString& target) {
             }
             return;
           }
+          // A draft's first turn makes it a thread (a no-op for a thread the
+          // node already has).
+          NativeShell::of(this)->controller<DraftController>()->promote(target);
           QList<Send>& queue = m_queues[target];
           queue.removeFirst();
           if (queue.isEmpty()) {

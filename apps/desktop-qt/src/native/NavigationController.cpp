@@ -7,6 +7,8 @@
 #include <QJsonObject>
 #include <QSaveFile>
 
+#include "DraftController.h"
+#include "NativeShell.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 
@@ -87,6 +89,14 @@ void NavigationController::activate() {
     m_route = m_pageRoute.value_or(Route());
     save();
   }
+  // Nor is a draft that was sent or deleted.
+  if (m_route.kind == QLatin1String("draft")) {
+    const auto* drafts = NativeShell::of(this)->controller<DraftController>();
+    if (drafts && !drafts->draft(m_route.draftId)) {
+      m_route = Route();
+      save();
+    }
+  }
   m_restored = false;
   publish();
   follow();
@@ -127,8 +137,6 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
   } else if (action == QLatin1String("draft.open")) {
     const QString id = map.value(QStringLiteral("draftId")).toString();
     if (!id.isEmpty()) open(Route::draft(id));
-  } else if (action == QLatin1String("thread.new")) {
-    open(Route::newThread(map.value(QStringLiteral("projectKey")).toString()));
   } else if (action == QLatin1String("settings.open")) {
     if (m_route.kind != QLatin1String("settings")) open(Route::settings());
   } else if (action == QLatin1String("settings.back")) {
@@ -189,7 +197,19 @@ void NavigationController::follow() {
   // The page cannot show the shell's own pages; it stays where it was.
   if (m_route == Route::settings(kClusterSection)) return;
   m_pageRoute = m_route;
-  m_bridge->sendToPage(QStringLiteral("route.follow"), m_route.toVariant());
+  QVariantMap follow = m_route.toVariant();
+  // The page opens the shell's draft as its own composer draft, for the
+  // thread id the draft will become.
+  if (m_route.kind == QLatin1String("draft")) {
+    if (const auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
+      if (const auto draft = drafts->draft(m_route.draftId)) {
+        follow.insert(QStringLiteral("environmentId"), draft->environmentId);
+        follow.insert(QStringLiteral("projectId"), draft->projectId);
+        follow.insert(QStringLiteral("threadId"), draft->threadId);
+      }
+    }
+  }
+  m_bridge->sendToPage(QStringLiteral("route.follow"), follow);
 }
 
 void NavigationController::publish() {

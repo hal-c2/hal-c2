@@ -117,14 +117,6 @@ const Steps steps([] {
     expect(world.state(QStringLiteral("native")) == world.pageNative,
            QStringLiteral("native is %1").arg(show(world.state(QStringLiteral("native")))));
   });
-  step(QStringLiteral("the shell tells the page it owns the composer but not the sidebar"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&world] { return world.pageNative.isValid() && !world.pageNative.toMap().value(QStringLiteral("sidebar")).toBool(); },
-                  [&world] { return QStringLiteral("the page to keep the sidebar; it was told %1").arg(show(world.pageNative)); });
-    expect(world.pageNative.toMap().value(QStringLiteral("composer")).toBool(),
-           QStringLiteral("the page was told %1").arg(show(world.pageNative)));
-    expect(world.state(QStringLiteral("native")) == world.pageNative,
-           QStringLiteral("native is %1").arg(show(world.state(QStringLiteral("native")))));
-  });
   step(QStringLiteral("the page has not been told who owns the sidebar"), [](World& world, const Captures&, const Table&) {
     world.sync();
     expect(!world.pageNative.isValid(), QStringLiteral("the page was told %1").arg(show(world.pageNative)));
