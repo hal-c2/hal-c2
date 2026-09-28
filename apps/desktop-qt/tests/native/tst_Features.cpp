@@ -1,17 +1,20 @@
 // Runs the desktop shell's native scenarios (the @desktop and @shared ones in
-// features/desktop/native-*.feature and features/connections/cluster.feature) against a fake
-// protocol-3 node: a small Gherkin reader, the step definitions the files in
-// features/ register (Harness.h), and one QTest row per scenario.
+// the files kDefaultGlobs names) against a fake protocol-3 node: a small
+// Gherkin reader, the step definitions the files in features/ register
+// (Harness.h), and one QTest row per scenario.
 // HAL_C2_FEATURES narrows the run to other globs under features/ (space
-// separated).
+// separated). A glob may name scenarios after a colon, for a file whose other
+// scenarios the shell does not deliver itself: `navigation/appearance.feature:System*`.
 
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QGuiApplication>
+#include <QMap>
 #include <QRegularExpression>
 #include <QTest>
 
+#include <algorithm>
 #include <ctime>
 #include <optional>
 
@@ -169,30 +172,52 @@ void runStep(World& world, const Step& step) {
   found->run(world, captures, step.table);
 }
 
+const QStringList kDefaultGlobs{
+    QStringLiteral("desktop/native-*.feature"),
+    QStringLiteral("connections/cluster.feature"),
+    QStringLiteral("timeline/streaming.feature"),
+    QStringLiteral("timeline/tool-calls.feature"),
+    QStringLiteral("timeline/runs-and-queue.feature"),
+    QStringLiteral("timeline/plans-and-subagents.feature"),
+    QStringLiteral("navigation/environment-themes.feature"),
+    QStringLiteral("navigation/appearance.feature:System appearance follows*"),
+};
+
+QRegularExpression wildcard(const QString& glob) {
+  return QRegularExpression::fromWildcard(glob, Qt::CaseSensitive, QRegularExpression::NonPathWildcardConversion);
+}
+
 QList<Scenario> collectScenarios() {
   const QDir root(QStringLiteral(HAL_C2_FEATURES_DIR));
-  QStringList globs{QStringLiteral("desktop/native-*.feature"), QStringLiteral("connections/cluster.feature")};
+  QStringList globs = kDefaultGlobs;
   if (const QString requested = qEnvironmentVariable("HAL_C2_FEATURES"); !requested.isEmpty()) {
     globs = requested.split(QLatin1Char(' '), Qt::SkipEmptyParts);
   }
-  QStringList files;
+  // Each file, with the scenario names wanted from it (none: all of them).
+  QMap<QString, QList<QRegularExpression>> files;
   QDirIterator it(root.path(), {QStringLiteral("*.feature")}, QDir::Files, QDirIterator::Subdirectories);
   while (it.hasNext()) {
     const QString path = it.next();
     const QString relative = root.relativeFilePath(path);
     for (const QString& glob : globs) {
-      if (QRegularExpression::fromWildcard(glob, Qt::CaseSensitive, QRegularExpression::NonPathWildcardConversion)
-              .match(relative)
-              .hasMatch()) {
-        files.append(path);
+      const qsizetype colon = glob.indexOf(QLatin1Char(':'));
+      if (!wildcard(glob.left(colon)).match(relative).hasMatch()) continue;
+      QList<QRegularExpression>& names = files[path];
+      if (colon < 0) {
+        names.clear();
         break;
       }
+      names.append(wildcard(glob.mid(colon + 1)));
     }
   }
-  files.sort();
   QList<Scenario> scenarios;
-  for (const QString& file : files) {
-    for (const Scenario& scenario : parseFeature(file)) {
+  for (auto file = files.cbegin(); file != files.cend(); ++file) {
+    for (const Scenario& scenario : parseFeature(file.key())) {
+      if (!file.value().isEmpty() && std::none_of(file.value().cbegin(), file.value().cend(), [&](const QRegularExpression& name) {
+            return name.match(scenario.name).hasMatch();
+          })) {
+        continue;
+      }
       // `@shared` is `@desktop @mobile @tui` (features/README.md).
       if (!scenario.tags.contains(QStringLiteral("@desktop")) && !scenario.tags.contains(QStringLiteral("@shared"))) continue;
       // Not delivered anywhere, dropped, or not on the desktop yet.

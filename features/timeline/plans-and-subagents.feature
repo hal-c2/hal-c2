@@ -23,7 +23,7 @@ Feature: Plans and subagents
     And the user is looking at a thread in "shop"
 
   # TUI: implemented in apps/tui/src/proposedPlan.ts
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: A proposed plan appears as a card titled by its first heading
     When the agent proposes a plan whose first heading is "Add a tax line"
     Then the plan card is titled "Add a tax line"
@@ -95,7 +95,7 @@ Feature: Plans and subagents
       | carry on    | with "12 tests added" | "12 tests added" once it is free       |
       | wait for it | without an answer     | "(no answer)" once its own run is over |
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: A subagent's status is shown in the parent
     Given the agent has a subagent that is <status>
     Then the subagent is shown as "<label>"
@@ -118,7 +118,7 @@ Feature: Plans and subagents
     Then the parent thread is shown
 
   # TUI: implemented in apps/tui/src/orchestrationV2Adapter.ts
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: Changes to the thread's context are marked in the timeline
     When <event>
     Then the timeline marks "<marker>"

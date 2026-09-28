@@ -37,6 +37,10 @@ defmodule HalC2.Links.Connection do
     :exit, _ -> {:error, "unknown environment"}
   end
 
+  @doc "`watch/4` under `ref`, without waiting for a link that may be connecting."
+  def watch_async(pid, ref, shape, subscriber),
+    do: GenServer.cast(pid, {:watch, ref, shape, subscriber, nil})
+
   def unwatch(pid, ref), do: GenServer.cast(pid, {:unwatch, ref})
 
   # --- server --------------------------------------------------------------------
@@ -84,14 +88,20 @@ defmodule HalC2.Links.Connection do
 
   def handle_call({:watch, shape, pid, offset}, _from, state) do
     ref = make_ref()
-    sub = %{pid: pid, monitor: Process.monitor(pid), shape: shape, id: nil, offset: offset}
-    state = put_in(state.subs[ref], sub)
-    state = if state.node, do: send_sub(state, ref), else: state
-    {:reply, {:ok, ref}, state}
+    {:reply, {:ok, ref}, add_sub(state, ref, shape, pid, offset)}
   end
 
   @impl true
+  def handle_cast({:watch, ref, shape, pid, offset}, state),
+    do: {:noreply, add_sub(state, ref, shape, pid, offset)}
+
   def handle_cast({:unwatch, ref}, state), do: {:noreply, drop_sub(state, ref, true)}
+
+  defp add_sub(state, ref, shape, pid, offset) do
+    sub = %{pid: pid, monitor: Process.monitor(pid), shape: shape, id: nil, offset: offset}
+    state = put_in(state.subs[ref], sub)
+    if state.node, do: send_sub(state, ref), else: state
+  end
 
   @impl true
   def handle_info(:connect, %{conn: conn} = state) when conn != nil, do: {:noreply, state}

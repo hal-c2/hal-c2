@@ -15,12 +15,19 @@ defmodule HalC2.Links do
   Paired links persist in the `environment-links` secret. Subscribers get
   `{:hal_c2_links, links}` with the whole list (`list/0`) whenever a link is added,
   removed, or goes on- or offline.
+
+  A subscriber can also ask for the linked environments' sidebars (`subscribe_rows/1`).
+  While one does, each link follows its environment's `shell` and keeps its nodes and
+  rows (`HalC2.Links.Rows`); such subscribers also get `{:hal_c2_link_rows, id, change}`
+  for each change, with `change` as `HalC2.Shell` notifies its own. When a link drops,
+  its rows stay and its nodes go offline; when the last such subscriber leaves, the
+  links stop following and forget the rows.
   """
 
   use GenServer
 
   alias HalC2.Connect.Secrets
-  alias HalC2.Links.Connection
+  alias HalC2.Links.{Connection, Rows}
 
   @secret "environment-links"
   @http_timeout 10_000
@@ -36,6 +43,25 @@ defmodule HalC2.Links do
   @spec subscribe(pid) :: :ok
   def subscribe(pid) do
     if Process.whereis(__MODULE__), do: GenServer.call(__MODULE__, {:subscribe, pid}), else: :ok
+  end
+
+  @doc """
+  Subscribes `pid` as `subscribe/1` does, and to the linked environments' rows too.
+  Returns `list/0` with each link's `"nodes"` and `"rows"` as far as they are known.
+  """
+  @spec subscribe_rows(pid) :: [map]
+  def subscribe_rows(pid) do
+    if Process.whereis(__MODULE__),
+      do: GenServer.call(__MODULE__, {:subscribe_rows, pid}),
+      else: []
+  end
+
+  @doc "Stops sending `pid` the linked environments' rows; it stays subscribed to links."
+  @spec unsubscribe_rows(pid) :: :ok
+  def unsubscribe_rows(pid) do
+    if Process.whereis(__MODULE__),
+      do: GenServer.call(__MODULE__, {:unsubscribe_rows, pid}),
+      else: :ok
   end
 
   @doc """
@@ -237,7 +263,25 @@ defmodule HalC2.Links do
       end
 
     Enum.each(links, fn {_, link} -> start_connection(link) end)
-    {:ok, %{links: links, online: MapSet.new(), subscribers: %{}}}
+    # subscribers: pid => {monitor, rows?}; rows: id => Rows, while any subscriber wants
+    # them; following: the ref of each link's shell subscription => id.
+    {:ok, %{links: links, online: MapSet.new(), subscribers: %{}, rows: %{}, following: %{}}}
+  end
+
+  # From before linked rows: subscribers were pid => monitor.
+  @impl true
+  def code_change(_old_vsn, state, _extra) do
+    subscribers =
+      Map.new(state.subscribers, fn
+        {pid, {_, _} = sub} -> {pid, sub}
+        {pid, monitor} -> {pid, {monitor, false}}
+      end)
+
+    {:ok,
+     state
+     |> Map.put(:subscribers, subscribers)
+     |> Map.put_new(:rows, %{})
+     |> Map.put_new(:following, %{})}
   end
 
   @impl true
@@ -245,9 +289,38 @@ defmodule HalC2.Links do
 
   def handle_call({:subscribe, pid}, _from, state) do
     subscribers =
-      Map.put_new_lazy(state.subscribers, pid, fn -> Process.monitor(pid) end)
+      Map.put_new_lazy(state.subscribers, pid, fn -> {Process.monitor(pid), false} end)
 
     {:reply, :ok, %{state | subscribers: subscribers}}
+  end
+
+  def handle_call({:subscribe_rows, pid}, _from, state) do
+    monitor =
+      case state.subscribers[pid] do
+        {monitor, _} -> monitor
+        nil -> Process.monitor(pid)
+      end
+
+    state = follow(%{state | subscribers: Map.put(state.subscribers, pid, {monitor, true})})
+
+    links =
+      for link <- listing(state) do
+        rows = Map.get(state.rows, link["environment"]["environmentId"], Rows.new())
+        Map.merge(link, Rows.listing(rows))
+      end
+
+    {:reply, links, state}
+  end
+
+  def handle_call({:unsubscribe_rows, pid}, _from, state) do
+    case state.subscribers[pid] do
+      {monitor, true} ->
+        subscribers = Map.put(state.subscribers, pid, {monitor, false})
+        {:reply, :ok, unfollow(%{state | subscribers: subscribers})}
+
+      _ ->
+        {:reply, :ok, state}
+    end
   end
 
   # A borrowed token never replaces a paired link, nor the same loan again.
@@ -275,7 +348,9 @@ defmodule HalC2.Links do
         state = %{
           state
           | links: Map.delete(state.links, id),
-            online: MapSet.delete(state.online, id)
+            online: MapSet.delete(state.online, id),
+            rows: Map.delete(state.rows, id),
+            following: Map.reject(state.following, &(elem(&1, 1) == id))
         }
 
         persist(state)
@@ -295,6 +370,10 @@ defmodule HalC2.Links do
 
     persist(state)
     start_connection(link)
+    # A link paired again follows its environment afresh; until then its nodes are offline.
+    state = %{state | following: Map.reject(state.following, &(elem(&1, 1) == id))}
+    state = rows_changed(state, id, &Rows.offline/1)
+    state = if rows_wanted?(state), do: follow_link(state, id), else: state
     {:reply, :ok, notify(state)}
   end
 
@@ -302,14 +381,32 @@ defmodule HalC2.Links do
   def handle_cast({:online, id, online?}, state) do
     online = if online?, do: MapSet.put(state.online, id), else: MapSet.delete(state.online, id)
 
-    if Map.has_key?(state.links, id) and online != state.online,
-      do: {:noreply, notify(%{state | online: online})},
-      else: {:noreply, state}
+    if Map.has_key?(state.links, id) and online != state.online do
+      state = notify(%{state | online: online})
+      {:noreply, if(online?, do: state, else: rows_changed(state, id, &Rows.offline/1))}
+    else
+      {:noreply, state}
+    end
   end
 
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _}, state),
-    do: {:noreply, %{state | subscribers: Map.delete(state.subscribers, pid)}}
+    do: {:noreply, unfollow(%{state | subscribers: Map.delete(state.subscribers, pid)})}
+
+  # A frame of a link's own shell subscription. One that ends it (the environment
+  # refused it) leaves the link's rows as they were.
+  def handle_info({:hal_c2_link, ref, frame}, state) do
+    case {state.following, frame["t"]} do
+      {%{^ref => _id}, t} when t in ["end", "error", "resync"] ->
+        {:noreply, %{state | following: Map.delete(state.following, ref)}}
+
+      {%{^ref => id}, _} ->
+        {:noreply, rows_changed(state, id, &Rows.apply(&1, frame))}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
 
   def handle_info(_other, state), do: {:noreply, state}
 
@@ -327,6 +424,60 @@ defmodule HalC2.Links do
     links = listing(state)
     for {pid, _} <- state.subscribers, do: send(pid, {:hal_c2_links, links})
     state
+  end
+
+  # --- linked rows ---------------------------------------------------------------
+
+  defp rows_wanted?(state), do: Enum.any?(state.subscribers, &match?({_, {_, true}}, &1))
+
+  # Every link follows its environment's shell, once some subscriber wants rows.
+  defp follow(state) do
+    if map_size(state.following) == 0 and rows_wanted?(state),
+      do: Enum.reduce(Map.keys(state.links), state, &follow_link(&2, &1)),
+      else: state
+  end
+
+  defp follow_link(state, id) do
+    case connection(id) do
+      nil ->
+        state
+
+      pid ->
+        ref = make_ref()
+        Connection.watch_async(pid, ref, %{"type" => "shell"}, self())
+
+        %{
+          state
+          | following: Map.put(state.following, ref, id),
+            rows: Map.put_new(state.rows, id, Rows.new())
+        }
+    end
+  end
+
+  # Once no subscriber wants rows, the links stop following and forget them.
+  defp unfollow(state) do
+    if rows_wanted?(state) do
+      state
+    else
+      for {ref, id} <- state.following, do: unwatch(id, ref)
+      %{state | following: %{}, rows: %{}}
+    end
+  end
+
+  defp rows_changed(state, id, fun) do
+    case state.rows do
+      %{^id => rows} ->
+        {rows, changes} = fun.(rows)
+
+        for {pid, {_, true}} <- state.subscribers,
+            change <- changes,
+            do: send(pid, {:hal_c2_link_rows, id, change})
+
+        %{state | rows: Map.put(state.rows, id, rows)}
+
+      _ ->
+        state
+    end
   end
 
   defp persist(state) do

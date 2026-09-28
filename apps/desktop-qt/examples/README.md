@@ -46,7 +46,8 @@ macOS 26 uses `NSGlassEffectView`; older systems use `NSVisualEffectView`.
 Reduce Transparency uses an opaque backing and the standard material. The
 variant opts in through `window.liquidGlass` alongside `transparent` and `blur`.
 `window.followSystemAppearance` selects the matching `variants.light` or
-`variants.dark` colors when the system appearance changes, including while running.
+`variants.dark` colors when the app's appearance changes, including while running.
+The app's appearance follows the system unless light or dark is pinned.
 The original `glass` keeps its existing blur. The native controls are macOS-only,
 so use `glass` on other platforms.
 

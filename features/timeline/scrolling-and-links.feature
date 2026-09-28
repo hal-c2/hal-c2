@@ -22,20 +22,20 @@ Feature: Moving through a thread and following links
     And the user is looking at a long thread in "shop"
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: The view follows new output while the user is at the end
     Given the user is at the end of the thread
     When the agent writes more of its reply
     Then the new text stays in view
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: Scrolling away stops the view from following
     Given the agent is writing its reply
     When the user scrolls up to an earlier message
     Then the view stays on that message while the reply grows
     And the user is offered a way to scroll to the end
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: The user returns to the end of the thread
     Given the user has scrolled away from the end while the agent writes
     When the user scrolls to the end

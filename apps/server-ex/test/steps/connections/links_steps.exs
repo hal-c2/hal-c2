@@ -243,6 +243,157 @@ defmodule HalC2.Steps.Connections.Links do
     context
   end
 
+  # --- linked rows in the shell -------------------------------------------------------
+
+  step "a client of the node asks for the shell with its links' rows", context do
+    {model, client} = shell_with_rows(World.client(context))
+    context |> World.put_client(client) |> Map.put(:linked, model)
+  end
+
+  # Until the link's first rows are in: the thread when there is one, else a node.
+  step "a client of the node follows the shell with its links' rows", context do
+    {model, client} = shell_with_rows(World.client(context))
+
+    done? =
+      if context[:link_stream],
+        do: &thread_listed?(&1, context),
+        else: &Enum.any?(&1.links, fn {_, l} -> l.nodes != %{} end)
+
+    {model, client} = await_linked(client, model, done?)
+    context |> World.put_client(client) |> Map.put(:linked, model)
+  end
+
+  step "the thread is listed under the link to {string}", context do
+    {model, client} =
+      await_linked(World.client(context), context.linked, &thread_listed?(&1, context))
+
+    context |> World.put_client(client) |> Map.put(:linked, model)
+  end
+
+  step "the node of {string} is listed online under its link", %{args: [label]} = context do
+    id = environment(context, label)
+
+    listed? = fn model ->
+      Enum.any?(
+        model.links[id].nodes,
+        fn {_, n} -> n["online"] and n["environment"]["environmentId"] == id end
+      )
+    end
+
+    {model, client} = await_linked(World.client(context), context.linked, listed?)
+    context |> World.put_client(client) |> Map.put(:linked, model)
+  end
+
+  step "none of the rows of {string} are among the cluster's own", %{args: [label]} = context do
+    id = environment(context, label)
+    refute Enum.any?(context.linked.snapshot["rows"], &match?([_, "th-beast", _, _], &1))
+
+    refute Enum.any?(
+             context.linked.snapshot["nodes"],
+             &(&1["environment"]["environmentId"] == id)
+           )
+
+    refute Enum.any?(HalC2.Shell.rows(), &match?({{_, "th-beast"}, _}, &1))
+    context
+  end
+
+  step "the thread on {string} is renamed to {string}", %{args: [label, title]} = context do
+    commit(context, label, [{"thread", "th-beast", %{"s" => %{"title" => title}}}])
+    Map.put(context, :renamed, title)
+  end
+
+  step "the client receives only that thread's new row under the link to {string}",
+       %{args: [label]} = context do
+    id = environment(context, label)
+    title = context.renamed
+
+    {frame, client} =
+      Node.await(
+        World.client(context),
+        &(&1["t"] == "shell.linkRows" and &1["link"] == id),
+        10_000
+      )
+
+    assert [["th-beast", "thread", %{"title" => ^title}]] = frame["rows"]
+    World.put_client(context, client)
+  end
+
+  step "{string} becomes unreachable", %{args: [label]} = context do
+    :ok = Machines.stop(Machines.machine(context, label))
+    context
+  end
+
+  step "the client is told the node of {string} is offline under its link",
+       %{args: [label]} = context do
+    id = environment(context, label)
+    [node] = for {name, n} <- context.linked.links[id].nodes, n["online"], do: name
+
+    {_frame, client} =
+      Node.await(
+        World.client(context),
+        &(&1["t"] == "shell.linkNode" and &1["link"] == id and &1["node"] == node and
+            &1["online"] == false),
+        10_000
+      )
+
+    World.put_client(context, client)
+  end
+
+  step "a client of the node that asks for the shell with its links' rows sees the thread under the link to {string}, offline",
+       %{args: [label]} = context do
+    id = environment(context, label)
+    {model, _client} = shell_with_rows(Node.connect(context.node))
+    link = model.links[id]
+    assert link.online == false
+    assert link.nodes != %{} and Enum.all?(link.nodes, fn {_, n} -> n["online"] == false end)
+    assert thread_listed?(model, context)
+    context
+  end
+
+  step "the client's links no longer include {string}", %{args: [label]} = context do
+    id = environment(context, label)
+
+    {_frame, client} =
+      Node.await(
+        World.client(context),
+        &(&1["t"] == "shell.links" and
+            not Enum.any?(&1["links"], fn l -> l["environment"]["environmentId"] == id end)),
+        5_000
+      )
+
+    World.put_client(context, client)
+  end
+
+  step ~r/^the node (?:no longer follows|does not follow) the shell of "(?<label>[^"]+)"$/,
+       %{args: [label]} = context do
+    id = environment(context, label)
+    links = :sys.get_state(HalC2.Links)
+    refute id in Map.values(links.following)
+    refute Map.has_key?(links.rows, id)
+    context
+  end
+
+  step "a client of the node asks for the shell", context do
+    client = context |> World.client() |> Node.sub(5, %{"type" => "shell"})
+    {frame, client} = Node.await(client, &(&1["t"] == "shell" and &1["id"] == 5), 5_000)
+    context |> World.put_client(client) |> Map.put(:shell_frame, frame)
+  end
+
+  step "its links carry only their environment, origin and whether they are online", context do
+    assert [link] = context.shell_frame["links"]
+    assert Enum.sort(Map.keys(link)) == ~w(environment online origin)
+    assert context.shell_frame["links"] == HalC2.Links.list()
+    context
+  end
+
+  step "the client stops following the shell", context do
+    client = Node.unsub(World.client(context), 5)
+    # The pong comes after the socket has handled the unsub.
+    client = WsClient.send_json(client, %{"t" => "ping"})
+    {_pong, client} = Node.await(client, &(&1["t"] == "pong"))
+    World.put_client(context, client)
+  end
+
   # --- helpers ----------------------------------------------------------------------
 
   defp commit(context, label, entities) do
@@ -312,5 +463,67 @@ defmodule HalC2.Steps.Connections.Links do
           10_000 -> flunk("no link to #{id} with online #{online}: #{inspect(links)}")
         end
     end
+  end
+
+  # The shell with its links' rows under id 5, as a model a client keeps: each link's
+  # nodes by name and rows by `{node, id}`, and the snapshot it started from.
+  defp shell_with_rows(client) do
+    client = Node.sub(client, 5, %{"type" => "shell", "links" => true})
+    {frame, client} = Node.await(client, &(&1["t"] == "shell" and &1["id"] == 5), 5_000)
+
+    links =
+      Map.new(frame["links"], fn link ->
+        {link["environment"]["environmentId"],
+         %{
+           online: link["online"],
+           nodes: Map.new(link["nodes"], &{&1["node"], &1}),
+           rows: Map.new(link["rows"], fn [node, id, kind, row] -> {{node, id}, {kind, row}} end)
+         }}
+      end)
+
+    {%{snapshot: frame, links: links}, client}
+  end
+
+  # Applies the shell's link frames to `model` until `done?` holds.
+  defp await_linked(client, model, done?) do
+    if done?.(model) do
+      {model, client}
+    else
+      {frame, client} =
+        Node.await(
+          client,
+          &(&1["id"] == 5 and String.starts_with?(&1["t"], "shell.link")),
+          10_000
+        )
+
+      await_linked(client, apply_link_frame(model, frame), done?)
+    end
+  end
+
+  defp apply_link_frame(model, %{"link" => id, "node" => node} = frame) do
+    update_in(model.links[id], fn link ->
+      entry = Map.get(link.nodes, node, %{"node" => node, "online" => false})
+
+      case frame["t"] do
+        "shell.linkRows" ->
+          rows =
+            for [row_id, kind, row] <- frame["rows"], into: %{}, do: {{node, row_id}, {kind, row}}
+
+          %{link | rows: Map.merge(link.rows, rows)}
+
+        "shell.linkEnvironment" ->
+          put_in(link.nodes[node], Map.put(entry, "environment", frame["environment"]))
+
+        "shell.linkNode" ->
+          put_in(link.nodes[node], Map.put(entry, "online", frame["online"]))
+      end
+    end)
+  end
+
+  defp apply_link_frame(model, _frame), do: model
+
+  defp thread_listed?(model, context) do
+    link = model.links[environment(context, context.link_stream)]
+    link != nil and Enum.any?(link.rows, &match?({{_, "th-beast"}, {"thread", _}}, &1))
   end
 end

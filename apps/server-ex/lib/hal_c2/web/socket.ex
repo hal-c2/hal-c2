@@ -97,18 +97,28 @@ defmodule HalC2.Web.Socket do
   end
 
   def handle_info({:hal_c2_shell, message}, state) do
-    case Enum.find(state.subs, &match?({_, :shell}, &1)) do
-      {id, :shell} -> {:push, Protocol.encode(shell_message(id, message)), state}
+    case shell_sub(state) do
+      {id, _} -> {:push, Protocol.encode(shell_message(id, message)), state}
       nil -> {:ok, state}
     end
   end
 
   def handle_info({:hal_c2_links, links}, state) do
-    case Enum.find(state.subs, &match?({_, :shell}, &1)) do
-      {id, :shell} ->
+    case shell_sub(state) do
+      {id, _} ->
         {:push, Protocol.encode(%{"t" => "shell.links", "id" => id, "links" => links}), state}
 
       nil ->
+        {:ok, state}
+    end
+  end
+
+  def handle_info({:hal_c2_link_rows, environment_id, message}, state) do
+    case shell_sub(state) do
+      {id, {:shell, :links}} ->
+        {:push, Protocol.encode(link_message(id, environment_id, message)), state}
+
+      _ ->
         {:ok, state}
     end
   end
@@ -551,7 +561,7 @@ defmodule HalC2.Web.Socket do
 
   # --- subscriptions -------------------------------------------------------------
 
-  defp subscribe(state, id, :shell, _offset) do
+  defp subscribe(state, id, shell, _offset) when shell in [:shell, {:shell, :links}] do
     :ok = HalC2.Shell.subscribe(self())
     online = MapSet.new(HalC2.Shell.online_nodes())
 
@@ -564,11 +574,14 @@ defmodule HalC2.Web.Socket do
         %{"node" => Atom.to_string(node), "online" => node in online, "environment" => descriptor}
       end
 
-    :ok = HalC2.Links.subscribe(self())
-    links = HalC2.Links.list()
+    links =
+      if shell == :shell,
+        do: with(:ok <- HalC2.Links.subscribe(self()), do: HalC2.Links.list()),
+        else: HalC2.Links.subscribe_rows(self())
+
     frame = %{"t" => "shell", "id" => id, "nodes" => nodes, "rows" => rows, "links" => links}
 
-    {:push, Protocol.encode(frame), put_in(state.subs[id], :shell)}
+    {:push, Protocol.encode(frame), put_in(state.subs[id], shell)}
   end
 
   # A node's ServerConfig, fetched once; it is small and changes with settings.
@@ -1177,6 +1190,10 @@ defmodule HalC2.Web.Socket do
 
   defp unsubscribe(state, id) do
     case Map.pop(state.subs, id) do
+      {{:shell, :links}, subs} ->
+        :ok = HalC2.Links.unsubscribe_rows(self())
+        %{state | subs: subs}
+
       {{:terminal, node, {thread_id, terminal_id} = key}, subs} ->
         :erpc.cast(node, HalC2.Terminal, :detach, [thread_id, terminal_id, self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, key)}
@@ -1426,11 +1443,27 @@ defmodule HalC2.Web.Socket do
     %{state | flush_scheduled: true}
   end
 
+  # The socket's one shell subscription, as `{id, :shell | {:shell, :links}}`.
+  defp shell_sub(state),
+    do: Enum.find(state.subs, fn {_, shape} -> shape in [:shell, {:shell, :links}] end)
+
+  @link_frames %{
+    "shell.rows" => "shell.linkRows",
+    "shell.environment" => "shell.linkEnvironment",
+    "shell.node" => "shell.linkNode"
+  }
+
+  # A linked environment's shell change; its node names are its own strings.
+  defp link_message(id, environment_id, message) do
+    frame = shell_message(id, message)
+    %{frame | "t" => @link_frames[frame["t"]]} |> Map.put("link", environment_id)
+  end
+
   defp shell_message(id, {:rows, node, rows}),
     do: %{
       "t" => "shell.rows",
       "id" => id,
-      "node" => Atom.to_string(node),
+      "node" => to_string(node),
       "rows" => for({sid, {kind, row}} <- rows, do: [sid, kind, row])
     }
 
@@ -1438,7 +1471,7 @@ defmodule HalC2.Web.Socket do
     do: %{
       "t" => "shell.environment",
       "id" => id,
-      "node" => Atom.to_string(node),
+      "node" => to_string(node),
       "environment" => descriptor
     }
 
@@ -1446,7 +1479,7 @@ defmodule HalC2.Web.Socket do
     do: %{
       "t" => "shell.node",
       "id" => id,
-      "node" => Atom.to_string(node),
-      "online" => status == :up
+      "node" => to_string(node),
+      "online" => status in [:up, true]
     }
 end

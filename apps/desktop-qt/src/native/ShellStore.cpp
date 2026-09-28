@@ -113,6 +113,17 @@ QString ShellStore::nodeServing(const QString& environmentId) const {
   return {};
 }
 
+QString ShellStore::nodeOf(const QString& threadKey) const {
+  const qsizetype colon = threadKey.indexOf(QLatin1Char(':'));
+  if (colon <= 0) return {};
+  const QString environmentId = threadKey.left(colon);
+  const QString threadId = threadKey.mid(colon + 1);
+  for (auto it = m_nodes.cbegin(); it != m_nodes.cend(); ++it) {
+    if (it->environmentId == environmentId && it->threads.contains(threadId)) return it.key();
+  }
+  return {};
+}
+
 sidebar::Capabilities ShellStore::capabilities(const QString& environmentId) const {
   for (const Node& node : m_nodes) {
     if (node.environmentId != environmentId) continue;

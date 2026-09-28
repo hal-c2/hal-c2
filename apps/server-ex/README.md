@@ -116,8 +116,10 @@ mix hal_c2.link --remove ENVIRONMENT_ID
 ```
 
 A link keeps the other node's access token, and this node forwards its clients'
-RPCs and terminal shapes for that environment over one socket (`HalC2.Links`). The
-desktop shell reaches its terminals that way, since it only talks to its own node.
+RPCs and stream and terminal shapes for that environment over one socket
+(`HalC2.Links`). A client that asks for the shell with `"links": true` also gets each
+linked environment's nodes and rows under its link, followed only while some client
+asks. The desktop shell reaches its terminals that way, since it only talks to its own node.
 The desktop also lends its node the access its page already has to the environments
 the user paired there, so those need no link of their own.
 

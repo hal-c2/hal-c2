@@ -24,7 +24,7 @@ signals:
   void scriptFinished(const QVariant& result);
 
 private slots:
-  void systemAppearanceUpdatesQmlAndWebWithoutReloading() {
+  void appAppearanceUpdatesQmlAndWebWithoutReloading() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     QFile file(directory.filePath("theme.json"));
@@ -50,10 +50,9 @@ private slots:
     page.setHtml("<!doctype html><html><body>System appearance</body></html>");
     QTRY_VERIFY(!loaded.isEmpty());
     connect(&theme, &ThemeStore::themeChanged, &page, [&] { page.runJavaScript(theme.injectionScript()); });
-    for (auto scheme : {Qt::ColorScheme::Dark, Qt::ColorScheme::Light, Qt::ColorScheme::Dark}) {
-      // Deliver the platform notification without changing the user's OS preferences.
-      QGuiApplication::styleHints()->colorSchemeChanged(scheme);
-      const bool dark = scheme == Qt::ColorScheme::Dark;
+    for (const bool dark : {true, false, true}) {
+      // The app's appearance, as ThemeController resolves it.
+      theme.applyBaseTheme(QVariantMap{{"id", "hal-c2"}, {"appearance", dark ? "dark" : "light"}});
       QCOMPARE(theme.appearance(), dark ? QString("dark") : QString("light"));
       QCOMPARE(item->property("color").value<QColor>(), QColor(dark ? "#1c1c1e" : "#fafafa"));
       QCOMPARE(theme.colors().contains("darkOnly"), dark);
@@ -72,9 +71,7 @@ private slots:
     file.close();
     theme.reload();
     QVERIFY(!theme.followsSystemAppearance());
-    QSignalSpy changed(&theme, &ThemeStore::themeChanged);
-    QGuiApplication::styleHints()->colorSchemeChanged(Qt::ColorScheme::Dark);
-    QCOMPARE(changed.count(), 0);
+    theme.applyBaseTheme(QVariantMap{{"id", "hal-c2"}, {"appearance", "dark"}, {"colors", QVariantMap{{"text", "#eeeeee"}}}});
     QCOMPARE(theme.appearance(), QString("light"));
     QCOMPARE(item->property("color").value<QColor>(), QColor("#ffffff"));
     QVERIFY(file.remove());
@@ -107,7 +104,7 @@ private slots:
     QVERIFY(!theme.windowLiquidGlass());
   }
 
-  void qmlPaletteFollowsPublishedPageTheme() {
+  void qmlPaletteFollowsTheBaseTheme() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     ThemeStore theme(directory.path());
@@ -118,10 +115,10 @@ private slots:
     QScopedPointer<QObject> item(component.create());
     QVERIFY2(item, qPrintable(component.errorString()));
     QCOMPARE(item->property("color").value<QColor>(), QColor("#111111"));
-    theme.applyPageTheme(QVariantMap{{"appearance", "light"}, {"colors", QVariantMap{{"canvas", "#ffffff"}}}});
+    theme.applyBaseTheme(QVariantMap{{"appearance", "light"}, {"colors", QVariantMap{{"canvas", "#ffffff"}}}});
     QCOMPARE(theme.color("canvas", Qt::black), QColor("#ffffff"));
     QCOMPARE(item->property("color").value<QColor>(), QColor("#ffffff"));
-    theme.applyPageTheme(QVariantMap{{"appearance", "dark"}, {"colors", QVariantMap{{"canvas", "#0c2238cc"}}}});
+    theme.applyBaseTheme(QVariantMap{{"appearance", "dark"}, {"colors", QVariantMap{{"canvas", "#0c2238cc"}}}});
     QCOMPARE(item->property("color").value<QColor>(), QColor(12, 34, 56, 204));
     QFile overrideFile(directory.filePath("theme.json"));
     QVERIFY(overrideFile.open(QIODevice::WriteOnly));
@@ -317,13 +314,22 @@ private slots:
     QCOMPARE(evaluate("window.deliveredTheme.id").toString(), QString("shell-night"));
     QCOMPARE(evaluate("document.documentElement.dataset.themeId").toString(), QString("page-owned"));
     QCOMPARE(evaluate("window.__halC2ShellTheme.observer === null").toBool(), true);
-    const QString beforePublication = theme.injectionScript();
-    theme.applyPageTheme(QVariantMap{{"appearance", "light"}, {"colors", QVariantMap{{"canvas", "#ffffff"}}}});
-    QCOMPARE(theme.injectionScript(), beforePublication);
+    // The shell's own theme goes under the file: the file's id and colours win.
+    theme.applyBaseTheme(QVariantMap{{"id", "grove"},
+                                     {"appearance", "light"},
+                                     {"colors", QVariantMap{{"canvas", "#ffffff"}, {"text", "#101010"}}}});
+    evaluate(theme.injectionScript());
+    QCOMPARE(evaluate("window.deliveredTheme.id").toString(), QString("shell-night"));
+    QCOMPARE(evaluate("window.deliveredTheme.dark").toBool(), true);
+    QCOMPARE(evaluate("window.deliveredTheme.vars['--app-theme-canvas']").toString(), QString("#123456"));
+    QCOMPARE(evaluate("window.deliveredTheme.vars['--app-theme-text']").toString(), QString("#101010"));
+    // Without the file the page follows the shell's theme alone.
     QVERIFY(file.remove());
     theme.reload();
     evaluate(theme.injectionScript());
-    QCOMPARE(evaluate("window.deliveredTheme.id").toString(), QString());
+    QCOMPARE(evaluate("window.deliveredTheme.id").toString(), QString("grove"));
+    QCOMPARE(evaluate("window.deliveredTheme.dark").toBool(), false);
+    QCOMPARE(evaluate("window.deliveredTheme.vars['--app-theme-canvas']").toString(), QString("#ffffff"));
   }
 
   void reloadKeepsSingletonsAndRecoversFromInvalidSource() {
