@@ -113,6 +113,9 @@ Item {
     // In-flight and read-ready rows recede: prominence is for rows that need
     // a human (done, failed, woke) and the one that is open.
     readonly property bool recedes: !active && !woke && item.unread !== true && item.status !== "failed" && item.status !== "limited"
+    // Titles keep the prompt's line breaks; the row shows them on one line,
+    // as the page does, so a multi-line title never overflows the card.
+    readonly property string oneLineTitle: (item.title ?? "").replace(/\s+/g, " ").trim()
     readonly property string ageLabel: item.wakeLabel ? item.wakeLabel : relativeAge(item.updatedAt, ageNow)
 
     function relativeAge(iso, now) {
@@ -316,7 +319,7 @@ Item {
 
         Text {
             Layout.fillWidth: true
-            text: row.item.title
+            text: row.oneLineTitle
             color: Qt.alpha(row.secondaryColor, 0.7)
             font.pixelSize: 14
             font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
@@ -368,7 +371,8 @@ Item {
         Text {
             Layout.fillWidth: true
             Layout.topMargin: 2
-            text: row.item.title
+            objectName: "cardTitle"
+            text: row.oneLineTitle
             color: row.recedes ? Qt.alpha(row.textColor, 0.72) : row.textColor
             font.pixelSize: 14
             font.weight: Font.Medium
