@@ -493,6 +493,29 @@ defmodule HalC2.Steps.Platform.EventStore do
     context
   end
 
+  # --- WAL checkpoints ------------------------------------------------------------------
+
+  step "the store's writer never checkpoints the WAL itself", context do
+    %{db: db} = :sys.get_state(Store)
+    {:ok, stmt} = Sqlite3.prepare(db, "PRAGMA wal_autocheckpoint")
+    assert {:ok, [[0]]} = Sqlite3.fetch_all(db, stmt)
+    Sqlite3.release(db, stmt)
+    context
+  end
+
+  step "a checkpoint from its own connection copies the changes into the database", context do
+    assert {:ok, %{log: log, checkpointed: checkpointed}} = Store.checkpoint()
+    assert log > 0 and checkpointed > 0
+    context
+  end
+
+  step "that connection closes when the store stops", context do
+    ref = Process.monitor(:sys.get_state(Store).checkpointer)
+    context = %{context | node: Node.restart(context.node), clients: %{}}
+    assert_receive {:DOWN, ^ref, :process, _, _}
+    context
+  end
+
   # --- schema version -------------------------------------------------------------------
 
   step "a node opens its store", context do
