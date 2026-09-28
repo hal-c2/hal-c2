@@ -126,10 +126,10 @@ private:
 
 // The terminal drawer, native: which thread's terminals are shown, whether the
 // drawer is open and how tall, the tabs, and the RPCs behind them. The thread
-// is the one the page shows (`sidebarInput.activeThreadKey`); everything else
-// comes from the node. Its terminals are attached the first time the drawer
-// opens on that thread and stay attached while the thread is on screen, so
-// hiding the drawer keeps their output.
+// (drafts too), its project root, worktree and scripts are what the page shows
+// in its header (`workspace`); the terminals come from the node. They are
+// attached the first time the drawer opens on that thread and stay attached
+// while the thread is on screen, so hiding the drawer keeps their output.
 class TerminalController : public QObject {
   Q_OBJECT
   Q_PROPERTY(bool available READ available NOTIFY changed)
@@ -174,11 +174,11 @@ private:
     QSet<QString> closing;
   };
 
-  std::optional<TerminalPlace> placeFor(const QString& threadKey) const;
+  std::optional<TerminalPlace> placeFor(const QVariantMap& workspace) const;
   void refresh();
   void syncTabs();
   QStringList terminalIds() const;
-  void watchNodes();
+  void watch(const QString& node, const QString& environmentId);
   void onTerminals(const QString& environmentId, const QJsonObject& event);
   bool setOpen(bool open);
   void openTerminal(const QString& terminalId);

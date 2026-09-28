@@ -285,19 +285,15 @@ void TerminalTabs::clear() {
 TerminalController::TerminalController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
                                        QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_tabs(this) {
-  connect(store, &ShellStore::changed, this, [this] {
-    watchNodes();
-    refresh();
-  });
+  connect(store, &ShellStore::changed, this, &TerminalController::refresh);
   connect(bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key) {
-    if (key == QLatin1String("sidebarInput")) refresh();
+    if (key == QLatin1String("workspace")) refresh();
   });
 }
 
 void TerminalController::activate() {
   if (m_active) return;
   m_active = true;
-  watchNodes();
   refresh();
 }
 
@@ -345,7 +341,6 @@ bool TerminalController::handle(const QString& action, const QVariant& payload) 
     return true;
   }
   if (action == QLatin1String("workspace.runScript")) {
-    // A thread the node does not know (a draft) still runs scripts in the page.
     if (!m_place) return false;
     runScript(args.value(QStringLiteral("scriptId")).toString());
     return true;
@@ -353,18 +348,20 @@ bool TerminalController::handle(const QString& action, const QVariant& payload) 
   return false;
 }
 
-std::optional<TerminalPlace> TerminalController::placeFor(const QString& threadKey) const {
-  const QJsonObject thread = m_store->threadRow(threadKey);
-  if (thread.isEmpty()) return std::nullopt;
+// Where the page's thread (a draft too) runs its terminals, from what the page
+// resolved for its header: the thread, its project root, worktree and scripts.
+std::optional<TerminalPlace> TerminalController::placeFor(const QVariantMap& workspace) const {
+  if (!workspace.value(QStringLiteral("terminalAvailable")).toBool()) return std::nullopt;
+  const QString threadKey = workspace.value(QStringLiteral("threadKey")).toString();
+  const qsizetype colon = threadKey.indexOf(QLatin1Char(':'));
+  const QString root = workspace.value(QStringLiteral("projectRoot")).toString();
+  if (colon <= 0 || root.isEmpty()) return std::nullopt;
   TerminalPlace place;
-  place.environmentId = threadKey.left(threadKey.indexOf(QLatin1Char(':')));
-  place.threadId = thread.value(QLatin1String("id")).toString();
+  place.environmentId = threadKey.left(colon);
+  place.threadId = threadKey.mid(colon + 1);
   place.node = m_store->nodeOf(place.environmentId);
-  const QJsonObject project =
-      m_store->projectRow(place.environmentId, thread.value(QLatin1String("projectId")).toString());
-  const QString root = project.value(QLatin1String("workspaceRoot")).toString();
-  if (place.node.isEmpty() || place.threadId.isEmpty() || root.isEmpty()) return std::nullopt;
-  place.worktreePath = thread.value(QLatin1String("worktreePath")).toString();
+  if (place.node.isEmpty() || place.threadId.isEmpty()) return std::nullopt;
+  place.worktreePath = workspace.value(QStringLiteral("worktreePath")).toString();
   place.cwd = place.worktreePath.isEmpty() ? root : place.worktreePath;
   // packages/shared projectScriptRuntimeEnv; T3CODE_ is what older scripts read.
   place.env = {
@@ -375,16 +372,16 @@ std::optional<TerminalPlace> TerminalController::placeFor(const QString& threadK
     place.env.insert(QStringLiteral("HAL_C2_WORKTREE_PATH"), place.worktreePath);
     place.env.insert(QStringLiteral("T3CODE_WORKTREE_PATH"), place.worktreePath);
   }
-  place.scripts = project.value(QLatin1String("scripts")).toArray();
+  place.scripts = QJsonArray::fromVariantList(workspace.value(QStringLiteral("scripts")).toList());
   return place;
 }
 
 void TerminalController::refresh() {
   if (!m_active) return;
-  const QVariant key =
-      m_bridge->state()->value(QStringLiteral("sidebarInput")).toMap().value(QStringLiteral("activeThreadKey"));
-  const QString threadKey = key.typeId() == QMetaType::QString ? key.toString() : QString();
-  auto place = placeFor(threadKey);
+  const QVariantMap workspace = m_bridge->state()->value(QStringLiteral("workspace")).toMap();
+  auto place = placeFor(workspace);
+  const QString threadKey = place ? place->environmentId + QLatin1Char(':') + place->threadId : QString();
+  if (place) watch(place->node, place->environmentId);
   // Another thread, or the same one launching elsewhere: start over.
   const bool moved = threadKey != m_threadKey || !place || !m_place || place->node != m_place->node ||
                      place->cwd != m_place->cwd;
@@ -447,21 +444,16 @@ void TerminalController::syncTabs() {
   }
 }
 
-void TerminalController::watchNodes() {
-  if (!m_active) return;
-  for (const sidebar::Thread& thread : m_store->threads()) {
-    const QString node = m_store->nodeOf(thread.environmentId);
-    if (node.isEmpty() || m_watched.contains(node)) continue;
-    const QString environmentId = thread.environmentId;
-    m_watched.insert(node, m_client->subscribe({{QStringLiteral("type"), QStringLiteral("terminals")},
-                                                {QStringLiteral("node"), node}},
-                                               [this, environmentId](const QJsonObject& frame) {
-                                                 if (frame.value(QLatin1String("t")) != QLatin1String("terminals"))
-                                                   return;
-                                                 onTerminals(environmentId,
-                                                             frame.value(QLatin1String("event")).toObject());
-                                               }));
-  }
+// Follows a node's terminals list once a thread there is shown.
+void TerminalController::watch(const QString& node, const QString& environmentId) {
+  if (m_watched.contains(node)) return;
+  m_watched.insert(node, m_client->subscribe({{QStringLiteral("type"), QStringLiteral("terminals")},
+                                              {QStringLiteral("node"), node}},
+                                             [this, environmentId](const QJsonObject& frame) {
+                                               if (frame.value(QLatin1String("t")) != QLatin1String("terminals"))
+                                                 return;
+                                               onTerminals(environmentId, frame.value(QLatin1String("event")).toObject());
+                                             }));
 }
 
 void TerminalController::onTerminals(const QString& environmentId, const QJsonObject& event) {

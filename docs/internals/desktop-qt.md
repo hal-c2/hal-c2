@@ -602,12 +602,14 @@ The terminal drawer is native: `TerminalDrawer` draws each of the thread's
 terminals with [qml-ghostty](https://github.com/hal-c2/qml-ghostty)'s
 `Terminal` item (libghostty-vt, built as described in the app's README), and
 `TerminalController` (the `Terminals` singleton) talks to the node for it over
-the shell's own `NodeClient`, as the sidebar and composer do. The page takes no
-part and still publishes its old drawer fields, which the shell ignores. The
-controller intercepts `terminal.*` and `workspace.runScript` before they reach
-the page, so the header's run pill types into a drawer terminal the shell
-launched itself; drafts and environments outside the node's cluster are not
-covered yet (`features/desktop/native-terminal.feature`).
+the shell's own `NodeClient`, as the sidebar and composer do. The page's only
+part is `workspace`: the controller takes the thread (drafts included), its
+project root, worktree and scripts from what the header shows, because the
+node's shell rows know no drafts. The page still publishes its old drawer
+fields, which the shell ignores. The controller intercepts `terminal.*` and
+`workspace.runScript` before they reach the page, so the header's run pill
+types into a drawer terminal the shell launched itself; environments outside
+the node's cluster are not covered yet (`features/desktop/native-terminal.feature`).
 
 - **Launch context.** Every attach and open sends the thread's cwd (worktree,
   else project root) and the same `HAL_C2_*`/`T3CODE_*` root variables as the

@@ -526,6 +526,21 @@ public:
   }
 
   void publishSidebarInput() { m_bridge.publish(QStringLiteral("sidebarInput"), sidebarInput); }
+  // What the page's header shows for a thread (ShellWorkspaceState), from the
+  // node's project; a thread whose project the node does not know has none.
+  void publishWorkspace(const QString& threadKey, const QString& projectId, const QString& worktreePath, bool draft) {
+    const QJsonObject project = node.projects.value(projectId);
+    const bool known = !project.isEmpty();
+    m_bridge.publish(QStringLiteral("workspace"),
+                     QVariantMap{
+                         {QStringLiteral("threadKey"), threadKey},
+                         {QStringLiteral("isDraft"), draft},
+                         {QStringLiteral("projectRoot"), known ? project.value(QLatin1String("workspaceRoot")).toVariant() : QVariant()},
+                         {QStringLiteral("worktreePath"), worktreePath.isEmpty() ? QVariant() : QVariant(worktreePath)},
+                         {QStringLiteral("scripts"), project.value(QLatin1String("scripts")).toArray().toVariantList()},
+                         {QStringLiteral("terminalAvailable"), known},
+                     });
+  }
   void publishComposer() { m_bridge.publish(QStringLiteral("composer"), composer); }
 
   void connect(const QString& token = QStringLiteral("node-token")) {
@@ -781,6 +796,14 @@ void defineSteps() {
   step(QStringLiteral("the page shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sidebarInput.insert(QStringLiteral("activeThreadKey"), c[0]);
     world.publishSidebarInput();
+    const QJsonObject thread = world.node.threads.value(c[0].mid(c[0].indexOf(QLatin1Char(':')) + 1));
+    world.publishWorkspace(c[0], thread.value(QLatin1String("projectId")).toString(),
+                           thread.value(QLatin1String("worktreePath")).toString(), false);
+  });
+  step(QStringLiteral("the page shows the draft %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sidebarInput.insert(QStringLiteral("activeThreadKey"), QVariant());
+    world.publishSidebarInput();
+    world.publishWorkspace(world.node.environmentId + QLatin1Char(':') + c[0], c[1], QString(), true);
   });
   step(QStringLiteral("the page's sidebar is scoped to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sidebarInput.insert(QStringLiteral("scopeProjectKey"), c[0]);

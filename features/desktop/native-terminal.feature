@@ -1,5 +1,7 @@
 # Sources:
 #   apps/desktop-qt/src/TerminalController.cpp (the drawer's tabs, sessions and RPCs against the node)
+#   apps/web/src/shell/shellWorkspaceState.ts (the thread, drafts too, its project root, worktree
+#   and scripts, which the drawer takes from the page)
 #   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml (qml-ghostty's Terminal per tab)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
 #   apps/web/src/components/ThreadTerminals.tsx (the launch context and script runs this mirrors)
@@ -10,7 +12,8 @@
 Feature: The desktop shell runs the terminal drawer against its node
   The Qt shell draws a thread's terminals with qml-ghostty and talks to the node for them
   itself: it attaches each terminal, sends what the user types and shows what the shell
-  prints. The page takes no part in it.
+  prints. From the page it takes only which thread is shown and that thread's project root,
+  worktree and scripts, as its header shows them.
 
   Background:
     Given the desktop's node "node-a" serves the environment "env-a"
@@ -47,6 +50,13 @@ Feature: The desktop shell runs the terminal drawer against its node
     Scenario: A thread whose project the node does not know has no terminal
       Given the page shows "env-a:t3"
       Then the terminal drawer is unavailable
+
+    @desktop
+    Scenario: A draft thread has a terminal in its project
+      Given the page shows the draft "d1" in "p1"
+      When the user toggles the terminal drawer
+      Then the terminal drawer shows the tabs "Terminal 1"
+      And the node attaches "term-1" of "d1" in "/work/p1"
 
     @desktop
     Scenario: The drawer shows the terminals the thread already has
@@ -172,12 +182,6 @@ Feature: The desktop shell runs the terminal drawer against its node
       And the terminal drawer shows the tabs "Terminal 1, Terminal 2"
 
   Rule: What the page's drawer did that the native drawer does not yet
-
-    @backlog @desktop
-    Scenario: A draft thread has a terminal in its project
-      Given the page shows a draft thread in "p1"
-      When the user toggles the terminal drawer
-      Then the node attaches "term-1" of the draft in "/work/p1"
 
     @backlog @desktop
     Scenario: A thread on an environment outside the node's cluster has a terminal

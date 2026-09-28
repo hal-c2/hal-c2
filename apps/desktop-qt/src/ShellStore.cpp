@@ -6,12 +6,8 @@
 
 namespace {
 
-// The node's threads or projects table, for a row of that kind.
-QHash<QString, QJsonObject>* tableFor(const QString& kind, QHash<QString, QJsonObject>& threads,
-                                      QHash<QString, QJsonObject>& projects) {
-  if (kind == QLatin1String("thread")) return &threads;
-  if (kind == QLatin1String("project")) return &projects;
-  return nullptr;
+bool isThreadRow(const QString& kind) {
+  return kind == QLatin1String("thread");
 }
 
 bool removed(const QJsonObject& row) {
@@ -46,29 +42,6 @@ bool ShellStore::servesEnvironment(const QString& environmentId) const {
 QString ShellStore::nodeOf(const QString& environmentId) const {
   for (auto it = m_nodes.cbegin(); it != m_nodes.cend(); ++it) {
     if (it->environmentId == environmentId) return it.key();
-  }
-  return {};
-}
-
-QJsonObject ShellStore::threadRow(const QString& key) const {
-  const qsizetype colon = key.indexOf(QLatin1Char(':'));
-  if (colon <= 0) return {};
-  const QString environmentId = key.left(colon);
-  for (const Node& node : m_nodes) {
-    if (node.environmentId == environmentId) {
-      const QJsonObject row = node.threads.value(key.mid(colon + 1));
-      if (!row.isEmpty()) return row;
-    }
-  }
-  return {};
-}
-
-QJsonObject ShellStore::projectRow(const QString& environmentId, const QString& projectId) const {
-  for (const Node& node : m_nodes) {
-    if (node.environmentId == environmentId) {
-      const QJsonObject row = node.projects.value(projectId);
-      if (!row.isEmpty()) return row;
-    }
   }
   return {};
 }
@@ -116,10 +89,8 @@ void ShellStore::onFrame(const QJsonObject& frame) {
     for (const QJsonValue& value : frame.value(QLatin1String("rows")).toArray()) {
       const QJsonArray row = value.toArray();
       const QJsonObject fields = row.at(3).toObject();
-      Node& node = m_nodes[row.at(0).toString()];
-      auto* table = tableFor(row.at(2).toString(), node.threads, node.projects);
-      if (!table || removed(fields)) continue;
-      table->insert(row.at(1).toString(), fields);
+      if (!isThreadRow(row.at(2).toString()) || removed(fields)) continue;
+      m_nodes[row.at(0).toString()].threads.insert(row.at(1).toString(), fields);
     }
     m_synchronized = true;
   } else if (type == QLatin1String("shell.environment")) {
@@ -132,13 +103,12 @@ void ShellStore::onFrame(const QJsonObject& frame) {
     Node& node = m_nodes[frame.value(QLatin1String("node")).toString()];
     for (const QJsonValue& value : frame.value(QLatin1String("rows")).toArray()) {
       const QJsonArray row = value.toArray();
-      auto* table = tableFor(row.at(1).toString(), node.threads, node.projects);
-      if (!table) continue;
+      if (!isThreadRow(row.at(1).toString())) continue;
       const QJsonObject fields = row.at(2).toObject();
       if (removed(fields)) {
-        table->remove(row.at(0).toString());
+        node.threads.remove(row.at(0).toString());
       } else {
-        table->insert(row.at(0).toString(), fields);
+        node.threads.insert(row.at(0).toString(), fields);
       }
     }
   } else {
