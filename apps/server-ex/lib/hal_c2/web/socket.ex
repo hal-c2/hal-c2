@@ -49,7 +49,8 @@ defmodule HalC2.Web.Socket do
      Protocol.encode(%{
        "t" => "hello",
        "protocol" => Protocol.version(),
-       "node" => Atom.to_string(node())
+       "node" => Atom.to_string(node()),
+       "environment" => HalC2.Environment.id()
      }), state}
   end
 

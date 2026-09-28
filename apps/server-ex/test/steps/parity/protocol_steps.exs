@@ -23,9 +23,14 @@ defmodule HalC2.Steps.Parity.Protocol do
     Map.put(context, :received, Shapes.open_socket(context))
   end
 
-  step "the first frame is a hello carrying protocol 3 and the node's name", context do
+  step "the first frame is a hello carrying protocol 3, the node's name and its environment",
+       context do
     me = Atom.to_string(node())
-    assert %{"t" => "hello", "protocol" => 3, "node" => ^me} = context.received
+    environment = HalC2.Environment.id()
+
+    assert %{"t" => "hello", "protocol" => 3, "node" => ^me, "environment" => ^environment} =
+             context.received
+
     context
   end
 
@@ -226,7 +231,7 @@ defmodule HalC2.Steps.Parity.Protocol do
 
   # The keys each frame carries besides `t`, from `apps/server-ex/lib/hal_c2/web/protocol.ex`.
   @carries %{
-    "hello" => ~w(protocol node),
+    "hello" => ~w(protocol node environment),
     "pong" => [],
     "error" => ~w(id reason),
     "rpc.result" => ~w(id result),

@@ -23,9 +23,9 @@ Feature: Protocol 3 wire parity
     And a protocol 3 client connected to it
 
   @node
-  Scenario: The node greets every socket with its protocol version and name
+  Scenario: The node greets every socket with its protocol version, name and environment
     When the client opens its socket
-    Then the first frame is a hello carrying protocol 3 and the node's name
+    Then the first frame is a hello carrying protocol 3, the node's name and its environment
 
   @node
   Scenario Outline: The node answers a <frame> frame
@@ -96,7 +96,7 @@ Feature: Protocol 3 wire parity
 
     Examples: 31 socket, stream, config and node frames
       | frame                      | when                                                   | fields                                                    |
-      | hello                      | the socket opens                                       | protocol, node                                            |
+      | hello                      | the socket opens                                       | protocol, node, environment                               |
       | pong                       | the client pings                                       | nothing else                                              |
       | error                      | a frame or subscription is refused                     | reason, and the id when there is one                      |
       | rpc.result                 | a method succeeds                                      | id, result                                                |
