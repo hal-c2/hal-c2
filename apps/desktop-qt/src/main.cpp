@@ -2,6 +2,7 @@
 #include <QDir>
 #include <QJsonDocument>
 #include <QGuiApplication>
+#include <QIcon>
 #include <QProcessEnvironment>
 #include <QQmlEngine>
 #include <QQuickWebEngineProfile>
@@ -84,6 +85,7 @@ int main(int argc, char* argv[]) {
   }
   QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
+  QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/hal-c2/app-icon.png")));
   useSoftwareRenderingWithoutDisplay();
 
   QCommandLineParser parser;

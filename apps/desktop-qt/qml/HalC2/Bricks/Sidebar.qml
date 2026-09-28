@@ -187,25 +187,10 @@ Rectangle {
                 onClicked: Shell.dispatch("sidebar.toggle")
             }
 
-            Row {
+            HalC2Wordmark {
                 x: 52
+                size: 11
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: 6
-
-                HalC2Wordmark {
-                    size: 10
-                    color: sidebar.foreground
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-
-                Text {
-                    text: qsTr("Code")
-                    color: sidebar.muted
-                    font.pixelSize: 14
-                    font.weight: Font.Medium
-                    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
-                    anchors.verticalCenter: parent.verticalCenter
-                }
             }
         }
 

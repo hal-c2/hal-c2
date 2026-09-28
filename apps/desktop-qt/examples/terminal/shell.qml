@@ -100,12 +100,6 @@ ShellWindow {
                     Layout.alignment: Qt.AlignVCenter
                     Layout.leftMargin: 14
                     size: 10
-                    color: root.ink
-                }
-
-                Segment {
-                    Layout.leftMargin: 6
-                    text: qsTr("Code")
                 }
 
                 Segment {
