@@ -34,3 +34,4 @@ TitleBar 1.0 TitleBar.qml
 WebSurface 1.0 WebSurface.qml
 WindowControls 1.0 WindowControls.qml
 Workspace 1.0 Workspace.qml
+Timeline 1.0 Timeline.qml
