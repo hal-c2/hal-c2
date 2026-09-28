@@ -4,7 +4,8 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/SettingsNav.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (tab activation from the keyboard)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (focusInput)
-#   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml (focusTerminal)
+#   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml (focusTerminal, focus on open)
+#   apps/desktop-qt/tests/native/tst_ShellExamples.cpp (terminalDrawerTakesAndReturnsTheKeyboard)
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml (accessible names)
 
@@ -39,7 +40,7 @@ Feature: Keyboard focus and keyboard-only use
       When a terminal starts on its own
       Then the composer keeps keyboard focus
 
-    @backlog @desktop
+    @desktop
     Scenario: Explicitly opening a terminal focuses it
       Given the terminal is closed
       When the user opens the terminal

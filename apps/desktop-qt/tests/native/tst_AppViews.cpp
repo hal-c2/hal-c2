@@ -48,6 +48,8 @@ private slots:
     qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Shell", &bridge);
     qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Theme", theme.get());
     qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", profile->profile());
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Terminals.qml")),
+                             "HalC2.Shell", 1, 0, "Terminals");
     engine = std::make_unique<QQmlEngine>();
     engine->addImportPath(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/qml"));
     component = std::make_unique<QQmlComponent>(engine.get());

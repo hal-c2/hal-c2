@@ -91,10 +91,10 @@ attaches this way to the node `mise run node` runs.
   home finds the lock file taken and stays off-the-record for its run.
 - **One renderer per surface.** Chromium gives each top-level view its own
   renderer process (roughly the app bundle's footprint each), which is the
-  price of the panel and the terminal drawer being separate documents. Both
-  surfaces set `sleepsWhenHidden`, so their pages are frozen (no timers, no
-  painting) while closed and resume where they were; discarding them would
-  also drop the terminals they hold. The primary surface never sleeps.
+  price of the right panel being a separate document. It sets
+  `sleepsWhenHidden`, so its page is frozen (no timers, no painting) while
+  closed and resumes where it was; discarding it would also drop the
+  terminals it holds. The primary surface never sleeps.
 - **The channel carries no properties.** QWebChannel re-sends a changed
   property to every connected page, so `Shell.state` is not on it: pages talk
   to `ShellChannel` (`publish`, `dispatch`, `snapshot`, `actionRequested`,
@@ -134,11 +134,12 @@ works compiled into the binary and as an on-disk import path.
 
 The bricks come in two layers. Chrome bricks each own one piece of the page's
 chrome and read one key of `Shell.state`: `Sidebar`, `Workspace` (the header
-strip), `Composer`, `RightPanel`, `TerminalDrawer`, `SettingsNav`, `GitActions`,
+strip), `Composer`, `RightPanel`, `SettingsNav`, `GitActions`,
 `Notifications`, `ContextMenuHost`, plus `WebSurface`, `DefaultShell` and
-`ShellErrorOverlay`. A rice that cards a surface passes the card's inner
-radius as `WebSurface.radius` (`TerminalDrawer` and `RightPanel` forward
-theirs): the page clips itself to the curve and drops its own backdrop
+`ShellErrorOverlay`. `TerminalDrawer` reads the native `Terminals` controller
+instead (see the terminal drawer below). A rice that cards a surface passes the card's inner
+radius as `WebSurface.radius` (`RightPanel` forwards its own; `TerminalDrawer`
+insets its terminal from its own `radius`): the page clips itself to the curve and drops its own backdrop
 (`data-shell-surface-radius` in `index.html` and `index.css`), so no QML layer is needed to
 round a live web view. `WebSurface.transparentCanvas` additionally clears the
 chat's web backdrop layers without fading text, messages, code or menus. A
@@ -585,40 +586,43 @@ is unavailable under the shell.
 `ShellWorkspaceState`: project and thread titles, checkout mode (and whether
 it can still change), branch and worktree, a git summary (dirty, ahead/behind,
 linked PR), the environments the logical project spans, available editors
-with the preferred one, project scripts, and the terminal drawer's state
-(`terminalAvailable`, `terminalOpen`, `terminalHeight`, `terminalEmbedPath`;
-see below). `ChatHeader` keeps only the git
+with the preferred one, and project scripts. `ChatHeader` keeps only the git
 control (`shellHosted`), since commit/push/PR flows carry dialogs and progress
 UI that live with that control; the branch toolbar under the composer is not
 rendered. The `Workspace` brick renders the breadcrumb and the run / open
 pills; the branch toolbar's contents (environment, checkout mode, branch
 picker, PR badge) are the context strip under the `Composer` brick, where the
 page puts them, and the terminal and panel toggles from the page's header.
-Actions: `workspace.newThread`, `terminal.toggle`, `terminal.resize {height}`,
-`workspace.openInEditor {editorId?}` (same command and preference as the HTML
+Actions: `workspace.newThread`, `workspace.openInEditor {editorId?}` (same command and preference as the HTML
 picker), `workspace.runScript {scriptId}`, `workspace.envMode.set {mode}`,
 `workspace.startFromOrigin.set {enabled}`, `workspace.openPullRequest`,
 `workspace.environment.set {environmentId}`.
 
-The terminal drawer is HTML content in a shell-placed surface, like the right
-panel: `TerminalDrawer` loads the embed route with `?surface=terminal` in a
-third `WebSurface` (kept once created, frozen while closed) and sizes it from
-`terminalHeight`, so the page's order, timeline over composer over drawer,
-survives the composer moving out of the page. The embed route renders
-`ThreadTerminalDocument`, without mounting conversation hooks. It shares
-`ThreadTerminals` and `useThreadTerminalActions` with the inline chat drawer.
-The module owns retained sessions, allocation, attachment locations, script
-launches, and focus. It fills the document (`ThreadTerminalDrawer` in `fill` mode:
-no border, no handle, no height of its own); the primary renders no drawer
-when hosted. The drawer's open flag and height are the page's
-(`terminalUiStateStore`, synced across documents through localStorage), so
-`Workspace`'s toggle keeps dispatching `terminal.toggle`, and dragging the
-brick's top edge dispatches `terminal.resize` on release, which the primary
-persists and publishes back. Known gap: the run pill's terminal is opened by
-the primary and the drawer document attaches to the same server-side session,
-but the launch context the primary derives for it (cwd and worktree) stays in
-the primary; terminals the drawer document opens on its own use the thread's
-checkout.
+The terminal drawer is native: `TerminalDrawer` draws each of the thread's
+terminals with [qml-ghostty](https://github.com/hal-c2/qml-ghostty)'s
+`Terminal` item (libghostty-vt, built as described in the app's README), and
+`TerminalController` (the `Terminals` singleton) talks to the node for it over
+the shell's own `NodeClient`, as the sidebar and composer do. The page takes no
+part and still publishes its old drawer fields, which the shell ignores. The
+controller intercepts `terminal.*` and `workspace.runScript` before they reach
+the page, so the header's run pill types into a drawer terminal the shell
+launched itself; drafts and environments outside the node's cluster are not
+covered yet (`features/desktop/native-terminal.feature`).
+
+- **Launch context.** Every attach and open sends the thread's cwd (worktree,
+  else project root) and the same `HAL_C2_*`/`T3CODE_*` root variables as the
+  web client. The node restarts a shell whose launch env changed, so the shell
+  must send the same env every time.
+- **Replay.** A session keeps the transcript it attached with plus what has
+  arrived since (capped like other clients' buffers), so a tab created late replays
+  with `Terminal.restore()`, which answers no queries. Only live output goes
+  through `write()`; replaying history through it would answer stale device
+  queries into the shell.
+- **One write in flight.** Keys typed while `terminal.write` is pending
+  coalesce into the next one, so the shell sees the user's order.
+- **Hidden is not detached.** Once opened, the drawer stays attached while
+  hidden, like the page's drawer did, so output keeps arriving and switching
+  back costs nothing.
 
 Branch switching is native too: the selector's brain moved into
 `hooks/useThreadBranchSelection.ts` (thread/draft resolution, paginated ref
@@ -701,7 +705,9 @@ chord into a portable Qt sequence such as `Ctrl+Shift+]` (Qt swaps Ctrl and
 Command on macOS, so the builder swaps them back), skips unmodified keys —
 those belong to whichever native control has focus — and collapses rules
 that share a chord. `ShellWindow` instantiates a window `Shortcut` per entry
-while no `WebSurface` has focus; the page handles the real key there. A match
+while no `WebSurface` has focus; the page handles the real key there. A drawer
+terminal with focus turns them off too, so chords reach the shell in it, and
+Ctrl+J toggles the drawer natively whatever the user bound `terminal.toggle` to. A match
 dispatches `keybinding.press {key, ctrlKey, metaKey, shiftKey, altKey}`,
 which the page replays as a synthetic keydown on `document.body`, so the same
 dispatcher, the same `when` clauses and the user's own config decide what
@@ -709,7 +715,7 @@ runs. A body target reads as "not typing", so chords scoped to a focused
 editor do nothing from chrome; the QML composer submits through
 `composer.submit` instead.
 
-Secondary documents (the terminal drawer, the right panel) carry no
+Secondary documents (the right panel) carry no
 `HalC2ShellBridge` and no sidebar, so the handlers behind thread jumps or the
 sidebar toggle do not exist there, and while one has focus the shell's own
 shortcuts are off. `ShellEmbedRouteBridge` therefore forwards a keydown its
@@ -799,13 +805,13 @@ on this machine.
 ## Splitting chrome out
 
 Every piece of chrome from the original list now has a brick: `Sidebar`,
-`Composer`, `RightPanel` (+ embed route), `TerminalDrawer` (+ embed route),
-`Workspace`, `SettingsNav`. The timeline, the terminal and the settings pages
-stay HTML by design. Each split-out piece becomes one brick with a documented
+`Composer`, `RightPanel` (+ embed route), `TerminalDrawer` (native, on
+qml-ghostty), `Workspace`, `SettingsNav`. The timeline and the settings pages
+are still HTML; the right panel's terminal tab is too. Each split-out piece becomes one brick with a documented
 state/action surface; in the shell the SPA simply does not render the parts
 that moved out. When an HTML brick needs to live somewhere QML decides, it
 becomes another `WebEngineView` loading an embed route with its own server
-connection (the right panel and the terminal drawer are the precedents); the
+connection (the right panel is the precedent); the
 primary view stays the brain.
 
 What the shell still lacks next to web and mobile is tracked as Gherkin, not

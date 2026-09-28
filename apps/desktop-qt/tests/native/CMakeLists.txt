@@ -8,6 +8,8 @@ if(APPLE)
   enable_language(OBJCXX)
 endif()
 include(../../cmake/PlatformWindow.cmake)
+# The bricks the layout tests load import Ghostty (the terminal drawer).
+include(../../cmake/QmlGhostty.cmake)
 if(APPLE)
   add_executable(tst_PlatformWindow tst_PlatformWindow.mm)
   target_include_directories(tst_PlatformWindow PRIVATE ../../src)
@@ -44,6 +46,7 @@ add_executable(tst_Features
   ../../src/ShellStore.cpp
   ../../src/SidebarController.cpp
   ../../src/SidebarModel.cpp
+  ../../src/TerminalController.cpp
 )
 target_include_directories(tst_Features PRIVATE ../../src)
 target_compile_definitions(tst_Features PRIVATE
@@ -72,7 +75,7 @@ foreach(test_name IN ITEMS ShellRuntime ShellExamples AppViews)
     HAL_C2_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../.."
   )
   target_link_libraries(tst_${test_name} PRIVATE
-    Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Quick Qt6::Test Qt6::WebEngineQuick Qt6::WebChannel
+    Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Quick Qt6::Test Qt6::WebEngineQuick Qt6::WebChannel qmlghosttyplugin
   )
   hal_c2_target_platform_window(tst_${test_name})
   add_test(NAME ${test_name} COMMAND tst_${test_name})

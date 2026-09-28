@@ -1,11 +1,9 @@
 # Sources:
 #   apps/desktop-qt/parity/features.backlog.test.ts (in-app-preview, right-panel-surfaces,
-#   app-updates, ssh-environments, network-access, open-workspace-activation,
-#   terminal-drawer-launch-context)
+#   app-updates, ssh-environments, network-access, open-workspace-activation)
 #   apps/desktop-qt/parity/web-parity.test.ts (thread jump, composer send chords, toolbar chords)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts)
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml
 #   docs/user/updating.md
 #   docs/user/remote-access.md
 
@@ -128,20 +126,6 @@ Feature: Desktop shell gaps
       Given "~/code/api" is already a project
       When the user launches the app again with "~/code/api"
       Then a new thread opens in the existing project
-
-  Rule: Terminal drawer launch context
-
-    @backlog @desktop
-    Scenario: A new drawer terminal starts in the thread's worktree
-      Given the thread runs in a worktree
-      When the user opens a new terminal from the drawer
-      Then the terminal starts in that worktree's folder
-
-    @backlog @desktop
-    Scenario: A drawer terminal keeps the launch context of the header's scripts
-      Given the header ran a project script in the thread's worktree
-      When the user opens that script's terminal in the drawer
-      Then it keeps the same folder and environment
 
   Rule: Known shell keyboard bugs
 

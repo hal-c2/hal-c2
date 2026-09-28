@@ -19,10 +19,20 @@ Window {
     // focused page sees its own keydowns and handles them itself.
     readonly property var keybindings: Shell.state.keybindings ?? []
     readonly property bool webFocused: isWebItem(root.activeFocusItem)
+    // A focused terminal takes its keys too, as the page's terminal does;
+    // the drawer's own shortcuts are the ones that apply there.
+    readonly property bool terminalFocused: hasAncestor(root.activeFocusItem, "HalC2Terminal")
+    // The terminal drawer is native, so its toggle is the shell's own; the
+    // page's entry for the same chord stands down so the two never collide.
+    readonly property string terminalToggleSequence: "Ctrl+J"
 
     function isWebItem(item) {
+        return hasAncestor(item, "HalC2WebSurface");
+    }
+
+    function hasAncestor(item, objectName) {
         for (let node = item; node; node = node.parent) {
-            if (node.objectName === "HalC2WebSurface") {
+            if (node.objectName === objectName) {
                 return true;
             }
         }
@@ -61,7 +71,7 @@ Window {
 
             sequence: modelData.sequence
             context: Qt.WindowShortcut
-            enabled: !root.webFocused
+            enabled: !root.webFocused && !root.terminalFocused && modelData.sequence !== root.terminalToggleSequence
             onActivated: Shell.dispatch("keybinding.press", {
                 key: modelData.key,
                 ctrlKey: modelData.ctrlKey,
@@ -70,6 +80,14 @@ Window {
                 altKey: modelData.altKey
             })
         }
+    }
+
+    // Fires over a focused page too: its web view only claims editing keys.
+    Shortcut {
+        sequence: root.terminalToggleSequence
+        context: Qt.WindowShortcut
+        enabled: Terminals.available
+        onActivated: Shell.dispatch("terminal.toggle")
     }
 
     Connections {

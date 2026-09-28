@@ -361,6 +361,8 @@ Window {
     ThemeStore theme(config);
     WebProfile webProfile(directory.filePath("web"));
     qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", webProfile.profile());
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Terminals.qml")),
+                             "HalC2.Shell", 1, 0, "Terminals");
     ShellRuntime runtime({config, sources}, &bridge, &theme);
     const auto window = []() -> QQuickWindow* {
       QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);

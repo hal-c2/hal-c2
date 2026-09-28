@@ -49,8 +49,7 @@ Item {
                     isDraft: false,
                     renameRequestId: 0,
                     scripts: [],
-                    editors: [],
-                    terminalAvailable: false
+                    editors: []
                 }
             };
             let workspace = createTemporaryObject(workspaceComponent, root);

@@ -635,11 +635,11 @@ Item {
                     isDraft: false,
                     renameRequestId: 0,
                     scripts: [],
-                    editors: [],
-                    terminalAvailable: true,
-                    terminalOpen: false
+                    editors: []
                 }
             };
+            Terminals.available = true;
+            Terminals.open = false;
             const workspace = createTemporaryObject(workspaceComponent, root);
             verify(!!workspace, "Component exists");
             const toggle = findChild(workspace, "terminalToggle");
@@ -648,6 +648,7 @@ Item {
             mouseClick(toggle);
             tryCompare(Shell, "dispatchCount", 1);
             compare(lastDispatch().action, "terminal.toggle");
+            Terminals.available = false;
         }
     }
 }

@@ -85,6 +85,8 @@ qt_add_executable(hal-c2-qt
   src/SidebarModel.h
   src/StoragePaths.cpp
   src/StoragePaths.h
+  src/TerminalController.cpp
+  src/TerminalController.h
   src/ThemeStore.cpp
   src/ThemeStore.h
   src/WebProfile.cpp

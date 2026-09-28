@@ -165,6 +165,8 @@ int main(int argc, char* argv[]) {
   qmlRegisterType<NativeNotifications>("HalC2.Shell", 1, 0, "NativeNotifications");
   qmlRegisterType<LocalTranscriber>("HalC2.Shell", 1, 0, "LocalTranscriber");
   qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
+  NativeShell native(&bridge);
+  qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Terminals", native.terminals());
   ThemeStore theme(configDir);
   ShellRuntime runtime({configDir, qmlSourceDir}, &bridge, &theme);
   // The page publishes its resolved theme; without a theme.json it is the
@@ -192,7 +194,6 @@ int main(int argc, char* argv[]) {
   }
   BackendProcess backend(backendOptions);
   // Announced before `ready`, so the shell's own connection starts with the page.
-  NativeShell native(&bridge);
   QObject::connect(&backend, &BackendProcess::nodeAvailable, &native, &NativeShell::open);
   QObject::connect(&backend, &BackendProcess::ready, &bridge, &ShellBridge::setPageUrl);
   QObject::connect(&backend, &BackendProcess::failed, &bridge, [&bridge](const QString& message) {
