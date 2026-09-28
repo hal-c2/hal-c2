@@ -181,6 +181,17 @@ const QStringList kDefaultGlobs{
     QStringLiteral("timeline/plans-and-subagents.feature"),
     QStringLiteral("navigation/environment-themes.feature"),
     QStringLiteral("navigation/appearance.feature:System appearance follows*"),
+    QStringLiteral("threads/creating.feature:A new thread start*"),
+    QStringLiteral("threads/sidebar-list.feature:Projects *"),
+    QStringLiteral("threads/sidebar-list.feature:Threads started by other agents*"),
+    QStringLiteral("files/adding-projects.feature:Adding a folder from the desktop*"),
+    QStringLiteral("files/adding-projects.feature:Adding an existing project from the desktop*"),
+    QStringLiteral("files/adding-projects.feature:A folder the environment refuses*"),
+    QStringLiteral("files/adding-projects.feature:Dropping a folder *"),
+    QStringLiteral("files/removing-and-listing-projects.feature:Removing *"),
+    QStringLiteral("files/removing-and-listing-projects.feature:Confirming removal*"),
+    QStringLiteral("files/removing-and-listing-projects.feature:Cancelling removal*"),
+    QStringLiteral("files/removing-and-listing-projects.feature:A removal the environment refuses*"),
 };
 
 QRegularExpression wildcard(const QString& glob) {

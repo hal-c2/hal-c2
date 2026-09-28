@@ -11,6 +11,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/ProjectFolderDrop.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Add project)
 #   apps/desktop-qt/src/ShellBridge.cpp (project.folder.open, localDirectoryPath)
+#   apps/desktop-qt/src/native/ProjectController.cpp (opens a local folder through projects.mutate)
 #   apps/tui/src/components/AddProjectOverlay.tsx
 #   apps/tui/src/components/ChatView.tsx (add project flow)
 #   apps/mobile/src/features/projects/AddProjectScreen.tsx
@@ -51,12 +52,20 @@ Feature: Adding projects
       Then the project "shop" is listed for "laptop"
       And a draft thread opens in "shop"
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: Adding a folder from the desktop and mobile apps registers it and starts a thread
       Given the folder "/home/sam/shop" exists on "laptop"
       When the user adds the local folder "/home/sam/shop"
       Then the project "shop" is listed for "laptop"
       And a draft thread opens in "shop"
+
+    @desktop @mobile @backlog-mobile
+    Scenario: A folder the environment refuses to add says why
+      Given the folder "/home/sam/shop" exists on "laptop"
+      And the environment refuses to change projects with "Disk is read-only"
+      When the user adds the local folder "/home/sam/shop"
+      Then the user sees an "error" toast "Could not open folder" saying "Disk is read-only"
+      And the shell keeps 0 drafts
 
     @node
     Scenario: A new project is titled after its folder
@@ -96,7 +105,7 @@ Feature: Adding projects
       Then no second project is created
       And the user is told the project was already added
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: Adding an existing project from the desktop and mobile apps opens its latest thread
       Given "shop" is already a project on "laptop" with an unsettled thread "Fix checkout"
       When the user adds the local folder of "shop" again
@@ -160,14 +169,14 @@ Feature: Adding projects
       When the user drags a local folder over the window
       Then the drop is refused
 
-    @backlog @desktop
+    @desktop
     Scenario: Dropping a folder adds it as a project and starts a thread
       Given the desktop app is connected to its own local environment
       When the user drops the folder "/home/sam/shop" on the window
       Then the project "shop" is listed for "laptop"
       And a draft thread opens in "shop"
 
-    @backlog @desktop
+    @desktop
     Scenario: Dropping a folder while the environment is disconnected reports a failure
       Given the local environment is disconnected
       When the user drops the folder "/home/sam/shop" on the window
