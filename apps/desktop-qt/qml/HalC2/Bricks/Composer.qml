@@ -71,21 +71,60 @@ Rectangle {
     implicitHeight: stack.implicitHeight + gutter
     color: canvas
 
-    // The page's model-picker keybinding lands here while this brick hosts
-    // the picker.
+    // The page's model-picker and toolbar keybindings land here while this
+    // brick hosts those controls.
     Connections {
         target: Shell
         function onActionRequested(action, payload) {
-            if (action !== "composer.modelPicker.toggle") {
-                return;
-            }
-            if (modelPicker.popup.visible) {
-                modelPicker.popup.close();
-            } else if (modelPicker.enabled) {
-                modelPicker.forceActiveFocus();
-                modelPicker.popup.open();
+            if (action === "composer.modelPicker.toggle") {
+                if (modelPicker.popup.visible) {
+                    modelPicker.popup.close();
+                } else if (modelPicker.enabled) {
+                    modelPicker.forceActiveFocus();
+                    modelPicker.popup.open();
+                }
+            } else if (action === "composer.control.open") {
+                composer.openControl(payload.command);
             }
         }
+    }
+
+    function openControl(command) {
+        if (command === "composer.branch") {
+            if (branchButton.visible && branchButton.enabled) branchPicker.open();
+            return;
+        }
+        const picker = {
+            "composer.effort": effortPicker,
+            "composer.mode": runtimeModePicker,
+            "composer.host": hostPicker,
+            "composer.workspace": envModePicker
+        }[command];
+        if (!picker || !picker.visible || !picker.enabled) return;
+        picker.forceActiveFocus();
+        picker.popup.open();
+    }
+
+    // Shift+Tab flips plan and build where the provider has a plan mode.
+    function toggleInteractionMode() {
+        if (!composer.ready || !composer.model.showInteractionModeToggle) return false;
+        Shell.dispatch("composer.interactionMode.set", {
+            mode: composer.model.interactionMode === "plan" ? "default" : "plan"
+        });
+        return true;
+    }
+
+    // Up on the editor's first line recalls the thread's earlier prompts and
+    // Down on its last steps back; the page keeps the history and answers with
+    // the recalled text, or ignores a draft the user typed.
+    function stepPromptHistory(direction) {
+        const caret = input.positionToRectangle(input.cursorPosition).y;
+        const edge = input.positionToRectangle(direction === "backward" ? 0 : input.length).y;
+        if (!composer.ready || caret !== edge) return;
+        composer.flushText();
+        Shell.dispatch("composer.history.step", {
+            direction: direction
+        });
     }
 
     function runtimeIcon(mode) {
@@ -453,6 +492,14 @@ Rectangle {
                                     }
                                 }
                             }
+                            if (event.key === Qt.Key_Backtab) {
+                                event.accepted = composer.toggleInteractionMode();
+                                return;
+                            }
+                            if ((event.key === Qt.Key_Up || event.key === Qt.Key_Down) && event.modifiers === Qt.NoModifier) {
+                                composer.stepPromptHistory(event.key === Qt.Key_Up ? "backward" : "forward");
+                                return;
+                            }
                             if (event.key !== Qt.Key_Return && event.key !== Qt.Key_Enter) {
                                 return;
                             }
@@ -510,6 +557,9 @@ Rectangle {
                     }
 
                     ShellComboBox {
+                        id: effortPicker
+                        objectName: "effortPicker"
+
                         visible: composer.effortOption !== null
                         model: composer.effortOption ? composer.effortOption.choices.map(choice => choice.label) : []
                         currentIndex: composer.effortOption ? composer.effortOption.choices.findIndex(choice => choice.id === composer.effortOption.value) : -1
@@ -524,6 +574,9 @@ Rectangle {
                     Separator {}
 
                     ShellComboBox {
+                        id: runtimeModePicker
+                        objectName: "runtimeModePicker"
+
                         iconName: composer.ready ? composer.runtimeIcon(composer.model.runtimeMode) : "lock"
                         enabled: composer.ready
                         model: composer.ready ? composer.model.runtimeModes.map(mode => mode.label) : []
@@ -692,6 +745,9 @@ Rectangle {
                 spacing: 8
 
                 ShellComboBox {
+                    id: hostPicker
+                    objectName: "hostPicker"
+
                     visible: contextStrip.wsReady && contextStrip.ws.environments.length > 1
                     implicitHeight: 24
                     leftPadding: 7 + iconSize + 6
@@ -813,6 +869,7 @@ Rectangle {
 
                     Popup {
                         id: branchPicker
+                        objectName: "branchPicker"
 
                         x: parent.width - width
                         y: -height - 4

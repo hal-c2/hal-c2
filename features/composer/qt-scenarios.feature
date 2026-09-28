@@ -20,6 +20,40 @@ Feature: Desktop shell scenarios: composer
     Then plan mode is requested
 
   @desktop
+  Scenario: Shift+Tab switches from build to plan
+    Given the composer is in build mode with keyboard focus
+    When the user presses Shift+Tab
+    Then plan mode is requested
+    And the composer keeps the keyboard
+
+  @desktop
+  Scenario: Up in an empty composer recalls the previous prompt
+    Given the composer is empty with keyboard focus
+    When the user presses Up
+    Then the page is asked for the previous prompt
+    When the page recalls "Run the tests"
+    Then the composer contains "Run the tests"
+
+  @desktop
+  Scenario: Up below the first line moves the caret
+    Given the composer holds two lines with the caret on the second
+    When the user presses Up
+    Then the page is not asked for the previous prompt
+
+  @desktop
+  Scenario Outline: The page's toolbar shortcuts open the native controls
+    When the page asks to open the <control>
+    Then the native <control> opens
+
+    Examples:
+      | control            |
+      | effort picker      |
+      | access mode picker |
+      | host picker        |
+      | workspace picker   |
+      | branch picker      |
+
+  @desktop
   Scenario: With a turn running and no draft, the primary action stops the turn
     Given a turn is running
     And the composer is empty

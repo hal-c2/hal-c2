@@ -52,6 +52,8 @@ export interface ShellComposerBridgeProps {
   readonly onCursorChange: (expandedCursor: number) => void;
   readonly onSelectSuggestion: (item: ComposerCommandItem) => void;
   readonly onDismissSuggestions: () => void;
+  /** Steps through the thread's earlier prompts; false when the draft is not the history's. */
+  readonly onStepPromptHistory: (direction: "backward" | "forward") => boolean;
   /** The drop pipeline (validation, limits, downscaling, uploads). */
   readonly onAttachFiles: (files: File[]) => void;
   readonly onAddTerminalContext: (selection: TerminalContextSelection) => void;
@@ -258,6 +260,9 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
       }
       case "composer.suggest.dismiss":
         props.onDismissSuggestions();
+        return;
+      case "composer.history.step":
+        props.onStepPromptHistory(action.direction);
         return;
       case "composer.attach": {
         const files: File[] = [];

@@ -6199,14 +6199,20 @@ export default function ChatView(props: ChatViewProps) {
       ) {
         event.preventDefault();
         event.stopPropagation();
-        if (!event.repeat) composerRef.current?.openControl(command);
+        if (event.repeat) return;
+        if (shellHostsChrome)
+          void window.halC2Shell?.dispatch("composer.control.open", { command });
+        else composerRef.current?.openControl(command);
         return;
       }
 
       if (command === "composer.branch") {
         event.preventDefault();
         event.stopPropagation();
-        if (!event.repeat) branchToolbarRef.current?.openBranchPicker();
+        if (event.repeat) return;
+        if (shellHostsChrome)
+          void window.halC2Shell?.dispatch("composer.control.open", { command });
+        else branchToolbarRef.current?.openBranchPicker();
         return;
       }
 
@@ -6292,6 +6298,7 @@ export default function ChatView(props: ChatViewProps) {
     toggleThreadPanel,
     toggleTerminalVisibility,
     composerRef,
+    shellHostsChrome,
   ]);
 
   // Paste-to-focus: the resting composer blurs on a click into the timeline,

@@ -501,10 +501,14 @@ atomic with the last edit), `composer.interrupt`, `composer.model.select
 {instanceId, model}`, `composer.option.set {id, value}`,
 `composer.model.favorite.toggle {instanceId, model}`,
 `composer.runtimeMode.set {mode}`, `composer.interactionMode.set {mode}`,
-`composer.suggest.select {id}`, `composer.suggest.dismiss`. The page's
+`composer.suggest.select {id}`, `composer.suggest.dismiss`,
+`composer.history.step {direction}` (Up/Down on the editor's edge; the page
+keeps the prompt history and answers with the recalled draft). The page's
 `modelPicker.toggle` command dispatches `composer.modelPicker.toggle` the
-other way, page → shell, since the HTML picker is hidden when hosted; the
-`Composer` brick listens on `Shell.actionRequested` and opens its own.
+other way, page → shell, since the HTML picker is hidden when hosted, and
+the toolbar commands (`composer.effort`, `.mode`, `.host`, `.workspace`,
+`.branch`) dispatch `composer.control.open {command}`; the `Composer` brick
+listens on `Shell.actionRequested` and opens its own control.
 
 Text edits and submissions carry an `edit: {clientId, revision}` stamp. The
 page publishes the latest applied stamp with the draft and retains it when

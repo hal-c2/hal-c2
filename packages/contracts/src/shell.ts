@@ -586,6 +586,17 @@ export const ShellAction = Schema.Union([
   }),
   /** Page → shell: the `modelPicker.toggle` command opens the native picker. */
   Schema.Struct({ type: Schema.Literal("composer.modelPicker.toggle") }),
+  /** Page → shell: a composer toolbar command opens the native control. */
+  Schema.Struct({
+    type: Schema.Literal("composer.control.open"),
+    command: Schema.Literals([
+      "composer.host",
+      "composer.effort",
+      "composer.mode",
+      "composer.workspace",
+      "composer.branch",
+    ]),
+  }),
   Schema.Struct({ type: Schema.Literal("draft.open"), draftId: Schema.String }),
   Schema.Struct({ type: Schema.Literal("thread.new"), projectKey: Schema.optional(Schema.String) }),
   Schema.Struct({
@@ -628,6 +639,11 @@ export const ShellAction = Schema.Union([
     text: Schema.String,
   }),
   Schema.Struct({ type: Schema.Literal("composer.suggest.dismiss") }),
+  /** Up/Down on the editor's edge: recall an earlier prompt of this thread, or step back. */
+  Schema.Struct({
+    type: Schema.Literal("composer.history.step"),
+    direction: Schema.Literals(["backward", "forward"]),
+  }),
   // `text` rides along so the send is atomic with the latest edit. `alternate`
   // (mod+Enter during a turn) does the opposite of the follow-up setting;
   // `background` starts a new thread without opening it.

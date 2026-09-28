@@ -152,16 +152,7 @@ Feature: Desktop shell gaps
       Then the third thread opens
 
     @backlog @desktop
-    Scenario Outline: Composer toolbar shortcuts work in the native composer
+    Scenario: The previous worktree shortcut works in the native composer
       Given the native composer has keyboard focus
-      When the user presses <key>
-      Then <outcome>
-
-      Examples:
-        | key         | outcome                                        |
-        | mod+shift+e | the native effort picker opens                 |
-        | mod+shift+a | the native access mode picker opens            |
-        | mod+shift+h | the native host picker opens                   |
-        | mod+shift+x | the native workspace picker opens              |
-        | mod+shift+g | the native branch picker opens                 |
-        | mod+shift+l | the composer switches to the previous worktree |
+      When the user presses mod+shift+l
+      Then the composer switches to the previous worktree

@@ -4254,11 +4254,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [composerDraftTarget, promptRef, setComposerDraftPrompt, setComposerTrigger],
   );
 
-  const navigatePromptHistory = useCallback(
-    (direction: "backward" | "forward", event: KeyboardEvent): boolean => {
-      if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
-        return false;
-      }
+  // One step through the thread's prompts, when the composer holds nothing
+  // but text it can replace. The caller has checked the caret is on the edge.
+  const stepPromptHistory = useCallback(
+    (direction: "backward" | "forward"): boolean => {
       if (isComposerApprovalState || pendingUserInputs.length > 0) return false;
       // A composer holding an image, file, picked element, preview
       // annotation, or review comment is not empty. Recalling text into it
@@ -4273,13 +4272,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ) {
         return false;
       }
-      // A typed draft with no active recall can never step, so skip the
-      // layout read and the entry build for that common case.
+      // A typed draft with no active recall never steps.
       if (promptHistoryPositionRef.current === null && promptRef.current.length > 0) {
-        return false;
-      }
-      const editor = composerEditorRef.current;
-      if (!editor?.isCaretOnVisualEdge(direction === "backward" ? "start" : "end")) {
         return false;
       }
       const step = stepComposerPromptHistory({
@@ -4304,6 +4298,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptRef,
       replacePromptFromHistory,
     ],
+  );
+
+  const navigatePromptHistory = useCallback(
+    (direction: "backward" | "forward", event: KeyboardEvent): boolean => {
+      if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
+        return false;
+      }
+      // A typed draft with no active recall can never step, so skip the
+      // layout read for that common case.
+      if (promptHistoryPositionRef.current === null && promptRef.current.length > 0) {
+        return false;
+      }
+      const editor = composerEditorRef.current;
+      if (!editor?.isCaretOnVisualEdge(direction === "backward" ? "start" : "end")) {
+        return false;
+      }
+      return stepPromptHistory(direction);
+    },
+    [promptRef, stepPromptHistory],
   );
 
   // ------------------------------------------------------------------
@@ -7402,6 +7415,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 onCursorChange={onShellCursorChange}
                 onSelectSuggestion={onSelectComposerItem}
                 onDismissSuggestions={dismissShellComposerTrigger}
+                onStepPromptHistory={stepPromptHistory}
                 onAttachFiles={(files) => {
                   void addComposerAttachments(files);
                 }}

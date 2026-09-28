@@ -23,6 +23,7 @@ const defaults = {
   suggestionsEmptyText: null,
   onSelectSuggestion: () => {},
   onDismissSuggestions: () => {},
+  onStepPromptHistory: () => false,
   onAttachFiles: () => {},
   onAddTerminalContext: () => {},
   attachments: [],

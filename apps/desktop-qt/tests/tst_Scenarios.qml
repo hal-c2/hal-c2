@@ -236,6 +236,88 @@ Item {
             compare(lastDispatch().payload.mode, "plan");
         }
 
+        function test_given_build_mode_when_shift_tab_is_pressed_then_plan_mode_is_requested() {
+            const composer = createComposer({
+                showInteractionModeToggle: true,
+                interactionMode: "default"
+            });
+            const input = findChild(composer, "input");
+            input.forceActiveFocus();
+            keyClick(Qt.Key_Backtab, Qt.ShiftModifier);
+            compare(lastDispatch().action, "composer.interactionMode.set");
+            compare(lastDispatch().payload.mode, "plan");
+            verify(input.activeFocus, "the editor keeps the keyboard");
+        }
+
+        function test_given_an_empty_composer_when_up_is_pressed_then_the_previous_prompt_is_recalled() {
+            const composer = createComposer({});
+            const input = findChild(composer, "input");
+            input.forceActiveFocus();
+            keyClick(Qt.Key_Up);
+            compare(lastDispatch().action, "composer.history.step");
+            compare(lastDispatch().payload.direction, "backward");
+            Shell.publishComposerText("Run the tests", 13);
+            compare(input.text, "Run the tests");
+        }
+
+        function test_given_a_second_line_when_up_is_pressed_then_the_caret_moves_instead() {
+            const composer = createComposer({});
+            const input = findChild(composer, "input");
+            input.forceActiveFocus();
+            input.text = "first\nsecond";
+            input.cursorPosition = input.length;
+            keyClick(Qt.Key_Up);
+            verify(!Shell.dispatchedActions.some(entry => entry.action === "composer.history.step"));
+        }
+
+        function test_given_the_page_owns_a_toolbar_shortcut_when_it_opens_a_control_then_the_native_control_opens_data() {
+            return [
+                { tag: "effort", command: "composer.effort", picker: "effortPicker" },
+                { tag: "access mode", command: "composer.mode", picker: "runtimeModePicker" },
+                { tag: "host", command: "composer.host", picker: "hostPicker" },
+                { tag: "workspace", command: "composer.workspace", picker: "envModePicker" },
+                { tag: "branch", command: "composer.branch", picker: "branchPicker" }
+            ];
+        }
+
+        function test_given_the_page_owns_a_toolbar_shortcut_when_it_opens_a_control_then_the_native_control_opens(data) {
+            const composer = createComposer({
+                options: [{
+                    type: "select",
+                    id: "effort",
+                    label: "Effort",
+                    value: "high",
+                    choices: [{ id: "high", label: "High" }, { id: "low", label: "Low" }]
+                }],
+                runtimeModes: [{ value: "approval-required", label: "Ask" }, { value: "auto", label: "Auto" }]
+            });
+            Shell.state = Object.assign({}, Shell.state, {
+                workspace: {
+                    environments: [
+                        { environmentId: "here", key: "here", label: "This machine" },
+                        { environmentId: "there", key: "there", label: "Build box" }
+                    ],
+                    activeEnvironmentId: "here",
+                    environmentChangeable: true,
+                    envMode: "local",
+                    envModeLabel: "Current checkout",
+                    envModeChangeable: true,
+                    git: null,
+                    canOpenPullRequest: false,
+                    branch: "main",
+                    branchChangeable: true,
+                    branchSwitchPending: false,
+                    branches: [],
+                    branchesTotal: 0,
+                    branchesLoading: false
+                }
+            });
+            const picker = findChild(composer, data.picker);
+            verify(!!picker, data.picker);
+            Shell.actionRequested("composer.control.open", { command: data.command });
+            tryCompare(picker.popup ?? picker, "visible", true);
+        }
+
         function test_given_a_running_turn_and_an_empty_draft_when_the_primary_button_is_clicked_then_the_turn_is_interrupted() {
             const composer = createComposer({
                 isRunning: true,

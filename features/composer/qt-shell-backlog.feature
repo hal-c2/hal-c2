@@ -1,5 +1,5 @@
 # Sources:
-#   apps/desktop-qt/parity/features.backlog.test.ts (composer-keyboard-parity, screen-snap-shot)
+#   apps/desktop-qt/parity/features.backlog.test.ts (screen-snap-shot)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml
 #   docs/user/keybindings.md (send shortcut, follow-up behaviour)
 #   docs/user/snap-shot.md
@@ -8,27 +8,6 @@
 Feature: Desktop shell gaps: composer
   Composer behaviour the web app and the Electron desktop app have that the native desktop
   composer does not yet deliver.
-
-  Rule: Keyboard parity
-
-    @backlog @desktop
-    Scenario: Shift+Tab switches between plan and build
-      Given the composer is in build mode with keyboard focus
-      When the user presses Shift+Tab
-      Then the composer is in plan mode
-
-    @backlog @desktop
-    Scenario: Up in an empty composer recalls the previous prompt
-      Given the user sent "Run the tests" earlier in this thread
-      And the composer is empty with keyboard focus
-      When the user presses Up
-      Then the composer contains "Run the tests"
-
-    @backlog @desktop
-    Scenario: mod+shift+E opens the effort picker
-      Given the composer has keyboard focus
-      When the user presses mod+shift+E
-      Then the effort picker opens
 
   Rule: Snap Shot
 
