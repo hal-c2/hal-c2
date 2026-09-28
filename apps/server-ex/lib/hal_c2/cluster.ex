@@ -21,7 +21,8 @@ defmodule HalC2.Cluster do
   (`admit/1`), answering with every member. Members exchange the list whenever they
   connect, entry by entry by timestamp (`merge/3`), so a machine that joins one member
   is admitted by all of them, and a removal (`remove/1`) reaches members that were
-  away.
+  away. Timestamps come from `stamp/1`, so they order changes even when the members'
+  clocks disagree.
   """
 
   use GenServer
@@ -234,6 +235,22 @@ defmodule HalC2.Cluster do
 
   defp sanitize(_entry), do: nil
 
+  @doc """
+  The time to record a change to `members` at: now, or just after the latest time the
+  table holds when a member's clock ran ahead. A removal made after seeing an admission
+  then always outranks it, however far apart the members' clocks are.
+  """
+  def stamp(members) do
+    seen =
+      for {_id, entry} <- members,
+          time <- [entry["admittedAt"], entry["removedAt"], entry["updatedAt"]],
+          is_integer(time),
+          reduce: 0,
+          do: (latest -> max(latest, time))
+
+    max(System.os_time(:millisecond), seen + 1)
+  end
+
   @doc "Whether a member table entry is a current member."
   def member?(%{"admittedAt" => admitted, "removedAt" => removed}),
     do: removed == nil or admitted > removed
@@ -348,7 +365,7 @@ defmodule HalC2.Cluster do
     with %{"id" => id, "fingerprint" => fp} when is_binary(id) and is_binary(fp) <- entry,
          true <- id != state.id and Regex.match?(~r/^[0-9a-z][0-9a-z-]{0,62}$/, id),
          true <- Regex.match?(~r/^[0-9a-f]{64}$/, fp) do
-      now = System.os_time(:millisecond)
+      now = stamp(state.members)
 
       admitted = %{
         "fingerprint" => fp,
@@ -394,7 +411,7 @@ defmodule HalC2.Cluster do
         {:reply, {:error, :not_a_member}, state}
 
       true ->
-        now = System.os_time(:millisecond)
+        now = stamp(state.members)
         removed = %{entry | "removedAt" => now, "updatedAt" => now}
         {:reply, :ok, merge_in(state, %{id => removed})}
     end
@@ -452,7 +469,7 @@ defmodule HalC2.Cluster do
 
   # This machine's entry, updated only when something in it changed, so gossip settles.
   defp refresh_own(state) do
-    now = System.os_time(:millisecond)
+    now = stamp(state.members)
     current = state.members[state.id]
 
     fresh = %{

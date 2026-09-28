@@ -30,6 +30,23 @@ defmodule HalC2.ClusterMembersTest do
     assert Cluster.member?(readmitted["b"])
   end
 
+  test "a removal after an admission outranks it when the admitting clock ran ahead" do
+    ahead = System.os_time(:millisecond) + :timer.hours(1)
+    admitted = %{"b" => entry(admittedAt: ahead, updatedAt: ahead)}
+
+    removed_at = Cluster.stamp(admitted)
+    assert removed_at > ahead
+    removal = %{"b" => entry(admittedAt: ahead, removedAt: removed_at, updatedAt: removed_at)}
+
+    refute Cluster.member?(Cluster.merge(admitted, removal, "a")["b"])
+
+    # Admitting it again, after seeing the removal, outranks that in turn.
+    readmitted_at = Cluster.stamp(removal)
+    assert readmitted_at > removed_at
+    readmission = %{"b" => entry(admittedAt: readmitted_at, updatedAt: readmitted_at)}
+    assert Cluster.member?(Cluster.merge(removal, readmission, "a")["b"])
+  end
+
   test "the entry updated last carries the label and addresses" do
     ours = %{"b" => entry(updatedAt: 3)}
     theirs = %{"b" => entry(label: "laptop", addresses: ["10.0.0.9:4370"], updatedAt: 4)}
