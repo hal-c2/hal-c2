@@ -128,10 +128,10 @@ private:
 
 // The terminal drawer, native: which thread's terminals are shown, whether the
 // drawer is open and how tall, the tabs, and the RPCs behind them. The thread
-// (drafts too), its project root, worktree and scripts are what the page shows
-// in its header (`workspace`); the terminals come from the node. They are
-// attached the first time the drawer opens on that thread and stay attached
-// while the thread is on screen, so hiding the drawer keeps their output.
+// (drafts too), its project root, worktree and scripts are WorkspaceController's
+// place; the terminals come from the node. They are attached the first time the
+// drawer opens on that thread and stay attached while the thread is on screen,
+// so hiding the drawer keeps their output.
 class TerminalController : public QObject, public NativeController {
   Q_OBJECT
   Q_PROPERTY(bool available READ available NOTIFY changed)
@@ -155,6 +155,9 @@ public:
   int height() const { return m_height; }
   QString activeTerminalId() const;
   TerminalTabs* tabs() { return &m_tabs; }
+  // As the page's runProjectScript: in the active terminal, or a new one when
+  // that one is busy. False without a place or such a script.
+  bool runScript(const QString& scriptId);
 
 signals:
   void changed();
@@ -175,7 +178,7 @@ private:
     QSet<QString> closing;
   };
 
-  std::optional<TerminalPlace> placeFor(const QVariantMap& workspace) const;
+  std::optional<TerminalPlace> placeOfWorkspace() const;
   void refresh();
   void syncTabs();
   QStringList terminalIds() const;
@@ -184,7 +187,6 @@ private:
   bool setOpen(bool open);
   void openTerminal(const QString& terminalId);
   void closeTerminal(const QString& terminalId);
-  void runScript(const QString& scriptId);
   QString nextTerminalId() const;
   TerminalSession* session(const QString& terminalId) const;
   void toast(const QString& title, const QString& description);

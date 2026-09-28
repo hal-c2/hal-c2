@@ -138,6 +138,7 @@ QJsonArray FakeNode::links() const {
 }
 
 void FakeNode::join(const QString& peer, const QString& peerEnvironment) {
+  peers.insert(peerEnvironment, peer);
   send({
       {QStringLiteral("t"), QStringLiteral("shell.environment")},
       {QStringLiteral("id"), m_shellSubscription},
@@ -148,12 +149,18 @@ void FakeNode::join(const QString& peer, const QString& peerEnvironment) {
 }
 
 void FakeNode::sendRow(const QString& id, const QJsonObject& row) {
+  QJsonArray rows;
+  rows.append(QJsonArray{id, QStringLiteral("thread"), row});
+  sendRows(name, rows);
+}
+
+void FakeNode::sendRows(const QString& node, const QJsonArray& rows) {
   if (!m_socket || m_shellSubscription < 0) return;
   send({
       {QStringLiteral("t"), QStringLiteral("shell.rows")},
       {QStringLiteral("id"), m_shellSubscription},
-      {QStringLiteral("node"), name},
-      {QStringLiteral("rows"), QJsonArray{QJsonArray{id, QStringLiteral("thread"), row}}},
+      {QStringLiteral("node"), node},
+      {QStringLiteral("rows"), rows},
   });
 }
 
@@ -212,6 +219,7 @@ void FakeNode::dispatchCommand(const Rpc& rpc) {
     if (known) {
       refuse(rpc, refusal);
     } else {
+      for (const auto& effect : std::as_const(effects)) effect(rpc.payload);
       reply(rpc, QJsonObject{{QStringLiteral("sequence"), commands.size()}});
     }
   };

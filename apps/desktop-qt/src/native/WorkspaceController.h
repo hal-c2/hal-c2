@@ -1,0 +1,158 @@
+#pragma once
+
+#include <QHash>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QObject>
+#include <QString>
+#include <QVariantMap>
+
+#include <functional>
+#include <optional>
+
+#include "NativeController.h"
+
+class NodeClient;
+class ShellBridge;
+class ShellStore;
+
+// The header and the composer's context strip for the route's thread (a
+// draft too), from the node: publishes `workspace` in the page's
+// ShellWorkspaceState shape (packages/contracts shell.ts) less the terminal
+// fields, which the Terminals singleton owns. The thread and its project are
+// ShellStore rows, the checkout's git status the node's `vcs` shape, the refs
+// `vcs.listRefs`, the editors each environment's `config`.
+//
+// It takes every `workspace.*` action but the three that still open page UI:
+// `workspace.newThread`, `workspace.titleMenu` (the thread's action menu) and
+// `workspace.openPullRequest` go on to the page.
+//
+// A draft's checkout (mode, start from origin, branch, worktree, the machine
+// it runs on) lives here, keyed by draft id. While the page still sends a
+// draft's first message it is told each change: the checkout actions go on to
+// it after they land here, and a branch picked for a draft as
+// `workspace.checkout.follow`.
+class WorkspaceController : public QObject, public NativeController {
+  Q_OBJECT
+
+public:
+  // Which thread a draft is, and where: DraftController's answer for an id.
+  struct DraftPlace {
+    QString environmentId;
+    QString projectId;
+    QString threadId;
+  };
+  // A new thread's checkout, or the mode picked for a server thread that has
+  // not started yet.
+  struct Checkout {
+    QString envMode = QStringLiteral("local");
+    bool startFromOrigin = false;
+    std::optional<QString> branch;
+    std::optional<QString> worktreePath;
+    // "Run on" another machine's checkout; empty keeps the draft's own.
+    QString environmentId;
+    QString projectId;
+  };
+  // Where the route's thread is and what its terminals start in.
+  struct Place {
+    QString environmentId;
+    QString threadId;
+    QString projectId;
+    QString draftId;  // empty for a server thread
+    QString root;  // empty while the node does not know the project
+    QString worktreePath;  // empty without a worktree
+    QJsonArray scripts;
+
+    QString threadKey() const { return environmentId + QLatin1Char(':') + threadId; }
+    QString cwd() const { return worktreePath.isEmpty() ? root : worktreePath; }
+  };
+
+  WorkspaceController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+  ~WorkspaceController() override;
+
+  void activate() override;
+  bool handle(const QString& action, const QVariant& payload) override;
+
+  const std::optional<Place>& place() const { return m_place; }
+  // How drafts resolve; without one a draft route has no workspace.
+  void setDraftResolver(std::function<std::optional<DraftPlace>(const QString& draftId)> resolve);
+  // A draft's checkout as the user left it (defaults for one never touched).
+  Checkout checkout(const QString& draftId) const { return m_checkouts.value(draftId); }
+  // The draft is gone (sent or discarded).
+  void forgetDraft(const QString& draftId) { m_checkouts.remove(draftId); }
+  // Resolves the route again (a draft moved, say).
+  void refresh();
+
+signals:
+  // The route's thread, its root or worktree changed.
+  void placeChanged();
+
+private:
+  struct Git {
+    QJsonObject local;
+    QJsonObject remote;  // empty while unknown
+  };
+
+  std::optional<Place> resolve() const;
+  void follow(const QString& cwd);
+  void watchConfig(const QString& environmentId);
+  void loadRefs();
+  void publish();
+  QVariantMap build() const;
+  QJsonObject threadRow() const;
+  bool locked() const;
+  QString envMode() const;
+  bool envModeChangeable() const;
+  QString currentBranch() const;
+  QJsonArray editors() const;
+  QString preferredEditor(const QJsonArray& editors) const;
+  QVariantList environmentChoices() const;
+
+  void rename(const QString& title);
+  void openInEditor(const QString& editorId);
+  void runScript(const QString& scriptId);
+  void setEnvMode(const QString& mode);
+  void setEnvironment(const QString& key);
+  void selectBranch(const QString& name);
+  void createBranch(const QString& name);
+  void setThreadBranch(const std::optional<QString>& branch, const std::optional<QString>& worktreePath);
+  void updateCheckout(const std::function<void(Checkout&)>& edit);
+
+  ShellBridge* m_bridge;
+  NodeClient* m_client;
+  ShellStore* m_store;
+  bool m_active = false;
+  std::function<std::optional<DraftPlace>(const QString&)> m_resolveDraft;
+  std::optional<Place> m_place;
+  std::optional<QVariantMap> m_published;
+
+  QHash<QString, Checkout> m_checkouts;
+  // Picked before an empty server thread's first message, by thread key.
+  QHash<QString, Checkout> m_pending;
+  // The branch a switch is taking the thread to, until the checkout says so.
+  std::optional<QString> m_optimisticBranch;
+  bool m_switching = false;
+
+  // The checkout's git status (`vcs` shape).
+  int m_vcs = 0;
+  QString m_vcsKey;
+  std::optional<Git> m_git;
+  // Editors of environments other than the node's own (`config` shape); the
+  // node's own come with SettingsController.
+  int m_config = 0;
+  QString m_configEnvironment;
+  QJsonArray m_configEditors;
+
+  // The ref list: loaded when the picker opens or its search changes.
+  QString m_query;
+  QString m_refsCwd;
+  QJsonArray m_refs;
+  int m_refsTotal = 0;
+  bool m_refsLoading = false;
+  quint64 m_refsGeneration = 0;
+
+  // In memory until the shell has somewhere of its own to keep them.
+  QHash<QString, QString> m_lastScript;  // by project ("env:projectId")
+  int m_renameRequestId = 0;
+  QString m_renameWanted;  // a thread asked to rename before it was shown
+};

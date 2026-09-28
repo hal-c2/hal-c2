@@ -1,6 +1,7 @@
 // The legacy page: what it publishes to the shell (grouping, the route, the
 // workspace) and what the shell asks of it (navigation).
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QVariantList>
 
@@ -38,21 +39,32 @@ const Steps steps([] {
     world.sidebarInput.insert(QStringLiteral("activeThreadKey"), c[0]);
     world.publishSidebarInput();
     world.pageOpens({{QStringLiteral("kind"), QStringLiteral("thread")}, {QStringLiteral("threadKey"), c[0]}});
-    const QJsonObject thread = world.node.threads.value(c[0].mid(c[0].indexOf(QLatin1Char(':')) + 1));
-    world.publishWorkspace(c[0], world.node.projects.value(thread.value(QLatin1String("projectId")).toString()),
-                           thread.value(QLatin1String("worktreePath")).toString(), false);
   });
+  // A thread of another environment: a cluster member's rows carry it; the
+  // shell has no rows for any other.
   step(QStringLiteral("the page shows %1 with its project at %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sidebarInput.insert(QStringLiteral("activeThreadKey"), c[0]);
     world.publishSidebarInput();
+    const qsizetype colon = c[0].indexOf(QLatin1Char(':'));
+    const QString peer = world.node.peers.value(c[0].left(colon));
+    if (!peer.isEmpty()) {
+      const QString thread = c[0].mid(colon + 1);
+      const QString project = QStringLiteral("project-") + thread;
+      world.node.sendRows(peer, {
+          QJsonArray{project, QStringLiteral("project"),
+                     QJsonObject{{QStringLiteral("id"), project}, {QStringLiteral("workspaceRoot"), c[1]}, {QStringLiteral("scripts"), QJsonArray()}}},
+          QJsonArray{thread, QStringLiteral("thread"),
+                     QJsonObject{{QStringLiteral("id"), thread}, {QStringLiteral("projectId"), project}, {QStringLiteral("title"), thread}}},
+      });
+      world.sync();
+    }
     world.pageOpens({{QStringLiteral("kind"), QStringLiteral("thread")}, {QStringLiteral("threadKey"), c[0]}});
-    world.publishWorkspace(c[0], {{QStringLiteral("workspaceRoot"), c[1]}}, QString(), false);
   });
   step(QStringLiteral("the page shows the draft %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sidebarInput.insert(QStringLiteral("activeThreadKey"), QVariant());
     world.publishSidebarInput();
+    world.drafts.insert(c[0], {world.node.environmentId, c[1], c[0]});
     world.pageOpens({{QStringLiteral("kind"), QStringLiteral("draft")}, {QStringLiteral("draftId"), c[0]}});
-    world.publishWorkspace(world.node.environmentId + QLatin1Char(':') + c[0], world.node.projects.value(c[1]), QString(), true);
   });
   step(QStringLiteral("the page's sidebar is scoped to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sidebarInput.insert(QStringLiteral("scopeProjectKey"), c[0]);

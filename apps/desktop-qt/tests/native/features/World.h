@@ -16,6 +16,7 @@
 #include "NativeShell.h"
 #include "ShellBridge.h"
 #include "ThemeStore.h"
+#include "WorkspaceController.h"
 
 struct PageAction {
   QString type;
@@ -57,9 +58,8 @@ public:
   QDateTime now() const { return m_now; }
 
   void publishSidebarInput() { m_bridge->publish(QStringLiteral("sidebarInput"), sidebarInput); }
-  // What the page's header shows for a thread (ShellWorkspaceState), from the
-  // node's project; a thread whose project the node does not know has none.
-  void publishWorkspace(const QString& threadKey, const QJsonObject& project, const QString& worktreePath, bool draft);
+  // The drafts the shell knows, as DraftController answers WorkspaceController.
+  QHash<QString, WorkspaceController::DraftPlace> drafts;
   void publishComposer() { m_bridge->publish(QStringLiteral("composer"), composer); }
   // The page reports that its own navigation took it to `route` (`route.open`).
   void pageOpens(const QVariantMap& route, bool replace = false);

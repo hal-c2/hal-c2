@@ -28,6 +28,12 @@ void World::start() {
   m_native->sidebar()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
   m_native->controller<NavigationController>()->setStorePath(m_home.filePath(QStringLiteral("state/shell-route.json")));
   m_native->controller<SettingsController>()->setDevicePath(QDir(configDir()).filePath(QStringLiteral("preferences.json")));
+  m_native->controller<WorkspaceController>()->setDraftResolver(
+      [this](const QString& id) -> std::optional<WorkspaceController::DraftPlace> {
+        const auto draft = drafts.constFind(id);
+        if (draft == drafts.cend()) return std::nullopt;
+        return *draft;
+      });
   m_theme = std::make_unique<ThemeStore>(configDir());
   m_theme->applyBaseTheme(state(QStringLiteral("theme")));
   QObject::connect(m_bridge.get(), &ShellBridge::stateEntryChanged, m_theme.get(), [this](const QString& key, const QVariant& value) {
@@ -75,20 +81,6 @@ void World::setTime(const QDateTime& time) {
   m_native->controller<ToastController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ThreadStore>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ToastController>()->expire();
-}
-
-void World::publishWorkspace(const QString& threadKey, const QJsonObject& project, const QString& worktreePath,
-                             bool draft) {
-  const bool known = !project.isEmpty();
-  m_bridge->publish(QStringLiteral("workspace"),
-                   QVariantMap{
-                       {QStringLiteral("threadKey"), threadKey},
-                       {QStringLiteral("isDraft"), draft},
-                       {QStringLiteral("projectRoot"), known ? project.value(QLatin1String("workspaceRoot")).toVariant() : QVariant()},
-                       {QStringLiteral("worktreePath"), worktreePath.isEmpty() ? QVariant() : QVariant(worktreePath)},
-                       {QStringLiteral("scripts"), project.value(QLatin1String("scripts")).toArray().toVariantList()},
-                       {QStringLiteral("terminalAvailable"), known},
-                   });
 }
 
 void World::connect(const QString& token) {
