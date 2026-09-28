@@ -74,13 +74,6 @@ ThemeStore::ThemeStore(const QString& configDir, QObject* parent)
     watch();
     scheduleReload();
   });
-  connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this,
-          [this](Qt::ColorScheme scheme) {
-    if (!m_followsSystemAppearance) return;
-    const QString previous = m_appearance;
-    resolveColors(scheme);
-    if (m_appearance != previous) emit themeChanged();
-  });
   applyDefaults();
   watch();
   reload();
@@ -104,7 +97,7 @@ void ThemeStore::applyDefaults() {
   m_id.clear();
   m_name.clear();
   m_appearance.clear();
-  m_baseColors = {};
+  m_fileColors = {};
   m_variants = {};
   m_followsSystemAppearance = false;
   m_colors.clear();
@@ -158,9 +151,9 @@ void ThemeStore::reload() {
                      ? QStringLiteral("light")
                      : QStringLiteral("dark");
 
-  m_baseColors = root.value(QStringLiteral("colors")).toObject();
+  m_fileColors = root.value(QStringLiteral("colors")).toObject();
   m_variants = root.value(QStringLiteral("variants")).toObject();
-  // Shell-only extras; the page keeps its own font and radius preferences.
+  // Shell-only extras over the base theme's radius and fonts.
   m_radius = root.value(QStringLiteral("radius")).toString();
   const QJsonObject fonts = root.value(QStringLiteral("fonts")).toObject();
   m_fontUi = fonts.value(QStringLiteral("ui")).toString();
@@ -168,7 +161,7 @@ void ThemeStore::reload() {
 
   const QJsonObject window = root.value(QStringLiteral("window")).toObject();
   m_followsSystemAppearance = window.value(QStringLiteral("followSystemAppearance")).toBool(false);
-  resolveColors(QGuiApplication::styleHints()->colorScheme());
+  resolveColors();
   m_windowOpacity = qBound(0.1, window.value(QStringLiteral("opacity")).toDouble(1.0), 1.0);
   m_windowTransparent = window.value(QStringLiteral("transparent")).toBool(false);
   m_windowBlur = window.value(QStringLiteral("blur")).toBool(false);
@@ -178,13 +171,17 @@ void ThemeStore::reload() {
   emit themeChanged();
 }
 
-void ThemeStore::resolveColors(Qt::ColorScheme colorScheme) {
-  if (m_followsSystemAppearance && colorScheme != Qt::ColorScheme::Unknown) {
-    m_appearance = colorScheme == Qt::ColorScheme::Light ? QStringLiteral("light")
-                                                       : QStringLiteral("dark");
+void ThemeStore::resolveColors() {
+  // Following, the file's variants track the app's appearance: the system's
+  // unless the user pinned one (ThemeController).
+  if (m_followsSystemAppearance) {
+    const bool dark = m_baseAppearance.isEmpty()
+                          ? QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark
+                          : m_baseAppearance == QStringLiteral("dark");
+    m_appearance = dark ? QStringLiteral("dark") : QStringLiteral("light");
   }
   m_colors.clear();
-  mergeColors(m_colors, m_baseColors);
+  mergeColors(m_colors, m_fileColors);
   mergeColors(m_colors, m_variants.value(m_appearance).toObject());
 }
 
@@ -196,13 +193,17 @@ QString ThemeStore::injectionScript() const {
   // and again on theme changes. Once the page claims the bootstrap mailbox,
   // subsequent injections deliver the override to its theme module. Older
   // pages retain the observer fallback. An empty theme removes the override.
+  // The page draws the base theme with theme.json's colours over it; with
+  // neither, the override is removed and the page draws its own.
+  QVariantMap colors = m_baseColors;
+  colors.insert(m_colors);
   QJsonObject vars;
-  for (auto it = m_colors.cbegin(); it != m_colors.cend(); ++it) {
+  for (auto it = colors.cbegin(); it != colors.cend(); ++it) {
     vars.insert(cssVariableForRole(it.key()), it.value().toString());
   }
   // The boot splash in index.html paints `--boot-*` until React mounts.
   const auto boot = [&](const char* variable, const char* role) {
-    const QString value = m_colors.value(QLatin1String(role)).toString();
+    const QString value = colors.value(QLatin1String(role)).toString();
     if (!value.isEmpty()) {
       vars.insert(QLatin1String(variable), value);
     }
@@ -211,8 +212,8 @@ QString ThemeStore::injectionScript() const {
   boot("--boot-foreground", "text");
   boot("--boot-accent", "accent");
   const QJsonObject theme{
-      {QStringLiteral("id"), m_loaded ? m_id : QString()},
-      {QStringLiteral("dark"), m_appearance != QStringLiteral("light")},
+      {QStringLiteral("id"), m_loaded ? m_id : m_baseTheme.value(QStringLiteral("id")).toString()},
+      {QStringLiteral("dark"), appearance() != QStringLiteral("light")},
       {QStringLiteral("vars"), vars},
   };
   return QStringLiteral(
@@ -311,7 +312,7 @@ QColor parseCssColor(const QString& value) {
 }  // namespace
 
 QColor ThemeStore::color(const QString& role, const QColor& fallback) const {
-  for (const QVariantMap* source : {&m_colors, &m_pageColors}) {
+  for (const QVariantMap* source : {&m_colors, &m_baseColors}) {
     const auto value = source->value(role).toString();
     if (value.isEmpty()) {
       continue;
@@ -373,26 +374,28 @@ qreal ThemeStore::radius() const {
       return parsed;
     }
   }
-  return m_pageRadius;
+  return m_baseRadius;
 }
 
 QString ThemeStore::fontUi() const {
-  return m_fontUi.isEmpty() ? firstFontFamily(m_pageFontUi) : firstFontFamily(m_fontUi);
+  return m_fontUi.isEmpty() ? firstFontFamily(m_baseFontUi) : firstFontFamily(m_fontUi);
 }
 
 QString ThemeStore::fontMono() const {
-  return m_fontMono.isEmpty() ? firstFontFamily(m_pageFontMono) : firstFontFamily(m_fontMono);
+  return m_fontMono.isEmpty() ? firstFontFamily(m_baseFontMono) : firstFontFamily(m_fontMono);
 }
 
-void ThemeStore::applyPageTheme(const QVariant& theme) {
+void ThemeStore::applyBaseTheme(const QVariant& theme) {
   const QVariantMap map = theme.toMap();
-  if (map.isEmpty()) {
+  if (map.isEmpty() || map == m_baseTheme) {
     return;
   }
-  m_pageColors = map.value(QStringLiteral("colors")).toMap();
-  m_pageAppearance = map.value(QStringLiteral("appearance")).toString();
-  m_pageRadius = map.value(QStringLiteral("radius"), 8).toDouble();
-  m_pageFontUi = map.value(QStringLiteral("fontUi")).toString();
-  m_pageFontMono = map.value(QStringLiteral("fontMono")).toString();
+  m_baseTheme = map;
+  m_baseColors = map.value(QStringLiteral("colors")).toMap();
+  m_baseAppearance = map.value(QStringLiteral("appearance")).toString();
+  m_baseRadius = map.value(QStringLiteral("radius"), 8).toDouble();
+  m_baseFontUi = map.value(QStringLiteral("fontUi")).toString();
+  m_baseFontMono = map.value(QStringLiteral("fontMono")).toString();
+  if (m_loaded) resolveColors();
   emit themeChanged();
 }
