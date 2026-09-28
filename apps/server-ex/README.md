@@ -95,7 +95,7 @@ cluster's CA.
 ## Link a node you do not cluster with
 
 ```sh
-mix hal_c2.link "http://beast:3780/pair#token=..."   # a pairing URL from the other node's `mix hal_c2.pair`
+mix hal_c2.link "https://beast.tailnet.ts.net/?token=..."  # from `mix hal_c2.pair --tailscale` on the other node
 mix hal_c2.link                                      # list links and whether they are online
 mix hal_c2.link --remove ENVIRONMENT_ID
 ```
