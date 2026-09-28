@@ -23,9 +23,9 @@ Feature: Protocol 3 wire parity
     And a protocol 3 client connected to it
 
   @node
-  Scenario: The node greets every socket with its protocol version and name
+  Scenario: The node greets every socket with its protocol version, name and environment
     When the client opens its socket
-    Then the first frame is a hello carrying protocol 3 and the node's name
+    Then the first frame is a hello carrying protocol 3, the node's name and its environment
 
   @node
   Scenario Outline: The node answers a <frame> frame
@@ -50,7 +50,7 @@ Feature: Protocol 3 wire parity
     # send the host a connected event as it subscribes, before any agent request.
     Examples: 22 shape forms
       | shape                | fields             | first frame                                           | later frames                                                                              | replaces                                            |
-      | shell                | none               | a shell frame with every node and every row           | shell.rows, shell.environment and shell.node frames                                       | orchestration.subscribeShell                        |
+      | shell                | none               | a shell frame with every node and every row           | shell.rows, shell.environment, shell.node and shell.links frames                          | orchestration.subscribeShell                        |
       | stream               | node, stream       | snapshot parts, the first with part 0                 | events frames after a live frame, or a resync                                             | orchestration.subscribeThread                       |
       | config               | node               | a config frame, then config.themes and config.usageLimitSources | config.settings, config.providers, config.keybindings, config.themes, config.usageLimitSources and config.ready frames | server.getConfig, subscribeServerConfig, subscribeServerLifecycle |
       | config               | environment        | the same frames as the node form for the environment's node | the same frames as the node form                                                     | server.getConfig, subscribeServerConfig, subscribeServerLifecycle |
@@ -94,14 +94,15 @@ Feature: Protocol 3 wire parity
     When <when>
     Then the client receives a <frame> frame carrying <fields>
 
-    Examples: 31 socket, stream, config and node frames
+    Examples: 32 socket, stream, config and node frames
       | frame                      | when                                                   | fields                                                    |
-      | hello                      | the socket opens                                       | protocol, node                                            |
+      | hello                      | the socket opens                                       | protocol, node, environment                               |
       | pong                       | the client pings                                       | nothing else                                              |
       | error                      | a frame or subscription is refused                     | reason, and the id when there is one                      |
       | rpc.result                 | a method succeeds                                      | id, result                                                |
       | rpc.error                  | a method fails                                         | id, error, and the contract error as detail when there is one |
-      | shell                      | the shell subscription opens                           | id, nodes with online and environment, rows               |
+      | shell                      | the shell subscription opens                           | id, nodes with online and environment, rows, links        |
+      | shell.links                | the environments the node links to change              | id, links                                                 |
       | shell.rows                 | projects or threads on one node change                 | id, node, rows                                            |
       | shell.environment          | a node's environment descriptor changes                | id, node, environment                                     |
       | shell.node                 | a node joins or leaves the cluster                     | id, node, online                                          |

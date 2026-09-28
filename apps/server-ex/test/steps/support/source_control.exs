@@ -78,7 +78,7 @@ defmodule HalC2.Steps.SourceControl.Shared do
   def writer_prompts(context) do
     case File.read(context.writer_log) do
       {:ok, text} ->
-        text |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!(&1)["prompt"])
+        text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!(&1)["prompt"])
 
       _ ->
         []
@@ -444,8 +444,8 @@ defmodule HalC2.Steps.SourceControl.Shared do
       end
 
     if rule do
-      existing = context.cli.rules |> File.read!() |> Jason.decode!()
-      File.write!(context.cli.rules, Jason.encode!(existing ++ List.wrap(rule)))
+      existing = context.cli.rules |> File.read!() |> JSON.decode!()
+      File.write!(context.cli.rules, JSON.encode!(existing ++ List.wrap(rule)))
     end
 
     context

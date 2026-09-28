@@ -2,12 +2,13 @@ defmodule HalC2.Steps.Connections.Cluster do
   @moduledoc """
   Steps for `features/connections/cluster.feature`.
 
-  The trust scenarios run `mix hal_c2.cluster` in the node's home and boot members as
-  `:peer` nodes with the flags `HalC2.Cluster.vm_args/1` gives them: TLS distribution on
-  the cluster port, each on its own loopback address, driven over stdio so the test VM
-  never joins their cluster. The sidebar, streaming, upload and device scenarios make
-  the scenario's node a distributed member and start the second member as a peer
-  running the whole application, as `test/hal_c2/cluster_test.exs` does.
+  The trust, joining and discovery scenarios boot each machine as an unnamed `:peer`
+  VM with the boot flags a release gives it, running the whole node on its own
+  loopback address and driven over stdio, so the test VM never joins their cluster.
+  They cluster through the same commands a user runs (`HalC2.Cluster.Command`). The
+  sidebar, streaming, upload and device scenarios make the scenario's node a
+  distributed node and start the second member as a peer running the whole
+  application, as `test/hal_c2/cluster_test.exs` does.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
@@ -15,7 +16,6 @@ defmodule HalC2.Steps.Connections.Cluster do
   alias HalC2.Test.{Node, WsClient}
   alias HalC2.Test.Node.World
 
-  @tailnet_address "100.64.0.7"
   @simulator %{
     "id" => "SIM-1",
     "name" => "iPhone 16",
@@ -25,276 +25,313 @@ defmodule HalC2.Steps.Connections.Cluster do
     "booted" => true
   }
 
-  # --- mix hal_c2.cluster -------------------------------------------------------------
+  # --- a node on its own --------------------------------------------------------------
 
-  step "the user creates a cluster on a machine with its tailnet address", context do
-    assert [_] = Node.run_task(Mix.Tasks.HalC2.Cluster, ["init", @tailnet_address])
-    context
+  step "a node starts", context do
+    context |> machine(:a) |> boot(:a)
   end
 
-  step "the machine has a cluster CA and its own certificate", context do
-    dir = HalC2.Cluster.dir(context.node.home)
-    ca = X509.Certificate.from_pem!(File.read!(Path.join(dir, "ca.pem")))
+  step "it has its own certificate, named after its environment", context do
+    a = context.machines.a
+    dir = HalC2.Cluster.dir(:peer.call(a.peer, HalC2.Paths, :data_dir, []))
     cert = X509.Certificate.from_pem!(File.read!(Path.join(dir, "node.pem")))
 
-    assert X509.Certificate.subject(cert, "CN") == ["hal_c2@#{@tailnet_address}"]
-    assert X509.Certificate.issuer(cert) == X509.Certificate.subject(ca)
-    assert mode(Path.join(dir, "ca.key")) == 0o600
+    assert a.id == :peer.call(a.peer, HalC2.Environment, :id, [])
+    assert X509.Certificate.subject(cert, "CN") == ["#{a.id}.hal-c2"]
+    assert X509.Certificate.issuer(cert) == X509.Certificate.subject(cert)
     assert mode(Path.join(dir, "node.key")) == 0o600
+    assert :peer.call(a.peer, :erlang, :node, []) == HalC2.Cluster.node_name(a.id)
     context
   end
 
-  step "it can boot clustered", context do
-    flags =
-      ExUnit.CaptureIO.capture_io(fn -> Node.run_task(Mix.Tasks.HalC2.Cluster, ["vm-args"]) end)
+  step "it listens for members over TLS on the cluster port without a port mapper", context do
+    a = context.machines.a
+    assert :peer.call(a.peer, HalC2.Cluster.Epmd, :listen_port, []) == context.cluster_port
 
-    optfile = Path.join(HalC2.Cluster.dir(context.node.home), "ssl_dist.conf")
+    assert :peer.call(a.peer, Application, :get_env, [:kernel, :epmd_module]) ==
+             HalC2.Cluster.Epmd
 
-    for flag <- [
-          "-name hal_c2@#{@tailnet_address}",
-          "-proto_dist inet_tls",
-          "-ssl_dist_optfile #{optfile}",
-          "-start_epmd false",
-          "-kernel inet_dist_listen_min 4370 inet_dist_listen_max 4370"
-        ],
-        do: assert(flags =~ flag)
-
-    # The VM reads the TLS options with ssl_dist_sup at boot; both sides verify the peer.
-    assert [server: server, client: client] = :ssl_dist_sup.consult(to_charlist(optfile))
-    assert server[:verify] == :verify_peer and server[:fail_if_no_peer_cert]
-    assert client[:verify] == :verify_peer
+    # Anyone may reach the port, but only over TLS with a member's certificate.
+    assert {:tls_alert, _} = handshake(context, a, verify: :verify_none)
     context
   end
 
-  step "the machine already has a cluster", context do
-    :ok = HalC2.Cluster.init(context.node.home, @tailnet_address)
-    Map.put(context, :ca, File.read!(Path.join(HalC2.Cluster.dir(context.node.home), "ca.pem")))
-  end
-
-  step "the user creates a cluster again", context do
-    Map.put(context, :result, Node.run_task(Mix.Tasks.HalC2.Cluster, ["init", "100.64.0.8"]))
-  end
-
-  step "it is refused because the machine already has one", context do
-    assert {:error, message} = context.result
-    assert message =~ "already has a cluster"
-    assert File.read!(Path.join(HalC2.Cluster.dir(context.node.home), "ca.pem")) == context.ca
+  step "its cluster has only itself", context do
+    status = status(context.machines.a)
+    assert status["clustered"]
+    assert status["label"] == "member-a"
+    assert status["addresses"] == ["#{context.machines.a.address}:#{context.cluster_port}"]
+    assert status["members"] == []
     context
   end
 
-  step "a cluster member that holds the CA key", context do
-    :ok = HalC2.Cluster.init(context.node.home, @tailnet_address)
-    assert File.exists?(Path.join(HalC2.Cluster.dir(context.node.home), "ca.key"))
+  # --- joining ------------------------------------------------------------------------
+
+  step "two nodes that are not clustered", context do
+    context |> machine(:a) |> boot(:a) |> machine(:b) |> boot(:b)
+  end
+
+  step "the user joins the second to the first with a pairing link from the first", context do
+    %{a: a, b: b} = context.machines
+    Map.put(context, :joined, command(b, ["join", invite(a)]))
+  end
+
+  step "each lists the other as a member", context do
+    %{a: a, b: b} = context.machines
+    assert [%{"id" => b_id, "label" => "member-b"}] = status(a)["members"]
+    assert [%{"id" => a_id, "label" => "member-a"}] = status(b)["members"]
+    assert {a_id, b_id} == {a.id, b.id}
     context
   end
 
-  step "the user invites a new machine by address", context do
-    file = Path.join(Node.tmp_dir(context.node, "invite"), "laptop.bundle")
-    assert [_] = Node.run_task(Mix.Tasks.HalC2.Cluster, ["invite", "100.64.0.8", file])
-    Map.put(context, :bundle, file)
-  end
-
-  step "a join bundle is written readable only by its owner", context do
-    assert mode(context.bundle) == 0o600
+  step "they are connected without restarting", context do
+    %{a: a, b: b} = context.machines
+    assert await_connected(a, b)
+    assert await_connected(b, a)
+    # The same VMs that were running before the join.
+    assert Process.alive?(a.peer) and Process.alive?(b.peer)
     context
   end
 
-  step "it contains the new machine's certificate and key", context do
-    bundle = :erlang.binary_to_term(File.read!(context.bundle), [:safe])
-
-    ca =
-      X509.Certificate.from_pem!(
-        File.read!(Path.join(HalC2.Cluster.dir(context.node.home), "ca.pem"))
-      )
-
-    cert = X509.Certificate.from_pem!(bundle.cert)
-    key = X509.PrivateKey.from_pem!(bundle.key)
-
-    assert bundle.address == "100.64.0.8"
-    assert X509.Certificate.subject(cert, "CN") == ["hal_c2@100.64.0.8"]
-    assert X509.Certificate.issuer(cert) == X509.Certificate.subject(ca)
-    assert X509.PublicKey.derive(key) == X509.Certificate.public_key(cert)
+  step "the command lists both machines as connected", context do
+    %{a: a, b: b} = context.machines
+    assert {:ok, text} = context.joined
+    assert text =~ "This machine: member-b (#{b.id})"
+    assert text =~ "  member-a (#{a.id}): connected"
+    assert {:ok, text} = command(a, ["status"])
+    assert text =~ "  member-b (#{b.id}): connected"
     context
   end
 
-  step "a join bundle for this machine", context do
-    member = Node.tmp_dir(context.node, "member")
-    :ok = HalC2.Cluster.init(member, @tailnet_address)
-    file = Path.join(member, "bundle")
-    File.write!(file, HalC2.Cluster.invite(member, "100.64.0.9"))
-    Map.put(context, :bundle, file)
+  step "the user joins the second with a standard pairing link from the first", context do
+    %{a: a, b: b} = context.machines
+    store = :peer.call(a.peer, HalC2.Store, :home_path, [])
+    token = :peer.call(a.peer, HalC2.Auth, :create_pairing_token, [store])
+    Map.put(context, :joined, command(b, ["join", "#{origin(a)}/?token=#{token}"]))
   end
 
-  step "the user joins with it", context do
-    Map.put(context, :printed, Node.run_task(Mix.Tasks.HalC2.Cluster, ["join", context.bundle]))
-  end
-
-  step "the machine becomes a member named after its address", context do
-    home = context.node.home
-    assert context.printed == ["Joined as hal_c2@100.64.0.9"]
-    assert HalC2.Cluster.address(home) == "100.64.0.9"
-    assert HalC2.Cluster.vm_args(home) =~ "-name hal_c2@100.64.0.9"
-    # Only the member that invited can invite again.
-    refute File.exists?(Path.join(HalC2.Cluster.dir(home), "ca.key"))
+  step "the join is refused because the link does not grant access:write", context do
+    assert {:error, message} = context.joined
+    assert message =~ "cannot add machines to a cluster"
     context
   end
 
-  step "the machine is not in a cluster", context do
-    refute File.exists?(HalC2.Cluster.dir(context.node.home))
+  step "neither lists the other", context do
+    %{a: a, b: b} = context.machines
+    assert status(a)["members"] == []
+    assert status(b)["members"] == []
+    assert :peer.call(a.peer, Elixir.Node, :list, []) == []
     context
   end
 
-  step "the user asks for its cluster boot flags", context do
-    Map.put(context, :result, Node.run_task(Mix.Tasks.HalC2.Cluster, ["vm-args"]))
+  # --- from a client ------------------------------------------------------------------
+
+  step "a client of the first asks it for a cluster invite", context do
+    a = context.machines.a
+    assert {:ok, invite} = client_call(a, :admin, "cluster.invite", %{})
+    assert invite["link"] =~ "#{origin(a)}/?token="
+    Map.put(context, :invite, invite)
   end
 
-  step "it is refused because the machine is not in a cluster yet", context do
-    assert context.result == {:error, "not in a cluster yet"}
+  step "a client of the second joins it with that invite", context do
+    b = context.machines.b
+
+    Map.put(
+      context,
+      :joined,
+      client_call(b, :admin, "cluster.join", %{"link" => context.invite["link"]})
+    )
+  end
+
+  step "the client sees both machines connected", context do
+    %{a: a, b: b} = context.machines
+    assert {:ok, %{"clustered" => true, "id" => b_id, "members" => [member]}} = context.joined
+    assert b_id == b.id
+    assert %{"id" => a_id, "label" => "member-a", "connected" => true} = member
+    assert a_id == a.id
     context
   end
 
-  # --- mutual TLS -------------------------------------------------------------------
-
-  step "two members of one cluster", context do
-    context |> member(:a) |> member(:b)
+  step "a client of the first removes the second", context do
+    %{a: a, b: b} = context.machines
+    Map.put(context, :removed, client_call(a, :admin, "cluster.remove", %{"id" => b.id}))
   end
 
-  step "both nodes start", context do
-    context |> boot(:a) |> boot(:b)
-  end
-
-  step "they connect over TLS on the cluster port", context do
-    %{a: a, b: b} = context.booted
-    assert :peer.call(a.peer, :net_kernel, :connect_node, [b.node])
-    assert :peer.call(a.peer, :erlang, :nodes, []) == [b.node]
-
-    {:ok, info} = :peer.call(a.peer, :net_kernel, :node_info, [b.node])
-    {:net_address, {ip, port}, _host, protocol, _family} = info[:address]
-    assert protocol == :tls
-    assert {:inet.ntoa(ip) |> to_string(), port} == {b.address, HalC2.Cluster.dist_port()}
-    # No port mapper: the node neither starts one nor asks one where its peers listen.
-    assert :peer.call(a.peer, :init, :get_argument, [:start_epmd]) == {:ok, [[~c"false"]]}
+  step "the client sees the first alone again", context do
+    assert {:ok, %{"clustered" => true, "members" => []}} = context.removed
+    assert status(context.machines.a)["members"] == []
     context
   end
 
-  step "each listens only on its cluster address", context do
-    for {_, member} <- context.booted do
-      {:ok, ip} = :inet.parse_address(to_charlist(member.address))
-      assert {:ok, socket} = :gen_tcp.connect(ip, HalC2.Cluster.dist_port(), [])
-      :gen_tcp.close(socket)
+  step "a client paired with a standard link asks the first for a cluster invite", context do
+    a = context.machines.a
+
+    context
+    |> Map.put(:invited, client_call(a, :standard, "cluster.invite", %{}))
+    |> Map.put(:read, client_call(a, :standard, "cluster.status", %{}))
+  end
+
+  step "the node refuses both, saying access is required", context do
+    for {reply, scope} <- [{context.invited, "access:write"}, {context.read, "access:read"}] do
+      assert {:error, _message, %{"_tag" => "EnvironmentScopeRequiredError"} = detail} = reply
+      assert detail["requiredScope"] == scope
     end
 
-    assert {:error, :econnrefused} =
-             :gen_tcp.connect(~c"127.0.0.1", HalC2.Cluster.dist_port(), [])
+    assert status(context.machines.a)["members"] == []
+    context
+  end
+
+  step "a node started without the cluster boot flags", context do
+    context |> machine(:a) |> boot(:a, flags: false)
+  end
+
+  step "the user joins it to another machine", context do
+    link = "http://127.0.0.1:9/?token=unused"
+    Map.put(context, :joined, command(context.machines.a, ["join", link]))
+  end
+
+  step "the join is refused saying the node was not started for clustering", context do
+    assert {:error, message} = context.joined
+    assert message =~ "node was not started for clustering"
+    assert {:ok, "Not clustering: " <> _} = command(context.machines.a, ["status"])
+    context
+  end
+
+  step "a cluster of two members", context do
+    cluster(context, [:a, :b])
+  end
+
+  step "a third machine joins through the second member", context do
+    context = context |> machine(:c) |> boot(:c)
+    %{b: b, c: c} = context.machines
+    assert {:ok, _} = command(c, ["join", invite(b)])
+    context
+  end
+
+  step "all three are connected to each other", context do
+    %{a: a, b: b, c: c} = context.machines
+
+    for {m, others} <- [{a, [b, c]}, {b, [a, c]}, {c, [a, b]}], other <- others do
+      assert await_connected(m, other)
+      assert %{"connected" => true} = Enum.find(status(m)["members"], &(&1["id"] == other.id))
+    end
 
     context
   end
 
-  step "a node whose certificate was signed by a different cluster CA", context do
-    context |> member(:a) |> member(:stranger, cluster: :other)
+  # --- strangers ----------------------------------------------------------------------
+
+  step "a member of a cluster and a node that never joined it", context do
+    context |> machine(:a) |> boot(:a) |> machine(:stranger) |> boot(:stranger)
   end
 
-  step "it tries to connect to a member", context do
-    context = context |> boot(:a) |> boot(:stranger)
-    %{a: a, stranger: stranger} = context.booted
-    Map.put(context, :connected, :peer.call(stranger.peer, :net_kernel, :connect_node, [a.node]))
+  step "the node tries to connect to the member", context do
+    %{a: a, stranger: stranger} = context.machines
+    {:ok, ip} = :inet.parse_address(to_charlist(a.address))
+    host = HalC2.Cluster.host(a.id)
+    :peer.call(stranger.peer, HalC2.Cluster.Epmd, :put, [host, ip, context.cluster_port])
+    connected = :peer.call(stranger.peer, Elixir.Node, :connect, [HalC2.Cluster.node_name(a.id)])
+    Map.put(context, :connected, connected)
   end
 
   step "the TLS handshake fails", context do
     refute context.connected
-    # The same handshake by hand: the member's certificate is not from the stranger's CA.
-    %{a: a, stranger: stranger} = context.booted
-    options = dial_options(stranger.home)
-    {:ok, ip} = :inet.parse_address(to_charlist(a.address))
+    # The same handshake by hand, with the stranger's certificate: the member does not
+    # pin it.
+    %{a: a, stranger: stranger} = context.machines
+    dir = HalC2.Cluster.dir(:peer.call(stranger.peer, HalC2.Paths, :data_dir, []))
 
-    assert {:error, {:tls_alert, {:unknown_ca, _}}} =
-             :ssl.connect(ip, HalC2.Cluster.dist_port(), options, 5_000)
+    assert {:tls_alert, _} =
+             handshake(context, a,
+               certfile: to_charlist(Path.join(dir, "node.pem")),
+               keyfile: to_charlist(Path.join(dir, "node.key")),
+               verify: :verify_none
+             )
 
     context
   end
 
   step "it never joins the cluster", context do
-    %{a: a, stranger: stranger} = context.booted
-    assert :peer.call(a.peer, :erlang, :nodes, []) == []
-    assert :peer.call(stranger.peer, :erlang, :nodes, []) == []
+    %{a: a, stranger: stranger} = context.machines
+    assert :peer.call(a.peer, Elixir.Node, :list, []) == []
+    assert :peer.call(stranger.peer, Elixir.Node, :list, []) == []
+    assert status(a)["members"] == []
     context
   end
 
-  step "a member whose certificate was revoked", context do
-    context = context |> member(:a) |> member(:b) |> member(:removed)
-    removed = context.members.removed.address
-    # `mix hal_c2.cluster revoke` on each member (this scenario's node home is not one).
-    :ok = HalC2.Cluster.revoke(context.members.a.home, removed)
-    :ok = HalC2.Cluster.revoke(context.members.b.home, removed)
+  # --- finding members ----------------------------------------------------------------
+
+  step "both restart", context do
+    context |> stop(:a) |> stop(:b) |> boot(:a) |> boot(:b)
+  end
+
+  step "they connect again at the addresses they reported", context do
+    %{a: a, b: b} = context.machines
+    assert await_connected(a, b)
+    assert await_connected(b, a)
+    assert %{"addresses" => [address]} = hd(status(a)["members"])
+    assert address == "#{b.address}:#{context.cluster_port}"
     context
   end
 
-  step "it tries to connect", context do
-    context = context |> boot(:a) |> boot(:b) |> boot(:removed)
-    %{a: a, b: b, removed: removed} = context.booted
-
-    Map.put(context, :connected, %{
-      a: :peer.call(removed.peer, :net_kernel, :connect_node, [a.node]),
-      b: :peer.call(removed.peer, :net_kernel, :connect_node, [b.node])
-    })
+  step "a cluster of two members whose recorded addresses are out of date", context do
+    # Both come back on new addresses, so neither is where the other recorded it.
+    context
+    |> cluster([:a, :b])
+    |> stop(:a)
+    |> stop(:b)
+    |> update_in([:machines, :a], &%{&1 | address: loopback_address()})
+    |> update_in([:machines, :b], &%{&1 | address: loopback_address()})
   end
 
-  step "the other members refuse it", context do
-    %{a: a, b: b, removed: removed} = context.booted
-    assert context.connected == %{a: false, b: false}
-    assert :peer.call(removed.peer, :erlang, :nodes, []) == []
-    # The refusal is about that certificate: the remaining members still connect.
-    assert :peer.call(b.peer, :net_kernel, :connect_node, [a.node])
-    assert :peer.call(a.peer, :erlang, :nodes, []) == [b.node]
+  step "the tailnet lists the second member's address", context do
+    %{a: a, b: b} = context.machines
+    put_in(context.machines.a.tailscale, tailnet(context, a, [b.address]))
+  end
+
+  step "HAL_C2_PEERS lists the second member's address", context do
+    put_in(context.machines.a.env, [{~c"HAL_C2_PEERS", to_charlist(context.machines.b.address)}])
+  end
+
+  step "the first member looks for its peers", context do
+    # The second is up first, so the first member's look when it starts can find it.
+    context |> boot(:b) |> boot(:a)
+  end
+
+  step "it connects to the second member within about ten seconds", context do
+    %{a: a, b: b} = context.machines
+    assert await_connected(a, b, 12_000)
     context
   end
 
-  # --- discovery ---------------------------------------------------------------------
+  # --- removing a member --------------------------------------------------------------
 
-  step "two members on the same tailnet", context do
-    context = context |> member(:a) |> member(:b)
-    %{a: a, b: b} = context.members
-
-    put_in(context.members, %{
-      a: Map.put(a, :tailscale, tailnet(context, a, [b])),
-      b: Map.put(b, :tailscale, tailnet(context, b, [a]))
-    })
+  step "a cluster of three members", context do
+    cluster(context, [:a, :b, :c])
   end
 
-  step "both are online", context do
-    context |> boot(:a, app: true) |> boot(:b, app: true)
-  end
-
-  step "each discovers the other within about ten seconds", context do
-    %{a: a, b: b} = context.booted
-    assert await_nodeup(a, b.node)
-    assert await_nodeup(b, a.node)
+  step "the user removes the third member on the first", context do
+    assert {:ok, _} = command(context.machines.a, ["remove", "member-c"])
     context
   end
 
-  step "HAL_C2_PEERS names a member's node", context do
-    distribute()
+  step "no member admits the third any more", context do
+    %{a: a, b: b, c: c} = context.machines
 
-    {:ok, peer, member} =
-      :peer.start_link(%{
-        name: :"hal_c2_member#{System.unique_integer([:positive])}",
-        host: ~c"127.0.0.1",
-        longnames: true,
-        connection: :standard_io,
-        args: [~c"-setcookie", Atom.to_charlist(:erlang.get_cookie())] ++ code_path_args()
-      })
+    for m <- [a, b] do
+      assert await_disconnected(m, c)
+      refute Enum.any?(status(m)["members"], &(&1["id"] == c.id))
+      refute :peer.call(c.peer, Elixir.Node, :connect, [HalC2.Cluster.node_name(m.id)])
+    end
 
-    System.put_env("HAL_C2_PEERS", Atom.to_string(member))
-    ExUnit.Callbacks.on_exit(fn -> System.delete_env("HAL_C2_PEERS") end)
-    :ok = :net_kernel.monitor_nodes(true)
-    context |> Map.put(:member, member) |> Map.put(:member_peer, peer)
+    context
   end
 
-  step "it connects to that member without tailnet discovery", context do
-    member = context.member
-    assert_receive {:nodeup, ^member}, 5_000
-    # The node has no cluster certificate, so only the static list runs.
-    assert [{:static, _, :worker, _}] = Supervisor.which_children(HalC2.ClusterSupervisor)
+  step "the first two stay connected", context do
+    %{a: a, b: b, c: c} = context.machines
+    assert :peer.call(a.peer, Elixir.Node, :list, []) == [HalC2.Cluster.node_name(b.id)]
+    assert :peer.call(b.peer, Elixir.Node, :list, []) == [HalC2.Cluster.node_name(a.id)]
+    assert :peer.call(c.peer, Elixir.Node, :list, []) == []
     context
   end
 
@@ -564,90 +601,201 @@ defmodule HalC2.Steps.Connections.Cluster do
 
   defp code_path_args, do: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
 
-  # A cluster member's home on its own loopback address, so members can share the
-  # cluster port on this machine. The first member creates the cluster; later ones
-  # join it unless `cluster: :other` starts a separate one.
-  defp member(context, name, opts \\ []) do
-    members = Map.get(context, :members, %{})
-    home = Node.tmp_dir(context.node, "member-#{name}")
+  # A machine for the trust scenarios: its own home, loopback address and label. Every
+  # machine in a scenario listens for members on one free port, apart from any node
+  # running on this computer.
+  defp machine(context, name) do
+    context = Map.put_new_lazy(context, :cluster_port, &free_port/0)
+
+    machine = %{
+      home: Node.tmp_dir(context.node, "machine-#{name}"),
+      address: loopback_address(),
+      label: "member-#{name}",
+      tailscale: tailnet(context, nil, []),
+      env: []
+    }
+
+    put_in(context, [Access.key(:machines, %{}), name], machine)
+  end
+
+  defp loopback_address do
     n = System.unique_integer([:positive])
-    address = "127.#{rem(div(n, 250), 250) + 1}.#{rem(div(n, 62_500), 250)}.#{rem(n, 250) + 2}"
-
-    case {members[:a], opts[:cluster]} do
-      {%{home: first}, nil} ->
-        :ok = HalC2.Cluster.join(home, HalC2.Cluster.invite(first, address))
-
-      _ ->
-        :ok = HalC2.Cluster.init(home, address)
-    end
-
-    Map.put(context, :members, Map.put(members, name, %{home: home, address: address}))
+    "127.#{rem(div(n, 250), 250) + 1}.#{rem(div(n, 62_500), 250)}.#{rem(n, 250) + 2}"
   end
 
-  # Boots a member with its cluster flags. `app: true` also runs the whole node there.
+  defp free_port do
+    {:ok, socket} = :gen_tcp.listen(0, [])
+    {:ok, port} = :inet.port(socket)
+    :gen_tcp.close(socket)
+    port
+  end
+
+  # Boots a machine's VM as a release does (`flags: false` leaves out the cluster boot
+  # flags) and starts the whole node in it.
   defp boot(context, name, opts \\ []) do
-    %{home: home, address: address} = member = context.members[name]
-    ["-name", _node | flags] = String.split(HalC2.Cluster.vm_args(home))
+    machine = context.machines[name]
+    optfile = Path.join(Node.tmp_dir(context.node, "dist"), "ssl_dist.conf")
 
-    {:ok, peer, node} =
-      :peer.start_link(%{
-        name: :hal_c2,
-        host: to_charlist(address),
-        longnames: true,
-        connection: :standard_io,
-        args: Enum.map(flags, &to_charlist/1) ++ code_path_args()
-      })
+    flags =
+      if Keyword.get(opts, :flags, true),
+        do: ~w(-proto_dist inet_tls -ssl_dist_optfile #{optfile} -setcookie hal_c2),
+        else: []
 
-    if opts[:app] do
-      settings = [start_node: true, home: home, port: 0, tailscale_command: member.tailscale]
+    peer =
+      case :peer.start_link(%{
+             connection: :standard_io,
+             args: Enum.map(flags, &to_charlist/1) ++ code_path_args(),
+             env: [{~c"HAL_C2_LABEL", to_charlist(machine.label)} | machine.env]
+           }) do
+        {:ok, peer} -> peer
+        {:ok, peer, _node} -> peer
+      end
 
-      for {key, value} <- settings,
-          do: :ok = :peer.call(peer, Application, :put_env, [:hal_c2, key, value])
+    settings = [
+      start_node: true,
+      home: machine.home,
+      port: 0,
+      host: machine.address,
+      cluster_listen: machine.address,
+      cluster_port: context.cluster_port,
+      tailscale_command: machine.tailscale
+    ]
 
-      {:ok, _} = :peer.call(peer, Application, :ensure_all_started, [:hal_c2], 30_000)
-    end
+    for {key, value} <- settings,
+        do: :ok = :peer.call(peer, Application, :put_env, [:hal_c2, key, value])
 
-    booted = Map.get(context, :booted, %{})
-    Map.put(context, :booted, Map.put(booted, name, Map.merge(member, %{peer: peer, node: node})))
+    {:ok, _} = :peer.call(peer, Application, :ensure_all_started, [:hal_c2], 30_000)
+    id = :peer.call(peer, HalC2.Environment, :id, [])
+    put_in(context.machines[name], Map.merge(machine, %{peer: peer, id: id}))
   end
 
-  # A `tailscale` stand-in for `member` that lists `peers` as online tailnet machines.
-  defp tailnet(context, member, peers) do
+  defp stop(context, name) do
+    :ok = :peer.stop(context.machines[name].peer)
+    context
+  end
+
+  # Boots the machines and joins each later one to the first.
+  defp cluster(context, [first | rest]) do
+    context = context |> machine(first) |> boot(first)
+
+    Enum.reduce(rest, context, fn name, context ->
+      context = context |> machine(name) |> boot(name)
+      %{^first => inviter, ^name => joiner} = context.machines
+      assert {:ok, _} = command(joiner, ["join", invite(inviter)])
+      context
+    end)
+  end
+
+  defp command(machine, args),
+    do: :peer.call(machine.peer, HalC2.Cluster.Command, :command, [args], 30_000)
+
+  defp status(machine), do: :peer.call(machine.peer, HalC2.Cluster, :status, [])
+
+  # One RPC over a fresh socket to the machine's node, as the TUI and desktop send it.
+  # `:admin` pairs the client with an admin link, `:standard` with a standard one.
+  defp client_call(machine, pairing, method, payload) do
+    scopes =
+      case pairing do
+        :admin -> ~w(orchestration:read access:read access:write)
+        :standard -> :peer.call(machine.peer, HalC2.Auth, :standard_scopes, [])
+      end
+
+    link = %{"label" => "Client", "scopes" => scopes}
+    {:ok, %{"credential" => pairing_token}} = auth(machine, :create_pairing_link, [link])
+    {:ok, access, _, _} = auth(machine, :exchange, [pairing_token, %{"label" => "Client"}])
+    {:ok, ticket, _} = auth(machine, :issue_ticket, [access])
+
+    port = URI.parse(origin(machine)).port
+    {:ok, client} = WsClient.connect(port, "/ws?wsTicket=#{ticket}", machine.address)
+    {%{"t" => "hello"}, client} = WsClient.recv(client, 5_000)
+
+    id = System.unique_integer([:positive])
+    client = Node.rpc(client, machine.id, id, method, payload)
+    reply? = &(&1["id"] == id and &1["t"] in ["rpc.result", "rpc.error"])
+    {frame, _client} = Node.await(client, reply?, 30_000)
+
+    case frame do
+      %{"t" => "rpc.result", "result" => result} -> {:ok, result}
+      %{"t" => "rpc.error", "error" => error} -> {:error, error, frame["detail"]}
+    end
+  end
+
+  defp auth(machine, fun, args), do: :peer.call(machine.peer, HalC2.Auth, fun, args)
+
+  # A link from `hal_c2.cluster invite` on the machine.
+  defp invite(machine) do
+    {:ok, text} = command(machine, ["invite"])
+    [_, link] = Regex.run(~r/cluster join (\S+)/, text)
+    link
+  end
+
+  defp origin(machine) do
+    path = :peer.call(machine.peer, HalC2.RuntimeRecord, :path, [])
+    JSON.decode!(File.read!(path))["origin"]
+  end
+
+  # Waits on `machine` itself for its connection to `other` (discovery looks every 10s).
+  defp await_connected(machine, other, timeout \\ 15_000) do
+    await_node(machine, :nodeup, HalC2.Cluster.node_name(other.id), timeout)
+  end
+
+  defp await_disconnected(machine, other) do
+    await_node(machine, :nodedown, HalC2.Cluster.node_name(other.id), 15_000)
+  end
+
+  defp await_node(machine, event, node, timeout) do
+    code = """
+    :ok = :net_kernel.monitor_nodes(true)
+
+    result =
+      (node in Node.list()) == (event == :nodeup) or
+        receive do
+          {^event, ^node} -> true
+        after
+          timeout -> false
+        end
+
+    :net_kernel.monitor_nodes(false)
+    result
+    """
+
+    binding = [node: node, event: event, timeout: timeout]
+    {result, _} = :peer.call(machine.peer, Code, :eval_string, [code, binding], timeout + 5_000)
+    result
+  end
+
+  # A TLS handshake with the machine's cluster port; returns the alert that ended it.
+  defp handshake(context, machine, options) do
+    {:ok, ip} = :inet.parse_address(to_charlist(machine.address))
+    {:ok, _} = Application.ensure_all_started(:ssl)
+    options = [active: false, versions: [:"tlsv1.3"]] ++ options
+
+    # Under TLS 1.3 the server judges the client's certificate after the client
+    # finished, so a refusal can arrive on the first read.
+    case :ssl.connect(ip, context.cluster_port, options, 5_000) do
+      {:ok, socket} ->
+        result = :ssl.recv(socket, 0, 5_000)
+        :ssl.close(socket)
+        with {:error, {:tls_alert, _} = alert} <- result, do: alert
+
+      {:error, {:tls_alert, _} = alert} ->
+        alert
+    end
+  end
+
+  # A `tailscale` stand-in whose tailnet lists `addresses` as online peers.
+  defp tailnet(context, machine, addresses) do
     state = Path.join(Node.tmp_dir(context.node, "tailscale"), "state.json")
 
     File.write!(
       state,
       JSON.encode!(%{
-        "self" => %{"TailscaleIPs" => [member.address]},
-        "peers" =>
-          Map.new(peers, &{&1.address, %{"Online" => true, "TailscaleIPs" => [&1.address]}})
+        "self" => %{"TailscaleIPs" => List.wrap(machine && machine.address)},
+        "peers" => Map.new(addresses, &{&1, %{"Online" => true, "TailscaleIPs" => [&1]}})
       })
     )
 
     ["env", "FAKE_TAILSCALE_STATE=#{state}", Path.expand("test/support/fake_tailscale.py")]
-  end
-
-  # Waits on `member` itself for its connection to `other` (discovery polls every 10s).
-  defp await_nodeup(member, other) do
-    code = """
-    :ok = :net_kernel.monitor_nodes(true)
-
-    other in Node.list() or
-      receive do
-        {:nodeup, ^other} -> true
-      after
-        10_000 -> false
-      end
-    """
-
-    {result, _} = :peer.call(member.peer, Code, :eval_string, [code, [other: other]], 15_000)
-    result
-  end
-
-  # The options a node dials other members with, from its `ssl_dist.conf`.
-  defp dial_options(home) do
-    conf = :ssl_dist_sup.consult(to_charlist(Path.join(HalC2.Cluster.dir(home), "ssl_dist.conf")))
-    conf[:client] |> Keyword.delete(:verify_fun) |> Keyword.put(:active, false)
   end
 
   # Makes this VM a named node (as a clustered node boots) and restarts the node on it.

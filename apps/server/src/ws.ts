@@ -71,6 +71,7 @@ import {
   ProviderUploadFeedbackError,
   ProviderSetupError,
   RelayClientInstallFailedError,
+  ClusterError,
   type RelayClientInstallProgressEvent,
   type ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
@@ -2594,6 +2595,30 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "cloud" },
           ),
+        // Only nodes cluster (apps/server-ex `HalC2.Cluster`).
+        ...(Object.fromEntries(
+          [
+            WS_METHODS.clusterStatus,
+            WS_METHODS.clusterInvite,
+            WS_METHODS.clusterJoin,
+            WS_METHODS.clusterRemove,
+          ].map((method) => [
+            method,
+            () =>
+              Effect.fail(
+                new ClusterError({
+                  reason: "unsupported",
+                  message: "This server does not cluster; run the HAL-C2 node.",
+                }),
+              ),
+          ]),
+        ) as Record<
+          | typeof WS_METHODS.clusterStatus
+          | typeof WS_METHODS.clusterInvite
+          | typeof WS_METHODS.clusterJoin
+          | typeof WS_METHODS.clusterRemove,
+          () => Effect.Effect<never, ClusterError>
+        >),
         [WS_METHODS.pullRequestsList]: (input) =>
           observeRpcEffect(WS_METHODS.pullRequestsList, pullRequests.list(input), {
             "rpc.aggregate": "pull-requests",

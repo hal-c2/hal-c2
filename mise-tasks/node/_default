@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-#MISE description="Run the Elixir node in the foreground (mix hal_c2.server); --cluster boots it clustered"
+#MISE description="Run the Elixir node in the foreground (mix hal_c2.server), ready to cluster"
 #MISE dir="{{config_root}}/apps/server-ex"
 set -euo pipefail
-if [[ ${1:-} == --cluster ]]; then
-  shift
-  exec elixir --erl "$(mix hal_c2.cluster vm-args)" -S mix hal_c2.server "$@"
-fi
+# The node starts TLS distribution itself (HalC2.Cluster) and writes its options here.
+optfile="$(mktemp -t hal-c2-dist.XXXXXX)"
+export ELIXIR_ERL_OPTIONS="${ELIXIR_ERL_OPTIONS:-} -proto_dist inet_tls -ssl_dist_optfile $optfile -setcookie hal_c2"
 exec mix hal_c2.server "$@"

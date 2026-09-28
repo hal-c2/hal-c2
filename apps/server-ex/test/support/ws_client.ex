@@ -1,8 +1,8 @@
 defmodule HalC2.Test.WsClient do
   @moduledoc "Minimal blocking WebSocket client for tests, speaking JSON text frames."
 
-  def connect(port, path) do
-    {:ok, conn} = Mint.HTTP.connect(:http, "127.0.0.1", port)
+  def connect(port, path, host \\ "127.0.0.1") do
+    {:ok, conn} = Mint.HTTP.connect(:http, host, port)
     {:ok, conn, ref} = Mint.WebSocket.upgrade(:ws, conn, path, [])
     {conn, [{:status, ^ref, status}, {:headers, ^ref, headers} | rest]} = recv_http(conn, [])
 

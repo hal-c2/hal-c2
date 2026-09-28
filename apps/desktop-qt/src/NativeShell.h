@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QUrl>
 
+#include "ClusterController.h"
 #include "ComposerController.h"
 #include "NodeClient.h"
 #include "ShellStore.h"
@@ -14,11 +15,11 @@ class ShellBridge;
 
 // The shell's own client of its node: one protocol-3 connection, the shell
 // shape folded into rows, and the controllers that take the sidebar, the
-// composer's turn RPCs and the terminal drawer off the page. Until the first
-// shell snapshot lands the page keeps doing everything; after it, `native`
-// (and a `shell.native` action to the page) says which keys and actions the
-// shell now owns. The sidebar stays with the page while it groups projects
-// from outside the node's cluster.
+// composer's turn RPCs, the terminal drawer and this machine's cluster settings
+// off the page. Until the first shell snapshot lands the page keeps doing
+// everything; after it, `native` (and a `shell.native` action to the page) says
+// which keys and actions the shell now owns. The sidebar stays with the page
+// while it groups projects from outside the node's cluster.
 //
 // The page's saved environments outside the cluster (`environmentAccess`:
 // origin and access token per environment the page is connected to) are lent
@@ -36,6 +37,7 @@ public:
   SidebarController* sidebar() { return &m_sidebar; }
   ComposerController* composer() { return &m_composer; }
   TerminalController* terminals() { return &m_terminals; }
+  ClusterController* cluster() { return &m_cluster; }
 
 private:
   void update();
@@ -51,4 +53,5 @@ private:
   SidebarController m_sidebar;
   ComposerController m_composer;
   TerminalController m_terminals;
+  ClusterController m_cluster;
 };

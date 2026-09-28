@@ -10,8 +10,9 @@ import OpenTUI
 // Shift+Enter adds a line; a paste that is an image (bytes or a path) becomes
 // an attachment (`composer.paste` returns true and the text is not inserted).
 // The editor is as tall as the host's layout says (`layout.editorRows`).
-// Renaming a thread or writing a commit message swaps the box for a one-line
-// prompt in the accent colour (ChatComposer's rename and commit modes).
+// Renaming a thread, writing a commit message or pasting a cluster invite
+// swaps the box for a one-line prompt in the accent colour (ChatComposer's
+// rename and commit modes).
 Item {
     id: dock
     objectName: "composerDock"
@@ -24,15 +25,17 @@ Item {
     property alias footer: footerView
     // How plugins' "composer.actions" contributions sit next to the built-in controls.
     property alias actionsMode: footerView.actionsMode
-    // "rename", "commit" or "" (the prompt itself).
+    // "rename", "commit", "join" or "" (the prompt itself).
     readonly property string auxMode: Shell.state.mode === "rename" && Shell.state.overlay !== null
         ? "rename"
-        : Shell.state.mode === "commit" && Shell.state.git.commitPrompt !== null ? "commit" : ""
+        : Shell.state.mode === "commit" && Shell.state.git.commitPrompt !== null ? "commit"
+        : Shell.state.mode === "join" && Shell.state.cluster.joining ? "join" : ""
     // Prefill the title each time a rename opens, and start each commit message
     // empty (typing breaks a `text` binding).
     onAuxModeChanged: {
         if (auxMode === "rename") renameInput.text = Shell.state.overlay.title
         if (auxMode === "commit") commitInput.text = ""
+        if (auxMode === "join") joinInput.text = ""
     }
 
     width: model.surfaceWidth
@@ -56,7 +59,7 @@ Item {
             height: 1
             Text {
                 flexShrink: 0
-                text: dock.auxMode === "commit" ? "commit ▸ " : "rename ▸ "
+                text: dock.auxMode + " ▸ "
                 color: Theme.colors.accent
             }
             TextInput {
@@ -91,9 +94,25 @@ Item {
                 focusedBackgroundColor: Theme.colors.bg
                 onAccepted: Shell.dispatch("git.commit", { message: text })
             }
+            TextInput {
+                id: joinInput
+                objectName: "clusterJoinLink"
+                visible: dock.auxMode === "join"
+                flexGrow: 1
+                height: 1
+                focus: dock.auxMode === "join"
+                placeholderText: "Invite link from the other machine…"
+                placeholderColor: Theme.colors.dim
+                cursorColor: Theme.colors.accent
+                color: Theme.colors.text
+                focusedColor: Theme.colors.text
+                backgroundColor: Theme.colors.bg
+                focusedBackgroundColor: Theme.colors.bg
+                onAccepted: Shell.dispatch("cluster.join", { link: text })
+            }
         }
         Text {
-            text: dock.auxMode === "commit" ? "Enter commit · Esc cancel" : "Enter rename · Esc cancel"
+            text: "Enter " + dock.auxMode + " · Esc cancel"
             color: Theme.colors.dim
         }
     }

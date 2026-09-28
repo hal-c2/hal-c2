@@ -5,6 +5,9 @@
 import * as NodeFS from "node:fs";
 
 import {
+  type ClusterInvite,
+  type ClusterInviteInput,
+  type ClusterStatus,
   EnvironmentId,
   type MessageId,
   MessageId as MessageIdSchema,
@@ -487,6 +490,11 @@ export interface TuiClient {
     provider: SourceControlProviderKind,
     repository: string,
   ) => Promise<SourceControlRepositoryInfo>;
+  /** This machine's cluster: who is in it, an invite for another machine, joining, removing. */
+  readonly clusterStatus: () => Promise<ClusterStatus>;
+  readonly clusterInvite: (input: ClusterInviteInput) => Promise<ClusterInvite>;
+  readonly clusterJoin: (link: string) => Promise<ClusterStatus>;
+  readonly clusterRemove: (id: string) => Promise<ClusterStatus>;
   readonly cloneRepository: (
     remoteUrl: string,
     destinationPath: string,
@@ -813,6 +821,10 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
           repository: TrimmedNonEmptyString.make(repository),
         }),
       ),
+    clusterStatus: () => runtime.runPromise(request(WS_METHODS.clusterStatus, {})),
+    clusterInvite: (input) => runtime.runPromise(request(WS_METHODS.clusterInvite, input)),
+    clusterJoin: (link) => runtime.runPromise(request(WS_METHODS.clusterJoin, { link })),
+    clusterRemove: (id) => runtime.runPromise(request(WS_METHODS.clusterRemove, { id })),
     cloneRepository: (remoteUrl, destinationPath) =>
       runtime.runPromise(
         request(WS_METHODS.sourceControlCloneRepository, {

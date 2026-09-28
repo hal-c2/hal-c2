@@ -23,9 +23,14 @@ defmodule HalC2.Steps.Parity.Protocol do
     Map.put(context, :received, Shapes.open_socket(context))
   end
 
-  step "the first frame is a hello carrying protocol 3 and the node's name", context do
+  step "the first frame is a hello carrying protocol 3, the node's name and its environment",
+       context do
     me = Atom.to_string(node())
-    assert %{"t" => "hello", "protocol" => 3, "node" => ^me} = context.received
+    environment = HalC2.Environment.id()
+
+    assert %{"t" => "hello", "protocol" => 3, "node" => ^me, "environment" => ^environment} =
+             context.received
+
     context
   end
 
@@ -155,6 +160,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     "projects or threads on one node change" => "shell.rows",
     "a node's environment descriptor changes" => "shell.environment",
     "a node joins or leaves the cluster" => "shell.node",
+    "the environments the node links to change" => "shell.links",
     "a stream subscription starts or falls too far behind" => "snapshot",
     "stream entities change" => "events",
     "a stream has caught up" => "live",
@@ -187,7 +193,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     "the relay client install progresses" => "relayClientInstall"
   }
 
-  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one node change|a node's environment descriptor changes|a node joins or leaves the cluster|a stream subscription starts or falls too far behind|stream entities change|a stream has caught up|a client falls behind|a shape is over|a config subscription opens|the node moves to another version in place|the node's settings change|the node's published themes change|the node's usage limit sources change|the node's keybinding rules change|the node's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|the relay client install progresses)$/,
+  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one node change|a node's environment descriptor changes|a node joins or leaves the cluster|the environments the node links to change|a stream subscription starts or falls too far behind|stream entities change|a stream has caught up|a client falls behind|a shape is over|a config subscription opens|the node moves to another version in place|the node's settings change|the node's published themes change|the node's usage limit sources change|the node's keybinding rules change|the node's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|the relay client install progresses)$/,
        %{args: [text]} = context do
     frame = Map.fetch!(@whens, text)
 
@@ -226,15 +232,16 @@ defmodule HalC2.Steps.Parity.Protocol do
 
   # The keys each frame carries besides `t`, from `apps/server-ex/lib/hal_c2/web/protocol.ex`.
   @carries %{
-    "hello" => ~w(protocol node),
+    "hello" => ~w(protocol node environment),
     "pong" => [],
     "error" => ~w(id reason),
     "rpc.result" => ~w(id result),
     "rpc.error" => ~w(id error detail),
-    "shell" => ~w(id nodes rows),
+    "shell" => ~w(id nodes rows links),
     "shell.rows" => ~w(id node rows),
     "shell.environment" => ~w(id node environment),
     "shell.node" => ~w(id node online),
+    "shell.links" => ~w(id links),
     "snapshot" => ~w(id offset at part rows done),
     "events" => ~w(id offset events),
     "live" => ~w(id offset),
@@ -699,6 +706,13 @@ defmodule HalC2.Steps.Parity.Shapes do
 
     case type do
       "shell" ->
+        # The socket follows the node's links for shell.links from the moment it subscribes.
+        ensure([
+          {Registry, keys: :unique, name: HalC2.Links.Registry},
+          {DynamicSupervisor, name: HalC2.Links.Supervisor, strategy: :one_for_one},
+          HalC2.Links
+        ])
+
         {%{}, context}
 
       "authAccess" ->
@@ -804,6 +818,18 @@ defmodule HalC2.Steps.Parity.Shapes do
       "shell.node" ->
         send(HalC2.Shell, {:nodedown, @gone})
         await(context, t, id, &(&1["online"] == false))
+
+      "shell.links" ->
+        # A loan of access to an environment nobody serves; taken back once the frame lands.
+        environment = %{"environmentId" => "env-linked", "label" => "Linked"}
+        link = %{"origin" => "http://127.0.0.1:9", "token" => "t", "environment" => environment}
+        :ok = GenServer.call(HalC2.Links, {:put, Map.put(link, "borrowed", true)})
+
+        result =
+          await(context, t, id, &match?([%{"origin" => "http://127.0.0.1:9"}], &1["links"]))
+
+        HalC2.Links.give_back("env-linked")
+        result
 
       "live" ->
         await(context, t, id)

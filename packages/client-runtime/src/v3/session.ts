@@ -55,6 +55,7 @@ import {
   PreviewSessionLookupError,
   ProjectCloneListEvent,
   ScheduledTaskError,
+  ClusterError,
   SourceControlRepositoryError,
   ScheduledTaskListResult,
   ServerConfig,
@@ -165,6 +166,7 @@ const decodePreviewAutomationEvent = Schema.decodeUnknownSync(
 const decodeLocalServers = Schema.decodeUnknownSync(Schema.toCodecJson(DiscoveredLocalServerList));
 const decodeDeviceState = Schema.decodeUnknownSync(Schema.toCodecJson(DeviceServiceState));
 const decodeDeviceError = Schema.decodeUnknownOption(DeviceError);
+const decodeClusterError = Schema.decodeUnknownOption(ClusterError);
 const decodeTelemetry = Schema.decodeUnknownSync(Schema.toCodecJson(ResourceTelemetrySnapshot));
 const decodeAuthAccess = Schema.decodeUnknownSync(Schema.toCodecJson(AuthAccessStreamEvent));
 const decodeSetupError = Schema.decodeUnknownOption(ProviderSetupError);
@@ -820,6 +822,13 @@ export function makeV3Session(input: {
         ),
       );
 
+    const clusterCommand = (tag: string) =>
+      forward(tag, (_request: object, message, cause) =>
+        decodeClusterError(cause instanceof ClusterRpcError ? cause.detail : undefined).pipe(
+          Option.getOrElse(() => new ClusterError({ reason: "request_failed", message })),
+        ),
+      );
+
     // A client manages the connections of the node it is paired with; other
     // nodes are reached through it without a session of their own.
     const authAccess = () =>
@@ -1188,6 +1197,14 @@ export function makeV3Session(input: {
           WS_METHODS.deviceDetail,
           WS_METHODS.deviceAction,
         ].map((tag) => [tag, deviceCommand(tag)]),
+      ),
+      ...Object.fromEntries(
+        [
+          WS_METHODS.clusterStatus,
+          WS_METHODS.clusterInvite,
+          WS_METHODS.clusterJoin,
+          WS_METHODS.clusterRemove,
+        ].map((tag) => [tag, clusterCommand(tag)]),
       ),
       [WS_METHODS.scheduledTasksList]: scheduledTaskCommand(WS_METHODS.scheduledTasksList),
       [WS_METHODS.scheduledTasksUpsert]: scheduledTaskCommand(WS_METHODS.scheduledTasksUpsert),

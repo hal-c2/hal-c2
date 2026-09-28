@@ -1,10 +1,12 @@
 # Desktop (Qt) shell
 
-`apps/desktop-qt` is a second desktop client next to the Electron app. It is a
-compiled Qt 6 / QML binary (`hal-c2-qt`) that hosts the web app in a
-`WebEngineView` and makes everything around the web view - window, chrome,
-layout, colours - a set of QML "bricks" a user can rearrange and restyle from
-`~/.config/hal-c2/shell/`. It coexists with `apps/desktop`; nothing in `apps/web` or
+`apps/desktop-qt` is the desktop client, replacing the legacy Electron app. It
+is a compiled Qt 6 / QML binary (`hal-c2-qt`) whose window, chrome, layout and
+colours are QML "bricks" a user can rearrange and restyle from
+`~/.config/hal-c2/shell/`, fed by the shell's own connection to the node. It
+still embeds the legacy web app in a `WebEngineView` for what has not moved to
+QML yet; that page leaves piece by piece and nothing new is built on it (see
+[Moving off the page](#moving-off-the-page)). Nothing in `apps/web` or
 `apps/server-ex` may become Qt-specific.
 
 ## Process model
@@ -14,13 +16,15 @@ hal-c2-qt (C++/QML, the shell)
   └─ spawns ─► node apps/desktop-qt/host/main.ts  (the desktop host)
                  ├─ serves ─► apps/web/dist on http://127.0.0.1:<web port>
                  └─ spawns ─► bin/hal_c2 start | mix hal_c2.server  (the Elixir node)
-WebEngineView ──── WebSocket (protocol 3) ─────────────────────────────► node
+NativeShell (NodeClient) ── WebSocket (protocol 3) ──────────────────► node
+WebEngineView (legacy page) ── WebSocket (protocol 3) ──────────────► node
 WebEngineView ◄─── WebChannel ───► QML bricks
 ```
 
-- **The web view is the brain.** It keeps its normal WebSocket client to the
-  node, exactly as in a browser tab. The shell never speaks the app protocol
-  and holds no domain state.
+- **The shell talks to the node itself.** `NativeShell` holds its own
+  protocol-3 connection (`NodeClient`), and its C++ controllers own the state
+  of every piece that has left the page. The embedded page keeps its own
+  WebSocket client, as in a browser tab, only for what it still renders.
 - **The Node desktop host** owns everything TypeScript-owned: serving the web
   bundle and the node's lifecycle today; SSH, Tailscale, secrets and updates as
   they are ported from `apps/desktop`. It reports to the shell over its stdout
@@ -55,8 +59,8 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   actions flow QML → web (`Shell.dispatch(action, payload)` →
   `halC2Shell.onAction(listener)`), except the ones the shell's own node
   client takes (below).
-- **The shell is moving onto its own node client**, as the TUI already is:
-  the page is legacy, so RPC moves out of it key by key. With a node it
+- **The shell's own node client** does what the TUI's does: the page is
+  legacy, so RPC moves out of it key by key. With a node it
   started, the host's `ready` line carries the node's origin and access
   token, and `NativeShell` opens one protocol-3 socket (`NodeClient`) and
   folds the `shell` snapshot and row deltas (`ShellStore`). On the first
@@ -66,8 +70,12 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   actions and the composer's plain sends. It announces this as `native`
   and a `shell.native` action; a page that loads later asks with
   `shell.native.query`. Attach mode and environments outside the node's
-  cluster stay on the page. Its scenarios are
-  `features/desktop/native-*.feature`, run by the native `tst_Features`.
+  cluster stay on the page. The hello frame names the environment the node
+  serves, which is where the shell sends calls about the node itself (its
+  cluster). Pieces that never existed on the page, such as the cluster
+  settings (`ClusterController`), have no page counterpart at all. The
+  scenarios are `features/desktop/native-*.feature` and the `@desktop` ones in
+  `features/connections/cluster.feature`, run by the native `tst_Features`.
 - The UI-owned parts of `desktopBridge` (open external, window commands,
   colour scheme, dialogs/context menus later) are served by the shell over the
   same channel; the TypeScript-owned parts stay on the Node side.
@@ -134,12 +142,13 @@ works compiled into the binary and as an on-disk import path.
 
 The bricks come in two layers. Chrome bricks each own one piece of the page's
 chrome and read one key of `Shell.state`: `Sidebar`, `Workspace` (the header
-strip), `Composer`, `RightPanel`, `SettingsNav`, `GitActions`,
-`Notifications`, `ContextMenuHost`, plus `WebSurface`, `DefaultShell` and
-`ShellErrorOverlay`. `TerminalDrawer` reads the native `Terminals` controller
-instead (see the terminal drawer below). A rice that cards a surface passes the card's inner
-radius as `WebSurface.radius` (`RightPanel` forwards its own; `TerminalDrawer`
-insets its terminal from its own `radius`): the page clips itself to the curve and drops its own backdrop
+strip), `Composer`, `RightPanel`, `SettingsNav`, `ClusterSettings`,
+`GitActions`, `Notifications`, `ContextMenuHost`, plus `WebSurface`,
+`DefaultShell` and `ShellErrorOverlay`. `TerminalDrawer` reads the native
+`Terminals` controller instead (see the terminal drawer below). A rice that
+cards a surface passes the card's inner radius as `WebSurface.radius`
+(`RightPanel` forwards its own; `TerminalDrawer` insets its terminal from its
+own `radius`): the page clips itself to the curve and drops its own backdrop
 (`data-shell-surface-radius` in `index.html` and `index.css`), so no QML layer is needed to
 round a live web view. `WebSurface.transparentCanvas` additionally clears the
 chat's web backdrop layers without fading text, messages, code or menus. A
@@ -147,8 +156,8 @@ transparent WebEngine background alone cannot clear CSS backgrounds or an
 opaque parent `ShellCard`; wallpaper layouts must account for both.
 Under them sit the primitives a rice composes its own
 chrome from, all styled from `Theme`: `ShellWindow` (the root every rice
-starts from: theme-driven colour, opacity and frame, `sidebarCollapsed` /
-`settingsActive` read from the page, the shell's context menus, the error
+starts from: theme-driven colour, opacity and frame, `sidebarCollapsed`,
+`settingsActive` and `clusterOpen`, the shell's context menus, the error
 overlay and the page's window commands), `ShellCard` (a rounded, hairlined
 panel), `ShellButton` (outline, `subtle` ghost, `primary`), `ShellComboBox`
 (ghost, `outline: true` for a field), `ShellSplitButton` (the header's action
@@ -451,7 +460,7 @@ wake label, the woke timestamp and whether settle/snooze apply (`wakeLabel`,
 with the same code as the HTML sidebar — `partitionSidebarThreads` and
 `useSidebarProjectGroups` are shared — so the two never disagree. `settled` is
 capped at 50 rows with `settledTotal` carrying the real count. When hosted,
-`AppSidebarLayout` renders no thread sidebar (the settings nav stays HTML).
+`AppSidebarLayout` renders no thread sidebar.
 
 The QML sidebar reconciles publications into a keyed `ListModel`, updating
 and moving existing rows instead of replacing the list. This preserves row
@@ -647,18 +656,29 @@ Renaming is native too (`workspace.rename {title}`, with `renameRequestId`
 bumping when the page asks the brick to start editing) and the title's
 context menu comes from `workspace.titleMenu {x, y}`.
 
-### `settings`
+### `settings` and `cluster`
 
-Settings are whole HTML pages, so only their navigation moves: the root
-route mounts `ShellSettingsBridge` when hosted, which publishes
-`ShellSettingsState` on every route change — `active` (on `/settings*`),
-the sections in sidebar order, the active one, and search results for the
-query the shell last sent (the same `searchSettings` catalog the HTML nav
-uses). `DefaultShell` swaps the `Sidebar` brick for `SettingsNav` while
-`active`. Actions: `settings.navigate {to}`, `settings.openResult {to,
-targetId}` (scrolls when already on the page), `settings.search {query}`,
-`settings.back` (history back, else `/`). When hosted, `AppSidebarLayout`
-renders no sidebar on any route.
+The settings nav is the shell's (`SettingsNav`); the pages behind it are
+either the shell's own or still HTML.
+
+The shell's own pages work with no page loaded. `ClusterController` publishes
+`cluster` (`open`, `busy`, `status`, `error`, `invite`, `notice`) and calls
+the node's `cluster.*` RPCs; `ClusterSettings` renders it. Layouts show that
+brick where the page would be while `ShellWindow.clusterOpen`, and
+`settingsActive` includes it. Actions: `cluster.open`, `cluster.close`,
+`cluster.refresh`, `cluster.invite {tailscale?}` (copies the link),
+`cluster.invite.copy`, `cluster.join {link}`, `cluster.remove {id}`.
+`settings.back` on the cluster page closes it without reaching the page.
+
+The rest are HTML pages until they move. The root route mounts
+`ShellSettingsBridge` when hosted, which publishes `ShellSettingsState` on
+every route change: `active` (on `/settings*`), the sections in sidebar
+order, the active one, and search results for the query the shell last sent.
+`SettingsNav` lists those sections, then the shell's own pages; picking one
+of the page's closes the shell's page. Actions: `settings.navigate {to}`,
+`settings.openResult {to, targetId}` (scrolls when already on the page),
+`settings.search {query}`, `settings.back` (history back, else `/`). When
+hosted, `AppSidebarLayout` renders no sidebar on any route.
 
 Bridges tied to a thread route (`workspace`, `composer`, `rightPanel`)
 publish `null` for their key on unmount, so leaving a thread clears the
@@ -812,17 +832,23 @@ host and the node's sidecars. The Linux path was
 written against the documented tooling but has only been exercised in CI, not
 on this machine.
 
-## Splitting chrome out
+## Moving off the page
 
-Every piece of chrome from the original list now has a brick: `Sidebar`,
-`Composer`, `RightPanel` (+ embed route), `TerminalDrawer` (native, on
-qml-ghostty), `Workspace`, `SettingsNav`. The timeline and the settings pages
-are still HTML; the right panel's terminal tab is too. Each split-out piece becomes one brick with a documented
-state/action surface; in the shell the SPA simply does not render the parts
-that moved out. When an HTML brick needs to live somewhere QML decides, it
-becomes another `WebEngineView` loading an embed route with its own server
-connection (the right panel is the precedent); the
-primary view stays the brain.
+The embedded page is legacy and leaves the shell piece by piece. Every piece
+of the original chrome has a brick (`Sidebar`, `Composer`, `RightPanel`,
+`TerminalDrawer`, `Workspace`, `SettingsNav`), but several still get their
+state from the page. The timeline, the right panel's terminal tab and most
+settings pages are still HTML because they have not moved yet, not by design.
+
+A piece has moved when a controller in `NativeShell` builds its state from the
+shell's own node client and a brick renders it; the controller claims the key,
+so the page's publishes to it are dropped. The terminal drawer (native, on
+qml-ghostty) and the cluster settings are built this way. New features skip
+the page entirely: a controller, a brick the layouts place, and `@desktop`
+scenarios run by `tst_Features`. They are never hosted in or over
+`WebSurface`, and never gated on state the page publishes. The embed route
+behind `RightPanel` (a second `WebEngineView` on its own connection) is a
+stopgap for HTML that must sit where QML decides, not a pattern for new work.
 
 What the shell still lacks next to web and mobile is tracked as Gherkin, not
 prose. The repository's `features/` tree tags every scenario with the surface it

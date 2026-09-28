@@ -1,4 +1,7 @@
 import {
+  type ClusterInvite,
+  type ClusterMember,
+  type ClusterStatus,
   DEFAULT_SERVER_SETTINGS,
   type GitRunStackedActionResult,
   type GitStackedAction,
@@ -153,6 +156,7 @@ const UNRECORDED = new Set([
   "getServerConfig",
   "listModels",
   "listTerminalIds",
+  "clusterStatus",
 ]);
 
 export function fakeClient({
@@ -308,7 +312,26 @@ export function fakeClient({
   readonly currentThread: (threadId: string) => OrchestrationThread | null;
   /** Move the connection to a phase (the client starts "connecting"). */
   readonly emitConnection: (phase: TuiConnectionPhase) => void;
+  /** The node's cluster: its members, the invite it hands out, why it refuses a join. */
+  readonly cluster: FakeCluster;
 } {
+  const cluster: FakeCluster = {
+    members: [],
+    invite: {
+      link: "http://192.168.1.20:3773/pair#token=cluster-invite",
+      expiresAt: "2026-09-28T12:05:00Z",
+      localOnly: false,
+    },
+    joinRefusal: null,
+  };
+  const clusterStatus = (): ClusterStatus => ({
+    clustered: true,
+    id: "env-local",
+    label: "This machine",
+    node: "hal-c2-env-local",
+    addresses: ["192.168.1.20:47730"],
+    members: cluster.members,
+  });
   let connectionPhase: TuiConnectionPhase = "connecting";
   let latestShell = shellSnapshot;
   const connectionSubscribers = new Set<(phase: TuiConnectionPhase) => void>();
@@ -375,6 +398,22 @@ export function fakeClient({
     },
     browseFilesystem,
     discoverSourceControl,
+    clusterStatus: async () => clusterStatus(),
+    clusterInvite: async () => cluster.invite,
+    // Joining adds the machine the link points at.
+    clusterJoin: async (link: string) => {
+      if (cluster.joinRefusal) throw new Error(cluster.joinRefusal);
+      const label = new URL(link).hostname;
+      cluster.members = [
+        ...cluster.members,
+        { id: `env-${label}`, label, addresses: [`${label}:47730`], connected: true },
+      ];
+      return clusterStatus();
+    },
+    clusterRemove: async (id: string) => {
+      cluster.members = cluster.members.filter((member) => member.id !== id);
+      return clusterStatus();
+    },
     lookupRepository,
     cloneRepository,
     subscribeShell: (onSnapshot: (snapshot: OrchestrationShellSnapshot) => void) => {
@@ -561,11 +600,19 @@ export function fakeClient({
     },
     workspaceFiles,
     currentThread,
+    cluster,
     emitConnection: (phase) => {
       connectionPhase = phase;
       for (const onPhase of connectionSubscribers) onPhase(phase);
     },
   };
+}
+
+export interface FakeCluster {
+  members: ClusterMember[];
+  invite: ClusterInvite;
+  /** The node's reason for refusing a join; null joins. */
+  joinRefusal: string | null;
 }
 
 export type FakeGitCall =

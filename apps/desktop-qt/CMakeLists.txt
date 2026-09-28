@@ -67,6 +67,8 @@ qt_add_executable(hal-c2-qt
   src/NativeNotifications.h
   src/BackendProcess.cpp
   src/BackendProcess.h
+  src/ClusterController.cpp
+  src/ClusterController.h
   src/ComposerController.cpp
   src/ComposerController.h
   src/NativeShell.cpp

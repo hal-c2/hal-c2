@@ -7,8 +7,9 @@
 #   Shared domain: settings/ owns every settings panel; editing stays there for now.
 
 Feature: Settings in the terminal client
-  The terminal client shows a read-only view of the settings that shape its behaviour.
-  Editing settings is done in the web or desktop app until the terminal can do it.
+  The terminal client shows the settings that shape its behaviour, and this machine's
+  cluster (connections/cluster.feature, changed from the palette). Editing other settings is
+  done in the desktop app until the terminal can do it.
 
   @tui
   Scenario: Settings opens a read-only reference

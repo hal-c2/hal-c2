@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Run every @node scenario, one mix features per top-level features/ directory"
 #MISE dir="{{config_root}}/apps/server-ex"
-# @backlog scenarios run too and fail by design; see features:node.
+#USAGE flag "--backlog" help="Also run @backlog scenarios (or set INCLUDE_BACKLOG=1)"
 set -euo pipefail
 
 log=$(mktemp)
@@ -13,7 +13,7 @@ for dir in ../../features/*/; do
   grep -rqs --include='*.feature' '@node' "$dir" || continue
   echo "==> features/$name"
   status=ok
-  mix features "$name/**/*.feature" 2>&1 | tee "$log" || { status=FAILED; failed+=("$name"); }
+  mix features "$@" "$name/**/*.feature" 2>&1 | tee "$log" || { status=FAILED; failed+=("$name"); }
   result=$(grep '^Result:' "$log" | tail -n1 || true)
   results+=("$(printf '%-16s %-7s %s' "$name" "$status" "${result:-Result: none (the run did not finish)}")")
   # "Result: 19 passed, ..." when all pass, "Result: 925/1103 passed, ..." otherwise.

@@ -7,11 +7,18 @@ defmodule Mix.Tasks.HalC2.Bundle do
       mix hal_c2.bundle [OUT_DIR]
 
   Writes `hal-c2-node-<version>-<platform>.tar.gz` and its `.sha256` to `OUT_DIR`
-  (default `_build/prod`), the names release artifacts are published under.
+  (default `_build/prod`), the names release artifacts are published under. Beside it
+  goes the single-file node, `hal-c2-node-<version>-<platform>` and its `.sha256`: the
+  bundle behind a shell script (`rel/hal-c2-node.sh`) that unpacks it into the node's
+  data directory and starts it, for machines without Elixir or Erlang.
   Prints the bundle's path.
   """
 
   use Mix.Task
+
+  @stub_path Path.expand("../../../rel/hal-c2-node.sh", __DIR__)
+  @external_resource @stub_path
+  @stub File.read!(@stub_path)
 
   @impl true
   def run(args) do
@@ -44,9 +51,31 @@ defmodule Mix.Tasks.HalC2.Bundle do
           do: {String.to_charlist(Path.relative_to(entry, root)), String.to_charlist(entry)}
 
     :ok = :erl_tar.create(String.to_charlist(path), files, [:compressed])
+    write_sum(path)
 
+    single = String.replace_suffix(path, ".tar.gz", "")
+    File.write!(single, [stub(root, version, erts), File.read!(path)])
+    File.chmod!(single, 0o755)
+    write_sum(single)
+    path
+  end
+
+  # The script the single-file node starts with; the bundle follows its last line.
+  defp stub(root, version, erts) do
+    data_dir = File.read!(Path.join([root, "bin", "hal-c2-data-dir"]))
+
+    script =
+      @stub
+      |> String.replace("@VERSION@", version)
+      |> String.replace("@ERTS@", erts)
+      |> String.replace("@DATA_DIR@\n", data_dir)
+
+    lines = length(String.split(script, "\n")) - 1
+    String.replace(script, "@PAYLOAD_LINE@", Integer.to_string(lines + 1))
+  end
+
+  defp write_sum(path) do
     sum = :crypto.hash(:sha256, File.read!(path)) |> Base.encode16(case: :lower)
     File.write!(path <> ".sha256", "#{sum}  #{Path.basename(path)}\n")
-    path
   end
 end

@@ -17,6 +17,7 @@ import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { createStore, type StatusKind, type StoreState } from "../store.ts";
 import { revertableCheckpoints } from "../timeline.ts";
 import { createAddProjectController } from "./addProjectState.ts";
+import { createClusterController, NO_CLUSTER_STATE } from "./clusterState.ts";
 import { createComposer, type ImageDecoder } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
 import { createFilesController } from "./filesState.ts";
@@ -255,6 +256,7 @@ export function createHost(options: HostOptions): Host {
     problems: { items: [] },
     connection: connectionState("connecting"),
     graphics: { inlineImages: options.inlineImages ?? null } satisfies TuiGraphicsState,
+    cluster: NO_CLUSTER_STATE,
   });
 
   let pluginPort: PluginPort | null = null;
@@ -313,7 +315,8 @@ export function createHost(options: HostOptions): Host {
     const previous = layout;
     const popoverOpen = wantedPopoverRows() > 0 || mode === "contextMenu";
     // ChatView's rename, commit and filter focus: the prompt is one line.
-    const oneLineComposer = mode === "rename" || mode === "commit" || mode === "filter";
+    const oneLineComposer =
+      mode === "rename" || mode === "commit" || mode === "filter" || mode === "join";
     layout = buildTuiLayoutState({
       size,
       sidebarCollapsed,
@@ -365,6 +368,7 @@ export function createHost(options: HostOptions): Host {
         active: settingsOpen,
         detail: current.detail,
         vcsStatus: current.vcsStatus,
+        cluster: cluster.state(),
         // Before the first layout the pane is the whole terminal.
         width: (layout as TuiLayoutState | undefined)?.chatWidth ?? size.columns,
       }),
@@ -591,6 +595,19 @@ export function createHost(options: HostOptions): Host {
     openDraft: (projectId) => dispatch("thread.new", { projectKey: projectKey(projectId) }),
     publish: (next) => state.set("addProject", next),
   });
+  // The cluster: status in settings, invite / join / remove from the palette.
+  const cluster = createClusterController({
+    client,
+    store,
+    setMode: (next) => setMode(next),
+    restingMode,
+    copyToClipboard: options.copyToClipboard,
+    publish: (next) => {
+      state.set("cluster", next);
+      if (settingsOpen) publishSettings();
+      palette.sync();
+    },
+  });
   /** The files, add-project and terminal entries, as palette commands. */
   const areaCommands = (): PaletteCommand[] =>
     [...addProject.commands(), ...files.commands(), ...terminal.commands()].map((command) => ({
@@ -643,7 +660,7 @@ export function createHost(options: HostOptions): Host {
       };
     },
     // After the composer's own entries: thread lifecycle and scope, then the
-    // diff, source-control, settings, files, add-project and terminal entries.
+    // diff, source-control, settings, files, add-project, terminal and cluster entries.
     extraCommands: () => [
       ...threadActions.paletteCommands(),
       ...detailCommands({
@@ -652,6 +669,7 @@ export function createHost(options: HostOptions): Host {
           revertableCheckpoints(store.getState().detail?.checkpoints ?? []).length > 0,
       }),
       ...areaCommands(),
+      ...cluster.commands(),
     ],
     run: (action, payload) => {
       dispatch(action, payload);
@@ -748,7 +766,11 @@ export function createHost(options: HostOptions): Host {
     }
   };
   const handle = (action: string, payload?: unknown): boolean => {
-    if (action === "palette.open") threadActions.closeMenu();
+    if (action === "palette.open") {
+      threadActions.closeMenu();
+      // Its remove entries follow the members.
+      void cluster.refresh();
+    }
     if (palette.dispatch(action, payload)) return true;
     // A paste the composer does not take (plain text) is inserted by the prompt.
     if (action === "composer.paste") return composer!.dispatch(action, payload);
@@ -860,6 +882,7 @@ export function createHost(options: HostOptions): Host {
         if (mode === "diff") dispatch("diff.close");
         settingsOpen = true;
         publishSettings();
+        void cluster.refresh();
         setMode("settings");
         return true;
       case "settings.close":
@@ -964,6 +987,7 @@ export function createHost(options: HostOptions): Host {
         if (threadView.dispatch(action, payload)) return true;
         if (sourceControl.dispatch(action, payload)) return true;
         if (files.dispatch(action, payload) || addProject.dispatch(action, payload)) return true;
+        if (cluster.dispatch(action, payload)) return true;
         // Known actions that decline when they do not apply (the key falls through).
         if (DECLINABLE_ACTIONS.has(action)) return false;
         if (!unknownActions.has(action)) {
@@ -1058,6 +1082,7 @@ export function createHost(options: HostOptions): Host {
       await files.settled();
       await terminal.settled();
       await threadView.settled();
+      await cluster.settled();
     },
     attachPlugins: (port) => {
       pluginPort = port;

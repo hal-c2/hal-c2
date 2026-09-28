@@ -10,10 +10,14 @@ Window {
 
     default property alias content: body.data
 
-    // The page owns both of these (Mod+B collapses, Settings opens); the shell
-    // only animates and re-arranges around them.
+    // The page still owns collapsing (Mod+B) and its own settings sections;
+    // the shell animates and re-arranges around them.
     readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
-    readonly property bool settingsActive: Shell.state.settings ? Shell.state.settings.active : false
+    // A settings page the shell renders itself is open (ClusterController):
+    // layouts put ClusterSettings where the page would be.
+    readonly property bool clusterOpen: Shell.state.cluster?.open ?? false
+    // Settings show, from the page's sections or the shell's own pages.
+    readonly property bool settingsActive: clusterOpen || (Shell.state.settings ? Shell.state.settings.active : false)
     // The page's keybindings (the configurable ones from Settings), as Qt
     // sequences. They fire only while the chrome owns the keyboard: a
     // focused page sees its own keydowns and handles them itself.

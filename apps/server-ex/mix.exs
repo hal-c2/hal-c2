@@ -39,7 +39,6 @@ defmodule HalC2.MixProject do
       {:erlexec, "~> 2.5"},
       {:exile, "~> 0.15"},
       {:exqlite, "~> 0.41"},
-      {:libcluster, "~> 3.5"},
       {:mint_web_socket, "~> 1.0"},
       {:tz, "~> 0.28"},
       {:websock_adapter, "~> 0.6"},
@@ -75,13 +74,19 @@ defmodule HalC2.MixProject do
     release
   end
 
-  # `mix features [glob ...] [-- mix test args]` runs the repo's `@node` Gherkin
-  # scenarios (`features/`) and nothing else. Globs are relative to `features/`
-  # and default to every file; see test/support/features.ex.
+  # `mix features [--backlog] [glob ...] [-- mix test args]` runs the repo's `@node`
+  # Gherkin scenarios (`features/`) and nothing else. Globs are relative to `features/`
+  # and default to every file; `--backlog` (or INCLUDE_BACKLOG=1) also runs the
+  # `@backlog` ones. See test/support/features.ex.
   defp features(args) do
-    {globs, rest} = Enum.split_while(args, &(&1 != "--"))
+    {ours, rest} = Enum.split_while(args, &(&1 != "--"))
+    {flags, globs} = Enum.split_with(ours, &(&1 == "--backlog"))
     if globs != [], do: System.put_env("HAL_C2_FEATURES", Enum.join(globs, ","))
     System.put_env("HAL_C2_FEATURES", System.get_env("HAL_C2_FEATURES") || "**/*.feature")
+
+    if flags != [] or System.get_env("INCLUDE_BACKLOG") in ["1", "true"],
+      do: System.put_env("HAL_C2_FEATURES_BACKLOG", "1")
+
     Mix.env(:test)
     Mix.Task.run("test", ["--only", "cucumber" | Enum.drop(rest, 1)])
   end

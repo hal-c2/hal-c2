@@ -10,7 +10,7 @@ import type { KeyBindingMode } from "../hooks/useKeyBindings.ts";
 
 /** Key-routing modes: the old TUI's focus modes, the new-thread draft, and `list` (the thread list
  * has the keys; its "list" keymap is live). */
-export type TuiMode = KeyBindingMode | "newThread" | "list";
+export type TuiMode = KeyBindingMode | "newThread" | "list" | "join";
 
 export interface TuiSize {
   readonly columns: number;
@@ -70,7 +70,7 @@ export interface TuiLayoutInput {
   readonly popoverRows?: number;
   /**
    * A popover or context menu is open, or the prompt is a one-line rename,
-   * commit or filter field: the editor takes one row (ChatView).
+   * commit, filter or cluster join field: the editor takes one row (ChatView).
    */
   readonly oneLineEditor?: boolean;
   /** The composer's rows besides the editor (question, attachments, compact footer, context). */

@@ -4,7 +4,8 @@
 #   apps/server-ex/README.md (Run, Release: where the node keeps its state)
 #   apps/server/src/cli/config.ts (HAL_C2_HOST)
 #   apps/server-ex/lib/mix/tasks/hal_c2.server.ex, hal_c2.import.ex, hal_c2.bundle.ex
-#   apps/server-ex/rel/env.sh.eex (the release's home, RELEASE_DISTRIBUTION, cluster vm.args)
+#   apps/server-ex/rel/env.sh.eex (RELEASE_DISTRIBUTION, cluster boot flags), rel/overlays/bin/hal-c2-data-dir (the release's home)
+#   apps/server-ex/rel/hal-c2-node.sh (the single-file node)
 #   apps/server-ex/rel/overlays/bin/hal-c2-service (restart loop on exit 75), lib/hal_c2/service.ex
 #   apps/server-ex/lib/hal_c2/desktop.ex (HAL_C2_BOOTSTRAP_STDIN), acp.ex (HAL_C2_NODE_COMMAND, HAL_C2_NODE_ELECTRON)
 #   apps/server-ex/lib/hal_c2/web.ex (access-token), environment.ex (environment-id, HAL_C2_LABEL, descriptor)
@@ -183,18 +184,42 @@ Feature: Starting the node
     And it starts on login
     And the user can see its status and remove it again
 
-  @backlog @node
-  Scenario: A user starts the node from a published package without installing Elixir
-    Given a machine with no Elixir or Erlang installed
-    When the user runs the published start command
-    Then a node starts with its bundled runtime
-    And it prints a pairing link
+  @node
+  Scenario: A user starts the node from one downloaded file without installing Elixir
+    Given the single-file node of a release
+    When a user runs it with "--flag"
+    Then the release and its runtime are unpacked in the node's data directory
+    And the service wrapper starts the release with "--flag"
+
+  @node
+  Scenario: Running the single file again starts the version the node upgraded to
+    Given a user ran the single-file node of a release
+    And the node has since upgraded itself to "9.9.9"
+    When a user runs it with "--flag"
+    Then the service wrapper starts "9.9.9" with "--flag"
+    And the installed release is left as it was
+
+  @node
+  Scenario: An install cut off before it finished runs again
+    Given a user ran the single-file node of a release
+    And the install was cut off before it named the release to start
+    When a user runs it with "--flag"
+    Then the release and its runtime are unpacked in the node's data directory
+    And the service wrapper starts the release with "--flag"
+
+  @node
+  Scenario: The single file of another version moves the node to it
+    Given a user ran the single-file node of a release
+    When a user runs the single-file node of "9.9.9"
+    Then the service wrapper starts "9.9.9" with ""
+    And the versions installed before are kept
 
   @node
   Scenario: A release bundle is packaged for one platform with a checksum
     When a maintainer builds a release bundle
     Then it writes one archive named for the version and platform
-    And a SHA-256 file beside it
+    And an executable single-file node named the same without the extension
+    And a SHA-256 file beside each
 
   @node
   Scenario: The release carries the Cursor sidecar
@@ -241,11 +266,10 @@ Feature: Starting the node
     Then it refuses with the expected usage
 
   @node
-  Scenario: A node joins its cluster on boot when it has been made a member
-    Given the home directory holds cluster boot arguments
+  Scenario: A release boots ready to cluster
     When the release starts
-    Then it starts with cluster distribution over mutual TLS
-    And without them it starts with distribution off
+    Then it boots with TLS distribution whose options are in the node's data directory
+    And asking the release for named distribution leaves the cluster flags out
 
   # The TypeScript server's --home-dir, --port and --mode flags. A node reads HAL_C2_HOME and
   # HAL_C2_NODE_PORT and has one mode; the desktop bootstrap covers the desktop case.

@@ -3,7 +3,8 @@
 #   apps/server-ex/lib/hal_c2/upgrade/source.ex (cache, cluster peer, release URL, SHA-256)
 #   apps/server-ex/lib/hal_c2/hot.ex (md5 skip, code_change, soft purge, lingering modules)
 #   apps/server-ex/lib/mix/tasks/hal_c2.upgrade.ex, hal_c2.bundle.ex
-#   apps/server-ex/lib/hal_c2/web/router.ex (GET /api/upgrade/:token)
+#   apps/server-ex/lib/hal_c2/web/router.ex (GET /api/upgrade/:token, POST /api/dev/reload)
+#   mise-tasks/node/reload
 #   apps/server-ex/lib/hal_c2/web/socket.ex (serverUpdate shape, config.ready updateOutcome, @state_version)
 #   apps/server-ex/rel/overlays/bin/hal-c2-service
 #   packages/contracts/src/server.ts (server.updateServer, server.updateServerWithProgress, server.commitDesktopUpdate)
@@ -144,6 +145,19 @@ Feature: Node self-update and hot upgrades
     When a developer reloads them after editing code
     Then only modules whose code changed are loaded
     And the report lists modules that need a restart
+
+  @node
+  Scenario: A developer reloads the node their checkout runs without naming it
+    Given nodes started from a checkout
+    When a developer reloads the local node with its own access token
+    Then only modules whose code changed are loaded
+    And the report lists modules that need a restart
+
+  @node
+  Scenario: Only the node's own access token reloads it
+    Given nodes started from a checkout
+    When someone asks the local node to reload with another token
+    Then the node refuses and loads nothing
 
   @node
   Scenario: Modules still in use are left for later rather than killed

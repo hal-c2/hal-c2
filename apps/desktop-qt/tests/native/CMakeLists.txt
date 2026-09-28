@@ -39,6 +39,7 @@ add_test(NAME BackendProcess COMMAND tst_BackendProcess)
 # The native scenarios of features/desktop, against a fake node.
 add_executable(tst_Features
   tst_Features.cpp
+  ../../src/ClusterController.cpp
   ../../src/ComposerController.cpp
   ../../src/NativeShell.cpp
   ../../src/NodeClient.cpp

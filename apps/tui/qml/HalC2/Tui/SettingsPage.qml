@@ -1,11 +1,11 @@
 import OpenTUI
 
-// The read-only settings overview (`Shell.state.settings.groups`) in place
-// of the conversation, like SettingsView: the thread's provider and git
-// state, then the keybinding reference by context, each group after the
-// first parted by a blank row. The host draws each row (`line`: the label
-// padded to 16, the value clipped to the pane). PgUp/PgDn scroll (`scroll`),
-// Esc closes.
+// The settings overview (`Shell.state.settings.groups`) in place of the
+// conversation, like SettingsView: the thread's provider and git state, this
+// machine's cluster, then the keybinding reference by context, each group
+// after the first parted by a blank row. The host draws each row (`line`: the
+// label padded to 16, the value clipped to the pane). PgUp/PgDn scroll
+// (`scroll`), Esc closes.
 Rectangle {
     id: page
     objectName: "settingsPage"

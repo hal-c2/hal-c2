@@ -64,7 +64,8 @@ defmodule HalC2.Web.Protocol do
 
   Server to client:
 
-      {"t": "hello", "protocol": 3, "node": n}
+      {"t": "hello", "protocol": 3, "node": n, "environment": id}
+        (the environment this node serves, for RPCs about the node itself)
       {"t": "shell", "id", "nodes": [{"node", "online", "environment"}], "rows": [[node, id, kind, row]],
         "links": [{"environment", "origin", "online"}]}
       {"t": "shell.links", "id", "links"}   (environments this node links to; the whole list)

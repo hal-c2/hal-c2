@@ -559,6 +559,13 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "scheduledTasks.runNow" ->
         {%{"id" => "hal-c2-missing"}, context}
 
+      # The test VM is not booted for clustering, so these fail as the contract's error.
+      "cluster.join" ->
+        {%{"link" => "http://127.0.0.1:1/?token=hal-c2-none"}, context}
+
+      "cluster.remove" ->
+        {%{"id" => "hal-c2-none"}, context}
+
       _ ->
         {%{}, context}
     end
@@ -635,6 +642,9 @@ defmodule HalC2.Steps.Parity.Fixtures do
 
         "scheduledTasks." <> _ ->
           [HalC2.ScheduledTasks]
+
+        "cluster." <> _ ->
+          [HalC2.Cluster]
 
         _ ->
           []

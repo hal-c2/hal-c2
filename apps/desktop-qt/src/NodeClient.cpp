@@ -101,6 +101,7 @@ void NodeClient::onMessage(const QString& text) {
     m_ready = true;
     m_attempt = 0;
     m_node = frame.value(QLatin1String("node")).toString();
+    m_environment = frame.value(QLatin1String("environment")).toString();
     m_pingTimer.start();
     for (auto it = m_subscriptions.cbegin(); it != m_subscriptions.cend(); ++it) sendSub(it.key());
     emit readyChanged(true);

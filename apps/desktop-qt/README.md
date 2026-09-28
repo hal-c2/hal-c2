@@ -1,7 +1,9 @@
 # @hal-c2/desktop-qt
 
-Qt/QML shell for HAL-C2. Hosts the web app in a `WebEngineView` and lets the
-window chrome be rearranged and themed from `~/.config/hal-c2/shell/`.
+Qt/QML desktop client for HAL-C2. Its QML chrome talks to the node over the
+shell's own connection and can be rearranged and themed from
+`~/.config/hal-c2/shell/`. What has not moved to QML yet still comes from the
+legacy web app in an embedded `WebEngineView`.
 
 Architecture, setup, and the QML/theme contracts: `docs/internals/desktop-qt.md`.
 
@@ -33,8 +35,9 @@ cmake --build apps/desktop-qt/build/tests/native
 ctest --test-dir apps/desktop-qt/build/tests/native --output-on-failure
 ```
 
-`Features` runs the `@desktop` scenarios in `features/desktop/native-*.feature` against a fake
-node; `HAL_C2_FEATURES="desktop/native-sidebar.feature"` narrows it.
+`Features` runs the `@desktop` scenarios in `features/desktop/native-*.feature` and
+`features/connections/cluster.feature` against a fake node;
+`HAL_C2_FEATURES="desktop/native-sidebar.feature"` narrows it.
 `ShellRuntime` covers reload and theme ownership. `ShellExamples` loads all
 the examples at 640, 1000, and 1400 pixels (including `glass-macos` on macOS), checking header text and dashboard
 card bounds, long branch names, clipped icons, and scrolling to the last card. It uses a local

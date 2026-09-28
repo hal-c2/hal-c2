@@ -13,7 +13,8 @@ NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)
       m_store(&m_client, this),
       m_sidebar(bridge, &m_client, &m_store, this),
       m_composer(bridge, &m_client, &m_store, this),
-      m_terminals(bridge, &m_client, &m_store, this) {
+      m_terminals(bridge, &m_client, &m_store, this),
+      m_cluster(bridge, &m_client, this) {
   bridge->addInterceptor([this](const QString& action, const QVariant& payload) {
     // A (re)loaded page asks who owns what; the answer comes as `shell.native`.
     if (action == QLatin1String("shell.native.query")) {
@@ -21,7 +22,7 @@ NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)
       return true;
     }
     return m_sidebar.handle(action, payload) || m_composer.handle(action, payload) ||
-           m_terminals.handle(action, payload);
+           m_terminals.handle(action, payload) || m_cluster.handle(action, payload);
   });
   connect(&m_store, &ShellStore::changed, this, &NativeShell::update);
   connect(&m_store, &ShellStore::changed, this, &NativeShell::lend);
@@ -84,6 +85,7 @@ void NativeShell::update() {
   if (m_composer.isActive() && sidebar == m_sidebar.isActive()) return;
   m_composer.activate();
   m_terminals.activate();
+  m_cluster.activate();
   if (sidebar) {
     m_bridge->claimKey(QStringLiteral("sidebar"));
     m_sidebar.activate();

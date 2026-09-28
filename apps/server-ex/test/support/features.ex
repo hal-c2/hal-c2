@@ -3,7 +3,9 @@ defmodule HalC2.Test.Features do
   Runs the repo's Gherkin specification (`features/`) against this node.
 
   Only scenarios tagged `@node` and not `@dropped` become tests; the rest belong
-  to other surfaces. Step definitions live in `test/steps/`, one file per feature
+  to other surfaces. `@backlog` scenarios (and `@backlog` example tables) are left
+  out unless `backlog: true` (`mix features --backlog`), since they name behaviour
+  the node does not have yet. Step definitions live in `test/steps/`, one file per feature
   directory, on the harness in `HalC2.Test.Node`. `mix features` runs them, or
   `HAL_C2_FEATURES=<globs> mix test --only cucumber`; globs are relative to `features/`.
   """
@@ -14,7 +16,8 @@ defmodule HalC2.Test.Features do
   def root, do: @root
 
   @doc "Compiles the selected `@node` scenarios into ExUnit modules."
-  def compile!(globs) do
+  def compile!(globs, opts \\ []) do
+    backlog? = Keyword.get(opts, :backlog, false)
     patterns = Enum.map(globs, &Path.join(@root, &1))
 
     %Cucumber.Discovery.DiscoveryResult{
@@ -31,7 +34,7 @@ defmodule HalC2.Test.Features do
 
     features =
       features
-      |> Enum.map(&select_node_scenarios/1)
+      |> Enum.map(&select_node_scenarios(&1, backlog?))
       |> Enum.reject(&(&1.scenarios == [] and &1.rules == []))
       # Module names come from the file path: `Features.Threads.SettleTest`.
       |> Enum.map(&%{&1 | file: Path.relative_to(&1.file, Path.dirname(@root))})
@@ -47,19 +50,37 @@ defmodule HalC2.Test.Features do
     )
   end
 
-  defp select_node_scenarios(feature) do
+  defp select_node_scenarios(feature, backlog?) do
+    select = fn scenarios, inherited ->
+      scenarios
+      |> Enum.filter(&node?(&1, inherited))
+      |> Enum.flat_map(&without_backlog(&1, inherited, backlog?))
+    end
+
     rules =
       feature.rules
-      |> Enum.map(fn rule ->
-        %{rule | scenarios: Enum.filter(rule.scenarios, &node?(&1, feature.tags ++ rule.tags))}
-      end)
+      |> Enum.map(&%{&1 | scenarios: select.(&1.scenarios, feature.tags ++ &1.tags)})
       |> Enum.reject(&(&1.scenarios == []))
 
-    %{
-      feature
-      | scenarios: Enum.filter(feature.scenarios, &node?(&1, feature.tags)),
-        rules: rules
-    }
+    %{feature | scenarios: select.(feature.scenarios, feature.tags), rules: rules}
+  end
+
+  defp without_backlog(scenario, _inherited, true), do: [scenario]
+
+  defp without_backlog(scenario, inherited, false) do
+    cond do
+      "backlog" in inherited or "backlog" in scenario.tags ->
+        []
+
+      examples = Map.get(scenario, :examples) ->
+        case Enum.reject(examples, &("backlog" in &1.tags)) do
+          [] when examples != [] -> []
+          kept -> [%{scenario | examples: kept}]
+        end
+
+      true ->
+        [scenario]
+    end
   end
 
   # Example tables carry tags too; an outline runs when any of its tables is a

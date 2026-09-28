@@ -50,6 +50,36 @@ Item {
             publish("model 123 & provider");
             compare(search.text, "model 123 & provider");
         }
+        function test_clusterRowWithoutThePage() {
+            Shell.state = { cluster: { open: false } };
+            let nav = createTemporaryObject(component, root);
+            verify(!!nav, "Component exists");
+            let row = findChild(nav, "settingsRow0");
+            verify(!!row, "Object exists");
+            compare(row.Accessible.name, "Cluster");
+            row.forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            compare(Shell.dispatchedActions[0].action, "cluster.open");
+        }
+        function test_clusterRowTakesCurrentFromThePage() {
+            Shell.state = Object.assign({}, Shell.state, { cluster: { open: true } });
+            let nav = createTemporaryObject(component, root);
+            verify(!!nav, "Component exists");
+            tryVerify(() => findChild(nav, "settingsRow2") !== null, 1000, "Cluster follows the page's sections");
+            verify(!findChild(nav, "settingsRow0").current, "the page's section is not current");
+            verify(findChild(nav, "settingsRow2").current, "Cluster is current");
+        }
+        function test_searchFindsCluster() {
+            Shell.state = { cluster: { open: false } };
+            let nav = createTemporaryObject(component, root);
+            verify(!!nav, "Component exists");
+            let search = findChild(nav, "search");
+            search.forceActiveFocus();
+            keyClick(Qt.Key_M); keyClick(Qt.Key_A); keyClick(Qt.Key_C);
+            compare(findChild(nav, "settingsRow0").Accessible.name, "Cluster");
+            search.text = "theme";
+            verify(!findChild(nav, "settingsRow0"), "Cluster does not match");
+        }
         function test_keyboardSearchResult() {
             publish("theme");
             let nav = createTemporaryObject(component, root);

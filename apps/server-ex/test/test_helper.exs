@@ -5,10 +5,11 @@ ExUnit.start(exclude: [:codex, :claude, :opencode, :parity, :backlog])
 
 # The Gherkin specification runs only when asked for (`mix features`, or
 # `HAL_C2_FEATURES=threads/*.feature mix test --only cucumber`), so a plain
-# `mix test <file>` stays quick. `--only cucumber` includes every scenario, so
-# `@backlog` scenarios always run under `mix features` and fail by design; the
-# exclude below only keeps them out of `HAL_C2_FEATURES=... mix test` without
-# `--only`, where `--include backlog` brings them back.
+# `mix test <file>` stays quick. `@backlog` scenarios are left out of it unless
+# HAL_C2_FEATURES_BACKLOG=1 (`mix features --backlog`): they name behaviour the
+# node does not have yet, and fail until it does.
 if globs = System.get_env("HAL_C2_FEATURES") do
-  HalC2.Test.Features.compile!(String.split(globs, ","))
+  HalC2.Test.Features.compile!(String.split(globs, ","),
+    backlog: System.get_env("HAL_C2_FEATURES_BACKLOG") in ["1", "true"]
+  )
 end

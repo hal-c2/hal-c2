@@ -1,7 +1,7 @@
 defmodule HalC2.Cluster.TailscaleTest do
   use ExUnit.Case, async: true
 
-  test "online peers become node names on their IPv4 address" do
+  test "online peers are tried at their IPv4 address" do
     status = %{
       "Self" => %{"TailscaleIPs" => ["100.67.211.56", "fd7a::1"]},
       "Peer" => %{
@@ -11,7 +11,7 @@ defmodule HalC2.Cluster.TailscaleTest do
       }
     }
 
-    assert HalC2.Cluster.Tailscale.peers(status) == [:"hal_c2@100.66.87.5"]
+    assert HalC2.Cluster.Tailscale.peers(status) == ["100.66.87.5"]
     assert HalC2.Cluster.Tailscale.peers(%{"BackendState" => "Stopped"}) == []
   end
 end

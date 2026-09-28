@@ -5,7 +5,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   (`HalC2.Upgrade`):
 
       mix hal_c2.upgrade NODE [NODE ...] [--cookie COOKIE]
-      mix hal_c2.upgrade --dev NODE [NODE ...] [--cookie COOKIE]
+      mix hal_c2.upgrade --dev [NODE ...] [--cookie COOKIE]
 
   Without `--dev`, builds the prod release and its bundle, sends the bundle to the
   first node, and has each named node update to it; the others fetch it over HTTP
@@ -13,11 +13,14 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   need a restart.
 
   With `--dev`, compiles and has nodes started from this checkout (`mix run`)
-  load what changed.
+  load what changed. Without node names that is the node `mix hal_c2.server` runs
+  here (`mise run node:reload`), reached over its HTTP port with its access token, so
+  it needs no distribution.
 
-  Clustered nodes use TLS distribution: run the task with the cluster's flags,
-  `elixir --erl "$(mix hal_c2.cluster vm-args)" -S mix hal_c2.upgrade ...`. Otherwise a
-  hidden short-name node is started with `--cookie`.
+  Named nodes are reached from a hidden short-name node started with `--cookie`, so
+  they must run with plain distribution (`elixir --sname ... -S mix hal_c2.server`).
+  A cluster's nodes (`HalC2.Cluster`) admit only their members' certificates; update
+  them from a client instead.
   """
 
   use Mix.Task
@@ -28,12 +31,25 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   def run(args) do
     {opts, nodes} = OptionParser.parse!(args, strict: [dev: :boolean, cookie: :string])
     nodes = Enum.map(nodes, &String.to_atom/1)
-    nodes != [] || Mix.raise("Name the nodes to upgrade, e.g. hal_c2_a@my-mac")
 
-    if opts[:dev], do: Mix.Task.run("compile"), else: build()
-    connect(nodes, opts[:cookie])
+    cond do
+      opts[:dev] && nodes == [] ->
+        Mix.Task.run("compile")
+        local()
 
-    if opts[:dev], do: dev(nodes), else: release(nodes, Mix.Tasks.HalC2.Bundle.bundle())
+      nodes == [] ->
+        Mix.raise("Name the nodes to upgrade, e.g. hal_c2_a@my-mac")
+
+      opts[:dev] ->
+        Mix.Task.run("compile")
+        connect(nodes, opts[:cookie])
+        dev(nodes)
+
+      true ->
+        build()
+        connect(nodes, opts[:cookie])
+        release(nodes, Mix.Tasks.HalC2.Bundle.bundle())
+    end
   end
 
   defp build do
@@ -49,16 +65,55 @@ defmodule Mix.Tasks.HalC2.Upgrade do
     for node <- nodes do
       case :erpc.call(node, HalC2.Upgrade, :reload_checkout, [], 60_000) do
         {:ok, %{changed: changed, needs_restart: restart}} ->
-          Mix.shell().info("#{node}: loaded #{length(changed)} modules")
-
-          if restart != [],
-            do:
-              Mix.shell().info("#{node}: restart for #{Enum.map_join(restart, ", ", &inspect/1)}")
+          loaded(node, Enum.map(changed, &inspect/1), Enum.map(restart, &inspect/1))
 
         {:error, reason} ->
           Mix.shell().error("#{node}: #{inspect(reason)}")
       end
     end
+  end
+
+  # The node this checkout runs, through `POST /api/dev/reload`.
+  defp local do
+    Mix.Task.run("app.config")
+    {:ok, _} = Application.ensure_all_started(:inets)
+    base = HalC2.Web.base_url()
+
+    token =
+      case File.read(HalC2.Web.token_path()) do
+        {:ok, token} ->
+          String.trim(token)
+
+        {:error, _} ->
+          Mix.raise(
+            "No node has run from #{HalC2.Paths.data_dir()}; start one with `mise run node`"
+          )
+      end
+
+    request = {~c"#{base}/api/dev/reload", [{~c"authorization", ~c"Bearer #{token}"}], ~c"", ""}
+
+    case :httpc.request(:post, request, [timeout: 60_000], body_format: :binary) do
+      {:ok, {{_, 200, _}, _, body}} ->
+        report = JSON.decode!(body)
+        loaded(base, report["changed"], report["needsRestart"])
+
+      {:ok, {{_, 404, _}, _, _}} ->
+        Mix.raise("The node at #{base} runs from a release; name it to upgrade it")
+
+      {:ok, {{_, 409, _}, _, body}} ->
+        Mix.raise("#{base}: #{JSON.decode!(body)["reason"]}")
+
+      {:ok, {{_, status, _}, _, _}} ->
+        Mix.raise("#{base} answered #{status}; is it a node from another home?")
+
+      {:error, _} ->
+        Mix.raise("No node answers at #{base}; start one with `mise run node`")
+    end
+  end
+
+  defp loaded(node, changed, restart) do
+    Mix.shell().info("#{node}: loaded #{length(changed)} modules")
+    if restart != [], do: Mix.shell().info("#{node}: restart for #{Enum.join(restart, ", ")}")
   end
 
   @doc false

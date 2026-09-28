@@ -44,9 +44,6 @@ defmodule HalC2.Test.Node do
     start_supervised!(HalC2.Shell)
     web = start_supervised!(Supervisor.child_spec(HalC2.Web, id: HalC2.Web))
     start_supervised!(HalC2.RuntimeRecord)
-    # A named node finds its peers as it would at boot (HAL_C2_PEERS, the tailnet).
-    for spec <- HalC2.Application.discovery(HalC2.Paths.data_dir()),
-        do: start_supervised!(Supervisor.child_spec(spec, id: :discovery))
 
     {:ok, {_ip, port}} = ThousandIsland.listener_info(web)
     # The port it got, as a configured node knows its own (`mix hal_c2.pair` reads it).
@@ -73,7 +70,6 @@ defmodule HalC2.Test.Node do
         do: ExUnit.Callbacks.stop_supervised(Supervisor.child_spec(child, []).id)
 
     for child <- [
-          :discovery,
           HalC2.RuntimeRecord,
           HalC2.Web,
           HalC2.Shell,
@@ -1381,8 +1377,8 @@ defmodule HalC2.Test.Node.World do
   """
   def cli_rules(context, rules) do
     context = if context[:cli], do: context, else: fake_cli(context)
-    existing = context.cli.rules |> File.read!() |> Jason.decode!()
-    File.write!(context.cli.rules, Jason.encode!(List.wrap(rules) ++ existing))
+    existing = context.cli.rules |> File.read!() |> JSON.decode!()
+    File.write!(context.cli.rules, JSON.encode!(List.wrap(rules) ++ existing))
     context
   end
 
@@ -1391,7 +1387,7 @@ defmodule HalC2.Test.Node.World do
     context.cli.log
     |> File.read!()
     |> String.split("\n", trim: true)
-    |> Enum.map(&Jason.decode!/1)
+    |> Enum.map(&JSON.decode!/1)
     |> Enum.filter(&(Enum.join(&1["args"], " ") =~ fragment))
   end
 
