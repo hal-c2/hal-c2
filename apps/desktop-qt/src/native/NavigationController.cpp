@@ -7,6 +7,8 @@
 #include <QJsonObject>
 #include <QSaveFile>
 
+#include "DraftController.h"
+#include "NativeShell.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 
@@ -87,6 +89,14 @@ void NavigationController::activate() {
     m_route = m_pageRoute.value_or(Route());
     save();
   }
+  // Nor is a draft that was sent or deleted.
+  if (m_route.kind == QLatin1String("draft")) {
+    const auto* drafts = NativeShell::of(this)->controller<DraftController>();
+    if (drafts && !drafts->draft(m_route.draftId)) {
+      m_route = Route();
+      save();
+    }
+  }
   m_restored = false;
   publish();
   follow();
@@ -109,8 +119,8 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
     // where the user left off. Where they click to is.
     if (m_restored && map.value(QStringLiteral("replace")).toBool()) return true;
     m_restored = false;
-    // Behind the shell's own page the page only lands and redirects.
-    if (m_route == Route::settings(kClusterSection)) return true;
+    // Behind the shell's own pages the page only lands and redirects.
+    if (isNativeSection(m_route)) return true;
     // The page went back (its own back button, Escape in settings).
     if (!m_backStack.isEmpty() && m_backStack.constLast() == *route) {
       m_backStack.removeLast();
@@ -127,8 +137,6 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
   } else if (action == QLatin1String("draft.open")) {
     const QString id = map.value(QStringLiteral("draftId")).toString();
     if (!id.isEmpty()) open(Route::draft(id));
-  } else if (action == QLatin1String("thread.new")) {
-    open(Route::newThread(map.value(QStringLiteral("projectKey")).toString()));
   } else if (action == QLatin1String("settings.open")) {
     if (m_route.kind != QLatin1String("settings")) open(Route::settings());
   } else if (action == QLatin1String("settings.back")) {
@@ -141,10 +149,19 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
     open(Route::settings(kClusterSection));
   } else if (action == QLatin1String("cluster.close")) {
     if (m_route == Route::settings(kClusterSection)) back();
+  } else if (action == QLatin1String("connections.open")) {
+    open(Route::settings(kConnectionsSection));
+  } else if (action == QLatin1String("connections.close")) {
+    if (m_route == Route::settings(kConnectionsSection)) back();
   } else if (action == QLatin1String("settings.navigate") || action == QLatin1String("settings.openResult")) {
     // The page moves between its own sections (and scrolls to a result); the
     // route only learns where it went.
     const QString to = map.value(QStringLiteral("to")).toString();
+    // A link to one of the shell's own pages opens it instead.
+    if (isNativeSection(Route::settings(to))) {
+      open(Route::settings(to));
+      return true;
+    }
     if (m_route.kind == QLatin1String("settings") && to.startsWith(QLatin1String("/settings/"))) {
       m_pageRoute = Route::settings(to);
       go(Route::settings(to), true, false);
@@ -187,9 +204,21 @@ void NavigationController::follow() {
   // where it is.
   if (!m_pageRoute && m_route.kind == QLatin1String("home")) return;
   // The page cannot show the shell's own pages; it stays where it was.
-  if (m_route == Route::settings(kClusterSection)) return;
+  if (isNativeSection(m_route)) return;
   m_pageRoute = m_route;
-  m_bridge->sendToPage(QStringLiteral("route.follow"), m_route.toVariant());
+  QVariantMap follow = m_route.toVariant();
+  // The page opens the shell's draft as its own composer draft, for the
+  // thread id the draft will become.
+  if (m_route.kind == QLatin1String("draft")) {
+    if (const auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
+      if (const auto draft = drafts->draft(m_route.draftId)) {
+        follow.insert(QStringLiteral("environmentId"), draft->environmentId);
+        follow.insert(QStringLiteral("projectId"), draft->projectId);
+        follow.insert(QStringLiteral("threadId"), draft->threadId);
+      }
+    }
+  }
+  m_bridge->sendToPage(QStringLiteral("route.follow"), follow);
 }
 
 void NavigationController::publish() {

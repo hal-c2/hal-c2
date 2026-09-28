@@ -109,19 +109,23 @@ public:
   };
   bool holdSnapshot = false;
   // Environments outside the cluster the node is linked to (HalC2.Links), and
-  // the tokens clients lent it for them.
+  // why a link is down ("unreachable", "refused"; absent while it is online).
   QStringList linked;
-  QHash<QString, QString> lent;
+  QHash<QString, QString> linkProblems;
+  // Each linked environment's label, when it is not its id.
+  QHash<QString, QString> linkLabels;
 
   void sendSnapshot();
   // The node pairs with an environment outside its cluster, announced as `shell.links`.
   void link(const QString& environment);
   void unlink(const QString& environment);
+  // Announces the links as they now are.
+  void sendLinks();
   // Another node joins this one's cluster, announced as the shell announces it on nodeup.
   void join(const QString& peer, const QString& peerEnvironment);
   // The cluster member serving each environment that joined, by environment.
   QHash<QString, QString> peers;
-  void sendRow(const QString& id, const QJsonObject& row);
+  void sendRow(const QString& id, const QJsonObject& row, const QString& kind = QStringLiteral("thread"));
   // Rows of the cluster member `node` as `shell.rows`: each [id, kind, fields].
   void sendRows(const QString& node, const QJsonArray& rows);
 
@@ -134,7 +138,6 @@ private:
   void accept();
   void onMessage(QWebSocket* socket, const QString& text);
   void dispatchCommand(const Rpc& rpc);
-  void sendLinks();
   QJsonArray links() const;
 
   QWebSocketServer m_server;

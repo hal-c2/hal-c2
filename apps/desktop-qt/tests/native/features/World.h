@@ -34,10 +34,8 @@ public:
   QList<PageAction> pageActions;
   QVariant pageNative;  // what the last `shell.native` told the page
   QList<QVariantMap> follows;  // every `route.follow` the page was sent
-  QVariantMap sidebarInput{{QStringLiteral("projects"), QVariantList()},
-                           {QStringLiteral("drafts"), QVariantList()},
-                           {QStringLiteral("localProjects"), QVariantList()},
-                           {QStringLiteral("timestampFormat"), QStringLiteral("locale")}};
+  // The draft the last new thread opened.
+  QString draftId;
   QVariantMap composer;
   std::optional<qsizetype> command;  // the command the last "receives" step found
   QSet<qsizetype> checkedCommands;
@@ -57,9 +55,10 @@ public:
   void setTime(const QDateTime& now);
   QDateTime now() const { return m_now; }
 
-  void publishSidebarInput() { m_bridge->publish(QStringLiteral("sidebarInput"), sidebarInput); }
-  // The drafts the shell knows, as DraftController answers WorkspaceController.
-  QHash<QString, WorkspaceController::DraftPlace> drafts;
+  // Dispatches `thread.new`; the draft it opens (if any) becomes draftId.
+  void startNewThread(const QVariantMap& payload);
+  // The key of the sidebar's project named `name`; `name` itself when none is.
+  QString projectKey(const QString& name) const;
   void publishComposer() { m_bridge->publish(QStringLiteral("composer"), composer); }
   // The page reports that its own navigation took it to `route` (`route.open`).
   void pageOpens(const QVariantMap& route, bool replace = false);

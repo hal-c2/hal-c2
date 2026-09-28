@@ -2,6 +2,8 @@
 
 #include <QJsonArray>
 
+#include <algorithm>
+
 #include "NodeClient.h"
 
 namespace {
@@ -35,6 +37,32 @@ QList<sidebar::Thread> ShellStore::threads() const {
   return result;
 }
 
+QList<sidebar::Project> ShellStore::projects() const {
+  QList<sidebar::Project> result;
+  for (const Node& node : m_nodes) {
+    if (node.environmentId.isEmpty()) continue;
+    for (const QJsonObject& row : node.projects) result.append(sidebar::projectFromRow(node.environmentId, row));
+  }
+  // Row hashes have no order; the page lists projects by creation.
+  std::stable_sort(result.begin(), result.end(), [](const sidebar::Project& left, const sidebar::Project& right) {
+    if (left.createdAt != right.createdAt) return left.createdAt < right.createdAt;
+    return left.key() < right.key();
+  });
+  return result;
+}
+
+std::optional<sidebar::Project> ShellStore::project(const QString& key) const {
+  const qsizetype colon = key.indexOf(QLatin1Char(':'));
+  if (colon <= 0) return std::nullopt;
+  const QString environmentId = key.left(colon);
+  for (const Node& node : m_nodes) {
+    if (node.environmentId != environmentId) continue;
+    const auto row = node.projects.constFind(key.mid(colon + 1));
+    if (row != node.projects.constEnd()) return sidebar::projectFromRow(environmentId, *row);
+  }
+  return std::nullopt;
+}
+
 bool ShellStore::servesEnvironment(const QString& environmentId) const {
   for (const Node& node : m_nodes) {
     if (node.environmentId == environmentId) return true;
@@ -47,6 +75,7 @@ bool ShellStore::reaches(const QString& environmentId) const {
 }
 
 void ShellStore::setLinks(const QJsonArray& links) {
+  m_links = links;
   m_linked.clear();
   for (const QJsonValue& link : links) {
     m_linked.insert(

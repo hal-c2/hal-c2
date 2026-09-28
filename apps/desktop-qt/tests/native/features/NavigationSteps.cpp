@@ -29,7 +29,7 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("draft.open"), QVariantMap{{QStringLiteral("draftId"), c[0]}});
   });
   step(QStringLiteral("the user starts a new thread in %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.bridge().dispatch(QStringLiteral("thread.new"), QVariantMap{{QStringLiteral("projectKey"), c[0]}});
+    world.startNewThread(QVariantMap{{QStringLiteral("projectKey"), world.projectKey(c[0])}});
   });
   step(QStringLiteral("the user opens settings"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("settings.open"), {});

@@ -88,6 +88,21 @@ Item {
             search.text = "theme";
             verify(!findChild(nav, "settingsRow0"), "Cluster does not match");
         }
+        function test_connectionsRowTakesThePageSectionsPlace() {
+            let settings = Shell.state.settings;
+            settings.sections = settings.sections.concat([{ to: "/settings/connections", label: "Connections" }]);
+            Shell.state = { settings: settings, connections: {}, route: { kind: "settings", section: "/settings/connections" } };
+            let nav = createTemporaryObject(component, root);
+            verify(!!nav, "Component exists");
+            tryVerify(() => findChild(nav, "settingsRow2") !== null, 1000, "Connections is listed");
+            verify(!findChild(nav, "settingsRow3"), "the page's own Connections section is not");
+            let row = findChild(nav, "settingsRow2");
+            compare(row.Accessible.name, "Connections");
+            verify(row.current, "Connections is current");
+            row.forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            compare(Shell.dispatchedActions[0].action, "connections.open");
+        }
         function test_keyboardSearchResult() {
             publish("theme");
             let nav = createTemporaryObject(component, root);

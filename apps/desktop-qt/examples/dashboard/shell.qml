@@ -527,7 +527,7 @@ ShellWindow {
 
                     WebSurface {
                         anchors.fill: parent
-                        visible: !root.clusterOpen
+                        visible: !root.nativeSettingsOpen
                         url: Shell.pageUrl
                         radius: surfaceCard.radius - surfaceCard.border.width
                     }
@@ -538,6 +538,7 @@ ShellWindow {
                         radius: surfaceCard.radius - surfaceCard.border.width
                         visible: root.clusterOpen
                     }
+                    ConnectionsSettings { anchors.fill: parent; anchors.margins: surfaceCard.border.width; radius: surfaceCard.radius - surfaceCard.border.width; visible: root.connectionsOpen }
 
                     // The page dims under the drawer; clicking it closes the drawer.
                     Rectangle {
@@ -1109,7 +1110,7 @@ ShellWindow {
                     id: composer
 
                     Layout.fillWidth: true
-                    visible: ready && !root.clusterOpen
+                    visible: ready && !root.nativeSettingsOpen
                     color: "transparent"
                 }
 

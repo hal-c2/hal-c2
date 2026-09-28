@@ -13,6 +13,7 @@
 Feature: The desktop app runs its own node
   Started on its own, the Qt desktop app starts an Elixir node on this machine and opens the
   app already paired with it. Given a node's pairing link, it attaches to that node instead.
+  Either way the shell's own client is paired with the node, so the shell never waits on the page.
   The app itself is served by the desktop app from this machine; the node serves no app.
 
   Rule: Starting the desktop app starts its node and opens the app paired
@@ -104,10 +105,24 @@ Feature: The desktop app runs its own node
       Then the shell is told that node's address and the node's own access token
 
     @desktop
-    Scenario: An attached desktop leaves a node it has no files for to the app
+    Scenario: An attached desktop's own client pairs with a node it has no files for
       Given a node is running whose runtime record this machine does not have
       When the user starts the desktop app with that node's pairing link
-      Then the shell is told of no node, so the app makes every call itself
+      Then the shell is told that node's address and the session its pairing link opened
+      And the app opens with a fresh pairing link of its own
+
+    @desktop
+    Scenario: A pairing link without access to pairing opens the app unpaired
+      Given a node is running whose pairing link carries standard access
+      When the user starts the desktop app with that node's pairing link
+      Then the shell is told that node's address and the session its pairing link opened
+      And the app opens without a pairing link, because the link could only be used once
+
+    @desktop
+    Scenario: Attaching with a pairing link the node refuses
+      Given a node is running on this machine
+      When the user starts the desktop app with a pairing link that node has spent or never issued
+      Then the desktop app says the pairing link is invalid or expired
 
     @desktop
     Scenario: An address that is not a node is loaded as it is

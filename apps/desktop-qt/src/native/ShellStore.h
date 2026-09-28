@@ -15,8 +15,11 @@ class NodeClient;
 
 // The node's `shell` shape folded into rows: every node of the cluster, its
 // environment descriptor, its live projects and threads, plus the environments
-// the node reaches through links (HalC2.Links). Grouping projects stays with
-// the page, which groups them by its own settings.
+// the node reaches through links (HalC2.Links). The node sends linked
+// environments' rows only to a `{"type":"shell","links":true}` subscription
+// (shell.linkRows, shell.linkEnvironment, shell.linkNode), and the shell does
+// not ask yet; when it does they fold in here as more projects and threads
+// keyed by their environment, and the sidebar groups them like any other.
 class ShellStore : public QObject {
   Q_OBJECT
 
@@ -24,6 +27,8 @@ public:
   explicit ShellStore(NodeClient* client, QObject* parent = nullptr);
 
   QList<sidebar::Thread> threads() const;
+  QList<sidebar::Project> projects() const;
+  std::optional<sidebar::Project> project(const QString& key) const;
   std::optional<sidebar::Thread> thread(const QString& key) const;
   // The raw rows, empty when the cluster has none by that key.
   QJsonObject threadRow(const QString& key) const;
@@ -46,6 +51,9 @@ public:
   QString nodeOf(const QString& threadKey) const;
   bool online(const QString& node) const { return m_nodes.value(node).online; }
   bool synchronized() const { return m_synchronized; }
+  // The node's links as `shell.links` carries them: {environment, origin,
+  // online, problem?}, where problem is "unreachable" or "refused".
+  const QJsonArray& links() const { return m_links; }
 
 signals:
   void changed();
@@ -68,5 +76,6 @@ private:
   // Environments outside the cluster the node is linked to. Their threads stay
   // with the page; the node only forwards their RPCs and shapes.
   QSet<QString> m_linked;
+  QJsonArray m_links;
   bool m_synchronized = false;
 };

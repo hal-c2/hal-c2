@@ -70,7 +70,7 @@ defmodule HalC2.Web.Protocol do
       {"t": "hello", "protocol": 3, "node": n, "environment": id}
         (the environment this node serves, for RPCs about the node itself)
       {"t": "shell", "id", "nodes": [{"node", "online", "environment"}], "rows": [[node, id, kind, row]],
-        "links": [{"environment", "origin", "online"}]}
+        "links": [{"environment", "origin", "online", "problem"?}]}
       {"t": "shell.links", "id", "links"}   (environments this node links to; the whole list)
       {"t": "shell.environment", "id", "node", "environment"}
       {"t": "shell.rows", "id", "node", "rows": [[id, kind, row]]}

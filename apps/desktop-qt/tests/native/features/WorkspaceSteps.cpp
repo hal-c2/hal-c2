@@ -162,22 +162,6 @@ void gitRepo(World& world, const QString& project, const QStringList& branches, 
   world.node.part<FakeGit>().repos.insert(root(project), {branches, current, defaultBranch});
 }
 
-// The sidebar lists the node's threads under the projects the page groups.
-void group(World& world, const QString& project) {
-  QVariantList projects = world.sidebarInput.value(QStringLiteral("projects")).toList();
-  const QString member = world.node.environmentId + QLatin1Char(':') + project;
-  projects.append(QVariantMap{
-      {QStringLiteral("key"), project},
-      {QStringLiteral("displayName"), project},
-      {QStringLiteral("environmentId"), world.node.environmentId},
-      {QStringLiteral("projectId"), project},
-      {QStringLiteral("workspaceRoot"), root(project)},
-      {QStringLiteral("memberKeys"), QStringList{member}},
-  });
-  world.sidebarInput.insert(QStringLiteral("projects"), projects);
-  world.publishSidebarInput();
-}
-
 void open(World& world, const QString& threadKey) {
   world.native().controller<NavigationController>()->open(NavigationController::Route::thread(threadKey));
   world.waitFor([&] { return workspace(world).value(QStringLiteral("threadKey")) == threadKey; },
@@ -185,8 +169,10 @@ void open(World& world, const QString& threadKey) {
 }
 
 void openDraft(World& world, const QString& project) {
-  world.drafts.insert(kDraft, {world.node.environmentId, project, kDraft});
-  world.pageOpens({{QStringLiteral("kind"), QStringLiteral("draft")}, {QStringLiteral("draftId"), kDraft}});
+  // The page reports the draft it opened, which the shell adopts.
+  world.pageOpens({{QStringLiteral("kind"), QStringLiteral("draft")}, {QStringLiteral("draftId"), kDraft},
+                   {QStringLiteral("environmentId"), world.node.environmentId}, {QStringLiteral("projectId"), project},
+                   {QStringLiteral("threadId"), kDraft}});
   world.waitFor([&] { return workspace(world).value(QStringLiteral("isDraft")).toBool(); },
                 [&] { return QStringLiteral("the header to show the draft; it shows %1").arg(show(workspace(world))); });
 }
@@ -247,7 +233,6 @@ const Steps steps([] {
   step(QStringLiteral("a connected environment with the thread %1 in the project %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.node.projects.insert(c[1], {{QStringLiteral("id"), c[1]}, {QStringLiteral("title"), c[1]}, {QStringLiteral("workspaceRoot"), root(c[1])}, {QStringLiteral("scripts"), QJsonArray()}});
     world.node.threads.insert(kThread, {{QStringLiteral("id"), kThread}, {QStringLiteral("title"), c[0]}, {QStringLiteral("projectId"), c[1]}, {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
-    group(world, c[1]);
     world.connect();
     open(world, threadKey(world));
   });
@@ -257,7 +242,6 @@ const Steps steps([] {
     world.node.threads.insert(kThread, {{QStringLiteral("id"), kThread}, {QStringLiteral("title"), QStringLiteral("Tax line")}, {QStringLiteral("projectId"), c[0]}, {QStringLiteral("branch"), c[1]},
                                         {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
     gitRepo(world, c[0], {c[1], QStringLiteral("main")}, c[1], QStringLiteral("main"));
-    group(world, c[0]);
     world.connect();
     open(world, threadKey(world));
   });
@@ -411,7 +395,6 @@ const Steps steps([] {
     world.waitFor([&] { return workspace(world).value(QStringLiteral("branch")) == c[0] && world.node.threads.value(kThread).value(QLatin1String("branch")).toString() == c[0]; },
                   [&] { return QStringLiteral("the thread's branch to read %1; the header shows %2").arg(c[0], show(workspace(world))); });
   });
-  step(QStringLiteral("the user looks at the thread list"), [](World& world, const Captures&, const Table&) { world.sync(); });
   step(QStringLiteral("the thread in %1 shows the branch %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const auto row = sidebarRow(world, threadKey(world));
     expect(row && world.node.threads.value(kThread).value(QLatin1String("projectId")) == c[0] && row->value(QStringLiteral("branch")) == c[1],

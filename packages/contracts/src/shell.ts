@@ -103,9 +103,8 @@ export type ShellSidebarState = typeof ShellSidebarState.Type;
 
 /**
  * Published under the `native` key, and sent to the page as `shell.native`,
- * once the shell's own node connection has its first snapshot: the page
- * stops publishing `sidebar` (the shell builds it from `sidebarInput`) and
- * the shell sends row actions and plain turns to the node itself.
+ * once the shell's own node connection has its first snapshot: the shell
+ * builds the sidebar and sends row actions and plain turns to the node itself.
  */
 export const ShellNativeState = Schema.Struct({
   sidebar: Schema.Boolean,
@@ -135,6 +134,17 @@ export const ShellRoute = Schema.Struct({
   section: Schema.NullOr(Schema.String),
 });
 export type ShellRoute = typeof ShellRoute.Type;
+
+/**
+ * Beside a draft route: the thread the draft will become. The shell's draft
+ * and the page's composer draft share it, whichever side started the draft.
+ */
+export const ShellRouteDraftThread = Schema.Struct({
+  environmentId: Schema.optional(Schema.String),
+  projectId: Schema.optional(Schema.String),
+  threadId: Schema.optional(Schema.String),
+});
+export type ShellRouteDraftThread = typeof ShellRouteDraftThread.Type;
 
 /**
  * Published under the `sidebarInput` key: what only the page knows that the
@@ -696,11 +706,16 @@ export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("pullRequests.open") }),
   Schema.Struct({ type: Schema.Literal("usage.open") }),
   /** Shell → page: show this route (the shell owns where the window is). */
-  Schema.Struct({ type: Schema.Literal("route.follow"), ...ShellRoute.fields }),
+  Schema.Struct({
+    type: Schema.Literal("route.follow"),
+    ...ShellRoute.fields,
+    ...ShellRouteDraftThread.fields,
+  }),
   /** Page → shell: the page's own links or redirects moved it here. */
   Schema.Struct({
     type: Schema.Literal("route.open"),
     ...ShellRoute.fields,
+    ...ShellRouteDraftThread.fields,
     replace: Schema.Boolean,
   }),
   Schema.Struct({ type: Schema.Literal("palette.open") }),

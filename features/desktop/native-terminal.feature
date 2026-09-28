@@ -1,7 +1,6 @@
 # Sources:
 #   apps/desktop-qt/src/TerminalController.cpp (the drawer's tabs, sessions and RPCs against the node)
-#   apps/desktop-qt/src/NativeShell.cpp (lends the node the page's access to environments)
-#   apps/web/src/shell/useShellEnvironmentAccess.ts (the page's access to its saved environments)
+#   apps/desktop-qt/src/native/NativeShell.cpp (lent the node the page's access to environments; dropped)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (the route's thread, drafts too, its project
 #   root, worktree and scripts, from the node's rows)
 #   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml (qml-ghostty's Terminal per tab)
@@ -75,20 +74,23 @@ Feature: The desktop shell runs the terminal drawer against its node
       When the user toggles the terminal drawer
       Then "env-c" attaches "term-1" of "t7" in "/work/p7"
 
-    @desktop @backlog-desktop
+    # Lending: the page's saved environments were lent to the node. Environments outside the
+    # cluster are paired as node links from the shell's Connections settings instead
+    # (settings/connections.feature), so the page has nothing to lend.
+    @dropped @desktop
     Scenario: A thread on an environment the page has access to has its terminal there
       Given the page has access to "env-c"
       And the page shows "env-c:t7" with its project at "/work/p7"
       When the user toggles the terminal drawer
       Then "env-c" attaches "term-1" of "t7" in "/work/p7"
 
-    @desktop
+    @dropped @desktop
     Scenario: The node keeps the page's access while the page is disconnected there
       Given the page has access to "env-c"
       When the page loses its connection to "env-c"
       Then the node is linked to "env-c" with the page's access
 
-    @desktop
+    @dropped @desktop
     Scenario: The node gives back the page's access when the page forgets the environment
       Given the page has access to "env-c"
       When the page forgets "env-c"

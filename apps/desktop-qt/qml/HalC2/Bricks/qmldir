@@ -4,6 +4,7 @@ FolderOperationDialog 1.0 FolderOperationDialog.qml
 AppView 1.0 AppView.qml
 AppWindow 1.0 AppWindow.qml
 ClusterSettings 1.0 ClusterSettings.qml
+ConnectionsSettings 1.0 ConnectionsSettings.qml
 Composer 1.0 Composer.qml
 ModelPicker 1.0 ModelPicker.qml
 ProviderIcon 1.0 ProviderIcon.qml
@@ -35,3 +36,4 @@ WebSurface 1.0 WebSurface.qml
 WindowControls 1.0 WindowControls.qml
 Workspace 1.0 Workspace.qml
 Timeline 1.0 Timeline.qml
+ProjectRemovalDialog 1.0 ProjectRemovalDialog.qml

@@ -10,12 +10,12 @@ namespace {
 
 // Everything the web app publishes (see apps/web/src/shell/*Bridge.tsx) plus
 // the shell's own `backendError` and `native`. The native controllers declare
-// the keys only they publish (NativeControllerRegistrar). `sidebar` comes from
-// the page or, once `native.sidebar` is set, from SidebarController.
+// the keys only they publish (NativeControllerRegistrar). `sidebar` is the
+// page's until the shell's first snapshot, then SidebarController's.
 constexpr const char* kStateKeys[] = {
     "backendError", "composer", "contextMenu", "git",   "keybindings", "layout",
     "notifications", "rightPanel", "settings", "sidebar", "theme",     "workspace",
-    "desktopNotifications", "modelPicker", "native", "sidebarInput", "environmentAccess",
+    "desktopNotifications", "modelPicker", "native",
 };
 
 // Qt 6.11 deprecates the public constructor in favour of create(); the

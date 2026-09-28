@@ -846,15 +846,15 @@ defmodule HalC2.Steps.Parity.Shapes do
         await(context, t, id, &(&1["online"] == false))
 
       "shell.links" ->
-        # A loan of access to an environment nobody serves; taken back once the frame lands.
+        # A link to an environment nobody serves; removed once the frame lands.
         environment = %{"environmentId" => "env-linked", "label" => "Linked"}
         link = %{"origin" => "http://127.0.0.1:9", "token" => "t", "environment" => environment}
-        :ok = GenServer.call(HalC2.Links, {:put, Map.put(link, "borrowed", true)})
+        :ok = GenServer.call(HalC2.Links, {:put, link})
 
         result =
-          await(context, t, id, &match?([%{"origin" => "http://127.0.0.1:9"}], &1["links"]))
+          await(context, t, id, &match?([%{"origin" => "http://127.0.0.1:9"} | _], &1["links"]))
 
-        HalC2.Links.give_back("env-linked")
+        HalC2.Links.remove("env-linked")
         result
 
       "shell.link" <> _ ->
@@ -1032,13 +1032,12 @@ defmodule HalC2.Steps.Parity.Shapes do
     end
   end
 
-  # A loan of access to an environment nobody serves, whose shell frames the test plays
-  # to the node's links as that environment would send them; taken back once the frame
-  # lands.
+  # A link to an environment nobody serves, whose shell frames the test plays to the
+  # node's links as that environment would send them; removed once the frame lands.
   defp linked_frame(context, t, id) do
     environment = %{"environmentId" => "env-linked", "label" => "Linked"}
     link = %{"origin" => "http://127.0.0.1:9", "token" => "t", "environment" => environment}
-    :ok = GenServer.call(HalC2.Links, {:put, Map.put(link, "borrowed", true)})
+    :ok = GenServer.call(HalC2.Links, {:put, link})
     [ref] = for {ref, "env-linked"} <- :sys.get_state(HalC2.Links).following, do: ref
 
     frame =
@@ -1056,7 +1055,7 @@ defmodule HalC2.Steps.Parity.Shapes do
 
     send(HalC2.Links, {:hal_c2_link, ref, frame})
     result = await(context, t, id, &(&1["link"] == "env-linked"))
-    HalC2.Links.give_back("env-linked")
+    :ok = HalC2.Links.remove("env-linked")
     result
   end
 
