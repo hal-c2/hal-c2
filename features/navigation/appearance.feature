@@ -4,6 +4,7 @@
 #   apps/web/src/components/settings/SettingsPanels.tsx (AppearanceSettingsPanel: interface, motion, fonts)
 #   apps/web/src/components/CommandPalette.logic.ts (appearance.cycle, change theme)
 #   packages/shared/src/keybindings.ts (theme.select, appearance.cycle)
+#   apps/desktop-qt/src/native/ThemeController.cpp (the desktop's appearance, following the system)
 #   Settings panel: Settings → Appearance
 
 Feature: Appearance
@@ -26,7 +27,7 @@ Feature: Appearance
         | Light  | light                                   |
         | Dark   | dark                                    |
 
-    @backlog @desktop
+    @desktop
     Scenario: System appearance follows the operating system as it changes
       Given the user chose the System appearance
       When the operating system switches to dark

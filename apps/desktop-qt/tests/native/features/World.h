@@ -4,14 +4,17 @@
 #include <QList>
 #include <QQmlPropertyMap>
 #include <QSet>
+#include <QTemporaryDir>
 #include <QVariant>
 
 #include <functional>
+#include <memory>
 #include <optional>
 
 #include "FakeNode.h"
 #include "NativeShell.h"
 #include "ShellBridge.h"
+#include "ThemeStore.h"
 
 struct PageAction {
   QString type;
@@ -39,6 +42,10 @@ public:
 
   ShellBridge& bridge() { return m_bridge; }
   NativeShell& native() { return m_native; }
+  // The shell's config directory (theme.json, preferences.json), fresh per
+  // scenario, and the palette main.cpp builds over it.
+  QString configDir() const { return m_config.path(); }
+  ThemeStore& theme() { return *m_theme; }
   QVariant state(const QString& key) const { return m_bridge.state()->value(key); }
 
   void setTime(const QString& iso);
@@ -68,6 +75,8 @@ private:
   void onPageAction(const QString& type, const QVariantMap& payload);
 
   // Declared in teardown order: the shell goes before the bridge it intercepts.
+  QTemporaryDir m_config;
   ShellBridge m_bridge;
   NativeShell m_native{&m_bridge};
+  std::unique_ptr<ThemeStore> m_theme;
 };
