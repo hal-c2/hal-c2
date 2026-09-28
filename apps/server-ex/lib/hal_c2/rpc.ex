@@ -202,6 +202,15 @@ defmodule HalC2.Rpc do
   def handle("terminal.restart", input), do: HalC2.Terminal.restart(input)
   def handle("terminal.close", input), do: HalC2.Terminal.close(input)
   def handle("terminal.list", input), do: HalC2.Terminal.list(input)
+  def handle("hal-c2.environmentLinks", _), do: {:ok, HalC2.Links.list()}
+
+  def handle("hal-c2.linkEnvironment", %{"pairingUrl" => url}) when is_binary(url),
+    do: HalC2.Links.add(url)
+
+  def handle("hal-c2.unlinkEnvironment", %{"environmentId" => id}) when is_binary(id) do
+    with :ok <- HalC2.Links.remove(id), do: {:ok, nil}
+  end
+
   def handle("cloud.getRelayClientStatus", _), do: {:ok, HalC2.Connect.RelayClient.resolve()}
   def handle(method, _payload), do: {:error, "#{method} is not served by this node yet"}
 
@@ -211,6 +220,7 @@ defmodule HalC2.Rpc do
     orchestration.getWorkflowScript orchestration.getTurnDiff orchestration.getFullThreadDiff
     orchestration.searchThreads orchestration.getArchivedShellSnapshot
     orchestration.getThreadProjection server.getSettings hal-c2.readSettings hal-c2.threadRows
+    hal-c2.environmentLinks
     server.getConfig server.probe server.discoverSourceControl server.getTraceDiagnostics
     server.getProcessDiagnostics server.getHostResources server.getProcessResourceHistory
     server.getResourceTelemetryHistory server.getUsageSummary server.refreshUsageRates
@@ -229,6 +239,10 @@ defmodule HalC2.Rpc do
   @spec required_scope(String.t()) :: String.t()
   def required_scope("terminal." <> _), do: "terminal:operate"
   def required_scope("review." <> _), do: "review:write"
+  # A link hands this node's clients whatever its pairing grants on the other side.
+  def required_scope("hal-c2." <> m) when m in ~w(linkEnvironment unlinkEnvironment),
+    do: "access:write"
+
   def required_scope("cloud.getRelayClientStatus"), do: "relay:read"
   def required_scope("cloud." <> _), do: "relay:write"
 

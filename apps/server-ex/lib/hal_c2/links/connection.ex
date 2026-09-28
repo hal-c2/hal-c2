@@ -1,0 +1,326 @@
+defmodule HalC2.Links.Connection do
+  @moduledoc """
+  One link's websocket to its environment (`HalC2.Links`). It mints a socket ticket
+  with the link's token, connects over protocol 3, and forwards this node's client
+  RPCs and subscriptions. After a drop it reconnects with backoff and subscribes
+  again, so subscribers get a fresh snapshot, as after their own reconnect. RPCs
+  fail while it is down rather than wait for it.
+  """
+
+  use GenServer
+
+  require Logger
+
+  @ping :timer.seconds(20)
+  @min_backoff 500
+  @max_backoff :timer.seconds(30)
+
+  def start_link(link) do
+    id = link["environment"]["environmentId"]
+    GenServer.start_link(__MODULE__, link, name: {:via, Registry, {HalC2.Links.Registry, id}})
+  end
+
+  def child_spec(link),
+    do: %{id: __MODULE__, start: {__MODULE__, :start_link, [link]}, restart: :transient}
+
+  def rpc(pid, method, payload, timeout) do
+    GenServer.call(pid, {:rpc, method, payload}, timeout)
+  catch
+    :exit, {:timeout, _} -> {:error, "#{method} timed out"}
+    :exit, _ -> {:error, "unknown environment"}
+  end
+
+  def watch(pid, shape, subscriber) do
+    GenServer.call(pid, {:watch, shape, subscriber})
+  catch
+    :exit, _ -> {:error, "unknown environment"}
+  end
+
+  def unwatch(pid, ref), do: GenServer.cast(pid, {:unwatch, ref})
+
+  # --- server --------------------------------------------------------------------
+
+  @impl true
+  def init(link) do
+    send(self(), :connect)
+
+    {:ok,
+     %{
+       link: link,
+       environment: link["environment"]["environmentId"],
+       conn: nil,
+       request: nil,
+       upgrade: nil,
+       ws: nil,
+       # The remote node's name, from its hello: set while the link is up.
+       node: nil,
+       next_id: 1,
+       # Remote id => {:call, from} | {:sub, ref}
+       pending: %{},
+       # ref => %{pid, monitor, shape, id}
+       subs: %{},
+       backoff: @min_backoff
+     }}
+  end
+
+  @impl true
+  def handle_call({:rpc, _method, _payload}, _from, %{node: nil} = state),
+    do: {:reply, {:error, unreachable(state)}, state}
+
+  def handle_call({:rpc, method, payload}, from, state) do
+    {id, state} = next_id(state)
+
+    frame = %{
+      "t" => "rpc",
+      "id" => id,
+      "environment" => state.environment,
+      "method" => method,
+      "payload" => payload
+    }
+
+    {:noreply, state |> put_in([:pending, id], {:call, from}) |> push(frame)}
+  end
+
+  def handle_call({:watch, shape, pid}, _from, state) do
+    ref = make_ref()
+    sub = %{pid: pid, monitor: Process.monitor(pid), shape: shape, id: nil}
+    state = put_in(state.subs[ref], sub)
+    state = if state.node, do: send_sub(state, ref), else: state
+    {:reply, {:ok, ref}, state}
+  end
+
+  @impl true
+  def handle_cast({:unwatch, ref}, state), do: {:noreply, drop_sub(state, ref, true)}
+
+  @impl true
+  def handle_info(:connect, %{conn: conn} = state) when conn != nil, do: {:noreply, state}
+
+  def handle_info(:connect, state) do
+    case open(state.link) do
+      {:ok, conn, request} ->
+        {:noreply, %{state | conn: conn, request: request, upgrade: %{responses: []}}}
+
+      {:error, reason} ->
+        Logger.warning("link to #{label(state)}: #{reason}")
+        {:noreply, retry(state)}
+    end
+  end
+
+  def handle_info(:ping, %{ws: nil} = state), do: {:noreply, state}
+
+  def handle_info(:ping, state) do
+    Process.send_after(self(), :ping, @ping)
+    {:noreply, push(state, %{"t" => "ping"})}
+  end
+
+  def handle_info({:DOWN, monitor, :process, _pid, _}, state) do
+    case Enum.find(state.subs, fn {_, sub} -> sub.monitor == monitor end) do
+      {ref, _} -> {:noreply, drop_sub(state, ref, true)}
+      nil -> {:noreply, state}
+    end
+  end
+
+  def handle_info(message, %{conn: conn} = state) when conn != nil do
+    case Mint.WebSocket.stream(conn, message) do
+      :unknown ->
+        {:noreply, state}
+
+      {:ok, conn, responses} ->
+        {:noreply, received(%{state | conn: conn}, responses)}
+
+      {:error, conn, reason, _responses} ->
+        Logger.info("link to #{label(state)} dropped: #{inspect(reason)}")
+        {:noreply, down(%{state | conn: conn})}
+    end
+  end
+
+  def handle_info(_other, state), do: {:noreply, state}
+
+  # --- the socket ----------------------------------------------------------------
+
+  # A fresh ticket for each connection; the link's token only mints them.
+  defp open(link) do
+    uri = URI.parse(link["origin"])
+    auth = [{"authorization", "Bearer " <> link["token"]}]
+
+    with {:ticket, {:ok, 200, %{"ticket" => ticket}}} <-
+           {:ticket,
+            HalC2.Links.http(
+              :post,
+              link["origin"] <> "/api/auth/websocket-ticket",
+              auth,
+              {"application/json", "{}"}
+            )},
+         path = "/ws?" <> URI.encode_query(%{"wsTicket" => ticket, "protocol" => 3}),
+         {:ok, conn} <- Mint.HTTP.connect(String.to_existing_atom(uri.scheme), uri.host, uri.port),
+         {:ok, conn, request} <-
+           Mint.WebSocket.upgrade(if(uri.scheme == "https", do: :wss, else: :ws), conn, path, []) do
+      {:ok, conn, request}
+    else
+      {:ticket, {:ok, 401, _}} -> {:error, "its token is no longer accepted; pair again"}
+      {:ticket, {:ok, status, _}} -> {:error, "ticket refused (#{status})"}
+      {:ticket, {:error, reason}} -> {:error, "unreachable (#{inspect(reason)})"}
+      {:error, reason} -> {:error, "unreachable (#{inspect(reason)})"}
+      {:error, _conn, reason} -> {:error, "unreachable (#{inspect(reason)})"}
+    end
+  end
+
+  # The upgrade's response, until the socket is open.
+  defp received(%{ws: nil, upgrade: upgrade, request: request} = state, responses) do
+    responses = upgrade.responses ++ responses
+
+    if Enum.any?(responses, &match?({:done, ^request}, &1)) do
+      status = Enum.find_value(responses, fn r -> match?({:status, _, _}, r) && elem(r, 2) end)
+
+      headers =
+        Enum.find_value(responses, [], fn r -> match?({:headers, _, _}, r) && elem(r, 2) end)
+
+      case Mint.WebSocket.new(state.conn, request, status, headers) do
+        {:ok, conn, ws} ->
+          early = for {:data, ^request, data} <- responses, into: "", do: data
+          frames(%{state | conn: conn, ws: ws, upgrade: nil}, early)
+
+        {:error, conn, reason} ->
+          Logger.warning("link to #{label(state)}: upgrade refused (#{inspect(reason)})")
+          down(%{state | conn: conn})
+      end
+    else
+      %{state | upgrade: %{upgrade | responses: responses}}
+    end
+  end
+
+  defp received(%{request: request} = state, responses) do
+    if Enum.any?(responses, &match?({:done, ^request}, &1)),
+      do: down(state),
+      else: frames(state, for({:data, ^request, data} <- responses, into: "", do: data))
+  end
+
+  defp frames(state, ""), do: state
+
+  defp frames(state, data) do
+    case Mint.WebSocket.decode(state.ws, data) do
+      {:ok, ws, frames} ->
+        Enum.reduce_while(frames, %{state | ws: ws}, fn
+          _frame, %{ws: nil} = state -> {:halt, state}
+          {:text, text}, state -> {:cont, message(state, JSON.decode!(text))}
+          {:ping, data}, state -> {:cont, send_frame(state, {:pong, data})}
+          {:close, _, _}, state -> {:halt, down(state)}
+          _, state -> {:cont, state}
+        end)
+
+      {:error, _ws, reason} ->
+        Logger.warning("link to #{label(state)}: bad frame (#{inspect(reason)})")
+        down(state)
+    end
+  end
+
+  defp message(state, %{"t" => "hello", "node" => node}) do
+    GenServer.cast(HalC2.Links, {:online, state.environment, true})
+    Process.send_after(self(), :ping, @ping)
+    state = %{state | node: node, backoff: @min_backoff}
+    Enum.reduce(Map.keys(state.subs), state, &send_sub(&2, &1))
+  end
+
+  defp message(state, %{"t" => t, "id" => id} = frame) when t in ["rpc.result", "rpc.error"] do
+    case Map.pop(state.pending, id) do
+      {{:call, from}, pending} ->
+        GenServer.reply(from, reply(frame))
+        %{state | pending: pending}
+
+      _ ->
+        state
+    end
+  end
+
+  defp message(state, %{"t" => t, "id" => id} = frame) do
+    case state.pending do
+      %{^id => {:sub, ref}} ->
+        send(state.subs[ref].pid, {:hal_c2_link, ref, frame})
+        # The remote ended the subscription.
+        if t in ["end", "error"], do: drop_sub(state, ref, false), else: state
+
+      _ ->
+        state
+    end
+  end
+
+  defp message(state, _frame), do: state
+
+  defp reply(%{"t" => "rpc.result"} = frame), do: {:ok, frame["result"]}
+
+  defp reply(%{"detail" => %{} = detail} = frame),
+    do: {:error, Map.put(detail, "message", frame["error"])}
+
+  defp reply(frame), do: {:error, frame["error"]}
+
+  defp send_sub(state, ref) do
+    {id, state} = next_id(state)
+    sub = state.subs[ref]
+    shape = sub.shape |> Map.delete("environment") |> Map.put("node", state.node)
+
+    state
+    |> put_in([:subs, ref], %{sub | id: id})
+    |> put_in([:pending, id], {:sub, ref})
+    |> push(%{"t" => "sub", "id" => id, "shape" => shape})
+  end
+
+  defp drop_sub(state, ref, unsubscribe?) do
+    case Map.pop(state.subs, ref) do
+      {nil, _} ->
+        state
+
+      {sub, subs} ->
+        Process.demonitor(sub.monitor, [:flush])
+        state = %{state | subs: subs, pending: Map.delete(state.pending, sub.id)}
+
+        if unsubscribe? and sub.id != nil and state.node != nil,
+          do: push(state, %{"t" => "unsub", "id" => sub.id}),
+          else: state
+    end
+  end
+
+  defp push(state, frame), do: send_frame(state, {:text, JSON.encode!(frame)})
+
+  defp send_frame(%{ws: nil} = state, _frame), do: state
+
+  defp send_frame(state, frame) do
+    with {:ok, ws, data} <- Mint.WebSocket.encode(state.ws, frame),
+         {:ok, conn} <- Mint.WebSocket.stream_request_body(state.conn, state.request, data) do
+      %{state | ws: ws, conn: conn}
+    else
+      _ -> down(state)
+    end
+  end
+
+  # The socket is gone: pending calls fail, subscriptions wait for the next one.
+  defp down(state) do
+    if state.conn, do: Mint.HTTP.close(state.conn)
+    if state.node, do: GenServer.cast(HalC2.Links, {:online, state.environment, false})
+
+    for {_id, {:call, from}} <- state.pending,
+        do: GenServer.reply(from, {:error, unreachable(state)})
+
+    subs = Map.new(state.subs, fn {ref, sub} -> {ref, %{sub | id: nil}} end)
+
+    retry(%{
+      state
+      | conn: nil,
+        request: nil,
+        upgrade: nil,
+        ws: nil,
+        node: nil,
+        pending: %{},
+        subs: subs
+    })
+  end
+
+  defp retry(state) do
+    Process.send_after(self(), :connect, state.backoff)
+    %{state | backoff: min(state.backoff * 2, @max_backoff)}
+  end
+
+  defp next_id(state), do: {state.next_id, %{state | next_id: state.next_id + 1}}
+
+  defp label(state), do: state.link["environment"]["label"] || state.link["origin"]
+  defp unreachable(state), do: "#{label(state)} is unreachable"
+end

@@ -102,6 +102,39 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  def handle_info({:hal_c2_links, links}, state) do
+    case Enum.find(state.subs, &match?({_, :shell}, &1)) do
+      {id, :shell} ->
+        {:push, Protocol.encode(%{"t" => "shell.links", "id" => id, "links" => links}), state}
+
+      nil ->
+        {:ok, state}
+    end
+  end
+
+  # A frame of a subscription on a linked environment, under the link's id.
+  def handle_info({:hal_c2_link, ref, frame}, state) do
+    case state.by_terminal do
+      %{{:link, ^ref} => id} ->
+        frame = Map.put(frame, "id", id)
+
+        # The environment ended it; the link has already let go.
+        state =
+          if frame["t"] in ["end", "error"],
+            do: %{
+              state
+              | subs: Map.delete(state.subs, id),
+                by_terminal: Map.delete(state.by_terminal, {:link, ref})
+            },
+            else: state
+
+        {:push, Protocol.encode(frame), state}
+
+      _ ->
+        {:ok, state}
+    end
+  end
+
   def handle_info({:hal_c2_terminal, key, event}, state) do
     case state.by_terminal do
       %{^key => id} ->
@@ -456,8 +489,9 @@ defmodule HalC2.Web.Socket do
     Task.start(fn ->
       reply =
         case node_for(environment) do
+          # Outside the cluster: through this node's link, if it has one.
           nil ->
-            {:error, "unknown environment"}
+            HalC2.Links.rpc(environment, method, payload || %{}, timeout)
 
           # Activity leases belong to this socket and its session.
           node when method == "server.reportClientActivity" ->
@@ -510,7 +544,9 @@ defmodule HalC2.Web.Socket do
         %{"node" => Atom.to_string(node), "online" => node in online, "environment" => descriptor}
       end
 
-    frame = %{"t" => "shell", "id" => id, "nodes" => nodes, "rows" => rows}
+    :ok = HalC2.Links.subscribe(self())
+    links = HalC2.Links.list()
+    frame = %{"t" => "shell", "id" => id, "nodes" => nodes, "rows" => rows, "links" => links}
 
     {:push, Protocol.encode(frame), put_in(state.subs[id], :shell)}
   end
@@ -611,6 +647,32 @@ defmodule HalC2.Web.Socket do
         {:error, reason} ->
           {:push, Protocol.encode(error_frame(id, reason)), state}
       end
+    end
+  end
+
+  # A shape named by environment: on the cluster member that serves it, else through
+  # this node's link to it, whose frames arrive as `{:hal_c2_link, ref, frame}`.
+  defp subscribe(state, id, {:environment, environment_id, shape}, offset) do
+    case {node_for(environment_id), shape} do
+      {nil, _} ->
+        case HalC2.Links.watch(environment_id, shape, self()) do
+          {:ok, ref} ->
+            {:ok,
+             %{
+               state
+               | subs: Map.put(state.subs, id, {:link, environment_id, ref}),
+                 by_terminal: Map.put(state.by_terminal, {:link, ref}, id)
+             }}
+
+          {:error, reason} ->
+            {:push, Protocol.encode(error_frame(id, reason)), state}
+        end
+
+      {node, %{"type" => "terminal", "input" => input}} ->
+        subscribe(state, id, {:terminal, node, input}, offset)
+
+      {node, %{"type" => "terminals"}} ->
+        subscribe(state, id, {:terminals, node}, offset)
     end
   end
 
@@ -1012,6 +1074,7 @@ defmodule HalC2.Web.Socket do
   # The scope each shape needs, as the Node server's subscribe methods declare it.
   defp shape_scope({:terminal, _, _}), do: "terminal:operate"
   defp shape_scope({:terminals, _}), do: "terminal:operate"
+  defp shape_scope({:environment, _, %{"type" => "terminal" <> _}}), do: "terminal:operate"
   defp shape_scope(:auth_access), do: "access:read"
 
   defp shape_scope({kind, _, _}) when kind in [:server_update, :git_action, :preview_automation],
@@ -1213,6 +1276,10 @@ defmodule HalC2.Web.Socket do
       {{:terminals, node} = shape, subs} ->
         :erpc.cast(node, HalC2.Terminal.Hub, :unwatch, [self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
+
+      {{:link, environment_id, ref}, subs} ->
+        HalC2.Links.unwatch(environment_id, ref)
+        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:link, ref})}
 
       {{:stream, node, stream_id}, subs} ->
         :erpc.cast(node, HalC2.Streams, :unsubscribe, [stream_id, self()])
