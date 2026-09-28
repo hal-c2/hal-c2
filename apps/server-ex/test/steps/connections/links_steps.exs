@@ -9,7 +9,7 @@ defmodule HalC2.Steps.Connections.Links do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.{Machines, Node}
+  alias HalC2.Test.{Machines, Node, WsClient}
   alias HalC2.Test.Node.{Terminal, World}
 
   step "another node {string} outside the node's cluster", %{args: [label]} = context do
@@ -189,7 +189,86 @@ defmodule HalC2.Steps.Connections.Links do
     World.put_client(context, "follower", client)
   end
 
+  # --- streams through the link -----------------------------------------------------
+
+  step "a thread that lives on {string}", %{args: [label]} = context do
+    thread = %{"s" => %{"id" => "th-beast", "title" => "On #{label}"}}
+    commit(context, label, [{"thread", "th-beast", thread}])
+    Map.put(context, :link_stream, label)
+  end
+
+  step "a client of the node follows that thread by its environment", context do
+    {frames, _offset, client} = follow_linked(World.client(context), context, 3, nil)
+    context |> World.put_client(client) |> Map.put(:link_frames, frames)
+  end
+
+  step "it receives the thread's snapshot and goes live", context do
+    assert [%{"t" => "snapshot", "part" => 0, "done" => true} = snapshot] = context.link_frames
+    assert [["thread", "th-beast", %{"title" => "On beast"}]] = snapshot["rows"]
+    context
+  end
+
+  step "a change to the thread on {string} reaches the client", %{args: [label]} = context do
+    seq = commit(context, label, [{"turn-item", "i1", %{"s" => %{"text" => "from beast"}}}])
+    events = &(&1["t"] == "events" and &1["id"] == 3)
+    {frame, client} = Node.await(World.client(context), events, 10_000)
+    assert [[^seq, "turn-item", "i1", %{"s" => %{"text" => "from beast"}}, _at]] = frame["events"]
+    World.put_client(context, client)
+  end
+
+  step "a client of the node followed that thread by its environment and stopped", context do
+    {_frames, offset, client} = follow_linked(World.client(context), context, 3, nil)
+    client = WsClient.send_json(client, %{"t" => "unsub", "id" => 3})
+    context |> World.put_client(client) |> Map.put(:link_offset, offset)
+  end
+
+  step "the thread on {string} changed since", %{args: [label]} = context do
+    seq = commit(context, label, [{"turn-item", "i2", %{"s" => %{"text" => "missed"}}}])
+    Map.put(context, :missed, seq)
+  end
+
+  step "the client follows that thread again from the offset it last saw", context do
+    {frames, _offset, client} =
+      follow_linked(World.client(context), context, 4, context.link_offset)
+
+    context |> World.put_client(client) |> Map.put(:link_frames, frames)
+  end
+
+  step "it receives only the change it missed, then goes live", context do
+    seq = context.missed
+
+    assert [%{"t" => "events", "events" => [[^seq, "turn-item", "i2", %{"s" => _}, _at]]}] =
+             context.link_frames
+
+    context
+  end
+
   # --- helpers ----------------------------------------------------------------------
+
+  defp commit(context, label, entities) do
+    {:ok, seq} =
+      Machines.on(context, label, HalC2.Streams, :commit, ["th-beast", :thread, entities])
+
+    seq
+  end
+
+  # Subscribes to the linked thread by its environment: the frames before `live`, and
+  # the live offset.
+  defp follow_linked(client, context, id, offset) do
+    shape = %{
+      "type" => "stream",
+      "environment" => environment(context, context.link_stream),
+      "stream" => "th-beast"
+    }
+
+    client =
+      WsClient.send_json(client, %{"t" => "sub", "id" => id, "shape" => shape, "offset" => offset})
+
+    {live, frames, client} =
+      WsClient.recv_until(client, &(&1["t"] == "live" and &1["id"] == id), 10_000)
+
+    {Enum.filter(frames, &(&1["id"] == id)), live["offset"], client}
+  end
 
   defp environment(context, label), do: Machines.machine(context, label).environment
 

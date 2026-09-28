@@ -119,9 +119,10 @@ defmodule HalC2.Web.Socket do
       %{{:link, ^ref} => id} ->
         frame = Map.put(frame, "id", id)
 
-        # The environment ended it; the link has already let go.
+        # The environment ended it (a resync ends a stream too); the link has already
+        # let go.
         state =
-          if frame["t"] in ["end", "error"],
+          if frame["t"] in ["end", "error", "resync"],
             do: %{
               state
               | subs: Map.delete(state.subs, id),
@@ -656,7 +657,7 @@ defmodule HalC2.Web.Socket do
   defp subscribe(state, id, {:environment, environment_id, shape}, offset) do
     case {node_for(environment_id), shape} do
       {nil, _} ->
-        case HalC2.Links.watch(environment_id, shape, self()) do
+        case HalC2.Links.watch(environment_id, shape, self(), offset) do
           {:ok, ref} ->
             {:ok,
              %{
@@ -674,6 +675,9 @@ defmodule HalC2.Web.Socket do
 
       {node, %{"type" => "terminals"}} ->
         subscribe(state, id, {:terminals, node}, offset)
+
+      {node, %{"type" => "stream", "stream" => stream_id}} ->
+        subscribe(state, id, {:stream, node, stream_id}, offset)
     end
   end
 

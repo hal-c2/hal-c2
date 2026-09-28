@@ -817,7 +817,7 @@ defmodule HalC2.Steps.Common do
   end
 
   # A frame the node refuses; the refusal frame is `context.refusal`.
-  step ~r/^the client sends (?<case>text that is not JSON|a frame of an unknown type|a frame with an unknown or missing type|a subscription to an unknown shape|a subscription to a shape type the node does not know|a subscription naming an unknown node|a subscription naming a node outside the cluster|a config subscription for an unknown environment|an authAccess subscription from a session without access:read|an RPC for an unknown environment|an rpc for an unknown environment|an rpc whose node has gone away)$/,
+  step ~r/^the client sends (?<case>text that is not JSON|a frame of an unknown type|a frame with an unknown or missing type|a subscription to an unknown shape|a subscription to a shape type the node does not know|a subscription naming an unknown node|a subscription naming a node outside the cluster|a config subscription for an unknown environment|a stream subscription for an unknown environment|an authAccess subscription from a session without access:read|an RPC for an unknown environment|an rpc for an unknown environment|an rpc whose node has gone away)$/,
        %{args: [refused]} = context do
     alias HalC2.Test.WsClient
     client = World.client(context)
@@ -838,6 +838,13 @@ defmodule HalC2.Steps.Common do
 
         "a config subscription" <> _ ->
           Node.sub(client, 43, %{"type" => "config", "environment" => "env-missing"})
+
+        "a stream subscription" <> _ ->
+          Node.sub(client, 47, %{
+            "type" => "stream",
+            "environment" => "env-missing",
+            "stream" => "x"
+          })
 
         "an authAccess subscription" <> _ ->
           {:ok, %{"credential" => credential}} =

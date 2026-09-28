@@ -12,6 +12,7 @@
 #   apps/tui/src/host/clusterState.ts, apps/tui/src/host/settingsState.ts (the terminal's cluster)
 #   apps/desktop-qt/src/ClusterController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ClusterSettings.qml (the desktop's cluster)
 #   apps/server-ex/lib/hal_c2/devices/proxy.ex (device hub of any node)
+#   apps/server-ex/lib/hal_c2/web/protocol.ex, web/socket.ex (streams by node or by environment)
 #   packages/client-runtime/src/v3/clusterSocket.ts (one socket per cluster)
 #   packages/client-runtime/src/v3/clusterMembers.ts (registering members that join later)
 #   packages/client-runtime/src/connection/compatibility.ts (descriptorServesEnvironment)
@@ -133,6 +134,12 @@ Feature: Clustering one person's machines
   Scenario: A thread on another member streams through the connected node
     Given a client connected to the first member
     When it follows a thread that lives on the second member
+    Then the thread streams over the client's one socket
+
+  @node
+  Scenario: A client follows a thread on another member by its environment
+    Given a client connected to the first member
+    When it follows a thread that lives on the second member by that member's environment
     Then the thread streams over the client's one socket
 
   @node

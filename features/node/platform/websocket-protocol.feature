@@ -134,12 +134,13 @@ Feature: The protocol 3 WebSocket
     And the socket stays open
 
     Examples:
-      | frame                                   | reason              |
-      | text that is not JSON                   | invalid json        |
-      | a frame of an unknown type              | unknown message     |
-      | a subscription to an unknown shape      | unknown shape       |
-      | a subscription naming an unknown node   | unknown node        |
-      | an RPC for an unknown environment       | unknown environment |
+      | frame                                            | reason              |
+      | text that is not JSON                            | invalid json        |
+      | a frame of an unknown type                       | unknown message     |
+      | a subscription to an unknown shape               | unknown shape       |
+      | a subscription naming an unknown node            | unknown node        |
+      | a stream subscription for an unknown environment | unknown environment |
+      | an RPC for an unknown environment                | unknown environment |
 
   @node
   Scenario: Names from the client never create new node names

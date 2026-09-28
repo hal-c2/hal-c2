@@ -7,7 +7,7 @@
 #   packages/client-runtime/src/v3/session.ts (methods a protocol 3 environment does not serve yet)
 #   packages/client-runtime/src/connection/compatibility.ts (SHAPE_PROTOCOL_VERSION, negotiation)
 #   packages/contracts/src/rpc.ts (the subscription methods each shape replaces)
-#   Counts: 4 client frames, 21 shape types (22 rows: config has a node and an environment form),
+#   Counts: 4 client frames, 21 shape types (23 rows: config and stream have a node and an environment form),
 #   39 server frame types, 8 refusal reasons; all aligned, 1 dropped. The legacy client adapter
 #   carries neither providerInstall nor relayClientInstall.
 #   Behaviour of a single subscription (resume, merge, resync timing) lives in
@@ -48,10 +48,11 @@ Feature: Protocol 3 wire parity
 
     # previewAutomation: the node's broker and the TypeScript PreviewAutomationBroker both
     # send the host a connected event as it subscribes, before any agent request.
-    Examples: 22 shape forms
+    Examples: 23 shape forms
       | shape                | fields             | first frame                                           | later frames                                                                              | replaces                                            |
       | shell                | none               | a shell frame with every node and every row           | shell.rows, shell.environment, shell.node and shell.links frames                          | orchestration.subscribeShell                        |
       | stream               | node, stream       | snapshot parts, the first with part 0                 | events frames after a live frame, or a resync                                             | orchestration.subscribeThread                       |
+      | stream               | environment, stream | the same frames as the node form for the environment's node | the same frames as the node form                                                   | orchestration.subscribeThread                       |
       | config               | node               | a config frame, then config.themes and config.usageLimitSources | config.settings, config.providers, config.keybindings, config.themes, config.usageLimitSources and config.ready frames | server.getConfig, subscribeServerConfig, subscribeServerLifecycle |
       | config               | environment        | the same frames as the node form for the environment's node | the same frames as the node form                                                     | server.getConfig, subscribeServerConfig, subscribeServerLifecycle |
       | terminal             | node, input        | a terminal frame with the terminal's snapshot         | terminal frames                                                                           | terminal.attach                                     |

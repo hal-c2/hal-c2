@@ -3,8 +3,9 @@ defmodule HalC2.Links.Connection do
   One link's websocket to its environment (`HalC2.Links`). It mints a socket ticket
   with the link's token, connects over protocol 3, and forwards this node's client
   RPCs and subscriptions. After a drop it reconnects with backoff and subscribes
-  again, so subscribers get a fresh snapshot, as after their own reconnect. RPCs
-  fail while it is down rather than wait for it.
+  again, so subscribers get a fresh snapshot, as after their own reconnect; a stream
+  resumes from the last offset it passed on instead. RPCs fail while it is down
+  rather than wait for it.
   """
 
   use GenServer
@@ -30,8 +31,8 @@ defmodule HalC2.Links.Connection do
     :exit, _ -> {:error, "unknown environment"}
   end
 
-  def watch(pid, shape, subscriber) do
-    GenServer.call(pid, {:watch, shape, subscriber})
+  def watch(pid, shape, subscriber, offset \\ nil) do
+    GenServer.call(pid, {:watch, shape, subscriber, offset})
   catch
     :exit, _ -> {:error, "unknown environment"}
   end
@@ -57,7 +58,7 @@ defmodule HalC2.Links.Connection do
        next_id: 1,
        # Remote id => {:call, from} | {:sub, ref}
        pending: %{},
-       # ref => %{pid, monitor, shape, id}
+       # ref => %{pid, monitor, shape, id, offset}
        subs: %{},
        backoff: @min_backoff
      }}
@@ -81,9 +82,9 @@ defmodule HalC2.Links.Connection do
     {:noreply, state |> put_in([:pending, id], {:call, from}) |> push(frame)}
   end
 
-  def handle_call({:watch, shape, pid}, _from, state) do
+  def handle_call({:watch, shape, pid, offset}, _from, state) do
     ref = make_ref()
-    sub = %{pid: pid, monitor: Process.monitor(pid), shape: shape, id: nil}
+    sub = %{pid: pid, monitor: Process.monitor(pid), shape: shape, id: nil, offset: offset}
     state = put_in(state.subs[ref], sub)
     state = if state.node, do: send_sub(state, ref), else: state
     {:reply, {:ok, ref}, state}
@@ -241,8 +242,11 @@ defmodule HalC2.Links.Connection do
     case state.pending do
       %{^id => {:sub, ref}} ->
         send(state.subs[ref].pid, {:hal_c2_link, ref, frame})
-        # The remote ended the subscription.
-        if t in ["end", "error"], do: drop_sub(state, ref, false), else: state
+
+        # The remote ended the subscription; a stream that fell behind resubscribes.
+        if t in ["end", "error", "resync"],
+          do: drop_sub(state, ref, false),
+          else: update_in(state.subs[ref], &passed_on(&1, frame))
 
       _ ->
         state
@@ -250,6 +254,15 @@ defmodule HalC2.Links.Connection do
   end
 
   defp message(state, _frame), do: state
+
+  # How far a stream's subscriber has been brought, to resume from after a drop.
+  defp passed_on(sub, %{"t" => t, "offset" => offset}) when t in ["events", "live"],
+    do: %{sub | offset: offset}
+
+  defp passed_on(sub, %{"t" => "snapshot", "done" => true, "offset" => offset}),
+    do: %{sub | offset: offset}
+
+  defp passed_on(sub, _frame), do: sub
 
   defp reply(%{"t" => "rpc.result"} = frame), do: {:ok, frame["result"]}
 
@@ -266,7 +279,7 @@ defmodule HalC2.Links.Connection do
     state
     |> put_in([:subs, ref], %{sub | id: id})
     |> put_in([:pending, id], {:sub, ref})
-    |> push(%{"t" => "sub", "id" => id, "shape" => shape})
+    |> push(%{"t" => "sub", "id" => id, "shape" => shape, "offset" => sub.offset})
   end
 
   defp drop_sub(state, ref, unsubscribe?) do

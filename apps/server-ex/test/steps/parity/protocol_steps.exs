@@ -93,7 +93,7 @@ defmodule HalC2.Steps.Parity.Protocol do
 
   step ~r/^the client subscribes to an? (?<shape>\w+) shape with (?<fields>.+)$/,
        %{args: [type, fields]} = context do
-    form = if fields == "environment", do: "environment", else: "node"
+    form = if "environment" in String.split(fields, ", "), do: "environment", else: "node"
     context = Shapes.subscribe(context, type, form)
     expected = if fields == "none", do: [], else: String.split(fields, ", ")
     assert Enum.sort(Map.keys(context.shape.map)) == Enum.sort(expected)
@@ -719,7 +719,9 @@ defmodule HalC2.Steps.Parity.Shapes do
         {%{}, context}
 
       "stream" ->
-        {Map.put(node, "stream", f.thread), context}
+        if form == "environment",
+          do: {%{"environment" => context.node.environment, "stream" => f.thread}, context},
+          else: {Map.put(node, "stream", f.thread), context}
 
       "config" ->
         Enum.each([HalC2.EnvironmentThemes, HalC2.UsageLimitSources], &Node.ensure/1)

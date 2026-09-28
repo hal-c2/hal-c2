@@ -15,8 +15,9 @@ defmodule HalC2.Web.Protocol do
     * `{"type": "terminal", "node": n, "input": TerminalAttachInput}`: one terminal,
       opened if needed; a snapshot, then its events
     * `{"type": "terminals", "node": n}`: that node's terminal summaries, then changes
-    * either terminal shape with `"environment": id` instead of `"node"`: on the
-      cluster member serving that environment, or through this node's link to it
+    * the stream and terminal shapes with `"environment": id` instead of `"node"`: on
+      the cluster member serving that environment, or through this node's link to it
+      (a linked stream resumes from `offset` and resyncs as a local one does)
     * `{"type": "vcs", "node": n, "cwd": dir}`: a checkout's git status, then changes
     * `{"type": "worktreeSetup", "node": n, "threadId": id}`: a new thread's worktree
       setup (`WorktreeSetupStreamEvent`: null, or a snapshot), then changes
@@ -184,6 +185,10 @@ defmodule HalC2.Web.Protocol do
   end
 
   # By environment: a cluster member's, or one this node links to (`HalC2.Links`).
+  defp decode_shape(%{"type" => "stream", "environment" => env, "stream" => id}, _)
+       when is_binary(env) and is_binary(id),
+       do: {:ok, {:environment, env, %{"type" => "stream", "stream" => id}}}
+
   defp decode_shape(%{"type" => "terminal", "environment" => env, "input" => %{} = input}, _)
        when is_binary(env),
        do: {:ok, {:environment, env, %{"type" => "terminal", "input" => input}}}

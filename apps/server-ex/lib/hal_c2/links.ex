@@ -92,14 +92,16 @@ defmodule HalC2.Links do
 
   @doc """
   Subscribes `pid` to `shape` (a protocol 3 shape naming the environment) on a
-  linked environment. `pid` receives `{:hal_c2_link, ref, frame}` for each of the
-  subscription's frames; the frame's `id` is the link's, not the client's.
+  linked environment, from `offset` for a stream. `pid` receives
+  `{:hal_c2_link, ref, frame}` for each of the subscription's frames; the frame's `id`
+  is the link's, not the client's.
   """
-  @spec watch(String.t(), map, pid) :: {:ok, reference} | {:error, String.t()}
-  def watch(environment_id, shape, pid) do
+  @spec watch(String.t(), map, pid, non_neg_integer | nil) ::
+          {:ok, reference} | {:error, String.t()}
+  def watch(environment_id, shape, pid, offset \\ nil) do
     case connection(environment_id) do
       nil -> {:error, "unknown environment"}
-      link -> Connection.watch(link, shape, pid)
+      link -> Connection.watch(link, shape, pid, offset)
     end
   end
 

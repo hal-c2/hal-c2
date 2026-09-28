@@ -2,7 +2,7 @@
 #   apps/server-ex/lib/hal_c2/links.ex, apps/server-ex/lib/hal_c2/links/connection.ex
 #   apps/server-ex/lib/mix/tasks/hal_c2.link.ex
 #   apps/server-ex/lib/hal_c2/web/socket.ex (rpc and shapes by environment, shell links)
-#   apps/server-ex/lib/hal_c2/web/protocol.ex (terminal shapes by environment, shell.links)
+#   apps/server-ex/lib/hal_c2/web/protocol.ex (stream and terminal shapes by environment, shell.links)
 #   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.linkEnvironment, hal-c2.unlinkEnvironment, hal-c2.environmentLinks)
 #   Shared domain: cluster.feature holds machines that join one cluster; pairing.feature holds
 #   the pairing links a link is made from.
@@ -43,6 +43,23 @@ Feature: Linking a node to environments outside its cluster
     And a client of the node follows the terminals on "beast"
     When a client of the node attaches a terminal on "beast"
     Then the client following them sees the new terminal
+
+  @node
+  Scenario: A client follows a thread on a linked environment through its node
+    Given the node is linked to "beast"
+    And a thread that lives on "beast"
+    When a client of the node follows that thread by its environment
+    Then it receives the thread's snapshot and goes live
+    And a change to the thread on "beast" reaches the client
+
+  @node
+  Scenario: A client resumes a linked environment's thread from the offset it last saw
+    Given the node is linked to "beast"
+    And a thread that lives on "beast"
+    And a client of the node followed that thread by its environment and stopped
+    And the thread on "beast" changed since
+    When the client follows that thread again from the offset it last saw
+    Then it receives only the change it missed, then goes live
 
   @node
   Scenario: A link survives the node restarting
