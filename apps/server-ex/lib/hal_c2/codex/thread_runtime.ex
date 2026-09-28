@@ -326,7 +326,8 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
     state = if state.turn, do: end_turn(state, "failed", "Codex exited unexpectedly"), else: state
-    {:noreply, %{state | conn: nil}}
+    # The native thread was loaded in that app-server; the next one resumes it.
+    {:noreply, %{state | conn: nil, native_thread_id: nil}}
   end
 
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}

@@ -515,7 +515,6 @@ defmodule HalC2.Orchestration.TurnWriter do
   def finish(state, status, failure) do
     ids = state.turn.ids
     at = Entities.now()
-    TurnWatch.release(ids.run)
     done = %{"status" => status, "completedAt" => at}
 
     checkpoint =
@@ -560,6 +559,9 @@ defmodule HalC2.Orchestration.TurnWriter do
           is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at)
         ]
     end)
+
+    # Only once the run has ended: a crash before then still ends it.
+    TurnWatch.release(ids.run)
 
     # The thread is idle now: its next queued message can start. Off this process,
     # since starting a turn calls back into the runtime that is finishing this one.

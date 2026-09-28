@@ -17,9 +17,15 @@ defmodule HalC2.Orchestration.TurnWatch do
 
   def start_link(_opts), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
-  @doc "The calling process drives run `run_id` of `thread_id` until `release/1`."
-  def claim(thread_id, run_id),
-    do: GenServer.cast(__MODULE__, {:claim, self(), thread_id, run_id})
+  @doc """
+  The calling process drives run `run_id` of `thread_id` until `release/1`. Returns
+  once the claim is in place, so a stop that sees the run running sees it driven.
+  """
+  def claim(thread_id, run_id) do
+    GenServer.call(__MODULE__, {:claim, self(), thread_id, run_id})
+  catch
+    :exit, _ -> :ok
+  end
 
   @doc "Run `run_id` ended; its process no longer drives it."
   def release(run_id), do: GenServer.cast(__MODULE__, {:release, run_id})
@@ -38,14 +44,14 @@ defmodule HalC2.Orchestration.TurnWatch do
   def init(nil), do: {:ok, %{}}
 
   @impl true
-  def handle_cast({:claim, pid, thread_id, run_id}, runs) do
-    runs = forget(runs, run_id)
-    {:noreply, Map.put(runs, run_id, {Process.monitor(pid), thread_id})}
-  end
-
   def handle_cast({:release, run_id}, runs), do: {:noreply, forget(runs, run_id)}
 
   @impl true
+  def handle_call({:claim, pid, thread_id, run_id}, _from, runs) do
+    runs = forget(runs, run_id)
+    {:reply, :ok, Map.put(runs, run_id, {Process.monitor(pid), thread_id})}
+  end
+
   def handle_call({:driven?, run_id}, _from, runs), do: {:reply, Map.has_key?(runs, run_id), runs}
 
   @impl true
