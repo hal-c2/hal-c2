@@ -23,6 +23,7 @@ void NodeClient::open(const QUrl& origin, const QString& token) {
   QUrlQuery query;
   query.addQueryItem(QStringLiteral("token"), token);
   url.setQuery(query);
+  m_origin = origin;
   m_url = url;
   m_closed = false;
   m_attempt = 0;

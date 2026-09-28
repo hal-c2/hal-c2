@@ -35,6 +35,8 @@ public:
   void open(const QUrl& origin, const QString& token);
   void close();
   bool isReady() const { return m_ready; }
+  // The http(s) origin the node was opened at.
+  QUrl origin() const { return m_origin; }
   QString node() const { return m_node; }
   // The environment the node itself serves, for calls about the node (its
   // cluster); empty until the first hello.
@@ -64,6 +66,7 @@ private:
     FrameHandler onFrame;
   };
 
+  QUrl m_origin;
   QUrl m_url;
   QPointer<QWebSocket> m_socket;
   QHash<int, Subscription> m_subscriptions;

@@ -60,9 +60,8 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   `halC2Shell.onAction(listener)`), except the ones the shell's own node
   client takes (below).
 - **The shell's own node client** does what the TUI's does: the page is
-  legacy, so RPC moves out of it key by key. With a node it
-  started, the host's `ready` line carries the node's origin and access
-  token, and `NativeShell` opens one protocol-3 socket (`NodeClient`) and
+  legacy, so RPC moves out of it key by key. In every mode the host's
+  `ready` line carries the node's origin and access token, and `NativeShell` opens one protocol-3 socket (`NodeClient`) and
   folds the `shell` snapshot and row deltas (`ShellStore`). On the first
   snapshot it builds `sidebar` itself from those rows plus the page's
   `sidebarInput` (project grouping and drafts) and its own `route`, claims the
@@ -74,8 +73,9 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   serves, which is where the shell sends calls about the node itself (its
   cluster). Pieces that never existed on the page, such as the cluster
   settings (`ClusterController`), have no page counterpart at all. The
-  scenarios are `features/desktop/native-*.feature` and the `@desktop` ones in
-  `features/connections/cluster.feature`, run by the native `tst_Features`.
+  scenarios are `features/desktop/native-*.feature` and the `@desktop` and
+  `@shared` ones in the files `tests/native/tst_Features.cpp` lists, run by
+  the native `tst_Features`.
 - The UI-owned parts of `desktopBridge` (open external, window commands,
   colour scheme, dialogs/context menus later) are served by the shell over the
   same channel; the TypeScript-owned parts stay on the Node side.
@@ -151,7 +151,7 @@ works compiled into the binary and as an on-disk import path.
 The bricks come in two layers. Chrome bricks each own one piece of the page's
 chrome and read one key of `Shell.state`: `Sidebar`, `Workspace` (the header
 strip), `Composer`, `RightPanel`, `SettingsNav`, `ClusterSettings`,
-`GitActions`, `Notifications`, `ContextMenuHost`, plus `WebSurface`,
+`ConnectionsSettings`, `GitActions`, `Notifications`, `ContextMenuHost`, plus `WebSurface`,
 `DefaultShell` and `ShellErrorOverlay`. `TerminalDrawer` reads the native
 `Terminals` controller instead (see the terminal drawer below), and `Timeline`
 renders a native `Threads` timeline (see the thread store below). A rice that
@@ -166,7 +166,7 @@ opaque parent `ShellCard`; wallpaper layouts must account for both.
 Under them sit the primitives a rice composes its own
 chrome from, all styled from `Theme`: `ShellWindow` (the root every rice
 starts from: theme-driven colour, opacity and frame, `sidebarCollapsed`,
-`settingsActive` and `clusterOpen`, the shell's context menus, the error
+`settingsActive`, `clusterOpen`, `connectionsOpen` and `nativeSettingsOpen`, the shell's context menus, the error
 overlay and the page's window commands), `ShellCard` (a rounded, hairlined
 panel), `ShellButton` (outline, `subtle` ghost, `primary`), `ShellComboBox`
 (ghost, `outline: true` for a field), `ShellSplitButton` (the header's action
@@ -635,7 +635,7 @@ environment, not a node, so the node routes them to the cluster member that serv
 it or through a link (`HalC2.Links`) to an environment outside the cluster; the
 drawer is available for any environment the `shell` snapshot lists in `nodes` or
 `links` (`features/desktop/native-terminal.feature`). Environments outside the
-cluster are paired natively, as node links (see Connections below); the page's
+cluster are paired natively, as node links (see `connections` below); the page's
 saved environments are not lent to the node.
 
 - **Launch context.** Every attach and open sends the thread's cwd (worktree,
@@ -666,7 +666,7 @@ Renaming is native too (`workspace.rename {title}`, with `renameRequestId`
 bumping when the page asks the brick to start editing) and the title's
 context menu comes from `workspace.titleMenu {x, y}`.
 
-### `settings` and `cluster`
+### `settings`, `cluster` and `connections`
 
 The settings nav is the shell's (`SettingsNav`); the pages behind it are
 either the shell's own or still HTML.
@@ -679,6 +679,21 @@ settings section `/settings/cluster`, which the page is never told to follow.
 Layouts show the brick where the page would be while `ShellWindow.clusterOpen`.
 Actions: `cluster.refresh`, `cluster.invite {tailscale?}` (copies the link),
 `cluster.invite.copy`, `cluster.join {link}`, `cluster.remove {id}`.
+
+`ConnectionsController` publishes `connections` and `ConnectionsSettings`
+renders it at `/settings/connections` (`connections.open`/`close`,
+`ShellWindow.connectionsOpen`); `SettingsNav` lists it in place of the page's
+own Connections section. Other environments are the node's links from the
+`shell` shape, each with its `status`; adding one is `hal-c2.linkEnvironment`
+with a pairing link, or a host and code (a host without a scheme tries HTTPS,
+then HTTP when HTTPS cannot connect), and removing is
+`hal-c2.unlinkEnvironment`. The node has no rename for a link. While open the
+page follows the `authAccess` shape (pairing links, client sessions) and calls
+the `hal-c2.*` access RPCs; a created link's secret lives only in `created`
+until the page closes. Those calls need `access:read`/`access:write`, so a
+session paired with standard scopes sees one explanation in place of the list.
+A link needs a direct origin and a bearer token: an environment reached only
+through the relay (DPoP) cannot be linked yet.
 
 The rest are HTML pages until they move. The root route mounts
 `ShellSettingsBridge` when hosted, which publishes `ShellSettingsState` on

@@ -109,8 +109,8 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
     // where the user left off. Where they click to is.
     if (m_restored && map.value(QStringLiteral("replace")).toBool()) return true;
     m_restored = false;
-    // Behind the shell's own page the page only lands and redirects.
-    if (m_route == Route::settings(kClusterSection)) return true;
+    // Behind the shell's own pages the page only lands and redirects.
+    if (isNativeSection(m_route)) return true;
     // The page went back (its own back button, Escape in settings).
     if (!m_backStack.isEmpty() && m_backStack.constLast() == *route) {
       m_backStack.removeLast();
@@ -141,10 +141,19 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
     open(Route::settings(kClusterSection));
   } else if (action == QLatin1String("cluster.close")) {
     if (m_route == Route::settings(kClusterSection)) back();
+  } else if (action == QLatin1String("connections.open")) {
+    open(Route::settings(kConnectionsSection));
+  } else if (action == QLatin1String("connections.close")) {
+    if (m_route == Route::settings(kConnectionsSection)) back();
   } else if (action == QLatin1String("settings.navigate") || action == QLatin1String("settings.openResult")) {
     // The page moves between its own sections (and scrolls to a result); the
     // route only learns where it went.
     const QString to = map.value(QStringLiteral("to")).toString();
+    // A link to one of the shell's own pages opens it instead.
+    if (isNativeSection(Route::settings(to))) {
+      open(Route::settings(to));
+      return true;
+    }
     if (m_route.kind == QLatin1String("settings") && to.startsWith(QLatin1String("/settings/"))) {
       m_pageRoute = Route::settings(to);
       go(Route::settings(to), true, false);
@@ -187,7 +196,7 @@ void NavigationController::follow() {
   // where it is.
   if (!m_pageRoute && m_route.kind == QLatin1String("home")) return;
   // The page cannot show the shell's own pages; it stays where it was.
-  if (m_route == Route::settings(kClusterSection)) return;
+  if (isNativeSection(m_route)) return;
   m_pageRoute = m_route;
   m_bridge->sendToPage(QStringLiteral("route.follow"), m_route.toVariant());
 }
