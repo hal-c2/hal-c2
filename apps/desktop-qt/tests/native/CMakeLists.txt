@@ -10,6 +10,8 @@ endif()
 include(../../cmake/PlatformWindow.cmake)
 # The bricks the layout tests load import Ghostty (the terminal drawer).
 include(../../cmake/QmlGhostty.cmake)
+include(../../cmake/NativeShell.cmake)
+hal_c2_add_native_library("qrc:///qtwebchannel/qwebchannel.js")
 if(APPLE)
   add_executable(tst_PlatformWindow tst_PlatformWindow.mm)
   target_include_directories(tst_PlatformWindow PRIVATE ../../src)
@@ -36,25 +38,14 @@ add_executable(tst_BackendProcess tst_BackendProcess.cpp ../../src/BackendProces
 target_include_directories(tst_BackendProcess PRIVATE ../../src)
 target_link_libraries(tst_BackendProcess PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME BackendProcess COMMAND tst_BackendProcess)
-# The native scenarios of features/desktop, against a fake node.
-add_executable(tst_Features
-  tst_Features.cpp
-  ../../src/ClusterController.cpp
-  ../../src/ComposerController.cpp
-  ../../src/NativeShell.cpp
-  ../../src/NodeClient.cpp
-  ../../src/ShellBridge.cpp
-  ../../src/ShellStore.cpp
-  ../../src/SidebarController.cpp
-  ../../src/SidebarModel.cpp
-  ../../src/TerminalController.cpp
-)
-target_include_directories(tst_Features PRIVATE ../../src)
+# The native scenarios of features/, against a fake node: the harness, the fake
+# node, and one steps file per domain (features/*.cpp, picked up on the next build).
+file(GLOB _feature_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/features/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/features/*.h")
+add_executable(tst_Features tst_Features.cpp ${_feature_sources})
 target_compile_definitions(tst_Features PRIVATE
   HAL_C2_FEATURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../../features"
-  HAL_C2_WEBCHANNEL_SCRIPT_URL="qrc:///qtwebchannel/qwebchannel.js"
 )
-target_link_libraries(tst_Features PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Network Qt6::WebSockets Qt6::Test)
+target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::Test)
 add_test(NAME Features COMMAND tst_Features)
 set_tests_properties(Features PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 add_executable(tst_LocalTranscriber tst_LocalTranscriber.cpp ../../src/LocalTranscriber.cpp)

@@ -1,0 +1,73 @@
+#pragma once
+
+#include <QJsonObject>
+#include <QList>
+#include <QQmlPropertyMap>
+#include <QSet>
+#include <QVariant>
+
+#include <functional>
+#include <optional>
+
+#include "FakeNode.h"
+#include "NativeShell.h"
+#include "ShellBridge.h"
+
+struct PageAction {
+  QString type;
+  QVariantMap payload;
+};
+
+// The shell as main.cpp builds it, the page as a recorder of what the shell
+// asks of it (plus the composer echo the real page makes), and the node. One
+// per scenario.
+class World {
+public:
+  World();
+
+  FakeNode node;
+  QList<PageAction> pageActions;
+  QVariant pageNative;  // what the last `shell.native` told the page
+  QVariantMap sidebarInput{{QStringLiteral("projects"), QVariantList()},
+                           {QStringLiteral("drafts"), QVariantList()},
+                           {QStringLiteral("localProjects"), QVariantList()},
+                           {QStringLiteral("timestampFormat"), QStringLiteral("locale")}};
+  QVariantMap composer;
+  std::optional<qsizetype> command;  // the command the last "receives" step found
+  QSet<qsizetype> checkedCommands;
+  int nextEdit = 1;
+
+  ShellBridge& bridge() { return m_bridge; }
+  NativeShell& native() { return m_native; }
+  QVariant state(const QString& key) const { return m_bridge.state()->value(key); }
+
+  void setTime(const QString& iso);
+
+  void publishSidebarInput() { m_bridge.publish(QStringLiteral("sidebarInput"), sidebarInput); }
+  // What the page's header shows for a thread (ShellWorkspaceState), from the
+  // node's project; a thread whose project the node does not know has none.
+  void publishWorkspace(const QString& threadKey, const QJsonObject& project, const QString& worktreePath, bool draft);
+  void publishComposer() { m_bridge.publish(QStringLiteral("composer"), composer); }
+
+  void connect(const QString& token = QStringLiteral("node-token"));
+  int shellSubscriptions() const;
+
+  // `what` is read on timeout, so it can describe the state the wait gave up on.
+  void waitFor(const std::function<bool()>& condition, const std::function<QString()>& what);
+  void waitFor(const std::function<bool()>& condition, const QString& what);
+
+  // A round trip through the node: everything the node sent before, and every
+  // answer to a command sent before, has been handled once it returns.
+  void sync();
+
+  QList<PageAction> actionsOf(const QString& type) const;
+  QString describePage() const;
+  QString describeCommands() const;
+
+private:
+  void onPageAction(const QString& type, const QVariantMap& payload);
+
+  // Declared in teardown order: the shell goes before the bridge it intercepts.
+  ShellBridge m_bridge;
+  NativeShell m_native{&m_bridge};
+};

@@ -35,9 +35,11 @@ cmake --build apps/desktop-qt/build/tests/native
 ctest --test-dir apps/desktop-qt/build/tests/native --output-on-failure
 ```
 
-`Features` runs the `@desktop` scenarios in `features/desktop/native-*.feature` and
-`features/connections/cluster.feature` against a fake node;
-`HAL_C2_FEATURES="desktop/native-sidebar.feature"` narrows it.
+`Features` runs the `@desktop` and `@shared` scenarios in `features/desktop/native-*.feature` and
+`features/connections/cluster.feature` against a fake node, skipping `@backlog`,
+`@backlog-desktop` and `@dropped`; `HAL_C2_FEATURES="desktop/native-sidebar.feature"` narrows it.
+Its steps live in `tests/native/features/`, one self-registering file per domain, each with its
+own part of the fake node (`FakeNode::Extension`).
 `ShellRuntime` covers reload and theme ownership. `ShellExamples` loads all
 the examples at 640, 1000, and 1400 pixels (including `glass-macos` on macOS), checking header text and dashboard
 card bounds, long branch names, clipped icons, and scrolling to the last card. It uses a local
