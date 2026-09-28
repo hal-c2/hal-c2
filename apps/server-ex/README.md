@@ -44,8 +44,9 @@ home's `elixir` directory (`T3CODE_HOME` or `T3_HOME`, else `~/.hal-c2`, else `~
 ([storage-migration.feature](../../features/node/platform/storage-migration.feature)).
 
 The release carries the Cursor sidecar (`packages/cursor-acp`, bundled with its
-dependencies for the build machine's platform), so building one needs `pnpm`, and
-running Cursor needs Node 22+ on the machine. The desktop app runs it on its own
+dependencies for the build machine's platform), so building one needs `npm` and the JS
+workspace installed (`vp i`, for its esbuild), and running Cursor needs Node 22+ on the
+machine. The desktop app runs it on its own
 Electron binary instead (`HAL_C2_NODE_COMMAND`).
 
 Run it as a service with `bin/hal-c2-service` (under launchd, systemd, or a terminal): it
