@@ -211,6 +211,11 @@ void SidebarController::park(const QString& key, QJsonObject parkCommand, const 
       });
 }
 
+std::optional<QString> SidebarController::projectKeyOf(const QString& threadKey) const {
+  const auto thread = m_store->thread(threadKey);
+  return thread ? logicalProjectKey(*thread) : std::nullopt;
+}
+
 std::optional<QString> SidebarController::logicalProjectKey(const sidebar::Thread& thread) const {
   const QString physicalKey = thread.environmentId + QLatin1Char(':') + thread.projectId;
   for (const sidebar::ProjectGroup& group : m_input.projects) {

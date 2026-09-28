@@ -35,6 +35,10 @@ public:
   // Whether every project the page groups lives on the node's cluster; rows
   // from any other environment exist only in the page.
   bool coversPage() const;
+  // The rows' keys in the order they render.
+  const QStringList& orderedKeys() const { return m_view.orderedKeys; }
+  // The project group a thread belongs to, as the page groups projects.
+  std::optional<QString> projectKeyOf(const QString& threadKey) const;
 
   // Tests pin the clock and locale; the app uses the system's.
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }

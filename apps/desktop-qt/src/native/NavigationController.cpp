@@ -110,7 +110,7 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
     if (m_restored && map.value(QStringLiteral("replace")).toBool()) return true;
     m_restored = false;
     // Behind the shell's own page the page only lands and redirects.
-    if (m_route == Route::settings(kClusterSection)) return true;
+    if (onShellPage()) return true;
     // The page went back (its own back button, Escape in settings).
     if (!m_backStack.isEmpty() && m_backStack.constLast() == *route) {
       m_backStack.removeLast();
@@ -141,6 +141,8 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
     open(Route::settings(kClusterSection));
   } else if (action == QLatin1String("cluster.close")) {
     if (m_route == Route::settings(kClusterSection)) back();
+  } else if (action == QLatin1String("keybindings.open")) {
+    open(Route::settings(kKeybindingsSection));
   } else if (action == QLatin1String("settings.navigate") || action == QLatin1String("settings.openResult")) {
     // The page moves between its own sections (and scrolls to a result); the
     // route only learns where it went.
@@ -186,8 +188,8 @@ void NavigationController::follow() {
   // Home is the page's own landing: nothing to tell a page that has not said
   // where it is.
   if (!m_pageRoute && m_route.kind == QLatin1String("home")) return;
-  // The page cannot show the shell's own pages; it stays where it was.
-  if (m_route == Route::settings(kClusterSection)) return;
+  // The page does not show the shell's own pages; it stays where it was.
+  if (onShellPage()) return;
   m_pageRoute = m_route;
   m_bridge->sendToPage(QStringLiteral("route.follow"), m_route.toVariant());
 }

@@ -45,8 +45,9 @@ public:
     bool operator==(const Route&) const = default;
   };
 
-  // The shell's own settings page, which the page cannot show.
+  // The shell's own settings pages, which the page does not show.
   static inline const QString kClusterSection = QStringLiteral("/settings/cluster");
+  static inline const QString kKeybindingsSection = QStringLiteral("/settings/keybindings");
 
   NavigationController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 
@@ -71,6 +72,10 @@ signals:
 
 private:
   void go(const Route& route, bool replace, bool follow);
+  // On one of the shell's own settings pages.
+  bool onShellPage() const {
+    return m_route == Route::settings(kClusterSection) || m_route == Route::settings(kKeybindingsSection);
+  }
   void follow();
   void publish();
   void save() const;
