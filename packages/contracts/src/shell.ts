@@ -1,12 +1,16 @@
 import * as Schema from "effect/Schema";
+import { ModelSelection } from "./modelSelection.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
+import { TimestampFormat } from "./settings.ts";
 
 /**
  * Contract between the web app and a native shell hosting it (the Qt shell
  * in apps/desktop-qt). The shell exposes `window.halC2Shell`; the page publishes
  * derived view models with `publish(key, value)` and receives user intent
- * from shell-rendered chrome as actions. The page stays the only client of
- * the server; the shell never sees the app protocol.
+ * from shell-rendered chrome as actions. Once its own connection to the node
+ * has a snapshot the shell also builds the sidebar and sends the sidebar's
+ * row actions and plain turns itself (`ShellNativeState`); everything else
+ * still goes through the page.
  *
  * Imported as `@hal-c2/contracts/shell` so only shell-hosted code pulls
  * these schemas into its bundle.
@@ -96,6 +100,46 @@ export const ShellSidebarState = Schema.Struct({
   activeDraftId: Schema.NullOr(Schema.String),
 });
 export type ShellSidebarState = typeof ShellSidebarState.Type;
+
+/**
+ * Published under the `native` key, and sent to the page as `shell.native`,
+ * once the shell's own node connection has its first snapshot: the page
+ * stops publishing `sidebar` (the shell builds it from `sidebarInput`) and
+ * the shell sends row actions and plain turns to the node itself.
+ */
+export const ShellNativeState = Schema.Struct({
+  sidebar: Schema.Boolean,
+  composer: Schema.Boolean,
+});
+export type ShellNativeState = typeof ShellNativeState.Type;
+
+/**
+ * Published under the `sidebarInput` key: what only the page knows that the
+ * shell's own sidebar needs (project grouping, drafts, the route, settings).
+ */
+export const ShellSidebarInput = Schema.Struct({
+  projects: Schema.Array(
+    Schema.Struct({
+      key: Schema.String,
+      displayName: Schema.String,
+      environmentId: Schema.String,
+      projectId: Schema.String,
+      workspaceRoot: Schema.String,
+      /** `<environmentId>:<projectId>` of every project grouped under `key`. */
+      memberKeys: Schema.Array(Schema.String),
+    }),
+  ),
+  localEnvironmentId: Schema.NullOr(Schema.String),
+  localProjects: Schema.Array(ShellLocalProject),
+  /** Every draft with content; the shell filters them by its scope. */
+  drafts: Schema.Array(ShellSidebarDraft),
+  activeThreadKey: Schema.NullOr(Schema.String),
+  activeDraftId: Schema.NullOr(Schema.String),
+  timestampFormat: TimestampFormat,
+  /** The page's sidebar scope, which the shell starts from when it takes the sidebar over. */
+  scopeProjectKey: Schema.NullOr(Schema.String),
+});
+export type ShellSidebarInput = typeof ShellSidebarInput.Type;
 
 /**
  * Published under the `layout` key by the page's sidebar provider: the
@@ -224,6 +268,22 @@ const ShellComposerEdit = Schema.Struct({
 
 export const ShellComposerSubmitIntent = Schema.Literals(["foreground", "background", "alternate"]);
 
+/**
+ * A send the shell may make itself: the page checked the prompt is plain
+ * (text only, one model, nothing attached, nothing pending) and did the
+ * formatting its own send would.
+ */
+export const ShellComposerNativeSend = Schema.Struct({
+  /** The raw prompt this was computed for; a submit with other text goes to the page. */
+  prompt: Schema.String,
+  text: Schema.String,
+  titleSeed: Schema.String,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: Schema.Literals(["default", "plan"]),
+});
+export type ShellComposerNativeSend = typeof ShellComposerNativeSend.Type;
+
 /** Published under the `composer` key while a thread or draft route is open. */
 export const ShellComposerState = Schema.Struct({
   /** `<environmentId>:<threadId>` or a draft id; null between routes. */
@@ -275,6 +335,8 @@ export const ShellComposerState = Schema.Struct({
   runtimeModes: Schema.Array(ShellComposerRuntimeMode),
   interactionMode: Schema.Literals(["default", "plan"]),
   showInteractionModeToggle: Schema.Boolean,
+  /** Null whenever the prompt needs the page's send pipeline. */
+  nativeSend: Schema.optional(Schema.NullOr(ShellComposerNativeSend)),
 });
 export type ShellComposerState = typeof ShellComposerState.Type;
 
@@ -752,6 +814,28 @@ export const ShellAction = Schema.Union([
     key: Schema.String,
     x: Schema.Number,
     y: Schema.Number,
+  }),
+  /** Page → shell: which keys and actions the shell owns; answered with `shell.native`. */
+  Schema.Struct({ type: Schema.Literal("shell.native.query") }),
+  /** Shell → page: the shell took over the sidebar and plain turns (see `ShellNativeState`). */
+  Schema.Struct({
+    type: Schema.Literal("shell.native"),
+    sidebar: Schema.Boolean,
+    composer: Schema.Boolean,
+  }),
+  /** Shell → page: show a toast; its action button dispatches a shell action back. */
+  Schema.Struct({
+    type: Schema.Literal("toast.show"),
+    toastType: Schema.Literals(["error", "success", "info", "warning"]),
+    title: Schema.String,
+    description: Schema.optional(Schema.String),
+    timeout: Schema.optional(Schema.Number),
+    action: Schema.optional(
+      Schema.Struct({
+        label: Schema.String,
+        dispatch: Schema.Struct({ type: Schema.String, payload: Schema.Unknown }),
+      }),
+    ),
   }),
 ]);
 export type ShellAction = typeof ShellAction.Type;

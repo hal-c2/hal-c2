@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 project(hal-c2-qt-runtime-tests LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_AUTOMOC ON)
-find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui GuiPrivate Quick Test WebEngineQuick WebChannel)
+find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui GuiPrivate Network Quick Test WebEngineQuick WebChannel WebSockets)
 enable_testing()
 if(APPLE)
   enable_language(OBJCXX)
@@ -34,6 +34,25 @@ add_executable(tst_BackendProcess tst_BackendProcess.cpp ../../src/BackendProces
 target_include_directories(tst_BackendProcess PRIVATE ../../src)
 target_link_libraries(tst_BackendProcess PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME BackendProcess COMMAND tst_BackendProcess)
+# The native scenarios of features/desktop, against a fake node.
+add_executable(tst_Features
+  tst_Features.cpp
+  ../../src/ComposerController.cpp
+  ../../src/NativeShell.cpp
+  ../../src/NodeClient.cpp
+  ../../src/ShellBridge.cpp
+  ../../src/ShellStore.cpp
+  ../../src/SidebarController.cpp
+  ../../src/SidebarModel.cpp
+)
+target_include_directories(tst_Features PRIVATE ../../src)
+target_compile_definitions(tst_Features PRIVATE
+  HAL_C2_FEATURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../../features"
+  HAL_C2_WEBCHANNEL_SCRIPT_URL="qrc:///qtwebchannel/qwebchannel.js"
+)
+target_link_libraries(tst_Features PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Network Qt6::WebSockets Qt6::Test)
+add_test(NAME Features COMMAND tst_Features)
+set_tests_properties(Features PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 add_executable(tst_LocalTranscriber tst_LocalTranscriber.cpp ../../src/LocalTranscriber.cpp)
 target_include_directories(tst_LocalTranscriber PRIVATE ../../src)
 target_link_libraries(tst_LocalTranscriber PRIVATE Qt6::Core Qt6::Qml Qt6::Test)

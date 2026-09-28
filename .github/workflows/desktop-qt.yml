@@ -66,7 +66,7 @@ jobs:
           version: "6.9.*"
           host: ${{ matrix.qt_host }}
           arch: ${{ matrix.qt_arch }}
-          modules: qtwebengine qtwebchannel qtpositioning
+          modules: qtwebengine qtwebchannel qtpositioning qtwebsockets
           cache: true
 
       - name: Install build tools (Linux)

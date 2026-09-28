@@ -1,5 +1,6 @@
 # Sources:
 #   apps/desktop-qt/host/main.ts (desktop host: node lifecycle, app bundle, ready URL)
+#   apps/desktop-qt/host/elixirNode.ts (the node's access token, found through its runtime record when attached)
 #   apps/desktop-qt/host/main.test.ts (these scenarios, by name, against a fake node)
 #   apps/desktop-qt/src/BackendProcess.cpp (host process, ready/error lines, stdin close on exit)
 #   apps/desktop-qt/src/main.cpp (--url attach mode, --home-dir, --screenshot scripted runs)
@@ -31,6 +32,12 @@ Feature: The desktop app runs its own node
       And the user is not asked to pair
 
     @desktop
+    Scenario: The desktop's own client is given the node and its access token
+      When the user starts the desktop app
+      Then the shell is told the desktop node's address and the node's own access token
+      And that token is not the bootstrap token the app pairs with
+
+    @desktop
     Scenario: The app is served from this machine, not by the node
       When the user starts the desktop app
       Then the app's pages come from a loopback address on this machine
@@ -47,6 +54,12 @@ Feature: The desktop app runs its own node
       Given no node release is configured or bundled
       When the user starts the desktop app from a checkout
       Then the node runs from the checkout's source
+
+    @desktop
+    Scenario: A node run from source keeps its access token in the development profile
+      Given no HAL-C2 home is set for the desktop app
+      When the desktop app starts its node from a checkout
+      Then the shell looks for the node's access token in the "hal-c2-dev" data directory
 
     @desktop
     Scenario: The node's JavaScript sidecars run on the desktop app's Node
@@ -83,6 +96,18 @@ Feature: The desktop app runs its own node
       When the user starts the desktop app with that node's pairing link
       Then the app opens with a pairing link for that node
       And the desktop app starts no node of its own
+
+    @desktop
+    Scenario: An attached desktop's own client is given the token of a node on this machine
+      Given `mise run node` runs a node on this machine
+      When the user starts the desktop app with that node's pairing link
+      Then the shell is told that node's address and the node's own access token
+
+    @desktop
+    Scenario: An attached desktop leaves a node it has no files for to the app
+      Given a node is running whose runtime record this machine does not have
+      When the user starts the desktop app with that node's pairing link
+      Then the shell is told of no node, so the app makes every call itself
 
     @desktop
     Scenario: An address that is not a node is loaded as it is

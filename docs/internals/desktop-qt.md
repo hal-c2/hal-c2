@@ -50,10 +50,24 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   exchanges the token like any pairing link and goes to `/` on success. The
   connection catalog keys a bearer environment by its environment id, so the
   next launch re-pairs the same entry instead of adding one.
-- **QML gets everything from the web view over WebChannel**, nothing else.
-  State flows web → QML (`halC2Shell.publish(key, value)` → `Shell.state[key]`);
+- **QML reads `Shell.state`, whoever fills it.** The web view publishes over
+  WebChannel (`halC2Shell.publish(key, value)` → `Shell.state[key]`) and
   actions flow QML → web (`Shell.dispatch(action, payload)` →
-  `halC2Shell.onAction(listener)`).
+  `halC2Shell.onAction(listener)`), except the ones the shell's own node
+  client takes (below).
+- **The shell is moving onto its own node client**, as the TUI already is:
+  the page is legacy, so RPC moves out of it key by key. With a node it
+  started, the host's `ready` line carries the node's origin and access
+  token, and `NativeShell` opens one protocol-3 socket (`NodeClient`) and
+  folds the `shell` snapshot and row deltas (`ShellStore`). On the first
+  snapshot it builds `sidebar` itself from those rows plus the page's
+  `sidebarInput` (project grouping, drafts, the active route), claims the
+  key so the page's publishes to it are dropped, and intercepts the row
+  actions and the composer's plain sends. It announces this as `native`
+  and a `shell.native` action; a page that loads later asks with
+  `shell.native.query`. Attach mode and environments outside the node's
+  cluster stay on the page. Its scenarios are
+  `features/desktop/native-*.feature`, run by the native `tst_Features`.
 - The UI-owned parts of `desktopBridge` (open external, window commands,
   colour scheme, dialogs/context menus later) are served by the shell over the
   same channel; the TypeScript-owned parts stay on the Node side.
@@ -106,6 +120,7 @@ attaches this way to the node `mise run node` runs.
 | `src/ShellBridge.*`     | The `shell` WebChannel object / `Shell` QML singleton               |
 | `src/ThemeStore.*`      | `theme.json` loader + watcher, `Theme` QML singleton, CSS injection |
 | `src/BackendProcess.*`  | Spawns the Node desktop host, waits for `ready`                     |
+| `src/NativeShell.*`     | The shell's node client and the controllers that take keys over     |
 | `qml/HalC2/Bricks/`     | Pure-QML bricks (see below) and the injected `js/shell-connect.js`  |
 | `scripts/gen-icons.mjs` | Regenerates `js/lucide.js`, the icon paths `ShellIcon` draws        |
 | `host/main.ts`          | Node desktop host: serves the web bundle, starts or attaches a node |
@@ -425,7 +440,9 @@ wraps each one in `React.lazy`, and only a shell-hosted document ever imports
 ### `sidebar`
 
 `apps/web/src/shell/HalC2ShellBridge.tsx` (mounted from the root route when
-`isHalC2Shell`) publishes `ShellSidebarState`: project groups, the current scope,
+`isHalC2Shell`) publishes `ShellSidebarState` until the shell's own client
+takes the key (then `SidebarController` builds the same shape and the page
+only publishes `sidebarInput`): project groups, the current scope,
 and the thread list already bucketed (`pinned`/`active`/`snoozed`/`settled`),
 sorted, and annotated with status, status label, unread, branch, the snooze
 wake label, the woke timestamp and whether settle/snooze apply (`wakeLabel`,
@@ -493,6 +510,14 @@ brick copies the web picker's rail, ranking, rows and keys from that
 and only a choice or a star crosses back. Its popup does not close on
 Escape by `closePolicy`: a popup that does blocks every window shortcut,
 including the `modelPicker.toggle` binding that must close it again.
+
+The page also publishes `nativeSend` with the draft when sending it would be
+nothing but one `message.dispatch`: a server thread with nothing to prepare
+or answer, no attachments or contexts, not a slash command. It carries the
+text, title seed, model and modes the page's send would use. Once native,
+`ComposerController` sends a foreground `composer.submit` whose text matches
+it, and interrupts on its threads, itself; any other submit still reaches
+the page, so the pipeline's special cases keep one implementation.
 
 Actions: `composer.text.set {target, text, cursor?, edit?}` (debounced from the QML
 editor), `composer.submit {text?, intent?, edit?}` (text rides along so the send is

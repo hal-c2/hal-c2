@@ -89,6 +89,12 @@ void BackendProcess::handleLine(const QByteArray& line) {
       return;
     }
     m_announced = true;
+    const QJsonObject node = message.value(QStringLiteral("node")).toObject();
+    const QUrl origin(node.value(QStringLiteral("origin")).toString());
+    const QString token = node.value(QStringLiteral("token")).toString();
+    if (origin.isValid() && !origin.isEmpty() && !token.isEmpty()) {
+      emit nodeAvailable(origin, token);
+    }
     emit ready(url);
   } else if (type == QStringLiteral("error")) {
     m_reportedError = true;

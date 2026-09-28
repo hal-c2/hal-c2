@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui GuiPrivate Quick WebEngineQuick WebChannel)
+find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui GuiPrivate Network Quick WebEngineQuick WebChannel WebSockets)
 qt_standard_project_setup(REQUIRES 6.9)
 qt_policy(SET QTP0001 NEW)
 
@@ -67,10 +67,22 @@ qt_add_executable(hal-c2-qt
   src/NativeNotifications.h
   src/BackendProcess.cpp
   src/BackendProcess.h
+  src/ComposerController.cpp
+  src/ComposerController.h
+  src/NativeShell.cpp
+  src/NativeShell.h
+  src/NodeClient.cpp
+  src/NodeClient.h
   src/ShellBridge.cpp
   src/ShellBridge.h
   src/ShellRuntime.cpp
   src/ShellRuntime.h
+  src/ShellStore.cpp
+  src/ShellStore.h
+  src/SidebarController.cpp
+  src/SidebarController.h
+  src/SidebarModel.cpp
+  src/SidebarModel.h
   src/StoragePaths.cpp
   src/StoragePaths.h
   src/ThemeStore.cpp
@@ -114,6 +126,7 @@ target_link_libraries(hal-c2-qt PRIVATE
   Qt6::Quick
   Qt6::WebEngineQuick
   Qt6::WebChannel
+  Qt6::WebSockets
   hal_c2_bricksplugin
 )
 

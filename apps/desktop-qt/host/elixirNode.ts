@@ -10,7 +10,10 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+
+import { HAL_C2_APP_DIR, HAL_C2_DEV_APP_DIR, resolveHalC2Dirs } from "@hal-c2/shared/xdgDirs";
 
 import { HostError } from "./hostError.ts";
 
@@ -85,6 +88,130 @@ export async function nodePort(env: NodeJS.ProcessEnv): Promise<number> {
   throw new HostError(
     `No free port for the node in ${DEFAULT_NODE_PORT}-${DEFAULT_NODE_PORT + PORT_SCAN - 1}. Set HAL_C2_NODE_PORT.`,
   );
+}
+
+/**
+ * The node's data directory, resolved the way `HalC2.Paths` resolves it for this
+ * launch: the desktop's HAL-C2 home, `HAL_C2_NODE_HOME`, else HAL-C2's XDG data
+ * directory, in the `hal-c2-dev` profile for a node run from a checkout
+ * (config/config.exs).
+ */
+export function nodeDataDir(input: {
+  readonly launch: NodeLaunch;
+  readonly home: string | undefined;
+  readonly env: NodeJS.ProcessEnv;
+  readonly homeDir?: string;
+}): string {
+  if (input.home !== undefined) return NodePath.join(input.home, "data", "elixir");
+  const nodeHome = input.env.HAL_C2_NODE_HOME?.trim();
+  if (nodeHome) return NodePath.join(nodeHome, "data");
+  const dirs = resolveHalC2Dirs({
+    env: input.env,
+    homeDir: input.homeDir ?? NodeOS.homedir(),
+    platform: process.platform,
+    profile: input.launch.cwd === undefined ? HAL_C2_APP_DIR : HAL_C2_DEV_APP_DIR,
+  });
+  return NodePath.join(dirs.data, "elixir");
+}
+
+/**
+ * The node's own access token (`HalC2.Web.token/0`, written at boot), which the
+ * shell's native client puts on its socket. Undefined when the file is not there.
+ */
+export function readAccessToken(dataDir: string): string | undefined {
+  try {
+    const token = NodeFS.readFileSync(NodePath.join(dataDir, "access-token"), "utf8").trim();
+    return token === "" ? undefined : token;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The access token of the node at `origin` when it runs on this machine: the
+ * first node directory whose runtime record (`<state>/server-runtime.json`,
+ * apps/server-ex/lib/hal_c2/runtime_record.ex) names that origin and a live pid.
+ * Looks where apps/tui/src/nodeDiscovery.ts looks: `HAL_C2_NODE_HOME`, the
+ * desktop's HAL-C2 home, then the `hal-c2-dev` and release XDG directories.
+ * Only reads.
+ */
+export function findLocalNodeToken(input: {
+  readonly origin: string;
+  readonly home: string | undefined;
+  readonly env: NodeJS.ProcessEnv;
+  readonly homeDir?: string;
+  readonly isAlive?: (pid: number) => boolean;
+}): string | undefined {
+  const candidates: Array<{ state: string; data: string }> = [];
+  const nodeHome = input.env.HAL_C2_NODE_HOME?.trim();
+  if (nodeHome) {
+    candidates.push({
+      state: NodePath.join(nodeHome, "state"),
+      data: NodePath.join(nodeHome, "data"),
+    });
+  }
+  if (input.home !== undefined) {
+    candidates.push({
+      state: NodePath.join(input.home, "state", "elixir"),
+      data: NodePath.join(input.home, "data", "elixir"),
+    });
+  }
+  // HAL_C2_HOME is the desktop's own home, already a candidate above.
+  const env = { ...input.env, HAL_C2_HOME: undefined };
+  for (const profile of [HAL_C2_DEV_APP_DIR, HAL_C2_APP_DIR] as const) {
+    const dirs = resolveHalC2Dirs({
+      env,
+      homeDir: input.homeDir ?? NodeOS.homedir(),
+      platform: process.platform,
+      profile,
+    });
+    candidates.push({
+      state: NodePath.join(dirs.state, "elixir"),
+      data: NodePath.join(dirs.data, "elixir"),
+    });
+  }
+  const isAlive = input.isAlive ?? processIsAlive;
+  for (const dirs of candidates) {
+    const record = readRuntimeRecord(NodePath.join(dirs.state, "server-runtime.json"));
+    if (record === undefined || !sameOrigin(record.origin, input.origin) || !isAlive(record.pid)) {
+      continue;
+    }
+    return readAccessToken(dirs.data);
+  }
+  return undefined;
+}
+
+function readRuntimeRecord(path: string): { pid: number; origin: string } | undefined {
+  try {
+    const record = JSON.parse(NodeFS.readFileSync(path, "utf8")) as {
+      pid?: unknown;
+      origin?: unknown;
+    };
+    return typeof record.pid === "number" && typeof record.origin === "string"
+      ? { pid: record.pid, origin: record.origin }
+      : undefined;
+  } catch {
+    // Missing, torn or foreign: no record.
+    return undefined;
+  }
+}
+
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
+/** `kill(pid, 0)`: EPERM still means the process exists. */
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 export interface NodeExit {

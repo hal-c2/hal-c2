@@ -12,7 +12,10 @@
  * `--attach=<url>`.
  *
  * Protocol (stdout, newline-delimited JSON):
- *   {"type":"ready","url":"http://..."}   load this URL
+ *   {"type":"ready","url":"http://...","node":{"origin","token"}}
+ *                                          load this URL; `node` (only for the node the
+ *                                          host started) is where the shell's own client
+ *                                          connects, with the node's access token
  *   {"type":"error","message":"..."}       fatal, the host is exiting
  *   {"type":"exit","code":n}               the node ended on its own
  * stdin closing means the shell is gone: stop the node and exit.
@@ -23,7 +26,10 @@ import * as NodeURL from "node:url";
 
 import {
   fetchDescriptor,
+  findLocalNodeToken,
+  nodeDataDir,
   nodePort,
+  readAccessToken,
   resolveNodeLaunch,
   startNode,
   waitForNode,
@@ -33,8 +39,13 @@ import { HostError } from "./hostError.ts";
 import { appPairingUrl, readPairingLink } from "./pairingUrl.ts";
 import { resolveWebBundle, serveWebBundle, webPort, type WebServer } from "./webBundle.ts";
 
+interface NodeAccess {
+  readonly origin: string;
+  readonly token: string;
+}
+
 type HostMessage =
-  | { readonly type: "ready"; readonly url: string }
+  | { readonly type: "ready"; readonly url: string; readonly node?: NodeAccess }
   | { readonly type: "error"; readonly message: string }
   | { readonly type: "exit"; readonly code: number | null; readonly signal: string | null };
 
@@ -98,7 +109,12 @@ async function serveApp(home: string | undefined): Promise<WebServer> {
   return web;
 }
 
-async function standalone(home: string | undefined): Promise<string> {
+interface Launched {
+  readonly url: string;
+  readonly node?: NodeAccess;
+}
+
+async function standalone(home: string | undefined): Promise<Launched> {
   const app = await serveApp(home);
   const port = await nodePort(process.env);
   const launch = resolveNodeLaunch(hostDir, process.env);
@@ -114,12 +130,16 @@ async function standalone(home: string | undefined): Promise<string> {
     emit({ type: "exit", code, signal });
     process.exit(code ?? 1);
   });
-  return appPairingUrl(app.origin, started.origin, token);
+  const url = appPairingUrl(app.origin, started.origin, token);
+  // Exchanging the bootstrap token again would replace the page's session
+  // (HalC2.Auth), so the shell's client uses the node's own token instead.
+  const access = readAccessToken(nodeDataDir({ launch, home, env: process.env }));
+  return access === undefined ? { url } : { url, node: { origin: started.origin, token: access } };
 }
 
-async function attach(url: string, home: string | undefined): Promise<string> {
+async function attach(url: string, home: string | undefined): Promise<Launched> {
   const link = readPairingLink(url);
-  if (link === undefined) return url;
+  if (link === undefined) return { url };
   const descriptor = await fetchDescriptor(link.origin).catch((error: unknown) => {
     const reason = error instanceof Error && error.cause instanceof Error ? error.cause : error;
     throw new HostError(
@@ -128,11 +148,16 @@ async function attach(url: string, home: string | undefined): Promise<string> {
   });
   // Anything that is not a protocol-3 node (a web dev server, a legacy
   // server that serves its own app) is loaded as it is.
-  if (descriptor === undefined) return url;
+  if (descriptor === undefined) return { url };
   const app = await serveApp(home);
-  return link.token === undefined
-    ? `${app.origin}/`
-    : appPairingUrl(app.origin, link.origin, link.token);
+  const page =
+    link.token === undefined
+      ? `${app.origin}/`
+      : appPairingUrl(app.origin, link.origin, link.token);
+  // A node on this machine lets the shell's own client in with its access
+  // token; a remote one leaves every RPC with the page.
+  const token = findLocalNodeToken({ origin: link.origin, home, env: process.env });
+  return token === undefined ? { url: page } : { url: page, node: { origin: link.origin, token } };
 }
 
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
@@ -145,11 +170,11 @@ process.stdin.resume();
 
 try {
   const args = parseArgs(process.argv.slice(2));
-  const url =
+  const launched =
     args.attach === undefined
       ? await standalone(args.baseDir)
       : await attach(args.attach, args.baseDir);
-  if (!stopping) emit({ type: "ready", url });
+  if (!stopping) emit({ type: "ready", ...launched });
 } catch (error) {
   if (!stopping) {
     emit({

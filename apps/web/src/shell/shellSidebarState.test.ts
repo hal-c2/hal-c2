@@ -7,6 +7,7 @@ import type { SidebarProjectSnapshot } from "../sidebarProjectGrouping";
 import {
   SHELL_SIDEBAR_SETTLED_LIMIT,
   buildLogicalProjectKeyMap,
+  buildShellSidebarInput,
   buildShellSidebarState,
 } from "./shellSidebarState";
 
@@ -51,6 +52,39 @@ describe("buildLogicalProjectKeyMap", () => {
   it("maps every member ref of a group to the group's logical key", () => {
     const map = buildLogicalProjectKeyMap([makeProjectGroup()]);
     expect(map.get(`${environmentId}:${projectId}`)).toBe("logical:hal-c2");
+  });
+});
+
+describe("buildShellSidebarInput", () => {
+  it("gives the shell every checkout grouped under a project", () => {
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const remoteProjectId = ProjectId.make("project-remote");
+    const group = {
+      ...makeProjectGroup(),
+      memberProjectRefs: [
+        { environmentId, projectId },
+        { environmentId: remoteEnvironmentId, projectId: remoteProjectId },
+      ],
+    };
+    const input = buildShellSidebarInput({
+      projectGroups: [group],
+      localEnvironmentId: environmentId,
+      drafts: [],
+      activeThreadKey: null,
+      activeDraftId: null,
+      timestampFormat: "24-hour",
+      scopeProjectKey: null,
+    });
+    expect(input.projects).toEqual([
+      {
+        key: "logical:hal-c2",
+        displayName: "HAL-C2",
+        environmentId,
+        projectId,
+        workspaceRoot: "/repo",
+        memberKeys: [`${environmentId}:${projectId}`, `${remoteEnvironmentId}:${remoteProjectId}`],
+      },
+    ]);
   });
 });
 

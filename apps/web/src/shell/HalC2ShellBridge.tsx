@@ -8,7 +8,11 @@ import {
   scopedThreadKey,
 } from "@hal-c2/client-runtime/environment";
 import type { EnvironmentId } from "@hal-c2/contracts";
-import type { ShellSidebarDraft, ShellSidebarState } from "@hal-c2/contracts/shell";
+import type {
+  ShellNativeState,
+  ShellSidebarDraft,
+  ShellSidebarState,
+} from "@hal-c2/contracts/shell";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -18,6 +22,7 @@ import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../
 import { isHalC2ShellEmbed } from "../env";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { useClientSettings } from "../hooks/useSettings";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
 import {
@@ -26,6 +31,7 @@ import {
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { requestShellRename } from "./shellRenameRequest";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { useThreadShells } from "../state/entities";
@@ -33,7 +39,11 @@ import { usePrimaryEnvironment } from "../state/environments";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
 import { buildShellKeybindings } from "./shellKeybindings";
-import { buildLogicalProjectKeyMap, buildShellSidebarState } from "./shellSidebarState";
+import {
+  buildLogicalProjectKeyMap,
+  buildShellSidebarInput,
+  buildShellSidebarState,
+} from "./shellSidebarState";
 import { useShellActions } from "./useShellActions";
 import { useShellPublish } from "./useShellPublish";
 import { useShellDesktopNotifications } from "./useShellDesktopNotifications";
@@ -46,7 +56,9 @@ import { requestShellProjectRemoval } from "./shellProjectRemovalRequest";
  * its actions into navigation. Mounted only when hosted by the shell; the
  * HTML sidebar hides itself in that case (AppSidebarLayout). Everything here
  * is derived with the same logic the HTML sidebar uses, so the two never
- * disagree about rows, order, or status.
+ * disagree about rows, order, or status. Once the shell's own node
+ * connection takes the sidebar over (`shell.native`), this publishes only
+ * `sidebarInput` and the shell sends the row actions itself.
  */
 export function HalC2ShellBridge() {
   const router = useRouter();
@@ -64,6 +76,8 @@ export function HalC2ShellBridge() {
   const nowMinute = useNowMinute();
   const lastVisitedAtByKey = useUiStateStore((store) => store.threadLastVisitedAtById);
   const handleNewThread = useNewThreadHandler();
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  const [native, setNative] = useState<ShellNativeState | null>(null);
   const [scopeProjectKey, setScopeProjectKey] = useState<string | null>(null);
   const routeTarget = useParams({
     strict: false,
@@ -173,7 +187,7 @@ export function HalC2ShellBridge() {
     return counts;
   }, [projectGroups, threads]);
 
-  const drafts = useMemo((): ReadonlyArray<ShellSidebarDraft> => {
+  const allDrafts = useMemo((): ReadonlyArray<ShellSidebarDraft> => {
     const logicalKeyByPhysicalKey = buildLogicalProjectKeyMap(projectGroups);
     const result: ShellSidebarDraft[] = [];
     for (const [draftId, session] of Object.entries(draftSessions)) {
@@ -182,7 +196,6 @@ export function HalC2ShellBridge() {
       const physicalKey = scopedProjectKey(
         scopeProjectRef(session.environmentId, session.projectId),
       );
-      if (scopedProjectKeys !== null && !scopedProjectKeys.has(physicalKey)) continue;
       result.push({
         draftId,
         projectKey: logicalKeyByPhysicalKey.get(physicalKey) ?? physicalKey,
@@ -190,31 +203,65 @@ export function HalC2ShellBridge() {
       });
     }
     return result;
-  }, [draftContents, draftSessions, projectGroups, scopedProjectKeys]);
+  }, [draftContents, draftSessions, projectGroups]);
+  const drafts = useMemo(
+    () =>
+      scopeProjectKey === null
+        ? allDrafts
+        : allDrafts.filter((draft) => draft.projectKey === scopeProjectKey),
+    [allDrafts, scopeProjectKey],
+  );
+  const activeDraftId = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
 
-  const state = useMemo(
-    (): ShellSidebarState =>
-      buildShellSidebarState({
-        localEnvironmentId,
+  const sidebarInput = useMemo(
+    () =>
+      buildShellSidebarInput({
         projectGroups,
-        scopeProjectKey,
-        partition,
-        capabilitiesFor,
-        threadCountByLogicalKey,
-        lastVisitedAtByKey,
-        drafts,
+        localEnvironmentId,
+        drafts: allDrafts,
         activeThreadKey,
-        activeDraftId: routeTarget?.kind === "draft" ? routeTarget.draftId : null,
+        activeDraftId,
+        timestampFormat,
+        scopeProjectKey,
       }),
     [
+      activeDraftId,
+      activeThreadKey,
+      allDrafts,
+      localEnvironmentId,
+      projectGroups,
+      scopeProjectKey,
+      timestampFormat,
+    ],
+  );
+  useShellPublish("sidebarInput", sidebarInput);
+
+  const state = useMemo(
+    (): ShellSidebarState | undefined =>
+      native?.sidebar
+        ? undefined
+        : buildShellSidebarState({
+            localEnvironmentId,
+            projectGroups,
+            scopeProjectKey,
+            partition,
+            capabilitiesFor,
+            threadCountByLogicalKey,
+            lastVisitedAtByKey,
+            drafts,
+            activeThreadKey,
+            activeDraftId,
+          }),
+    [
+      activeDraftId,
       activeThreadKey,
       capabilitiesFor,
       drafts,
       lastVisitedAtByKey,
       localEnvironmentId,
+      native?.sidebar,
       partition,
       projectGroups,
-      routeTarget,
       scopeProjectKey,
       threadCountByLogicalKey,
     ],
@@ -354,7 +401,7 @@ export function HalC2ShellBridge() {
         openCommandPalette({ open: "add-project" });
         return;
       case "project.remove": {
-        const project = state.localProjects.find((entry) => entry.key === action.projectKey);
+        const project = sidebarInput.localProjects.find((entry) => entry.key === action.projectKey);
         if (!project || localEnvironmentId === null) return;
         const cancel = requestShellProjectRemoval(project.key);
         void router
@@ -380,8 +427,44 @@ export function HalC2ShellBridge() {
       case "usage.open":
         void router.navigate({ to: "/usage" });
         return;
+      case "shell.native":
+        setNative((prev) =>
+          prev?.sidebar === action.sidebar && prev.composer === action.composer
+            ? prev
+            : { sidebar: action.sidebar, composer: action.composer },
+        );
+        return;
+      case "toast.show": {
+        const button = action.action;
+        toastManager.add(
+          stackedThreadToast({
+            type: action.toastType,
+            title: action.title,
+            ...(action.description !== undefined ? { description: action.description } : {}),
+            ...(action.timeout !== undefined ? { timeout: action.timeout } : {}),
+            ...(button !== undefined
+              ? {
+                  actionProps: {
+                    children: button.label,
+                    onClick: () =>
+                      void window.halC2Shell?.dispatch(
+                        button.dispatch.type,
+                        button.dispatch.payload,
+                      ),
+                  },
+                }
+              : {}),
+          }),
+        );
+        return;
+      }
     }
   });
+  // Declared after the action subscription so the answer finds it: a page
+  // (re)loaded after the shell took over learns so here.
+  useEffect(() => {
+    void window.halC2Shell?.dispatch("shell.native.query");
+  }, []);
 
   return null;
 }

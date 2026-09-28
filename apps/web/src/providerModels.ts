@@ -8,7 +8,12 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@hal-c2/contracts";
-import { createModelCapabilities, resolveSelectableModel } from "@hal-c2/shared/model";
+import {
+  applyClaudePromptEffortPrefix,
+  createModelCapabilities,
+  resolvePromptInjectedEffort,
+  resolveSelectableModel,
+} from "@hal-c2/shared/model";
 
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -65,6 +70,19 @@ export function getProviderModelCapabilities(
     return caps;
   }
   return withoutPlanAgentOption(caps);
+}
+
+/** The text a turn sends: the prompt, prefixed with the effort for models that take it inline. */
+export function formatOutgoingPrompt(params: {
+  provider: ProviderDriverKind;
+  model: string | null;
+  models: ReadonlyArray<ServerProviderModel>;
+  effort: string | null;
+  text: string;
+}): string {
+  const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
+  const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
+  return applyClaudePromptEffortPrefix(params.text, promptEffort);
 }
 
 // The opencode "plan" agent is only reachable while legacy plan mode is on.

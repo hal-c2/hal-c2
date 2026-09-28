@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@hal-c2/contracts";
+import type { TimestampFormat } from "@hal-c2/contracts/settings";
 import type { EnvironmentThreadShell } from "@hal-c2/client-runtime/state/models";
 import {
   scopeProjectRef,
@@ -13,6 +14,7 @@ import {
 } from "@hal-c2/client-runtime/state/thread-settled";
 import type {
   ShellSidebarDraft,
+  ShellSidebarInput,
   ShellSidebarState,
   ShellSidebarThread,
 } from "@hal-c2/contracts/shell";
@@ -153,5 +155,40 @@ export function buildShellSidebarState(input: ShellSidebarStateInput): ShellSide
     drafts: input.drafts,
     activeThreadKey: input.activeThreadKey,
     activeDraftId: input.activeDraftId,
+  };
+}
+
+export interface ShellSidebarInputOptions {
+  readonly projectGroups: ReadonlyArray<SidebarProjectSnapshot>;
+  readonly localEnvironmentId: EnvironmentId | null;
+  readonly drafts: ReadonlyArray<ShellSidebarDraft>;
+  readonly activeThreadKey: string | null;
+  readonly activeDraftId: string | null;
+  readonly timestampFormat: TimestampFormat;
+  readonly scopeProjectKey: string | null;
+}
+
+/**
+ * What the shell needs from the page to build `sidebar` itself once it owns
+ * it: the project grouping (by member key, so it can place the node's
+ * threads), the drafts and route only the page has, and the clock format.
+ */
+export function buildShellSidebarInput(options: ShellSidebarInputOptions): ShellSidebarInput {
+  return {
+    projects: options.projectGroups.map((group) => ({
+      key: group.projectKey,
+      displayName: group.displayName,
+      environmentId: group.environmentId,
+      projectId: group.id,
+      workspaceRoot: group.workspaceRoot,
+      memberKeys: group.memberProjectRefs.map(scopedProjectKey),
+    })),
+    localEnvironmentId: options.localEnvironmentId,
+    localProjects: buildShellLocalProjects(options.projectGroups, options.localEnvironmentId),
+    drafts: options.drafts,
+    activeThreadKey: options.activeThreadKey,
+    activeDraftId: options.activeDraftId,
+    timestampFormat: options.timestampFormat,
+    scopeProjectKey: options.scopeProjectKey,
   };
 }
