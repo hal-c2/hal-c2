@@ -1,7 +1,7 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/orchestration.ex (steerable?, driver_for, follow-up queueing)
 #   apps/server-ex/lib/hal_c2/orchestration/entities.ex (steers?), apps/server-ex/lib/hal_c2/pi/thread_runtime.ex (steer)
-#   apps/server-ex/lib/hal_c2/orchestration/handoff.ex (native forks for codex/claudeAgent, transcript otherwise, 60 000 character cap)
+#   apps/server-ex/lib/hal_c2/orchestration/handoff.ex (native forks for codex/claudeAgent/pi/opencode, transcript otherwise, 60 000 character cap)
 #   apps/server-ex/lib/hal_c2/orchestration/fork.ex (thread.fork, thread.merge_back)
 #   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (rollback starts a fresh session, refuses while a turn runs)
 #   apps/server-ex/lib/hal_c2/text_generation.ex (which providers write titles, commits and PRs)
@@ -44,11 +44,11 @@ Feature: Provider capabilities
     Then the fork's first turn <how>
 
     Examples:
-      | provider | how                                                     |
-      | Codex    | continues a copy of Codex's own thread cut after turn 2 |
-      | Claude   | resumes Claude's session at turn 2 as a new session     |
-      | Grok     | starts with a transcript of the first two turns         |
-      | OpenCode | starts with a transcript of the first two turns         |
+      | provider | how                                                      |
+      | Codex    | continues a copy of Codex's own thread cut after turn 2  |
+      | Claude   | resumes Claude's session at turn 2 as a new session      |
+      | Grok     | starts with a transcript of the first two turns          |
+      | OpenCode | continues a fork of OpenCode's session cut before turn 3 |
 
   Scenario: Switching provider mid-thread hands over a transcript
     Given a Codex thread with history

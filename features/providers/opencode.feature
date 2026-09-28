@@ -2,7 +2,7 @@
 #   docs/user/providers-opencode.md
 #   docs/internals/providers.md (OpenCode server per thread, full-access replies once)
 #   apps/server-ex/lib/hal_c2/acp.ex (opencode acp, models split into subProvider)
-#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex
+#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex, apps/server-ex/lib/hal_c2/acp/opencode.ex (rewind, fork)
 #   apps/server/src/provider/Layers/OpenCodeProvider.ts, apps/server/src/provider/Drivers/OpenCodeDriver.ts
 #   apps/server/src/provider/opencodeRuntime.ts, apps/server/src/provider/OpenCodeServerOwner.ts
 #   apps/server/src/orchestration-v2/Adapters/OpenCodeAdapterV2.ts
@@ -129,13 +129,11 @@ Feature: OpenCode
     Given an OpenCode turn is running
     Then the running command reads "ls" with the output "a.txt"
 
-  @backlog
   Scenario: Reverting an OpenCode turn rewinds OpenCode's session
     Given an OpenCode thread with three turns
     When the user reverts to the end of the first turn
     Then OpenCode's session is rewound to that point
 
-  @backlog
   Scenario: Forking an OpenCode thread forks OpenCode's session
     Given an OpenCode thread with three turns
     When the user forks from the second turn

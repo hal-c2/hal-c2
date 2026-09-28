@@ -120,6 +120,34 @@ defmodule HalC2.Steps.Providers.Capabilities do
     context
   end
 
+  # OpenCode's server forked the source's session before turn 3's message, and the
+  # fork's prompt carries no transcript.
+  step "the fork's first turn continues a fork of OpenCode's session cut before turn 3",
+       context do
+    third =
+      context
+      |> World.stream(@thread)
+      |> StreamState.list("provider-turn")
+      |> Enum.find(&(&1["ordinal"] == 3))
+      |> get_in(["nativeTurnRef", "nativeId"])
+
+    log = World.provider_log(context, "acp")
+
+    assert [%{"path" => "/session/" <> path, "body" => %{"messageID" => ^third}}] =
+             for(%{"http" => %{"method" => "POST"} = request} <- log, do: request)
+
+    assert is_binary(third) and String.ends_with?(path, "/fork")
+
+    prompt =
+      log
+      |> Enum.filter(&(get_in(&1, ["in", "method"]) == "session/prompt"))
+      |> List.last()
+      |> get_in(["in", "params", "prompt"])
+
+    assert [%{"text" => "where are we"}] = prompt
+    context
+  end
+
   step "the fork's first turn starts with a transcript of the first two turns", context do
     prompt =
       context

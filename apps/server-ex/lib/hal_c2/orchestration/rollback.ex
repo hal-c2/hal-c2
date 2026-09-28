@@ -162,6 +162,9 @@ defmodule HalC2.Orchestration.Rollback do
 
   defp settle(state, plan, patch) do
     at = Entities.now()
+    # A provider that rewinds into a copy of its conversation renames the kept turns:
+    # old native turn id -> new.
+    {renamed, patch} = Map.pop(patch, "nativeTurnRefs", %{})
 
     provider_thread =
       Orchestration.upsert(state, "provider-thread", plan.provider_thread["id"], fn entity ->
@@ -185,6 +188,18 @@ defmodule HalC2.Orchestration.Rollback do
               &Map.put(&1, "status", "stale")
             )
 
+    turns =
+      for turn <- StreamState.list(state, "provider-turn"),
+          turn["providerThreadId"] == plan.provider_thread["id"],
+          copy = renamed[get_in(turn, ["nativeTurnRef", "nativeId"])],
+          do:
+            Orchestration.upsert(
+              state,
+              "provider-turn",
+              turn["id"],
+              &put_in(&1, ["nativeTurnRef", "nativeId"], copy)
+            )
+
     rolled_back = &Map.merge(&1, %{"status" => "rolled_back", "completedAt" => at})
 
     runs =
@@ -196,7 +211,7 @@ defmodule HalC2.Orchestration.Rollback do
       end)
 
     # An upsert that changes nothing is nil.
-    Enum.reject([provider_thread | stale ++ runs], &is_nil/1)
+    Enum.reject([provider_thread | stale ++ turns ++ runs], &is_nil/1)
   end
 
   # The thread's own worktree, which no other thread on this node points at.

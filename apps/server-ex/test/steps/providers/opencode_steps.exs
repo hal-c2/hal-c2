@@ -710,4 +710,115 @@ defmodule HalC2.Steps.Providers.Opencode do
 
     context
   end
+
+  # --- rewind and fork over OpenCode's server -------------------------------------------
+
+  # A turn sent to the thread `title` and finished.
+  defp send_turn(context, title, text) do
+    count = length(World.runs(context, title))
+    context = World.post_message(context, title, text)
+    World.await_value(context, title, &(length(StreamState.list(&1, "run")) > count))
+    World.await_idle(context, title)
+    context
+  end
+
+  # The forks OpenCode's server was asked for, as the fake traced them: `%{"path", "body"}`.
+  defp forks(context) do
+    for %{"http" => %{"method" => "POST", "path" => path} = request} <-
+          World.provider_log(context, "acp"),
+        String.ends_with?(path, "/fork"),
+        do: request
+  end
+
+  # The thread's OpenCode session, and each of its turns' OpenCode message by ordinal.
+  defp native(context, title) do
+    state = World.stream(context, title)
+    thread = StreamState.get(state, "thread")[World.thread_id(context, title)]
+    provider_thread = StreamState.get(state, "provider-thread")[thread["activeProviderThreadId"]]
+
+    turns =
+      for turn <- StreamState.list(state, "provider-turn"),
+          turn["providerThreadId"] == provider_thread["id"],
+          into: %{},
+          do: {turn["ordinal"], get_in(turn, ["nativeTurnRef", "nativeId"])}
+
+    {get_in(provider_thread, ["nativeThreadRef", "nativeId"]), turns}
+  end
+
+  # An OpenCode session as the fake keeps it: its messages' ids, and its users' texts.
+  defp session(context, id) do
+    messages =
+      Path.join([context.fakes.dir, "opencode-sessions", "#{id}.json"])
+      |> File.read!()
+      |> JSON.decode!()
+
+    {Enum.map(messages, & &1["info"]["id"]),
+     for(%{"info" => %{"role" => "user"}, "parts" => [%{"text" => text}]} <- messages, do: text)}
+  end
+
+  defp last_prompt(context) do
+    context
+    |> World.provider_log("acp")
+    |> Enum.filter(&(get_in(&1, ["in", "method"]) == "session/prompt"))
+    |> List.last()
+    |> get_in(["in", "params"])
+  end
+
+  step "an OpenCode thread with three turns", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.run_turns(@thread, "opencode", ~w(first second third))
+
+    {source, turns} = native(context, @thread)
+    {ids, texts} = session(context, source)
+    assert texts == ~w(first second third)
+    # Each turn is named by its own OpenCode message.
+    assert Enum.all?(1..3, &(turns[&1] in ids))
+    Map.put(context, :opencode, {source, turns})
+  end
+
+  # OpenCode forked the session before the second turn's message; the thread goes on
+  # in the fork, whose copy of the first turn now names it.
+  step "OpenCode's session is rewound to that point", context do
+    assert {:ok, _} = context.reply
+    {source, turns} = context.opencode
+    assert [%{"path" => path, "body" => %{"messageID" => before}}] = forks(context)
+    assert path == "/session/#{source}/fork" and before == turns[2]
+
+    {fork, kept} = native(context, @thread)
+    assert fork != source
+    assert {[first | _], ["first"]} = session(context, fork)
+    assert kept[1] == first
+
+    context = send_turn(context, @thread, "where are we")
+
+    assert %{"sessionId" => ^fork, "prompt" => [%{"text" => "where are we"}]} =
+             last_prompt(context)
+
+    assert {_, ["first", "where are we"]} = session(context, fork)
+    assert {_, ~w(first second third)} = session(context, source)
+    context
+  end
+
+  # The fork's first turn opened a fork of the source's session, cut before the third
+  # turn's message, with no transcript in its prompt.
+  step "the new thread continues from a fork of OpenCode's session", context do
+    assert {:ok, _} = context.reply
+    {source, turns} = context.opencode
+    context = send_turn(context, "fork", "where are we")
+
+    assert [%{"path" => path, "body" => %{"messageID" => before}}] = forks(context)
+    assert path == "/session/#{source}/fork" and before == turns[3]
+
+    {fork, _} = native(context, "fork")
+    assert fork != source
+
+    assert %{"sessionId" => ^fork, "prompt" => [%{"text" => "where are we"}]} =
+             last_prompt(context)
+
+    assert {_, ["first", "second", "where are we"]} = session(context, fork)
+    assert {_, ~w(first second third)} = session(context, source)
+    context
+  end
 end

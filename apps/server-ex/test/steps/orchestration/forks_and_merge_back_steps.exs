@@ -15,7 +15,7 @@ defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
   @models %{
     "codex" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
     "claudeAgent" => %{"instanceId" => "claudeAgent", "model" => "haiku"},
-    "opencode" => %{"instanceId" => "opencode", "model" => "fake/one"}
+    "grok" => %{"instanceId" => "grok", "model" => "grok-build"}
   }
 
   # --- setup ---------------------------------------------------------------------

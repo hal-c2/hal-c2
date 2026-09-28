@@ -23,7 +23,7 @@ defmodule HalC2.Orchestration.Handoff do
   alias HalC2.Orchestration
   alias HalC2.StreamState
 
-  @native_forks ~w(codex claudeAgent pi)
+  @native_forks ~w(codex claudeAgent pi opencode)
   @finished ~w(completed interrupted failed)
   # Keeps a transcript well inside any provider's context; the newest part wins.
   @max_chars 60_000
@@ -33,8 +33,8 @@ defmodule HalC2.Orchestration.Handoff do
   @doc """
   How run `ordinal` starts in `provider_thread` (nil when the run creates it):
   `%{fork: %{thread: native_id, turn: native_turn_id} | nil, context: text | nil,
-  changes: [...]}`, where `changes` settle the transfers the run consumes. A Pi
-  fork also names the entry to cut the copy `before` (nil keeps all of it). A carried
+  changes: [...]}`, where `changes` settle the transfers the run consumes. A Pi or
+  OpenCode fork also names the entry to cut the copy `before` (nil keeps all of it). A carried
   session's fork has `carried: true` and the `fallback` context for a new session.
   """
   def plan(state, provider_thread, driver, run_id, ordinal, at) do
@@ -189,7 +189,10 @@ defmodule HalC2.Orchestration.Handoff do
     thread_ref = point["providerThreadRef"]
     turn_ref = point["providerTurnRef"]
 
-    if driver in @native_forks and thread_ref["driver"] == driver and turn_ref != nil do
+    # An ACP agent's driver is its instance's id.
+    kind = if driver in @native_forks, do: driver, else: HalC2.Acp.driver(driver)
+
+    if kind in @native_forks and thread_ref["driver"] == driver and turn_ref != nil do
       settled =
         settle(state, transfer, run_id, at, %{
           "status" => "consumed",
@@ -199,7 +202,9 @@ defmodule HalC2.Orchestration.Handoff do
       fork = %{thread: thread_ref["nativeId"], turn: turn_ref["nativeId"]}
 
       fork =
-        if driver == "pi", do: Map.put(fork, :before, next_turn(transfer, turn_ref)), else: fork
+        if kind in ~w(pi opencode),
+          do: Map.put(fork, :before, next_turn(transfer, turn_ref)),
+          else: fork
 
       {fork, nil, [settled]}
     else
@@ -228,8 +233,8 @@ defmodule HalC2.Orchestration.Handoff do
     end
   end
 
-  # Pi forks a session before an entry: the user message of the source's turn after
-  # the fork point, or nothing when the fork point is the source's latest turn.
+  # Pi and OpenCode fork a session before an entry: the user message of the source's
+  # turn after the fork point, or nothing when the fork point is the source's latest turn.
   defp next_turn(transfer, turn_ref) do
     turns =
       HalC2.Streams.ensure(transfer["sourceThreadId"])

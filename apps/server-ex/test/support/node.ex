@@ -3276,6 +3276,8 @@ defmodule HalC2.Test.Node.World do
       "FAKE_CLAUDE_TRACE" => logs["claude"],
       "FAKE_CODEX_TRACE" => logs["codex"],
       "FAKE_ACP_TRACE" => logs["acp"],
+      # OpenCode's sessions, which every fake reads (a fork reads its source's).
+      "FAKE_ACP_SESSIONS" => Path.join(dir, "opencode-sessions"),
       # Cursor's sidecar runs under this Node binary.
       "HAL_C2_NODE_COMMAND" => acp
     }

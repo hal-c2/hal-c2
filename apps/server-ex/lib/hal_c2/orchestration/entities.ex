@@ -117,9 +117,10 @@ defmodule HalC2.Orchestration.Entities do
   """
   def steers?(driver), do: driver in ["codex", "claudeAgent", "opencode", "pi"]
 
-  # Codex and Claude fork their own threads; other agents fork through a transcript.
+  # Codex, Claude and OpenCode fork their own threads; other agents fork through a
+  # transcript. An ACP agent's driver is its instance's id.
   defp capabilities(driver) do
-    native = driver in ["codex", "claudeAgent"]
+    native = driver in ["codex", "claudeAgent"] or HalC2.Acp.driver(driver) == "opencode"
 
     base =
       @codex_capabilities

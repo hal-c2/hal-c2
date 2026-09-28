@@ -112,7 +112,7 @@ Feature: Forking a thread and merging work back
 
   @node
   Scenario: A fork of a provider that cannot fork natively starts from a transcript
-    Given "f1" is a fork of "t1" at run 2 on "opencode"
+    Given "f1" is a fork of "t1" at run 2 on "grok"
     When the user sends "Try again" to "f1"
     Then the provider receives a transcript of the copied history before the message
 

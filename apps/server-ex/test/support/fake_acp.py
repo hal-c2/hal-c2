@@ -4,7 +4,16 @@
 # FAKE_TEXT_LOG) ask to run a tool, then answer JSON naming the permission outcome.
 # With FAKE_ACP_LOG set, every permission answer is appended to that file as a JSON line;
 # FAKE_ACP_TRACE collects the argv and every message read.
-import json, os, sys
+#
+# With `--port P` (`opencode acp --port`) it also serves OpenCode's HTTP API on
+# 127.0.0.1:P for the `opencode` user and OPENCODE_SERVER_PASSWORD, over sessions kept
+# as JSON files in FAKE_ACP_SESSIONS (shared by every fake; a private directory without
+# it): each prompt adds a user message, and each turn's end an assistant message.
+# GET /session/:id/message[?limit=n] and POST /session/:id/fork ({messageID}: the
+# messages before it, with new ids) are served; each request is traced as
+# {"http": {method, path, body}}.
+import base64, json, os, sys, tempfile, threading, time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # With FAKE_AUTH_FILE set, sessions need a sign-in, which creates that file: the
 # "browser" method asks the client to open a URL; "cli" runs `fake_acp.py login`.
@@ -36,15 +45,108 @@ def save_state(state):
 
 # With FAKE_ACP_TRACE set, the argv and every message read are appended to it as JSON lines.
 TRACE = os.environ.get("FAKE_ACP_TRACE")
+LOCK = threading.RLock()
 def trace(entry):
     if TRACE:
-        with open(TRACE, "a") as f:
+        with LOCK, open(TRACE, "a") as f:
             f.write(json.dumps(entry) + "\n")
 
 def send(msg):
     msg["jsonrpc"] = "2.0"
-    sys.stdout.write(json.dumps(msg) + "\n")
-    sys.stdout.flush()
+    with LOCK:
+        sys.stdout.write(json.dumps(msg) + "\n")
+        sys.stdout.flush()
+
+# --- OpenCode's sessions and HTTP API (`--port`) ---------------------------------
+
+PORT = int(sys.argv[sys.argv.index("--port") + 1]) if "--port" in sys.argv else None
+SESSIONS = os.environ.get("FAKE_ACP_SESSIONS") or (PORT and tempfile.mkdtemp())
+ids = [0]
+
+def new_id(prefix):
+    with LOCK:
+        ids[0] += 1
+        return "%s_%020d%06d" % (prefix, time.time_ns(), ids[0])
+
+def messages(sid):
+    try:
+        with open(os.path.join(SESSIONS, "%s.json" % sid)) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return []
+
+def save(sid, msgs):
+    os.makedirs(SESSIONS, exist_ok=True)
+    path = os.path.join(SESSIONS, "%s.json" % sid)
+    with open(path + ".tmp", "w") as f:
+        json.dump(msgs, f)
+    os.replace(path + ".tmp", path)
+
+def add_message(sid, role, text):
+    if PORT:
+        with LOCK:
+            save(sid, messages(sid) + [{"info": {"id": new_id("msg"), "role": role, "sessionID": sid},
+                                        "parts": [{"type": "text", "text": text}]}])
+
+def end_prompt(pid, sid, reason="end_turn"):
+    """Ends a prompt once the turn's answer is in the session."""
+    add_message(sid, "assistant", "")
+    send({"id": pid, "result": {"stopReason": reason}})
+
+class Api(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def reply(self, status, body=None):
+        data = b"" if body is None else json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def handle_any(self, method):
+        length = int(self.headers.get("content-length") or 0)
+        body = json.loads(self.rfile.read(length)) if length else None
+        trace({"http": {"method": method, "path": self.path, "body": body}})
+        password = os.environ.get("OPENCODE_SERVER_PASSWORD", "")
+        wanted = "Basic " + base64.b64encode(("opencode:" + password).encode()).decode()
+        if self.headers.get("authorization") != wanted:
+            return self.reply(401, {"message": "Unauthorized"})
+        path, _, query = self.path.partition("?")
+        parts = path.strip("/").split("/")
+        if len(parts) != 3 or parts[0] != "session":
+            return self.reply(404, {"message": "not found"})
+        sid, action = parts[1], parts[2]
+        if action == "message" and method == "GET":
+            limit = dict(q.split("=", 1) for q in query.split("&") if "=" in q).get("limit")
+            with LOCK:
+                msgs = messages(sid)
+            return self.reply(200, msgs[-int(limit):] if limit else msgs)
+        if action == "fork" and method == "POST":
+            before = (body or {}).get("messageID")
+            with LOCK:
+                kept = []
+                for msg in messages(sid):
+                    if msg["info"]["id"] == before:
+                        break
+                    kept.append(msg)
+                fork = new_id("ses")
+                for msg in kept:
+                    msg["info"] = dict(msg["info"], id=new_id("msg"), sessionID=fork)
+                save(fork, kept)
+            return self.reply(200, {"id": fork})
+        return self.reply(404, {"message": "not found"})
+
+    def do_GET(self):
+        self.handle_any("GET")
+
+    def do_POST(self):
+        self.handle_any("POST")
+
+if PORT:
+    api = ThreadingHTTPServer(("127.0.0.1", PORT), Api)
+    threading.Thread(target=api.serve_forever, daemon=True).start()
 
 def update(sid, u):
     send({"method": "session/update", "params": {"sessionId": sid, "update": u}})
@@ -68,7 +170,7 @@ def finish_turn(pid, sid, allowed=True):
     text = "Hello from acp" if allowed else "not allowed"
     for part in [text[:5], text[5:]]:
         update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-1", "content": {"type": "text", "text": part}})
-    send({"id": pid, "result": {"stopReason": "end_turn"}})
+    end_prompt(pid, sid)
 
 def answer_title():
     # Text generation: log what the agent was allowed, then answer the schema's keys.
@@ -141,7 +243,9 @@ for line in sys.stdin:
                   "providers": {}, "auth": {"logout": {}}}}})
     elif method in ("session/new", "session/resume"):
         sessions += 1
-        sid = params.get("sessionId") or "acp-%d" % sessions
+        # Sessions every fake keeps in one place need ids no other fake gives.
+        new = "acp-%d-%d" % (os.getpid(), sessions) if os.environ.get("FAKE_ACP_SESSIONS") else "acp-%d" % sessions
+        sid = params.get("sessionId") or new
         # FAKE_ACP_MODELS: a JSON list of model names to offer instead of the fake's own.
         names = json.loads(os.environ.get("FAKE_ACP_MODELS", "null")) or ["Fake/One", "Fake/Two"]
         options = [{"value": n.lower().replace(" ", "-"), "name": n} for n in names]
@@ -155,6 +259,7 @@ for line in sys.stdin:
     elif method == "session/prompt":
         sid = params["sessionId"]
         text = params["prompt"][0]["text"]
+        add_message(sid, "user", text)
         # FAKE_ACP_INPUT_LOG names a file each prompt's text is appended to, as JSON.
         if os.environ.get("FAKE_ACP_INPUT_LOG"):
             with open(os.environ["FAKE_ACP_INPUT_LOG"], "a") as input_log:
@@ -163,8 +268,8 @@ for line in sys.stdin:
             # A prompt during a waiting turn joins it, as OpenCode's running loop takes
             # it: the turn answers it, then both prompts end.
             update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-steer", "content": {"type": "text", "text": "steered: " + text}})
-            for held in (waiting[0], mid):
-                send({"id": held, "result": {"stopReason": "end_turn"}})
+            end_prompt(waiting[0], sid)
+            send({"id": mid, "result": {"stopReason": "end_turn"}})
             waiting = None
             continue
         update(sid, {"sessionUpdate": "agent_thought_chunk", "messageId": "th-1", "content": {"type": "text", "text": "Let me look."}})
@@ -233,7 +338,7 @@ for line in sys.stdin:
             os.remove(AUTH_FILE)
         send({"id": mid, "result": {}})
     elif method == "session/cancel" and waiting:
-        send({"id": waiting[0], "result": {"stopReason": "cancelled"}})
+        end_prompt(waiting[0], waiting[1], "cancelled")
         waiting = None
     elif mid is not None:
         send({"id": mid, "error": {"code": -32601, "message": method}})

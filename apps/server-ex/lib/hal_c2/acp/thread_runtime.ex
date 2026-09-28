@@ -10,6 +10,9 @@ defmodule HalC2.Acp.ThreadRuntime do
   since it lasts the whole turn; its `session/update` notifications stream thoughts,
   answers, and tool calls into items. Permission requests become approvals, which
   full-access threads grant at once. Interrupt is `session/cancel`.
+
+  OpenCode also serves its HTTP API (`HalC2.Acp.OpenCode`): each turn records the
+  OpenCode message it began with, where a rewind or a fork cuts the session.
   """
 
   use GenServer, restart: :temporary
@@ -22,8 +25,9 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.{Entities, NativeSubagent}
   alias HalC2.Acp.Antigravity.Session, as: Antigravity
+  alias HalC2.Acp.OpenCode
 
-  @state_version 6
+  @state_version 7
   @registry HalC2.Acp.Registry
 
   # Grok's own requests (`x.ai/...`), bare or wrapped in `{method, params}`.
@@ -70,9 +74,17 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   @doc """
   ACP has no conversation truncation: a rollback starts the next turn in a new
-  session, without any of the old conversation.
+  session, without any of the old conversation. OpenCode forks its session before
+  the first dropped turn's message, and the thread continues in the fork.
   """
   @spec rollback(String.t(), map) :: {:ok, map} | {:error, String.t()}
+  def rollback(thread_id, %{native_thread_id: native, first_dropped: before} = plan)
+      when is_binary(native) and is_binary(before) do
+    if HalC2.Acp.driver(plan.instance) == "opencode",
+      do: thread_id |> ensure() |> GenServer.call({:rollback, plan}, 120_000),
+      else: rollback(thread_id, Map.delete(plan, :first_dropped))
+  end
+
   def rollback(thread_id, _plan) do
     reply =
       case Registry.lookup(@registry, thread_id) do
@@ -142,7 +154,11 @@ defmodule HalC2.Acp.ThreadRuntime do
        # Child-session updates that arrived before their subagent named its session.
        orphans: %{},
        # The session's config options (`configId` -> current value).
-       config: %{}
+       config: %{},
+       # OpenCode's HTTP server (`HalC2.Acp.OpenCode`), and its session's newest
+       # message when the turn began: `{:ok, id | nil}`, or `:unknown`.
+       server: nil,
+       leaf: :unknown
      }}
   end
 
@@ -159,6 +175,7 @@ defmodule HalC2.Acp.ThreadRuntime do
          {:ok, state} <- select_model(state, turn.model),
          state = set_options(state, turn) do
       started(state)
+      state = %{state | leaf: leaf(state)}
       conn = state.conn
       session_id = state.session_id
       prompt = acp_prompt(turn, state.capabilities, state.announce)
@@ -218,7 +235,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_call(:close, _from, state) do
     state = if state.turn, do: end_turn(%{state | prompt: nil}, "interrupted", nil), else: state
     if state.conn, do: Connection.stop(state.conn)
-    {:reply, :ok, released(%{state | conn: nil, session_id: nil, prompt: nil})}
+    {:reply, :ok, released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})}
   end
 
   def handle_call(:rollback, _from, %{turn: nil} = state),
@@ -226,6 +243,28 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   def handle_call(:rollback, _from, state),
     do: {:reply, {:error, "Interrupt the current turn before rewinding."}, state}
+
+  def handle_call({:rollback, _plan}, _from, %{turn: turn} = state) when turn != nil,
+    do: {:reply, {:error, "Interrupt the current turn before rewinding."}, state}
+
+  # The fork keeps the thread's earlier turns under new message ids, so their refs
+  # move to the copies (`nativeTurnRefs`, which the rewind settles with the rest).
+  # The next turn opens the fork.
+  def handle_call({:rollback, plan}, _from, state) do
+    with {:ok, state} <- serve(state, plan),
+         {:ok, fork, copies} <-
+           OpenCode.fork(state.server, plan.native_thread_id, plan.first_dropped) do
+      {:reply,
+       {:ok,
+        %{
+          "nativeThreadRef" => Entities.provider_ref(fork, plan.driver),
+          "nativeTurnRefs" => copies
+        }}, %{state | session_id: nil}}
+    else
+      {:error, reason, state} -> {:reply, {:error, format(reason)}, state}
+      {:error, reason} -> {:reply, {:error, format(reason)}, state}
+    end
+  end
 
   # A decision string is how a runtime before v4 was asked.
   def handle_call({:respond, request_id, decision}, from, state) when is_binary(decision),
@@ -344,7 +383,8 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:error, reason} -> {"failed", format(reason)}
       end
 
-    {:noreply, end_turn(%{state | prompt: nil}, status, failure)}
+    state = record_turn(%{state | prompt: nil})
+    {:noreply, end_turn(state, status, failure)}
   end
 
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
@@ -353,7 +393,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         do: end_turn(state, "failed", "#{HalC2.Acp.label(state.agent)} exited unexpectedly"),
         else: state
 
-    {:noreply, released(%{state | conn: nil, session_id: nil, prompt: nil})}
+    {:noreply, released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})}
   end
 
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
@@ -395,7 +435,15 @@ defmodule HalC2.Acp.ThreadRuntime do
     do: state |> Map.put_new(:options, []) |> Map.put(:v, 5) |> migrate()
 
   defp migrate(%{v: 5} = state),
-    do: state |> Map.merge(%{subagents: %{}, orphans: %{}, config: %{}}) |> Map.put(:v, 6)
+    do:
+      state
+      |> Map.merge(%{subagents: %{}, orphans: %{}, config: %{}})
+      |> Map.put(:v, 6)
+      |> migrate()
+
+  # An agent started before v7 runs no OpenCode server; its turns go unrecorded.
+  defp migrate(%{v: 6} = state),
+    do: state |> Map.merge(%{server: nil, leaf: :unknown}) |> Map.put(:v, 7)
 
   # --- session -------------------------------------------------------------------
 
@@ -406,17 +454,36 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp ensure_session(state, turn) do
     driver = turn.ids.driver
-    if state.conn, do: Connection.stop(state.conn)
 
-    with {:ok, command, env} <- HalC2.Acp.command(driver, turn.runtime_mode),
+    with {:ok, state} <- launch(state, driver, turn.runtime_mode, turn.cwd) do
+      with :ok <- Antigravity.authenticate(state.conn, driver),
+           {:ok, forked} <- fork_first(state, turn),
+           {:ok, session_id, state} <- open_session(state, forked) do
+        if session_id != turn.native_thread_id, do: record_session(state, session_id)
+        Antigravity.opened(state.conn, session_id, driver, turn.runtime_mode, state.options)
+        {:ok, %{state | session_id: session_id, announce: mcp_servers(state, turn) != []}}
+      else
+        {:error, reason} -> {:error, reason, state}
+        {:error, reason, state} -> {:error, reason, state}
+      end
+    end
+  end
+
+  # A new agent process for `instance`, initialized; OpenCode's serves its HTTP API.
+  defp launch(state, instance, mode, cwd) do
+    if state.conn, do: Connection.stop(state.conn)
+    state = %{state | conn: nil, session_id: nil, server: nil}
+
+    with {:ok, command, env} <- HalC2.Acp.command(instance, mode),
+         {command, env, server} = serve_opencode(instance, command, env),
          {:ok, conn} <-
            Connection.start_link(
              cmd: command,
              handler: self(),
-             cd: turn.cwd,
+             cd: cwd,
              env: env,
              dialect: :v2,
-             log: turn.ids.thread
+             log: state.thread_id
            ),
          {:ok, init} <-
            Connection.call(conn, "initialize", %{
@@ -428,24 +495,46 @@ defmodule HalC2.Acp.ThreadRuntime do
                "elicitation" => %{"url" => %{}}
              },
              "clientInfo" => %{"name" => "hal-c2", "version" => "0.1.0"}
-           }),
-         state = %{
-           state
-           | conn: conn,
-             agent: driver,
-             mode: turn.runtime_mode,
-             capabilities: init["agentCapabilities"] || %{}
-         },
-         :ok <- Antigravity.authenticate(conn, driver),
-         {:ok, session_id, state} <- open_session(state, turn) do
-      if session_id != turn.native_thread_id, do: record_session(state, session_id)
-      Antigravity.opened(conn, session_id, driver, turn.runtime_mode, state.options)
-      {:ok, %{state | session_id: session_id, announce: mcp_servers(state, turn) != []}}
+           }) do
+      {:ok,
+       %{
+         state
+         | conn: conn,
+           agent: instance,
+           mode: mode,
+           server: server,
+           capabilities: init["agentCapabilities"] || %{}
+       }}
     else
       {:error, reason} -> {:error, reason, state}
-      {:error, reason, state} -> {:error, reason, state}
     end
   end
+
+  defp serve_opencode(instance, command, env) do
+    if HalC2.Acp.driver(instance) == "opencode",
+      do: OpenCode.serve(command, env),
+      else: {command, env, nil}
+  end
+
+  # OpenCode's server for a rewind: the thread's own, else one started for it.
+  defp serve(%{conn: conn, server: server, agent: agent} = state, plan)
+       when conn != nil and server != nil and agent == plan.instance,
+       do: {:ok, state}
+
+  defp serve(state, plan),
+    do: launch(state, plan.instance, state.mode || "approval-required", plan.cwd)
+
+  # A forked OpenCode thread's first turn opens a fork of the source's session, cut
+  # before the source's turn after the fork point.
+  defp fork_first(%{server: server} = state, %{fork: %{thread: source} = fork} = turn)
+       when server != nil and is_binary(source) do
+    case OpenCode.fork(server, source, fork[:before]) do
+      {:ok, id, _copies} -> {:ok, %{turn | native_thread_id: id}}
+      {:error, reason} -> {:error, reason, state}
+    end
+  end
+
+  defp fork_first(_state, turn), do: {:ok, turn}
 
   # Continue the recorded session when the agent can; otherwise start a new one.
   defp open_session(state, %{native_thread_id: native} = turn) when is_binary(native) do
@@ -642,6 +731,45 @@ defmodule HalC2.Acp.ThreadRuntime do
       ]
     end)
   end
+
+  # Where an OpenCode session stood when the turn began.
+  defp leaf(%{server: nil}), do: :unknown
+
+  defp leaf(state) do
+    case OpenCode.leaf(state.server, state.session_id) do
+      {:ok, leaf} ->
+        {:ok, leaf}
+
+      {:error, reason} ->
+        Logger.warning("could not read the OpenCode session: #{reason}")
+        :unknown
+    end
+  end
+
+  # The OpenCode message that began the turn names it, so a rewind or a fork can cut
+  # the session there.
+  defp record_turn(%{server: server, leaf: {:ok, leaf}, turn: turn} = state)
+       when server != nil and turn != nil do
+    with message when is_binary(message) <-
+           OpenCode.turn_message(server, state.session_id, leaf) do
+      ids = turn.ids
+
+      commit(state, fn stream ->
+        [
+          Orchestration.upsert(
+            stream,
+            "provider-turn",
+            ids.provider_turn,
+            &Map.put(&1, "nativeTurnRef", Entities.provider_ref(message, ids.driver))
+          )
+        ]
+      end)
+    end
+
+    state
+  end
+
+  defp record_turn(state), do: state
 
   # --- updates -------------------------------------------------------------------
 
