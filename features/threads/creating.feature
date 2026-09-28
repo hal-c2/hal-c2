@@ -3,6 +3,7 @@
 #   apps/web/src/hooks/useHandleNewThread.ts
 #   apps/web/src/components/threadActionMenu.logic.ts (New thread on <branch>)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (New thread, draft rows)
+#   apps/desktop-qt/src/native/DraftController.cpp (the desktop's drafts)
 #   apps/tui/src/newThread.logic.ts
 #   apps/tui/src/commands.ts (New thread)
 #   packages/contracts/src/orchestrationV2.ts (thread.create, thread.created)

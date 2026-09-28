@@ -122,6 +122,25 @@ const Steps steps([] {
            QStringLiteral("the composer's turn is %1").arg(show(turn)));
   });
 
+  // A new thread's draft (DraftSteps names it).
+  step(QStringLiteral("the user types %1 into the new thread").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("composer.text.set"), QVariantMap{
+                                                                     {QStringLiteral("target"), world.draftId},
+                                                                     {QStringLiteral("edit"), edit(world)},
+                                                                     {QStringLiteral("text"), c[0]},
+                                                                     {QStringLiteral("cursor"), c[0].size()},
+                                                                 });
+  });
+  step(QStringLiteral("the user goes back to the new thread"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("draft.open"), QVariantMap{{QStringLiteral("draftId"), world.draftId}});
+  });
+  step(QStringLiteral("the composer offers the new thread's text %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      const QVariantMap turn = world.state(QStringLiteral("turn")).toMap();
+      return turn.value(QStringLiteral("threadKey")) == world.draftId && turn.value(QStringLiteral("draft")) == c[0];
+    }, [&] { return QStringLiteral("the draft's text; the composer's turn is %1").arg(show(world.state(QStringLiteral("turn")))); });
+  });
+
   // Images.
   step(QStringLiteral("the user attaches the image %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.bridge().dispatch(QStringLiteral("composer.attach"),

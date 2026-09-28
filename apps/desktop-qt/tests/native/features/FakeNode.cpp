@@ -28,20 +28,6 @@ FakeNode::FakeNode() : m_server(QStringLiteral("fake-node"), QWebSocketServer::N
     if (!holdSnapshot) sendSnapshot();
   });
   onRpc(QStringLiteral("orchestration.dispatchCommand"), [this](const Rpc& rpc) { dispatchCommand(rpc); });
-  // Lent access links the environment at the origin (`http://<env>:3780`);
-  // taking it back unlinks it.
-  onRpc(QStringLiteral("hal-c2.linkEnvironment"), [this](const Rpc& rpc) {
-    const QString environment = QUrl(rpc.payload.value(QLatin1String("origin")).toString()).host();
-    lent.insert(environment, rpc.payload.value(QLatin1String("token")).toString());
-    link(environment);
-    reply(rpc, QJsonValue::Null);
-  });
-  onRpc(QStringLiteral("hal-c2.unlinkEnvironment"), [this](const Rpc& rpc) {
-    const QString environment = rpc.payload.value(QLatin1String("environmentId")).toString();
-    lent.remove(environment);
-    unlink(environment);
-    reply(rpc, QJsonValue::Null);
-  });
   for (const auto extend : std::as_const(extensions())) extend(*this);
 }
 
@@ -117,6 +103,7 @@ void FakeNode::link(const QString& environment) {
 
 void FakeNode::unlink(const QString& environment) {
   linked.removeAll(environment);
+  linkProblems.remove(environment);
   sendLinks();
 }
 
@@ -129,10 +116,17 @@ QJsonArray FakeNode::links() const {
   QJsonArray result;
   for (const QString& environment : linked) {
     result.append(QJsonObject{
-        {QStringLiteral("environment"), QJsonObject{{QStringLiteral("environmentId"), environment}}},
+        {QStringLiteral("environment"),
+         QJsonObject{{QStringLiteral("environmentId"), environment},
+                     {QStringLiteral("label"), linkLabels.value(environment, environment)}}},
         {QStringLiteral("origin"), QStringLiteral("http://") + environment + QStringLiteral(":3780")},
-        {QStringLiteral("online"), true},
+        {QStringLiteral("online"), !linkProblems.contains(environment)},
     });
+    if (linkProblems.contains(environment)) {
+      QJsonObject link = result.last().toObject();
+      link.insert(QStringLiteral("problem"), linkProblems.value(environment));
+      result.replace(result.size() - 1, link);
+    }
   }
   return result;
 }
@@ -147,13 +141,13 @@ void FakeNode::join(const QString& peer, const QString& peerEnvironment) {
   });
 }
 
-void FakeNode::sendRow(const QString& id, const QJsonObject& row) {
+void FakeNode::sendRow(const QString& id, const QJsonObject& row, const QString& kind) {
   if (!m_socket || m_shellSubscription < 0) return;
   send({
       {QStringLiteral("t"), QStringLiteral("shell.rows")},
       {QStringLiteral("id"), m_shellSubscription},
       {QStringLiteral("node"), name},
-      {QStringLiteral("rows"), QJsonArray{QJsonArray{id, QStringLiteral("thread"), row}}},
+      {QStringLiteral("rows"), QJsonArray{QJsonArray{id, kind, row}}},
   });
 }
 

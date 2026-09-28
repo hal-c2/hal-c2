@@ -53,16 +53,18 @@ so use `glass` on other platforms.
 
 What you can reach from `shell.qml`: `ShellWindow` as the root (window
 colour, opacity and frame from the theme, `sidebarCollapsed`,
-`settingsActive` and `clusterOpen`, the error overlay and the page's window
+`settingsActive`, `clusterOpen`, `connectionsOpen` and `nativeSettingsOpen`, the error overlay and the page's window
 commands built in), the bricks (`TitleBar`, `Sidebar`, `SettingsNav`,
-`ClusterSettings`, `Workspace`, `GitActions`, `WebSurface`, `Composer`,
+`ClusterSettings`, `ConnectionsSettings`, `Workspace`, `GitActions`, `WebSurface`, `Composer`,
 `RightPanel`, `TerminalDrawer`, `Notifications`), the themed controls (`ShellCard`, `ShellButton`,
 `ShellComboBox`, `ShellTextField`, `ShellMenu`, `ShellMenuItem`, `ShellIcon`,
 `WindowControls`), and the `HalC2.Shell` singletons: `Shell.state.<key>` for
 everything the shell and the page publish, `Shell.dispatch(action, payload)` to act,
 `Theme.palette.color(role, fallback)` / `Theme.radius` / `Theme.fontUi` /
-`Theme.fontMono`, and `Runtime.reload()`. Place `ClusterSettings` where the
-page would be while `clusterOpen`, as the examples do.
+`Theme.fontMono`, and `Runtime.reload()`. Place `ClusterSettings` and
+`ConnectionsSettings` where the page would be while `clusterOpen` and
+`connectionsOpen`, and hide the page and composer while `nativeSettingsOpen`,
+as the examples do.
 
 A broken `shell.qml` never locks you out: the built-in shell takes over with
 the error shown in an overlay.

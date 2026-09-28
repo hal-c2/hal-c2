@@ -189,6 +189,20 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/drafting-and-sending.feature:Each thread keeps its own draft*"),
     QStringLiteral("composer/drafting-and-sending.feature:Sending while disconnected*"),
     QStringLiteral("composer/drafting-and-sending.feature:A send the node rejects*"),
+    QStringLiteral("settings/connections.feature"),
+    QStringLiteral("connections/links.feature"),
+    QStringLiteral("connections/pairing.feature"),
+    QStringLiteral("threads/creating.feature:A new thread start*"),
+    QStringLiteral("threads/sidebar-list.feature:Projects *"),
+    QStringLiteral("threads/sidebar-list.feature:Threads started by other agents*"),
+    QStringLiteral("files/adding-projects.feature:Adding a folder from the desktop*"),
+    QStringLiteral("files/adding-projects.feature:Adding an existing project from the desktop*"),
+    QStringLiteral("files/adding-projects.feature:A folder the environment refuses*"),
+    QStringLiteral("files/adding-projects.feature:Dropping a folder *"),
+    QStringLiteral("files/removing-and-listing-projects.feature:Removing *"),
+    QStringLiteral("files/removing-and-listing-projects.feature:Confirming removal*"),
+    QStringLiteral("files/removing-and-listing-projects.feature:Cancelling removal*"),
+    QStringLiteral("files/removing-and-listing-projects.feature:A removal the environment refuses*"),
 };
 
 QRegularExpression wildcard(const QString& glob) {

@@ -227,16 +227,6 @@ defmodule HalC2.Rpc do
   def handle("hal-c2.linkEnvironment", %{"pairingUrl" => url}) when is_binary(url),
     do: HalC2.Links.add(url)
 
-  def handle("hal-c2.linkEnvironment", %{"origin" => origin, "token" => token})
-      when is_binary(origin) and is_binary(token),
-      do: HalC2.Links.borrow(origin, token)
-
-  def handle("hal-c2.unlinkEnvironment", %{"environmentId" => id, "borrowed" => true})
-      when is_binary(id) do
-    :ok = HalC2.Links.give_back(id)
-    {:ok, nil}
-  end
-
   def handle("hal-c2.unlinkEnvironment", %{"environmentId" => id}) when is_binary(id) do
     with :ok <- HalC2.Links.remove(id), do: {:ok, nil}
   end

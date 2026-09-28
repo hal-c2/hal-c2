@@ -28,11 +28,12 @@ class TimelineModel;
 // by the brick's own actions: `composer.text.set`, `composer.model.select`,
 // `composer.option.set` and the mode actions are recorded and still reach the
 // page, which follows. A send reads only the draft and the thread's shell row.
-// New-thread drafts are DraftController's; slash commands (a prompt starting
+// New-thread drafts are DraftController's (the text is kept there); slash commands (a prompt starting
 // with "/") still go to the page.
 //
 // `turn` publishes the route thread's state for the request bricks:
-//   {threadKey, running, draft, attachments: [{id, name, mimeType, sizeBytes}],
+//   {threadKey, kind: "thread", running, draft,
+//    attachments: [{id, name, mimeType, sizeBytes}],
 //    approvals: [{requestId, title, appName, detail, options: [{decision, label,
 //      warning}], canRespond, responding, problem}],
 //    questions: [{requestId, questions: [{id, header, question, options:
@@ -42,6 +43,9 @@ class TimelineModel;
 //    queue: [{runId, text}]}
 // `problem` says why a request cannot be answered, when it cannot.
 // `draft` is the thread's text as it was when the window opened the thread.
+// On a new thread's draft route the turn is {threadKey: draftId, kind:
+// "draft", draft} with nothing pending: its text is kept with the draft
+// (DraftController::setText), and its images and send stay with the page.
 //
 // Actions: composer.submit {text, intent, edit}, composer.interrupt,
 // composer.attach {files}, composer.attachment.remove {id},
@@ -104,6 +108,8 @@ private:
 
   // The thread the window shows (the shell's route), or empty.
   QString openThread() const;
+  // The new-thread draft the window shows (DraftController's), or empty.
+  QString openDraft() const;
   bool running(const QString& target) const;
   void toast(const QString& title, const QString& description);
   void follow();
@@ -122,6 +128,7 @@ private:
   // The route thread, the draft it had when opened, and its stream.
   QString m_thread;
   QString m_openedDraft;
+  QString m_draftId;
   QPointer<TimelineModel> m_timeline;
   QMetaObject::Connection m_timelineConnection;
   // Requests answered and waiting for the node, and ones it said are gone.

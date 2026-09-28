@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <memory>
 
+#include "DraftController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "NodeClient.h"
@@ -104,8 +105,12 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
   const QString target = openThread();
   // What the brick changes on the thread's draft; the page follows along.
   if (action == QLatin1String("composer.text.set")) {
+    const QString text = map.value(QStringLiteral("text")).toString();
     if (!target.isEmpty() && map.value(QStringLiteral("target")).toString() == target) {
-      m_drafts[target].text = map.value(QStringLiteral("text")).toString();
+      m_drafts[target].text = text;
+    } else if (const QString draftId = openDraft(); !draftId.isEmpty() && map.value(QStringLiteral("target")).toString() == draftId) {
+      // A new thread's text is kept with its draft.
+      NativeShell::of(this)->controller<DraftController>()->setText(draftId, text);
     }
     return false;
   }
@@ -374,6 +379,9 @@ void ComposerController::sendNext(const QString& target) {
       publish();
       return;
     }
+    // A draft's first turn makes it a thread (a no-op for a thread the node
+    // already has).
+    NativeShell::of(this)->controller<DraftController>()->promote(target);
     QList<Send>& queue = m_queues[target];
     queue.removeFirst();
     if (queue.isEmpty()) {
@@ -492,6 +500,11 @@ QString ComposerController::openThread() const {
   return NativeShell::of(this)->controller<NavigationController>()->threadKey();
 }
 
+QString ComposerController::openDraft() const {
+  const NavigationController::Route& route = NativeShell::of(this)->controller<NavigationController>()->route();
+  return route.kind == QLatin1String("draft") ? route.draftId : QString();
+}
+
 bool ComposerController::running(const QString& target) const {
   const auto thread = m_store->thread(target);
   return thread && thread->activeRunId.has_value();
@@ -504,9 +517,17 @@ void ComposerController::toast(const QString& title, const QString& description)
 // Follows the route's thread and its stream.
 void ComposerController::follow() {
   const QString thread = openThread();
-  if (thread != m_thread) {
-    m_thread = thread;
-    m_openedDraft = draft(thread);
+  const QString draftId = openDraft();
+  const QString key = draftId.isEmpty() ? thread : draftId;
+  if (key != m_thread || draftId != m_draftId) {
+    m_thread = key;
+    m_draftId = draftId;
+    if (draftId.isEmpty()) {
+      m_openedDraft = draft(thread);
+    } else {
+      const auto kept = NativeShell::of(this)->controller<DraftController>()->draft(draftId);
+      m_openedDraft = kept ? kept->text : QString();
+    }
   }
   TimelineModel* timeline = thread.isEmpty() ? nullptr : NativeShell::of(this)->controller<ThreadStore>()->timeline(thread);
   if (timeline != m_timeline) {
@@ -535,7 +556,20 @@ QVariantMap ComposerController::turnState() const {
                                    {QStringLiteral("sizeBytes"), attachment.sizeBytes}});
   }
   const bool isRunning = thread && thread->activeRunId.has_value();
+  // A new thread's draft: only its text is the shell's so far.
+  if (!m_draftId.isEmpty()) {
+    return {{QStringLiteral("threadKey"), m_draftId},
+            {QStringLiteral("kind"), QStringLiteral("draft")},
+            {QStringLiteral("running"), false},
+            {QStringLiteral("draft"), m_openedDraft},
+            {QStringLiteral("attachments"), QVariantList()},
+            {QStringLiteral("approvals"), QVariantList()},
+            {QStringLiteral("questions"), QVariantList()},
+            {QStringLiteral("plan"), QVariant()},
+            {QStringLiteral("queue"), QVariantList()}};
+  }
   QVariantMap state{{QStringLiteral("threadKey"), thread ? m_thread : QString()},
+                    {QStringLiteral("kind"), QStringLiteral("thread")},
                     {QStringLiteral("running"), isRunning},
                     {QStringLiteral("draft"), m_openedDraft},
                     {QStringLiteral("attachments"), attachments},

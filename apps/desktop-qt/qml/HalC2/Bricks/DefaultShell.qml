@@ -100,13 +100,14 @@ ShellWindow {
                     Layout.fillHeight: true
                     visible: root.clusterOpen
                 }
+                ConnectionsSettings { Layout.fillWidth: true; Layout.fillHeight: true; visible: root.connectionsOpen }
 
                 WebSurface {
                     id: primaryView
 
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    visible: !root.clusterOpen
+                    visible: !root.nativeSettingsOpen
                     url: Shell.pageUrl
                 }
 
@@ -119,7 +120,7 @@ ShellWindow {
                     id: composerView
 
                     Layout.fillWidth: true
-                    visible: ready && !root.clusterOpen
+                    visible: ready && !root.nativeSettingsOpen
                 }
 
                 TerminalDrawer {

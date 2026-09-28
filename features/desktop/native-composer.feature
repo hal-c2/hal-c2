@@ -18,7 +18,7 @@ Feature: The desktop shell sends a thread's turns to its node
       | id | project | title | runtimeMode  | interactionMode |
       | t1 | p1      | One   | full-access  | default         |
       | t2 | p1      | Two   | full-access  | default         |
-    And the page groups "env-a:p1" as the project "proj-1"
+    And the node has the project "p1" titled "proj-1"
     And the desktop shell is connected to its node
 
   Rule: Stop interrupts the thread's run
@@ -172,6 +172,24 @@ Feature: The desktop shell sends a thread's turns to its node
       Then the composer offers the draft ""
       When the user opens "env-a:t1" from the sidebar
       Then the composer offers the draft "half a thought"
+
+    @desktop
+    Scenario: A new thread's text is kept with its draft
+      Given the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      And the user types "set up the linter" into the new thread
+      When the user opens "env-a:t1" from the sidebar
+      And the user goes back to the new thread
+      Then the composer offers the new thread's text "set up the linter"
+
+    @desktop
+    Scenario: A new thread's text is still there after a restart
+      Given the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      And the user types "set up the linter" into the new thread
+      When the desktop quits and starts again
+      And the desktop shell is connected to its node
+      Then the composer offers the new thread's text "set up the linter"
 
   Rule: Images go up before the message that carries them
 

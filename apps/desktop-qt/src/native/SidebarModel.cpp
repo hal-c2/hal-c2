@@ -2,6 +2,7 @@
 
 #include <QHash>
 #include <QJsonArray>
+#include <QRegularExpression>
 
 #include <algorithm>
 #include <cmath>
@@ -377,27 +378,249 @@ Partition partition(const QList<Thread>& threads, const std::optional<QSet<QStri
   return result;
 }
 
-Input Input::fromVariant(const QVariant& value) {
-  const QVariantMap map = value.toMap();
-  Input input;
-  for (const QVariant& entry : map.value(QStringLiteral("projects")).toList()) {
-    QVariantMap project = entry.toMap();
-    ProjectGroup group;
-    group.key = project.value(QStringLiteral("key")).toString();
-    group.memberKeys = project.take(QStringLiteral("memberKeys")).toStringList();
-    group.summary = project;
-    input.projects.append(group);
+Project projectFromRow(const QString& environmentId, const QJsonObject& row) {
+  Project project;
+  project.environmentId = environmentId;
+  project.id = row.value(QLatin1String("id")).toString();
+  project.title = row.value(QLatin1String("title")).toString();
+  project.workspaceRoot = row.value(QLatin1String("workspaceRoot")).toString();
+  project.createdAt = row.value(QLatin1String("createdAt")).toString();
+  project.updatedAt = row.value(QLatin1String("updatedAt")).toString();
+  const QJsonValue identity = row.value(QLatin1String("repositoryIdentity"));
+  if (identity.isObject()) {
+    const QJsonObject fields = identity.toObject();
+    project.repositoryIdentity = RepositoryIdentity{
+        fields.value(QLatin1String("canonicalKey")).toString(),
+        stringField(fields, "rootPath"),
+        stringField(fields, "displayName"),
+        stringField(fields, "name"),
+    };
   }
-  input.localEnvironmentId = map.value(QStringLiteral("localEnvironmentId"), QVariant::fromValue(nullptr));
-  input.localProjects = map.value(QStringLiteral("localProjects")).toList();
-  input.drafts = map.value(QStringLiteral("drafts")).toList();
-  const QVariant activeThreadKey = map.value(QStringLiteral("activeThreadKey"));
-  if (activeThreadKey.typeId() == QMetaType::QString) input.activeThreadKey = activeThreadKey.toString();
-  input.activeDraftId = map.value(QStringLiteral("activeDraftId"), QVariant::fromValue(nullptr));
-  input.timestampFormat = map.value(QStringLiteral("timestampFormat"), QStringLiteral("locale")).toString();
-  const QVariant scopeProjectKey = map.value(QStringLiteral("scopeProjectKey"));
-  if (scopeProjectKey.typeId() == QMetaType::QString) input.scopeProjectKey = scopeProjectKey.toString();
-  return input;
+  return project;
+}
+
+namespace {
+
+bool isWindowsDrivePath(const QString& value) {
+  static const QRegularExpression drive(QStringLiteral("^[a-zA-Z]:([/\\\\]|$)"));
+  return drive.match(value).hasMatch();
+}
+
+QString trimTrailingSeparators(const QString& value) {
+  static const QRegularExpression root(QStringLiteral("^([/\\\\]|[a-zA-Z]:[/\\\\])$"));
+  if (value.isEmpty() || root.match(value).hasMatch()) return value;
+  static const QRegularExpression unixTrailing(QStringLiteral("/+$"));
+  static const QRegularExpression anyTrailing(QStringLiteral("[\\\\/]+$"));
+  QString trimmed = value;
+  trimmed.remove(value.startsWith(QLatin1Char('/')) ? unixTrailing : anyTrailing);
+  if (trimmed.isEmpty()) return value;
+  static const QRegularExpression bareDrive(QStringLiteral("^[a-zA-Z]:$"));
+  return bareDrive.match(trimmed).hasMatch() ? trimmed + QLatin1Char('\\') : trimmed;
+}
+
+// Where a project sits under its repository root, "" at the root itself, or
+// nothing when it is outside it.
+Nullable repositoryRelativePath(const Project& project) {
+  const QString rootPath = project.repositoryIdentity->rootPath.value_or(QString()).trimmed();
+  if (rootPath.isEmpty()) return std::nullopt;
+  const QString projectPath = normalizePath(project.workspaceRoot);
+  const QString normalizedRoot = normalizePath(rootPath);
+  if (projectPath.isEmpty() || normalizedRoot.isEmpty()) return std::nullopt;
+  if (projectPath == normalizedRoot) return QString();
+  const QString prefix = normalizedRoot + (normalizedRoot.contains(QLatin1Char('\\')) ? QLatin1Char('\\') : QLatin1Char('/'));
+  if (!projectPath.startsWith(prefix)) return std::nullopt;
+  return projectPath.mid(prefix.size()).replace(QLatin1Char('\\'), QLatin1Char('/'));
+}
+
+QString logicalKey(const Project& project, const QString& mode) {
+  if (mode == QLatin1String("separate") || !project.repositoryIdentity ||
+      project.repositoryIdentity->canonicalKey.isEmpty()) {
+    return physicalKey(project);
+  }
+  const QString& canonicalKey = project.repositoryIdentity->canonicalKey;
+  if (mode == QLatin1String("repository")) return canonicalKey;
+  const Nullable relative = repositoryRelativePath(project);
+  if (!relative || relative->isEmpty()) return canonicalKey;
+  return canonicalKey + QStringLiteral("::") + *relative;
+}
+
+qint64 freshness(const Project& project) {
+  if (const auto updated = parseIso(project.updatedAt)) return *updated;
+  return parseIso(project.createdAt).value_or(0);
+}
+
+bool fresher(const Project& candidate, const Project& existing) {
+  const qint64 delta = freshness(candidate) - freshness(existing);
+  return delta > 0 || (delta == 0 && candidate.id > existing.id);
+}
+
+QStringList uniqueNonEmpty(const QStringList& values) {
+  QStringList unique;
+  for (const QString& value : values) {
+    const QString trimmed = value.trimmed();
+    if (!trimmed.isEmpty() && !unique.contains(trimmed)) unique.append(trimmed);
+  }
+  return unique;
+}
+
+QString groupLabel(const Project& representative, const QList<Project>& members) {
+  QStringList titles, displayNames, names;
+  for (const Project& member : members) {
+    titles.append(member.title);
+    if (member.repositoryIdentity) {
+      displayNames.append(member.repositoryIdentity->displayName.value_or(QString()));
+      names.append(member.repositoryIdentity->name.value_or(QString()));
+    }
+  }
+  titles = uniqueNonEmpty(titles);
+  displayNames = uniqueNonEmpty(displayNames);
+  names = uniqueNonEmpty(names);
+  if (titles.size() == 1 && !displayNames.contains(titles.first()) && !names.contains(titles.first())) {
+    return titles.first();
+  }
+  if (displayNames.size() == 1) return displayNames.first();
+  if (names.size() == 1) return names.first();
+  return representative.title;
+}
+
+constexpr double kNever = -std::numeric_limits<double>::infinity();
+
+double timestamp(const Nullable& iso) {
+  const auto ms = parseIso(iso);
+  return ms ? double(*ms) : kNever;
+}
+
+double firstTimestamp(const Nullable& first, const Nullable& second) {
+  if (const auto ms = parseIso(first)) return double(*ms);
+  return timestamp(second);
+}
+
+double threadSortTimestamp(const Thread& thread, const QString& sortOrder) {
+  if (sortOrder == QLatin1String("created_at")) return firstTimestamp(thread.createdAt, thread.updatedAt);
+  if (const auto ms = parseIso(thread.latestUserMessageAt)) return double(*ms);
+  return firstTimestamp(thread.updatedAt, thread.createdAt);
+}
+
+}  // namespace
+
+QString normalizePath(const QString& path) {
+  const QString normalized = trimTrailingSeparators(path.trimmed());
+  if (isWindowsDrivePath(normalized) || normalized.startsWith(QStringLiteral("\\\\"))) {
+    return QString(normalized).replace(QLatin1Char('/'), QLatin1Char('\\')).toLower();
+  }
+  return normalized;
+}
+
+QString physicalKey(const Project& project) {
+  return project.environmentId + QLatin1Char(':') + normalizePath(project.workspaceRoot);
+}
+
+QList<ProjectGroup> groupProjects(const QList<Project>& projects, const GroupingSettings& settings,
+                                  const QString& preferredEnvironmentId, const QList<Thread>& threads) {
+  // Folders in first-seen order, each with every project row claiming it.
+  QStringList folderOrder;
+  QHash<QString, QList<Project>> byFolder;
+  for (const Project& project : projects) {
+    const QString folder = physicalKey(project);
+    if (!byFolder.contains(folder)) folderOrder.append(folder);
+    byFolder[folder].append(project);
+  }
+
+  QStringList groupOrder;
+  QHash<QString, QList<Project>> members;
+  QHash<QString, QString> logicalByFolder;
+  for (const QString& folder : std::as_const(folderOrder)) {
+    const QList<Project>& claims = byFolder.value(folder);
+    const Project* winner = &claims.first();
+    for (const Project& candidate : claims) {
+      if (fresher(candidate, *winner)) winner = &candidate;
+    }
+    // The winner names the repository unless only an older row knows it.
+    const Project* identitySource = winner;
+    if (!winner->repositoryIdentity) {
+      const Project* identified = nullptr;
+      for (const Project& candidate : claims) {
+        if (candidate.repositoryIdentity && (!identified || fresher(candidate, *identified))) identified = &candidate;
+      }
+      if (identified) identitySource = identified;
+    }
+    const QString key = logicalKey(*identitySource, settings.overrides.value(folder, settings.mode));
+    logicalByFolder.insert(folder, key);
+    if (!members.contains(key)) groupOrder.append(key);
+    members[key].append(*winner);
+  }
+
+  QHash<QString, QStringList> memberKeys;
+  QSet<QString> seen;
+  for (const Project& project : projects) {
+    if (seen.contains(project.key())) continue;
+    seen.insert(project.key());
+    memberKeys[logicalByFolder.value(physicalKey(project))].append(project.key());
+  }
+
+  struct Sorted {
+    ProjectGroup group;
+    QString title;
+    double at = kNever;
+  };
+  QList<Sorted> sorted;
+  QHash<QString, qsizetype> indexByProjectKey;
+  for (const QString& key : std::as_const(groupOrder)) {
+    const QList<Project>& grouped = members.value(key);
+    const Project* representative = &grouped.first();
+    for (const Project& member : grouped) {
+      if (!preferredEnvironmentId.isEmpty() && member.environmentId == preferredEnvironmentId) {
+        representative = &member;
+        break;
+      }
+    }
+    Sorted entry;
+    entry.group.key = key;
+    entry.group.memberKeys = memberKeys.value(key);
+    entry.group.members = grouped;
+    entry.group.summary = QVariantMap{
+        {QStringLiteral("key"), key},
+        {QStringLiteral("displayName"),
+         grouped.size() > 1 ? groupLabel(*representative, grouped) : representative->title},
+        {QStringLiteral("environmentId"), representative->environmentId},
+        {QStringLiteral("projectId"), representative->id},
+        {QStringLiteral("workspaceRoot"), representative->workspaceRoot},
+    };
+    entry.title = representative->title;
+    // A group without threads sorts by the representative's own stamps.
+    entry.at = settings.sortOrder == QLatin1String("created_at")
+                   ? timestamp(representative->createdAt)
+                   : firstTimestamp(representative->updatedAt, representative->createdAt);
+    for (const QString& member : std::as_const(entry.group.memberKeys)) indexByProjectKey.insert(member, sorted.size());
+    sorted.append(entry);
+  }
+
+  // "manual" keeps the given order; the page's hand-arranged order is not
+  // carried over (native stores start fresh).
+  if (settings.sortOrder != QLatin1String("manual")) {
+    QSet<qsizetype> withThreads;
+    for (const Thread& thread : threads) {
+      if (thread.archivedAt) continue;
+      const auto index = indexByProjectKey.constFind(thread.environmentId + QLatin1Char(':') + thread.projectId);
+      if (index == indexByProjectKey.constEnd()) continue;
+      Sorted& entry = sorted[*index];
+      const double at = threadSortTimestamp(thread, settings.sortOrder);
+      if (!withThreads.contains(*index)) {
+        withThreads.insert(*index);
+        entry.at = at;
+      } else {
+        entry.at = std::max(entry.at, at);
+      }
+    }
+    std::stable_sort(sorted.begin(), sorted.end(), [](const Sorted& left, const Sorted& right) {
+      if (left.at != right.at) return left.at > right.at;
+      if (const int byTitle = left.title.localeAwareCompare(right.title)) return byTitle < 0;
+      return left.group.key.localeAwareCompare(right.group.key) < 0;
+    });
+  }
+  QList<ProjectGroup> groups;
+  for (const Sorted& entry : std::as_const(sorted)) groups.append(entry.group);
+  return groups;
 }
 
 const ProjectGroup* Input::group(const QString& key) const {
@@ -476,9 +699,25 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
     if (scoped && draft.toMap().value(QStringLiteral("projectKey")).toString() != scoped->key) continue;
     drafts.append(draft);
   }
+  QVariantList localProjects;
+  if (input.localEnvironmentId) {
+    for (const ProjectGroup& group : input.projects) {
+      for (const Project& member : group.members) {
+        if (member.environmentId != *input.localEnvironmentId) continue;
+        localProjects.append(QVariantMap{
+            {QStringLiteral("key"), member.key()},
+            {QStringLiteral("logicalProjectKey"), group.key},
+            {QStringLiteral("displayName"), member.title},
+            {QStringLiteral("environmentId"), member.environmentId},
+            {QStringLiteral("projectId"), member.id},
+            {QStringLiteral("workspaceRoot"), member.workspaceRoot},
+        });
+      }
+    }
+  }
   view.state = QVariantMap{
-      {QStringLiteral("localEnvironmentId"), input.localEnvironmentId},
-      {QStringLiteral("localProjects"), input.localProjects},
+      {QStringLiteral("localEnvironmentId"), nullable(input.localEnvironmentId)},
+      {QStringLiteral("localProjects"), localProjects},
       {QStringLiteral("projects"), projects},
       {QStringLiteral("scopeProjectKey"), nullable(scopeProjectKey)},
       {QStringLiteral("pinned"), pinned},
