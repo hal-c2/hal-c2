@@ -109,9 +109,10 @@ attaches this way to the node `mise run node` runs.
   `stateEntryChanged`), and `shell-connect.js` pulls the map lazily. A page
   that never reads it (the primary) is never sent its own publishes back.
 - **Per-key bindings.** `Shell.state` is a `QQmlPropertyMap`, so a publish
-  only re-evaluates bindings on that key. Keys are declared up front in
-  `ShellBridge.cpp`; a rice can read any of them, but a new key must be added
-  there before a binding will follow it.
+  only re-evaluates bindings on that key. Keys are declared up front, in
+  `ShellBridge.cpp` for the page's and in each native controller's
+  registration for the ones it owns; a rice can read any of them, but a new
+  key must be declared before a binding will follow it.
 - **Permissions and downloads.** Pages get the async clipboard; other browser
   permissions are denied. Opt-in QML extensions can use the native notification
   presenter described below. Downloads go to the user's download folder.
@@ -128,7 +129,7 @@ attaches this way to the node `mise run node` runs.
 | `src/ShellBridge.*`     | The `shell` WebChannel object / `Shell` QML singleton               |
 | `src/ThemeStore.*`      | `theme.json` loader + watcher, `Theme` QML singleton, CSS injection |
 | `src/BackendProcess.*`  | Spawns the Node desktop host, waits for `ready`                     |
-| `src/NativeShell.*`     | The shell's node client and the controllers that take keys over     |
+| `src/native/`           | The shell's node client and the controllers that take keys over     |
 | `qml/HalC2/Bricks/`     | Pure-QML bricks (see below) and the injected `js/shell-connect.js`  |
 | `scripts/gen-icons.mjs` | Regenerates `js/lucide.js`, the icon paths `ShellIcon` draws        |
 | `host/main.ts`          | Node desktop host: serves the web bundle, starts or attaches a node |
@@ -840,8 +841,9 @@ of the original chrome has a brick (`Sidebar`, `Composer`, `RightPanel`,
 state from the page. The timeline, the right panel's terminal tab and most
 settings pages are still HTML because they have not moved yet, not by design.
 
-A piece has moved when a controller in `NativeShell` builds its state from the
-shell's own node client and a brick renders it; the controller claims the key,
+A piece has moved when a native controller (`src/native/`, registered with
+`NativeControllerRegistrar`) builds its state from the shell's own node client
+and a brick renders it; the controller claims the key,
 so the page's publishes to it are dropped. The terminal drawer (native, on
 qml-ghostty) and the cluster settings are built this way. New features skip
 the page entirely: a controller, a brick the layouts place, and `@desktop`

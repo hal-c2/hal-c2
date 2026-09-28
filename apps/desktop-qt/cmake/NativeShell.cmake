@@ -1,0 +1,20 @@
+# hal_c2_native: the shell's own half, built once for the app and the native
+# tests. Every file in src/native (the node client, the store, the controllers
+# that take pieces off the page, their models) plus ShellBridge, which they
+# publish through. A new file there is picked up on the next build, no list to
+# edit.
+#
+# OBJECT, not STATIC: controllers register themselves from static
+# initialisers (NativeControllerRegistrar), which an archive would drop.
+#
+# Include once per project, then link `hal_c2_native`.
+
+function(hal_c2_add_native_library webchannel_script_url)
+  get_filename_component(_hal_c2_src "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src" ABSOLUTE)
+  file(GLOB _sources CONFIGURE_DEPENDS "${_hal_c2_src}/native/*.cpp" "${_hal_c2_src}/native/*.h")
+  add_library(hal_c2_native OBJECT ${_sources} "${_hal_c2_src}/ShellBridge.cpp" "${_hal_c2_src}/ShellBridge.h")
+  set_target_properties(hal_c2_native PROPERTIES AUTOMOC ON)
+  target_include_directories(hal_c2_native PUBLIC "${_hal_c2_src}" "${_hal_c2_src}/native")
+  target_compile_definitions(hal_c2_native PRIVATE HAL_C2_WEBCHANNEL_SCRIPT_URL="${webchannel_script_url}")
+  target_link_libraries(hal_c2_native PUBLIC Qt6::Core Qt6::Gui Qt6::Qml Qt6::Network Qt6::WebSockets)
+endfunction()

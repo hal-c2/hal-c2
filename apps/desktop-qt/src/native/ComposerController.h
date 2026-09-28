@@ -9,6 +9,8 @@
 
 #include <functional>
 
+#include "NativeController.h"
+
 class NodeClient;
 class ShellBridge;
 class ShellStore;
@@ -17,18 +19,17 @@ class ShellStore;
 // goes straight to the node, and so does a plain send (text only, one model)
 // the page has marked `nativeSend`. Anything richer, such as attachments,
 // slash commands, drafts or plan follow-ups, stays with the page's pipeline.
-class ComposerController : public QObject {
+class ComposerController : public QObject, public NativeController {
   Q_OBJECT
 
 public:
   ComposerController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 
-  void activate() { m_active = true; }
+  void activate() override { m_active = true; }
   bool isActive() const { return m_active; }
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
 
-  // The ShellBridge interceptor: true when the action was handled here.
-  bool handle(const QString& action, const QVariant& payload);
+  bool handle(const QString& action, const QVariant& payload) override;
 
 private:
   struct Send {

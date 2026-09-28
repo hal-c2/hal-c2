@@ -4,19 +4,20 @@
 #include <QObject>
 #include <QUrl>
 
-#include "ClusterController.h"
-#include "ComposerController.h"
+#include <memory>
+#include <vector>
+
+#include "NativeController.h"
 #include "NodeClient.h"
 #include "ShellStore.h"
 #include "SidebarController.h"
-#include "TerminalController.h"
 
 class ShellBridge;
 
 // The shell's own client of its node: one protocol-3 connection, the shell
-// shape folded into rows, and the controllers that take the sidebar, the
-// composer's turn RPCs, the terminal drawer and this machine's cluster settings
-// off the page. Until the first shell snapshot lands the page keeps doing
+// shape folded into rows, the sidebar, and the registered controllers
+// (NativeController.h) that take the composer's turn RPCs, the terminal drawer,
+// this machine's cluster settings and whatever moves next off the page. Until the first shell snapshot lands the page keeps doing
 // everything; after it, `native` (and a `shell.native` action to the page) says
 // which keys and actions the shell now owns. The sidebar stays with the page
 // while it groups projects from outside the node's cluster.
@@ -35,9 +36,16 @@ public:
 
   NodeClient* client() { return &m_client; }
   SidebarController* sidebar() { return &m_sidebar; }
-  ComposerController* composer() { return &m_composer; }
-  TerminalController* terminals() { return &m_terminals; }
-  ClusterController* cluster() { return &m_cluster; }
+  // The registered controller of type T, or null.
+  template <class T>
+  T* controller() const {
+    for (const Controller& entry : m_controllers) {
+      if (auto* found = qobject_cast<T*>(entry.object.get())) return found;
+    }
+    return nullptr;
+  }
+  // Registers the controllers that name one as `HalC2.Shell` singletons.
+  void registerQmlSingletons() const;
 
 private:
   void update();
@@ -50,8 +58,17 @@ private:
   QHash<QString, QString> m_lent;
   NodeClient m_client;
   ShellStore m_store;
+  // Not registered: it is the one piece that goes back to the page, while the
+  // page groups projects from outside the node's cluster.
   SidebarController m_sidebar;
-  ComposerController m_composer;
-  TerminalController m_terminals;
-  ClusterController m_cluster;
+  struct Controller {
+    // Owned here rather than by QObject parenting, so they go before the
+    // client and store they use.
+    std::unique_ptr<QObject> object;
+    NativeController* native;
+    const char* qmlName;
+  };
+  std::vector<Controller> m_controllers;
+  // Whether the controllers have taken over from the page.
+  bool m_active = false;
 };

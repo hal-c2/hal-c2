@@ -14,6 +14,8 @@ namespace {
 const QString kLocalOnlyHint =
     QStringLiteral("Only this machine can open it: the node listens on loopback. Invite over Tailscale instead.");
 
+const NativeControllerRegistrar<ClusterController> registrar(QStringLiteral("cluster"), {QStringLiteral("cluster")});
+
 }  // namespace
 
 ClusterController::ClusterController(ShellBridge* bridge, NodeClient* client, QObject* parent)

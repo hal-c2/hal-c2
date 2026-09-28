@@ -12,6 +12,9 @@
 
 namespace {
 
+// The drawer reads it as the `Terminals` singleton.
+const NativeControllerRegistrar<TerminalController> registrar(QStringLiteral("terminals"), {}, "Terminals");
+
 // TerminalWriteInput's limit.
 constexpr qsizetype kMaxWrite = 65536;
 // What the transcript keeps for a late Terminal, as the other clients cap their

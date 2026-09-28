@@ -13,6 +13,10 @@
 #include "ShellStore.h"
 #include "SidebarModel.h"
 
+namespace {
+const NativeControllerRegistrar<ComposerController> registrar(QStringLiteral("composer"));
+}  // namespace
+
 ComposerController::ComposerController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
                                        QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {}

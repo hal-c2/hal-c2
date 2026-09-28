@@ -9,14 +9,13 @@
 namespace {
 
 // Everything the web app publishes (see apps/web/src/shell/*Bridge.tsx) plus
-// the shell's own `backendError`, `native` and `cluster` (ClusterController).
-// `sidebar` comes from the page or, once `native.sidebar` is set, from
-// SidebarController.
+// the shell's own `backendError` and `native`. The native controllers declare
+// the keys only they publish (NativeControllerRegistrar). `sidebar` comes from
+// the page or, once `native.sidebar` is set, from SidebarController.
 constexpr const char* kStateKeys[] = {
     "backendError", "composer", "contextMenu", "git",   "keybindings", "layout",
     "notifications", "rightPanel", "settings", "sidebar", "theme",     "workspace",
     "desktopNotifications", "modelPicker", "native", "sidebarInput", "environmentAccess",
-    "cluster",
 };
 
 // Qt 6.11 deprecates the public constructor in favour of create(); the
@@ -36,6 +35,10 @@ ShellBridge::ShellBridge(QObject* parent)
   for (const char* key : kStateKeys) {
     m_state->insert(QString::fromLatin1(key), QVariant());
   }
+}
+
+void ShellBridge::declareKey(const QString& key) {
+  if (!m_state->contains(key)) m_state->insert(key, QVariant());
 }
 
 QObject* ShellBridge::channel() const {

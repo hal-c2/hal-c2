@@ -45,6 +45,8 @@ public:
   bool localFolderImportEnabled() const { return m_localFolderImportEnabled; }
   void setLocalFolderImportEnabled(bool enabled) { m_localFolderImportEnabled = enabled; }
 
+  // A key bindings can follow before anything publishes it; see kStateKeys.
+  void declareKey(const QString& key);
   // Called by the web app (via the channel) with its view models.
   Q_INVOKABLE void publish(const QString& key, const QVariant& value);
   Q_INVOKABLE void openExternal(const QUrl& url);

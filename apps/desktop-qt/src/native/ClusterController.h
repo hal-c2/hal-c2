@@ -6,6 +6,8 @@
 
 #include <functional>
 
+#include "NativeController.h"
+
 class NodeClient;
 class ShellBridge;
 
@@ -14,7 +16,7 @@ class ShellBridge;
 // over the shell's own connection (`cluster.*` RPCs). Publishes `cluster`:
 // {open, busy, status, error, invite, notice}; `open` puts the window in
 // settings with this page showing (ShellWindow.settingsPage).
-class ClusterController : public QObject {
+class ClusterController : public QObject, public NativeController {
   Q_OBJECT
 
 public:
@@ -22,11 +24,10 @@ public:
 
   // Once the shell has its node: publishes `cluster`, so the settings nav
   // offers the page.
-  void activate();
+  void activate() override;
   bool isActive() const { return m_active; }
 
-  // The ShellBridge interceptor: true when the action was handled here.
-  bool handle(const QString& action, const QVariant& payload);
+  bool handle(const QString& action, const QVariant& payload) override;
 
 private:
   void refresh();

@@ -14,6 +14,8 @@
 
 #include <optional>
 
+#include "NativeController.h"
+
 class NodeClient;
 class ShellBridge;
 class ShellStore;
@@ -130,7 +132,7 @@ private:
 // in its header (`workspace`); the terminals come from the node. They are
 // attached the first time the drawer opens on that thread and stay attached
 // while the thread is on screen, so hiding the drawer keeps their output.
-class TerminalController : public QObject {
+class TerminalController : public QObject, public NativeController {
   Q_OBJECT
   Q_PROPERTY(bool available READ available NOTIFY changed)
   Q_PROPERTY(bool open READ isOpen NOTIFY changed)
@@ -144,10 +146,9 @@ public:
 
   TerminalController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 
-  void activate();
+  void activate() override;
   bool isActive() const { return m_active; }
-  // The ShellBridge interceptor: true when the action was handled here.
-  bool handle(const QString& action, const QVariant& payload);
+  bool handle(const QString& action, const QVariant& payload) override;
 
   bool available() const { return m_place.has_value(); }
   bool isOpen() const;

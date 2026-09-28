@@ -166,7 +166,7 @@ int main(int argc, char* argv[]) {
   qmlRegisterType<LocalTranscriber>("HalC2.Shell", 1, 0, "LocalTranscriber");
   qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
   NativeShell native(&bridge);
-  qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Terminals", native.terminals());
+  native.registerQmlSingletons();
   ThemeStore theme(configDir);
   ShellRuntime runtime({configDir, qmlSourceDir}, &bridge, &theme);
   // The page publishes its resolved theme; without a theme.json it is the

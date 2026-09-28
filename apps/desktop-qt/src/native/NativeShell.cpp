@@ -1,28 +1,44 @@
 #include "NativeShell.h"
 
 #include <QJsonObject>
+#include <QQmlEngine>
 #include <QTimer>
 #include <QtLogging>
 
+#include <algorithm>
+
 #include "ShellBridge.h"
+
+QList<NativeControllerRegistration>& nativeControllerRegistry() {
+  static QList<NativeControllerRegistration> registry;
+  return registry;
+}
 
 NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)
     : QObject(parent),
       m_bridge(bridge),
       m_client(this),
       m_store(&m_client, this),
-      m_sidebar(bridge, &m_client, &m_store, this),
-      m_composer(bridge, &m_client, &m_store, this),
-      m_terminals(bridge, &m_client, &m_store, this),
-      m_cluster(bridge, &m_client, this) {
+      m_sidebar(bridge, &m_client, &m_store, this) {
+  // Static initialisers register in link order; name order keeps it stable.
+  QList<NativeControllerRegistration> registrations = nativeControllerRegistry();
+  std::sort(registrations.begin(), registrations.end(),
+            [](const auto& a, const auto& b) { return a.name < b.name; });
+  for (const NativeControllerRegistration& registration : registrations) {
+    for (const QString& key : registration.stateKeys) bridge->declareKey(key);
+    std::unique_ptr<QObject> object(registration.create(bridge, &m_client, &m_store, this));
+    auto* native = dynamic_cast<NativeController*>(object.get());
+    m_controllers.push_back({std::move(object), native, registration.qmlName});
+  }
   bridge->addInterceptor([this](const QString& action, const QVariant& payload) {
     // A (re)loaded page asks who owns what; the answer comes as `shell.native`.
     if (action == QLatin1String("shell.native.query")) {
-      if (m_composer.isActive()) announce();
+      if (m_active) announce();
       return true;
     }
-    return m_sidebar.handle(action, payload) || m_composer.handle(action, payload) ||
-           m_terminals.handle(action, payload) || m_cluster.handle(action, payload);
+    if (m_sidebar.handle(action, payload)) return true;
+    return std::any_of(m_controllers.cbegin(), m_controllers.cend(),
+                       [&](const Controller& entry) { return entry.native->handle(action, payload); });
   });
   connect(&m_store, &ShellStore::changed, this, &NativeShell::update);
   connect(&m_store, &ShellStore::changed, this, &NativeShell::lend);
@@ -35,6 +51,12 @@ NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)
     if (key == QLatin1String("sidebarInput")) update();
     if (key == QLatin1String("environmentAccess")) lend();
   });
+}
+
+void NativeShell::registerQmlSingletons() const {
+  for (const Controller& entry : m_controllers) {
+    if (entry.qmlName) qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, entry.qmlName, entry.object.get());
+  }
 }
 
 void NativeShell::lend() {
@@ -82,10 +104,9 @@ void NativeShell::lend() {
 void NativeShell::update() {
   if (!m_store.synchronized()) return;
   const bool sidebar = m_sidebar.coversPage();
-  if (m_composer.isActive() && sidebar == m_sidebar.isActive()) return;
-  m_composer.activate();
-  m_terminals.activate();
-  m_cluster.activate();
+  if (m_active && sidebar == m_sidebar.isActive()) return;
+  m_active = true;
+  for (const Controller& entry : m_controllers) entry.native->activate();
   if (sidebar) {
     m_bridge->claimKey(QStringLiteral("sidebar"));
     m_sidebar.activate();

@@ -67,28 +67,10 @@ qt_add_executable(hal-c2-qt
   src/NativeNotifications.h
   src/BackendProcess.cpp
   src/BackendProcess.h
-  src/ClusterController.cpp
-  src/ClusterController.h
-  src/ComposerController.cpp
-  src/ComposerController.h
-  src/NativeShell.cpp
-  src/NativeShell.h
-  src/NodeClient.cpp
-  src/NodeClient.h
-  src/ShellBridge.cpp
-  src/ShellBridge.h
   src/ShellRuntime.cpp
   src/ShellRuntime.h
-  src/ShellStore.cpp
-  src/ShellStore.h
-  src/SidebarController.cpp
-  src/SidebarController.h
-  src/SidebarModel.cpp
-  src/SidebarModel.h
   src/StoragePaths.cpp
   src/StoragePaths.h
-  src/TerminalController.cpp
-  src/TerminalController.h
   src/ThemeStore.cpp
   src/ThemeStore.h
   src/WebProfile.cpp
@@ -105,11 +87,14 @@ endif()
 if(HAL_C2_QWEBCHANNEL_JS)
   set_source_files_properties("${HAL_C2_QWEBCHANNEL_JS}" PROPERTIES QT_RESOURCE_ALIAS "qwebchannel.js")
   qt_add_resources(hal-c2-qt "hal_c2_webchannel" PREFIX "/hal-c2" FILES "${HAL_C2_QWEBCHANNEL_JS}")
-  target_compile_definitions(hal-c2-qt PRIVATE HAL_C2_WEBCHANNEL_SCRIPT_URL="qrc:/hal-c2/qwebchannel.js")
+  set(_hal_c2_webchannel_url "qrc:/hal-c2/qwebchannel.js")
 else()
   message(STATUS "qwebchannel.js not found next to Qt; relying on qrc:///qtwebchannel/qwebchannel.js at runtime")
-  target_compile_definitions(hal-c2-qt PRIVATE HAL_C2_WEBCHANNEL_SCRIPT_URL="qrc:///qtwebchannel/qwebchannel.js")
+  set(_hal_c2_webchannel_url "qrc:///qtwebchannel/qwebchannel.js")
 endif()
+
+include(cmake/NativeShell.cmake)
+hal_c2_add_native_library("${_hal_c2_webchannel_url}")
 
 # The window icon; packaged builds also install it for the desktop entry.
 set(HAL_C2_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../../assets/prod/black-universal-1024.png")
@@ -137,6 +122,7 @@ target_link_libraries(hal-c2-qt PRIVATE
   Qt6::WebEngineQuick
   Qt6::WebChannel
   Qt6::WebSockets
+  hal_c2_native
   hal_c2_bricksplugin
   qmlghosttyplugin
 )
