@@ -15,9 +15,10 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   With `--dev`, compiles and has nodes started from this checkout (`mix run`)
   load what changed.
 
-  Clustered nodes use TLS distribution: run the task with the cluster's flags,
-  `elixir --erl "$(mix hal_c2.cluster vm-args)" -S mix hal_c2.upgrade ...`. Otherwise a
-  hidden short-name node is started with `--cookie`.
+  Named nodes are reached from a hidden short-name node started with `--cookie`, so
+  they must run with plain distribution (`elixir --sname ... -S mix hal_c2.server`).
+  A cluster's nodes (`HalC2.Cluster`) admit only their members' certificates; update
+  them from a client instead.
   """
 
   use Mix.Task

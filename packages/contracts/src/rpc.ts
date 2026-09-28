@@ -172,6 +172,14 @@ import {
   PullRequestUpdateInput,
 } from "./pullRequest.ts";
 import {
+  ClusterError,
+  ClusterInvite,
+  ClusterInviteInput,
+  ClusterJoinInput,
+  ClusterRemoveInput,
+  ClusterStatus,
+} from "./cluster.ts";
+import {
   RelayClientInstallFailedError,
   RelayClientInstallProgressEventSchema,
   RelayClientStatusSchema,
@@ -462,6 +470,12 @@ export const WS_METHODS = {
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
+
+  // The cluster of this person's machines (nodes only)
+  clusterStatus: "cluster.status",
+  clusterInvite: "cluster.invite",
+  clusterJoin: "cluster.join",
+  clusterRemove: "cluster.remove",
 
   // Pull request methods
   pullRequestsList: "pullRequests.list",
@@ -821,6 +835,34 @@ const WsCloudInstallRelayClientRpc = Rpc.make(WS_METHODS.cloudInstallRelayClient
   success: RelayClientInstallProgressEventSchema,
   error: Schema.Union([RelayClientInstallFailedError, EnvironmentAuthorizationError]),
   stream: true,
+});
+
+const ClusterRpcError = Schema.Union([ClusterError, EnvironmentAuthorizationError]);
+
+const WsClusterStatusRpc = Rpc.make(WS_METHODS.clusterStatus, {
+  payload: Schema.Struct({}),
+  success: ClusterStatus,
+  error: ClusterRpcError,
+});
+
+const WsClusterInviteRpc = Rpc.make(WS_METHODS.clusterInvite, {
+  payload: ClusterInviteInput,
+  success: ClusterInvite,
+  error: ClusterRpcError,
+});
+
+/** Joins the node to the cluster of the machine the invite is from; answers the new status. */
+const WsClusterJoinRpc = Rpc.make(WS_METHODS.clusterJoin, {
+  payload: ClusterJoinInput,
+  success: ClusterStatus,
+  error: ClusterRpcError,
+});
+
+/** Stops every member admitting `id`; answers the new status. */
+const WsClusterRemoveRpc = Rpc.make(WS_METHODS.clusterRemove, {
+  payload: ClusterRemoveInput,
+  success: ClusterStatus,
+  error: ClusterRpcError,
 });
 
 const WsServerReportClientActivityRpc = Rpc.make(WS_METHODS.serverReportClientActivity, {
@@ -1688,6 +1730,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetBackgroundPolicyRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
+  WsClusterStatusRpc,
+  WsClusterInviteRpc,
+  WsClusterJoinRpc,
+  WsClusterRemoveRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsSummaryRpc,

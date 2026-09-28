@@ -8,6 +8,7 @@ export * from "./auth.ts";
 export * from "./environment.ts";
 export * from "./environmentHttp.ts";
 export * from "./relayClient.ts";
+export * from "./cluster.ts";
 export * from "./desktopBootstrap.ts";
 export * from "./desktopAppActivation.ts";
 export * from "./remoteAccess.ts";

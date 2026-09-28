@@ -4,7 +4,8 @@ defmodule Mix.Tasks.HalC2.Server do
   Starts the node in the foreground and prints the WebSocket URL with its token.
 
       mix hal_c2.server
-      elixir --name hal_c2@HOST -S mix hal_c2.server   # as a named, clusterable node
+
+  It clusters when the VM was booted for it (`mise run node`, `HalC2.Cluster`).
   """
 
   use Mix.Task

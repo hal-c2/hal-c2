@@ -246,8 +246,8 @@ defmodule HalC2.Environment do
     end
   end
 
-  # The machine's host name, unless HAL_C2_LABEL names it.
-  defp label do
+  @doc "The name this machine goes by: `HAL_C2_LABEL`, else its hostname."
+  def label do
     case System.get_env("HAL_C2_LABEL") do
       nil ->
         {:ok, host} = :inet.gethostname()

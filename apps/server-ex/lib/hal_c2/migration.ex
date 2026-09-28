@@ -103,7 +103,6 @@ defmodule HalC2.Migration do
 
       # Into place, the database last.
       for {kind, _} <- kinds, File.dir?(stagings[kind]), do: commit(stagings[kind], dirs[kind])
-      if "elixir/cluster" in copied, do: HalC2.Cluster.relocate(dirs.data)
       write_record(record, %{"source" => source, "at" => now(), "copied" => copied ++ database})
       Logger.info("Migrated from #{source}: copied #{length(copied ++ database)} items")
       {:migrated, source}

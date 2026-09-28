@@ -222,7 +222,32 @@ defmodule HalC2.Rpc do
   end
 
   def handle("cloud.getRelayClientStatus", _), do: {:ok, HalC2.Connect.RelayClient.resolve()}
+  # This machine's cluster (`HalC2.Cluster`); a client joins it to another with an invite.
+  def handle("cluster.status", _input), do: {:ok, HalC2.Cluster.status()}
+  def handle("cluster.invite", input), do: cluster(HalC2.Cluster.invite(input || %{}))
+
+  def handle("cluster.join", %{"link" => link}) when is_binary(link),
+    do: cluster(HalC2.Cluster.join(link))
+
+  def handle("cluster.remove", %{"id" => id}) when is_binary(id) do
+    case HalC2.Cluster.remove(id) do
+      :ok -> {:ok, HalC2.Cluster.status()}
+      error -> cluster(error)
+    end
+  end
+
   def handle(method, _payload), do: {:error, "#{method} is not served by this node yet"}
+
+  defp cluster({:ok, _} = ok), do: ok
+
+  defp cluster({:error, reason}),
+    do:
+      {:error,
+       %{
+         "_tag" => "ClusterError",
+         "reason" => HalC2.Cluster.reason(reason),
+         "message" => HalC2.Cluster.describe(reason)
+       }}
 
   # Methods a session with `orchestration:read` alone may call, as the Node server's
   # `RPC_REQUIRED_SCOPES` declares them; every other method changes something.
@@ -255,6 +280,8 @@ defmodule HalC2.Rpc do
 
   def required_scope("cloud.getRelayClientStatus"), do: "relay:read"
   def required_scope("cloud." <> _), do: "relay:write"
+  def required_scope("cluster.status"), do: "access:read"
+  def required_scope("cluster." <> _), do: "access:write"
 
   def required_scope("pullRequests." <> method),
     do:

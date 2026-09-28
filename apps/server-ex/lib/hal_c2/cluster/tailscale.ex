@@ -1,68 +1,33 @@
 defmodule HalC2.Cluster.Tailscale do
   @moduledoc """
-  libcluster strategy that finds peers on the local tailnet.
-
-  It reads `tailscale status --json` from the local daemon (no API key) every
-  `:polling_interval` ms and tries `hal_c2@<tailscale IPv4>` on each online peer. Peers
-  without a HAL-C2 node simply refuse the connection, and peers from another cluster
-  fail the TLS handshake, so trying every peer is safe.
-
-      config :libcluster,
-        topologies: [tailnet: [strategy: HalC2.Cluster.Tailscale, config: [polling_interval: 10_000]]]
+  Discovery strategy: the online peers on this machine's tailnet, from the local
+  daemon's `tailscale status --json` (no API key). Machines without a HAL-C2 node refuse
+  the connection and ones outside the cluster fail the handshake, so every peer is
+  worth a try.
   """
 
-  use GenServer
-  use Cluster.Strategy
+  @behaviour HalC2.Cluster.Discovery
 
-  alias Cluster.Strategy.State
+  @impl true
+  def addresses do
+    [command | args] = Application.get_env(:hal_c2, :tailscale_command, ["tailscale"])
 
-  @default_interval 10_000
-
-  @impl Cluster.Strategy
-  def start_link([%State{} = state]), do: GenServer.start_link(__MODULE__, state)
-
-  @impl GenServer
-  def init(state) do
-    send(self(), :poll)
-    {:ok, state}
-  end
-
-  @impl GenServer
-  def handle_info(:poll, state) do
-    command =
-      Keyword.get_lazy(state.config, :command, fn ->
-        Application.get_env(:hal_c2, :tailscale_command, ["tailscale"]) ++ ["status", "--json"]
-      end)
-
-    nodes = discover(command)
-    Cluster.Strategy.connect_nodes(state.topology, state.connect, state.list_nodes, nodes)
-
-    Process.send_after(
-      self(),
-      :poll,
-      Keyword.get(state.config, :polling_interval, @default_interval)
-    )
-
-    {:noreply, state}
-  end
-
-  @doc "Node names for the online peers in a `tailscale status --json` document."
-  @spec peers(map) :: [node]
-  def peers(%{"Peer" => peers}) when is_map(peers) do
-    for {_key, %{"Online" => true, "TailscaleIPs" => ips}} <- peers,
-        ip = Enum.find(ips, &String.contains?(&1, ".")),
-        ip != nil,
-        do: :"hal_c2@#{ip}"
-  end
-
-  def peers(_status), do: []
-
-  defp discover([cmd | args]) do
-    case System.cmd(cmd, args, stderr_to_stdout: true) do
+    case System.cmd(command, args ++ ["status", "--json"], stderr_to_stdout: true) do
       {json, 0} -> json |> JSON.decode!() |> peers()
       _ -> []
     end
   rescue
     _ -> []
   end
+
+  @doc "The IPv4 address of each online peer in a `tailscale status --json` document."
+  @spec peers(map) :: [String.t()]
+  def peers(%{"Peer" => peers}) when is_map(peers) do
+    for {_key, %{"Online" => true, "TailscaleIPs" => ips}} <- peers,
+        ip = Enum.find(ips, &String.contains?(&1, ".")),
+        ip != nil,
+        do: ip
+  end
+
+  def peers(_status), do: []
 end

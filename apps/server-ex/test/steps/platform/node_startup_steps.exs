@@ -709,38 +709,26 @@ defmodule HalC2.Steps.Platform.NodeStartup do
 
   # --- cluster boot -----------------------------------------------------------------------
 
-  step "the home directory holds cluster boot arguments", context do
-    # A node root (HAL_C2_NODE_HOME): the arguments are in its data directory.
-    home = Node.tmp_dir(context.node, "clustered")
-    :ok = HalC2.Cluster.init(Path.join(home, "data"), "100.64.0.9")
-    Map.put(context, :cluster_home, home)
-  end
-
   step "the release starts", context do
-    Map.put(context, :release_env, release_env(context.cluster_home))
+    home = Node.tmp_dir(context.node, "release")
+    context |> Map.put(:release_home, home) |> Map.put(:release_env, release_env(home))
   end
 
-  step "it starts with cluster distribution over mutual TLS", context do
-    args_file = Path.join([context.cluster_home, "data", "cluster", "vm.args"])
-    assert context.release_env["ELIXIR_ERL_OPTIONS"] =~ "-args_file #{args_file}"
-    # The release script starts no distribution of its own; the flags do.
-    assert context.release_env["RELEASE_DISTRIBUTION"] == "none"
-
-    args = File.read!(args_file)
-    assert args =~ "-proto_dist inet_tls"
-    assert args =~ "-name hal_c2@100.64.0.9"
-    [_, conf_file] = Regex.run(~r/-ssl_dist_optfile (\S+)/, args)
-    {:ok, [conf]} = :file.consult(String.to_charlist(conf_file))
-    assert conf[:server][:verify] == :verify_peer
-    assert conf[:server][:fail_if_no_peer_cert] == true
-    assert conf[:client][:verify] == :verify_peer
+  step "it boots with TLS distribution whose options are in the node's data directory",
+       context do
+    # The node names itself and writes the options when it starts (`HalC2.Cluster`).
+    optfile = Path.join([context.release_home, "data", "cluster", "ssl_dist.conf"])
+    env = context.release_env
+    assert env["RELEASE_DISTRIBUTION"] == "none"
+    assert env["RELEASE_COOKIE"] == "hal_c2"
+    assert env["ELIXIR_ERL_OPTIONS"] =~ "-proto_dist inet_tls -ssl_dist_optfile #{optfile}"
     context
   end
 
-  step "without them it starts with distribution off", context do
-    env = release_env(Node.tmp_dir(context.node, "standalone"))
-    assert env["RELEASE_DISTRIBUTION"] == "none"
-    refute (env["ELIXIR_ERL_OPTIONS"] || "") =~ "-args_file"
+  step "asking the release for named distribution leaves the cluster flags out", context do
+    env = release_env(context.release_home, "sname")
+    assert env["RELEASE_DISTRIBUTION"] == "sname"
+    refute env["ELIXIR_ERL_OPTIONS"] =~ "-proto_dist"
     context
   end
 
@@ -763,7 +751,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
 
   # What rel/env.sh.eex exports, sourced the way the release script does, with
   # `node_home` as the node's root (HAL_C2_NODE_HOME).
-  defp release_env(node_home) do
+  defp release_env(node_home, distribution \\ nil) do
     script = Path.join(project_dir(), "rel/env.sh.eex")
 
     {out, 0} =
@@ -771,19 +759,21 @@ defmodule HalC2.Steps.Platform.NodeStartup do
         "sh",
         [
           "-c",
-          ~s(. "$0"; printf '%s\\n' "$RELEASE_DISTRIBUTION" "${ELIXIR_ERL_OPTIONS:-}"),
+          ~s(. "$0"; printf '%s\\n' "$RELEASE_DISTRIBUTION" "${ELIXIR_ERL_OPTIONS:-}" "${RELEASE_COOKIE:-}"),
           script
         ],
         env:
           [
             {"HAL_C2_NODE_HOME", node_home},
-            {"RELEASE_DISTRIBUTION", nil},
-            {"ELIXIR_ERL_OPTIONS", nil}
+            {"RELEASE_ROOT", Path.join(project_dir(), "rel/overlays")},
+            {"RELEASE_DISTRIBUTION", distribution},
+            {"ELIXIR_ERL_OPTIONS", nil},
+            {"RELEASE_COOKIE", nil}
           ] ++ for(name <- @home_env -- ["HAL_C2_NODE_HOME"], do: {name, nil})
       )
 
-    [dist, opts] = String.split(out, "\n") |> Enum.take(2)
-    %{"RELEASE_DISTRIBUTION" => dist, "ELIXIR_ERL_OPTIONS" => opts}
+    [dist, opts, cookie] = String.split(out, "\n") |> Enum.take(3)
+    %{"RELEASE_DISTRIBUTION" => dist, "ELIXIR_ERL_OPTIONS" => opts, "RELEASE_COOKIE" => cookie}
   end
 
   # `{ip, port}` of the listener `HalC2.Web` would start under `boot`.

@@ -48,9 +48,6 @@ dependencies for the build machine's platform), so building one needs `pnpm`, an
 running Cursor needs Node 22+ on the machine. The desktop app runs it on its own
 Electron binary instead (`HAL_C2_NODE_COMMAND`).
 
-A machine that has joined a cluster boots clustered: joining writes
-`cluster/vm.args` in its data directory, which the release reads at start.
-
 Run it as a service with `bin/hal-c2-service` (under launchd, systemd, or a terminal): it
 is `bin/hal_c2 start`, started again when the node restarts to finish an update.
 `bin/hal-c2-service install` registers it as a systemd user unit (Linux) or launch agent
@@ -82,15 +79,22 @@ callback.
 ## Cluster your machines
 
 ```sh
-mix hal_c2.cluster init 100.x.y.z                    # first machine: its Tailscale IP
-mix hal_c2.cluster invite 100.a.b.c bundle           # on a member, for the new machine
-mix hal_c2.cluster join bundle                       # on the new machine; then delete the bundle
-elixir --erl "$(mix hal_c2.cluster vm-args)" -S mix hal_c2.server
+bin/hal-c2-service cluster invite            # on a member: prints a link, good once for 5 minutes
+bin/hal-c2-service cluster join LINK         # on the new machine
+bin/hal-c2-service cluster                   # this machine and the members it is connected to
+bin/hal-c2-service cluster remove LABEL      # no member admits that machine any more
 ```
 
-Nodes find each other on the tailnet (`HalC2.Cluster.Tailscale`) or through
-`HAL_C2_PEERS=hal_c2@host,...`, and only connect when both certificates come from the
-cluster's CA.
+From a checkout, `mix hal_c2.cluster` takes the same arguments. Every node boots ready to
+cluster (`rel/env.sh.eex`, `mise run node`): it has its own certificate, and members pin
+each other's and talk Erlang distribution over mutual TLS on port 4370
+([cluster.feature](../../features/connections/cluster.feature)). The joining machine has to
+reach the inviting node's HTTP address, so start that one with `HAL_C2_NODE_HOST` set to
+its LAN or tailnet address, or invite with `--tailscale`.
+
+Members find each other at the addresses they report, then at those a discovery strategy
+lists: the tailnet (`HalC2.Cluster.Tailscale`) and `HAL_C2_PEERS=host[:port],...`
+(`HalC2.Cluster.Static`), or modules of your own in the `:cluster_strategies` config.
 
 ## Link a node you do not cluster with
 

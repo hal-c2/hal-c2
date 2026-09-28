@@ -4,7 +4,7 @@
 #   apps/server-ex/README.md (Run, Release: where the node keeps its state)
 #   apps/server/src/cli/config.ts (HAL_C2_HOST)
 #   apps/server-ex/lib/mix/tasks/hal_c2.server.ex, hal_c2.import.ex, hal_c2.bundle.ex
-#   apps/server-ex/rel/env.sh.eex (the release's home, RELEASE_DISTRIBUTION, cluster vm.args)
+#   apps/server-ex/rel/env.sh.eex (RELEASE_DISTRIBUTION, cluster boot flags), rel/overlays/bin/hal-c2-data-dir (the release's home)
 #   apps/server-ex/rel/overlays/bin/hal-c2-service (restart loop on exit 75), lib/hal_c2/service.ex
 #   apps/server-ex/lib/hal_c2/desktop.ex (HAL_C2_BOOTSTRAP_STDIN), acp.ex (HAL_C2_NODE_COMMAND, HAL_C2_NODE_ELECTRON)
 #   apps/server-ex/lib/hal_c2/web.ex (access-token), environment.ex (environment-id, HAL_C2_LABEL, descriptor)
@@ -241,11 +241,10 @@ Feature: Starting the node
     Then it refuses with the expected usage
 
   @node
-  Scenario: A node joins its cluster on boot when it has been made a member
-    Given the home directory holds cluster boot arguments
+  Scenario: A release boots ready to cluster
     When the release starts
-    Then it starts with cluster distribution over mutual TLS
-    And without them it starts with distribution off
+    Then it boots with TLS distribution whose options are in the node's data directory
+    And asking the release for named distribution leaves the cluster flags out
 
   # The TypeScript server's --home-dir, --port and --mode flags. A node reads HAL_C2_HOME and
   # HAL_C2_NODE_PORT and has one mode; the desktop bootstrap covers the desktop case.

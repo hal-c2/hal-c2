@@ -39,7 +39,6 @@ defmodule HalC2.MixProject do
       {:erlexec, "~> 2.5"},
       {:exile, "~> 0.15"},
       {:exqlite, "~> 0.41"},
-      {:libcluster, "~> 3.5"},
       {:mint_web_socket, "~> 1.0"},
       {:tz, "~> 0.28"},
       {:websock_adapter, "~> 0.6"},

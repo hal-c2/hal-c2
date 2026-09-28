@@ -11,6 +11,8 @@ defmodule HalC2.Application do
         :ok = prepare_files()
 
         [
+          # Distribution starts here, before anything reads `node()`.
+          HalC2.Cluster,
           {HalC2.Store, path: HalC2.Store.home_path()},
           HalC2.Auth,
           HalC2.Settings,
@@ -75,8 +77,10 @@ defmodule HalC2.Application do
           # Turns the restart cut off go on, where the user asked for that.
           Supervisor.child_spec({Task, &HalC2.Orchestration.Recovery.continue/0}, id: :continue),
           # Projects that ask for it are brought up to date.
-          Supervisor.child_spec({Task, &HalC2.Projects.auto_pull/0}, id: :auto_pull)
-        ] ++ discovery(HalC2.Paths.data_dir())
+          Supervisor.child_spec({Task, &HalC2.Projects.auto_pull/0}, id: :auto_pull),
+          # Members of this machine's cluster are connected once everything is up.
+          HalC2.Cluster.Discovery
+        ]
       else
         []
       end
@@ -97,27 +101,4 @@ defmodule HalC2.Application do
 
     HalC2.Paths.ensure!()
   end
-
-  # Named nodes find peers listed in HAL_C2_PEERS (node names such as hal_c2@192.168.1.20);
-  # nodes with cluster certificates also search the tailnet.
-  @doc false
-  def discovery(data_dir) do
-    static =
-      case System.get_env("HAL_C2_PEERS") do
-        nil -> []
-        peers -> [static: [strategy: Cluster.Strategy.Epmd, config: [hosts: parse_peers(peers)]]]
-      end
-
-    tailnet =
-      if HalC2.Cluster.address(data_dir),
-        do: [tailnet: [strategy: HalC2.Cluster.Tailscale]],
-        else: []
-
-    if Node.alive?() and static ++ tailnet != [],
-      do: [{Cluster.Supervisor, [static ++ tailnet, [name: HalC2.ClusterSupervisor]]}],
-      else: []
-  end
-
-  defp parse_peers(peers),
-    do: for(p <- String.split(peers, ",", trim: true), do: p |> String.trim() |> String.to_atom())
 end

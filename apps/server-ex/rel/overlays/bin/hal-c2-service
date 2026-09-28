@@ -7,9 +7,11 @@ set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 
 # `hal-c2-service install|status|restart|uninstall` manages this release with the user's
-# service manager (`HalC2.Service.main/1`).
+# service manager (`HalC2.Service.main/1`); `hal-c2-service cluster ...` the running
+# node's cluster (`HalC2.Cluster.Command`).
 case "${1:-}" in
   install | status | restart | uninstall) exec "$here/hal_c2" eval "HalC2.Service.main([\"$1\"])" ;;
+  cluster) shift && exec "$here/hal_c2" eval "HalC2.Cluster.Command.main(System.argv())" "$@" ;;
 esac
 
 releases="$here/../releases"

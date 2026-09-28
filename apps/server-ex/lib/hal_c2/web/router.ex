@@ -198,6 +198,46 @@ defmodule HalC2.Web.Router do
     end)
   end
 
+  # The cluster of this person's machines (`HalC2.Cluster`). A machine joining through a
+  # pairing link is admitted with the link's one-time session, which ends there.
+  get "/api/cluster" do
+    with_scope(conn, "access:read", fn _session -> {200, HalC2.Cluster.status()} end)
+  end
+
+  post "/api/cluster/members" do
+    with_scope(conn, "access:write", fn session ->
+      with {:ok, body} <- json_body(conn) do
+        answer = cluster_answer(HalC2.Cluster.admit(body))
+        if session.id && elem(answer, 0) == 200, do: HalC2.Auth.revoke_client(session.id)
+        answer
+      end
+    end)
+  end
+
+  post "/api/cluster/invite" do
+    with_scope(conn, "access:write", fn _session ->
+      with {:ok, body} <- json_body(conn), do: cluster_answer(HalC2.Cluster.invite(body))
+    end)
+  end
+
+  post "/api/cluster/join" do
+    with_scope(conn, "access:write", fn _session ->
+      case json_body(conn) do
+        {:ok, %{"link" => link}} when is_binary(link) -> cluster_answer(HalC2.Cluster.join(link))
+        _ -> {:error, :invalid_body}
+      end
+    end)
+  end
+
+  post "/api/cluster/remove" do
+    with_scope(conn, "access:write", fn _session ->
+      case json_body(conn) do
+        {:ok, %{"id" => id}} when is_binary(id) -> cluster_answer(HalC2.Cluster.remove(id))
+        _ -> {:error, :invalid_body}
+      end
+    end)
+  end
+
   # A pull request's patch, which is large enough to want HTTP rather than the socket.
   post "/api/pull-requests/diff" do
     with_scope(conn, "orchestration:read", fn _session ->
@@ -269,6 +309,14 @@ defmodule HalC2.Web.Router do
     for {_node, descriptor} <- HalC2.Shell.environments(),
         do: Map.take(descriptor, ["environmentId", "label"])
   end
+
+  defp cluster_answer(:ok), do: {200, %{}}
+  defp cluster_answer({:ok, body}), do: {200, body}
+
+  defp cluster_answer({:error, reason}),
+    do:
+      {409,
+       %{"reason" => HalC2.Cluster.reason(reason), "message" => HalC2.Cluster.describe(reason)}}
 
   # The session a socket opens for, or nil for one opened with the node's own token.
   defp socket_session(%{"wsTicket" => ticket}), do: HalC2.Auth.take_ticket(ticket)

@@ -6,7 +6,8 @@
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (shapes)
 #   packages/client-runtime/src/v3/clusterSocket.ts (protocol 3 client adapter)
 #   apps/server-ex/lib/hal_c2/acp/antigravity/installation.ex (provider.install.*), apps/server-ex/lib/hal_c2/connect/relay_client.ex (cloud.*)
-#   Counts: 168 contract methods; 165 aligned, 3 dropped.
+#   apps/server-ex/lib/hal_c2/cluster.ex (cluster.*; the TypeScript server answers them as unsupported)
+#   Counts: 172 contract methods; 169 aligned, 3 dropped.
 #   WS_METHODS also names projects.add, projects.list and projects.remove with no Rpc.make
 #   behind them; neither server routes them, so they are recorded as dropped names.
 #   "via" says how a protocol 3 client reaches the method: an rpc frame (under the node's
@@ -26,7 +27,7 @@ Feature: RPC parity with the TypeScript server
     When the client calls <method> through its <via>
     Then the node answers with the contract's response shape for <method>
 
-    Examples: 165 aligned methods
+    Examples: 169 aligned methods
       | method                                   | domain            | via                                                                       |
       | server.upsertKeybinding                  | server            | rpc as hal-c2.upsertKeybinding                                                |
       | server.removeKeybinding                  | server            | rpc as hal-c2.removeKeybinding                                                |
@@ -193,6 +194,10 @@ Feature: RPC parity with the TypeScript server
       | subscribeResourceTelemetry               | server            | shape resourceTelemetry                                                   |
       | cloud.getRelayClientStatus               | cloud             | rpc                                                                       |
       | cloud.installRelayClient                 | cloud             | shape relayClientInstall                                                  |
+      | cluster.status                           | cluster           | rpc                                                                       |
+      | cluster.invite                           | cluster           | rpc                                                                       |
+      | cluster.join                             | cluster           | rpc                                                                       |
+      | cluster.remove                           | cluster           | rpc                                                                       |
 
   # The node refuses these as unserved methods: desktop update handoff is replaced by hot
   # upgrades, the archived-shell subscription has no subscriber, and terminal events arrive
