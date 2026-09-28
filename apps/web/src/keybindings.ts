@@ -8,7 +8,7 @@ import {
   type ModelPickerJumpKeybindingCommand,
   type ThreadJumpKeybindingCommand,
 } from "@hal-c2/contracts";
-import { isElectron } from "./env";
+import { isElectron, isHalC2Shell } from "./env";
 import { isMacPlatform } from "./lib/utils";
 
 export interface ShortcutEventLike {
@@ -151,8 +151,9 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
     terminalOpen: false,
     previewFocus: false,
     previewOpen: false,
-    isWeb: !isElectron,
-    isDesktop: isElectron,
+    // The Qt shell is a desktop app too: mod+1…9 are no browser tab keys there.
+    isWeb: !(isElectron || isHalC2Shell),
+    isDesktop: isElectron || isHalC2Shell,
     editableFocus: false,
     ...options?.context,
   };

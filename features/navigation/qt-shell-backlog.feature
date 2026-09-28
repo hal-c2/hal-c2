@@ -145,6 +145,8 @@ Feature: Desktop shell gaps
 
   Rule: Known shell keyboard bugs
 
+    # The page resolves mod+1…9 for the shell today (apps/web/src/shell/HalC2ShellBridge.tsx);
+    # this passes once the native sidebar owns the order.
     @backlog @desktop
     Scenario: Thread number shortcuts work in the native desktop shell
       Given the thread list shows at least three threads
