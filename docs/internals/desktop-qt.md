@@ -653,9 +653,8 @@ origin, branch, worktree, the machine it runs on) is kept natively by draft
 id and the page is told each change: `workspace.envMode.set`,
 `.startFromOrigin.set` and `.environment.set` go on to it after they land, and
 a branch picked for a draft as `workspace.checkout.follow {draftId, branch,
-worktreePath, envMode}`. Which thread a draft is comes from a resolver the app
-installs (`setDraftResolver`, DraftController's answer); without one a draft
-route has no workspace. Environments reached only through a link have no
+worktreePath, envMode}`. Which thread a draft is, `NativeShell` asks
+`DraftController` (`setDraftResolver`). Environments reached only through a link have no
 shell rows, so their threads have no header yet.
 
 The terminal drawer is native: `TerminalDrawer` draws each of the thread's
