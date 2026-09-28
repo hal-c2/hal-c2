@@ -401,15 +401,15 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   # The runtime or its provider plugin's supervisor crashed (not a stop): the turn
   # it was running ends, with what was buffered, so the thread shows the session is gone.
+  # The agent's subagents ran in its process and end with it.
   @impl true
   def terminate(reason, %{turn: turn} = state) when turn != nil do
-    unless reason in [:normal, :shutdown] or match?({:shutdown, _}, reason),
-      do:
-        end_turn(
-          state,
-          "failed",
-          "#{HalC2.Acp.label(state.agent)}'s session ended unexpectedly."
-        )
+    unless reason in [:normal, :shutdown] or match?({:shutdown, _}, reason) do
+      for {_, %{done: false, sub: sub}} <- state.subagents,
+          do: NativeSubagent.finish(sub, "failed", nil)
+
+      end_turn(state, "failed", "#{HalC2.Acp.label(state.agent)}'s session ended unexpectedly.")
+    end
 
     :ok
   end

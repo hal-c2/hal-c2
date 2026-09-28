@@ -651,19 +651,32 @@ defmodule HalC2.Orchestration.TurnWriter do
     %{thread_id: thread_id, turn: %{ids: ids, cwd: cwd, run_ordinal: run["ordinal"]}}
   end
 
-  # The items, nodes and prompts a run left open, and its message still streaming. Its
-  # root node ends with the run.
+  # The items, nodes, provider subagents and prompts a run left open, and its message
+  # still streaming. Its root node ends with the run. A task it delegated runs on in its
+  # own thread and settles when that ends (`Delegation.finished/3`).
   defp left_open(stream, %{"id" => run_id, "rootNodeId" => root}, status, at) do
     nodes =
       for {id, %{"runId" => ^run_id}} <- StreamState.get(stream, "node"),
           into: MapSet.new(),
           do: id
 
+    delegated =
+      for {id, %{"runId" => ^run_id, "origin" => "app_owned"}} <-
+            StreamState.get(stream, "subagent"),
+          into: MapSet.new(),
+          do: id
+
     for {kind, open?, changes} <- [
-          {"turn-item", &(&1["runId"] == run_id and &1["status"] in @open),
+          {"turn-item",
+           &(&1["runId"] == run_id and &1["nodeId"] not in delegated and &1["status"] in @open),
            %{"status" => status, "streaming" => false, "completedAt" => at, "updatedAt" => at}},
-          {"node", &(&1["runId"] == run_id and &1["id"] != root and &1["status"] in @open),
-           %{"status" => status, "completedAt" => at}},
+          {"node",
+           &(&1["runId"] == run_id and &1["id"] != root and &1["id"] not in delegated and
+               &1["status"] in @open), %{"status" => status, "completedAt" => at}},
+          {"subagent",
+           &(&1["runId"] == run_id and &1["origin"] == "provider_native" and
+               &1["status"] in @open),
+           %{"status" => status, "completedAt" => at, "updatedAt" => at}},
           {"message", &(&1["runId"] == run_id and &1["streaming"] == true),
            %{"streaming" => false, "updatedAt" => at}},
           {"runtime-request", &(&1["nodeId"] in nodes and &1["status"] == "pending"),
