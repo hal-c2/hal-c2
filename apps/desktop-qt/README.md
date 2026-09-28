@@ -16,6 +16,14 @@ as the installed app does.
 Besides Qt Quick and WebEngine, the shell needs the Qt WebSockets module for its own node
 client: `qt6-websockets` on Arch and Fedora, `qt6-websockets-dev` on Debian and Ubuntu.
 
+The terminal drawer is [qml-ghostty](https://github.com/hal-c2/qml-ghostty), fetched at the
+revision pinned in `cmake/QmlGhostty.cmake`. The first configure builds its libghostty-vt from
+a Ghostty checkout with Zig 0.15.2 (both downloaded into `~/.cache/qml-ghostty`; needs `bash`,
+`curl`, `git` and `tar`), which takes a few minutes. Pass
+`-DHAL_C2_GHOSTTY_VT_LIBRARY=/path/to/libghostty-vt.a` to use one already built, or
+`-DFETCHCONTENT_SOURCE_DIR_QML_GHOSTTY=/path/to/qml-ghostty` to build against a local checkout.
+qml-ghostty's Ghostty pin must equal `native/libghostty-vt/VERSION`; configure stops if it does not.
+
 Focused native checks use temporary data and run offscreen:
 
 ```sh

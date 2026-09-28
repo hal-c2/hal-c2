@@ -123,6 +123,7 @@ include(cmake/PlatformWindow.cmake)
 hal_c2_target_platform_window(hal-c2-qt)
 
 add_subdirectory(qml/HalC2/Bricks)
+include(cmake/QmlGhostty.cmake)
 
 target_link_libraries(hal-c2-qt PRIVATE
   Qt6::Core
@@ -133,6 +134,7 @@ target_link_libraries(hal-c2-qt PRIVATE
   Qt6::WebChannel
   Qt6::WebSockets
   hal_c2_bricksplugin
+  qmlghosttyplugin
 )
 
 set_target_properties(hal-c2-qt PROPERTIES
