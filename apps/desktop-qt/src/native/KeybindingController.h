@@ -55,7 +55,9 @@ public:
 
   // Registers the native commands and follows the node's rules.
   void activate() override;
-  bool handle(const QString&, const QVariant&) override { return false; }
+  // A `keybinding.press` a secondary page forwards runs here when its command
+  // is native; any other goes on to the primary page.
+  bool handle(const QString& action, const QVariant& payload) override;
 
   CommandRegistry* commands() { return &m_commands; }
   QVariantList shortcuts() const { return m_shortcuts; }
@@ -74,6 +76,8 @@ public:
 
   // Settings → Keybindings.
   Q_INVOKABLE QString recordKey(int key, int modifiers) const { return keybindings::recordedKey(key, modifiers, m_mac); }
+  // "mod+shift+y" as the rows show it: "Ctrl+Shift+Y", or "⇧⌘Y" on macOS.
+  Q_INVOKABLE QString keyLabel(const QString& key) const;
   Q_INVOKABLE QString commandLabel(const QString& command) const { return keybindings::commandLabel(command); }
   // Why a condition cannot be used, or empty (an empty condition is "always").
   Q_INVOKABLE QString whenError(const QString& expression) const;
@@ -82,7 +86,7 @@ public:
   // The command labels another binding on `key` (whose condition can also
   // apply) runs, other than the row `rowId`.
   Q_INVOKABLE QStringList conflicts(const QString& rowId, const QString& key, const QString& when) const;
-  // Every command a binding can be added for, by label.
+  // Every command a binding can be added for, sorted by label.
   Q_INVOKABLE QStringList commandOptions() const;
   // Binds `command` to `key` when `when` (empty: always), replacing the row
   // `replacing` when it is one of `bindings`.

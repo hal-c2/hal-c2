@@ -207,6 +207,23 @@ bool KeybindingController::press(const QString& sequence, const QVariantMap& foc
   return true;
 }
 
+bool KeybindingController::handle(const QString& action, const QVariant& payload) {
+  if (action != QLatin1String("keybinding.press")) return false;
+  const QVariantMap press = payload.toMap();
+  const bool ctrl = press.value(QStringLiteral("ctrlKey")).toBool();
+  const bool meta = press.value(QStringLiteral("metaKey")).toBool();
+  keybindings::Shortcut shortcut;
+  shortcut.key = press.value(QStringLiteral("key")).toString().toLower();
+  shortcut.mod = m_mac ? meta : ctrl;
+  shortcut.ctrl = m_mac && ctrl;
+  shortcut.meta = !m_mac && meta;
+  shortcut.shift = press.value(QStringLiteral("shiftKey")).toBool();
+  shortcut.alt = press.value(QStringLiteral("altKey")).toBool();
+  // The embed checked the command is the same without its focus.
+  const QString command = resolve(keybindings::sequence(shortcut, m_mac));
+  return m_commands.run(command);
+}
+
 // One entry per sequence; the page and terminal flags say whether the key is
 // the shell's even with that focus.
 void KeybindingController::refreshShortcuts() {
@@ -323,6 +340,11 @@ QStringList KeybindingController::conflicts(const QString& rowId, const QString&
   }
   labels.sort();
   return labels;
+}
+
+QString KeybindingController::keyLabel(const QString& key) const {
+  const std::optional<keybindings::Shortcut> shortcut = keybindings::parseShortcut(key);
+  return shortcut ? keybindings::label(*shortcut, m_mac) : key;
 }
 
 QString KeybindingController::whenError(const QString& expression) const {
