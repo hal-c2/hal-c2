@@ -764,7 +764,9 @@ defmodule HalC2.Orchestration do
   end
 
   # A runtime that dies while starting the turn must not leave the run "starting"
-  # forever: the run fails and the thread can take the next message.
+  # forever: the run fails and the thread can take the next message. Once the turn
+  # was claimed, `HalC2.Orchestration.TurnWatch` may be ending it too; only the
+  # first to abandon it does.
   defp start_turn(thread_id, turn) do
     :ok = runtime(turn.ids.instance).start_turn(thread_id, turn)
   catch
@@ -772,8 +774,9 @@ defmodule HalC2.Orchestration do
       require Logger
       Logger.warning("turn failed to start in #{thread_id}: #{inspect(reason)}")
 
-      HalC2.Orchestration.TurnWriter.finish(
-        %{thread_id: thread_id, turn: turn},
+      HalC2.Orchestration.TurnWriter.abandon(
+        thread_id,
+        turn.ids.run,
         "failed",
         HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
       )
