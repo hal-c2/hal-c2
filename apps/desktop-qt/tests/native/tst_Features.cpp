@@ -583,6 +583,10 @@ void defineSteps() {
     world.sidebarInput.insert(QStringLiteral("activeThreadKey"), c[0]);
     world.publishSidebarInput();
   });
+  step(QStringLiteral("the page's sidebar is scoped to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sidebarInput.insert(QStringLiteral("scopeProjectKey"), c[0]);
+    world.publishSidebarInput();
+  });
   step(QStringLiteral("the page's timestamps are %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sidebarInput.insert(QStringLiteral("timestampFormat"), c[0]);
     world.publishSidebarInput();
@@ -643,6 +647,14 @@ void defineSteps() {
     const QVariantMap native = world.pageNative.toMap();
     expect(native.value(QStringLiteral("sidebar")).toBool() && native.value(QStringLiteral("composer")).toBool(),
            QStringLiteral("the page was told %1").arg(show(native)));
+    expect(world.state(QStringLiteral("native")) == world.pageNative,
+           QStringLiteral("native is %1").arg(show(world.state(QStringLiteral("native")))));
+  });
+  step(QStringLiteral("the shell tells the page it owns the composer but not the sidebar"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&world] { return world.pageNative.isValid() && !world.pageNative.toMap().value(QStringLiteral("sidebar")).toBool(); },
+                  [&world] { return QStringLiteral("the page to keep the sidebar; it was told %1").arg(show(world.pageNative)); });
+    expect(world.pageNative.toMap().value(QStringLiteral("composer")).toBool(),
+           QStringLiteral("the page was told %1").arg(show(world.pageNative)));
     expect(world.state(QStringLiteral("native")) == world.pageNative,
            QStringLiteral("native is %1").arg(show(world.state(QStringLiteral("native")))));
   });

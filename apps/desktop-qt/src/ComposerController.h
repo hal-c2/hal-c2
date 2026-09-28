@@ -24,6 +24,7 @@ public:
   ComposerController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() { m_active = true; }
+  bool isActive() const { return m_active; }
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
 
   // The ShellBridge interceptor: true when the action was handled here.

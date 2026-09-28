@@ -32,6 +32,13 @@ QList<sidebar::Thread> ShellStore::threads() const {
   return result;
 }
 
+bool ShellStore::servesEnvironment(const QString& environmentId) const {
+  for (const Node& node : m_nodes) {
+    if (node.environmentId == environmentId) return true;
+  }
+  return false;
+}
+
 std::optional<sidebar::Thread> ShellStore::thread(const QString& key) const {
   const qsizetype colon = key.indexOf(QLatin1Char(':'));
   if (colon <= 0) return std::nullopt;

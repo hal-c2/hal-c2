@@ -14,7 +14,8 @@ class ShellBridge;
 // shape folded into rows, and the controllers that take the sidebar and the
 // composer's turn RPCs off the page. Until the first shell snapshot lands the
 // page keeps doing everything; after it, `native` (and a `shell.native` action
-// to the page) says which keys and actions the shell now owns.
+// to the page) says which keys and actions the shell now owns. The sidebar
+// stays with the page while it groups projects from outside the node's cluster.
 class NativeShell : public QObject {
   Q_OBJECT
 
@@ -28,6 +29,7 @@ public:
   ComposerController* composer() { return &m_composer; }
 
 private:
+  void update();
   void announce();
 
   ShellBridge* m_bridge;

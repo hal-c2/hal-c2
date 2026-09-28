@@ -395,6 +395,8 @@ Input Input::fromVariant(const QVariant& value) {
   if (activeThreadKey.typeId() == QMetaType::QString) input.activeThreadKey = activeThreadKey.toString();
   input.activeDraftId = map.value(QStringLiteral("activeDraftId"), QVariant::fromValue(nullptr));
   input.timestampFormat = map.value(QStringLiteral("timestampFormat"), QStringLiteral("locale")).toString();
+  const QVariant scopeProjectKey = map.value(QStringLiteral("scopeProjectKey"));
+  if (scopeProjectKey.typeId() == QMetaType::QString) input.scopeProjectKey = scopeProjectKey.toString();
   return input;
 }
 

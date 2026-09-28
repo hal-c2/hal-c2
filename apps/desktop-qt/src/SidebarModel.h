@@ -125,6 +125,8 @@ struct Input {
   Nullable activeThreadKey;
   QVariant activeDraftId;
   QString timestampFormat;
+  // The page's scope, which the shell starts from when it takes over.
+  Nullable scopeProjectKey;
 
   static Input fromVariant(const QVariant& value);
   const ProjectGroup* group(const QString& key) const;

@@ -1,7 +1,8 @@
 # Sources:
 #   apps/desktop-qt/src/NodeClient.cpp (protocol-3 socket: subscriptions, rpc, reconnect)
 #   apps/desktop-qt/src/ShellStore.cpp (the shell shape folded into thread rows)
-#   apps/desktop-qt/src/NativeShell.cpp (hand-over from the page after the first snapshot)
+#   apps/desktop-qt/src/NativeShell.cpp (hand-over from the page after the first snapshot, and back)
+#   apps/web/src/shell/HalC2ShellBridge.tsx (sidebarInput: the page's project groups and scope)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (the protocol the shell speaks)
 #   packages/client-runtime/src/v3/clusterSocket.ts (the TypeScript twin of the shell's client)
@@ -76,6 +77,50 @@ Feature: The desktop shell talks to its node itself
       Given the desktop shell is connected to its node
       When the page publishes its own sidebar
       Then the sidebar's "active" section lists "One"
+
+  Rule: The sidebar stays with the page while it groups projects from outside the node's cluster
+    The node's snapshot has rows only for its own cluster. A project from any other environment
+    has threads only the page knows, so the page keeps building the sidebar until it is gone.
+
+    @desktop
+    Scenario: The page keeps the sidebar while it groups a project from another environment
+      Given the page groups "env-b:p9" as the project "proj-9"
+      When the desktop shell connects to its node
+      Then the shell tells the page it owns the composer but not the sidebar
+
+    @desktop
+    Scenario: A project from another environment hands the sidebar back to the page
+      Given the desktop shell is connected to its node
+      When the page groups "env-b:p9" as the project "proj-9"
+      And the page publishes its own sidebar
+      Then the shell tells the page it owns the composer but not the sidebar
+      And the sidebar's "active" section is empty
+
+    @desktop
+    Scenario: Row actions go to the page while it keeps the sidebar
+      Given the desktop shell is connected to its node
+      And the page groups "env-b:p9" as the project "proj-9"
+      When the user settles "env-a:t1"
+      Then the action "thread.settle" for "env-a:t1" reaches the page
+      And the node receives no commands
+
+    @desktop
+    Scenario: The shell takes the sidebar again once that project is gone
+      Given the desktop shell is connected to its node
+      And the page groups "env-b:p9" as the project "proj-9"
+      When the page stops grouping "env-b:p9"
+      Then the shell tells the page it owns the sidebar and the composer
+      And the sidebar's "active" section lists "One"
+
+    @desktop
+    Scenario: The shell starts from the scope the page had
+      Given the node has these threads:
+        | id | project | title |
+        | t2 | p2      | Two   |
+      And the page groups "env-a:p2" as the project "proj-2"
+      And the page's sidebar is scoped to "proj-2"
+      When the desktop shell is connected to its node
+      Then the sidebar's "active" section lists "Two"
 
   Rule: A dropped connection comes back on its own
 

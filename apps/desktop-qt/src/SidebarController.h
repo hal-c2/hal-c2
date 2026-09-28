@@ -27,9 +27,14 @@ class SidebarController : public QObject {
 public:
   SidebarController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 
-  // Starts publishing `sidebar` and claiming its actions.
+  // Starts publishing `sidebar` and claiming its actions, from the page's scope.
   void activate();
+  // Leaves `sidebar` and its actions to the page again.
+  void deactivate() { m_active = false; }
   bool isActive() const { return m_active; }
+  // Whether every project the page groups lives on the node's cluster; rows
+  // from any other environment exist only in the page.
+  bool coversPage() const;
 
   // Tests pin the clock and locale; the app uses the system's.
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }

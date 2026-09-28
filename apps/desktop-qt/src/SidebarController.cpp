@@ -33,7 +33,17 @@ SidebarController::SidebarController(ShellBridge* bridge, NodeClient* client, Sh
 
 void SidebarController::activate() {
   m_active = true;
+  m_scope = m_input.scopeProjectKey;
   refresh();
+}
+
+bool SidebarController::coversPage() const {
+  for (const sidebar::ProjectGroup& group : m_input.projects) {
+    for (const QString& member : group.memberKeys) {
+      if (!m_store->servesEnvironment(member.section(QLatin1Char(':'), 0, 0))) return false;
+    }
+  }
+  return true;
 }
 
 void SidebarController::refresh() {

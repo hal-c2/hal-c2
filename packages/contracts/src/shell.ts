@@ -136,6 +136,8 @@ export const ShellSidebarInput = Schema.Struct({
   activeThreadKey: Schema.NullOr(Schema.String),
   activeDraftId: Schema.NullOr(Schema.String),
   timestampFormat: TimestampFormat,
+  /** The page's sidebar scope, which the shell starts from when it takes the sidebar over. */
+  scopeProjectKey: Schema.NullOr(Schema.String),
 });
 export type ShellSidebarInput = typeof ShellSidebarInput.Type;
 

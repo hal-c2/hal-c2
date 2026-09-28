@@ -22,6 +22,8 @@ public:
   QList<sidebar::Thread> threads() const;
   std::optional<sidebar::Thread> thread(const QString& key) const;
   sidebar::Capabilities capabilities(const QString& environmentId) const;
+  // Whether a node of the cluster serves this environment.
+  bool servesEnvironment(const QString& environmentId) const;
   bool synchronized() const { return m_synchronized; }
 
 signals:

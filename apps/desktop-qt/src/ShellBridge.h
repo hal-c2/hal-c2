@@ -65,6 +65,7 @@ public:
   // so a page that has not caught up (or unmounts, publishing null) cannot
   // overwrite it.
   void claimKey(const QString& key) { m_claimedKeys.insert(key); }
+  void releaseKey(const QString& key) { m_claimedKeys.remove(key); }
   bool isClaimed(const QString& key) const { return m_claimedKeys.contains(key); }
   // Reads image files for the composer: [{name, mimeType, base64}], skipping
   // anything that is not an image or is over the page's size limit.

@@ -165,6 +165,7 @@ export interface ShellSidebarInputOptions {
   readonly activeThreadKey: string | null;
   readonly activeDraftId: string | null;
   readonly timestampFormat: TimestampFormat;
+  readonly scopeProjectKey: string | null;
 }
 
 /**
@@ -188,5 +189,6 @@ export function buildShellSidebarInput(options: ShellSidebarInputOptions): Shell
     activeThreadKey: options.activeThreadKey,
     activeDraftId: options.activeDraftId,
     timestampFormat: options.timestampFormat,
+    scopeProjectKey: options.scopeProjectKey,
   };
 }

@@ -222,8 +222,17 @@ export function HalC2ShellBridge() {
         activeThreadKey,
         activeDraftId,
         timestampFormat,
+        scopeProjectKey,
       }),
-    [activeDraftId, activeThreadKey, allDrafts, localEnvironmentId, projectGroups, timestampFormat],
+    [
+      activeDraftId,
+      activeThreadKey,
+      allDrafts,
+      localEnvironmentId,
+      projectGroups,
+      scopeProjectKey,
+      timestampFormat,
+    ],
   );
   useShellPublish("sidebarInput", sidebarInput);
 

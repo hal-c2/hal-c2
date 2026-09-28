@@ -73,6 +73,7 @@ describe("buildShellSidebarInput", () => {
       activeThreadKey: null,
       activeDraftId: null,
       timestampFormat: "24-hour",
+      scopeProjectKey: null,
     });
     expect(input.projects).toEqual([
       {
