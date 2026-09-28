@@ -65,4 +65,29 @@ defmodule HalC2.AcpTest do
     assert HalC2.Acp.agent?("pi")
     assert HalC2.Acp.entry("pi") == nil
   end
+
+  test "a disabled agent says so instead of claiming to be ready", %{tmp_dir: dir} do
+    grok = Path.join(dir, "grok")
+    File.write!(grok, "#!/bin/sh\n")
+    File.chmod!(grok, 0o755)
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            "grok" => %{
+              "driver" => "grok",
+              "enabled" => false,
+              "config" => %{"binaryPath" => grok}
+            }
+          }
+        },
+        0
+      )
+
+    assert %{"enabled" => false, "status" => "disabled", "message" => message} =
+             HalC2.Acp.entry("grok")
+
+    assert message == "Grok is disabled in HAL-C2 settings."
+  end
 end

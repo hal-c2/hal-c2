@@ -229,6 +229,7 @@ defmodule HalC2.Acp do
           "version" => :persistent_term.get({__MODULE__, id, :version}, "unknown"),
           "status" =>
             cond do
+              not enabled -> "disabled"
               failure -> "error"
               empty_catalog?(driver, models) -> "warning"
               true -> "ready"
@@ -259,6 +260,17 @@ defmodule HalC2.Acp do
         &if(notice = :persistent_term.get({__MODULE__, id, :notice}, nil),
           do: Map.put(&1, "message", notice),
           else: &1
+        )
+      )
+      |> then(
+        &if(enabled,
+          do: &1,
+          else:
+            Map.put(
+              &1,
+              "message",
+              "#{&1["displayName"] || label(id)} is disabled in HAL-C2 settings."
+            )
         )
       )
       |> driver_fields(driver, id, instance)
