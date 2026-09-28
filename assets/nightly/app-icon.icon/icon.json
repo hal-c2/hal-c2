@@ -6,9 +6,9 @@
     {
       "layers": [
         {
-          "glass": true,
+          "glass": false,
           "image-name": "text.svg",
-          "name": "Text",
+          "name": "Avatar",
           "position": {
             "scale": 8.5,
             "translation-in-points": [0, 0]
@@ -49,7 +49,7 @@
         "opacity": 0.6
       },
       "translucency": {
-        "enabled": true,
+        "enabled": false,
         "value": 0.2
       }
     },

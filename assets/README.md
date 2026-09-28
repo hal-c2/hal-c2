@@ -1,4 +1,8 @@
-# Brand icons
+# Brand
+
+`brand/hal-c2-avatar.svg` is the HAL-C2 mark and `brand/hal-c2-logotype.svg` the "HAL-C2" logotype: "HAL-" in `#fba919` and "C2" in `#768efb`, set in the [HAL C2 font](https://github.com/hal-c2/hal-c2-font) and outlined so nothing needs the font installed. The desktop's `HalC2Wordmark.qml` and the marketing site carry copies of these outlines; update them together.
+
+## App icons
 
 The three Icon Composer projects are the source of truth for full application icons:
 
@@ -6,7 +10,7 @@ The three Icon Composer projects are the source of truth for full application ic
 - `nightly/app-icon.icon`
 - `prod/app-icon.icon`
 
-Each project uses `text.svg` for the HAL-C2 mark and `background.svg` when the background is a vector layer. Additional layers use semantic names that describe their role and placement.
+Each project uses `text.svg` for the avatar (the mark centred in the 128pt layer box) and `background.svg` when the background is a vector layer. Additional layers use semantic names that describe their role and placement.
 
 Run `vp run icons:export` from the repository root to regenerate the tracked iOS, Linux, Windows, and web assets. The development web exports are also copied to `apps/web/public` for the browser favicon and splash screen. Run `vp run icons:check` to verify that the generated assets and public copies match their sources without changing files.
 
@@ -53,13 +57,13 @@ Do not edit the generated PNG or ICO files directly.
 
 Android masks the central 72dp of a 108dp adaptive canvas, and the Android 12+ splash screen masks
 the central two thirds of a 288dp canvas, so the Icon Composer exports cannot be used directly:
-their rounded-square silhouette gets framed again and the wordmark is cropped. The Android artwork
+their rounded-square silhouette gets framed again and the avatar is cropped. The Android artwork
 is instead rendered from the same Icon Composer SVG sources by `vp run icons:export:android`:
 
-- `apps/mobile/assets/android-icon-foreground.png`: the shared transparent wordmark, sized to stay
+- `apps/mobile/assets/android-icon-foreground.png`: the shared transparent avatar, sized to stay
   inside the safe zone
 - `apps/mobile/assets/android-icon-background-dev.png` and `-nightly.png`: full-bleed variant
-  artwork (blueprint grid and annotations; night sky and clouds). Production uses a solid color.
+  artwork (blueprint grid; night sky and clouds). Production uses a solid color.
 - `apps/mobile/assets/android-splash-icon-*.png`: the two layers composed into one 288dp image, so
   the splash mask reproduces the launcher icon's framing.
 
