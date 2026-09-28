@@ -44,6 +44,7 @@ qt_add_qml_module(hal_c2_bricks
     WindowControls.qml
     Workspace.qml
     Timeline.qml
+    TurnRequests.qml
     js/lucide.js
     js/modelPicker.js
     js/providerIcons.js
