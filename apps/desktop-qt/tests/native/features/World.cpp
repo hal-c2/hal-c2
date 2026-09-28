@@ -8,14 +8,47 @@
 
 #include "ComposerController.h"
 #include "Harness.h"
+#include "NavigationController.h"
 #include "ToastController.h"
 
 World::World() {
-  m_native.client()->setRetryDelays({20});
-  m_native.sidebar()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
-  setTime(QStringLiteral("2026-09-23T10:00:00Z"));
-  QObject::connect(&m_bridge, &ShellBridge::actionRequested, &m_bridge,
+  m_now = QDateTime::fromString(QStringLiteral("2026-09-23T10:00:00Z"), Qt::ISODate);
+  start();
+}
+
+void World::start() {
+  m_bridge = std::make_unique<ShellBridge>();
+  m_native = std::make_unique<NativeShell>(m_bridge.get());
+  m_native->client()->setRetryDelays({20});
+  m_native->sidebar()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
+  m_native->controller<NavigationController>()->setStorePath(m_home.filePath(QStringLiteral("state/shell-route.json")));
+  setTime(m_now);
+  QObject::connect(m_bridge.get(), &ShellBridge::actionRequested, m_bridge.get(),
                    [this](const QString& type, const QVariant& payload) { onPageAction(type, payload.toMap()); });
+}
+
+void World::restart() {
+  m_native.reset();
+  m_bridge.reset();
+  pageActions.clear();
+  follows.clear();
+  pageNative = QVariant();
+  start();
+  // The page loads again and publishes what it publishes.
+  publishSidebarInput();
+}
+
+void World::pageOpens(const QVariantMap& route, bool replace) {
+  QVariantMap payload{
+      {QStringLiteral("kind"), QStringLiteral("home")},
+      {QStringLiteral("threadKey"), QVariant::fromValue(nullptr)},
+      {QStringLiteral("draftId"), QVariant::fromValue(nullptr)},
+      {QStringLiteral("projectKey"), QVariant::fromValue(nullptr)},
+      {QStringLiteral("section"), QVariant::fromValue(nullptr)},
+  };
+  payload.insert(route);
+  payload.insert(QStringLiteral("replace"), replace);
+  m_bridge->dispatch(QStringLiteral("route.open"), payload);
 }
 
 void World::setTime(const QString& iso) {
@@ -25,16 +58,16 @@ void World::setTime(const QString& iso) {
 void World::setTime(const QDateTime& time) {
   const QDateTime now = time.toLocalTime();
   m_now = now;
-  m_native.sidebar()->setClock([now] { return now; });
-  m_native.controller<ComposerController>()->setClock([now] { return now.toUTC(); });
-  m_native.controller<ToastController>()->setClock([now] { return now.toUTC(); });
-  m_native.controller<ToastController>()->expire();
+  m_native->sidebar()->setClock([now] { return now; });
+  m_native->controller<ComposerController>()->setClock([now] { return now.toUTC(); });
+  m_native->controller<ToastController>()->setClock([now] { return now.toUTC(); });
+  m_native->controller<ToastController>()->expire();
 }
 
 void World::publishWorkspace(const QString& threadKey, const QJsonObject& project, const QString& worktreePath,
                              bool draft) {
   const bool known = !project.isEmpty();
-  m_bridge.publish(QStringLiteral("workspace"),
+  m_bridge->publish(QStringLiteral("workspace"),
                    QVariantMap{
                        {QStringLiteral("threadKey"), threadKey},
                        {QStringLiteral("isDraft"), draft},
@@ -46,7 +79,7 @@ void World::publishWorkspace(const QString& threadKey, const QJsonObject& projec
 }
 
 void World::connect(const QString& token) {
-  m_native.open(node.origin(), token);
+  m_native->open(node.origin(), token);
   waitFor([this] { return shellSubscriptions() >= 1; }, QStringLiteral("the shell to subscribe"));
 }
 
@@ -68,7 +101,7 @@ void World::waitFor(const std::function<bool()>& condition, const QString& what)
 
 void World::sync() {
   bool done = false;
-  m_native.client()->call(node.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
+  m_native->client()->call(node.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
                           [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
   waitFor([&done] { return done; }, QStringLiteral("a round trip through the node"));
 }
@@ -84,6 +117,7 @@ QList<PageAction> World::actionsOf(const QString& type) const {
 QString World::describePage() const {
   QStringList lines;
   for (const PageAction& action : pageActions) lines.append(action.type + QLatin1Char(' ') + show(action.payload));
+  for (const QVariantMap& route : follows) lines.append(QStringLiteral("route.follow ") + show(route));
   return lines.isEmpty() ? QStringLiteral("(nothing)") : lines.join(QStringLiteral("; "));
 }
 
@@ -99,6 +133,11 @@ void World::onPageAction(const QString& type, const QVariantMap& payload) {
   // The page's record of who owns what, not a request for it to act on.
   if (type == QLatin1String("shell.native")) {
     pageNative = payload;
+    return;
+  }
+  // Where the page is told to be; the page goes there and says nothing back.
+  if (type == QLatin1String("route.follow")) {
+    follows.append(payload);
     return;
   }
   pageActions.append({type, payload});

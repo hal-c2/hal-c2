@@ -51,7 +51,7 @@ Item {
             compare(search.text, "model 123 & provider");
         }
         function test_clusterRowWithoutThePage() {
-            Shell.state = { cluster: { open: false } };
+            Shell.state = { cluster: {} };
             let nav = createTemporaryObject(component, root);
             verify(!!nav, "Component exists");
             let row = findChild(nav, "settingsRow0");
@@ -61,16 +61,24 @@ Item {
             keyClick(Qt.Key_Return);
             compare(Shell.dispatchedActions[0].action, "cluster.open");
         }
-        function test_clusterRowTakesCurrentFromThePage() {
-            Shell.state = Object.assign({}, Shell.state, { cluster: { open: true } });
+        function test_clusterRowTakesCurrentFromTheRoute() {
+            Shell.state = Object.assign({}, Shell.state, { cluster: {}, route: { kind: "settings", section: "/settings/cluster" } });
             let nav = createTemporaryObject(component, root);
             verify(!!nav, "Component exists");
             tryVerify(() => findChild(nav, "settingsRow2") !== null, 1000, "Cluster follows the page's sections");
             verify(!findChild(nav, "settingsRow0").current, "the page's section is not current");
             verify(findChild(nav, "settingsRow2").current, "Cluster is current");
         }
+        function test_routeSectionIsCurrent() {
+            Shell.state = Object.assign({}, Shell.state, { route: { kind: "settings", section: "/settings/providers" } });
+            let nav = createTemporaryObject(component, root);
+            verify(!!nav, "Component exists");
+            tryVerify(() => findChild(nav, "settingsRow1") !== null, 1000, "the page's sections are listed");
+            verify(!findChild(nav, "settingsRow0").current, "the page's last section is not current");
+            verify(findChild(nav, "settingsRow1").current, "the route's section is current");
+        }
         function test_searchFindsCluster() {
-            Shell.state = { cluster: { open: false } };
+            Shell.state = { cluster: {} };
             let nav = createTemporaryObject(component, root);
             verify(!!nav, "Component exists");
             let search = findChild(nav, "search");

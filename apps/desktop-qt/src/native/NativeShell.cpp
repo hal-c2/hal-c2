@@ -7,6 +7,7 @@
 
 #include <algorithm>
 
+#include "NavigationController.h"
 #include "ShellBridge.h"
 
 QList<NativeControllerRegistration>& nativeControllerRegistry() {
@@ -33,13 +34,21 @@ NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)
   bridge->addInterceptor([this](const QString& action, const QVariant& payload) {
     // A (re)loaded page asks who owns what; the answer comes as `shell.native`.
     if (action == QLatin1String("shell.native.query")) {
-      if (m_active) announce();
+      if (m_active) {
+        announce();
+        // A page that just asked knows nothing of the route yet.
+        if (auto* navigation = controller<NavigationController>()) navigation->pageReady();
+      }
       return true;
     }
     if (m_sidebar.handle(action, payload)) return true;
     return std::any_of(m_controllers.cbegin(), m_controllers.cend(),
                        [&](const Controller& entry) { return entry.native->handle(action, payload); });
   });
+  // The sidebar marks the thread the window shows.
+  if (auto* navigation = controller<NavigationController>()) {
+    connect(navigation, &NavigationController::changed, &m_sidebar, &SidebarController::refresh);
+  }
   connect(&m_store, &ShellStore::changed, this, &NativeShell::update);
   connect(&m_store, &ShellStore::changed, this, &NativeShell::lend);
   // A new connection may be to a restarted node, which forgot every loan.

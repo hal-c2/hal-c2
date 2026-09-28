@@ -52,6 +52,8 @@ private:
   void openSnoozeMenu(const QString& key, double x, double y);
   void selectSnooze(const QString& id);
   ToastController* toasts() const;
+  // The open thread, from the shell's route.
+  QString activeThreadKey() const;
   std::optional<QString> logicalProjectKey(const sidebar::Thread& thread) const;
 
   ShellBridge* m_bridge;

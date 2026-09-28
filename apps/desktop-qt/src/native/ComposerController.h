@@ -42,6 +42,8 @@ private:
   bool interrupt();
   bool submit(const QVariantMap& payload);
   void sendNext(const QString& target);
+  // The thread the window shows (the shell's route), or empty.
+  QString openThread() const;
   void toast(const QString& title, const QString& description);
 
   ShellBridge* m_bridge;

@@ -10,7 +10,7 @@
 Feature: The desktop shell runs the sidebar against its node
   Once connected, the Qt shell builds the sidebar from the node's threads and the page's project
   groups, and sends the row actions (settle, snooze, wake, mark unread) to the node itself.
-  Toasts are the shell's own; navigation still renders in the page, so the shell asks the page for it.
+  Toasts are the shell's own, and so is the route; the page still draws the centre, so it follows.
 
   Background:
     Given the time is "2026-09-23T10:00:00Z"

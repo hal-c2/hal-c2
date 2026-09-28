@@ -1,0 +1,89 @@
+#pragma once
+
+#include <QList>
+#include <QObject>
+#include <QString>
+#include <QVariantMap>
+
+#include <optional>
+
+#include "NativeController.h"
+
+class NodeClient;
+class ShellBridge;
+class ShellStore;
+
+// Where the window is: the shell's route, its back stack, and the last route
+// kept across restarts (setStorePath). Publishes `route`: {kind, threadKey,
+// draftId, projectKey, section, title, canGoBack}, where kind is one of home,
+// thread, draft, newThread, settings (section: the settings path, or
+// "/settings/cluster" for the shell's own cluster page), pullRequests, usage.
+//
+// The page still renders the centre, so it follows: every route the page does
+// not already show goes to it as `route.follow {kind, threadKey, draftId,
+// projectKey, section}`, and the page reports where its own links and
+// redirects took it as `route.open {..., replace}`. The page is not the source
+// of truth; this is.
+class NavigationController : public QObject, public NativeController {
+  Q_OBJECT
+
+public:
+  struct Route {
+    QString kind = QStringLiteral("home");
+    QString threadKey;
+    QString draftId;
+    QString projectKey;
+    QString section;
+
+    static Route thread(const QString& key) { return {QStringLiteral("thread"), key, {}, {}, {}}; }
+    static Route draft(const QString& id) { return {QStringLiteral("draft"), {}, id, {}, {}}; }
+    static Route newThread(const QString& projectKey = {}) { return {QStringLiteral("newThread"), {}, {}, projectKey, {}}; }
+    static Route settings(const QString& section = {}) { return {QStringLiteral("settings"), {}, {}, {}, section}; }
+    static Route of(const QString& kind) { return {kind, {}, {}, {}, {}}; }
+    static std::optional<Route> fromVariant(const QVariant& value);
+    QVariantMap toVariant() const;
+    bool operator==(const Route&) const = default;
+  };
+
+  // The shell's own settings page, which the page cannot show.
+  static inline const QString kClusterSection = QStringLiteral("/settings/cluster");
+
+  NavigationController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+
+  void activate() override;
+  bool handle(const QString& action, const QVariant& payload) override;
+
+  const Route& route() const { return m_route; }
+  // The open thread's key, or empty.
+  QString threadKey() const { return m_route.kind == QLatin1String("thread") ? m_route.threadKey : QString(); }
+  // Moves to `route`, keeping where the user was on the back stack.
+  void open(const Route& route) { go(route, false, true); }
+  // Back to where the user was before, or home.
+  void back();
+
+  // Where the last route is kept; restores it from there.
+  void setStorePath(const QString& path);
+  // A (re)loaded page shows nothing the shell knows of: tell it the route.
+  void pageReady();
+
+signals:
+  void changed();
+
+private:
+  void go(const Route& route, bool replace, bool follow);
+  void follow();
+  void publish();
+  void save() const;
+
+  ShellBridge* m_bridge;
+  ShellStore* m_store;
+  Route m_route;
+  QList<Route> m_backStack;
+  // What the page shows as far as the shell knows: the last route it was told
+  // or reported. Unknown until the page first says so.
+  std::optional<Route> m_pageRoute;
+  QString m_storePath;
+  bool m_active = false;
+  // The route came from the last run and the page has not been anywhere since.
+  bool m_restored = false;
+};

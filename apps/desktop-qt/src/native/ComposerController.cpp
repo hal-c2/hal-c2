@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "NativeShell.h"
+#include "NavigationController.h"
 #include "NodeClient.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -33,9 +34,7 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
 // Stops the thread's active run, or the latest one while it still waits on
 // the provider or background work, as client-runtime's interruptThreadTurn.
 bool ComposerController::interrupt() {
-  const QVariantMap composer = m_bridge->state()->value(QStringLiteral("composer")).toMap();
-  if (composer.value(QStringLiteral("routeKind")).toString() != QLatin1String("server")) return false;
-  const auto thread = m_store->thread(composer.value(QStringLiteral("target")).toString());
+  const auto thread = m_store->thread(openThread());
   if (!thread) return false;
   sidebar::Nullable runId = thread->activeRunId;
   if (!runId && (thread->activityRunStatus == QStringLiteral("waiting") || thread->pendingBackgroundTasks > 0)) {
@@ -74,8 +73,13 @@ bool ComposerController::submit(const QVariantMap& payload) {
   if (payload.value(QStringLiteral("intent"), QStringLiteral("foreground")).toString() != QLatin1String("foreground")) {
     return false;
   }
-  const QString target = composer.value(QStringLiteral("target")).toString();
-  if (composer.value(QStringLiteral("routeKind")).toString() != QLatin1String("server")) return false;
+  // The page vouched for the prompt of the thread it shows; the window has
+  // to be on that thread too.
+  const QString target = openThread();
+  if (composer.value(QStringLiteral("routeKind")).toString() != QLatin1String("server") ||
+      composer.value(QStringLiteral("target")).toString() != target) {
+    return false;
+  }
   const auto thread = m_store->thread(target);
   if (!thread) return false;
 
@@ -174,6 +178,10 @@ void ComposerController::sendNext(const QString& target) {
         });
   };
   (*next)(0);
+}
+
+QString ComposerController::openThread() const {
+  return NativeShell::of(this)->controller<NavigationController>()->threadKey();
 }
 
 void ComposerController::toast(const QString& title, const QString& description) {

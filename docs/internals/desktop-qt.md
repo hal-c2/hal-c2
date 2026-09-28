@@ -65,7 +65,7 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   token, and `NativeShell` opens one protocol-3 socket (`NodeClient`) and
   folds the `shell` snapshot and row deltas (`ShellStore`). On the first
   snapshot it builds `sidebar` itself from those rows plus the page's
-  `sidebarInput` (project grouping, drafts, the active route), claims the
+  `sidebarInput` (project grouping and drafts) and its own `route`, claims the
   key so the page's publishes to it are dropped, and intercepts the row
   actions and the composer's plain sends. It announces this as `native`
   and a `shell.native` action; a page that loads later asks with
@@ -468,9 +468,10 @@ and moving existing rows instead of replacing the list. This preserves row
 hover, keyboard focus and scroll position while thread state changes.
 
 Actions (`Shell.dispatch(name, payload)` in QML → `ShellAction` on the page):
-`thread.open {key}`, `draft.open {draftId}`, `thread.new {projectKey?}`,
-`sidebar.scope {projectKey|null}`, `project.add`, `settings.open`,
-`pullRequests.open`, `usage.open`, `palette.open`. Row actions run the
+`sidebar.scope {projectKey|null}`, `project.add`, `palette.open`, and the
+navigation ones `route` takes once the shell has its node (`thread.open {key}`,
+`draft.open {draftId}`, `thread.new {projectKey?}`, `settings.open`,
+`pullRequests.open`, `usage.open`). The active row is the route's. Row actions run the
 handlers the HTML row's hover buttons use (`useShellThreadRowActions`):
 `thread.settle {key}`, `thread.unsettle {key}`, `thread.unsnooze {key}`,
 `thread.snoozeMenu {key, x, y}` (the snooze durations open through
@@ -663,23 +664,47 @@ The settings nav is the shell's (`SettingsNav`); the pages behind it are
 either the shell's own or still HTML.
 
 The shell's own pages work with no page loaded. `ClusterController` publishes
-`cluster` (`open`, `busy`, `status`, `error`, `invite`, `notice`) and calls
-the node's `cluster.*` RPCs; `ClusterSettings` renders it. Layouts show that
-brick where the page would be while `ShellWindow.clusterOpen`, and
-`settingsActive` includes it. Actions: `cluster.open`, `cluster.close`,
-`cluster.refresh`, `cluster.invite {tailscale?}` (copies the link),
+`cluster` (`busy`, `status`, `error`, `invite`, `notice`) and calls the
+node's `cluster.*` RPCs; `ClusterSettings` renders it. Whether it shows is
+the route's: `cluster.open` and `cluster.close` move `route` to and from the
+settings section `/settings/cluster`, which the page is never told to follow.
+Layouts show the brick where the page would be while `ShellWindow.clusterOpen`.
+Actions: `cluster.refresh`, `cluster.invite {tailscale?}` (copies the link),
 `cluster.invite.copy`, `cluster.join {link}`, `cluster.remove {id}`.
-`settings.back` on the cluster page closes it without reaching the page.
 
 The rest are HTML pages until they move. The root route mounts
 `ShellSettingsBridge` when hosted, which publishes `ShellSettingsState` on
 every route change: `active` (on `/settings*`), the sections in sidebar
 order, the active one, and search results for the query the shell last sent.
-`SettingsNav` lists those sections, then the shell's own pages; picking one
-of the page's closes the shell's page. Actions: `settings.navigate {to}`,
+`SettingsNav` lists those sections, then the shell's own pages, and marks
+the route's section current; picking one of the page's replaces the shell's
+page in the route. Actions: `settings.navigate {to}`,
 `settings.openResult {to, targetId}` (scrolls when already on the page),
-`settings.search {query}`, `settings.back` (history back, else `/`). When
-hosted, `AppSidebarLayout` renders no sidebar on any route.
+`settings.search {query}`, and `settings.back`, which is the route's back
+once the shell has its node and history back (else `/`) in the page before.
+When hosted, `AppSidebarLayout` renders no sidebar on any route.
+
+### `route`
+
+`NavigationController` owns where the window is once the shell has its node:
+`route` is `{kind, threadKey, draftId, projectKey, section, title,
+canGoBack}` with `kind` one of `home`, `thread`, `draft`, `newThread`,
+`settings`, `pullRequests`, `usage` (the `ShellRoute` contract plus
+`title` and `canGoBack`). `ShellWindow` titles the window from `title` and derives
+`settingsActive` and `clusterOpen` from it; the sidebar's active row and the
+composer's target thread come from it too. It keeps a back stack (home and a
+new thread are passed through, and moving between settings sections is one
+step) and writes the last route to `shell-route.json` in the shell's state
+directory; the next launch reopens it unless the thread was deleted or the
+user clicked somewhere in the page before the node answered.
+
+The page still draws the centre, so it follows: the shell sends
+`route.follow {kind, …}` for every route the page is not already on (and to a
+page that reloads), and `HalC2ShellBridge` navigates there. Where the page's
+own links, redirects and history take it comes back as `route.open {kind, …,
+replace}` (`shellRoute.ts` maps paths), and the shell adopts it; a page
+report that matches the top of the back stack pops it. The page never keeps
+state of its own about where it is beyond its URL.
 
 Bridges tied to a thread route (`workspace`, `composer`, `rightPanel`)
 publish `null` for their key on unmount, so leaving a thread clears the
@@ -848,7 +873,8 @@ A piece has moved when a native controller (`src/native/`, registered with
 `NativeControllerRegistrar`) builds its state from the shell's own node client
 and a brick renders it; the controller claims the key,
 so the page's publishes to it are dropped. The terminal drawer (native, on
-qml-ghostty) and the cluster settings are built this way. New features skip
+qml-ghostty), the cluster settings, the route and the shell's toasts are
+built this way. New features skip
 the page entirely: a controller, a brick the layouts place, and `@desktop`
 scenarios run by `tst_Features`. They are never hosted in or over
 `WebSurface`, and never gated on state the page publishes. The embed route

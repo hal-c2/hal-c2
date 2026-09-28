@@ -5,9 +5,11 @@
 #include <QList>
 #include <QQmlPropertyMap>
 #include <QSet>
+#include <QTemporaryDir>
 #include <QVariant>
 
 #include <functional>
+#include <memory>
 #include <optional>
 
 #include "FakeNode.h"
@@ -29,6 +31,7 @@ public:
   FakeNode node;
   QList<PageAction> pageActions;
   QVariant pageNative;  // what the last `shell.native` told the page
+  QList<QVariantMap> follows;  // every `route.follow` the page was sent
   QVariantMap sidebarInput{{QStringLiteral("projects"), QVariantList()},
                            {QStringLiteral("drafts"), QVariantList()},
                            {QStringLiteral("localProjects"), QVariantList()},
@@ -38,19 +41,23 @@ public:
   QSet<qsizetype> checkedCommands;
   int nextEdit = 1;
 
-  ShellBridge& bridge() { return m_bridge; }
-  NativeShell& native() { return m_native; }
-  QVariant state(const QString& key) const { return m_bridge.state()->value(key); }
+  ShellBridge& bridge() { return *m_bridge; }
+  NativeShell& native() { return *m_native; }
+  QVariant state(const QString& key) const { return m_bridge->state()->value(key); }
+  // The desktop quits and starts again: a new shell and page, the same files.
+  void restart();
 
   void setTime(const QString& iso);
   void setTime(const QDateTime& now);
   QDateTime now() const { return m_now; }
 
-  void publishSidebarInput() { m_bridge.publish(QStringLiteral("sidebarInput"), sidebarInput); }
+  void publishSidebarInput() { m_bridge->publish(QStringLiteral("sidebarInput"), sidebarInput); }
   // What the page's header shows for a thread (ShellWorkspaceState), from the
   // node's project; a thread whose project the node does not know has none.
   void publishWorkspace(const QString& threadKey, const QJsonObject& project, const QString& worktreePath, bool draft);
-  void publishComposer() { m_bridge.publish(QStringLiteral("composer"), composer); }
+  void publishComposer() { m_bridge->publish(QStringLiteral("composer"), composer); }
+  // The page reports that its own navigation took it to `route` (`route.open`).
+  void pageOpens(const QVariantMap& route, bool replace = false);
 
   void connect(const QString& token = QStringLiteral("node-token"));
   int shellSubscriptions() const;
@@ -70,8 +77,12 @@ public:
 private:
   void onPageAction(const QString& type, const QVariantMap& payload);
 
+  void start();
+
   QDateTime m_now;
+  // Where the shell keeps its files (the last route), across restarts.
+  QTemporaryDir m_home;
   // Declared in teardown order: the shell goes before the bridge it intercepts.
-  ShellBridge m_bridge;
-  NativeShell m_native{&m_bridge};
+  std::unique_ptr<ShellBridge> m_bridge;
+  std::unique_ptr<NativeShell> m_native;
 };

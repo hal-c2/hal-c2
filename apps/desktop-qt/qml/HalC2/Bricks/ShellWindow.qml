@@ -13,11 +13,14 @@ Window {
     // The page still owns collapsing (Mod+B) and its own settings sections;
     // the shell animates and re-arranges around them.
     readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
+    // Where the window is (NavigationController); the page's own settings
+    // state until the shell has its node.
+    readonly property var route: Shell.state.route ?? null
     // A settings page the shell renders itself is open (ClusterController):
     // layouts put ClusterSettings where the page would be.
-    readonly property bool clusterOpen: Shell.state.cluster?.open ?? false
+    readonly property bool clusterOpen: route !== null && route.kind === "settings" && route.section === "/settings/cluster"
     // Settings show, from the page's sections or the shell's own pages.
-    readonly property bool settingsActive: clusterOpen || (Shell.state.settings ? Shell.state.settings.active : false)
+    readonly property bool settingsActive: route !== null ? route.kind === "settings" : (Shell.state.settings ? Shell.state.settings.active : false)
     // The page's keybindings (the configurable ones from Settings), as Qt
     // sequences. They fire only while the chrome owns the keyboard: a
     // focused page sees its own keydowns and handles them itself.
@@ -48,7 +51,7 @@ Window {
     minimumWidth: 640
     minimumHeight: 400
     visible: true
-    title: qsTr("HAL-C2")
+    title: route !== null && route.title ? qsTr("%1 — HAL-C2").arg(route.title) : qsTr("HAL-C2")
     color: Theme.windowTransparent ? "transparent" : Theme.palette.color("chrome", "#0b0b0d")
     opacity: Theme.windowOpacity
     flags: Theme.frameless ? Qt.Window | Qt.FramelessWindowHint : Qt.Window

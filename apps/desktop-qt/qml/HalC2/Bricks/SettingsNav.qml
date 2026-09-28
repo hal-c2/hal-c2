@@ -13,7 +13,10 @@ Rectangle {
     readonly property var model: Shell.state.settings ?? null
     readonly property bool active: model !== null && model.active
     readonly property var cluster: Shell.state.cluster ?? null
-    readonly property bool clusterOpen: cluster !== null && cluster.open
+    // The section showing: the shell's route once it has one, else the page's.
+    readonly property var route: Shell.state.route ?? null
+    readonly property string currentSection: route !== null && route.section ? route.section : model !== null && model.activeSection ? model.activeSection : ""
+    readonly property bool clusterOpen: currentSection === "/settings/cluster"
     readonly property string query: search.text.trim().toLowerCase()
     // The shell's own pages, as rows shaped like the page's sections and
     // search results; `action` is what picking one dispatches. Every row
@@ -112,7 +115,7 @@ Rectangle {
 
                 readonly property bool isResult: modelData.result
                 readonly property bool isNative: modelData.action !== undefined
-                readonly property bool current: isNative ? !isResult && modelData.current : !isResult && !nav.clusterOpen && nav.model.activeSection === modelData.to
+                readonly property bool current: isNative ? !isResult && modelData.current : !isResult && nav.currentSection === modelData.to
 
                 width: ListView.view.width
                 implicitHeight: isResult ? 48 : 36

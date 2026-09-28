@@ -1,6 +1,7 @@
 #include "SidebarController.h"
 
 #include "NativeShell.h"
+#include "NavigationController.h"
 #include "NodeClient.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -53,7 +54,14 @@ void SidebarController::refresh() {
   // A scope whose project went away (removed, regrouped) shows everything again.
   if (m_inputReceived && m_scope && m_input.group(*m_scope) == nullptr) m_scope.reset();
   const QDateTime now = m_now();
-  m_view = sidebar::build(m_store->threads(), m_input, m_scope,
+  // The window's route marks the open thread or draft, not the page's.
+  sidebar::Input input = m_input;
+  if (const auto* navigation = NativeShell::of(this)->controller<NavigationController>()) {
+    const NavigationController::Route& route = navigation->route();
+    input.activeThreadKey = route.kind == QLatin1String("thread") ? sidebar::Nullable(route.threadKey) : std::nullopt;
+    input.activeDraftId = route.kind == QLatin1String("draft") ? QVariant(route.draftId) : QVariant::fromValue(nullptr);
+  }
+  m_view = sidebar::build(m_store->threads(), input, m_scope,
                           [this](const QString& environmentId) { return m_store->capabilities(environmentId); },
                           now.toMSecsSinceEpoch());
   m_bridge->publish(QStringLiteral("sidebar"), m_view.state);
@@ -163,7 +171,7 @@ void SidebarController::park(const QString& key, QJsonObject parkCommand, const 
 
   // Planned now, before the command reshuffles the list.
   std::function<void()> navigate;
-  if (m_input.activeThreadKey == key) {
+  if (activeThreadKey() == key) {
     const QStringList& keys = m_view.orderedKeys;
     const qsizetype index = keys.indexOf(key);
     std::optional<QString> next;
@@ -177,10 +185,13 @@ void SidebarController::park(const QString& key, QJsonObject parkCommand, const 
       }
     }
     if (next) {
-      navigate = [this, next = *next] { m_bridge->sendToPage(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), next}}); };
+      navigate = [this, next = *next] {
+        NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::thread(next));
+      };
     } else if (const auto projectKey = logicalProjectKey(*thread)) {
       navigate = [this, projectKey = *projectKey] {
-        m_bridge->sendToPage(QStringLiteral("thread.new"), QVariantMap{{QStringLiteral("projectKey"), projectKey}});
+        NativeShell::of(this)->controller<NavigationController>()->open(
+            NavigationController::Route::newThread(projectKey));
       };
     }
   }
@@ -195,7 +206,7 @@ void SidebarController::park(const QString& key, QJsonObject parkCommand, const 
           return;
         }
         // A navigation made while the command was pending wins over the plan.
-        if (navigate && m_input.activeThreadKey == key) navigate();
+        if (navigate && activeThreadKey() == key) navigate();
         if (onSuccess) onSuccess();
       });
 }
@@ -249,6 +260,10 @@ void SidebarController::selectSnooze(const QString& id) {
          });
     return;
   }
+}
+
+QString SidebarController::activeThreadKey() const {
+  return NativeShell::of(this)->controller<NavigationController>()->threadKey();
 }
 
 ToastController* SidebarController::toasts() const {

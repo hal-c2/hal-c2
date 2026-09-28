@@ -14,8 +14,9 @@ class ShellBridge;
 // This machine's cluster, a settings page the shell owns (apps/server-ex
 // `HalC2.Cluster`): the node does the work of status, invite, join and remove
 // over the shell's own connection (`cluster.*` RPCs). Publishes `cluster`:
-// {open, busy, status, error, invite, notice}; `open` puts the window in
-// settings with this page showing (ShellWindow.settingsPage).
+// {busy, status, error, invite, notice}. The page shows while the route is
+// the settings section "/settings/cluster" (NavigationController, which takes
+// cluster.open and cluster.close).
 class ClusterController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -43,6 +44,8 @@ private:
   NodeClient* m_client;
   QVariantMap m_state;
   bool m_active = false;
+  // Whether the route shows this page.
+  bool m_open = false;
   // Bumped by every read and change; a read's answer lands only if nothing was asked since.
   quint64 m_generation = 0;
 };
