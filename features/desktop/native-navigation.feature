@@ -13,7 +13,8 @@ Feature: The desktop shell decides where the window is
   Once connected, the Qt shell owns the route: the thread, draft, new thread, settings section,
   pull requests or usage the window shows. It keeps where the user came from so back returns
   there, remembers the last route across restarts, and titles the window. The page still draws
-  the centre, so it is told where to go, and where its own links take it the shell adopts.
+  some settings sections, so it is told where to go except on the shell's own pages, and where
+  its own links take it the shell adopts.
 
   Background:
     Given the time is "2026-09-23T10:00:00Z"
@@ -63,14 +64,14 @@ Feature: The desktop shell decides where the window is
     Scenario: Opening pull requests
       When the user opens pull requests
       Then the window shows pull requests
-      And the page is asked to open pull requests
+      And the page is not told where to go
       And the window is titled "Pull requests"
 
     @desktop
     Scenario: Opening usage
       When the user opens usage
       Then the window shows usage
-      And the page is asked to open usage
+      And the page is not told where to go
       And the window is titled "Usage"
 
   Rule: Back returns to where the user was

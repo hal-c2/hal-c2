@@ -41,6 +41,12 @@ void FakeNode::onRpc(const QString& method, RpcHandler handler) {
   m_rpc.insert(method, std::move(handler));
 }
 
+void FakeNode::passOn(const Rpc& rpc) {
+  const auto handler = m_rpc.constFind(rpc.method.left(rpc.method.indexOf(QLatin1Char('.')) + 1));
+  if (handler != m_rpc.cend()) return (*handler)(rpc);
+  reply(rpc, QJsonValue::Null);
+}
+
 void FakeNode::onShape(const QString& type, ShapeHandler handler) {
   m_shapes.insert(type, std::move(handler));
 }
@@ -323,8 +329,8 @@ void FakeNode::onMessage(QWebSocket* socket, const QString& text) {
   } else if (type == QLatin1String("ping")) {
     send({{QStringLiteral("t"), QStringLiteral("pong")}});
   } else if (type == QLatin1String("rpc")) {
-    const Rpc rpc{id, message.value(QLatin1String("method")).toString(), message.value(QLatin1String("payload")).toObject(), socket};
     const QString down = message.value(QLatin1String("environment")).toString();
+    const Rpc rpc{id, message.value(QLatin1String("method")).toString(), message.value(QLatin1String("payload")).toObject(), socket, down};
     if (linkProblems.contains(down)) {
       const QJsonObject detail = unreachable(down);
       refuse(rpc, detail.value(QLatin1String("message")).toString(), detail);

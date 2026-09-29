@@ -44,6 +44,8 @@ public:
     QJsonObject payload;
     // The connection it came on; an answer to a dropped one is not sent.
     QPointer<QWebSocket> socket;
+    // The environment it is for ("" for the node's own).
+    QString environment;
   };
   using RpcHandler = std::function<void(const Rpc& rpc)>;
   // `id` is the subscription's; the shape is live until unsubscribed, forgotten
@@ -65,6 +67,9 @@ public:
   // call); an exact match wins.
   void onRpc(const QString& method, RpcHandler handler);
   void onShape(const QString& type, ShapeHandler handler);
+  // Hands a call an exact handler does not take to its namespace's handler,
+  // when two domains fake one method for different callers.
+  void passOn(const Rpc& rpc);
   // `path` is exact ("/api/pull-requests/diff"); an unknown one is a 404.
   void onHttp(const QString& path, HttpHandler handler) { m_httpHandlers.insert(path, std::move(handler)); }
 

@@ -91,6 +91,8 @@ const FakeNode::Extension pullRequests([](FakeNode& node) {
     syncLinks(node, threadId);
   });
   node.onRpc(QStringLiteral("pullRequests.invalidate"), [&node](const FakeNode::Rpc& rpc) {
+    // The pull requests page's refresh names no reference (PullRequestListSteps).
+    if (!rpc.payload.contains(QLatin1String("reference"))) return node.passOn(rpc);
     node.part<FakePullRequests>().invalidated.append(rpc.payload.value(QLatin1String("reference")).toObject());
     syncLinks(node, node.part<FakePullRequests>().thread);
     node.reply(rpc, QJsonValue::Null);

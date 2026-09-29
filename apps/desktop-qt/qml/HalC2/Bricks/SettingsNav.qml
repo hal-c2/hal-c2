@@ -37,7 +37,8 @@ Rectangle {
                     to: section.to,
                     title: section.label,
                     sectionLabel: section.detail ?? section.label,
-                    action: section.action
+                    action: section.action,
+                    targetId: section.targetId
                 }));
         return pageResults.map(row => Object.assign({
                     result: true
@@ -92,10 +93,13 @@ Rectangle {
             onTextEdited: Shell.dispatch("settings.search", {
                 query: text
             })
+            // Clears here, and the page's query while it keeps one: the
+            // binding follows the page again, or empties without it.
             Keys.onEscapePressed: {
                 Shell.dispatch("settings.search", {
                     query: ""
                 });
+                text = Qt.binding(() => nav.model ? nav.model.searchQuery : "");
             }
         }
 
@@ -128,7 +132,7 @@ Rectangle {
                 Keys.onEnterPressed: clicked()
                 Keys.onDownPressed: nav.focusRow(index + 1)
                 Keys.onUpPressed: nav.focusRow(index - 1)
-                onClicked: row.modelData.action ? Shell.dispatch(row.modelData.action) : row.isResult && row.modelData.targetId !== undefined ? Shell.dispatch("settings.openResult", {
+                onClicked: row.modelData.action ? Shell.dispatch(row.modelData.action) : row.isResult && row.modelData.targetId ? Shell.dispatch("settings.openResult", {
                     to: row.modelData.to,
                     targetId: row.modelData.targetId
                 }) : Shell.dispatch("settings.navigate", {
@@ -169,6 +173,7 @@ Rectangle {
             }
 
             Text {
+                objectName: "noMatches"
                 anchors.centerIn: parent
                 visible: list.searching && list.count === 0
                 text: qsTr("No matching settings")

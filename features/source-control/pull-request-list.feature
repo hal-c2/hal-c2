@@ -12,6 +12,7 @@
 #   apps/web/src/components/pullRequest/pullRequestListPreferences.ts
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Pull requests)
 #   apps/desktop-qt/parity/features.backlog.test.ts (right panel pull request list)
+#   apps/desktop-qt/src/native/PullRequestListController.cpp
 
 Feature: Browsing pull requests
   The pull requests page gathers pull requests from every project in the workspace, with
@@ -125,17 +126,88 @@ Feature: Browsing pull requests
     When the user refreshes the pull request list by hand
     Then the node reads the pull requests afresh
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The pull requests page with its filters
     When the user opens the pull requests page
     Then pull requests from every project are listed with state, involvement, project and filter choices
     And the user's filter choices are kept for next time
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Nothing under these filters
     Given no pull request matches the chosen filters
     When the user opens the pull requests page
     Then the user is told "Nothing under these filters" and to widen the filters
+
+  @desktop
+  Scenario Outline: The page's filters narrow the list
+    Given the user is on the pull requests page
+    When the user filters pull requests to <filter>
+    Then the <which> pull requests are listed
+
+    Examples:
+      | filter        | which     |
+      | drafts only   | draft     |
+      | drafts hidden | non-draft |
+      | merged ones   | merged    |
+
+  @desktop
+  Scenario: A workspace without pull requests says so
+    Given the projects have no pull requests
+    When the user opens the pull requests page
+    Then the pull requests page says "No pull requests"
+
+  @desktop
+  Scenario: An environment that cannot be reached is named on the page
+    Given the environment "env-lab" is offline
+    When the user opens the pull requests page
+    Then the open pull requests are listed
+    And the pull requests page says "env-lab cannot be reached; its pull requests are not listed."
+
+  @desktop
+  Scenario: A list the node cannot read can be retried
+    Given the node cannot list pull requests, saying "gh auth login is required."
+    When the user opens the pull requests page
+    Then the pull requests page shows the error "gh auth login is required." with a retry
+    When the node can list pull requests again
+    And the user retries the pull requests page
+    Then the open pull requests are listed
+
+  @desktop
+  Scenario: Refreshing the page asks the hosts afresh
+    Given the user is on the pull requests page
+    When the user refreshes the pull requests page
+    Then the node forgets what it knew and the list is read again
+
+  @desktop
+  Scenario: The page follows changes made from HAL-C2
+    Given the user is on the pull requests page
+    When a pull request is merged from HAL-C2
+    Then the page lists it no longer
+
+  @desktop
+  Scenario: Leaving the page stops following changes
+    Given the user is on the pull requests page
+    When the user leaves the pull requests page
+    Then the desktop stops listening for pull request changes
+
+  @desktop
+  Scenario: Opening a pull request opens the thread working on it
+    Given the thread "Fix tax" works on #12
+    And the user is on the pull requests page
+    When the user opens #12 from the pull requests page
+    Then the thread "Fix tax" opens
+
+  @desktop
+  Scenario: A pull request no thread works on says so
+    Given the user is on the pull requests page
+    When the user opens #7 from the pull requests page
+    Then the pull requests page says "No thread works on #7 yet."
+
+  @desktop
+  Scenario: A pull request opens on its host
+    Given the user is on the pull requests page
+    When the user opens #12 on GitHub from the pull requests page
+    Then the browser opens "https://github.com/acme/shop/pull/12"
 
   @backlog @desktop
   Scenario: A pull request list beside the thread

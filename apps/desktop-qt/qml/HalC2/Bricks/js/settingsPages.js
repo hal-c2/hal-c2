@@ -1,4 +1,5 @@
 .pragma library
+.import "settingsRows.js" as Rows
 
 // The settings sections, in the page's order (apps/web SettingsSidebarNav).
 // A section with a `brick` is a native page, loaded from <brick>.qml in this
@@ -8,16 +9,21 @@
 //   action     dispatched instead of settings.navigate (the page never shows it)
 //   requires   shell state the section needs before it is listed
 //   keywords   what the native search matches, beside the label
+//   rows       the page's settingsRows.js rows, each found by its title and description
+//   settings   other settings on the page the search finds: {title, targetId, keywords}
 var sections = [
-    { to: "/settings/general", label: "General", brick: "GeneralSettings",
+    { to: "/settings/general", label: "General", brick: "GeneralSettings", rows: Rows.general,
       keywords: "project grouping auto-resume snooze limited threads auto-settle merged inactive notifications time format response streaming whitespace diff layout proactive panels skills slash rich text composer collapse send shortcut follow-up provider update checks continue restarts origin worktree add project unpin archive delete confirmation quit text generation model legacy plan context window sidebar" },
-    { to: "/settings/appearance", label: "Appearance", brick: "AppearanceSettings",
+    { to: "/settings/appearance", label: "Appearance", brick: "AppearanceSettings", rows: Rows.appearance,
+      settings: [{ title: "Theme", targetId: "themes", keywords: "theme themes light dark system color scheme mode" }],
       keywords: "appearance theme themes light dark system color scheme contrast glass opacity environment identification diff colors composer context panel animations font size family smoothing word wrap custom editor" },
     { to: "/settings/projects", label: "Project" },
     { to: "/settings/keybindings", label: "Keybindings", brick: "KeybindingsSettings", action: "keybindings.open",
       detail: "Shortcuts and when they apply", keywords: "keybindings shortcuts keys hotkeys conditions when recorder" },
     { to: "/settings/snap-shot", label: "SnapShots" },
-    { to: "/settings/providers", label: "Providers" },
+    { to: "/settings/providers", label: "Providers", brick: "ProvidersSettings", requires: "providerSettings",
+      detail: "Install, sign-in, versions and models",
+      keywords: "providers provider codex claude cursor grok opencode antigravity acp agents sign in sign out login logout account email enable disable update version models refresh" },
     { to: "/settings/integrations", label: "Integrations" },
     { to: "/settings/scheduled-tasks", label: "Scheduled Tasks" },
     { to: "/settings/source-control", label: "Source Control" },
@@ -25,7 +31,8 @@ var sections = [
     { to: "/settings/connections", label: "Connections", brick: "ConnectionsSettings", action: "connections.open",
       requires: "connections", detail: "Environments, pairing links and clients",
       keywords: "connections environments pairing link code clients revoke access remote" },
-    { to: "/settings/archived", label: "Archive" },
+    { to: "/settings/archived", label: "Archive", brick: "ArchivedThreads", requires: "archivedThreads",
+      detail: "Archived threads, unarchived or deleted", keywords: "archive archived threads unarchive restore delete" },
     { to: "/settings/cluster", label: "Cluster", brick: "ClusterSettings", action: "cluster.open", requires: "cluster",
       detail: "Machines, invites and joining", keywords: "cluster machines invite join remove tailscale" },
 ];
@@ -69,9 +76,32 @@ function pageResults(results) {
     });
 }
 
-// The native sections matching `query` (lower case) by label or keywords.
+// What the native search finds for `query` (lower case): sections by label or
+// keywords, and the settings on their pages, each {label, detail (its
+// section), to, action, targetId (the setting's objectName on the page)}.
+// Every word must match; titles that match come first.
 function searchRows(query, state) {
-    return navRows([], state).filter(function (section) {
-        return section.label.toLowerCase().indexOf(query) >= 0 || (section.keywords || "").indexOf(query) >= 0;
+    var words = query.split(/\s+/).filter(function (word) { return word.length > 0; });
+    var matches = function (text) {
+        return words.every(function (word) { return text.indexOf(word) >= 0; });
+    };
+    var titled = [];
+    var others = [];
+    var add = function (row, title) {
+        (matches(title.toLowerCase()) ? titled : others).push(row);
+    };
+    navRows([], state).forEach(function (section) {
+        var text = (section.label + " " + (section.keywords || "")).toLowerCase();
+        if (matches(text)) add(section, section.label);
+        // Rows this platform does not show are not found.
+        var settings = Rows.visible(section.rows || [], Qt.platform.os).filter(function (row) { return row.key !== undefined; }).map(function (row) {
+            return { title: row.title, targetId: "settingsRow:" + row.key, keywords: row.description || "" };
+        }).concat(section.settings || []);
+        settings.forEach(function (setting) {
+            var haystack = (setting.title + " " + setting.keywords).toLowerCase();
+            if (!matches(haystack)) return;
+            add({ label: setting.title, detail: section.label, to: section.to, targetId: setting.targetId }, setting.title);
+        });
     });
+    return titled.concat(others);
 }

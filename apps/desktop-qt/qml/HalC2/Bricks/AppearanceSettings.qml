@@ -85,6 +85,7 @@ SettingsPage {
     }
 
     Heading {
+        objectName: "themes"
         text: qsTr("Themes")
     }
 
