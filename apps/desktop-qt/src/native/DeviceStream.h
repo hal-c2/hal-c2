@@ -36,7 +36,8 @@ class QWebSocket;
 // arrived), or error with `detail` (reconnect() starts again). A dropped
 // connection retries after a second; no picture within the first-frame
 // timeout, an AVCC body that stops, a refused credential, a decoder that
-// cannot start, or video it refuses three times running is an error.
+// cannot start, or video it refuses three times running is an error, and so
+// is FFmpeg not being installed (it is loaded at run time, see FFmpeg.h).
 class DeviceStream : public QObject {
   Q_OBJECT
   Q_PROPERTY(QString status READ status NOTIFY statusChanged)

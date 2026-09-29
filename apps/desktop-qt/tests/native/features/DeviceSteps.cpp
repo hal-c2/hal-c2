@@ -28,6 +28,7 @@
 
 #include "Brick.h"
 #include "DeviceStream.h"
+#include "FFmpeg.h"
 #include "Harness.h"
 #include "RightPanelController.h"
 #include "Stream.h"
@@ -147,6 +148,11 @@ struct FakeHub {
   QList<QJsonObject> text;
   bool used = false;
   bool looking = false;
+  // FFmpeg is made to look not installed, until this node goes.
+  bool noFFmpeg = false;
+  ~FakeHub() {
+    if (noFFmpeg) ffmpeg::pretendMissing(false);
+  }
 };
 
 QJsonObject stateOf(FakeNode& node) {
@@ -574,6 +580,23 @@ const Steps steps([] {
   });
   step(QStringLiteral("the device sends no picture yet"), [](World& world, const Captures&, const Table&) {
     fakeHub(world).silent = true;
+  });
+  step(QStringLiteral("FFmpeg is not installed"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).noFFmpeg = true;
+    ffmpeg::pretendMissing(true);
+  });
+  step(QStringLiteral("the tab says to install FFmpeg to watch device screens"), [](World& world, const Captures&, const Table&) {
+    // The words the panel shows over where the picture would be.
+    const auto shown = [&]() -> QString {
+      const QQuickItem* status = devicePanel(world).item(QStringLiteral("deviceStatus"));
+      if (!status || !status->isVisible()) return {};
+      for (const QQuickItem* child : status->childItems()) {
+        if (child->isVisible() && child->property("text").isValid()) return child->property("text").toString();
+      }
+      return {};
+    };
+    world.waitFor([&] { return shown().startsWith(QLatin1String("Install FFmpeg to watch device screens")); },
+                  [&] { return shown() + QLatin1Char('\n') + describe(world); });
   });
   step(QStringLiteral("the device sends video the desktop cannot decode"), [](World& world, const Captures&, const Table&) {
     fakeHub(world).undecodable = true;

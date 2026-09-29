@@ -678,8 +678,8 @@ with the composer's strip.
 
 Device tabs (`ThreadDevices`, `DeviceStream`) follow the node's `devices`
 shape and stream through its device-hub proxy with the shell's bearer token,
-decoding H.264 with FFmpeg's libavcodec (a build dependency found through
-pkg-config; see [Devices](devices.md#the-viewers-decode-both-vendored-protocols)).
+decoding H.264 with FFmpeg's libavcodec (headers at build time, the libraries
+loaded at run time; see [Devices](devices.md#the-viewers-decode-both-vendored-protocols)).
 A device tab streams only while it is the active tab.
 
 The panel never asks the page for anything. Per thread, the controller keeps

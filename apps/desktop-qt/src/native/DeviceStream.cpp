@@ -11,6 +11,7 @@
 
 #include <algorithm>
 
+#include "FFmpeg.h"
 #include "NodeClient.h"
 
 namespace {
@@ -227,6 +228,12 @@ void DeviceStream::start() {
   if (m_running) return;
   if (!m_active || m_hubBase.isEmpty() || m_deviceId.isEmpty()) {
     setStatus(QStringLiteral("idle"));
+    return;
+  }
+  // Without FFmpeg there is no picture to show: say what to install rather
+  // than connect. reconnect() looks again.
+  if (!ffmpeg::api()) {
+    setStatus(QStringLiteral("error"), ffmpeg::missing());
     return;
   }
   m_running = true;

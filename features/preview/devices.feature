@@ -7,7 +7,7 @@
 #   apps/web/src/components/RightPanelTabs.tsx (device tabs replace the picker, dismissed tabs)
 #   apps/server-ex/lib/hal_c2/devices.ex (devices shape, hubBasePath)
 #   apps/server-ex/lib/hal_c2/devices/proxy.ex (/api/device-hub/nodes/<node>/vendor/*, 401 and 403)
-#   apps/desktop-qt/src/native/ThreadDevices.cpp, DeviceStream.cpp, DeviceDecoder.cpp
+#   apps/desktop-qt/src/native/ThreadDevices.cpp, DeviceStream.cpp, DeviceDecoder.cpp, FFmpeg.cpp
 #   apps/desktop-qt/qml/HalC2/Bricks/DevicePanel.qml
 #   apps/desktop-qt/tests/native/features/DeviceSteps.cpp
 #   Cross-domain: connections/device-hub.feature holds the node's hub and proxy,
@@ -98,6 +98,17 @@ Feature: Device panel
       When the device starts sending pictures
       And the user reconnects
       Then the tab "iPhone 17" shows the device's screen
+
+    @desktop
+    Scenario: Without FFmpeg the device tab explains what to install
+      Given FFmpeg is not installed
+      And the thread's environment has an iOS Simulator "iPhone 17" running
+      When the user adds a Device tab
+      Then "iPhone 17" is offered under "iOS Simulators"
+      When the user opens "iPhone 17" from the Device tab
+      Then the thread has "iPhone 17" open
+      And the tab says to install FFmpeg to watch device screens
+      And the tab asked for the device's video 0 times
 
     @desktop
     Scenario: Video the desktop cannot decode is an error, not endless reconnecting

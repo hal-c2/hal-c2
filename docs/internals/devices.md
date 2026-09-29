@@ -91,4 +91,8 @@ decodes in software with libavcodec on its own thread
 every profile decodes and MJPEG only seeds the first picture. QtMultimedia was
 not used: its player paces by timestamp and buffers, and cannot drop frames or
 ask for keyframes. A decoder that falls behind drops its backlog and waits for
-the next keyframe instead of showing old pictures late.
+the next keyframe instead of showing old pictures late. FFmpeg is not linked or
+shipped (licensing and size): [`FFmpeg.cpp`](../../apps/desktop-qt/src/native/FFmpeg.cpp)
+loads the user's libraries at run time, and only at the major versions of the
+headers the app was built with, since the decoder reads FFmpeg's structs
+directly. Without them the app runs and the Device tab says to install FFmpeg.

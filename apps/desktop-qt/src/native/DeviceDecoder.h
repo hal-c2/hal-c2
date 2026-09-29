@@ -13,6 +13,9 @@ struct AVCodecContext;
 struct AVFrame;
 struct AVPacket;
 struct SwsContext;
+namespace ffmpeg {
+struct Api;
+}
 
 // A device's H.264 screen, decoded off the GUI thread with libavcodec: iOS
 // sends AVCC (length-prefixed NAL units after an avcC record), Android sends
@@ -93,6 +96,8 @@ private:
 
   // The worker's own.
   int m_openEpoch = -1;
+  // FFmpeg as loaded by open(); null before.
+  const ffmpeg::Api* m_av = nullptr;
   AVCodecContext* m_context = nullptr;
   AVPacket* m_packet = nullptr;
   AVFrame* m_picture = nullptr;

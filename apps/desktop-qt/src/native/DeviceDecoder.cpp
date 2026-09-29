@@ -4,13 +4,13 @@
 
 #include <cstring>
 
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavutil/frame.h>
-#include <libavutil/macros.h>
-#include <libavutil/mem.h>
-#include <libswscale/swscale.h>
-}
+#include "FFmpeg.h"
+
+namespace {
+// Frees a converted picture's pixels; set once FFmpeg has loaded, which it
+// has before any picture exists.
+decltype(&::av_free) freePixels = nullptr;
+}  // namespace
 
 DeviceDecoder::DeviceDecoder(QObject* parent) : QObject(parent) {
   m_thread.setObjectName(QStringLiteral("device-decoder"));
@@ -131,22 +131,22 @@ void DeviceDecoder::drain() {
         }
       }
       m_openEpoch = epoch;
-      av_packet_unref(m_packet);
+      m_av->packet_unref(m_packet);
       const qsizetype size = unit.data.size() - unit.offset;
-      if (av_new_packet(m_packet, int(size)) < 0) {
+      if (m_av->new_packet(m_packet, int(size)) < 0) {
         failed = true;
         break;
       }
       std::memcpy(m_packet->data, unit.data.constData() + unit.offset, size_t(size));
       if (unit.keyframe) m_packet->flags |= AV_PKT_FLAG_KEY;
-      if (avcodec_send_packet(m_context, m_packet) < 0) {
+      if (m_av->send_packet(m_context, m_packet) < 0) {
         failed = true;
         break;
       }
       // Keeps the newest picture; the ones before it are never shown.
-      while (avcodec_receive_frame(m_context, m_picture) == 0) {
-        av_frame_unref(m_last);
-        av_frame_move_ref(m_last, m_picture);
+      while (m_av->receive_frame(m_context, m_picture) == 0) {
+        m_av->frame_unref(m_last);
+        m_av->frame_move_ref(m_last, m_picture);
         decoded = true;
       }
     }
@@ -177,10 +177,13 @@ void DeviceDecoder::drain() {
 
 QString DeviceDecoder::open(const QByteArray& avcc) {
   close();
-  const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+  m_av = ffmpeg::api();
+  if (!m_av) return ffmpeg::missing();
+  freePixels = m_av->avFree;
+  const AVCodec* codec = m_av->find_decoder(AV_CODEC_ID_H264);
   if (!codec) return QStringLiteral("This FFmpeg has no H.264 decoder.");
   const QString failed = QStringLiteral("The H.264 decoder did not start.");
-  m_context = avcodec_alloc_context3(codec);
+  m_context = m_av->alloc_context3(codec);
   if (!m_context) return failed;
   // A live screen: no reordering delay, and slice threads (frame threads
   // hold pictures back one per thread).
@@ -188,25 +191,25 @@ QString DeviceDecoder::open(const QByteArray& avcc) {
   m_context->thread_type = FF_THREAD_SLICE;
   m_context->thread_count = 0;
   if (!avcc.isEmpty()) {
-    m_context->extradata = static_cast<uint8_t*>(av_mallocz(size_t(avcc.size()) + AV_INPUT_BUFFER_PADDING_SIZE));
+    m_context->extradata = static_cast<uint8_t*>(m_av->avMallocz(size_t(avcc.size()) + AV_INPUT_BUFFER_PADDING_SIZE));
     if (!m_context->extradata) return failed;
     std::memcpy(m_context->extradata, avcc.constData(), size_t(avcc.size()));
     m_context->extradata_size = int(avcc.size());
   }
-  if (avcodec_open2(m_context, codec, nullptr) < 0) return failed;
-  m_packet = av_packet_alloc();
-  m_picture = av_frame_alloc();
-  m_last = av_frame_alloc();
+  if (m_av->open2(m_context, codec, nullptr) < 0) return failed;
+  m_packet = m_av->packet_alloc();
+  m_picture = m_av->frame_alloc();
+  m_last = m_av->frame_alloc();
   return m_packet && m_picture && m_last ? QString() : failed;
 }
 
 void DeviceDecoder::close() {
-  if (m_context) avcodec_free_context(&m_context);
-  if (m_packet) av_packet_free(&m_packet);
-  if (m_picture) av_frame_free(&m_picture);
-  if (m_last) av_frame_free(&m_last);
+  if (m_context) m_av->free_context(&m_context);
+  if (m_packet) m_av->packet_free(&m_packet);
+  if (m_picture) m_av->frame_free(&m_picture);
+  if (m_last) m_av->frame_free(&m_last);
   if (m_scaler) {
-    sws_freeContext(m_scaler);
+    m_av->freeContext(m_scaler);
     m_scaler = nullptr;
   }
 }
@@ -217,17 +220,17 @@ QImage DeviceDecoder::convert(AVFrame* picture, const QSize& limit) {
   if (!limit.isEmpty() && (size.width() > limit.width() || size.height() > limit.height())) {
     size = size.scaled(limit, Qt::KeepAspectRatio).expandedTo(QSize(1, 1));
   }
-  m_scaler = sws_getCachedContext(m_scaler, picture->width, picture->height, AVPixelFormat(picture->format), size.width(),
+  m_scaler = m_av->getCachedContext(m_scaler, picture->width, picture->height, AVPixelFormat(picture->format), size.width(),
                                   size.height(), AV_PIX_FMT_RGB32, SWS_BILINEAR, nullptr, nullptr, nullptr);
   if (!m_scaler) return {};
   // swscale's SIMD writes whole vectors, past the last pixel of a row and of
   // the picture: it gets aligned rows and a padded buffer, which the image
   // then owns.
   const int stride = FFALIGN(size.width() * 4, 64);
-  auto* bits = static_cast<uint8_t*>(av_malloc(size_t(stride) * size_t(size.height()) + 64));
+  auto* bits = static_cast<uint8_t*>(m_av->avMalloc(size_t(stride) * size_t(size.height()) + 64));
   if (!bits) return {};
   uint8_t* planes[4] = {bits, nullptr, nullptr, nullptr};
   int strides[4] = {stride, 0, 0, 0};
-  sws_scale(m_scaler, picture->data, picture->linesize, 0, picture->height, planes, strides);
-  return QImage(bits, size.width(), size.height(), stride, QImage::Format_RGB32, [](void* data) { av_free(data); }, bits);
+  m_av->scale(m_scaler, picture->data, picture->linesize, 0, picture->height, planes, strides);
+  return QImage(bits, size.width(), size.height(), stride, QImage::Format_RGB32, [](void* data) { freePixels(data); }, bits);
 }

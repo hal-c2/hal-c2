@@ -17,9 +17,13 @@ as the installed app does.
 
 Besides Qt Quick and WebEngine, the shell needs the Qt WebSockets module for its own node
 client: `qt6-websockets` on Arch and Fedora, `qt6-websockets-dev` on Debian and Ubuntu.
-The Device tab decodes H.264 with FFmpeg's libavcodec, libavutil and libswscale, found through
-`pkg-config`: `ffmpeg` on Arch and Homebrew, `libavcodec-dev libavutil-dev libswscale-dev` on
-Debian and Ubuntu.
+The Device tab decodes H.264 with FFmpeg's libavcodec, libavutil and libswscale. Building needs
+only their headers, found through `pkg-config`: `ffmpeg` on Arch and Homebrew,
+`libavcodec-dev libavutil-dev libswscale-dev` on Debian and Ubuntu, `ffmpeg-free-devel` (or
+RPM Fusion's `ffmpeg-devel`) on Fedora. Nothing links or ships FFmpeg: the libraries load when a
+Device tab first streams, at the major versions the headers name, so the app starts without them
+and the tab says to install them. At run time that is `ffmpeg` on Debian, Ubuntu, Arch and
+Homebrew, and RPM Fusion's `ffmpeg-libs` on Fedora (`ffmpeg-free` may lack H.264).
 
 The terminal drawer is [qml-ghostty](https://github.com/hal-c2/qml-ghostty), fetched at the
 revision pinned in `cmake/QmlGhostty.cmake`. The first configure builds its libghostty-vt from

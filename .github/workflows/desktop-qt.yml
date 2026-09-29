@@ -69,8 +69,9 @@ jobs:
           modules: qtwebengine qtwebchannel qtpositioning qtwebsockets
           cache: true
 
-      # FFmpeg's libavcodec, libavutil and libswscale decode the Device tab's
-      # H.264 screen (cmake/NativeShell.cmake); the bundlers below carry them.
+      # FFmpeg's headers build the Device tab's H.264 decoding
+      # (cmake/NativeShell.cmake). Nothing links FFmpeg, so the bundlers below
+      # do not ship it: the app loads the user's own at run time.
       - name: Install build tools (Linux)
         if: runner.os == 'Linux'
         run: |
