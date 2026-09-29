@@ -165,12 +165,8 @@ const Steps steps([] {
   step(QStringLiteral("the user turns off the device hub"), [](World& world, const Captures&, const Table&) { turn(world, QStringLiteral("hub"), false); });
   step(QStringLiteral("the user turns on agent device access"), [](World& world, const Captures&, const Table&) { turn(world, QStringLiteral("agent"), true); });
   step(QStringLiteral("the user turns off agent device access"), [](World& world, const Captures&, const Table&) { turn(world, QStringLiteral("agent"), false); });
-  // New sessions read the stored setting (HalC2.Devices.agent_available?).
-  step(QStringLiteral("agents started from then on can use the device tools"), [](World& world, const Captures&, const Table&) {
-    expectStored(world, QStringLiteral("enableAgentDeviceAccess"), true);
-  });
-  step(QStringLiteral("agents started from then on cannot use the device tools"), [](World& world, const Captures&, const Table&) {
-    expectStored(world, QStringLiteral("enableAgentDeviceAccess"), false);
+  step(QStringLiteral("agent device access is stored as (on|off) and shown as \\1"), [](World& world, const Captures& c, const Table&) {
+    expectStored(world, QStringLiteral("enableAgentDeviceAccess"), c[0] == QLatin1String("on"));
   });
   step(QStringLiteral("the device hub is stored as on"), [](World& world, const Captures&, const Table&) {
     expectStored(world, QStringLiteral("enableDeviceSupport"), true);

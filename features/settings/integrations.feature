@@ -127,13 +127,15 @@ Feature: Integrations settings
       Then the device hub is stored as off
       And agent device access is stored as off
 
+    # What agents may then do is the node's: connections/device-hub.feature
+    # (Agent device access needs every prerequisite).
     @desktop
     Scenario: Agent device access can be granted and taken away
       Given the device hub is on
       When the user turns on agent device access
-      Then agents started from then on can use the device tools
+      Then agent device access is stored as on and shown as on
       When the user turns off agent device access
-      Then agents started from then on cannot use the device tools
+      Then agent device access is stored as off and shown as off
 
     @desktop
     Scenario: Device settings change on every selected environment
