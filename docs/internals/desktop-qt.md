@@ -674,9 +674,9 @@ worktreePath, envMode}`. Which thread a draft is, `NativeShell` asks
 `DraftController` (`setDraftResolver`). The `vcs` shape names the thread's
 environment, so a linked thread's git status comes through its link; while the
 link is down the subscription fails at once with the link's message
-(`gitError`), and it is followed again when the environment comes back. The
-header watches `config` for the cluster only, so a linked thread has no
-editors.
+(`gitError`), and it is followed again when the environment comes back.
+`config` names the environment too, so another machine's editors, cluster or
+linked, are watched while it is online.
 
 The terminal drawer is native: `TerminalDrawer` draws each of the thread's
 terminals with [qml-ghostty](https://github.com/hal-c2/qml-ghostty)'s

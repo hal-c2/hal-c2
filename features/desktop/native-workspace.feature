@@ -89,6 +89,14 @@ Feature: The desktop shell runs the workspace header against its node
     Then the header shows the thread "Deploy" in "ops" on "main"
 
   @desktop
+  Scenario: A linked thread's header lists its environment's editors
+    Given the node is linked to "env-c"
+    And "env-c" has the editors "VS Code" and "Zed"
+    And "env-c" has the thread "t7" titled "Deploy" in "ops" on the branch "main"
+    When the user goes to "env-c:t7"
+    Then the header lists the editors "VS Code" and "Zed"
+
+  @desktop
   Scenario: A linked thread's header says so while its environment is unreachable
     Given the node is linked to "env-c"
     And "env-c" has the thread "t7" titled "Deploy" in "ops" on the branch "main"
