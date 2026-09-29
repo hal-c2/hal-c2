@@ -397,7 +397,10 @@ the shell, so nothing alerts twice. It compares each thread with what it saw
 last, so the snapshot after connecting, or reconnecting, is a baseline rather
 than a burst of old completions. This device's `notificationMode` and
 `inAppNotificationsEnabled` pick a toast while the window has focus, or a
-system notification while it has not; regaining focus clears them.
+system notification while it has not; regaining focus clears them. A thread
+muted from its menu or the palette (`mutedAlertThreads`, thread keys, device
+settings) is still compared, only never alerted, so unmuting it does not
+replay what finished while it was muted.
 
 The platform side is the controller's `Presenter`, which `main.cpp` wires to
 `NativeNotifications` (Linux's desktop notification D-Bus service; `supported`
@@ -488,8 +491,12 @@ Projects are added and removed through `projects.mutate` by
 `project.folder.open {path}` (a folder dropped on the window) register a local
 folder, or open its latest thread if it already is a project, and otherwise
 start the new project's draft once its row arrives; a failure is a toast.
-Without a path, or where the page may not reach local folders,
-`project.add` still falls through to the page's palette. `project.remove
+Without a path, `project.add` runs the palette's Add project menu, which
+`ProjectController` registers: an online environment when there is a choice,
+then a folder browsed on that environment (`filesystem.browse`) in the
+palette's browse mode. Cloning is not native yet. Only before the shell has
+its node, or with a path where the page may not reach local folders, does
+`project.add` fall through to the page. `project.remove
 {projectKey}` publishes `projectRemoval {projectKey, title, workspaceRoot,
 threadCount}`, which `ProjectRemovalDialog` asks about; `project.remove.confirm`
 deletes with `force` and `project.remove.cancel` closes it, as does the
@@ -924,19 +931,31 @@ through `thread.new`, back, the sidebar, the terminal drawer, next, previous
 and numbered threads in the sidebar's order, the composer's pickers and stop,
 and steering with or editing a queued message.
 A brick adds its own with `Keybindings.commands.add(command, title, callback,
-owner)`, and a controller from its `activate()` (`ThemeController` the
-appearance cycle, `NavigationController` "Open settings" and "Open usage").
+owner)`, and a controller from its `activate()`. The controller that owns a
+behaviour registers its command and keeps it current (title, description,
+`setListed`, `setEnabled`) as its state changes: "Copy PR link" becomes "Copy
+thread ID" without a linked pull request, "Mute alerts for this thread" turns
+into "Unmute", pull request commands are listed only where an environment
+can serve them. A menu command (`addMenu`: theme, appearance, "New thread
+in...", Add project) hands the palette its choices when shown, so a submenu is
+never stale. A QML callback that throws emits `failed`, and the palette
+toasts "Unable to run command" only for the command it ran.
 
 The command palette (`CommandPaletteController`, the `PaletteModel` singleton,
 drawn by `CommandPalette`) lists those rows as its actions, so an action
 reaches the palette by being registered there, never by the palette naming
-it. It adds the shell's threads by key (linked environments and cluster
-threads alike), the sidebar's projects and the settings sections
-`js/settingsPages.js` hands it. It is its own list model and filters in C++,
-moving only the rows a keystroke changes. It owns `commandPalette.toggle`;
-the sidebar's Search opens it too, and dismissing it sends `composer.focus`
-to the composer. The singleton is not `Palette`, which QtQuick already
-names.
+it; only the order of the root list (`kRootCommands`, the web's hand-picked
+actions) is its own. It adds the shell's threads by key (linked environments
+and cluster threads alike), the sidebar's projects, the settings sections
+`js/settingsPages.js` hands it (without those whose `requires` is missing)
+and, from two characters, threads whose messages match. Go to file
+(`filePicker.toggle`) and project search (`projectSearch.toggle`) are modes of
+the same list against the route thread's environment, only while it is
+online; node searches wait for typing to pause and only the newest answer
+counts. It is its own list model and filters in C++, moving only the rows a
+keystroke or an answer changes, never resetting the list. Dismissing it sends
+`composer.focus` to the composer. The singleton is not `Palette`, which
+QtQuick already names.
 
 `ShellWindow` instantiates one window `Shortcut` per bound sequence and calls
 `Keybindings.press`. Who takes a key follows focus:
