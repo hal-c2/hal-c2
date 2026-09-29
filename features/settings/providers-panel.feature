@@ -166,32 +166,32 @@ Feature: Providers settings panel
 
   Rule: Native ACP sessions and model providers
 
-    @node
+    @node @desktop
     Scenario: Importing a native session continues it as a thread
       Given the agent "gemini" has a native session for the project "hal-c2"
       When the user imports that session
       Then a thread continuing the session is created in "hal-c2"
 
-    @node
+    @node @desktop
     Scenario: An imported session cannot be deleted before its thread
       Given a native session was imported as a thread
       When the user deletes the native session
       Then the user is told to delete the imported thread first
 
-    @node
+    @node @desktop
     Scenario: Deleting a native session that was not imported
       Given the agent "gemini" has a native session that was not imported
       When the user deletes it and confirms
       Then the session is deleted by the agent
 
-    @node
+    @node @desktop
     Scenario: Pointing an agent's model provider at an API and disabling it
       When the user sets the agent's model provider to "https://api.example.com" with an authorization header
       Then the agent uses that base URL
       When the user disables that model provider
       Then the agent no longer uses it
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Model provider headers must be a JSON object of strings
       When the user saves the headers "<headers>"
       Then the user is told "<message>"
@@ -201,7 +201,7 @@ Feature: Providers settings panel
         | {not json           | Headers must be valid JSON.                      |
         | {"Authorization": 1} | Headers must be a JSON object with string values. |
 
-    @node
+    @node @desktop
     Scenario: Logging out of an ACP agent
       When the user logs out of the agent "gemini"
       Then the agent is signed out and its status is read again

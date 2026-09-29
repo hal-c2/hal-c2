@@ -43,7 +43,8 @@ class ShellStore;
 // terminal), credentials [{name, label, secret}], acceptsCallback (a pasted
 // final address finishes it), docsUrl}, and how it is configured
 // (ProviderSettingsInstances.cpp): custom, resettable, label, accentColor,
-// placeholder, fields, secrets, variables, pending}], health: null |
+// placeholder, fields, secrets, variables, pending}, and a registry agent's
+// sessions and model providers, acp (ProviderSettingsAcp.cpp)], health: null |
 // {seconds, defaultSeconds, step} (the background provider health check
 // interval), wizard: null | the add-provider wizard}.
 //
@@ -55,7 +56,8 @@ class ShellStore;
 // `.signInCallback {instanceId, url}`, `.copySignInLink {instanceId}`,
 // `.openDocs {instanceId}`, `.update {instanceId}`, `.copyUpdateCommand {instanceId}`,
 // `.healthInterval {seconds}` (0 turns it off), `.resetHealthInterval`, and
-// the instance actions ProviderSettingsInstances.cpp lists.
+// the actions ProviderSettingsInstances.cpp, ProviderSettingsRegistry.cpp and
+// ProviderSettingsAcp.cpp list.
 class ProviderSettingsController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -95,6 +97,13 @@ private:
   void searchRegistry(const QString& query);
   QString registrySelectionError() const;
   QVariantMap registry() const;
+  // ProviderSettingsAcp.cpp: a registry agent's sessions, model providers and sign-out.
+  bool handleAcp(const QString& action, const QVariantMap& input);
+  QString acpProject(const QString& instanceId) const;
+  void acpCall(const QString& instanceId, const QString& busy, const QString& method, QJsonObject payload, const QString& failure,
+               const std::function<void(const QJsonObject&)>& done);
+  void listAcpProviders(const QString& instanceId, const QString& projectId);
+  QVariant acp(const QJsonObject& provider) const;
   QVariant health() const;
   void call(const QString& instanceId, const QString& method, const QJsonObject& payload, const QString& failure);
   void sendTerminal(const QString& instanceId);
@@ -131,6 +140,16 @@ private:
   // Registry search: the query, the agents found (none before the first
   // answer), the search in flight, why it failed, the agent being prepared,
   // the one chosen ({id, name, version}), and whether one is entered by hand.
+  // Each registry agent's sessions and model providers as last listed from
+  // the chosen project, the next page's cursor, and what runs ("" for nothing).
+  struct Acp {
+    QString projectId;
+    std::optional<QJsonArray> sessions;
+    QString nextCursor;
+    std::optional<QJsonArray> providers;
+    QString busy;
+  };
+  QHash<QString, Acp> m_acp;
   struct Wizard {
     QString driver = QStringLiteral("codex");
     QHash<QString, QJsonObject> identity;

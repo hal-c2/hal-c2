@@ -280,7 +280,7 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
     save([seconds](QJsonObject settings, const QString&) { return withHealthSeconds(settings, seconds); });
   } else if (action == QLatin1String("providerSettings.resetHealthInterval")) {
     save([](QJsonObject settings, const QString&) { return withHealthSeconds(settings, std::nullopt); });
-  } else if (handleInstance(action, input) || handleRegistry(action, input)) {
+  } else if (handleInstance(action, input) || handleRegistry(action, input) || handleAcp(action, input)) {
     return true;
   } else if (action == QLatin1String("providerSettings.enable")) {
     // Also an instance the environment has yet to list.
@@ -494,6 +494,7 @@ void ProviderSettingsController::unfollow() {
   m_terminalQueue.clear();
   m_wizard.reset();
   m_variables.clear();
+  m_acp.clear();
 }
 
 // Follows the sign-in of each provider that signs in from HAL-C2; the shape
@@ -661,6 +662,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
       {QStringLiteral("account"), null()},
   };
   configuration(result, instanceId, driver);
+  result.insert(QStringLiteral("acp"), acp(provider));
   if (!signsIn(provider)) return result;
   // ProviderAuthenticationSection.
   const bool served = !m_store->nodeServing(m_followed).isEmpty();

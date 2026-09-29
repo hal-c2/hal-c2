@@ -34,7 +34,12 @@ struct FakeProviders {
   QString uninstallRefusal;
   qsizetype writesBefore = 0;  // the settings writes made before a custom model's save
   QStringList searches, prepares;  // ACP Registry queries and agents prepared
+  // The ACP agent's own sessions and model providers (HalC2.Acp.Sessions).
+  QJsonArray acpSessions, acpProviders;
+  QList<QJsonObject> acpImports, acpSets;
+  QStringList acpDeletes, acpDisables, acpLogouts;
 };
+
 
 // The ACP Registry's compatible agents, as server.searchAcpRegistry lists them.
 QJsonArray registryAgents() {
@@ -141,6 +146,54 @@ const FakeNode::Extension extension([](FakeNode& node) {
                                 {QStringLiteral("distribution"), QStringLiteral("npx")},
                                 {QStringLiteral("prepared"), true}});
   });
+  node.onRpc(QStringLiteral("server.listAcpRegistrySessions"), [&node](const FakeNode::Rpc& rpc) {
+    node.reply(rpc, QJsonObject{{QStringLiteral("sessions"), node.part<FakeProviders>().acpSessions},
+                                {QStringLiteral("nextCursor"), QJsonValue::Null},
+                                {QStringLiteral("canLoad"), true},
+                                {QStringLiteral("canResume"), false},
+                                {QStringLiteral("canDelete"), true}});
+  });
+  node.onRpc(QStringLiteral("server.importAcpRegistrySession"), [&node](const FakeNode::Rpc& rpc) {
+    node.part<FakeProviders>().acpImports.append(rpc.payload);
+    node.reply(rpc, QJsonObject{{QStringLiteral("threadId"), QStringLiteral("thread-imported")}, {QStringLiteral("imported"), true}});
+  });
+  node.onRpc(QStringLiteral("server.deleteAcpRegistrySession"), [&node](const FakeNode::Rpc& rpc) {
+    FakeProviders& fake = node.part<FakeProviders>();
+    const QString sessionId = rpc.payload.value(QLatin1String("sessionId")).toString();
+    fake.acpDeletes.append(sessionId);
+    for (qsizetype i = 0; i < fake.acpSessions.size(); ++i) {
+      if (fake.acpSessions.at(i).toObject().value(QLatin1String("sessionId")) == sessionId) fake.acpSessions.removeAt(i--);
+    }
+    node.reply(rpc, QJsonObject{{QStringLiteral("deleted"), true}});
+  });
+  node.onRpc(QStringLiteral("server.listAcpRegistryProviders"), [&node](const FakeNode::Rpc& rpc) {
+    node.reply(rpc, QJsonObject{{QStringLiteral("providers"), node.part<FakeProviders>().acpProviders}});
+  });
+  const auto current = [&node](const QString& providerId, const QJsonValue& value) {
+    QJsonArray& providers = node.part<FakeProviders>().acpProviders;
+    for (qsizetype i = 0; i < providers.size(); ++i) {
+      QJsonObject entry = providers.at(i).toObject();
+      if (entry.value(QLatin1String("providerId")) != providerId) continue;
+      entry.insert(QStringLiteral("current"), value);
+      providers.replace(i, entry);
+    }
+  };
+  node.onRpc(QStringLiteral("server.setAcpRegistryProvider"), [&node, current](const FakeNode::Rpc& rpc) {
+    node.part<FakeProviders>().acpSets.append(rpc.payload);
+    current(rpc.payload.value(QLatin1String("providerId")).toString(),
+            QJsonObject{{QStringLiteral("apiType"), rpc.payload.value(QLatin1String("apiType"))},
+                        {QStringLiteral("baseUrl"), rpc.payload.value(QLatin1String("baseUrl"))}});
+    node.reply(rpc, QJsonObject{{QStringLiteral("configured"), true}});
+  });
+  node.onRpc(QStringLiteral("server.disableAcpRegistryProvider"), [&node, current](const FakeNode::Rpc& rpc) {
+    node.part<FakeProviders>().acpDisables.append(rpc.payload.value(QLatin1String("providerId")).toString());
+    current(rpc.payload.value(QLatin1String("providerId")).toString(), QJsonValue::Null);
+    node.reply(rpc, QJsonObject{{QStringLiteral("disabled"), true}});
+  });
+  node.onRpc(QStringLiteral("server.logoutAcpRegistry"), [&node](const FakeNode::Rpc& rpc) {
+    node.part<FakeProviders>().acpLogouts.append(rpc.payload.value(QLatin1String("instanceId")).toString());
+    node.reply(rpc, QJsonObject{{QStringLiteral("loggedOut"), true}});
+  });
   node.onRpc(QStringLiteral("server.updateProvider"), [&node](const FakeNode::Rpc& rpc) {
     FakeProviders& fake = node.part<FakeProviders>();
     fake.updates.append(rpc);
@@ -212,18 +265,30 @@ QJsonObject provider(const QString& instanceId, const QString& driver, const QSt
   return entry;
 }
 
-// An ACP agent that signs in from HAL-C2.
 // A sign-in method named `name`, its id the name in kebab case.
 QJsonObject signInMethod(const QString& name) {
   return {{QStringLiteral("id"), name.toLower().replace(QLatin1Char(' '), QLatin1Char('-'))}, {QStringLiteral("name"), name}};
 }
 
+// An ACP agent that signs in from HAL-C2.
 QJsonObject gemini(const QString& authStatus) {
   QJsonObject auth{{QStringLiteral("status"), authStatus}};
   if (authStatus == QLatin1String("authenticated")) auth.insert(QStringLiteral("email"), QStringLiteral("sam@example.com"));
   return provider(QStringLiteral("gemini"), QStringLiteral("acpRegistry"), QStringLiteral("Gemini"),
                   {{QStringLiteral("auth"), auth},
                    {QStringLiteral("setup"), QJsonObject{{QStringLiteral("canAuthenticate"), true}}}});
+}
+
+// "Gemini" signed in, managing its own sessions and model providers.
+QJsonObject acpAgent(const QString& authStatus = QStringLiteral("authenticated")) {
+  return provider(QStringLiteral("gemini"), QStringLiteral("acpRegistry"), QStringLiteral("Gemini"),
+                  {{QStringLiteral("auth"), QJsonObject{{QStringLiteral("status"), authStatus}, {QStringLiteral("canLogout"), true}}},
+                   {QStringLiteral("setup"), QJsonObject{{QStringLiteral("canAuthenticate"), false}}},
+                   {QStringLiteral("nativeSessions"), QJsonObject{{QStringLiteral("canList"), true},
+                                                                  {QStringLiteral("canLoad"), true},
+                                                                  {QStringLiteral("canResume"), false},
+                                                                  {QStringLiteral("canDelete"), true}}},
+                   {QStringLiteral("configurableProviders"), true}});
 }
 
 // This machine's providers, replacing the one with the same instance id.
@@ -1208,6 +1273,178 @@ const Steps registrySteps([] {
                config.value(QLatin1String("registryIconUrl")) == QStringLiteral("https://cdn.agentclientprotocol.com/%1.svg").arg(c[1]),
            QStringLiteral("%1 running %2; saved %3").arg(c[0], c[1], show(saved.toVariantMap())));
     world.waitFor([&] { return wizard(world).isEmpty(); }, [&] { return QStringLiteral("the wizard to close; it is %1").arg(show(wizard(world))); });
+  });
+});
+
+QVariantMap acpSection(World& world) {
+  return entry(world, QStringLiteral("Gemini")).value(QStringLiteral("acp")).toMap();
+}
+
+// The shown environment's project `title`.
+void acpProject(World& world, const QString& title) {
+  const QJsonObject row{{QStringLiteral("id"), title},
+                        {QStringLiteral("title"), title},
+                        {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + title},
+                        {QStringLiteral("createdAt"), stream::iso(stream::now())},
+                        {QStringLiteral("updatedAt"), stream::iso(stream::now())},
+                        {QStringLiteral("scripts"), QJsonArray()}};
+  world.node.projects.insert(title, row);
+  world.node.sendRow(title, row, QStringLiteral("project"));
+}
+
+// Gemini with one native session in `project`, imported as a thread or not.
+void acpSession(World& world, const QString& project, bool imported) {
+  openPanel(world);
+  acpProject(world, project);
+  QJsonObject session{{QStringLiteral("sessionId"), QStringLiteral("session-1")},
+                      {QStringLiteral("cwd"), QStringLiteral("/work/") + project},
+                      {QStringLiteral("title"), QStringLiteral("Fix the build")},
+                      {QStringLiteral("updatedAt"), stream::iso(stream::now())},
+                      {QStringLiteral("importedThreadId"), imported ? QJsonValue(QStringLiteral("thread-imported")) : QJsonValue::Null}};
+  fake(world).acpSessions = {session};
+  offer(world, acpAgent());
+  world.waitFor([&] { return acpSection(world).value(QStringLiteral("projectId")) == project; },
+                [&] { return QStringLiteral("Gemini's sessions to be asked from %1; the card is %2").arg(project, show(entry(world, QStringLiteral("Gemini")))); });
+}
+
+QVariantMap listedSession(World& world) {
+  const QVariantList sessions = acpSection(world).value(QStringLiteral("sessions")).toList();
+  return sessions.isEmpty() ? QVariantMap{} : sessions.first().toMap();
+}
+
+void listSessions(World& world) {
+  act(world, QStringLiteral("acpSessions"), {{QStringLiteral("instanceId"), QStringLiteral("gemini")}});
+  world.waitFor([&] { const QVariant sessions = acpSection(world).value(QStringLiteral("sessions"));
+                      return sessions.typeId() == QMetaType::QVariantList && acpSection(world).value(QStringLiteral("busy")).toString().isEmpty(); },
+                [&] { return QStringLiteral("Gemini's sessions to be listed; the section is %1").arg(show(acpSection(world))); });
+}
+
+// Gemini's "openai" model provider, listed from a project.
+void listAcpProviders(World& world) {
+  openPanel(world);
+  acpProject(world, QStringLiteral("hal-c2"));
+  fake(world).acpProviders = {QJsonObject{{QStringLiteral("providerId"), QStringLiteral("openai")},
+                                          {QStringLiteral("supported"), QJsonArray{QStringLiteral("openai")}},
+                                          {QStringLiteral("required"), false},
+                                          {QStringLiteral("current"), QJsonValue::Null}}};
+  offer(world, acpAgent());
+  world.waitFor([&] { return !acpSection(world).value(QStringLiteral("projectId")).toString().isEmpty(); },
+                [&] { return QStringLiteral("a project to ask Gemini from; the card is %1").arg(show(entry(world, QStringLiteral("Gemini")))); });
+  act(world, QStringLiteral("acpProviders"), {{QStringLiteral("instanceId"), QStringLiteral("gemini")}});
+  world.waitFor([&] { return acpSection(world).value(QStringLiteral("providers")).toList().size() == 1; },
+                [&] { return QStringLiteral("Gemini's model providers; the section is %1").arg(show(acpSection(world))); });
+}
+
+QVariantMap acpProvider(World& world) {
+  const QVariantList providers = acpSection(world).value(QStringLiteral("providers")).toList();
+  return providers.isEmpty() ? QVariantMap{} : providers.first().toMap();
+}
+
+void setAcpProvider(World& world, const QString& baseUrl, const QString& headers) {
+  act(world, QStringLiteral("acpSetProvider"), {{QStringLiteral("instanceId"), QStringLiteral("gemini")},
+                                                {QStringLiteral("providerId"), QStringLiteral("openai")},
+                                                {QStringLiteral("apiType"), QStringLiteral("openai")},
+                                                {QStringLiteral("baseUrl"), baseUrl},
+                                                {QStringLiteral("headers"), headers}});
+}
+
+const Steps acpSteps([] {
+  const QString q = kQuoted;
+
+  // Native sessions.
+  step(QStringLiteral("the agent %1 has a native session for the project %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == QLatin1String("gemini"), QStringLiteral("the scenario's agent is gemini"));
+    acpSession(world, c[1], false);
+  });
+  step(QStringLiteral("the agent %1 has a native session that was not imported").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == QLatin1String("gemini"), QStringLiteral("the scenario's agent is gemini"));
+    acpSession(world, QStringLiteral("hal-c2"), false);
+  });
+  step(QStringLiteral("a native session was imported as a thread"),
+       [](World& world, const Captures&, const Table&) { acpSession(world, QStringLiteral("hal-c2"), true); });
+  step(QStringLiteral("the user imports that session"), [](World& world, const Captures&, const Table&) {
+    listSessions(world);
+    act(world, QStringLiteral("acpImport"), {{QStringLiteral("instanceId"), QStringLiteral("gemini")}, {QStringLiteral("sessionId"), QStringLiteral("session-1")}});
+  });
+  step(QStringLiteral("a thread continuing the session is created in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return listedSession(world).value(QStringLiteral("imported")).toBool(); },
+                  [&] { return QStringLiteral("the session to show as imported; the section is %1").arg(show(acpSection(world))); });
+    const QList<QJsonObject> imports = fake(world).acpImports;
+    expect(imports.size() == 1 && imports.first().value(QLatin1String("projectId")) == c[0] &&
+               imports.first().value(QLatin1String("sessionId")) == QLatin1String("session-1") &&
+               imports.first().value(QLatin1String("title")) == QLatin1String("Fix the build"),
+           QStringLiteral("session-1 to be imported into %1").arg(c[0]));
+    expectToast(world, QStringLiteral("ACP session imported"));
+  });
+  step(QStringLiteral("the user deletes the native session"), [](World& world, const Captures&, const Table&) {
+    listSessions(world);
+    act(world, QStringLiteral("acpDelete"), {{QStringLiteral("instanceId"), QStringLiteral("gemini")}, {QStringLiteral("sessionId"), QStringLiteral("session-1")}});
+  });
+  step(QStringLiteral("the user is told to delete the imported thread first"), [](World& world, const Captures&, const Table&) {
+    expectToast(world, QStringLiteral("Could not delete ACP session"),
+                QStringLiteral("Delete the imported HAL-C2 thread before deleting its native ACP session."));
+    expect(fake(world).acpDeletes.isEmpty() && !listedSession(world).isEmpty(), QStringLiteral("the session to be kept"));
+  });
+  step(QStringLiteral("the user deletes it and confirms"), [](World& world, const Captures&, const Table&) {
+    listSessions(world);
+    act(world, QStringLiteral("acpDelete"), {{QStringLiteral("instanceId"), QStringLiteral("gemini")}, {QStringLiteral("sessionId"), QStringLiteral("session-1")}});
+    answer(world, true);
+  });
+  step(QStringLiteral("the session is deleted by the agent"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return fake(world).acpDeletes == QStringList{QStringLiteral("session-1")} && listedSession(world).isEmpty(); },
+                  [&] { return QStringLiteral("session-1 to be deleted; the section is %1").arg(show(acpSection(world))); });
+    expectToast(world, QStringLiteral("ACP session deleted"));
+  });
+
+  // Model providers.
+  step(QStringLiteral("the user sets the agent's model provider to %1 with an authorization header").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+    listAcpProviders(world);
+    setAcpProvider(world, c[0], QStringLiteral(R"({"Authorization": "Bearer token"})"));
+  });
+  step(QStringLiteral("the agent uses that base URL"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return acpProvider(world).value(QStringLiteral("configured")).toBool(); },
+                  [&] { return QStringLiteral("openai to be configured; the section is %1").arg(show(acpSection(world))); });
+    const QJsonObject set = fake(world).acpSets.value(0);
+    expect(acpProvider(world).value(QStringLiteral("baseUrl")) == set.value(QLatin1String("baseUrl")).toString() &&
+               set.value(QLatin1String("headers")).toObject().value(QLatin1String("Authorization")) == QLatin1String("Bearer token"),
+           QStringLiteral("the base URL and header to be sent; sent %1").arg(show(set.toVariantMap())));
+    expectToast(world, QStringLiteral("ACP provider configured"));
+  });
+  step(QStringLiteral("the user disables that model provider"), [](World& world, const Captures&, const Table&) {
+    act(world, QStringLiteral("acpDisableProvider"), {{QStringLiteral("instanceId"), QStringLiteral("gemini")}, {QStringLiteral("providerId"), QStringLiteral("openai")}});
+    answer(world, true);
+  });
+  step(QStringLiteral("the agent no longer uses it"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return fake(world).acpDisables == QStringList{QStringLiteral("openai")} && !acpProvider(world).isEmpty() &&
+                               !acpProvider(world).value(QStringLiteral("configured")).toBool(); },
+                  [&] { return QStringLiteral("openai to be disabled; the section is %1").arg(show(acpSection(world))); });
+    expectToast(world, QStringLiteral("ACP provider disabled"));
+  });
+  // The headers may hold quotes of their own.
+  step(QStringLiteral("the user saves the headers \"(.*)\""), [](World& world, const Captures& c, const Table&) {
+    listAcpProviders(world);
+    setAcpProvider(world, QStringLiteral("https://api.example.com"), c[0]);
+    expect(fake(world).acpSets.isEmpty(), QStringLiteral("nothing to be sent"));
+  });
+
+  // Signing out.
+  step(QStringLiteral("the user logs out of the agent %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == QLatin1String("gemini"), QStringLiteral("the scenario's agent is gemini"));
+    openPanel(world);
+    offer(world, acpAgent());
+    world.waitFor([&] { return acpSection(world).value(QStringLiteral("canLogout")).toBool(); },
+                  [&] { return QStringLiteral("Gemini to offer logging out; the card is %1").arg(show(entry(world, QStringLiteral("Gemini")))); });
+    act(world, QStringLiteral("acpLogout"), {{QStringLiteral("instanceId"), QStringLiteral("gemini")}});
+  });
+  step(QStringLiteral("the agent is signed out and its status is read again"), [](World& world, const Captures&, const Table&) {
+    expectToast(world, QStringLiteral("Logged out of ACP agent"));
+    expect(fake(world).acpLogouts == QStringList{QStringLiteral("gemini")}, QStringLiteral("gemini to be logged out"));
+    // The node reads the agent's status again and lists it signed out.
+    const QString before = entry(world, QStringLiteral("Gemini")).value(QStringLiteral("headline")).toString();
+    offer(world, acpAgent(QStringLiteral("unauthenticated")));
+    world.waitFor([&] { return entry(world, QStringLiteral("Gemini")).value(QStringLiteral("headline")).toString() != before; },
+                  [&] { return QStringLiteral("Gemini to show signed out; the card is %1").arg(show(entry(world, QStringLiteral("Gemini")))); });
   });
 });
 

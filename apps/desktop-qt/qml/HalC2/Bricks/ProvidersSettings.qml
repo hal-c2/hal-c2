@@ -891,6 +891,11 @@ Rectangle {
                     provider: card.provider
                 }
 
+                ProviderAcpSessions {
+                    Layout.fillWidth: true
+                    provider: card.provider
+                }
+
                 Label {
                     text: qsTr("Environment variables")
                     color: page.foreground

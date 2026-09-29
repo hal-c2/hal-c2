@@ -114,6 +114,35 @@ Item {
             }, overrides);
         }
 
+        // A registry agent's native sessions and model providers.
+        function test_a_registry_agent_imports_sessions_and_sets_a_model_provider() {
+            const acp = {
+                canList: true, canImport: true, canDelete: true, canLogout: true, canConfigure: true,
+                projects: [{ id: "p1", title: "hal-c2" }], projectId: "p1", more: false, busy: "",
+                sessions: [{ sessionId: "s1", title: "Fix the build", updatedAt: "", cwd: "/work", imported: false }],
+                providers: [{ providerId: "openai", supported: ["openai"], required: false, configured: false, apiType: "openai", baseUrl: "" }]
+            };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ acp: acp })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            mouseClick(findChild(card, "configure"));
+            const section = findChild(card, "acpSessions");
+            verify(section.visible);
+            mouseClick(findChild(findChild(section, "acpSession_s1"), "acpImport"));
+            compare(Shell.dispatchedActions[0].action, "providerSettings.acpImport");
+            compare(Shell.dispatchedActions[0].payload.sessionId, "s1");
+            const row = findChild(section, "acpProvider_openai");
+            const save = findChild(row, "acpSaveProvider");
+            verify(!save.enabled, "a base URL is needed");
+            findChild(row, "acpBaseUrl").text = "https://api.example.com";
+            findChild(row, "acpHeaders").text = "{\"A\": \"b\"}";
+            tryVerify(() => save.enabled);
+            mouseClick(save);
+            compare(Shell.dispatchedActions[1].action, "providerSettings.acpSetProvider");
+            compare(Shell.dispatchedActions[1].payload.baseUrl, "https://api.example.com");
+            compare(Shell.dispatchedActions[1].payload.headers, "{\"A\": \"b\"}");
+        }
+
         // The ACP Registry: an agent already added is not offered, another is,
         // and an empty answer suggests a broader search.
         function test_the_wizard_offers_registry_agents() {

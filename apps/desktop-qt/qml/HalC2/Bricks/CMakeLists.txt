@@ -79,6 +79,7 @@ qt_add_qml_module(hal_c2_bricks
     ProvidersSettings.qml
     ProviderAuthTerminal.qml
     ProviderCustomModels.qml
+    ProviderAcpSessions.qml
     ArchivedThreads.qml
   RESOURCES
     qmldir
