@@ -39,6 +39,9 @@ Feature: Desktop shell gaps
       When the user looks at what can be added to the right panel
       Then pull request list and connected devices are offered next to diff, files, terminal and pull request
 
+    # Not native yet: the hub streams iOS as AVCC H.264 (MJPEG fallback) and Android as
+    # SEMU-framed H.264 over a WebSocket, and Qt has no decoder for either without
+    # QtMultimedia/FFmpeg; input needs the hub's binary WebSocket through the node's proxy.
     @backlog @desktop
     Scenario: A device tab streams a device screen
       Given a simulator is booted
