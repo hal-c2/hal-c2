@@ -69,7 +69,7 @@ qt_add_qml_module(hal_c2_bricks
     js/panelTabs.js
     RevertDialog.qml
     TerminalSplits.qml
-    TerminalPanel.qml PullRequestsPage.qml
+    TerminalPanel.qml PullRequestsPage.qml HomePage.qml
   RESOURCES
     qmldir
     js/shell-connect.js

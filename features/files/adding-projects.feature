@@ -10,6 +10,7 @@
 #   apps/web/src/shell/useShellFolderDrop.ts
 #   apps/desktop-qt/qml/HalC2/Bricks/ProjectFolderDrop.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Add project)
+#   apps/desktop-qt/qml/HalC2/Bricks/HomePage.qml
 #   apps/desktop-qt/src/ShellBridge.cpp (project.folder.open, localDirectoryPath)
 #   apps/desktop-qt/src/native/ProjectController.cpp (opens a local folder through projects.mutate)
 #   apps/tui/src/components/AddProjectOverlay.tsx
@@ -32,8 +33,8 @@ Feature: Adding projects
 
   Rule: Adding a local folder
 
-    # Delivered natively (Sidebar's empty list, ThreadView's "Add a project to start"); no desktop test yet.
-    @desktop @tui @backlog-desktop
+    # Desktop: HomePage (apps/desktop-qt/tests/tst_HomePage.qml).
+    @desktop @tui
     Scenario: A user with no projects is invited to add one
       Given "laptop" has no projects
       When the user opens the app
