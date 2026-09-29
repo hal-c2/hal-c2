@@ -16,7 +16,7 @@ class ShellStore;
 
 // The shell's drafts: a new thread the user has opened but not sent yet, one
 // per project folder, kept on this machine only (setStorePath) and listed at
-// the top of the sidebar. Every window's controller keeps the same drafts
+// the top of the sidebar once they hold something (SidebarController). Every window's controller keeps the same drafts
 // (NativeShell::common), so a window that closes leaves them to the others. Each draft carries the thread id its first send
 // creates, so when that thread's row reaches the shell (or promote() is
 // called) the draft is done and the window moves on to the thread.

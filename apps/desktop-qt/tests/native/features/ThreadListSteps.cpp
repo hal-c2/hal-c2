@@ -142,7 +142,14 @@ const Steps steps([] {
                                                    {QStringLiteral("snoozedUntil"), later}, {QStringLiteral("snoozedAt"), kAt}});
     putThread(world, QStringLiteral("t-settled"), {{QStringLiteral("projectId"), project}, {QStringLiteral("title"), QStringLiteral("Settled")},
                                                    {QStringLiteral("settledOverride"), QStringLiteral("settled")}, {QStringLiteral("settledAt"), kAt}});
+    // The list holds the drafts the user wrote in (drafts.feature), once left.
     world.startNewThread(QVariantMap{{QStringLiteral("projectKey"), world.projectKey(project)}});
+    world.bridge().dispatch(QStringLiteral("composer.text.set"),
+                            QVariantMap{{QStringLiteral("target"), world.draftId},
+                                        {QStringLiteral("edit"), QVariantMap{{QStringLiteral("clientId"), QStringLiteral("qml")}, {QStringLiteral("revision"), world.nextEdit++}}},
+                                        {QStringLiteral("text"), QStringLiteral("Plan the release")},
+                                        {QStringLiteral("cursor"), 16}});
+    world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), threadKeyOf(world, QStringLiteral("First"))}});
     sectionsProject() = world.projectKey(project);
   });
   step(QStringLiteral("%1 was created before %1").arg(q), [](World& world, const Captures& c, const Table&) {

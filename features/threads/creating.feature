@@ -1,6 +1,7 @@
 # Sources:
 #   docs/user/thread-sidebar.md (New threads, background start, multi-model fan-out)
 #   apps/web/src/hooks/useHandleNewThread.ts
+#   apps/web/src/components/Sidebar.tsx (SidebarDraftBlock: only a draft with content is listed)
 #   apps/web/src/components/threadActionMenu.logic.ts (New thread on <branch>)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (New thread, draft rows)
 #   apps/desktop-qt/src/native/DraftController.cpp (the desktop's drafts)
@@ -21,11 +22,11 @@ Feature: Creating threads
     Given a connected environment with the project "shop"
     And the user is looking at a thread in "shop"
 
-  @desktop @tui
+  @desktop @tui @backlog-tui
   Scenario: A new thread starts in the project the user is looking at
     When the user starts a new thread
     Then a draft thread opens in "shop"
-    And the draft is listed at the top of the thread list
+    And the thread list does not list the empty draft
 
   @desktop
   Scenario: A new thread started while the list is scoped to a project uses that project

@@ -60,7 +60,7 @@ Feature: The desktop shell decides where the window is
       When the page lands on its own draft "d9" for the thread "t9" in "p1"
       Then the window shows the draft "d9"
       And the sidebar marks the draft "d9" as open
-      And the sidebar lists the draft "d9"
+      And the desktop keeps the draft "d9"
 
     @desktop
     Scenario: Opening pull requests

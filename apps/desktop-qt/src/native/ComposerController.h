@@ -105,6 +105,10 @@ public:
   // The draft's terminal excerpts, with their text: {id, terminalId,
   // terminalLabel, lineStart, lineEnd, text}.
   QVariantList terminalContexts(const QString& target) const;
+  // What the sidebar shows for a draft with something in it (the page's
+  // SidebarDraftRow): the text's first line, else how many attachments it
+  // carries; nothing for an empty draft (composerDraftHasUserContent).
+  std::optional<QString> draftPreview(const QString& target) const;
 
 private:
   struct Attachment {

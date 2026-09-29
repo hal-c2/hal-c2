@@ -46,6 +46,14 @@ QStringList sidebarDraftIds(World& world) {
   return ids;
 }
 
+// The one draft `sidebar` lists is the draft the steps talk about, reading `label`.
+void expectListedDraft(World& world, const QVariant& sidebar, const QString& label) {
+  const QVariantList drafts = at(sidebar, QStringLiteral("drafts")).toList();
+  expect(drafts.size() == 1 && drafts.first().toMap().value(QStringLiteral("draftId")) == world.draftId &&
+             drafts.first().toMap().value(QStringLiteral("label")) == label,
+         QStringLiteral("the sidebar lists the drafts %1, not %2 reading %3").arg(show(drafts), world.draftId, label));
+}
+
 // The window shows a draft in the project named `name`; it becomes the draft the steps talk about.
 // The project the header named when the user chose it.
 QString& headerProject() {
@@ -168,22 +176,18 @@ const Steps steps([] {
     expect(at(sidebar, QStringLiteral("activeDraftId")) == world.draftId && at(sidebar, QStringLiteral("activeThreadKey")).isNull(),
            QStringLiteral("the sidebar is %1").arg(show(sidebar)));
   });
-  step(QStringLiteral("the sidebar lists the draft %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the sidebar lists the draft reading %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
-    expect(sidebarDraftIds(world).contains(c[0]), QStringLiteral("the sidebar lists the drafts %1").arg(sidebarDraftIds(world).join(u", ")));
+    expectListedDraft(world, world.state(QStringLiteral("sidebar")), c[0]);
   });
-  step(QStringLiteral("the sidebar lists the draft"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the new window's sidebar lists the draft reading %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
-    expect(sidebarDraftIds(world) == QStringList{world.draftId},
-           QStringLiteral("the sidebar lists the drafts %1, not %2").arg(sidebarDraftIds(world).join(u", "), world.draftId));
+    const auto& windows = world.native().windows();
+    expect(windows.size() == 2, QStringLiteral("%1 windows are open").arg(windows.size()));
+    expectListedDraft(world, windows.at(1)->bridge()->state()->value(QStringLiteral("sidebar")), c[0]);
   });
-  step(QStringLiteral("the draft is listed at the top of the thread list"), [](World& world, const Captures&, const Table&) {
-    world.sync();
-    // Drafts are the list's first section (Sidebar.qml).
-    expect(sidebarDraftIds(world).value(0) == world.draftId,
-           QStringLiteral("the sidebar lists the drafts %1, not %2").arg(sidebarDraftIds(world).join(u", "), world.draftId));
-  });
-  step(QStringLiteral("the sidebar lists no drafts"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("(?:the sidebar lists no drafts|the thread list does not list the empty draft)"),
+       [](World& world, const Captures&, const Table&) {
     world.sync();
     expect(sidebarDraftIds(world).isEmpty(), QStringLiteral("the sidebar lists the drafts %1").arg(sidebarDraftIds(world).join(u", ")));
   });
@@ -218,6 +222,11 @@ const Steps steps([] {
            QStringLiteral("the windows show %1 %2 and %3 %4").arg(first.kind, first.draftId, second.kind, second.draftId));
   });
 
+  step(QStringLiteral("the desktop keeps the draft(?: %1)?").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    const QString id = c.value(0).isEmpty() ? world.draftId : c[0];
+    expect(drafts(world)->draft(id).has_value(), QStringLiteral("the desktop keeps no draft %1").arg(id));
+  });
   step(QStringLiteral("the desktop keeps (\\d+) drafts?"), [](World& world, const Captures& c, const Table&) {
     world.sync();
     expect(drafts(world)->drafts().size() == c[0].toInt(), QStringLiteral("the desktop keeps %1 drafts").arg(drafts(world)->drafts().size()));

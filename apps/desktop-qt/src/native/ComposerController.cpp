@@ -20,6 +20,7 @@
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "SidebarController.h"
 #include "SidebarModel.h"
 #include "ThreadStore.h"
 #include "TimelineModel.h"
@@ -697,6 +698,15 @@ QVariantList ComposerController::terminalContexts(const QString& target) const {
   return contexts;
 }
 
+std::optional<QString> ComposerController::draftPreview(const QString& target) const {
+  const QString text = draft(target).trimmed();
+  if (!text.isEmpty()) return text.section(QLatin1Char('\n'), 0, 0);
+  const auto kept = m_drafts.constFind(target);
+  const qsizetype count = kept == m_drafts.cend() ? 0 : kept->attachments.size() + kept->terminalContexts.size();
+  if (count == 0) return std::nullopt;
+  return count == 1 ? tr("1 attachment") : tr("%1 attachments").arg(count);
+}
+
 // As the web's composer: each excerpt is an inline link in the text
 // (formatTerminalContextReference) and a record in `context`
 // (terminalContextRecord); the node swaps the links for the excerpts when it
@@ -932,6 +942,10 @@ void ComposerController::publish() {
   if (picker != m_publishedPicker) {
     m_publishedPicker = picker;
     m_bridge->publish(QStringLiteral("modelPicker"), picker);
+  }
+  // Other windows list the draft by what it holds.
+  if (!m_draftId.isEmpty()) {
+    for (const auto& window : NativeShell::of(this)->shell()->windows()) window->sidebar()->draftEdited(m_draftId);
   }
 }
 

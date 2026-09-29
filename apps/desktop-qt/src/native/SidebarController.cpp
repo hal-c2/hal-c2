@@ -1,5 +1,6 @@
 #include "SidebarController.h"
 
+#include "ComposerController.h"
 #include "DraftController.h"
 #include "MenuController.h"
 #include "NativeShell.h"
@@ -70,22 +71,41 @@ void SidebarController::refresh() {
   for (const QString& environment : m_store->environments()) {
     if (!m_store->environmentOnline(environment)) input.offlineEnvironments.insert(environment);
   }
-  if (const auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
-    for (const DraftController::Draft& draft : drafts->drafts()) {
-      const QString physical = draft.environmentId + QLatin1Char(':') + draft.projectId;
-      input.drafts.append(QVariantMap{
-          {QStringLiteral("draftId"), draft.id},
-          {QStringLiteral("projectKey"), logicalProjectKey(draft.environmentId, draft.projectId).value_or(physical)},
-          {QStringLiteral("label"), QStringLiteral("Draft")},
-      });
-    }
-  }
   // The window's route marks the open thread or draft.
   input.activeDraftId = QVariant::fromValue(nullptr);
+  QString openDraft;
   if (const auto* navigation = NativeShell::of(this)->controller<NavigationController>()) {
     const NavigationController::Route& route = navigation->route();
     if (route.kind == QLatin1String("thread")) input.activeThreadKey = route.threadKey;
-    if (route.kind == QLatin1String("draft")) input.activeDraftId = route.draftId;
+    if (route.kind == QLatin1String("draft")) openDraft = route.draftId;
+  }
+  if (!openDraft.isEmpty()) input.activeDraftId = openDraft;
+  const auto* composer = NativeShell::of(this)->controller<ComposerController>();
+  const auto preview = [composer](const QString& id) { return composer ? composer->draftPreview(id) : std::nullopt; };
+  if (openDraft != m_openDraftId) {
+    m_openDraftId = openDraft;
+    m_openDraftLabel = openDraft.isEmpty() ? std::nullopt : preview(openDraft);
+  }
+  m_draftLabels.clear();
+  if (const auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
+    QList<const DraftController::Draft*> listed;
+    for (const DraftController::Draft& draft : drafts->drafts()) {
+      const auto label = draft.id == m_openDraftId ? m_openDraftLabel : preview(draft.id);
+      if (!label) continue;
+      m_draftLabels.insert(draft.id, *label);
+      listed.append(&draft);
+    }
+    // Newest first; the stamps are ISO, so they sort as text.
+    std::stable_sort(listed.begin(), listed.end(),
+                     [](const auto* left, const auto* right) { return left->createdAt > right->createdAt; });
+    for (const DraftController::Draft* draft : std::as_const(listed)) {
+      const QString physical = draft->environmentId + QLatin1Char(':') + draft->projectId;
+      input.drafts.append(QVariantMap{
+          {QStringLiteral("draftId"), draft->id},
+          {QStringLiteral("projectKey"), logicalProjectKey(draft->environmentId, draft->projectId).value_or(physical)},
+          {QStringLiteral("label"), m_draftLabels.value(draft->id)},
+      });
+    }
   }
   m_view = sidebar::build(threads, input, m_scope,
                           [this](const QString& environmentId) { return m_store->capabilities(environmentId); },
@@ -94,6 +114,14 @@ void SidebarController::refresh() {
   const QTime time = now.time();
   m_minute.start(std::max(1000, 60000 - time.second() * 1000 - time.msec()));
   if (regrouped) emit grouped();
+}
+
+void SidebarController::draftEdited(const QString& id) {
+  if (!m_active || id == m_openDraftId) return;
+  const auto* composer = NativeShell::of(this)->controller<ComposerController>();
+  const auto label = composer ? composer->draftPreview(id) : std::nullopt;
+  const auto listed = m_draftLabels.constFind(id);
+  if (listed == m_draftLabels.cend() ? label.has_value() : label != *listed) refresh();
 }
 
 bool SidebarController::handle(const QString& action, const QVariant& payload) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QHash>
 #include <QJsonObject>
 #include <QLocale>
 #include <QObject>
@@ -9,6 +10,7 @@
 #include <QVariant>
 
 #include <functional>
+#include <optional>
 
 #include "SidebarModel.h"
 
@@ -22,6 +24,11 @@ class ToastController;
 // (sidebar::groupProjects), drafts from DraftController, and the row actions
 // (settle, snooze, wake, mark unread, dismiss the woke pill) and the project
 // scope stay here.
+//
+// As the page's SidebarDraftBlock, a draft is listed only once it holds
+// something (ComposerController::draftPreview), newest first. The draft the
+// window shows keeps the row it had when the window opened it: none for one
+// that was empty then, and the same label however the user types.
 class SidebarController : public QObject {
   Q_OBJECT
 
@@ -47,6 +54,9 @@ public:
   void setLocale(const QLocale& locale) { m_locale = locale; }
 
   void refresh();
+  // The draft `id` was edited in some window: refreshes when its row here
+  // would change.
+  void draftEdited(const QString& id);
   // The ShellBridge interceptor: true when the action was handled here.
   bool handle(const QString& action, const QVariant& payload);
 
@@ -92,4 +102,9 @@ private:
   sidebar::Nullable m_scope;
   sidebar::View m_view;
   QSet<QString> m_pending;
+  // The listed drafts' labels, and the open draft's row as it was when the
+  // window opened it (nothing when it was empty).
+  QHash<QString, QString> m_draftLabels;
+  QString m_openDraftId;
+  std::optional<QString> m_openDraftLabel;
 };
