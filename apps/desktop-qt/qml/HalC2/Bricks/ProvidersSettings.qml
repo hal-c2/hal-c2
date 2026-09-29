@@ -1182,6 +1182,227 @@ Rectangle {
                     font.pixelSize: 12
                 }
             }
+
+            // CLIProxyAPI hubs whose accounts join Limits.
+            ColumnLayout {
+                id: hubsSection
+
+                objectName: "hubs"
+                readonly property var hubs: page.model ? (page.model.hubs ?? null) : null
+                Layout.fillWidth: true
+                Layout.topMargin: 12
+                visible: hubs !== null
+                spacing: 6
+
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("Usage providers")
+                        color: page.foreground
+                        font.pixelSize: 14
+                        font.weight: Font.DemiBold
+                    }
+
+                    ShellButton {
+                        objectName: "addHub"
+                        visible: !page.readOnly
+                        iconName: "plus"
+                        text: qsTr("Add hub")
+                        onClicked: addHubDialog.open()
+                    }
+                }
+
+                Note {
+                    visible: (hubsSection.hubs ?? []).length === 0
+                    text: qsTr("No usage providers configured.")
+                }
+
+                Repeater {
+                    model: hubsSection.hubs ?? []
+
+                    delegate: RowLayout {
+                        required property var modelData
+                        objectName: "hub_" + modelData.id
+                        Layout.fillWidth: true
+                        spacing: 12
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Label {
+                                objectName: "label"
+                                text: modelData.label
+                                color: page.foreground
+                                font.pixelSize: 13
+                                font.weight: Font.Medium
+                            }
+
+                            Note {
+                                text: modelData.description
+                                wrapMode: Text.WrapAnywhere
+                            }
+                        }
+
+                        ShellButton {
+                            objectName: "remove"
+                            visible: !page.readOnly
+                            subtle: true
+                            text: qsTr("Remove")
+                            onClicked: {
+                                removeHubDialog.hubId = modelData.id;
+                                removeHubDialog.label = modelData.label;
+                                removeHubDialog.open();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    component HubDialog: Dialog {
+        id: hubDialog
+
+        parent: Overlay.overlay
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(460, (parent?.width ?? 492) - 32)
+        padding: 20
+
+        background: Rectangle {
+            color: Theme.palette.color("surfaceOverlay", "#18181b")
+            border.color: Theme.palette.color("border", "#27272a")
+            radius: Math.min(Theme.radius, 16)
+        }
+        header: Label {
+            text: hubDialog.title
+            padding: 20
+            bottomPadding: 4
+            font.pixelSize: 17
+            font.weight: Font.DemiBold
+            color: page.foreground
+            elide: Text.ElideRight
+        }
+    }
+
+    // As AddUsageLimitSourceDialog: a URL and a management key are needed.
+    HubDialog {
+        id: addHubDialog
+
+        readonly property bool complete: hubUrl.text.trim().length > 0 && hubKey.text.trim().length > 0
+
+        objectName: "addHubDialog"
+        title: qsTr("Add a CLIProxyAPI hub")
+        onAboutToShow: {
+            hubUrl.clear();
+            hubKey.clear();
+            hubLabel.clear();
+        }
+        onAccepted: Shell.dispatch("providerSettings.addHub", {
+            url: hubUrl.text.trim(),
+            key: hubKey.text.trim(),
+            label: hubLabel.text.trim()
+        })
+
+        contentItem: ColumnLayout {
+            spacing: 8
+
+            Note {
+                text: qsTr("Its accounts' limits appear in Usage next to this machine's. The management key is kept on the server and never shown again.")
+            }
+
+            Label { text: qsTr("Hub URL"); color: page.foreground; font.pixelSize: 13 }
+            TextField {
+                id: hubUrl
+                objectName: "url"
+                Layout.fillWidth: true
+                placeholderText: "https://hub.example.ts.net:8318"
+                Accessible.name: qsTr("Hub URL")
+            }
+
+            Label { text: qsTr("Management key"); color: page.foreground; font.pixelSize: 13 }
+            TextField {
+                id: hubKey
+                objectName: "key"
+                Layout.fillWidth: true
+                echoMode: TextInput.Password
+                Accessible.name: qsTr("Management key")
+            }
+
+            Label { text: qsTr("Label (optional)"); color: page.foreground; font.pixelSize: 13 }
+            TextField {
+                id: hubLabel
+                objectName: "label"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Defaults to the hub's host name")
+                Accessible.name: qsTr("Hub label")
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 4
+                spacing: 8
+
+                Item { Layout.fillWidth: true }
+
+                ShellButton {
+                    objectName: "cancel"
+                    subtle: true
+                    text: qsTr("Cancel")
+                    onClicked: addHubDialog.reject()
+                }
+
+                ShellButton {
+                    objectName: "confirm"
+                    primary: true
+                    enabled: addHubDialog.complete
+                    text: qsTr("Add hub")
+                    onClicked: addHubDialog.accept()
+                }
+            }
+        }
+    }
+
+    HubDialog {
+        id: removeHubDialog
+
+        property string hubId
+        property string label
+
+        objectName: "removeHubDialog"
+        title: qsTr("Remove %1?").arg(label)
+        onAccepted: Shell.dispatch("providerSettings.removeHub", { id: hubId })
+
+        contentItem: ColumnLayout {
+            spacing: 12
+
+            Note {
+                text: qsTr("The hub's management key is deleted from this server. Its accounts leave the Limits view; the hub itself is untouched. Add it again with the URL and key to bring them back.")
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Item { Layout.fillWidth: true }
+
+                ShellButton {
+                    objectName: "cancel"
+                    subtle: true
+                    text: qsTr("Cancel")
+                    onClicked: removeHubDialog.reject()
+                }
+
+                ShellButton {
+                    objectName: "confirm"
+                    tint: page.danger
+                    text: qsTr("Remove hub")
+                    onClicked: removeHubDialog.accept()
+                }
+            }
         }
     }
 }

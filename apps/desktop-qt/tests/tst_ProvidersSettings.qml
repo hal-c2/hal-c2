@@ -264,5 +264,51 @@ Item {
             compare(Shell.dispatchedActions[2].payload.slug, "x");
             compare(slug.text, "");
         }
+
+        // settings/usage-limit-sources.feature: a hub needs a URL and a key.
+        function test_a_hub_is_added_only_with_a_url_and_key() {
+            Shell.state = { providerSettings: root.settings({ hubs: [] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            mouseClick(findChild(page, "addHub"));
+            const dialog = findChild(page, "addHubDialog");
+            tryVerify(() => dialog.opened);
+            const url = findChild(dialog, "url");
+            url.text = "https://hub.example.ts.net:8318";
+            verify(!findChild(dialog, "confirm").enabled, "no key, no hub");
+            findChild(dialog, "key").text = "secret";
+            verify(findChild(dialog, "confirm").enabled);
+            mouseClick(findChild(dialog, "confirm"));
+            compare(Shell.dispatchedActions[0].action, "providerSettings.addHub");
+            compare(Shell.dispatchedActions[0].payload.url, "https://hub.example.ts.net:8318");
+            compare(Shell.dispatchedActions[0].payload.key, "secret");
+            compare(Shell.dispatchedActions[0].payload.label, "");
+        }
+
+        function test_a_hub_is_removed_after_a_confirm() {
+            Shell.state = { providerSettings: root.settings({ hubs: [{ id: "cliproxy-hub.example", label: "Team hub",
+                                                                        description: "CLI Proxy · https://hub.example" }] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const row = findChild(page, "hub_cliproxy-hub.example");
+            compare(findChild(row, "label").text, "Team hub");
+            mouseClick(findChild(row, "remove"));
+            const dialog = findChild(page, "removeHubDialog");
+            tryVerify(() => dialog.opened);
+            compare(dialog.title, "Remove Team hub?");
+            mouseClick(findChild(dialog, "cancel"));
+            compare(Shell.dispatchedActions.length, 0);
+            mouseClick(findChild(row, "remove"));
+            tryVerify(() => dialog.opened);
+            mouseClick(findChild(dialog, "confirm"));
+            compare(Shell.dispatchedActions[0].action, "providerSettings.removeHub");
+            compare(Shell.dispatchedActions[0].payload.id, "cliproxy-hub.example");
+        }
+
+        function test_a_read_only_connection_cannot_add_or_remove_hubs() {
+            Shell.state = { providerSettings: root.settings({ readOnly: true, hubs: [{ id: "h", label: "Team hub", description: "CLI Proxy" }] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            verify(findChild(page, "hubs").visible);
+            verify(!findChild(page, "addHub").visible);
+            verify(!findChild(findChild(page, "hub_h"), "remove").visible);
+        }
     }
 }

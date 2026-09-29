@@ -46,7 +46,8 @@ class ShellStore;
 // placeholder, fields, secrets, variables, pending}, and a registry agent's
 // sessions and model providers, acp (ProviderSettingsAcp.cpp)], health: null |
 // {seconds, defaultSeconds, step} (the background provider health check
-// interval), wizard: null | the add-provider wizard}.
+// interval), hubs: null | [{id, label, description}] (its usage-limit
+// hubs), wizard: null | the add-provider wizard}.
 //
 // Actions: `providerSettings.environment {id}`, `.refresh`, `.enable
 // {instanceId, enabled}`, `.signIn {instanceId}`, `.cancelSignIn
@@ -55,7 +56,9 @@ class ShellStore;
 // data, columns, rows}`, `.signInCredentials {instanceId, values}`,
 // `.signInCallback {instanceId, url}`, `.copySignInLink {instanceId}`,
 // `.openDocs {instanceId}`, `.update {instanceId}`, `.copyUpdateCommand {instanceId}`,
-// `.healthInterval {seconds}` (0 turns it off), `.resetHealthInterval`, and
+// `.healthInterval {seconds}` (0 turns it off), `.resetHealthInterval`,
+// `.addHub {url, key, label}` (a CLIProxyAPI hub; url and key required),
+// `.removeHub {id}` (its key is deleted from the node), and
 // the actions ProviderSettingsInstances.cpp, ProviderSettingsRegistry.cpp and
 // ProviderSettingsAcp.cpp list.
 class ProviderSettingsController : public QObject, public NativeController {
@@ -105,6 +108,7 @@ private:
   void listAcpProviders(const QString& instanceId, const QString& projectId);
   QVariant acp(const QJsonObject& provider) const;
   QVariant health() const;
+  QVariant hubs() const;
   void call(const QString& instanceId, const QString& method, const QJsonObject& payload, const QString& failure);
   void sendTerminal(const QString& instanceId);
   void publish();

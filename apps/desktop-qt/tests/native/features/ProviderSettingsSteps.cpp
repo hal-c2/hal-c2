@@ -4,6 +4,7 @@
 // environment plays "Laptop", this machine; others are linked environments.
 
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 
 #include "FakeConfig.h"
@@ -472,6 +473,75 @@ const Steps steps([] {
     const QString said = panel(world).value(QStringLiteral("readOnlyDescription")).toString();
     expect(said == QLatin1String("This session can view Build box's providers but can't change their settings."),
            QStringLiteral("the read-only note; it says \"%1\"").arg(said));
+  });
+  // Usage-limit hubs (settings/usage-limit-sources.feature).
+  step(QStringLiteral("the user adds a hub with a URL and management key but no label"), [](World& world, const Captures&, const Table&) {
+    openPanel(world);
+    world.waitFor([&] { return panel(world).value(QStringLiteral("hubs")).typeId() == QMetaType::QVariantList; },
+                  [&] { return QStringLiteral("the hubs to be listed; the panel is %1").arg(show(panel(world))); });
+    act(world, QStringLiteral("addHub"), {{QStringLiteral("url"), QStringLiteral("https://hub.example.ts.net:8318")},
+                                          {QStringLiteral("key"), QStringLiteral("hub-key")},
+                                          {QStringLiteral("label"), QString()}});
+  });
+  step(QStringLiteral("the hub is listed under the hub's host name"), [](World& world, const Captures&, const Table&) {
+    const QString id = QStringLiteral("cliproxy-hub.example.ts.net-8318");
+    world.waitFor([&] {
+      for (const QVariant& hub : panel(world).value(QStringLiteral("hubs")).toList()) {
+        if (hub.toMap().value(QStringLiteral("id")) == id) return hub.toMap().value(QStringLiteral("label")) == QLatin1String("hub.example.ts.net:8318");
+      }
+      return false;
+    }, [&] { return QStringLiteral("the hub listed by its host; the panel is %1").arg(show(panel(world))); });
+    // The key went to the node's secret store, not the document.
+    const FakeConfig& config = fakeConfig(world.node);
+    expect(config.secrets.value(QStringLiteral("hub/") + id) == QLatin1String("hub-key") &&
+               config.settings.value(QLatin1String("usageLimitSources")).toObject().value(id).toObject()
+                       .value(QLatin1String("managementKey")) == QStringLiteral("••••••"),
+           QStringLiteral("the key sealed on the node; the settings are %1").arg(QString::fromUtf8(QJsonDocument(config.settings).toJson(QJsonDocument::Compact))));
+  });
+  step(QStringLiteral("the user fills in a URL but no management key"), [](World& world, const Captures&, const Table&) {
+    openPanel(world);
+    act(world, QStringLiteral("addHub"), {{QStringLiteral("url"), QStringLiteral("https://hub.example")}, {QStringLiteral("key"), QString()}});
+  });
+  step(QStringLiteral("the user cannot add the hub"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(fakeConfig(world.node).writes.isEmpty(), QStringLiteral("no hub saved"));
+  });
+  step(QStringLiteral("the user removes %1 and confirms").arg(q), [](World& world, const Captures& c, const Table&) {
+    openPanel(world);
+    QString id;
+    world.waitFor([&] {
+      for (const QVariant& hub : panel(world).value(QStringLiteral("hubs")).toList()) {
+        if (hub.toMap().value(QStringLiteral("label")) == c[0]) id = hub.toMap().value(QStringLiteral("id")).toString();
+      }
+      return !id.isEmpty();
+    }, [&] { return QStringLiteral("%1 to be listed; the panel is %2").arg(c[0], show(panel(world))); });
+    act(world, QStringLiteral("removeHub"), {{QStringLiteral("id"), id}});
+  });
+  step(QStringLiteral("its key is deleted from the node"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !fakeConfig(world.node).secrets.contains(QStringLiteral("hub/team-hub")); },
+                  QStringLiteral("the hub's key to be deleted"));
+    expect(!fakeConfig(world.node).settings.value(QLatin1String("usageLimitSources")).toObject().contains(QStringLiteral("team-hub")),
+           QStringLiteral("the hub gone from the settings"));
+  });
+  // Nothing is sent to the hub: the node only saved its settings once.
+  step(QStringLiteral("the hub itself is untouched"), [](World& world, const Captures&, const Table&) {
+    expect(fakeConfig(world.node).writes.size() == 1, QStringLiteral("one settings write; there were %1").arg(fakeConfig(world.node).writes.size()));
+  });
+  step(QStringLiteral("the user is connected with read-only access"), [](World& world, const Captures&, const Table&) {
+    world.node.linkScopes.insert(QStringLiteral("Build box"), {QStringLiteral("orchestration:read")});
+    documentOf(world.node, QStringLiteral("Build box")).settings.insert(QStringLiteral("usageLimitSources"), QJsonObject{});
+    linkEnvironment(world, QStringLiteral("Build box"), {provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"))});
+  });
+  step(QStringLiteral("the user opens usage providers"), [](World& world, const Captures&, const Table&) {
+    showEnvironment(world, QStringLiteral("Build box"));
+  });
+  step(QStringLiteral("the user cannot add a hub"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return panel(world).value(QStringLiteral("readOnly")).toBool(); },
+                  [&] { return QStringLiteral("the providers read-only; the panel is %1").arg(show(panel(world))); });
+    act(world, QStringLiteral("addHub"), {{QStringLiteral("url"), QStringLiteral("https://hub.example")}, {QStringLiteral("key"), QStringLiteral("hub-key")}});
+    world.sync();
+    expect(documentOf(world.node, QStringLiteral("Build box")).version == 0 && fakeConfig(world.node).writes.isEmpty(),
+           QStringLiteral("no hub saved on Build box"));
   });
   step(QStringLiteral("%1 reconnects").arg(q), [](World& world, const Captures& c, const Table&) {
     world.node.setLinkProblem(c[0], QString());

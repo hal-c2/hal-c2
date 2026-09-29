@@ -8,6 +8,8 @@
 #   apps/web/src/components/settings/AddUsageLimitSourceDialog.tsx
 #   packages/shared/src/usageLimits.ts (hub accounts pooled with native ones, the hub wins redemption)
 #   apps/desktop-qt/src/native/UsageController.cpp
+#   apps/desktop-qt/src/native/ProviderSettingsController.cpp (adding and removing hubs)
+#   apps/desktop-qt/tests/tst_ProvidersSettings.qml (the add and remove dialogs)
 
 Feature: Usage limit sources
   A CLIProxyAPI hub pools many provider accounts. Adding it as a usage source
@@ -67,17 +69,17 @@ Feature: Usage limit sources
     When the user uses the reset credit and confirms
     Then the credit is spent through the hub
 
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: The user adds a hub
     When the user adds a hub with a URL and management key but no label
     Then the hub is listed under the hub's host name
 
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: A hub cannot be added without a URL and key
     When the user fills in a URL but no management key
     Then the user cannot add the hub
 
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: The user removes a hub
     Given a hub "Team hub"
     When the user removes "Team hub" and confirms
@@ -85,7 +87,7 @@ Feature: Usage limit sources
     And its accounts leave limits
     And the hub itself is untouched
 
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: A read-only connection cannot add hubs
     Given the user is connected with read-only access
     When the user opens usage providers

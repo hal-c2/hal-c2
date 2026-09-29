@@ -69,6 +69,22 @@ QJsonObject sealed(FakeConfig& fake, QJsonObject settings) {
     it.value() = instance;
   }
   if (settings.contains(QLatin1String("providerInstances"))) settings.insert(QStringLiteral("providerInstances"), instances);
+  // As HalC2.UsageLimitSources.seal_keys: a hub's management key moves to the
+  // secret store, the marker stays, and a dropped hub's key is deleted.
+  QJsonObject hubs = settings.value(QLatin1String("usageLimitSources")).toObject();
+  const QString marker = QStringLiteral("••••••");
+  for (auto it = hubs.begin(); it != hubs.end(); ++it) {
+    QJsonObject hub = it.value().toObject();
+    const QString key = hub.value(QLatin1String("managementKey")).toString();
+    if (key.isEmpty() || key == marker) continue;
+    fake.secrets.insert(QStringLiteral("hub/") + it.key(), key);
+    hub.insert(QStringLiteral("managementKey"), marker);
+    it.value() = hub;
+  }
+  for (const QString& secret : fake.secrets.keys()) {
+    if (secret.startsWith(QLatin1String("hub/")) && !hubs.contains(secret.mid(4))) fake.secrets.remove(secret);
+  }
+  if (settings.contains(QLatin1String("usageLimitSources"))) settings.insert(QStringLiteral("usageLimitSources"), hubs);
   return settings;
 }
 
@@ -147,6 +163,18 @@ const FakeNode::Extension extension([](FakeNode& node) {
     node.reply(rpc, QJsonObject{{QStringLiteral("version"), fake.version}});
     sendConfig(node, node.environmentId,
                {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), fake.settings}});
+    // A dropped hub's accounts leave what the node publishes.
+    if (fake.sources.contains(node.environmentId)) {
+      const QJsonObject hubs = fake.settings.value(QLatin1String("usageLimitSources")).toObject();
+      QJsonArray kept;
+      for (const QJsonValue& source : fake.sources.value(node.environmentId)) {
+        if (hubs.contains(source.toObject().value(QLatin1String("id")).toString())) kept.append(source);
+      }
+      if (kept.size() != fake.sources.value(node.environmentId).size()) {
+        fake.sources.insert(node.environmentId, kept);
+        sendConfig(node, node.environmentId, {{QStringLiteral("t"), QStringLiteral("config.usageLimitSources")}, {QStringLiteral("sources"), kept}});
+      }
+    }
     // As HalC2.Settings provider_enabled? reads it: an instance's own entry
     // first, then its driver's; an added instance that was removed is no
     // longer listed, and one's name and colour show as HalC2.Environment

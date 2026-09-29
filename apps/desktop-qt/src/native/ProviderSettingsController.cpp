@@ -31,6 +31,18 @@ const QString kKey = QStringLiteral("providerSettings");
 const QString kRegistry = QStringLiteral("acpRegistry");
 const QString kHealthKey = QStringLiteral("providerHealthRefreshInterval");
 
+// A hub's settings key, stable per hub (AddUsageLimitSourceDialog's
+// sourceIdFromUrl): its host with dots and dashes kept, anything else folded
+// to a dash.
+QString hubId(const QString& url) {
+  QString host = QUrl(url, QUrl::StrictMode).authority();
+  if (host.isEmpty()) host = url;
+  QString slug = host.toLower();
+  slug.replace(QRegularExpression(QStringLiteral("[^a-z0-9.-]+")), QStringLiteral("-"));
+  slug.remove(QRegularExpression(QStringLiteral("^-+|-+$")));
+  return QStringLiteral("cliproxy-") + (slug.isEmpty() ? QStringLiteral("hub") : slug);
+}
+
 // The node's background activity presets' provider health intervals
 // (HalC2.BackgroundPolicy), in seconds.
 int presetHealthSeconds(const QString& profile) {
@@ -280,6 +292,30 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
     save([seconds](QJsonObject settings, const QString&) { return withHealthSeconds(settings, seconds); });
   } else if (action == QLatin1String("providerSettings.resetHealthInterval")) {
     save([](QJsonObject settings, const QString&) { return withHealthSeconds(settings, std::nullopt); });
+  } else if (action == QLatin1String("providerSettings.addHub")) {
+    const QString url = input.value(QStringLiteral("url")).toString().trimmed();
+    const QString key = input.value(QStringLiteral("key")).toString().trimmed();
+    const QString name = input.value(QStringLiteral("label")).toString().trimmed();
+    if (url.isEmpty() || key.isEmpty()) return true;
+    // The node moves the key to its secret store; settings keep a marker.
+    QJsonObject hub{{QStringLiteral("kind"), QStringLiteral("cliproxy")}, {QStringLiteral("url"), url},
+                    {QStringLiteral("managementKey"), key}, {QStringLiteral("enabled"), true}};
+    if (!name.isEmpty()) hub.insert(QStringLiteral("label"), name);
+    const QString id = hubId(url);
+    save([id, hub](QJsonObject settings, const QString&) {
+      QJsonObject hubs = settings.value(QLatin1String("usageLimitSources")).toObject();
+      hubs.insert(id, hub);
+      settings.insert(QStringLiteral("usageLimitSources"), hubs);
+      return settings;
+    });
+  } else if (action == QLatin1String("providerSettings.removeHub")) {
+    const QString id = input.value(QStringLiteral("id")).toString();
+    save([id](QJsonObject settings, const QString&) {
+      QJsonObject hubs = settings.value(QLatin1String("usageLimitSources")).toObject();
+      hubs.remove(id);
+      settings.insert(QStringLiteral("usageLimitSources"), hubs);
+      return settings;
+    });
   } else if (handleInstance(action, input) || handleRegistry(action, input) || handleAcp(action, input)) {
     return true;
   } else if (action == QLatin1String("providerSettings.enable")) {
@@ -773,6 +809,29 @@ QVariant ProviderSettingsController::health() const {
   return QVariantMap{{QStringLiteral("seconds"), seconds}, {QStringLiteral("defaultSeconds"), preset}, {QStringLiteral("step"), 30}};
 }
 
+// The environment's usage-limit hubs, named by their label or else the
+// host the node names them by.
+QVariant ProviderSettingsController::hubs() const {
+  const std::optional<QJsonObject> settings = m_followed.isEmpty() ? std::nullopt : m_scope->settings(m_followed);
+  if (!m_open || !settings) return null();
+  QVariantList hubs;
+  const QJsonObject sources = (*settings).value(QLatin1String("usageLimitSources")).toObject();
+  for (auto it = sources.begin(); it != sources.end(); ++it) {
+    const QJsonObject hub = it.value().toObject();
+    const QString url = hub.value(QLatin1String("url")).toString();
+    QString name = hub.value(QLatin1String("label")).toString().trimmed();
+    if (name.isEmpty()) name = QUrl(url).authority();
+    if (name.isEmpty()) name = url;
+    QStringList description{QStringLiteral("CLI Proxy")};
+    if (!hub.value(QLatin1String("enabled")).toBool(true)) description.append(QStringLiteral("Disabled"));
+    if (name != url) description.append(url);
+    hubs.append(QVariantMap{{QStringLiteral("id"), it.key()},
+                            {QStringLiteral("label"), name},
+                            {QStringLiteral("description"), description.join(QStringLiteral(" · "))}});
+  }
+  return hubs;
+}
+
 void ProviderSettingsController::publish() {
   if (!m_active) return;
   const QString local = m_client->environment();
@@ -834,6 +893,7 @@ void ProviderSettingsController::publish() {
                                         : QString()},
                               {QStringLiteral("providers"), providers},
                               {QStringLiteral("health"), health()},
+                              {QStringLiteral("hubs"), hubs()},
                               {QStringLiteral("wizard"), wizard()},
                           });
 }

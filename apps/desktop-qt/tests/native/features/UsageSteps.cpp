@@ -525,6 +525,25 @@ const Steps steps([] {
     world.sync();
     expect(codexAccounts(world).size() == 1, QStringLiteral("one Codex account; they are %1").arg(show(codexAccounts(world))));
   });
+  // A hub the user added, its key sealed on the node, its account in limits.
+  step(QStringLiteral("a hub %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeConfig& config = fakeConfig(world.node);
+    config.settings.insert(QStringLiteral("usageLimitSources"),
+                           QJsonObject{{QStringLiteral("team-hub"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("cliproxy")},
+                                                                              {QStringLiteral("label"), c[0]},
+                                                                              {QStringLiteral("url"), QStringLiteral("https://hub.example")},
+                                                                              {QStringLiteral("managementKey"), QStringLiteral("••••••")},
+                                                                              {QStringLiteral("enabled"), true}}}});
+    config.secrets.insert(QStringLiteral("hub/team-hub"), QStringLiteral("hub-key"));
+    setHub(world, c[0], {hubAccount(world, {}, false)});
+    showUsage(world, QStringLiteral("limits"));
+    world.waitFor([&] { return !codexAccounts(world).isEmpty(); },
+                  [&] { return QStringLiteral("the hub's account in limits; the page is %1").arg(show(usage(world))); });
+  });
+  step(QStringLiteral("its accounts leave limits"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return codexAccounts(world).isEmpty(); },
+                  [&] { return QStringLiteral("no hub account in limits; the page is %1").arg(show(usage(world))); });
+  });
   step(QStringLiteral("the credit is spent through the hub"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return !fake(world).redeemed.isEmpty(); }, QStringLiteral("a credit to be spent"));
     const QJsonObject input = fake(world).redeemed.first();

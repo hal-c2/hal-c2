@@ -33,7 +33,8 @@ struct FakeConfig {
   bool editOnRead = false;  // another client saves right after each read
   QString refuseWrites;
   // Sensitive provider variables sealed out of the document, by
-  // "<instance>/<name>" (HalC2.ProviderSecrets).
+  // "<instance>/<name>" (HalC2.ProviderSecrets), and hub management keys by
+  // "hub/<source id>" (HalC2.UsageLimitSources).
   QHash<QString, QString> secrets;
 };
 
