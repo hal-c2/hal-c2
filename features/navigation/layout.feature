@@ -210,19 +210,29 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user closes the right panel
       Then the right panel stops updating until it is opened again
 
-    @backlog @desktop
+    @desktop
     Scenario: Resizing the right panel
       Given the right panel is open
       When the user drags the right panel's edge
       Then the right panel takes the new width
 
-    @backlog @desktop
+    @desktop
     Scenario: Maximizing the right panel
       Given the right panel is open
       When the user toggles the right panel to fill the window
       Then the right panel covers the thread
       When the user toggles it again
       Then the thread is shown beside the right panel
+
+    @desktop
+    Scenario: The right panel's tabs and width survive a restart
+      Given the right panel has "Diff" and "Files" tabs
+      And the user switches to "Files"
+      And the user drags the right panel's edge
+      When the desktop quits and starts again
+      And the user is looking at a thread
+      Then the "Files" tab is active
+      And the right panel takes the new width
 
     @backlog @desktop
     Scenario: Toggling the thread details panel

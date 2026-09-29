@@ -15,6 +15,7 @@
 #include "DiffModel.h"
 #include "FileTreeModel.h"
 #include "Harness.h"
+#include "KeybindingController.h"
 #include "RightPanelController.h"
 #include "Stream.h"
 #include "ThreadDiff.h"
@@ -318,17 +319,8 @@ QString tabIdTitled(World& world, const QString& title) {
   fail(describePanel(world));
 }
 
-// The page's own right panel for the thread, as ShellRightPanelBridge publishes it.
-void pagePublishes(World& world, bool open, const QString& active, const QVariantList& surfaces, const QVariantMap& canAdd) {
-  const QString threadKey = world.node.environmentId + QLatin1Char(':') + kThread;
-  world.bridge().publish(QStringLiteral("rightPanel"),
-                         QVariantMap{{QStringLiteral("threadKey"), threadKey},
-                                     {QStringLiteral("isOpen"), open},
-                                     {QStringLiteral("activeSurfaceId"), active.isEmpty() ? QVariant() : QVariant(active)},
-                                     {QStringLiteral("surfaces"), surfaces},
-                                     {QStringLiteral("canAdd"), canAdd},
-                                     {QStringLiteral("embedPath"), QStringLiteral("/embed/env-a/thread-1")}});
-}
+// Where the edge is dragged to.
+constexpr int kDraggedWidth = 720;
 
 const QHash<QString, QString> kKinds{{QStringLiteral("diff"), QStringLiteral("diff")},
                                      {QStringLiteral("files"), QStringLiteral("files")},
@@ -728,26 +720,15 @@ const Steps steps([] {
   });
   // A pull request to show is one linked to the thread (its row's).
   step(QStringLiteral("the thread can show (diff|files|agents|terminal|pull request|previews)"), [](World& world, const Captures& c, const Table&) {
-    pagePublishes(world, false, {}, {}, {{QStringLiteral("diff"), true}, {QStringLiteral("files"), true}, {QStringLiteral("terminal"), true}, {QStringLiteral("pullRequest"), true}});
     if (c[0] == QLatin1String("pull request")) linkPullRequests(world, 1);
   });
-  step(QStringLiteral("the thread has no pull request"), [](World& world, const Captures&, const Table&) {
-    pagePublishes(world, false, {}, {}, {{QStringLiteral("diff"), true}, {QStringLiteral("files"), true}, {QStringLiteral("terminal"), true}, {QStringLiteral("pullRequest"), false}});
-    linkPullRequests(world, 0);
-  });
+  step(QStringLiteral("the thread has no pull request"), [](World& world, const Captures&, const Table&) { linkPullRequests(world, 0); });
   step(QStringLiteral("the user adds an? (diff|files|agents|terminal|pull request|previews) tab to the right panel"), [](World& world, const Captures& c, const Table&) {
     const QString kind = kKinds.value(c[0]);
     expect(at(world.state(QStringLiteral("panel")), QStringLiteral("canAdd.") + (kind == QLatin1String("pull-requests") ? QStringLiteral("pullRequests") : kind)).toBool(),
            describePanel(world));
     world.bridge().dispatch(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), kind}});
     world.sync();
-    // The page adds its own tabs and shows the one it added, as ChatView does.
-    for (const PageAction& action : world.actionsOf(QStringLiteral("rightPanel.add"))) {
-      const QString added = action.payload.value(QStringLiteral("kind")).toString();
-      const QString id = added == QLatin1String("terminal") ? QStringLiteral("terminal:default") : added;
-      pagePublishes(world, true, id, {QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), added}, {QStringLiteral("title"), added == QLatin1String("terminal") ? QStringLiteral("Terminal") : QStringLiteral("Pull request")}}},
-                    {{QStringLiteral("diff"), true}, {QStringLiteral("files"), true}, {QStringLiteral("terminal"), true}, {QStringLiteral("pullRequest"), true}});
-    }
   });
   step(QStringLiteral("an? (diff|files|agents|terminal|pull request|previews) tab opens in the right panel"), [](World& world, const Captures& c, const Table&) {
     const QString kind = kKinds.value(c[0]);
@@ -758,6 +739,27 @@ const Steps steps([] {
       shown = shown || (at(tab, QStringLiteral("id")) == active && at(tab, QStringLiteral("kind")) == kind);
     }
     expect(at(state, QStringLiteral("isOpen")).toBool() && shown, describePanel(world));
+  });
+  // Its size (the brick's edge drags to a width and dispatches it).
+  step(QStringLiteral("the user drags the right panel's edge"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("rightPanel.resize"), QVariantMap{{QStringLiteral("width"), kDraggedWidth}});
+  });
+  step(QStringLiteral("the right panel takes the new width"), [](World& world, const Captures&, const Table&) {
+    expect(at(world.state(QStringLiteral("panel")), QStringLiteral("width")) == kDraggedWidth, describePanel(world));
+  });
+  step(QStringLiteral("the user toggles the right panel to fill the window"), [](World& world, const Captures&, const Table&) {
+    // The keybinding's command (mod+alt+m, bound by the user).
+    expect(world.native().controller<KeybindingController>()->commands()->run(QStringLiteral("rightPanel.toggleMaximized")), describePanel(world));
+  });
+  step(QStringLiteral("the user toggles it again"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("rightPanel.toggleMaximized"), QVariantMap());
+  });
+  step(QStringLiteral("the right panel covers the thread"), [](World& world, const Captures&, const Table&) {
+    expect(at(world.state(QStringLiteral("panel")), QStringLiteral("maximized")).toBool(), describePanel(world));
+  });
+  step(QStringLiteral("the thread is shown beside the right panel"), [](World& world, const Captures&, const Table&) {
+    const QVariant state = world.state(QStringLiteral("panel"));
+    expect(at(state, QStringLiteral("isOpen")).toBool() && !at(state, QStringLiteral("maximized")).toBool(), describePanel(world));
   });
   step(QStringLiteral("the user looks at what can be added to the right panel"), [](World& world, const Captures&, const Table&) { world.sync(); });
   step(QStringLiteral("pull request cannot be added"), [](World& world, const Captures&, const Table&) {

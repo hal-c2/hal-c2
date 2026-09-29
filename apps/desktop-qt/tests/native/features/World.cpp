@@ -32,6 +32,7 @@ void World::start() {
   m_native->controller<NavigationController>()->setStorePath(m_home.filePath(QStringLiteral("state/shell-route.json")));
   m_native->controller<DraftController>()->setStorePath(m_home.filePath(QStringLiteral("data/shell-drafts.json")));
   m_native->controller<ComposerController>()->setStorePath(m_home.filePath(QStringLiteral("data/shell-composer.json")));
+  m_native->controller<RightPanelController>()->setStorePath(m_home.filePath(QStringLiteral("state/shell-panel.json")));
   // The shell runs its own local node, so local folders are its to open.
   m_bridge->setLocalFolderImportEnabled(true);
   m_native->controller<SettingsController>()->setDevicePath(QDir(configDir()).filePath(QStringLiteral("preferences.json")));

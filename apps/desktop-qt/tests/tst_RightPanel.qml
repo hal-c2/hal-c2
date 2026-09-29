@@ -3,9 +3,9 @@ import QtTest
 import HalC2.Shell
 import "../qml/HalC2/Bricks"
 
-// The right panel's bodies: a native tab draws its brick and keeps it while
-// another tab shows; only a page tab shows the page. The Files viewer's wrap
-// and the Diff tab's revert confirmation.
+// The right panel's bodies: each tab draws its brick and keeps it while
+// another tab shows. Its edge resizes it and its header button maximizes it.
+// The Files viewer's wrap and the Diff tab's revert confirmation.
 Item {
     id: root
     width: 900
@@ -176,12 +176,12 @@ Item {
             threadKey: "env-a:thread-1",
             isOpen: true,
             activeId: activeId,
-            embedPath: "",
-            canAdd: { diff: true, files: true, agents: true, terminal: true, pullRequest: false },
+            width: 540,
+            maximized: false,
+            canAdd: { diff: true, files: true, agents: true, terminal: true },
             tabs: [
-                { id: "diff", kind: "diff", title: "Diff", native: true },
-                { id: "files", kind: "files", title: "Files", native: true },
-                { id: "terminal:default", kind: "terminal", title: "Terminal", native: false }
+                { id: "diff", kind: "diff", title: "Diff" },
+                { id: "files", kind: "files", title: "Files" }
             ]
         };
     }
@@ -197,30 +197,60 @@ Item {
             Panel.agents = null;
         }
 
-        function test_nativeTabsKeepTheirBodyAndOnlyPageTabsShowThePage() {
+        function test_tabsKeepTheirBody() {
             Panel.diff = createTemporaryObject(fakeDiff, root);
             Panel.files = createTemporaryObject(fakeFiles, root);
             Shell.state = Object.assign({}, Shell.state, { panel: panelState("diff") });
             const panel = createTemporaryObject(panelComponent, root);
             const diff = findChild(panel, "panelBody-diff");
             const files = findChild(panel, "panelBody-files");
-            const page = findChild(panel, "panelPage");
-            verify(diff && files && page);
+            verify(diff && files);
             tryCompare(diff, "status", Loader.Ready);
             compare(diff.item.source, Panel.diff);
             verify(diff.visible);
             compare(files.active, false, "a tab not yet shown is not made");
-            compare(page.visible, false);
 
             Shell.state = Object.assign({}, Shell.state, { panel: panelState("files") });
             tryCompare(files, "status", Loader.Ready);
             verify(files.visible && !diff.visible);
-            compare(diff.active, true, "a hidden native tab is kept");
-            compare(page.visible, false);
+            compare(diff.active, true, "a hidden tab is kept");
+        }
 
-            Shell.state = Object.assign({}, Shell.state, { panel: panelState("terminal:default") });
-            verify(page.visible);
-            verify(!diff.visible && !files.visible);
+        function test_edgeDragsToAWidthTheLayoutAllows() {
+            Shell.state = Object.assign({}, Shell.state, { panel: panelState("diff") });
+            const panel = createTemporaryObject(panelComponent, root, { x: 450, maximumWidth: 700 });
+            compare(panel.implicitWidth, 540);
+            const edge = findChild(panel, "panelEdge");
+            verify(edge.visible);
+            mousePress(edge, 3, 100);
+            mouseMove(edge, -97, 100);
+            compare(panel.implicitWidth, 640, "the panel follows the drag");
+            compare(Shell.dispatchedActions.length, 0, "the width is kept once the drag ends");
+            mouseMove(edge, -440, 100);
+            compare(panel.implicitWidth, 700, "the thread keeps its room");
+            mouseRelease(edge, -440, 100);
+            compare(Shell.dispatchedActions.length, 1);
+            compare(Shell.dispatchedActions[0].action, "rightPanel.resize");
+            compare(Shell.dispatchedActions[0].payload.width, 700);
+            mouseDoubleClickSequence(edge, 3, 100);
+            compare(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].action, "rightPanel.resize");
+            verify(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].payload.width === undefined, "a double click resets it");
+        }
+
+        function test_maximizeIsOfferedOnlyWhereTheLayoutHidesTheThread() {
+            Shell.state = Object.assign({}, Shell.state, { panel: panelState("diff") });
+            const panel = createTemporaryObject(panelComponent, root);
+            const button = findChild(panel, "panelMaximize");
+            verify(!button.visible);
+            panel.canMaximize = true;
+            verify(button.visible);
+            mouseClick(button);
+            compare(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].action, "rightPanel.toggleMaximized");
+            const maximized = panelState("diff");
+            maximized.maximized = true;
+            Shell.state = Object.assign({}, Shell.state, { panel: maximized });
+            verify(panel.maximized);
+            verify(!findChild(panel, "panelEdge").visible, "a maximized panel has no edge to drag");
         }
 
         function test_agentsOpenTheirThreadAndCommandsDoNot() {

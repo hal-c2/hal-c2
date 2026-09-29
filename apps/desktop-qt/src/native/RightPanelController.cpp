@@ -1,6 +1,12 @@
 #include "RightPanelController.h"
 
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 #include <QUrl>
 
 #include <algorithm>
@@ -21,7 +27,6 @@ namespace {
 const NativeControllerRegistrar<RightPanelController> registrar(QStringLiteral("panel"), {QStringLiteral("panel")},
                                                                 "Panel");
 
-const QString kRightPanel = QStringLiteral("rightPanel");
 const QString kTerminalTab = QStringLiteral("terminal:");
 
 QString titleOf(const QString& kind) {
@@ -32,6 +37,9 @@ QString titleOf(const QString& kind) {
   if (kind == QLatin1String("previews")) return QStringLiteral("Previews");
   return QStringLiteral("Files");
 }
+
+// How many threads' panels the store keeps.
+constexpr qsizetype kStoredThreads = 100;
 
 void toast(QObject* owner, const QString& type, const QString& title, const QString& description) {
   if (auto* toasts = NativeShell::of(owner)->controller<ToastController>()) toasts->show(type, title, description);
@@ -56,9 +64,6 @@ RightPanelController::RightPanelController(ShellBridge* bridge, NodeClient* clie
           [bridge](const QUrl& url) { bridge->openExternal(url); }, this) {
   // The add menu offers Pull requests only while the thread has some.
   connect(&m_pullRequests, &ThreadPullRequests::countChanged, this, &RightPanelController::publish);
-  connect(bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key, const QVariant& value) {
-    if (key == kRightPanel) onPage(value);
-  });
   connect(store, &ShellStore::changed, this, [this] {
     if (m_active) retarget();
   });
@@ -80,6 +85,8 @@ void RightPanelController::activate() {
     };
     add(QStringLiteral("rightPanel.toggle"), [this] { toggle(); });
     add(QStringLiteral("rightPanel.close"), [this] { closeTab(); });
+    add(QStringLiteral("rightPanel.toggleMaximized"), [this] { toggleMaximized(); });
+    add(QStringLiteral("threadPanel.toggle"), [this] { toggleDetails(); });
     add(QStringLiteral("diff.toggle"), [this] { toggleDiff(); });
     add(QStringLiteral("preview.toggle"), [this] { togglePreviews(); });
     keys->commands()->add(QStringLiteral("thread.showPullRequests"), QStringLiteral("Show linked pull requests"), [this] {
@@ -88,7 +95,6 @@ void RightPanelController::activate() {
     keys->commands()->add(QStringLiteral("thread.linkPullRequest"), QStringLiteral("Link pull request to thread"),
                           [this] { linkPullRequest(); });
   }
-  m_page = m_bridge->state()->value(kRightPanel).toMap();
   retarget();
 }
 
@@ -103,6 +109,16 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
     closeTab(map.value(QStringLiteral("id")).toString());
   } else if (action == QLatin1String("rightPanel.add")) {
     addTab(map.value(QStringLiteral("kind")).toString());
+  } else if (action == QLatin1String("rightPanel.resize")) {
+    if (map.contains(QStringLiteral("width"))) {
+      setWidth(map.value(QStringLiteral("width")).toInt());
+    } else {
+      resetWidth();
+    }
+  } else if (action == QLatin1String("rightPanel.toggleMaximized")) {
+    toggleMaximized();
+  } else if (action == QLatin1String("threadPanel.toggle")) {
+    toggleDetails();
   } else if (action == QLatin1String("rightPanel.openThread")) {
     openThread(map.value(QStringLiteral("threadKey")).toString());
   } else if (action == QLatin1String("panel.open")) {
@@ -121,10 +137,9 @@ void RightPanelController::retarget() {
   m_onThread = !threadKey.isEmpty();
   // Away from a thread the tabs keep what they show, for coming back.
   if (m_onThread) {
-    if (threadKey != m_thread) {
-      m_thread = threadKey;
-      m_told.clear();
-    }
+    m_thread = threadKey;
+    m_recent.removeOne(threadKey);
+    m_recent.append(threadKey);
     const QString environmentId = threadKey.left(threadKey.indexOf(QLatin1Char(':')));
     const QJsonObject row = m_store->threadRow(threadKey);
     const QString threadId = row.value(QLatin1String("id")).toString(threadKey.mid(threadKey.indexOf(QLatin1Char(':')) + 1));
@@ -153,78 +168,6 @@ QStringList RightPanelController::terminalGroups() const {
   return terminals ? terminals->panelGroups(m_thread) : QStringList();
 }
 
-// --- The page's tabs -----------------------------------------------------------------
-
-QVariantList RightPanelController::pageTabs() const {
-  QVariantList tabs;
-  if (m_page.value(QStringLiteral("threadKey")).toString() != m_thread) return tabs;
-  for (const QVariant& value : m_page.value(QStringLiteral("surfaces")).toList()) {
-    const QVariantMap surface = value.toMap();
-    const QString kind = surface.value(QStringLiteral("kind")).toString();
-    // The page's diff, files, file, terminal and pull request list tabs are
-    // drawn natively instead; its browser tabs are listed under Previews.
-    if (nativeKinds.contains(kind) || kind == QLatin1String("file") || kind == QLatin1String("preview")) continue;
-    tabs.append(QVariantMap{{QStringLiteral("id"), surface.value(QStringLiteral("id"))},
-                            {QStringLiteral("kind"), kind},
-                            {QStringLiteral("title"), surface.value(QStringLiteral("title"))},
-                            {QStringLiteral("native"), false}});
-  }
-  return tabs;
-}
-
-bool RightPanelController::hasPageTab(const QString& id) const {
-  for (const QVariant& tab : pageTabs()) {
-    if (tab.toMap().value(QStringLiteral("id")).toString() == id) return true;
-  }
-  return false;
-}
-
-void RightPanelController::onPage(const QVariant& value) {
-  const QVariantMap previous = std::exchange(m_page, value.toMap());
-  if (!m_active) return;
-  const QString threadKey = m_page.value(QStringLiteral("threadKey")).toString();
-  if (threadKey != m_thread || threadKey.isEmpty()) return;
-  // The page's first word about this thread is its own stored state, not the
-  // user's: it is told what to show instead.
-  if (previous.value(QStringLiteral("threadKey")).toString() != threadKey) {
-    m_told.clear();
-    update();
-    return;
-  }
-  const bool pageOpen = m_page.value(QStringLiteral("isOpen")).toBool();
-  const QString pageActive = m_page.value(QStringLiteral("activeSurfaceId")).toString();
-  const bool openMoved = pageOpen != previous.value(QStringLiteral("isOpen")).toBool();
-  const bool activeMoved = pageActive != previous.value(QStringLiteral("activeSurfaceId")).toString();
-  const bool asTold = m_told.value(QStringLiteral("open")).toBool() == pageOpen &&
-                      (!pageOpen || m_told.value(QStringLiteral("activeSurfaceId")).toString() == pageActive);
-  if ((openMoved || activeMoved) && !asTold) {
-    if (pageOpen && pageActive == QLatin1String("diff")) {
-      showTab(QStringLiteral("diff"));
-      return;
-    }
-    if (pageOpen && (pageActive == QLatin1String("files") || pageActive == QLatin1String("pull-requests"))) {
-      showTab(pageActive);
-      return;
-    }
-    if (pageOpen && pageActive.startsWith(QLatin1String("browser:"))) {
-      showTab(QStringLiteral("previews"));
-      return;
-    }
-    if (pageOpen && pageActive.startsWith(QLatin1String("file:"))) {
-      open(QStringLiteral("files"), {{QStringLiteral("path"), pageActive.mid(5)}});
-      return;
-    }
-    Panel& state = panel();
-    if (pageOpen && hasPageTab(pageActive)) {
-      state.open = true;
-      state.active = pageActive;
-    } else if (!pageOpen && openMoved && isPageTab(state.active)) {
-      state.open = false;
-    }
-  }
-  update();
-}
-
 // --- Tabs ----------------------------------------------------------------------------
 
 bool RightPanelController::isOpen() const {
@@ -236,9 +179,15 @@ QString RightPanelController::activeTab() const {
 }
 
 QStringList RightPanelController::tabIds() const {
-  QStringList ids = current().tabs;
-  for (const QVariant& tab : pageTabs()) ids.append(tab.toMap().value(QStringLiteral("id")).toString());
-  return ids;
+  return current().tabs;
+}
+
+bool RightPanelController::isMaximized() const {
+  return isOpen() && current().maximized;
+}
+
+bool RightPanelController::detailsOpen() const {
+  return m_onThread && current().details;
 }
 
 void RightPanelController::toggle() {
@@ -258,6 +207,8 @@ void RightPanelController::setOpen(bool open) {
     }
   }
   state.open = open;
+  // A closed panel comes back beside the thread.
+  if (!open) state.maximized = false;
   update();
 }
 
@@ -287,7 +238,7 @@ void RightPanelController::showTab(const QString& id) {
     if (!state.tabs.contains(id)) state.tabs.append(id);
   } else if (nativeKinds.contains(id)) {
     if (!state.tabs.contains(id)) state.tabs.append(id);
-  } else if (!hasPageTab(id)) {
+  } else {
     return;
   }
   state.active = id;
@@ -300,18 +251,16 @@ void RightPanelController::closeTab(const QString& id) {
   Panel& state = panel();
   const QString closing = id.isEmpty() ? (state.open ? state.active : QString()) : id;
   if (closing.isEmpty()) return;
-  if (isPageTab(closing)) {
-    // The page drops it and publishes; onPage/update pick the next tab.
-    m_bridge->sendToPage(QStringLiteral("rightPanel.close"), QVariantMap{{QStringLiteral("id"), closing}});
-    return;
-  }
   const QStringList before = tabIds();
   if (!state.tabs.removeOne(closing)) return;
   if (state.active == closing) {
     const QStringList after = tabIds();
     const qsizetype at = before.indexOf(closing);
     state.active = after.isEmpty() ? QString() : after.at(std::min(at, after.size() - 1));
-    if (after.isEmpty()) state.open = false;
+    if (after.isEmpty()) {
+      state.open = false;
+      state.maximized = false;
+    }
   }
   if (kindOf(closing) == QLatin1String("terminal")) {
     // Its terminals go too, as the web's closeTerminalSurface.
@@ -329,12 +278,32 @@ void RightPanelController::addTab(const QString& kind) {
     if (!group.isEmpty()) showTab(kTerminalTab + group);
     return;
   }
-  if (nativeKinds.contains(kind)) {
-    showTab(kind);
-    return;
-  }
-  // The page adds its own and makes it active; onPage shows it.
-  m_bridge->sendToPage(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), kind}});
+  if (nativeKinds.contains(kind)) showTab(kind);
+}
+
+void RightPanelController::setWidth(int width) {
+  width = std::max(width, minimumWidth);
+  if (width == m_width) return;
+  m_width = width;
+  update();
+}
+
+void RightPanelController::resetWidth() {
+  setWidth(defaultWidth);
+}
+
+void RightPanelController::toggleMaximized() {
+  if (!isOpen()) return;
+  Panel& state = panel();
+  state.maximized = !state.maximized;
+  update();
+}
+
+void RightPanelController::toggleDetails() {
+  if (!m_onThread) return;
+  Panel& state = panel();
+  state.details = !state.details;
+  update();
 }
 
 void RightPanelController::toggleDiff() {
@@ -370,8 +339,7 @@ void RightPanelController::update() {
   if (m_onThread) {
     Panel& state = panel();
     // A terminal tab whose terminals all ended (here, in another client, or
-    // the node's) goes, and so does a page tab that went away (closed on the
-    // page): the next one shows.
+    // the node's) goes: the next one shows.
     const QStringList groups = terminalGroups();
     const QStringList before = tabIds();
     state.tabs.removeIf([&groups](const QString& id) {
@@ -383,38 +351,16 @@ void RightPanelController::update() {
       state.active = after.isEmpty() ? QString() : after.at(std::clamp<qsizetype>(at, 0, after.size() - 1));
       if (after.isEmpty()) state.open = false;
     }
-    if (isPageTab(state.active) && m_page.value(QStringLiteral("threadKey")).toString() == m_thread &&
-        !hasPageTab(state.active)) {
-      const QStringList ids = tabIds();
-      state.active = ids.isEmpty() ? QString() : ids.last();
-      if (ids.isEmpty()) state.open = false;
-    }
+    if (!state.open) state.maximized = false;
   }
   const bool open = isOpen();
   m_diff.setActive(open && activeTab() == QLatin1String("diff"));
   m_files.setActive(open && activeTab() == QLatin1String("files"));
   m_agents.setActive(open && activeTab() == QLatin1String("agents"));
   m_previews.setActive(open && activeTab() == QLatin1String("previews"));
-  follow();
   publish();
+  save();
   emit changed();
-}
-
-void RightPanelController::follow() {
-  if (!m_onThread) return;
-  const Panel state = current();
-  const bool pageOpen = state.open && isPageTab(state.active);
-  const QVariantMap told{{QStringLiteral("threadKey"), m_thread},
-                         {QStringLiteral("open"), pageOpen},
-                         {QStringLiteral("activeSurfaceId"), pageOpen ? QVariant(state.active) : QVariant()}};
-  if (told == m_told) return;
-  // Only a page that has published this thread's panel, and shows something
-  // else, is told; a page already showing what the shell wants hears nothing.
-  if (m_page.value(QStringLiteral("threadKey")).toString() != m_thread) return;
-  m_told = told;
-  const bool shown = m_page.value(QStringLiteral("isOpen")).toBool();
-  if (shown == pageOpen && (!pageOpen || m_page.value(QStringLiteral("activeSurfaceId")).toString() == state.active)) return;
-  m_bridge->sendToPage(QStringLiteral("rightPanel.follow"), told);
 }
 
 void RightPanelController::publish() {
@@ -425,33 +371,85 @@ void RightPanelController::publish() {
   const Panel state = current();
   QVariantList tabs;
   for (const QString& id : state.tabs) {
-    tabs.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), kindOf(id)}, {QStringLiteral("title"), titleOf(kindOf(id))}, {QStringLiteral("native"), true}});
+    tabs.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), kindOf(id)}, {QStringLiteral("title"), titleOf(kindOf(id))}});
   }
-  tabs.append(pageTabs());
-  const bool pageKnown = m_page.value(QStringLiteral("threadKey")).toString() == m_thread;
   // Terminals need the thread's place on an environment the node reaches.
   auto* terminals = NativeShell::of(this)->controller<TerminalController>();
   const bool canTerminal = terminals && terminals->available() && terminals->threadKey() == m_thread;
-  const QVariantMap canAdd = pageKnown ? m_page.value(QStringLiteral("canAdd")).toMap() : QVariantMap();
-  const QString environmentId = m_thread.left(m_thread.indexOf(QLatin1Char(':')));
-  const QString threadId = m_thread.mid(m_thread.indexOf(QLatin1Char(':')) + 1);
   m_bridge->publish(QStringLiteral("panel"),
                     QVariantMap{
                         {QStringLiteral("threadKey"), m_thread},
                         {QStringLiteral("isOpen"), state.open},
                         {QStringLiteral("activeId"), state.active},
                         {QStringLiteral("tabs"), tabs},
+                        {QStringLiteral("width"), m_width},
+                        {QStringLiteral("maximized"), state.open && state.maximized},
+                        {QStringLiteral("detailsOpen"), state.details},
                         {QStringLiteral("canAdd"),
                          QVariantMap{{QStringLiteral("diff"), true},
                                      {QStringLiteral("files"), !m_files.root().isEmpty()},
                                      {QStringLiteral("agents"), true},
                                      {QStringLiteral("terminal"), canTerminal},
                                      {QStringLiteral("pullRequests"), m_pullRequests.count() > 0},
-                                     {QStringLiteral("previews"), true},
-                                     {QStringLiteral("pullRequest"), canAdd.value(QStringLiteral("pullRequest")).toBool()}}},
-                        {QStringLiteral("embedPath"),
-                         pageKnown ? m_page.value(QStringLiteral("embedPath")).toString()
-                                   : QStringLiteral("/embed/%1/%2").arg(QString::fromUtf8(QUrl::toPercentEncoding(environmentId)),
-                                                                        QString::fromUtf8(QUrl::toPercentEncoding(threadId)))},
+                                     {QStringLiteral("previews"), true}}},
                     });
+}
+
+// --- Kept ----------------------------------------------------------------------------
+
+// The store: {width, threads: [{threadKey, open, tabs, active, details}]},
+// the thread shown latest last.
+
+void RightPanelController::setStorePath(const QString& path) {
+  m_storePath = path;
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly)) return;
+  m_saved = file.readAll();
+  const QJsonObject stored = QJsonDocument::fromJson(m_saved).object();
+  m_width = std::max(stored.value(QLatin1String("width")).toInt(defaultWidth), minimumWidth);
+  for (const QJsonValue& value : stored.value(QLatin1String("threads")).toArray()) {
+    const QJsonObject thread = value.toObject();
+    const QString threadKey = thread.value(QLatin1String("threadKey")).toString();
+    if (threadKey.isEmpty()) continue;
+    Panel state;
+    for (const QJsonValue& id : thread.value(QLatin1String("tabs")).toArray()) {
+      if (nativeKinds.contains(id.toString()) && !state.tabs.contains(id.toString())) state.tabs.append(id.toString());
+    }
+    state.active = thread.value(QLatin1String("active")).toString();
+    if (!state.tabs.contains(state.active)) state.active = state.tabs.value(0);
+    state.open = thread.value(QLatin1String("open")).toBool() && !state.tabs.isEmpty();
+    state.details = thread.value(QLatin1String("details")).toBool();
+    m_panels.insert(threadKey, state);
+    m_recent.removeOne(threadKey);
+    m_recent.append(threadKey);
+  }
+}
+
+void RightPanelController::save() {
+  if (m_storePath.isEmpty()) return;
+  QJsonArray threads;
+  for (qsizetype at = m_recent.size() - 1; at >= 0 && threads.size() < kStoredThreads; --at) {
+    const QString& threadKey = m_recent.at(at);
+    const Panel state = m_panels.value(threadKey);
+    // Terminal tabs end with the app.
+    QJsonArray tabs;
+    for (const QString& id : state.tabs) {
+      if (kindOf(id) != QLatin1String("terminal")) tabs.append(id);
+    }
+    if (tabs.isEmpty() && !state.details) continue;
+    const bool terminalShown = kindOf(state.active) == QLatin1String("terminal");
+    threads.prepend(QJsonObject{{QStringLiteral("threadKey"), threadKey},
+                                {QStringLiteral("open"), state.open},
+                                {QStringLiteral("tabs"), tabs},
+                                {QStringLiteral("active"), terminalShown ? QJsonValue() : QJsonValue(state.active)},
+                                {QStringLiteral("details"), state.details}});
+  }
+  const QByteArray json = QJsonDocument(QJsonObject{{QStringLiteral("width"), m_width}, {QStringLiteral("threads"), threads}})
+                              .toJson(QJsonDocument::Compact);
+  if (json == m_saved) return;
+  QDir().mkpath(QFileInfo(m_storePath).absolutePath());
+  QSaveFile file(m_storePath);
+  if (!file.open(QIODevice::WriteOnly)) return;
+  file.write(json);
+  if (file.commit()) m_saved = json;
 }

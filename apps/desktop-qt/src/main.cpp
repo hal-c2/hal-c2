@@ -19,6 +19,7 @@
 #include "NativeNotifications.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
+#include "RightPanelController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
@@ -177,6 +178,8 @@ int main(int argc, char* argv[]) {
   // Drafts are the user's unsent work: data, not state.
   native.controller<DraftController>()->setStorePath(QDir(storage.data).filePath(QStringLiteral("shell-drafts.json")));
   native.controller<ComposerController>()->setStorePath(QDir(storage.data).filePath(QStringLiteral("shell-composer.json")));
+  // The right panel reopens as each thread left it.
+  native.controller<RightPanelController>()->setStorePath(QDir(storage.state).filePath(QStringLiteral("shell-panel.json")));
   ThemeStore theme(configDir);
   // ThemeController's resolved theme is the palette under theme.json.
   theme.applyBaseTheme(bridge.state()->value(QStringLiteral("theme")));
