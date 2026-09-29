@@ -2,7 +2,7 @@
 // the cluster's, changed row by row, offline while the link is down, and gone
 // with the link (the desktop scenarios of connections/links.feature, the
 // linked ones of desktop/native-workspace.feature and
-// threads/sidebar-list.feature).
+// desktop/native-keybindings.feature, and threads/sidebar-list.feature).
 
 #include <QJsonObject>
 #include <QVariantList>
