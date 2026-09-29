@@ -1,18 +1,18 @@
 .pragma library
 
-// The right panel's native tabs, by kind. A kind listed here is drawn by its
-// brick (<brick>.qml in this module, given the controller's body object as
-// `source`); every other kind is still the page's, shown in its embed. Moving
-// a tab to QML is a line here plus the kind in RightPanelController::nativeKinds.
-// A kind can have many tabs (terminal: one per `terminal:<group>`); its body
-// shows for any of them.
+// The right panel's tabs, by kind: each is drawn by its brick (<brick>.qml in
+// this module, given the controller's body object as `source`). A new tab is a
+// line here plus the kind in RightPanelController::nativeKinds. A kind can
+// have many tabs (terminal: one per `terminal:<group>`, pull-request: one per
+// `pull-request:<key>`); its body shows for any of them.
 var tabs = {
     diff: { label: "Diff", icon: "file-diff", brick: "DiffPanel", source: "diff" },
     files: { label: "Files", icon: "files", brick: "FilesPanel", source: "files" },
     agents: { label: "Agents", icon: "bot", brick: "AgentsPanel", source: "agents" },
     terminal: { label: "Terminal", icon: "terminal", brick: "TerminalPanel", source: "" },
     "pull-requests": { label: "Pull requests", icon: "git-pull-request", brick: "PullRequestsPanel", source: "pullRequests" },
-    previews: { label: "Previews", icon: "monitor", brick: "PreviewsPanel", source: "previews" }
+    previews: { label: "Previews", icon: "monitor", brick: "PreviewsPanel", source: "previews" },
+    "pull-request": { label: "Pull request review", icon: "git-pull-request", brick: "PullRequestReviewPanel", source: "review" }
 };
 
 function brickOf(kind) {

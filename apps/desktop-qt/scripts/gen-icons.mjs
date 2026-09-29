@@ -79,6 +79,7 @@ const ICONS = [
   "settings",
   "sparkles",
   "square",
+  "square-check",
   "square-pen",
   "square-split-horizontal",
   "square-split-vertical",

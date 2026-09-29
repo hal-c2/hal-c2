@@ -5,7 +5,8 @@ import "../qml/HalC2/Bricks"
 
 // The right panel's bodies: each tab draws its brick and keeps it while
 // another tab shows. Its edge resizes it and its header button maximizes it.
-// The Files viewer's wrap and the Diff tab's revert confirmation.
+// The Files viewer's wrap, the Diff tab's revert confirmation, and the Pull
+// request review tab's conversation, offline and online.
 Item {
     id: root
     width: 900
@@ -154,6 +155,43 @@ Item {
                 review: "review-required"; reviewLabel: "Review required"; conflicting: false
                 branches: "tax-fix → main"; sourceLabel: "Linked by you"; unlinkLabel: "Unlink"
             }
+        }
+    }
+
+    Component {
+        id: reviewComponent
+        PullRequestReviewPanel {
+            width: 500
+            height: 600
+        }
+    }
+
+    // A PullRequestReview of pull request 42, read, with one remark.
+    Component {
+        id: fakeReview
+        QtObject {
+            property var model: null
+            property int number: 42
+            property bool online: true
+            property string status: "ready"
+            property string message: ""
+            property bool busy: false
+            property string problem: ""
+            property var detail: ({ title: "Tax line fix", body: "Rounds the tax line.", url: "https://github.com/acme/shop/pull/42", author: "octocat", state: "open", stateLabel: "Open", branches: "feature/tax → main", labels: [], reviewers: [], mergeability: "mergeable", behindBy: 0, checks: [{ name: "test", status: "success", description: "", url: "" }] })
+            property var conversation: [{ id: "c1", kind: "comment", author: "ada", body: "Why round up?", createdAt: "", reviewState: "", path: "" }]
+            property var reviewThreads: []
+            property string codeStatus: "ready"
+            property string codeMessage: ""
+            property var viewedPaths: []
+            property int viewedCount: 0
+            property var calls: []
+            function reload() { calls.push("reload"); }
+            function comment(body) { calls.push("comment " + body); return true; }
+            function submitReview(verdict, body) { calls.push(verdict + " " + body); return true; }
+            function copyNumber() { calls.push("copy"); }
+            function openOnHost() { calls.push("host"); }
+            function setViewed(path, viewed) {}
+            function setThreadResolved(id, resolved) {}
         }
     }
 
@@ -340,6 +378,40 @@ Item {
             verify(findChild(panel, "pullRequestsOffline").visible);
             verify(!findChild(panel, "pullRequestsLink").enabled);
             verify(!findChild(panel, "pullRequestsRefresh").enabled);
+        }
+
+        function test_reviewCommentsFromItsConversationAndCopiesItsNumber() {
+            const source = createTemporaryObject(fakeReview, root);
+            const panel = createTemporaryObject(reviewComponent, root, { source: source });
+            compare(findChild(panel, "reviewTitle").text, "Tax line fix");
+            verify(findChild(panel, "reviewOverview").visible);
+            mouseClick(findChild(panel, "reviewCopyNumber"));
+            compare(source.calls, ["copy"]);
+
+            mouseClick(findChild(panel, "reviewSection-conversation"));
+            const reply = findChild(panel, "reviewReply");
+            tryVerify(() => reply.visible);
+            verify(!findChild(panel, "reviewComment").enabled, "nothing to send yet");
+            mouseClick(reply);
+            keySequence("o");
+            keySequence("k");
+            mouseClick(findChild(panel, "reviewComment"));
+            compare(source.calls[1], "comment ok");
+            compare(reply.text, "", "a sent comment leaves the field");
+
+            mouseClick(findChild(panel, "reviewSection-code"));
+            verify(findChild(panel, "reviewCode").visible);
+        }
+
+        function test_reviewOfAnUnreachableEnvironmentStaysButSendsNothing() {
+            const source = createTemporaryObject(fakeReview, root, { online: false });
+            const panel = createTemporaryObject(reviewComponent, root, { source: source });
+            verify(findChild(panel, "reviewOffline").visible);
+            verify(!findChild(panel, "reviewReload").enabled);
+            compare(findChild(panel, "reviewTitle").text, "Tax line fix");
+            panel.section = "conversation";
+            verify(!findChild(panel, "reviewReply").enabled);
+            verify(!findChild(panel, "reviewSubmit").enabled);
         }
 
         function test_previewsOpenInTheBrowserAndCloseFromTheRow() {

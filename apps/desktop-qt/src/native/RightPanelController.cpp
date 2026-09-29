@@ -28,8 +28,24 @@ const NativeControllerRegistrar<RightPanelController> registrar(QStringLiteral("
                                                                 "Panel");
 
 const QString kTerminalTab = QStringLiteral("terminal:");
+const QString kReviewTab = QStringLiteral("pull-request:");
 
-QString titleOf(const QString& kind) {
+// A review tab's pull request: host, repository and number of "host/repository#number".
+struct Reviewed {
+  QString host;
+  QString repository;
+  int number = 0;
+};
+Reviewed reviewedOf(const QString& key) {
+  const qsizetype slash = key.indexOf(QLatin1Char('/'));
+  const qsizetype hash = key.lastIndexOf(QLatin1Char('#'));
+  if (slash <= 0 || hash <= slash + 1) return {};
+  return {key.left(slash), key.mid(slash + 1, hash - slash - 1), key.mid(hash + 1).toInt()};
+}
+
+QString titleOf(const QString& id) {
+  const QString kind = RightPanelController::kindOf(id);
+  if (kind == QLatin1String("pull-request")) return QStringLiteral("PR #%1").arg(reviewedOf(id.mid(kReviewTab.size())).number);
   if (kind == QLatin1String("diff")) return QStringLiteral("Diff");
   if (kind == QLatin1String("agents")) return QStringLiteral("Agents");
   if (kind == QLatin1String("terminal")) return QStringLiteral("Terminal");
@@ -61,9 +77,14 @@ RightPanelController::RightPanelController(ShellBridge* bridge, NodeClient* clie
           [bridge](const QUrl& url) { bridge->openExternal(url); }, this),
       m_previews(
           client, [this](const QString& type, const QString& title, const QString& description) { toast(this, type, title, description); },
-          [bridge](const QUrl& url) { bridge->openExternal(url); }, this) {
+          [bridge](const QUrl& url) { bridge->openExternal(url); }, this),
+      m_review(
+          client, [this](const QString& type, const QString& title, const QString& description) { toast(this, type, title, description); },
+          [bridge](const QString& url) { bridge->openExternal(QUrl(url)); }, this) {
   // The add menu offers Pull requests only while the thread has some.
   connect(&m_pullRequests, &ThreadPullRequests::countChanged, this, &RightPanelController::publish);
+  // The review follows its thread's environment going offline and back.
+  connect(&m_pullRequests, &ThreadPullRequests::stateChanged, this, [this] { m_review.setOnline(m_pullRequests.online()); });
   connect(store, &ShellStore::changed, this, [this] {
     if (m_active) retarget();
   });
@@ -89,6 +110,9 @@ void RightPanelController::activate() {
     add(QStringLiteral("threadPanel.toggle"), [this] { toggleDetails(); });
     add(QStringLiteral("diff.toggle"), [this] { toggleDiff(); });
     add(QStringLiteral("preview.toggle"), [this] { togglePreviews(); });
+    add(QStringLiteral("pullRequest.copyNumber"), [this] {
+      if (isOpen() && kindOf(activeTab()) == QLatin1String("pull-request")) m_review.copyNumber();
+    });
     keys->commands()->add(QStringLiteral("thread.showPullRequests"), QStringLiteral("Show linked pull requests"), [this] {
       if (m_pullRequests.count() > 0) showTab(QStringLiteral("pull-requests"));
     });
@@ -119,6 +143,8 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
     toggleMaximized();
   } else if (action == QLatin1String("threadPanel.toggle")) {
     toggleDetails();
+  } else if (action == QLatin1String("rightPanel.review")) {
+    reviewPullRequest(map.value(QStringLiteral("key")).toString());
   } else if (action == QLatin1String("rightPanel.openThread")) {
     openThread(map.value(QStringLiteral("threadKey")).toString());
   } else if (action == QLatin1String("panel.open")) {
@@ -160,7 +186,9 @@ void RightPanelController::retarget() {
 }
 
 QString RightPanelController::kindOf(const QString& id) {
-  return id.startsWith(kTerminalTab) ? QStringLiteral("terminal") : id;
+  if (id.startsWith(kTerminalTab)) return QStringLiteral("terminal");
+  if (id.startsWith(kReviewTab)) return QStringLiteral("pull-request");
+  return id;
 }
 
 QStringList RightPanelController::terminalGroups() const {
@@ -236,6 +264,9 @@ void RightPanelController::showTab(const QString& id) {
   if (kindOf(id) == QLatin1String("terminal")) {
     if (!terminalGroups().contains(id.mid(kTerminalTab.size()))) return;
     if (!state.tabs.contains(id)) state.tabs.append(id);
+  } else if (kindOf(id) == QLatin1String("pull-request")) {
+    if (reviewedOf(id.mid(kReviewTab.size())).number <= 0) return;
+    if (!state.tabs.contains(id)) state.tabs.append(id);
   } else if (nativeKinds.contains(id)) {
     if (!state.tabs.contains(id)) state.tabs.append(id);
   } else {
@@ -278,7 +309,24 @@ void RightPanelController::addTab(const QString& kind) {
     if (!group.isEmpty()) showTab(kTerminalTab + group);
     return;
   }
+  if (kind == QLatin1String("pull-request")) {
+    // The first one still open, else the first.
+    QString key;
+    for (int row = 0; row < m_pullRequests.rowCount(); ++row) {
+      if (key.isEmpty() || m_pullRequests.value(row, ThreadPullRequests::StateRole) == QLatin1String("open")) {
+        key = m_pullRequests.value(row, ThreadPullRequests::KeyRole).toString();
+        if (m_pullRequests.value(row, ThreadPullRequests::StateRole) == QLatin1String("open")) break;
+      }
+    }
+    reviewPullRequest(key);
+    return;
+  }
   if (nativeKinds.contains(kind)) showTab(kind);
+}
+
+void RightPanelController::reviewPullRequest(const QString& key) {
+  if (key.isEmpty() || m_pullRequests.indexOf(key) < 0) return;
+  showTab(kReviewTab + key);
 }
 
 void RightPanelController::setWidth(int width) {
@@ -358,6 +406,15 @@ void RightPanelController::update() {
   m_files.setActive(open && activeTab() == QLatin1String("files"));
   m_agents.setActive(open && activeTab() == QLatin1String("agents"));
   m_previews.setActive(open && activeTab() == QLatin1String("previews"));
+  // The review shows the active review tab's pull request, or the last one shown.
+  if (m_onThread && kindOf(activeTab()) == QLatin1String("pull-request")) {
+    const Reviewed reviewed = reviewedOf(activeTab().mid(kReviewTab.size()));
+    m_review.setOnline(m_pullRequests.online());
+    m_review.setPullRequest(m_thread.left(m_thread.indexOf(QLatin1Char(':'))),
+                            m_store->threadRow(m_thread).value(QLatin1String("projectId")).toString(), reviewed.host, reviewed.repository,
+                            reviewed.number);
+  }
+  m_review.setActive(open && kindOf(activeTab()) == QLatin1String("pull-request"));
   publish();
   save();
   emit changed();
@@ -371,7 +428,7 @@ void RightPanelController::publish() {
   const Panel state = current();
   QVariantList tabs;
   for (const QString& id : state.tabs) {
-    tabs.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), kindOf(id)}, {QStringLiteral("title"), titleOf(kindOf(id))}});
+    tabs.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), kindOf(id)}, {QStringLiteral("title"), titleOf(id)}});
   }
   // Terminals need the thread's place on an environment the node reaches.
   auto* terminals = NativeShell::of(this)->controller<TerminalController>();
@@ -391,6 +448,7 @@ void RightPanelController::publish() {
                                      {QStringLiteral("agents"), true},
                                      {QStringLiteral("terminal"), canTerminal},
                                      {QStringLiteral("pullRequests"), m_pullRequests.count() > 0},
+                                     {QStringLiteral("pullRequest"), m_pullRequests.count() > 0},
                                      {QStringLiteral("previews"), true}}},
                     });
 }
@@ -413,7 +471,11 @@ void RightPanelController::setStorePath(const QString& path) {
     if (threadKey.isEmpty()) continue;
     Panel state;
     for (const QJsonValue& id : thread.value(QLatin1String("tabs")).toArray()) {
-      if (nativeKinds.contains(id.toString()) && !state.tabs.contains(id.toString())) state.tabs.append(id.toString());
+      const QString tab = id.toString();
+      const QString kind = kindOf(tab);
+      const bool known = kind == QLatin1String("pull-request") ? reviewedOf(tab.mid(kReviewTab.size())).number > 0
+                                                                : kind != QLatin1String("terminal") && nativeKinds.contains(kind);
+      if (known && !state.tabs.contains(tab)) state.tabs.append(tab);
     }
     state.active = thread.value(QLatin1String("active")).toString();
     if (!state.tabs.contains(state.active)) state.active = state.tabs.value(0);

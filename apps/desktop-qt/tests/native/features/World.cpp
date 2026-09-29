@@ -47,6 +47,11 @@ void World::start() {
     clipboard = text;
     return true;
   });
+  m_native->controller<RightPanelController>()->review()->setClipboardWriter([this](const QString& text) {
+    if (clipboardFails) return false;
+    clipboard = text;
+    return true;
+  });
   setTime(m_now);
   QObject::connect(m_bridge.get(), &ShellBridge::actionRequested, m_bridge.get(),
                    [this](const QString& type, const QVariant& payload) { onPageAction(type, payload.toMap()); });

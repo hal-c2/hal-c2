@@ -356,6 +356,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/layout.feature:Maximizing the right panel"),
     QStringLiteral("navigation/layout.feature:The right panel's tabs and width survive a restart"),
     QStringLiteral("source-control/pull-request-threads.feature"),
+    QStringLiteral("source-control/pull-request-review.feature"),
     QStringLiteral("preview/surfaces.feature"),
     QStringLiteral("navigation/layout.feature:Showing the terminal from the header"),
     QStringLiteral("navigation/layout.feature:Hiding the terminal"),
