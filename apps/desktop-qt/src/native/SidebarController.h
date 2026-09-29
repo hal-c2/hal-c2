@@ -55,6 +55,8 @@ public:
   // showed the thread, once the command lands. Failures toast `failureTitle`.
   void park(const QString& key, QJsonObject command, const QString& failureTitle,
             std::function<void()> onSuccess = {});
+  // Whether park() is waiting on the node for the thread `key`.
+  bool parking(const QString& key) const { return m_pending.contains(key); }
   // The snooze choices now, and snoozing the thread `key` until one's time,
   // with an Undo toast.
   QList<sidebar::SnoozePreset> snoozePresets() const;

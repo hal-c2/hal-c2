@@ -34,6 +34,13 @@ class ShellStore;
 // It registers the palette's two ways to start a thread: chat.new ("New
 // thread in <project>", listed while the window shows a project) and the
 // thread.newIn menu ("New thread in...", the window's project first).
+//
+// A window with no thread lands on a draft, as the page's index route does:
+// on `home`, once the node's snapshot is in, it opens the draft of the most
+// recently active project (sidebar::mostRecentProject), the same draft every
+// other window landing there opens. With no project it stays home, which
+// offers to add one. A draft that cannot be kept publishes `landing`
+// {failed: true} until `landing.retry` or the window goes elsewhere.
 class DraftController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -59,8 +66,11 @@ public:
 
   const QList<Draft>& drafts() const { return m_drafts; }
   std::optional<Draft> draft(const QString& id) const;
-  // Opens the project's draft, creating it the first time; returns its id.
+  // Opens the project's draft, creating it the first time; returns its id, or
+  // nothing when a new draft could not be kept (its store is not writable).
   QString start(const QString& environmentId, const QString& projectId);
+  // On `home`, opens the most recent project's draft (see above).
+  void land();
   // Deletes the draft; every window that shows it leaves it.
   void remove(const QString& id);
   // The draft's first turn was sent as the thread `threadKey`: the draft is
@@ -88,7 +98,8 @@ private:
   void openMenu(const QString& id, double x, double y);
   // Drops drafts whose thread now exists or whose project is gone.
   void reconcile();
-  void save() const;
+  bool save() const;
+  void setLandingFailed(bool failed);
   // Every window's controller, this one's included.
   QList<DraftController*> everyWindow() const;
   void changedEverywhere();
@@ -104,4 +115,5 @@ private:
   Kept& m_kept;
   QList<Draft>& m_drafts;
   bool m_active = false;
+  bool m_landingFailed = false;
 };

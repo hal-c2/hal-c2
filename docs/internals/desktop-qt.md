@@ -850,7 +850,14 @@ documents the shape and actions:
 
 Home, the pull requests page and usage are routes of their own, drawn by
 `HomePage`, `PullRequestsPage` and `UsagePage` over `PullRequestListController`
-and `UsageController`; they too follow node shapes only while open.
+and `UsageController`; they too follow node shapes only while open. Home is
+never where a window with projects stays: once every environment has
+reported, `DraftController::land` replaces it with the most recent project's
+draft (`sidebar::mostRecentProject`, the web's "updated_at" order), reusing
+the draft other windows landed on. `HomePage` shows the add-project hero with
+no projects, and `landing.failed` with its `landing.retry` when the draft
+could not be kept. The open thread vanishing (deleted, or its environment
+gone) sends the window home, and so onto the draft.
 
 Storage, Scheduled Tasks, Source Control, Integrations and Project edit settings scoped to one or
 several environments or a project through `SettingsScopeController`

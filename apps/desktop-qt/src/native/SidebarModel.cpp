@@ -623,6 +623,37 @@ QList<ProjectGroup> groupProjects(const QList<Project>& projects, const Grouping
   return groups;
 }
 
+std::optional<Project> mostRecentProject(const QList<Project>& projects, const QList<Thread>& threads) {
+  const QString sortOrder = QStringLiteral("updated_at");
+  QHash<QString, double> latest;
+  for (const Thread& thread : threads) {
+    if (thread.archivedAt) continue;
+    const QString key = thread.environmentId + QLatin1Char(':') + thread.projectId;
+    const double at = threadSortTimestamp(thread, sortOrder);
+    const auto found = latest.constFind(key);
+    latest.insert(key, found == latest.constEnd() ? at : std::max(*found, at));
+  }
+  const auto stamp = [&latest](const Project& project) {
+    return latest.value(project.key(), firstTimestamp(project.updatedAt, project.createdAt));
+  };
+  // Ties go by title, then environment, then id.
+  const auto before = [](const Project& left, const Project& right) {
+    if (const int byTitle = left.title.localeAwareCompare(right.title)) return byTitle < 0;
+    if (const int byEnvironment = left.environmentId.compare(right.environmentId)) return byEnvironment < 0;
+    return left.id.compare(right.id) < 0;
+  };
+  const Project* best = nullptr;
+  double bestAt = kNever;
+  for (const Project& project : projects) {
+    const double at = stamp(project);
+    if (!best || at > bestAt || (at == bestAt && before(project, *best))) {
+      best = &project;
+      bestAt = at;
+    }
+  }
+  return best ? std::optional<Project>(*best) : std::nullopt;
+}
+
 const ProjectGroup* Input::group(const QString& key) const {
   for (const ProjectGroup& group : projects) {
     if (group.key == key) return &group;

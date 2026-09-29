@@ -14,6 +14,7 @@
 #include "NativeShell.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "SidebarController.h"
 
 namespace {
 
@@ -69,7 +70,10 @@ QVariantMap NavigationController::Route::toVariant() const {
 NavigationController::NavigationController(ShellBridge* bridge, NodeClient*, ShellStore* store, QObject* parent)
     : QObject(parent), m_bridge(bridge), m_store(store) {
   // The window title follows the open thread's.
-  connect(store, &ShellStore::changed, this, &NavigationController::publish);
+  connect(store, &ShellStore::changed, this, [this] {
+    leaveVanishedThread();
+    publish();
+  });
 }
 
 void NavigationController::setStorePath(const QString& path) {
@@ -125,6 +129,19 @@ void NavigationController::activate() {
   };
   connect(m_store, &ShellStore::changed, this, present);
   present();
+  m_threadSeen = m_store->thread(m_route.threadKey).has_value();
+  // With the route checked, a window with no thread lands on a draft.
+  if (auto* drafts = NativeShell::of(this)->controller<DraftController>()) drafts->land();
+}
+
+void NavigationController::leaveVanishedThread() {
+  if (!m_active || m_route.kind != QLatin1String("thread")) return;
+  if (m_store->thread(m_route.threadKey)) {
+    m_threadSeen = true;
+    return;
+  }
+  if (!m_threadSeen || NativeShell::of(this)->sidebar()->parking(m_route.threadKey)) return;
+  replace(Route());
 }
 
 void NavigationController::pageReady() {
@@ -222,6 +239,7 @@ void NavigationController::go(const Route& route, bool replace, bool followPage)
       if (m_backStack.size() > kBackStackLimit) m_backStack.removeFirst();
     }
     m_route = route;
+    m_threadSeen = m_store->thread(route.threadKey).has_value();
     save();
     publish();
     emit changed();

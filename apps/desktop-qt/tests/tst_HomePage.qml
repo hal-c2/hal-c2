@@ -37,14 +37,25 @@ Item {
             compare(Shell.dispatchedActions[0].action, "project.add");
         }
 
-        function test_with_projects_home_offers_a_new_thread() {
-            Shell.state = { sidebar: { projects: [{ key: "env:shop" }], localEnvironmentId: null } };
+        // The shell moves on to the most recent project's draft; home says nothing meanwhile.
+        function test_with_projects_home_shows_nothing_while_the_draft_opens() {
+            Shell.state = { sidebar: { projects: [{ key: "env:shop" }], localEnvironmentId: null }, landing: { failed: false } };
             const home = createTemporaryObject(homeComponent, root);
+            verify(!findChild(home, "homeTitle").visible);
             verify(!findChild(home, "homeDetail").visible);
+            verify(!findChild(home, "homeAction").visible);
+        }
+
+        // Starting the draft failed: the user is told and can try again.
+        function test_a_draft_that_could_not_start_offers_to_try_again() {
+            Shell.state = { sidebar: { projects: [{ key: "env:shop" }], localEnvironmentId: null }, landing: { failed: true } };
+            const home = createTemporaryObject(homeComponent, root);
+            compare(findChild(home, "homeTitle").text, "Couldn’t start a new thread");
+            compare(findChild(home, "homeDetail").text, "The project is still available. Try opening the draft again.");
             const action = findChild(home, "homeAction");
-            compare(action.text, "New thread");
+            compare(action.text, "Try again");
             mouseClick(action);
-            compare(Shell.dispatchedActions[0].action, "thread.new");
+            compare(Shell.dispatchedActions[0].action, "landing.retry");
         }
 
         function test_before_the_node_answers_home_waits() {

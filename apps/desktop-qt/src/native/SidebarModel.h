@@ -166,6 +166,11 @@ struct ProjectGroup {
 QList<ProjectGroup> groupProjects(const QList<Project>& projects, const GroupingSettings& settings,
                                   const QString& preferredEnvironmentId, const QList<Thread>& threads);
 
+// The project a window with no thread lands in: the first of every project the
+// shell sees in the page's "updated_at" order (Sidebar.logic.ts
+// sortScopedProjectsForSidebar), whatever order the sidebar is set to.
+std::optional<Project> mostRecentProject(const QList<Project>& projects, const QList<Thread>& threads);
+
 struct Input {
   QList<ProjectGroup> projects;
   // The environment of the node the shell runs against; its folders are the
