@@ -67,6 +67,10 @@ void DraftController::activate() {
   commands->add(newThread, keybindings::commandLabel(newThread), [this] { startNew({}); });
   commands->setTerms(newThread, {QStringLiteral("new thread"), QStringLiteral("chat"), QStringLiteral("create"),
                                  QStringLiteral("draft")});
+  // The web's chat.newLocal: the contextual create, never a project chooser.
+  const QString newLocal = QStringLiteral("chat.newLocal");
+  commands->add(newLocal, keybindings::commandLabel(newLocal), [this] { startNew({}); });
+  commands->setListed(newLocal, false);
   commands->addMenu(QStringLiteral("thread.newIn"), tr("New thread in..."), [this] {
     // The window's project first, then the sidebar's order.
     QList<CommandRegistry::Choice> choices;

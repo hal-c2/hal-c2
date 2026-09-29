@@ -226,11 +226,11 @@ Standalone: run the binary with no `--url`; the host serves the built web app
 and starts the node for the shell's home.
 
 CLI: `--url`, `--home-dir`, `--config-dir`, `--qml-dir`, `--host-entry`, `--node`, `--screenshot <png>`
-(grab the window after the page loads, or with the error when the start fails, then quit with
+(grab the window once the node's first snapshot is in, or with the error when the start fails, then quit with
 0, or 2 on a failure; PR evidence without a screen-recording permission, and with
 `QT_QPA_PLATFORM=offscreen` without a window at all), `--action name[=json]` (repeatable; dispatch shell
-actions after the page loads, e.g. `--action rightPanel.toggle`), `--key <chord>`
-(repeatable; press a key chord after the page loads, e.g. `--key Ctrl+1`, portable
+actions after that snapshot, e.g. `--action rightPanel.toggle`), `--key <chord>`
+(repeatable; press a key chord after it, e.g. `--key Ctrl+1`, portable
 `QKeySequence` names — `--action` and `--key` run in command-line order, 1.5 s
 apart, so a key test can open a thread first); env `HAL_C2_HOME`,
 `HAL_C2_QML_DIR`, `HAL_C2_NODE_BIN`, and for the host `HAL_C2_NODE_RELEASE`
@@ -338,11 +338,13 @@ agent replies and renames. Local filtering cannot recover rows omitted by the
 page's 50-row Settled limit. `thread.markUnread {key}` uses the existing client
 unread state.
 
-`ProjectFolderDrop` imports one existing directory through the page's project
-registration flow. It does not create, rename, move, or delete directories.
-Native dispatch canonicalizes the path and requires the shell's own backend,
-or explicit `--allow-local-folder-import` for an attached loopback URL. Do not
-enable that flag for an SSH-forwarded backend with a different filesystem.
+`ProjectFolderDrop` imports one existing directory through `ProjectController`
+(`projects.mutate`). It does not create, rename, move, or delete directories.
+`ShellBridge::localFolders` decides whether this machine's folders are the
+node's: the shell's own backend, or explicit `--allow-local-folder-import` for
+an attached URL, and a node origin on loopback. Do not enable that flag for an
+SSH-forwarded backend with a different filesystem; its loopback origin looks
+local.
 
 `examples/folders` adds a native folder explorer using Qt's `TreeView` and
 asynchronous `QFileSystemModel` through `DefaultShell.navigationPanel`. The
@@ -1069,17 +1071,18 @@ for the same chord wins, as it does over Electron's menu.
   terminal still gets Ctrl+K. The web's defaults bind `mod+d` to
   `terminal.split` in a terminal, so off macOS a terminal loses Ctrl+D (EOF)
   unless the user rebinds it.
-- From native chrome, a native command or script runs in the shell, and any
-  other bound key goes to the page as `keybinding.press {key, ctrlKey,
-metaKey, shiftKey, altKey}`. The page replays it on `document.body`, so the
-  page's own commands resolve with no editor or terminal focus.
+- From native chrome (a focused composer included), only a sequence that
+  resolves to a native command or script is a window shortcut; any other
+  key stays with the focused control. No key goes to the page as
+  `keybinding.press`.
 - Unmodified keys are never window shortcuts; they belong to whichever
   control has focus.
 
 Secondary documents (the right panel) forward a keydown they did not consume
 as `keybinding.press` when the chord resolves to the same command with and
 without the embed's focus (`shellKeybindingPressToForward`). The controller
-intercepts that dispatch and runs the command if it is native.
+claims that dispatch and runs the command if it is native; the primary page
+never sees it.
 
 Mod+Q is not a shortcut. `QuitController` (shared, one per process) filters
 the application's key events before any window or page sees them and ports
@@ -1100,18 +1103,16 @@ from the node's push, not from the reply.
 
 ### `notifications`
 
-`ToastProvider` accepts a `shellMirror` rendered inside it; the mirrored
-toasts still get a hidden `Toast.Root` in the HTML viewport, because Base UI
-only drops a closed toast once its root has finished leaving. `ShellToastBridge`
-mirrors the page's stacked toasts (title, description, buttons, update key)
-as `notifications` and runs a toast's button or dismissal on
-`notification.action {id, actionId}` / `notification.dismiss {id}` — the
-same `onClick`/`onClose` the HTML buttons call. Toasts with React-element
-bodies or anchored positioning stay in the page. The `Notifications` brick
-renders the rest, below the shell's own `toasts`: `ToastController` is what
-native controllers call (`show`, `error`), with its own timing and actions,
-and its ids start with `native:` so dismiss and action clicks stop there
-instead of reaching the page.
+The `Notifications` brick renders only the shell's own `toasts`.
+`ToastController` is what native controllers call (`show`, `error`,
+`showActions` with up to two buttons, `replace` to update one in place), with
+its own timing; its ids start with `native:`. The page's `ShellToastBridge`
+still publishes its toasts as `notifications`, but nothing shows them: every
+toast the desktop needs has a native producer with the web's text, such as
+`KeybindingController`'s "Keybindings updated" on a `config.keybindings` push
+and `ProviderUpdateNotice`'s launch offer of provider updates
+(`ProviderUpdatePrimaryNotification`), whose dismissed version sets are this
+device's `dismissedProviderUpdateNotificationKeys`.
 
 ### `menu`, `confirmation` and `contextMenu`
 
@@ -1139,12 +1140,13 @@ their toast for its five seconds, and `thread.undo` (mod+z outside text)
 runs the newest Undo on offer. Delete, archive and unpin ask first when the
 device's `confirmThread*` settings say so (delete's is on by default).
 
-The page's own menus still go through `contextMenu`:
-`localApi.contextMenu.show` publishes the items with the surface they belong
-to (every web surface tags its document with `window.halC2Shell.surfaceId`)
-and the choice returns as `contextMenu.select {requestId, id}`.
-`ContextMenuHost` lives in each `WebSurface` and once at the window level for
-it. `workspace.rename {title}` / `renameRequestId` drive an inline rename in
+Every window menu is a native controller's (`thread.menu`,
+`workspace.titleMenu`, `draft.menu`, `thread.snoozeMenu`, `git.menu`), so the
+window has one `ContextMenuHost`, for `menu`. The page's own menus still
+publish `contextMenu` (`localApi.contextMenu.show`, answered by
+`contextMenu.select {requestId, id}`), but only a visible `WebSurface`'s
+inner host renders them; the hidden main page's are never shown.
+`workspace.rename {title}` / `renameRequestId` drive an inline rename in
 the header; the thread menu's "Rename" asks for it with
 `workspace.rename.begin {threadKey}`.
 

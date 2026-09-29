@@ -2,6 +2,8 @@
 
 #include "ShellBridge.h"
 
+#include <algorithm>
+
 namespace {
 
 const NativeControllerRegistrar<ToastController> registrar(QStringLiteral("toasts"), {QStringLiteral("toasts")});
@@ -38,7 +40,10 @@ bool ToastController::handle(const QString& action, const QVariant& payload) {
       return true;
     }
   }
+  const bool closed = action == QLatin1String("notification.dismiss") &&
+                      std::any_of(m_toasts.cbegin(), m_toasts.cend(), [&id](const Toast& toast) { return toast.id == id; });
   dismiss(id);
+  if (closed) emit closedByUser(id);
   return true;
 }
 

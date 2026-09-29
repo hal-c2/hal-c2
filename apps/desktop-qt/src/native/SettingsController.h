@@ -117,6 +117,9 @@ public:
 signals:
   void settingsChanged();
   void configChanged();
+  // The node pushed changed keybindings (`config.keybindings`), not the
+  // snapshot a subscription starts with.
+  void keybindingsPushed();
   void themesChanged();
   void deviceChanged();
 

@@ -6,6 +6,8 @@
 
 #include <algorithm>
 
+#include "KeybindingController.h"
+#include "Keybindings.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "NodeClient.h"
@@ -117,6 +119,12 @@ void WorkspaceController::activate() {
     connect(settings, &SettingsController::configChanged, this, &WorkspaceController::publish);
     connect(settings, &SettingsController::configChanged, this, &WorkspaceController::configChanged);
     connect(settings, &SettingsController::deviceChanged, this, &WorkspaceController::publish);
+  }
+  // The web's OpenInPicker shortcut: the route's folder in the preferred editor.
+  if (auto* keys = shell->controller<KeybindingController>()) {
+    const QString openFavorite = QStringLiteral("editor.openFavorite");
+    keys->commands()->add(openFavorite, keybindings::commandLabel(openFavorite), [this] { openInEditor({}); });
+    keys->commands()->setListed(openFavorite, false);
   }
   refresh();
 }
@@ -681,6 +689,7 @@ void WorkspaceController::rename(const QString& title) {
 }
 
 void WorkspaceController::openInEditor(const QString& editorId) {
+  if (!m_place) return;
   const QString cwd = m_place->cwd();
   if (cwd.isEmpty()) return;
   const QJsonArray available = editors();

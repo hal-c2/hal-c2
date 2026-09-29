@@ -61,8 +61,14 @@ public:
   // Drops the toasts whose time is up; the timer calls it at the next deadline.
   void expire();
 
+  QDateTime now() const { return m_now(); }
   // Tests pin the clock; the app uses the system's.
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
+
+signals:
+  // The user closed the toast `id`, rather than it timing out or an action
+  // being chosen.
+  void closedByUser(const QString& id);
 
 private:
   void publish();
