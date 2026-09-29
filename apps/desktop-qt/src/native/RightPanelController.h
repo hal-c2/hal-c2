@@ -167,6 +167,9 @@ private:
   void save();
   // A device's tab, in place of the picker (ThreadDevices::opened).
   void openDevice(const QString& id, bool automatic);
+  static bool removeTab(Panel& state, const QString& id);
+  // Closes `id` in `threadKey`'s panel, shown or not (ThreadDevices::closed).
+  void closeTabIn(const QString& threadKey, const QString& id);
 
   ShellBridge* m_bridge;
   NodeClient* m_client;

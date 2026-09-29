@@ -89,7 +89,7 @@ RightPanelController::RightPanelController(ShellBridge* bridge, NodeClient* clie
           [bridge](const QString& url) { bridge->openExternal(QUrl(url)); }, this),
       m_devices(client, this) {
   connect(&m_devices, &ThreadDevices::opened, this, &RightPanelController::openDevice);
-  connect(&m_devices, &ThreadDevices::closed, this, [this](const QString& id) { closeTab(id); });
+  connect(&m_devices, &ThreadDevices::closed, this, &RightPanelController::closeTabIn);
   connect(&m_devices, &ThreadDevices::namesChanged, this, &RightPanelController::publish);
   // The add menu offers Pull requests only while the thread has some.
   connect(&m_pullRequests, &ThreadPullRequests::countChanged, this, &RightPanelController::publish);
@@ -317,23 +317,33 @@ void RightPanelController::showTab(const QString& id) {
   update();
 }
 
-void RightPanelController::closeTab(const QString& id) {
-  if (!m_onThread) return;
-  Panel& state = panel();
-  const QString closing = id.isEmpty() ? (state.open ? state.active : QString()) : id;
-  if (closing.isEmpty()) return;
-  const QStringList before = tabIds();
-  if (!state.tabs.removeOne(closing)) return;
-  if (closing.startsWith(kDeviceTab) && !state.dismissed.contains(closing)) state.dismissed.append(closing);
-  if (state.active == closing) {
-    const QStringList after = tabIds();
-    const qsizetype at = before.indexOf(closing);
-    state.active = after.isEmpty() ? QString() : after.at(std::min(at, after.size() - 1));
-    if (after.isEmpty()) {
+// Takes `id` out of `state`; the next tab shows in its place.
+bool RightPanelController::removeTab(Panel& state, const QString& id) {
+  const QStringList before = state.tabs;
+  if (!state.tabs.removeOne(id)) return false;
+  if (id.startsWith(kDeviceTab) && !state.dismissed.contains(id)) state.dismissed.append(id);
+  if (state.active == id) {
+    const qsizetype at = before.indexOf(id);
+    state.active = state.tabs.isEmpty() ? QString() : state.tabs.at(std::min(at, state.tabs.size() - 1));
+    if (state.tabs.isEmpty()) {
       state.open = false;
       state.maximized = false;
     }
   }
+  return true;
+}
+
+void RightPanelController::closeTabIn(const QString& threadKey, const QString& id) {
+  if (m_onThread && threadKey == m_thread) return closeTab(id);
+  const auto found = m_panels.find(threadKey);
+  if (found != m_panels.end() && removeTab(*found, id)) save();
+}
+
+void RightPanelController::closeTab(const QString& id) {
+  if (!m_onThread) return;
+  Panel& state = panel();
+  const QString closing = id.isEmpty() ? (state.open ? state.active : QString()) : id;
+  if (closing.isEmpty() || !removeTab(state, closing)) return;
   if (kindOf(closing) == QLatin1String("terminal")) {
     // Its terminals go too, as the web's closeTerminalSurface.
     if (auto* terminals = NativeShell::of(this)->controller<TerminalController>()) terminals->closeGroup(closing.mid(kTerminalTab.size()));

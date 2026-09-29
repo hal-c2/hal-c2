@@ -168,6 +168,18 @@ Feature: Device panel
       Then the node is asked to close "iPhone 17" and shut it down
       And the right panel has no "iPhone 17" tab
 
+    @desktop
+    Scenario: A device powered off from a thread the user left closes that thread's tab
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      And the node is slow to close devices
+      When the user powers the device off
+      And before the node answers, the user switches to another thread showing "iPhone 17"
+      And the node answers
+      Then the right panel shows the "iPhone 17" tab
+      When the user goes back to the first thread
+      Then the right panel has no "iPhone 17" tab
+
   Rule: Devices an agent opens
 
     @desktop

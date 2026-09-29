@@ -21,7 +21,7 @@ class NodeClient;
 // open() is `device.open` for the thread; once it answers, opened() asks the
 // panel for the device's tab in place of the picker. powerOff() is
 // `device.close` with shutdown, then closed() asks the panel to close the
-// tab; closing a tab only stops its stream, the device stays open. A device
+// tab in the thread it was asked from; closing a tab only stops its stream, the device stays open. A device
 // tab whose session ended shows the picker again.
 //
 // While following, a session the thread gains (an agent's device.open) asks
@@ -76,7 +76,9 @@ signals:
   // The panel shows `tabId` (replacing the picker); `automatic`: an agent
   // opened it, and a tab the user closed stays closed.
   void opened(const QString& tabId, bool automatic);
-  void closed(const QString& tabId);
+  // `threadKey` (`<environment>:<thread>`) closes `tabId`: the thread it was
+  // asked in, which may no longer be the one shown.
+  void closed(const QString& threadKey, const QString& tabId);
   // A device's name became known or changed: tab titles follow.
   void namesChanged();
 

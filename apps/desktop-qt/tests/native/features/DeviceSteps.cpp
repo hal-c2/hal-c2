@@ -164,10 +164,10 @@ void announce(FakeNode& node) {
     node.send({{QStringLiteral("t"), QStringLiteral("devices")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), stateOf(node)}});
 }
 
-int sessionOf(const FakeHub& hub, const QString& deviceId) {
+int sessionOf(const FakeHub& hub, const QString& deviceId, const QString& thread = kThread) {
   for (qsizetype n = 0; n < hub.sessions.size(); ++n) {
     const QJsonObject session = hub.sessions.at(n).toObject();
-    if (session.value(QLatin1String("threadId")) == kThread && session.value(QLatin1String("deviceId")) == deviceId) return int(n);
+    if (session.value(QLatin1String("threadId")) == thread && session.value(QLatin1String("deviceId")) == deviceId) return int(n);
   }
   return -1;
 }
@@ -179,7 +179,7 @@ QJsonObject deviceNamed(const FakeHub& hub, const QString& name) {
   fail(QStringLiteral("the hub has no device \"%1\"").arg(name));
 }
 
-void openSession(FakeNode& node, const QJsonObject& device) {
+void openSession(FakeNode& node, const QJsonObject& device, const QString& thread = kThread) {
   FakeHub& hub = node.part<FakeHub>();
   for (qsizetype n = 0; n < hub.devices.size(); ++n) {
     QJsonObject listed = hub.devices.at(n).toObject();
@@ -188,8 +188,8 @@ void openSession(FakeNode& node, const QJsonObject& device) {
       hub.devices.replace(n, listed);
     }
   }
-  if (sessionOf(hub, device.value(QLatin1String("id")).toString()) < 0)
-    hub.sessions.append(QJsonObject{{QStringLiteral("threadId"), kThread},
+  if (sessionOf(hub, device.value(QLatin1String("id")).toString(), thread) < 0)
+    hub.sessions.append(QJsonObject{{QStringLiteral("threadId"), thread},
                                     {QStringLiteral("hostId"), kHost},
                                     {QStringLiteral("deviceId"), device.value(QLatin1String("id"))},
                                     {QStringLiteral("platform"), device.value(QLatin1String("platform"))},
@@ -264,17 +264,22 @@ FakeHub& fakeHub(World& world) {
       if (listed.toObject().value(QLatin1String("id")) == rpc.payload.value(QLatin1String("deviceId"))) device = listed.toObject();
     }
     if (device.isEmpty()) return node.refuse(rpc, QStringLiteral("Device not found"));
-    openSession(node, device);
+    const QString thread = rpc.payload.value(QLatin1String("threadId")).toString();
+    openSession(node, device, thread);
     announce(node);
-    node.reply(rpc, hub.sessions.at(sessionOf(hub, device.value(QLatin1String("id")).toString())));
+    node.reply(rpc, hub.sessions.at(sessionOf(hub, device.value(QLatin1String("id")).toString(), thread)));
   });
   node.onRpc(QStringLiteral("device.close"), [&node](const FakeNode::Rpc& rpc) {
-    FakeHub& hub = node.part<FakeHub>();
-    hub.closes.append(rpc.payload);
-    const int at = sessionOf(hub, rpc.payload.value(QLatin1String("deviceId")).toString());
-    if (at >= 0) hub.sessions.removeAt(at);
-    announce(node);
-    node.reply(rpc, QJsonValue::Null);
+    const auto close = [&node, rpc] {
+      FakeHub& hub = node.part<FakeHub>();
+      hub.closes.append(rpc.payload);
+      const int at = sessionOf(hub, rpc.payload.value(QLatin1String("deviceId")).toString(), rpc.payload.value(QLatin1String("threadId")).toString());
+      if (at >= 0) hub.sessions.removeAt(at);
+      announce(node);
+      node.reply(rpc, QJsonValue::Null);
+    };
+    if (node.holding(QStringLiteral("device.close"))) return node.defer(close);
+    close();
   });
   return hub;
 }
@@ -715,6 +720,30 @@ const Steps steps([] {
       return closes.size() == 1 && closes[0].value(QLatin1String("deviceId")) == id && closes[0].value(QLatin1String("threadId")) == kThread &&
              closes[0].value(QLatin1String("shutdown")).toBool();
     }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the node is slow to close devices"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world);
+    world.node.hold(QStringLiteral("device.close"));
+  });
+  step(QStringLiteral("before the node answers, the user switches to another thread showing %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(world.node.holding(QStringLiteral("device.close")) && fakeHub(world).closes.isEmpty(), describe(world));
+    const QString other = QStringLiteral("thread-2");
+    world.node.threads.insert(other, {{QStringLiteral("id"), other}, {QStringLiteral("title"), QStringLiteral("Other")}, {QStringLiteral("projectId"), kProject},
+                                      {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
+    world.node.sendRow(other, world.node.threads.value(other));
+    world.sync();
+    stream::look(world, world.node.environmentId + QLatin1Char(':') + other);
+    world.sync();
+    // An agent opened the same device there: that thread has its own tab for it.
+    openSession(world.node, deviceNamed(fakeHub(world), c[0]), other);
+    announce(world.node);
+    world.sync();
+    world.waitFor([&] { return activeTab(world) == tabOf(world, c[0]); }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the user goes back to the first thread"), [](World& world, const Captures&, const Table&) {
+    stream::look(world, world.node.environmentId + QLatin1Char(':') + kThread);
+    world.sync();
   });
   step(QStringLiteral("the right panel has no %1 tab").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();

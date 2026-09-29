@@ -222,25 +222,29 @@ void ThreadDevices::powerOff() {
   m_error.clear();
   publish();
   const QPointer<ThreadDevices> self(this);
-  const int generation = m_generation;
-  m_client->call(m_environment, QStringLiteral("device.close"),
-                 QJsonObject{{QStringLiteral("threadId"), m_thread},
+  const QString environment = m_environment, thread = m_thread;
+  m_client->call(environment, QStringLiteral("device.close"),
+                 QJsonObject{{QStringLiteral("threadId"), thread},
                              {QStringLiteral("hostId"), hostId},
                              {QStringLiteral("deviceId"), deviceId},
                              {QStringLiteral("shutdown"), true}},
-                 [self, generation, tab](const QJsonValue&, const std::optional<QString>& error) {
-                   if (!self || self->m_generation != generation) return;
+                 [self, environment, thread, tab](const QJsonValue&, const std::optional<QString>& error) {
+                   if (!self) return;
+                   const bool here = self->m_environment == environment && self->m_thread == thread;
                    if (error) {
+                     // Only the thread that asked shows why.
+                     if (!here) return;
                      self->m_error = *error;
                      self->publish();
                      return;
                    }
-                   emit self->closed(tab);
+                   // The tab closes in the thread it was powered off from, shown or not.
+                   emit self->closed(environment + QLatin1Char(':') + thread, tab);
                  });
 }
 
 void ThreadDevices::close() {
-  if (!m_tab.isEmpty()) emit closed(m_tab);
+  if (!m_tab.isEmpty()) emit closed(m_environment + QLatin1Char(':') + m_thread, m_tab);
 }
 
 void ThreadDevices::refresh() {
