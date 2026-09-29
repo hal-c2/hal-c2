@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
 #include <QStringList>
@@ -64,6 +65,17 @@ public:
   void write(const Edit& edit);
   bool editable() const;
   QString disabledReason() const;
+  // The scope's environments, connected or not ("unavailable" has none), and
+  // for a project scope its checkout on one ("" otherwise).
+  QString kind() const { return resolve().kind; }
+  QStringList environments() const { return resolve().environments; }
+  QString projectOn(const QString& environmentId) const { return m_members.value(environmentId); }
+  // Whether a project of the environment is in the scope.
+  bool covers(const QString& environmentId, const QString& projectId) const;
+  bool online(const QString& environmentId) const;
+  std::optional<QJsonObject> settings(const QString& environmentId) const { return m_documents->settings(environmentId); }
+  // A target's providers (ServerConfig providers), as its config frames last said.
+  QJsonArray providers(const QString& environmentId) const { return m_providers.value(environmentId); }
 
   // `settings` with the project's override of `key` set; undefined removes it,
   // and an override left empty goes.
@@ -98,4 +110,5 @@ private:
   QString m_environmentId;
   QHash<QString, QString> m_members;
   QHash<QString, QJsonObject> m_capabilities;
+  QHash<QString, QJsonArray> m_providers;
 };

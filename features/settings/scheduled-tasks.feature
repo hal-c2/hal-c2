@@ -129,14 +129,14 @@ Feature: Scheduled tasks
 
   Rule: The scheduled tasks settings
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: The user creates a task with the defaults
       When the user starts a new task
       Then it starts in a new worktree from "main" fetched from origin
       And it runs at 09:00 every day with full access
       And its model is the project's default model
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario Outline: A task runs in the workspace the user chose
       When the user creates a task that uses <workspace>
       Then each run works in <place>
@@ -147,7 +147,7 @@ Feature: Scheduled tasks
         | the project checkout       | the project root               |
         | a specific checkout        | the chosen checkout path       |
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario Outline: An incomplete task cannot be saved
       When the user saves a task <problem>
       Then the user is told "<message>"
@@ -159,31 +159,31 @@ Feature: Scheduled tasks
         | that uses a specific checkout with no path  | Checkout path is required                |
         | on an environment that is disconnected      | Reconnect this environment before saving |
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: Each task shows when it runs next and how it last went
       Given a paused task and a task that failed its last run
       When the user opens scheduled tasks
       Then the paused task says it is paused
       And the failed task shows its last error
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: The list follows the settings scope
       Given tasks in projects "api" and "web"
       When the user views scheduled tasks for project "api"
       Then only the tasks for "api" are listed
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: The user deletes a task
       Given a task "Check Sentry"
       When the user deletes the task
       Then it no longer runs and is no longer listed
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: A link to a task that is gone says so
       When the user follows a link to a task that was deleted
       Then the user is told the task is unavailable
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: Scheduled tasks on a disconnected environment offer to reconnect
       Given the environment "laptop" is disconnected
       When the user opens scheduled tasks for "laptop"

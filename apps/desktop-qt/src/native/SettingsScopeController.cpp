@@ -28,13 +28,16 @@ const QStringList kScopedSections{QStringLiteral("/settings/storage"), QStringLi
 SettingsScopeController::SettingsScopeController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_documents(new EnvironmentSettings(client, this)) {
   connect(m_documents, &EnvironmentSettings::frame, this, [this](const QString& environmentId, const QJsonObject& frame) {
-    if (frame.value(QLatin1String("t")) != QLatin1String("config")) return;
-    m_capabilities.insert(environmentId, frame.value(QLatin1String("config"))
-                                             .toObject()
-                                             .value(QLatin1String("environment"))
-                                             .toObject()
-                                             .value(QLatin1String("capabilities"))
-                                             .toObject());
+    const QString type = frame.value(QLatin1String("t")).toString();
+    if (type == QLatin1String("config.providers")) {
+      m_providers.insert(environmentId, frame.value(QLatin1String("providers")).toArray());
+      emit changed();
+      return;
+    }
+    if (type != QLatin1String("config")) return;
+    const QJsonObject config = frame.value(QLatin1String("config")).toObject();
+    m_capabilities.insert(environmentId, config.value(QLatin1String("environment")).toObject().value(QLatin1String("capabilities")).toObject());
+    m_providers.insert(environmentId, config.value(QLatin1String("providers")).toArray());
   });
   connect(m_documents, &EnvironmentSettings::changed, this, [this] {
     publish();
@@ -156,6 +159,16 @@ EnvironmentSettings::Reading SettingsScopeController::read(const Pick& pick) con
   return m_documents->read([this, pick](const QJsonObject& settings, const QString& environmentId) {
     return pick(settings, m_members.value(environmentId));
   });
+}
+
+bool SettingsScopeController::covers(const QString& environmentId, const QString& projectId) const {
+  const Resolved resolved = resolve();
+  if (!resolved.environments.contains(environmentId)) return false;
+  return resolved.kind != QLatin1String("project") || resolved.members.value(environmentId) == projectId;
+}
+
+bool SettingsScopeController::online(const QString& environmentId) const {
+  return m_store->environmentOnline(environmentId);
 }
 
 bool SettingsScopeController::editable() const {

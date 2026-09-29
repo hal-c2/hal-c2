@@ -477,6 +477,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/scopes-and-inheritance.feature:An environment-wide change is saved*"),
     QStringLiteral("settings/scopes-and-inheritance.feature:Saving on some environments*"),
     QStringLiteral("settings/scopes-and-inheritance.feature:A setting cannot be changed while*"),
+    QStringLiteral("settings/scheduled-tasks.feature"),
 };
 
 QRegularExpression wildcard(const QString& glob) {

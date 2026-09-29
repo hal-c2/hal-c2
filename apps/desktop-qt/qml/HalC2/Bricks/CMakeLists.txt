@@ -81,6 +81,8 @@ qt_add_qml_module(hal_c2_bricks
     ProviderCustomModels.qml
     ProviderAcpSessions.qml
     ArchivedThreads.qml
+    ScheduledTaskEditor.qml
+    ScheduledTasksSettings.qml
     SettingsScopeSentence.qml
     StorageSettings.qml
   RESOURCES
