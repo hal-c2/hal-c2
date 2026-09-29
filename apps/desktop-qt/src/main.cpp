@@ -259,8 +259,8 @@ int main(int argc, char* argv[]) {
   backend.start();
 
   // Scripted runs: replay --action and --key steps in command-line order once
-  // the page is up, then optionally grab the window and quit. Only the first
-  // load triggers this.
+  // the node's first snapshot is in (NativeShell::ready), then optionally grab
+  // the window and quit.
   struct ScriptedStep {
     bool isKey;
     QString spec;
@@ -280,16 +280,9 @@ int main(int argc, char* argv[]) {
   const bool screenshotRequested = parser.isSet(screenshotOption);
   if (!scriptedSteps.isEmpty() || screenshotRequested) {
     const QString target = parser.value(screenshotOption);
-    QObject::connect(&bridge, &ShellBridge::pageLoaded, &runtime,
+    QObject::connect(&native, &NativeShell::ready, &runtime,
                      [&runtime, &bridge, &app, target, scriptedSteps,
-                      screenshotRequested](bool ok) {
-                       if (!ok) {
-                         qWarning().noquote() << "[shell] page failed to load; scripted run aborted";
-                         if (screenshotRequested) {
-                           app.exit(2);
-                         }
-                         return;
-                       }
+                      screenshotRequested] {
                        int delay = 1500;
                        for (const ScriptedStep& step : scriptedSteps) {
                          if (step.isKey) {
@@ -322,7 +315,7 @@ int main(int argc, char* argv[]) {
                        }
                      },
                      Qt::SingleShotConnection);
-    // A start that fails never loads a page; grab the error the window shows
+    // A start that fails never reaches the node; grab the error the window shows
     // instead of waiting forever, and quit with a failure code.
     if (screenshotRequested) {
       QObject::connect(&backend, &BackendProcess::failed, &runtime,

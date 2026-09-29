@@ -88,8 +88,9 @@ bool ProjectController::handle(const QString& action, const QVariant& payload) {
     const QString path = map.value(QStringLiteral("path")).toString();
     // Without a folder, the palette's Add project.
     if (path.isEmpty()) return NativeShell::of(this)->controller<KeybindingController>()->commands()->run(kAdd);
-    // Where local folders mean nothing (a remote page), the page's own flow.
-    if (!m_bridge->localFolderImportEnabled()) return false;
+    // Where this machine's folders are not the node's (a node elsewhere),
+    // nothing opens.
+    if (!m_bridge->localFolders()) return true;
     openFolder(path);
     return true;
   }

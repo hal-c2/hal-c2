@@ -206,6 +206,8 @@ WebEngineView {
         sourceComponent: Component {
             ContextMenuHost {
                 surfaceId: view.surfaceId
+                stateKey: "contextMenu"
+                selectAction: "contextMenu.select"
             }
         }
     }

@@ -5,6 +5,7 @@
 #   apps/server-ex/lib/hal_c2/keybindings.ex (server.upsertKeybinding, server.removeKeybinding)
 #   apps/desktop-qt/src/native/KeybindingController.cpp (the desktop merges config.keybindings over its defaults, as the node changes them)
 #   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the @desktop scenarios against a fake node)
+#   apps/web/src/routes/__root.tsx (the "Keybindings updated" toast, KEYBINDINGS_SUCCESS_TOAST_COOLDOWN_MS)
 
 Feature: Customising keybindings
   Custom rules live in keybindings.json in the HAL-C2 home. Each rule names a key, a command and
@@ -103,6 +104,25 @@ Feature: Customising keybindings
       When the node adds the rule mod+alt+g for "diff.toggle"
       And the user presses mod+alt+g
       Then "diff.toggle" runs
+
+    @desktop
+    Scenario: A reload of the keybindings is confirmed
+      Given no custom keybindings
+      When the node adds the rule mod+alt+g for "diff.toggle"
+      Then the user sees a "success" toast "Keybindings updated" saying "Keybindings configuration reloaded successfully."
+
+    @desktop
+    Scenario: Reloads close together are confirmed once
+      Given no custom keybindings
+      When the node adds the rule mod+alt+g for "diff.toggle"
+      And the node adds the rule mod+alt+h for "diff.toggle"
+      Then the user sees the toast "Keybindings updated" once
+
+    @desktop
+    Scenario: Starting with custom keybindings is not announced
+      Given keybindings.json binds mod+alt+g to "diff.toggle"
+      When the client starts
+      Then the user sees no toast
 
     @desktop
     Scenario: A rule the node removes stops applying

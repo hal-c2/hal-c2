@@ -37,31 +37,32 @@ Item {
             };
         }
 
-        function test_shellToastsStackAbovePageToasts() {
+        function test_onlyTheShellsToastsShow() {
             Shell.state = {
                 toasts: {
-                    items: [toast("native:1", "Snoozed until 6 PM", [
+                    items: [toast("native:2", "Snoozed until 6 PM", [
                             {
                                 id: "primary",
                                 label: "Undo",
                                 primary: true
                             }
-                        ])]
+                        ]), toast("native:1", "Pushing", [])]
                 },
                 notifications: {
-                    items: [toast("page-1", "Pushing", [])]
+                    items: [toast("page-1", "The page's", [])]
                 }
             };
             const host = createTemporaryObject(notificationsComponent, root);
-            compare(host.items.map(item => item.id), ["native:1", "page-1"]);
+            compare(host.items.map(item => item.id), ["native:2", "native:1"]);
+            compare(findChild(host, "notificationDismiss-page-1"), null);
 
-            const undo = findChild(host, "notificationAction-native:1-primary");
+            const undo = findChild(host, "notificationAction-native:2-primary");
             verify(undo !== null);
             mouseClick(undo);
-            const dismiss = findChild(host, "notificationDismiss-page-1");
+            const dismiss = findChild(host, "notificationDismiss-native:1");
             verify(dismiss !== null);
             mouseClick(dismiss);
-            compare(Shell.dispatchedActions.map(entry => entry.action + " " + entry.payload.id), ["notification.action native:1", "notification.dismiss page-1"]);
+            compare(Shell.dispatchedActions.map(entry => entry.action + " " + entry.payload.id), ["notification.action native:2", "notification.dismiss native:1"]);
         }
 
         function test_accentClearsRoundedCorners_data() {
@@ -97,10 +98,10 @@ Item {
                 border: "#ffffff"
             };
             Shell.state = {
-                notifications: {
+                toasts: {
                     items: [
                         {
-                            id: "update",
+                            id: "native:1",
                             type: "warning",
                             title: qsTr("Update available"),
                             description: qsTr("Install the update now or review provider settings."),

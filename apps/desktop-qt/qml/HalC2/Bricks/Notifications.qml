@@ -3,16 +3,13 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// Toasts, newest first: the shell's own (Shell.state.toasts, NativeShell's
-// ToastController) above the page's (Shell.state.notifications). Place it over
-// the window; whoever published a toast keeps its timing, and dismiss and
+// Toasts, newest first (Shell.state.toasts, NativeShell's ToastController).
+// Place it over the window; the controller keeps their timing, and dismiss and
 // action clicks go back to it by id.
 Item {
     id: host
 
-    readonly property var nativeItems: Shell.state.toasts ? Shell.state.toasts.items : []
-    readonly property var pageItems: Shell.state.notifications ? Shell.state.notifications.items : []
-    readonly property var items: nativeItems.concat(pageItems)
+    readonly property var items: Shell.state.toasts ? Shell.state.toasts.items : []
     property int cardWidth: 340
 
     implicitWidth: cardWidth

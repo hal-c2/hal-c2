@@ -542,6 +542,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/integrations.feature"),
     QStringLiteral("settings/projects.feature"),
     QStringLiteral("settings/project-defaults.feature"),
+    QStringLiteral("settings/updates.feature:At launch*"),
 };
 
 QRegularExpression wildcard(const QString& glob) {
