@@ -16,6 +16,7 @@
 #include "RightPanelController.h"
 #include "ThreadStore.h"
 #include "ToastController.h"
+#include "UsageController.h"
 
 World::World() {
   m_now = QDateTime::fromString(QStringLiteral("2026-09-23T10:00:00Z"), Qt::ISODate);
@@ -100,6 +101,7 @@ void World::setTime(const QDateTime& time) {
   m_native->controller<ToastController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ThreadStore>()->setClock([now] { return now.toUTC(); });
   m_native->controller<RightPanelController>()->agents()->setClock([now] { return now.toUTC(); });
+  m_native->controller<UsageController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ToastController>()->expire();
 }
 

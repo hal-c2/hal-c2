@@ -10,6 +10,8 @@
 #   packages/contracts/src/rpc.ts (server.getUsageSummary, server.refreshUsageRates, server.consumeResetCredit)
 #   apps/web/src/components/usage/UsagePage.tsx
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (usage.open entry)
+#   apps/desktop-qt/src/native/UsageController.cpp, apps/desktop-qt/qml/HalC2/Bricks/UsagePage.qml
+#   packages/shared/src/usageMerge.ts, packages/shared/src/usageLimits.ts
 
 Feature: Usage and limits
   Usage adds up token use and estimated cost from each provider's local
@@ -119,7 +121,7 @@ Feature: Usage and limits
 
   Rule: Reading usage
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario Outline: The user reads usage over a window
       When the user views <metric> for the past <window>
       Then the numbers cover that window
@@ -130,24 +132,54 @@ Feature: Usage and limits
         | tokens | 7 days  |
         | cost   | 90 days |
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: Usage from several environments arrives as each finishes scanning
       Given "laptop" is still scanning and "server" has finished
       When the user views usage for all environments
       Then "server" usage is shown
       And "laptop" is shown as still scanning
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: An environment that cannot report usage is named
       Given "server" is offline
       When the user views usage for all environments
       Then the user is told some environments could not report usage
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: Usage remembers the view the user last chose
       Given the user switched usage to tokens
       When the user opens usage again
       Then it shows tokens
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: An environment on an older server is left out of the totals
+      Given "server" runs an older server version
+      When the user views usage for all environments
+      Then usage says "server runs an older server version and is excluded from totals."
+      And the usage of "server" is not counted
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: Usage that could not be read can be read again
+      Given the node cannot read usage
+      When the user views cost for the past 7 days
+      Then usage says "This environment could not report usage."
+      When the node can read usage again
+      And the user refreshes usage
+      Then the usage of this environment is shown
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: Refreshing usage fetches prices and reads it again
+      Given the user views cost for the past 7 days
+      When the user refreshes usage
+      Then the node is asked for the latest model prices
+      And usage is read again
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: Usage of one environment leaves the others out
+      Given "laptop" is still scanning and "server" has finished
+      When the user views usage for "server"
+      Then the usage of "server" is shown
+      And the usage of this environment is not counted
 
   Rule: Limits
 
@@ -179,18 +211,43 @@ Feature: Usage and limits
         | with no reset credits left           | No reset credit left.                  |
         | whose credit another device redeemed | That credit was already redeemed.      |
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: Limits are pooled per provider with one share per account
       Given two Codex accounts
       When the user views limits
       Then Codex shows one 5-hour number made up of both accounts
       And the account that resets soonest comes first
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: Opening limits checks them at most every five minutes
       Given limits were checked two minutes ago
       When the user opens limits
       Then the limits are not checked again
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: Refreshing limits checks them even within five minutes
+      Given limits were checked two minutes ago
+      When the user opens limits
+      And the user refreshes usage
+      Then the limits are checked again
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: A provider whose limits could not be read is named
+      Given Codex could not read its limits
+      When the user views limits
+      Then usage says "Codex: Could not read limits."
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: Without limits to show the page says so
+      Given no provider reports limits
+      When the user views limits
+      Then usage says "No provider on the selected environments reports subscription limits."
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: Leaving usage stops following limits
+      Given the user views limits
+      When the user leaves usage
+      Then limits are no longer followed
 
     # Grok, Cursor and OpenCode Go limits, and the /usage-limits composer command, are in
     # providers/usage-limits.feature.

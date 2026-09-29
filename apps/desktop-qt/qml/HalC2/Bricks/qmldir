@@ -56,3 +56,4 @@ TerminalSplits 1.0 TerminalSplits.qml
 TerminalPanel 1.0 TerminalPanel.qml
 PullRequestsPage 1.0 PullRequestsPage.qml
 HomePage 1.0 HomePage.qml
+UsagePage 1.0 UsagePage.qml

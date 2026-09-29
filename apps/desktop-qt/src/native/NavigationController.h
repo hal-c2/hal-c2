@@ -55,7 +55,8 @@ public:
   // The page is not told about them and stays where it was.
   static bool isNative(const Route& route) {
     return route == Route::settings(kClusterSection) || route == Route::settings(kConnectionsSection) ||
-           route == Route::settings(kKeybindingsSection) || route.kind == QLatin1String("pullRequests");
+           route == Route::settings(kKeybindingsSection) || route.kind == QLatin1String("pullRequests") ||
+           route.kind == QLatin1String("usage");
   }
 
   NavigationController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);

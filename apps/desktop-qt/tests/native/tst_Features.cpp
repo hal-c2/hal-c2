@@ -246,6 +246,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("connections/pairing.feature"),
     QStringLiteral("threads/drafts.feature"),
     QStringLiteral("source-control/pull-request-list.feature"),
+    QStringLiteral("settings/usage.feature"),
     QStringLiteral("threads/menu-actions.feature"),
     QStringLiteral("threads/thread-list.feature"),
     QStringLiteral("terminal/drawer.feature"),

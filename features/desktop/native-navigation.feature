@@ -71,7 +71,7 @@ Feature: The desktop shell decides where the window is
     Scenario: Opening usage
       When the user opens usage
       Then the window shows usage
-      And the page is asked to open usage
+      And the page is not told where to go
       And the window is titled "Usage"
 
   Rule: Back returns to where the user was
