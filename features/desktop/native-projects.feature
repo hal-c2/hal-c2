@@ -3,15 +3,14 @@
 #   apps/desktop-qt/src/ShellBridge.cpp (localFolderImportEnabled, localDirectoryPath)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Add project)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
-#   apps/web/src/components/CommandPalette.tsx (the add-project palette a pathless add still opens)
+#   apps/desktop-qt/src/native/CommandPaletteController.cpp (Add project, a pathless add opens it)
 #   Shared domain: files/adding-projects.feature and files/removing-and-listing-projects.feature
-#   own what adding and removing mean, including the removal confirmation; this file owns
-#   what still reaches the page's add-project palette.
+#   own what adding and removing mean, including the removal confirmation.
 
 Feature: The desktop shell adds and removes its node's projects
   The Qt shell opens a local folder as a project and removes projects through its node's
-  `projects.mutate`, without the page. Adding by typing a path or cloning is still the page's
-  add-project palette.
+  `projects.mutate`, without the page. Adding by typing a path is the command palette's
+  Add project; cloning is not native yet.
 
   Background:
     Given the desktop's node "node-a" serves the environment "env-a"
@@ -19,9 +18,9 @@ Feature: The desktop shell adds and removes its node's projects
     And the desktop shell is connected to its node
 
   @desktop
-  Scenario: Adding a project without a folder opens the page's palette
+  Scenario: Adding a project without a folder opens the palette's Add project
     When the user asks to add a project without a folder
-    Then the action "project.add" reaches the page
+    Then the command palette asks where the project comes from
     And no project is created
 
   @desktop

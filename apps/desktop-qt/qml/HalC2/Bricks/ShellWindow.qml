@@ -80,6 +80,25 @@ Window {
 
     CommandPalette {}
 
+    // The palette's "Toggle theme editor": the active theme's colours.
+    ThemeEditor {
+        id: themeEditor
+
+        onClosed: Themes.editorOpen = false
+
+        Connections {
+            target: Themes
+
+            function onEditorOpenChanged() {
+                if (Themes.editorOpen) {
+                    themeEditor.edit(Themes.draft());
+                } else {
+                    themeEditor.close();
+                }
+            }
+        }
+    }
+
     ShellErrorOverlay {
         anchors.fill: parent
     }

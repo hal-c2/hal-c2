@@ -41,6 +41,8 @@ public:
     int id = 0;
     QString method;
     QJsonObject payload;
+    // The environment it was addressed to.
+    QString environment;
     // The connection it came on; an answer to a dropped one is not sent.
     QPointer<QWebSocket> socket;
   };
@@ -111,6 +113,9 @@ public:
       {QStringLiteral("threadVisitedTracking"), true},
       {QStringLiteral("threadPinning"), true},
       {QStringLiteral("threadTitleRegeneration"), true},
+      {QStringLiteral("pullRequests"), true},
+      {QStringLiteral("threadPullRequests"), true},
+      {QStringLiteral("threadPullRequestLinking"), true},
   };
   bool holdSnapshot = false;
   // Environments outside the cluster the node is linked to (HalC2.Links), and

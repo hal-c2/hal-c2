@@ -79,8 +79,6 @@ void KeybindingController::registerCommands() {
     m_commands.add(command, keybindings::commandLabel(command), std::move(run));
   };
   add(QStringLiteral("navigation.back"), [navigation] { navigation->back(); });
-  // DraftController starts it in the project the window shows.
-  add(QStringLiteral("chat.new"), [this] { m_bridge->dispatch(QStringLiteral("thread.new")); });
   add(QStringLiteral("thread.previous"), [this] { traverse(false); });
   add(QStringLiteral("thread.next"), [this] { traverse(true); });
   for (int n = 1; n <= 9; ++n) {
@@ -121,9 +119,6 @@ void KeybindingController::registerCommands() {
   });
   add(QStringLiteral("thread.settle"), [menu, navigation] {
     if (!navigation->threadKey().isEmpty()) menu->toggleSettle(navigation->threadKey());
-  });
-  add(QStringLiteral("thread.copyReference"), [menu, navigation] {
-    if (!navigation->threadKey().isEmpty()) menu->copyReference(navigation->threadKey());
   });
   add(QStringLiteral("thread.undo"), [menu] { menu->undo(); });
 }

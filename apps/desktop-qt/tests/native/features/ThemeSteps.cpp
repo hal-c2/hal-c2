@@ -10,6 +10,7 @@
 #include <QJsonDocument>
 
 #include "FakeConfig.h"
+#include "CommandPaletteController.h"
 #include "Harness.h"
 #include "SettingsController.h"
 #include "ThemeController.h"
@@ -366,7 +367,21 @@ const Steps steps([] {
   step(QStringLiteral("%1 only has a dark palette").arg(q), [](World& world, const Captures& c, const Table&) {
     ensureTheme(world, c[0], {QStringLiteral("dark")});
   });
-  step(QStringLiteral("the user chooses %1").arg(q), [](World& world, const Captures& c, const Table&) { choose(world, c[0]); });
+  step(QStringLiteral("the user chooses %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // From an open command palette (its Change theme submenu among them): its
+    // entry of that title.
+    if (auto* palette = world.native().controller<CommandPaletteController>(); palette && palette->isOpen()) {
+      for (int row = 0; row < palette->rowCount(); ++row) {
+        if (palette->index(row).data(CommandPaletteController::TitleRole) == c[0]) {
+          palette->run(row);
+          world.sync();
+          return;
+        }
+      }
+      fail(QStringLiteral("the command palette does not list \"%1\"").arg(c[0]));
+    }
+    choose(world, c[0]);
+  });
   step(QStringLiteral("the light theme is unchanged"), [](World& world, const Captures&, const Table&) {
     expect(!themes(world)->halves().contains(QStringLiteral("light")) && themes(world)->themeId().isEmpty(),
            QStringLiteral("the theme is %1, the halves %2").arg(themes(world)->themeId(), show(themes(world)->halves())));
@@ -378,8 +393,11 @@ const Steps steps([] {
 
   // This device's own themes (the theme editor).
   step(QStringLiteral("the active theme is %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    ensureTheme(world, c[0]);
-    choose(world, c[0]);
+    // As an outcome, only what the window draws.
+    if (!world.checking) {
+      ensureTheme(world, c[0]);
+      choose(world, c[0]);
+    }
     usesTheme(world, c[0]);
   });
   step(QStringLiteral("the user creates a theme"), [](World& world, const Captures&, const Table&) {

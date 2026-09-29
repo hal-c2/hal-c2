@@ -5,16 +5,25 @@
 // other nodes of the cluster, and the palette driven as the CommandPalette
 // brick drives it. The brick's own keys (mod+1..9) are in KeybindingSteps.cpp.
 
+#include <QJSEngine>
 #include <QJsonArray>
 
+#include <memory>
+
 #include "CommandPaletteController.h"
+#include "DraftController.h"
+#include "FakeFiles.h"
 #include "Harness.h"
 #include "KeybindingController.h"
 #include "Keybindings.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "NodeClient.h"
+#include "RightPanelController.h"
+#include "SettingsController.h"
 #include "Stream.h"
+#include "ThemeController.h"
+#include "ThreadPullRequests.h"
 #include "World.h"
 
 namespace {
@@ -34,7 +43,41 @@ struct PaletteState {
   // What the palette listed when it was opened, as "kind\nid".
   QStringList listed;
   QStringList ran;
+  // What runs "an action that will fail".
+  std::unique_ptr<QJSEngine> engine;
 };
+
+// What each thread's messages say (by thread id, on this node), for
+// `orchestration.searchThreads`; answers wait while the node holds "messages".
+struct FakeMessages {
+  QHash<QString, QString> text;
+  int asked = 0;
+};
+
+const FakeNode::Extension messages([](FakeNode& node) {
+  node.onRpc(QStringLiteral("orchestration.searchThreads"), [&node](const FakeNode::Rpc& rpc) {
+    FakeMessages& fake = node.part<FakeMessages>();
+    ++fake.asked;
+    const auto answer = [&node, rpc] {
+      const QString query = rpc.payload.value(QLatin1String("query")).toString();
+      QJsonArray matches;
+      if (rpc.environment.isEmpty() || rpc.environment == node.environmentId) {
+        const FakeMessages& fake = node.part<FakeMessages>();
+        for (auto it = fake.text.cbegin(); it != fake.text.cend(); ++it) {
+          if (it->contains(query, Qt::CaseInsensitive)) {
+            matches.append(QJsonObject{{QStringLiteral("threadId"), it.key()}, {QStringLiteral("snippet"), *it}});
+          }
+        }
+      }
+      node.reply(rpc, QJsonObject{{QStringLiteral("matches"), matches}});
+    };
+    if (node.holding(QStringLiteral("messages"))) {
+      node.defer(answer);
+    } else {
+      answer();
+    }
+  });
+});
 
 PaletteState& state(World& world) {
   return world.node.part<PaletteState>();
@@ -63,6 +106,8 @@ struct Listed {
 QList<Listed> rows(World& world) {
   world.sync();
   CommandPaletteController& model = palette(world);
+  // What the palette lists once its searches against the node are answered.
+  world.waitFor([&model] { return !model.searching(); }, QStringLiteral("the palette's searches to be answered"));
   QList<Listed> out;
   for (int row = 0; row < model.rowCount(); ++row) {
     const QModelIndex index = model.index(row);
@@ -88,13 +133,21 @@ int indexOf(World& world, const QString& title, const QString& kind = {}) {
   return -1;
 }
 
-// mod+k, as the window's shortcut hands it to the shell.
-void pressToggle(World& world) {
+// A shortcut (mod+k by default), as the window's shortcut hands it to the shell.
+void pressToggle(World& world, const QString& key = QStringLiteral("mod+k")) {
   palette(world);
   auto* keys = world.native().controller<KeybindingController>();
-  const auto shortcut = keybindings::parseShortcut(QStringLiteral("mod+k"));
+  const auto shortcut = keybindings::parseShortcut(key);
   keys->press(keybindings::sequence(*shortcut, false));
   world.sync();
+}
+
+// A mode as the scenarios name it, as the palette names it, and its key.
+QString modeOf(const QString& name) {
+  return name == u"go to file" ? QStringLiteral("files") : name == u"project search" ? QStringLiteral("content") : QStringLiteral("command");
+}
+QString shortcutOf(const QString& name) {
+  return name == u"go to file" ? QStringLiteral("mod+p") : name == u"project search" ? QStringLiteral("mod+shift+f") : QStringLiteral("mod+k");
 }
 
 void open(World& world) {
@@ -155,6 +208,19 @@ QString addThread(World& world, const QString& title, QJsonObject row = {}, cons
   return key;
 }
 
+// This node's environment with `changes` to what it can do, as the node says
+// when a capability changes.
+void setCapabilities(World& world, const QJsonObject& changes) {
+  QJsonObject capabilities = world.node.capabilities;
+  for (auto it = changes.begin(); it != changes.end(); ++it) capabilities.insert(it.key(), it.value());
+  world.node.send({{QStringLiteral("t"), QStringLiteral("shell.environment")},
+                   {QStringLiteral("id"), world.node.subscribers(QStringLiteral("shell")).value(0)},
+                   {QStringLiteral("node"), world.node.name},
+                   {QStringLiteral("environment"), QJsonObject{{QStringLiteral("environmentId"), world.node.environmentId},
+                                                               {QStringLiteral("capabilities"), capabilities}}}});
+  world.sync();
+}
+
 QString keyOf(World& world, const QString& title) {
   const QStringList keys = state(world).keys.value(title);
   if (keys.isEmpty()) fail(QStringLiteral("no thread \"%1\"").arg(title));
@@ -168,8 +234,12 @@ const Steps steps([] {
   step(QStringLiteral("the user has a project %1 with threads").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(c[0] == kProject, QStringLiteral("the palette's steps know the project \"%1\"").arg(kProject));
     addProject(world, kProject);
+    // Projects and a thread for a query to find besides actions and settings.
+    addProject(world, QStringLiteral("theme-lab"));
+    addProject(world, QStringLiteral("docs-site"));
     world.connect();
     world.sync();
+    addThread(world, QStringLiteral("Tweak theme colors"));
     // More than the recent list holds.
     for (int n = 1; n <= kBackgroundThreads; ++n) addThread(world, QStringLiteral("Chore %1").arg(n));
     // What the brick hands over from js/settingsPages.js.
@@ -236,7 +306,7 @@ const Steps steps([] {
          addThread(world, c[0]);
          addThread(world, c[1]);
        });
-  step(QStringLiteral("a thread whose (title|linked pull request|project name|branch|id) contains %1").arg(q),
+  step(QStringLiteral("a thread whose (title|linked pull request|project name|branch|id|message content) contains %1").arg(q),
        [](World& world, const Captures& c, const Table&) {
          const QString word = c[1];
          if (c[0] == QLatin1String("title")) {
@@ -251,6 +321,9 @@ const Steps steps([] {
          } else if (c[0] == QLatin1String("project name")) {
            addProject(world, word + QStringLiteral("-lab"));
            addThread(world, QStringLiteral("Tidy"), {{QStringLiteral("projectId"), word + QStringLiteral("-lab")}});
+         } else if (c[0] == QLatin1String("message content")) {
+           addThread(world, QStringLiteral("Tidy"), {{QStringLiteral("id"), QStringLiteral("thread-talk")}});
+           world.node.part<FakeMessages>().text.insert(QStringLiteral("thread-talk"), QStringLiteral("The %1 crossing is striped").arg(word));
          } else if (c[0] == QLatin1String("branch")) {
            addThread(world, QStringLiteral("Tidy"), {{QStringLiteral("branch"), QStringLiteral("feature/") + word}});
          } else {
@@ -259,8 +332,21 @@ const Steps steps([] {
        });
 
   // Opening and closing.
-  step(QStringLiteral("the user presses the command palette shortcut"), [](World& world, const Captures&, const Table&) {
-    pressToggle(world);
+  step(QStringLiteral("the user presses the (command palette|command|go to file|project search) shortcut"),
+       [](World& world, const Captures& c, const Table&) { pressToggle(world, shortcutOf(c[0])); });
+  step(QStringLiteral("the command palette is open in (command|go to file|project search) mode"), [](World& world, const Captures& c, const Table&) {
+    const QString mode = modeOf(c[0]);
+    if (!world.checking) {
+      open(world);
+      if (palette(world).mode() != mode) palette(world).toggleMode(mode);
+    }
+    expect(palette(world).isOpen() && palette(world).mode() == mode, describe(world) + u" in " + palette(world).mode());
+  });
+  step(QStringLiteral("no other palette mode is open"), [](World& world, const Captures&, const Table&) {
+    expect(palette(world).submenu().isEmpty(), QStringLiteral("the palette shows the submenu %1").arg(palette(world).submenu()));
+  });
+  step(QStringLiteral("the palette is in (go to file|project search) mode"), [](World& world, const Captures& c, const Table&) {
+    expect(palette(world).isOpen() && palette(world).mode() == modeOf(c[0]), describe(world) + u" in " + palette(world).mode());
   });
   step(QStringLiteral("the user opens the command palette"), [](World& world, const Captures&, const Table&) {
     open(world);
@@ -347,6 +433,7 @@ const Steps steps([] {
            describe(world));
   });
   step(QStringLiteral("the palette says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    rows(world);
     expect(palette(world).count() == 0 && palette(world).emptyText() == c[0], describe(world));
   });
 
@@ -378,6 +465,234 @@ const Steps steps([] {
   step(QStringLiteral("the usage page opens"), [](World& world, const Captures&, const Table&) {
     world.sync();
     expect(at(world.state(QStringLiteral("route")), QStringLiteral("kind")).toString() == u"usage", show(world.state(QStringLiteral("route"))));
+  });
+  // Groups and submenus.
+  step(QStringLiteral("matching actions, projects, settings and threads are listed in their own groups"),
+       [](World& world, const Captures&, const Table&) {
+         QStringList groups;
+         for (const Listed& row : rows(world)) {
+           if (!groups.contains(row.group)) groups << row.group;
+         }
+         expect(groups == QStringList{QStringLiteral("Actions"), QStringLiteral("Projects"), QStringLiteral("Settings"), QStringLiteral("Threads")},
+                describe(world));
+       });
+  step(QStringLiteral("the %1 group is hidden").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QList<Listed> listed = rows(world);
+    expect(std::none_of(listed.cbegin(), listed.cend(), [&](const Listed& row) { return row.group == c[0]; }), describe(world));
+  });
+  step(QStringLiteral("the palette shows the %1 submenu").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (!world.checking) {
+      if (c[0] == QLatin1String("Change theme")) {
+        // A theme of this device's own to choose.
+        auto* settings = world.native().controller<SettingsController>();
+        QJsonArray custom = settings->deviceSettings().value(QLatin1String("customThemes")).toArray();
+        custom.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("Nord")},
+                                  {QStringLiteral("label"), QStringLiteral("Nord")},
+                                  {QStringLiteral("appearance"), QStringLiteral("dark")},
+                                  {QStringLiteral("colors"), QJsonObject{{QStringLiteral("canvas"), QStringLiteral("#2e3440")},
+                                                                         {QStringLiteral("accent"), QStringLiteral("#88c0d0")}}},
+                                  {QStringLiteral("variants"),
+                                   QJsonObject{{QStringLiteral("light"), QJsonObject{{QStringLiteral("canvas"), QStringLiteral("#eceff4")},
+                                                                                    {QStringLiteral("accent"), QStringLiteral("#5e81ac")}}}}}});
+        expect(settings->writeDevice(QStringLiteral("customThemes"), custom.toVariantList()), settings->deviceError());
+      }
+      open(world);
+      const int row = indexOf(world, c[0], QStringLiteral("action"));
+      expect(row >= 0 && palette(world).run(row), describe(world));
+      world.sync();
+    }
+    expect(palette(world).isOpen() && palette(world).submenu() == c[0],
+           QStringLiteral("the submenu is \"%1\"; %2").arg(palette(world).submenu(), describe(world)));
+  });
+  step(QStringLiteral("the palette shows the root list again"), [](World& world, const Captures&, const Table&) {
+    const QList<Listed> listed = rows(world);
+    expect(palette(world).isOpen() && palette(world).submenu().isEmpty() &&
+               std::any_of(listed.cbegin(), listed.cend(), [](const Listed& row) { return row.group == u"Actions"; }),
+           describe(world));
+  });
+
+  // Searching thread messages.
+  step(QStringLiteral("the user searches for text that only appears inside messages"), [](World& world, const Captures&, const Table&) {
+    world.node.hold(QStringLiteral("messages"));
+    addThread(world, QStringLiteral("Tidy"), {{QStringLiteral("id"), QStringLiteral("thread-talk")}});
+    world.node.part<FakeMessages>().text.insert(QStringLiteral("thread-talk"), QStringLiteral("The flamingo stands on one leg"));
+    search(world, QStringLiteral("flamingo"));
+  });
+  step(QStringLiteral("the palette says %1 until the results arrive").arg(q), [](World& world, const Captures& c, const Table&) {
+    CommandPaletteController& model = palette(world);
+    world.waitFor([&world] { return world.node.part<FakeMessages>().asked > 0; }, QStringLiteral("the palette to search messages"));
+    world.sync();
+    expect(model.count() == 0 && model.emptyText() == c[0], QStringLiteral("the palette says \"%1\" with %2 rows").arg(model.emptyText()).arg(model.count()));
+    world.node.answerHeld();
+    const QList<Listed> listed = rows(world);
+    expect(std::any_of(listed.cbegin(), listed.cend(), [&](const Listed& row) { return row.id == state(world).that; }), describe(world));
+  });
+
+  // A command that fails.
+  step(QStringLiteral("an action that will fail"), [](World& world, const Captures&, const Table&) {
+    PaletteState& fake = state(world);
+    fake.engine = std::make_unique<QJSEngine>();
+    const QJSValue fails = fake.engine->evaluate(QStringLiteral("(function () { throw new Error(\"The disk is full.\"); })"));
+    world.native().controller<KeybindingController>()->commands()->add(QStringLiteral("test.explode"), QStringLiteral("Explode"), fails,
+                                                                          fake.engine.get());
+  });
+  step(QStringLiteral("the user runs it from the palette"), [](World& world, const Captures&, const Table&) {
+    search(world, QStringLiteral("Explode"));
+    const int row = indexOf(world, QStringLiteral("Explode"));
+    expect(row >= 0 && palette(world).run(row), describe(world));
+    world.sync();
+  });
+
+  // What the palette's actions do.
+  step(QStringLiteral("the user runs %1 from the palette").arg(q), [](World& world, const Captures& c, const Table&) {
+    open(world);
+    int row = indexOf(world, c[0]);
+    if (row < 0) {
+      palette(world).setQuery(c[0]);
+      row = indexOf(world, c[0]);
+    }
+    expect(row >= 0 && palette(world).run(row), describe(world));
+    world.sync();
+  });
+  step(QStringLiteral("the palette lists projects with the current project first"), [](World& world, const Captures&, const Table&) {
+    QStringList titles;
+    for (const Listed& row : rows(world)) titles << row.title;
+    expect(palette(world).submenu() == u"New thread in..." && titles.value(0) == kProject &&
+               titles.contains(QStringLiteral("theme-lab")) && titles.contains(QStringLiteral("docs-site")),
+           describe(world));
+  });
+  step(QStringLiteral("the thread id is on the clipboard"), [](World& world, const Captures&, const Table&) {
+    const QString key = world.native().controller<NavigationController>()->threadKey();
+    expect(!key.isEmpty() && world.clipboard == key.mid(key.indexOf(QLatin1Char(':')) + 1),
+           QStringLiteral("the clipboard holds \"%1\" for %2").arg(world.clipboard, key));
+  });
+  step(QStringLiteral("the user is asked which pull request to link to the thread"), [](World& world, const Captures&, const Table&) {
+    auto* panel = world.native().controller<RightPanelController>();
+    world.sync();
+    expect(panel->pullRequests()->linkOpen() && panel->isOpen() && panel->activeTab() == u"pull-requests",
+           show(world.state(QStringLiteral("panel"))));
+  });
+  step(QStringLiteral("the (?:command )?palette asks where the project comes from"), [](World& world, const Captures&, const Table&) {
+    expect(palette(world).isOpen() && palette(world).submenu() == u"Add project" && indexOf(world, QStringLiteral("Local folder")) >= 0,
+           QStringLiteral("the submenu is \"%1\"; %2").arg(palette(world).submenu(), describe(world)));
+  });
+  // The brick marks a current row "Current" (tst_CommandPalette.qml).
+  step(QStringLiteral("the palette lists themes with the current one marked \"Current\""), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    CommandPaletteController& model = palette(world);
+    QStringList current;
+    for (int row = 0; row < model.rowCount(); ++row) {
+      if (model.index(row).data(CommandPaletteController::CurrentRole).toBool()) current << model.index(row).data(CommandPaletteController::TitleRole).toString();
+    }
+    // The standard look is the one drawn.
+    expect(model.submenu() == u"Change theme" && current == QStringList{QStringLiteral("HAL-C2")},
+           QStringLiteral("current: %1; %2").arg(current.join(u", "), describe(world)));
+  });
+  step(QStringLiteral("the palette offers System, Light and Dark"), [](World& world, const Captures&, const Table&) {
+    QStringList titles;
+    for (const Listed& row : rows(world)) titles << row.title;
+    expect(palette(world).submenu() == u"Change appearance" &&
+               titles == QStringList{QStringLiteral("System"), QStringLiteral("Light"), QStringLiteral("Dark")},
+           describe(world));
+  });
+  step(QStringLiteral("the theme editor opens"), [](World& world, const Captures&, const Table&) {
+    expect(world.native().controller<ThemeController>()->editorOpen(), QStringLiteral("the theme editor is closed"));
+  });
+  step(QStringLiteral("the pull request list opens"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(at(world.state(QStringLiteral("route")), QStringLiteral("kind")).toString() == u"pullRequests", show(world.state(QStringLiteral("route"))));
+  });
+  step(QStringLiteral("the current project's settings open"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QVariant route = world.state(QStringLiteral("route"));
+    expect(at(route, QStringLiteral("kind")).toString() == u"settings" && at(route, QStringLiteral("projectKey")).toString().endsWith(kProject),
+           show(route));
+  });
+  step(QStringLiteral("the app appearance is (dark|light|system)"), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(world.native().controller<ThemeController>()->mode() == c[0],
+           QStringLiteral("the appearance is %1").arg(world.native().controller<ThemeController>()->mode()));
+  });
+
+  // Pull requests.
+  step(QStringLiteral("the thread has a linked pull request"), [](World& world, const Captures&, const Table&) {
+    const QString key = world.native().controller<NavigationController>()->threadKey();
+    const QString id = key.mid(key.indexOf(QLatin1Char(':')) + 1);
+    QJsonObject row = world.node.threads.value(id);
+    row.insert(QStringLiteral("linkedPullRequest"), QJsonObject{{QStringLiteral("url"), QStringLiteral("https://github.com/acme/shop/pull/7")}});
+    world.node.threads.insert(id, row);
+    world.node.sendRow(id, row);
+    world.sync();
+  });
+  step(QStringLiteral("the pull request URL is on the clipboard"), [](World& world, const Captures&, const Table&) {
+    expect(world.clipboard == u"https://github.com/acme/shop/pull/7", QStringLiteral("the clipboard holds \"%1\"").arg(world.clipboard));
+  });
+  step(QStringLiteral("the thread has no linked pull request"), [](World& world, const Captures&, const Table&) {
+    const QString key = world.native().controller<NavigationController>()->threadKey();
+    expect(world.node.threads.value(key.mid(key.indexOf(QLatin1Char(':')) + 1)).value(QLatin1String("pullRequests")).toArray().isEmpty(),
+           QStringLiteral("%1 has pull requests").arg(key));
+  });
+  step(QStringLiteral("%1 cannot be run").arg(q), [](World& world, const Captures& c, const Table&) {
+    const int row = indexOf(world, c[0]);
+    expect(row >= 0 && !palette(world).index(row).data(CommandPaletteController::EnabledRole).toBool(), describe(world));
+  });
+  step(QStringLiteral("the environment has no source control provider for pull requests"), [](World& world, const Captures&, const Table&) {
+    setCapabilities(world, {{QStringLiteral("pullRequests"), false}});
+  });
+  step(QStringLiteral("the thread's environment cannot link pull requests to threads"), [](World& world, const Captures&, const Table&) {
+    setCapabilities(world, {{QStringLiteral("threadPullRequests"), false}, {QStringLiteral("threadPullRequestLinking"), false}});
+  });
+  step(QStringLiteral("one connected environment supports pull requests and another does not"), [](World& world, const Captures&, const Table&) {
+    world.node.join(stream::kPeer, stream::kPeerEnvironment);
+    setCapabilities(world, {{QStringLiteral("pullRequests"), false}});
+  });
+  step(QStringLiteral("the user gives pull request (\\d+)"), [](World& world, const Captures& c, const Table&) {
+    // The project's repository is on the host, so its pull requests can be read.
+    QJsonObject project = world.node.projects.value(kProject);
+    project.insert(QStringLiteral("repositoryIdentity"), QJsonObject{{QStringLiteral("canonicalKey"), QStringLiteral("github.com/acme/shop")}});
+    world.node.projects.insert(kProject, project);
+    world.node.sendRow(kProject, project, QStringLiteral("project"));
+    world.sync();
+    ThreadPullRequests* prs = world.native().controller<RightPanelController>()->pullRequests();
+    expect(prs->linkOpen(), QStringLiteral("the link field is closed"));
+    prs->link(QStringLiteral("https://github.com/acme/shop/pull/") + c[0]);
+    world.sync();
+  });
+  step(QStringLiteral("pull request (\\d+) is linked to the thread"), [](World& world, const Captures& c, const Table&) {
+    ThreadPullRequests* prs = world.native().controller<RightPanelController>()->pullRequests();
+    world.waitFor([&] {
+      for (int row = 0; row < prs->rowCount(); ++row) {
+        if (prs->value(row, ThreadPullRequests::NumberRole).toInt() == c[0].toInt()) return true;
+      }
+      return false;
+    }, [&] { return QStringLiteral("pull request %1 among %2 linked (%3)").arg(c[0]).arg(prs->rowCount()).arg(prs->problem()); });
+  });
+
+  // Add project.
+  step(QStringLiteral("the user chooses a local folder %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeFiles& files = fakeFiles(world.node);
+    files.folders << files.home + QStringLiteral("/code") << files.home + QStringLiteral("/code/shop");
+    const int row = indexOf(world, QStringLiteral("Local folder"));
+    expect(row >= 0 && palette(world).run(row), describe(world));
+    // Typed, then mod+Enter: the folder the path names.
+    palette(world).setQuery(c[0]);
+    rows(world);
+    expect(palette(world).addBrowsedFolder(), describe(world));
+    world.sync();
+  });
+  step(QStringLiteral("%1 is added as a project").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      for (const QJsonObject& project : std::as_const(world.node.projects)) {
+        if (project.value(QLatin1String("title")) == c[0] && project.value(QLatin1String("workspaceRoot")) == fakeFiles(world.node).home + u"/code/" + c[0]) return true;
+      }
+      return false;
+    }, QStringLiteral("the project %1").arg(c[0]));
+  });
+  step(QStringLiteral("the user can start a thread in it"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return at(world.state(QStringLiteral("route")), QStringLiteral("kind")) == QLatin1String("draft"); },
+                  [&] { return show(world.state(QStringLiteral("route"))); });
+    const auto draft = world.native().controller<DraftController>()->draft(at(world.state(QStringLiteral("route")), QStringLiteral("draftId")).toString());
+    expect(draft && world.node.projects.value(draft->projectId).value(QLatin1String("title")) == QLatin1String("shop"), show(world.state(QStringLiteral("route"))));
   });
 });
 

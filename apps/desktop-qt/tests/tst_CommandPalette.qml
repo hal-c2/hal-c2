@@ -19,11 +19,14 @@ Item {
         function init() {
             PaletteModel.clear();
             for (let n = 1; n <= 3; ++n)
-                PaletteModel.append({ title: "Entry " + n, description: "", group: "Actions", shortcut: "", kind: "action" });
+                PaletteModel.append({ title: "Entry " + n, description: "", group: "Actions", shortcut: "", kind: "action", runnable: true, current: false });
             PaletteModel.highlighted = 0;
             PaletteModel.query = "";
             PaletteModel.ran = [];
             PaletteModel.open = false;
+            PaletteModel.mode = "command";
+            PaletteModel.submenu = "";
+            PaletteModel.calls = [];
         }
 
         function opened() {
@@ -46,6 +49,35 @@ Item {
             keyClick(Qt.Key_Escape);
             tryCompare(popup, "opened", false);
             compare(PaletteModel.open, false);
+        }
+
+        function test_escapeInAModeGoesBackToCommands() {
+            const popup = opened();
+            PaletteModel.mode = "files";
+            keyClick(Qt.Key_Escape);
+            compare(PaletteModel.mode, "command");
+            compare(popup.opened, true);
+        }
+
+        function test_backspaceOnAnEmptyFieldLeavesTheSubmenu() {
+            opened();
+            PaletteModel.submenu = "Change theme";
+            keyClick(Qt.Key_Backspace);
+            compare(PaletteModel.submenu, "");
+            compare(PaletteModel.calls, ["leaveSubmenu"]);
+        }
+
+        function test_theFieldFollowsTheQueryThePaletteMovesTo() {
+            const popup = opened();
+            const field = findChild(popup.contentItem, "commandPaletteSearch");
+            PaletteModel.query = "~/code/";
+            compare(field.text, "~/code/");
+        }
+
+        function test_modEnterAddsTheBrowsedFolder() {
+            opened();
+            keyClick(Qt.Key_Return, Qt.ControlModifier);
+            compare(PaletteModel.calls, ["addBrowsedFolder"]);
         }
 
         function test_typingSetsTheQuery() {

@@ -122,6 +122,8 @@ private:
   QVariantList pageTabs() const;
   bool hasPageTab(const QString& id) const;
   void retarget();
+  // What the palette shows of the thread's pull request commands.
+  void presentCommands();
   void onPage(const QVariant& value);
   void update();
   void follow();

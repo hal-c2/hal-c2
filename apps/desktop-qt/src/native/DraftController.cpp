@@ -10,6 +10,8 @@
 #include <QSaveFile>
 #include <QUuid>
 
+#include "KeybindingController.h"
+#include "Keybindings.h"
 #include "MenuController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -54,6 +56,66 @@ void DraftController::activate() {
   if (m_active) return;
   m_active = true;
   reconcile();
+  auto* shell = NativeShell::of(this);
+  auto* commands = shell->controller<KeybindingController>()->commands();
+  const QString newThread = QStringLiteral("chat.new");
+  commands->add(newThread, keybindings::commandLabel(newThread), [this] { startNew({}); });
+  commands->setTerms(newThread, {QStringLiteral("new thread"), QStringLiteral("chat"), QStringLiteral("create"),
+                                 QStringLiteral("draft")});
+  commands->addMenu(QStringLiteral("thread.newIn"), tr("New thread in..."), [this] {
+    // The window's project first, then the sidebar's order.
+    QList<CommandRegistry::Choice> choices;
+    SidebarController* sidebar = NativeShell::of(this)->sidebar();
+    const auto shown = shownProject();
+    const auto current = shown ? sidebar->logicalProjectKey(shown->first, shown->second) : std::nullopt;
+    for (const sidebar::ProjectGroup& group : sidebar->groups()) {
+      CommandRegistry::Choice choice;
+      choice.id = group.key;
+      choice.title = group.summary.value(QStringLiteral("displayName")).toString();
+      choice.description = group.summary.value(QStringLiteral("workspaceRoot")).toString();
+      for (const sidebar::Project& member : group.members) choice.terms << member.title << member.workspaceRoot;
+      choice.run = [this, key = group.key] {
+        if (const sidebar::ProjectGroup* chosen = NativeShell::of(this)->sidebar()->group(key)) startIn(*chosen);
+      };
+      if (current == group.key) {
+        choices.prepend(choice);
+      } else {
+        choices.append(choice);
+      }
+    }
+    return choices;
+  });
+  commands->setTerms(QStringLiteral("thread.newIn"), {QStringLiteral("new thread"), QStringLiteral("project"), QStringLiteral("pick"),
+                                    QStringLiteral("choose"), QStringLiteral("select")});
+  connect(shell->controller<NavigationController>(), &NavigationController::changed, this, &DraftController::present);
+  connect(m_store, &ShellStore::changed, this, &DraftController::present);
+  // The sidebar's groups and scope.
+  connect(m_bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key) {
+    if (key == QLatin1String("sidebar")) present();
+  });
+  present();
+}
+
+// "New thread in <project>", naming where it starts, while the window shows a
+// project or the list is scoped to one.
+void DraftController::present() {
+  auto* shell = NativeShell::of(this);
+  auto* commands = shell->controller<KeybindingController>()->commands();
+  const QString newThread = QStringLiteral("chat.new");
+  const sidebar::ProjectGroup* group = shownProject() || shell->sidebar()->scope() ? defaultGroup() : nullptr;
+  commands->setTitle(newThread, group ? tr("New thread in %1").arg(group->summary.value(QStringLiteral("displayName")).toString())
+                                      : keybindings::commandLabel(newThread));
+  commands->setListed(newThread, group != nullptr);
+}
+
+std::optional<std::pair<QString, QString>> DraftController::shownProject() const {
+  const NavigationController::Route& route = NativeShell::of(this)->controller<NavigationController>()->route();
+  if (route.kind == QLatin1String("thread")) {
+    if (const auto thread = m_store->thread(route.threadKey)) return {{thread->environmentId, thread->projectId}};
+  } else if (route.kind == QLatin1String("draft")) {
+    if (const auto open = draft(route.draftId)) return {{open->environmentId, open->projectId}};
+  }
+  return std::nullopt;
 }
 
 std::optional<DraftController::Draft> DraftController::draft(const QString& id) const {
@@ -99,40 +161,41 @@ bool DraftController::handle(const QString& action, const QVariant& payload) {
 // one the window shows, else the first. A logical project that spans
 // environments starts on the member the window shows, else its representative.
 bool DraftController::startNew(const QVariantMap& payload) {
-  auto* shell = NativeShell::of(this);
-  SidebarController* sidebar = shell->sidebar();
-  const NavigationController::Route& route = shell->controller<NavigationController>()->route();
-  std::optional<std::pair<QString, QString>> shown;
-  if (route.kind == QLatin1String("thread")) {
-    if (const auto thread = m_store->thread(route.threadKey)) shown = {{thread->environmentId, thread->projectId}};
-  } else if (route.kind == QLatin1String("draft")) {
-    if (const auto open = draft(route.draftId)) shown = {{open->environmentId, open->projectId}};
-  }
-
   const sidebar::ProjectGroup* group = nullptr;
   const QVariant requested = payload.value(QStringLiteral("projectKey"));
   if (requested.typeId() == QMetaType::QString && !requested.toString().isEmpty()) {
     // A stale key (project removed, environment gone) must not land the
     // thread in whichever project sorts first.
-    group = sidebar->group(requested.toString());
+    group = NativeShell::of(this)->sidebar()->group(requested.toString());
     if (!group) return true;
-  } else if (sidebar->scope()) {
-    group = sidebar->group(*sidebar->scope());
+  } else {
+    group = defaultGroup();
   }
-  if (!group && shown) {
+  // No project yet: the sidebar offers to add one.
+  if (group) startIn(*group);
+  return true;
+}
+
+const sidebar::ProjectGroup* DraftController::defaultGroup() const {
+  SidebarController* sidebar = NativeShell::of(this)->sidebar();
+  const sidebar::ProjectGroup* group = sidebar->scope() ? sidebar->group(*sidebar->scope()) : nullptr;
+  if (const auto shown = shownProject(); !group && shown) {
     if (const auto key = sidebar->logicalProjectKey(shown->first, shown->second)) group = sidebar->group(*key);
   }
   if (!group && !sidebar->groups().isEmpty()) group = &sidebar->groups().first();
-  // No project yet: the sidebar offers to add one.
-  if (!group) return true;
+  return group;
+}
 
-  QString environmentId = group->summary.value(QStringLiteral("environmentId")).toString();
-  QString projectId = group->summary.value(QStringLiteral("projectId")).toString();
-  if (shown && group->memberKeys.contains(shown->first + QLatin1Char(':') + shown->second)) {
+// A logical project that spans environments starts on the member the window
+// shows, else its representative.
+void DraftController::startIn(const sidebar::ProjectGroup& group) {
+  QString environmentId = group.summary.value(QStringLiteral("environmentId")).toString();
+  QString projectId = group.summary.value(QStringLiteral("projectId")).toString();
+  const auto shown = shownProject();
+  if (shown && group.memberKeys.contains(shown->first + QLatin1Char(':') + shown->second)) {
     std::tie(environmentId, projectId) = *shown;
   }
   start(environmentId, projectId);
-  return true;
 }
 
 QString DraftController::start(const QString& environmentId, const QString& projectId) {

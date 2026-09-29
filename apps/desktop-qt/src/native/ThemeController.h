@@ -40,11 +40,16 @@ class ThemeController : public QObject, public NativeController {
   Q_PROPERTY(QVariantList available READ available NOTIFY changed)
   // The colour roles a theme sets, in the order an editor lists them.
   Q_PROPERTY(QStringList roles READ roles CONSTANT)
+  // Whether the window's theme editor is open (themeEditor.toggle); the
+  // editor sets it back when it closes.
+  Q_PROPERTY(bool editorOpen READ editorOpen WRITE setEditorOpen NOTIFY editorOpenChanged)
 
 public:
   ThemeController(ShellBridge* bridge, NodeClient* client, QObject* parent = nullptr);
 
-  // Registers the appearance shortcut's command.
+  // Registers the appearance shortcut's command, and the palette's Change
+  // theme (theme.select) and Change appearance (appearance.select) menus and
+  // Toggle theme editor (themeEditor.toggle).
   void activate() override;
   // The page forwards its own theme commands here (`appearance.cycle`,
   // `theme.mode {mode}`, `theme.choose {id}`, `theme.chooseHalf {appearance,
@@ -58,6 +63,8 @@ public:
   QString resolvedId() const { return m_resolvedId; }
   QVariantList available() const;
   QStringList roles() const;
+  bool editorOpen() const { return m_editorOpen; }
+  void setEditorOpen(bool open);
 
   // Each saves to this device's preferences and returns false when that fails,
   // leaving the theme as it was and telling the user.
@@ -93,6 +100,7 @@ public:
 
 signals:
   void changed();
+  void editorOpenChanged();
 
 private:
   struct Definition {
@@ -117,4 +125,5 @@ private:
   QString m_appearance;
   QString m_resolvedId;
   QString m_cycleToast;
+  bool m_editorOpen = false;
 };

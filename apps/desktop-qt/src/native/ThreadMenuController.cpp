@@ -8,6 +8,8 @@
 
 #include "../ShellBridge.h"
 #include "DraftController.h"
+#include "KeybindingController.h"
+#include "Keybindings.h"
 #include "MenuController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -232,10 +234,7 @@ void ThreadMenuController::choose(const QString& key, const QString& id, double 
   } else if (id == QLatin1String("copy-thread-id")) {
     copy(thread->id, QStringLiteral("Thread ID copied"), QStringLiteral("Failed to copy thread ID"));
   } else if (id == QLatin1String("project-settings")) {
-    const auto projectKey = shell->sidebar()->logicalProjectKey(thread->environmentId, thread->projectId);
-    NavigationController::Route route = NavigationController::Route::settings(kProjectSettings);
-    route.projectKey = projectKey.value_or(QString());
-    navigation->open(route);
+    openProjectSettings(key);
   } else if (id == QLatin1String("fork")) {
     fork(key);
   } else if (id == QLatin1String("move")) {
@@ -364,19 +363,70 @@ void ThreadMenuController::toggleSettle(const QString& key) {
 
 // The thread's current pull request (the row's linkedPullRequest, else the
 // one its checkout's branch has), else its id.
-void ThreadMenuController::copyReference(const QString& key) {
-  const auto thread = m_store->thread(key);
-  if (!thread) return;
+void ThreadMenuController::activate() {
+  auto* shell = NativeShell::of(this);
+  auto* commands = shell->controller<KeybindingController>()->commands();
+  auto* navigation = shell->controller<NavigationController>();
+  commands->add(kCopyReference, keybindings::commandLabel(kCopyReference), [this, navigation] {
+    if (!navigation->threadKey().isEmpty()) copyReference(navigation->threadKey());
+  });
+  commands->setTerms(kCopyReference, {QStringLiteral("copy"), QStringLiteral("pull request"), QStringLiteral("pr link"),
+                                      QStringLiteral("thread id"), QStringLiteral("reference")});
+  commands->add(kProjectSettingsCommand, tr("Project settings"), [this, navigation] {
+    if (!navigation->threadKey().isEmpty()) openProjectSettings(navigation->threadKey());
+  });
+  commands->setTerms(kProjectSettingsCommand, {QStringLiteral("project"), QStringLiteral("settings"),
+                                               QStringLiteral("scripts"), QStringLiteral("configuration")});
+  connect(navigation, &NavigationController::changed, this, &ThreadMenuController::present);
+  connect(m_store, &ShellStore::changed, this, &ThreadMenuController::present);
+  if (auto* workspace = shell->controller<WorkspaceController>()) {
+    connect(workspace, &WorkspaceController::gitChanged, this, &ThreadMenuController::present);
+  }
+  present();
+}
+
+void ThreadMenuController::present() {
+  auto* shell = NativeShell::of(this);
+  auto* commands = shell->controller<KeybindingController>()->commands();
+  const QString key = shell->controller<NavigationController>()->threadKey();
+  const auto thread = key.isEmpty() ? std::nullopt : m_store->thread(key);
+  const QString url = thread ? pullRequestUrl(key) : QString();
+  commands->setTitle(kCopyReference, url.isEmpty() ? tr("Copy thread ID") : tr("Copy PR link"));
+  commands->setDescription(kCopyReference, url.isEmpty() && thread ? thread->id : url);
+  commands->setListed(kCopyReference, thread.has_value());
+  const auto project = thread ? m_store->project(thread->environmentId + QLatin1Char(':') + thread->projectId) : std::nullopt;
+  commands->setDescription(kProjectSettingsCommand, project ? project->title : QString());
+  commands->setListed(kProjectSettingsCommand, project.has_value());
+}
+
+QString ThreadMenuController::pullRequestUrl(const QString& key) const {
   const auto* workspace = NativeShell::of(this)->controller<WorkspaceController>();
   QString url = text(m_store->threadRow(key).value(QLatin1String("linkedPullRequest")).toObject(), "url");
   if (url.isEmpty() && workspace && workspace->place() && workspace->place()->threadKey() == key && workspace->git()) {
     url = text(workspace->git()->remote.value(QLatin1String("pr")).toObject(), "url");
   }
+  return url;
+}
+
+void ThreadMenuController::copyReference(const QString& key) {
+  const auto thread = m_store->thread(key);
+  if (!thread) return;
+  const QString url = pullRequestUrl(key);
   if (url.isEmpty()) {
     copy(thread->id, QStringLiteral("Thread ID copied"), QStringLiteral("Failed to copy thread ID"));
   } else {
     copy(url, QStringLiteral("PR link copied"), QStringLiteral("Failed to copy PR link"));
   }
+}
+
+void ThreadMenuController::openProjectSettings(const QString& key) {
+  const auto thread = m_store->thread(key);
+  if (!thread) return;
+  auto* shell = NativeShell::of(this);
+  const auto projectKey = shell->sidebar()->logicalProjectKey(thread->environmentId, thread->projectId);
+  NavigationController::Route route = NavigationController::Route::settings(kProjectSettings);
+  route.projectKey = projectKey.value_or(QString());
+  shell->controller<NavigationController>()->open(route);
 }
 
 void ThreadMenuController::undo() {

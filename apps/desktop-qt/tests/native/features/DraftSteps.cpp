@@ -131,7 +131,7 @@ const Steps steps([] {
   });
 
   // What the shell shows.
-  step(QStringLiteral("the window shows a new draft in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("(?:the window shows a new draft|a new thread starts) in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expectNewDraft(world, c[0]);
   });
   step(QStringLiteral("a draft thread opens in %1").arg(q), [](World& world, const Captures& c, const Table&) {

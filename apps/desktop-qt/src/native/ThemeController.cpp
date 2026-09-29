@@ -288,6 +288,73 @@ void ThemeController::activate() {
   const QString command = KeybindingController::kAppearanceCycle;
   auto* commands = NativeShell::of(this)->controller<KeybindingController>()->commands();
   if (!commands->contains(command)) commands->add(command, keybindings::commandLabel(command), [this] { cycleAppearance(); });
+
+  // The standard look first, then every theme offered; a theme drawn in one
+  // appearance takes that half. "Current" is the one drawn now.
+  const QString select = QStringLiteral("theme.select");
+  commands->addMenu(select, tr("Change theme"), [this] {
+    const QString current = halves().value(m_appearance).toString();
+    const QString drawn = current.isEmpty() ? themeId() : current;
+    QList<CommandRegistry::Choice> choices;
+    CommandRegistry::Choice standard;
+    standard.id = QStringLiteral("theme:standard");
+    standard.title = QStringLiteral("HAL-C2");
+    standard.current = drawn.isEmpty();
+    standard.terms = {QStringLiteral("theme"), QStringLiteral("appearance")};
+    standard.run = [this] { choose({}); };
+    choices.append(standard);
+    for (const QVariant& value : available()) {
+      const QVariantMap theme = value.toMap();
+      const QString id = theme.value(QStringLiteral("id")).toString();
+      const QStringList appearances = theme.value(QStringLiteral("appearances")).toStringList();
+      CommandRegistry::Choice choice;
+      choice.id = QStringLiteral("theme:palette:") + id;
+      choice.title = theme.value(QStringLiteral("label")).toString();
+      if (appearances.size() == 1) choice.description = tr("For %1 mode").arg(appearances.first());
+      choice.current = id == drawn;
+      choice.terms = {QStringLiteral("theme"), QStringLiteral("appearance")};
+      choice.run = [this, id, appearances] {
+        if (appearances.size() == 1) {
+          chooseHalf(appearances.first(), id);
+        } else {
+          choose(id);
+        }
+      };
+      choices.append(choice);
+    }
+    return choices;
+  });
+  commands->setTerms(select, {QStringLiteral("change theme"), QStringLiteral("appearance"), QStringLiteral("colors"),
+                              QStringLiteral("palette")});
+
+  const QString appearance = QStringLiteral("appearance.select");
+  commands->addMenu(appearance, tr("Change appearance"), [this] {
+    QList<CommandRegistry::Choice> choices;
+    for (const auto& [mode, label] : {std::pair{kSystem, tr("System")}, std::pair{kLight, tr("Light")},
+                                      std::pair{kDark, tr("Dark")}}) {
+      CommandRegistry::Choice choice;
+      choice.id = QStringLiteral("appearance:") + mode;
+      choice.title = label;
+      choice.current = this->mode() == mode;
+      choice.terms = {QStringLiteral("appearance"), QStringLiteral("mode")};
+      choice.run = [this, mode] { setMode(mode); };
+      choices.append(choice);
+    }
+    return choices;
+  });
+  commands->setTerms(appearance, {QStringLiteral("change appearance"), QStringLiteral("light"), QStringLiteral("dark"),
+                                  QStringLiteral("system"), QStringLiteral("mode"), QStringLiteral("toggle")});
+
+  const QString editor = QStringLiteral("themeEditor.toggle");
+  commands->add(editor, tr("Toggle theme editor"), [this] { setEditorOpen(!m_editorOpen); });
+  commands->setTerms(editor, {QStringLiteral("theme"), QStringLiteral("appearance"), QStringLiteral("colors"),
+                              QStringLiteral("palette"), QStringLiteral("customize")});
+}
+
+void ThemeController::setEditorOpen(bool open) {
+  if (open == m_editorOpen) return;
+  m_editorOpen = open;
+  emit editorOpenChanged();
 }
 
 bool ThemeController::handle(const QString& action, const QVariant& payload) {

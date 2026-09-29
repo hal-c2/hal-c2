@@ -13,6 +13,7 @@
 #include <QTimer>
 
 #include "DiffModel.h"
+#include "FakeFiles.h"
 #include "FileTreeModel.h"
 #include "Harness.h"
 #include "RightPanelController.h"
@@ -24,19 +25,6 @@
 namespace {
 
 using namespace stream;
-
-// The node's workspace of the thread's project: file paths to contents, and
-// the folders git ignores.
-struct FakeFiles {
-  QMap<QString, QString> files;
-  QSet<QString> ignored;
-  // Folders ("" the top) whose next listing fails.
-  QSet<QString> failOnce;
-  bool cannotList = false;
-  QSet<QString> readFailsOnce;
-  // A file larger than the node reads whole, by its full size in bytes.
-  QHash<QString, qint64> truncated;
-};
 
 // The node's checkpoints: each finished turn's patch.
 struct FakeDiffs {
@@ -55,69 +43,7 @@ QString patchAdding(const QString& path, const QStringList& lines) {
   return patch;
 }
 
-// Every folder a path is under, and the path.
-QStringList withFolders(const QString& path) {
-  QStringList paths;
-  const QStringList parts = path.split(QLatin1Char('/'));
-  for (qsizetype i = 1; i <= parts.size(); ++i) paths.append(parts.mid(0, i).join(QLatin1Char('/')));
-  return paths;
-}
-
-QJsonObject entry(const FakeFiles& fake, const QString& path) {
-  const bool directory = !fake.files.contains(path);
-  bool ignored = false;
-  for (const QString& folder : withFolders(path)) ignored = ignored || fake.ignored.contains(folder);
-  return {{QStringLiteral("path"), path}, {QStringLiteral("kind"), directory ? QStringLiteral("directory") : QStringLiteral("file")},
-          {QStringLiteral("ignored"), ignored}};
-}
-
 const FakeNode::Extension extension([](FakeNode& node) {
-  // projects.listEntries, searchEntries and readFile as apps/server-ex
-  // lib/hal_c2/workspace.ex answers them.
-  node.onRpc(QStringLiteral("projects.listEntries"), [&node](const FakeNode::Rpc& rpc) {
-    FakeFiles& fake = node.part<FakeFiles>();
-    const QString folder = rpc.payload.value(QLatin1String("directoryPath")).toString();
-    if (fake.cannotList || fake.failOnce.remove(folder)) {
-      node.refuse(rpc, QStringLiteral("Could not list %1.").arg(folder.isEmpty() ? QStringLiteral("the project") : folder));
-      return;
-    }
-    QSet<QString> children;
-    for (auto it = fake.files.cbegin(); it != fake.files.cend(); ++it) {
-      for (const QString& path : withFolders(it.key())) {
-        const qsizetype slash = path.lastIndexOf(QLatin1Char('/'));
-        if ((slash < 0 ? QString() : path.left(slash)) == folder) children.insert(path);
-      }
-    }
-    QJsonArray entries;
-    for (const QString& path : children) entries.append(entry(fake, path));
-    node.reply(rpc, QJsonObject{{QStringLiteral("entries"), entries}, {QStringLiteral("truncated"), false}});
-  });
-  node.onRpc(QStringLiteral("projects.searchEntries"), [&node](const FakeNode::Rpc& rpc) {
-    FakeFiles& fake = node.part<FakeFiles>();
-    const QString query = rpc.payload.value(QLatin1String("query")).toString();
-    QSet<QString> matches;
-    for (auto it = fake.files.cbegin(); it != fake.files.cend(); ++it) {
-      for (const QString& path : withFolders(it.key())) {
-        if (path.section(QLatin1Char('/'), -1).contains(query, Qt::CaseInsensitive)) matches.insert(path);
-      }
-    }
-    QJsonArray entries;
-    for (const QString& path : matches) entries.append(entry(fake, path));
-    node.reply(rpc, QJsonObject{{QStringLiteral("entries"), entries}, {QStringLiteral("truncated"), false}});
-  });
-  node.onRpc(QStringLiteral("projects.readFile"), [&node](const FakeNode::Rpc& rpc) {
-    FakeFiles& fake = node.part<FakeFiles>();
-    const QString path = rpc.payload.value(QLatin1String("relativePath")).toString();
-    if (fake.readFailsOnce.remove(path) || !fake.files.contains(path)) {
-      node.refuse(rpc, QStringLiteral("Could not read %1.").arg(path));
-      return;
-    }
-    const QString contents = fake.files.value(path);
-    node.reply(rpc, QJsonObject{{QStringLiteral("contents"), contents},
-                                {QStringLiteral("byteLength"), double(fake.truncated.value(path, contents.toUtf8().size()))},
-                                {QStringLiteral("truncated"), fake.truncated.contains(path)}});
-  });
-
   // A turn's diff is the patches of the turns in its range (a fake's
   // stand-in for diffing two checkpoints).
   const auto diff = [&node](const FakeNode::Rpc& rpc, int from) {
@@ -552,14 +478,14 @@ const Steps steps([] {
 
   // The Files tab.
   step(QStringLiteral("%1 holds %1, %1, %1 and an ignored %1 folder").arg(q), [](World& world, const Captures& c, const Table&) {
-    FakeFiles& fake = world.node.part<FakeFiles>();
+    FakeFiles& fake = fakeFiles(world.node);
     for (const QString& path : {c[1], c[2], c[3]}) fake.files.insert(path, QStringLiteral("// %1\n").arg(path));
     fake.files.insert(c[4] + QStringLiteral("/left-pad/index.js"), QStringLiteral("module.exports = {};\n"));
     fake.ignored.insert(c[4]);
     lookAtThread(world, c[0]);
   });
   step(QStringLiteral("%1 holds the text file %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.part<FakeFiles>().files.insert(c[1], linesOf(12));
+    fakeFiles(world.node).files.insert(c[1], linesOf(12));
     lookAtThread(world, c[0]);
   });
   step(QStringLiteral("the user expands %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -574,7 +500,7 @@ const Steps steps([] {
     expectShownUnder(world, {c[0]}, c[1]);
   });
   step(QStringLiteral("listing %1 fails once").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.part<FakeFiles>().failOnce.insert(c[0]);
+    fakeFiles(world.node).failOnce.insert(c[0]);
   });
   step(QStringLiteral("the user is told the folder could not be loaded"), [](World& world, const Captures&, const Table&) {
     FileTreeModel& model = tree(world);
@@ -609,10 +535,10 @@ const Steps steps([] {
     waitForTree(world);
   });
   step(QStringLiteral("the environment cannot list %1").arg(q), [](World& world, const Captures&, const Table&) {
-    world.node.part<FakeFiles>().cannotList = true;
+    fakeFiles(world.node).cannotList = true;
   });
   step(QStringLiteral("the environment can list %1 again").arg(q), [](World& world, const Captures&, const Table&) {
-    world.node.part<FakeFiles>().cannotList = false;
+    fakeFiles(world.node).cannotList = false;
   });
   step(QStringLiteral("the user opens the Files tab"), [](World& world, const Captures&, const Table&) { openFiles(world); });
   step(QStringLiteral("the user is told the files could not be listed"), [](World& world, const Captures&, const Table&) {
@@ -649,7 +575,7 @@ const Steps steps([] {
 
   // The file viewer.
   step(QStringLiteral("%1 in %1 is 3 MB").arg(q), [](World& world, const Captures& c, const Table&) {
-    FakeFiles& fake = world.node.part<FakeFiles>();
+    FakeFiles& fake = fakeFiles(world.node);
     fake.files.insert(c[0], linesOf(200));
     fake.truncated.insert(c[0], 3 * 1024 * 1024);
   });
@@ -662,7 +588,7 @@ const Steps steps([] {
            QStringLiteral("the viewer says \"%1\"").arg(files(world).truncatedNotice()));
   });
   step(QStringLiteral("%1 has (\\d+) lines").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.part<FakeFiles>().files.insert(c[0], linesOf(c[1].toInt()));
+    fakeFiles(world.node).files.insert(c[0], linesOf(c[1].toInt()));
   });
   step(QStringLiteral("line (\\d+) is revealed"), [](World& world, const Captures& c, const Table&) {
     expect(files(world).revealLine() == c[0].toInt(), QStringLiteral("line %1 is revealed").arg(files(world).revealLine()));
@@ -680,14 +606,14 @@ const Steps steps([] {
     expect(!files(world).wrap(), QStringLiteral("the viewer wraps"));
   });
   step(QStringLiteral("reading %1 fails once").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.part<FakeFiles>().readFailsOnce.insert(c[0]);
+    fakeFiles(world.node).readFailsOnce.insert(c[0]);
   });
   step(QStringLiteral("the user is told the file could not be read"), [](World& world, const Captures&, const Table&) {
     expect(files(world).fileStatus() == QLatin1String("error") && files(world).fileProblem().startsWith(QStringLiteral("Could not read")),
            QStringLiteral("the viewer is %1: %2").arg(files(world).fileStatus(), files(world).fileProblem()));
   });
   step(QStringLiteral("the contents of %1 are shown").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString contents = world.node.part<FakeFiles>().files.value(c[0]);
+    const QString contents = fakeFiles(world.node).files.value(c[0]);
     expect(files(world).openPath() == c[0] && files(world).fileStatus() == QLatin1String("ready") &&
                files(world).lines()->rowCount() == contents.count(QLatin1Char('\n')),
            QStringLiteral("the viewer shows %1 (%2, %3 lines)").arg(files(world).openPath(), files(world).fileStatus()).arg(files(world).lines()->rowCount()));

@@ -1,11 +1,17 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QJsonArray>
 #include <QList>
+#include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
+
+#include <functional>
 #include <QVariantList>
 
+#include "CommandRegistry.h"
 #include "NativeController.h"
 
 class NodeClient;
@@ -13,41 +19,84 @@ class ShellBridge;
 class ShellStore;
 
 // The command palette (the web's CommandPalette), as the `PaletteModel` QML
-// singleton and the list the CommandPalette brick shows. It lists:
-//   - Actions: every command in Keybindings.commands (CommandRegistry) but its
-//     own toggle and the thread jumps. An owner that wants an action here
-//     registers it there, which also gives it a keybinding.
-//   - Recent Threads (no query) or Threads (a query): the shell's threads,
-//     cluster and linked environments alike, by key `environmentId:threadId`,
-//     archived and subagent ones left out, most recent activity first.
-//   - Projects and Settings (a query only): the sidebar's logical projects,
-//     and the settings sections the brick hands over (js/settingsPages.js).
-// A query filters and ranks as the web does (CommandPalette.logic.ts); a
-// leading ">" keeps to actions. Each row is {title, description, group,
-// shortcut, kind (action, thread, project, setting)}; a query change moves only
-// the rows that differ, never resetting the list.
+// singleton and the list the CommandPalette brick shows. It has four modes:
 //
-// `commandPalette.toggle` (mod+k) opens and closes it. Dismissing it gives the
-// composer its keyboard back (`composer.focus` to the brick); running an entry
-// leaves focus to what the entry opened.
+//   - command (commandPalette.toggle, mod+k). With no query, the web's
+//     hand-picked actions (kRootCommands, each while its owner lists it) and
+//     Recent Threads. A query adds every listed command in
+//     Keybindings.commands (CommandRegistry), the sidebar's projects, the
+//     settings sections the brick hands over (js/settingsPages.js, those whose
+//     `requires` state is there) and the shell's threads, cluster and linked
+//     alike (by key `environmentId:threadId`, archived and subagent ones left
+//     out); from two characters on, threads whose messages match too
+//     (`orchestration.searchThreads` on every online environment). A query
+//     filters and ranks as the web does (CommandPalette.logic.ts); a leading
+//     ">" keeps to actions. A menu command (CommandRegistry::addMenu) opens its
+//     choices as a submenu; Backspace on an empty query leaves it.
+//   - files (filePicker.toggle): the route thread's files by name
+//     (`projects.searchEntries`); choosing one opens it in the right panel.
+//   - content (projectSearch.toggle): text across them
+//     (`projects.searchContents`, with the case, whole word and regular
+//     expression options), matches grouped by file; choosing one opens its
+//     file at the line.
+//   - browse (Add project's Local folder): the query is a path on an
+//     environment (`filesystem.browse`); choosing a folder goes into it, and
+//     Enter with none highlighted adds the path as a project there.
+//
+// Searches against the node wait for typing to pause (kSearchDelayMs) and
+// only the newest answer counts; files and content only while the route
+// thread's environment is online, starting afresh when it moves to another
+// project. Each row is {title, description, group,
+// shortcut, kind, runnable, current}; a query change moves only the rows that
+// differ, never resetting the list.
+//
+// Dismissing it gives the composer its keyboard back (`composer.focus` to the
+// brick); running an entry leaves focus to what the entry opened. A command
+// that fails says so ("Unable to run command").
 class CommandPaletteController : public QAbstractListModel, public NativeController {
   Q_OBJECT
   Q_PROPERTY(bool open READ isOpen NOTIFY openChanged)
+  // command, files, content or browse.
+  Q_PROPERTY(QString mode READ mode NOTIFY modeChanged)
+  // The submenu shown, empty at the root.
+  Q_PROPERTY(QString submenu READ submenu NOTIFY modeChanged)
+  Q_PROPERTY(QString placeholder READ placeholder NOTIFY modeChanged)
   Q_PROPERTY(QString query READ query WRITE setQuery NOTIFY queryChanged)
   Q_PROPERTY(int highlighted READ highlighted WRITE setHighlighted NOTIFY highlightedChanged)
   Q_PROPERTY(int count READ count NOTIFY resultsChanged)
-  // What the palette says when nothing matches, or empty.
+  // What the palette says when nothing is listed, or empty.
   Q_PROPERTY(QString emptyText READ emptyText NOTIFY resultsChanged)
+  // A line over the content search's results ("3 results in 2 files").
+  Q_PROPERTY(QString status READ status NOTIFY resultsChanged)
+  Q_PROPERTY(bool caseSensitive READ caseSensitive WRITE setCaseSensitive NOTIFY optionsChanged)
+  Q_PROPERTY(bool wholeWord READ wholeWord WRITE setWholeWord NOTIFY optionsChanged)
+  Q_PROPERTY(bool useRegex READ useRegex WRITE setUseRegex NOTIFY optionsChanged)
 
 public:
-  enum Role { TitleRole = Qt::UserRole + 1, DescriptionRole, GroupRole, ShortcutRole, KindRole };
+  enum Role {
+    TitleRole = Qt::UserRole + 1,
+    DescriptionRole,
+    GroupRole,
+    ShortcutRole,
+    KindRole,
+    EnabledRole,
+    CurrentRole
+  };
 
   static inline const QString kToggle = QStringLiteral("commandPalette.toggle");
+  static inline const QString kFiles = QStringLiteral("filePicker.toggle");
+  static inline const QString kContent = QStringLiteral("projectSearch.toggle");
   static constexpr int kRecentThreads = 12;
+  static constexpr int kSearchDelayMs = 120;
+  static constexpr int kFileLimit = 200;
+  static constexpr int kContentLimit = 500;
+  static constexpr int kMessageLimit = 20;
+  // The root list with no query, in order (the web's actionItems).
+  static const QStringList kRootCommands;
 
   CommandPaletteController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 
-  // Registers the toggle and follows what the palette lists.
+  // Registers the toggles and follows what the palette lists.
   void activate() override;
   bool handle(const QString&, const QVariant&) override { return false; }
 
@@ -56,39 +105,72 @@ public:
   QHash<int, QByteArray> roleNames() const override;
 
   bool isOpen() const { return m_open; }
+  QString mode() const;
+  QString submenu() const { return m_views.isEmpty() ? QString() : m_views.constLast().title; }
+  QString placeholder() const;
   QString query() const { return m_query; }
   int highlighted() const { return m_highlighted; }
   int count() const { return static_cast<int>(m_rows.size()); }
   QString emptyText() const;
-  // The row's entry: kind and id (a command, thread key, project key or
-  // settings path).
+  QString status() const;
+  bool caseSensitive() const { return m_caseSensitive; }
+  bool wholeWord() const { return m_wholeWord; }
+  bool useRegex() const { return m_useRegex; }
+  void setCaseSensitive(bool on);
+  void setWholeWord(bool on);
+  void setUseRegex(bool on);
+  // The row's entry: kind (action, thread, project, setting, choice, file,
+  // match, folder, up) and id (a command, thread key, project key, settings
+  // path, choice id, file path, "path:line" or folder path).
   QString kindAt(int row) const;
   QString idAt(int row) const;
+  // Whether a search against the node is on its way.
+  bool searching() const { return m_pending > 0 || m_debounce.isActive(); }
 
-  // Opens it with an empty query and the first entry highlighted.
+  // Opens it in command mode with an empty query and the first entry
+  // highlighted.
   Q_INVOKABLE void show();
   // Opens it, or dismisses it when open.
   Q_INVOKABLE void toggle();
+  // Opens it in `mode`, or closes it when it is open in that mode.
+  Q_INVOKABLE void toggleMode(const QString& mode);
   // Closes it without running anything; the composer gets the keyboard back.
   Q_INVOKABLE void dismiss();
+  // Escape: a secondary mode goes back to command mode, a submenu to the
+  // root, anything else dismisses.
+  Q_INVOKABLE void back();
+  // Backspace on an empty query leaves a submenu; false when there is none.
+  Q_INVOKABLE bool leaveSubmenu();
   void setQuery(const QString& query);
   void setHighlighted(int row);
   // Moves the highlight by `delta` rows, wrapping around.
   Q_INVOKABLE void move(int delta);
-  // Closes the palette and runs the entry at `row`; false when there is none.
+  // Runs the entry at `row` (a submenu or a folder moves the palette on;
+  // anything else closes it first); false when there is none.
   Q_INVOKABLE bool run(int row);
-  Q_INVOKABLE bool runHighlighted() { return run(m_highlighted); }
-  // The settings sections to offer: [{to, label, keywords}].
+  // Enter: the highlighted entry, or in browse mode with none, adds the path.
+  Q_INVOKABLE bool runHighlighted();
+  // Adds the browsed path as a project (browse mode's mod+Enter).
+  Q_INVOKABLE bool addBrowsedFolder();
+  // Opens the palette on the menu `command`'s choices.
+  void showMenu(const QString& command);
+  // Browses folders on `environmentId` from the home folder, for a new
+  // project; `add` is given the path chosen.
+  void browse(const QString& environmentId, std::function<void(const QString& path)> add);
+  // The settings sections to offer: [{to, label, keywords, requires?}].
   Q_INVOKABLE void setSettingsSections(const QVariantList& sections);
 
 signals:
   void openChanged();
+  void modeChanged();
   void queryChanged();
   void highlightedChanged();
   void resultsChanged();
+  void optionsChanged();
 
 private:
-  enum class Kind { Action, Thread, Project, Setting };
+  enum class Mode { Command, Files, Content, Browse };
+  enum class Kind { Action, Thread, Project, Setting, Choice, File, Match, Folder, Up };
 
   struct Entry {
     Kind kind;
@@ -101,31 +183,94 @@ private:
     QString haystack;
     // Threads: when the user last wrote in it, for ties and the recent list.
     qint64 recency = 0;
+    bool enabled = true;
+    bool current = false;
+    // Content matches: the file's group.
+    QString group;
   };
 
   struct Row {
-    int group;
+    QString group;
     int entry;
-    // What the row shows, whichever entry list it points into: its group and
-    // entry id.
+    // Its group and entry id, which say whether a row moved.
     QString key;
+    // A thread found by its messages shows the matching snippet.
+    QString description;
   };
 
+  // A submenu: the menu's title and its choices when it opened.
+  struct View {
+    QString title;
+    QList<CommandRegistry::Choice> choices;
+  };
+
+  // Where files and content are searched: the route thread's environment and
+  // folder.
+  struct Target {
+    QString environmentId;
+    QString root;
+    bool operator==(const Target&) const = default;
+  };
+
+  void open(Mode mode);
   void close(bool returnFocus);
+  void setMode(Mode mode);
+  void pushView(const QString& title, QList<CommandRegistry::Choice> choices);
   // Reads what the palette lists again, while it is open.
   void rebuild();
+  void rebuildCommand();
+  void rebuildChoices();
   // Filters to the query and moves only the rows that changed; `refreshed`
   // says the entries themselves may have changed.
   void refilter(bool refreshed);
+  void apply(QList<Row> next, bool refreshed);
   bool openEntry(const Entry& entry);
+  bool runCommand(const QString& command);
+  Target target() const;
+  // Starts the mode's search against the node once typing pauses.
+  void scheduleSearch();
+  void search();
+  void searchFiles(int generation);
+  void searchContent(int generation);
+  void searchMessages(int generation);
+  void searchFolders(int generation);
+  QString browsedPath() const;
+  void followTarget();
 
   ShellBridge* m_bridge;
+  NodeClient* m_client;
   ShellStore* m_store;
   bool m_active = false;
   bool m_open = false;
+  Mode m_mode = Mode::Command;
+  QList<View> m_views;
   QString m_query;
   int m_highlighted = 0;
   QVariantList m_settingsSections;
   QList<Entry> m_entries;
   QList<Row> m_rows;
+  // The command being run from the palette, whose failure is toasted.
+  QString m_running;
+
+  // Searches against the node: the newest one's generation, and how many
+  // answers are still to come.
+  QTimer m_debounce;
+  int m_generation = 0;
+  int m_pending = 0;
+  Target m_target;
+  bool m_truncated = false;
+  QString m_error;
+  bool m_invalidRegex = false;
+  bool m_caseSensitive = false;
+  bool m_wholeWord = false;
+  bool m_useRegex = false;
+  // Threads whose messages match the query: key to snippet.
+  QHash<QString, QString> m_messageMatches;
+  QString m_messageQuery;
+  // Browse mode: the environment, its answer, and what adding does.
+  QString m_browseEnvironment;
+  QString m_browseQuery;
+  QString m_browseParent;
+  QJsonArray m_browseEntries;
+  std::function<void(const QString&)> m_add;
 };

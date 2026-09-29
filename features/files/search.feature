@@ -7,6 +7,7 @@
 #   packages/contracts/src/filesystem.ts (ProjectSearchEntriesInput, ProjectSearchContentsInput)
 #   packages/contracts/src/rpc.ts (projects.searchEntries, projects.searchContents)
 #   packages/contracts/src/keybindings.ts (filePicker.toggle, projectSearch.toggle)
+#   apps/desktop-qt/src/native/CommandPaletteController.cpp (files and content modes)
 
 Feature: Searching project files
   The user finds files by name and finds text across a project's files.
@@ -63,13 +64,13 @@ Feature: Searching project files
       When a client searches "shop" for files with an empty query
       Then "docs/shopping-cart.md" is listed first
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: The file picker opens the chosen file
       When the user goes to a file and types "cart"
       And the user picks "src/cart.ts"
       Then "src/cart.ts" opens in the viewer
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: The file picker says when nothing matches
       When the user goes to a file and types "zzz"
       Then the user is told no files match
@@ -115,19 +116,19 @@ Feature: Searching project files
       When a client searches the contents of "shop" for "total"
       Then "logs/huge.log" is not returned
 
-    @backlog @desktop
+    @desktop
     Scenario: Content search groups matches by file and opens a match at its line
       When the user searches the project contents for "total"
       Then the matches are grouped under "src/cart.ts"
       When the user opens the match
       Then "src/cart.ts" opens at the matching line
 
-    @backlog @desktop
+    @desktop
     Scenario: The result count summarises matches and files
       When the user searches the project contents for "cart"
       Then the user sees how many results were found in how many files
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Content search explains empty and invalid states
       Given <situation>
       When the user searches the project contents
@@ -140,7 +141,7 @@ Feature: Searching project files
         | the query is the regular expression "cart(" | Invalid regular expression              |
         | no project is open                         | Open a project to search its files.     |
 
-    @backlog @desktop
+    @desktop
     Scenario: The search is cleared when the user switches project
       Given the user searched the project contents of "shop" for "total"
       When the user switches to the project "docs"
