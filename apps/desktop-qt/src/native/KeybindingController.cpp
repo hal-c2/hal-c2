@@ -12,6 +12,7 @@
 #include "SettingsController.h"
 #include "SidebarController.h"
 #include "TerminalController.h"
+#include "ThreadMenuController.h"
 #include "ToastController.h"
 
 namespace {
@@ -106,6 +107,18 @@ void KeybindingController::registerCommands() {
       m_bridge->sendToPage(QStringLiteral("composer.control.open"), QVariantMap{{QStringLiteral("command"), command}});
     });
   }
+  // The route thread's, as its menu has them; Undo is the newest toast's.
+  auto* menu = shell->controller<ThreadMenuController>();
+  add(QStringLiteral("thread.pin"), [menu, navigation] {
+    if (!navigation->threadKey().isEmpty()) menu->togglePin(navigation->threadKey());
+  });
+  add(QStringLiteral("thread.settle"), [menu, navigation] {
+    if (!navigation->threadKey().isEmpty()) menu->toggleSettle(navigation->threadKey());
+  });
+  add(QStringLiteral("thread.copyReference"), [menu, navigation] {
+    if (!navigation->threadKey().isEmpty()) menu->copyReference(navigation->threadKey());
+  });
+  add(QStringLiteral("thread.undo"), [menu] { menu->undo(); });
 }
 
 void KeybindingController::jumpTo(const QString& threadKey) {

@@ -80,10 +80,4 @@ private:
   QList<Draft> m_drafts;
   QString m_storePath;
   bool m_active = false;
-  struct Menu {
-    QString requestId;
-    QString draftId;
-  };
-  std::optional<Menu> m_menu;
-  int m_nextMenuId = 1;
 };

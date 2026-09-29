@@ -23,9 +23,10 @@ class ShellStore;
 // ShellStore rows, the checkout's git status the node's `vcs` shape, the refs
 // `vcs.listRefs`, the editors each environment's `config`.
 //
-// It takes every `workspace.*` action but the three that still open page UI:
-// `workspace.newThread`, `workspace.titleMenu` (the thread's action menu) and
-// `workspace.openPullRequest` go on to the page.
+// It takes every `workspace.*` action: `workspace.newThread` opens a draft
+// in the header's project (`thread.new`), `workspace.openPullRequest` the
+// checkout's pull request in the browser. `workspace.titleMenu` is
+// ThreadMenuController's, which sees it first.
 //
 // A draft's checkout (mode, start from origin, branch, worktree, the machine
 // it runs on) lives here, keyed by draft id, and launch() turns it into the
@@ -66,6 +67,11 @@ public:
     QString threadKey() const { return environmentId + QLatin1Char(':') + threadId; }
     QString cwd() const { return worktreePath.isEmpty() ? root : worktreePath; }
   };
+  // The checkout's git status as the node's `vcs` shape has it.
+  struct Git {
+    QJsonObject local;
+    QJsonObject remote;  // empty while unknown
+  };
 
   WorkspaceController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
   ~WorkspaceController() override;
@@ -74,10 +80,19 @@ public:
   bool handle(const QString& action, const QVariant& payload) override;
 
   const std::optional<Place>& place() const { return m_place; }
+  // The route's checkout status; none while unknown or not followed (a linked
+  // environment's, whose `vcs` the node does not route).
+  const std::optional<Git>& git() const { return m_git; }
+  // Why the checkout's status could not be followed (a link that is down).
+  const QString& gitError() const { return m_gitError; }
+  // Asks the node to read the checkout's status again.
+  void refreshGit();
   // How drafts resolve; without one a draft route has no workspace.
   void setDraftResolver(std::function<std::optional<DraftPlace>(const QString& draftId)> resolve);
   // A draft's checkout as the user left it (defaults for one never touched).
   Checkout checkout(const QString& draftId) const { return m_checkouts.value(draftId); }
+  // Sets a draft's checkout (a new thread on another thread's branch).
+  void setCheckout(const QString& draftId, const Checkout& checkout);
   // Where a draft's first message starts its thread: the environment and
   // project it runs in, and the node's `workspaceStrategy` for
   // `orchestration.launchThread` ({type: "root" | "existing_worktree" |
@@ -97,13 +112,10 @@ public:
 signals:
   // The route's thread, its root or worktree changed.
   void placeChanged();
+  // git() changed.
+  void gitChanged();
 
 private:
-  struct Git {
-    QJsonObject local;
-    QJsonObject remote;  // empty while unknown
-  };
-
   std::optional<Place> resolve() const;
   void follow(const QString& cwd);
   void watchConfig(const QString& environmentId);
@@ -128,6 +140,9 @@ private:
   void createBranch(const QString& name);
   void setThreadBranch(const std::optional<QString>& branch, const std::optional<QString>& worktreePath);
   void updateCheckout(const std::function<void(Checkout&)>& edit);
+  // Tells the page a draft's checkout, while it still sends the first message.
+  void followCheckout(const QString& draftId);
+  void openPullRequest();
 
   ShellBridge* m_bridge;
   NodeClient* m_client;
@@ -148,6 +163,7 @@ private:
   int m_vcs = 0;
   QString m_vcsKey;
   std::optional<Git> m_git;
+  QString m_gitError;
   // Editors of environments other than the node's own (`config` shape); the
   // node's own come with SettingsController.
   int m_config = 0;

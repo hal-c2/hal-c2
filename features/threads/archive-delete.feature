@@ -41,7 +41,7 @@ Feature: Archiving and deleting threads
     When the user opens the thread's menu
     Then archiving is unavailable
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Archiving waits for the agent on the desktop and phone
     Given the agent is working in "Old spike"
     When the user opens the thread menu
@@ -73,7 +73,7 @@ Feature: Archiving and deleting threads
     When a client asks for the archived threads
     Then "Old spike" is in the answer
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Archiving asks first when the user wants confirmation
     Given the user asked to confirm before archiving
     When the user archives "Old spike"
@@ -104,7 +104,7 @@ Feature: Archiving and deleting threads
     When the user cancels
     Then "Old spike" is still in the thread list
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Deleting from the desktop and phone asks when the user wants confirmation
     Given the user asked to confirm before deleting
     When the user deletes "Old spike"
@@ -143,7 +143,7 @@ Feature: Archiving and deleting threads
     Then "Old spike" is deleted
     And the user is told "Failed to delete worktree"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Deleting the open thread opens the next thread in the project
     Given the user is viewing "Old spike"
     And "Newer work" is the top remaining thread in "shop"

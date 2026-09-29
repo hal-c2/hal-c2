@@ -2,16 +2,18 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// Shows the page's pending context menu (Shell.state.contextMenu) when it
-// targets this host's surface, and reports the choice back. One instance
-// lives in each WebSurface (page coordinates) and one in the shell root
-// (window coordinates, surfaceId "shell").
+// Shows a pending context menu when it targets this host's surface, and
+// reports the choice back: the page's (Shell.state.contextMenu, one instance
+// in each WebSurface in page coordinates and one in the shell root) or the
+// shell's own (stateKey "menu", MenuController, in window coordinates).
 Item {
     id: host
 
     required property string surfaceId
+    property string stateKey: "contextMenu"
+    property string selectAction: "contextMenu.select"
 
-    readonly property var request: Shell.state.contextMenu ?? null
+    readonly property var request: Shell.state[stateKey] ?? null
     readonly property bool mine: request !== null && request.surfaceId === surfaceId
     property string shownRequestId: ""
 
@@ -47,7 +49,7 @@ Item {
             return;
         }
         const requestId = host.request.requestId;
-        Shell.dispatch("contextMenu.select", {
+        Shell.dispatch(host.selectAction, {
             requestId: requestId,
             id: id
         });
@@ -86,8 +88,10 @@ Item {
                 required property var modelData
 
                 text: modelData.label
-                enabled: modelData.disabled !== true && modelData.header !== true
+                enabled: modelData.disabled !== true && modelData.enabled !== false && modelData.header !== true
                 destructive: modelData.destructive === true
+                current: modelData.checked === true
+                iconName: modelData.icon ?? ""
                 font.bold: modelData.header === true
                 onTriggered: {
                     menu.chosen = true;

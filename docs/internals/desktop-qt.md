@@ -521,8 +521,8 @@ navigation ones `route` takes once the shell has its node (`thread.open {key}`,
 `pullRequests.open`, `usage.open`). The active row is the route's. Row actions run the
 handlers the HTML row's hover buttons use (`useShellThreadRowActions`):
 `thread.settle {key}`, `thread.unsettle {key}`, `thread.unsnooze {key}`,
-`thread.snoozeMenu {key, x, y}` (the snooze durations open through
-`contextMenu` at those window coordinates), `thread.wokeDismiss {key}`, and
+`thread.snoozeMenu {key, x, y}` (the snooze durations open as the shell's
+`menu` at those window coordinates), `thread.wokeDismiss {key}`, and
 `thread.menu {key, x, y}` for the thread menu. Unknown or malformed actions
 are dropped by the schema guard.
 
@@ -656,23 +656,27 @@ the git summary the node's `vcs` shape for the checkout, the refs
 `vcs.listRefs`, the editors each environment's `config`. It keeps
 `useThreadBranchSelection`'s rules (optimistic branch, `switchRef` /
 `createRef`, then `thread.metadata.update` with the new branch and worktree),
-and renames through `thread.metadata.update`. `ChatHeader` keeps only the git
-control (`shellHosted`), since commit/push/PR flows carry dialogs and progress
-UI that live with that control; the branch toolbar under the composer is not
+and renames through `thread.metadata.update`. The git pill is the `GitActions`
+brick's (`git`, below); the branch toolbar under the composer is not
 rendered. The `Workspace` brick renders the breadcrumb and the run / open
 pills; the branch toolbar's contents (environment, checkout mode, branch
 picker, PR badge) are the context strip under the `Composer` brick.
 
-Three actions still open page UI and go on to it: `workspace.newThread`,
-`workspace.titleMenu {x, y}` and `workspace.openPullRequest`. A draft's checkout (mode, start from
+`workspace.newThread` starts a draft in the header's project (`thread.new`),
+`workspace.openPullRequest` opens the checkout's pull request in the system
+browser, and `workspace.titleMenu {x, y}` opens the thread menu (below). A
+draft's checkout (mode, start from
 origin, branch, worktree, the machine it runs on) is kept natively by draft
 id and the page is told each change: `workspace.envMode.set`,
 `.startFromOrigin.set` and `.environment.set` go on to it after they land, and
 a branch picked for a draft as `workspace.checkout.follow {draftId, branch,
 worktreePath, envMode}`. Which thread a draft is, `NativeShell` asks
-`DraftController` (`setDraftResolver`). A linked thread's header is its rows:
-the node serves `vcs` and `config` for its cluster only, so its branch is the
-thread row's and it has no editors or git status.
+`DraftController` (`setDraftResolver`). The `vcs` shape names the thread's
+environment, so a linked thread's git status comes through its link; while the
+link is down the subscription fails at once with the link's message
+(`gitError`), and it is followed again when the environment comes back. The
+header watches `config` for the cluster only, so a linked thread has no
+editors.
 
 The terminal drawer is native: `TerminalDrawer` draws each of the thread's
 terminals with [qml-ghostty](https://github.com/hal-c2/qml-ghostty)'s
@@ -928,32 +932,61 @@ native controllers call (`show`, `error`), with its own timing and actions,
 and its ids start with `native:` so dismiss and action clicks stop there
 instead of reaching the page.
 
-### `contextMenu`
+### `menu`, `confirmation` and `contextMenu`
 
-`localApi.contextMenu.show` routes to the shell when hosted: the items are
-published under `contextMenu` with the surface they belong to (every web
-surface tags its document with `window.halC2Shell.surfaceId`; `"shell"` means
-window coordinates from native chrome) and the choice returns as
-`contextMenu.select {requestId, id}`. `ContextMenuHost` lives in each
-`WebSurface` and once at the window level. This makes every context menu in
-the app native; the thread title menu (`workspace.titleMenu {x, y}`) and
-sidebar rows (`thread.menu {key, x, y}`) open the thread action menu through
-it, and `workspace.rename {title}` / `renameRequestId` drive an inline rename
-in the header; the page's "Rename" asks for it with `workspace.rename.begin
-{threadKey}`.
+The shell's own menus and questions are `MenuController`'s: a controller
+opens a list of items (id, label, icon, enabled, checked, destructive,
+separator, one level of children) at window coordinates with the function the
+chosen id runs, or asks a question with the function a yes runs. They are
+published as `menu` and `confirmation`; the window-level `ContextMenuHost`
+(`stateKey: "menu"`) and `ConfirmDialog` render them and answer with
+`menu.select {requestId, id|null}` and `confirmation.answer {requestId,
+accepted}`. Only an enabled item that was offered can be picked, and a newer
+menu replaces the open one.
+
+The thread menu is `ThreadMenuController`'s, from a row (`thread.menu {key,
+x, y}`) and from the header's title (`workspace.titleMenu`, which leaves out
+the project filter; a draft's title opens the draft menu). It follows
+`threadActionMenu.logic.ts`'s order and adds Fork and "Move to another
+machine…" (`hal-c2.moveDestinations`, then `hal-c2.moveThread`, which may
+answer with a question, a project to pick, or the moved thread's new key,
+which the route follows). Items the environment does not support are left
+out; on an offline thread only what needs no environment (copying, the new
+thread on its branch, the project filter) can be chosen. Every command
+reports a refusal as an error toast. Archive, unpin and settle offer Undo on
+their toast for its five seconds, and `thread.undo` (mod+z outside text)
+runs the newest Undo on offer. Delete, archive and unpin ask first when the
+device's `confirmThread*` settings say so (delete's is on by default).
+
+The page's own menus still go through `contextMenu`:
+`localApi.contextMenu.show` publishes the items with the surface they belong
+to (every web surface tags its document with `window.halC2Shell.surfaceId`)
+and the choice returns as `contextMenu.select {requestId, id}`.
+`ContextMenuHost` lives in each `WebSurface` and once at the window level for
+it. `workspace.rename {title}` / `renameRequestId` drive an inline rename in
+the header; the thread menu's "Rename" asks for it with
+`workspace.rename.begin {threadKey}`.
 
 ### `git`
 
-`useGitActions` (extracted from `GitActionsControl`) owns the status query,
-the stacked-action runner with its progress/result toasts, the default-branch
-gate and the thread↔branch sync. When hosted the control renders
-`ShellGitBridge` — publishing the quick action, menu items with disabled
-reasons, hints, working-tree files and the pending confirmation — plus the
-publish-repository dialog (still HTML). Actions: `git.quick`, `git.menu
-{id}`, `git.commit {message, filePaths|null, featureBranch}`,
-`git.defaultBranch {choice}`, `git.init`, `git.publish`, `git.refresh`. The
-`GitActions` brick renders the split button, the commit dialog (file
-checklist + message) and the confirmation.
+`GitController` publishes `git` itself from `WorkspaceController`'s `vcs`
+status; the page's `ShellGitBridge` no longer writes the key. The recommended
+action and the menu follow `apps/tui/src/gitActions.logic.ts`, not the web's
+`GitActionsControl.logic.ts`: the ledger (`source-control/git-actions.feature`)
+is written against the TUI's labels and reasons, named for the host's change
+requests (PR, MR). Actions: `git.quick`, `git.menu {id}`, `git.commit
+{message, filePaths|null, featureBranch}`, `git.defaultBranch {choice}`,
+`git.init`, `git.publish`, `git.publish.submit`, `git.publish.cancel`,
+`git.refresh`.
+
+A stacked action is one `gitAction` subscription; its stage and last hook line
+update one loading toast in place, and the node's result toast (with its
+next-step CTA) replaces it. The subscription is dropped, not resent, when the
+connection drops, since the node would run the action twice. `gitAction`
+names the environment, so a linked thread's actions run through its link. While
+an environment is offline the brick publishes `available: false`, with the
+link's message (`EnvironmentUnreachableError`) as the `unavailableReason` it
+shows; a refused action or call carries the same message in its error toast.
 
 ### Composer layout
 

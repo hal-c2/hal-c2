@@ -85,6 +85,12 @@ const FakeNode::Extension extension([](FakeNode& node) {
   node.effects.append([&node](const QJsonObject& command) { applyMetadata(node, command); });
   node.onShape(QStringLiteral("vcs"), [&node](int id, const QJsonObject& shape) {
     const QString cwd = shape.value(QLatin1String("cwd")).toString();
+    if (const auto checkout = node.checkouts.constFind(cwd); checkout != node.checkouts.cend()) {
+      QJsonObject snapshot = (*checkout)();
+      snapshot.insert(QStringLiteral("_tag"), QStringLiteral("snapshot"));
+      node.send({{QStringLiteral("t"), QStringLiteral("vcs")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), snapshot}});
+      return;
+    }
     const auto repo = node.part<FakeGit>().repos.constFind(cwd);
     const QJsonObject local = repo == node.part<FakeGit>().repos.cend() ? QJsonObject{{QStringLiteral("isRepo"), false}} : localStatus(*repo);
     node.send({{QStringLiteral("t"), QStringLiteral("vcs")},
@@ -495,6 +501,28 @@ const Steps steps([] {
   step(QStringLiteral("%1 is the editor offered first").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
     expect(workspace(world).value(QStringLiteral("preferredEditorId")) == editorId(c[0]), QStringLiteral("the header shows %1").arg(show(workspace(world))));
+  });
+
+  // The header's buttons that leave the header.
+  step(QStringLiteral("the checkout's pull request is %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    const QJsonObject remote{{QStringLiteral("pr"), QJsonObject{{QStringLiteral("number"), 7}, {QStringLiteral("title"), QStringLiteral("Tax line")},
+                                                                {QStringLiteral("url"), c[0]}, {QStringLiteral("state"), QStringLiteral("open")}}}};
+    for (const int id : world.node.subscribers(QStringLiteral("vcs"))) {
+      world.node.send({{QStringLiteral("t"), QStringLiteral("vcs")},
+                       {QStringLiteral("id"), id},
+                       {QStringLiteral("event"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("remoteUpdated")}, {QStringLiteral("remote"), remote}}}});
+    }
+    world.sync();
+  });
+  step(QStringLiteral("the user opens the pull request from the header"), [](World& world, const Captures&, const Table&) {
+    dispatch(world, QStringLiteral("workspace.openPullRequest"));
+  });
+  step(QStringLiteral("the browser opens %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(world.openedUrls == QList<QUrl>{QUrl(c[0])}, QStringLiteral("the browser opened %1").arg(world.openedUrls.size()));
+  });
+  step(QStringLiteral("the user starts a new thread from the header"), [](World& world, const Captures&, const Table&) {
+    dispatch(world, QStringLiteral("workspace.newThread"));
   });
 });
 

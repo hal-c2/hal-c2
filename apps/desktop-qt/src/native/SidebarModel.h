@@ -96,6 +96,8 @@ struct Capabilities {
   bool snooze = false;
   // The node keeps the visited watermark; without it the page keeps unread markers.
   bool visitedTracking = false;
+  bool pinning = false;
+  bool titleRegeneration = false;
 };
 using CapabilitiesFor = std::function<Capabilities(const QString& environmentId)>;
 

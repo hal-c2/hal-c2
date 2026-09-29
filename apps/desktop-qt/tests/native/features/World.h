@@ -6,6 +6,7 @@
 #include <QQmlPropertyMap>
 #include <QSet>
 #include <QTemporaryDir>
+#include <QUrl>
 #include <QVariant>
 
 #include <functional>
@@ -43,6 +44,11 @@ public:
   bool checking = false;  // the running step is an outcome (Step::outcome)
   QVariantMap themeDraft;  // what the theme editor holds (ThemeController::draft)
   QString settingRow;  // the settings row the scenario is about
+  // The shell's clipboard and the addresses it opened in the browser, recorded
+  // instead of touching the desktop's.
+  QString clipboard;
+  bool clipboardFails = false;
+  QList<QUrl> openedUrls;
 
   ShellBridge& bridge() { return *m_bridge; }
   NativeShell& native() { return *m_native; }

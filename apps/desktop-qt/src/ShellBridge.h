@@ -50,6 +50,8 @@ public:
   // Called by the web app (via the channel) with its view models.
   Q_INVOKABLE void publish(const QString& key, const QVariant& value);
   Q_INVOKABLE void openExternal(const QUrl& url);
+  // Where openExternal sends a URL; the system browser unless tests say otherwise.
+  void setUrlOpener(std::function<void(const QUrl&)> open) { m_openUrl = std::move(open); }
   Q_INVOKABLE void setColorScheme(const QString& scheme);
   Q_INVOKABLE void windowCommand(const QString& command);
 
@@ -91,6 +93,7 @@ private:
   QQmlPropertyMap* m_state;
   ShellChannel* m_channel;
   QList<Interceptor> m_interceptors;
+  std::function<void(const QUrl&)> m_openUrl;
   QSet<QString> m_claimedKeys;
   QUrl m_pageUrl;
   QString m_colorScheme = QStringLiteral("system");

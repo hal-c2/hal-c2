@@ -93,7 +93,11 @@ void ShellBridge::openExternal(const QUrl& url) {
       scheme != QStringLiteral("mailto")) {
     return;
   }
-  QDesktopServices::openUrl(url);
+  if (m_openUrl) {
+    m_openUrl(url);
+  } else {
+    QDesktopServices::openUrl(url);
+  }
 }
 
 void ShellBridge::setColorScheme(const QString& scheme) {

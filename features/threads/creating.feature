@@ -84,7 +84,7 @@ Feature: Creating threads
     When the user tries to start a thread with an empty first message
     Then the thread is not started
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Starting a thread from another thread's branch
     Given the current thread is on the branch "feature/cart"
     When the user starts a new thread on that branch from the thread menu

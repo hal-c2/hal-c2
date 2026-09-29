@@ -10,6 +10,7 @@
 #include <QSaveFile>
 #include <QUuid>
 
+#include "MenuController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "ShellBridge.h"
@@ -89,16 +90,6 @@ bool DraftController::handle(const QString& action, const QVariant& payload) {
   if (action == QLatin1String("draft.menu")) {
     openMenu(map.value(QStringLiteral("draftId")).toString(), map.value(QStringLiteral("x")).toDouble(),
              map.value(QStringLiteral("y")).toDouble());
-    return true;
-  }
-  if (action == QLatin1String("contextMenu.select")) {
-    const QString requestId = map.value(QStringLiteral("requestId")).toString();
-    if (!requestId.startsWith(QLatin1String("drafts:"))) return false;
-    if (m_menu && m_menu->requestId == requestId) {
-      m_bridge->publish(QStringLiteral("contextMenu"), QVariant::fromValue(nullptr));
-      if (map.value(QStringLiteral("id")).toString() == QLatin1String("delete")) remove(m_menu->draftId);
-      m_menu.reset();
-    }
     return true;
   }
   return false;
@@ -196,19 +187,9 @@ void DraftController::setText(const QString& id, const QString& text) {
 
 void DraftController::openMenu(const QString& id, double x, double y) {
   if (!draft(id)) return;
-  m_menu = Menu{QStringLiteral("drafts:%1").arg(m_nextMenuId++), id};
-  m_bridge->publish(QStringLiteral("contextMenu"),
-                    QVariantMap{
-                        {QStringLiteral("requestId"), m_menu->requestId},
-                        {QStringLiteral("surfaceId"), QStringLiteral("shell")},
-                        {QStringLiteral("x"), x},
-                        {QStringLiteral("y"), y},
-                        {QStringLiteral("items"), QVariantList{QVariantMap{
-                                                      {QStringLiteral("id"), QStringLiteral("delete")},
-                                                      {QStringLiteral("label"), QStringLiteral("Delete draft")},
-                                                      {QStringLiteral("destructive"), true},
-                                                  }}},
-                    });
+  MenuController::Item remove{QStringLiteral("delete"), QStringLiteral("Delete draft"), QStringLiteral("trash")};
+  remove.destructive = true;
+  NativeShell::of(this)->controller<MenuController>()->open(x, y, {remove}, [this, id](const QString&) { this->remove(id); });
 }
 
 void DraftController::reconcile() {

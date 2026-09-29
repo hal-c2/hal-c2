@@ -8,6 +8,7 @@
 #   packages/contracts/src/settings.ts (defaultAutoPull)
 #   apps/web/src/components/GitActionsControl.logic.ts (default-branch confirmation, toasts)
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (default-branch dialog)
+#   apps/desktop-qt/src/native/GitController.cpp (runs the desktop's actions through gitAction)
 #   apps/desktop-qt/qml/HalC2/Bricks/Notifications.qml
 #   apps/tui/src/store.ts (pullGit, runGitAction)
 
@@ -18,7 +19,7 @@ Feature: Pushing, pulling and guarding the default branch
   Background:
     Given a connected environment with a thread in the git project "shop" with the remote "origin"
 
-  @node @desktop @tui @backlog-desktop
+  @node @desktop @tui
   Scenario: Pushing a branch that tracks an upstream
     Given "feature/tax" tracks "origin/feature/tax" and is 1 commit ahead
     When the user pushes
@@ -49,13 +50,13 @@ Feature: Pushing, pulling and guarding the default branch
     When the user commits on a branch with an upstream
     Then the result offers to push the commit
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A finished action's result goes away by itself
     When a push finishes
     Then the user is told what was pushed
     And the message goes away by itself after a while
 
-  @node @desktop @tui @backlog-desktop
+  @node @desktop @tui
   Scenario: Pulling fast-forwards the branch
     Given "feature/tax" is 2 commits behind its upstream and has no local commits
     When the user pulls
@@ -78,7 +79,7 @@ Feature: Pushing, pulling and guarding the default branch
       | is on a detached HEAD     | Cannot pull from detached HEAD.                                        |
       | has no upstream           | Current branch has no upstream configured. Push with upstream first.   |
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario Outline: Actions that would land on the default branch ask first
     Given the checkout is on the default branch "main"
     When the user runs "<action>"
@@ -91,19 +92,19 @@ Feature: Pushing, pulling and guarding the default branch
       | Commit & push     |
       | Commit, push & PR |
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Continuing on the default branch
     Given the user was asked to confirm pushing to "main"
     When the user continues
     Then the push runs against "main"
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Aborting on the default branch
     Given the user was asked to confirm pushing to "main"
     When the user aborts
     Then nothing is committed or pushed
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Moving the work onto a new branch instead
     Given the user was asked to confirm committing and pushing to "main"
     When the user chooses to create a feature branch and continue

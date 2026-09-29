@@ -8,6 +8,7 @@
 #   apps/server-ex/lib/hal_c2/text_generation.ex (pr_content)
 #   apps/web/src/components/GitActionsControl.tsx (commit dialog)
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (commit dialog)
+#   apps/desktop-qt/src/native/GitController.cpp (runs the desktop's actions through gitAction)
 #   apps/desktop-qt/tests/tst_GitActions.qml
 #   apps/tui/src/components/ChatView.tsx (onRunGitAction, commit message prompt)
 #   apps/tui/src/store.ts (runGitAction)
@@ -20,13 +21,13 @@ Feature: Committing with written or generated messages
     Given a connected environment with a thread in the git project "shop"
     And the user has changed "src/cart.ts" and "src/tax.ts"
 
-  @node @desktop @tui @backlog-desktop
+  @node @desktop @tui
   Scenario: Committing with a message the user wrote
     When the user commits with the message "Add tax to the cart"
     Then a commit "Add tax to the cart" holds both files
     And the user is told the commit was made with its short hash
 
-  @node @desktop @backlog-desktop
+  @node @desktop
   Scenario: A blank message is written by the writer model
     When the user commits without writing a message
     Then the writer model writes the commit message from the staged diff
@@ -43,7 +44,7 @@ Feature: Committing with written or generated messages
     Then nothing is committed
     And the status line reads "Commit needs a message."
 
-  @node @desktop @backlog-desktop
+  @node @desktop
   Scenario: Committing only the files the user picked
     When the user leaves "src/tax.ts" out of the commit and commits
     Then the commit holds only "src/cart.ts"
@@ -65,7 +66,7 @@ Feature: Committing with written or generated messages
     When the user starts a commit
     Then the user is warned that the commit lands on "main"
 
-  @node @desktop @backlog-desktop
+  @node @desktop
   Scenario: Committing on a new branch
     Given the checkout is on the default branch "main"
     When the user commits on a new branch with the message "Add tax to the cart"

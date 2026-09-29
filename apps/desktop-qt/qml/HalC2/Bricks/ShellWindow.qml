@@ -4,7 +4,7 @@ import "js/settingsPages.js" as Pages
 import "js/centreViews.js" as Centre
 
 // The window every rice starts from: theme-driven colour, opacity and frame,
-// the shell's own context menus and error overlay, and the page's window
+// the shell's own context menus, questions and error overlay, and the page's window
 // commands (minimize / maximize / close / move). Children land in the body
 // under the overlay, so a broken layout still shows its error.
 Window {
@@ -68,7 +68,15 @@ Window {
         surfaceId: "shell"
     }
 
+    ContextMenuHost {
+        surfaceId: "shell"
+        stateKey: "menu"
+        selectAction: "menu.select"
+    }
+
     ProjectRemovalDialog {}
+
+    ConfirmDialog {}
 
     ShellErrorOverlay {
         anchors.fill: parent

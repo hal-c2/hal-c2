@@ -295,8 +295,10 @@ const Steps steps([] {
       for (const QVariant& item : listed(world, QStringLiteral("approvals"))) {
         if (item.toMap().value(QStringLiteral("problem")) == c[0]) return true;
       }
+      // A toast is told by its title, or as "title — description".
       for (const QVariant& item : toasts(world)) {
-        if (item.toMap().value(QStringLiteral("title")) == c[0]) return true;
+        const QString title = item.toMap().value(QStringLiteral("title")).toString();
+        if (title == c[0] || title + QStringLiteral(" — ") + item.toMap().value(QStringLiteral("description")).toString() == c[0]) return true;
       }
       return conditionProblem(world) == c[0];
     };

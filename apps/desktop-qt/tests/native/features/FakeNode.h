@@ -102,10 +102,15 @@ public:
   // What an accepted command does to the node's rows (the real node's
   // projection), run before it is answered.
   QList<std::function<void(const QJsonObject& command)>> effects;
+  // Checkouts whose whole status a domain fakes, by folder: the `vcs`
+  // snapshot (`local`, `remote`) the workspace's `vcs` shape sends for them.
+  QHash<QString, std::function<QJsonObject()>> checkouts;
   QJsonObject capabilities{
       {QStringLiteral("threadSettlement"), true},
       {QStringLiteral("threadSnooze"), true},
       {QStringLiteral("threadVisitedTracking"), true},
+      {QStringLiteral("threadPinning"), true},
+      {QStringLiteral("threadTitleRegeneration"), true},
   };
   bool holdSnapshot = false;
   // Environments outside the cluster the node is linked to (HalC2.Links), and
@@ -156,6 +161,7 @@ private:
   void dispatchCommand(const Rpc& rpc);
   QJsonArray links() const;
   QJsonObject linkedEnvironment(const QString& environment) const;
+  QJsonObject unreachable(const QString& environment) const;
   void sendLinkFrame(const QString& type, const QString& environment, QJsonObject frame);
 
   QWebSocketServer m_server;

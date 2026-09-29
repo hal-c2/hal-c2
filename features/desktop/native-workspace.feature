@@ -7,6 +7,7 @@
 #   apps/web/src/hooks/useRenameThread.ts
 #   apps/web/src/components/BranchToolbar.logic.ts (mode, branch and machine rules)
 #   apps/web/src/shell/shellRenameRequest.ts (rename from the page's thread menu)
+#   apps/desktop-qt/src/ShellBridge.cpp (openExternal: the system browser)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
 #   Shared domain: threads/titles.feature, source-control/refs-and-branches.feature,
 #   source-control/worktrees-and-setup-scripts.feature and files/project-scripts-and-actions.feature
@@ -15,11 +16,22 @@
 Feature: The desktop shell runs the workspace header against its node
   The header over a thread and the strip under its composer come from the node: the thread and
   its project are the node's rows, the branch its checkout's status, the editors its machine's.
-  The shell renames, switches and creates branches, opens editors and runs actions itself. The
-  page still draws the thread menu, the pull request dialog and a new thread's first send.
+  The shell renames, switches and creates branches, opens editors, runs actions, starts new
+  threads and opens the checkout's pull request itself.
 
   Background:
     Given a connected environment with a thread in the git project "shop" on the branch "feature/tax"
+
+  @desktop
+  Scenario: The header's new thread button opens a draft in the thread's project
+    When the user starts a new thread from the header
+    Then the window shows a new draft in "shop"
+
+  @desktop
+  Scenario: The header opens the checkout's pull request in the browser
+    Given the checkout's pull request is "https://github.com/acme/shop/pull/7"
+    When the user opens the pull request from the header
+    Then the browser opens "https://github.com/acme/shop/pull/7"
 
   @desktop
   Scenario: The header shows the route's thread from the node

@@ -57,11 +57,34 @@ QString ToastController::error(const QString& title, const QString& description)
               description.isEmpty() ? QStringLiteral("An error occurred.") : description);
 }
 
+bool ToastController::runAction(const QString& label) {
+  // Newest first.
+  for (const Toast& toast : std::as_const(m_toasts)) {
+    if (!toast.action || toast.action->label != label) continue;
+    handle(QStringLiteral("notification.action"), QVariantMap{{QStringLiteral("id"), toast.id}});
+    return true;
+  }
+  return false;
+}
+
 void ToastController::dismiss(const QString& id) {
   const qsizetype removed = m_toasts.removeIf([&id](const Toast& toast) { return toast.id == id; });
   if (removed == 0) return;
   publish();
   schedule();
+}
+
+bool ToastController::update(const QString& id, const QString& title, const QString& description) {
+  for (Toast& toast : m_toasts) {
+    if (toast.id != id) continue;
+    if (toast.title == title && toast.description == description) return true;
+    toast.title = title;
+    toast.description = description;
+    ++toast.revision;
+    publish();
+    return true;
+  }
+  return false;
 }
 
 void ToastController::expire() {
@@ -101,7 +124,7 @@ void ToastController::publish() {
         {QStringLiteral("title"), toast.title},
         {QStringLiteral("description"),
          toast.description.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(toast.description)},
-        {QStringLiteral("updateKey"), 0},
+        {QStringLiteral("updateKey"), toast.revision},
         {QStringLiteral("actions"), actions},
     });
   }
