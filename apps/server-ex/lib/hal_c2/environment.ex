@@ -164,8 +164,27 @@ defmodule HalC2.Environment do
   @doc "`ServerConfig.providers`: the agents this node can run."
   def providers do
     (HalC2.Plugins.providers() || builtin_providers())
-    |> Enum.map(&(&1 |> with_custom_models() |> HalC2.ProviderUsageLimits.put()))
+    |> Enum.map(
+      &(&1
+        |> with_identity()
+        |> with_custom_models()
+        |> HalC2.ProviderUsageLimits.put())
+    )
   end
+
+  # The name and accent colour the user gave an instance in settings, which every
+  # picker shows it by.
+  defp with_identity(%{"instanceId" => id} = entry) do
+    instance = (HalC2.Settings.settings()["providerInstances"] || %{})[id]
+
+    for key <- ["displayName", "accentColor"],
+        is_map(instance),
+        is_binary(instance[key]) and String.trim(instance[key]) != "",
+        reduce: entry,
+        do: (entry -> Map.put(entry, key, String.trim(instance[key])))
+  end
+
+  defp with_identity(entry), do: entry
 
   defp builtin_providers do
     for(
