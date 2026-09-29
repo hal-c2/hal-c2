@@ -103,6 +103,8 @@ public:
 
   QString name = QStringLiteral("node-a");
   QString environmentId = QStringLiteral("env-a");
+  // The node's environment's label, when it has one ("This machine" otherwise).
+  QString label;
   QMap<QString, QJsonObject> threads;
   QMap<QString, QJsonObject> projects;
   QList<QUrl> connections;

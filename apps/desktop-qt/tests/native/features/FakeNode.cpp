@@ -98,10 +98,10 @@ void FakeNode::sendSnapshot() {
            {QStringLiteral("node"), name},
            {QStringLiteral("online"), true},
            {QStringLiteral("environment"),
-            QJsonObject{
-                {QStringLiteral("environmentId"), environmentId},
-                {QStringLiteral("capabilities"), capabilities},
-            }},
+            label.isEmpty() ? QJsonObject{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("capabilities"), capabilities}}
+                            : QJsonObject{{QStringLiteral("environmentId"), environmentId},
+                                          {QStringLiteral("label"), label},
+                                          {QStringLiteral("capabilities"), capabilities}}},
        }}},
       {QStringLiteral("rows"), rows},
       {QStringLiteral("links"), links()},

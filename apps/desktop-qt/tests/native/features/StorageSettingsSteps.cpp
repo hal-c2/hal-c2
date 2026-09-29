@@ -66,7 +66,11 @@ void openStorage(World& world) {
     world.connect();
     world.sync();
   }
-  world.native().controller<NavigationController>()->open(NavigationController::Route::settings(QStringLiteral("/settings/storage")));
+  // Another scoped section that is open stays: the scope is shared.
+  auto* navigation = world.native().controller<NavigationController>();
+  if (navigation->route().kind != QLatin1String("settings")) {
+    navigation->open(NavigationController::Route::settings(QStringLiteral("/settings/storage")));
+  }
   world.waitFor([&] { return !scope(world).isEmpty() && !storage(world).isEmpty(); },
                 [&] { return QStringLiteral("storage settings to show; they are %1").arg(show(storage(world))); });
 }
@@ -242,6 +246,11 @@ const Steps steps([] {
     }, [&] { return QStringLiteral("%1 to be listed offline; the scope is %2").arg(c[0], show(scope(world))); });
   });
   step(QStringLiteral("the user is editing settings across all environments"), [](World& world, const Captures&, const Table&) {
+    // The ledger's two other machines, when the feature has linked none.
+    if (world.node.linked.isEmpty()) {
+      supportHere(world);
+      for (const QString& name : {QStringLiteral("Laptop"), QStringLiteral("Build box")}) linkMachine(world, name);
+    }
     openStorage(world);
     chooseEnvironment(world, {});
     waitReady(world, 3);

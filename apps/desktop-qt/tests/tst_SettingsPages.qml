@@ -51,14 +51,15 @@ Item {
             compare(Pages.brickFor("/settings/keybindings"), "KeybindingsSettings");
             compare(Pages.brickFor("/settings/providers"), "ProvidersSettings");
             compare(Pages.brickFor("/settings/source-control"), "SourceControlSettings");
-            compare(Pages.brickFor("/settings/integrations"), "", "the page still renders Integrations");
+            compare(Pages.brickFor("/settings/integrations"), "IntegrationsSettings");
+            compare(Pages.brickFor("/settings/snap-shot"), "", "the page still renders SnapShots");
             compare(Pages.brickFor("/settings/nowhere"), "");
         }
 
         function test_navListsNativePagesAlwaysAndThePagesWhileListed() {
             const labels = rows => rows.map(section => section.label);
             compare(labels(Pages.navRows([], {})), ["General", "Appearance", "Keybindings"]);
-            compare(labels(Pages.navRows([{ to: "/settings/integrations" }], { cluster: {}, providerSettings: {} })), ["General", "Appearance", "Keybindings", "Providers", "Integrations", "Cluster"]);
+            compare(labels(Pages.navRows([{ to: "/settings/snap-shot" }], { cluster: {}, providerSettings: {} })), ["General", "Appearance", "Keybindings", "SnapShots", "Providers", "Cluster"]);
         }
 
         function test_searchFindsNativeSectionsAndDropsThePagesResultsInThem() {
@@ -70,8 +71,8 @@ Item {
             compare(Pages.searchRows("pairing", {}).length, 0, "Connections waits for its state");
             compare(Pages.searchRows("pairing", { connections: {} })[0].label, "Connections");
             compare(Pages.searchRows("sign out", { providerSettings: {} })[0].label, "Providers");
-            const kept = Pages.pageResults([{ to: "/settings/appearance" }, { to: "/settings/integrations" }, { to: "/settings/providers" }]);
-            compare(kept.map(result => result.to), ["/settings/integrations"]);
+            const kept = Pages.pageResults([{ to: "/settings/appearance" }, { to: "/settings/snap-shot" }, { to: "/settings/providers" }]);
+            compare(kept.map(result => result.to), ["/settings/snap-shot"]);
         }
 
         function test_projectGroupingRestoresTheModeUsedBefore() {
@@ -145,7 +146,7 @@ Item {
             verify(!!host);
             tryCompare(host, "status", Loader.Ready);
             compare(host.item.objectName, "generalSettings");
-            host.section = "/settings/integrations";
+            host.section = "/settings/snap-shot";
             verify(!host.active, "the page's section loads nothing");
         }
 

@@ -42,6 +42,9 @@ void publishThemes(FakeNode& node, const QString& environment, const QJsonArray&
 // Another client's save: the document moves on, announced as `config.settings`
 // unless `quietly`.
 void saveElsewhere(FakeNode& node, const QString& key, const QJsonValue& value, bool quietly = false);
+// The same on the environment's document ("" or the node's own for this
+// node's), as the node saves a setting it owns (HalC2.Devices' device.configure).
+void saveOn(FakeNode& node, const QString& environment, const QString& key, const QJsonValue& value);
 // Another environment's document, created on first use; its config
 // snapshot carries it.
 FakeConfig::Document& documentOf(FakeNode& node, const QString& environment);

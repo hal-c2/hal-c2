@@ -480,6 +480,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/scheduled-tasks.feature"),
     QStringLiteral("settings/source-control.feature"),
     QStringLiteral("settings/source-control-writing.feature"),
+    QStringLiteral("settings/integrations.feature"),
 };
 
 QRegularExpression wildcard(const QString& glob) {

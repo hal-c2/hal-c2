@@ -14,8 +14,8 @@ Item {
         function publish(query) {
             Shell.state = { settings: {
                 active: true, activeSection: "/settings/general", searchQuery: query,
-                sections: [{ to: "/settings/general", label: "General" }, { to: "/settings/integrations", label: "Integrations" }],
-                searchResults: [{ to: "/settings/integrations", title: "Theme", sectionLabel: "Integrations", targetId: "theme" }]
+                sections: [{ to: "/settings/general", label: "General" }, { to: "/settings/snap-shot", label: "SnapShots" }],
+                searchResults: [{ to: "/settings/snap-shot", title: "Theme", sectionLabel: "SnapShots", targetId: "theme" }]
             } };
         }
         function init() { Shell.reset(); publish(""); }
@@ -32,7 +32,7 @@ Item {
             keyClick(Qt.Key_Down);
             keyClick(Qt.Key_Return);
             compare(Shell.dispatchedActions[0].action, "settings.navigate");
-            compare(Shell.dispatchedActions[0].payload.to, "/settings/integrations");
+            compare(Shell.dispatchedActions[0].payload.to, "/settings/snap-shot");
             keyClick(Qt.Key_Up);
             keyClick(Qt.Key_Up);
             keyClick(Qt.Key_Up);
@@ -74,7 +74,7 @@ Item {
             verify(findChild(nav, "settingsRow4").current, "Cluster is current");
         }
         function test_routeSectionIsCurrent() {
-            Shell.state = Object.assign({}, Shell.state, { route: { kind: "settings", section: "/settings/integrations" } });
+            Shell.state = Object.assign({}, Shell.state, { route: { kind: "settings", section: "/settings/snap-shot" } });
             let nav = createTemporaryObject(component, root);
             verify(!!nav, "Component exists");
             tryVerify(() => findChild(nav, "settingsRow3") !== null, 1000, "the page's sections are listed");

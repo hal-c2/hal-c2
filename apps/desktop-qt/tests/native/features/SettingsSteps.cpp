@@ -373,6 +373,17 @@ void saveElsewhere(FakeNode& node, const QString& key, const QJsonValue& value, 
              {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), fake.settings}});
 }
 
+void saveOn(FakeNode& node, const QString& environment, const QString& key, const QJsonValue& value) {
+  if (environment.isEmpty() || environment == node.environmentId) {
+    saveElsewhere(node, key, value);
+    return;
+  }
+  FakeConfig::Document& document = documentOf(node, environment);
+  document.settings.insert(key, value);
+  document.version++;
+  sendConfig(node, environment, {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), document.settings}});
+}
+
 FakeConfig::Document& documentOf(FakeNode& node, const QString& environment) {
   return fakeConfig(node).documents[environment];
 }

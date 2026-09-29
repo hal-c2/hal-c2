@@ -84,6 +84,7 @@ qt_add_qml_module(hal_c2_bricks
     ScheduledTaskEditor.qml
     ScheduledTasksSettings.qml
     SourceControlSettings.qml
+    IntegrationsSettings.qml
     SettingsScopeSentence.qml
     StorageSettings.qml
   RESOURCES
