@@ -120,6 +120,17 @@ void NodeClient::post(QObject* context, const QString& path, const QJsonObject& 
   });
 }
 
+QNetworkRequest NodeClient::request(const QString& path, const QString& query, bool socket) const {
+  QUrl url = m_origin;
+  if (socket) url.setScheme(m_origin.scheme() == QLatin1String("https") ? QStringLiteral("wss") : QStringLiteral("ws"));
+  // Already encoded: a node's hubBasePath carries `nodes/<name%40host>`.
+  url.setPath(path, QUrl::TolerantMode);
+  url.setQuery(query);
+  QNetworkRequest request(url);
+  request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
+  return request;
+}
+
 void NodeClient::dispatchCommand(QObject* context, const QString& environment, QJsonObject command, Reply reply) {
   command.insert(QStringLiteral("commandId"), QUuid::createUuid().toString(QUuid::WithoutBraces));
   call(context, environment, QStringLiteral("orchestration.dispatchCommand"), command, std::move(reply));

@@ -72,6 +72,12 @@ public:
   void passOn(const Rpc& rpc);
   // `path` is exact ("/api/pull-requests/diff"); an unknown one is a 404.
   void onHttp(const QString& path, HttpHandler handler) { m_httpHandlers.insert(path, std::move(handler)); }
+  // Any request under `prefix` ("/api/device-hub/"), HTTP or a socket's
+  // handshake: the handler gets the connection with the request unread
+  // (`head` is its request line and headers) and answers it itself, or hands
+  // it to a QWebSocketServer of its own.
+  using RawHandler = std::function<void(QTcpSocket* socket, const QByteArray& head)>;
+  void onRaw(const QString& prefix, RawHandler handler) { m_rawHandlers.insert(prefix, std::move(handler)); }
 
   void send(const QJsonObject& frame);
   // Whether the call came on the connection still open.
@@ -189,6 +195,7 @@ private:
   QTcpServer m_tcp;
   QWebSocketServer m_server;
   QHash<QString, HttpHandler> m_httpHandlers;
+  QHash<QString, RawHandler> m_rawHandlers;
   quint16 m_port = 0;
   QPointer<QWebSocket> m_socket;
   int m_shellSubscription = -1;

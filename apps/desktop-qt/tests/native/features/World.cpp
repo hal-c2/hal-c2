@@ -9,6 +9,7 @@
 #include <QLocale>
 #include <QTest>
 
+#include "Brick.h"
 #include "ComposerController.h"
 #include "DraftController.h"
 #include "Harness.h"
@@ -25,6 +26,10 @@ World::World() {
   m_now = QDateTime::fromString(QStringLiteral("2026-09-23T10:00:00Z"), Qt::ISODate);
   QDir(m_home.path()).mkpath(QStringLiteral("config"));
   start();
+}
+
+World::~World() {
+  brick.reset();
 }
 
 // As main.cpp wires them.
@@ -81,6 +86,7 @@ void World::closeWindow(NativeWindow* window) {
 }
 
 void World::restart() {
+  brick.reset();
   m_windows.reset();
   m_theme.reset();
   m_native.reset();

@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QList>
+#include <QNetworkRequest>
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
@@ -53,6 +54,10 @@ public:
   // A refusal's `error` is the body's `message`, `detail` or `_tag`, else the
   // HTTP status; `result` is then the body.
   void post(QObject* context, const QString& path, const QJsonObject& body, Reply reply);
+  // A request for `path` (and `query`), both percent-encoded, on the node's
+  // origin carrying the access token, for streams the socket does not carry (a device's screen
+  // through /api/device-hub). `socket`: its ws(s) twin, for a QWebSocket.
+  QNetworkRequest request(const QString& path, const QString& query = {}, bool socket = false) const;
   // `orchestration.dispatchCommand` with a fresh commandId.
   void dispatchCommand(QObject* context, const QString& environment, QJsonObject command, Reply reply);
 
