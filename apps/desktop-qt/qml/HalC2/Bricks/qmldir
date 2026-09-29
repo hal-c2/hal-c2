@@ -67,3 +67,5 @@ ArchivedThreads 1.0 ArchivedThreads.qml
 ProviderAuthTerminal 1.0 ProviderAuthTerminal.qml
 ProviderCustomModels 1.0 ProviderCustomModels.qml
 ProviderAcpSessions 1.0 ProviderAcpSessions.qml
+SettingsScopeSentence 1.0 SettingsScopeSentence.qml
+StorageSettings 1.0 StorageSettings.qml

@@ -14,8 +14,8 @@ Item {
         function publish(query) {
             Shell.state = { settings: {
                 active: true, activeSection: "/settings/general", searchQuery: query,
-                sections: [{ to: "/settings/general", label: "General" }, { to: "/settings/storage", label: "Storage" }],
-                searchResults: [{ to: "/settings/storage", title: "Theme", sectionLabel: "Storage", targetId: "theme" }]
+                sections: [{ to: "/settings/general", label: "General" }, { to: "/settings/source-control", label: "Source Control" }],
+                searchResults: [{ to: "/settings/source-control", title: "Theme", sectionLabel: "Source Control", targetId: "theme" }]
             } };
         }
         function init() { Shell.reset(); publish(""); }
@@ -32,7 +32,7 @@ Item {
             keyClick(Qt.Key_Down);
             keyClick(Qt.Key_Return);
             compare(Shell.dispatchedActions[0].action, "settings.navigate");
-            compare(Shell.dispatchedActions[0].payload.to, "/settings/storage");
+            compare(Shell.dispatchedActions[0].payload.to, "/settings/source-control");
             keyClick(Qt.Key_Up);
             keyClick(Qt.Key_Up);
             keyClick(Qt.Key_Up);
@@ -74,7 +74,7 @@ Item {
             verify(findChild(nav, "settingsRow4").current, "Cluster is current");
         }
         function test_routeSectionIsCurrent() {
-            Shell.state = Object.assign({}, Shell.state, { route: { kind: "settings", section: "/settings/storage" } });
+            Shell.state = Object.assign({}, Shell.state, { route: { kind: "settings", section: "/settings/source-control" } });
             let nav = createTemporaryObject(component, root);
             verify(!!nav, "Component exists");
             tryVerify(() => findChild(nav, "settingsRow3") !== null, 1000, "the page's sections are listed");
@@ -126,7 +126,7 @@ Item {
             Shell.state = { settings: settings, route: { kind: "settings", section: "/settings/keybindings" } };
             let nav = createTemporaryObject(component, root);
             verify(!!nav, "Component exists");
-            tryVerify(() => findChild(nav, "settingsRow3") !== null, 1000, "General, Appearance, Keybindings and Storage are listed");
+            tryVerify(() => findChild(nav, "settingsRow3") !== null, 1000, "General, Appearance, Keybindings and Source Control are listed");
             verify(!findChild(nav, "settingsRow4"), "the page's own Keybindings section is not");
             let row = findChild(nav, "settingsRow2");
             compare(row.Accessible.name, "Keybindings");

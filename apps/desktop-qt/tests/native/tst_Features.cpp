@@ -470,6 +470,13 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/layout.feature:The thread's git actions are in the header"),
     QStringLiteral("navigation/appearance.feature:Panels open and close immediately by default"),
     QStringLiteral("navigation/header.feature"),
+    QStringLiteral("settings/storage.feature:Settings for several machines show mixed values"),
+    QStringLiteral("settings/storage.feature:A machine too old for storage cleanup*"),
+    QStringLiteral("settings/scopes-and-inheritance.feature:Changing one axis of the scope*"),
+    QStringLiteral("settings/scopes-and-inheritance.feature:Offline environments are marked*"),
+    QStringLiteral("settings/scopes-and-inheritance.feature:An environment-wide change is saved*"),
+    QStringLiteral("settings/scopes-and-inheritance.feature:Saving on some environments*"),
+    QStringLiteral("settings/scopes-and-inheritance.feature:A setting cannot be changed while*"),
 };
 
 QRegularExpression wildcard(const QString& glob) {
