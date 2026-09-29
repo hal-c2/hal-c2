@@ -49,6 +49,8 @@ private slots:
     qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", profile->profile());
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Terminals.qml")),
                              "HalC2.Shell", 1, 0, "Terminals");
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Keybindings.qml")),
+                             "HalC2.Shell", 1, 0, "Keybindings");
     // Settings opens the native General page, which reads these.
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Settings.qml")),
                              "HalC2.Shell", 1, 0, "Settings");

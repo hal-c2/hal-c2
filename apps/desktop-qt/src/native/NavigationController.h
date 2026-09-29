@@ -49,9 +49,11 @@ public:
 
   // The shell's own settings pages, which the page does not show.
   static inline const QString kClusterSection = QStringLiteral("/settings/cluster");
+  static inline const QString kKeybindingsSection = QStringLiteral("/settings/keybindings");
   static inline const QString kConnectionsSection = QStringLiteral("/settings/connections");
   static bool isNativeSection(const Route& route) {
-    return route == Route::settings(kClusterSection) || route == Route::settings(kConnectionsSection);
+    return route == Route::settings(kClusterSection) || route == Route::settings(kConnectionsSection) ||
+           route == Route::settings(kKeybindingsSection);
   }
 
   NavigationController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
@@ -80,6 +82,7 @@ signals:
 
 private:
   void go(const Route& route, bool replace, bool follow);
+  // On one of the shell's own settings pages.
   void follow();
   void publish();
   void save() const;

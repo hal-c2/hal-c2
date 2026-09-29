@@ -39,6 +39,8 @@ public:
   std::optional<QString> logicalProjectKey(const QString& environmentId, const QString& projectId) const;
   // The project the list is scoped to, if any.
   const sidebar::Nullable& scope() const { return m_scope; }
+  // The rows' keys in the order they render.
+  const QStringList& orderedKeys() const { return m_view.orderedKeys; }
 
   // Tests pin the clock and locale; the app uses the system's.
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }

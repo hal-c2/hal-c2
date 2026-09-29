@@ -102,6 +102,7 @@ ShellWindow {
                     visible: root.nativeSettingsOpen
                 }
 
+
                 WebSurface {
                     id: primaryView
 

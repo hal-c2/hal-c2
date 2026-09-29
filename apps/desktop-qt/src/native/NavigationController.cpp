@@ -149,6 +149,8 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
     open(Route::settings(kClusterSection));
   } else if (action == QLatin1String("cluster.close")) {
     if (m_route == Route::settings(kClusterSection)) back();
+  } else if (action == QLatin1String("keybindings.open")) {
+    open(Route::settings(kKeybindingsSection));
   } else if (action == QLatin1String("connections.open")) {
     open(Route::settings(kConnectionsSection));
   } else if (action == QLatin1String("connections.close")) {

@@ -540,6 +540,7 @@ ShellWindow {
                         visible: root.nativeSettingsOpen
                     }
 
+
                     // The page dims under the drawer; clicking it closes the drawer.
                     Rectangle {
                         anchors.fill: parent
