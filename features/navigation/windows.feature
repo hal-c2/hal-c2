@@ -11,6 +11,8 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/AppWindow.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/AppView.qml
 #   apps/desktop-qt/src/native/NativeShell.cpp (window.new, per-window state)
+#   apps/desktop-qt/src/ShellWindows.cpp (closing one window)
+#   apps/desktop/src/app/DesktopLifecycle.ts (quit on the last window, except macOS; activate reopens)
 #   apps/desktop-qt/tests/tst_ShellWindow.qml (a window's title and minimum size, the zoomed body, a menu at the pointer)
 #   apps/desktop-qt/src/native/LayoutController.cpp (the app zoom)
 #   apps/desktop-qt/src/native/QuitController.cpp (the quit shortcut; Quit is the palette's app.quit)
@@ -99,6 +101,33 @@ Feature: Windows, zoom and quitting
       Given a second window is open
       When the user closes the second window
       Then the first window stays open on the same thread
+
+    @desktop
+    Scenario: Closing the first window leaves the others open
+      Given a second window is open
+      When the user closes the first window
+      Then the second window is still open on its own thread
+      And the app is still running
+      When the user restarts the app
+      Then only the second window reopens
+
+    # Linux and Windows. On macOS the app stays in the dock (main.cpp), as the
+    # Electron desktop did; see the next scenario.
+    @desktop
+    Scenario: Closing the last window quits
+      Given a second window is open
+      When the user closes the second window
+      And the user closes the first window
+      Then the app quits
+
+    # main.cpp reopens the window when the app is activated again, but the
+    # scenarios run on Linux and cannot drive macOS's dock.
+    @desktop @backlog-desktop
+    Scenario: On macOS closing the last window keeps the app in the dock
+      Given the user is on macOS
+      And the user closed the last window
+      When the user clicks the app in the dock
+      Then the window opens again
 
     @desktop
     Scenario: Closing a window keeps its unsent work

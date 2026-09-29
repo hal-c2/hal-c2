@@ -7,6 +7,7 @@
 #include <QJsonObject>
 #include <QQmlEngine>
 #include <QRegularExpression>
+#include <QPointer>
 #include <QSaveFile>
 #include <QUuid>
 #include <QtLogging>
@@ -67,21 +68,22 @@ NativeWindow::NativeWindow(NativeShell* shell, const QString& id, ShellBridge* b
       }
     }
   }
-  if (m_ownedBridge) {
-    // The shared controllers publish on the first window's bridge; this one
-    // shows the same.
-    ShellBridge* main = shell->main()->bridge();
+  if (ShellBridge* shared = shell->m_sharedBridge; bridge != shared) {
+    // The shared controllers publish on the shared bridge; this one shows the
+    // same.
     for (const QString& key : shell->sharedKeys()) {
       bridge->claimKey(key);
-      if (main->state()->contains(key)) bridge->publish(key, main->state()->value(key));
+      if (shared->state()->contains(key)) bridge->publish(key, shared->state()->value(key));
     }
-    connect(main, &ShellBridge::stateEntryChanged, this, [this](const QString& key, const QVariant& value) {
+    connect(shared, &ShellBridge::stateEntryChanged, this, [this](const QString& key, const QVariant& value) {
       if (m_shell->sharedKeys().contains(key)) m_bridge->publish(key, value);
     });
   }
-  bridge->addInterceptor([this](const QString& action, const QVariant& payload) {
-    m_shell->setActiveWindow(this);
-    return handle(action, payload);
+  // The shared bridge outlives the first window, and keeps its interceptor.
+  bridge->addInterceptor([window = QPointer<NativeWindow>(this)](const QString& action, const QVariant& payload) {
+    if (!window) return false;
+    window->m_shell->setActiveWindow(window);
+    return window->handle(action, payload);
   });
   // The sidebar marks the thread the window shows.
   if (auto* navigation = controller<NavigationController>()) {
@@ -171,13 +173,13 @@ void NativeWindow::announce() {
 }
 
 NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)
-    : QObject(parent), m_client(this), m_store(&m_client, this) {
+    : QObject(parent), m_client(this), m_store(&m_client, this), m_sharedBridge(bridge) {
   g_shell = this;
   // Static initialisers register in link order; name order keeps it stable.
   m_registrations = nativeControllerRegistry();
   std::sort(m_registrations.begin(), m_registrations.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
   // The shared ones first, so every window finds them; they publish on the
-  // first window's bridge and the others mirror it.
+  // first window's bridge and every other mirrors it.
   for (const NativeControllerRegistration& registration : m_registrations) {
     if (registration.scope != NativeControllerScope::Shared) continue;
     m_sharedKeys += registration.stateKeys;
@@ -216,15 +218,12 @@ NativeWindow* NativeShell::openWindow(const QString& id) {
     return open;
   }
   const QString windowId = validWindowId(id) ? id : QUuid::createUuid().toString(QUuid::Id128).left(12);
-  ShellBridge* main = this->main()->bridge();
   auto bridge = std::make_unique<ShellBridge>();
-  bridge->setLocalFolderImportEnabled(main->localFolderImportEnabled());
+  bridge->setLocalFolderImportEnabled(m_sharedBridge->localFolderImportEnabled());
   ShellBridge* raw = bridge.get();
   m_windows.push_back(std::make_unique<NativeWindow>(this, windowId, raw, std::move(bridge)));
   NativeWindow* window = m_windows.back().get();
-  if (!m_stateDir.isEmpty()) {
-    window->setStoreDirs(QDir(m_stateDir).filePath(kWindowsDir + QLatin1Char('/') + windowId));
-  }
+  if (!m_stateDir.isEmpty()) window->setStoreDirs(windowDir(windowId));
   if (m_active) activate(window);
   saveWindows();
   emit windowOpened(window);
@@ -232,15 +231,23 @@ NativeWindow* NativeShell::openWindow(const QString& id) {
 }
 
 void NativeShell::closeWindow(const QString& id) {
-  if (id == NativeWindow::kMain) return;
   const auto it = std::find_if(m_windows.begin(), m_windows.end(), [&](const auto& window) { return window->id() == id; });
   if (it == m_windows.end()) return;
+  // The last one keeps its place and files, to reopen with.
+  if (m_windows.size() == 1) {
+    emit lastWindowClosed();
+    return;
+  }
   NativeWindow* window = it->release();
   m_windows.erase(it);
   if (m_activeWindow == window) m_activeWindow = nullptr;
   saveWindows();
-  if (!m_stateDir.isEmpty()) {
-    QDir(QDir(m_stateDir).filePath(kWindowsDir + QLatin1Char('/') + id)).removeRecursively();
+  // Its route and panels; the drafts are every window's.
+  if (!m_stateDir.isEmpty() && id == NativeWindow::kMain) {
+    QFile::remove(QDir(m_stateDir).filePath(QStringLiteral("shell-route.json")));
+    QFile::remove(QDir(m_stateDir).filePath(QStringLiteral("shell-panel.json")));
+  } else if (!m_stateDir.isEmpty()) {
+    QDir(windowDir(id)).removeRecursively();
   }
   emit windowClosing(window);
   window->deleteLater();
@@ -248,7 +255,9 @@ void NativeShell::closeWindow(const QString& id) {
 
 void NativeShell::setStoreDirs(const QString& state, const QString& data) {
   m_stateDir = state;
-  main()->setStoreDirs(state);
+  const QStringList saved = savedWindows();
+  if (!saved.isEmpty()) main()->m_id = saved.first();
+  main()->setStoreDirs(windowDir(main()->id()));
   // Every window's alike, so the first window's load them.
   QDir().mkpath(data);
   if (auto* drafts = controller<DraftController>()) drafts->setStorePath(QDir(data).filePath(QStringLiteral("shell-drafts.json")));
@@ -258,25 +267,34 @@ void NativeShell::setStoreDirs(const QString& state, const QString& data) {
 }
 
 void NativeShell::restoreWindows() {
-  if (m_stateDir.isEmpty()) return;
-  QFile file(QDir(m_stateDir).filePath(kWindowsDir + QStringLiteral(".json")));
-  if (!file.open(QIODevice::ReadOnly)) return;
-  const QJsonArray ids = QJsonDocument::fromJson(file.readAll()).object().value(QStringLiteral("windows")).toArray();
-  for (const QJsonValue& id : ids) {
-    if (validWindowId(id.toString())) openWindow(id.toString());
+  for (const QString& id : savedWindows()) {
+    if (!window(id)) openWindow(id);
   }
+}
+
+QStringList NativeShell::savedWindows() const {
+  if (m_stateDir.isEmpty()) return {};
+  QFile file(QDir(m_stateDir).filePath(kWindowsDir + QStringLiteral(".json")));
+  if (!file.open(QIODevice::ReadOnly)) return {};
+  QStringList ids;
+  for (const QJsonValue& id : QJsonDocument::fromJson(file.readAll()).object().value(QStringLiteral("open")).toArray()) {
+    if (validWindowId(id.toString()) && !ids.contains(id.toString())) ids.append(id.toString());
+  }
+  return ids;
+}
+
+QString NativeShell::windowDir(const QString& id) const {
+  return id == NativeWindow::kMain ? m_stateDir : QDir(m_stateDir).filePath(kWindowsDir + QLatin1Char('/') + id);
 }
 
 void NativeShell::saveWindows() const {
   if (m_stateDir.isEmpty()) return;
   QJsonArray ids;
-  for (const auto& window : m_windows) {
-    if (window->id() != NativeWindow::kMain) ids.append(window->id());
-  }
+  for (const auto& window : m_windows) ids.append(window->id());
   QDir().mkpath(m_stateDir);
   QSaveFile file(QDir(m_stateDir).filePath(kWindowsDir + QStringLiteral(".json")));
   if (!file.open(QIODevice::WriteOnly)) return;
-  file.write(QJsonDocument(QJsonObject{{QStringLiteral("windows"), ids}}).toJson(QJsonDocument::Compact));
+  file.write(QJsonDocument(QJsonObject{{QStringLiteral("open"), ids}}).toJson(QJsonDocument::Compact));
   if (!file.commit()) qWarning("shell windows not saved: %s", qPrintable(file.errorString()));
 }
 

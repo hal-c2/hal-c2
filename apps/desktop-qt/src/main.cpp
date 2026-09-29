@@ -23,6 +23,7 @@
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
+#include "ShellWindows.h"
 #include "StoragePaths.h"
 #include "ThemeStore.h"
 #include "WebProfile.h"
@@ -90,6 +91,8 @@ int main(int argc, char* argv[]) {
   }
   QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
+  // Closing a window closes only it; the last one quits (NativeShell::lastWindowClosed).
+  QGuiApplication::setQuitOnLastWindowClosed(false);
   QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/hal-c2/app-icon.png")));
   useSoftwareRenderingWithoutDisplay();
 
@@ -175,38 +178,30 @@ int main(int argc, char* argv[]) {
   qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
   NativeShell native(&bridge);
   native.registerQmlSingletons();
-  // Each window reopens where the user left it: its route and panels are
-  // state, its drafts the user's unsent work (data).
+  // Each window reopens where the user left it (its route and panels are
+  // state); the drafts are every window's unsent work (data).
   native.setStoreDirs(storage.state, storage.data);
   native.controller<SettingsController>()->setDevicePath(QDir(configDir).filePath(QStringLiteral("preferences.json")));
   ThemeStore theme(configDir);
   // ThemeController's resolved theme is the palette under theme.json.
   theme.applyBaseTheme(bridge.state()->value(QStringLiteral("theme")));
-  QObject::connect(&bridge, &ShellBridge::stateEntryChanged, &theme,
-                   [&theme](const QString& key, const QVariant& value) {
-                     if (key == QStringLiteral("theme")) {
-                       theme.applyBaseTheme(value);
-                     }
-                   });
-  ShellRuntime runtime({configDir, qmlSourceDir}, &bridge, &theme);
-  QObject::connect(&runtime, &ShellRuntime::closed, &app, &QCoreApplication::quit);
-  QObject::connect(&runtime, &ShellRuntime::activated, &native, [&native] { native.setActiveWindow(native.main()); });
-  // Every other window (window.new) is its own engine on its window's bridge.
-  QHash<NativeWindow*, ShellRuntime*> windowRuntimes;
-  QObject::connect(&native, &NativeShell::windowOpened, &runtime,
-                   [&native, &theme, &windowRuntimes, configDir, qmlSourceDir](NativeWindow* window) {
-                     auto* shown = new ShellRuntime({configDir, qmlSourceDir}, window->bridge(), &theme);
-                     windowRuntimes.insert(window, shown);
-                     const QString id = window->id();
-                     QObject::connect(shown, &ShellRuntime::closed, &native, [&native, id] { native.closeWindow(id); },
-                                      Qt::QueuedConnection);
-                     QObject::connect(shown, &ShellRuntime::activated, &native,
-                                      [&native, window] { native.setActiveWindow(window); });
-                     shown->start();
-                   });
-  QObject::connect(&native, &NativeShell::windowClosing, &runtime, [&windowRuntimes](NativeWindow* window) {
-    if (ShellRuntime* shown = windowRuntimes.take(window)) shown->deleteLater();
+  // Every window (the first, window.new's, restored ones) is its own engine on
+  // its window's bridge.
+  ShellWindows windows(&native, {configDir, qmlSourceDir}, &theme);
+  ShellRuntime& runtime = *windows.runtime(native.main());
+  // Closing the last window quits, except on macOS, where the app stays in the
+  // dock and coming back to it shows the window again.
+#ifdef Q_OS_MACOS
+  QObject::connect(&app, &QGuiApplication::applicationStateChanged, &windows, [&windows](Qt::ApplicationState state) {
+    if (state != Qt::ApplicationActive) return;
+    for (QWindow* window : QGuiApplication::topLevelWindows()) {
+      if (window->isVisible()) return;
+    }
+    windows.reopen();
   });
+#else
+  QObject::connect(&native, &NativeShell::lastWindowClosed, &app, &QCoreApplication::quit, Qt::QueuedConnection);
+#endif
 
   // Alerts reach the desktop's notification service; a click shows its thread.
   NativeNotifications notifications;
@@ -341,9 +336,7 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  runtime.start();
+  windows.start();
   native.restoreWindows();
-  const int code = app.exec();
-  qDeleteAll(windowRuntimes);
-  return code;
+  return app.exec();
 }

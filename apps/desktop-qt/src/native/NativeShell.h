@@ -37,7 +37,8 @@ class NativeWindow : public QObject {
   Q_OBJECT
 
 public:
-  // The first window, the one main.cpp builds its bridge for.
+  // The id of the window that keeps its route and panels directly in the
+  // state folder: the first one, on a first launch.
   static inline const QString kMain = QStringLiteral("main");
 
   NativeWindow(NativeShell* shell, const QString& id, ShellBridge* bridge, std::unique_ptr<ShellBridge> owned = {});
@@ -95,9 +96,9 @@ public:
 
   NodeClient* client() { return &m_client; }
   ShellStore* store() { return &m_store; }
-  // The first window's.
+  // The main window's.
   SidebarController* sidebar() { return main()->sidebar(); }
-  // The first window's controller of type T, else the shared one, or null.
+  // The main window's controller of type T, else the shared one, or null.
   template <class T>
   T* controller() const {
     return main()->controller<T>();
@@ -115,6 +116,8 @@ public:
   // controller's is the window the user acts in (activeWindow).
   static NativeWindow* of(const QObject* controller);
 
+  // The oldest open window. There is always one: the last to close stays,
+  // hidden, for the next launch (or macOS's reopen).
   NativeWindow* main() const { return m_windows.front().get(); }
   const std::vector<std::unique_ptr<NativeWindow>>& windows() const { return m_windows; }
   NativeWindow* window(const QString& id) const;
@@ -124,7 +127,8 @@ public:
   // Opens another window (`window.new`), or the one `id` names; it reopens
   // with its own route, drafts and panels after a restart until it closes.
   NativeWindow* openWindow(const QString& id = {});
-  // A window other than the first closed: its route and panels go with it.
+  // The user closed a window: it goes, with its route and panels, and the
+  // others stay. The last one stays too, and says so (lastWindowClosed).
   void closeWindow(const QString& id);
 
   // The one T every window's controllers keep alike (DraftController's
@@ -137,10 +141,11 @@ public:
   }
 
   // Where windows keep their files: the drafts and composer text in `data`,
-  // the first window's route and panels directly in `state`, any other's under
-  // `shell-windows/<id>/`, and which are open in `<state>/shell-windows.json`.
+  // the route and panels of the window `kMain` directly in `state` and any
+  // other's under `shell-windows/<id>/`, and which are open, oldest first, in
+  // `<state>/shell-windows.json`. The first window takes the first of those.
   void setStoreDirs(const QString& state, const QString& data);
-  // Opens the windows that were open when the app last quit.
+  // Opens the rest of the windows that were open when the app last quit.
   void restoreWindows();
 
   // Registers the controllers that name one as `HalC2.Shell` singletons, each
@@ -156,15 +161,24 @@ signals:
   void windowOpened(NativeWindow* window);
   // Before `window` goes (deleteLater): whatever shows it should go first.
   void windowClosing(NativeWindow* window);
+  // The user closed the one window left, which stays open here: the app
+  // quits, or on macOS waits to show it again.
+  void lastWindowClosed();
 
 private:
   friend class NativeWindow;
   void update();
   void activate(NativeWindow* window);
   void saveWindows() const;
+  // The ids shell-windows.json lists, oldest first.
+  QStringList savedWindows() const;
+  QString windowDir(const QString& id) const;
 
   NodeClient m_client;
   ShellStore m_store;
+  // The bridge the shared controllers publish on, which every window's
+  // mirrors: the first window's, which outlives it.
+  ShellBridge* m_sharedBridge;
   QList<NativeControllerRegistration> m_registrations;
   QStringList m_sharedKeys;
   std::vector<NativeControllerEntry> m_shared;

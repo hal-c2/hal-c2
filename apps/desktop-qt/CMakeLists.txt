@@ -69,6 +69,8 @@ qt_add_executable(hal-c2-qt
   src/BackendProcess.h
   src/ShellRuntime.cpp
   src/ShellRuntime.h
+  src/ShellWindows.cpp
+  src/ShellWindows.h
   src/StoragePaths.cpp
   src/StoragePaths.h
   src/ThemeStore.cpp

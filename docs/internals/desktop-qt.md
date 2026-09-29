@@ -386,13 +386,22 @@ binds it to one engine. A shared controller reaches "its" window through
 `NativeShell::of`, which answers the window the user last acted in, and meets
 each window in `attach()`.
 
-The drafts and composer text live in `<data>`. The first window keeps its
-route and panels directly in `<state>`; another keeps them under
+The drafts and composer text live in `<data>`. The window with the id `main`
+keeps its route and panels directly in `<state>`; another keeps them under
 `<state>/shell-windows/<id>/`, and `<state>/shell-windows.json` lists the ids
-open when the app quit, so they reopen with it. Closing a window forgets it and
-its route and panels; closing the first quits. Pass a stable `id` to reopen a
-known window rather than opening another; ids name folders, so the shell
-accepts only `[A-Za-z0-9_-]{1,32}` and generates one otherwise.
+open, in order, so the same set reopens with the app. Closing a window
+(`ShellWindows`: the window's `closing`, then a queued
+`NativeShell::closeWindow`, never inside the close itself) forgets it and its
+route and panels and nothing else. The oldest open window is `main()`: the
+shared controllers still publish on the first window's bridge, which outlives
+that window, and every other window mirrors the shared state from it. The
+last window is never forgotten; the shell emits `lastWindowClosed` and
+`main.cpp` quits, except on macOS, where the app stays running and activating
+it shows the window again (as Electron's `DesktopLifecycle` did). Qt's own
+quit-on-last-window is off, since a hot reload or a closed popup must not
+quit. Pass a stable `id` to reopen a known window rather than opening another;
+ids name folders, so the shell accepts only `[A-Za-z0-9_-]{1,32}` and
+generates one otherwise.
 
 `AppView` and `AppWindow` are the web client's equivalent: another complete
 page sharing `WebProfile` authentication, with a per-view `storageId`
@@ -446,7 +455,7 @@ capture or speech model is included in the Qt binary.
 `ShellRuntime` watches the config dir and, in non-release builds, the in-repo
 `qml/` directory. A change to any `.qml`/`.js`/`qmldir` file clears the component
 cache and loads new root objects in the same engine. The new window loads before
-the old roots are dropped, so the app never hits "last window closed". If both
+the old roots are dropped, and a replaced root is not a closed window. If both
 the user shell and default shell fail, the previous roots stay alive. Generations
 share C++ singleton state, never QML-created objects with generation-specific
 types. The web view is recreated with the window

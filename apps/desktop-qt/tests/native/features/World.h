@@ -16,6 +16,7 @@
 #include "FakeNode.h"
 #include "NativeShell.h"
 #include "ShellBridge.h"
+#include "ShellWindows.h"
 #include "ThemeStore.h"
 #include "WorkspaceController.h"
 
@@ -59,6 +60,13 @@ public:
   QVariant state(const QString& key) const { return m_bridge->state()->value(key); }
   // The desktop quits and starts again: a new shell and page, the same files.
   void restart();
+  // Puts every window of the shell on screen (as main.cpp does), each a
+  // bare window, so the user can close them.
+  ShellWindows& showWindows();
+  // Closes `window` as the user does, from its window on screen.
+  void closeWindow(NativeWindow* window);
+  // How often the user closed the last window left.
+  int lastWindowClosed = 0;
 
   void setTime(const QString& iso);
   void setTime(const QDateTime& now);
@@ -98,4 +106,5 @@ private:
   std::unique_ptr<ShellBridge> m_bridge;
   std::unique_ptr<NativeShell> m_native;
   std::unique_ptr<ThemeStore> m_theme;
+  std::unique_ptr<ShellWindows> m_windows;
 };

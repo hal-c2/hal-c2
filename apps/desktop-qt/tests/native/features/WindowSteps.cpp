@@ -71,6 +71,8 @@ void connectWithThreads(World& world) {
 // first window stays where it is.
 struct SecondWindowWork {
   qsizetype firstSub = 0;
+  // Its id, once the first window closed.
+  QString id;
 };
 
 NativeWindow* openSecond(World& world, const QVariantMap& payload = {}) {
@@ -173,8 +175,37 @@ const Steps steps([] {
     // It was showing the other thread, followed only for it.
     openIn(world, second(world), kSecond);
     world.waitFor([&] { return !stream::followers(world, kSecond).isEmpty(); }, QStringLiteral("the second window to follow its thread"));
-    world.native().closeWindow(second(world)->id());
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    world.closeWindow(second(world));
+  });
+  // The first window closed with others open: the second becomes the main one.
+  step(QStringLiteral("the user closes the first window"), [](World& world, const Captures&, const Table&) {
+    if (NativeWindow* window = second(world)) {
+      openIn(world, window, kSecond);
+      world.node.part<SecondWindowWork>().id = window->id();
+    }
+    world.closeWindow(world.native().main());
+  });
+  step(QStringLiteral("the second window is still open on its own thread"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const auto& windows = world.native().windows();
+    const QString id = world.node.part<SecondWindowWork>().id;
+    expect(windows.size() == 1 && windows.front()->id() == id,
+           QStringLiteral("%1 windows are open, the first %2").arg(windows.size()).arg(windows.front()->id()));
+    expect(shownBy(windows.front().get()) == keyOf(world, kSecond),
+           QStringLiteral("the second window shows %1").arg(shownBy(windows.front().get())));
+    expect(!stream::followers(world, kSecond).isEmpty(), QStringLiteral("the second window stopped following its thread"));
+  });
+  step(QStringLiteral("the app is still running"), [](World& world, const Captures&, const Table&) {
+    expect(world.lastWindowClosed == 0, QStringLiteral("the app was told its last window closed"));
+  });
+  step(QStringLiteral("only the second window reopens"), [](World& world, const Captures&, const Table&) {
+    const auto& windows = world.native().windows();
+    const QString id = world.node.part<SecondWindowWork>().id;
+    expect(windows.size() == 1 && windows.front()->id() == id,
+           QStringLiteral("%1 windows reopened, the first %2").arg(windows.size()).arg(windows.front()->id()));
+    NativeWindow* window = windows.front().get();
+    world.waitFor([&] { return shownBy(window) == keyOf(world, kSecond); },
+                  [&] { return QStringLiteral("the window to reopen on %1; it shows %2").arg(kSecond, shownBy(window)); });
   });
   step(QStringLiteral("the first window stays open on the same thread"), [](World& world, const Captures&, const Table&) {
     expect(world.native().windows().size() == 1, QStringLiteral("%1 windows are open").arg(world.native().windows().size()));
@@ -231,7 +262,7 @@ const Steps steps([] {
     QDir().mkpath(QDir(world.homeDir()).filePath(QStringLiteral("state")));
     QFile file(QDir(world.homeDir()).filePath(QStringLiteral("state/shell-windows.json")));
     expect(file.open(QIODevice::WriteOnly), QStringLiteral("the saved windows could not be written"));
-    file.write(QJsonDocument(QJsonObject{{QStringLiteral("windows"), QJsonArray{c[0], c[1]}}}).toJson());
+    file.write(QJsonDocument(QJsonObject{{QStringLiteral("open"), QJsonArray{NativeWindow::kMain, c[0], c[1]}}}).toJson());
   });
   step(QStringLiteral("only the window \"([^\"]*)\" reopens beside the first"), [](World& world, const Captures& c, const Table&) {
     QStringList ids;
@@ -381,7 +412,10 @@ const Steps steps([] {
            QStringLiteral("there is no Quit command"));
   });
   step(QStringLiteral("the app quits"), [](World& world, const Captures&, const Table&) {
-    expect(quitting(world).quits == 1, QStringLiteral("the app was asked to quit %1 times").arg(quitting(world).quits));
+    // By the quit shortcut, or by closing the last window (main.cpp quits on
+    // lastWindowClosed).
+    const int quits = world.lastWindowClosed > 0 ? world.lastWindowClosed : quitting(world).quits;
+    expect(quits == 1, QStringLiteral("the app was asked to quit %1 times").arg(quits));
   });
   step(QStringLiteral("the app keeps running"), [](World& world, const Captures&, const Table&) {
     expect(quitting(world).quits == 0, QStringLiteral("the app was asked to quit"));

@@ -53,7 +53,6 @@ struct Title {
 
 Title layOutTitle(World& world) {
   current = &world;
-  registerSingletons();
   QQmlEngine engine;
   engine.addImportPath(QStringLiteral(HAL_C2_QML_DIR));
   QQmlComponent component(&engine);
@@ -80,6 +79,9 @@ Title layOutTitle(World& world) {
 }
 
 const Steps steps([] {
+  // Before any ShellRuntime (World::showWindows) registers its own: the first
+  // registration of a singleton is the one QML uses.
+  registerSingletons();
   step(QStringLiteral("a long thread title"), [](World& world, const Captures&, const Table&) {
     // The thread the background looks at, renamed.
     QJsonObject row = world.node.threads.value(kThread);

@@ -262,6 +262,14 @@ QString ShellRuntime::sourceFingerprint() const {
   return QString::fromLatin1(hash.result().toHex());
 }
 
+void ShellRuntime::show() {
+  if (QQuickWindow* window = rootWindow()) {
+    window->show();
+    window->raise();
+    window->requestActivate();
+  }
+}
+
 QQuickWindow* ShellRuntime::rootWindow() const {
   if (m_engine == nullptr) {
     return nullptr;

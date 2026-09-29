@@ -1,7 +1,9 @@
 #include "World.h"
 
 #include <QDateTime>
+#include <QCoreApplication>
 #include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocale>
@@ -52,10 +54,34 @@ void World::start() {
   setTime(m_now);
   QObject::connect(m_bridge.get(), &ShellBridge::actionRequested, m_bridge.get(),
                    [this](const QString& type, const QVariant& payload) { onPageAction(type, payload.toMap()); });
+  QObject::connect(m_native.get(), &NativeShell::lastWindowClosed, m_native.get(), [this] { ++lastWindowClosed; });
   m_native->restoreWindows();
 }
 
+ShellWindows& World::showWindows() {
+  if (!m_windows) {
+    const QString dir = m_home.filePath(QStringLiteral("windows"));
+    QDir().mkpath(dir);
+    QFile shell(QDir(dir).filePath(QStringLiteral("shell.qml")));
+    if (!shell.exists() && shell.open(QIODevice::WriteOnly)) shell.write("import QtQuick\nWindow { visible: true }\n");
+    shell.close();
+    m_windows = std::make_unique<ShellWindows>(m_native.get(), ShellRuntime::Options{dir, {}}, m_theme.get());
+    m_windows->start();
+  }
+  return *m_windows;
+}
+
+void World::closeWindow(NativeWindow* window) {
+  ShellRuntime* runtime = showWindows().runtime(window);
+  expect(runtime && runtime->window(), QStringLiteral("the window %1 is not on screen").arg(window->id()));
+  runtime->window()->close();
+  // The shell closes it once the window's own close is over.
+  QCoreApplication::sendPostedEvents();
+  QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
 void World::restart() {
+  m_windows.reset();
   m_theme.reset();
   m_native.reset();
   m_bridge.reset();
