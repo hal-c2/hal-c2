@@ -5,6 +5,7 @@
 #   apps/web/src/components/chat/ComposerPrimaryActions.tsx (queue, steer, stop)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (stop while running, steer or queue, mod+Enter)
 #   apps/desktop-qt/tests/tst_Composer.qml
+#   apps/desktop-qt/src/native/ComposerController.cpp (the queue in the turn, cancel and steer)
 #   apps/tui/src/components/ChatView.tsx (Esc interrupts)
 #   apps/tui/qml/HalC2/Tui/ShellKeymap.qml (a held Esc does not repeat)
 #   packages/shared/src/keybindings.ts (composer.sendAlternate, thread.steerQueuedMessage, thread.editQueuedMessage)
@@ -130,6 +131,12 @@ Feature: Follow-ups while the agent is working
     When the user chooses to stop
     Then the running turn is interrupted
 
+  @desktop
+  Scenario: A shortcut bound to stop interrupts the running turn
+    Given "thread.stop" is bound to mod+shift+.
+    When the user presses mod+shift+.
+    Then the running turn is interrupted
+
   @tui
   Scenario: Escape clears the draft first, then stops the turn
     Given the user has typed "wait"
@@ -144,3 +151,34 @@ Feature: Follow-ups while the agent is working
     When the user clicks "All projects"
     And the user holds Escape
     Then the turn is still running
+
+  @desktop
+  Scenario: Queued messages are listed in the order they run
+    Given "check the logs" and "update the docs" are queued
+    Then the composer lists the queued messages "check the logs" and "update the docs"
+
+  @desktop
+  Scenario: Removing a queued message cancels its run
+    Given "check the logs" and "update the docs" are queued
+    When the user removes "check the logs" from the queue
+    Then the node is asked to cancel the queued run of "check the logs"
+
+  @desktop
+  Scenario: A removal the node refuses is reported
+    Given "check the logs" and "update the docs" are queued
+    And the node refuses "queued-run.cancel" with "run already started"
+    When the user removes "check the logs" from the queue
+    Then the user sees an "error" toast "Failed to remove the queued message." saying "run already started"
+
+  @desktop
+  Scenario: A queued message can steer the running turn
+    Given "check the logs" and "update the docs" are queued
+    When the user steers the running turn with the queued "update the docs"
+    Then the node is asked to steer the running turn with the queued run of "update the docs"
+
+  @desktop
+  Scenario: A steer the node refuses is reported
+    Given "check the logs" and "update the docs" are queued
+    And the node refuses "queued-message.promote-to-steer" with "provider cannot steer"
+    When the user steers the running turn with the queued "update the docs"
+    Then the user sees an "error" toast "Failed to steer with the queued message." saying "provider cannot steer"

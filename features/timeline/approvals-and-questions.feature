@@ -12,6 +12,7 @@
 #   apps/web/src/components/chat/ComposerPendingApprovalPanel.tsx
 #   apps/web/src/components/chat/ComposerPendingUserInputPanel.tsx
 #   apps/tui/src/approvals.ts (stale versus transient respond failure)
+#   apps/desktop-qt/src/native/ComposerController.cpp (answers sent once, failed answers)
 #   apps/tui/src/components/ChatView.tsx (approve, decline, cycle pending approvals)
 #   apps/tui/src/components/ComposerPendingUserInputPanel.tsx
 #
@@ -104,6 +105,23 @@ Feature: Approvals and agent questions
       | reason                              | state                                   |
       | the request was already resolved    | closed                                  |
       | the connection dropped for a moment | still open so the user can answer again |
+
+  @desktop
+  Scenario: An answer waiting on the node is not sent twice
+    Given the agent asks to run "npm test"
+    And the node holds its answers
+    When the user approves it
+    Then the approval shows it is being answered
+    When the user approves it
+    Then the node receives one answer
+
+  @desktop
+  Scenario: A failed answer is reported and can be sent again
+    Given the agent asks to run "npm test"
+    And the node refuses "runtime-request.respond" with "connection closed"
+    When the user approves it
+    Then the user sees an "error" toast "Failed to submit approval decision." saying "connection closed"
+    And the approval is still open so the user can answer again
 
   # TUI: implemented in apps/tui/src/components/ComposerPendingUserInputPanel.tsx
   @shared @backlog-mobile @backlog-tui

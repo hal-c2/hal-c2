@@ -1,7 +1,8 @@
 // The shell's keymap (KeybindingController): pressing keys the way
 // ShellWindow's window shortcuts hand them over, the rules the node keeps in
 // keybindings.json, and Settings → Keybindings over them
-// (features/navigation/keybinding*.feature, desktop/native-keybindings.feature).
+// (features/navigation/keybinding*.feature, desktop/native-keybindings.feature for
+// who takes a key under focus).
 //
 // A press goes where ShellWindow sends it: with no window shortcut for the
 // sequence, or one standing down for the focused page or terminal, the key

@@ -3,7 +3,7 @@
 #   packages/contracts/src/keybindings.ts (limits, forward-compatible decoding, KeybindingsConfigParseError)
 #   packages/shared/src/keybindings.ts (when-expression evaluation)
 #   apps/server-ex/lib/hal_c2/keybindings.ex (server.upsertKeybinding, server.removeKeybinding)
-#   apps/desktop-qt/src/native/KeybindingController.cpp (the desktop merges config.keybindings over its defaults)
+#   apps/desktop-qt/src/native/KeybindingController.cpp (the desktop merges config.keybindings over its defaults, as the node changes them)
 #   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the @desktop scenarios against a fake node)
 
 Feature: Customising keybindings
@@ -96,6 +96,20 @@ Feature: Customising keybindings
       And keybindings.json binds mod+alt+r to "script.test.run"
       When the user presses mod+alt+r
       Then the "test" script runs
+
+    @desktop
+    Scenario: A rule the node pushes applies at once
+      Given no custom keybindings
+      When the node adds the rule mod+alt+g for "diff.toggle"
+      And the user presses mod+alt+g
+      Then "diff.toggle" runs
+
+    @desktop
+    Scenario: A rule the node removes stops applying
+      Given "diff.toggle" is bound to mod+alt+g
+      When the node removes every custom rule
+      And the user presses mod+alt+g
+      Then "diff.toggle" does not run
 
     @node
     Scenario Outline: Rules beyond the limits are rejected

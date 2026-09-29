@@ -6,6 +6,7 @@
 #   apps/desktop-qt/src/native/KeybindingController.cpp (the desktop's keymap: native commands, keybinding.press for the page's)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts, standing down for a focused page or terminal)
 #   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the @desktop scenarios against a fake node)
+#   apps/web/src/components/Sidebar.tsx (thread.previous, thread.next and thread.jump follow the sidebar's order)
 #   apps/desktop-qt/qml/HalC2/Bricks/ModelPicker.qml (modelPicker.previousProvider, nextProvider and jump.1-9 while the picker is open)
 #   Keybinding ids: sidebar.toggle, navigation.back, navigation.forward, terminal.toggle,
 #   terminal.split, terminal.splitVertical, terminal.new, terminal.close, rightPanel.toggle,
@@ -369,3 +370,58 @@ Feature: Keybindings
       When the user presses mod+l
       Then the preview's address is not focused
 
+  Rule: Shortcuts move between threads
+
+    Background:
+      Given the time is "2026-09-23T10:00:00Z"
+      And the desktop's node "node-a" serves the environment "env-a"
+      And the node has these threads:
+        | id | project | title  | createdAt            |
+        | t1 | p1      | First  | 2026-09-23T09:50:00Z |
+        | t2 | p1      | Second | 2026-09-23T09:40:00Z |
+        | t3 | p1      | Third  | 2026-09-23T09:30:00Z |
+      And the node has the project "p1" titled "proj-1"
+      And the desktop shell is connected to its node
+
+    @desktop
+    Scenario: The next and previous thread follow the sidebar
+      Given the user opens "env-a:t1" from the sidebar
+      When the user presses mod+shift+]
+      Then the window shows "env-a:t2"
+      When the user presses mod+shift+[
+      Then the window shows "env-a:t1"
+
+    @desktop
+    Scenario: There is no thread past either end of the sidebar
+      Given the user opens "env-a:t3" from the sidebar
+      When the user presses mod+shift+]
+      Then the window shows "env-a:t3"
+
+    @desktop
+    Scenario: A thread's number opens it
+      Given the user opens "env-a:t1" from the sidebar
+      When the user presses mod+3
+      Then the window shows "env-a:t3"
+
+    @desktop
+    Scenario: The next thread reaches a thread on an environment the node is linked to
+      Given the node is linked to "env-c"
+      And "env-c" has the thread "t7" titled "Deploy" in "ops" on the branch "main"
+      And the user opens "env-a:t3" from the sidebar
+      When the user presses mod+shift+]
+      Then the window shows "env-c:t7"
+      When the user presses mod+shift+[
+      Then the window shows "env-a:t3"
+
+    @desktop
+    Scenario: The new thread shortcut starts one in the project the window shows
+      Given the user opens "env-a:t2" from the sidebar
+      When the user presses mod+n
+      Then the window shows a new draft in "proj-1"
+
+    @desktop
+    Scenario: The back shortcut returns where the user came from
+      Given the user opens "env-a:t1" from the sidebar
+      And the user opens "env-a:t2" from the sidebar
+      When the user presses mod+[
+      Then the window shows "env-a:t1"
