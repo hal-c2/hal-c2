@@ -671,9 +671,12 @@ id and the page is told each change: `workspace.envMode.set`,
 `.startFromOrigin.set` and `.environment.set` go on to it after they land, and
 a branch picked for a draft as `workspace.checkout.follow {draftId, branch,
 worktreePath, envMode}`. Which thread a draft is, `NativeShell` asks
-`DraftController` (`setDraftResolver`). A linked thread's header is its rows:
-the node serves `vcs` and `config` for its cluster only, so its branch is the
-thread row's and it has no editors or git status.
+`DraftController` (`setDraftResolver`). The `vcs` shape names the thread's
+environment, so a linked thread's git status comes through its link; while the
+link is down the subscription fails at once with the link's message
+(`gitError`), and it is followed again when the environment comes back. The
+header watches `config` for the cluster only, so a linked thread has no
+editors.
 
 The terminal drawer is native: `TerminalDrawer` draws each of the thread's
 terminals with [qml-ghostty](https://github.com/hal-c2/qml-ghostty)'s
@@ -979,9 +982,11 @@ requests (PR, MR). Actions: `git.quick`, `git.menu {id}`, `git.commit
 A stacked action is one `gitAction` subscription; its stage and last hook line
 update one loading toast in place, and the node's result toast (with its
 next-step CTA) replaces it. The subscription is dropped, not resent, when the
-connection drops, since the node would run the action twice. The node routes
-neither `vcs` nor `gitAction` through its links, so a linked thread publishes
-`available: false` with an `unavailableReason` the brick shows.
+connection drops, since the node would run the action twice. `gitAction`
+names the environment, so a linked thread's actions run through its link. While
+an environment is offline the brick publishes `available: false`, with the
+link's message (`EnvironmentUnreachableError`) as the `unavailableReason` it
+shows; a refused action or call carries the same message in its error toast.
 
 ### Composer layout
 

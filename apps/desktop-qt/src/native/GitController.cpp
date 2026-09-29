@@ -266,12 +266,12 @@ QString GitController::menuReason(const QString& id) const {
 void GitController::publish() {
   if (!m_active) return;
   const auto& place = workspace()->place();
-  // The node does not route `vcs` or `gitAction` through its links.
-  if (place && m_store->nodeServing(place->environmentId).isEmpty()) {
-    m_bridge->publish(QStringLiteral("git"),
-                      QVariantMap{{QStringLiteral("available"), false},
-                                  {QStringLiteral("unavailableReason"),
-                                   QStringLiteral("Git actions are not available for threads on linked environments.")}});
+  // A link that is down says why when the checkout's status is followed.
+  const QString unreachable = workspace()->gitError();
+  if (place && (!m_store->environmentOnline(place->environmentId) || !unreachable.isEmpty())) {
+    QVariantMap git{{QStringLiteral("available"), false}};
+    if (!unreachable.isEmpty()) git.insert(QStringLiteral("unavailableReason"), unreachable);
+    m_bridge->publish(QStringLiteral("git"), git);
     return;
   }
   if (!place || place->cwd().isEmpty()) {
@@ -328,7 +328,7 @@ bool GitController::handle(const QString& action, const QVariant& payload) {
   if (!m_active || !action.startsWith(QLatin1String("git."))) return false;
   const QVariantMap args = payload.toMap();
   const auto& place = workspace()->place();
-  const bool ready = place && !place->cwd().isEmpty() && !m_store->nodeServing(place->environmentId).isEmpty();
+  const bool ready = place && !place->cwd().isEmpty() && m_store->environmentOnline(place->environmentId);
   if (!ready) return true;
   if (action == QLatin1String("git.quick")) {
     runQuick();
@@ -444,7 +444,7 @@ void GitController::run(const QString& action, const QString& message, const std
   m_action = m_client->subscribe(
       {
           {QStringLiteral("type"), QStringLiteral("gitAction")},
-          {QStringLiteral("node"), m_store->nodeServing(place.environmentId)},
+          {QStringLiteral("environment"), place.environmentId},
           {QStringLiteral("input"), input},
       },
       [this](const QJsonObject& frame) { onActionFrame(frame); });

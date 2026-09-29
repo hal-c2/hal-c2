@@ -729,6 +729,19 @@ const Steps steps([] {
     expect(!fake(world).inputs.isEmpty() && fake(world).inputs.last().value(QLatin1String("action")) == QStringLiteral("push"),
            QStringLiteral("the node was asked %1").arg(show(fake(world).inputs.value(fake(world).inputs.size() - 1).toVariantMap())));
   });
+  // Threads the node reaches through a link.
+  step(QStringLiteral("the action ran on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QString environment;
+    for (const QJsonObject& sub : std::as_const(world.node.subscriptions)) {
+      const QJsonObject shape = sub.value(QLatin1String("shape")).toObject();
+      if (shape.value(QLatin1String("type")) == QLatin1String("gitAction")) environment = shape.value(QLatin1String("environment")).toString();
+    }
+    expect(environment == c[0], QStringLiteral("the last action ran on \"%1\"").arg(environment));
+  });
+  step(QStringLiteral("the git actions are available again"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return git(world).value(QStringLiteral("available")).toBool() && git(world).value(QStringLiteral("unavailableReason")).isNull(); },
+                  [&] { return QStringLiteral("the git actions are %1").arg(show(git(world))); });
+  });
   step(QStringLiteral("the git actions say %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return git(world).value(QStringLiteral("unavailableReason")) == c[0] && !git(world).value(QStringLiteral("available")).toBool(); },
                   [&] { return QStringLiteral("the git actions are %1").arg(show(git(world))); });

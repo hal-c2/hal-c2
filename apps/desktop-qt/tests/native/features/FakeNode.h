@@ -161,6 +161,7 @@ private:
   void dispatchCommand(const Rpc& rpc);
   QJsonArray links() const;
   QJsonObject linkedEnvironment(const QString& environment) const;
+  QJsonObject unreachable(const QString& environment) const;
   void sendLinkFrame(const QString& type, const QString& environment, QJsonObject frame);
 
   QWebSocketServer m_server;

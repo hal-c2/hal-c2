@@ -6,6 +6,7 @@
 #   apps/server-ex/lib/hal_c2/git_actions.ex (gitAction events and result toasts)
 #   apps/server-ex/lib/hal_c2/vcs.ex (vcs.pull, vcs.init)
 #   apps/server-ex/lib/hal_c2/source_control.ex (sourceControl.publishRepository)
+#   apps/server-ex/lib/hal_c2/links.ex (a linked environment's requests, and the error while its link is down)
 #   Shared domain: source-control/git-actions.feature, push-pull-and-default-branch.feature and
 #   commit-and-generated-messages.feature own what the actions do; this file owns that the Qt
 #   shell runs them itself and reports each outcome.
@@ -121,8 +122,20 @@ Feature: The desktop shell runs the thread's git actions itself
   Rule: Threads the node reaches through a link
 
     @desktop
-    Scenario: A linked thread's git actions say they are unavailable
+    Scenario: A git action on a linked environment runs through the link
       Given the node is linked to "env-c"
-      And "env-c" has the thread "t7" titled "Deploy" in "ops" on the branch "main"
+      And "env-c" has the thread "t7" titled "Deploy" in "shop" on the branch "feature/tax"
       When the user goes to "env-c:t7"
-      Then the git actions say "Git actions are not available for threads on linked environments."
+      And the user commits with the message "Add tax"
+      Then the action ran on "env-c"
+      And a commit "Add tax" holds both files
+
+    @desktop
+    Scenario: A link that is down says why its git actions cannot run
+      Given the node is linked to "env-c"
+      And "env-c" has the thread "t7" titled "Deploy" in "shop" on the branch "feature/tax"
+      And "env-c" becomes unreachable
+      When the user goes to "env-c:t7"
+      Then the git actions say "env-c cannot be reached."
+      When "env-c" is reachable again
+      Then the git actions are available again

@@ -243,18 +243,23 @@ QJsonObject WorkspaceController::threadRow() const {
   return m_store->threadRow(m_place->threadKey());
 }
 
-// The checkout's status, from whichever cluster member serves the thread. The
-// node does not route `vcs` through its links, so a linked thread's branch is
-// the one its row names.
+// The checkout's status, from wherever the node reaches the thread's
+// environment: a cluster member or a link. It is followed again when the
+// environment comes back online, since a link that is down ends it at once
+// with its reason (gitError()).
 void WorkspaceController::follow(const QString& cwd) {
-  const QString node = m_place ? m_store->nodeServing(m_place->environmentId) : QString();
-  const QString key = node.isEmpty() || cwd.isEmpty() ? QString() : node + QLatin1Char('\n') + cwd;
+  const QString environment = m_place ? m_place->environmentId : QString();
+  const bool online = !environment.isEmpty() && m_store->environmentOnline(environment);
+  const QString key = environment.isEmpty() || cwd.isEmpty()
+                          ? QString()
+                          : environment + QLatin1Char('\n') + cwd + (online ? QStringLiteral("\n1") : QStringLiteral("\n0"));
   if (key == m_vcsKey) return;
   if (m_vcs) m_client->unsubscribe(m_vcs);
   m_vcs = 0;
   m_vcsKey = key;
-  if (m_git) {
+  if (m_git || !m_gitError.isEmpty()) {
     m_git.reset();
+    m_gitError.clear();
     emit gitChanged();
   }
   const bool hadRefs = !m_refsCwd.isEmpty();
@@ -267,10 +272,17 @@ void WorkspaceController::follow(const QString& cwd) {
   m_vcs = m_client->subscribe(
       {
           {QStringLiteral("type"), QStringLiteral("vcs")},
-          {QStringLiteral("node"), node},
+          {QStringLiteral("environment"), environment},
           {QStringLiteral("cwd"), cwd},
       },
       [this](const QJsonObject& frame) {
+        if (frame.value(QLatin1String("t")).toString() == QLatin1String("error")) {
+          m_git.reset();
+          m_gitError = frame.value(QLatin1String("reason")).toVariant().toString();
+          emit gitChanged();
+          publish();
+          return;
+        }
         if (frame.value(QLatin1String("t")).toString() != QLatin1String("vcs")) return;
         const QJsonObject event = frame.value(QLatin1String("event")).toObject();
         const QString tag = text(event, "_tag");

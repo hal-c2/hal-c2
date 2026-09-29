@@ -149,6 +149,15 @@ void FakeNode::setLinkProblem(const QString& environment, const QString& problem
   if (shellLinks) sendLinkFrame(QStringLiteral("shell.linkNode"), environment, {{QStringLiteral("online"), problem.isEmpty()}});
 }
 
+// What the node answers a request for a linked environment while its link is
+// down (HalC2.Links.unreachable/3).
+QJsonObject FakeNode::unreachable(const QString& environment) const {
+  return {{QStringLiteral("_tag"), QStringLiteral("EnvironmentUnreachableError")},
+          {QStringLiteral("environmentId"), environment},
+          {QStringLiteral("reason"), linkProblems.value(environment)},
+          {QStringLiteral("message"), QStringLiteral("%1 cannot be reached.").arg(environment)}};
+}
+
 QJsonObject FakeNode::linkedEnvironment(const QString& environment) const {
   return {{QStringLiteral("environmentId"), environment},
           {QStringLiteral("label"), linkLabels.value(environment, environment)},
@@ -244,6 +253,12 @@ void FakeNode::onMessage(QWebSocket* socket, const QString& text) {
   if (type == QLatin1String("sub")) {
     subscriptions.append(message);
     const QJsonObject shape = message.value(QLatin1String("shape")).toObject();
+    const QString down = shape.value(QLatin1String("environment")).toString();
+    if (linkProblems.contains(down)) {
+      const QJsonObject detail = unreachable(down);
+      send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), detail.value(QLatin1String("message"))}, {QStringLiteral("detail"), detail}});
+      return;
+    }
     const auto handler = m_shapes.constFind(shape.value(QLatin1String("type")).toString());
     if (handler == m_shapes.cend()) return;
     m_live.insert(id, shape);
@@ -254,6 +269,12 @@ void FakeNode::onMessage(QWebSocket* socket, const QString& text) {
     send({{QStringLiteral("t"), QStringLiteral("pong")}});
   } else if (type == QLatin1String("rpc")) {
     const Rpc rpc{id, message.value(QLatin1String("method")).toString(), message.value(QLatin1String("payload")).toObject(), socket};
+    const QString down = message.value(QLatin1String("environment")).toString();
+    if (linkProblems.contains(down)) {
+      const QJsonObject detail = unreachable(down);
+      refuse(rpc, detail.value(QLatin1String("message")).toString(), detail);
+      return;
+    }
     auto handler = m_rpc.constFind(rpc.method);
     if (handler == m_rpc.cend()) {
       const qsizetype dot = rpc.method.indexOf(QLatin1Char('.'));

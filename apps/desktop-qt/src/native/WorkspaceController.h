@@ -83,6 +83,8 @@ public:
   // The route's checkout status; none while unknown or not followed (a linked
   // environment's, whose `vcs` the node does not route).
   const std::optional<Git>& git() const { return m_git; }
+  // Why the checkout's status could not be followed (a link that is down).
+  const QString& gitError() const { return m_gitError; }
   // Asks the node to read the checkout's status again.
   void refreshGit();
   // How drafts resolve; without one a draft route has no workspace.
@@ -161,6 +163,7 @@ private:
   int m_vcs = 0;
   QString m_vcsKey;
   std::optional<Git> m_git;
+  QString m_gitError;
   // Editors of environments other than the node's own (`config` shape); the
   // node's own come with SettingsController.
   int m_config = 0;
