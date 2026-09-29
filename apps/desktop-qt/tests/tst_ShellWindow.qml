@@ -46,6 +46,20 @@ Item {
         }
     }
 
+    // A layout with a select in its zoomed content.
+    Component {
+        id: comboWindowComponent
+        ShellWindow {
+            ShellComboBox {
+                objectName: "combo"
+                x: 40
+                y: 50
+                width: 200
+                model: ["Alpha", "Beta"]
+            }
+        }
+    }
+
     TestCase {
         name: "ShellWindowTests"
         when: windowShown
@@ -100,6 +114,51 @@ Item {
             fuzzyCompare(shown.x, 300, 1);
             fuzzyCompare(shown.y, 180, 1);
             menu.close();
+        }
+    
+        // Where an item draws in the window: its scene rect, whatever the
+        // transforms (the body's, a popup's own) between.
+        function sceneRect(item) {
+            const topLeft = item.mapToItem(null, 0, 0);
+            const bottomRight = item.mapToItem(null, item.width, item.height);
+            return Qt.rect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
+        }
+
+        // Popups follow the zoom as the body does: a select's list opens
+        // under it at its zoomed width.
+        function test_selectPopupFollowsTheZoom() {
+            Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 2 } });
+            const window = createTemporaryObject(comboWindowComponent, null);
+            verify(waitForRendering(window.contentItem));
+            const combo = findChild(window.contentItem, "combo");
+            combo.popup.open();
+            tryVerify(() => combo.popup.opened);
+            const field = sceneRect(combo);
+            const list = sceneRect(combo.popup.background);
+            fuzzyCompare(field.width, 400, 1);
+            fuzzyCompare(list.width, field.width, 1);
+            fuzzyCompare(list.x, field.x, 1);
+            fuzzyCompare(list.y, field.y + field.height + 8, 1);
+            combo.popup.close();
+        }
+
+        // ...and a dialog in the overlay draws at the zoom, still centred.
+        function test_dialogFollowsTheZoom() {
+            Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 2 } });
+            const window = createTemporaryObject(windowComponent, null);
+            verify(waitForRendering(window.contentItem));
+            Shell.state = Object.assign({}, Shell.state, {
+                confirmation: { requestId: "confirm:1", title: "Delete thread?", description: "", confirmLabel: "Delete" }
+            });
+            const dialog = findChild(window, "confirmDialog");
+            tryVerify(() => dialog.opened);
+            const shown = sceneRect(dialog.background);
+            fuzzyCompare(shown.width, dialog.width * 2, 1);
+            verify(shown.width <= window.width);
+            fuzzyCompare(shown.x + shown.width / 2, window.width / 2, 1);
+            fuzzyCompare(shown.y + shown.height / 2, window.height / 2, 1);
+            Shell.state = Object.assign({}, Shell.state, { confirmation: null });
+            tryVerify(() => !dialog.visible);
         }
     }
 }

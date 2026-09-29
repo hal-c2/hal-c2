@@ -25,7 +25,9 @@ Dialog {
     parent: Overlay.overlay
     modal: true
     anchors.centerIn: parent
-    width: Math.min(440, (parent?.width ?? 472) - 32)
+    scale: Shell.state.layout?.zoom ?? 1
+    transformOrigin: Item.TopLeft
+    width: Math.min(440, (parent?.width ?? 472) / scale - 32)
     padding: 20
     closePolicy: Popup.CloseOnEscape
     title: question?.title ?? ""

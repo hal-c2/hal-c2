@@ -36,8 +36,10 @@ Popup {
 
     objectName: "themeEditor"
     anchors.centerIn: parent
-    width: Math.min(560, parent ? parent.width - 48 : 560)
-    height: Math.min(640, parent ? parent.height - 48 : 640)
+    scale: Shell.state.layout?.zoom ?? 1
+    transformOrigin: Item.TopLeft
+    width: Math.min(560, parent ? parent.width / scale - 48 : 560)
+    height: Math.min(640, parent ? parent.height / scale - 48 : 640)
     modal: true
     padding: 16
 

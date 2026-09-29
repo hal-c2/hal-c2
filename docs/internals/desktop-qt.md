@@ -965,8 +965,12 @@ as `layout.zoom`. `view.zoomIn`, `view.zoomOut` and `view.resetZoom` change it.
 `ShellWindow` scales its `body` rather than the fonts, so a rice needs no zoom
 awareness; the menu hosts stay unscaled in window coordinates, so anything
 that places a popup at a pointer maps through the scaled item
-(`mapToItem(parent, ...)`, never `null`). Qt Quick Controls popups in the
-overlay are not scaled, and the embedded page is scaled as a texture.
+(`mapToItem(parent, ...)`, never `null`). Other popups and dialogs live in
+the unscaled overlay, so each sets `scale` to `layout.zoom` about
+`Item.TopLeft` (the origin the popup positioner assumes, centring included)
+and divides any size it takes from the window by it; context menus and tool
+tips stay unscaled, as native ones do. The embedded page is scaled as a
+texture.
 `DefaultShell` snaps the sidebar (one relayout, no animated width); examples
 that ease `Layout.preferredWidth` to 0 hide it once it is gone
 (`visible: !sidebarCollapsed || width > 0` — guard on the collapsed flag, not
