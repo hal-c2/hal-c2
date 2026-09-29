@@ -77,10 +77,11 @@ void ThreadDevices::setTab(const QString& tabId) {
 
 void ThreadDevices::follow() {
   if (m_subscription >= 0 || m_node.isEmpty() || m_environment.isEmpty()) return;
+  const QPointer<ThreadDevices> self(this);
   m_subscription = m_client->subscribe({{QStringLiteral("type"), QStringLiteral("devices")}, {QStringLiteral("node"), m_node}},
-                                       [this](const QJsonObject& frame) {
-                                         if (frame.value(QLatin1String("t")) == QLatin1String("devices"))
-                                           take(frame.value(QLatin1String("state")).toObject());
+                                       [self](const QJsonObject& frame) {
+                                         if (self && frame.value(QLatin1String("t")) == QLatin1String("devices"))
+                                           self->take(frame.value(QLatin1String("state")).toObject());
                                        });
 }
 
