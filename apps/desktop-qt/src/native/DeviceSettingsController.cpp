@@ -158,6 +158,8 @@ private:
       m_loaded = false;
       m_platformsShown = false;
       m_updateError = {};
+      // A request in flight answers for the old environment: the switches are free again.
+      m_pending.clear();
       ++m_generation;
       if (!environmentId.isEmpty()) {
         const QString node = m_store->nodeServing(environmentId);
@@ -186,9 +188,10 @@ private:
     m_pending = pending;
     const QPointer<DeviceSettingsController> self(this);
     const int generation = m_generation;
+    const int request = ++m_request;
     m_client->call(m_environmentId, QStringLiteral("device.list"), input,
-                   [self, generation, failed](const QJsonValue& result, const std::optional<QString>& error) {
-                     if (!self || self->m_generation != generation) return;
+                   [self, generation, request, failed](const QJsonValue& result, const std::optional<QString>& error) {
+                     if (!self || self->m_generation != generation || self->m_request != request) return;
                      self->m_pending.clear();
                      if (error) {
                        if (failed) failed();
@@ -214,10 +217,12 @@ private:
     auto round = std::make_shared<Round>();
     round->left = int(environments.size());
     const QPointer<DeviceSettingsController> self(this);
-    const auto done = [self, round, environments](const QString& environmentId, bool ok) {
+    const int request = ++m_request;
+    const auto done = [self, round, environments, request](const QString& environmentId, bool ok) {
       if (!ok) round->failed.append(environmentId);
       if (--round->left > 0 || !self) return;
-      self->m_pending.clear();
+      // Only the latest request frees the switches (follow() already did for older ones).
+      if (self->m_request == request) self->m_pending.clear();
       if (!round->failed.isEmpty()) {
         QStringList labels;
         for (const QString& id : environments) {
@@ -399,6 +404,7 @@ private:
   int m_subscription = -1;
   // Bumped when the inspected environment changes, so older answers are dropped.
   int m_generation = 0;
+  int m_request = 0;
   QJsonObject m_state;
   bool m_loaded = false;
   bool m_platformsShown = false;

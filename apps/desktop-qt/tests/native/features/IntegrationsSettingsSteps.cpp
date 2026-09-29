@@ -85,6 +85,11 @@ const FakeNode::Extension devices([](FakeNode& node) {
   node.onRpc(QStringLiteral("device."), [&node](const FakeNode::Rpc& rpc) {
     const QString environment = environmentOf(node, rpc);
     FakeDevices& fake = node.part<FakeDevices>();
+    if (node.holding(QStringLiteral("device"))) {
+      // Answered once released, late: the change is still saving until then.
+      node.defer([&node, rpc, environment] { node.reply(rpc, deviceState(node, environment)); });
+      return;
+    }
     if (rpc.method == QLatin1String("device.configure")) {
       const QString refusal = environment == node.environmentId ? fakeConfig(node).refuseWrites : documentOf(node, environment).refuseWrites;
       if (!refusal.isEmpty()) {
@@ -191,6 +196,28 @@ const Steps steps([] {
                     fakeConfig(world.node).settings.value(QLatin1String("enableDeviceSupport")) == QJsonValue(true),
                 QStringLiteral("the other environments to have saved it"));
        });
+
+  step(QStringLiteral("the device tools are still being checked"), [](World& world, const Captures&, const Table&) {
+    ready(world);
+    world.node.hold(QStringLiteral("device"));
+    world.bridge().dispatch(QStringLiteral("deviceSettings.check"), QVariantMap{});
+    world.waitFor([&] { return section(world).value(QStringLiteral("pending")) == QLatin1String("check"); },
+                  [&] { return QStringLiteral("the check to be running; the section is %1").arg(show(section(world))); });
+  });
+  step(QStringLiteral("the user leaves the Integrations settings and comes back"), [](World& world, const Captures&, const Table&) {
+    auto* navigation = world.native().controller<NavigationController>();
+    navigation->open(NavigationController::Route::settings(QStringLiteral("/settings/general")));
+    world.waitFor([&] { return !section(world).value(QStringLiteral("open")).toBool(); },
+                  [&] { return QStringLiteral("the device settings to close; they are %1").arg(show(section(world))); });
+    world.node.answerHeld();
+    ready(world);
+  });
+  step(QStringLiteral("the device hub can be changed again"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return section(world).value(QStringLiteral("pending")).toString().isEmpty() && at(section(world), QStringLiteral("hub.enabled")).toBool(); },
+                  [&] { return QStringLiteral("the hub switch to be free; the section is %1").arg(show(section(world))); });
+    turn(world, QStringLiteral("hub"), true);
+    expectStored(world, QStringLiteral("enableDeviceSupport"), true);
+  });
 
   step(QStringLiteral("the device hub tool update fails"), [](World& world, const Captures&, const Table&) {
     world.node.part<FakeDevices>().outdated.insert(world.node.environmentId);

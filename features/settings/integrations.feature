@@ -143,6 +143,12 @@ Feature: Integrations settings
       Then the user is told device settings were not saved on all environments and could not update "Build box"
 
     @desktop
+    Scenario: Leaving the page during a device tool check keeps the switches usable
+      Given the device tools are still being checked
+      When the user leaves the Integrations settings and comes back
+      Then the device hub can be changed again
+
+    @desktop
     Scenario: A failed tool update explains what to check
       Given the device hub tool update fails
       When the user updates the device hub tool
