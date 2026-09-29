@@ -391,7 +391,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
     toast(QStringLiteral("Could not create thread"), where.problem);
     return true;
   }
-  if (!m_client->isReady() || !m_store->online(m_store->nodeServing(where.environmentId))) {
+  if (!m_client->isReady() || !m_store->environmentOnline(where.environmentId)) {
     shell->controller<ToastController>()->show(QStringLiteral("warning"), QStringLiteral("Not connected: message not sent"),
                                                QStringLiteral("Reconnecting to the environment. Try again once it is connected."));
     return true;

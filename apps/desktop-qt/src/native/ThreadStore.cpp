@@ -97,7 +97,7 @@ bool ThreadStore::revert(const QString& threadKey, const QString& rowId, bool re
   if (m_reverting.contains(threadKey)) return true;
   auto* toasts = NativeShell::of(this)->controller<ToastController>();
   const auto thread = m_store->thread(threadKey);
-  if (!thread || !m_client->isReady()) {
+  if (!thread || !m_client->isReady() || !m_store->threadOnline(threadKey)) {
     toasts->error(QStringLiteral("Failed to revert thread state."), QStringLiteral("The thread's node cannot be reached."));
     return true;
   }

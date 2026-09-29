@@ -29,7 +29,7 @@ struct FakeTurns {
 
 QString threadKey(World& world) {
   const FakeStreams& fake = world.node.part<FakeStreams>();
-  return world.node.environmentId + QLatin1Char(':') + fake.thread;
+  return fake.environment + QLatin1Char(':') + fake.thread;
 }
 
 // A finished turn: the user's message, the agent's reply, and the checkpoint
@@ -171,7 +171,7 @@ const Steps steps([] {
   // Following again.
   step(QStringLiteral("the node stops sending the thread"), [](World& world, const Captures&, const Table&) {
     FakeStreams& fake = world.node.part<FakeStreams>();
-    fake.offline.insert(fake.node);
+    fake.offline.insert(fake.environment);
     for (const int id : followers(world, fake.thread)) {
       world.node.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("stream closed")}});
       world.node.forget(id);
@@ -180,7 +180,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the node can send the thread again"), [](World& world, const Captures&, const Table&) {
     FakeStreams& fake = world.node.part<FakeStreams>();
-    fake.offline.remove(fake.node);
+    fake.offline.remove(fake.environment);
   });
   step(QStringLiteral("the user retries the thread"), [](World& world, const Captures&, const Table&) {
     store(world)->reload(threadKey(world));
