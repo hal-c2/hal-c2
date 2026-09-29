@@ -360,6 +360,14 @@ defmodule HalC2.Steps.Providers.Cursor do
     api_key_instance(context)
   end
 
+  step "Cursor ends a turn with a command still running", context do
+    sign_in("cursor")
+    {_entry, ctx} = enabled(context)
+    ctx = Acp.launch(ctx, "Cursor", "cursor", "leave a command running")
+    [%{"status" => "completed"}] = Acp.await_runs(ctx.threads["Cursor"], 1)
+    Map.put(ctx, :thread, "Cursor")
+  end
+
   step "the user sends a message to Cursor", context do
     run_on_cursor(context, "full-access")
   end

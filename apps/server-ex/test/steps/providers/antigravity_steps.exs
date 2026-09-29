@@ -973,6 +973,36 @@ defmodule HalC2.Steps.Providers.Antigravity do
     Map.put(context, :run_state, FakeAcp.await_run(context, "completed"))
   end
 
+  step "Antigravity ends a turn with a command still running", context do
+    turn = %{
+      "match" => "leave a command running",
+      "steps" => [
+        %{
+          "update" => %{
+            "sessionUpdate" => "tool_call",
+            "toolCallId" => "cmd-bg",
+            "title" => "npm run dev",
+            "kind" => "execute",
+            "status" => "in_progress",
+            "rawInput" => %{"command" => "npm run dev"}
+          }
+        },
+        %{"text" => "Started it."}
+      ]
+    }
+
+    FakeAcp.configure(context, &Map.update!(&1, "turns", fn turns -> [turn | turns] end))
+
+    context =
+      context
+      |> signed_in()
+      |> FakeAcp.thread("Work")
+      |> FakeAcp.send_message("leave a command running")
+
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
   step "their activity is shown as a subagent batch", context do
     items = HalC2.StreamState.list(context.run_state, "turn-item")
     assert [item] = Enum.filter(items, &(&1["type"] == "subagent"))

@@ -672,6 +672,35 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
+  # OpenCode has no background tasks: what its turn left running ends with it.
+  step "OpenCode ends a turn with a command still running", context do
+    turn = %{
+      "match" => "leave a command running",
+      "steps" => [
+        %{
+          "update" => %{
+            "sessionUpdate" => "tool_call",
+            "toolCallId" => "cmd-bg",
+            "title" => "npm run dev",
+            "kind" => "execute",
+            "status" => "in_progress",
+            "rawInput" => %{"command" => "npm run dev"}
+          }
+        },
+        %{"text" => "Started it."}
+      ]
+    }
+
+    context =
+      context
+      |> FakeAcp.install("opencode", %{"turns" => [turn | FakeAcp.turns()]}, enabled: true)
+      |> FakeAcp.thread(@thread)
+      |> FakeAcp.send_message("leave a command running")
+
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
   step "an OpenCode turn is running", context do
     context =
       context |> World.fake_providers() |> World.launch_on(@thread, "opencode", "wait for me")
