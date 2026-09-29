@@ -486,14 +486,17 @@ private:
     }
     m_editor.saving = true;
     const QPointer<ScheduledTasksController> self(this);
+    // The reply belongs to this editor; one opened since keeps its draft.
+    const int seq = m_editorSeq;
     m_client->call(environmentId, QStringLiteral("scheduledTasks.upsert"), input,
-                   [self, environmentId](const QJsonValue&, const std::optional<QString>& error) {
+                   [self, environmentId, seq](const QJsonValue&, const std::optional<QString>& error) {
                      if (!self) return;
-                     self->m_editor.saving = false;
+                     const bool current = self->m_editor.open && self->m_editorSeq == seq;
+                     if (current) self->m_editor.saving = false;
                      if (error) {
                        self->fail(QStringLiteral("Could not save scheduled task"), *error);
                      } else {
-                       self->m_editor = {};
+                       if (current) self->m_editor = {};
                        if (self->m_listings.contains(environmentId)) self->list(environmentId);
                      }
                      self->publish();

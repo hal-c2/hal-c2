@@ -41,13 +41,7 @@ qsizetype indexOf(const QJsonArray& tasks, const QString& id) {
   return -1;
 }
 
-const FakeNode::Extension scheduled([](FakeNode& node) {
-  node.onShape(QStringLiteral("scheduledTasks"), [&node](int id, const QJsonObject&) {
-    node.send({{QStringLiteral("t"), QStringLiteral("scheduledTasks")},
-               {QStringLiteral("id"), id},
-               {QStringLiteral("tasks"), node.part<FakeTasks>().tasks.value(node.environmentId)}});
-  });
-  node.onRpc(QStringLiteral("scheduledTasks."), [&node](const FakeNode::Rpc& rpc) {
+void answer(FakeNode& node, const FakeNode::Rpc& rpc) {
     FakeTasks& fake = node.part<FakeTasks>();
     const QString environment = environmentOf(node, rpc);
     QJsonArray& tasks = fake.tasks[environment];
@@ -89,6 +83,21 @@ const FakeNode::Extension scheduled([](FakeNode& node) {
       node.reply(rpc, QJsonObject{});
     }
     if (environment == node.environmentId) broadcast(node);
+}
+
+const FakeNode::Extension scheduled([](FakeNode& node) {
+  node.onShape(QStringLiteral("scheduledTasks"), [&node](int id, const QJsonObject&) {
+    node.send({{QStringLiteral("t"), QStringLiteral("scheduledTasks")},
+               {QStringLiteral("id"), id},
+               {QStringLiteral("tasks"), node.part<FakeTasks>().tasks.value(node.environmentId)}});
+  });
+  node.onRpc(QStringLiteral("scheduledTasks."), [&node](const FakeNode::Rpc& rpc) {
+    // A held save is answered once released, late.
+    if (node.holding(QStringLiteral("scheduledTasks")) && rpc.method == QLatin1String("scheduledTasks.upsert")) {
+      node.defer([&node, rpc] { answer(node, rpc); });
+      return;
+    }
+    answer(node, rpc);
   });
 });
 
@@ -396,6 +405,33 @@ const Steps steps([] {
       return shown.value(QStringLiteral("status")) == QLatin1String("disconnected") &&
              shown.value(QStringLiteral("message")) == QStringLiteral("Reconnect %1 to view its scheduled tasks.").arg(c[0]);
     }, [&] { return QStringLiteral("%1 to be offered a reconnect; the section is %2").arg(c[0], show(section(world))); });
+  });
+
+  // A save answered after the page was left and a new editor opened.
+  step(QStringLiteral("the user saves a task and starts another before the save is answered"), [](World& world, const Captures&, const Table&) {
+    providersHere(world);
+    world.node.hold(QStringLiteral("scheduledTasks"));
+    save(world, newDraft(world));
+    world.waitFor([&] { return editor(world).value(QStringLiteral("saving")).toBool(); },
+                  [&] { return QStringLiteral("the save to be sent; the editor is %1").arg(show(editor(world))); });
+    auto* navigation = world.native().controller<NavigationController>();
+    navigation->open(NavigationController::Route::settings(QStringLiteral("/settings/general")));
+    world.waitFor([&] { return !section(world).value(QStringLiteral("open")).toBool(); }, QStringLiteral("the section to close"));
+    openTasks(world);
+    world.bridge().dispatch(QStringLiteral("scheduledTasks.new"), QVariant());
+    world.waitFor([&] { return !editor(world).isEmpty() && !editor(world).value(QStringLiteral("saving")).toBool(); },
+                  [&] { return QStringLiteral("a new editor to open; the section is %1").arg(show(section(world))); });
+    world.node.part<FakeTasks>().draft = editor(world);
+    world.node.answerHeld();
+  });
+  step(QStringLiteral("the first task is saved and the new task stays open"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return stored(world).size() == 1 && ready(world).value(QStringLiteral("tasks")).toList().size() == 1; },
+                  [&] { return QStringLiteral("the first task to be listed; the section is %1").arg(show(section(world))); });
+    world.sync();
+    const QVariantMap opened = world.node.part<FakeTasks>().draft;
+    expect(!editor(world).isEmpty() && editor(world).value(QStringLiteral("seq")) == opened.value(QStringLiteral("seq")) &&
+               !editor(world).value(QStringLiteral("editing")).toBool() && !editor(world).value(QStringLiteral("saving")).toBool(),
+           QStringLiteral("the new task's editor to stay open; the section is %1").arg(show(section(world))));
   });
 });
 

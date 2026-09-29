@@ -167,6 +167,11 @@ Feature: Scheduled tasks
       And the failed task shows its last error
 
     @shared @backlog-mobile @backlog-tui
+    Scenario: A slow save does not close a task opened after it
+      When the user saves a task and starts another before the save is answered
+      Then the first task is saved and the new task stays open
+
+    @shared @backlog-mobile @backlog-tui
     Scenario: The list follows the settings scope
       Given tasks in projects "api" and "web"
       When the user views scheduled tasks for project "api"
