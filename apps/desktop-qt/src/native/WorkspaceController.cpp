@@ -174,7 +174,7 @@ std::optional<WorkspaceController::Place> WorkspaceController::resolve() const {
   Place place;
   if (route.kind == QLatin1String("thread")) {
     const QJsonObject row = m_store->threadRow(route.threadKey);
-    // A thread whose row the shell does not have (one on a linked environment).
+    // A thread the shell does not list (yet: a link's rows come after its snapshot).
     if (row.isEmpty()) return std::nullopt;
     place.environmentId = route.threadKey.left(route.threadKey.indexOf(QLatin1Char(':')));
     place.threadId = text(row, "id");
@@ -222,7 +222,8 @@ void WorkspaceController::refresh() {
     ++m_renameRequestId;
   }
   follow(m_place ? m_place->cwd() : QString());
-  if (m_place && m_place->environmentId != m_client->environment()) {
+  // The node serves `config` for its cluster's environments only.
+  if (m_place && m_place->environmentId != m_client->environment() && m_store->servesEnvironment(m_place->environmentId)) {
     watchConfig(m_place->environmentId);
   } else {
     watchConfig({});
@@ -241,7 +242,9 @@ QJsonObject WorkspaceController::threadRow() const {
   return m_store->threadRow(m_place->threadKey());
 }
 
-// The checkout's status, from whichever cluster member serves the thread.
+// The checkout's status, from whichever cluster member serves the thread. The
+// node does not route `vcs` through its links, so a linked thread's branch is
+// the one its row names.
 void WorkspaceController::follow(const QString& cwd) {
   const QString node = m_place ? m_store->nodeServing(m_place->environmentId) : QString();
   const QString key = node.isEmpty() || cwd.isEmpty() ? QString() : node + QLatin1Char('\n') + cwd;
@@ -538,6 +541,8 @@ QVariantMap WorkspaceController::build() const {
       {QStringLiteral("preferredScriptId"), known ? QVariant(lastScript) : QVariant::fromValue(nullptr)},
       {QStringLiteral("environments"), environmentChoices()},
       {QStringLiteral("activeEnvironmentId"), place.environmentId},
+      // The node serving it is out of reach (a cluster member asleep, a link down).
+      {QStringLiteral("offline"), !m_store->environmentOnline(place.environmentId)},
       {QStringLiteral("environmentChangeable"), draft},
       {QStringLiteral("renameRequestId"), m_renameRequestId},
       {QStringLiteral("branchQuery"), m_query},

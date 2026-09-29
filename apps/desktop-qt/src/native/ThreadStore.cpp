@@ -32,11 +32,9 @@ void ThreadStore::activate() {
   retry();
 }
 
-// Addressed by cluster node today. When the node routes `stream` by
-// environment, this becomes {"environment": environmentId}.
-QJsonObject ThreadStore::streamShape(const QString& node, const QString& threadId) {
+QJsonObject ThreadStore::streamShape(const QString& environmentId, const QString& threadId) {
   return {{QStringLiteral("type"), QStringLiteral("stream")},
-          {QStringLiteral("node"), node},
+          {QStringLiteral("environment"), environmentId},
           {QStringLiteral("stream"), threadId}};
 }
 
@@ -131,13 +129,11 @@ void ThreadStore::evict() {
 void ThreadStore::follow(const QString& threadKey) {
   Followed& followed = m_threads[threadKey];
   if (followed.subscription) return;
-  const QString node = m_store->nodeOf(threadKey);
-  if (node.isEmpty()) return;  // not in the sidebar yet: ShellStore::changed retries
-  followed.node = node;
+  if (!m_store->thread(threadKey)) return;  // not in the sidebar yet: ShellStore::changed retries
   followed.waitOnline = false;
-  const QString threadId = threadKey.mid(threadKey.indexOf(QLatin1Char(':')) + 1);
-  followed.subscription = m_client->subscribe(
-      streamShape(node, threadId), [this, threadKey](const QJsonObject& frame) { onFrame(threadKey, frame); });
+  const qsizetype colon = threadKey.indexOf(QLatin1Char(':'));
+  followed.subscription = m_client->subscribe(streamShape(threadKey.left(colon), threadKey.mid(colon + 1)),
+                                              [this, threadKey](const QJsonObject& frame) { onFrame(threadKey, frame); });
 }
 
 void ThreadStore::unfollow(Followed& followed) {
@@ -160,7 +156,7 @@ void ThreadStore::onFrame(const QString& threadKey, const QJsonObject& frame) {
     // The node ends a refused subscription itself; forget it and retry when
     // the node (or the connection) comes back.
     unfollow(*it);
-    it->waitOnline = !m_store->online(it->node);
+    it->waitOnline = !m_store->threadOnline(threadKey);
     const QString reason = frame.value(QLatin1String("reason")).toString();
     model->setStatus(QStringLiteral("unreachable"),
                      reason.isEmpty() ? QStringLiteral("The node stopped sending this thread.") : reason);
@@ -173,7 +169,7 @@ void ThreadStore::retry() {
   if (!m_client->isReady()) return;
   for (auto it = m_threads.begin(); it != m_threads.end(); ++it) {
     if (it->subscription || !it->model) continue;
-    if (it->waitOnline && !m_store->online(it->node)) continue;
+    if (it->waitOnline && !m_store->threadOnline(it.key())) continue;
     follow(it.key());
   }
 }

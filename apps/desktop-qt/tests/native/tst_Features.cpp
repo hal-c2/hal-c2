@@ -213,6 +213,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/drafting-and-sending.feature:The first message of a new thread creates*"),
     QStringLiteral("threads/sidebar-list.feature:Projects *"),
     QStringLiteral("threads/sidebar-list.feature:Threads started by other agents*"),
+    QStringLiteral("threads/sidebar-list.feature:Threads on an offline environment*"),
     QStringLiteral("files/adding-projects.feature:Adding a folder from the desktop*"),
     QStringLiteral("files/adding-projects.feature:Adding an existing project from the desktop*"),
     QStringLiteral("files/adding-projects.feature:A folder the environment refuses*"),

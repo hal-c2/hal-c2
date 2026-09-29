@@ -48,6 +48,16 @@ Feature: The desktop shell keeps the keymap
       Then the window shows "env-a:t3"
 
     @desktop
+    Scenario: The next thread reaches a thread on an environment the node is linked to
+      Given the node is linked to "env-c"
+      And "env-c" has the thread "t7" titled "Deploy" in "ops" on the branch "main"
+      And the user opens "env-a:t3" from the sidebar
+      When the user presses mod+shift+]
+      Then the window shows "env-c:t7"
+      When the user presses mod+shift+[
+      Then the window shows "env-a:t3"
+
+    @desktop
     Scenario: The new thread shortcut starts one in the project the window shows
       Given the user opens "env-a:t2" from the sidebar
       When the user presses mod+n

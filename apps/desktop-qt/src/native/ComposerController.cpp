@@ -276,7 +276,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   const auto thread = m_store->thread(target);
   if (!thread) return false;
   // Nothing leaves while the node is out of reach: the draft stays as it is.
-  if (!m_client->isReady() || !m_store->online(m_store->nodeOf(target))) {
+  if (!m_client->isReady() || !m_store->threadOnline(target)) {
     NativeShell::of(this)->controller<ToastController>()->show(
         QStringLiteral("warning"), QStringLiteral("Not connected: message not sent"),
         QStringLiteral("Reconnecting to the environment. Try again once it is connected."));

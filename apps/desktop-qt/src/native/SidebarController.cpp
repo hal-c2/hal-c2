@@ -63,6 +63,9 @@ void SidebarController::refresh() {
   sidebar::Input input;
   input.projects = m_groups;
   if (!ownEnvironment.isEmpty()) input.localEnvironmentId = ownEnvironment;
+  for (const QString& environment : m_store->environments()) {
+    if (!m_store->environmentOnline(environment)) input.offlineEnvironments.insert(environment);
+  }
   if (const auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
     for (const DraftController::Draft& draft : drafts->drafts()) {
       const QString physical = draft.environmentId + QLatin1Char(':') + draft.projectId;
