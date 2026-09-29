@@ -287,9 +287,22 @@ const Steps steps([] {
     const QVariantMap shown = first(world, QStringLiteral("approvals"));
     expect(!shown.value(QStringLiteral("canRespond")).toBool(), QStringLiteral("the approval is %1").arg(show(shown)));
   });
+  // Shared with WorkspaceSteps' renames: the message is either why the
+  // pending approval cannot be answered or a toast's title.
   step(QStringLiteral("the user is told %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QVariantMap shown = first(world, QStringLiteral("approvals"));
-    expect(shown.value(QStringLiteral("problem")) == c[0], QStringLiteral("the approval is %1").arg(show(shown)));
+    const auto told = [&] {
+      for (const QVariant& item : listed(world, QStringLiteral("approvals"))) {
+        if (item.toMap().value(QStringLiteral("problem")) == c[0]) return true;
+      }
+      for (const QVariant& item : toasts(world)) {
+        if (item.toMap().value(QStringLiteral("title")) == c[0]) return true;
+      }
+      return false;
+    };
+    world.waitFor(told, [&] {
+      return QStringLiteral("\"%1\"; the turn is %2, the toasts are %3")
+          .arg(c[0], show(turn(world)), show(world.state(QStringLiteral("toasts"))));
+    });
   });
   step(QStringLiteral("the user approved a pending request"), [](World& world, const Captures&, const Table&) {
     approval(world, QStringLiteral("command"), QStringLiteral("npm test"));
