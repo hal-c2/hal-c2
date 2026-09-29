@@ -12,6 +12,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTcpSocket>
+#include <QUrl>
 #include <QWebSocket>
 #include <QWebSocketServer>
 #include <QtEndian>
@@ -152,7 +153,7 @@ QJsonObject stateOf(FakeNode& node) {
           {QStringLiteral("sessions"), hub.sessions},
           {QStringLiteral("onboardingCompleted"), hub.hostStatus != QLatin1String("disabled")},
           {QStringLiteral("agentAccessEnabled"), false},
-          {QStringLiteral("hubBasePath"), QStringLiteral("/api/device-hub/nodes/") + node.name},
+          {QStringLiteral("hubBasePath"), QStringLiteral("/api/device-hub/nodes/") + QString::fromLatin1(QUrl::toPercentEncoding(node.name))},
           {QStringLiteral("revision"), hub.revision}};
 }
 
@@ -249,6 +250,8 @@ FakeHub& fakeHub(World& world) {
   FakeHub& hub = node.part<FakeHub>();
   if (hub.used) return hub;
   hub.used = true;
+  // As a node is named (`name@host`), which its hubBasePath carries encoded.
+  node.name = QStringLiteral("hal-c2@studio");
   node.onShape(QStringLiteral("devices"), [&node](int id, const QJsonObject&) {
     node.send({{QStringLiteral("t"), QStringLiteral("devices")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), stateOf(node)}});
   });
@@ -566,7 +569,9 @@ const Steps steps([] {
   });
   step(QStringLiteral("the screen came through the node's device proxy"), [](World& world, const Captures&, const Table&) {
     const QString id = deviceNamed(fakeHub(world), QStringLiteral("iPhone 17")).value(QLatin1String("id")).toString();
-    const QString wanted = QStringLiteral("/api/device-hub/nodes/%1/vendor/serve-sim/helper/%2/stream.avcc Bearer node-token").arg(world.node.name, id);
+    // The node's name is encoded once: `hal-c2%40studio`.
+    const QString wanted = QStringLiteral("/api/device-hub/nodes/%1/vendor/serve-sim/helper/%2/stream.avcc Bearer node-token")
+                               .arg(QString::fromLatin1(QUrl::toPercentEncoding(world.node.name)), id);
     expect(fakeHub(world).requests.contains(wanted), describe(world));
   });
   step(QStringLiteral("the tab says it is connecting to the device"), [](World& world, const Captures&, const Table&) {
