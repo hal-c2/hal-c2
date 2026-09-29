@@ -280,7 +280,10 @@ QString shownThread(World& world) {
 
 // The thread the header shows, or one of the node's first project shown now.
 QString ensureThread(World& world) {
-  if (shownThread(world).isEmpty()) showThread(world, world.node.projects.firstKey());
+  // A draft the window landed on is not a thread yet.
+  if (shownThread(world).isEmpty() || at(world.state(QStringLiteral("route")), QStringLiteral("kind")) != QLatin1String("thread")) {
+    showThread(world, world.node.projects.firstKey());
+  }
   return shownThread(world);
 }
 

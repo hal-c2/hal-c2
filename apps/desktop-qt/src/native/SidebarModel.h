@@ -166,6 +166,17 @@ struct ProjectGroup {
 QList<ProjectGroup> groupProjects(const QList<Project>& projects, const GroupingSettings& settings,
                                   const QString& preferredEnvironmentId, const QList<Thread>& threads);
 
+// The project a window with no thread lands in: the first of every project the
+// shell sees in the page's "updated_at" order (Sidebar.logic.ts
+// sortScopedProjectsForSidebar), whatever order the sidebar is set to.
+std::optional<Project> mostRecentProject(const QList<Project>& projects, const QList<Thread>& threads);
+
+// Where a window that showed the deleted thread `key` goes: the first other
+// thread of its project on its environment in `sortOrder` ("updated_at" or
+// "created_at"), as the page's getFallbackThreadIdAfterDelete, leaving out the
+// archived and subagent rows the sidebar does not list either.
+std::optional<QString> fallbackAfterDelete(const QList<Thread>& threads, const QString& key, const QString& sortOrder);
+
 struct Input {
   QList<ProjectGroup> projects;
   // The environment of the node the shell runs against; its folders are the

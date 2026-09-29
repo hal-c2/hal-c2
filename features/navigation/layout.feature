@@ -97,8 +97,9 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the header shows the project name and the thread title
 
     # The web never says "No thread": with no thread open it lands on a draft, and its header
-    # belongs to the thread. The desktop hides the header likewise (navigation/header.feature:
-    # Leaving the thread clears the header).
+    # belongs to the thread. The desktop now lands on a draft like the web
+    # (navigation/landing.feature, navigation/header.feature: Leaving the thread lands on a new
+    # draft in the most recent project).
     @dropped @desktop
     Scenario: The header says when there is no thread
       Given no thread is open

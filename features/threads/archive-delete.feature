@@ -1,6 +1,7 @@
 # Sources:
 #   apps/web/src/components/threadActionMenu.logic.ts (Archive thread, Delete)
-#   apps/web/src/hooks/useThreadActions.ts
+#   apps/web/src/hooks/useThreadActions.ts (archiveThread and deleteThread: where the open thread's window goes)
+#   apps/web/src/components/Sidebar.logic.ts (getFallbackThreadIdAfterDelete)
 #   apps/web/src/components/Sidebar.tsx (confirm archive, confirm delete, orphaned worktree prompt, navigation after delete)
 #   apps/tui/src/commands.ts (Archive thread, Unarchive thread, Delete thread)
 #   apps/tui/src/components/ThreadOverlays.tsx (delete confirmation)
@@ -9,6 +10,8 @@
 #   apps/server-ex/lib/hal_c2/orchestration.ex (archive, unarchive, delete, getArchivedShellSnapshot)
 #   apps/web/src/components/settings/SettingsPanels.tsx (ArchivedThreadsPanel: loading, empty, error, per-project groups)
 #   apps/desktop-qt/src/native/ArchivedThreadsController.cpp (the desktop's Archive section)
+#   apps/desktop-qt/src/native/SidebarController.cpp (park: where the window goes)
+#   apps/desktop-qt/src/native/SidebarModel.cpp (fallbackAfterDelete)
 
 Feature: Archiving and deleting threads
   Archiving hides a thread and can be undone. Deleting clears its history for good, and
@@ -80,6 +83,13 @@ Feature: Archiving and deleting threads
     When the user archives "Old spike"
     Then the user is asked "Archive thread 'Old spike'?"
 
+  @desktop @mobile @backlog-mobile
+  Scenario: Archiving the open thread opens a new thread in its project
+    Given the user is viewing "Old spike"
+    And "Newer work" is the top remaining thread in "shop"
+    When the user archives "Old spike"
+    Then a draft thread opens in "shop"
+
   @backlog @desktop @mobile
   Scenario: Archiving the open thread when the next thread cannot be opened
     Given the user is viewing "Old spike"
@@ -150,6 +160,20 @@ Feature: Archiving and deleting threads
     And "Newer work" is the top remaining thread in "shop"
     When the user deletes "Old spike"
     Then "Newer work" opens
+
+  @desktop @mobile @backlog-mobile
+  Scenario: Deleting the open thread opens the latest thread left in its project
+    Given "Newer work" is the top remaining thread in "shop"
+    And "Oldest" is an older thread in "shop"
+    And the user is viewing "Newer work"
+    When the user deletes "Newer work"
+    Then "Old spike" opens
+
+  @desktop @mobile @backlog-mobile
+  Scenario: Deleting the open thread, the last in its project, lands on a new thread
+    Given the user is viewing "Old spike"
+    When the user deletes "Old spike"
+    Then a draft thread opens in "shop"
 
   @backlog @desktop
   Scenario: Deleting several threads at once

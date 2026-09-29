@@ -12,6 +12,7 @@
 
 #include <algorithm>
 
+#include "DraftController.h"
 #include "FakeProjects.h"
 #include "Harness.h"
 #include "NavigationController.h"
@@ -421,6 +422,7 @@ const Steps steps([] {
     world.sync();
     const QVariantList drafts = at(world.state(QStringLiteral("sidebar")), QStringLiteral("drafts")).toList();
     expect(drafts.isEmpty(), QStringLiteral("the sidebar lists the drafts %1").arg(show(drafts)));
+    expect(!world.native().controller<DraftController>()->draft(world.draftId), QStringLiteral("the desktop keeps the draft"));
   });
   step(QStringLiteral("the user is taken home"), [](World& world, const Captures&, const Table&) {
     world.sync();

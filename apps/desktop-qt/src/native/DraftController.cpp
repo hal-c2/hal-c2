@@ -19,10 +19,11 @@
 #include "ShellStore.h"
 #include "SidebarController.h"
 #include "SidebarModel.h"
+#include "ToastController.h"
 
 namespace {
 
-const NativeControllerRegistrar<DraftController> registrar(QStringLiteral("drafts"));
+const NativeControllerRegistrar<DraftController> registrar(QStringLiteral("drafts"), {QStringLiteral("landing")});
 
 QString newId() {
   return QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -91,13 +92,22 @@ void DraftController::activate() {
   });
   commands->setTerms(QStringLiteral("thread.newIn"), {QStringLiteral("new thread"), QStringLiteral("project"), QStringLiteral("pick"),
                                     QStringLiteral("choose"), QStringLiteral("select")});
-  connect(shell->controller<NavigationController>(), &NavigationController::changed, this, &DraftController::present);
-  connect(m_store, &ShellStore::changed, this, &DraftController::present);
+  connect(shell->controller<NavigationController>(), &NavigationController::changed, this, [this] {
+    present();
+    land();
+  });
+  connect(m_store, &ShellStore::changed, this, [this] {
+    present();
+    land();
+  });
   // The sidebar's groups and scope.
   connect(m_bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key) {
     if (key == QLatin1String("sidebar")) present();
   });
+  m_bridge->publish(QStringLiteral("landing"), QVariantMap{{QStringLiteral("failed"), m_landingFailed}});
   present();
+  // NavigationController lands the window once it has checked the route it
+  // restored.
 }
 
 // "New thread in <project>", naming where it starts, while the window shows a
@@ -149,6 +159,11 @@ bool DraftController::handle(const QString& action, const QVariant& payload) {
   }
   if (!m_active) return false;
   if (action == QLatin1String("thread.new")) return startNew(map);
+  if (action == QLatin1String("landing.retry")) {
+    setLandingFailed(false);
+    land();
+    return true;
+  }
   if (action == QLatin1String("draft.delete")) {
     remove(map.value(QStringLiteral("draftId")).toString());
     return true;
@@ -199,7 +214,10 @@ void DraftController::startIn(const sidebar::ProjectGroup& group) {
   if (shown && group.memberKeys.contains(shown->first + QLatin1Char(':') + shown->second)) {
     std::tie(environmentId, projectId) = *shown;
   }
-  start(environmentId, projectId);
+  if (start(environmentId, projectId).isEmpty()) {
+    NativeShell::of(this)->controller<ToastController>()->error(
+        tr("Couldn't start a new thread"), tr("The project is still available. Try opening the draft again."));
+  }
 }
 
 QString DraftController::start(const QString& environmentId, const QString& projectId) {
@@ -210,11 +228,34 @@ QString DraftController::start(const QString& environmentId, const QString& proj
   if (id.isEmpty()) {
     id = newId();
     m_drafts.append({id, environmentId, projectId, newId(), sidebar::formatIso(QDateTime::currentDateTimeUtc()), {}});
-    save();
+    // A draft that would not survive a restart is not started.
+    if (!save()) {
+      m_drafts.removeLast();
+      return {};
+    }
     changedEverywhere();
   }
   NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::draft(id));
   return id;
+}
+
+// Home passes through (NavigationController), so the draft takes its place
+// rather than stacking on it, as the page's replace navigation does.
+void DraftController::land() {
+  if (!m_active || !m_store->synchronized()) return;
+  if (NativeShell::of(this)->controller<NavigationController>()->route().kind != QLatin1String("home")) {
+    setLandingFailed(false);
+    return;
+  }
+  if (m_landingFailed) return;
+  const auto project = sidebar::mostRecentProject(m_store->projects(), m_store->threads());
+  if (project && start(project->environmentId, project->id).isEmpty()) setLandingFailed(true);
+}
+
+void DraftController::setLandingFailed(bool failed) {
+  if (m_landingFailed == failed) return;
+  m_landingFailed = failed;
+  m_bridge->publish(QStringLiteral("landing"), QVariantMap{{QStringLiteral("failed"), failed}});
 }
 
 void DraftController::remove(const QString& id) {
@@ -304,8 +345,8 @@ void DraftController::changedEverywhere() {
   for (DraftController* drafts : everyWindow()) emit drafts->changed();
 }
 
-void DraftController::save() const {
-  if (m_kept.path.isEmpty()) return;
+bool DraftController::save() const {
+  if (m_kept.path.isEmpty()) return true;
   QJsonArray entries;
   for (const Draft& draft : m_drafts) {
     QJsonObject entry{
@@ -320,7 +361,7 @@ void DraftController::save() const {
   }
   QDir().mkpath(QFileInfo(m_kept.path).absolutePath());
   QSaveFile file(m_kept.path);
-  if (!file.open(QIODevice::WriteOnly)) return;
+  if (!file.open(QIODevice::WriteOnly)) return false;
   file.write(QJsonDocument(entries).toJson(QJsonDocument::Compact));
-  file.commit();
+  return file.commit();
 }

@@ -272,12 +272,15 @@ const Steps steps([] {
              state.value(QStringLiteral("branch")) == c[2];
     }, [&] { return QStringLiteral("the header to show %1 in %2 on %3; it shows %4").arg(c[0], c[1], c[2], show(workspace(world))); });
   });
+  step(QStringLiteral("the header shows a new thread in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      const QVariantMap state = workspace(world);
+      return state.value(QStringLiteral("isDraft")).toBool() && state.value(QStringLiteral("threadTitle")) == QLatin1String("New thread") &&
+             state.value(QStringLiteral("projectTitle")) == c[0];
+    }, [&] { return QStringLiteral("the header to show a new thread in %1; it shows %2").arg(c[0], show(workspace(world))); });
+  });
   step(QStringLiteral("the user leaves the thread"), [](World& world, const Captures&, const Table&) {
     world.native().controller<NavigationController>()->open(NavigationController::Route::of(QStringLiteral("home")));
-  });
-  step(QStringLiteral("the header shows no thread"), [](World& world, const Captures&, const Table&) {
-    world.sync();
-    expect(workspace(world).isEmpty(), QStringLiteral("the header shows %1").arg(show(workspace(world))));
   });
 
   // Titles.

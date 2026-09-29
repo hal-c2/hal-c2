@@ -537,7 +537,10 @@ arrives, or whose project goes, is dropped. The page is told the draft's
 the composer for that thread id; a draft the page opened itself comes back
 the same way with `route.open` and is adopted. The draft's text is kept with
 the draft: the composer's `composer.text.set` on a draft route saves it
-through `DraftController`, so it survives a restart.
+through `DraftController`, so it survives a restart. As on the page, the
+sidebar lists only drafts that hold something, and the open draft keeps the
+row it had when the window opened it, so a fresh draft is not listed while
+the user types into it.
 
 The QML sidebar reconciles publications into a keyed `ListModel`, updating
 and moving existing rows instead of replacing the list. This preserves row
@@ -852,7 +855,14 @@ documents the shape and actions:
 
 Home, the pull requests page and usage are routes of their own, drawn by
 `HomePage`, `PullRequestsPage` and `UsagePage` over `PullRequestListController`
-and `UsageController`; they too follow node shapes only while open.
+and `UsageController`; they too follow node shapes only while open. Home is
+never where a window with projects stays: once every environment has
+reported, `DraftController::land` replaces it with the most recent project's
+draft (`sidebar::mostRecentProject`, the web's "updated_at" order), reusing
+the draft other windows landed on. `HomePage` shows the add-project hero with
+no projects, and `landing.failed` with its `landing.retry` when the draft
+could not be kept. The open thread vanishing (deleted, or its environment
+gone) sends the window home, and so onto the draft.
 
 Storage, Scheduled Tasks, Source Control, Integrations and Project edit settings scoped to one or
 several environments or a project through `SettingsScopeController`

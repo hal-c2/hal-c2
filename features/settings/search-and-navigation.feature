@@ -19,6 +19,7 @@
 #   apps/desktop-qt/src/native/ThemeController.cpp, SettingsController.cpp (restoring defaults)
 #   apps/desktop-qt/tests/native/tst_ThemeResolution.cpp (a theme that cannot be restored)
 #   apps/desktop-qt/src/native/NavigationController.cpp (settings sections and back)
+#   apps/desktop-qt/src/native/DraftController.cpp (back to nowhere lands on a draft)
 #   apps/tui/src/components/SettingsView.tsx
 #   apps/tui/src/keymap.ts
 
@@ -58,10 +59,10 @@ Feature: Settings search and navigation
       Then that thread is shown
 
     @desktop
-    Scenario: Back with nowhere to return to goes home
-      Given the user can not go back
+    Scenario: Back with nowhere to return to lands on a new thread
       When the user goes back from settings
-      Then the window shows home
+      Then the window shows a new draft in "shop"
+      And the user can not go back
 
     @backlog @desktop
     Scenario Outline: The page names where the user is

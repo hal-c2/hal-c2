@@ -205,7 +205,7 @@ Feature: Sending a thread's turns to its node
       And the window shows the draft
       And the new thread still reads "Set up the linter"
       And the composer lists the attachment "cart.png"
-      And the sidebar lists the draft
+      And the desktop keeps the draft
 
     @desktop
     Scenario: A new thread is launched once however often the user sends

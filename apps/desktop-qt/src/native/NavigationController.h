@@ -29,6 +29,10 @@ class ShellStore;
 // threadId, from DraftController), and the page reports where its own links and
 // redirects took it as `route.open {..., replace}`. The page is not the source
 // of truth; this is.
+//
+// Home is where the window has no thread; DraftController lands it on a
+// draft from there. The open thread going away (deleted here or elsewhere)
+// sends the window home too.
 class NavigationController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -103,6 +107,9 @@ private:
   // Brings a setting of the settings page showing into view (route.target).
   void reveal(const QString& target);
   void save() const;
+  // The open thread's row went away: home, unless the sidebar is already
+  // moving the window on (park()).
+  void leaveVanishedThread();
 
   ShellBridge* m_bridge;
   ShellStore* m_store;
@@ -118,4 +125,7 @@ private:
   int m_targetSeq = 0;
   // The route came from the last run and the page has not been anywhere since.
   bool m_restored = false;
+  // The open thread's row has been seen, so its absence means it went away
+  // rather than has not arrived yet.
+  bool m_threadSeen = false;
 };

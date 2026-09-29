@@ -1,5 +1,6 @@
 #include "SidebarController.h"
 
+#include "ComposerController.h"
 #include "DraftController.h"
 #include "MenuController.h"
 #include "NativeShell.h"
@@ -70,22 +71,41 @@ void SidebarController::refresh() {
   for (const QString& environment : m_store->environments()) {
     if (!m_store->environmentOnline(environment)) input.offlineEnvironments.insert(environment);
   }
-  if (const auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
-    for (const DraftController::Draft& draft : drafts->drafts()) {
-      const QString physical = draft.environmentId + QLatin1Char(':') + draft.projectId;
-      input.drafts.append(QVariantMap{
-          {QStringLiteral("draftId"), draft.id},
-          {QStringLiteral("projectKey"), logicalProjectKey(draft.environmentId, draft.projectId).value_or(physical)},
-          {QStringLiteral("label"), QStringLiteral("Draft")},
-      });
-    }
-  }
   // The window's route marks the open thread or draft.
   input.activeDraftId = QVariant::fromValue(nullptr);
+  QString openDraft;
   if (const auto* navigation = NativeShell::of(this)->controller<NavigationController>()) {
     const NavigationController::Route& route = navigation->route();
     if (route.kind == QLatin1String("thread")) input.activeThreadKey = route.threadKey;
-    if (route.kind == QLatin1String("draft")) input.activeDraftId = route.draftId;
+    if (route.kind == QLatin1String("draft")) openDraft = route.draftId;
+  }
+  if (!openDraft.isEmpty()) input.activeDraftId = openDraft;
+  const auto* composer = NativeShell::of(this)->controller<ComposerController>();
+  const auto preview = [composer](const QString& id) { return composer ? composer->draftPreview(id) : std::nullopt; };
+  if (openDraft != m_openDraftId) {
+    m_openDraftId = openDraft;
+    m_openDraftLabel = openDraft.isEmpty() ? std::nullopt : preview(openDraft);
+  }
+  m_draftLabels.clear();
+  if (const auto* drafts = NativeShell::of(this)->controller<DraftController>()) {
+    QList<const DraftController::Draft*> listed;
+    for (const DraftController::Draft& draft : drafts->drafts()) {
+      const auto label = draft.id == m_openDraftId ? m_openDraftLabel : preview(draft.id);
+      if (!label) continue;
+      m_draftLabels.insert(draft.id, *label);
+      listed.append(&draft);
+    }
+    // Newest first; the stamps are ISO, so they sort as text.
+    std::stable_sort(listed.begin(), listed.end(),
+                     [](const auto* left, const auto* right) { return left->createdAt > right->createdAt; });
+    for (const DraftController::Draft* draft : std::as_const(listed)) {
+      const QString physical = draft->environmentId + QLatin1Char(':') + draft->projectId;
+      input.drafts.append(QVariantMap{
+          {QStringLiteral("draftId"), draft->id},
+          {QStringLiteral("projectKey"), logicalProjectKey(draft->environmentId, draft->projectId).value_or(physical)},
+          {QStringLiteral("label"), m_draftLabels.value(draft->id)},
+      });
+    }
   }
   m_view = sidebar::build(threads, input, m_scope,
                           [this](const QString& environmentId) { return m_store->capabilities(environmentId); },
@@ -94,6 +114,14 @@ void SidebarController::refresh() {
   const QTime time = now.time();
   m_minute.start(std::max(1000, 60000 - time.second() * 1000 - time.msec()));
   if (regrouped) emit grouped();
+}
+
+void SidebarController::draftEdited(const QString& id) {
+  if (!m_active || id == m_openDraftId) return;
+  const auto* composer = NativeShell::of(this)->controller<ComposerController>();
+  const auto label = composer ? composer->draftPreview(id) : std::nullopt;
+  const auto listed = m_draftLabels.constFind(id);
+  if (listed == m_draftLabels.cend() ? label.has_value() : label != *listed) refresh();
 }
 
 bool SidebarController::handle(const QString& action, const QVariant& payload) {
@@ -136,7 +164,7 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
     const sidebar::Nullable pinOrderKey = thread->pinnedAt ? thread->pinOrderKey : sidebar::Nullable();
     const bool pinned = thread->pinnedAt.has_value();
     park(key, with({{QStringLiteral("type"), QStringLiteral("thread.settle")}}),
-         QStringLiteral("Failed to settle thread"), [this, key, target, pinned, pinOrderKey] {
+         QStringLiteral("Failed to settle thread"), Leave::NextCard, [this, key, target, pinned, pinOrderKey] {
            toasts()->show(QStringLiteral("success"), QStringLiteral("Settled"), QString(),
                           ToastController::Action{QStringLiteral("Undo"), [this, key, target, pinned, pinOrderKey] {
                             const auto thread = m_store->thread(key);
@@ -197,7 +225,7 @@ void SidebarController::command(const QString& environmentId, QJsonObject comman
 
 // Settling or snoozing the open thread moves to the next card that stays in
 // the list (or a new thread in the same project), as the page's threadParking.
-void SidebarController::park(const QString& key, QJsonObject parkCommand, const QString& failureTitle,
+void SidebarController::park(const QString& key, QJsonObject parkCommand, const QString& failureTitle, Leave leave,
                              std::function<void()> onSuccess) {
   if (m_pending.contains(key)) return;
   const auto thread = m_store->thread(key);
@@ -206,11 +234,16 @@ void SidebarController::park(const QString& key, QJsonObject parkCommand, const 
 
   // Planned now, before the command reshuffles the list.
   std::function<void()> navigate;
-  if (activeThreadKey() == key) {
+  if (activeThreadKey() == key && leave == Leave::ProjectFallback) {
+    navigate = [this, fallback = sidebar::fallbackAfterDelete(m_store->threads(), key, m_threadSortOrder)] {
+      auto* navigation = NativeShell::of(this)->controller<NavigationController>();
+      navigation->replace(fallback ? NavigationController::Route::thread(*fallback) : NavigationController::Route());
+    };
+  } else if (activeThreadKey() == key) {
     const QStringList& keys = m_view.orderedKeys;
     const qsizetype index = keys.indexOf(key);
     std::optional<QString> next;
-    if (index != -1) {
+    if (index != -1 && leave == Leave::NextCard) {
       for (qsizetype step = 1; step < keys.size(); ++step) {
         const QString& candidate = keys.at((index + step) % keys.size());
         if (!m_view.parkedKeys.contains(candidate)) {
@@ -274,7 +307,7 @@ void SidebarController::snooze(const QString& key, const QString& snoozedUntil) 
        {{QStringLiteral("type"), QStringLiteral("thread.snooze")},
         {QStringLiteral("threadId"), thread->id},
         {QStringLiteral("snoozedUntil"), snoozedUntil}},
-       QStringLiteral("Failed to snooze thread"), [this, key, snoozedUntil] {
+       QStringLiteral("Failed to snooze thread"), Leave::NextCard, [this, key, snoozedUntil] {
          const QString when = sidebar::wakeDescription(snoozedUntil, m_now(), m_timestampFormat, m_locale);
          toasts()->show(QStringLiteral("success"), QStringLiteral("Snoozed until ") + when, QString(),
                         ToastController::Action{QStringLiteral("Undo"), [this, key] {
@@ -295,6 +328,7 @@ ToastController* SidebarController::toasts() const {
 void SidebarController::readSettings() {
   m_grouping = {};
   m_timestampFormat = QStringLiteral("locale");
+  m_threadSortOrder = QStringLiteral("updated_at");
   const auto* settings = NativeShell::of(this)->controller<SettingsController>();
   if (!settings) return;
   const QJsonObject device = settings->deviceSettings();
@@ -305,6 +339,7 @@ void SidebarController::readSettings() {
   text("sidebarProjectGroupingMode", m_grouping.mode);
   text("sidebarProjectSortOrder", m_grouping.sortOrder);
   text("timestampFormat", m_timestampFormat);
+  text("sidebarThreadSortOrder", m_threadSortOrder);
   const QJsonObject overrides = device.value(QLatin1String("sidebarProjectGroupingOverrides")).toObject();
   for (auto it = overrides.constBegin(); it != overrides.constEnd(); ++it) {
     if (it.value().isString()) m_grouping.overrides.insert(it.key(), it.value().toString());

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QHash>
 #include <QJsonObject>
 #include <QLocale>
 #include <QObject>
@@ -9,6 +10,7 @@
 #include <QVariant>
 
 #include <functional>
+#include <optional>
 
 #include "SidebarModel.h"
 
@@ -22,6 +24,11 @@ class ToastController;
 // (sidebar::groupProjects), drafts from DraftController, and the row actions
 // (settle, snooze, wake, mark unread, dismiss the woke pill) and the project
 // scope stay here.
+//
+// As the page's SidebarDraftBlock, a draft is listed only once it holds
+// something (ComposerController::draftPreview), newest first. The draft the
+// window shows keeps the row it had when the window opened it: none for one
+// that was empty then, and the same label however the user types.
 class SidebarController : public QObject {
   Q_OBJECT
 
@@ -47,14 +54,26 @@ public:
   void setLocale(const QLocale& locale) { m_locale = locale; }
 
   void refresh();
+  // The draft `id` was edited in some window: refreshes when its row here
+  // would change.
+  void draftEdited(const QString& id);
   // The ShellBridge interceptor: true when the action was handled here.
   bool handle(const QString& action, const QVariant& payload);
 
+  // Where a window that showed a parked thread goes, as the page does:
+  // settling and snoozing move to the next card, else a new thread in the
+  // project (useThreadParking); archiving to a new thread in the project
+  // (useThreadActions archiveThread); deleting to the project's first other
+  // thread (fallbackAfterDelete), else nowhere, which lands the window on a
+  // draft (DraftController::land).
+  enum class Leave { NextCard, ProjectDraft, ProjectFallback };
   // Runs `command`, which takes the thread `key` out of the list (settle,
-  // snooze, archive, delete); the window moves on to the next card when it
+  // snooze, archive, delete); the window moves on as `leave` says when it
   // showed the thread, once the command lands. Failures toast `failureTitle`.
-  void park(const QString& key, QJsonObject command, const QString& failureTitle,
+  void park(const QString& key, QJsonObject command, const QString& failureTitle, Leave leave,
             std::function<void()> onSuccess = {});
+  // Whether park() is waiting on the node for the thread `key`.
+  bool parking(const QString& key) const { return m_pending.contains(key); }
   // The snooze choices now, and snoozing the thread `key` until one's time,
   // with an Undo toast.
   QList<sidebar::SnoozePreset> snoozePresets() const;
@@ -86,8 +105,14 @@ private:
   bool m_active = false;
   sidebar::GroupingSettings m_grouping;
   QString m_timestampFormat = QStringLiteral("locale");
+  QString m_threadSortOrder = QStringLiteral("updated_at");
   QList<sidebar::ProjectGroup> m_groups;
   sidebar::Nullable m_scope;
   sidebar::View m_view;
   QSet<QString> m_pending;
+  // The listed drafts' labels, and the open draft's row as it was when the
+  // window opened it (nothing when it was empty).
+  QHash<QString, QString> m_draftLabels;
+  QString m_openDraftId;
+  std::optional<QString> m_openDraftLabel;
 };
