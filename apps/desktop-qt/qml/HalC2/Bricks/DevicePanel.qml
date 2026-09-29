@@ -14,7 +14,8 @@ Rectangle {
     property var source: null
 
     readonly property var view: source ? source.view : null
-    readonly property var screen: view ? view.screen : null
+    // No screen is an undefined entry of the view: null, as the bindings compare.
+    readonly property var screen: view && view.screen ? view.screen : null
     readonly property var stream: source ? source.stream : null
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
