@@ -37,8 +37,7 @@ Feature: The thread list
     When the user looks at the settled section
     Then "Alpha" is listed above "Beta"
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @tui @backlog-desktop
+  @desktop @tui
   Scenario: Collapsing and expanding a shelf
     Given the settled section is expanded
     When the user collapses the settled section
@@ -73,8 +72,7 @@ Feature: The thread list
     Then 50 settled threads are shown
     And the section says "20 more settled in the app"
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario Outline: Moving through the list with the keyboard
     Given the thread list has keyboard focus on "Beta"
     When the user presses <key>
@@ -89,15 +87,13 @@ Feature: The thread list
       | Enter     | "Beta" opens                |
       | Shift+F10 | the menu for "Beta" opens   |
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Enter on a shelf header folds the shelf
     Given the thread list has keyboard focus on the settled section header
     When the user presses Enter
     Then the settled section collapses
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A thread row keeps its place while the list updates
     Given the user is pointing at "Beta"
     When the list is republished with a new thread above "Beta"
@@ -121,8 +117,7 @@ Feature: The thread list
     When the user scopes the thread list to all projects
     Then threads from "shop" and "docs" are listed
 
-  # Delivered natively (Sidebar's folder dialog, project.add); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Adding a project from the thread list
     When the user adds a project from the thread list
     Then the user can choose a project to add
@@ -134,8 +129,7 @@ Feature: The thread list
     When the user shows the thread list
     Then the thread list is back
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario Outline: Empty thread lists explain themselves
     Given <state>
     When the user looks at the thread list

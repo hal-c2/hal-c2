@@ -69,8 +69,7 @@ Feature: Unread and status in the thread list
     When the user looks at the thread
     Then the thread shows it has been working for 3 minutes
 
-  # Delivered natively (SidebarThreadRow); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario Outline: An idle thread shows its age
     Given the last activity in "Build search" was <ago>
     When the user looks at the thread list
@@ -90,8 +89,7 @@ Feature: Unread and status in the thread list
     When a minute passes without any update
     Then the row for "Build search" shows "6m"
 
-  # Delivered natively (SidebarThreadRow); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Threads that need nothing step back
     Given "Build search" is idle and read
     And "Fix cart" finished work the user has not seen
