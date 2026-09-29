@@ -4,6 +4,7 @@
 #   apps/server-ex/lib/hal_c2/acp/auth.ex, apps/server-ex/lib/hal_c2/acp/url_auth.ex (server.acceptAcpRegistryUrlAuth)
 #   apps/server-ex/lib/hal_c2/provider_auth.ex (provider.auth.start, provider.auth.cancel, provider.auth.logout)
 #   packages/cursor-acp/src/agent.ts, packages/cursor-acp/src/main.ts
+#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (open items close with the turn)
 #   apps/server/src/provider/Layers/CursorProvider.ts, apps/server/src/provider/CursorAuth.ts, apps/server/src/provider/CursorCredentialStore.ts
 #   apps/server/src/provider/Layers/CursorSdkCatalog.ts, apps/server/src/provider/cursorSdkModel.ts
 #   apps/server/src/orchestration-v2/Adapters/CursorAdapterV2.ts
@@ -145,3 +146,8 @@ Feature: Cursor
     Then the thread receives the recorded updates, results and cancellation in order
     # docs/user/cursor.md "Replay And Live Testing" is contributor tooling for the TypeScript
     # adapter (record:cursor-replay), not product behaviour; the Elixir node does not carry it.
+
+  # Cursor's SDK says nothing once a run finishes, and nothing Cursor starts outlives it.
+  Scenario: A command Cursor leaves running ends with its turn
+    When Cursor ends a turn with a command still running
+    Then the command it left running ends with the turn

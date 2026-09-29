@@ -165,3 +165,8 @@ Feature: OpenCode
     Given OpenCode 1.14.19 is installed
     When the node checks its providers
     Then OpenCode carries no compatibility warning
+
+  # OpenCode has no background tasks; its subagents finish inside the turn.
+  Scenario: A command OpenCode leaves running ends with its turn
+    When OpenCode ends a turn with a command still running
+    Then the command it left running ends with the turn

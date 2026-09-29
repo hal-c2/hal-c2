@@ -5,7 +5,8 @@
 #   apps/server/src/provider/antigravityAuthSupport.ts, apps/server/src/provider/antigravityCallback.ts
 #   apps/server/src/provider/AntigravityInstallation.ts, apps/server/src/provider/antigravityRelease.ts
 #   apps/server/src/provider/acp/AntigravityAcpSupport.ts, apps/server/src/provider/acp/AntigravityProtocol.ts
-#   apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts
+#   apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts (open execute tools complete with the turn)
+#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (open items close with the turn)
 #   apps/web/src/components/settings/ProviderSetupSection.tsx
 #   packages/contracts/src/rpc.ts (provider.install.start, provider.install.cancel, provider.install.remove, provider.install.subscribe, provider.auth.complete)
 #   packages/contracts/src/providerSetup.ts (ProviderInstallState)
@@ -201,3 +202,9 @@ Feature: Antigravity
     Given the Antigravity runtime is installed on the environment
     When the user signs in from the mobile app's provider accounts
     Then Antigravity confirms access
+
+  # Antigravity completes the commands a turn left open, and its subagent batches
+  # finish inside the turn, so nothing outlives it.
+  Scenario: A command Antigravity leaves running ends with its turn
+    When Antigravity ends a turn with a command still running
+    Then the command it left running ends with the turn

@@ -225,6 +225,17 @@ for line in sys.stdin:
                 send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-gate", "text": answer}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
             continue
+        # "in the background" starts a dev server in a unified exec terminal and ends the
+        # turn with it running (or, with "wait", keeps the turn open); Codex reports it
+        # later, when it exits. thread/backgroundTerminals/terminate stops it.
+        if "in the background" in text:
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-bg", "command": "npm run dev", "processId": "4275", "source": "unifiedExecStartup", "status": "inProgress"}}})
+            send({"method": "item/commandExecution/outputDelta", "params": {**ctx, "itemId": "cmd-bg", "delta": "listening on 5173\n"}})
+            if "wait" not in text:
+                send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-bg", "text": ""}}})
+                send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-bg", "text": "The dev server is running."}}})
+                send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
+                continue
         if "wait" in text or "finishing" in text:
             waiting_ctx = ctx
             finishing = "finishing" in text
@@ -443,6 +454,8 @@ for line in sys.stdin:
             if outcome == "reset":
                 open(os.environ["FAKE_CODEX_CONSUME_LOG"] + ".reset", "w").close()
             send({"id": mid, "result": {"outcome": outcome}})
+    elif method == "thread/backgroundTerminals/terminate":
+        send({"id": mid, "result": {"terminated": True}})
     elif method == "turn/interrupt":
         send({"id": mid, "result": {}})
         send({"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": params["turnId"], "status": "interrupted"}}})
