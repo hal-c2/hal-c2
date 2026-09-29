@@ -3,6 +3,9 @@
 // reopens with them after a restart until it is closed.
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QJsonDocument>
 #include <QEvent>
 #include <QJsonArray>
 
@@ -209,6 +212,31 @@ const Steps steps([] {
       if (!world.node.shapeOf(id).isEmpty()) live << show(world.node.shapeOf(id).toVariantMap());
     }
     expect(live.isEmpty(), QStringLiteral("the closed window still follows %1").arg(live.join(u", ")));
+  });
+
+  // A window's id names its folder (NativeShell's validWindowId).
+  step(QStringLiteral("the page asks for a second window with the id \"([^\"]*)\""), [](World& world, const Captures& c, const Table&) {
+    connectWithThreads(world);
+    openSecond(world, {{QStringLiteral("id"), c[0]}});
+  });
+  step(QStringLiteral("the second window keeps its files in its own folder"), [](World& world, const Captures&, const Table&) {
+    const QString id = second(world)->id();
+    const QDir windows(QDir(world.homeDir()).filePath(QStringLiteral("state/shell-windows")));
+    expect(!id.contains(QLatin1Char('/')) && !id.contains(QLatin1Char('.')) && windows.exists(id),
+           QStringLiteral("the window is \"%1\"; the windows folder holds %2").arg(id, windows.entryList(QDir::Dirs | QDir::NoDotAndDotDot).join(u", ")));
+    const QStringList home = QDir(world.homeDir()).entryList(QDir::AllEntries | QDir::NoDotAndDotDot);
+    expect(!home.contains(QStringLiteral("outside")), QStringLiteral("a folder was made outside the windows folder: %1").arg(home.join(u", ")));
+  });
+  step(QStringLiteral("the saved windows are \"([^\"]*)\" and \"([^\"]*)\""), [](World& world, const Captures& c, const Table&) {
+    QDir().mkpath(QDir(world.homeDir()).filePath(QStringLiteral("state")));
+    QFile file(QDir(world.homeDir()).filePath(QStringLiteral("state/shell-windows.json")));
+    expect(file.open(QIODevice::WriteOnly), QStringLiteral("the saved windows could not be written"));
+    file.write(QJsonDocument(QJsonObject{{QStringLiteral("windows"), QJsonArray{c[0], c[1]}}}).toJson());
+  });
+  step(QStringLiteral("only the window \"([^\"]*)\" reopens beside the first"), [](World& world, const Captures& c, const Table&) {
+    QStringList ids;
+    for (const auto& window : world.native().windows()) ids << window->id();
+    expect(ids.size() == 2 && ids.at(1) == c[0], QStringLiteral("the open windows are %1").arg(ids.join(u", ")));
   });
 
   step(QStringLiteral("the second window is signed in to the same environments"), [](World& world, const Captures&, const Table&) {

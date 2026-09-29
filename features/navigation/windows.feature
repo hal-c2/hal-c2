@@ -122,6 +122,17 @@ Feature: Windows, zoom and quitting
       Then that window has the same draft and panel
 
     @desktop
+    Scenario: A window keeps its files in its own folder
+      When the page asks for a second window with the id "../../outside"
+      Then the second window keeps its files in its own folder
+
+    @desktop
+    Scenario: A restart skips a saved window that names another folder
+      Given the saved windows are "../outside" and "kept"
+      When the user restarts the app
+      Then only the window "kept" reopens beside the first
+
+    @desktop
     Scenario: A window has a sensible title and size
       Given a second window has no page title yet
       Then its title is "HAL-C2"

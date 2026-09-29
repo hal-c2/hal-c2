@@ -190,6 +190,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/windows.feature:Closing a window while it waits on the node"),
     QStringLiteral("navigation/windows.feature:Windows share the sign-in but not the navigation"),
     QStringLiteral("navigation/windows.feature:A window restores its drafts and panels after a restart"),
+    QStringLiteral("navigation/windows.feature:A window keeps its files in its own folder"),
+    QStringLiteral("navigation/windows.feature:A restart skips a saved window that names another folder"),
     QStringLiteral("navigation/windows.feature:The settings shortcut opens settings"),
     QStringLiteral("navigation/windows.feature:Zooming the app*"),
     QStringLiteral("navigation/windows.feature:Actual size undoes the zoom"),

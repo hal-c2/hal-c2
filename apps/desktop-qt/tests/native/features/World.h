@@ -53,6 +53,8 @@ public:
   // The shell's config directory (theme.json, preferences.json), fresh per
   // scenario and kept across restarts, and the palette main.cpp builds over it.
   QString configDir() const { return m_home.filePath(QStringLiteral("config")); }
+  // Where the shell keeps its state (`state/`) and data (`data/`).
+  QString homeDir() const { return m_home.path(); }
   ThemeStore& theme() { return *m_theme; }
   QVariant state(const QString& key) const { return m_bridge->state()->value(key); }
   // The desktop quits and starts again: a new shell and page, the same files.

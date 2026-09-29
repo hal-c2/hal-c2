@@ -6,6 +6,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QQmlEngine>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QUuid>
 #include <QtLogging>
@@ -30,6 +31,13 @@ namespace {
 
 const QString kNewWindow = QStringLiteral("window.new");
 const QString kWindowsDir = QStringLiteral("shell-windows");
+
+// A window's id names its directory under shell-windows/, so one from the page
+// or a saved file is used only if it cannot climb out of it.
+bool validWindowId(const QString& id) {
+  static const QRegularExpression pattern(QStringLiteral("^[A-Za-z0-9_-]{1,32}$"));
+  return pattern.match(id).hasMatch();
+}
 
 // The process's one shell, for the QML singleton factories.
 NativeShell* g_shell = nullptr;
@@ -214,7 +222,7 @@ NativeWindow* NativeShell::openWindow(const QString& id) {
     open->bridge()->windowCommand(QStringLiteral("raise"));
     return open;
   }
-  const QString windowId = id.isEmpty() ? QUuid::createUuid().toString(QUuid::Id128).left(12) : id;
+  const QString windowId = validWindowId(id) ? id : QUuid::createUuid().toString(QUuid::Id128).left(12);
   ShellBridge* main = this->main()->bridge();
   auto bridge = std::make_unique<ShellBridge>();
   bridge->setLocalFolderImportEnabled(main->localFolderImportEnabled());
@@ -259,7 +267,7 @@ void NativeShell::restoreWindows() {
   if (!file.open(QIODevice::ReadOnly)) return;
   const QJsonArray ids = QJsonDocument::fromJson(file.readAll()).object().value(QStringLiteral("windows")).toArray();
   for (const QJsonValue& id : ids) {
-    if (!id.toString().isEmpty()) openWindow(id.toString());
+    if (validWindowId(id.toString())) openWindow(id.toString());
   }
 }
 
