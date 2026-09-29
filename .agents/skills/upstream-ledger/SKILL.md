@@ -71,9 +71,11 @@ These are the mistakes the first upstream batch (hal-c2/hal-c2#10) made and revi
 ## Finish
 
 1. Write the digest's commit to `features/UPSTREAM`.
-2. Run `mise run features:node <each touched file>` (and `mise run features:tui <file>` for
-   files with `@tui` or `@shared` scenarios). They parse the files and keep passing scenarios
-   passing. If mix deps are missing, `mise run install:node` first.
+2. Run the runner for every surface a touched file tags: `mise run features:node <file>`,
+   `mise run features:tui <file>` for `@tui` or `@shared`, and `mise run features:desktop`
+   for `@desktop` or `@shared`. They parse the files and keep passing scenarios passing. A
+   scenario whose runner you could not run keeps `@backlog`. If mix deps are missing,
+   `mise run install:node` first.
 3. Commit as `test(features): ledger upstream T3 Code through <short sha>`. When asked for a
-   PR, its description is one table row per upstream pull request: number and title,
+   PR, its description is one table row per digest entry: pull request or commit and title,
    disposition, and the scenario or reason in a few words.
