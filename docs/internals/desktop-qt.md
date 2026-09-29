@@ -814,9 +814,9 @@ Choosing a theme waits for the native settings pages.
 
 ### `layout`
 
-The page keeps owning the main sidebar's open state (its `sidebar.toggle`
-keybinding, Mod+B by default, still works when hosted — see `keybindings`)
-and publishes it as
+The page keeps owning the main sidebar's open state (the shell runs the
+`sidebar.toggle` keybinding, Mod+B by default, as that action — see
+`keybindings`) and publishes it as
 `layout {sidebarCollapsed}` from `ShellLayoutBridge`, mounted inside the
 sidebar provider. `sidebar.toggle` flips it from native chrome — the
 `Workspace` brick shows a toggle when its `sidebarToggle` property is bound
@@ -840,34 +840,44 @@ because most rices bring their own title bar.
 
 ### `keybindings`
 
-The page's keybindings are configurable and fire on keydown events the
-document sees, so with native chrome focused (the thread list, the composer
-editor) they would go dead. `HalC2ShellBridge` publishes the resolved config as
-`keybindings`: `apps/web/src/shell/shellKeybindings.ts` turns every modified
-chord into a portable Qt sequence such as `Ctrl+Shift+]` (Qt swaps Ctrl and
-Command on macOS, so the builder swaps them back), skips unmodified keys —
-those belong to whichever native control has focus — and collapses rules
-that share a chord. `ShellWindow` instantiates a window `Shortcut` per entry
-while no `WebSurface` has focus; the page handles the real key there. A drawer
-terminal with focus turns them off too, so chords reach the shell in it, and
-Ctrl+J toggles the drawer natively whatever the user bound `terminal.toggle` to. A match
-dispatches `keybinding.press {key, ctrlKey, metaKey, shiftKey, altKey}`,
-which the page replays as a synthetic keydown on `document.body`, so the same
-dispatcher, the same `when` clauses and the user's own config decide what
-runs. A body target reads as "not typing", so chords scoped to a focused
-editor do nothing from chrome; the QML composer submits through
-`composer.submit` instead.
+`KeybindingController` (the `Keybindings` singleton) keeps the keymap. It
+merges `src/native/Keybindings.cpp`'s copy of the web defaults with the rules
+the node pushes as `config.keybindings` (a custom rule for a command replaces
+that command's defaults, the newest match wins, rules naming an unknown
+command are dropped) and evaluates `when` against the shell's own context:
+terminal and composer focus, the drawer, `isDesktop`. Commands the shell can
+run itself sit in a `CommandRegistry` (`Keybindings.commands`): new thread
+through `thread.new`, back, the sidebar, the terminal drawer, next, previous
+and numbered threads in the sidebar's order, the composer's pickers and stop.
+A brick adds its own with `Keybindings.commands.add(command, title, callback,
+owner)`; `KeybindingController::kAppearanceCycle` names the one a native
+appearance setting should register. Its rows (`{command, title, shortcut}`)
+are also what a native command palette lists.
 
-Secondary documents (the right panel) carry no
-`HalC2ShellBridge` and no sidebar, so the handlers behind thread jumps or the
-sidebar toggle do not exist there, and while one has focus the shell's own
-shortcuts are off. `ShellEmbedRouteBridge` therefore forwards a keydown its
-document did not consume as `keybinding.press` when the chord resolves to the
-same command with and without the embed's focus context
-(`shellKeybindingPressToForward`): Mod+1 jumps threads either way and is
-forwarded, Mod+D splits a focused terminal there and is not. A focused
-terminal consumes Mod+1 as terminal input before that listener runs, exactly
-as in the web app.
+`ShellWindow` instantiates one window `Shortcut` per bound sequence and calls
+`Keybindings.press`. Who takes a key follows focus:
+
+- A focused `WebSurface` or drawer terminal keeps every key except the
+  sequences that resolve, in that focus, to a native command or a project
+  script. Those `Shortcut`s stay enabled, so a native command runs once and
+  a terminal still gets Ctrl+K or Ctrl+D.
+- From native chrome, a native command or script runs in the shell, and any
+  other bound key goes to the page as `keybinding.press {key, ctrlKey,
+metaKey, shiftKey, altKey}`. The page replays it on `document.body`, so the
+  page's own commands resolve with no editor or terminal focus.
+- Unmodified keys are never window shortcuts; they belong to whichever
+  control has focus.
+
+Secondary documents (the right panel) forward a keydown they did not consume
+as `keybinding.press` when the chord resolves to the same command with and
+without the embed's focus (`shellKeybindingPressToForward`). The controller
+intercepts that dispatch and runs the command if it is native.
+
+Settings → Keybindings (`KeybindingsSettings`, route
+`/settings/keybindings`) lists the merged rows, records chords with
+`Keybindings.recordKey`, and saves through `hal-c2.upsertKeybinding` and
+`hal-c2.removeKeybinding` on the shell's own environment. The rows refresh
+from the node's push, not from the reply.
 
 ### `notifications`
 
