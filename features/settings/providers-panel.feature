@@ -73,6 +73,11 @@ Feature: Providers settings panel
       Then the node reads each provider's installation, sign-in and models again
       And every connected client receives the new provider list
 
+    @desktop
+    Scenario: The panel says when providers were last checked
+      Given Codex was checked 10 minutes ago and Claude 2 minutes ago
+      Then the panel says providers were last checked by the latest of them
+
     # The node already honours the interval (providers/provider-instances.feature and
     # settings/background-service.feature); only this settings row is backlog.
     @desktop

@@ -3,6 +3,7 @@
 // the desktop's side of providers/provider-setup.feature. The node's own
 // environment plays "Laptop", this machine; others are linked environments.
 
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -39,6 +40,8 @@ struct FakeProviders {
   QJsonArray acpSessions, acpProviders;
   QList<QJsonObject> acpImports, acpSets;
   QStringList acpDeletes, acpDisables, acpLogouts;
+  // The latest provider check a scenario seeded.
+  QDateTime checkedAt;
   // Calls the scenario answers itself, one at a time, while held.
   bool holdPrepares = false, holdStarts = false;
   QList<FakeNode::Rpc> heldPrepares, heldStarts;
@@ -819,6 +822,20 @@ const Steps steps([] {
   step(QStringLiteral("the secret stored for %1 is forgotten").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return !fakeConfig(world.node).secrets.contains(fake(world).instanceId + QLatin1Char('/') + c[0]); },
                   [&] { return QStringLiteral("the secret of %1 to be deleted").arg(c[0]); });
+  });
+  step(QStringLiteral("Codex was checked (\\d+) minutes ago and Claude (\\d+) minutes ago"), [](World& world, const Captures& c, const Table&) {
+    openPanel(world);
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    offer(world, provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"),
+                          {{QStringLiteral("checkedAt"), now.addSecs(-60 * c[0].toInt()).toString(Qt::ISODateWithMs)}}));
+    offer(world, provider(QStringLiteral("claudeAgent"), QStringLiteral("claudeAgent"), QStringLiteral("Claude"),
+                          {{QStringLiteral("checkedAt"), now.addSecs(-60 * c[1].toInt()).toString(Qt::ISODateWithMs)}}));
+    fake(world).checkedAt = now.addSecs(-60 * std::min(c[0].toInt(), c[1].toInt()));
+  });
+  step(QStringLiteral("the panel says providers were last checked by the latest of them"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      return QDateTime::fromString(panel(world).value(QStringLiteral("checkedAt")).toString(), Qt::ISODateWithMs) == fake(world).checkedAt;
+    }, [&] { return QStringLiteral("the panel to say %1; it is %2").arg(fake(world).checkedAt.toString(Qt::ISODateWithMs), show(panel(world))); });
   });
   // A Cursor instance that signs in from the browser, keeping `CURSOR_API_KEY` as a stored secret.
   step(QStringLiteral("a Cursor instance keeps its own %1").arg(q), [](World& world, const Captures& c, const Table&) {

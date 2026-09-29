@@ -278,6 +278,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/providers-panel.feature:A disconnected environment cannot*"),
     QStringLiteral("settings/providers-panel.feature:An environment that reconnects*"),
     QStringLiteral("settings/providers-panel.feature:Leaving the Providers settings*"),
+    QStringLiteral("settings/providers-panel.feature:The panel says when providers were last checked"),
     QStringLiteral("settings/providers-panel.feature:Turning an instance off and on"),
     QStringLiteral("settings/providers-panel.feature:A change that cannot be saved*"),
     QStringLiteral("settings/providers-panel.feature:A provider's own API key can be cleared*"),

@@ -50,6 +50,19 @@ Item {
             Shell.reset();
         }
 
+        // The header says when the environment last checked its providers.
+        function test_the_header_says_when_providers_were_checked() {
+            const fiveMinutesAgo = new Date(Date.now() - 5 * 60000 - 1000).toISOString();
+            Shell.state = { providerSettings: root.settings({ checkedAt: fiveMinutesAgo }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const checked = findChild(page, "checked");
+            tryCompare(checked, "text", "Checked 5m ago");
+            compare(page.checkedAgo(new Date(Date.now() - 2 * 3600000).toISOString(), Date.now()), "Checked 2h ago");
+            compare(page.checkedAgo(new Date().toISOString(), Date.now()), "Checked just now");
+            Shell.state = { providerSettings: root.settings({ checkedAt: "" }) };
+            verify(!checked.visible);
+        }
+
         // The signed-in account email stays hidden until asked; the signed-in
         // email is hidden until the user reveals it.
         function test_the_account_email_is_scrambled_until_revealed() {

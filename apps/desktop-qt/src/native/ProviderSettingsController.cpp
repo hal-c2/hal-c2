@@ -1,6 +1,7 @@
 #include "ProviderSettingsController.h"
 
 #include <QClipboard>
+#include <QDateTime>
 #include <QPointer>
 #include <QGuiApplication>
 #include <QRegularExpression>
@@ -893,6 +894,14 @@ void ProviderSettingsController::publish() {
     for (const QJsonValue& value : *m_providers) providers.append(entry(value.toObject()));
     providers.append(pendingEntries());
   }
+  // When the environment last checked its providers: the latest of their checks.
+  QDateTime checked;
+  if (m_providers && status == QLatin1String("ready")) {
+    for (const QJsonValue& value : *m_providers) {
+      const QDateTime at = QDateTime::fromString(value.toObject().value(QLatin1String("checkedAt")).toString(), Qt::ISODateWithMs);
+      if (at.isValid() && (!checked.isValid() || at > checked)) checked = at;
+    }
+  }
   m_bridge->publish(kKey, QVariantMap{
                               {QStringLiteral("open"), m_open},
                               {QStringLiteral("environmentId"), environmentId},
@@ -901,6 +910,7 @@ void ProviderSettingsController::publish() {
                               {QStringLiteral("title"), title},
                               {QStringLiteral("description"), description},
                               {QStringLiteral("refreshing"), m_refreshing > 0},
+                              {QStringLiteral("checkedAt"), checked.isValid() ? checked.toUTC().toString(Qt::ISODateWithMs) : QString()},
                               {QStringLiteral("readOnly"), readOnly},
                               {QStringLiteral("readOnlyDescription"),
                                readOnly ? QStringLiteral("This session can view %1's providers but can't change their settings.")

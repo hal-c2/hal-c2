@@ -45,6 +45,40 @@ Rectangle {
         return result;
     }
 
+    // "Checked 5m ago": when the environment last checked its providers,
+    // re-read every half minute while the page shows it.
+    property double checkedNow: Date.now()
+    readonly property string checkedLabel: checkedAgo(model ? model.checkedAt : "", checkedNow)
+
+    function checkedAgo(iso, now) {
+        if (!iso) {
+            return "";
+        }
+        const at = Date.parse(iso);
+        if (isNaN(at)) {
+            return qsTr("Checked unavailable");
+        }
+        const minutes = Math.floor(Math.max(0, now - at) / 60000);
+        if (minutes < 1) {
+            return qsTr("Checked just now");
+        }
+        if (minutes < 60) {
+            return qsTr("Checked %1m ago").arg(minutes);
+        }
+        if (minutes < 60 * 24) {
+            return qsTr("Checked %1h ago").arg(Math.floor(minutes / 60));
+        }
+        return qsTr("Checked %1d ago").arg(Math.floor(minutes / (60 * 24)));
+    }
+
+    Timer {
+        interval: 30000
+        repeat: true
+        triggeredOnStart: true
+        running: page.visible && !!(page.model && page.model.checkedAt)
+        onTriggered: page.checkedNow = Date.now()
+    }
+
     function act(action, provider, extra) {
         Shell.dispatch("providerSettings." + action, Object.assign({ instanceId: provider.instanceId }, extra || {}));
     }
@@ -1063,6 +1097,14 @@ Rectangle {
                     iconName: "plus"
                     text: qsTr("Add provider")
                     onClicked: Shell.dispatch("providerSettings.wizardOpen")
+                }
+
+                Label {
+                    objectName: "checked"
+                    visible: text.length > 0
+                    text: page.checkedLabel
+                    color: page.muted
+                    font.pixelSize: 12
                 }
 
                 ShellButton {
