@@ -300,6 +300,9 @@ Feature: Usage and limits
       When the user leaves usage
       Then limits are no longer followed
 
+    # Grok, Cursor and OpenCode Go limits, and the /usage-limits composer command, are in
+    # providers/usage-limits.feature.
+
     @shared @backlog-mobile @backlog-tui
     Scenario: A banked reset credit is spent once the user confirms
       Given Codex has a reset credit banked
@@ -331,5 +334,3 @@ Feature: Usage and limits
         | the account has no credit left            | No reset credit left.             |
         | the credit was redeemed on another device | That credit was already redeemed. |
 
-    # Grok, Cursor and OpenCode Go limits, and the /usage-limits composer command, are in
-    # providers/usage-limits.feature.
