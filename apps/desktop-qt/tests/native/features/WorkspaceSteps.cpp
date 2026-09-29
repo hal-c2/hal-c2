@@ -13,6 +13,9 @@
 #include "World.h"
 #include "WorkspaceController.h"
 
+// ProviderSettingsSteps.cpp
+void renameProviderInstance(World& world, const QString& from, const QString& to);
+
 namespace {
 
 const QString kThread = QStringLiteral("t1");
@@ -276,6 +279,11 @@ const Steps steps([] {
 
   // Titles.
   step(QStringLiteral("the user renames %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The same words rename a provider instance in the Providers settings.
+    if (at(world.state(QStringLiteral("providerSettings")), QStringLiteral("open")).toBool()) {
+      renameProviderInstance(world, c[0], c[1]);
+      return;
+    }
     expect(workspace(world).value(QStringLiteral("threadTitle")) == c[0], QStringLiteral("the header shows %1").arg(show(workspace(world))));
     dispatch(world, QStringLiteral("workspace.rename"), {{QStringLiteral("title"), c[1]}});
   });

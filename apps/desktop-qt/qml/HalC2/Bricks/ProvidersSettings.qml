@@ -5,7 +5,8 @@ import HalC2.Shell
 
 // The Providers settings section (ProviderSettingsController publishes
 // `providerSettings`): one environment's providers, how each stands, turning
-// one on or off, signing in and out, and its version and updates.
+// one on or off, signing in and out, its version and updates, and adding,
+// configuring and deleting instances.
 Rectangle {
     id: page
 
@@ -55,6 +56,269 @@ Rectangle {
         wrapMode: Text.Wrap
     }
 
+    // A driver setting: a text or secret input, or a choice. `commit(value)`
+    // runs when the user settles on a value.
+    component ConfigField: ColumnLayout {
+        id: configField
+
+        required property var field
+        signal commit(string value)
+
+        objectName: "field_" + field.key
+        Layout.fillWidth: true
+        spacing: 2
+
+        Label {
+            text: configField.field.label
+            color: page.foreground
+            font.pixelSize: 12
+            font.weight: Font.Medium
+        }
+
+        ShellTextField {
+            objectName: "input"
+            Layout.fillWidth: true
+            visible: configField.field.control !== "select"
+            text: configField.field.value
+            placeholderText: configField.field.placeholder
+            echoMode: configField.field.control === "password" ? TextInput.Password : TextInput.Normal
+            Accessible.name: configField.field.label
+            onEditingFinished: if (text !== configField.field.value) configField.commit(text)
+        }
+
+        ShellComboBox {
+            objectName: "choice"
+            visible: configField.field.control === "select"
+            outline: true
+            model: configField.field.options
+            textRole: "label"
+            valueRole: "value"
+            currentIndex: Math.max(0, indexOfValue(configField.field.value))
+            Accessible.name: configField.field.label
+            onActivated: configField.commit(currentValue)
+        }
+
+        Note {
+            visible: configField.field.description.length > 0
+            text: configField.field.description
+        }
+    }
+
+    // An accent colour as `#rrggbb`, or none.
+    component AccentField: RowLayout {
+        id: accentField
+
+        required property string color
+        property string name: ""
+        signal commit(string color)
+
+        objectName: "accent"
+        spacing: 6
+
+        Rectangle {
+            implicitWidth: 18
+            implicitHeight: 18
+            radius: 9
+            color: accentField.color.length > 0 ? accentField.color : "transparent"
+            border.color: Theme.palette.color("border", "#27272a")
+        }
+
+        ShellTextField {
+            objectName: "hex"
+            implicitWidth: 110
+            text: accentField.color
+            placeholderText: "#2563eb"
+            font.family: "monospace"
+            Accessible.name: qsTr("Accent color for %1").arg(accentField.name)
+            onEditingFinished: if (text !== accentField.color) accentField.commit(text)
+        }
+
+        ShellButton {
+            visible: accentField.color.length > 0
+            subtle: true
+            text: qsTr("Clear color")
+            onClicked: accentField.commit("")
+        }
+    }
+
+    // Adding an instance: pick a driver, name it, then set it up.
+    component Wizard: ShellCard {
+        id: wizardCard
+
+        required property var wizard
+
+        objectName: "wizard"
+        Layout.fillWidth: true
+        implicitHeight: wizardColumn.implicitHeight + 24
+
+        function send(action, payload) {
+            Shell.dispatch("providerSettings.wizard" + action, payload || {});
+        }
+
+        ColumnLayout {
+            id: wizardColumn
+
+            x: 12
+            y: 12
+            width: parent.width - 24
+            spacing: 8
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("Add provider instance")
+                    color: page.foreground
+                    font.pixelSize: 13
+                    font.weight: Font.DemiBold
+                }
+
+                Repeater {
+                    model: wizardCard.wizard.steps
+
+                    delegate: Label {
+                        required property string modelData
+                        required property int index
+                        text: (index + 1) + ". " + modelData
+                        color: index === wizardCard.wizard.step ? page.foreground : page.muted
+                        font.pixelSize: 11
+                        font.weight: index === wizardCard.wizard.step ? Font.DemiBold : Font.Normal
+                    }
+                }
+            }
+
+            Flow {
+                objectName: "drivers"
+                Layout.fillWidth: true
+                visible: wizardCard.wizard.step === 0
+                spacing: 6
+
+                Repeater {
+                    model: wizardCard.wizard.drivers
+
+                    delegate: ShellButton {
+                        required property var modelData
+                        objectName: "driver_" + modelData.id
+                        primary: wizardCard.wizard.driver === modelData.id
+                        subtle: !primary
+                        text: modelData.badge ? modelData.label + " (" + modelData.badge + ")" : modelData.label
+                        onClicked: wizardCard.send("Driver", { driver: modelData.id })
+                    }
+                }
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                visible: wizardCard.wizard.step === 1
+                spacing: 6
+
+                Label {
+                    text: qsTr("Label")
+                    color: page.foreground
+                    font.pixelSize: 12
+                }
+
+                ShellTextField {
+                    objectName: "label"
+                    Layout.fillWidth: true
+                    text: wizardCard.wizard.label
+                    placeholderText: wizardCard.wizard.driverLabel
+                    onTextEdited: wizardCard.send("Label", { label: text })
+                }
+
+                AccentField {
+                    color: wizardCard.wizard.accentColor
+                    name: wizardCard.wizard.label
+                    onCommit: color => wizardCard.send("Accent", { color: color })
+                }
+
+                Label {
+                    text: qsTr("Instance ID")
+                    color: page.foreground
+                    font.pixelSize: 12
+                }
+
+                ShellTextField {
+                    objectName: "instanceId"
+                    Layout.fillWidth: true
+                    text: wizardCard.wizard.instanceId
+                    font.family: "monospace"
+                    onTextEdited: wizardCard.send("InstanceId", { instanceId: text })
+                }
+
+                Note {
+                    objectName: "instanceIdError"
+                    visible: wizardCard.wizard.instanceIdError.length > 0
+                    text: wizardCard.wizard.instanceIdError
+                    color: page.danger
+                }
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                visible: wizardCard.wizard.step === 2
+                spacing: 8
+
+                Note {
+                    visible: wizardCard.wizard.fields.length === 0
+                    text: qsTr("%1 needs no further setup.").arg(wizardCard.wizard.driverLabel)
+                }
+
+                Repeater {
+                    model: wizardCard.wizard.fields
+
+                    delegate: ConfigField {
+                        required property var modelData
+                        field: modelData
+                        onCommit: value => wizardCard.send("Field", { key: modelData.key, value: value })
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                ShellButton {
+                    subtle: true
+                    enabled: !wizardCard.wizard.saving
+                    text: qsTr("Cancel")
+                    onClicked: wizardCard.send("Close")
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                }
+
+                ShellButton {
+                    objectName: "back"
+                    visible: wizardCard.wizard.step > 0
+                    enabled: !wizardCard.wizard.saving
+                    text: qsTr("Back")
+                    onClicked: wizardCard.send("Step", { step: wizardCard.wizard.step - 1 })
+                }
+
+                ShellButton {
+                    objectName: "next"
+                    visible: wizardCard.wizard.step < wizardCard.wizard.steps.length - 1
+                    primary: true
+                    text: qsTr("Next")
+                    onClicked: wizardCard.send("Step", { step: wizardCard.wizard.step + 1 })
+                }
+
+                ShellButton {
+                    objectName: "submit"
+                    primary: true
+                    enabled: !wizardCard.wizard.saving
+                    text: wizardCard.wizard.saving ? qsTr("Adding…") : qsTr("Add instance")
+                    onClicked: wizardCard.send("Submit")
+                }
+            }
+        }
+    }
+
     component ProviderCard: ShellCard {
         id: card
 
@@ -63,6 +327,7 @@ Rectangle {
         readonly property var account: provider.account
         readonly property var advisory: provider.advisory
         property bool revealed: false
+        property bool configuring: false
 
         objectName: "provider_" + provider.instanceId
         Layout.fillWidth: true
@@ -85,6 +350,14 @@ Rectangle {
                     size: 18
                 }
 
+                Rectangle {
+                    visible: card.provider.accentColor.length > 0
+                    implicitWidth: 8
+                    implicitHeight: 8
+                    radius: 4
+                    color: card.provider.accentColor.length > 0 ? card.provider.accentColor : "transparent"
+                }
+
                 Label {
                     text: card.provider.name
                     color: page.foreground
@@ -103,6 +376,15 @@ Rectangle {
 
                 Item {
                     Layout.fillWidth: true
+                }
+
+                ShellButton {
+                    objectName: "configure"
+                    visible: card.provider.editable
+                    subtle: true
+                    iconName: "settings"
+                    Accessible.name: qsTr("Configure %1").arg(card.provider.name)
+                    onClicked: card.configuring = !card.configuring
                 }
 
                 Switch {
@@ -259,6 +541,172 @@ Rectangle {
                 }
             }
 
+            // The instance's own settings, saved as each one settles.
+            ColumnLayout {
+                objectName: "editor"
+                Layout.fillWidth: true
+                Layout.topMargin: 6
+                visible: card.configuring && card.provider.editable
+                spacing: 8
+
+                Label {
+                    text: qsTr("Name")
+                    color: page.foreground
+                    font.pixelSize: 12
+                    font.weight: Font.Medium
+                }
+
+                ShellTextField {
+                    objectName: "name"
+                    Layout.fillWidth: true
+                    text: card.provider.label
+                    placeholderText: card.provider.placeholder
+                    Accessible.name: qsTr("Name for %1").arg(card.provider.name)
+                    onEditingFinished: if (text !== card.provider.label) page.act("rename", card.provider, { name: text })
+                }
+
+                AccentField {
+                    color: card.provider.accentColor
+                    name: card.provider.name
+                    onCommit: color => page.act("accent", card.provider, { color: color })
+                }
+
+                Repeater {
+                    model: card.provider.fields
+
+                    delegate: ConfigField {
+                        required property var modelData
+                        field: modelData
+                        onCommit: value => page.act("field", card.provider, { key: modelData.key, value: value })
+                    }
+                }
+
+                Repeater {
+                    model: card.provider.secrets
+
+                    delegate: ColumnLayout {
+                        required property var modelData
+                        objectName: "secret_" + modelData.name
+                        Layout.fillWidth: true
+                        spacing: 2
+
+                        Label {
+                            text: modelData.label
+                            color: page.foreground
+                            font.pixelSize: 12
+                            font.weight: Font.Medium
+                        }
+
+                        ShellTextField {
+                            Layout.fillWidth: true
+                            echoMode: TextInput.Password
+                            placeholderText: modelData.stored ? qsTr("Stored secret, enter a new value to replace") : modelData.placeholder
+                            Accessible.name: modelData.label
+                            onEditingFinished: if (text.length > 0) {
+                                page.act("secret", card.provider, { name: modelData.name, value: text });
+                                text = "";
+                            }
+                        }
+
+                        Note {
+                            visible: modelData.description.length > 0
+                            text: modelData.description
+                        }
+                    }
+                }
+
+                Label {
+                    text: qsTr("Environment variables")
+                    color: page.foreground
+                    font.pixelSize: 12
+                    font.weight: Font.Medium
+                }
+
+                Repeater {
+                    model: card.provider.variables
+
+                    delegate: RowLayout {
+                        id: variableRow
+
+                        required property var modelData
+                        required property int index
+                        objectName: "variable_" + index
+                        Layout.fillWidth: true
+                        spacing: 6
+
+                        ShellTextField {
+                            objectName: "variableName"
+                            Layout.preferredWidth: 180
+                            text: variableRow.modelData.name
+                            placeholderText: "NAME"
+                            font.family: "monospace"
+                            color: variableRow.modelData.invalid ? page.danger : page.foreground
+                            Accessible.name: qsTr("Environment variable name")
+                            onEditingFinished: if (text !== variableRow.modelData.name) page.act("variable", card.provider, { index: variableRow.index, name: text })
+                        }
+
+                        ShellTextField {
+                            objectName: "variableValue"
+                            Layout.fillWidth: true
+                            text: variableRow.modelData.value
+                            placeholderText: variableRow.modelData.placeholder
+                            echoMode: variableRow.modelData.sensitive ? TextInput.Password : TextInput.Normal
+                            Accessible.name: qsTr("Environment variable value")
+                            onEditingFinished: if (text !== variableRow.modelData.value) page.act("variable", card.provider, { index: variableRow.index, value: text })
+                        }
+
+                        ShellButton {
+                            objectName: "sensitive"
+                            subtle: true
+                            iconName: variableRow.modelData.sensitive ? "lock" : "lock-open"
+                            Accessible.name: variableRow.modelData.sensitive ? qsTr("Mark as not sensitive") : qsTr("Mark as sensitive")
+                            onClicked: page.act("variable", card.provider, { index: variableRow.index, sensitive: !variableRow.modelData.sensitive })
+                        }
+
+                        ShellButton {
+                            objectName: "removeVariable"
+                            subtle: true
+                            iconName: "x"
+                            Accessible.name: qsTr("Remove environment variable")
+                            onClicked: page.act("removeVariable", card.provider, { index: variableRow.index })
+                        }
+                    }
+                }
+
+                ShellButton {
+                    objectName: "addVariable"
+                    subtle: true
+                    iconName: "plus"
+                    text: qsTr("Add variable")
+                    onClicked: page.act("addVariable", card.provider)
+                }
+
+                Note {
+                    text: qsTr("Sensitive values are stored separately and never returned to the app.")
+                }
+
+                RowLayout {
+                    spacing: 8
+
+                    ShellButton {
+                        objectName: "delete"
+                        visible: card.provider.custom
+                        subtle: true
+                        tint: page.danger
+                        text: qsTr("Delete instance")
+                        onClicked: page.act("delete", card.provider)
+                    }
+
+                    ShellButton {
+                        objectName: "resetInstance"
+                        visible: card.provider.resettable
+                        subtle: true
+                        text: qsTr("Reset to defaults")
+                        onClicked: page.act("reset", card.provider)
+                    }
+                }
+            }
+
             Note {
                 visible: card.provider.models.length > 0
                 text: qsTr("Models: %1").arg(card.provider.models.map(model => model.name || model.slug).join(", "))
@@ -291,6 +739,14 @@ Rectangle {
                     color: page.foreground
                     font.pixelSize: 18
                     font.weight: Font.DemiBold
+                }
+
+                ShellButton {
+                    objectName: "addInstance"
+                    enabled: page.model !== null && page.model.status === "ready" && !page.model.wizard
+                    iconName: "plus"
+                    text: qsTr("Add provider")
+                    onClicked: Shell.dispatch("providerSettings.wizardOpen")
                 }
 
                 ShellButton {
@@ -344,6 +800,16 @@ Rectangle {
                 }
             }
 
+            Loader {
+                Layout.fillWidth: true
+                active: !!(page.model && page.model.wizard)
+                visible: active
+
+                sourceComponent: Wizard {
+                    wizard: page.model.wizard
+                }
+            }
+
             Repeater {
                 model: page.providers
 
@@ -355,7 +821,7 @@ Rectangle {
                 id: healthRow
 
                 objectName: "healthInterval"
-                readonly property var health: page.model ? page.model.health : null
+                readonly property var health: page.model ? (page.model.health ?? null) : null
                 Layout.fillWidth: true
                 Layout.topMargin: 12
                 visible: health !== null

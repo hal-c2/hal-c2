@@ -17,6 +17,7 @@
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "NodeClient.h"
+#include "ProviderDrivers.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ToastController.h"
@@ -262,10 +263,13 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
     save([seconds](QJsonObject settings, const QString&) { return withHealthSeconds(settings, seconds); });
   } else if (action == QLatin1String("providerSettings.resetHealthInterval")) {
     save([](QJsonObject settings, const QString&) { return withHealthSeconds(settings, std::nullopt); });
-  } else if (entry.isEmpty()) {
+  } else if (handleInstance(action, input)) {
     return true;
   } else if (action == QLatin1String("providerSettings.enable")) {
-    setEnabled(instanceId, input.value(QStringLiteral("enabled")).toBool());
+    // Also an instance the environment has yet to list.
+    if (!driverOf(instanceId).isEmpty()) setEnabled(instanceId, input.value(QStringLiteral("enabled")).toBool());
+  } else if (entry.isEmpty()) {
+    return true;
   } else if (action == QLatin1String("providerSettings.signIn")) {
     call(instanceId, QStringLiteral("provider.auth.start"), {{QStringLiteral("instanceId"), instanceId}},
          QStringLiteral("Provider sign-in failed. Try again."));
@@ -391,6 +395,8 @@ void ProviderSettingsController::unfollow() {
   m_authState.clear();
   m_authError.clear();
   m_busy.clear();
+  m_wizard.reset();
+  m_variables.clear();
 }
 
 // Follows the sign-in of each provider that signs in from HAL-C2; the shape
@@ -451,7 +457,7 @@ QJsonObject ProviderSettingsController::provider(const QString& instanceId) cons
 // Turns an instance on or off where the node reads it: its providerInstances
 // entry when it has one, and a built-in driver's `providers` entry.
 void ProviderSettingsController::setEnabled(const QString& instanceId, bool enabled) {
-  const QString driver = provider(instanceId).value(QLatin1String("driver")).toString();
+  const QString driver = driverOf(instanceId);
   save([instanceId, driver, enabled](QJsonObject settings, const QString&) {
     QJsonObject instances = settings.value(QLatin1String("providerInstances")).toObject();
     if (instances.contains(instanceId)) {
@@ -471,19 +477,19 @@ void ProviderSettingsController::setEnabled(const QString& instanceId, bool enab
   });
 }
 
-// Edits the shown environment's settings document; `saved` runs once it is.
 void ProviderSettingsController::save(const std::function<QJsonObject(QJsonObject, const QString&)>& edit,
-                                      const std::function<void()>& saved, const QString& failure) {
+                                      const std::function<void(bool)>& done, const QString& failure) {
   const QPointer<ProviderSettingsController> self(this);
-  m_scope->change(edit, [self, saved, failure](const QHash<QString, QString>& failed, int) {
+  m_scope->change(edit, [self, done, failure](const QHash<QString, QString>& failed, int) {
     if (!self) return;
-    if (failed.isEmpty()) {
-      if (saved) saved();
-      return;
+    if (!failed.isEmpty()) {
+      if (auto* toasts = NativeShell::of(self)->controller<ToastController>()) {
+        const QString why = failed.cbegin().value();
+        toasts->error(failure.isEmpty() ? QStringLiteral("Could not save provider settings") : failure,
+                      why.isEmpty() ? QStringLiteral("The settings update failed.") : why);
+      }
     }
-    if (auto* toasts = NativeShell::of(self)->controller<ToastController>()) {
-      toasts->error(failure.isEmpty() ? QStringLiteral("Could not save provider settings") : failure, failed.cbegin().value());
-    }
+    if (done) done(failed.isEmpty());
   });
 }
 
@@ -518,10 +524,11 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   const bool updating = m_updating.contains(instanceId) || updateStatus == QLatin1String("queued") ||
                         updateStatus == QLatin1String("running");
   const QString name = text(provider.value(QLatin1String("displayName")));
+  const ProviderDrivers::Driver* meta = ProviderDrivers::find(driver);
   QVariantMap result{
       {QStringLiteral("instanceId"), instanceId},
       {QStringLiteral("driver"), driver},
-      {QStringLiteral("name"), name.isEmpty() ? driver : name},
+      {QStringLiteral("name"), !name.isEmpty() ? name : meta ? meta->label : driver},
       {QStringLiteral("version"), versionLabel(text(provider.value(QLatin1String("version"))))},
       {QStringLiteral("enabled"), provider.value(QLatin1String("enabled")).toBool()},
       {QStringLiteral("installed"), provider.value(QLatin1String("installed")).toBool()},
@@ -535,6 +542,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
       {QStringLiteral("updating"), updating},
       {QStringLiteral("account"), null()},
   };
+  configuration(result, instanceId, driver);
   if (!signsIn(provider)) return result;
   // ProviderAuthenticationSection, without the terminal and credential prompts.
   const bool served = !m_store->nodeServing(m_followed).isEmpty();
@@ -654,6 +662,7 @@ void ProviderSettingsController::publish() {
   QVariantList providers;
   if (m_open && m_providers && status == QLatin1String("ready")) {
     for (const QJsonValue& value : *m_providers) providers.append(entry(value.toObject()));
+    providers.append(pendingEntries());
   }
   m_bridge->publish(kKey, QVariantMap{
                               {QStringLiteral("open"), m_open},
@@ -665,5 +674,6 @@ void ProviderSettingsController::publish() {
                               {QStringLiteral("refreshing"), m_refreshing > 0},
                               {QStringLiteral("providers"), providers},
                               {QStringLiteral("health"), health()},
+                              {QStringLiteral("wizard"), wizard()},
                           });
 }

@@ -22,6 +22,10 @@ struct FakeProviders {
   QString updateRefusal;
   int followedBefore = 0;
   QString instanceId;  // the instance the scenario last acted on
+  QString suggestedId;  // the id the add-provider wizard last suggested
+  QString choices;  // what the wizard held before the user went back
+  QStringList uninstalls;  // agents whose managed binary was cleaned up
+  QString uninstallRefusal;
 };
 
 FakeProviders& fake(World& world) {
@@ -75,6 +79,12 @@ const FakeNode::Extension extension([](FakeNode& node) {
   node.onRpc(QStringLiteral("provider.auth.logout"), [&node](const FakeNode::Rpc& rpc) {
     node.part<FakeProviders>().logouts.append(rpc.payload.value(QLatin1String("instanceId")).toString());
     node.reply(rpc, QJsonObject{});
+  });
+  node.onRpc(QStringLiteral("server.uninstallAcpRegistryManagedBinary"), [&node](const FakeNode::Rpc& rpc) {
+    FakeProviders& fake = node.part<FakeProviders>();
+    fake.uninstalls.append(rpc.payload.value(QLatin1String("agentId")).toString());
+    if (fake.uninstallRefusal.isEmpty()) node.reply(rpc, QJsonObject{});
+    else node.refuse(rpc, fake.uninstallRefusal);
   });
   node.onRpc(QStringLiteral("server.updateProvider"), [&node](const FakeNode::Rpc& rpc) {
     FakeProviders& fake = node.part<FakeProviders>();
@@ -200,6 +210,91 @@ void expectEnabled(World& world, bool enabled) {
   }, enabled ? QStringLiteral("to be on in the saved settings") : QStringLiteral("to be off in the saved settings"));
 }
 
+// This machine's settings gain the instance, as another client would add it,
+// and the machine lists it; it shows once its settings are there to edit.
+void seedInstance(World& world, const QString& instanceId, const QJsonObject& instance, const QJsonObject& listed) {
+  openPanel(world);
+  QJsonObject instances = fakeConfig(world.node).settings.value(QLatin1String("providerInstances")).toObject();
+  instances.insert(instanceId, instance);
+  saveElsewhere(world.node, QStringLiteral("providerInstances"), instances);
+  offer(world, listed);
+  const QString name = listed.value(QLatin1String("displayName")).toString();
+  waitForEntry(world, name, [](const QVariantMap& found) { return found.value(QStringLiteral("editable")).toBool(); },
+               QStringLiteral("to be editable"));
+  fake(world).instanceId = instanceId;
+}
+
+// "Claude Work", an added Claude instance.
+void seedWork(World& world, const QString& name, const QJsonArray& environment = {}) {
+  QJsonObject instance{{QStringLiteral("driver"), QStringLiteral("claudeAgent")},
+                       {QStringLiteral("displayName"), name},
+                       {QStringLiteral("enabled"), true}};
+  if (!environment.isEmpty()) instance.insert(QStringLiteral("environment"), environment);
+  seedInstance(world, QStringLiteral("claudeAgent_work"), instance,
+               provider(QStringLiteral("claudeAgent_work"), QStringLiteral("claudeAgent"), name));
+}
+
+QJsonObject savedInstance(World& world, const QString& instanceId) {
+  return fakeConfig(world.node).settings.value(QLatin1String("providerInstances")).toObject().value(instanceId).toObject();
+}
+
+QVariantMap wizard(World& world) {
+  return panel(world).value(QStringLiteral("wizard")).toMap();
+}
+
+void act(World& world, const QString& action, const QVariantMap& payload = {}) {
+  world.bridge().dispatch(QStringLiteral("providerSettings.") + action, payload);
+}
+
+void openWizard(World& world) {
+  openPanel(world);
+  world.waitFor([&] { return panel(world).value(QStringLiteral("status")) == QLatin1String("ready"); },
+                [&] { return QStringLiteral("the providers to be ready; the panel is %1").arg(show(panel(world))); });
+  act(world, QStringLiteral("wizardOpen"));
+  world.waitFor([&] { return !wizard(world).isEmpty(); }, [&] { return QStringLiteral("the wizard to open; the panel is %1").arg(show(panel(world))); });
+}
+
+// Chooses the driver shown as `label` and names the instance.
+void startAdding(World& world, const QString& driverLabel, const std::optional<QString>& label) {
+  openWizard(world);
+  QString driver;
+  for (const QVariant& option : wizard(world).value(QStringLiteral("drivers")).toList()) {
+    if (option.toMap().value(QStringLiteral("label")) == driverLabel) driver = option.toMap().value(QStringLiteral("id")).toString();
+  }
+  expect(!driver.isEmpty(), QStringLiteral("the wizard to offer %1; it is %2").arg(driverLabel, show(wizard(world))));
+  act(world, QStringLiteral("wizardDriver"), {{QStringLiteral("driver"), driver}});
+  act(world, QStringLiteral("wizardStep"), {{QStringLiteral("step"), 1}});
+  if (label) act(world, QStringLiteral("wizardLabel"), {{QStringLiteral("label"), *label}});
+  world.waitFor([&] { return wizard(world).value(QStringLiteral("driver")) == driver && wizard(world).value(QStringLiteral("step")) == 1 &&
+                             (!label || wizard(world).value(QStringLiteral("label")) == *label); },
+                [&] { return QStringLiteral("the identity step for %1; the wizard is %2").arg(driverLabel, show(wizard(world))); });
+  fake(world).suggestedId = wizard(world).value(QStringLiteral("instanceId")).toString();
+}
+
+void finishAdding(World& world) {
+  act(world, QStringLiteral("wizardStep"), {{QStringLiteral("step"), 2}});
+  act(world, QStringLiteral("wizardSubmit"));
+}
+
+bool toasted(World& world, const QString& title, const QString& description = {}) {
+  for (const QVariant& toast : at(world.state(QStringLiteral("toasts")), QStringLiteral("items")).toList()) {
+    if (toast.toMap().value(QStringLiteral("title")) == title &&
+        (description.isEmpty() || toast.toMap().value(QStringLiteral("description")) == description)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void expectToast(World& world, const QString& title, const QString& description = {}) {
+  world.waitFor([&] { return toasted(world, title, description); },
+                [&] { return QStringLiteral("a toast \"%1\"; the shell shows %2").arg(title, show(world.state(QStringLiteral("toasts")))); });
+}
+
+QVariantList variables(World& world, const QString& name) {
+  return entry(world, name).value(QStringLiteral("variables")).toList();
+}
+
 QVariantMap account(World& world, const QString& name) {
   return entry(world, name).value(QStringLiteral("account")).toMap();
 }
@@ -303,6 +398,169 @@ const Steps steps([] {
     world.sync();
     expect(entry(world, c[0]).value(QStringLiteral("enabled")).toBool() && instanceEnabled(world, fake(world).instanceId),
            QStringLiteral("%1 to stay on; the panel is %2").arg(c[0], show(panel(world))));
+  });
+
+  // Adding an instance.
+  step(QStringLiteral("the user adds (?:a|another) %1 (?:provider|instance) labelled %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    startAdding(world, c[0], c[1]);
+    finishAdding(world);
+  });
+  step(QStringLiteral("(?:an|the) instance %1 exists").arg(q), [](World& world, const Captures& c, const Table&) {
+    openPanel(world);
+    QJsonObject instances = fakeConfig(world.node).settings.value(QLatin1String("providerInstances")).toObject();
+    instances.insert(c[0], QJsonObject{{QStringLiteral("driver"), c[0].section(QLatin1Char('_'), 0, 0)}, {QStringLiteral("enabled"), true}});
+    saveElsewhere(world.node, QStringLiteral("providerInstances"), instances);
+    world.waitFor([&] {
+      for (const QVariant& row : panel(world).value(QStringLiteral("providers")).toList()) {
+        if (row.toMap().value(QStringLiteral("instanceId")) == c[0]) return true;
+      }
+      return false;
+    }, [&] { return QStringLiteral("%1 to be listed; the panel is %2").arg(c[0], show(panel(world))); });
+  });
+  step(QStringLiteral("an instance with the id %1 is listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      for (const QVariant& row : panel(world).value(QStringLiteral("providers")).toList()) {
+        if (row.toMap().value(QStringLiteral("instanceId")) == c[0]) return !savedInstance(world, c[0]).isEmpty();
+      }
+      return false;
+    }, [&] { return QStringLiteral("%1 to be saved and listed; the panel is %2").arg(c[0], show(panel(world))); });
+    const QJsonObject saved = savedInstance(world, c[0]);
+    expect(saved.value(QLatin1String("driver")) == QLatin1String("claudeAgent") && saved.value(QLatin1String("enabled")).toBool() &&
+               saved.value(QLatin1String("displayName")) == QLatin1String("Work") && panel(world).value(QStringLiteral("wizard")).isNull(),
+           QStringLiteral("the saved instance is %1, the wizard %2").arg(show(saved), show(panel(world).value(QStringLiteral("wizard")))));
+  });
+  step(QStringLiteral("the user is told the instance was added"), [](World& world, const Captures&, const Table&) {
+    expectToast(world, QStringLiteral("Provider instance added"), QStringLiteral("Claude instance 'claudeAgent_work' was added."));
+  });
+  step(QStringLiteral("(?:the suggested instance id|its instance id) is %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(fake(world).suggestedId == c[0], QStringLiteral("the wizard suggested %1").arg(fake(world).suggestedId));
+    world.waitFor([&] { return !savedInstance(world, c[0]).isEmpty(); },
+                  [&] { return QStringLiteral("%1 to be saved; the settings are %2").arg(c[0], show(fakeConfig(world.node).settings)); });
+  });
+  step(QStringLiteral("the user (?:enters|sets) the instance id (?:to )?%1(?: and continues)?").arg(q), [](World& world, const Captures& c, const Table&) {
+    startAdding(world, QStringLiteral("Codex"), std::nullopt);
+    act(world, QStringLiteral("wizardInstanceId"), {{QStringLiteral("instanceId"), c[0]}});
+    act(world, QStringLiteral("wizardStep"), {{QStringLiteral("step"), 2}});
+  });
+  step(QStringLiteral("the user stays on the identity step and is told %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return wizard(world).value(QStringLiteral("step")) == 1 && wizard(world).value(QStringLiteral("instanceIdError")) == c[0]; },
+                  [&] { return QStringLiteral("the identity step to say \"%1\"; the wizard is %2").arg(c[0], show(wizard(world))); });
+  });
+  step(QStringLiteral("the user is on the configuration step of adding a provider"), [](World& world, const Captures&, const Table&) {
+    startAdding(world, QStringLiteral("Claude"), QStringLiteral("Work"));
+    act(world, QStringLiteral("wizardAccent"), {{QStringLiteral("color"), QStringLiteral("#22c55e")}});
+    act(world, QStringLiteral("wizardStep"), {{QStringLiteral("step"), 2}});
+    act(world, QStringLiteral("wizardField"), {{QStringLiteral("key"), QStringLiteral("homePath")}, {QStringLiteral("value"), QStringLiteral("~/.claude-work")}});
+    world.waitFor([&] { return wizard(world).value(QStringLiteral("step")) == 2 &&
+                               at(wizard(world), QStringLiteral("fields")).toList().value(1).toMap().value(QStringLiteral("value")) == QLatin1String("~/.claude-work"); },
+                  [&] { return QStringLiteral("the configuration step; the wizard is %1").arg(show(wizard(world))); });
+    QVariantMap choices = wizard(world);
+    choices.remove(QStringLiteral("step"));
+    fake(world).choices = show(choices);
+  });
+  step(QStringLiteral("the user goes back to choosing a driver"), [](World& world, const Captures&, const Table&) {
+    act(world, QStringLiteral("wizardStep"), {{QStringLiteral("step"), 0}});
+  });
+  step(QStringLiteral("the choices already made are kept"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return wizard(world).value(QStringLiteral("step")) == 0; },
+                  [&] { return QStringLiteral("the driver step; the wizard is %1").arg(show(wizard(world))); });
+    QVariantMap now = wizard(world);
+    now.remove(QStringLiteral("step"));
+    expect(show(now) == fake(world).choices, QStringLiteral("the wizard held %1 and now %2").arg(fake(world).choices, show(now)));
+  });
+  step(QStringLiteral("the user adds a provider instance"), [](World& world, const Captures&, const Table&) {
+    startAdding(world, QStringLiteral("Codex"), std::nullopt);
+    finishAdding(world);
+  });
+  step(QStringLiteral("the user is told the provider instance could not be added"), [](World& world, const Captures&, const Table&) {
+    expectToast(world, QStringLiteral("Could not add provider instance"), fakeConfig(world.node).refuseWrites);
+    world.waitFor([&] { return !wizard(world).isEmpty() && !wizard(world).value(QStringLiteral("saving")).toBool(); },
+                  [&] { return QStringLiteral("the wizard to stay open; it is %1").arg(show(wizard(world))); });
+  });
+
+  // Editing an instance.
+  // The picker names an instance as the environment lists it (ComposerModel).
+  step(QStringLiteral("the instance is shown as %1 in the model picker").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto listed = [&] {
+      for (const QJsonValue& value : fakeConfig(world.node).config.value(QLatin1String("providers")).toArray()) {
+        if (value.toObject().value(QLatin1String("instanceId")) == fake(world).instanceId) return value.toObject().value(QLatin1String("displayName")).toString();
+      }
+      return QString();
+    };
+    waitForEntry(world, c[0], [&](const QVariantMap& found) { return found.value(QStringLiteral("label")) == c[0] && listed() == c[0]; },
+                 QStringLiteral("to be listed under its new name"));
+  });
+  step(QStringLiteral("the user adds the environment variable %1 and marks it sensitive").arg(q), [](World& world, const Captures& c, const Table&) {
+    seedWork(world, QStringLiteral("Claude Work"));
+    const QString id = fake(world).instanceId;
+    act(world, QStringLiteral("addVariable"), {{QStringLiteral("instanceId"), id}});
+    act(world, QStringLiteral("variable"), {{QStringLiteral("instanceId"), id}, {QStringLiteral("index"), 0}, {QStringLiteral("name"), c[0]}});
+    act(world, QStringLiteral("variable"), {{QStringLiteral("instanceId"), id}, {QStringLiteral("index"), 0}, {QStringLiteral("sensitive"), true}});
+    act(world, QStringLiteral("variable"), {{QStringLiteral("instanceId"), id}, {QStringLiteral("index"), 0}, {QStringLiteral("value"), QStringLiteral("sk-secret")}});
+  });
+  step(QStringLiteral("its value is stored as a secret"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      const QJsonArray environment = savedInstance(world, fake(world).instanceId).value(QLatin1String("environment")).toArray();
+      return fakeConfig(world.node).secrets.value(fake(world).instanceId + QStringLiteral("/API_KEY")) == QLatin1String("sk-secret") &&
+             environment.size() == 1 && environment.at(0).toObject().value(QLatin1String("value")).toString().isEmpty();
+    }, [&] { return QStringLiteral("API_KEY to be sealed; the instance is %1").arg(show(savedInstance(world, fake(world).instanceId))); });
+  });
+  step(QStringLiteral("the page shows it as a stored secret that a new value replaces"), [](World& world, const Captures&, const Table&) {
+    waitForEntry(world, QStringLiteral("Claude Work"), [](const QVariantMap& found) {
+      const QVariantList rows = found.value(QStringLiteral("variables")).toList();
+      return rows.size() == 1 && at(rows.first(), QStringLiteral("redacted")).toBool() && at(rows.first(), QStringLiteral("value")).toString().isEmpty() &&
+             at(rows.first(), QStringLiteral("placeholder")) == QLatin1String("Stored secret, enter a new value to replace");
+    }, QStringLiteral("to show a stored secret"));
+  });
+  step(QStringLiteral("the instance has the environment variable %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    seedWork(world, QStringLiteral("Claude Work"),
+             {QJsonObject{{QStringLiteral("name"), c[0]}, {QStringLiteral("value"), QStringLiteral("sk-secret")}, {QStringLiteral("sensitive"), true}}});
+    waitForEntry(world, QStringLiteral("Claude Work"), [](const QVariantMap& found) { return found.value(QStringLiteral("variables")).toList().size() == 1; },
+                 QStringLiteral("to list its variable"));
+  });
+  step(QStringLiteral("the user removes %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantList rows = variables(world, QStringLiteral("Claude Work"));
+    for (qsizetype i = 0; i < rows.size(); ++i) {
+      if (at(rows.at(i), QStringLiteral("name")) != c[0]) continue;
+      act(world, QStringLiteral("removeVariable"), {{QStringLiteral("instanceId"), fake(world).instanceId}, {QStringLiteral("index"), int(i)}});
+      return;
+    }
+    expect(false, QStringLiteral("%1 to be listed; the rows are %2").arg(c[0], show(rows)));
+  });
+  step(QStringLiteral("the instance no longer sets %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      const QJsonObject saved = savedInstance(world, fake(world).instanceId);
+      return !saved.isEmpty() && !saved.contains(QLatin1String("environment")) && variables(world, QStringLiteral("Claude Work")).isEmpty() &&
+             !fakeConfig(world.node).secrets.contains(fake(world).instanceId + QLatin1Char('/') + c[0]);
+    }, [&] { return QStringLiteral("%1 to be gone; the instance is %2").arg(c[0], show(savedInstance(world, fake(world).instanceId))); });
+  });
+  step(QStringLiteral("the user deletes the %1 instance").arg(q), [](World& world, const Captures& c, const Table&) {
+    seedWork(world, c[0]);
+    act(world, QStringLiteral("delete"), {{QStringLiteral("instanceId"), fake(world).instanceId}});
+  });
+  step(QStringLiteral("it is no longer listed"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      for (const QVariant& row : panel(world).value(QStringLiteral("providers")).toList()) {
+        if (row.toMap().value(QStringLiteral("instanceId")) == fake(world).instanceId) return false;
+      }
+      return savedInstance(world, fake(world).instanceId).isEmpty();
+    }, [&] { return QStringLiteral("%1 to be gone; the panel is %2").arg(fake(world).instanceId, show(panel(world))); });
+  });
+  step(QStringLiteral("cleaning up the instance's managed binary fails"), [](World& world, const Captures&, const Table&) {
+    fake(world).uninstallRefusal = QStringLiteral("The agent's files are in use.");
+  });
+  step(QStringLiteral("the user deletes the instance"), [](World& world, const Captures&, const Table&) {
+    const QJsonObject config{{QStringLiteral("agentId"), QStringLiteral("gemini")}};
+    seedInstance(world, QStringLiteral("acpRegistry_gemini"),
+                 {{QStringLiteral("driver"), QStringLiteral("acpRegistry")}, {QStringLiteral("displayName"), QStringLiteral("Gemini")},
+                  {QStringLiteral("enabled"), true}, {QStringLiteral("config"), config}},
+                 provider(QStringLiteral("acpRegistry_gemini"), QStringLiteral("acpRegistry"), QStringLiteral("Gemini")));
+    act(world, QStringLiteral("delete"), {{QStringLiteral("instanceId"), fake(world).instanceId}});
+  });
+  step(QStringLiteral("the user is told the provider was deleted but managed files remain"), [](World& world, const Captures&, const Table&) {
+    expectToast(world, QStringLiteral("Provider deleted, but managed files remain"), fake(world).uninstallRefusal);
+    expect(fake(world).uninstalls == QStringList{QStringLiteral("gemini")} && savedInstance(world, fake(world).instanceId).isEmpty(),
+           QStringLiteral("gemini to be deleted and cleaned up; cleaned up %1").arg(fake(world).uninstalls.join(QStringLiteral(", "))));
   });
 
   // Signing in and out.
@@ -516,3 +774,10 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+// "The user renames <instance> to <name>" in the Providers settings
+// (WorkspaceSteps.cpp shares the words for thread titles).
+void renameProviderInstance(World& world, const QString& from, const QString& to) {
+  seedWork(world, from);
+  act(world, QStringLiteral("rename"), {{QStringLiteral("instanceId"), fake(world).instanceId}, {QStringLiteral("name"), to}});
+}

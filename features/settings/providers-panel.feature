@@ -86,23 +86,24 @@ Feature: Providers settings panel
 
   # Instance ids are derived as "<driver>_<label slug>" (AddProviderInstanceDialog.tsx
   # deriveInstanceId); Claude's driver is "claudeAgent". The node side of instances, and the
-  # same id rules, are in providers/provider-instances.feature; both are @backlog.
+  # same id rules, are in providers/provider-instances.feature.
   Rule: Adding a provider instance
 
-    @backlog @desktop
+    @desktop
     Scenario: Adding a second instance of a provider
       When the user adds a "Claude" provider labelled "Work"
       Then an instance with the id "claudeAgent_work" is listed
       And the user is told the instance was added
 
-    @backlog @desktop
+    @desktop
     Scenario: A taken instance id gets a number
       Given an instance "claudeAgent_work" exists
       When the user adds a "Claude" provider labelled "Work"
       Then the suggested instance id is "claudeAgent_work_2"
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The instance id must be valid before the user moves on
+      Given an instance "claudeAgent_work" exists
       When the user enters the instance id "<id>" and continues
       Then the user stays on the identity step and is told "<message>"
 
@@ -112,13 +113,13 @@ Feature: Providers settings panel
         | 9lives      | Instance ID must start with a letter and use only letters, digits, '-', or '_'.   |
         | claudeAgent_work | An instance named 'claudeAgent_work' already exists.                         |
 
-    @backlog @desktop
+    @desktop
     Scenario: Going back in the wizard is always allowed
       Given the user is on the configuration step of adding a provider
       When the user goes back to choosing a driver
       Then the choices already made are kept
 
-    @backlog @desktop
+    @desktop
     Scenario: An instance that cannot be saved is reported
       Given saving settings on "Laptop" fails
       When the user adds a provider instance
@@ -211,29 +212,29 @@ Feature: Providers settings panel
       Then the user is told the provider settings could not be saved
       And "Claude Work" stays on
 
-    @backlog @desktop
+    @desktop
     Scenario: Renaming an instance changes how it is shown
       When the user renames "Claude Work" to "Claude Client"
       Then the instance is shown as "Claude Client" in the model picker
 
-    @backlog @desktop
+    @desktop
     Scenario: Sensitive environment variables are stored separately
       When the user adds the environment variable "API_KEY" and marks it sensitive
       Then its value is stored as a secret
       And the page shows it as a stored secret that a new value replaces
 
-    @backlog @desktop
+    @desktop
     Scenario: Removing an environment variable
       Given the instance has the environment variable "API_KEY"
       When the user removes "API_KEY"
       Then the instance no longer sets "API_KEY"
 
-    @backlog @desktop
+    @desktop
     Scenario: Deleting an instance
       When the user deletes the "Claude Work" instance
       Then it is no longer listed
 
-    @backlog @desktop
+    @desktop
     Scenario: Deleting an instance whose managed files remain is reported
       Given cleaning up the instance's managed binary fails
       When the user deletes the instance

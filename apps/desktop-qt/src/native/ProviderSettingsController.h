@@ -35,14 +35,18 @@ class ShellStore;
 // enabled, installed, status, headline, detail, email, models [{slug, name}],
 // advisory {title, detail, updateCommand, targetVersion, strong} | null,
 // canUpdate, updating, account: null | {description, canSignIn, signInLabel,
-// canCancel, canSignOut, url, userCode, error}}], health: null | {seconds,
-// defaultSeconds, step} (the background provider health check interval)}.
+// canCancel, canSignOut, url, userCode, error}, and how it is configured
+// (ProviderSettingsInstances.cpp): custom, resettable, label, accentColor,
+// placeholder, fields, secrets, variables, pending}], health: null |
+// {seconds, defaultSeconds, step} (the background provider health check
+// interval), wizard: null | the add-provider wizard}.
 //
 // Actions: `providerSettings.environment {id}`, `.refresh`, `.enable
 // {instanceId, enabled}`, `.signIn {instanceId}`, `.cancelSignIn
 // {instanceId}`, `.openSignIn {instanceId}`, `.signOut {instanceId}` (asks
 // first), `.update {instanceId}`, `.copyUpdateCommand {instanceId}`,
-// `.healthInterval {seconds}` (0 turns it off), `.resetHealthInterval`.
+// `.healthInterval {seconds}` (0 turns it off), `.resetHealthInterval`, and
+// the instance actions ProviderSettingsInstances.cpp lists.
 class ProviderSettingsController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -64,8 +68,19 @@ private:
   QString label(const QString& environmentId) const;
   QJsonObject provider(const QString& instanceId) const;
   void setEnabled(const QString& instanceId, bool enabled);
-  void save(const std::function<QJsonObject(QJsonObject, const QString&)>& edit, const std::function<void()>& saved = {},
+  // Edits the shown environment's settings; `done` learns whether it saved.
+  void save(const std::function<QJsonObject(QJsonObject, const QString&)>& edit, const std::function<void(bool saved)>& done = {},
             const QString& failure = {});
+  // ProviderSettingsInstances.cpp: adding, editing and deleting instances.
+  bool handleInstance(const QString& action, const QVariantMap& input);
+  std::optional<QJsonObject> shownSettings() const;
+  QString driverOf(const QString& instanceId) const;
+  void editInstance(const QString& instanceId, const std::function<QJsonObject(QJsonObject)>& change,
+                    const std::function<void(bool saved)>& done = {});
+  void setVariables(const QString& instanceId, const QJsonArray& rows);
+  void configuration(QVariantMap& result, const QString& instanceId, const QString& driver) const;
+  QVariantList pendingEntries() const;
+  QVariant wizard() const;
   QVariant health() const;
   void call(const QString& instanceId, const QString& method, const QJsonObject& payload, const QString& failure);
   void publish();
@@ -91,5 +106,21 @@ private:
   QHash<QString, QString> m_authError;
   QSet<QString> m_busy;
   QSet<QString> m_updating;
+  // The add-provider wizard while it shows: the chosen driver, what was
+  // entered for each driver (label, accentColor, instanceId when typed) and
+  // its config, the step (Provider, Identity, Config), whether moving on was
+  // tried (which shows the id's error), and whether it is saving.
+  struct Wizard {
+    QString driver = QStringLiteral("codex");
+    QHash<QString, QJsonObject> identity;
+    QHash<QString, QJsonObject> config;
+    int step = 0;
+    bool attempted = false;
+    bool saving = false;
+  };
+  std::optional<Wizard> m_wizard;
+  // Variable rows being edited that cannot be saved yet (a blank or invalid
+  // name), by instance.
+  QHash<QString, QJsonArray> m_variables;
   int m_refreshing = 0;
 };

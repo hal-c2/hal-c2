@@ -25,7 +25,11 @@ Item {
             email: "ada@example.com", models: [{ slug: "claude-opus", name: "Claude Opus" }],
             advisory: null, canUpdate: false, updating: false,
             account: { description: "Signed in.", canSignIn: true, signInLabel: "Change account", canCancel: false,
-                       canSignOut: true, url: "", userCode: "", error: "" }
+                       canSignOut: true, url: "", userCode: "", error: "" },
+            editable: true, custom: true, resettable: false, pending: false, label: "Claude Work", placeholder: "Claude",
+            accentColor: "", fields: [], secrets: [],
+            variables: [{ name: "API_TOKEN", value: "", sensitive: true, redacted: true, invalid: false,
+                          placeholder: "Stored secret, enter a new value to replace" }]
         }, overrides);
     }
 
@@ -33,7 +37,7 @@ Item {
         return Object.assign({
             open: true, environmentId: "env-a",
             environments: [{ id: "env-a", label: "This machine", local: true, online: true }],
-            status: "ready", title: "", description: "", refreshing: false,
+            status: "ready", title: "", description: "", refreshing: false, wizard: null,
             providers: [root.provider({})]
         }, overrides);
     }
@@ -98,6 +102,48 @@ Item {
             const update = findChild(findChild(page, "provider_claudeAgent_work"), "update");
             verify(update.visible);
             verify(!update.enabled);
+        }
+    
+        function wizard(overrides) {
+            return Object.assign({
+                step: 1, steps: ["Provider", "Identity", "Config"],
+                drivers: [{ id: "codex", label: "Codex", badge: "" }, { id: "claudeAgent", label: "Claude", badge: "" }],
+                driver: "claudeAgent", driverLabel: "Claude", label: "Claude", accentColor: "", instanceId: "claudeAgent_2",
+                instanceIdError: "", fields: [], saving: false
+            }, overrides);
+        }
+
+        // Adding an instance: the wizard's own actions, and a taken id said.
+        function test_the_wizard_adds_an_instance_and_says_why_an_id_is_refused() {
+            Shell.state = { providerSettings: root.settings({}) };
+            const page = createTemporaryObject(settingsComponent, root);
+            mouseClick(findChild(page, "addInstance"));
+            compare(Shell.dispatchedActions[0].action, "providerSettings.wizardOpen");
+            Shell.state = { providerSettings: root.settings({ wizard: wizard({ instanceIdError: "An instance with this id already exists." }) }) };
+            const card = findChild(page, "wizard");
+            tryVerify(() => !!card && card.visible);
+            verify(findChild(card, "instanceIdError").visible);
+            verify(!findChild(page, "addInstance").enabled, "one wizard at a time");
+            mouseClick(findChild(card, "submit"));
+            compare(Shell.dispatchedActions[1].action, "providerSettings.wizardSubmit");
+        }
+
+        // A stored secret is never shown; its row offers a replacement.
+        function test_a_stored_secret_row_offers_a_replacement() {
+            Shell.state = { providerSettings: root.settings({}) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            mouseClick(findChild(card, "configure"));
+            verify(findChild(card, "editor").visible);
+            const value = findChild(findChild(card, "variable_0"), "variableValue");
+            compare(value.text, "");
+            compare(value.placeholderText, "Stored secret, enter a new value to replace");
+            compare(value.echoMode, TextInput.Password);
+            mouseClick(findChild(card, "addVariable"));
+            compare(Shell.dispatchedActions[0].action, "providerSettings.addVariable");
+            compare(Shell.dispatchedActions[0].payload.instanceId, "claudeAgent_work");
+            mouseClick(findChild(card, "delete"));
+            compare(Shell.dispatchedActions[1].action, "providerSettings.delete");
         }
     }
 }

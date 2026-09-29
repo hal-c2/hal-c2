@@ -31,6 +31,9 @@ struct FakeConfig {
   bool holdReads = false;
   bool editOnRead = false;  // another client saves right after each read
   QString refuseWrites;
+  // Sensitive provider variables sealed out of the document, by
+  // "<instance>/<name>" (HalC2.ProviderSecrets).
+  QHash<QString, QString> secrets;
 };
 
 FakeConfig& fakeConfig(FakeNode& node);

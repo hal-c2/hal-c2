@@ -41,6 +41,37 @@ bool ownsDocument(const FakeConfig& fake, const QString& environment) {
   return fake.documents.contains(environment) || fake.elsewhere.contains(environment);
 }
 
+// The document as HalC2.ProviderSecrets.seal keeps it: each sensitive
+// provider variable's value moved to the secret store, a redacted one kept.
+QJsonObject sealed(FakeConfig& fake, QJsonObject settings) {
+  QJsonObject instances = settings.value(QLatin1String("providerInstances")).toObject();
+  for (auto it = instances.begin(); it != instances.end(); ++it) {
+    QJsonObject instance = it.value().toObject();
+    QJsonArray environment = instance.value(QLatin1String("environment")).toArray();
+    for (qsizetype i = 0; i < environment.size(); ++i) {
+      QJsonObject variable = environment.at(i).toObject();
+      if (!variable.value(QLatin1String("sensitive")).toBool()) continue;
+      const QString key = it.key() + QLatin1Char('/') + variable.value(QLatin1String("name")).toString();
+      const QString value = variable.value(QLatin1String("value")).toString();
+      if (variable.value(QLatin1String("valueRedacted")).toBool()) {
+        variable.insert(QStringLiteral("value"), QString());
+      } else if (!value.isEmpty()) {
+        fake.secrets.insert(key, value);
+        variable.insert(QStringLiteral("value"), QString());
+        variable.insert(QStringLiteral("valueRedacted"), true);
+      } else {
+        fake.secrets.remove(key);
+        variable.remove(QStringLiteral("valueRedacted"));
+      }
+      environment.replace(i, variable);
+    }
+    if (!environment.isEmpty()) instance.insert(QStringLiteral("environment"), environment);
+    it.value() = instance;
+  }
+  if (settings.contains(QLatin1String("providerInstances"))) settings.insert(QStringLiteral("providerInstances"), instances);
+  return settings;
+}
+
 const FakeNode::Extension extension([](FakeNode& node) {
   node.onShape(QStringLiteral("config"), [&node](int id, const QJsonObject& shape) {
     const QString environment = shape.value(QLatin1String("environment")).toString();
@@ -105,19 +136,37 @@ const FakeNode::Extension extension([](FakeNode& node) {
       return;
     }
     fake.saved.append(true);
-    fake.settings = rpc.payload.value(QLatin1String("settings")).toObject();
+    const QJsonObject before = fake.settings.value(QLatin1String("providerInstances")).toObject();
+    fake.settings = sealed(fake, rpc.payload.value(QLatin1String("settings")).toObject());
     fake.version++;
     node.reply(rpc, QJsonObject{{QStringLiteral("version"), fake.version}});
     sendConfig(node, node.environmentId,
                {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), fake.settings}});
     // As HalC2.Settings provider_enabled? reads it: an instance's own entry
-    // first, then its driver's.
+    // first, then its driver's; an added instance that was removed is no
+    // longer listed, and one's name and colour show as HalC2.Environment
+    // lists them.
     QJsonArray providers = fake.config.value(QLatin1String("providers")).toArray();
+    const QJsonObject instances = fake.settings.value(QLatin1String("providerInstances")).toObject();
     bool changed = false;
+    for (qsizetype i = providers.size() - 1; i >= 0; --i) {
+      const QString id = providers.at(i).toObject().value(QLatin1String("instanceId")).toString();
+      if (before.contains(id) && !instances.contains(id) && id != providers.at(i).toObject().value(QLatin1String("driver")).toString()) {
+        providers.removeAt(i);
+        changed = true;
+      }
+    }
     for (qsizetype i = 0; i < providers.size(); ++i) {
       QJsonObject entry = providers.at(i).toObject();
       const QString id = entry.value(QLatin1String("instanceId")).toString();
-      const QJsonObject instance = fake.settings.value(QLatin1String("providerInstances")).toObject().value(id).toObject();
+      const QJsonObject instance = instances.value(id).toObject();
+      for (const QString key : {QStringLiteral("displayName"), QStringLiteral("accentColor")}) {
+        const QString value = instance.value(key).toString().trimmed();
+        if (value.isEmpty() || entry.value(key) == value) continue;
+        entry.insert(key, value);
+        providers.replace(i, entry);
+        changed = true;
+      }
       const QJsonValue enabled = instance.contains(QLatin1String("enabled"))
                                      ? instance.value(QLatin1String("enabled"))
                                      : fake.settings.value(QLatin1String("providers")).toObject().value(id).toObject().value(QLatin1String("enabled"));
