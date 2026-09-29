@@ -240,12 +240,19 @@ Rectangle {
                 }
 
                 MouseArea {
+                    objectName: "deviceTouch"
                     anchors.fill: parent
                     enabled: root.stream !== null && root.stream.inputConnected
                     preventStealing: true
 
+                    // Where the touch last was: a cancelled touch ends there.
+                    property real lastX: 0
+                    property real lastY: 0
+
                     function send(phase, mouse) {
-                        root.stream.touch(phase, mouse.x / width, mouse.y / height);
+                        lastX = mouse.x / width;
+                        lastY = mouse.y / height;
+                        root.stream.touch(phase, lastX, lastY);
                     }
 
                     onPressed: mouse => {
@@ -257,7 +264,10 @@ Rectangle {
                             send("move", mouse);
                     }
                     onReleased: mouse => send("end", mouse)
-                    onCanceled: root.stream.touch("end", 0, 0)
+                    onCanceled: {
+                        if (root.stream)
+                            root.stream.touch("end", lastX, lastY);
+                    }
                 }
             }
 
