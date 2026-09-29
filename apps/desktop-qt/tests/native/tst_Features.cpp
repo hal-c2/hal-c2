@@ -278,6 +278,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/providers-panel.feature:A provider update shows*"),
     QStringLiteral("settings/providers-panel.feature:An update that fails*"),
     QStringLiteral("settings/providers-panel.feature:A provider version outside*"),
+    QStringLiteral("settings/providers-panel.feature:The health check interval*"),
     QStringLiteral("providers/provider-setup.feature:Signing out asks*"),
     QStringLiteral("threads/menu-actions.feature"),
     QStringLiteral("threads/thread-list.feature"),

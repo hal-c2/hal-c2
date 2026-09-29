@@ -394,6 +394,29 @@ const Steps steps([] {
     expect(world.node.subscribers(QStringLiteral("providerAuth")).isEmpty(), QStringLiteral("no sign-in to be followed"));
   });
 
+  // The health check interval. The environment starts on the "performance"
+  // preset (a minute), so each interval below is a change.
+  step(QStringLiteral("the user sets the provider health check interval to (\\d+) seconds"), [](World& world, const Captures& c, const Table&) {
+    saveElsewhere(world.node, QStringLiteral("backgroundActivity"),
+                  QJsonObject{{QStringLiteral("schemaVersion"), 1}, {QStringLiteral("profile"), QStringLiteral("performance")}});
+    world.waitFor([&] { return at(panel(world), QStringLiteral("health.seconds")) == 60; },
+                  [&] { return QStringLiteral("the interval to show a minute; the panel is %1").arg(show(panel(world))); });
+    world.bridge().dispatch(QStringLiteral("providerSettings.healthInterval"), QVariantMap{{QStringLiteral("seconds"), c[0].toInt()}});
+  });
+  step(QStringLiteral("providers are refreshed in the background (every five minutes|never)"), [](World& world, const Captures& c, const Table&) {
+    const int seconds = c[0] == QLatin1String("never") ? 0 : 300;
+    // What the node reads (HalC2.BackgroundPolicy.settings): a custom profile's override.
+    const auto saved = [&] {
+      const QJsonObject activity = fakeConfig(world.node).settings.value(QLatin1String("backgroundActivity")).toObject();
+      return activity.value(QLatin1String("profile")) == QLatin1String("custom") &&
+             activity.value(QLatin1String("baseProfile")) == QLatin1String("performance") &&
+             activity.value(QLatin1String("overrides")).toObject().value(QLatin1String("providerHealthRefreshInterval")).toInt(-1) == seconds * 1000;
+    };
+    world.waitFor([&] { return saved() && at(panel(world), QStringLiteral("health.seconds")) == seconds; },
+                  [&] { return QStringLiteral("a %1 s interval to be saved; the settings are %2, the panel %3")
+                            .arg(seconds).arg(show(fakeConfig(world.node).settings.value(QLatin1String("backgroundActivity"))), show(panel(world))); });
+  });
+
   // Updates.
   step(QStringLiteral("%1 is behind its latest release").arg(q), [](World& world, const Captures& c, const Table&) {
     offer(world, provider(QStringLiteral("codex"), QStringLiteral("codex"), c[0],

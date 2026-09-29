@@ -349,6 +349,69 @@ Rectangle {
 
                 delegate: ProviderCard {}
             }
+
+            // How often the environment checks its providers in the background.
+            RowLayout {
+                id: healthRow
+
+                objectName: "healthInterval"
+                readonly property var health: page.model ? page.model.health : null
+                Layout.fillWidth: true
+                Layout.topMargin: 12
+                visible: health !== null
+                spacing: 12
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+
+                    RowLayout {
+                        spacing: 4
+
+                        Label {
+                            text: qsTr("Provider health check interval")
+                            color: page.foreground
+                            font.pixelSize: 13
+                            font.weight: Font.Medium
+                        }
+
+                        ShellButton {
+                            objectName: "reset"
+                            visible: healthRow.health !== null && healthRow.health.seconds !== healthRow.health.defaultSeconds
+                            subtle: true
+                            iconName: "undo-2"
+                            iconSize: 12
+                            implicitWidth: 20
+                            implicitHeight: 20
+                            Accessible.name: qsTr("Reset provider health check interval to default")
+                            onClicked: Shell.dispatch("providerSettings.resetHealthInterval")
+                        }
+                    }
+
+                    Note {
+                        text: qsTr("Refresh provider status, versions, and models in the background. Set to 0 to disable.")
+                    }
+                }
+
+                SpinBox {
+                    objectName: "seconds"
+                    from: 0
+                    to: 86400
+                    stepSize: healthRow.health ? healthRow.health.step : 30
+                    editable: true
+                    value: healthRow.health ? healthRow.health.seconds : 0
+                    Accessible.name: qsTr("Provider health check interval in seconds")
+                    onValueModified: Shell.dispatch("providerSettings.healthInterval", {
+                        seconds: value
+                    })
+                }
+
+                Label {
+                    text: qsTr("seconds")
+                    color: page.muted
+                    font.pixelSize: 12
+                }
+            }
         }
     }
 }

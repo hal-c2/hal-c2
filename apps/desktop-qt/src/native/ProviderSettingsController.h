@@ -12,6 +12,7 @@
 
 #include "NativeController.h"
 
+class EnvironmentSettings;
 class NodeClient;
 class ShellBridge;
 class ShellStore;
@@ -34,12 +35,14 @@ class ShellStore;
 // enabled, installed, status, headline, detail, email, models [{slug, name}],
 // advisory {title, detail, updateCommand, targetVersion, strong} | null,
 // canUpdate, updating, account: null | {description, canSignIn, signInLabel,
-// canCancel, canSignOut, url, userCode, error}}]}.
+// canCancel, canSignOut, url, userCode, error}}], health: null | {seconds,
+// defaultSeconds, step} (the background provider health check interval)}.
 //
 // Actions: `providerSettings.environment {id}`, `.refresh`, `.enable
 // {instanceId, enabled}`, `.signIn {instanceId}`, `.cancelSignIn
 // {instanceId}`, `.openSignIn {instanceId}`, `.signOut {instanceId}` (asks
-// first), `.update {instanceId}`, `.copyUpdateCommand {instanceId}`.
+// first), `.update {instanceId}`, `.copyUpdateCommand {instanceId}`,
+// `.healthInterval {seconds}` (0 turns it off), `.resetHealthInterval`.
 class ProviderSettingsController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -61,7 +64,9 @@ private:
   QString label(const QString& environmentId) const;
   QJsonObject provider(const QString& instanceId) const;
   void setEnabled(const QString& instanceId, bool enabled);
-  void editSettings(const QString& environmentId, std::function<QJsonObject(QJsonObject)> edit, int retries);
+  void save(const std::function<QJsonObject(QJsonObject, const QString&)>& edit, const std::function<void()>& saved = {},
+            const QString& failure = {});
+  QVariant health() const;
   void call(const QString& instanceId, const QString& method, const QJsonObject& payload, const QString& failure);
   void publish();
   QVariantMap entry(const QJsonObject& provider) const;
@@ -74,9 +79,10 @@ private:
   bool m_open = false;
   // The environment the user chose; empty for this machine.
   QString m_environment;
-  // The followed environment's `config` shape and the providers it brought.
+  // The followed environment, its settings and the providers its `config`
+  // shape brought.
   QString m_followed;
-  int m_config = -1;
+  EnvironmentSettings* m_scope;
   std::optional<QJsonArray> m_providers;
   // Each signing-in provider's `providerAuth` shape and its last state.
   QHash<QString, int> m_auth;

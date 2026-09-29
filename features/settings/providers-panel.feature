@@ -74,7 +74,7 @@ Feature: Providers settings panel
 
     # The node already honours the interval (providers/provider-instances.feature and
     # settings/background-service.feature); only this settings row is backlog.
-    @backlog @desktop
+    @desktop
     Scenario Outline: The health check interval controls background refreshes
       When the user sets the provider health check interval to <seconds> seconds
       Then providers are refreshed in the background <frequency>

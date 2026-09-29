@@ -18,6 +18,14 @@ struct FakeConfig {
   QJsonObject config;  // ServerConfig, less settings
   QHash<QString, QJsonArray> themes;  // by environment
   QHash<QString, QJsonObject> elsewhere;  // other environments' ServerConfig, by environment
+  // Other environments' settings documents, by environment: read, written and
+  // published as this node's own is.
+  struct Document {
+    QJsonObject settings;
+    int version = 0;
+    QString refuseWrites;
+  };
+  QHash<QString, Document> documents;
   QList<QJsonObject> writes;  // every writeSettings payload, in order
   QList<bool> saved;  // whether each write was saved
   bool holdReads = false;
@@ -31,5 +39,8 @@ void publishThemes(FakeNode& node, const QString& environment, const QJsonArray&
 // Another client's save: the document moves on, announced as `config.settings`
 // unless `quietly`.
 void saveElsewhere(FakeNode& node, const QString& key, const QJsonValue& value, bool quietly = false);
+// Another environment's document, created on first use; its config
+// snapshot carries it.
+FakeConfig::Document& documentOf(FakeNode& node, const QString& environment);
 // The node's providers become `providers`, announced as `config.providers`.
 void publishProviders(FakeNode& node, const QJsonArray& providers);

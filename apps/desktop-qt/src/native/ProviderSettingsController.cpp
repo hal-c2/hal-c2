@@ -1,13 +1,16 @@
 #include "ProviderSettingsController.h"
 
 #include <QClipboard>
+#include <QPointer>
 #include <QGuiApplication>
 #include <QRegularExpression>
 #include <QUrl>
 
 #include <algorithm>
+#include <cmath>
 
 #include "CommandRegistry.h"
+#include "EnvironmentSettings.h"
 #include "KeybindingController.h"
 #include "Keybindings.h"
 #include "MenuController.h"
@@ -25,7 +28,50 @@ const NativeControllerRegistrar<ProviderSettingsController> registrar(QStringLit
 
 const QString kKey = QStringLiteral("providerSettings");
 const QString kRegistry = QStringLiteral("acpRegistry");
-constexpr int kStaleRetries = 3;
+const QString kHealthKey = QStringLiteral("providerHealthRefreshInterval");
+
+// The node's background activity presets' provider health intervals
+// (HalC2.BackgroundPolicy), in seconds.
+int presetHealthSeconds(const QString& profile) {
+  if (profile == QLatin1String("performance")) return 60;
+  if (profile == QLatin1String("battery-saver")) return 900;
+  return 300;
+}
+
+// The preset a `backgroundActivity` builds on: its profile, or for a custom
+// one the profile it started from.
+QString baseProfile(const QJsonObject& activity) {
+  const QString profile = activity.value(QLatin1String("profile")).toString();
+  const QString base = profile == QLatin1String("custom") ? activity.value(QLatin1String("baseProfile")).toString() : profile;
+  return base == QLatin1String("performance") || base == QLatin1String("battery-saver") ? base : QStringLiteral("balanced");
+}
+
+// The provider health interval the node uses, in seconds (BackgroundPolicy.settings).
+int healthSeconds(const QJsonObject& settings) {
+  const QJsonObject activity = settings.value(QLatin1String("backgroundActivity")).toObject();
+  const QJsonObject overrides = activity.value(QLatin1String("overrides")).toObject();
+  if (activity.value(QLatin1String("profile")) == QLatin1String("custom") && overrides.value(kHealthKey).isDouble()) {
+    return int(overrides.value(kHealthKey).toDouble() / 1000);
+  }
+  return presetHealthSeconds(baseProfile(activity));
+}
+
+// `settings` with the health interval overridden (`seconds`) or back to its
+// preset (none), as the web's backgroundActivityOverrideSettings: a custom
+// profile on the current base, keeping the overrides a custom profile had.
+QJsonObject withHealthSeconds(QJsonObject settings, std::optional<int> seconds) {
+  const QJsonObject activity = settings.value(QLatin1String("backgroundActivity")).toObject();
+  QJsonObject overrides = activity.value(QLatin1String("profile")) == QLatin1String("custom")
+                              ? activity.value(QLatin1String("overrides")).toObject()
+                              : QJsonObject{};
+  if (seconds) overrides.insert(kHealthKey, qint64(*seconds) * 1000);
+  else overrides.remove(kHealthKey);
+  settings.insert(QStringLiteral("backgroundActivity"), QJsonObject{{QStringLiteral("schemaVersion"), 1},
+                                                                    {QStringLiteral("profile"), QStringLiteral("custom")},
+                                                                    {QStringLiteral("baseProfile"), baseProfile(activity)},
+                                                                    {QStringLiteral("overrides"), overrides}});
+  return settings;
+}
 
 QVariant null() {
   return QVariant::fromValue(nullptr);
@@ -146,7 +192,20 @@ bool signsIn(const QJsonObject& provider) {
 
 ProviderSettingsController::ProviderSettingsController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
                                                        QObject* parent)
-    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {
+    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_scope(new EnvironmentSettings(client, this)) {
+  connect(m_scope, &EnvironmentSettings::frame, this, [this](const QString&, const QJsonObject& frame) {
+    const QString type = frame.value(QLatin1String("t")).toString();
+    if (type == QLatin1String("config")) {
+      m_providers = frame.value(QLatin1String("config")).toObject().value(QLatin1String("providers")).toArray();
+    } else if (type == QLatin1String("config.providers")) {
+      m_providers = frame.value(QLatin1String("providers")).toArray();
+    } else {
+      return;
+    }
+    followAuth();
+    publish();
+  });
+  connect(m_scope, &EnvironmentSettings::changed, this, &ProviderSettingsController::publish);
   m_writeClipboard = [](const QString& value) {
     QClipboard* clipboard = QGuiApplication::clipboard();
     if (!clipboard) return false;
@@ -198,6 +257,11 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
                      }
                      publish();
                    });
+  } else if (action == QLatin1String("providerSettings.healthInterval")) {
+    const int seconds = std::max(0, int(std::lround(input.value(QStringLiteral("seconds")).toDouble())));
+    save([seconds](QJsonObject settings, const QString&) { return withHealthSeconds(settings, seconds); });
+  } else if (action == QLatin1String("providerSettings.resetHealthInterval")) {
+    save([](QJsonObject settings, const QString&) { return withHealthSeconds(settings, std::nullopt); });
   } else if (entry.isEmpty()) {
     return true;
   } else if (action == QLatin1String("providerSettings.enable")) {
@@ -315,25 +379,11 @@ void ProviderSettingsController::follow(const QString& environmentId) {
   }
   unfollow();
   m_followed = environmentId;
-  m_config = m_client->subscribe(
-      {{QStringLiteral("type"), QStringLiteral("config")}, {QStringLiteral("environment"), environmentId}},
-      [this](const QJsonObject& frame) {
-        const QString type = frame.value(QLatin1String("t")).toString();
-        if (type == QLatin1String("config")) {
-          m_providers = frame.value(QLatin1String("config")).toObject().value(QLatin1String("providers")).toArray();
-        } else if (type == QLatin1String("config.providers")) {
-          m_providers = frame.value(QLatin1String("providers")).toArray();
-        } else {
-          return;
-        }
-        followAuth();
-        publish();
-      });
+  m_scope->setTargets({environmentId});
 }
 
 void ProviderSettingsController::unfollow() {
-  if (m_config >= 0) m_client->unsubscribe(m_config);
-  m_config = -1;
+  m_scope->setTargets({});
   m_followed.clear();
   m_providers.reset();
   for (const int id : std::as_const(m_auth)) m_client->unsubscribe(id);
@@ -402,7 +452,7 @@ QJsonObject ProviderSettingsController::provider(const QString& instanceId) cons
 // entry when it has one, and a built-in driver's `providers` entry.
 void ProviderSettingsController::setEnabled(const QString& instanceId, bool enabled) {
   const QString driver = provider(instanceId).value(QLatin1String("driver")).toString();
-  editSettings(m_followed, [instanceId, driver, enabled](QJsonObject settings) {
+  save([instanceId, driver, enabled](QJsonObject settings, const QString&) {
     QJsonObject instances = settings.value(QLatin1String("providerInstances")).toObject();
     if (instances.contains(instanceId)) {
       QJsonObject instance = instances.value(instanceId).toObject();
@@ -418,39 +468,23 @@ void ProviderSettingsController::setEnabled(const QString& instanceId, bool enab
       settings.insert(QStringLiteral("providers"), providers);
     }
     return settings;
-  }, kStaleRetries);
+  });
 }
 
-// Reads the environment's settings document, edits it and writes it back at
-// the version read; another client's save first means reading again.
-void ProviderSettingsController::editSettings(const QString& environmentId, std::function<QJsonObject(QJsonObject)> edit,
-                                              int retries) {
-  const auto fail = [this](const QString& error) {
-    if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) {
-      toasts->error(QStringLiteral("Could not save provider settings"), error);
+// Edits the shown environment's settings document; `saved` runs once it is.
+void ProviderSettingsController::save(const std::function<QJsonObject(QJsonObject, const QString&)>& edit,
+                                      const std::function<void()>& saved, const QString& failure) {
+  const QPointer<ProviderSettingsController> self(this);
+  m_scope->change(edit, [self, saved, failure](const QHash<QString, QString>& failed, int) {
+    if (!self) return;
+    if (failed.isEmpty()) {
+      if (saved) saved();
+      return;
     }
-  };
-  m_client->call(environmentId, QStringLiteral("hal-c2.readSettings"), QJsonObject{},
-                 [this, environmentId, edit, retries, fail](const QJsonValue& result, const std::optional<QString>& error) {
-                   if (error) {
-                     fail(*error);
-                     return;
-                   }
-                   const QJsonObject read = result.toObject();
-                   const QJsonObject settings = read.value(QLatin1String("settings")).toObject();
-                   const QJsonObject next = edit(settings);
-                   if (next == settings) return;
-                   m_client->call(environmentId, QStringLiteral("hal-c2.writeSettings"),
-                                  QJsonObject{{QStringLiteral("settings"), next}, {QStringLiteral("version"), read.value(QLatin1String("version"))}},
-                                  [this, environmentId, edit, retries, fail](const QJsonValue& answer, const std::optional<QString>& error) {
-                                    if (!error) return;
-                                    if (answer.toObject().value(QLatin1String("_tag")) == QLatin1String("StaleSettings") && retries > 0) {
-                                      editSettings(environmentId, edit, retries - 1);
-                                    } else {
-                                      fail(*error);
-                                    }
-                                  });
-                 });
+    if (auto* toasts = NativeShell::of(self)->controller<ToastController>()) {
+      toasts->error(failure.isEmpty() ? QStringLiteral("Could not save provider settings") : failure, failed.cbegin().value());
+    }
+  });
 }
 
 void ProviderSettingsController::call(const QString& instanceId, const QString& method, const QJsonObject& payload,
@@ -568,6 +602,15 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   return result;
 }
 
+// The provider health check row: the interval the node uses and its preset.
+QVariant ProviderSettingsController::health() const {
+  const std::optional<QJsonObject> settings = m_followed.isEmpty() ? std::nullopt : m_scope->settings(m_followed);
+  if (!m_open || !settings) return null();
+  const int seconds = healthSeconds(*settings);
+  const int preset = presetHealthSeconds(baseProfile((*settings).value(QLatin1String("backgroundActivity")).toObject()));
+  return QVariantMap{{QStringLiteral("seconds"), seconds}, {QStringLiteral("defaultSeconds"), preset}, {QStringLiteral("step"), 30}};
+}
+
 void ProviderSettingsController::publish() {
   if (!m_active) return;
   const QString local = m_client->environment();
@@ -621,5 +664,6 @@ void ProviderSettingsController::publish() {
                               {QStringLiteral("description"), description},
                               {QStringLiteral("refreshing"), m_refreshing > 0},
                               {QStringLiteral("providers"), providers},
+                              {QStringLiteral("health"), health()},
                           });
 }

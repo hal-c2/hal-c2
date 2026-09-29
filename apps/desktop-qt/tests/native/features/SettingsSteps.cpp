@@ -36,6 +36,11 @@ void sendConfig(FakeNode& node, const QString& environment, const QJsonObject& f
   }
 }
 
+// A linked environment keeps its own settings document.
+bool ownsDocument(const FakeConfig& fake, const QString& environment) {
+  return fake.documents.contains(environment) || fake.elsewhere.contains(environment);
+}
+
 const FakeNode::Extension extension([](FakeNode& node) {
   node.onShape(QStringLiteral("config"), [&node](int id, const QJsonObject& shape) {
     const QString environment = shape.value(QLatin1String("environment")).toString();
@@ -48,8 +53,10 @@ const FakeNode::Extension extension([](FakeNode& node) {
                  {QStringLiteral("id"), id},
                  {QStringLiteral("node"), node.name},
                  {QStringLiteral("config"), config}});
-    } else if (fake.elsewhere.contains(environment)) {
-      node.send({{QStringLiteral("t"), QStringLiteral("config")}, {QStringLiteral("id"), id}, {QStringLiteral("config"), fake.elsewhere.value(environment)}});
+    } else if (fake.elsewhere.contains(environment) || fake.documents.contains(environment)) {
+      QJsonObject config = fake.elsewhere.value(environment);
+      config.insert(QStringLiteral("settings"), fake.documents.value(environment).settings);
+      node.send({{QStringLiteral("t"), QStringLiteral("config")}, {QStringLiteral("id"), id}, {QStringLiteral("config"), config}});
     }
     node.send({{QStringLiteral("t"), QStringLiteral("config.themes")},
                {QStringLiteral("id"), id},
@@ -57,6 +64,11 @@ const FakeNode::Extension extension([](FakeNode& node) {
   });
   node.onRpc(QStringLiteral("hal-c2.readSettings"), [&node](const FakeNode::Rpc& rpc) {
     FakeConfig& fake = fakeConfig(node);
+    if (ownsDocument(fake, rpc.environment)) {
+      const FakeConfig::Document& document = fake.documents.value(rpc.environment);
+      node.reply(rpc, QJsonObject{{QStringLiteral("settings"), document.settings}, {QStringLiteral("version"), document.version}});
+      return;
+    }
     if (fake.holdReads) return;
     node.reply(rpc, QJsonObject{{QStringLiteral("settings"), fake.settings}, {QStringLiteral("version"), fake.version}});
     if (fake.editOnRead) {
@@ -65,6 +77,20 @@ const FakeNode::Extension extension([](FakeNode& node) {
   });
   node.onRpc(QStringLiteral("hal-c2.writeSettings"), [&node](const FakeNode::Rpc& rpc) {
     FakeConfig& fake = fakeConfig(node);
+    if (ownsDocument(fake, rpc.environment)) {
+      FakeConfig::Document& document = fake.documents[rpc.environment];
+      if (!document.refuseWrites.isEmpty()) {
+        node.refuse(rpc, document.refuseWrites);
+      } else if (rpc.payload.value(QLatin1String("version")).toInt(-1) != document.version) {
+        node.refuse(rpc, QStringLiteral("settings changed"), {{QStringLiteral("_tag"), QStringLiteral("StaleSettings")}});
+      } else {
+        document.settings = rpc.payload.value(QLatin1String("settings")).toObject();
+        document.version++;
+        node.reply(rpc, QJsonObject{{QStringLiteral("version"), document.version}});
+        sendConfig(node, rpc.environment, {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), document.settings}});
+      }
+      return;
+    }
     fake.writes.append(rpc.payload);
     if (!fake.refuseWrites.isEmpty()) {
       fake.saved.append(false);
@@ -296,6 +322,10 @@ void saveElsewhere(FakeNode& node, const QString& key, const QJsonValue& value, 
   if (quietly) return;
   sendConfig(node, node.environmentId,
              {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), fake.settings}});
+}
+
+FakeConfig::Document& documentOf(FakeNode& node, const QString& environment) {
+  return fakeConfig(node).documents[environment];
 }
 
 void publishProviders(FakeNode& node, const QJsonArray& providers) {
