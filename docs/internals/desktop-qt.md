@@ -110,11 +110,10 @@ node `mise run node` runs.
   share a profile directory between processes: a second shell on the same
   home finds the lock file taken and stays off-the-record for its run.
 - **One renderer per surface.** Chromium gives each top-level view its own
-  renderer process (roughly the app bundle's footprint each), which is the
-  price of the right panel being a separate document. It sets
-  `sleepsWhenHidden`, so its page is frozen (no timers, no painting) while
-  closed and resumes where it was; discarding it would also drop the
-  terminals it holds. The primary surface never sleeps.
+  renderer process (roughly the app bundle's footprint each), so the shell
+  keeps one: the right panel is native and embeds no second document. A
+  surface that may hide sets `sleepsWhenHidden`, which freezes its page (no
+  timers, no painting) until it shows again. The primary surface never sleeps.
 - **The channel carries no properties.** QWebChannel re-sends a changed
   property to every connected page, so `Shell.state` is not on it: pages talk
   to `ShellChannel` (`publish`, `dispatch`, `snapshot`, `actionRequested`,
@@ -126,8 +125,8 @@ node `mise run node` runs.
   registration for the ones it owns; a rice can read any of them, but a new
   key must be declared before a binding will follow it.
 - **Permissions and downloads.** Pages get the async clipboard; other browser
-  permissions are denied. Opt-in QML extensions can use the native notification
-  presenter described below. Downloads go to the user's download folder.
+  permissions are denied, notifications included: the shell raises its own
+  (below). Downloads go to the user's download folder.
 - **No width animation on the surfaces' neighbours.** Animating the sidebar
   or panel width resizes the web view every frame, which is a Chromium
   relayout and a new GPU surface each time; both snap instead.
@@ -390,23 +389,22 @@ before any window is created, allowing launch-profile-specific window rules.
 
 ### Notification delivery
 
-The primary page publishes live `desktopNotifications` batches independently
-of sidebar filtering. Each event contains an ID, scoped thread key, kind,
-thread title, and runtime mode. Initial observations baseline existing threads
-without replaying their old completions or approvals. A QML policy should
-consume `Shell.stateEntryChanged`, not replay the retained batch on startup.
+`AlertController` decides when a thread alerts, from the shell's own rows
+(cluster and linked environments alike), as the web's
+`ThreadNotificationCoordinator` does; the page's coordinator is not mounted in
+the shell, so nothing alerts twice. It compares each thread with what it saw
+last, so the snapshot after connecting, or reconnecting, is a baseline rather
+than a burst of old completions. This device's `notificationMode` and
+`inAppNotificationsEnabled` pick a toast while the window has focus, or a
+system notification while it has not; regaining focus clears them.
 
-`NativeNotifications` is a creatable `HalC2.Shell` type, disabled by default.
-QML chooses event filters, foreground behavior, titles, message text, sound,
-and timeout, then calls `show(key, title, body, silent, timeoutMs)`. Its
-`activated(key)` signal identifies the originating thread. QML decides whether
-to raise a window and dispatch `thread.open`. Disabling delivery closes its
-outstanding notifications.
-
-Delivery currently uses Linux's desktop notification D-Bus service.
-`supported` is false without that service and on macOS or Windows. The desktop
-may ignore requested sound or timeout behavior. No durable missed-event inbox
-is maintained.
+The platform side is the controller's `Presenter`, which `main.cpp` wires to
+`NativeNotifications` (Linux's desktop notification D-Bus service; `supported`
+is false without it and on macOS or Windows) and tests fake. Its click reports
+the thread key it was shown for, even after newer notifications replaced
+others, and turning notifications off makes late clicks open nothing. There is
+no audio module: sound goes through the desktop sound theme's
+`canberra-gtk-play` when it is installed, and is silent otherwise.
 
 ### Local dictation helpers
 
@@ -515,7 +513,7 @@ hover, keyboard focus and scroll position while thread state changes.
 
 Actions (`Shell.dispatch(name, payload)` in QML → `ShellAction` on the page):
 `sidebar.scope {projectKey|null}`, `project.add {path?}`, `project.remove
-{projectKey}`, `draft.menu {draftId, x, y}`, `palette.open`, and the
+{projectKey}`, `draft.menu {draftId, x, y}`, and the
 navigation ones `route` takes once the shell has its node (`thread.open {key}`,
 `draft.open {draftId}`, `thread.new {projectKey?}`, `settings.open`,
 `pullRequests.open`, `usage.open`). The active row is the route's. Row actions run the
@@ -635,31 +633,53 @@ elapsed times tick only while it shows (the web dropped this tab when lineage
 moved to the title bar; the desktop keeps it). A terminal tab is
 `terminal:<group>`: one of `TerminalController`'s panel groups (below), made
 by `rightPanel.add {kind: "terminal"}` and closed, terminals and all, with its
-tab; `TerminalPanel` draws it. Moving another tab to QML is a line in
-`js/panelTabs.js` plus its kind in `RightPanelController::nativeKinds`.
+tab; `TerminalPanel` draws it. The Pull requests tab (`PullRequestsPanel`
+over `ThreadPullRequests`) reads the links the thread row already carries,
+links and unlinks with the `thread.pull-request.link`/`.unlink` commands, and
+refreshes with `pullRequests.invalidate`; linking accepts any repository on a
+host a project reads, as the web dialog does. Offline its rows stay as last
+synced and nothing is sent. The Previews tab (`PreviewsPanel` over
+`ThreadPreviews`) lists the thread's browser tabs from `preview.list` and the
+`preview` shape, subscribed only while it shows, and opens each in the user's
+browser. Moving another tab to QML is a line in `js/panelTabs.js` plus its kind
+in `RightPanelController::nativeKinds`.
 
-The pull request tab is still the page's content in the shell's placement:
-`RightPanel` loads the app's embed route (`/embed/$environmentId/$threadId`)
-in a second `WebSurface` only while it shows. Both surfaces share the shell's profile (see Web
-engine), so the embed document authenticates with the primary's cookie; it
-opens its own WebSocket and sleeps while hidden. The embed route renders
-`ChatView` with `presentation="rightPanel"`, and `shell/shellDocumentSync.ts`
-rehydrates the terminal store the two documents share.
+The desktop embeds no browser. QtWebEngine is the dependency being removed,
+and QtWebView is WebEngine underneath on Linux with no input injection, zoom
+or popup control, so neither can host the agent's preview tabs (that host was
+only ever Electron's `desktopBridge`). The embedding scenarios in
+`features/preview/surfaces.feature` are `@backlog-desktop` for that reason.
 
-The page still publishes `rightPanel` (`ShellRightPanelBridge`: its tabs,
-what can be added, `embedPath`); the controller takes its non-native tabs
-and `canAdd` from it, and a change the page makes on its own (its keybinding,
-a tab it added) is taken as the user's. The page follows the shell, not the
-other way round: `rightPanel.follow {threadKey, open, activeSurfaceId}` is
-sent only when the page shows something other than a page tab the shell
-wants, so it does no work behind a native tab. `panel.open {tab, path?,
+The Pull request review tab (`pull-request:<host>/<repository>#<number>`,
+titled "PR #n") is `PullRequestReviewPanel` over the controller's
+`PullRequestReview` (`Panel.review`). It opens from the add menu or a Pull
+requests row's menu (`rightPanel.review {key}`) and reads the pull request
+through the thread's environment: `pullRequests.detail` and `.activity` over
+the socket, and the code over HTTP (`POST /api/pull-requests/diff`, one
+`nextCursor` slice at a time, with `NodeClient::post`), which lands in a
+`DiffModel` that `DiffPanel` draws. Comments, reviews, thread resolutions and
+viewed marks go back through the same environment, and the pull request is
+read again once each lands. A viewed mark the host refuses is taken back.
+Offline, what was read stays and nothing is sent.
+
+The thread details column (`ThreadDetailsPanel`, `threadPanel.toggle` from
+the header's info button or the keybinding) is not a tab. It sits beside the
+right panel and reads `panel.details`, which the controller builds from store
+rows: the environment and whether it is reachable, the project, the checkout
+and branch, and the lineage parent and children. Changing the checkout stays
+with the composer's strip.
+
+The device tab is not native: the hub's streams are H.264 (iOS AVCC with an
+MJPEG fallback, Android SEMU-framed over a WebSocket), which Qt cannot decode
+without QtMultimedia or FFmpeg. Its scenarios stay `@backlog`.
+
+The panel never asks the page for anything. Per thread, the controller keeps
+whether it is open, its tabs, the active one and the details column, plus one
+width for all threads, in `shell-panel.json` in the state directory, so they
+survive a restart (maximizing does not). `rightPanel.resize {width}` and `rightPanel.toggleMaximized`
+come from the brick's edge and the keybinding. `panel.open {tab, path?,
 line?, turn?, turnId?}` opens a native tab on a turn's diff or a file at a
 line, for the timeline's links.
-
-Known gaps: the browser/preview surface needs the Electron preview host and
-is unavailable under the shell; the native tabs are not persisted across
-restarts, and the working-tree review and the diff's file tree stay on the
-page.
 
 ### `workspace`
 
@@ -873,20 +893,19 @@ editor live in the page's storage and are unknown to the shell.
 
 ### `layout`
 
-The page keeps owning the main sidebar's open state (the shell runs the
-`sidebar.toggle` keybinding, Mod+B by default, as that action — see
-`keybindings`) and publishes it as
-`layout {sidebarCollapsed}` from `ShellLayoutBridge`, mounted inside the
-sidebar provider. `sidebar.toggle` flips it from native chrome — the
-`Workspace` brick shows a toggle when its `sidebarToggle` property is bound
-(it takes the sidebar's place at the strip's left edge, as on the page), and
-`Sidebar` shows the matching collapse toggle in its brand band when
-`showBrand` is on. The right panel's toggle follows the same pattern:
-`Workspace.panelToggle` puts it in the header strip and `RightPanel
+The shell owns whether the thread list is hidden: `LayoutController` claims
+`layout {sidebarCollapsed}` from the page, remembers it in the device's
+`preferences.json`, and publishes it before the node's first snapshot so a
+restart does not flash the list. `sidebar.toggle` (action and keybinding
+command, Mod+B by default) flips it. The `Workspace` brick shows a toggle when
+its `sidebarToggle` property is bound (it takes the sidebar's place at the
+strip's left edge), and `Sidebar` shows the matching collapse toggle in its
+brand band when `showBrand` is on. The right panel's toggle follows the same
+pattern: `Workspace.panelToggle` puts it in the header strip and `RightPanel
 { ownToggle: false }` then takes no width while closed; a rice that leaves
 `ownToggle` on gets the 36 px rail with the toggle instead.
-The shell only animates the result: `DefaultShell` and the examples ease the
-sidebar's `Layout.preferredWidth` to 0 and hide it once it is gone
+`DefaultShell` snaps the sidebar (one relayout, no animated width); examples
+that ease `Layout.preferredWidth` to 0 hide it once it is gone
 (`visible: !sidebarCollapsed || width > 0` — guard on the collapsed flag, not
 on width alone, or a layout-managed item never regains a size).
 
@@ -910,9 +929,19 @@ through `thread.new`, back, the sidebar, the terminal drawer, next, previous
 and numbered threads in the sidebar's order, the composer's pickers and stop,
 and steering with or editing a queued message.
 A brick adds its own with `Keybindings.commands.add(command, title, callback,
-owner)`; `KeybindingController::kAppearanceCycle` names the one a native
-appearance setting should register. Its rows (`{command, title, shortcut}`)
-are also what a native command palette lists.
+owner)`, and a controller from its `activate()` (`ThemeController` the
+appearance cycle, `NavigationController` "Open settings" and "Open usage").
+
+The command palette (`CommandPaletteController`, the `PaletteModel` singleton,
+drawn by `CommandPalette`) lists those rows as its actions, so an action
+reaches the palette by being registered there, never by the palette naming
+it. It adds the shell's threads by key (linked environments and cluster
+threads alike), the sidebar's projects and the settings sections
+`js/settingsPages.js` hands it. It is its own list model and filters in C++,
+moving only the rows a keystroke changes. It owns `commandPalette.toggle`;
+the sidebar's Search opens it too, and dismissing it sends `composer.focus`
+to the composer. The singleton is not `Palette`, which QtQuick already
+names.
 
 `ShellWindow` instantiates one window `Shortcut` per bound sequence and calls
 `Keybindings.press`. Who takes a key follows focus:
@@ -1054,7 +1083,8 @@ of the original chrome has a brick (`Sidebar`, `Composer`, `RightPanel`,
 `TerminalDrawer`, `Workspace`, `SettingsNav`), but several still get their
 state from the page. The right panel's pull request tab and most settings
 pages are still HTML because they have not moved yet, not by design (its
-Diff, Files, Agents and terminal tabs are native).
+Diff, Files, Agents, terminal, Pull requests and Previews tabs are native;
+the pull request review and the device tab are not).
 
 A piece has moved when a native controller (`src/native/`, registered with
 `NativeControllerRegistrar`) builds its state from the shell's own node client
@@ -1066,7 +1096,8 @@ the page entirely: a controller, a brick the layouts place, and `@desktop`
 scenarios run by `tst_Features`. They are never hosted in or over
 `WebSurface`, and never gated on state the page publishes. The embed route
 behind `RightPanel` (a second `WebEngineView` on its own connection) is a
-stopgap for HTML that must sit where QML decides, not a pattern for new work.
+stopgap for HTML that must sit where QML decides, not a pattern for new work;
+web content the desktop cannot draw opens in the user's browser instead.
 
 ### Thread store and timeline
 

@@ -101,8 +101,7 @@ void UsageController::activate() {
   }
   auto* navigation = shell->controller<NavigationController>();
   if (auto* keys = shell->controller<KeybindingController>()) {
-    keys->commands()->add(QStringLiteral("usage.open"), keybindings::commandLabel(QStringLiteral("usage.open")),
-                          [navigation] { navigation->open(NavigationController::Route::of(QStringLiteral("usage"))); });
+    // usage.open is NavigationController's, with the other pages the palette offers.
     keys->commands()->add(QStringLiteral("usage.refresh"), keybindings::commandLabel(QStringLiteral("usage.refresh")),
                           [this, navigation] {
                             if (navigation->route().kind != QLatin1String("usage")) {

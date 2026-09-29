@@ -85,6 +85,9 @@ Rectangle {
                 }
             } else if (action === "composer.control.open") {
                 composer.openControl(payload.command);
+            } else if (action === "composer.focus") {
+                // A dismissed command palette hands the keyboard back.
+                composer.focusInput();
             } else if (action === "composer.queue.editLast" && composer.ready && input.activeFocus) {
                 // From the start of the draft the key reaches the queue;
                 // anywhere else it moves there first, as the web's does.

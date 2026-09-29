@@ -13,6 +13,7 @@
 #include <algorithm>
 
 #include "Harness.h"
+#include "NavigationController.h"
 #include "NodeClient.h"
 #include "World.h"
 
@@ -197,8 +198,15 @@ const Steps steps([] {
                 {{QStringLiteral("projectId"), c[0]}, {QStringLiteral("title"), QStringLiteral("Thread %1").arg(index)}});
     }
   });
+  // A new thread the user typed into and left.
   step(QStringLiteral("%1 has an unsent draft").arg(q), [](World& world, const Captures& c, const Table&) {
     world.startNewThread(QVariantMap{{QStringLiteral("projectKey"), world.projectKey(c[0])}});
+    world.bridge().dispatch(QStringLiteral("composer.text.set"),
+                            QVariantMap{{QStringLiteral("target"), world.draftId},
+                                        {QStringLiteral("edit"), QVariantMap{{QStringLiteral("clientId"), QStringLiteral("qml")}, {QStringLiteral("revision"), world.nextEdit++}}},
+                                        {QStringLiteral("text"), QStringLiteral("Unsent work")},
+                                        {QStringLiteral("cursor"), 11}});
+    world.native().controller<NavigationController>()->open(NavigationController::Route::of(QStringLiteral("home")));
   });
   step(QStringLiteral("the environments %1 and %1 both have a project %1").arg(q), [](World& world, const Captures& c, const Table&) {
     for (const QString& environment : {c[0], c[1]}) {
@@ -319,11 +327,14 @@ const Steps steps([] {
     const QString names = projectNames(world).join(u", ");
     expect(names == c[0], QStringLiteral("the sidebar lists the projects \"%1\"").arg(names));
   });
+  // Projects, or threads when the names are threads'.
   step(QStringLiteral("%1 is listed above %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
-    const QStringList names = projectNames(world);
+    const QStringList projects = projectNames(world);
+    const bool threads = !projects.contains(c[0]);
+    const QStringList names = threads ? threadTitles(world) : projects;
     expect(names.contains(c[0]) && names.contains(c[1]) && names.indexOf(c[0]) < names.indexOf(c[1]),
-           QStringLiteral("the sidebar lists the projects %1").arg(names.join(u", ")));
+           QStringLiteral("the sidebar lists the %1 %2").arg(threads ? u"threads" : u"projects", names.join(u", ")));
   });
   step(QStringLiteral("%1 is listed once for each environment").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();

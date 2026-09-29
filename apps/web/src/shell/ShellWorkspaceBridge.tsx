@@ -26,7 +26,7 @@ import { useRenameThread } from "../hooks/useRenameThread";
 import { useThreadBranchSelection } from "../hooks/useThreadBranchSelection";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { subscribeShellRenameRequests } from "./shellRenameRequest";
-import { buildEmbedPath } from "./shellRightPanelState";
+import { buildTerminalEmbedPath } from "./shellEmbedPath";
 import { shellEnvironment } from "../state/shell";
 import { buildShellWorkspaceState } from "./shellWorkspaceState";
 
@@ -139,10 +139,9 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
         terminalOpen: props.terminalOpen,
         terminalHeight: props.terminalHeight,
         terminalFocusRequestId: props.terminalFocusRequestId,
-        terminalEmbedPath: buildEmbedPath(
+        terminalEmbedPath: buildTerminalEmbedPath(
           props.threadRef.environmentId,
           props.threadRef.threadId,
-          "terminal",
         ),
         availableEditors: props.availableEditors,
         preferredEditorId,

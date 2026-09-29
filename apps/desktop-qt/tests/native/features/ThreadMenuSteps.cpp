@@ -11,6 +11,7 @@
 #include "MenuController.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
+#include "ThreadList.h"
 #include "ThreadMenuController.h"
 #include "Turn.h"
 #include "World.h"
@@ -48,8 +49,13 @@ void projectCommand(FakeNode& node, const QJsonObject& command) {
     row.remove(QStringLiteral("pinOrderKey"));
   } else if (type == QLatin1String("thread.settle")) {
     row.insert(QStringLiteral("settledOverride"), QStringLiteral("settled"));
+    row.insert(QStringLiteral("settledAt"), now);
   } else if (type == QLatin1String("thread.unsettle")) {
     row.remove(QStringLiteral("settledOverride"));
+    row.remove(QStringLiteral("settledAt"));
+    row.insert(QStringLiteral("unsettledAt"), now);
+  } else if (type == QLatin1String("thread.visit")) {
+    row.insert(QStringLiteral("lastVisitedAt"), command.value(QLatin1String("visitedAt")).toString(now));
   } else if (type == QLatin1String("thread.snooze")) {
     row.insert(QStringLiteral("snoozedUntil"), command.value(QLatin1String("snoozedUntil")));
     row.insert(QStringLiteral("snoozedAt"), now);
@@ -221,10 +227,11 @@ const Steps steps([] {
     world.connect();
     view(world, keyOf(world, QStringLiteral("t1").prepend(world.node.environmentId + QLatin1Char(':'))));
   });
-  step(QStringLiteral("a connected environment with the idle thread %1 in the project %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("a connected environment with the idle thread %1(?: in the project %1)?").arg(q), [](World& world, const Captures& c, const Table&) {
     fake(world).project = true;
-    world.node.projects.insert(c[1], project(c[1]));
-    world.node.threads.insert(QStringLiteral("t1"), thread(QStringLiteral("t1"), c[0], c[1], QStringLiteral("2026-09-23T09:00:00Z")));
+    const QString projectId = c.value(1).isEmpty() ? QStringLiteral("shop") : c[1];
+    world.node.projects.insert(projectId, project(projectId));
+    world.node.threads.insert(QStringLiteral("t1"), thread(QStringLiteral("t1"), c[0], projectId, QStringLiteral("2026-09-23T09:00:00Z")));
     world.connect();
     view(world, world.node.environmentId + QStringLiteral(":t1"));
   });
@@ -601,3 +608,19 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+QString threadKeyOf(World& world, const QString& thread) {
+  return keyOf(world, thread);
+}
+
+QString sidebarSectionOf(World& world, const QString& key) {
+  return sectionOf(world, key);
+}
+
+void updateThreadRow(World& world, const QString& id, const std::function<void(QJsonObject&)>& change) {
+  updateRow(world, id, change);
+}
+
+void projectThreadCommands(World& world) {
+  fake(world).project = true;
+}

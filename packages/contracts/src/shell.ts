@@ -356,46 +356,6 @@ export const ShellComposerState = Schema.Struct({
 });
 export type ShellComposerState = typeof ShellComposerState.Type;
 
-export const ShellRightPanelKind = Schema.Literals([
-  "diff",
-  "files",
-  "file",
-  "preview",
-  "terminal",
-  "pull-request",
-  "pull-requests",
-  "device",
-  "source-control",
-]);
-export type ShellRightPanelKind = typeof ShellRightPanelKind.Type;
-
-export const ShellRightPanelSurface = Schema.Struct({
-  id: Schema.String,
-  kind: ShellRightPanelKind,
-  title: Schema.String,
-});
-export type ShellRightPanelSurface = typeof ShellRightPanelSurface.Type;
-
-/**
- * Published under the `rightPanel` key while a thread route is open. The
- * panel's content stays HTML: the shell loads `embedPath` (same origin as the
- * page, same session) in a second web view; this state only drives the tabs.
- */
-export const ShellRightPanelState = Schema.Struct({
-  threadKey: Schema.String,
-  isOpen: Schema.Boolean,
-  activeSurfaceId: Schema.NullOr(Schema.String),
-  surfaces: Schema.Array(ShellRightPanelSurface),
-  canAdd: Schema.Struct({
-    diff: Schema.Boolean,
-    files: Schema.Boolean,
-    terminal: Schema.Boolean,
-    pullRequest: Schema.Boolean,
-  }),
-  embedPath: Schema.String,
-});
-export type ShellRightPanelState = typeof ShellRightPanelState.Type;
-
 export const ShellWorkspaceEnvMode = Schema.Literals(["local", "worktree"]);
 export type ShellWorkspaceEnvMode = typeof ShellWorkspaceEnvMode.Type;
 
@@ -790,22 +750,8 @@ export const ShellAction = Schema.Union([
     type: Schema.Literal("composer.interactionMode.set"),
     mode: Schema.Literals(["default", "plan"]),
   }),
-  Schema.Struct({ type: Schema.Literal("rightPanel.toggle") }),
   Schema.Struct({ type: Schema.Literal("terminal.toggle") }),
   Schema.Struct({ type: Schema.Literal("terminal.resize"), height: Schema.Number }),
-  Schema.Struct({ type: Schema.Literal("rightPanel.activate"), id: Schema.String }),
-  Schema.Struct({ type: Schema.Literal("rightPanel.close"), id: Schema.String }),
-  Schema.Struct({
-    type: Schema.Literal("rightPanel.add"),
-    kind: Schema.Literals(["diff", "files", "terminal", "pull-request"]),
-  }),
-  /** The shell's panel state for the thread: open only while a page tab shows. */
-  Schema.Struct({
-    type: Schema.Literal("rightPanel.follow"),
-    threadKey: Schema.String,
-    open: Schema.Boolean,
-    activeSurfaceId: Schema.NullOr(Schema.String),
-  }),
   Schema.Struct({ type: Schema.Literal("workspace.newThread") }),
   Schema.Struct({
     type: Schema.Literal("workspace.openInEditor"),
@@ -906,7 +852,7 @@ export type ShellAction = typeof ShellAction.Type;
 /** `window.halC2Shell`, injected by the shell before any page script runs. */
 export interface HalC2Shell {
   readonly protocolVersion: number;
-  /** Which web surface this document is in (`"primary"`, `"rightPanel"`, …). */
+  /** Which web surface this document is in (`"primary"`, `"shell"`, …). */
   readonly surfaceId: string;
   readonly ready: Promise<unknown>;
   publish(key: string, value: unknown): Promise<void>;

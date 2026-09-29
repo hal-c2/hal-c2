@@ -30,6 +30,10 @@ var general = [
       daysDescription: "Any new activity un-settles a thread automatically.", min: 1, max: 90 },
 
     { section: "Behavior" },
+    { key: "notificationMode", kind: "select", title: "Thread notifications",
+      description: "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while HAL-C2 is open.",
+      options: [option("off", "Off"), option("notifications", "Notifications only"), option("sound", "Sound only"),
+                option("notifications-and-sound", "Notifications with sound")] },
     { key: "inAppNotificationsEnabled", kind: "switch", title: "In-app notifications",
       description: "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus." },
     { key: "timestampFormat", kind: "select", title: "Time format",

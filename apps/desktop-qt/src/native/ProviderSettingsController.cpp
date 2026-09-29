@@ -162,7 +162,7 @@ void ProviderSettingsController::activate() {
   auto* navigation = NativeShell::of(this)->controller<NavigationController>();
   const auto section = NavigationController::Route::settings(NavigationController::kProvidersSection);
   if (auto* keys = NativeShell::of(this)->controller<KeybindingController>()) {
-    keys->commands()->add(QStringLiteral("providers.open"), keybindings::commandLabel(QStringLiteral("providers.open")),
+    keys->commands()->add(QStringLiteral("providers.open"), tr("Open provider settings"),
                           [navigation, section] { navigation->open(section); });
   }
   connect(navigation, &NavigationController::changed, this,

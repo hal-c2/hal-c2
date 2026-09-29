@@ -10,6 +10,7 @@
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
 #   apps/desktop-qt/src/native/NavigationController.cpp (leaving settings)
 #   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml (accessible names)
+#   apps/desktop-qt/src/native/CommandPaletteController.cpp (a background update keeps the query and highlight)
 
 Feature: Keyboard focus and keyboard-only use
   Everything a user can do with the pointer can be done from the keyboard, and focus lands
@@ -17,7 +18,7 @@ Feature: Keyboard focus and keyboard-only use
 
   Rule: Where focus goes
 
-    @backlog @desktop
+    @desktop
     Scenario: The palette keeps focus while it is open
       Given the command palette is open
       When a background update changes the thread list
@@ -55,15 +56,13 @@ Feature: Keyboard focus and keyboard-only use
 
   Rule: Keyboard-only thread list
 
-    # Delivered natively (Sidebar's keyboard outline); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Tab reaches the thread list
       Given the thread list is visible
       When the user tabs into the thread list
       Then the current thread is highlighted for the keyboard
 
-    # Delivered natively (Sidebar's keyboard outline); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario Outline: Home and End jump to the ends of the thread list
       Given the thread list has keyboard focus on a middle thread
       When the user presses <key>
@@ -74,8 +73,7 @@ Feature: Keyboard focus and keyboard-only use
         | Home | first |
         | End  | last  |
 
-    # Delivered natively (Sidebar's keyboard outline); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario Outline: Enter and Space open the highlighted thread
       Given the thread list has keyboard focus on thread "B"
       When the user presses <key>
@@ -86,8 +84,7 @@ Feature: Keyboard focus and keyboard-only use
         | Enter |
         | Space |
 
-    # Delivered natively (Sidebar's keyboard outline); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The menu key opens the highlighted thread's menu
       Given the thread list has keyboard focus on thread "B"
       When the user presses the menu key
@@ -153,8 +150,7 @@ Feature: Keyboard focus and keyboard-only use
       When the user focuses the "Files" tab and presses Enter
       Then the "Files" tab is active
 
-    # Delivered natively (WindowControls' accessible names); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario Outline: Window controls are announced by name
       Then the window control "<name>" is available to assistive technology
 

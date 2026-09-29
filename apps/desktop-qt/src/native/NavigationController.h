@@ -66,6 +66,10 @@ public:
            route.kind == QLatin1String("usage");
   }
 
+  // Its commands in Keybindings.commands.
+  static inline const QString kOpenSettings = QStringLiteral("settings.open");
+  static inline const QString kOpenUsage = QStringLiteral("usage.open");
+
   NavigationController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;

@@ -40,6 +40,7 @@ Item {
 
         ShellButton {
             id: action
+            objectName: "splitAction"
 
             Layout.fillHeight: true
             Layout.maximumWidth: split.maximumTextWidth

@@ -14,8 +14,8 @@ namespace {
 // page's until the shell's first snapshot, then SidebarController's.
 constexpr const char* kStateKeys[] = {
     "backendError", "composer", "contextMenu", "git",   "keybindings", "layout",
-    "notifications", "rightPanel", "settings", "sidebar", "theme",     "workspace",
-    "desktopNotifications", "modelPicker", "native",
+    "notifications", "settings", "sidebar", "theme",     "workspace",
+    "modelPicker", "native",
 };
 
 // Qt 6.11 deprecates the public constructor in favour of create(); the

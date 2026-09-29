@@ -245,8 +245,8 @@ const Steps steps([] {
                   [&] { return QStringLiteral("%1 to be offered; the page is %2").arg(c[0], show(usage(world))); });
     world.bridge().dispatch(QStringLiteral("usage.environment"), QVariantMap{{QStringLiteral("id"), c[0]}});
   });
-  step(QStringLiteral("(?:the usage of )?%1(?: usage)? is shown").arg(q), [](World& world, const Captures& c, const Table&) {
-    expectShown(world, c[0]);
+  step(QStringLiteral("(?:the usage of %1|%1 usage) is shown").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectShown(world, c[0].isEmpty() ? c[1] : c[0]);
   });
   step(QStringLiteral("the usage of this environment is shown"), [](World& world, const Captures&, const Table&) {
     expectShown(world, world.node.environmentId);

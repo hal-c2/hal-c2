@@ -17,14 +17,12 @@ Feature: Settling threads
   Background:
     Given a connected environment with the idle thread "Ship checkout" in the project "shop"
 
-  # Delivered natively (SidebarController, thread.settle and thread.unsettle); no desktop test yet.
-  @desktop @tui @backlog-desktop
+  @desktop @tui
   Scenario: Settling a thread
     When the user settles "Ship checkout"
     Then "Ship checkout" moves to the settled section
 
-  # Delivered natively (SidebarController, thread.settle and thread.unsettle); no desktop test yet.
-  @desktop @tui @backlog-desktop
+  @desktop @tui
   Scenario: Un-settling a thread
     Given "Ship checkout" is settled
     When the user un-settles "Ship checkout"
@@ -60,8 +58,7 @@ Feature: Settling threads
     When the user settles "Ship checkout"
     Then "Ship checkout" is settled and no longer snoozed
 
-  # Delivered natively (the node settles it; SidebarModel files it under settled); no desktop test yet.
-  @desktop @tui @backlog-desktop
+  @desktop @tui
   Scenario: A thread whose pull request merges moves to the settled section on its own
     Given "Ship checkout" is linked to a pull request
     When the pull request is merged on GitHub

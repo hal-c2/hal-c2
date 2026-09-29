@@ -7,7 +7,6 @@
 
 #include "CommandRegistry.h"
 #include "KeybindingController.h"
-#include "Keybindings.h"
 #include "MenuController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -54,8 +53,7 @@ void ArchivedThreadsController::activate() {
   const auto section = NavigationController::Route::settings(NavigationController::kArchivedSection);
   if (auto* keys = NativeShell::of(this)->controller<KeybindingController>()) {
     keys->commands()->add(QStringLiteral("archivedThreads.open"),
-                          keybindings::commandLabel(QStringLiteral("archivedThreads.open")),
-                          [navigation, section] { navigation->open(section); });
+                          tr("Open archived threads"), [navigation, section] { navigation->open(section); });
   }
   connect(navigation, &NavigationController::changed, this,
           [this, navigation, section] { setOpen(navigation->route() == section); });

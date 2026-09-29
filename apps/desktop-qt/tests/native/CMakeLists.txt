@@ -44,8 +44,9 @@ file(GLOB _feature_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/featur
 add_executable(tst_Features tst_Features.cpp ${_feature_sources} ../../src/ThemeStore.cpp)
 target_compile_definitions(tst_Features PRIVATE
   HAL_C2_FEATURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../../features"
+  HAL_C2_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../qml"
 )
-target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::Test)
+target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::Quick Qt6::Test)
 add_test(NAME Features COMMAND tst_Features)
 set_tests_properties(Features PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 add_executable(tst_LocalTranscriber tst_LocalTranscriber.cpp ../../src/LocalTranscriber.cpp)

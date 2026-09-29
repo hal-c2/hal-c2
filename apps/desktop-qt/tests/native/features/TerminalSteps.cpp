@@ -677,6 +677,61 @@ const Steps steps([] {
                terminalSession(world, terminalId)->transcript().contains(QStringLiteral("built in 3s")),
            QStringLiteral("the node got %1").arg(describeTerminalCalls(world)));
   });
+
+  // navigation/layout.feature's header: the run button runs the action the
+  // user ran last in the project (or its first), its menu any of them.
+  const auto shownProject = [](World& world) {
+    return world.node.threads.value(ensureThread(world)).value(QLatin1String("projectId")).toString();
+  };
+  step(QStringLiteral("the thread's project has the actions %1 and %1").arg(q), [shownProject](World& world, const Captures& c, const Table&) {
+    const QString project = shownProject(world);
+    for (const QString& name : c) addAction(world, project, name, QStringLiteral("bun ") + name.toLower());
+  });
+  step(QStringLiteral("the thread's project has no actions"), [shownProject](World& world, const Captures&, const Table&) {
+    expect(world.node.projects.value(shownProject(world)).value(QLatin1String("scripts")).toArray().isEmpty(), QStringLiteral("the project has actions"));
+  });
+  step(QStringLiteral("the user last ran %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("workspace.runScript"), QVariantMap{{QStringLiteral("scriptId"), actionId(c[0])}});
+    world.sync();
+    world.node.part<FakeTerminals>().calls.clear();
+  });
+  step(QStringLiteral("the user runs the action offered in the header"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QVariantMap workspace = world.state(QStringLiteral("workspace")).toMap();
+    const QVariantList scripts = workspace.value(QStringLiteral("scripts")).toList();
+    expect(!scripts.isEmpty(), QStringLiteral("the header offers no action: %1").arg(show(workspace)));
+    // Workspace.preferredScript: the one last run, else the first.
+    const QVariant preferred = workspace.value(QStringLiteral("preferredScriptId"));
+    const QString scriptId = preferred.isNull() ? scripts.first().toMap().value(QStringLiteral("id")).toString() : preferred.toString();
+    world.bridge().dispatch(QStringLiteral("workspace.runScript"), QVariantMap{{QStringLiteral("scriptId"), scriptId}});
+    world.sync();
+  });
+  step(QStringLiteral("the user picks %1 from the header's actions").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("workspace.runScript"), QVariantMap{{QStringLiteral("scriptId"), actionId(c[0])}});
+    world.sync();
+  });
+  step(QStringLiteral("%1 runs for the thread's workspace").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString command = QStringLiteral("bun ") + c[0].toLower() + QLatin1Char('\r');
+    const QVariantMap workspace = world.state(QStringLiteral("workspace")).toMap();
+    const QString folder = workspace.value(QStringLiteral("worktreePath")).toString().isEmpty() ? workspace.value(QStringLiteral("projectRoot")).toString()
+                                                                                                 : workspace.value(QStringLiteral("worktreePath")).toString();
+    const QString threadId = shownThread(world);
+    world.waitFor([&] {
+      QStringList written;
+      for (const QJsonObject& call : world.node.part<FakeTerminals>().calls) {
+        const QJsonObject payload = call.value(QLatin1String("payload")).toObject();
+        if (call.value(QLatin1String("method")) != QLatin1String("terminal.write")) continue;
+        const QString cwd = world.node.part<FakeTerminals>().terminals.value(terminalKey(payload)).summary.value(QLatin1String("cwd")).toString();
+        if (payload.value(QLatin1String("threadId")) == threadId && cwd == folder) written.append(payload.value(QLatin1String("data")).toString());
+      }
+      return written == QStringList{command};
+    }, [&] { return QStringLiteral("only %1 in %2; the node got %3").arg(command.trimmed(), folder, describeTerminalCalls(world)); });
+  });
+  step(QStringLiteral("the header offers no action to run"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QVariantMap workspace = world.state(QStringLiteral("workspace")).toMap();
+    expect(!workspace.isEmpty() && workspace.value(QStringLiteral("scripts")).toList().isEmpty(), QStringLiteral("the header shows %1").arg(show(workspace)));
+  });
 });
 
 }  // namespace

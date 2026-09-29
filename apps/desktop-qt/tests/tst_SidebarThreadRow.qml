@@ -28,6 +28,11 @@ Item {
         }
     }
 
+    Component {
+        id: spyComponent
+        SignalSpy {}
+    }
+
     TestCase {
         name: "SidebarThreadRowTests"
         when: windowShown
@@ -45,6 +50,52 @@ Item {
             timer.restart();
 
             tryCompare(row, "ageLabel", qsTr("1m"), 2000);
+        }
+        // Scenario: An idle thread shows its age (features/threads/unread-and-status.feature)
+        function test_idleAge_data() {
+            return [
+                { tag: "20 seconds", ago: 20, age: "now" },
+                { tag: "5 minutes", ago: 5 * 60, age: "5m" },
+                { tag: "3 hours", ago: 3 * 3600, age: "3h" },
+                { tag: "2 days", ago: 2 * 86400, age: "2d" },
+                { tag: "3 months", ago: 92 * 86400, age: "3mo" }
+            ];
+        }
+
+        function test_idleAge(data) {
+            let row = createTemporaryObject(rowComponent, root);
+            const now = Date.parse("2026-09-07T12:00:00Z");
+            row.item = Object.assign({}, row.item, {
+                updatedAt: new Date(now - data.ago * 1000).toISOString()
+            });
+            row.ageNow = now;
+            compare(row.statusWord, "");
+            compare(row.ageLabel, data.age);
+        }
+
+        // Scenario: Threads that need nothing step back (features/threads/unread-and-status.feature)
+        function test_readIdleRowRecedes() {
+            let read = createTemporaryObject(rowComponent, root);
+            let unread = createTemporaryObject(rowComponent, root);
+            unread.item = Object.assign({}, unread.item, {
+                unread: true
+            });
+            compare(read.recedes, true);
+            compare(unread.recedes, false);
+            compare(unread.statusWord, "Done");
+        }
+
+        // Scenario: The menu opens as soon as the secondary button is pressed (features/threads/menu-and-selection.feature)
+        function test_menuOpensOnPress() {
+            let row = createTemporaryObject(rowComponent, root);
+            let spy = createTemporaryObject(spyComponent, root, {
+                target: row,
+                signalName: "menuRequested"
+            });
+            mousePress(row, 100, 30, Qt.RightButton);
+            compare(spy.count, 1);
+            mouseRelease(row, 100, 30, Qt.RightButton);
+            compare(spy.count, 1);
         }
     }
 }
