@@ -53,6 +53,18 @@ std::pair<QString, QString> repositoryOf(const QJsonObject& project) {
   return {key.left(slash), key.mid(slash + 1)};
 }
 
+// One name for an Azure DevOps repository however it is reached, over SSH,
+// visualstudio.com or dev.azure.com (canonicalRepositoryKey in
+// packages/shared/src/sourceControl.ts).
+QString canonicalKey(QString key) {
+  static const QRegularExpression ssh(
+      QStringLiteral("^(?:ssh\\.dev\\.azure\\.com|vs-ssh\\.visualstudio\\.com)/v3/([^/]+)/([^/]+)/([^/]+)$"));
+  static const QRegularExpression legacy(QStringLiteral("^([^.]+)\\.visualstudio\\.com/(?:defaultcollection/)?([^/]+)/_git/([^/]+)$"));
+  key.replace(ssh, QStringLiteral("dev.azure.com/\\1/\\2/_git/\\3"));
+  key.replace(legacy, QStringLiteral("dev.azure.com/\\1/\\2/_git/\\3"));
+  return key;
+}
+
 }  // namespace
 
 ThreadPullRequests::ThreadPullRequests(NodeClient* client, ShellStore* store, Notify notify, Open open, QObject* parent)
@@ -161,15 +173,21 @@ std::optional<ThreadPullRequests::Target> ThreadPullRequests::parseUrl(const QSt
 }
 
 // As the web's LinkPullRequestDialog: a URL may name any repository on a host
-// a project here reads; a bare number means the thread's own repository.
+// a project here reads, since that project lends the node its credentials
+// there (findProjectOnChangeRequestHost); Azure DevOps reads with the
+// checkout's own organization and project, so there it takes a project of that
+// repository. A bare number means the thread's own repository.
 std::variant<ThreadPullRequests::Target, QString> ThreadPullRequests::resolve(const QString& input) const {
   const QString trimmed = input.trimmed();
   if (trimmed.isEmpty()) return QStringLiteral("Paste a pull request URL or enter 123 / #123.");
   const QList<QJsonObject> projects = m_store->projectRows(environmentId());
   if (const std::optional<Target> target = parseUrl(trimmed)) {
     const QString host = target->host.section(QLatin1Char(':'), 0, 0);
+    const QString wanted = canonicalKey(target->host + QLatin1Char('/') + target->repository);
+    const bool azure = wanted.startsWith(QLatin1String("dev.azure.com/"));
     const bool readable = std::any_of(projects.cbegin(), projects.cend(), [&](const QJsonObject& project) {
-      return repositoryOf(project).first == host;
+      const auto [projectHost, repository] = repositoryOf(project);
+      return azure ? canonicalKey(projectHost + QLatin1Char('/') + repository) == wanted : projectHost == host;
     });
     if (!readable) return QStringLiteral("No project in this environment can read %1/%2.").arg(target->host, target->repository);
     return *target;

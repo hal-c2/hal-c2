@@ -248,13 +248,14 @@ const Steps steps([] {
                draft.value(QStringLiteral("startFromOrigin")).toBool(),
            QStringLiteral("a new worktree from %1; the draft is %2").arg(c[0], show(draft)));
   });
-  step(QStringLiteral("it runs at 09:00 every day with full access"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("it runs at 09:00 on weekdays with full access"), [](World& world, const Captures&, const Table&) {
     save(world, world.node.part<FakeTasks>().draft);
     const QJsonObject task = savedTask(world);
     const QJsonObject schedule = task.value(QLatin1String("schedule")).toObject();
     expect(schedule.value(QLatin1String("type")) == QLatin1String("fixed_time") && schedule.value(QLatin1String("timeOfDay")) == QLatin1String("09:00") &&
-               !schedule.contains(QLatin1String("weekdays")) && task.value(QLatin1String("runtimeMode")) == QLatin1String("full-access"),
-           QStringLiteral("09:00 every day with full access; the task is %1").arg(show(task.toVariantMap())));
+               schedule.value(QLatin1String("weekdays")) == QJsonArray{1, 2, 3, 4, 5} &&
+               task.value(QLatin1String("runtimeMode")) == QLatin1String("full-access"),
+           QStringLiteral("09:00 on weekdays with full access; the task is %1").arg(show(task.toVariantMap())));
   });
   step(QStringLiteral("its model is the project's default model"), [](World& world, const Captures&, const Table&) {
     const QJsonObject selection = savedTask(world).value(QLatin1String("modelSelection")).toObject();

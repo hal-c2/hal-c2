@@ -96,8 +96,10 @@ Feature: Layout: sidebar, header, right panel and drawer
     Scenario: The header names the project and thread
       Then the header shows the project name and the thread title
 
-    # The desktop hides the header while no thread is open instead (navigation/header.feature: Leaving the thread clears the header).
-    @desktop @backlog-desktop
+    # The web never says "No thread": with no thread open it lands on a draft, and its header
+    # belongs to the thread. The desktop hides the header likewise (navigation/header.feature:
+    # Leaving the thread clears the header).
+    @dropped @desktop
     Scenario: The header says when there is no thread
       Given no thread is open
       Then the header says "No thread"
