@@ -31,8 +31,8 @@ class ShellStore;
 //
 // A thread's alerts can be muted on this device (`mutedAlertThreads`, thread
 // keys): it is still followed, so unmuting alerts only what changes after.
-// The palette's kToggleMute ("Mute alerts for this thread", the route
-// thread) and the thread menu flip it.
+// The palette's kToggleMute flips it for the thread shown, titled "Mute
+// alerts for this thread" or "Unmute alerts for this thread".
 class AlertController : public QObject, public NativeController {
   Q_OBJECT
 

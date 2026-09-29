@@ -398,9 +398,9 @@ last, so the snapshot after connecting, or reconnecting, is a baseline rather
 than a burst of old completions. This device's `notificationMode` and
 `inAppNotificationsEnabled` pick a toast while the window has focus, or a
 system notification while it has not; regaining focus clears them. A thread
-muted from its menu or the palette (`mutedAlertThreads`, thread keys, device
-settings) is still compared, only never alerted, so unmuting it does not
-replay what finished while it was muted.
+muted from the palette (`mutedAlertThreads`, thread keys, device settings) is
+still compared, only never alerted, so unmuting it does not replay what
+finished while it was muted.
 
 The platform side is the controller's `Presenter`, which `main.cpp` wires to
 `NativeNotifications` (Linux's desktop notification D-Bus service; `supported`

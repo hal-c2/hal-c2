@@ -8,6 +8,7 @@
 #include <QVariantList>
 
 #include "AlertController.h"
+#include "CommandPaletteController.h"
 #include "Harness.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
@@ -191,20 +192,32 @@ void completesInBackground(World& world, const QString& title) {
   change(world, thread, QStringLiteral("completes"));
 }
 
-// Mutes or unmutes `title` from its thread menu, which offers `id`.
-void muteFromMenu(World& world, const QString& title, const QString& id) {
+// Mutes or unmutes `title` from the palette while it is shown, then leaves
+// it for the usage page so its alerts are not the shown thread's.
+void toggleMuteFromPalette(World& world, const QString& title, bool mute) {
   const QString key = keyOf(world, tracked(world, title));
-  world.bridge().dispatch(QStringLiteral("thread.menu"),
-                          QVariantMap{{QStringLiteral("key"), key}, {QStringLiteral("x"), 40}, {QStringLiteral("y"), 120}});
-  const QVariantMap menu = world.state(QStringLiteral("menu")).toMap();
-  const QVariantList items = menu.value(QStringLiteral("items")).toList();
-  expect(std::any_of(items.begin(), items.end(), [&id](const QVariant& item) { return item.toMap().value(QStringLiteral("id")) == id; }),
-         QStringLiteral("the thread menu offers no \"%1\": %2").arg(id, show(items)));
-  world.bridge().dispatch(QStringLiteral("menu.select"),
-                          QVariantMap{{QStringLiteral("requestId"), menu.value(QStringLiteral("requestId"))}, {QStringLiteral("id"), id}});
+  auto* navigation = world.native().controller<NavigationController>();
+  navigation->open(NavigationController::Route::thread(key));
+  world.sync();
+  auto* palette = world.native().controller<CommandPaletteController>();
+  palette->show();
+  palette->setQuery(QStringLiteral("alerts"));
+  world.waitFor([palette] { return !palette->searching(); }, QStringLiteral("the palette to settle"));
+  const QString wanted = mute ? QStringLiteral("Mute alerts for this thread") : QStringLiteral("Unmute alerts for this thread");
+  int row = -1;
+  QStringList titles;
+  for (int i = 0; i < palette->count(); ++i) {
+    const QString rowTitle = palette->data(palette->index(i), CommandPaletteController::TitleRole).toString();
+    titles.append(rowTitle);
+    if (palette->idAt(i) == AlertController::kToggleMute && rowTitle == wanted) row = i;
+  }
+  expect(row >= 0, QStringLiteral("the palette offers no \"%1\": %2").arg(wanted, titles.join(QStringLiteral(", "))));
+  palette->run(row);
   world.sync();
   const bool muted = alerts(world).isMuted(key);
-  expect(muted == (id == QLatin1String("mute-alerts")), QStringLiteral("%1 is %2").arg(title, muted ? QStringLiteral("muted") : QStringLiteral("not muted")));
+  expect(muted == mute, QStringLiteral("%1 is %2").arg(title, muted ? QStringLiteral("muted") : QStringLiteral("not muted")));
+  navigation->open(NavigationController::Route::of(QStringLiteral("usage")));
+  world.sync();
 }
 
 const Steps steps([] {
@@ -329,14 +342,14 @@ const Steps steps([] {
 
   // Muting one thread.
   step(QStringLiteral("the user mutes alerts for %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    muteFromMenu(world, c[0], QStringLiteral("mute-alerts"));
+    toggleMuteFromPalette(world, c[0], true);
   });
   step(QStringLiteral("the user unmutes %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    muteFromMenu(world, c[0], QStringLiteral("unmute-alerts"));
+    toggleMuteFromPalette(world, c[0], false);
   });
   step(QStringLiteral("alerts for %1 are muted").arg(q), [](World& world, const Captures& c, const Table&) {
     working(world, c[0]);
-    muteFromMenu(world, c[0], QStringLiteral("mute-alerts"));
+    toggleMuteFromPalette(world, c[0], true);
   });
   step(QStringLiteral("%1 finishes its turn").arg(q), [](World& world, const Captures& c, const Table&) {
     change(world, tracked(world, c[0]), QStringLiteral("completes"));

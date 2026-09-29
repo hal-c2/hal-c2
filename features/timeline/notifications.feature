@@ -6,7 +6,6 @@
 #   apps/desktop-qt/tests/tst_Notifications.qml
 #   apps/desktop-qt/tests/tst_Scenarios.qml (notification scenarios)
 #   apps/desktop-qt/src/native/AlertController.cpp (which thread changes alert, and how; muted threads)
-#   apps/desktop-qt/src/native/ThreadMenuController.cpp (Mute alerts / Unmute alerts)
 #   apps/desktop-qt/src/NativeNotifications.cpp (the desktop's notification service)
 #   apps/desktop-qt/tests/native/tst_NativeNotifications.cpp (clicks keep their thread, one alert per thread, disabling closes alerts)
 #   apps/desktop-qt/tests/native/features/AlertSteps.cpp
@@ -14,8 +13,8 @@
 #
 # The desktop raises its alerts itself (AlertController); the page's coordinator stays off in
 # the shell. The TUI has no alerts. Mobile push lives in docs/user/mobile-notifications.md and is
-# out of scope. The desktop mutes a single thread's alerts from its thread menu or the palette
-# ("Mute alerts for this thread"), on that device only; the phone's version is in
+# out of scope. The desktop mutes the shown thread's alerts from the palette ("Mute alerts
+# for this thread"), on that device only; the phone's version is in
 # mobile/notifications.feature.
 
 Feature: Alerts when a thread needs the user
