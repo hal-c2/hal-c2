@@ -3,9 +3,10 @@ import QtTest
 import HalC2.Shell
 import "../qml/HalC2/Bricks"
 
-// The right panel's bodies: a native tab draws its brick and keeps it while
-// another tab shows; only a page tab shows the page. The Files viewer's wrap
-// and the Diff tab's revert confirmation.
+// The right panel's bodies: each tab draws its brick and keeps it while
+// another tab shows. Its edge resizes it and its header button maximizes it.
+// The Files viewer's wrap, the Diff tab's revert confirmation, and the Pull
+// request review tab's conversation, offline and online.
 Item {
     id: root
     width: 900
@@ -157,6 +158,43 @@ Item {
         }
     }
 
+    Component {
+        id: reviewComponent
+        PullRequestReviewPanel {
+            width: 500
+            height: 600
+        }
+    }
+
+    // A PullRequestReview of pull request 42, read, with one remark.
+    Component {
+        id: fakeReview
+        QtObject {
+            property var model: null
+            property int number: 42
+            property bool online: true
+            property string status: "ready"
+            property string message: ""
+            property bool busy: false
+            property string problem: ""
+            property var detail: ({ title: "Tax line fix", body: "Rounds the tax line.", url: "https://github.com/acme/shop/pull/42", author: "octocat", state: "open", stateLabel: "Open", branches: "feature/tax → main", labels: [], reviewers: [], mergeability: "mergeable", behindBy: 0, checks: [{ name: "test", status: "success", description: "", url: "" }] })
+            property var conversation: [{ id: "c1", kind: "comment", author: "ada", body: "Why round up?", createdAt: "", reviewState: "", path: "" }]
+            property var reviewThreads: []
+            property string codeStatus: "ready"
+            property string codeMessage: ""
+            property var viewedPaths: []
+            property int viewedCount: 0
+            property var calls: []
+            function reload() { calls.push("reload"); }
+            function comment(body) { calls.push("comment " + body); return true; }
+            function submitReview(verdict, body) { calls.push(verdict + " " + body); return true; }
+            function copyNumber() { calls.push("copy"); }
+            function openOnHost() { calls.push("host"); }
+            function setViewed(path, viewed) {}
+            function setThreadResolved(id, resolved) {}
+        }
+    }
+
     // A ThreadPreviews with one loaded tab.
     Component {
         id: fakePreviews
@@ -176,12 +214,12 @@ Item {
             threadKey: "env-a:thread-1",
             isOpen: true,
             activeId: activeId,
-            embedPath: "",
-            canAdd: { diff: true, files: true, agents: true, terminal: true, pullRequest: false },
+            width: 540,
+            maximized: false,
+            canAdd: { diff: true, files: true, agents: true, terminal: true },
             tabs: [
-                { id: "diff", kind: "diff", title: "Diff", native: true },
-                { id: "files", kind: "files", title: "Files", native: true },
-                { id: "terminal:default", kind: "terminal", title: "Terminal", native: false }
+                { id: "diff", kind: "diff", title: "Diff" },
+                { id: "files", kind: "files", title: "Files" }
             ]
         };
     }
@@ -197,30 +235,60 @@ Item {
             Panel.agents = null;
         }
 
-        function test_nativeTabsKeepTheirBodyAndOnlyPageTabsShowThePage() {
+        function test_tabsKeepTheirBody() {
             Panel.diff = createTemporaryObject(fakeDiff, root);
             Panel.files = createTemporaryObject(fakeFiles, root);
             Shell.state = Object.assign({}, Shell.state, { panel: panelState("diff") });
             const panel = createTemporaryObject(panelComponent, root);
             const diff = findChild(panel, "panelBody-diff");
             const files = findChild(panel, "panelBody-files");
-            const page = findChild(panel, "panelPage");
-            verify(diff && files && page);
+            verify(diff && files);
             tryCompare(diff, "status", Loader.Ready);
             compare(diff.item.source, Panel.diff);
             verify(diff.visible);
             compare(files.active, false, "a tab not yet shown is not made");
-            compare(page.visible, false);
 
             Shell.state = Object.assign({}, Shell.state, { panel: panelState("files") });
             tryCompare(files, "status", Loader.Ready);
             verify(files.visible && !diff.visible);
-            compare(diff.active, true, "a hidden native tab is kept");
-            compare(page.visible, false);
+            compare(diff.active, true, "a hidden tab is kept");
+        }
 
-            Shell.state = Object.assign({}, Shell.state, { panel: panelState("terminal:default") });
-            verify(page.visible);
-            verify(!diff.visible && !files.visible);
+        function test_edgeDragsToAWidthTheLayoutAllows() {
+            Shell.state = Object.assign({}, Shell.state, { panel: panelState("diff") });
+            const panel = createTemporaryObject(panelComponent, root, { x: 450, maximumWidth: 700 });
+            compare(panel.implicitWidth, 540);
+            const edge = findChild(panel, "panelEdge");
+            verify(edge.visible);
+            mousePress(edge, 3, 100);
+            mouseMove(edge, -97, 100);
+            compare(panel.implicitWidth, 640, "the panel follows the drag");
+            compare(Shell.dispatchedActions.length, 0, "the width is kept once the drag ends");
+            mouseMove(edge, -440, 100);
+            compare(panel.implicitWidth, 700, "the thread keeps its room");
+            mouseRelease(edge, -440, 100);
+            compare(Shell.dispatchedActions.length, 1);
+            compare(Shell.dispatchedActions[0].action, "rightPanel.resize");
+            compare(Shell.dispatchedActions[0].payload.width, 700);
+            mouseDoubleClickSequence(edge, 3, 100);
+            compare(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].action, "rightPanel.resize");
+            verify(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].payload.width === undefined, "a double click resets it");
+        }
+
+        function test_maximizeIsOfferedOnlyWhereTheLayoutHidesTheThread() {
+            Shell.state = Object.assign({}, Shell.state, { panel: panelState("diff") });
+            const panel = createTemporaryObject(panelComponent, root);
+            const button = findChild(panel, "panelMaximize");
+            verify(!button.visible);
+            panel.canMaximize = true;
+            verify(button.visible);
+            mouseClick(button);
+            compare(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].action, "rightPanel.toggleMaximized");
+            const maximized = panelState("diff");
+            maximized.maximized = true;
+            Shell.state = Object.assign({}, Shell.state, { panel: maximized });
+            verify(panel.maximized);
+            verify(!findChild(panel, "panelEdge").visible, "a maximized panel has no edge to drag");
         }
 
         // Scenario: Right panel contents survive a visit to settings
@@ -331,6 +399,40 @@ Item {
             verify(findChild(panel, "pullRequestsOffline").visible);
             verify(!findChild(panel, "pullRequestsLink").enabled);
             verify(!findChild(panel, "pullRequestsRefresh").enabled);
+        }
+
+        function test_reviewCommentsFromItsConversationAndCopiesItsNumber() {
+            const source = createTemporaryObject(fakeReview, root);
+            const panel = createTemporaryObject(reviewComponent, root, { source: source });
+            compare(findChild(panel, "reviewTitle").text, "Tax line fix");
+            verify(findChild(panel, "reviewOverview").visible);
+            mouseClick(findChild(panel, "reviewCopyNumber"));
+            compare(source.calls, ["copy"]);
+
+            mouseClick(findChild(panel, "reviewSection-conversation"));
+            const reply = findChild(panel, "reviewReply");
+            tryVerify(() => reply.visible);
+            verify(!findChild(panel, "reviewComment").enabled, "nothing to send yet");
+            mouseClick(reply);
+            keySequence("o");
+            keySequence("k");
+            mouseClick(findChild(panel, "reviewComment"));
+            compare(source.calls[1], "comment ok");
+            compare(reply.text, "", "a sent comment leaves the field");
+
+            mouseClick(findChild(panel, "reviewSection-code"));
+            verify(findChild(panel, "reviewCode").visible);
+        }
+
+        function test_reviewOfAnUnreachableEnvironmentStaysButSendsNothing() {
+            const source = createTemporaryObject(fakeReview, root, { online: false });
+            const panel = createTemporaryObject(reviewComponent, root, { source: source });
+            verify(findChild(panel, "reviewOffline").visible);
+            verify(!findChild(panel, "reviewReload").enabled);
+            compare(findChild(panel, "reviewTitle").text, "Tax line fix");
+            panel.section = "conversation";
+            verify(!findChild(panel, "reviewReply").enabled);
+            verify(!findChild(panel, "reviewSubmit").enabled);
         }
 
         function test_previewsOpenInTheBrowserAndCloseFromTheRow() {

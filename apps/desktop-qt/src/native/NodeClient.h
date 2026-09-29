@@ -12,6 +12,7 @@
 #include <functional>
 #include <optional>
 
+class QNetworkAccessManager;
 class QWebSocket;
 
 // The shell's own protocol-3 connection to its node (apps/server-ex
@@ -45,6 +46,11 @@ public:
   int subscribe(const QJsonObject& shape, FrameHandler onFrame);
   void unsubscribe(int id);
   void call(const QString& environment, const QString& method, const QJsonValue& payload, Reply reply);
+  // POSTs `body` to `path` of the node's origin (its HTTP API, for answers too
+  // large for the socket, as `/api/pull-requests/diff`), with the access token.
+  // A refusal's `error` is the body's `message`, `detail` or `_tag`, else the
+  // HTTP status; `result` is then the body.
+  void post(const QString& path, const QJsonObject& body, Reply reply);
   // `orchestration.dispatchCommand` with a fresh commandId.
   void dispatchCommand(const QString& environment, QJsonObject command, Reply reply);
 
@@ -68,6 +74,8 @@ private:
 
   QUrl m_origin;
   QUrl m_url;
+  QString m_token;
+  QNetworkAccessManager* m_http = nullptr;
   QPointer<QWebSocket> m_socket;
   QHash<int, Subscription> m_subscriptions;
   QHash<int, Reply> m_calls;

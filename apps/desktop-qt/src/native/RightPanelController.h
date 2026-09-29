@@ -7,6 +7,7 @@
 
 #include "AgentsModel.h"
 #include "NativeController.h"
+#include "PullRequestReview.h"
 #include "ThreadDiff.h"
 #include "ThreadPreviews.h"
 #include "ThreadPullRequests.h"
@@ -17,38 +18,44 @@ class ShellBridge;
 class ShellStore;
 
 // The right panel beside a thread, as the `Panel` QML singleton: whether it
-// is open and which tab shows, per thread (in memory; a thread seen for the
-// first time starts closed). The Diff, Files, Agents, Pull requests and
-// Previews tabs are native (`diff`, `files`, `agents`, `pull-requests`,
-// `previews`), and so are terminal tabs, one per terminal group
-// TerminalController keeps for the panel (`terminal:<group>`; closing the tab
-// closes its terminals). The page's browser tabs are not shown: Previews lists
-// them and opens them in the user's browser. The other tabs (a pull request's
-// review, device) are still the page's, taken from the `rightPanel` state the
-// page publishes and shown in the page's embed.
+// is open, which tabs it has and which one shows, per thread, and the thread
+// details column beside it. Every tab is native: Diff, Files, Agents, Pull
+// requests and Previews (`diff`, `files`, `agents`, `pull-requests`,
+// `previews`), a Pull request review tab per linked pull request reviewed
+// (`pull-request:<host>/<repository>#<number>`), and a terminal tab per
+// terminal group TerminalController keeps for the panel (`terminal:<group>`;
+// closing the tab closes its terminals).
+//
+// Each thread's panel (open, tabs, active tab, thread details shown) and the
+// panel's width outlive a restart in the store file (setStorePath); terminal
+// tabs do not, their terminals end with the app. Filling the window
+// (maximized) lasts until the panel closes or the app quits.
 //
 // Publishes `panel` for the RightPanel brick, null away from a thread:
-//   {threadKey, isOpen, activeId, tabs: [{id, kind, title, native}],
-//    canAdd: {diff, files, agents, terminal, pullRequests, previews,
-//             pullRequest}, embedPath}
-// (`pullRequests`: the thread has linked ones; `pullRequest`: the page can
-// open the linked one's review.)
+//   {threadKey, isOpen, activeId, tabs: [{id, kind, title}], width,
+//    maximized, detailsOpen, details,
+//    canAdd: {diff, files, agents, terminal, pullRequests, pullRequest,
+//             previews}}
+// (`pullRequests` and `pullRequest`, the review: the thread has linked ones.)
+// `details`, while the thread details column shows, else null:
+//   {environment, online, project, folder, checkout ("Local"|"Worktree"),
+//    branch, relations: [{threadKey, title, relation}]}
+// (its parent, and the forks and subagents it started).
 //
 // Actions: `rightPanel.toggle`, `rightPanel.activate {id}`,
-// `rightPanel.close {id}`, `rightPanel.add {kind}`, `rightPanel.openThread
-// {threadKey}` (an Agents row's; the brick's), and
+// `rightPanel.close {id}`, `rightPanel.add {kind}`, `rightPanel.resize
+// {width?}` (no width: the default), `rightPanel.toggleMaximized`,
+// `threadPanel.toggle`, `rightPanel.openThread {threadKey}` (an Agents row's;
+// the brick's), `rightPanel.review {key}` (a linked pull request's review), and
 // `panel.open {tab: "diff"|"files", path?, line?, turn?, turnId?}` (the
 // timeline's "view diff" and file links): opens the panel on that tab, the
 // diff on a turn (its number, or the run it finished) scrolled to `path`, or
 // `path` in the file viewer at `line`. Keybinding commands: rightPanel.toggle,
-// rightPanel.close (the active tab), diff.toggle and preview.toggle; palette
-// commands: thread.showPullRequests and thread.linkPullRequest (the Pull
-// requests tab with its link field open).
-//
-// The page follows: `rightPanel.follow {threadKey, open, activeSurfaceId}`
-// keeps its panel open only while one of its tabs shows, so it does no work
-// behind a native tab. A change the page makes on its own (its keybinding,
-// its "view diff", a tab it added) is taken as the user's.
+// rightPanel.close (the active tab), rightPanel.toggleMaximized,
+// threadPanel.toggle, diff.toggle, preview.toggle and pullRequest.copyNumber
+// (the reviewed pull request's); palette commands:
+// thread.showPullRequests and thread.linkPullRequest (the Pull requests tab
+// with its link field open).
 class RightPanelController : public QObject, public NativeController {
   Q_OBJECT
   Q_PROPERTY(ThreadDiff* diff READ diff CONSTANT)
@@ -56,16 +63,24 @@ class RightPanelController : public QObject, public NativeController {
   Q_PROPERTY(AgentsModel* agents READ agents CONSTANT)
   Q_PROPERTY(ThreadPullRequests* pullRequests READ pullRequests CONSTANT)
   Q_PROPERTY(ThreadPreviews* previews READ previews CONSTANT)
+  Q_PROPERTY(PullRequestReview* review READ review CONSTANT)
 
 public:
-  // The tab kinds drawn natively; each has a brick in js/panelTabs.js.
+  // The tab kinds; each has a brick in js/panelTabs.js.
   static inline const QStringList nativeKinds{QStringLiteral("diff"), QStringLiteral("files"), QStringLiteral("agents"),
                                               QStringLiteral("terminal"), QStringLiteral("pull-requests"),
-                                              QStringLiteral("previews")};
-  // A tab's kind: its id, or `terminal` for `terminal:<group>`.
+                                              QStringLiteral("previews"), QStringLiteral("pull-request")};
+  // A tab's kind: its id, `terminal` for `terminal:<group>`, or `pull-request`
+  // for `pull-request:<key>`.
   static QString kindOf(const QString& id);
+  // The panel's width when nothing was chosen, and the least it can be.
+  static constexpr int defaultWidth = 540;
+  static constexpr int minimumWidth = 360;
 
   RightPanelController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
+
+  // The file each thread's panel is kept in, read now.
+  void setStorePath(const QString& path);
 
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
@@ -75,11 +90,15 @@ public:
   AgentsModel* agents() { return &m_agents; }
   ThreadPullRequests* pullRequests() { return &m_pullRequests; }
   ThreadPreviews* previews() { return &m_previews; }
+  PullRequestReview* review() { return &m_review; }
 
   bool isOpen() const;
   QString activeTab() const;
-  // Every tab of the shown thread, native ones first.
+  // Every tab of the shown thread, in the order they were added.
   QStringList tabIds() const;
+  int width() const { return m_width; }
+  bool isMaximized() const;
+  bool detailsOpen() const;
 
   // Opens or closes the panel (the header button, mod+alt+b). Opening a
   // panel with no tabs opens the Diff tab.
@@ -91,8 +110,18 @@ public:
   // Closes a tab (empty: the active one); the last one closes the panel.
   Q_INVOKABLE void closeTab(const QString& id = {});
   // diff, files, agents, terminal, pull-requests, previews, or pull-request
-  // (the page's review of the linked one).
+  // (the review of the thread's first open linked pull request).
   Q_INVOKABLE void addTab(const QString& kind);
+  // The review tab of a linked pull request ("host/repository#number").
+  Q_INVOKABLE void reviewPullRequest(const QString& key);
+  // The width the user dragged the panel's edge to (at least minimumWidth;
+  // the brick keeps the thread its room), and back to the default.
+  Q_INVOKABLE void setWidth(int width);
+  Q_INVOKABLE void resetWidth();
+  // The open panel fills the window, or goes back beside the thread.
+  Q_INVOKABLE void toggleMaximized();
+  // Shows or hides the thread details column (mod+alt+t).
+  Q_INVOKABLE void toggleDetails();
   // Shows the Diff tab, or closes the panel when it is showing (mod+d).
   Q_INVOKABLE void toggleDiff();
   // Shows the Previews tab, or closes the panel when it is showing.
@@ -108,24 +137,22 @@ signals:
 private:
   struct Panel {
     bool open = false;
-    // The native tabs, in the order they were added.
+    // In the order they were added.
     QStringList tabs;
     QString active;
+    bool maximized = false;
+    bool details = false;
   };
 
   Panel& panel() { return m_panels[m_thread]; }
   Panel current() const { return m_panels.value(m_thread); }
-  bool isPageTab(const QString& id) const { return !id.isEmpty() && !nativeKinds.contains(kindOf(id)); }
   // The shown thread's terminal groups in the panel.
   QStringList terminalGroups() const;
-  // The page's tabs of the shown thread that it still draws.
-  QVariantList pageTabs() const;
-  bool hasPageTab(const QString& id) const;
   void retarget();
-  void onPage(const QVariant& value);
   void update();
-  void follow();
   void publish();
+  QVariantMap threadDetails() const;
+  void save();
 
   ShellBridge* m_bridge;
   NodeClient* m_client;
@@ -135,13 +162,17 @@ private:
   AgentsModel m_agents;
   ThreadPullRequests m_pullRequests;
   ThreadPreviews m_previews;
+  PullRequestReview m_review;
   bool m_active = false;
   // The thread the panel shows; kept while the route is elsewhere (settings)
   // so coming back finds the tabs as they were.
   QString m_thread;
   bool m_onThread = false;
   QHash<QString, Panel> m_panels;
-  // The page's `rightPanel`, and what it was last told to show.
-  QVariantMap m_page;
-  QVariantMap m_told;
+  // Threads by when their panel was last shown, the latest last: the store
+  // keeps the latest kStoredThreads.
+  QStringList m_recent;
+  int m_width = defaultWidth;
+  QString m_storePath;
+  QByteArray m_saved;
 };

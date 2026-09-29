@@ -71,8 +71,12 @@ ShellWindow {
             }
 
             ColumnLayout {
+                id: centre
+
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                // A maximized right panel covers the thread.
+                visible: !panelView.maximized
                 spacing: 0
 
                 Workspace {
@@ -83,6 +87,7 @@ ShellWindow {
                     visible: ready
                     sidebarToggle: root.sidebarCollapsed
                     panelToggle: panelView.available ? panelView.open : null
+                    detailsToggle: Shell.state.panel ? Shell.state.panel.detailsOpen === true : null
                     window: root
                 }
 
@@ -141,12 +146,24 @@ ShellWindow {
                 }
             }
 
+            // The thread details column (threadPanel.toggle), beside the thread.
+            ThreadDetailsPanel {
+                Layout.fillHeight: true
+                Layout.preferredWidth: implicitWidth
+                details: Shell.state.panel?.details ?? null
+                visible: details !== null && !panelView.maximized
+            }
+
             RightPanel {
                 id: panelView
 
                 Layout.fillHeight: true
+                Layout.fillWidth: maximized
                 ownToggle: false
+                canMaximize: true
                 Layout.preferredWidth: implicitWidth
+                // The thread keeps room of its own.
+                maximumWidth: root.width - (navigation.visible ? navigation.width : 0) - minimumWidth
                 visible: available
             }
         }

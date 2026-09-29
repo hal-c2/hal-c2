@@ -71,7 +71,9 @@ qt_add_qml_module(hal_c2_bricks
     TerminalSplits.qml
     TerminalPanel.qml
     PullRequestsPanel.qml
+    PullRequestReviewPanel.qml
     PreviewsPanel.qml
+    ThreadDetailsPanel.qml
     CommandPalette.qml
   RESOURCES
     qmldir

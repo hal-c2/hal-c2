@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import ChatView from "../components/ChatView";
 import { ThreadTerminalDocument } from "../components/ThreadTerminalDocument";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { ShellEmbedRouteBridge } from "../shell/lazy";
@@ -9,21 +8,16 @@ import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
 import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
 
-/** Which part of the thread this document shows. */
-export type EmbedSurface = "panel" | "terminal";
-
 /**
- * One part of the thread on its own, for a web view the Qt shell places
- * itself: the right panel's content, or with `?surface=terminal` the terminal
- * drawer. Same session (cookies), its own WebSocket; the panel tabs and the
- * drawer's state converge with the primary document through localStorage
- * (see shell/shellDocumentSync.ts).
+ * The thread's terminal drawer on its own (`?surface=terminal`), for a web
+ * view the Qt shell places itself. Same session (cookies), its own
+ * WebSocket; the drawer's state converges with the primary document through
+ * localStorage (see shell/shellDocumentSync.ts).
  */
 function EmbedThreadPanelRouteView() {
   const threadRef = Route.useParams({
     select: (params) => resolveThreadRouteRef(params),
   });
-  const { surface } = Route.useSearch();
 
   const shell = useEnvironmentQuery(
     threadRef === null ? null : environmentShell.stateAtom(threadRef.environmentId),
@@ -48,26 +42,15 @@ function EmbedThreadPanelRouteView() {
   return (
     <div className="flex h-svh min-h-0 flex-col overflow-hidden bg-background text-foreground md:h-dvh">
       {/* Follows the primary view's thread instead of the shell reloading this document. */}
-      <ShellEmbedRouteBridge threadRef={threadRef} surface={surface} />
+      <ShellEmbedRouteBridge threadRef={threadRef} />
       {renderState === "ready" || (renderState === "loading" && serverThreadShell !== null) ? (
-        surface === "terminal" ? (
-          <ThreadTerminalDocument threadRef={threadRef} />
-        ) : (
-          <ChatView
-            environmentId={threadRef.environmentId}
-            threadId={threadRef.threadId}
-            routeKind="server"
-            presentation="rightPanel"
-          />
-        )
+        <ThreadTerminalDocument threadRef={threadRef} />
       ) : null}
     </div>
   );
 }
 
 export const Route = createFileRoute("/embed/$environmentId/$threadId")({
-  validateSearch: (raw: Record<string, unknown>): { surface: EmbedSurface } => ({
-    surface: raw.surface === "terminal" ? "terminal" : "panel",
-  }),
+  validateSearch: (): { surface: "terminal" } => ({ surface: "terminal" }),
   component: EmbedThreadPanelRouteView,
 });

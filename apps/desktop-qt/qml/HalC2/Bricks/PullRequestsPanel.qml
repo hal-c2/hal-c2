@@ -4,8 +4,8 @@ import HalC2.Shell
 
 // The right panel's Pull requests tab: the pull requests linked to the thread
 // with their state, checks and review, from a ThreadPullRequests model
-// (Panel.pullRequests). A row opens in the browser; its menu copies the link
-// or unlinks it. The header links one (a URL or #123) and refreshes them all.
+// (Panel.pullRequests). A row opens in the browser; its menu opens its review
+// tab, copies the link or unlinks it. The header links one (a URL or #123) and refreshes them all.
 // Offline, the rows stay as last synced and nothing is offered.
 //
 //   PullRequestsPanel { anchors.fill: parent; source: Panel.pullRequests }
@@ -339,6 +339,14 @@ Rectangle {
 
                     y: parent.height
 
+                    ShellMenuItem {
+                        objectName: "pullRequestReviewItem"
+                        text: qsTr("Review")
+                        iconName: "git-pull-request"
+                        onTriggered: Shell.dispatch("rightPanel.review", {
+                            key: row.linkKey
+                        })
+                    }
                     ShellMenuItem {
                         text: qsTr("Open in browser")
                         iconName: "external-link"

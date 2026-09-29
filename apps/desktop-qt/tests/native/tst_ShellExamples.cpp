@@ -197,8 +197,8 @@ private slots:
       content->forceActiveFocus();
       QTRY_VERIFY(content->hasActiveFocus());
       auto panel = QJsonDocument::fromJson(R"({
-        "isOpen":true,"tabs":[],"activeId":"","embedPath":"",
-        "canAdd":{"diff":true,"files":true,"terminal":true,"pullRequest":false}
+        "isOpen":true,"tabs":[],"activeId":"",
+        "canAdd":{"diff":true,"files":true,"terminal":true}
       })").toVariant().toMap();
       bridge.publish("panel", panel);
       QTRY_VERIFY(inspector->isVisible());
@@ -334,10 +334,10 @@ private slots:
     source.write("import QtQuick\nimport HalC2.Bricks\nShellWindow { width: 600; height: 400; RightPanel { anchors.fill: parent } }");
     source.close();
     bridge.publish("panel", QJsonDocument::fromJson(R"({
-      "isOpen": true, "activeId": "diff", "embedPath": "/test",
-      "tabs": [{"id": "diff", "kind": "diff", "title": "Diff", "native": true},
-               {"id": "files", "kind": "files", "title": "Files", "native": true}],
-      "canAdd": {"diff": true, "files": true, "terminal": true, "pullRequest": false}
+      "isOpen": true, "activeId": "diff", 
+      "tabs": [{"id": "diff", "kind": "diff", "title": "Diff"},
+               {"id": "files", "kind": "files", "title": "Files"}],
+      "canAdd": {"diff": true, "files": true, "terminal": true}
     })").toVariant());
     runtime->reload();
     QVERIFY2(runtime->lastError().isEmpty(), qPrintable(runtime->lastError()));
@@ -427,9 +427,9 @@ private slots:
     source.write("import QtQuick\nimport HalC2.Bricks\nShellWindow { width: 800; height: 400; RightPanel { anchors.fill: parent } }");
     source.close();
     bridge.publish("panel", QJsonDocument::fromJson(R"({
-      "isOpen": true, "activeId": "terminal:group-1", "embedPath": "/test",
-      "tabs": [{"id": "terminal:group-1", "kind": "terminal", "title": "Terminal", "native": true}],
-      "canAdd": {"diff": true, "files": true, "terminal": true, "pullRequest": false}
+      "isOpen": true, "activeId": "terminal:group-1", 
+      "tabs": [{"id": "terminal:group-1", "kind": "terminal", "title": "Terminal"}],
+      "canAdd": {"diff": true, "files": true, "terminal": true}
     })").toVariant());
     runtime->reload();
     QVERIFY2(runtime->lastError().isEmpty(), qPrintable(runtime->lastError()));

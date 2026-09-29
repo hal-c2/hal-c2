@@ -28,6 +28,8 @@ Rectangle {
     // Same for the right panel: null hides the toggle, otherwise whether the
     // panel is open. The page's header keeps this button next to the pills.
     property var panelToggle: null
+    // Whether the thread details column shows, or null away from a thread.
+    property var detailsToggle: null
     // The window, for a frameless shell: the strip is its drag handle and
     // carries the window buttons.
     property Window window: null
@@ -355,6 +357,19 @@ Rectangle {
             objectName: "terminalToggle"
             Accessible.name: Terminals.open ? qsTr("Hide terminal") : qsTr("Show terminal")
             onClicked: Shell.dispatch("terminal.toggle")
+        }
+
+        ShellButton {
+            objectName: "threadDetailsToggle"
+            visible: strip.detailsToggle !== null
+            subtle: true
+            implicitHeight: 28
+            iconName: "info"
+            iconSize: 16
+            iconTint: strip.detailsToggle === true ? strip.foreground : strip.iconMuted
+            Layout.leftMargin: 4
+            Accessible.name: strip.detailsToggle === true ? qsTr("Hide thread details") : qsTr("Show thread details")
+            onClicked: Shell.dispatch("threadPanel.toggle")
         }
 
         ShellButton {

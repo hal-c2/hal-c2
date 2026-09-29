@@ -110,11 +110,10 @@ node `mise run node` runs.
   share a profile directory between processes: a second shell on the same
   home finds the lock file taken and stays off-the-record for its run.
 - **One renderer per surface.** Chromium gives each top-level view its own
-  renderer process (roughly the app bundle's footprint each), which is the
-  price of the right panel being a separate document. It sets
-  `sleepsWhenHidden`, so its page is frozen (no timers, no painting) while
-  closed and resumes where it was; discarding it would also drop the
-  terminals it holds. The primary surface never sleeps.
+  renderer process (roughly the app bundle's footprint each), so the shell
+  keeps one: the right panel is native and embeds no second document. A
+  surface that may hide sets `sleepsWhenHidden`, which freezes its page (no
+  timers, no painting) until it shows again. The primary surface never sleeps.
 - **The channel carries no properties.** QWebChannel re-sends a changed
   property to every connected page, so `Shell.state` is not on it: pages talk
   to `ShellChannel` (`publish`, `dispatch`, `snapshot`, `actionRequested`,
@@ -651,29 +650,36 @@ or popup control, so neither can host the agent's preview tabs (that host was
 only ever Electron's `desktopBridge`). The embedding scenarios in
 `features/preview/surfaces.feature` are `@backlog-desktop` for that reason.
 
-What is left on the page shows in the page's embed: the pull request review
-(`pull-request:<ref>`) and the device tab. `RightPanel` loads the app's embed
-route (`/embed/$environmentId/$threadId`) in a second `WebSurface` only while
-one of those shows. Both surfaces share the shell's profile (see Web engine),
-so the embed document authenticates with the primary's cookie; it opens its
-own WebSocket and sleeps while hidden. The embed route renders `ChatView` with
-`presentation="rightPanel"`, and `shell/shellDocumentSync.ts` rehydrates the
-terminal store the two documents share.
+The Pull request review tab (`pull-request:<host>/<repository>#<number>`,
+titled "PR #n") is `PullRequestReviewPanel` over the controller's
+`PullRequestReview` (`Panel.review`). It opens from the add menu or a Pull
+requests row's menu (`rightPanel.review {key}`) and reads the pull request
+through the thread's environment: `pullRequests.detail` and `.activity` over
+the socket, and the code over HTTP (`POST /api/pull-requests/diff`, one
+`nextCursor` slice at a time, with `NodeClient::post`), which lands in a
+`DiffModel` that `DiffPanel` draws. Comments, reviews, thread resolutions and
+viewed marks go back through the same environment, and the pull request is
+read again once each lands. A viewed mark the host refuses is taken back.
+Offline, what was read stays and nothing is sent.
 
-The page still publishes `rightPanel` (`ShellRightPanelBridge`: its tabs,
-what can be added, `embedPath`); the controller takes its non-native tabs
-from it (its browser tabs are dropped: the Previews tab lists them), and a
-change the page makes on its own (its keybinding, a tab it added) is taken as
-the user's. The page follows the shell, not the other way round:
-`rightPanel.follow {threadKey, open, activeSurfaceId}` is sent only when the
-page shows something other than a page tab the shell wants, so it does no
-work behind a native tab. `panel.open {tab, path?, line?, turn?, turnId?}`
-opens a native tab on a turn's diff or a file at a line, for the timeline's
-links.
+The thread details column (`ThreadDetailsPanel`, `threadPanel.toggle` from
+the header's info button or the keybinding) is not a tab. It sits beside the
+right panel and reads `panel.details`, which the controller builds from store
+rows: the environment and whether it is reachable, the project, the checkout
+and branch, and the lineage parent and children. Changing the checkout stays
+with the composer's strip.
 
-Known gaps: the native tabs are not persisted across restarts; the panel's
-resize and maximize, the working-tree review and the diff's file tree stay on
-the page.
+The device tab is not native: the hub's streams are H.264 (iOS AVCC with an
+MJPEG fallback, Android SEMU-framed over a WebSocket), which Qt cannot decode
+without QtMultimedia or FFmpeg. Its scenarios stay `@backlog`.
+
+The panel never asks the page for anything. Per thread, the controller keeps
+whether it is open, its tabs, the active one and the details column, plus one
+width for all threads, in `shell-panel.json` in the state directory, so they
+survive a restart (maximizing does not). `rightPanel.resize {width}` and `rightPanel.toggleMaximized`
+come from the brick's edge and the keybinding. `panel.open {tab, path?,
+line?, turn?, turnId?}` opens a native tab on a turn's diff or a file at a
+line, for the timeline's links.
 
 ### `workspace`
 

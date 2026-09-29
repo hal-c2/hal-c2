@@ -20,47 +20,42 @@ afterEach(async () => {
 });
 
 describe("retained shell embed navigation", () => {
-  it.each(["terminal", "panel"] as const)(
-    "follows %s thread publications without a document reload",
-    async (surface) => {
-      const first = {
-        environmentId: EnvironmentId.make("env-a"),
-        threadId: ThreadId.make("thread-a"),
-      };
-      const second = {
-        environmentId: EnvironmentId.make("env-b"),
-        threadId: ThreadId.make("thread-b"),
-      };
-      let publish!: (state: Record<string, unknown>) => void;
-      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-      vi.stubGlobal("window", {
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        halC2Shell: {
-          onState: async (listener: typeof publish) => {
-            publish = listener;
-            return () => {};
-          },
+  it("follows the thread publications without a document reload", async () => {
+    const first = {
+      environmentId: EnvironmentId.make("env-a"),
+      threadId: ThreadId.make("thread-a"),
+    };
+    const second = {
+      environmentId: EnvironmentId.make("env-b"),
+      threadId: ThreadId.make("thread-b"),
+    };
+    let publish!: (state: Record<string, unknown>) => void;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      halC2Shell: {
+        onState: async (listener: typeof publish) => {
+          publish = listener;
+          return () => {};
         },
-      });
-      await act(() => {
-        renderer = create(<ShellEmbedRouteBridge threadRef={first} surface={surface} />);
-      });
-      const key = surface === "terminal" ? "workspace" : "rightPanel";
-      await act(() => publish({ [key]: { threadKey: scopedThreadKey(first) } }));
-      expect(navigate).not.toHaveBeenCalled();
-      await act(() => publish({ [key]: { threadKey: scopedThreadKey(second) } }));
-      expect(navigate).toHaveBeenCalledExactlyOnceWith({
-        to: "/embed/$environmentId/$threadId",
-        params: { environmentId: "env-b", threadId: "thread-b" },
-        search: { surface },
-        replace: true,
-      });
-      await act(() =>
-        renderer?.update(<ShellEmbedRouteBridge threadRef={second} surface={surface} />),
-      );
-      await act(() => publish({ [key]: { threadKey: scopedThreadKey(second) } }));
-      expect(navigate).toHaveBeenCalledTimes(1);
-    },
-  );
+      },
+    });
+    await act(() => {
+      renderer = create(<ShellEmbedRouteBridge threadRef={first} />);
+    });
+    const key = "workspace";
+    await act(() => publish({ [key]: { threadKey: scopedThreadKey(first) } }));
+    expect(navigate).not.toHaveBeenCalled();
+    await act(() => publish({ [key]: { threadKey: scopedThreadKey(second) } }));
+    expect(navigate).toHaveBeenCalledExactlyOnceWith({
+      to: "/embed/$environmentId/$threadId",
+      params: { environmentId: "env-b", threadId: "thread-b" },
+      search: { surface: "terminal" },
+      replace: true,
+    });
+    await act(() => renderer?.update(<ShellEmbedRouteBridge threadRef={second} />));
+    await act(() => publish({ [key]: { threadKey: scopedThreadKey(second) } }));
+    expect(navigate).toHaveBeenCalledTimes(1);
+  });
 });
