@@ -18,8 +18,7 @@ Feature: Unread and status in the thread list
   Background:
     Given a connected environment with the thread "Build search" in the project "shop"
 
-  # Delivered natively (SidebarThreadRow); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario Outline: A thread row names its state
     Given "Build search" <state>
     When the user looks at the thread list

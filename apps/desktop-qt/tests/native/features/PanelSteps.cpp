@@ -637,7 +637,8 @@ const Steps steps([] {
     fake.files.insert(c[0], linesOf(200));
     fake.truncated.insert(c[0], 3 * 1024 * 1024);
   });
-  step(QStringLiteral("the user opens %1").arg(q), [](World& world, const Captures& c, const Table&) { openFile(world, c[0]); });
+  // A path has a dot or a slash; a bare name is a thread (ThreadListSteps).
+  step(QStringLiteral("the user opens \"([^\"]*[./][^\"]*)\""), [](World& world, const Captures& c, const Table&) { openFile(world, c[0]); });
   step(QStringLiteral("the user opens %1 at line (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
     openFile(world, c[0], c[1].toInt());
   });

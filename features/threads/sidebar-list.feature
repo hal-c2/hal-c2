@@ -19,21 +19,19 @@ Feature: The thread list
   Background:
     Given a connected environment with the projects "shop" and "docs"
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Threads are grouped into sections
     Given "shop" has a draft, a pinned thread, two active threads, a snoozed thread and a settled thread
     When the user looks at the thread list
     Then the sections read drafts, pinned, active, snoozed, settled in that order
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @tui @backlog-desktop
+  @desktop @tui
   Scenario: Active threads are listed newest first
     Given "Alpha" was created before "Beta"
     When the user looks at the thread list
     Then "Beta" is listed above "Alpha"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Settled threads are listed by when they settled
     Given "Alpha" settled after "Beta"
     When the user looks at the settled section
@@ -68,8 +66,7 @@ Feature: The thread list
     Then the first 10 settled threads are shown
     And the user can show more
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Very long settled shelves point to the rest
     Given there are 70 settled threads
     When the user looks at the settled section
@@ -106,20 +103,18 @@ Feature: The thread list
     When the list is republished with a new thread above "Beta"
     Then "Beta" is still the row under the pointer
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Opening a thread from the list
     When the user opens "Beta"
     Then "Beta" is shown in the main view
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Opening a draft from the list
     Given "shop" has an unsent draft
     When the user opens the draft
     Then the draft composer is shown with its unsent text
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @tui @backlog-desktop
+  @desktop @tui
   Scenario: Scoping the list to one project
     When the user scopes the thread list to "docs"
     Then only threads from "docs" are listed
