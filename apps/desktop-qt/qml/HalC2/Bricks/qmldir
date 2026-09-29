@@ -58,3 +58,4 @@ PullRequestsPanel 1.0 PullRequestsPanel.qml
 PullRequestReviewPanel 1.0 PullRequestReviewPanel.qml
 PreviewsPanel 1.0 PreviewsPanel.qml
 ThreadDetailsPanel 1.0 ThreadDetailsPanel.qml
+CommandPalette 1.0 CommandPalette.qml

@@ -332,6 +332,10 @@ private slots:
     QCOMPARE(evaluate("window.deliveredTheme.vars['--app-theme-canvas']").toString(), QString("#ffffff"));
   }
 
+  // Scenario: A user's own shell layout replaces the default, A broken shell
+  // layout falls back to the default, A shell layout change applies without
+  // restarting (features/navigation/layout.feature). That the fallback's
+  // error is on screen is tst_ShellExamples::brokenShellFallsBackAndSaysWhy.
   void reloadKeepsSingletonsAndRecoversFromInvalidSource() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
@@ -421,6 +425,7 @@ Window {
     QVERIFY(runtime.usingUserShell());
     QVERIFY(runtime.lastError().isEmpty());
 
+    // Saving the file is enough: the runtime watches it.
     QVERIFY(writeSource(shellPath, source(6)));
     QTRY_COMPARE(runtime.generation(), 6);
     verifySingletons(window());

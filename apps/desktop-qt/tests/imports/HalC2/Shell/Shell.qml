@@ -13,6 +13,7 @@ QtObject {
     property var dispatchedActions: []
     property int dispatchCount: 0
     property bool echoTextEdits: true
+    property bool localFolderImportEnabled: false
 
     signal actionRequested(string action, var payload)
 
@@ -61,6 +62,7 @@ QtObject {
 
     function reset() {
         echoTextEdits = true;
+        localFolderImportEnabled = false;
         dispatchedActions = [];
         dispatchCount = 0;
         state = {
@@ -120,6 +122,10 @@ QtObject {
             publishComposerText(payload.text, state.composer.cursor, payload.edit);
         }
         actionRequested(action, payload);
+    }
+
+    function localDirectoryPath(url) {
+        return String(url).replace(/^file:\/\//, "");
     }
 
     function readImageFiles(urls) {

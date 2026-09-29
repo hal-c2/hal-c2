@@ -9,6 +9,8 @@ QtObject {
     readonly property string fontUi: ""
     readonly property string fontMono: ""
     property var colors: ({})
+    // The frameless window (the header strip is its title bar).
+    property bool frameless: false
 
     function color(role, fallback) {
         return colors[role] ?? fallback;

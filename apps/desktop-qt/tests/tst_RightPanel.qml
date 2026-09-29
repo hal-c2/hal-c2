@@ -291,6 +291,27 @@ Item {
             verify(!findChild(panel, "panelEdge").visible, "a maximized panel has no edge to drag");
         }
 
+        // Scenario: Right panel contents survive a visit to settings
+        // (features/navigation/layout.feature): off the thread there is no
+        // panel, and coming back shows the same body, scrolled where it was.
+        function test_nativeBodySurvivesSettings() {
+            Panel.diff = createTemporaryObject(fakeDiff, root);
+            Shell.state = Object.assign({}, Shell.state, { panel: panelState("diff") });
+            const panel = createTemporaryObject(panelComponent, root);
+            const diff = findChild(panel, "panelBody-diff");
+            tryCompare(diff, "status", Loader.Ready);
+            const body = diff.item;
+
+            Shell.state = Object.assign({}, Shell.state, { panel: null });
+            verify(!panel.open);
+            verify(!diff.visible);
+            compare(diff.item, body, "the body is kept while settings show");
+
+            Shell.state = Object.assign({}, Shell.state, { panel: panelState("diff") });
+            verify(diff.visible);
+            compare(diff.item, body);
+        }
+
         function test_agentsOpenTheirThreadAndCommandsDoNot() {
             const agents = createTemporaryObject(agentsComponent, root, { source: createTemporaryObject(fakeAgents, root) });
             const tax = findChild(agents, "agentRow-task-tax");

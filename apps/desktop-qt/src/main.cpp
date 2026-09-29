@@ -3,6 +3,7 @@
 #include <QJsonDocument>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QProcess>
 #include <QProcessEnvironment>
 #include <QQmlEngine>
 #include <QQuickWebEngineProfile>
@@ -11,6 +12,7 @@
 #include <QtLogging>
 #include <QtWebEngineQuick/qtwebenginequickglobal.h>
 
+#include "AlertController.h"
 #include "BackendProcess.h"
 #include "ComposerController.h"
 #include "DraftController.h"
@@ -167,7 +169,6 @@ int main(int argc, char* argv[]) {
 
   ShellBridge bridge;
   bridge.setLocalFolderImportEnabled(!parser.isSet(urlOption) || parser.isSet(localFolderImportOption));
-  qmlRegisterType<NativeNotifications>("HalC2.Shell", 1, 0, "NativeNotifications");
   qmlRegisterType<LocalTranscriber>("HalC2.Shell", 1, 0, "LocalTranscriber");
   qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
   NativeShell native(&bridge);
@@ -190,6 +191,27 @@ int main(int argc, char* argv[]) {
                      }
                    });
   ShellRuntime runtime({configDir, qmlSourceDir}, &bridge, &theme);
+
+  // Alerts reach the desktop's notification service; a click shows its thread.
+  NativeNotifications notifications;
+  auto* alerts = native.controller<AlertController>();
+  alerts->setPresenter({
+      [&notifications](const QString& key, const QString& title, const QString& body, bool silent) {
+        return notifications.show(key, title, body, silent);
+      },
+      [&notifications] { notifications.closeAll(); },
+      [&notifications](bool enabled) { notifications.setEnabled(enabled); },
+      [](const QString& kind) {
+        // No audio module: the sound theme's player, where the desktop has one.
+        static const QString player = QStandardPaths::findExecutable(QStringLiteral("canberra-gtk-play"));
+        if (player.isEmpty()) return;
+        const QString event = kind == QLatin1String("completion") ? QStringLiteral("complete") : QStringLiteral("dialog-question");
+        QProcess::startDetached(player, {QStringLiteral("-i"), event});
+      },
+  });
+  QObject::connect(&notifications, &NativeNotifications::activated, alerts, [alerts, &bridge](const QString& key) {
+    if (alerts->openThread(key)) bridge.windowCommand(QStringLiteral("raise"));
+  });
 
   BackendProcess::Options backendOptions;
   backendOptions.nodeExecutable = parser.value(nodeOption);

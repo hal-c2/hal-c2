@@ -38,7 +38,6 @@ import { sameShellRoute, shellRouteFromPath } from "./shellRoute";
 import { isSettingsPath } from "./shellSettingsState";
 import { useShellActions } from "./useShellActions";
 import { useShellPublish } from "./useShellPublish";
-import { useShellDesktopNotifications } from "./useShellDesktopNotifications";
 import { useShellThreadRowActions } from "./useShellThreadRowActions";
 
 const decodeClientSettingsPatch = Schema.decodeUnknownOption(ClientSettingsPatch);
@@ -53,7 +52,6 @@ const decodeClientSettingsPatch = Schema.decodeUnknownOption(ClientSettingsPatch
 export function HalC2ShellBridge() {
   const router = useRouter();
   const threads = useThreadShells();
-  useShellDesktopNotifications(threads);
   const { projectGroups } = useSidebarProjectGroups(threads);
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);

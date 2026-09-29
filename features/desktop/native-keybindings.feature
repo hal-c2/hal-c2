@@ -49,6 +49,6 @@ Feature: The desktop shell keeps the keymap
     @desktop
     Scenario: The page's commands go to the page from the native chrome
       Given the native chrome has keyboard focus
-      When the user presses mod+k
+      When the user presses mod+p
       Then the page is handed the key once
-      And "commandPalette.toggle" runs
+      And "filePicker.toggle" runs

@@ -9,8 +9,10 @@
 #include <functional>
 
 // The commands the shell runs itself, by keybinding command id
-// (packages/contracts keybindings.ts): what a key press, the command palette or
-// a menu runs natively instead of handing to the page. Each row is
+// (packages/contracts keybindings.ts) or, for one without a key, an id of its
+// owner's (NavigationController::kOpenSettings): what a key press, the command
+// palette or a menu runs natively instead of handing to the page. The command
+// palette lists every one as an action. Each row is
 // {command, title, shortcut}; KeybindingController fills in the shortcut label
 // from the user's keybindings.
 //

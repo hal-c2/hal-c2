@@ -32,7 +32,7 @@ Feature: Searching threads
     When the user clears the filter
     Then "Fix OAuth loop" and "Add dark mode" are listed
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Searching from the thread list opens the command palette
     When the user starts a search from the thread list
     Then the command palette opens ready to search threads
