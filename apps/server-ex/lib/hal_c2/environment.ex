@@ -197,7 +197,8 @@ defmodule HalC2.Environment do
   # The model ids the user added in settings (`customModels`: bare slugs or
   # `{slug, name, capabilities}`) follow the provider's own models; one it already
   # lists is skipped. Codex's and Claude's are their instance's `config`, else the
-  # driver's `providers` entry, as for an ACP agent.
+  # driver's `providers` entry, as for an ACP agent. One without options of its own
+  # takes Codex's first model's, as Codex reads them for any model; Claude's has none.
   defp with_custom_models(%{"instanceId" => id, "driver" => driver} = entry) do
     settings = HalC2.Settings.settings()
 
@@ -210,9 +211,13 @@ defmodule HalC2.Environment do
 
     models = entry["models"] || []
 
+    fallback =
+      if driver == "codex",
+        do: Enum.find_value(models, &(is_map(&1["capabilities"]) && &1["capabilities"]))
+
     added =
       for setting <- List.wrap(custom),
-          %{"slug" => slug} = model <- [custom_model(setting)],
+          %{"slug" => slug} = model <- [custom_model(setting, fallback)],
           reduce: [] do
         added ->
           if Enum.any?(models ++ added, &(&1["slug"] == slug)), do: added, else: added ++ [model]
@@ -223,9 +228,10 @@ defmodule HalC2.Environment do
 
   defp with_custom_models(entry), do: entry
 
-  defp custom_model(slug) when is_binary(slug), do: custom_model(%{"slug" => slug})
+  defp custom_model(slug, fallback) when is_binary(slug),
+    do: custom_model(%{"slug" => slug}, fallback)
 
-  defp custom_model(%{"slug" => slug} = setting) when is_binary(slug) do
+  defp custom_model(%{"slug" => slug} = setting, fallback) when is_binary(slug) do
     case String.trim(slug) do
       "" ->
         nil
@@ -237,12 +243,12 @@ defmodule HalC2.Environment do
           "slug" => slug,
           "name" => if(name == "", do: slug, else: name),
           "isCustom" => true,
-          "capabilities" => setting["capabilities"] || %{"optionDescriptors" => []}
+          "capabilities" => setting["capabilities"] || fallback || %{"optionDescriptors" => []}
         }
     end
   end
 
-  defp custom_model(_), do: nil
+  defp custom_model(_, _), do: nil
 
   @spec id() :: String.t()
   def id do

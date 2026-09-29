@@ -114,6 +114,11 @@ Feature: Models
     When the user gives the custom model "my-model" a reasoning choice of low or high with high as default
     Then the composer offers low and high for "my-model" with high selected
 
+  Scenario: A Codex custom model without options of its own takes Codex's options
+    Given Codex's models offer reasoning levels
+    When the user adds the custom model "my-model" to Codex
+    Then "my-model" offers the same options as Codex's own models
+
   @backlog
   Scenario: A custom model's options can be copied from a built-in model
     When the user copies the options of a built-in Claude model into "my-model"

@@ -220,6 +220,41 @@ defmodule HalC2.Steps.Providers.Models do
     Map.put(context, :custom_model, slug)
   end
 
+  step "Codex's models offer reasoning levels", context do
+    System.put_env(
+      "FAKE_CODEX_MODELS",
+      JSON.encode!([
+        %{
+          "model" => "gpt-6-luna",
+          "displayName" => "GPT-6 Luna",
+          "isDefault" => true,
+          "defaultReasoningEffort" => "medium",
+          "supportedReasoningEfforts" =>
+            for(effort <- ~w(low medium high), do: %{"reasoningEffort" => effort})
+        }
+      ])
+    )
+
+    context = World.fake_providers(context)
+    HalC2.Codex.Provider.load()
+    context
+  end
+
+  step "the user adds the custom model {string} to Codex", %{args: [slug]} = context do
+    add_custom_model(World.fake_providers(context), slug, "codex")
+  end
+
+  step "{string} offers the same options as Codex's own models", %{args: [slug]} = context do
+    {providers, _context} = World.provider_list(context)
+    codex = Enum.find(providers, &(&1["instanceId"] == "codex"))
+    [own | _] = codex["models"]
+    custom = Enum.find(codex["models"], &(&1["slug"] == slug)) || flunk("#{slug} is not offered")
+    assert %{"isCustom" => true} = custom
+    assert [_ | _] = own["capabilities"]["optionDescriptors"]
+    assert custom["capabilities"] == own["capabilities"]
+    context
+  end
+
   step "{string} is offered in the model picker for Claude", %{args: [slug]} = context do
     assert %{"isCustom" => true, "name" => ^slug} = claude_model(context, slug)
     context
@@ -263,7 +298,7 @@ defmodule HalC2.Steps.Providers.Models do
   # --- helpers ------------------------------------------------------------------------------
 
   # Saves a custom model the way the settings panel does: read, add, write back.
-  defp add_custom_model(context, setting) do
+  defp add_custom_model(context, setting, driver \\ "claudeAgent") do
     {{:ok, %{"settings" => settings, "version" => version}}, context} =
       World.call(context, "hal-c2.readSettings")
 
@@ -272,7 +307,7 @@ defmodule HalC2.Steps.Providers.Models do
         settings,
         [
           Access.key("providers", %{}),
-          Access.key("claudeAgent", %{}),
+          Access.key(driver, %{}),
           Access.key("customModels", [])
         ],
         &(&1 ++ [setting])
