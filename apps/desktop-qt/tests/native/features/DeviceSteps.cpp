@@ -1,0 +1,742 @@
+// The right panel's Device tabs (ThreadDevices, DeviceStream, DeviceDecoder):
+// the node's DeviceServiceState on the `devices` shape and `device.list`,
+// `device.open` and `device.close`, and a fake device hub behind the node's
+// `/api/device-hub/` proxy speaking serve-sim (AVCC video, `[tag][json]`
+// input) and serve-emu (SEMU-framed Annex-B and JSON gestures on one socket).
+// The pictures are the committed fixture, a solid red 72x160 H.264 clip, so
+// a step checks the decoder really drew it. features/preview/devices.feature.
+
+#include <QFile>
+#include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QTcpSocket>
+#include <QWebSocket>
+#include <QWebSocketServer>
+#include <QtEndian>
+
+#include <memory>
+
+#include "DeviceStream.h"
+#include "Harness.h"
+#include "RightPanelController.h"
+#include "Stream.h"
+#include "ThreadDevices.h"
+#include "World.h"
+
+namespace {
+
+using namespace stream;
+
+const QString kHost = QStringLiteral("local");
+constexpr int kRetryMs = 50;
+constexpr int kFirstFrameMs = 15000;
+
+// The fixture's NAL units: its parameter sets and one slice per picture.
+struct Fixture {
+  QByteArray sps;
+  QByteArray pps;
+  QList<QByteArray> slices;
+  QList<bool> keys;
+};
+
+const Fixture& fixture() {
+  static const Fixture parsed = [] {
+    QFile file(QStringLiteral(HAL_C2_DEVICE_FIXTURE));
+    if (!file.open(QIODevice::ReadOnly)) qFatal("the device fixture is missing");
+    const QByteArray data = file.readAll();
+    QList<qsizetype> starts;
+    for (qsizetype at = data.indexOf(QByteArray("\0\0\1", 3)); at >= 0; at = data.indexOf(QByteArray("\0\0\1", 3), at + 3)) starts.append(at + 3);
+    Fixture fixture;
+    for (qsizetype n = 0; n < starts.size(); ++n) {
+      qsizetype end = n + 1 < starts.size() ? starts[n + 1] - 3 : data.size();
+      if (n + 1 < starts.size() && data.at(end - 1) == 0) --end;  // a four-byte start code
+      const QByteArray nal = data.mid(starts[n], end - starts[n]);
+      const int type = nal.at(0) & 0x1f;
+      if (type == 7 && fixture.sps.isEmpty()) fixture.sps = nal;
+      if (type == 8 && fixture.pps.isEmpty()) fixture.pps = nal;
+      if (type == 1 || type == 5) {
+        fixture.slices.append(nal);
+        fixture.keys.append(type == 5);
+      }
+    }
+    return fixture;
+  }();
+  return parsed;
+}
+
+QByteArray u32(quint32 value) {
+  QByteArray bytes(4, 0);
+  qToBigEndian(value, bytes.data());
+  return bytes;
+}
+
+QByteArray u16(quint16 value) {
+  QByteArray bytes(2, 0);
+  qToBigEndian(value, bytes.data());
+  return bytes;
+}
+
+// serve-sim's stream.avcc body: the avcC record, then every picture.
+QByteArray iosVideo() {
+  const Fixture& f = fixture();
+  const auto envelope = [](char tag, const QByteArray& payload) { return u32(quint32(payload.size() + 1)) + tag + payload; };
+  QByteArray avcc;
+  avcc += char(1);
+  avcc += f.sps.mid(1, 3);
+  avcc += char(0xff);  // four-byte lengths
+  avcc += char(0xe1);  // one SPS
+  avcc += u16(quint16(f.sps.size())) + f.sps;
+  avcc += char(1);
+  avcc += u16(quint16(f.pps.size())) + f.pps;
+  QByteArray body = envelope(1, avcc);
+  for (qsizetype n = 0; n < f.slices.size(); ++n)
+    body += envelope(f.keys[n] ? 2 : 3, u32(quint32(f.slices[n].size())) + f.slices[n]);
+  return body;
+}
+
+// serve-emu's frames: Annex-B access units behind a SEMU header.
+QList<QByteArray> androidVideo() {
+  const Fixture& f = fixture();
+  const QByteArray start("\0\0\0\1", 4);
+  QList<QByteArray> frames;
+  for (qsizetype n = 0; n < f.slices.size(); ++n) {
+    QByteArray header = u32(0x53454d55) + QByteArray(12, 0);
+    header[4] = 1;
+    header[5] = f.keys[n] ? 1 : 0;
+    const QByteArray unit = (f.keys[n] ? start + f.sps + start + f.pps : QByteArray()) + start + f.slices[n];
+    frames.append(header + unit);
+  }
+  return frames;
+}
+
+// The environment's devices and the hub the node proxies to.
+struct FakeHub {
+  QJsonArray devices;
+  QJsonArray sessions;
+  QString hostStatus = QStringLiteral("ready");
+  int revision = 0;
+  // Why the node fails `device.open`, when it does.
+  QString refuseOpen;
+  QList<QJsonObject> closes;
+  // The proxy's status for every hub request (401: a refused credential), when not 200.
+  int refuse = 0;
+  // The device has sent no picture yet.
+  bool silent = false;
+  // Every request that reached the proxy: "<target> <authorization>".
+  QStringList requests;
+  std::unique_ptr<QWebSocketServer> sockets;
+  QList<QPointer<QTcpSocket>> videos;
+  QList<QPointer<QWebSocket>> inputs;
+  // What the device received: serve-sim's `[tag][json]`, serve-emu's JSON.
+  QList<QByteArray> binary;
+  QList<QJsonObject> text;
+  bool used = false;
+  bool looking = false;
+};
+
+QJsonObject stateOf(FakeNode& node) {
+  FakeHub& hub = node.part<FakeHub>();
+  const QJsonArray platforms{QJsonObject{{QStringLiteral("platform"), QStringLiteral("ios")}, {QStringLiteral("available"), true}},
+                             QJsonObject{{QStringLiteral("platform"), QStringLiteral("android")}, {QStringLiteral("available"), true}}};
+  return {{QStringLiteral("hosts"), QJsonArray{QJsonObject{{QStringLiteral("id"), kHost},
+                                                            {QStringLiteral("kind"), QStringLiteral("local")},
+                                                            {QStringLiteral("label"), QStringLiteral("This Mac")},
+                                                            {QStringLiteral("platforms"), platforms},
+                                                            {QStringLiteral("hubInstalled"), true},
+                                                            {QStringLiteral("agentDeviceInstalled"), true}}}},
+          {QStringLiteral("hostStatus"), hub.hostStatus},
+          {QStringLiteral("hostStatuses"), QJsonObject{{kHost, QJsonObject{{QStringLiteral("status"), hub.hostStatus}}}}},
+          {QStringLiteral("devices"), hub.devices},
+          {QStringLiteral("sessions"), hub.sessions},
+          {QStringLiteral("onboardingCompleted"), hub.hostStatus != QLatin1String("disabled")},
+          {QStringLiteral("agentAccessEnabled"), false},
+          {QStringLiteral("hubBasePath"), QStringLiteral("/api/device-hub/nodes/") + node.name},
+          {QStringLiteral("revision"), hub.revision}};
+}
+
+// The node tells every watcher, as devices.ex does on each change.
+void announce(FakeNode& node) {
+  ++node.part<FakeHub>().revision;
+  for (const int id : node.subscribers(QStringLiteral("devices")))
+    node.send({{QStringLiteral("t"), QStringLiteral("devices")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), stateOf(node)}});
+}
+
+int sessionOf(const FakeHub& hub, const QString& deviceId) {
+  for (qsizetype n = 0; n < hub.sessions.size(); ++n) {
+    const QJsonObject session = hub.sessions.at(n).toObject();
+    if (session.value(QLatin1String("threadId")) == kThread && session.value(QLatin1String("deviceId")) == deviceId) return int(n);
+  }
+  return -1;
+}
+
+QJsonObject deviceNamed(const FakeHub& hub, const QString& name) {
+  for (const QJsonValue& device : hub.devices) {
+    if (device.toObject().value(QLatin1String("name")) == name) return device.toObject();
+  }
+  fail(QStringLiteral("the hub has no device \"%1\"").arg(name));
+}
+
+void openSession(FakeNode& node, const QJsonObject& device) {
+  FakeHub& hub = node.part<FakeHub>();
+  for (qsizetype n = 0; n < hub.devices.size(); ++n) {
+    QJsonObject listed = hub.devices.at(n).toObject();
+    if (listed.value(QLatin1String("id")) == device.value(QLatin1String("id"))) {
+      listed.insert(QStringLiteral("booted"), true);
+      hub.devices.replace(n, listed);
+    }
+  }
+  if (sessionOf(hub, device.value(QLatin1String("id")).toString()) < 0)
+    hub.sessions.append(QJsonObject{{QStringLiteral("threadId"), kThread},
+                                    {QStringLiteral("hostId"), kHost},
+                                    {QStringLiteral("deviceId"), device.value(QLatin1String("id"))},
+                                    {QStringLiteral("platform"), device.value(QLatin1String("platform"))},
+                                    {QStringLiteral("openedAt"), QStringLiteral("2026-09-23T10:00:00Z")}});
+}
+
+void sendVideo(FakeHub& hub) {
+  for (const QPointer<QTcpSocket>& video : std::as_const(hub.videos)) {
+    if (video && video->state() == QAbstractSocket::ConnectedState) video->write(iosVideo());
+  }
+  for (const QPointer<QWebSocket>& socket : std::as_const(hub.inputs)) {
+    if (!socket || !socket->requestUrl().path().endsWith(QLatin1String("/serve-emu/ws"))) continue;
+    for (const QByteArray& frame : androidVideo()) socket->sendBinaryMessage(frame);
+  }
+}
+
+void respond(QTcpSocket* socket, int status) {
+  socket->write(QStringLiteral("HTTP/1.1 %1 Refused\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").arg(status).toUtf8());
+  socket->disconnectFromHost();
+}
+
+QWebSocketServer& hubSockets(FakeNode& node) {
+  FakeHub& hub = node.part<FakeHub>();
+  if (hub.sockets) return *hub.sockets;
+  hub.sockets = std::make_unique<QWebSocketServer>(QStringLiteral("fake-hub"), QWebSocketServer::NonSecureMode);
+  QWebSocketServer* server = hub.sockets.get();
+  QObject::connect(server, &QWebSocketServer::newConnection, server, [&node, server] {
+    while (QWebSocket* socket = server->nextPendingConnection()) {
+      socket->setParent(server);
+      FakeHub& hub = node.part<FakeHub>();
+      hub.inputs.append(socket);
+      const bool android = socket->requestUrl().path().endsWith(QLatin1String("/serve-emu/ws"));
+      QObject::connect(socket, &QWebSocket::binaryMessageReceived, server, [&node](const QByteArray& message) {
+        node.part<FakeHub>().binary.append(message);
+      });
+      QObject::connect(socket, &QWebSocket::textMessageReceived, server, [&node, socket](const QString& message) {
+        FakeHub& hub = node.part<FakeHub>();
+        const QJsonObject parsed = QJsonDocument::fromJson(message.toUtf8()).object();
+        hub.text.append(parsed);
+        // serve-emu answers a keyframe request with a fresh keyframe.
+        if (parsed.value(QLatin1String("type")) == QLatin1String("reset-video") && !hub.silent) {
+          for (const QByteArray& frame : androidVideo()) socket->sendBinaryMessage(frame);
+        }
+      });
+      if (android && !hub.silent) {
+        for (const QByteArray& frame : androidVideo()) socket->sendBinaryMessage(frame);
+      }
+    }
+  });
+  return *server;
+}
+
+// The node's devices as this file fakes them. IntegrationsSettingsSteps fakes
+// the same shape and calls for the settings page, so a scenario that uses the
+// hub takes them over on first use, before the shell connects.
+FakeHub& fakeHub(World& world) {
+  FakeNode& node = world.node;
+  FakeHub& hub = node.part<FakeHub>();
+  if (hub.used) return hub;
+  hub.used = true;
+  node.onShape(QStringLiteral("devices"), [&node](int id, const QJsonObject&) {
+    node.send({{QStringLiteral("t"), QStringLiteral("devices")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), stateOf(node)}});
+  });
+  node.onRpc(QStringLiteral("device.list"), [&node](const FakeNode::Rpc& rpc) { node.reply(rpc, stateOf(node)); });
+  node.onRpc(QStringLiteral("device.open"), [&node](const FakeNode::Rpc& rpc) {
+    FakeHub& hub = node.part<FakeHub>();
+    if (!hub.refuseOpen.isEmpty()) return node.refuse(rpc, hub.refuseOpen);
+    QJsonObject device;
+    for (const QJsonValue& listed : std::as_const(hub.devices)) {
+      if (listed.toObject().value(QLatin1String("id")) == rpc.payload.value(QLatin1String("deviceId"))) device = listed.toObject();
+    }
+    if (device.isEmpty()) return node.refuse(rpc, QStringLiteral("Device not found"));
+    openSession(node, device);
+    announce(node);
+    node.reply(rpc, hub.sessions.at(sessionOf(hub, device.value(QLatin1String("id")).toString())));
+  });
+  node.onRpc(QStringLiteral("device.close"), [&node](const FakeNode::Rpc& rpc) {
+    FakeHub& hub = node.part<FakeHub>();
+    hub.closes.append(rpc.payload);
+    const int at = sessionOf(hub, rpc.payload.value(QLatin1String("deviceId")).toString());
+    if (at >= 0) hub.sessions.removeAt(at);
+    announce(node);
+    node.reply(rpc, QJsonValue::Null);
+  });
+  return hub;
+}
+
+const FakeNode::Extension proxy([](FakeNode& node) {
+  // The node's device proxy, and the hub behind it.
+  node.onRaw(QStringLiteral("/api/device-hub/"), [&node](QTcpSocket* socket, const QByteArray& head) {
+    FakeHub& hub = node.part<FakeHub>();
+    const QList<QByteArray> lines = head.split('\n');
+    const QString target = QString::fromUtf8(lines.value(0).split(' ').value(1));
+    QString authorization;
+    bool upgrade = false;
+    for (const QByteArray& line : lines) {
+      const QByteArray lower = line.trimmed().toLower();
+      if (lower.startsWith("authorization:")) authorization = QString::fromUtf8(line.trimmed().mid(14).trimmed());
+      if (lower.startsWith("upgrade:")) upgrade = true;
+    }
+    hub.requests.append(target + QLatin1Char(' ') + authorization);
+    if (hub.refuse) {
+      socket->read(head.size());
+      return respond(socket, hub.refuse);
+    }
+    if (upgrade) return hubSockets(node).handleConnection(socket);
+    socket->read(head.size());
+    const QString path = target.section(QLatin1Char('?'), 0, 0);
+    if (path.endsWith(QLatin1String("/stream.mjpeg"))) {
+      socket->write("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nConnection: close\r\n\r\n--frame\r\n");
+      return;
+    }
+    if (path.endsWith(QLatin1String("/stream.avcc"))) {
+      socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n");
+      hub.videos.append(socket);
+      if (!hub.silent) socket->write(iosVideo());
+      return;
+    }
+    respond(socket, 404);
+  });
+});
+
+RightPanelController& panel(World& world) {
+  return *world.native().controller<RightPanelController>();
+}
+
+ThreadDevices& devices(World& world) {
+  return *panel(world).device();
+}
+
+DeviceStream& deviceStream(World& world) {
+  return *devices(world).stream();
+}
+
+QVariantMap view(World& world) {
+  return devices(world).view();
+}
+
+QString describe(World& world) {
+  DeviceStream& stream = deviceStream(world);
+  return QStringLiteral("the panel is %1; the Device view is %2; the stream is %3 (%4), input %5; the hub saw %6")
+      .arg(show(world.state(QStringLiteral("panel"))), show(view(world)), stream.status(), stream.detail(),
+           stream.inputConnected() ? QStringLiteral("connected") : QStringLiteral("closed"),
+           fakeHub(world).requests.join(QStringLiteral(", ")));
+}
+
+void addDevice(World& world, const QString& platform, const QString& name, bool booted) {
+  const QString id = platform == QLatin1String("ios") ? QStringLiteral("UDID-") + QString(name).replace(QLatin1Char(' '), QLatin1Char('-')).toUpper()
+                                                      : QStringLiteral("emulator-5554");
+  fakeHub(world).devices.append(QJsonObject{{QStringLiteral("hostId"), kHost},
+                                                        {QStringLiteral("id"), id},
+                                                        {QStringLiteral("name"), name},
+                                                        {QStringLiteral("platform"), platform},
+                                                        {QStringLiteral("version"), platform == QLatin1String("ios") ? QStringLiteral("iOS 26.0") : QStringLiteral("Android 16")},
+                                                        {QStringLiteral("booted"), booted},
+                                                        {QStringLiteral("physical"), false}});
+}
+
+// The user looks at thread-1, whose environment's devices the shell follows.
+void look(World& world) {
+  FakeHub& hub = fakeHub(world);
+  if (hub.looking) return;
+  hub.looking = true;
+  world.node.projects.insert(kProject, {{QStringLiteral("id"), kProject}, {QStringLiteral("title"), kProject},
+                                        {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + kProject}, {QStringLiteral("scripts"), QJsonArray()}});
+  world.connect();
+  world.sync();
+  lookAtThread(world, kProject);
+  deviceStream(world).setTimeouts(kFirstFrameMs, kRetryMs);
+  world.waitFor([&] { return view(world).value(QStringLiteral("loaded")).toBool(); }, [&] { return describe(world); });
+}
+
+QString activeTab(World& world) {
+  return at(world.state(QStringLiteral("panel")), QStringLiteral("activeId")).toString();
+}
+
+QStringList tabTitles(World& world) {
+  QStringList titles;
+  for (const QVariant& tab : at(world.state(QStringLiteral("panel")), QStringLiteral("tabs")).toList())
+    titles.append(at(tab, QStringLiteral("title")).toString());
+  return titles;
+}
+
+QString tabOf(World& world, const QString& name) {
+  return ThreadDevices::tabIdOf(kHost, deviceNamed(fakeHub(world), name).value(QLatin1String("id")).toString());
+}
+
+void addDeviceTab(World& world) {
+  look(world);
+  world.bridge().dispatch(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), QStringLiteral("device")}});
+  world.sync();
+  world.waitFor([&] { return activeTab(world) == QLatin1String("device") && view(world).value(QStringLiteral("loaded")).toBool(); },
+                [&] { return describe(world); });
+}
+
+// The picker's row for the device named `name`.
+QVariantMap rowOf(World& world, const QString& name, const QString& group = {}) {
+  for (const QVariant& listed : view(world).value(QStringLiteral("groups")).toList()) {
+    if (!group.isEmpty() && at(listed, QStringLiteral("title")) != group) continue;
+    for (const QVariant& row : at(listed, QStringLiteral("devices")).toList()) {
+      if (at(row, QStringLiteral("name")) == name) return row.toMap();
+    }
+  }
+  return {};
+}
+
+void openFromPicker(World& world, const QString& name) {
+  world.waitFor([&] { return !rowOf(world, name).isEmpty(); }, [&] { return describe(world); });
+  const QVariantMap row = rowOf(world, name);
+  devices(world).open(row.value(QStringLiteral("hostId")).toString(), row.value(QStringLiteral("id")).toString());
+  world.sync();
+}
+
+// The user shows the device's tab: activates it, or opens the device from
+// the picker when the panel has no tab for it yet.
+void showDeviceTab(World& world, const QString& name) {
+  look(world);
+  const QString tab = tabOf(world, name);
+  if (tabTitles(world).contains(name)) {
+    world.bridge().dispatch(QStringLiteral("rightPanel.activate"), QVariantMap{{QStringLiteral("id"), tab}});
+  } else {
+    addDeviceTab(world);
+    openFromPicker(world, name);
+  }
+  world.sync();
+  world.waitFor([&] { return activeTab(world) == tab; }, [&] { return describe(world); });
+}
+
+// The decoder drew the fixture's red screen.
+bool showsScreen(World& world) {
+  DeviceStream& stream = deviceStream(world);
+  if (stream.status() != QLatin1String("streaming")) return false;
+  const QImage frame = stream.decoder()->frame();
+  if (frame.size() != QSize(72, 160)) return false;
+  const QColor colour = frame.pixelColor(36, 80);
+  return colour.red() > 160 && colour.green() < 90 && colour.blue() < 90;
+}
+
+void waitForScreen(World& world, const QString& name) {
+  const QString tab = tabOf(world, name);
+  world.waitFor([&] { return activeTab(world) == tab && tabTitles(world).contains(name) && showsScreen(world); },
+                [&] { return describe(world); });
+}
+
+void watch(World& world, const QString& name) {
+  showDeviceTab(world, name);
+  waitForScreen(world, name);
+  world.waitFor([&] { return deviceStream(world).inputConnected(); }, [&] { return describe(world); });
+}
+
+// serve-sim's input messages of `tag`, as JSON.
+QList<QJsonObject> iosInput(World& world, char tag) {
+  QList<QJsonObject> messages;
+  for (const QByteArray& message : std::as_const(fakeHub(world).binary)) {
+    if (!message.isEmpty() && message.at(0) == tag) messages.append(QJsonDocument::fromJson(message.mid(1)).object());
+  }
+  return messages;
+}
+
+QString describeInput(World& world) {
+  QStringList received;
+  for (const QByteArray& message : std::as_const(fakeHub(world).binary))
+    received.append(QStringLiteral("%1 %2").arg(int(message.at(0))).arg(QString::fromUtf8(message.mid(1))));
+  for (const QJsonObject& message : std::as_const(fakeHub(world).text))
+    received.append(QString::fromUtf8(QJsonDocument(message).toJson(QJsonDocument::Compact)));
+  return QStringLiteral("the device received %1").arg(received.join(QStringLiteral(", ")));
+}
+
+bool streamClosed(World& world) {
+  FakeHub& hub = fakeHub(world);
+  for (const QPointer<QTcpSocket>& video : std::as_const(hub.videos)) {
+    if (video && video->state() == QAbstractSocket::ConnectedState) return false;
+  }
+  for (const QPointer<QWebSocket>& socket : std::as_const(hub.inputs)) {
+    if (socket && socket->state() == QAbstractSocket::ConnectedState) return false;
+  }
+  return deviceStream(world).status() == QLatin1String("idle");
+}
+
+qsizetype videoRequests(World& world) {
+  qsizetype count = 0;
+  for (const QString& request : std::as_const(fakeHub(world).requests))
+    count += request.contains(QLatin1String("/stream.avcc")) || request.contains(QLatin1String("/serve-emu/ws"));
+  return count;
+}
+
+void tap(World& world, double x, double y) {
+  deviceStream(world).touch(QStringLiteral("begin"), x, y);
+  deviceStream(world).touch(QStringLiteral("end"), x, y);
+}
+
+void press(World& world, int key, const QString& text) {
+  deviceStream(world).key(key, text, false, true);
+  deviceStream(world).key(key, text, false, false);
+}
+
+bool near(double value, double wanted) {
+  return std::abs(value - wanted) < 1e-6;
+}
+
+const Steps steps([] {
+  const QString q = kQuoted;
+
+  // The environment's devices.
+  step(QStringLiteral("the thread's environment has an (iOS Simulator|Android Emulator) %1 (running|stopped)").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         addDevice(world, c[0] == QLatin1String("iOS Simulator") ? QStringLiteral("ios") : QStringLiteral("android"), c[1], c[2] == QLatin1String("running"));
+       });
+  step(QStringLiteral("a simulator is booted"), [](World& world, const Captures&, const Table&) {
+    addDevice(world, QStringLiteral("ios"), QStringLiteral("iPhone 17"), true);
+  });
+  step(QStringLiteral("the thread's environment has no simulators or emulators"), [](World& world, const Captures&, const Table&) { fakeHub(world); });
+  step(QStringLiteral("device support is off on the thread's environment"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).hostStatus = QStringLiteral("disabled");
+  });
+  step(QStringLiteral("the thread has the (iOS Simulator|Android Emulator) %1 open").arg(q), [](World& world, const Captures& c, const Table&) {
+    addDevice(world, c[0] == QLatin1String("iOS Simulator") ? QStringLiteral("ios") : QStringLiteral("android"), c[1], true);
+    openSession(world.node, deviceNamed(fakeHub(world), c[1]));
+  });
+  step(QStringLiteral("the node cannot open devices because %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeHub(world).refuseOpen = c[0];
+  });
+  step(QStringLiteral("the node refuses the device stream"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).refuse = 401;
+  });
+  step(QStringLiteral("the device sends no picture yet"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).silent = true;
+  });
+  step(QStringLiteral("the device starts sending pictures"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.silent = false;
+    sendVideo(hub);
+  });
+  step(QStringLiteral("the user is looking at the thread"), [](World& world, const Captures&, const Table&) { look(world); });
+
+  // Choosing.
+  step(QStringLiteral("the user adds a Device tab"), [](World& world, const Captures&, const Table&) { addDeviceTab(world); });
+  step(QStringLiteral("the user adds a device tab for it"), [](World& world, const Captures&, const Table&) {
+    addDeviceTab(world);
+    openFromPicker(world, QStringLiteral("iPhone 17"));
+  });
+  step(QStringLiteral("%1 is offered under %1( to start)?").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString action = c.value(2).isEmpty() ? QStringLiteral("Open") : QStringLiteral("Start");
+    world.waitFor([&] { return rowOf(world, c[0], c[1]).value(QStringLiteral("action")) == action; }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the user opens %1 from the Device tab").arg(q), [](World& world, const Captures& c, const Table&) { openFromPicker(world, c[0]); });
+  step(QStringLiteral("the thread has %1 open").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = deviceNamed(fakeHub(world), c[0]).value(QLatin1String("id")).toString();
+    expect(sessionOf(fakeHub(world), id) >= 0, describe(world));
+    world.waitFor([&] { return activeTab(world) == tabOf(world, c[0]) && !tabTitles(world).contains(QStringLiteral("Device")); },
+                  [&] { return describe(world); });
+  });
+  step(QStringLiteral("the tab says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      const QVariantMap shown = view(world);
+      const DeviceStream& stream = deviceStream(world);
+      return shown.value(QStringLiteral("empty")) == c[0] || shown.value(QStringLiteral("error")) == c[0] ||
+             (stream.status() == QLatin1String("error") && stream.detail() == c[0]);
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the user dismisses the error"), [](World& world, const Captures&, const Table&) { devices(world).dismissError(); });
+  step(QStringLiteral("the tab shows no error"), [](World& world, const Captures&, const Table&) {
+    expect(view(world).value(QStringLiteral("error")).toString().isEmpty(), describe(world));
+  });
+  step(QStringLiteral("the tab points to the Integrations settings"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return view(world).value(QStringLiteral("setup")).toBool(); }, [&] { return describe(world); });
+  });
+
+  // Watching.
+  step(QStringLiteral("the user shows the %1 tab").arg(q), [](World& world, const Captures& c, const Table&) { showDeviceTab(world, c[0]); });
+  step(QStringLiteral("the user is watching the %1 tab").arg(q), [](World& world, const Captures& c, const Table&) { watch(world, c[0]); });
+  step(QStringLiteral("the tab %1 shows the device's screen").arg(q), [](World& world, const Captures& c, const Table&) { waitForScreen(world, c[0]); });
+  step(QStringLiteral("the tab streams the simulator's screen"), [](World& world, const Captures&, const Table&) {
+    waitForScreen(world, QStringLiteral("iPhone 17"));
+  });
+  step(QStringLiteral("the screen came through the node's device proxy"), [](World& world, const Captures&, const Table&) {
+    const QString id = deviceNamed(fakeHub(world), QStringLiteral("iPhone 17")).value(QLatin1String("id")).toString();
+    const QString wanted = QStringLiteral("/api/device-hub/nodes/%1/vendor/serve-sim/helper/%2/stream.avcc Bearer node-token").arg(world.node.name, id);
+    expect(fakeHub(world).requests.contains(wanted), describe(world));
+  });
+  step(QStringLiteral("the tab says it is connecting to the device"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(deviceStream(world).status() == QLatin1String("connecting") && view(world).value(QStringLiteral("screen")).isValid(), describe(world));
+  });
+  step(QStringLiteral("no picture comes in time"), [](World& world, const Captures&, const Table&) {
+    DeviceStream& stream = deviceStream(world);
+    stream.setTimeouts(1, kRetryMs);
+    world.waitFor([&] { return stream.status() == QLatin1String("error"); }, [&] { return describe(world); });
+    stream.setTimeouts(kFirstFrameMs, kRetryMs);
+  });
+  step(QStringLiteral("the user reconnects"), [](World& world, const Captures&, const Table&) { deviceStream(world).reconnect(); });
+  step(QStringLiteral("the device's stream ends"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.requests.append(QStringLiteral("-- ended --"));
+    for (const QPointer<QTcpSocket>& video : std::as_const(hub.videos)) {
+      if (video) video->disconnectFromHost();
+    }
+  });
+  step(QStringLiteral("the tab connects to the device again"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      const QStringList requests = fakeHub(world).requests;
+      const qsizetype ended = requests.indexOf(QStringLiteral("-- ended --"));
+      for (qsizetype n = ended + 1; n < requests.size(); ++n) {
+        if (requests[n].contains(QLatin1String("/stream.avcc"))) return true;
+      }
+      return false;
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the emulator's video restarts"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.text.clear();
+    for (const QPointer<QWebSocket>& socket : std::as_const(hub.inputs)) {
+      if (socket) socket->sendTextMessage(QStringLiteral("{\"type\":\"video-session\"}"));
+    }
+  });
+  step(QStringLiteral("the device is asked for a fresh keyframe"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      const QList<QJsonObject> received = fakeHub(world).text;
+      return std::any_of(received.cbegin(), received.cend(),
+                         [](const QJsonObject& message) { return message.value(QLatin1String("type")) == QLatin1String("reset-video"); });
+    }, [&] { return describeInput(world); });
+  });
+  step(QStringLiteral("no device stream is open"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return streamClosed(world); }, [&] { return describe(world); });
+    const qsizetype asked = videoRequests(world);
+    world.sync();
+    expect(videoRequests(world) == asked, describe(world));
+  });
+
+  // Driving.
+  step(QStringLiteral("the user taps the middle of the screen"), [](World& world, const Captures&, const Table&) { tap(world, 0.5, 0.5); });
+  step(QStringLiteral("the user taps the left middle of the screen"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).binary.clear();
+    tap(world, 0.25, 0.5);
+  });
+  step(QStringLiteral("the user types %1 on the device").arg(q), [](World& world, const Captures& c, const Table&) {
+    press(world, Qt::Key_A + (c[0].at(0).toUpper().unicode() - 'A'), c[0]);
+  });
+  step(QStringLiteral("the user presses the device's (Home|Recents) button"), [](World& world, const Captures& c, const Table&) {
+    deviceStream(world).pressButton(c[0].toLower());
+  });
+  step(QStringLiteral("the user presses Escape on the device"), [](World& world, const Captures&, const Table&) {
+    press(world, Qt::Key_Escape, QStringLiteral("\x1b"));
+  });
+  step(QStringLiteral("the device receives a touch that begins and ends at the middle"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      const QList<QJsonObject> touches = iosInput(world, 0x03);
+      return touches.size() == 2 && touches[0].value(QLatin1String("type")) == QLatin1String("begin") &&
+             touches[1].value(QLatin1String("type")) == QLatin1String("end") && near(touches[1].value(QLatin1String("x")).toDouble(), 0.5) &&
+             near(touches[1].value(QLatin1String("y")).toDouble(), 0.5);
+    }, [&] { return describeInput(world); });
+  });
+  step(QStringLiteral("the device receives the key %1 going down and up").arg(q), [](World& world, const Captures& c, const Table&) {
+    const int usage = 0x04 + (c[0].at(0).toLower().unicode() - 'a');
+    world.waitFor([&] {
+      const QList<QJsonObject> keys = iosInput(world, 0x06);
+      return keys.size() == 2 && keys[0] == QJsonObject{{QStringLiteral("type"), QStringLiteral("down")}, {QStringLiteral("usage"), usage}} &&
+             keys[1] == QJsonObject{{QStringLiteral("type"), QStringLiteral("up")}, {QStringLiteral("usage"), usage}};
+    }, [&] { return describeInput(world); });
+  });
+  step(QStringLiteral("the device receives the %1 button").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return iosInput(world, 0x04) == QList<QJsonObject>{{{QStringLiteral("button"), c[0]}}}; },
+                  [&] { return describeInput(world); });
+  });
+  step(QStringLiteral("the emulator receives a touch down and up at the middle"), [](World& world, const Captures&, const Table&) {
+    const auto touch = [](const QString& action) {
+      return QJsonObject{{QStringLiteral("type"), QStringLiteral("touch")}, {QStringLiteral("action"), action}, {QStringLiteral("x"), 0.5}, {QStringLiteral("y"), 0.5}};
+    };
+    world.waitFor([&] {
+      const QList<QJsonObject> received = fakeHub(world).text;
+      return received.contains(touch(QStringLiteral("down"))) && received.indexOf(touch(QStringLiteral("up"))) > received.indexOf(touch(QStringLiteral("down")));
+    }, [&] { return describeInput(world); });
+  });
+  step(QStringLiteral("the emulator receives the text %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      return fakeHub(world).text.contains(QJsonObject{{QStringLiteral("type"), QStringLiteral("text")}, {QStringLiteral("text"), c[0]}});
+    }, [&] { return describeInput(world); });
+  });
+  step(QStringLiteral("the emulator receives the %1 button").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return fakeHub(world).text.contains(QJsonObject{{QStringLiteral("type"), c[0]}}); },
+                  [&] { return describeInput(world); });
+  });
+  step(QStringLiteral("the user rotates the device"), [](World& world, const Captures&, const Table&) { deviceStream(world).rotate(); });
+  step(QStringLiteral("the device is asked to turn to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return iosInput(world, 0x07) == QList<QJsonObject>{{{QStringLiteral("orientation"), c[0]}}}; },
+                  [&] { return describeInput(world); });
+  });
+  step(QStringLiteral("the device reports it is held %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // serve-sim's framebuffer stays portrait as the device turns.
+    const QByteArray config = QByteArray(1, char(0x82)) +
+                              QJsonDocument(QJsonObject{{QStringLiteral("width"), 1179}, {QStringLiteral("height"), 2556}, {QStringLiteral("orientation"), c[0]}})
+                                  .toJson(QJsonDocument::Compact);
+    for (const QPointer<QWebSocket>& socket : std::as_const(fakeHub(world).inputs)) {
+      if (socket) socket->sendBinaryMessage(config);
+    }
+  });
+  step(QStringLiteral("the screen is shown sideways and wider than tall"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return deviceStream(world).rotation() == 90 && deviceStream(world).aspect() > 1; }, [&] {
+      return QStringLiteral("the stream is %1, rotated %2 at %3").arg(deviceStream(world).orientation()).arg(deviceStream(world).rotation()).arg(deviceStream(world).aspect());
+    });
+  });
+  step(QStringLiteral("the device receives the touch where it lands on its own portrait screen"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      const QList<QJsonObject> touches = iosInput(world, 0x03);
+      return touches.size() == 2 && near(touches[0].value(QLatin1String("x")).toDouble(), 0.5) && near(touches[0].value(QLatin1String("y")).toDouble(), 0.75);
+    }, [&] { return describeInput(world); });
+  });
+
+  // Closing.
+  step(QStringLiteral("the thread still has %1 open").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    expect(hub.closes.isEmpty() && sessionOf(hub, deviceNamed(hub, c[0]).value(QLatin1String("id")).toString()) >= 0, describe(world));
+  });
+  step(QStringLiteral("the user powers the device off"), [](World& world, const Captures&, const Table&) { devices(world).powerOff(); });
+  step(QStringLiteral("the node is asked to close %1 and shut it down").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = deviceNamed(fakeHub(world), c[0]).value(QLatin1String("id")).toString();
+    world.waitFor([&] {
+      const QList<QJsonObject> closes = fakeHub(world).closes;
+      return closes.size() == 1 && closes[0].value(QLatin1String("deviceId")) == id && closes[0].value(QLatin1String("threadId")) == kThread &&
+             closes[0].value(QLatin1String("shutdown")).toBool();
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the right panel has no %1 tab").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    world.waitFor([&] { return !tabTitles(world).contains(c[0]); }, [&] { return describe(world); });
+  });
+
+  // An agent's devices.
+  step(QStringLiteral("an agent (?:opens|opened) %1 in the thread").arg(q), [](World& world, const Captures& c, const Table&) {
+    openSession(world.node, deviceNamed(fakeHub(world), c[0]));
+    announce(world.node);
+    world.sync();
+    world.waitFor([&] { return activeTab(world) == tabOf(world, c[0]); }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the agent closes %1 and opens it again").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    const QJsonObject device = deviceNamed(hub, c[0]);
+    hub.sessions.removeAt(sessionOf(hub, device.value(QLatin1String("id")).toString()));
+    announce(world.node);
+    world.sync();
+    openSession(world.node, device);
+    announce(world.node);
+    world.sync();
+  });
+  step(QStringLiteral("the right panel shows the %1 tab").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return activeTab(world) == tabOf(world, c[0]) && tabTitles(world).contains(c[0]) && panel(world).isOpen(); },
+                  [&] { return describe(world); });
+  });
+});
+
+}  // namespace

@@ -246,6 +246,18 @@ void FakeNode::route(QTcpSocket* socket) {
   auto routed = std::make_shared<QMetaObject::Connection>();
   const auto read = [this, socket, request, routed] {
     if (request->isEmpty() && socket->bytesAvailable() < 5) return;
+    if (request->isEmpty() && !m_rawHandlers.isEmpty()) {
+      const QByteArray peeked = socket->peek(socket->bytesAvailable());
+      const qsizetype end = peeked.indexOf("\r\n\r\n");
+      if (end < 0) return;
+      const QString path = QString::fromUtf8(peeked.left(peeked.indexOf('\r')).split(' ').value(1));
+      for (auto handler = m_rawHandlers.cbegin(); handler != m_rawHandlers.cend(); ++handler) {
+        if (!path.startsWith(handler.key())) continue;
+        QObject::disconnect(*routed);
+        handler.value()(socket, peeked.left(end + 4));
+        return;
+      }
+    }
     if (request->isEmpty() && !socket->peek(5).startsWith("POST ")) {
       QObject::disconnect(*routed);
       m_server.handleConnection(socket);
