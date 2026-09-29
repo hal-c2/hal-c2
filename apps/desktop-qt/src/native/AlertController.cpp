@@ -2,6 +2,7 @@
 
 #include <QGuiApplication>
 
+#include "KeybindingController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
@@ -33,8 +34,48 @@ void AlertController::activate() {
   if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
     connect(settings, &SettingsController::deviceChanged, this, &AlertController::readSettings, Qt::UniqueConnection);
   }
+  auto* shell = NativeShell::of(this);
+  if (auto* keys = shell->controller<KeybindingController>()) {
+    keys->commands()->add(kToggleMute, tr("Mute alerts for this thread"), [this] {
+      const auto* navigation = NativeShell::of(this)->controller<NavigationController>();
+      const QString key = navigation ? navigation->threadKey() : QString();
+      if (!key.isEmpty()) setMuted(key, !isMuted(key));
+    });
+    keys->commands()->setTerms(kToggleMute, {QStringLiteral("mute"), QStringLiteral("unmute"),
+                                             QStringLiteral("notifications"), QStringLiteral("alerts")});
+  }
+  if (auto* navigation = shell->controller<NavigationController>()) {
+    connect(navigation, &NavigationController::changed, this, &AlertController::present, Qt::UniqueConnection);
+  }
   readSettings();
   evaluate();
+}
+
+void AlertController::present() {
+  auto* shell = NativeShell::of(this);
+  auto* keys = shell->controller<KeybindingController>();
+  auto* navigation = shell->controller<NavigationController>();
+  if (!keys || !navigation) return;
+  const QString key = navigation->threadKey();
+  keys->commands()->setTitle(kToggleMute, isMuted(key) ? tr("Unmute alerts for this thread")
+                                                       : tr("Mute alerts for this thread"));
+  keys->commands()->setListed(kToggleMute, !key.isEmpty());
+}
+
+void AlertController::setMuted(const QString& key, bool muted) {
+  if (key.isEmpty() || isMuted(key) == muted) return;
+  auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  if (muted) {
+    m_muted.insert(key);
+  } else {
+    m_muted.remove(key);
+  }
+  if (settings) {
+    QStringList keys(m_muted.cbegin(), m_muted.cend());
+    keys.sort();
+    settings->writeDevice(kMutedKey, keys);
+  }
+  present();
 }
 
 void AlertController::setPresenter(Presenter presenter) {
@@ -62,6 +103,12 @@ void AlertController::readSettings() {
   if (!settings) return;
   const QString mode = settings->setting(QStringLiteral("notificationMode")).toString();
   m_inApp = settings->setting(QStringLiteral("inAppNotificationsEnabled")).toBool();
+  const QStringList muted = settings->deviceSettings().value(kMutedKey).toVariant().toStringList();
+  QSet<QString> next(muted.cbegin(), muted.cend());
+  if (next != m_muted) {
+    m_muted = std::move(next);
+    present();
+  }
   if (mode == m_mode) return;
   m_mode = mode;
   if (m_presenter.clear) m_presenter.clear();
@@ -102,7 +149,7 @@ void AlertController::evaluate() {
       seen.completion = prior->completion;
     }
     next.insert(key, seen);
-    if (prior == m_seen.constEnd() || thread.archivedAt) continue;
+    if (prior == m_seen.constEnd() || thread.archivedAt || m_muted.contains(key)) continue;
 
     QString kind;
     if (!seen.attention.isEmpty() && seen.attention != prior->attention) {

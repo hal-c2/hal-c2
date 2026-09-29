@@ -164,9 +164,9 @@ Feature: Keybindings
         | navigation.forward    | mod+]       | aligned | forwarded as a keybinding press           |
         | thread.previous       | mod+shift+[ | aligned | the shell opens the sidebar's previous    |
         | thread.next           | mod+shift+] | aligned | the shell opens the sidebar's next        |
-        | filePicker.toggle     | mod+p       | aligned | forwarded as a keybinding press           |
-        | projectSearch.toggle  | mod+shift+f | aligned | forwarded as a keybinding press           |
-        | theme.select          | mod+alt+a   | aligned | forwarded as a keybinding press           |
+        | filePicker.toggle     | mod+p       | aligned | the shell opens the palette on files      |
+        | projectSearch.toggle  | mod+shift+f | aligned | the shell opens the palette's text search |
+        | theme.select          | mod+alt+a   | aligned | the shell opens the palette on themes     |
         | modelPicker.toggle    | mod+shift+m | aligned | the shell toggles the composer's picker   |
         | editor.openFavorite   | mod+o       | aligned | forwarded as a keybinding press           |
         | thread.copyReference  | mod+shift+c | aligned | forwarded as a keybinding press           |
@@ -201,7 +201,7 @@ Feature: Keybindings
     @desktop
     Scenario: Window shortcuts stand down while the page has focus
       Given the page has keyboard focus
-      When the user presses mod+p
+      When the user presses mod+o
       Then the page handles the key itself
       And the desktop shell does not forward it a second time
 

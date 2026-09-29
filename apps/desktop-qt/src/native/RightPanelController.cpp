@@ -87,6 +87,7 @@ RightPanelController::RightPanelController(ShellBridge* bridge, NodeClient* clie
           [bridge](const QString& url) { bridge->openExternal(QUrl(url)); }, this) {
   // The add menu offers Pull requests only while the thread has some.
   connect(&m_pullRequests, &ThreadPullRequests::countChanged, this, &RightPanelController::publish);
+  connect(&m_pullRequests, &ThreadPullRequests::countChanged, this, &RightPanelController::presentCommands);
   // The review follows its thread's environment going offline and back.
   connect(&m_pullRequests, &ThreadPullRequests::stateChanged, this, [this] { m_review.setOnline(m_pullRequests.online()); });
   connect(store, &ShellStore::changed, this, [this] {
@@ -122,6 +123,12 @@ void RightPanelController::activate() {
     });
     keys->commands()->add(QStringLiteral("thread.linkPullRequest"), QStringLiteral("Link pull request to thread"),
                           [this] { linkPullRequest(); });
+    keys->commands()->setTerms(QStringLiteral("thread.showPullRequests"),
+                               {QStringLiteral("pull requests"), QStringLiteral("linked"), QStringLiteral("stack"),
+                                QStringLiteral("prs")});
+    keys->commands()->setTerms(QStringLiteral("thread.linkPullRequest"),
+                               {QStringLiteral("link"), QStringLiteral("pull request"), QStringLiteral("pr"),
+                                QStringLiteral("attach"), QStringLiteral("stack")});
   }
   retarget();
 }
@@ -186,7 +193,25 @@ void RightPanelController::retarget() {
     m_pullRequests.setThread(threadKey);
     m_previews.setThread(environmentId, threadId, m_store->nodeServing(environmentId));
   }
+  presentCommands();
   update();
+}
+
+// The palette offers linking where the thread's environment links pull
+// requests to threads, and showing them where it keeps a thread's list, as
+// long as there is one to show.
+void RightPanelController::presentCommands() {
+  auto* keys = NativeShell::of(this)->controller<KeybindingController>();
+  if (!m_active || !keys) return;
+  const QString threadKey = NativeShell::of(this)->controller<NavigationController>()->threadKey();
+  const QString environmentId = threadKey.left(threadKey.indexOf(QLatin1Char(':')));
+  const bool many = !threadKey.isEmpty() && m_store->supports(environmentId, QStringLiteral("threadPullRequests"));
+  const bool one = !threadKey.isEmpty() && m_store->supports(environmentId, QStringLiteral("threadPullRequestLinking"));
+  CommandRegistry* commands = keys->commands();
+  commands->setListed(QStringLiteral("thread.linkPullRequest"), many || one);
+  commands->setEnabled(QStringLiteral("thread.linkPullRequest"), many || one);
+  commands->setListed(QStringLiteral("thread.showPullRequests"), many);
+  commands->setEnabled(QStringLiteral("thread.showPullRequests"), many && m_pullRequests.count() > 0);
 }
 
 QString RightPanelController::kindOf(const QString& id) {

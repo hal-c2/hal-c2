@@ -76,8 +76,8 @@ void PullRequestListController::activate() {
   }
   auto* navigation = shell->controller<NavigationController>();
   if (auto* keys = shell->controller<KeybindingController>()) {
-    keys->commands()->add(QStringLiteral("pullRequests.open"), keybindings::commandLabel(QStringLiteral("pullRequests.open")),
-                          [navigation] { navigation->open(NavigationController::Route::of(QStringLiteral("pullRequests"))); });
+    // "Open pull requests" is NavigationController's, listed while an
+    // environment can serve pull requests.
     keys->commands()->add(QStringLiteral("pullRequests.refresh"), keybindings::commandLabel(QStringLiteral("pullRequests.refresh")),
                           [this, navigation] {
                             if (navigation->route().kind != QLatin1String("pullRequests")) {

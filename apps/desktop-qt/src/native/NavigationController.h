@@ -69,6 +69,7 @@ public:
   // Its commands in Keybindings.commands.
   static inline const QString kOpenSettings = QStringLiteral("settings.open");
   static inline const QString kOpenUsage = QStringLiteral("usage.open");
+  static inline const QString kOpenPullRequests = QStringLiteral("pullRequests.open");
 
   NavigationController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 

@@ -5,7 +5,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Notifications.qml (in-app alert cards, dismiss, actions)
 #   apps/desktop-qt/tests/tst_Notifications.qml
 #   apps/desktop-qt/tests/tst_Scenarios.qml (notification scenarios)
-#   apps/desktop-qt/src/native/AlertController.cpp (which thread changes alert, and how)
+#   apps/desktop-qt/src/native/AlertController.cpp (which thread changes alert, and how; muted threads)
 #   apps/desktop-qt/src/NativeNotifications.cpp (the desktop's notification service)
 #   apps/desktop-qt/tests/native/tst_NativeNotifications.cpp (clicks keep their thread, one alert per thread, disabling closes alerts)
 #   apps/desktop-qt/tests/native/features/AlertSteps.cpp
@@ -13,8 +13,9 @@
 #
 # The desktop raises its alerts itself (AlertController); the page's coordinator stays off in
 # the shell. The TUI has no alerts. Mobile push lives in docs/user/mobile-notifications.md and is
-# out of scope. Muting alerts for a single thread exists in no client yet; the phone's version is
-# in mobile/notifications.feature.
+# out of scope. The desktop mutes the shown thread's alerts from the palette ("Mute alerts
+# for this thread"), on that device only; the phone's version is in
+# mobile/notifications.feature.
 
 Feature: Alerts when a thread needs the user
   The user runs agents in the background. HAL-C2 tells them when a thread finishes
@@ -145,7 +146,7 @@ Feature: Alerts when a thread needs the user
     Then "Copied" is dismissed
     And no notifications are shown
 
-  @desktop @tui @backlog
+  @desktop @tui @backlog-tui
   Scenario: The user mutes alerts for one thread
     Given the thread "Tax fix" is working in the background
     When the user mutes alerts for "Tax fix"
@@ -153,7 +154,7 @@ Feature: Alerts when a thread needs the user
     Then no alert is raised for "Tax fix"
     And alerts for other threads in "shop" still arrive
 
-  @desktop @tui @backlog
+  @desktop @tui @backlog-tui
   Scenario: The user unmutes a thread
     Given alerts for "Tax fix" are muted
     When the user unmutes "Tax fix"

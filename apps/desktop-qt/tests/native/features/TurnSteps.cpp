@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QVariantMap>
 
+#include "CommandPaletteController.h"
 #include "ComposerController.h"
 #include "Harness.h"
 #include "Keymap.h"
@@ -299,6 +300,12 @@ const Steps steps([] {
       for (const QVariant& item : toasts(world)) {
         const QString title = item.toMap().value(QStringLiteral("title")).toString();
         if (title == c[0] || title + QStringLiteral(" — ") + item.toMap().value(QStringLiteral("description")).toString() == c[0]) return true;
+      }
+      // Or what an open command palette says of its search.
+      if (auto* palette = world.native().controller<CommandPaletteController>(); palette && palette->isOpen() &&
+                                                                               !palette->searching() &&
+                                                                               (palette->emptyText() == c[0] || palette->status() == c[0])) {
+        return true;
       }
       return conditionProblem(world) == c[0];
     };

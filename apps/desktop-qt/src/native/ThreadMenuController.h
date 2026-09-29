@@ -23,14 +23,20 @@ class ToastController;
 // ones that hide a thread (archive, unpin, settle, snooze) offer Undo.
 //
 // The route thread's keybinding commands (thread.pin, thread.settle,
-// thread.copyReference, thread.undo) run here too (KeybindingController).
+// thread.undo) run here too (KeybindingController), and it registers two of
+// its own the palette offers for the route thread: thread.copyReference
+// ("Copy PR link" or "Copy thread ID", with what it copies) and
+// projectSettings.open ("Project settings", with the project's name).
 class ThreadMenuController : public QObject, public NativeController {
   Q_OBJECT
 
 public:
   ThreadMenuController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 
-  void activate() override {}
+  static inline const QString kCopyReference = QStringLiteral("thread.copyReference");
+  static inline const QString kProjectSettingsCommand = QStringLiteral("projectSettings.open");
+
+  void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
 
   // Opens the menu of the thread `key` at window coordinates; false when the
@@ -63,6 +69,11 @@ private:
   void newThreadOnBranch(const QString& key);
   QString workspacePath(const QString& key) const;
   ToastController* toasts() const;
+  // The thread's PR link, else empty (its id is the reference).
+  QString pullRequestUrl(const QString& key) const;
+  void openProjectSettings(const QString& key);
+  // What the palette shows of the route thread's commands.
+  void present();
 
   ShellBridge* m_bridge;
   NodeClient* m_client;

@@ -222,6 +222,18 @@ void press(World& world, const QString& key) {
     world.sync();
     return;
   }
+  // Its field takes Escape (a step back) and Backspace on an empty query (out
+  // of a submenu) too.
+  if (palette && palette->isOpen() && key == QLatin1String("Escape")) {
+    palette->back();
+    world.sync();
+    return;
+  }
+  if (palette && palette->isOpen() && key == QLatin1String("Backspace") && palette->query().isEmpty()) {
+    palette->leaveSubmenu();
+    world.sync();
+    return;
+  }
   const auto shortcut = keybindings::parseShortcut(key.toLower());
   if (!shortcut) fail(QStringLiteral("%1 is not a key").arg(key));
   pressSequence(world, keybindings::sequence(*shortcut, keys(world).mac));

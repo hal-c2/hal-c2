@@ -5,6 +5,7 @@ import QtQuick
 // bricks asked for.
 QtObject {
     property string mode: "system"
+    property bool editorOpen: false
     property string themeId: ""
     property var halves: ({})
     property string resolvedId: "hal-c2"

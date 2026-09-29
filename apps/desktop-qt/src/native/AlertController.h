@@ -2,6 +2,7 @@
 
 #include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QString>
 
 #include <functional>
@@ -27,6 +28,11 @@ class ShellStore;
 // replaces it), which the window's focus clears. Sound follows the mode alone.
 // The platform side is the Presenter, which the app wires to
 // NativeNotifications and tests fake.
+//
+// A thread's alerts can be muted on this device (`mutedAlertThreads`, thread
+// keys): it is still followed, so unmuting alerts only what changes after.
+// The palette's kToggleMute flips it for the thread shown, titled "Mute
+// alerts for this thread" or "Unmute alerts for this thread".
 class AlertController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -57,6 +63,13 @@ public:
   // system notifications are off or the thread is gone.
   bool openThread(const QString& key);
 
+  static inline const QString kToggleMute = QStringLiteral("thread.toggleAlerts");
+  static inline const QString kMutedKey = QStringLiteral("mutedAlertThreads");
+
+  bool isMuted(const QString& key) const { return m_muted.contains(key); }
+  // Mutes or unmutes thread `key`'s alerts on this device.
+  void setMuted(const QString& key, bool muted);
+
   static bool hasSystemNotifications(const QString& mode) {
     return mode == QLatin1String("notifications") || mode == QLatin1String("notifications-and-sound");
   }
@@ -67,6 +80,8 @@ public:
 private:
   void readSettings();
   void evaluate();
+  // Keeps kToggleMute's title to the route thread.
+  void present();
 
   struct Seen {
     // "runId:status" while the thread waits on the user or stopped.
@@ -81,4 +96,5 @@ private:
   bool m_inApp = false;
   bool m_focused = true;
   QHash<QString, Seen> m_seen;
+  QSet<QString> m_muted;
 };
