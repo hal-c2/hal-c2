@@ -32,6 +32,12 @@ class ShellBridge;
 //   Settings.value("textGenerationModelSelection.provider")   // node document
 //   Settings.write("enableAssistantStreaming", true)            // null removes
 //   Settings.device.appearance, Settings.writeDevice("appearance", "dark")
+//
+// The rows of the settings pages go through `setting` / `set` / `reset`,
+// which know which store a key is in and its default (the web's
+// DEFAULT_CLIENT_SETTINGS and DEFAULT_SERVER_SETTINGS). Failures are toasted.
+// The page, while it still renders the centre, follows this device's rows
+// (`clientSettings.follow {settings}`) instead of its own storage.
 class SettingsController : public QObject, public NativeController {
   Q_OBJECT
   // The node's document has been read since the shell connected.
@@ -59,6 +65,8 @@ public:
   // Subscribes to the node's config and reads its settings.
   void activate() override;
   bool handle(const QString&, const QVariant&) override { return false; }
+  // A (re)loaded page gets this device's rows.
+  void pageReady();
 
   bool ready() const { return m_ready; }
   QJsonObject settings() const { return m_settings; }
@@ -87,6 +95,17 @@ public:
   Q_INVOKABLE bool writeDevice(const QString& key, const QVariant& value);
   QString deviceError() const { return m_deviceError; }
 
+  // A row's value (its default when unset), whether it is at its default, and
+  // changing or resetting it in the store it belongs to. Unknown keys are
+  // undefined and ignored.
+  Q_INVOKABLE QVariant setting(const QString& key) const;
+  Q_INVOKABLE QVariant defaultOf(const QString& key) const;
+  Q_INVOKABLE bool isDefault(const QString& key) const;
+  // Whether a row is kept on this device rather than by the node.
+  Q_INVOKABLE bool onDevice(const QString& key) const;
+  Q_INVOKABLE void set(const QString& key, const QVariant& value);
+  Q_INVOKABLE void reset(const QString& key);
+
   // What `config.themes` delivers; tests set it.
   void setThemes(const QJsonArray& themes);
 
@@ -101,6 +120,8 @@ private:
   void attempt(Edit edit, Done done, int retries);
   void onConfig(const QJsonObject& frame);
   void fail(const QString& error);
+  void toast(const QString& title, const QString& reason);
+  void follow(bool force = false);
   QVariantMap documentVariant() const { return m_settings.toVariantMap(); }
   QVariantMap configVariant() const { return m_config.toVariantMap(); }
   QVariantList themesVariant() const { return m_themes.toVariantList(); }
@@ -120,4 +141,7 @@ private:
   QString m_devicePath;
   QJsonObject m_device;
   QString m_deviceError;
+  ShellBridge* m_bridge;
+  // What the page was last told of this device's rows.
+  QJsonObject m_followed;
 };

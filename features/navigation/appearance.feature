@@ -16,7 +16,7 @@ Feature: Appearance
 
   Rule: Light, dark and system
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Choosing an appearance mode
       When the user chooses the <mode> appearance
       Then the app is drawn <result>
@@ -33,7 +33,7 @@ Feature: Appearance
       When the operating system switches to dark
       Then the app is drawn dark
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The appearance shortcut cycles through the modes
       Given the appearance is <from>
       When the user presses the appearance shortcut
@@ -60,7 +60,7 @@ Feature: Appearance
 
   Rule: Themes
 
-    @backlog @desktop
+    @desktop
     Scenario: Choosing a theme
       When the user chooses the "Nord" theme in Settings → Appearance
       Then the app uses "Nord"
@@ -71,7 +71,7 @@ Feature: Appearance
       Then the theme picker opens over the thread
       And the current theme is marked "Current"
 
-    @backlog @desktop
+    @desktop
     Scenario: Different themes for light and dark
       When the user picks "Solarized" for light and "Nord" for dark
       And the appearance is Light
@@ -79,14 +79,14 @@ Feature: Appearance
       When the appearance becomes Dark
       Then the app uses "Nord"
 
-    @backlog @desktop
+    @desktop
     Scenario: A theme with only one appearance fills only that half
       Given "Midnight" only has a dark palette
       When the user chooses "Midnight"
       Then "Midnight" is the dark theme
       And the light theme is unchanged
 
-    @backlog @desktop
+    @desktop
     Scenario: A theme choice that cannot be saved is reported
       Given the theme choice cannot be saved
       When the user chooses a theme
@@ -138,7 +138,7 @@ Feature: Appearance
       When the user sends the first message in a new thread
       Then branch and worktree controls are hidden
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: An appearance setting can be put back to its default
       Given the user changed <setting>
       When the user resets <setting>
@@ -195,7 +195,7 @@ Feature: Appearance
         | code      | JetBrains Mono | 13   | code blocks and diffs                     |
         | terminal  | JetBrains Mono | 12   | the terminal                              |
 
-    @backlog @desktop
+    @desktop
     Scenario: A font preference can be reset to the system font
       Given the user set the interface font to "Inter"
       When the user resets the interface font

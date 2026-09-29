@@ -169,12 +169,12 @@ ShellWindow {
                     Layout.preferredHeight: 1
                     color: root.hairline
                 }
-                ClusterSettings {
+                SettingsHost {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    visible: root.clusterOpen
+                    section: root.settingsSection
+                    visible: root.nativeSettingsOpen
                 }
-                ConnectionsSettings { Layout.fillWidth: true; Layout.fillHeight: true; visible: root.connectionsOpen }
 
                 WebSurface {
                     visible: !root.nativeSettingsOpen

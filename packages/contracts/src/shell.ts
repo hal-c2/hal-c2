@@ -703,6 +703,24 @@ export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("project.remove"), projectKey: Schema.String }),
   Schema.Struct({ type: Schema.Literal("project.folder.open"), path: Schema.String }),
   Schema.Struct({ type: Schema.Literal("settings.open") }),
+  /** Page → shell: the shell owns the theme; the page's shortcut and pickers ask it. */
+  Schema.Struct({ type: Schema.Literal("appearance.cycle") }),
+  Schema.Struct({
+    type: Schema.Literal("theme.mode"),
+    mode: Schema.Literals(["system", "light", "dark"]),
+  }),
+  /** An empty id is the standard look. */
+  Schema.Struct({ type: Schema.Literal("theme.choose"), id: Schema.String }),
+  Schema.Struct({
+    type: Schema.Literal("theme.chooseHalf"),
+    appearance: Schema.Literals(["light", "dark"]),
+    id: Schema.String,
+  }),
+  /** Shell → page: this device's client settings, which the page follows. */
+  Schema.Struct({
+    type: Schema.Literal("clientSettings.follow"),
+    settings: Schema.Record(Schema.String, Schema.Unknown),
+  }),
   Schema.Struct({ type: Schema.Literal("pullRequests.open") }),
   Schema.Struct({ type: Schema.Literal("usage.open") }),
   /** Shell → page: show this route (the shell owns where the window is). */

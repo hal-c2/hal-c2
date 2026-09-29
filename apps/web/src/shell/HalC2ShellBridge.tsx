@@ -7,8 +7,11 @@ import {
   scopedThreadKey,
 } from "@hal-c2/client-runtime/environment";
 import { EnvironmentId, ProjectId, ThreadId } from "@hal-c2/contracts";
+import { ClientSettingsPatch } from "@hal-c2/contracts/settings";
 import type { ShellRoute, ShellRouteDraftThread } from "@hal-c2/contracts/shell";
 import { useParams, useRouter } from "@tanstack/react-router";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { partitionSidebarThreads, resolveAdjacentThreadId } from "../components/Sidebar.logic";
@@ -17,6 +20,7 @@ import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { isHalC2ShellEmbed } from "../env";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { persistClientSettingsPatch } from "../hooks/useSettings";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
 import {
@@ -36,6 +40,8 @@ import { useShellActions } from "./useShellActions";
 import { useShellPublish } from "./useShellPublish";
 import { useShellDesktopNotifications } from "./useShellDesktopNotifications";
 import { useShellThreadRowActions } from "./useShellThreadRowActions";
+
+const decodeClientSettingsPatch = Schema.decodeUnknownOption(ClientSettingsPatch);
 
 /**
  * Turns the native shell's (window.halC2Shell) actions into navigation.
@@ -304,6 +310,12 @@ export function HalC2ShellBridge() {
       case "route.follow":
         followRoute(action);
         return;
+      case "clientSettings.follow": {
+        // The shell keeps this device's client settings; the page follows them.
+        const patch = decodeClientSettingsPatch(action.settings);
+        if (Option.isSome(patch)) void persistClientSettingsPatch(patch.value);
+        return;
+      }
       case "thread.open": {
         const threadRef = parseScopedThreadKey(action.key);
         if (threadRef === null) return;

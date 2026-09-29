@@ -2,3 +2,5 @@ module HalC2.Shell
 singleton Shell 1.0 Shell.qml
 singleton Theme 1.0 Theme.qml
 singleton Terminals 1.0 Terminals.qml
+singleton Settings 1.0 Settings.qml
+singleton Themes 1.0 Themes.qml

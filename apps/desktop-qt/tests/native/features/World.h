@@ -40,6 +40,9 @@ public:
   std::optional<qsizetype> command;  // the command the last "receives" step found
   QSet<qsizetype> checkedCommands;
   int nextEdit = 1;
+  bool checking = false;  // the running step is an outcome (Step::outcome)
+  QVariantMap themeDraft;  // what the theme editor holds (ThemeController::draft)
+  QString settingRow;  // the settings row the scenario is about
 
   ShellBridge& bridge() { return *m_bridge; }
   NativeShell& native() { return *m_native; }

@@ -2,51 +2,46 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
+import "js/settingsPages.js" as Pages
 
-// Settings navigation: sections, search, and a way back. Pages the shell
-// renders itself (Cluster and Connections, from their controllers) sit beside the sections the
-// embedded page still renders until they move to QML; picking one of those
-// hands navigation to the page.
+// Settings navigation: sections, search, and a way back. The sections are
+// js/settingsPages.js: the shell's own pages (General, Appearance, Cluster,
+// Connections, ...) are listed once their state is there, the ones the
+// embedded page still renders while it lists them. Picking a native section
+// with an `action` dispatches it; any other navigates the route, which the
+// page follows.
 Rectangle {
     id: nav
 
     readonly property var model: Shell.state.settings ?? null
     readonly property bool active: model !== null && model.active
-    readonly property var cluster: Shell.state.cluster ?? null
-    readonly property var connections: Shell.state.connections ?? null
     // The section showing: the shell's route once it has one, else the page's.
     readonly property var route: Shell.state.route ?? null
-    readonly property string currentSection: route !== null && route.section ? route.section : model !== null && model.activeSection ? model.activeSection : ""
-    readonly property bool clusterOpen: currentSection === "/settings/cluster"
-    readonly property bool connectionsOpen: currentSection === "/settings/connections"
+    readonly property string currentSection: Pages.resolve(route !== null && route.kind === "settings" ? route.section : model !== null ? model.activeSection : "")
     readonly property string query: search.text.trim().toLowerCase()
-    // The shell's own pages, as rows shaped like the page's sections and
-    // search results; `action` is what picking one dispatches. Every row
-    // says whether it is a search result, so a row never reads the other
-    // shape while the query and the rows change together.
-    readonly property var nativeRows: (cluster === null ? [] : [{
-                label: qsTr("Cluster"),
-                title: qsTr("Cluster"),
-                sectionLabel: qsTr("Machines, invites and joining"),
-                keywords: "cluster machines invite join remove tailscale",
-                action: "cluster.open",
-                current: clusterOpen
-            }]).concat(connections === null ? [] : [{
-                label: qsTr("Connections"),
-                title: qsTr("Connections"),
-                sectionLabel: qsTr("Environments, pairing links and clients"),
-                keywords: "connections environments pairing link code clients revoke access remote",
-                action: "connections.open",
-                current: connectionsOpen
-            }])
+    // Every row says whether it is a search result, so a row never reads the
+    // other shape while the query and the rows change together.
     readonly property var rows: {
-        const searching = query.length > 0;
-        // The page's own Connections section gives way to the shell's.
-        const pageRows = (model === null ? [] : searching ? model.searchResults : model.sections).filter(row => !(connections !== null && row.to && row.to.startsWith("/settings/connections")));
-        const own = searching ? nativeRows.filter(row => row.keywords.includes(query) || row.title.toLowerCase().includes(query)) : nativeRows;
-        return pageRows.concat(own).map(row => Object.assign({
-                result: searching
-            }, row));
+        const state = Shell.state;
+        if (query.length === 0) {
+            return Pages.navRows(model === null ? [] : model.sections, state).map(section => ({
+                        result: false,
+                        to: section.to,
+                        label: section.label,
+                        action: section.action
+                    }));
+        }
+        const pageResults = Pages.pageResults(model === null ? [] : model.searchResults);
+        const own = Pages.searchRows(query, state).map(section => ({
+                    result: true,
+                    to: section.to,
+                    title: section.label,
+                    sectionLabel: section.detail ?? section.label,
+                    action: section.action
+                }));
+        return pageResults.map(row => Object.assign({
+                    result: true
+                }, row)).concat(own);
     }
     readonly property color foreground: Theme.palette.color("sidebarForeground", "#e4e4e7")
     readonly property color muted: Theme.palette.color("sidebarMutedForeground", "#8b8b93")
@@ -124,8 +119,7 @@ Rectangle {
                 objectName: "settingsRow" + index
 
                 readonly property bool isResult: modelData.result
-                readonly property bool isNative: modelData.action !== undefined
-                readonly property bool current: isNative ? !isResult && modelData.current : !isResult && nav.currentSection === modelData.to
+                readonly property bool current: !isResult && nav.currentSection === modelData.to
 
                 width: ListView.view.width
                 implicitHeight: isResult ? 48 : 36
@@ -134,7 +128,7 @@ Rectangle {
                 Keys.onEnterPressed: clicked()
                 Keys.onDownPressed: nav.focusRow(index + 1)
                 Keys.onUpPressed: nav.focusRow(index - 1)
-                onClicked: row.isNative ? Shell.dispatch(row.modelData.action) : row.isResult ? Shell.dispatch("settings.openResult", {
+                onClicked: row.modelData.action ? Shell.dispatch(row.modelData.action) : row.isResult && row.modelData.targetId !== undefined ? Shell.dispatch("settings.openResult", {
                     to: row.modelData.to,
                     targetId: row.modelData.targetId
                 }) : Shell.dispatch("settings.navigate", {

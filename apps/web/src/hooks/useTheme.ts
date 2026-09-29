@@ -518,12 +518,25 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+// Inside the Qt shell the shell owns the theme: the page's pickers and
+// shortcut ask it (the `theme.*` shell actions) instead of writing their own
+// storage, and the page paints what the shell publishes.
+function forwardToShell(action: string, payload?: unknown): boolean {
+  const shell = typeof window === "undefined" ? undefined : window.halC2Shell;
+  if (!shell) return false;
+  void shell.dispatch(action, payload);
+  return true;
+}
+
 export function useTheme() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const { theme, resolvedTheme } = snapshot;
 
   const setTheme = useCallback((next: Theme): boolean => {
     if (typeof window === "undefined") return false;
+    // A bare mode is the standard look, keeping the appearance.
+    const standard = next === "light" || next === "dark" || next === "system";
+    if (forwardToShell("theme.choose", { id: standard ? "" : next })) return true;
     try {
       // Preserve the current mode before replacing a legacy or inferred theme
       // preference. Otherwise a fresh System preference is re-inferred from
@@ -570,6 +583,7 @@ export function useTheme() {
 
   const setAppearanceMode = useCallback((nextAppearanceMode: ThemePreferenceMode): boolean => {
     if (typeof window === "undefined") return false;
+    if (forwardToShell("theme.mode", { mode: nextAppearanceMode })) return true;
     try {
       writeAppearanceModePreference(nextAppearanceMode);
     } catch (cause) {
@@ -609,6 +623,7 @@ export function useTheme() {
   const setThemeHalf = useCallback(
     (appearance: ThemeAppearance, themeId: string | null): boolean => {
       if (typeof window === "undefined") return false;
+      if (forwardToShell("theme.chooseHalf", { appearance, id: themeId ?? "" })) return true;
       try {
         const current = readStoredThemeHalvesRaw();
         const next: { light?: string; dark?: string } = { ...current };
@@ -641,6 +656,11 @@ export function useTheme() {
 
   const clearThemeHalves = useCallback((): boolean => {
     if (typeof window === "undefined") return false;
+    if (window.halC2Shell) {
+      forwardToShell("theme.chooseHalf", { appearance: "light", id: "" });
+      forwardToShell("theme.chooseHalf", { appearance: "dark", id: "" });
+      return true;
+    }
     try {
       window.localStorage.removeItem(THEME_HALVES_STORAGE_KEY);
     } catch (cause) {
