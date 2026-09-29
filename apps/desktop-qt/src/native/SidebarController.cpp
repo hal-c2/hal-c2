@@ -164,7 +164,7 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
     const sidebar::Nullable pinOrderKey = thread->pinnedAt ? thread->pinOrderKey : sidebar::Nullable();
     const bool pinned = thread->pinnedAt.has_value();
     park(key, with({{QStringLiteral("type"), QStringLiteral("thread.settle")}}),
-         QStringLiteral("Failed to settle thread"), [this, key, target, pinned, pinOrderKey] {
+         QStringLiteral("Failed to settle thread"), Leave::NextCard, [this, key, target, pinned, pinOrderKey] {
            toasts()->show(QStringLiteral("success"), QStringLiteral("Settled"), QString(),
                           ToastController::Action{QStringLiteral("Undo"), [this, key, target, pinned, pinOrderKey] {
                             const auto thread = m_store->thread(key);
@@ -225,7 +225,7 @@ void SidebarController::command(const QString& environmentId, QJsonObject comman
 
 // Settling or snoozing the open thread moves to the next card that stays in
 // the list (or a new thread in the same project), as the page's threadParking.
-void SidebarController::park(const QString& key, QJsonObject parkCommand, const QString& failureTitle,
+void SidebarController::park(const QString& key, QJsonObject parkCommand, const QString& failureTitle, Leave leave,
                              std::function<void()> onSuccess) {
   if (m_pending.contains(key)) return;
   const auto thread = m_store->thread(key);
@@ -234,11 +234,16 @@ void SidebarController::park(const QString& key, QJsonObject parkCommand, const 
 
   // Planned now, before the command reshuffles the list.
   std::function<void()> navigate;
-  if (activeThreadKey() == key) {
+  if (activeThreadKey() == key && leave == Leave::ProjectFallback) {
+    navigate = [this, fallback = sidebar::fallbackAfterDelete(m_store->threads(), key, m_threadSortOrder)] {
+      auto* navigation = NativeShell::of(this)->controller<NavigationController>();
+      navigation->replace(fallback ? NavigationController::Route::thread(*fallback) : NavigationController::Route());
+    };
+  } else if (activeThreadKey() == key) {
     const QStringList& keys = m_view.orderedKeys;
     const qsizetype index = keys.indexOf(key);
     std::optional<QString> next;
-    if (index != -1) {
+    if (index != -1 && leave == Leave::NextCard) {
       for (qsizetype step = 1; step < keys.size(); ++step) {
         const QString& candidate = keys.at((index + step) % keys.size());
         if (!m_view.parkedKeys.contains(candidate)) {
@@ -302,7 +307,7 @@ void SidebarController::snooze(const QString& key, const QString& snoozedUntil) 
        {{QStringLiteral("type"), QStringLiteral("thread.snooze")},
         {QStringLiteral("threadId"), thread->id},
         {QStringLiteral("snoozedUntil"), snoozedUntil}},
-       QStringLiteral("Failed to snooze thread"), [this, key, snoozedUntil] {
+       QStringLiteral("Failed to snooze thread"), Leave::NextCard, [this, key, snoozedUntil] {
          const QString when = sidebar::wakeDescription(snoozedUntil, m_now(), m_timestampFormat, m_locale);
          toasts()->show(QStringLiteral("success"), QStringLiteral("Snoozed until ") + when, QString(),
                         ToastController::Action{QStringLiteral("Undo"), [this, key] {
@@ -323,6 +328,7 @@ ToastController* SidebarController::toasts() const {
 void SidebarController::readSettings() {
   m_grouping = {};
   m_timestampFormat = QStringLiteral("locale");
+  m_threadSortOrder = QStringLiteral("updated_at");
   const auto* settings = NativeShell::of(this)->controller<SettingsController>();
   if (!settings) return;
   const QJsonObject device = settings->deviceSettings();
@@ -333,6 +339,7 @@ void SidebarController::readSettings() {
   text("sidebarProjectGroupingMode", m_grouping.mode);
   text("sidebarProjectSortOrder", m_grouping.sortOrder);
   text("timestampFormat", m_timestampFormat);
+  text("sidebarThreadSortOrder", m_threadSortOrder);
   const QJsonObject overrides = device.value(QLatin1String("sidebarProjectGroupingOverrides")).toObject();
   for (auto it = overrides.constBegin(); it != overrides.constEnd(); ++it) {
     if (it.value().isString()) m_grouping.overrides.insert(it.key(), it.value().toString());

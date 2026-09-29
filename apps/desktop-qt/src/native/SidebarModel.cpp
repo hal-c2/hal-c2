@@ -654,6 +654,26 @@ std::optional<Project> mostRecentProject(const QList<Project>& projects, const Q
   return best ? std::optional<Project>(*best) : std::nullopt;
 }
 
+std::optional<QString> fallbackAfterDelete(const QList<Thread>& threads, const QString& key, const QString& sortOrder) {
+  const auto deleted = std::find_if(threads.cbegin(), threads.cend(), [&key](const Thread& thread) { return thread.key() == key; });
+  if (deleted == threads.cend()) return std::nullopt;
+  const Thread* best = nullptr;
+  double bestAt = kNever;
+  for (const Thread& thread : threads) {
+    if (thread.environmentId != deleted->environmentId || thread.projectId != deleted->projectId || thread.id == deleted->id ||
+        thread.archivedAt || thread.subagent) {
+      continue;
+    }
+    // Ties go to the greater id, as sortThreads.
+    const double at = threadSortTimestamp(thread, sortOrder);
+    if (!best || at > bestAt || (at == bestAt && thread.id > best->id)) {
+      best = &thread;
+      bestAt = at;
+    }
+  }
+  return best ? std::optional<QString>(best->key()) : std::nullopt;
+}
+
 const ProjectGroup* Input::group(const QString& key) const {
   for (const ProjectGroup& group : projects) {
     if (group.key == key) return &group;

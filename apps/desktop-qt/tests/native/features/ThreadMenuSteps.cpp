@@ -464,6 +464,12 @@ const Steps steps([] {
     world.node.sendRow(QStringLiteral("t2"), row);
     world.sync();
   });
+  step(QStringLiteral("%1 is an older thread in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonObject row = thread(QStringLiteral("t3"), c[0], c[1], QStringLiteral("2026-09-23T07:00:00Z"));
+    world.node.threads.insert(QStringLiteral("t3"), row);
+    world.node.sendRow(QStringLiteral("t3"), row);
+    world.sync();
+  });
   step(QStringLiteral("%1 opens").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString key = keyOf(world, c[0]);
     world.waitFor([&] { return world.native().controller<NavigationController>()->threadKey() == key; },

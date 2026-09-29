@@ -60,10 +60,17 @@ public:
   // The ShellBridge interceptor: true when the action was handled here.
   bool handle(const QString& action, const QVariant& payload);
 
+  // Where a window that showed a parked thread goes, as the page does:
+  // settling and snoozing move to the next card, else a new thread in the
+  // project (useThreadParking); archiving to a new thread in the project
+  // (useThreadActions archiveThread); deleting to the project's first other
+  // thread (fallbackAfterDelete), else nowhere, which lands the window on a
+  // draft (DraftController::land).
+  enum class Leave { NextCard, ProjectDraft, ProjectFallback };
   // Runs `command`, which takes the thread `key` out of the list (settle,
-  // snooze, archive, delete); the window moves on to the next card when it
+  // snooze, archive, delete); the window moves on as `leave` says when it
   // showed the thread, once the command lands. Failures toast `failureTitle`.
-  void park(const QString& key, QJsonObject command, const QString& failureTitle,
+  void park(const QString& key, QJsonObject command, const QString& failureTitle, Leave leave,
             std::function<void()> onSuccess = {});
   // Whether park() is waiting on the node for the thread `key`.
   bool parking(const QString& key) const { return m_pending.contains(key); }
@@ -98,6 +105,7 @@ private:
   bool m_active = false;
   sidebar::GroupingSettings m_grouping;
   QString m_timestampFormat = QStringLiteral("locale");
+  QString m_threadSortOrder = QStringLiteral("updated_at");
   QList<sidebar::ProjectGroup> m_groups;
   sidebar::Nullable m_scope;
   sidebar::View m_view;

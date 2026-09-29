@@ -273,8 +273,8 @@ void ThreadMenuController::command(const QString& key, QJsonObject command, cons
                             });
 }
 
-// Archiving moves the window on when it showed the thread; Undo brings the
-// thread back, and the reader with it.
+// Archiving moves the window to a new thread in the project when it showed
+// the thread; Undo brings the thread back, and the reader with it.
 void ThreadMenuController::archive(const QString& key) {
   const auto thread = m_store->thread(key);
   if (!thread) return;
@@ -283,7 +283,7 @@ void ThreadMenuController::archive(const QString& key) {
   const QJsonObject target{{QStringLiteral("threadId"), thread->id}};
   QJsonObject archive = target;
   archive.insert(QStringLiteral("type"), QStringLiteral("thread.archive"));
-  NativeShell::of(this)->sidebar()->park(key, archive, QStringLiteral("Failed to archive thread"), [this, key, target, viewing] {
+  NativeShell::of(this)->sidebar()->park(key, archive, QStringLiteral("Failed to archive thread"), SidebarController::Leave::ProjectDraft, [this, key, target, viewing] {
     toasts()->show(QStringLiteral("success"), QStringLiteral("Archived"), QString(),
                    ToastController::Action{QStringLiteral("Undo"), [this, key, target, viewing] {
                      QJsonObject unarchive = target;
@@ -309,7 +309,7 @@ void ThreadMenuController::remove(const QString& key) {
   if (!thread) return;
   NativeShell::of(this)->sidebar()->park(
       key, {{QStringLiteral("type"), QStringLiteral("thread.delete")}, {QStringLiteral("threadId"), thread->id}},
-      QStringLiteral("Failed to delete thread"));
+      QStringLiteral("Failed to delete thread"), SidebarController::Leave::ProjectFallback);
 }
 
 void ThreadMenuController::pin(const QString& key) {
