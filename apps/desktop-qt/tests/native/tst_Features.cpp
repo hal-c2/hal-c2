@@ -187,6 +187,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/windows.feature:The window title follows*"),
     QStringLiteral("navigation/windows.feature:A second window works on its own"),
     QStringLiteral("navigation/windows.feature:Closing a second window leaves the first alone"),
+    QStringLiteral("navigation/windows.feature:Closing a window keeps its unsent work"),
     QStringLiteral("navigation/windows.feature:Closing a window while it waits on the node"),
     QStringLiteral("navigation/windows.feature:Windows share the sign-in but not the navigation"),
     QStringLiteral("navigation/windows.feature:A window restores its drafts and panels after a restart"),

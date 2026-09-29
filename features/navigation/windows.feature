@@ -101,6 +101,13 @@ Feature: Windows, zoom and quitting
       Then the first window stays open on the same thread
 
     @desktop
+    Scenario: Closing a window keeps its unsent work
+      Given a second window is open
+      And the user has unsent work in the second window
+      When the user closes the second window
+      Then the first window has that unsent work
+
+    @desktop
     Scenario: Closing a window while it waits on the node
       Given a second window is open
       And the second window is waiting on the node
@@ -115,6 +122,7 @@ Feature: Windows, zoom and quitting
       Then the second window is signed in to the same environments
       And navigating in one window does not navigate the other
 
+    # Drafts are the app's, not a window's: every window sees the same ones.
     @desktop
     Scenario: A window restores its drafts and panels after a restart
       Given a second window with a stable identity has a draft and an open panel

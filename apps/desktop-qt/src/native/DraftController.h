@@ -16,7 +16,8 @@ class ShellStore;
 
 // The shell's drafts: a new thread the user has opened but not sent yet, one
 // per project folder, kept on this machine only (setStorePath) and listed at
-// the top of the sidebar. Each draft carries the thread id its first send
+// the top of the sidebar. Every window's controller keeps the same drafts
+// (NativeShell::common), so a window that closes leaves them to the others. Each draft carries the thread id its first send
 // creates, so when that thread's row reaches the shell (or promote() is
 // called) the draft is done and the window moves on to the thread.
 //
@@ -60,10 +61,10 @@ public:
   std::optional<Draft> draft(const QString& id) const;
   // Opens the project's draft, creating it the first time; returns its id.
   QString start(const QString& environmentId, const QString& projectId);
-  // Deletes the draft; the window leaves it if it was open.
+  // Deletes the draft; every window that shows it leaves it.
   void remove(const QString& id);
   // The draft's first turn was sent as the thread `threadKey`: the draft is
-  // done and the window shows the thread instead.
+  // done and every window that showed it shows the thread instead.
   void promote(const QString& threadKey);
   // The same for the draft `id`, whose thread may be on another environment
   // ("Run on").
@@ -88,10 +89,19 @@ private:
   // Drops drafts whose thread now exists or whose project is gone.
   void reconcile();
   void save() const;
+  // Every window's controller, this one's included.
+  QList<DraftController*> everyWindow() const;
+  void changedEverywhere();
+
+  // What every window's controller keeps.
+  struct Kept {
+    QList<Draft> drafts;
+    QString path;
+  };
 
   ShellBridge* m_bridge;
   ShellStore* m_store;
-  QList<Draft> m_drafts;
-  QString m_storePath;
+  Kept& m_kept;
+  QList<Draft>& m_drafts;
   bool m_active = false;
 };

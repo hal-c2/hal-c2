@@ -119,20 +119,13 @@ QObject* NativeWindow::singleton(const char* qmlName) const {
   return nullptr;
 }
 
-void NativeWindow::setStoreDirs(const QString& state, const QString& data) {
+void NativeWindow::setStoreDirs(const QString& state) {
   QDir().mkpath(state);
-  QDir().mkpath(data);
   if (auto* navigation = controller<NavigationController>()) {
     navigation->setStorePath(QDir(state).filePath(QStringLiteral("shell-route.json")));
   }
   if (auto* panel = controller<RightPanelController>()) {
     panel->setStorePath(QDir(state).filePath(QStringLiteral("shell-panel.json")));
-  }
-  if (auto* drafts = controller<DraftController>()) {
-    drafts->setStorePath(QDir(data).filePath(QStringLiteral("shell-drafts.json")));
-  }
-  if (auto* composer = controller<ComposerController>()) {
-    composer->setStorePath(QDir(data).filePath(QStringLiteral("shell-composer.json")));
   }
 }
 
@@ -230,8 +223,7 @@ NativeWindow* NativeShell::openWindow(const QString& id) {
   m_windows.push_back(std::make_unique<NativeWindow>(this, windowId, raw, std::move(bridge)));
   NativeWindow* window = m_windows.back().get();
   if (!m_stateDir.isEmpty()) {
-    window->setStoreDirs(QDir(m_stateDir).filePath(kWindowsDir + QLatin1Char('/') + windowId),
-                         QDir(m_dataDir).filePath(kWindowsDir + QLatin1Char('/') + windowId));
+    window->setStoreDirs(QDir(m_stateDir).filePath(kWindowsDir + QLatin1Char('/') + windowId));
   }
   if (m_active) activate(window);
   saveWindows();
@@ -249,7 +241,6 @@ void NativeShell::closeWindow(const QString& id) {
   saveWindows();
   if (!m_stateDir.isEmpty()) {
     QDir(QDir(m_stateDir).filePath(kWindowsDir + QLatin1Char('/') + id)).removeRecursively();
-    QDir(QDir(m_dataDir).filePath(kWindowsDir + QLatin1Char('/') + id)).removeRecursively();
   }
   emit windowClosing(window);
   window->deleteLater();
@@ -257,8 +248,13 @@ void NativeShell::closeWindow(const QString& id) {
 
 void NativeShell::setStoreDirs(const QString& state, const QString& data) {
   m_stateDir = state;
-  m_dataDir = data;
-  main()->setStoreDirs(state, data);
+  main()->setStoreDirs(state);
+  // Every window's alike, so the first window's load them.
+  QDir().mkpath(data);
+  if (auto* drafts = controller<DraftController>()) drafts->setStorePath(QDir(data).filePath(QStringLiteral("shell-drafts.json")));
+  if (auto* composer = controller<ComposerController>()) {
+    composer->setStorePath(QDir(data).filePath(QStringLiteral("shell-composer.json")));
+  }
 }
 
 void NativeShell::restoreWindows() {

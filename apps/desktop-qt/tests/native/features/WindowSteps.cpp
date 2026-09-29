@@ -279,6 +279,43 @@ const Steps steps([] {
            QStringLiteral("the second window's panel did not open"));
     expect(!at(world.state(QStringLiteral("panel")), QStringLiteral("isOpen")).toBool(), QStringLiteral("the first window's panel opened too"));
   });
+  // Unsent work outlives the window it was typed in.
+  step(QStringLiteral("the user has unsent work in the second window"), [](World& world, const Captures&, const Table&) {
+    NativeWindow* window = second(world);
+    openIn(world, window, kSecond);
+    window->bridge()->dispatch(QStringLiteral("composer.text.set"),
+                               QVariantMap{{QStringLiteral("target"), keyOf(world, kSecond)},
+                                           {QStringLiteral("edit"), QVariantMap{{QStringLiteral("clientId"), QStringLiteral("qml")},
+                                                                                {QStringLiteral("revision"), world.nextEdit++}}},
+                                           {QStringLiteral("text"), kDraft},
+                                           {QStringLiteral("cursor"), kDraft.size()}});
+    // And a new thread started there.
+    window->bridge()->dispatch(QStringLiteral("thread.new"), QVariantMap());
+    world.sync();
+    const QVariantMap route = window->bridge()->state()->value(QStringLiteral("route")).toMap();
+    expect(route.value(QStringLiteral("kind")) == QLatin1String("draft"), QStringLiteral("the second window shows %1").arg(show(route)));
+    world.draftId = route.value(QStringLiteral("draftId")).toString();
+    window->bridge()->dispatch(QStringLiteral("composer.text.set"),
+                               QVariantMap{{QStringLiteral("target"), world.draftId},
+                                           {QStringLiteral("edit"), QVariantMap{{QStringLiteral("clientId"), QStringLiteral("qml")},
+                                                                                {QStringLiteral("revision"), world.nextEdit++}}},
+                                           {QStringLiteral("text"), kDraft},
+                                           {QStringLiteral("cursor"), kDraft.size()}});
+    world.sync();
+  });
+  step(QStringLiteral("the first window has that unsent work"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    auto* composer = world.native().main()->controller<ComposerController>();
+    const QString text = composer->draft(keyOf(world, kSecond));
+    expect(text == kDraft, QStringLiteral("the first window's draft of the thread is \"%1\"").arg(text));
+    const QString draftText = composer->draft(world.draftId);
+    expect(draftText == kDraft, QStringLiteral("the first window's new-thread draft is \"%1\"").arg(draftText));
+    world.pageOpens({{QStringLiteral("kind"), QStringLiteral("draft")}, {QStringLiteral("draftId"), world.draftId}});
+    world.sync();
+    const QString shown = at(world.state(QStringLiteral("composer")), QStringLiteral("text")).toString();
+    expect(shown == kDraft, QStringLiteral("the first window's composer on the new thread shows \"%1\"").arg(shown));
+  });
+
   step(QStringLiteral("the user restarts the app"), [](World& world, const Captures&, const Table&) {
     world.restart();
     world.connect();
@@ -294,10 +331,10 @@ const Steps steps([] {
     expect(text == kDraft, QStringLiteral("the window's draft is \"%1\"").arg(text));
     expect(at(window->bridge()->state()->value(QStringLiteral("panel")), QStringLiteral("isOpen")).toBool(),
            QStringLiteral("the window's panel is %1").arg(show(window->bridge()->state()->value(QStringLiteral("panel")))));
-    // The first window kept its own.
+    // The first window kept its own route, and sees the same drafts.
     expectFirstOn(world, kFirst);
-    expect(world.native().main()->controller<ComposerController>()->draft(keyOf(world, kSecond)).isEmpty(),
-           QStringLiteral("the first window has the other window's draft"));
+    const QString first = world.native().main()->controller<ComposerController>()->draft(keyOf(world, kSecond));
+    expect(first == kDraft, QStringLiteral("the first window's draft of the thread is \"%1\"").arg(first));
   });
 
   // The app's zoom (the application menu's mod+=, mod++, mod+-, mod+0).

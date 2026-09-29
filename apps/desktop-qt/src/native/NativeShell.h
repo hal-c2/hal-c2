@@ -5,6 +5,8 @@
 #include <QUrl>
 
 #include <memory>
+#include <typeindex>
+#include <unordered_map>
 #include <vector>
 
 #include "NativeController.h"
@@ -26,9 +28,11 @@ struct NativeControllerEntry {
 };
 
 // One window's view of the node: its bridge (the `Shell` its QML reads), its
-// sidebar, and one of each per-window controller (the route, the composer's
-// drafts, the panels, the terminal drawer, the palette, toasts...). Everything
-// else, and the node connection itself, is the NativeShell's, one per process.
+// sidebar, and one of each per-window controller (the route, the composer, the
+// panels, the terminal drawer, the palette, toasts...). Everything else, and
+// the node connection itself, is the NativeShell's, one per process: the
+// drafts and composer text too, which every window's controllers keep in one
+// store (NativeShell::common) so closing a window loses no unsent work.
 class NativeWindow : public QObject {
   Q_OBJECT
 
@@ -49,8 +53,8 @@ public:
   // The QML singleton `qmlName` as this window's QML sees it.
   QObject* singleton(const char* qmlName) const;
 
-  // Where it keeps its route and panels (state) and its drafts (data).
-  void setStoreDirs(const QString& state, const QString& data);
+  // Where it keeps its route and panels.
+  void setStoreDirs(const QString& state);
 
 private:
   friend class NativeShell;
@@ -120,12 +124,21 @@ public:
   // Opens another window (`window.new`), or the one `id` names; it reopens
   // with its own route, drafts and panels after a restart until it closes.
   NativeWindow* openWindow(const QString& id = {});
-  // A window other than the first closed: its saved state goes with it.
+  // A window other than the first closed: its route and panels go with it.
   void closeWindow(const QString& id);
 
-  // Where windows keep their files: the first directly in `state` and `data`,
-  // any other under `shell-windows/<id>/`, and which are open in
-  // `<state>/shell-windows.json`.
+  // The one T every window's controllers keep alike (DraftController's
+  // drafts, ComposerController's text), made on first use.
+  template <class T>
+  T& common() {
+    std::shared_ptr<void>& slot = m_common[std::type_index(typeid(T))];
+    if (!slot) slot = std::make_shared<T>();
+    return *static_cast<T*>(slot.get());
+  }
+
+  // Where windows keep their files: the drafts and composer text in `data`,
+  // the first window's route and panels directly in `state`, any other's under
+  // `shell-windows/<id>/`, and which are open in `<state>/shell-windows.json`.
   void setStoreDirs(const QString& state, const QString& data);
   // Opens the windows that were open when the app last quit.
   void restoreWindows();
@@ -155,10 +168,10 @@ private:
   QList<NativeControllerRegistration> m_registrations;
   QStringList m_sharedKeys;
   std::vector<NativeControllerEntry> m_shared;
+  std::unordered_map<std::type_index, std::shared_ptr<void>> m_common;
   std::vector<std::unique_ptr<NativeWindow>> m_windows;
   NativeWindow* m_activeWindow = nullptr;
   QString m_stateDir;
-  QString m_dataDir;
   // Whether the controllers have taken over from the page.
   bool m_active = false;
 };

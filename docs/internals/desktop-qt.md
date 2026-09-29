@@ -375,8 +375,10 @@ workaround for renaming or moving a registered project root.
 (`ShellRuntime`) on its own `ShellBridge`, loading the same `shell.qml`. The
 node connection, the shell store and the shared controllers
 (`NativeControllerScope::Shared`: device settings and alerts) are one per
-process in `NativeShell`; everything a window shows (route, drafts, composer,
-panels, terminals, palette, toasts, sidebar) is a `NativeWindow`'s. The
+process in `NativeShell`; everything a window shows (route, composer,
+panels, terminals, palette, toasts, sidebar) is a `NativeWindow`'s. Unsent
+work is not: every window's `DraftController` and `ComposerController` keep
+one store (`NativeShell::common`), so a window that closes loses no drafts. The
 `HalC2.Shell` singletons are registered as per-engine factories, and an engine
 tagged with a bridge (`halC2Bridge`) gets that window's controllers, so a
 controller must never be registered with `qmlRegisterSingletonInstance`, which
@@ -384,12 +386,13 @@ binds it to one engine. A shared controller reaches "its" window through
 `NativeShell::of`, which answers the window the user last acted in, and meets
 each window in `attach()`.
 
-The first window keeps its files where it always did; another keeps its route
-and panels under `<state>/shell-windows/<id>/` and its drafts under
-`<data>/shell-windows/<id>/`, and `<state>/shell-windows.json` lists the ids
+The drafts and composer text live in `<data>`. The first window keeps its
+route and panels directly in `<state>`; another keeps them under
+`<state>/shell-windows/<id>/`, and `<state>/shell-windows.json` lists the ids
 open when the app quit, so they reopen with it. Closing a window forgets it and
-its files; closing the first quits. Pass a stable `id` to reopen a known
-window rather than opening another.
+its route and panels; closing the first quits. Pass a stable `id` to reopen a
+known window rather than opening another; ids name folders, so the shell
+accepts only `[A-Za-z0-9_-]{1,32}` and generates one otherwise.
 
 `AppView` and `AppWindow` are the web client's equivalent: another complete
 page sharing `WebProfile` authentication, with a per-view `storageId`

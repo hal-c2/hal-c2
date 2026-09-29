@@ -105,7 +105,12 @@ QString newId() {
 
 ComposerController::ComposerController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
                                        QObject* parent)
-    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {}
+    : QObject(parent),
+      m_bridge(bridge),
+      m_client(client),
+      m_store(store),
+      m_kept(NativeShell::of(this)->shell()->common<Kept>()),
+      m_drafts(m_kept.drafts) {}
 
 void ComposerController::activate() {
   if (m_active) return;
@@ -1076,6 +1081,7 @@ void ComposerController::setText(const QString& target, const QString& text, int
     if (NativeShell::of(this)->controller<DraftController>()->draft(target)) {
       // A new thread's text is kept with its draft.
       NativeShell::of(this)->controller<DraftController>()->setText(target, text);
+      spread();
     } else {
       kept.text = text;
       save();
@@ -1434,7 +1440,7 @@ QVariantMap ComposerController::pickerState() const {
 // Each target's text and choices, as {targets: {<target>: {text, modelSelection,
 // runtimeMode, interactionMode}}}; images are not kept.
 void ComposerController::setStorePath(const QString& path) {
-  m_storePath = path;
+  m_kept.path = path;
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) return;
   const QJsonObject targets = QJsonDocument::fromJson(file.readAll()).object().value(QLatin1String("targets")).toObject();
@@ -1452,8 +1458,16 @@ void ComposerController::setStorePath(const QString& path) {
   publish();
 }
 
+void ComposerController::spread() const {
+  for (const auto& window : NativeShell::of(this)->shell()->windows()) {
+    auto* composer = window->controller<ComposerController>();
+    if (composer && composer != this) QMetaObject::invokeMethod(composer, &ComposerController::publish, Qt::QueuedConnection);
+  }
+}
+
 void ComposerController::save() const {
-  if (m_storePath.isEmpty()) return;
+  spread();
+  if (m_kept.path.isEmpty()) return;
   QJsonObject targets;
   for (auto it = m_drafts.cbegin(); it != m_drafts.cend(); ++it) {
     const Draft& kept = it.value();
@@ -1466,7 +1480,7 @@ void ComposerController::save() const {
     if (!kept.interactionMode.isEmpty()) entry.insert(QStringLiteral("interactionMode"), kept.interactionMode);
     if (!entry.isEmpty()) targets.insert(it.key(), entry);
   }
-  QFile file(m_storePath);
+  QFile file(m_kept.path);
   if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
   file.write(QJsonDocument(QJsonObject{{QStringLiteral("targets"), targets}}).toJson(QJsonDocument::Compact));
 }
