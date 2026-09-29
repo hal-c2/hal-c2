@@ -374,7 +374,7 @@ workaround for renaming or moving a registered project root.
 {id})` from a layout) opens another native window: its own QML engine
 (`ShellRuntime`) on its own `ShellBridge`, loading the same `shell.qml`. The
 node connection, the shell store and the shared controllers
-(`NativeControllerScope::Shared`: device settings and alerts) are one per
+(`NativeControllerScope::Shared`: settings, alerts and quitting) are one per
 process in `NativeShell`; everything a window shows (route, composer,
 panels, terminals, palette, toasts, sidebar) is a `NativeWindow`'s. Unsent
 work is not: every window's `DraftController` and `ComposerController` keep

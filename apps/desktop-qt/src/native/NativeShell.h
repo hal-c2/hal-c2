@@ -79,7 +79,7 @@ private:
 // shape folded into rows, and its windows (NativeWindow), each with its own
 // sidebar and controllers (NativeController.h) that take the composer's turn
 // RPCs, the terminal drawer and whatever moves next off the page, beside the
-// shared ones every window reads alike (settings, cluster, pairing, alerts).
+// shared ones every window reads alike (settings, alerts, quitting).
 // Until the first shell snapshot lands the page keeps doing everything; after
 // it the sidebar, and every controller, is the shell's, and `native` (and a
 // `shell.native` action to the page) says which keys and actions it owns.

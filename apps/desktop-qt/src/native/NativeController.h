@@ -26,7 +26,7 @@ class ShellStore;
 // node's first snapshot lands, and offers them the bridge's actions. Most are
 // one per window (NativeWindow): what the window shows and the state behind
 // it. A shared one (NativeControllerScope::Shared) is one per process, for
-// what every window has alike (the settings, the cluster, pairing); its keys
+// what every window has alike (the settings, alerts, the quit shortcut); its keys
 // reach every window's bridge and its parent is the NativeShell. Build
 // them into the hal_c2_native OBJECT library (any file in src/native is): a
 // static archive would drop a registrar nothing else refers to.
