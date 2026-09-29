@@ -706,6 +706,265 @@ defmodule HalC2.Steps.Providers.Grok do
     context
   end
 
+  # --- background work ------------------------------------------------------------
+
+  # Grok's background shell (task-sh, from tool sh-1) and a subagent spawned in the
+  # background (spawn-1, session @child_session), both acknowledged in the turn.
+  @background [
+    %{
+      "update" => %{
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => "sh-1",
+        "title" => "npm run dev",
+        "kind" => "execute",
+        "status" => "in_progress",
+        "rawInput" => %{"command" => "npm run dev"}
+      }
+    },
+    %{
+      "update" => %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => "sh-1",
+        "status" => "completed",
+        "content" => [
+          %{"type" => "content", "content" => %{"type" => "text", "text" => "Started."}}
+        ],
+        "rawOutput" => %{"type" => "BackgroundTaskStarted", "task_id" => "task-sh"}
+      }
+    },
+    %{
+      "update" => %{
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => "spawn-1",
+        "title" => "task",
+        "kind" => "other",
+        "status" => "in_progress",
+        "rawInput" => %{"description" => "Survey the repo", "prompt" => "List the repo"}
+      }
+    },
+    %{
+      "update" => %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => "spawn-1",
+        "status" => "completed",
+        "content" => [
+          %{
+            "type" => "content",
+            "content" => %{
+              "type" => "text",
+              "text" =>
+                "Subagent started in background.\nsubagent_id: #{@child_session}\n" <>
+                  "Use get_command_or_subagent_output."
+            }
+          }
+        ]
+      }
+    },
+    %{"text" => "Both are running."}
+  ]
+
+  # A later turn that kills the background shell.
+  @kill [
+    %{
+      "update" => %{
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => "kill-1",
+        "title" => "kill_command_or_subagent",
+        "kind" => "other",
+        "status" => "in_progress",
+        "rawInput" => %{"task_id" => "task-sh"}
+      }
+    },
+    %{
+      "update" => %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => "kill-1",
+        "status" => "completed"
+      }
+    },
+    %{"text" => "Stopped the dev server."}
+  ]
+
+  # A persistent monitor, which Grok never ends.
+  @monitor [
+    %{
+      "update" => %{
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => "mon-1",
+        "title" => "monitor",
+        "kind" => "other",
+        "status" => "in_progress",
+        "rawInput" => %{"command" => "tail -f log/dev.log"}
+      }
+    },
+    %{
+      "update" => %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => "mon-1",
+        "status" => "completed",
+        "rawOutput" => %{"type" => "Monitor", "task_id" => "mon-1", "persistent" => true}
+      }
+    },
+    %{"text" => "Watching the log."}
+  ]
+
+  step "Grok left a command and a subagent running in the background", context do
+    context = background_thread(context, "work in the background")
+
+    World.await_row(
+      World.thread_id(context, context.thread),
+      &(length(&1["pendingBackgroundTasks"] || []) == 2)
+    )
+
+    context
+  end
+
+  step "Grok left a persistent monitor running", context do
+    background_thread(context, "watch the log")
+  end
+
+  step "{string} lists the command and the subagent as background work",
+       %{args: [thread]} = context do
+    assert ["command_execution", "subagent"] =
+             World.row(context, thread)["pendingBackgroundTasks"]
+             |> Enum.map(& &1["taskType"])
+             |> Enum.sort()
+
+    context
+  end
+
+  step "{string} lists only the subagent as background work", %{args: [thread]} = context do
+    World.await_row(
+      World.thread_id(context, thread),
+      &match?([%{"taskType" => "subagent"}], &1["pendingBackgroundTasks"])
+    )
+
+    context
+  end
+
+  step "the node keeps Grok's session of {string} while they run", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    idle_now()
+    HalC2.Test.Node.ensure(HalC2.Orchestration.IdleSessions)
+    refute id in HalC2.Orchestration.IdleSessions.check()
+    assert [_] = Registry.lookup(HalC2.Acp.Registry, id)
+    context
+  end
+
+  step "Grok reports the command and the subagent ended", context do
+    grok_says(context, "x.ai/task_completed", %{
+      "sessionId" => session(context),
+      "update" => %{
+        "sessionUpdate" => "task_completed",
+        "task_snapshot" => %{"task_id" => "task-sh"}
+      }
+    })
+
+    grok_says(context, "session/update", %{
+      "sessionId" => session(context),
+      "update" => %{
+        "sessionUpdate" => "user_message_chunk",
+        "content" => %{
+          "type" => "text",
+          "text" =>
+            ~s[Background subagent "#{@child_session}" (type: "general") completed successfully.]
+        }
+      }
+    })
+
+    context
+  end
+
+  step "the node can release Grok's session of {string}", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    World.await_row(id, &(&1["pendingBackgroundTasks"] == []))
+    idle_now()
+    HalC2.Test.Node.ensure(HalC2.Orchestration.IdleSessions)
+    assert id in HalC2.Orchestration.IdleSessions.check()
+    context
+  end
+
+  step ~r/^Grok's (?<which>command|command and subagent) (?:is|are) (?<status>completed|interrupted|cancelled)$/,
+       %{args: [which, status]} = context do
+    expected = if which == "command", do: ["sh-1"], else: ["sh-1", "spawn-1"]
+
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      items = background_items(state)
+      Enum.all?(expected, &(items[&1] == status))
+    end)
+
+    context
+  end
+
+  step "Grok's agent process for {string} stops", context do
+    ref = Process.monitor(context.grok_conn)
+    assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+    context
+  end
+
+  step "the user asks Grok to stop the dev server", context do
+    context = FakeAcp.send_message(context, "stop the dev server")
+    FakeAcp.await_runs(context, 2)
+    context
+  end
+
+  step "Grok's monitor is not listed as background work", context do
+    id = World.thread_id(context, context.thread)
+    World.await_row(id, &(&1["pendingBackgroundTasks"] == []))
+
+    assert %{"mon-1" => "running"} =
+             background_items(World.state(context, context.thread))
+
+    context
+  end
+
+  defp background_thread(context, text) do
+    turns = [
+      %{"match" => "work in the background", "steps" => @background},
+      %{"match" => "stop the dev server", "steps" => @kill},
+      %{"match" => "watch the log", "steps" => @monitor}
+      | FakeAcp.turns()
+    ]
+
+    context =
+      context
+      |> FakeAcp.install("grok", Map.put(signed_in_config(), "turns", turns), enabled: true)
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message(text)
+
+    FakeAcp.await_run(context, "completed")
+    [{pid, _}] = Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, context.thread))
+    Map.put(context, :grok_conn, :sys.get_state(pid).conn)
+  end
+
+  # The status of each of Grok's background tool calls, by native id.
+  defp background_items(state) do
+    for item <- HalC2.StreamState.list(state, "turn-item"),
+        id = (item["nativeItemRef"] || %{})["nativeId"],
+        id in ~w(sh-1 spawn-1 mon-1),
+        into: %{},
+        do: {id, item["status"]}
+  end
+
+  defp runtime_pid(context) do
+    [{pid, _}] = Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, context.thread))
+    pid
+  end
+
+  defp session(context), do: :sys.get_state(runtime_pid(context)).session_id
+
+  # A frame from Grok after its turn, as the agent's connection delivers it.
+  defp grok_says(context, method, params) do
+    pid = runtime_pid(context)
+    send(pid, {:json_rpc, :sys.get_state(pid).conn, {:notification, method, params}})
+  end
+
+  # Any session counts as idle from now on.
+  defp idle_now do
+    Application.put_env(:hal_c2, :session_idle_ms, 0)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :session_idle_ms) end)
+  end
+
   # The agent has started answering: the prompt reached it.
   defp await_answer(context) do
     World.await_stream(World.thread_id(context, context.thread), fn state ->

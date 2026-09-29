@@ -903,6 +903,164 @@ defmodule HalC2.OrchestrationTest do
     end
   end
 
+  describe "Grok background work" do
+    setup do
+      :ok = HalC2.Shell.subscribe(self())
+      :ok
+    end
+
+    @child "0f8e2a4c-5b6d-4e7f-8a9b-1c2d3e4f5a6b"
+
+    test "a background shell and subagent keep the agent until Grok reports them ended" do
+      Application.put_env(:hal_c2, :idle_session_check_ms, nil)
+      Application.put_env(:hal_c2, :session_idle_ms, 0)
+
+      on_exit(fn ->
+        Application.delete_env(:hal_c2, :idle_session_check_ms)
+        Application.delete_env(:hal_c2, :session_idle_ms)
+      end)
+
+      start_supervised!(HalC2.Orchestration.IdleSessions)
+      thread_id = launch("work in the background", "grok")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+
+      assert [
+               %{"type" => "command_execution", "status" => "running", "input" => "npm run dev"},
+               %{"type" => "subagent", "status" => "running"}
+             ] = background_items(thread_id)
+
+      assert HalC2.Orchestration.IdleSessions.check() == []
+      assert [_] = Registry.lookup(HalC2.Acp.Registry, thread_id)
+
+      grok_says(thread_id, "x.ai/task_completed", %{
+        "sessionId" => session(thread_id),
+        "update" => %{
+          "sessionUpdate" => "task_completed",
+          "task_snapshot" => %{"task_id" => "task-sh"}
+        }
+      })
+
+      grok_says(thread_id, "session/update", %{
+        "sessionId" => session(thread_id),
+        "update" => %{
+          "sessionUpdate" => "user_message_chunk",
+          "content" => %{
+            "type" => "text",
+            "text" =>
+              ~s[Background subagent "#{@child}" (type: "general") completed successfully.]
+          }
+        }
+      })
+
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      assert ["completed", "completed"] = Enum.map(background_items(thread_id), & &1["status"])
+      assert HalC2.Orchestration.IdleSessions.check() == [thread_id]
+    end
+
+    test "the subagent's answer after the turn still reaches its child thread" do
+      thread_id = launch("work in the background", "grok")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+
+      grok_says(thread_id, "session/update", %{
+        "sessionId" => @child,
+        "update" => %{
+          "sessionUpdate" => "agent_message_chunk",
+          "content" => %{"type" => "text", "text" => "the repo has a lib"}
+        }
+      })
+
+      grok_says(thread_id, "x.ai/task_completed", %{
+        "sessionId" => session(thread_id),
+        "update" => %{
+          "sessionUpdate" => "task_completed",
+          "task_snapshot" => %{"task_id" => @child}
+        }
+      })
+
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"]) == 1))
+
+      assert [%{"status" => "completed", "result" => "the repo has a lib"}] =
+               StreamState.list(current(thread_id), "subagent")
+    end
+
+    test "stopping the thread between turns ends the work and the agent" do
+      thread_id = launch("work in the background", "grok")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      conn = :sys.get_state(runtime_pid(thread_id)).conn
+      ref = Process.monitor(conn)
+
+      assert {:ok, _} =
+               Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+
+      assert ["interrupted", "interrupted"] =
+               Enum.map(background_items(thread_id), & &1["status"])
+
+      assert_receive {:DOWN, ^ref, :process, _, _}
+
+      assert {:error, _} =
+               Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+    end
+
+    test "an interrupted turn ends the work it started, and the agent" do
+      thread_id = launch("work in the background and wait", "grok")
+      _ = await_run(thread_id, "running")
+      await_item(thread_id, "subagent")
+      conn = :sys.get_state(runtime_pid(thread_id)).conn
+      ref = Process.monitor(conn)
+
+      assert {:ok, _} =
+               Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+      _ = await_run(thread_id, "interrupted")
+      assert_receive {:DOWN, ^ref, :process, _, _}
+
+      assert ["interrupted", "interrupted"] =
+               Enum.map(background_items(thread_id), & &1["status"])
+
+      assert [%{"status" => "interrupted"}] = StreamState.list(current(thread_id), "subagent")
+    end
+
+    test "releasing the agent ends the work it ran" do
+      thread_id = launch("work in the background", "grok")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+
+      assert :ok = Orchestration.release_session(thread_id)
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+
+      assert ["interrupted", "interrupted"] =
+               Enum.map(background_items(thread_id), & &1["status"])
+    end
+
+    defp background_items(thread_id) do
+      current(thread_id)
+      |> StreamState.list("turn-item")
+      |> Enum.filter(
+        &(&1["nativeItemRef"]["nativeId"] in ["sh-1", "spawn-1"] or
+            (&1["type"] == "subagent" and &1["status"] != nil))
+      )
+      |> Enum.uniq_by(& &1["id"])
+      |> Enum.sort_by(& &1["type"])
+    end
+
+    defp runtime_pid(thread_id) do
+      [{pid, _}] = Registry.lookup(HalC2.Acp.Registry, thread_id)
+      pid
+    end
+
+    defp session(thread_id), do: :sys.get_state(runtime_pid(thread_id)).session_id
+
+    defp grok_says(thread_id, method, params) do
+      pid = runtime_pid(thread_id)
+      send(pid, {:json_rpc, :sys.get_state(pid).conn, {:notification, method, params}})
+    end
+  end
+
   describe "Claude" do
     test "a message runs a Claude turn: thinking, a Bash call, and a streamed answer" do
       thread_id = launch("list the files", "claudeAgent")

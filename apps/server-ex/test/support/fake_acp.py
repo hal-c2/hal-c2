@@ -59,6 +59,8 @@ def send(msg):
 
 # --- OpenCode's sessions and HTTP API (`--port`) ---------------------------------
 
+# The session of the subagent an "in the background" prompt spawns.
+CHILD = "0f8e2a4c-5b6d-4e7f-8a9b-1c2d3e4f5a6b"
 PORT = int(sys.argv[sys.argv.index("--port") + 1]) if "--port" in sys.argv else None
 SESSIONS = os.environ.get("FAKE_ACP_SESSIONS") or (PORT and tempfile.mkdtemp())
 ids = [0]
@@ -294,6 +296,24 @@ for line in sys.stdin:
             send({"id": "perm-text", "method": "session/request_permission", "params": {"sessionId": sid,
                   "toolCall": {"toolCallId": "call-1", "title": "ls", "kind": "execute", "rawInput": {"command": "ls"}},
                   "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"}]}})
+        elif "in the background" in text:
+            # Grok's background work: a shell started as a task (task-sh), and a subagent
+            # spawned in the background (spawn-1, session CHILD). With "wait" the turn
+            # stays open.
+            update(sid, {"sessionUpdate": "tool_call", "toolCallId": "sh-1", "title": "npm run dev", "kind": "execute",
+                         "status": "in_progress", "rawInput": {"command": "npm run dev"}})
+            update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "sh-1", "status": "completed",
+                         "content": [{"type": "content", "content": {"type": "text", "text": "Started in the background."}}],
+                         "rawOutput": {"type": "BackgroundTaskStarted", "task_id": "task-sh", "command": "npm run dev"}})
+            update(sid, {"sessionUpdate": "tool_call", "toolCallId": "spawn-1", "title": "task", "kind": "other",
+                         "status": "in_progress", "rawInput": {"description": "Survey the repo", "prompt": "List the repo"}})
+            update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "spawn-1", "status": "completed",
+                         "content": [{"type": "content", "content": {"type": "text", "text":
+                             "Subagent started in background.\nsubagent_id: %s\nUse get_command_or_subagent_output." % CHILD}}]})
+            if "wait" in text:
+                waiting = (mid, sid)
+            else:
+                finish_turn(mid, sid)
         elif "wait" in text:
             # OpenCode names the command once it runs, with its output so far.
             update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "in_progress",
