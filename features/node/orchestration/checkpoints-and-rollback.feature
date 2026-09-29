@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829 (upstream orchestrator behavior)
 #   packages/contracts/src/orchestrationV2.ts (checkpoint.captured, checkpoint-scope.created,
 #     checkpoint.rollback, checkpoint.rollback-requested, run.updated, provider-thread.updated)
 #   packages/contracts/src/rpc.ts (orchestration.getTurnDiff, orchestration.getFullThreadDiff)

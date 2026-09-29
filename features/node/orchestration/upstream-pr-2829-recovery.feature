@@ -12,7 +12,7 @@ Feature: Recovering provider work without losing orchestration state
   Background:
     Given a node with a project "demo"
 
-  @node @backlog
+  @node @backlog @shared
   Scenario: Queued work remains available after a usage limit
     Given thread "t1" is working and has queued messages "one" and "two"
     When the provider stops "t1" because its usage limit was reached
@@ -63,7 +63,7 @@ Feature: Recovering provider work without losing orchestration state
     Then the child server is stopped
     And no OpenCode process remains owned by "t1"
 
-  @node @backlog
+  @node @backlog @shared
   Scenario: A failed rollback is visible to the user
     Given thread "t1" is being rolled back to a checkpoint
     When restoring the checkpoint fails
@@ -78,14 +78,14 @@ Feature: Recovering provider work without losing orchestration state
     Then the new turn starts from that message's checkpoint boundary
     And the stopped run remains visible as history
 
-  @node @backlog
+  @node @backlog @shared
   Scenario: Provider context occupancy survives a model handoff
     Given thread "t1" has used 80 percent of its current provider context
     When the user hands "t1" to another model on the same provider
     Then the next run reports the handoff's context occupancy
     And it does not reset the meter to zero until the provider reports new usage
 
-  @node @backlog
+  @node @backlog @plugin-claude
   Scenario: A provider session closes only after an abortable turn is stopped
     Given Claude has an active turn in thread "t1"
     When the node releases the Claude session

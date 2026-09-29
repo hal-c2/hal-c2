@@ -9,7 +9,7 @@ Feature: Durable thread workflows and compatible clients
   Workflow commands must work at stable provider boundaries. Read models and
   protocol clients must remain useful while the node changes underneath them.
 
-  @node @backlog
+  @node @backlog @shared
   Scenario: A provider-finished run can be forked
     Given thread "t1" has a run that the provider finished but the node has not yet displayed as settled
     When the user forks "t1" from that run
@@ -30,7 +30,7 @@ Feature: Durable thread workflows and compatible clients
     Then Pi resumes from the selected checkpoint
     And the stopped turn is not reused as native history
 
-  @node @backlog
+  @node @backlog @shared
   Scenario: Agent-sent messages retain their source thread
     Given a delegated child sends a message to its parent
     When the node stores the message
@@ -38,12 +38,10 @@ Feature: Durable thread workflows and compatible clients
     And a client can open the source thread from the message
 
   @node @backlog
-  Scenario: A merged pull request can settle its thread
-    Given thread "t1" has a linked pull request
-    And that pull request is merged
+  Scenario: A settled thread is not rediscovered as an active pull request thread
+    Given thread "t1" links a pull request that merged and "t1" has settled
     When the node refreshes pull request state
-    Then the thread becomes eligible for automatic settlement
-    And a settled thread is not rediscovered as an active pull request thread
+    Then "t1" is not listed as an active pull request thread
 
   @node @backlog
   Scenario: Thread settlement is available through the MCP read tools
@@ -52,7 +50,7 @@ Feature: Durable thread workflows and compatible clients
     Then the response includes the settlement state
     And the response includes why the thread can or cannot settle
 
-  @node @backlog
+  @node @backlog @shared
   Scenario: A client that does not know an event can keep its connection
     Given a connected client does not recognize a newly added event type
     When the node publishes that event

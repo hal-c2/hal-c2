@@ -11,7 +11,7 @@ Feature: Runtime state remains honest across provider work
   have separate lifecycles. The node must preserve those boundaries when work
   stops, resumes or moves between processes.
 
-  @node @backlog
+  @node @backlog @plugin-claude
   Scenario: Stopping a Claude turn ends its background work after settlement
     Given Claude has a foreground turn and a background task in thread "t1"
     When the user stops the foreground turn
@@ -26,7 +26,7 @@ Feature: Runtime state remains honest across provider work
     Then the shell command remains attached to the first run
     And its completion cannot finish the second run
 
-  @node @backlog
+  @node @backlog @plugin-grok
   Scenario: A provider-finished foreground run is not held by a monitor
     Given Grok has finished the foreground response of thread "t1"
     And a monitor is still reporting progress
@@ -34,7 +34,7 @@ Feature: Runtime state remains honest across provider work
     Then the foreground run is settled
     And the monitor remains separate background work
 
-  @node @backlog
+  @node @backlog @shared
   Scenario: A stopped provider command is shown as interrupted
     Given a provider command is running in thread "t1"
     When the user stops the command
@@ -55,21 +55,21 @@ Feature: Runtime state remains honest across provider work
     Then the child thread contains the continuation message
     And the message is not incorrectly placed in the parent thread
 
-  @node @backlog
+  @node @backlog @shared
   Scenario: A subagent approval belongs to the parent run
     Given a delegated child requests approval
     When the user answers the approval
     Then the answer is recorded on the parent run
     And the child receives the result
 
-  @node @backlog
+  @node @backlog @shared
   Scenario: A delegated child reports its own model
     Given a parent delegates work to model "model-b"
     When the child appears in thread lineage
     Then the child reports "model-b"
     And the parent model is not substituted for it
 
-  @node @backlog
+  @node @backlog @shared
   Scenario: A completed child with pending work remains visible as pending
     Given a delegated child has returned a result with background work still running
     When the parent reads its delegation state
@@ -90,7 +90,7 @@ Feature: Runtime state remains honest across provider work
     Then the steer becomes a follow-up turn
     And it is not lost or attached to the completed turn
 
-  @node @backlog
+  @node @backlog @shared
   Scenario: A failed or interrupted turn hands its context to the next run
     Given thread "t1" has a failed turn with usable provider context
     When the user sends a new message
@@ -110,20 +110,6 @@ Feature: Runtime state remains honest across provider work
     When the user starts a new run
     Then the provider receives the history through the selected checkpoint
     And neither rolled-back run is replayed
-
-  @node @backlog
-  Scenario: A checkpoint baseline failure does not prevent the turn
-    Given capturing the turn-start baseline fails
-    When the user sends a message
-    Then the provider turn starts
-    And the run records that its baseline is unavailable
-
-  @node @backlog
-  Scenario: Archiving cancels queued work
-    Given thread "t1" has queued messages and no active provider turn
-    When the user archives "t1"
-    Then the queued messages are cancelled
-    And no queued run starts after the archive
 
   @node @backlog
   Scenario: Snoozing prevents old failures from waking a thread
@@ -146,14 +132,7 @@ Feature: Runtime state remains honest across provider work
     When the node projects the lineage
     Then entries are ordered by their creation time
 
-  @node @backlog
-  Scenario: A missing worktree is recreated before provider startup
-    Given thread "t1" has a missing worktree and branch "feature/t1"
-    When a new turn is requested
-    Then the worktree is recreated from "feature/t1"
-    And the provider starts only after recreation succeeds
-
-  @node @backlog
+  @node @backlog @shared
   Scenario: A worktree fetch failure explains the recovery action
     Given preparing thread "t1" fails while fetching its worktree
     When the run fails
@@ -176,6 +155,12 @@ Feature: Runtime state remains honest across provider work
     And records which instance ran the turn
 
   @node @backlog
+  Scenario: A run records that its checkpoint baseline is unavailable
+    Given capturing the turn-start baseline fails
+    When the user sends a message
+    Then the run records that its baseline is unavailable
+
+  @node @backlog
   Scenario: Provider startup preparation failure fails the run cleanly
     Given provider startup preparation fails before a provider turn exists
     When the node starts the run
@@ -196,7 +181,7 @@ Feature: Runtime state remains honest across provider work
     Then the page contains only visible turns
     And the page ends at the true history boundary
 
-  @node @backlog
+  @node @backlog @shared
   Scenario: A provider retry is visible as a retry
     Given a provider retries a failed request
     When the retry is projected

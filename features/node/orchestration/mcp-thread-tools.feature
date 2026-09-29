@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829 (upstream orchestrator behavior)
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (hal_c2_thread_list, hal_c2_thread_read, hal_c2_thread_send,
 #     hal_c2_thread_wait, hal_c2_thread_interrupt, hal_c2_thread_search, hal_c2_environment_read,
 #     hal_c2_environment_preferences_update)

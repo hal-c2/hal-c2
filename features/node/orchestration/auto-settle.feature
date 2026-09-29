@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829 (upstream orchestrator behavior)
 #   packages/contracts/src/orchestrationV2.ts (thread.auto-settle, thread.settled)
 #   packages/contracts/src/settings.ts (sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays)
 #   apps/server-ex/lib/hal_c2/orchestration/settlement.ex

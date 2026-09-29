@@ -5,6 +5,9 @@
 #     117f678baf, f56ec3d96f, 4e05c14cd6, 85c787d997, 987897be15,
 #     fc4faae678 (MCP and delegated-work controls)
 #   apps/server/src/mcp/
+#   (agent search, queue edits, question answers, fork/merge, attachment ownership and
+#     credential revocation are covered by mcp-thread-tools.feature,
+#     mcp-queue-project-and-pull-request-tools.feature and mcp-server.feature)
 #   packages/contracts/src/orchestrationV2.ts
 #   apps/server-ex/lib/hal_c2/orchestration/
 Feature: Control-plane operations remain durable
@@ -20,12 +23,6 @@ Feature: Control-plane operations remain durable
     And its worktree is based on "feature/demo"
 
   @node @backlog
-  Scenario: An agent can search existing threads
-    Given project "demo" has threads "Fix parser" and "Update docs"
-    When an agent searches for "parser"
-    Then only "Fix parser" is returned
-
-  @node @backlog
   Scenario: An agent can update thread metadata without changing its history
     Given thread "t1" has completed runs
     When an agent renames "t1" and changes its organization
@@ -39,40 +36,7 @@ Feature: Control-plane operations remain durable
     Then one run starts immediately
     And the next scheduled due time is unchanged
 
-  @node @backlog
-  Scenario: An agent can answer a pending question
-    Given thread "t1" is waiting on a question
-    When an agent answers the question
-    Then the provider receives the answer
-    And the question is no longer pending
-
-  @node @backlog
-  Scenario: An agent can edit and reorder queued messages
-    Given thread "t1" has queued messages "A" and "B"
-    When an agent edits "A" and moves "B" first
-    Then the queue contains the edited "A" after "B"
-
-  @node @backlog
-  Scenario: An agent can fork and merge back a thread
-    Given thread "t1" has a finished run
-    When an agent forks "t1" and later merges the fork back
-    Then the parent receives the fork's work on its next run
-
-  @node @backlog
-  Scenario: An agent can upload an attachment before sending it
-    Given an agent has a file attachment for project "demo"
-    When it uploads the attachment and sends a message referencing it
-    Then the attachment is claimed by the new run
-    And an unrelated thread cannot claim it
-
-  @node @backlog
-  Scenario: MCP credentials are revoked when a session is released
-    Given a provider session has activated MCP credentials
-    When the provider session is released
-    Then the credentials are revoked
-    And the released session cannot use them again
-
-  @node @backlog
+  @node @backlog @plugin-claude
   Scenario: Rotating MCP credentials reopens the provider query
     Given a Claude query is using MCP credentials
     When those credentials rotate
