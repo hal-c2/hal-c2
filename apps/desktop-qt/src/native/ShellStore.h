@@ -14,12 +14,14 @@
 class NodeClient;
 
 // The node's `shell` shape folded into rows: every node of the cluster, its
-// environment descriptor, its live projects and threads, plus the environments
-// the node reaches through links (HalC2.Links). The node sends linked
-// environments' rows only to a `{"type":"shell","links":true}` subscription
-// (shell.linkRows, shell.linkEnvironment, shell.linkNode), and the shell does
-// not ask yet; when it does they fold in here as more projects and threads
-// keyed by their environment, and the sidebar groups them like any other.
+// environment descriptor, its live projects and threads, plus the nodes and
+// rows of the environments the node is linked to (HalC2.Links), which it sends
+// to a `{"type":"shell","links":true}` subscription under each link. Linked
+// rows are more projects and threads keyed by their environment, so the
+// sidebar groups them like any other; each change (shell.linkRows,
+// shell.linkEnvironment, shell.linkNode) is applied as it comes, and a link
+// that leaves `links` takes its nodes and rows with it. A dropped link keeps
+// its rows with its nodes offline, as a cluster member that leaves does.
 class ShellStore : public QObject {
   Q_OBJECT
 
@@ -34,22 +36,25 @@ public:
   QJsonObject threadRow(const QString& key) const;
   QJsonObject projectRow(const QString& environmentId, const QString& projectId) const;
   QList<QJsonObject> projectRows(const QString& environmentId) const;
-  // The environments the cluster serves, and each one's descriptor.
+  // The environments the cluster serves or the node is linked to, and each
+  // one's descriptor.
   QStringList environments() const;
   QJsonObject environment(const QString& environmentId) const;
-  // The node serving `environmentId`, empty when none does.
+  // The cluster node serving `environmentId`, for node-addressed shapes; empty
+  // when none does (a linked environment's nodes are not the cluster's).
   QString nodeServing(const QString& environmentId) const;
   sidebar::Capabilities capabilities(const QString& environmentId) const;
   // Whether a node of the cluster serves this environment.
   bool servesEnvironment(const QString& environmentId) const;
   // Whether the node reaches this environment: served by the cluster or linked.
   bool reaches(const QString& environmentId) const;
-  // The environment `node` serves, empty until its descriptor arrives.
+  // The environment the cluster's `node` serves, empty until its descriptor arrives.
   QString environmentOf(const QString& node) const { return m_nodes.value(node).environmentId; }
-  // The node of the cluster whose row this thread ("environmentId:threadId")
-  // is, empty while none lists it.
-  QString nodeOf(const QString& threadKey) const;
-  bool online(const QString& node) const { return m_nodes.value(node).online; }
+  // Whether the node (cluster member or linked) whose row lists this thread
+  // ("environmentId:threadId") is online; false while none lists it.
+  bool threadOnline(const QString& threadKey) const;
+  // Whether a node serving `environmentId` is online.
+  bool environmentOnline(const QString& environmentId) const;
   bool synchronized() const { return m_synchronized; }
   // The node's links as `shell.links` carries them: {environment, origin,
   // online, problem?}, where problem is "unreachable" or "refused".
@@ -62,8 +67,15 @@ private:
   void onFrame(const QJsonObject& frame);
   void setEnvironment(const QString& node, const QJsonObject& environment);
   void setLinks(const QJsonArray& links);
+  void putRows(const QString& node, const QJsonArray& rows);
+  void putRow(const QString& node, const QString& id, const QString& kind, const QJsonObject& fields);
+
+  // Cluster nodes are keyed by name; a linked environment's by linkedKey(),
+  // since its node names are its own and may be the cluster's too.
+  static QString linkedKey(const QString& link, const QString& node) { return link + QLatin1Char('\n') + node; }
 
   struct Node {
+    QString link;  // the linked environment it is reached through; empty in the cluster
     QString environmentId;
     QJsonObject capabilities;
     QJsonObject environment;
@@ -73,8 +85,8 @@ private:
   };
 
   QHash<QString, Node> m_nodes;
-  // Environments outside the cluster the node is linked to. Their threads stay
-  // with the page; the node only forwards their RPCs and shapes.
+  // Environments outside the cluster the node is linked to; the node forwards
+  // their RPCs and environment-addressed shapes.
   QSet<QString> m_linked;
   QJsonArray m_links;
   bool m_synchronized = false;

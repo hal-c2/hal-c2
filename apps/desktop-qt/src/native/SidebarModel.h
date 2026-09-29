@@ -169,6 +169,9 @@ struct Input {
   // The environment of the node the shell runs against; its folders are the
   // ones the folder explorer lists.
   Nullable localEnvironmentId;
+  // Environments that are listed but unreachable; their rows stay, marked
+  // offline, with the actions that need the environment off.
+  QSet<QString> offlineEnvironments;
   // Drafts as the sidebar lists them: draftId, projectKey (logical), label.
   QVariantList drafts;
   Nullable activeThreadKey;

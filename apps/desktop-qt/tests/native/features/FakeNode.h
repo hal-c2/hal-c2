@@ -115,8 +115,18 @@ public:
   // Each linked environment's label, when it is not its id.
   QHash<QString, QString> linkLabels;
 
+  // Whether the shell was asked for with its links' rows (`"links": true`).
+  bool shellLinks = false;
+  // Each linked environment's own rows, by environment then id: [id, kind, row].
+  // Its one node is named as this node is, since a linked environment's node
+  // names may collide with the cluster's.
+  QHash<QString, QMap<QString, QJsonArray>> linkedRows;
+
   void sendSnapshot();
-  // The node pairs with an environment outside its cluster, announced as `shell.links`.
+  // The node pairs with an environment outside its cluster, announced as
+  // `shell.links`; with links' rows, then its node (offline until
+  // `shell.linkNode`) and its rows follow as the node's first follow of that
+  // environment's shell brings them.
   void link(const QString& environment);
   void unlink(const QString& environment);
   // Announces the links as they now are.
@@ -128,6 +138,12 @@ public:
   void sendRow(const QString& id, const QJsonObject& row, const QString& kind = QStringLiteral("thread"));
   // Rows of the cluster member `node` as `shell.rows`: each [id, kind, fields].
   void sendRows(const QString& node, const QJsonArray& rows);
+  // A linked environment's row, kept and sent as `shell.linkRows`.
+  void sendLinkRow(const QString& environment, const QString& id, const QJsonObject& row,
+                   const QString& kind = QStringLiteral("thread"));
+  // A link goes down (`problem`, e.g. "unreachable") or comes back (empty):
+  // `shell.links` says so, and its node goes offline or online.
+  void setLinkProblem(const QString& environment, const QString& problem);
 
   void drop() {
     if (m_socket) m_socket->close();
@@ -139,6 +155,8 @@ private:
   void onMessage(QWebSocket* socket, const QString& text);
   void dispatchCommand(const Rpc& rpc);
   QJsonArray links() const;
+  QJsonObject linkedEnvironment(const QString& environment) const;
+  void sendLinkFrame(const QString& type, const QString& environment, QJsonObject frame);
 
   QWebSocketServer m_server;
   quint16 m_port = 0;

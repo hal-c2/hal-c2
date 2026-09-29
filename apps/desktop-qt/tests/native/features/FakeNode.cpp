@@ -23,8 +23,9 @@ FakeNode::FakeNode() : m_server(QStringLiteral("fake-node"), QWebSocketServer::N
   m_port = m_server.serverPort();
   QObject::connect(&m_server, &QWebSocketServer::newConnection, this, [this] { accept(); });
 
-  onShape(QStringLiteral("shell"), [this](int id, const QJsonObject&) {
+  onShape(QStringLiteral("shell"), [this](int id, const QJsonObject& shape) {
     m_shellSubscription = id;
+    shellLinks = shape.value(QLatin1String("links")).toBool();
     if (!holdSnapshot) sendSnapshot();
   });
   onRpc(QStringLiteral("orchestration.dispatchCommand"), [this](const Rpc& rpc) { dispatchCommand(rpc); });
@@ -78,7 +79,7 @@ void FakeNode::sendSnapshot() {
   for (auto it = projects.cbegin(); it != projects.cend(); ++it) {
     rows.append(QJsonArray{name, it.key(), QStringLiteral("project"), *it});
   }
-  send({
+  QJsonObject snapshot{
       {QStringLiteral("t"), QStringLiteral("shell")},
       {QStringLiteral("id"), m_shellSubscription},
       {QStringLiteral("nodes"),
@@ -93,12 +94,74 @@ void FakeNode::sendSnapshot() {
        }}},
       {QStringLiteral("rows"), rows},
       {QStringLiteral("links"), links()},
-  });
+  };
+  if (shellLinks) {
+    // Each link carries its nodes and rows as the node holds them.
+    QJsonArray withRows;
+    for (const QJsonValue& value : snapshot.value(QLatin1String("links")).toArray()) {
+      QJsonObject link = value.toObject();
+      const QString environment = link.value(QLatin1String("environment")).toObject().value(QLatin1String("environmentId")).toString();
+      QJsonArray linkRows;
+      for (const QJsonArray& row : linkedRows.value(environment)) linkRows.append(QJsonArray{name, row.at(0), row.at(1), row.at(2)});
+      link.insert(QStringLiteral("nodes"), QJsonArray{QJsonObject{
+                                               {QStringLiteral("node"), name},
+                                               {QStringLiteral("online"), !linkProblems.contains(environment)},
+                                               {QStringLiteral("environment"), linkedEnvironment(environment)},
+                                           }});
+      link.insert(QStringLiteral("rows"), linkRows);
+      withRows.append(link);
+    }
+    snapshot.insert(QStringLiteral("links"), withRows);
+  }
+  send(snapshot);
 }
 
 void FakeNode::link(const QString& environment) {
   if (!linked.contains(environment)) linked.append(environment);
   sendLinks();
+  if (!shellLinks) return;
+  sendLinkFrame(QStringLiteral("shell.linkEnvironment"), environment,
+                {{QStringLiteral("environment"), linkedEnvironment(environment)}});
+  sendLinkFrame(QStringLiteral("shell.linkNode"), environment,
+                {{QStringLiteral("online"), !linkProblems.contains(environment)}});
+  QJsonArray rows;
+  for (const QJsonArray& row : linkedRows.value(environment)) rows.append(row);
+  if (!rows.isEmpty()) sendLinkFrame(QStringLiteral("shell.linkRows"), environment, {{QStringLiteral("rows"), rows}});
+}
+
+void FakeNode::sendLinkRow(const QString& environment, const QString& id, const QJsonObject& row, const QString& kind) {
+  const QJsonArray entry{id, kind, row};
+  linkedRows[environment].insert(id, entry);
+  if (shellLinks && linked.contains(environment)) {
+    QJsonArray rows;
+    rows.append(entry);
+    sendLinkFrame(QStringLiteral("shell.linkRows"), environment, {{QStringLiteral("rows"), rows}});
+  }
+}
+
+void FakeNode::setLinkProblem(const QString& environment, const QString& problem) {
+  if (problem.isEmpty()) {
+    linkProblems.remove(environment);
+  } else {
+    linkProblems.insert(environment, problem);
+  }
+  sendLinks();
+  if (shellLinks) sendLinkFrame(QStringLiteral("shell.linkNode"), environment, {{QStringLiteral("online"), problem.isEmpty()}});
+}
+
+QJsonObject FakeNode::linkedEnvironment(const QString& environment) const {
+  return {{QStringLiteral("environmentId"), environment},
+          {QStringLiteral("label"), linkLabels.value(environment, environment)},
+          {QStringLiteral("capabilities"), capabilities}};
+}
+
+void FakeNode::sendLinkFrame(const QString& type, const QString& environment, QJsonObject frame) {
+  if (!m_socket || m_shellSubscription < 0) return;
+  frame.insert(QStringLiteral("t"), type);
+  frame.insert(QStringLiteral("id"), m_shellSubscription);
+  frame.insert(QStringLiteral("link"), environment);
+  frame.insert(QStringLiteral("node"), name);
+  send(frame);
 }
 
 void FakeNode::unlink(const QString& environment) {
@@ -122,11 +185,9 @@ QJsonArray FakeNode::links() const {
         {QStringLiteral("origin"), QStringLiteral("http://") + environment + QStringLiteral(":3780")},
         {QStringLiteral("online"), !linkProblems.contains(environment)},
     });
-    if (linkProblems.contains(environment)) {
-      QJsonObject link = result.last().toObject();
-      link.insert(QStringLiteral("problem"), linkProblems.value(environment));
-      result.replace(result.size() - 1, link);
-    }
+    QJsonObject link = result.last().toObject();
+    if (linkProblems.contains(environment)) link.insert(QStringLiteral("problem"), linkProblems.value(environment));
+    result.replace(result.size() - 1, link);
   }
   return result;
 }

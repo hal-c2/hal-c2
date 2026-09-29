@@ -11,7 +11,7 @@
 #   apps/tui/src/components/MessagesTimeline.tsx
 #   apps/tui/src/components/WorkingIndicator.tsx
 #   apps/server-ex/lib/hal_c2/web/socket.ex (stream snapshot after a reconnect, resync, unknown node)
-#   apps/server-ex/lib/hal_c2/web/protocol.ex (stream shape by node)
+#   apps/server-ex/lib/hal_c2/web/protocol.ex (stream shape by environment, through a link)
 
 Feature: Streaming the agent's reply
   While a turn runs, the agent's text and reasoning arrive as they are written. When the
@@ -131,3 +131,14 @@ Feature: Streaming the agent's reply
     When that node rejoins the cluster
     Then the thread follows its node again
     And the answer "Use the tax table." is still shown
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: A thread on an environment the node is linked to says so while the link is down
+    Given the user is looking at a thread on an environment the node is linked to
+    And the agent has answered "Deploy when green."
+    When that environment becomes unreachable
+    Then the thread says its node cannot be reached
+    And the answer "Deploy when green." is still shown
+    When that environment is reachable again
+    Then the thread follows its node again
+    And the answer "Deploy when green." is still shown

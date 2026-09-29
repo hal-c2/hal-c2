@@ -657,6 +657,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
       if (rows.size() >= limit) continue;
       const QString physical = thread.environmentId + QLatin1Char(':') + thread.projectId;
       const Capabilities capabilities = capabilitiesFor(thread.environmentId);
+      const bool offline = input.offlineEnvironments.contains(thread.environmentId);
       rows.append(QVariantMap{
           {QStringLiteral("key"), thread.key()},
           {QStringLiteral("threadId"), thread.id},
@@ -676,8 +677,9 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
            snoozed && thread.snoozedUntil ? QVariant(wakeLabel(*thread.snoozedUntil, nowMs))
                                           : QVariant::fromValue(nullptr)},
           {QStringLiteral("wokeAt"), nullable(visibleWokeAt(thread, nowMs))},
-          {QStringLiteral("canSettle"), capabilities.settlement},
-          {QStringLiteral("canSnooze"), capabilities.snooze && canSnooze(thread, nowMs)},
+          {QStringLiteral("offline"), offline},
+          {QStringLiteral("canSettle"), !offline && capabilities.settlement},
+          {QStringLiteral("canSnooze"), !offline && capabilities.snooze && canSnooze(thread, nowMs)},
       });
     }
     return rows;

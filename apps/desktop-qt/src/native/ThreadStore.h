@@ -23,8 +23,9 @@ class ShellStore;
 //   Threads.timeline                 // the active thread's rows
 //   Threads.close("env-a:thread-1")  // stops following it
 //
-// A thread is addressed by the cluster node whose shell row lists it
-// (ShellStore), so it waits in `loading` until the sidebar knows it. The
+// A thread is addressed by its environment, which the node routes to the
+// cluster member serving it or through its link to it. It waits in `loading`
+// until the shell lists it (ShellStore), whose node says when it is online. The
 // NodeClient sends the subscription again after a reconnect or `resync`, and
 // the part-0 snapshot that follows replaces the thread's entities; the rows
 // keep their ids. A node that refuses the stream (offline, gone) leaves the
@@ -58,7 +59,7 @@ public:
   void setClock(std::function<QDateTime()> now);
 
   // The one place a thread's stream is addressed.
-  static QJsonObject streamShape(const QString& node, const QString& threadId);
+  static QJsonObject streamShape(const QString& environmentId, const QString& threadId);
 
 signals:
   void activeThreadChanged();
@@ -66,7 +67,6 @@ signals:
 private:
   struct Followed {
     QPointer<TimelineModel> model;
-    QString node;
     int subscription = 0;
     // Refused while its node was offline: retried once the node is online.
     bool waitOnline = false;

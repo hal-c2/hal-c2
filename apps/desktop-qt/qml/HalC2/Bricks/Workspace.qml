@@ -249,6 +249,19 @@ Rectangle {
                     }
                 }
             }
+
+            // The thread's environment is unreachable; the header stays, and
+            // says so until the environment comes back.
+            Text {
+                objectName: "offlineLabel"
+                visible: strip.ready && strip.model.offline === true
+                text: qsTr("Offline")
+                color: strip.muted
+                font.pixelSize: 12
+                font.weight: Font.Medium
+                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                Layout.alignment: Qt.AlignVCenter
+            }
         }
 
         ShellSplitButton {
