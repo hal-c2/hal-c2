@@ -382,9 +382,6 @@ export function HalC2ShellBridge() {
       case "project.add":
         openCommandPalette({ open: "add-project" });
         return;
-      case "palette.open":
-        openCommandPalette({});
-        return;
       case "settings.open":
         void router.navigate({ to: "/settings" });
         return;
