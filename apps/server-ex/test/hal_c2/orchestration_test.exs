@@ -778,6 +778,131 @@ defmodule HalC2.OrchestrationTest do
     end
   end
 
+  describe "Codex background terminals" do
+    setup %{tmp_dir: dir} do
+      log = Path.join(dir, "codex-requests.log")
+
+      Application.put_env(:hal_c2, :codex_command, [
+        "env",
+        "FAKE_CODEX_LOG=#{log}",
+        "python3",
+        "-u",
+        @fake_codex
+      ])
+
+      :ok = HalC2.Shell.subscribe(self())
+      %{log: log}
+    end
+
+    test "a command left running keeps its session until Codex reports it ended" do
+      Application.put_env(:hal_c2, :idle_session_check_ms, nil)
+      Application.put_env(:hal_c2, :session_idle_ms, 0)
+
+      on_exit(fn ->
+        Application.delete_env(:hal_c2, :idle_session_check_ms)
+        Application.delete_env(:hal_c2, :session_idle_ms)
+      end)
+
+      start_supervised!(HalC2.Orchestration.IdleSessions)
+      thread_id = launch("start the dev server in the background")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      assert [%{"status" => "running", "input" => "npm run dev"}] = commands(thread_id)
+
+      assert HalC2.Orchestration.IdleSessions.check() == []
+      assert [_] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+
+      codex_says(thread_id, "item/completed", %{
+        "threadId" => "native-thread-1",
+        "turnId" => "native-turn-1",
+        "item" => %{
+          "type" => "commandExecution",
+          "id" => "cmd-bg",
+          "command" => "npm run dev",
+          "status" => "completed",
+          "aggregatedOutput" => "listening on 5173\nbye\n",
+          "exitCode" => 0
+        }
+      })
+
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+
+      assert [%{"status" => "completed", "output" => "listening on 5173\nbye\n", "exitCode" => 0}] =
+               commands(thread_id)
+
+      assert HalC2.Orchestration.IdleSessions.check() == [thread_id]
+    end
+
+    test "stopping the thread between turns terminates the command", %{log: log} do
+      thread_id = launch("start the dev server in the background")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+
+      assert {:ok, _} =
+               Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      assert [%{"status" => "interrupted"}] = commands(thread_id)
+      assert [%{"processId" => "4275"}] = terminated(log)
+
+      assert {:error, _} =
+               Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+    end
+
+    test "an interrupted turn terminates the command it started", %{log: log} do
+      thread_id = launch("start the dev server in the background and wait")
+      _ = await_run(thread_id, "running")
+      await_item(thread_id, "command_execution")
+
+      assert {:ok, _} =
+               Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+      _ = await_run(thread_id, "interrupted")
+      assert [%{"status" => "interrupted"}] = commands(thread_id)
+      assert [%{"processId" => "4275"}] = terminated(log)
+    end
+
+    test "the command fails when Codex exits" do
+      thread_id = launch("start the dev server in the background")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+
+      [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+      Process.exit(:sys.get_state(pid).conn, :kill)
+
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      assert [%{"status" => "failed"}] = commands(thread_id)
+    end
+
+    test "releasing the session ends the command" do
+      thread_id = launch("start the dev server in the background")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+
+      assert :ok = Orchestration.release_session(thread_id)
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      assert [%{"status" => "interrupted"}] = commands(thread_id)
+    end
+
+    defp commands(thread_id) do
+      current(thread_id)
+      |> StreamState.list("turn-item")
+      |> Enum.filter(&(&1["type"] == "command_execution"))
+    end
+
+    defp terminated(log) do
+      for line <- String.split(File.read!(log), "\n", trim: true),
+          %{"method" => "thread/backgroundTerminals/terminate", "params" => params} <-
+            [JSON.decode!(line)],
+          do: params
+    end
+
+    defp codex_says(thread_id, method, params) do
+      [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+      send(pid, {:json_rpc, :sys.get_state(pid).conn, {:notification, method, params}})
+    end
+  end
+
   describe "Claude" do
     test "a message runs a Claude turn: thinking, a Bash call, and a streamed answer" do
       thread_id = launch("list the files", "claudeAgent")
