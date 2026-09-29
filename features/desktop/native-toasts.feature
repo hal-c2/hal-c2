@@ -20,6 +20,7 @@ Feature: The desktop shell shows its own toasts
       | t1 | p1      | First | 2026-09-23T09:50:00Z |
     And the node has the project "p1" titled "proj-1"
     And the desktop shell is connected to its node
+    And the page has followed the window to its new thread
     And the node refuses "thread.settle" with "No"
 
   @desktop

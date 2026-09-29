@@ -3,6 +3,8 @@
 #   apps/desktop-qt/src/native/ComposerController.cpp (a draft's first send promotes it)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (draft rows and their menu)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
+#   navigation/landing.feature owns the draft a window with no thread lands on, which is here
+#   from the start: the window opens on a draft in "proj-1".
 #   threads/creating.feature owns what a new thread is; this file owns how the desktop keeps
 #   its drafts.
 
@@ -35,8 +37,8 @@ Feature: Drafts on the desktop
     @desktop
     Scenario: A project that is gone starts nothing
       When the user starts a new thread in "proj-9"
-      Then the desktop keeps 0 drafts
-      And the window shows home
+      Then the window shows a new draft in "proj-1"
+      And the desktop keeps 1 draft
 
   Rule: A draft ends when it is sent or deleted
 
@@ -56,13 +58,13 @@ Feature: Drafts on the desktop
         | delete | Delete draft |
 
     @desktop
-    Scenario: Deleting the open draft leaves it
-      Given the user starts a new thread in "proj-1"
+    Scenario: Deleting the open draft lands on a new thread
+      Given the user starts a new thread in "proj-2"
       And the user opens the draft's menu at 30, 60
       When the user picks "delete"
       Then the menu closes
-      And the sidebar lists no drafts
-      And the window shows home
+      And the window shows a new draft in "proj-1"
+      And the desktop keeps 1 draft
 
     @desktop
     Scenario: Dismissing the draft's menu keeps the draft
@@ -76,8 +78,8 @@ Feature: Drafts on the desktop
     Scenario: A draft whose project the node removes goes with it
       Given the user starts a new thread in "proj-1"
       When the node removes the project "p1"
-      Then the sidebar lists no drafts
-      And the window shows home
+      Then the window shows a new draft in "proj-2"
+      And the desktop keeps 1 draft
 
   Rule: Drafts stay on this machine
 

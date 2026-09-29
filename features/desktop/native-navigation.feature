@@ -25,6 +25,7 @@ Feature: The desktop shell decides where the window is
       | t2 | p1      | Second | 2026-09-23T09:40:00Z |
     And the node has the project "p1" titled "proj-1"
     And the desktop shell is connected to its node
+    And the page has followed the window to its new thread
 
   Rule: The shell moves the window and the page follows
 
@@ -48,6 +49,7 @@ Feature: The desktop shell decides where the window is
 
     @desktop
     Scenario: A new thread opens the project's draft
+      Given the user opens "env-a:t1" from the sidebar
       When the user starts a new thread in "proj-1"
       Then the window shows a new draft in "proj-1"
       And the page is asked to open the draft for its thread in "p1"
@@ -103,6 +105,8 @@ Feature: The desktop shell decides where the window is
       And the user can go back
       When the page goes back to "env-a:t1"
       Then the window shows "env-a:t1"
+      When the user goes back
+      Then the window shows a new draft in "proj-1"
       And the user can not go back
 
     @desktop

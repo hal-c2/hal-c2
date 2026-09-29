@@ -522,6 +522,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/layout.feature:The thread's git actions are in the header"),
     QStringLiteral("navigation/appearance.feature:Panels open and close immediately by default"),
     QStringLiteral("navigation/header.feature"),
+    QStringLiteral("navigation/landing.feature"),
     QStringLiteral("settings/storage.feature:Settings for several machines show mixed values"),
     QStringLiteral("settings/storage.feature:A machine too old for storage cleanup*"),
     QStringLiteral("settings/scopes-and-inheritance.feature:Changing one axis of the scope*"),

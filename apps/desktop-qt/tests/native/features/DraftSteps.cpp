@@ -1,12 +1,16 @@
 // The desktop's drafts (DraftController): starting a new thread, the draft in
 // the sidebar and the window, its menu, and the thread it becomes
 // (features/threads/drafts.feature, threads/creating.feature,
-// navigation/layout.feature).
+// navigation/layout.feature), and the draft a window with no thread lands on
+// (navigation/landing.feature).
 
+#include <QDir>
 #include <QJsonObject>
 
 #include "DraftController.h"
 #include "Harness.h"
+#include "NativeShell.h"
+#include "NavigationController.h"
 #include "World.h"
 
 namespace {
@@ -26,6 +30,12 @@ QString sidebarProjectName(World& world, const QString& environmentId, const QSt
     if (map.value(QStringLiteral("key")) == physical) return map.value(QStringLiteral("displayName")).toString();
   }
   return physical;
+}
+
+// Where NativeShell keeps the drafts (setStoreDirs); a folder in its place
+// makes every save fail.
+QString draftsFile(World& world) {
+  return QDir(world.homeDir()).filePath(QStringLiteral("data/shell-drafts.json"));
 }
 
 QStringList sidebarDraftIds(World& world) {
@@ -177,6 +187,37 @@ const Steps steps([] {
     world.sync();
     expect(sidebarDraftIds(world).isEmpty(), QStringLiteral("the sidebar lists the drafts %1").arg(sidebarDraftIds(world).join(u", ")));
   });
+  // Landing (navigation/landing.feature).
+  step(QStringLiteral("the desktop can not keep its drafts"), [](World& world, const Captures&, const Table&) {
+    expect(QDir().mkpath(draftsFile(world)), QStringLiteral("could not block %1").arg(draftsFile(world)));
+  });
+  step(QStringLiteral("the desktop can keep its drafts again"), [](World& world, const Captures&, const Table&) {
+    expect(QDir(draftsFile(world)).removeRecursively(), QStringLiteral("could not unblock %1").arg(draftsFile(world)));
+  });
+  step(QStringLiteral("the window says it couldn't start a new thread"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QVariant route = world.state(QStringLiteral("route"));
+    expect(at(route, QStringLiteral("kind")) == QLatin1String("home"), QStringLiteral("the route is %1").arg(show(route)));
+    const QVariant landing = world.state(QStringLiteral("landing"));
+    expect(at(landing, QStringLiteral("failed")).toBool(), QStringLiteral("landing is %1").arg(show(landing)));
+  });
+  step(QStringLiteral("the user tries again"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("landing.retry"), QVariantMap{});
+  });
+  step(QStringLiteral("the user opens a new window"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("window.new"), QVariantMap{});
+    world.sync();
+  });
+  step(QStringLiteral("the new window shows the first window's draft"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const auto& windows = world.native().windows();
+    expect(windows.size() == 2, QStringLiteral("%1 windows are open").arg(windows.size()));
+    const auto first = windows.at(0)->controller<NavigationController>()->route();
+    const auto second = windows.at(1)->controller<NavigationController>()->route();
+    expect(first.kind == QLatin1String("draft") && second == first,
+           QStringLiteral("the windows show %1 %2 and %3 %4").arg(first.kind, first.draftId, second.kind, second.draftId));
+  });
+
   step(QStringLiteral("the desktop keeps (\\d+) drafts?"), [](World& world, const Captures& c, const Table&) {
     world.sync();
     expect(drafts(world)->drafts().size() == c[0].toInt(), QStringLiteral("the desktop keeps %1 drafts").arg(drafts(world)->drafts().size()));

@@ -19,6 +19,12 @@ namespace {
 
 const QString kAt = QStringLiteral("2026-09-23T09:00:00Z");
 
+// The project whose sections threads/sidebar-list.feature reads.
+QString& sectionsProject() {
+  static QString key;
+  return key;
+}
+
 QString iso(const QDateTime& time) {
   return time.toUTC().toString(Qt::ISODate);
 }
@@ -137,6 +143,7 @@ const Steps steps([] {
     putThread(world, QStringLiteral("t-settled"), {{QStringLiteral("projectId"), project}, {QStringLiteral("title"), QStringLiteral("Settled")},
                                                    {QStringLiteral("settledOverride"), QStringLiteral("settled")}, {QStringLiteral("settledAt"), kAt}});
     world.startNewThread(QVariantMap{{QStringLiteral("projectKey"), world.projectKey(project)}});
+    sectionsProject() = world.projectKey(project);
   });
   step(QStringLiteral("%1 was created before %1").arg(q), [](World& world, const Captures& c, const Table&) {
     putThread(world, titleId(c[0]), {{QStringLiteral("projectId"), world.node.projects.firstKey()}, {QStringLiteral("title"), c[0]},
@@ -185,7 +192,12 @@ const Steps steps([] {
     const QVariantMap state = sidebar(world);
     QStringList counts;
     for (const QString& section : {QStringLiteral("drafts"), QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("snoozed"), QStringLiteral("settled")}) {
-      counts.append(QStringLiteral("%1 %2").arg(section).arg(state.value(section).toList().size()));
+      QVariantList rows = state.value(section).toList();
+      // The draft the window landed on (navigation/landing.feature) is another project's.
+      if (section == QLatin1String("drafts")) {
+        rows.removeIf([](const QVariant& row) { return row.toMap().value(QStringLiteral("projectKey")) != sectionsProject(); });
+      }
+      counts.append(QStringLiteral("%1 %2").arg(section).arg(rows.size()));
     }
     expect(counts.join(u", ") == QLatin1String("drafts 1, pinned 1, active 2, snoozed 1, settled 1"),
            QStringLiteral("the list holds %1").arg(counts.join(u", ")));

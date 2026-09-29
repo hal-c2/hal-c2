@@ -1,6 +1,7 @@
 # Sources:
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (the header and context strip from the node)
 #   apps/desktop-qt/src/native/ShellStore.cpp (the thread and project rows it reads)
+#   apps/desktop-qt/src/native/DraftController.cpp (the draft a window with no thread lands on)
 #   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (the header: title, rename, editor, actions)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (the context strip: checkout, machine, branch)
 #   apps/web/src/hooks/useRenameThread.ts
@@ -26,9 +27,9 @@ Feature: The thread's header on the desktop
     Then the browser opens "https://github.com/acme/shop/pull/7"
 
   @desktop
-  Scenario: Leaving the thread clears the header
+  Scenario: Leaving the thread lands on a new draft in the most recent project
     When the user leaves the thread
-    Then the header shows no thread
+    Then the header shows a new thread in "shop"
 
   @desktop
   Scenario: Opening the thread without picking uses the first editor the machine has

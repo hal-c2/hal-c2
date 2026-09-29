@@ -152,6 +152,15 @@ const Steps steps([] {
     expect(!world.follows.isEmpty() && world.follows.constLast().value(QStringLiteral("threadKey")) == c[0],
            QStringLiteral("the page got %1").arg(world.describePage()));
   });
+  // The page follows the draft the window lands on (navigation/landing.feature);
+  // what it is told after that is the scenario's.
+  step(QStringLiteral("the page has followed the window to its new thread"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      return !world.follows.isEmpty() && world.follows.constLast().value(QStringLiteral("kind")) == QLatin1String("draft") &&
+             world.follows.constLast().value(QStringLiteral("draftId")) == at(world.state(QStringLiteral("route")), QStringLiteral("draftId"));
+    }, [&] { return QStringLiteral("to follow the new thread; the page got %1").arg(world.describePage()); });
+    world.follows.clear();
+  });
   step(QStringLiteral("the page is not told where to go"), [](World& world, const Captures&, const Table&) {
     world.sync();
     expect(world.follows.isEmpty(), QStringLiteral("the page got %1").arg(world.describePage()));

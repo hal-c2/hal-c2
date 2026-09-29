@@ -224,7 +224,9 @@ const Steps steps([] {
 
   // A background start (mod+alt+Enter): the prompt it sent.
   const auto typeFirst = [](World& world, const QString& text) {
-    if (navigation(world)->route().kind != QLatin1String("draft")) startDraft(world);
+    // The window may already have landed on a draft (DraftController::land).
+    if (navigation(world)->route().kind == QLatin1String("draft")) world.draftId = navigation(world)->route().draftId;
+    else startDraft(world);
     world.bridge().dispatch(QStringLiteral("composer.text.set"),
                             QVariantMap{{QStringLiteral("target"), world.draftId}, {QStringLiteral("text"), text}, {QStringLiteral("cursor"), text.size()}});
   };
