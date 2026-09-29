@@ -28,25 +28,25 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   Background:
     Given a project with an open thread on Codex
 
-  @desktop @tui @backlog-desktop
+  @desktop @tui
   Scenario: The user switches the model for the next turn
     When the user chooses the model "gpt-5-codex"
     Then the next turn runs on "gpt-5-codex"
 
-  @desktop @tui @backlog-desktop
+  @desktop @tui
   Scenario: Models from unavailable providers cannot be chosen
     Given the Cursor provider is not installed
     When the user looks through the models
     Then Cursor's models cannot be chosen
 
-  @backlog @desktop
+  @desktop
   Scenario: Models are grouped by provider
     Given Claude and a second Codex instance "Codex Work" are enabled
     When the user looks through the models
     Then Codex, "Codex Work" and Claude each list only their own models
     And a provider that is turned off in settings is not listed
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: The chosen model is shown with its provider
     When the user chooses the model "gpt-5-codex"
     Then the composer shows "gpt-5-codex" marked as a Codex model
@@ -71,7 +71,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then "gpt-5.5" shows "Start a new thread to use this model."
     And "gpt-5.5" cannot be chosen
 
-  @backlog @desktop
+  @desktop
   Scenario: Unavailable providers stay listed with the reason
     Given the Cursor provider is not installed
     When the user looks through the models
@@ -104,7 +104,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user presses the model picker shortcut again
     Then the model picker is closed
 
-  @desktop @tui @backlog-desktop
+  @desktop @tui
   Scenario Outline: The user sets the reasoning effort for the next turn
     When the user sets the effort to <effort>
     Then the next turn runs with <effort> effort
@@ -115,7 +115,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | medium |
       | high   |
 
-  @node @desktop @tui @backlog-desktop
+  @node @desktop @tui
   Scenario Outline: The user sets what the agent may do without asking
     When the user sets the permissions to <mode>
     Then the next turn runs in <mode>
@@ -141,14 +141,14 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user turns on Ultrathink and sends "design the cache"
     Then the agent receives "Ultrathink: design the cache"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Favourite models are listed first and can be unfavourited
     When the user marks "claude-opus" as a favourite
     Then "claude-opus" is listed among the favourites
     When the user removes it from the favourites
     Then it is no longer listed among the favourites
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A thread's provider is locked once it has started
     Given the thread has already run a turn on Codex
     When the user looks through the models

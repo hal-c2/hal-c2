@@ -1,6 +1,8 @@
 #include "ComposerController.h"
 
+#include <QFile>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QStringList>
@@ -10,6 +12,7 @@
 #include <memory>
 
 #include "DraftController.h"
+#include "KeybindingController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "NodeClient.h"
@@ -21,9 +24,12 @@
 #include "TimelineModel.h"
 #include "ToastController.h"
 #include "WorkspaceController.h"
+#include "WorkspaceFiles.h"
 
 namespace {
-const NativeControllerRegistrar<ComposerController> registrar(QStringLiteral("composer"), {QStringLiteral("turn")});
+const NativeControllerRegistrar<ComposerController> registrar(QStringLiteral("composer"),
+                                                               {QStringLiteral("turn"), QStringLiteral("composer"),
+                                                                QStringLiteral("modelPicker")});
 
 // apps/web/src/proposedPlan.ts PLAN_IMPLEMENTATION_PROMPT_PREFIX.
 const QString kImplementPrefix = QStringLiteral("PLEASE IMPLEMENT THIS PLAN:\n");
@@ -110,6 +116,18 @@ void ComposerController::activate() {
   connect(shell->controller<DraftController>(), &DraftController::changed, this, &ComposerController::publish);
   // The row says whether a turn runs, which decides follow-ups and the plan.
   connect(m_store, &ShellStore::changed, this, &ComposerController::publish);
+  // The route environment's providers are the picker's catalogue.
+  connect(shell->controller<WorkspaceController>(), &WorkspaceController::configChanged, this, [this] {
+    refreshCatalogue();
+    publish();
+  });
+  if (auto* settings = shell->controller<SettingsController>()) {
+    connect(settings, &SettingsController::settingsChanged, this, &ComposerController::publish);
+    connect(settings, &SettingsController::deviceChanged, this, &ComposerController::publish);
+  }
+  connect(shell->controller<KeybindingController>(), &KeybindingController::bindingsChanged, this,
+          &ComposerController::publish);
+  refreshCatalogue();
   follow();
 }
 
@@ -284,9 +302,12 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   const bool implement = planFollowUp && trimmed.isEmpty();
 
   const QString createdAt = sidebar::formatIso(m_now());
-  const QString runtimeMode = runtimeModeOf(target);
+  // Only a mode the user changed is set; a thread the node has no mode for
+  // keeps the node's default.
+  const QString runtimeMode = m_drafts.value(target).runtimeMode;
   QString interactionMode = interactionModeOf(target);
   if (planFollowUp) interactionMode = implement ? QStringLiteral("default") : QStringLiteral("plan");
+  if (thread->interactionMode.isEmpty() && interactionMode == QLatin1String("default")) interactionMode.clear();
   QList<QJsonObject> commands;
   if (!runtimeMode.isEmpty() && runtimeMode != thread->runtimeMode) {
     commands.append({
@@ -587,9 +608,8 @@ void ComposerController::dispatchAll(const Send& send, qsizetype index,
 // Images the brick read from disk ({name, mimeType, base64}) join the route
 // thread's draft.
 bool ComposerController::attach(const QVariantList& files) {
-  const QString draftId = nativeDraft();
-  const QString target = draftId.isEmpty() ? openThread() : draftId;
-  if (draftId.isEmpty() && !m_store->thread(target)) return false;
+  const QString target = this->target();
+  if (target.isEmpty()) return true;
   QList<Attachment>& attachments = m_drafts[target].attachments;
   for (const QVariant& value : files) {
     const QVariantMap file = value.toMap();
@@ -659,11 +679,6 @@ QString ComposerController::openDraft() const {
   return route.kind == QLatin1String("draft") ? route.draftId : QString();
 }
 
-QString ComposerController::nativeDraft() const {
-  const QString id = openDraft();
-  return !id.isEmpty() && NativeShell::of(this)->controller<DraftController>()->draft(id) ? id : QString();
-}
-
 // A thread's own model; for a draft the project's default, as the web's
 // deriveComposerModelSelection: this device's project override, the
 // project's, then the default for new threads. Empty lets the node choose.
@@ -697,17 +712,8 @@ void ComposerController::toast(const QString& title, const QString& description)
 void ComposerController::follow() {
   const QString thread = openThread();
   const QString draftId = openDraft();
-  const QString key = draftId.isEmpty() ? thread : draftId;
-  if (key != m_thread || draftId != m_draftId) {
-    m_thread = key;
-    m_draftId = draftId;
-    if (draftId.isEmpty()) {
-      m_openedDraft = draft(thread);
-    } else {
-      const auto kept = NativeShell::of(this)->controller<DraftController>()->draft(draftId);
-      m_openedDraft = kept ? kept->text : QString();
-    }
-  }
+  m_thread = draftId.isEmpty() ? thread : draftId;
+  m_draftId = draftId;
   TimelineModel* timeline = thread.isEmpty() ? nullptr : NativeShell::of(this)->controller<ThreadStore>()->timeline(thread);
   if (timeline != m_timeline) {
     disconnect(m_timelineConnection);
@@ -719,10 +725,21 @@ void ComposerController::follow() {
 
 void ComposerController::publish() {
   if (!m_active) return;
-  QVariantMap state = turnState();
-  if (state == m_published) return;
-  m_published = state;
-  m_bridge->publish(QStringLiteral("turn"), state);
+  const QVariantMap state = turnState();
+  if (state != m_published) {
+    m_published = state;
+    m_bridge->publish(QStringLiteral("turn"), state);
+  }
+  const QVariant composerState = this->composerState(state);
+  if (composerState != m_publishedComposer) {
+    m_publishedComposer = composerState;
+    m_bridge->publish(QStringLiteral("composer"), composerState);
+  }
+  const QVariantMap picker = pickerState();
+  if (picker != m_publishedPicker) {
+    m_publishedPicker = picker;
+    m_bridge->publish(QStringLiteral("modelPicker"), picker);
+  }
 }
 
 QVariantMap ComposerController::turnState() const {
@@ -742,7 +759,6 @@ QVariantMap ComposerController::turnState() const {
             {QStringLiteral("kind"), QStringLiteral("draft")},
             {QStringLiteral("running"), false},
             {QStringLiteral("sending"), m_launching.contains(m_draftId)},
-            {QStringLiteral("draft"), m_openedDraft},
             {QStringLiteral("attachments"), attachments},
             {QStringLiteral("approvals"), QVariantList()},
             {QStringLiteral("questions"), QVariantList()},
@@ -752,8 +768,7 @@ QVariantMap ComposerController::turnState() const {
   QVariantMap state{{QStringLiteral("threadKey"), thread ? m_thread : QString()},
                     {QStringLiteral("kind"), QStringLiteral("thread")},
                     {QStringLiteral("running"), isRunning},
-                    {QStringLiteral("draft"), m_openedDraft},
-                    {QStringLiteral("attachments"), attachments},
+                            {QStringLiteral("attachments"), attachments},
                     {QStringLiteral("approvals"), QVariantList()},
                     {QStringLiteral("questions"), QVariantList()},
                     {QStringLiteral("plan"), QVariant()},
@@ -850,4 +865,416 @@ QVariantMap ComposerController::turnState() const {
   }
   state.insert(QStringLiteral("queue"), queue);
   return state;
+}
+
+// --- The draft and what the composer shows -------------------------------------
+
+QString ComposerController::target() const {
+  if (!m_draftId.isEmpty()) {
+    return NativeShell::of(this)->controller<DraftController>()->draft(m_draftId) ? m_draftId : QString();
+  }
+  return m_store->thread(m_thread) ? m_thread : QString();
+}
+
+QString ComposerController::draft(const QString& target) const {
+  if (const auto kept = NativeShell::of(this)->controller<DraftController>()->draft(target)) return kept->text;
+  return m_drafts.value(target).text;
+}
+
+QVariant ComposerController::setting(const QString& key) const {
+  const auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  return settings ? settings->setting(key) : QVariant();
+}
+
+void ComposerController::setText(const QString& target, const QString& text, int cursor, const QVariant& edit) {
+  Draft& kept = m_drafts[target];
+  if (edit.isValid() && !edit.isNull()) kept.edit = edit;
+  const bool changed = text != draft(target);
+  cursor = std::clamp(cursor, 0, int(text.size()));
+  if (changed || cursor != kept.cursor) kept.dismissed = false;
+  kept.cursor = cursor;
+  if (changed) {
+    if (NativeShell::of(this)->controller<DraftController>()->draft(target)) {
+      // A new thread's text is kept with its draft.
+      NativeShell::of(this)->controller<DraftController>()->setText(target, text);
+    } else {
+      kept.text = text;
+      save();
+    }
+  }
+  searchPaths(target);
+  publish();
+}
+
+bool ComposerController::slashMode(const QString& target, const QString& text) {
+  static const QRegularExpression command(QStringLiteral("^/(plan|default)\\s*$"), QRegularExpression::CaseInsensitiveOption);
+  const QRegularExpressionMatch match = command.match(text.trimmed());
+  if (!match.hasMatch() || !m_drafts.value(target).attachments.isEmpty() || !planModeOn(instanceOf(selection(target)))) {
+    return false;
+  }
+  setInteractionMode(target, match.captured(1).toLower());
+  setText(target, QString(), 0);
+  return true;
+}
+
+void ComposerController::setInteractionMode(const QString& target, const QString& mode) {
+  if (mode != QLatin1String("plan") && mode != QLatin1String("default")) return;
+  if (mode == QLatin1String("plan") && !planModeOn(instanceOf(selection(target)))) return;
+  if (mode == interactionModeOf(target)) return;
+  m_drafts[target].interactionMode = mode;
+  save();
+  publish();
+}
+
+// As the web's handleModelSelect: a started thread keeps its provider, and a
+// model its session cannot switch to says why instead.
+bool ComposerController::selectModel(const QString& target, const QString& instanceId, const QString& model) {
+  if (instanceId.isEmpty() || model.isEmpty()) return false;
+  // Only what the picker offers: a ready provider's own models.
+  const composer::Instance* next = composer::find(m_catalogue, instanceId);
+  if (!next || !next->ready() || composer::findModel(*next, model).isEmpty()) return false;
+  const std::optional<composer::Lock> lock = lockOf(target);
+  if (lock && next->driver != lock->driver) return false;
+  const auto thread = m_store->thread(target);
+  if (thread && thread->runtime) {
+    const QJsonObject current = thread->modelSelection;
+    if (const auto block = composer::blockReason(m_catalogue, current.value(QLatin1String("instanceId")).toString(),
+                                                 current.value(QLatin1String("model")).toString(), instanceId, model)) {
+      NativeShell::of(this)->controller<ToastController>()->show(QStringLiteral("warning"), block->title, block->description);
+      return false;
+    }
+  }
+  Draft& kept = m_drafts[target];
+  const QJsonObject current = selection(target);
+  QJsonObject chosen{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("model"), model}};
+  // Options belong to the provider they were set on.
+  if (current.value(QLatin1String("instanceId")).toString() == instanceId && current.contains(QLatin1String("options"))) {
+    chosen.insert(QStringLiteral("options"), current.value(QLatin1String("options")));
+  }
+  kept.modelSelection = chosen;
+  save();
+  publish();
+  return true;
+}
+
+bool ComposerController::setOption(const QString& target, const QString& id, const QVariant& value) {
+  QJsonObject chosen = selection(target);
+  const composer::Instance* instance = instanceOf(chosen);
+  if (!instance || !instance->ready()) return false;
+  const QJsonArray descriptors =
+      composer::descriptors(composer::findModel(*instance, chosen.value(QLatin1String("model")).toString()),
+                            chosen.value(QLatin1String("options")).toArray(), planModeOn(instance));
+  const std::optional<QJsonArray> options = composer::applyOption(descriptors, id, value);
+  if (!options) return false;
+  chosen.insert(QStringLiteral("options"), *options);
+  m_drafts[target].modelSelection = chosen;
+  save();
+  publish();
+  return true;
+}
+
+// Puts the suggestion in the trigger's place, as the web's
+// applyPromptReplacement; the composer's own commands act instead.
+bool ComposerController::selectSuggestion(const QString& target, const QString& id) {
+  const QString text = draft(target);
+  const std::optional<composer::Trigger> trigger = composer::trigger(text, m_drafts.value(target).cursor);
+  if (!trigger || m_drafts.value(target).dismissed) return false;
+  const QList<composer::Suggestion> offered = suggestions(target, trigger);
+  const auto chosen = std::find_if(offered.cbegin(), offered.cend(), [&](const composer::Suggestion& item) { return item.id == id; });
+  if (chosen == offered.cend()) return false;
+  const QString replacement = chosen->replacement;
+  int end = trigger->end;
+  if (replacement.endsWith(u' ') && end < text.size() && text.at(end) == u' ') ++end;
+  const QString next = text.left(trigger->start) + replacement + text.mid(end);
+  setText(target, next, trigger->start + int(replacement.size()));
+  if (id == QLatin1String("slash:model")) {
+    m_bridge->sendToPage(QStringLiteral("composer.modelPicker.toggle"));
+  } else if (id == QLatin1String("slash:plan") || id == QLatin1String("slash:default")) {
+    setInteractionMode(target, id.mid(6));
+  }
+  return true;
+}
+
+QList<composer::Suggestion> ComposerController::suggestions(const QString& target,
+                                                            const std::optional<composer::Trigger>& trigger) const {
+  if (!trigger) return {};
+  const composer::Instance* instance = instanceOf(selection(target));
+  if (trigger->kind == QLatin1String("slash-command")) {
+    return composer::slashItems(instance, *trigger, planModeOn(instance), setting(QStringLiteral("showSkillsInSlashMenu")).toBool(),
+                                draft(target).trimmed() == u'/' + trigger->query);
+  }
+  if (trigger->kind == QLatin1String("skill")) return composer::skillItems(instance, *trigger);
+  if (trigger->kind == QLatin1String("path") && m_paths.target == target && m_paths.query == trigger->query) {
+    return composer::pathItems(m_paths.entries);
+  }
+  return {};
+}
+
+// The @ menu asks the node's workspace search (the Files tab's) for the
+// route's checkout; the answer counts only while it is still the question.
+void ComposerController::searchPaths(const QString& target) {
+  const std::optional<composer::Trigger> trigger = composer::trigger(draft(target), m_drafts.value(target).cursor);
+  if (!trigger || trigger->kind != QLatin1String("path") || trigger->query.isEmpty()) return;
+  if (m_paths.target == target && m_paths.query == trigger->query) return;
+  const auto& place = NativeShell::of(this)->controller<WorkspaceController>()->place();
+  if (!place || place->cwd().isEmpty() || !m_store->environmentOnline(place->environmentId)) return;
+  m_paths = {target, trigger->query, false, {}, m_paths.request + 1};
+  const int request = m_paths.request;
+  WorkspaceFiles::searchEntries(m_client, place->environmentId, place->cwd(), trigger->query, 80,
+                                [this, request](const QList<FileTreeModel::Entry>& entries, bool,
+                                                const std::optional<QString>&) {
+                                  if (request != m_paths.request) return;
+                                  m_paths.done = true;
+                                  for (const FileTreeModel::Entry& entry : entries) {
+                                    m_paths.entries.append({entry.path, entry.directory});
+                                  }
+                                  publish();
+                                });
+}
+
+void ComposerController::refreshCatalogue() {
+  const QJsonObject config = NativeShell::of(this)->controller<WorkspaceController>()->environmentConfig();
+  m_catalogue = composer::instances(config.value(QLatin1String("providers")).toArray());
+}
+
+const composer::Instance* ComposerController::instanceOf(const QJsonObject& selection) const {
+  return composer::find(m_catalogue, selection.value(QLatin1String("instanceId")).toString());
+}
+
+QJsonObject ComposerController::selection(const QString& target) const {
+  QJsonObject chosen = m_drafts.value(target).modelSelection.value_or(baseSelection(target));
+  if (chosen.value(QLatin1String("instanceId")).toString().isEmpty()) {
+    const auto ready = std::find_if(m_catalogue.cbegin(), m_catalogue.cend(), [](const composer::Instance& instance) {
+      return instance.ready();
+    });
+    if (ready == m_catalogue.cend()) return {};
+    return {{QStringLiteral("instanceId"), ready->instanceId}, {QStringLiteral("model"), composer::defaultModel(*ready)}};
+  }
+  if (chosen.value(QLatin1String("model")).toString().isEmpty()) {
+    if (const composer::Instance* instance = instanceOf(chosen)) {
+      chosen.insert(QStringLiteral("model"), composer::defaultModel(*instance));
+    }
+  }
+  return chosen;
+}
+
+bool ComposerController::started(const QString& target) const {
+  const auto thread = m_store->thread(target);
+  return thread && (thread->latestRunId || thread->latestUserMessageAt || thread->runtime);
+}
+
+std::optional<composer::Lock> ComposerController::lockOf(const QString& target) const {
+  if (!started(target)) return std::nullopt;
+  const composer::Instance* instance = instanceOf(m_store->thread(target)->modelSelection);
+  if (!instance) return std::nullopt;
+  return composer::Lock{instance->driver, instance->groupKey};
+}
+
+bool ComposerController::planModeOn(const composer::Instance* instance) const {
+  return instance && instance->showInteractionModeToggle && setting(QStringLiteral("planModeEnabled")).toBool();
+}
+
+QString ComposerController::runtimeModeOf(const QString& target) const {
+  if (const QString mode = m_drafts.value(target).runtimeMode; !mode.isEmpty()) return mode;
+  if (const auto thread = m_store->thread(target); thread && !thread->runtimeMode.isEmpty()) return thread->runtimeMode;
+  return QStringLiteral("full-access");
+}
+
+// The mode a send uses: plan only while plan mode is on, as the web's.
+QString ComposerController::interactionModeOf(const QString& target) const {
+  if (!planModeOn(instanceOf(selection(target)))) return QStringLiteral("default");
+  if (const QString mode = m_drafts.value(target).interactionMode; !mode.isEmpty()) return mode;
+  if (const auto thread = m_store->thread(target); thread && !thread->interactionMode.isEmpty()) {
+    return thread->interactionMode;
+  }
+  return QStringLiteral("default");
+}
+
+// ShellComposerState, as the web's buildShellComposerState worked it out.
+QVariant ComposerController::composerState(const QVariantMap& turn) const {
+  const QString target = this->target();
+  if (target.isEmpty()) return QVariant::fromValue(nullptr);
+  const bool isDraft = !m_draftId.isEmpty();
+  const auto thread = m_store->thread(target);
+  const Draft kept = m_drafts.value(target);
+  const QString text = draft(target);
+  const int cursor = std::clamp(kept.cursor, 0, int(text.size()));
+  const QJsonObject chosen = selection(target);
+  const composer::Instance* instance = instanceOf(chosen);
+  const bool planOn = planModeOn(instance);
+
+  const std::optional<composer::Trigger> trigger = kept.dismissed ? std::nullopt : composer::trigger(text, cursor);
+  QVariantList suggestionList;
+  for (const composer::Suggestion& item : suggestions(target, trigger)) {
+    suggestionList.append(QVariantMap{{QStringLiteral("id"), item.id},
+                                      {QStringLiteral("kind"), item.kind},
+                                      {QStringLiteral("label"), item.label},
+                                      {QStringLiteral("description"), item.description}});
+  }
+  QVariant emptyText = QVariant::fromValue(nullptr);
+  if (trigger && suggestionList.isEmpty()) {
+    // A path search says nothing until it has answered.
+    const bool waiting = trigger->kind == QLatin1String("path") &&
+                         (trigger->query.isEmpty() || m_paths.target != target || m_paths.query != trigger->query ||
+                          !m_paths.done);
+    if (!waiting && !composer::emptyText(trigger->kind).isEmpty()) emptyText = composer::emptyText(trigger->kind);
+  }
+
+  QVariantList attachments;
+  for (const Attachment& attachment : kept.attachments) {
+    attachments.append(QVariantMap{{QStringLiteral("id"), attachment.id}, {QStringLiteral("name"), attachment.name}});
+  }
+  const QVariantList approvals = turn.value(QStringLiteral("approvals")).toList();
+  const QVariantList questions = turn.value(QStringLiteral("questions")).toList();
+  const QVariantMap firstQuestion =
+      questions.isEmpty() ? QVariantMap()
+                          : questions.constFirst().toMap().value(QStringLiteral("questions")).toList().value(0).toMap();
+  const bool choiceOnly = !firstQuestion.isEmpty() && !firstQuestion.value(QStringLiteral("allowCustomAnswer")).toBool();
+  const bool planOffered = !turn.value(QStringLiteral("plan")).isNull() && turn.value(QStringLiteral("plan")).isValid();
+  const bool showPlanFollowUp = planOffered && kept.attachments.isEmpty();
+  QString environmentId = thread ? thread->environmentId : QString();
+  if (isDraft) {
+    if (const auto draft = NativeShell::of(this)->controller<DraftController>()->draft(target)) {
+      environmentId = draft->environmentId;
+    }
+  }
+  const bool offline = !m_store->environmentOnline(environmentId);
+  const bool noProvider =
+      std::none_of(m_catalogue.cbegin(), m_catalogue.cend(), [](const composer::Instance& entry) { return entry.ready(); });
+  const bool busy = isDraft && m_launching.contains(target);
+  const bool hasContent = !text.trimmed().isEmpty() || !kept.attachments.isEmpty();
+  const bool isRunning = thread && thread->activeRunId.has_value();
+
+  QString placeholder = QStringLiteral("Ask anything, @tag files/folders, $use skills, or / for commands");
+  if (!approvals.isEmpty()) {
+    placeholder = QStringLiteral("Resolve this approval request to continue");
+  } else if (showPlanFollowUp) {
+    placeholder = QStringLiteral("Add feedback to refine the plan, or leave this blank to implement it");
+  } else if (noProvider) {
+    placeholder = QStringLiteral("Enable a provider in Settings to send a message");
+  } else if (offline) {
+    placeholder = QStringLiteral("Ask for changes, send follow-ups, or attach images");
+  }
+  QVariant disabledReason = QVariant::fromValue(nullptr);
+  if (offline) {
+    disabledReason = QStringLiteral("Not connected");
+  } else if (noProvider) {
+    disabledReason = QStringLiteral("No provider available");
+  }
+
+  auto* keys = NativeShell::of(this)->controller<KeybindingController>();
+  const QString selectedInstance = chosen.value(QLatin1String("instanceId")).toString();
+  const QString selectedModel = chosen.value(QLatin1String("model")).toString();
+  const QVariantList options =
+      instance ? composer::shellOptions(composer::descriptors(composer::findModel(*instance, selectedModel),
+                                                              chosen.value(QLatin1String("options")).toArray(), planOn))
+               : QVariantList();
+  const auto orNull = [](const QString& value) { return value.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(value); };
+  return QVariantMap{
+      {QStringLiteral("target"), target},
+      {QStringLiteral("routeKind"), isDraft ? QStringLiteral("draft") : QStringLiteral("server")},
+      {QStringLiteral("edit"), kept.edit.isValid() ? kept.edit : QVariant::fromValue(nullptr)},
+      {QStringLiteral("text"), text},
+      {QStringLiteral("cursor"), cursor},
+      {QStringLiteral("triggerKind"), trigger ? QVariant(trigger->kind) : QVariant::fromValue(nullptr)},
+      {QStringLiteral("suggestions"), suggestionList},
+      {QStringLiteral("suggestionsEmptyText"), emptyText},
+      {QStringLiteral("attachments"), attachments},
+      {QStringLiteral("terminalContexts"), QVariantList()},
+      {QStringLiteral("placeholder"), placeholder},
+      {QStringLiteral("editorDisabled"), !approvals.isEmpty() || choiceOnly},
+      {QStringLiteral("canSend"), !(busy || offline || noProvider) && (hasContent || showPlanFollowUp)},
+      {QStringLiteral("sendDisabledReason"), disabledReason},
+      {QStringLiteral("isRunning"), isRunning},
+      {QStringLiteral("followUpBehavior"), setting(QStringLiteral("followUpBehavior")).toString() == QLatin1String("queue")
+                                               ? QStringLiteral("queue")
+                                               : QStringLiteral("steer")},
+      {QStringLiteral("enterIntents"), composer::enterIntents(keys->resolved(), keys->mac(),
+                                                              setting(QStringLiteral("sendShortcut")).toString(), isDraft,
+                                                              isRunning)},
+      {QStringLiteral("isSendBusy"), busy},
+      {QStringLiteral("isConnecting"), false},
+      {QStringLiteral("pendingApprovalCount"), approvals.size()},
+      {QStringLiteral("pendingUserInputCount"), questions.size()},
+      {QStringLiteral("showPlanFollowUpPrompt"), showPlanFollowUp},
+      {QStringLiteral("selectedInstanceId"), orNull(selectedInstance)},
+      {QStringLiteral("selectedModel"), orNull(selectedModel)},
+      {QStringLiteral("options"), options},
+      {QStringLiteral("runtimeMode"), runtimeModeOf(target)},
+      {QStringLiteral("runtimeModes"), composer::runtimeModes(instance)},
+      {QStringLiteral("interactionMode"), interactionModeOf(target)},
+      {QStringLiteral("showInteractionModeToggle"), planOn},
+  };
+}
+
+// ShellModelPickerState: the rail for the route's thread or draft.
+QVariantMap ComposerController::pickerState() const {
+  const QString target = this->target();
+  const auto thread = m_store->thread(target);
+  const QJsonObject chosen = selection(target);
+  const QJsonObject current = thread ? thread->modelSelection : QJsonObject();
+  const auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  const composer::ModelPrefs prefs =
+      settings ? composer::modelPrefs(QJsonValue::fromVariant(settings->deviceValue(QStringLiteral("favorites"))),
+                                      QJsonValue::fromVariant(settings->deviceValue(QStringLiteral("providerModelPreferences"))))
+               : composer::ModelPrefs();
+  const std::optional<composer::Lock> lock = lockOf(target);
+  auto* keys = NativeShell::of(this)->controller<KeybindingController>();
+  const auto key = [keys](const QString& command) { return composer::pickerKey(keys->resolved(), keys->mac(), command); };
+  QVariantList jump;
+  for (int n = 1; n <= 9; ++n) jump.append(key(QStringLiteral("modelPicker.jump.%1").arg(n)));
+  const QVariant toggle = key(QStringLiteral("modelPicker.toggle"));
+  return {
+      {QStringLiteral("instances"),
+       composer::pickerInstances(m_catalogue, prefs, chosen.value(QLatin1String("instanceId")).toString(),
+                                 chosen.value(QLatin1String("model")).toString(), lock, thread && thread->runtime,
+                                 current.value(QLatin1String("instanceId")).toString(),
+                                 current.value(QLatin1String("model")).toString())},
+      {QStringLiteral("locked"), lock.has_value()},
+      {QStringLiteral("shortcut"),
+       toggle.isNull() ? QVariant::fromValue(nullptr) : toggle.toMap().value(QStringLiteral("label"))},
+      {QStringLiteral("previousProvider"), key(QStringLiteral("modelPicker.previousProvider"))},
+      {QStringLiteral("nextProvider"), key(QStringLiteral("modelPicker.nextProvider"))},
+      {QStringLiteral("jump"), jump},
+  };
+}
+
+// --- Keeping drafts ---------------------------------------------------------------
+
+// Each target's text and choices, as {targets: {<target>: {text, modelSelection,
+// runtimeMode, interactionMode}}}; images are not kept.
+void ComposerController::setStorePath(const QString& path) {
+  m_storePath = path;
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly)) return;
+  const QJsonObject targets = QJsonDocument::fromJson(file.readAll()).object().value(QLatin1String("targets")).toObject();
+  for (auto it = targets.begin(); it != targets.end(); ++it) {
+    const QJsonObject entry = it.value().toObject();
+    Draft& kept = m_drafts[it.key()];
+    kept.text = entry.value(QLatin1String("text")).toString();
+    kept.cursor = int(kept.text.size());
+    if (entry.value(QLatin1String("modelSelection")).isObject()) {
+      kept.modelSelection = entry.value(QLatin1String("modelSelection")).toObject();
+    }
+    kept.runtimeMode = entry.value(QLatin1String("runtimeMode")).toString();
+    kept.interactionMode = entry.value(QLatin1String("interactionMode")).toString();
+  }
+  publish();
+}
+
+void ComposerController::save() const {
+  if (m_storePath.isEmpty()) return;
+  QJsonObject targets;
+  for (auto it = m_drafts.cbegin(); it != m_drafts.cend(); ++it) {
+    const Draft& kept = it.value();
+    QJsonObject entry;
+    if (!kept.text.isEmpty()) entry.insert(QStringLiteral("text"), kept.text);
+    if (kept.modelSelection) entry.insert(QStringLiteral("modelSelection"), *kept.modelSelection);
+    if (!kept.runtimeMode.isEmpty()) entry.insert(QStringLiteral("runtimeMode"), kept.runtimeMode);
+    if (!kept.interactionMode.isEmpty()) entry.insert(QStringLiteral("interactionMode"), kept.interactionMode);
+    if (!entry.isEmpty()) targets.insert(it.key(), entry);
+  }
+  QFile file(m_storePath);
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
+  file.write(QJsonDocument(QJsonObject{{QStringLiteral("targets"), targets}}).toJson(QJsonDocument::Compact));
 }

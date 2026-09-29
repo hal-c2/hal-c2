@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include "ComposerController.h"
 #include "DraftController.h"
 #include "Harness.h"
 #include "NativeShell.h"
@@ -49,6 +50,22 @@ const FakeNode::Extension launches([](FakeNode& node) {
     }
   });
 });
+
+// The prompt the last background start sent.
+struct Background {
+  QString text;
+};
+
+// A toast of `type` titled `title`, with the one action `action` (any, when empty).
+bool toastOffering(World& world, const QString& type, const QString& title, const QString& action) {
+  for (const QVariant& entry : world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
+    const QVariantMap toast = entry.toMap();
+    if (toast.value(QStringLiteral("type")) != type || toast.value(QStringLiteral("title")) != title) continue;
+    const QVariantList actions = toast.value(QStringLiteral("actions")).toList();
+    if (action.isEmpty() || (actions.size() == 1 && actions.first().toMap().value(QStringLiteral("label")) == action)) return true;
+  }
+  return false;
+}
 
 QList<QJsonObject> calls(World& world) {
   return world.node.part<FakeLaunches>().calls;
@@ -185,16 +202,6 @@ const Steps steps([] {
     expect(calls(world).size() == c[0].toInt(), QStringLiteral("the node launched %1 threads").arg(calls(world).size()));
   });
 
-  // What the page is asked.
-  step(QStringLiteral("the page is asked to set the composer text for the draft to %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] {
-      for (const PageAction& action : world.actionsOf(QStringLiteral("composer.text.set"))) {
-        if (action.payload.value(QStringLiteral("target")) == world.draftId && action.payload.value(QStringLiteral("text")) == c[0]) return true;
-      }
-      return false;
-    }, [&] { return QStringLiteral("the composer text; the page got %1").arg(world.describePage()); });
-  });
-
   // What the window shows.
   step(QStringLiteral("the window shows the launched thread in the draft's place"), [](World& world, const Captures&, const Table&) {
     const QJsonObject launch = lastLaunch(world);
@@ -204,10 +211,70 @@ const Steps steps([] {
     expect(!world.native().controller<DraftController>()->draft(world.draftId),
            QStringLiteral("the shell still keeps the draft %1").arg(world.draftId));
   });
+  step(QStringLiteral("the window shows the thread the background start launched"), [](World& world, const Captures&, const Table&) {
+    const QString threadKey = world.node.environmentId + QLatin1Char(':') + lastLaunch(world).value(QLatin1String("threadId")).toString();
+    world.waitFor([&] { return navigation(world)->threadKey() == threadKey; },
+                  [&] { return QStringLiteral("%1; the route is %2").arg(threadKey, show(world.state(QStringLiteral("route")))); });
+  });
   step(QStringLiteral("the new thread still reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
     const auto draft = world.native().controller<DraftController>()->draft(world.draftId);
     expect(draft && draft->text == c[0], QStringLiteral("the draft reads %1").arg(draft ? draft->text : QStringLiteral("nothing; it is gone")));
+  });
+
+  // A background start (mod+alt+Enter): the prompt it sent.
+  const auto typeFirst = [](World& world, const QString& text) {
+    if (navigation(world)->route().kind != QLatin1String("draft")) startDraft(world);
+    world.bridge().dispatch(QStringLiteral("composer.text.set"),
+                            QVariantMap{{QStringLiteral("target"), world.draftId}, {QStringLiteral("text"), text}, {QStringLiteral("cursor"), text.size()}});
+  };
+  const auto sendInBackground = [](World& world) {
+    world.node.part<Background>().text = world.native().controller<ComposerController>()->draft(world.draftId);
+    world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("intent"), QStringLiteral("background")}});
+  };
+  step(QStringLiteral("the user is writing the first message of a new thread"), [typeFirst](World& world, const Captures&, const Table&) {
+    typeFirst(world, QStringLiteral("Set up the linter"));
+  });
+  step(QStringLiteral("the user sends it in the background"), [sendInBackground](World& world, const Captures&, const Table&) {
+    sendInBackground(world);
+  });
+  step(QStringLiteral("the user sent %1 in the background").arg(q), [typeFirst, sendInBackground](World& world, const Captures& c, const Table&) {
+    world.node.hold(QStringLiteral("answers"));
+    typeFirst(world, c[0]);
+    sendInBackground(world);
+  });
+  step(QStringLiteral("the background thread fails to start"), [](World& world, const Captures&, const Table&) {
+    world.node.refusals.insert(QStringLiteral("orchestration.launchThread"), QStringLiteral("Provider unavailable"));
+    world.sync();
+    world.node.answerHeld();
+    world.sync();
+  });
+  step(QStringLiteral("a new thread starts with that message"), [](World& world, const Captures&, const Table&) {
+    const QJsonObject launch = lastLaunch(world);
+    expect(message(launch).value(QLatin1String("text")) == world.node.part<Background>().text.trimmed(),
+           QStringLiteral("the launch is %1").arg(describe(launch)));
+  });
+  step(QStringLiteral("the user is told it started in the background with a way to open it"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return toastOffering(world, QStringLiteral("success"), QStringLiteral("Started 1 thread in background"), QStringLiteral("Open")); },
+                  [&] { return QStringLiteral("the toast; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
+  });
+  step(QStringLiteral("the composer is ready for another prompt"), [](World& world, const Captures&, const Table&) {
+    const auto draft = world.native().controller<DraftController>()->draft(world.draftId);
+    const QVariantMap composer = world.state(QStringLiteral("composer")).toMap();
+    expect(navigation(world)->route().draftId == world.draftId && draft &&
+               draft->threadId != lastLaunch(world).value(QLatin1String("threadId")).toString() &&
+               composer.value(QStringLiteral("target")) == world.draftId && composer.value(QStringLiteral("text")).toString().isEmpty(),
+           QStringLiteral("the composer shows %1").arg(show(composer)));
+  });
+  step(QStringLiteral("the user is told the background prompt could not be sent"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return toastOffering(world, QStringLiteral("error"), QStringLiteral("A background prompt could not be sent"), QString()); },
+                  [&] { return QStringLiteral("the toast; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
+  });
+  step(QStringLiteral("the user can restore %1 into the composer").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The draft was empty, so the prompt is back in it.
+    const QVariantMap composer = world.state(QStringLiteral("composer")).toMap();
+    expect(composer.value(QStringLiteral("target")) == world.draftId && composer.value(QStringLiteral("text")) == c[0],
+           QStringLiteral("the composer shows %1").arg(show(composer)));
   });
 });
 

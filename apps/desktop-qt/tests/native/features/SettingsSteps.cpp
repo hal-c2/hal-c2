@@ -280,3 +280,8 @@ void saveElsewhere(FakeNode& node, const QString& key, const QJsonValue& value, 
   sendConfig(node, node.environmentId,
              {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), fake.settings}});
 }
+
+void publishProviders(FakeNode& node, const QJsonArray& providers) {
+  fakeConfig(node).config.insert(QStringLiteral("providers"), providers);
+  sendConfig(node, node.environmentId, {{QStringLiteral("t"), QStringLiteral("config.providers")}, {QStringLiteral("providers"), providers}});
+}

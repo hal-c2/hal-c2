@@ -12,6 +12,7 @@
 #include <QtWebEngineQuick/qtwebenginequickglobal.h>
 
 #include "BackendProcess.h"
+#include "ComposerController.h"
 #include "DraftController.h"
 #include "LocalFolderModel.h"
 #include "LocalTranscriber.h"
@@ -175,6 +176,7 @@ int main(int argc, char* argv[]) {
   native.controller<SettingsController>()->setDevicePath(QDir(configDir).filePath(QStringLiteral("preferences.json")));
   // Drafts are the user's unsent work: data, not state.
   native.controller<DraftController>()->setStorePath(QDir(storage.data).filePath(QStringLiteral("shell-drafts.json")));
+  native.controller<ComposerController>()->setStorePath(QDir(storage.data).filePath(QStringLiteral("shell-composer.json")));
   ThemeStore theme(configDir);
   // ThemeController's resolved theme is the palette under theme.json.
   theme.applyBaseTheme(bridge.state()->value(QStringLiteral("theme")));

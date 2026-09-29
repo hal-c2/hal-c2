@@ -71,7 +71,8 @@ Feature: Sending a thread's turns to its node
 
     @desktop
     Scenario: Changed modes are set before the message
-      Given the composer shows "env-a:t1"
+      Given plan mode is turned on
+      And the composer shows "env-a:t1"
       When the user switches to the "approval-required" and "plan" modes
       And the user sends "Plan it"
       Then the node receives these commands in order:
@@ -174,7 +175,8 @@ Feature: Sending a thread's turns to its node
 
     @desktop
     Scenario: The model and modes picked for the new thread go with its launch
-      Given the user starts a new thread in "proj-1"
+      Given plan mode is turned on
+      And the user starts a new thread in "proj-1"
       And the window shows a new draft in "proj-1"
       When the user picks the model "gpt-5" of "codex"
       And the user switches to the "approval-required" and "plan" modes

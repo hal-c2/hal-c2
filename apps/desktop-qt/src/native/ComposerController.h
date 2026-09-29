@@ -142,8 +142,6 @@ private:
   QString openThread() const;
   // The new-thread draft the window shows (DraftController's), or empty.
   QString openDraft() const;
-  // The same, when the shell keeps it; empty for one only the page has.
-  QString nativeDraft() const;
   // The route's composer target: its draft id, or its thread when the shell
   // has the thread's row; empty otherwise.
   QString target() const;

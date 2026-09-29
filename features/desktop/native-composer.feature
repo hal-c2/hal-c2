@@ -1,17 +1,16 @@
 # Sources:
-#   apps/desktop-qt/src/native/ComposerController.cpp (the thread's draft, send and stop against the node)
+#   apps/desktop-qt/src/native/ComposerController.cpp (the composer's text, send and stop against the node)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
 #   apps/web/src/components/ChatView.tsx (onSend: offline toast, upload, restore on failure,
-#     a draft's first send: title seed, launchThread, the draft kept on failure)
+#     standalone /plan and /default, a draft's first send: title seed, launchThread, the draft kept
+#     on failure, background sends and their restore toast)
 #   packages/client-runtime/src/commands.ts (the message.dispatch and run.interrupt this mirrors)
 #   Shared domain: composer/sending-turns.feature and drafting-and-sending.feature own what a
-#   send does; this file owns how the Qt shell's own sends meet the page's composer text, and
-#   what still goes through the page.
+#   send does; this file owns how the Qt shell keeps the composer's text around its own sends.
 
 Feature: The desktop shell sends a thread's turns to its node
-  The Qt shell sends a thread's turns straight to the node, and clears or restores the text in
-  the page's composer to match. Slash commands, background starts and drafts only the page
-  has still go through the page.
+  The Qt shell keeps each thread's and new thread's composer text, sends turns straight to the
+  node, and clears or restores the text to match.
 
   Background:
     Given the time is "2026-09-23T10:00:00Z"
@@ -23,13 +22,13 @@ Feature: The desktop shell sends a thread's turns to its node
     And the node has the project "p1" titled "proj-1"
     And the desktop shell is connected to its node
 
-  Rule: The shell's sends set the page's composer text
+  Rule: A send clears the composer, and a failed one gives the text back
 
     @desktop
     Scenario: A send dispatches the message and clears the draft
       Given the composer shows "env-a:t1"
       When the user sends "  Fix the tests  "
-      Then the page is asked to set the composer text for "env-a:t1" to ""
+      Then the composer's text for "env-a:t1" is ""
       And the node receives a "message.dispatch" command for "t1"
       And the command's "text" is "Fix the tests"
       And the command's "titleSeed" is "Fix the tests"
@@ -44,7 +43,7 @@ Feature: The desktop shell sends a thread's turns to its node
       When the user sends "Fix the tests"
       And the user types "Something else" into the composer
       And the node answers
-      Then the page is not asked to set the composer text for "env-a:t1" to "Fix the tests"
+      Then the composer's text for "env-a:t1" is "Something else"
 
     @desktop
     Scenario: A refused send keeps the sends queued behind it
@@ -57,7 +56,7 @@ Feature: The desktop shell sends a thread's turns to its node
       Then the node receives these messages in order:
         | text  |
         | First |
-      And the page is asked to set the composer text for "env-a:t1" to the prompts:
+      And the composer's text for "env-a:t1" is the prompts:
         | prompt |
         | First  |
         | Second |
@@ -70,7 +69,7 @@ Feature: The desktop shell sends a thread's turns to its node
       When the user sends "What is wrong here?"
       Then the user sees an "error" toast "Failed to send message" saying "Image 'cart.png' could not be saved."
       And the composer lists the attachment "cart.png"
-      And the page is asked to set the composer text for "env-a:t1" to "What is wrong here?"
+      And the composer's text for "env-a:t1" is "What is wrong here?"
       And the node receives no commands
 
     @desktop
@@ -83,44 +82,94 @@ Feature: The desktop shell sends a thread's turns to its node
       And the launch is for the draft's thread in "p1"
       And the launch starts in the project folder
       And the window shows the launched thread in the draft's place
-      And the page is asked to set the composer text for the draft to ""
       And the sidebar lists no drafts
       When the user goes back
       Then the window shows "env-a:t1"
 
-  Rule: Slash commands, background starts and drafts only the page has stay with the page
+  Rule: Slash commands the composer knows act, the rest go to the agent
 
     @desktop
-    Scenario: A slash command goes to the page
+    Scenario: A provider's slash command is sent to the agent
       Given the composer shows "env-a:t1"
       When the user sends "/review"
-      Then the action "composer.submit" reaches the page
-      And the node receives no commands
+      Then the node receives a "message.dispatch" command for "t1"
+      And the command's "text" is "/review"
 
     @desktop
-    Scenario: A draft only the page has goes to the page
+    Scenario: /plan and /default switch the mode without sending
+      Given plan mode is turned on
+      And the composer shows "env-a:t1"
+      When the user sends "/plan"
+      Then the composer is in "plan" mode
+      And the composer's text for "env-a:t1" is ""
+      And the node receives no commands
+      When the user sends "/default"
+      Then the composer is in "default" mode
+      When the user sends "Build it"
+      Then the node receives these commands in order:
+        | type             |
+        | message.dispatch |
+
+    @desktop
+    Scenario: Without plan mode /plan is sent to the agent
+      Given the composer shows "env-a:t1"
+      When the user sends "/plan"
+      Then the node receives a "message.dispatch" command for "t1"
+      And the command's "text" is "/plan"
+
+    @desktop
+    Scenario: A slash command in a new thread starts it
+      Given the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      When the user sends "/review"
+      Then the node launches 1 thread
+      And the window shows the launched thread in the draft's place
+
+    @desktop
+    Scenario: A draft the shell does not keep sends nothing
       Given the composer shows the draft "draft-1"
       When the user sends "Start"
-      Then the action "composer.submit" reaches the page
-      And the node receives no commands
+      Then the node receives no commands
+      And the node launches no thread
       When the desktop quits and starts again
       And the page's own link takes it to "env-a:t1"
       And the desktop shell is connected to its node
       Then the window shows "env-a:t1"
       And the page is not told where to go
 
-    @desktop
-    Scenario: A slash command in a new thread goes to the page
-      Given the user starts a new thread in "proj-1"
-      And the window shows a new draft in "proj-1"
-      When the user sends "/review"
-      Then the action "composer.submit" reaches the page
-      And the node launches no thread
+  Rule: A new thread started in the background leaves the window on the draft
 
     @desktop
-    Scenario: A new thread started in the background goes to the page
+    Scenario: A background start offers to open the thread it started
       Given the user starts a new thread in "proj-1"
       And the window shows a new draft in "proj-1"
       When the user sends "Set up the linter" in the background
-      Then the action "composer.submit" reaches the page
-      And the node launches no thread
+      Then the node launches the thread with the message "Set up the linter" titled "Set up the linter"
+      And the user sees a "success" toast "Started 1 thread in background" offering "Open"
+      And the window shows the draft
+      And the composer offers the new thread's text ""
+      When the user chooses "Open" on the toast "Started 1 thread in background"
+      Then the window shows the thread the background start launched
+
+    @desktop
+    Scenario: A background start that fails behind newer typing offers the prompt back
+      Given the user sent "Set up the linter" in the background
+      And the user types "Something else" into the new thread
+      When the background thread fails to start
+      Then the user sees an "error" toast "A background prompt could not be sent" offering "Restore prompt"
+      And the composer offers the new thread's text "Something else"
+      When the user types "" into the new thread
+      And the user chooses "Restore prompt" on the toast "A background prompt could not be sent"
+      Then the composer offers the new thread's text "Set up the linter"
+
+    @desktop
+    Scenario: Sends keep going to the threads the window shows after a background start
+      Given the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      And the user sends "Set up the linter" in the background
+      And the composer shows "env-a:t1"
+      When the user sends "First"
+      And the composer shows "env-a:t2"
+      And the user sends "Second"
+      Then the node receives a "message.dispatch" command for "t1"
+      And the node receives a "message.dispatch" command for "t2"

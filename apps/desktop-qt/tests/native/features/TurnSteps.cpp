@@ -515,9 +515,9 @@ const Steps steps([] {
     look(world, threadKey(world));
   });
   step(QStringLiteral("thread A's draft reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QVariantMap shown = turn(world);
-    expect(shown.value(QStringLiteral("threadKey")) == threadKey(world) && shown.value(QStringLiteral("draft")) == c[0],
-           QStringLiteral("the composer offers %1").arg(show(shown)));
+    const QVariantMap shown = world.state(QStringLiteral("composer")).toMap();
+    expect(shown.value(QStringLiteral("target")) == threadKey(world) && shown.value(QStringLiteral("text")) == c[0],
+           QStringLiteral("the composer shows %1").arg(show(shown)));
   });
   step(QStringLiteral("thread B's draft is empty"), [threadB](World& world, const Captures&, const Table&) {
     expect(draftOf(world, threadB(world)).isEmpty(), QStringLiteral("thread B's draft reads \"%1\"").arg(draftOf(world, threadB(world))));
