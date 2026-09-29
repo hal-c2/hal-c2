@@ -60,8 +60,9 @@ public:
   // Whether the window has focus; the application's state unless tests say.
   bool focused() const { return m_focused; }
   void setFocused(bool focused);
-  // A system notification for `key` was clicked: shows its thread. False when
-  // system notifications are off or the thread is gone.
+  // A system notification for `key` was clicked: shows its thread in the
+  // window the user last acted in and raises that window. False when system
+  // notifications are off or the thread is gone.
   bool openThread(const QString& key);
 
   static inline const QString kToggleMute = QStringLiteral("thread.toggleAlerts");

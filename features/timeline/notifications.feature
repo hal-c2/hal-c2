@@ -86,6 +86,14 @@ Feature: Alerts when a thread needs the user
     Then "Tax fix" is shown
 
   @desktop
+  Scenario: Clicking a system notification opens its thread in the window last used
+    Given system notifications were shown for "Tax fix" and then for "Docs"
+    And the user last used a second window
+    When the user clicks the older notification
+    Then the second window shows "Tax fix" and comes to the front
+    And the first window stays where it was
+
+  @desktop
   Scenario: A newer alert for a thread replaces its older one
     Given a system notification says "Tax fix" completed
     When "Tax fix" then asks for approval

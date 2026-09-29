@@ -220,9 +220,7 @@ int main(int argc, char* argv[]) {
         QProcess::startDetached(player, {QStringLiteral("-i"), event});
       },
   });
-  QObject::connect(&notifications, &NativeNotifications::activated, alerts, [alerts, &bridge](const QString& key) {
-    if (alerts->openThread(key)) bridge.windowCommand(QStringLiteral("raise"));
-  });
+  QObject::connect(&notifications, &NativeNotifications::activated, alerts, &AlertController::openThread);
 
   // mod+Q, guarded as `confirmQuit` says; a finished hold hides the windows
   // while the key is let go.

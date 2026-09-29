@@ -12,6 +12,7 @@
 #include "Harness.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
+#include "ShellBridge.h"
 #include "Stream.h"
 #include "World.h"
 
@@ -41,6 +42,8 @@ struct FakeAlerts {
   QMap<QString, Tracked> threads;  // by title
   QString current;                 // the title the last steps were about
   QString lastToast;               // the title of the last in-app alert
+  QStringList raised;              // the ids of the windows brought to the front
+  QString firstShown;              // what the first window showed before a click
 };
 
 FakeAlerts& fake(World& world) {
@@ -398,7 +401,32 @@ const Steps steps([] {
     expect(fake(world).shown.size() == 2, QStringLiteral("the user sees %1").arg(describe(world)));
   });
   step(QStringLiteral("the user clicks the older notification"), [](World& world, const Captures&, const Table&) {
-    alerts(world).openThread(fake(world).delivered.first());
+    FakeAlerts& state = fake(world);
+    for (const auto& window : world.native().windows()) {
+      QObject::connect(window->bridge(), &ShellBridge::windowCommandRequested, window.get(),
+                       [&state, id = window->id()](const QString& command) {
+                         if (command == QLatin1String("raise")) state.raised.append(id);
+                       });
+    }
+    alerts(world).openThread(state.delivered.first());
+  });
+  step(QStringLiteral("the user last used a second window"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("window.new"), QVariantMap{});
+    const auto& windows = world.native().windows();
+    expect(windows.size() == 2, QStringLiteral("%1 windows are open").arg(windows.size()));
+    world.native().setActiveWindow(windows.at(1).get());
+    fake(world).firstShown = world.native().main()->controller<NavigationController>()->threadKey();
+  });
+  step(QStringLiteral("the second window shows %1 and comes to the front").arg(q), [](World& world, const Captures& c, const Table&) {
+    const FakeAlerts& state = fake(world);
+    NativeWindow* window = world.native().windows().at(1).get();
+    const QString shown = window->controller<NavigationController>()->threadKey();
+    expect(shown == keyOf(world, state.threads.value(c[0])), QStringLiteral("the second window shows %1").arg(shown));
+    expect(state.raised == QStringList{window->id()}, QStringLiteral("raised: %1").arg(state.raised.join(QStringLiteral(", "))));
+  });
+  step(QStringLiteral("the first window stays where it was"), [](World& world, const Captures&, const Table&) {
+    const QString shown = world.native().main()->controller<NavigationController>()->threadKey();
+    expect(shown == fake(world).firstShown, QStringLiteral("the first window shows %1").arg(shown));
   });
   step(QStringLiteral("only one system notification is shown for %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const FakeAlerts& state = fake(world);

@@ -6,6 +6,7 @@
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
+#include "ShellBridge.h"
 #include "ShellStore.h"
 #include "SidebarModel.h"
 #include "ToastController.h"
@@ -101,9 +102,12 @@ void AlertController::setFocused(bool focused) {
 
 bool AlertController::openThread(const QString& key) {
   if (!hasSystemNotifications(m_mode) || !m_store->thread(key)) return false;
-  auto* navigation = NativeShell::of(this)->controller<NavigationController>();
+  // The window the user last acted in shows it, and comes to the front.
+  NativeWindow* window = NativeShell::of(this);
+  auto* navigation = window->controller<NavigationController>();
   if (!navigation) return false;
   navigation->open(NavigationController::Route::thread(key));
+  window->bridge()->windowCommand(QStringLiteral("raise"));
   return true;
 }
 
