@@ -42,19 +42,34 @@ Rectangle {
         return count === 1 ? qsTr("1 session") : qsTr("%1 sessions").arg(Math.round(count));
     }
 
-    function resetsIn(iso) {
-        if (!iso)
-            return "";
+    // How long until `iso`: `2d 3h`, `3h 20m` or `5m`; "" once it has passed.
+    function until(iso) {
         const minutes = Math.max(0, Math.round((Date.parse(iso) - Date.now()) / 60000));
         if (minutes === 0)
-            return qsTr("resets now");
+            return "";
         const days = Math.floor(minutes / 1440);
         const hours = Math.floor((minutes % 1440) / 60);
         if (days > 0)
-            return qsTr("resets in %1d %2h").arg(days).arg(hours);
+            return qsTr("%1d %2h").arg(days).arg(hours);
         if (hours > 0)
-            return qsTr("resets in %1h %2m").arg(hours).arg(minutes % 60);
-        return qsTr("resets in %1m").arg(minutes);
+            return qsTr("%1h %2m").arg(hours).arg(minutes % 60);
+        return qsTr("%1m").arg(minutes);
+    }
+
+    function resetsIn(iso) {
+        if (!iso)
+            return "";
+        const left = page.until(iso);
+        return left ? qsTr("resets in %1").arg(left) : qsTr("resets now");
+    }
+
+    // `2 reset credits banked · next expires in 27d 23h` (resetCreditsSummary).
+    function credits(row) {
+        if (row.available === 0)
+            return qsTr("No reset credits banked");
+        const banked = row.available === 1 ? qsTr("1 reset credit banked") : qsTr("%1 reset credits banked").arg(row.available);
+        const left = row.nextExpiresAt ? page.until(row.nextExpiresAt) : "";
+        return left ? qsTr("%1 · next expires in %2").arg(banked).arg(left) : banked;
     }
 
     color: Theme.palette.color("canvas", "#0b0b0d")
@@ -311,6 +326,47 @@ Rectangle {
                                 }
                             }
                         }
+
+                        // Banked reset credits, spent only once the user confirms.
+                        Repeater {
+                            model: pool.modelData.credits ?? []
+
+                            delegate: RowLayout {
+                                required property var modelData
+
+                                objectName: "usageCredits_" + modelData.key
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                Label {
+                                    text: pool.modelData.credits.length > 1 ? qsTr("%1: %2").arg(modelData.name).arg(page.credits(modelData)) : page.credits(modelData)
+                                    color: page.muted
+                                    font.pixelSize: 12
+                                }
+
+                                ShellButton {
+                                    objectName: "useReset"
+                                    visible: modelData.available > 0
+                                    enabled: !modelData.busy
+                                    subtle: true
+                                    text: modelData.busy ? qsTr("Using…") : qsTr("Use reset")
+                                    onClicked: {
+                                        resetDialog.key = modelData.key;
+                                        resetDialog.open();
+                                    }
+                                }
+
+                                Label {
+                                    objectName: "resetStatus"
+                                    Layout.fillWidth: true
+                                    visible: text.length > 0
+                                    text: modelData.status
+                                    color: page.foreground
+                                    font.pixelSize: 12
+                                    wrapMode: Text.Wrap
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -477,6 +533,66 @@ Rectangle {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+    Dialog {
+        id: resetDialog
+
+        property string key
+
+        objectName: "resetDialog"
+        parent: Overlay.overlay
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(440, (parent?.width ?? 472) - 32)
+        padding: 20
+        title: qsTr("Use a reset credit?")
+        onAccepted: Shell.dispatch("usage.resetCredit", { key: key })
+
+        background: Rectangle {
+            color: Theme.palette.color("surfaceOverlay", "#18181b")
+            border.color: Theme.palette.color("border", "#27272a")
+            radius: Math.min(Theme.radius, 16)
+        }
+        header: Label {
+            text: resetDialog.title
+            padding: 20
+            bottomPadding: 4
+            font.pixelSize: 17
+            font.weight: Font.DemiBold
+            color: page.foreground
+        }
+        contentItem: ColumnLayout {
+            spacing: 12
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.")
+                color: page.muted
+                font.pixelSize: 13
+                wrapMode: Text.Wrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Item { Layout.fillWidth: true }
+
+                ShellButton {
+                    objectName: "cancel"
+                    subtle: true
+                    text: qsTr("Cancel")
+                    onClicked: resetDialog.reject()
+                }
+
+                ShellButton {
+                    objectName: "confirm"
+                    primary: true
+                    text: qsTr("Use credit")
+                    onClicked: resetDialog.accept()
                 }
             }
         }

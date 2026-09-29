@@ -155,6 +155,8 @@ bool UsageController::handle(const QString& action, const QVariant& payload) {
     } else {
       read(true);
     }
+  } else if (action == QLatin1String("usage.resetCredit")) {
+    if (m_open) redeem(input.value(QStringLiteral("key")).toString());
   } else {
     return false;
   }
@@ -174,6 +176,8 @@ void UsageController::setOpen(bool open) {
   if (!open) {
     // Nothing is read or followed for a page nobody sees.
     ++m_generation;
+    ++m_openings;
+    m_redeemStatus.clear();
     unfollow();
     publish();
     return;
@@ -516,12 +520,17 @@ QVariantMap UsageController::summary(QStringList& notices) const {
 
 // The followed environments' accounts, one per driver and email with the
 // freshest read winning, pooled per driver and window (usageLimits.ts).
-QVariantMap UsageController::limits() const {
+// Remembers where each account's banked reset credit is redeemed.
+QVariantMap UsageController::limits() {
   struct Account {
     QString driver;
     QString name;
     QString checkedAt;
     QJsonArray windows;
+    // The freshest read that knew the reset credits, and where to redeem them.
+    QString creditsAt;
+    QJsonObject credits;
+    Redeem redeem;
   };
   QList<QString> order;
   QHash<QString, Account> accounts;
@@ -529,6 +538,27 @@ QVariantMap UsageController::limits() const {
   QStringList ids = m_providers.keys();
   std::sort(ids.begin(), ids.end());
   const bool several = m_store->environments().size() > 1;
+  auto later = [](const QString& a, const QString& b) {
+    return QDateTime::fromString(a, Qt::ISODateWithMs) > QDateTime::fromString(b, Qt::ISODateWithMs);
+  };
+  auto merge = [&](const QString& key, const Account& next) {
+    if (!accounts.contains(key)) {
+      order.append(key);
+      accounts.insert(key, next);
+      return;
+    }
+    Account& known = accounts[key];
+    if (later(next.checkedAt, known.checkedAt)) {
+      known.checkedAt = next.checkedAt;
+      known.windows = next.windows;
+    }
+    // Credits and their redemption target travel together.
+    if (!next.credits.isEmpty() && (known.credits.isEmpty() || later(next.creditsAt, known.creditsAt))) {
+      known.credits = next.credits;
+      known.creditsAt = next.creditsAt;
+      known.redeem = next.redeem;
+    }
+  };
   for (const QString& environmentId : ids) {
     for (const QJsonValue& value : m_providers.value(environmentId)) {
       const QJsonObject provider = value.toObject();
@@ -556,14 +586,9 @@ QVariantMap UsageController::limits() const {
       const QString email = text(provider.value(QLatin1String("auth")).toObject(), "email").toLower();
       const QString key = driver + QLatin1Char(':') +
                           (email.isEmpty() ? environmentId + QLatin1Char(':') + text(provider, "instanceId") : email);
-      const Account account{driver, name, text(limits, "checkedAt"), windows};
-      if (!accounts.contains(key)) {
-        order.append(key);
-        accounts.insert(key, account);
-      } else if (QDateTime::fromString(account.checkedAt, Qt::ISODateWithMs) >
-                 QDateTime::fromString(accounts.value(key).checkedAt, Qt::ISODateWithMs)) {
-        accounts.insert(key, account);
-      }
+      const QString checkedAt = text(limits, "checkedAt");
+      merge(key, {driver, name, checkedAt, windows, checkedAt, limits.value(QLatin1String("resetCredits")).toObject(),
+                  {environmentId, QJsonObject{{QStringLiteral("instanceId"), text(provider, "instanceId")}}}});
     }
   }
 
@@ -593,11 +618,13 @@ QVariantMap UsageController::limits() const {
   std::stable_sort(drivers.begin(), drivers.end(), [](const QString& a, const QString& b) {
     return (kDriverLabels.contains(a) ? 0 : 1) < (kDriverLabels.contains(b) ? 0 : 1);
   });
+  m_redeems.clear();
   QVariantList pools;
   for (const QString& driver : drivers) {
     QStringList windowKeys;
     QHash<QString, QVariantList> members;
     QHash<QString, QJsonObject> firsts;
+    QVariantList credits;
     for (const QString& key : order) {
       const Account& account = accounts[key];
       if (account.driver != driver) continue;
@@ -612,6 +639,17 @@ QVariantMap UsageController::limits() const {
                                               {QStringLiteral("usedPercent"), number(window, "usedPercent")},
                                               {QStringLiteral("resetsAt"), text(window, "resetsAt")}});
       }
+      // Banked reset credits, and what came of the last redemption.
+      const int available = account.credits.value(QLatin1String("availableCount")).toInt();
+      const QString status = m_redeemStatus.value(key);
+      if (available == 0 && status.isEmpty() && !m_redeeming.contains(key)) continue;
+      if (!account.redeem.environmentId.isEmpty()) m_redeems.insert(key, account.redeem);
+      credits.append(QVariantMap{{QStringLiteral("key"), key},
+                                 {QStringLiteral("name"), account.name},
+                                 {QStringLiteral("available"), available},
+                                 {QStringLiteral("nextExpiresAt"), text(account.credits, "nextExpiresAt")},
+                                 {QStringLiteral("busy"), m_redeeming.contains(key)},
+                                 {QStringLiteral("status"), status}});
     }
     std::stable_sort(windowKeys.begin(), windowKeys.end(), [&](const QString& a, const QString& b) {
       const int left = kindRank(text(firsts.value(a), "kind"));
@@ -640,9 +678,40 @@ QVariantMap UsageController::limits() const {
     }
     pools.append(QVariantMap{{QStringLiteral("driver"), driver},
                              {QStringLiteral("label"), kDriverLabels.value(driver, accounts.value(order.first()).name)},
-                             {QStringLiteral("windows"), windows}});
+                             {QStringLiteral("windows"), windows},
+                             {QStringLiteral("credits"), credits}});
   }
   return {{QStringLiteral("pools"), pools}, {QStringLiteral("notices"), notices}};
+}
+
+// Spends one banked reset credit of the account `key`, where its credits were
+// read. What came of it stays beside the credits until the page closes.
+void UsageController::redeem(const QString& key) {
+  if (!m_redeems.contains(key) || m_redeeming.contains(key)) return;
+  const Redeem target = m_redeems.value(key);
+  m_redeeming.insert(key);
+  m_redeemStatus.remove(key);
+  const quint64 session = m_openings;
+  m_client->call(target.environmentId, QStringLiteral("provider.consumeResetCredit"), target.input,
+                 [this, key, session](const QJsonValue& result, const std::optional<QString>& error) {
+                   m_redeeming.remove(key);
+                   if (session != m_openings) return;
+                   static const QHash<QString, QString> outcomes{
+                       {QStringLiteral("reset"), QStringLiteral("Reset applied. Your windows have cleared.")},
+                       {QStringLiteral("nothingToReset"), QStringLiteral("Nothing to reset right now.")},
+                       {QStringLiteral("noCredit"), QStringLiteral("No reset credit left.")},
+                       {QStringLiteral("alreadyRedeemed"), QStringLiteral("That credit was already redeemed.")},
+                   };
+                   const QJsonObject answer = result.toObject();
+                   QString status = error ? *error : text(answer, "warning");
+                   if (!error && status.isEmpty()) status = outcomes.value(text(answer, "outcome"));
+                   if (status.isEmpty()) status = QStringLiteral("Could not use the reset credit.");
+                   m_redeemStatus.insert(key, status);
+                   // The windows and the balance are read again.
+                   if (!error) refreshLimits(true);
+                   publish();
+                 });
+  publish();
 }
 
 void UsageController::publish() {

@@ -27,6 +27,9 @@ struct FakeUsage {
   qsizetype readsAtRefresh = 0;
   int limitChecks = 0;
   int followedBefore = 0;
+  // provider.consumeResetCredit: what the node says, and what it was asked.
+  QString creditOutcome = QStringLiteral("reset");
+  QList<QJsonObject> redeemed;
 };
 
 FakeUsage& fake(World& world) {
@@ -97,6 +100,24 @@ const FakeNode::Extension extension([](FakeNode& node) {
   node.onRpc(QStringLiteral("server.refreshUsageRates"), [&node](const FakeNode::Rpc& rpc) {
     ++node.part<FakeUsage>().rates;
     node.reply(rpc, QJsonObject{{QStringLiteral("status"), QStringLiteral("fresh")}});
+  });
+  node.onRpc(QStringLiteral("provider.consumeResetCredit"), [&node](const FakeNode::Rpc& rpc) {
+    FakeUsage& fake = node.part<FakeUsage>();
+    fake.redeemed.append(rpc.payload);
+    if (fake.creditOutcome == QLatin1String("reset")) {
+      // The credit is spent and the windows clear.
+      QJsonArray providers = fakeConfig(node).config.value(QLatin1String("providers")).toArray();
+      for (qsizetype i = 0; i < providers.size(); ++i) {
+        QJsonObject provider = providers[i].toObject();
+        if (provider.value(QLatin1String("instanceId")) != rpc.payload.value(QLatin1String("instanceId"))) continue;
+        QJsonObject limits = provider.value(QLatin1String("usageLimits")).toObject();
+        limits.insert(QStringLiteral("resetCredits"), QJsonObject{{QStringLiteral("availableCount"), 0}});
+        provider.insert(QStringLiteral("usageLimits"), limits);
+        providers[i] = provider;
+      }
+      fakeConfig(node).config.insert(QStringLiteral("providers"), providers);
+    }
+    node.reply(rpc, QJsonObject{{QStringLiteral("outcome"), fake.creditOutcome}});
   });
   node.onRpc(QStringLiteral("server.refreshProviders"), [&node](const FakeNode::Rpc& rpc) {
     ++node.part<FakeUsage>().limitChecks;
@@ -177,6 +198,15 @@ QJsonObject codex(const QString& instanceId, const QString& name, const QString&
           {QStringLiteral("status"), QStringLiteral("ready")},
           {QStringLiteral("auth"), QJsonObject{{QStringLiteral("status"), QStringLiteral("authenticated")}, {QStringLiteral("email"), email}}},
           {QStringLiteral("usageLimits"), limits}};
+}
+
+// The Codex account's banked reset credits as the page shows them.
+QVariantMap credit(World& world) {
+  for (const QVariant& pool : at(usage(world), QStringLiteral("limits.pools")).toList()) {
+    const QVariantList credits = pool.toMap().value(QStringLiteral("credits")).toList();
+    if (pool.toMap().value(QStringLiteral("driver")) == QLatin1String("codex") && !credits.isEmpty()) return credits[0].toMap();
+  }
+  return {};
 }
 
 void setProviders(World& world, const QJsonArray& providers) {
@@ -387,6 +417,46 @@ const Steps steps([] {
   step(QStringLiteral("limits are no longer followed"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return world.node.subscribers(QStringLiteral("config")).size() == fake(world).followedBefore; },
                   [&] { return QStringLiteral("only the shell's own config to be followed; %1 are").arg(world.node.subscribers(QStringLiteral("config")).size()); });
+  });
+  // Reset credits.
+  step(QStringLiteral("Codex has a reset credit banked"), [](World& world, const Captures&, const Table&) {
+    const QDateTime now = world.now();
+    setProviders(world, {codex(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("sam@example.com"),
+                               {{QStringLiteral("checkedAt"), now.toUTC().toString(Qt::ISODateWithMs)},
+                                {QStringLiteral("windows"), QJsonArray{limitsWindow(QStringLiteral("5-hour"), 90, now.addSecs(3600))}},
+                                {QStringLiteral("resetCredits"),
+                                 QJsonObject{{QStringLiteral("availableCount"), 1},
+                                             {QStringLiteral("nextExpiresAt"), now.addDays(27).toUTC().toString(Qt::ISODateWithMs)}}}})});
+  });
+  step(QStringLiteral("(no rate-limit window is in use|the account has no credit left|the credit was redeemed on another device)"),
+       [](World& world, const Captures& c, const Table&) {
+         fake(world).creditOutcome = c[0].startsWith(QLatin1String("no rate")) ? QStringLiteral("nothingToReset")
+                                     : c[0].startsWith(QLatin1String("the account")) ? QStringLiteral("noCredit")
+                                                                                     : QStringLiteral("alreadyRedeemed");
+       });
+  step(QStringLiteral("limits show (\\d+) reset credits? banked for Codex"), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return credit(world).value(QStringLiteral("available")).toInt() == c[0].toInt(); },
+                  [&] { return QStringLiteral("%1 banked; the credits are %2").arg(c[0], show(credit(world))); });
+  });
+  step(QStringLiteral("the user uses the reset credit and confirms"), [](World& world, const Captures&, const Table&) {
+    showUsage(world, QStringLiteral("limits"));
+    world.waitFor([&] { return credit(world).value(QStringLiteral("available")).toInt() > 0; },
+                  [&] { return QStringLiteral("a banked credit to spend; the page is %1").arg(show(usage(world))); });
+    world.bridge().dispatch(QStringLiteral("usage.resetCredit"), QVariantMap{{QStringLiteral("key"), credit(world).value(QStringLiteral("key"))}});
+  });
+  step(QStringLiteral("the credit is spent on the Codex instance"), [](World& world, const Captures&, const Table&) {
+    const QList<QJsonObject>& redeemed = fake(world).redeemed;
+    expect(redeemed.size() == 1 && redeemed[0].value(QLatin1String("instanceId")) == QLatin1String("codex"),
+           QStringLiteral("one redemption on the codex instance; the node was asked %1 times").arg(redeemed.size()));
+  });
+  // The confirm is the page's (tst_UsagePage); backing out of it asks nothing.
+  step(QStringLiteral("the user starts to use the reset credit but cancels"), [](World& world, const Captures&, const Table&) {
+    showUsage(world, QStringLiteral("limits"));
+  });
+  step(QStringLiteral("the credit is still banked"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return credit(world).value(QStringLiteral("available")).toInt() == 1; },
+                  [&] { return QStringLiteral("one credit banked; the credits are %1").arg(show(credit(world))); });
+    expect(fake(world).redeemed.isEmpty(), QStringLiteral("no credit to be spent"));
   });
 });
 

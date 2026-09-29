@@ -304,6 +304,14 @@ const Steps steps([] {
       }
       const QVariantMap discovery = world.state(QStringLiteral("sourceControlSettings")).toMap().value(QStringLiteral("discovery")).toMap();
       if (discovery.value(QStringLiteral("title")) == c[0]) return true;
+      // What came of spending a reset credit on the usage page.
+      const QVariantList pools = world.state(QStringLiteral("usage")).toMap().value(QStringLiteral("limits")).toMap()
+                                     .value(QStringLiteral("pools")).toList();
+      for (const QVariant& pool : pools) {
+        for (const QVariant& credit : pool.toMap().value(QStringLiteral("credits")).toList()) {
+          if (credit.toMap().value(QStringLiteral("status")) == c[0]) return true;
+        }
+      }
       return conditionProblem(world) == c[0];
     };
     world.waitFor(told, [&] {

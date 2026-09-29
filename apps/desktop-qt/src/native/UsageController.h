@@ -42,10 +42,12 @@ class ShellStore;
 // model, costUsd, totalTokens, unpriced}], periods [{key, label, costUsd,
 // totalTokens}] newest first} | null, limits {pools [{driver, label, windows
 // [{key, label, remainingPercent, resetsAt, accounts [{name, usedPercent,
-// resetsAt}]}]}], notices [text]}}.
+// resetsAt}]}], credits [{key, name, available, nextExpiresAt, busy,
+// status}]}], notices [text]}}.
 //
 // Actions: `usage.metric {metric}` and `usage.window {days}` (kept on this
-// device), `usage.environment {id}` and `usage.refresh`.
+// device), `usage.environment {id}`, `usage.refresh`, and `usage.resetCredit
+// {key}`, which spends one of the account's banked reset credits.
 class UsageController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -61,6 +63,11 @@ private:
     QString status;  // scanning, ready, failed, offline
     QJsonObject summary;
   };
+  // Where an account's reset credit is spent: `provider.consumeResetCredit`'s input.
+  struct Redeem {
+    QString environmentId;
+    QJsonObject input;
+  };
 
   void setOpen(bool open);
   void update();
@@ -74,7 +81,8 @@ private:
   void keep();
   void publish();
   QVariantMap summary(QStringList& notices) const;
-  QVariantMap limits() const;
+  QVariantMap limits();
+  void redeem(const QString& key);
 
   ShellBridge* m_bridge;
   NodeClient* m_client;
@@ -95,4 +103,10 @@ private:
   // When each environment's limits were last asked for, and those in flight.
   QHash<QString, QDateTime> m_limitsAsked;
   QSet<QString> m_limitsInFlight;
+  // Reset credits: each shown account's redemption target, those being
+  // spent, and what the last spend said. Bumped on every opening.
+  QHash<QString, Redeem> m_redeems;
+  QSet<QString> m_redeeming;
+  QHash<QString, QString> m_redeemStatus;
+  quint64 m_openings = 0;
 };

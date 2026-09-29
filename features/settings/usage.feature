@@ -11,6 +11,8 @@
 #   apps/web/src/components/usage/UsagePage.tsx
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (usage.open entry)
 #   apps/desktop-qt/src/native/UsageController.cpp, apps/desktop-qt/qml/HalC2/Bricks/UsagePage.qml
+#   apps/desktop-qt/tests/tst_UsagePage.qml (backing out of a reset credit)
+#   apps/web/src/components/usage/UsageLimits.tsx (reset credits)
 #   packages/shared/src/usageMerge.ts, packages/shared/src/usageLimits.ts
 
 Feature: Usage and limits
@@ -248,6 +250,35 @@ Feature: Usage and limits
       Given the user views limits
       When the user leaves usage
       Then limits are no longer followed
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: A banked reset credit is spent once the user confirms
+      Given Codex has a reset credit banked
+      When the user views limits
+      Then limits show 1 reset credit banked for Codex
+      When the user uses the reset credit and confirms
+      Then the user is told "Reset applied. Your windows have cleared."
+      And the credit is spent on the Codex instance
+      And limits show 0 reset credits banked for Codex
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: The user backs out of spending a reset credit
+      Given Codex has a reset credit banked
+      When the user starts to use the reset credit but cancels
+      Then the credit is still banked
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario Outline: A reset credit that cannot be used says why
+      Given Codex has a reset credit banked
+      And <situation>
+      When the user uses the reset credit and confirms
+      Then the user is told "<message>"
+
+      Examples:
+        | situation                                 | message                           |
+        | no rate-limit window is in use            | Nothing to reset right now.       |
+        | the account has no credit left            | No reset credit left.             |
+        | the credit was redeemed on another device | That credit was already redeemed. |
 
     # Grok, Cursor and OpenCode Go limits, and the /usage-limits composer command, are in
     # providers/usage-limits.feature.
