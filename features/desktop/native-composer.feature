@@ -1,15 +1,17 @@
 # Sources:
 #   apps/desktop-qt/src/native/ComposerController.cpp (the thread's draft, send and stop against the node)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
-#   apps/web/src/components/ChatView.tsx (onSend: offline toast, upload, restore on failure)
+#   apps/web/src/components/ChatView.tsx (onSend: offline toast, upload, restore on failure,
+#     a draft's first send: title seed, launchThread, the draft kept on failure)
 #   packages/client-runtime/src/commands.ts (the message.dispatch and run.interrupt this mirrors)
 #   Shared domain: composer/ owns what a send does; this file owns that the Qt shell keeps the
 #   thread's draft and sends it itself.
 
 Feature: The desktop shell sends a thread's turns to its node
   The Qt shell keeps each thread's draft from the composer's own edits (text, model, modes,
-  images) and sends it, or stops the turn, straight to the node. Slash commands and new
-  threads still go through the page.
+  images) and sends it, or stops the turn, straight to the node. A new thread's first
+  message launches the thread. Slash commands, background starts and drafts only the page
+  has still go through the page.
 
   Background:
     Given the time is "2026-09-23T10:00:00Z"
@@ -233,7 +235,95 @@ Feature: The desktop shell sends a thread's turns to its node
       And the page is asked to set the composer text for "env-a:t1" to "What is wrong here?"
       And the node receives no commands
 
-  Rule: Slash commands and new threads stay with the page
+  Rule: A new thread's first message launches its thread
+
+    @desktop
+    Scenario: The first message launches the thread and the window moves to it
+      Given the composer shows "env-a:t1"
+      And the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      When the user sends "  Set up the linter  "
+      Then the node launches the thread with the message "Set up the linter" titled "Set up the linter"
+      And the launch is for the draft's thread in "p1"
+      And the launch starts in the project folder
+      And the window shows the launched thread in the draft's place
+      And the page is asked to set the composer text for the draft to ""
+      And the sidebar lists no drafts
+      When the user goes back
+      Then the window shows "env-a:t1"
+
+    @desktop
+    Scenario: A long first message is cut down for the title
+      Given the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      When the user sends "Set up the linter and fix every warning it reports in the cart"
+      Then the node launches the thread with the message "Set up the linter and fix every warning it reports in the cart" titled "Set up the linter and fix every warning it reports..."
+
+    @desktop
+    Scenario: The model and modes picked for the new thread go with its launch
+      Given the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      When the user picks the model "gpt-5" of "codex"
+      And the user switches to the "approval-required" and "plan" modes
+      And the user sends "Plan it"
+      Then the launch uses the model "gpt-5" of "codex" in the "approval-required" and "plan" modes
+
+    @desktop
+    Scenario: An image goes up before the new thread is launched with it
+      Given the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      And the user attaches the image "cart.png"
+      Then the composer lists the attachment "cart.png"
+      When the user sends ""
+      Then the node stores the image "cart.png" for the draft's thread
+      And the node launches the thread with the message "" titled "Image: cart.png"
+      And the launch carries the image "cart.png"
+
+    @desktop
+    Scenario: A launch the node refuses keeps the draft and says why
+      Given the node refuses "orchestration.launchThread" with "Provider unavailable"
+      And the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      And the user attaches the image "cart.png"
+      When the user sends "Set up the linter"
+      Then the user sees an "error" toast "Could not create thread" saying "Provider unavailable"
+      And the window shows the draft
+      And the new thread still reads "Set up the linter"
+      And the composer lists the attachment "cart.png"
+      And the sidebar lists the draft
+
+    @desktop
+    Scenario: A new thread is launched once however often the user sends
+      Given the node holds its answers
+      And the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      When the user sends "Set up the linter"
+      And the user sends "Set up the linter"
+      And the node answers
+      Then the node launches 1 thread
+      And the window shows the launched thread in the draft's place
+
+    @desktop
+    Scenario: A new thread is not launched while the node is out of reach
+      Given the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      And the node stops accepting connections
+      And the node drops the connection
+      When the user sends "Set up the linter"
+      Then the user sees a "warning" toast "Not connected: message not sent" saying "Reconnecting to the environment. Try again once it is connected."
+      And the node launches no thread
+      And the window shows the draft
+      And the new thread still reads "Set up the linter"
+
+    @desktop
+    Scenario: An empty first message launches nothing
+      Given the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      When the user sends "   "
+      Then the node launches no thread
+      And the window shows the draft
+
+  Rule: Slash commands, background starts and drafts only the page has stay with the page
 
     @desktop
     Scenario: A slash command goes to the page
@@ -243,7 +333,7 @@ Feature: The desktop shell sends a thread's turns to its node
       And the node receives no commands
 
     @desktop
-    Scenario: A draft thread goes to the page
+    Scenario: A draft only the page has goes to the page
       Given the composer shows the draft "draft-1"
       When the user sends "Start"
       Then the action "composer.submit" reaches the page
@@ -253,3 +343,19 @@ Feature: The desktop shell sends a thread's turns to its node
       And the desktop shell is connected to its node
       Then the window shows "env-a:t1"
       And the page is not told where to go
+
+    @desktop
+    Scenario: A slash command in a new thread goes to the page
+      Given the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      When the user sends "/review"
+      Then the action "composer.submit" reaches the page
+      And the node launches no thread
+
+    @desktop
+    Scenario: A new thread started in the background goes to the page
+      Given the user starts a new thread in "proj-1"
+      And the window shows a new draft in "proj-1"
+      When the user sends "Set up the linter" in the background
+      Then the action "composer.submit" reaches the page
+      And the node launches no thread

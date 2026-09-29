@@ -7,6 +7,7 @@
 #include <QVariantMap>
 
 #include "ComposerController.h"
+#include "DraftController.h"
 #include "Harness.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -30,7 +31,9 @@ const FakeNode::Extension uploads([](FakeNode& node) {
     QJsonArray stored;
     for (const QJsonValue& value : rpc.payload.value(QLatin1String("attachments")).toArray()) {
       QJsonObject image = value.toObject();
+      image.insert(QStringLiteral("threadId"), rpc.payload.value(QLatin1String("threadId")));
       node.part<FakeUploads>().stored.append(image);
+      image.remove(QStringLiteral("threadId"));
       image.remove(QStringLiteral("dataUrl"));
       image.insert(QStringLiteral("id"), QStringLiteral("image-%1").arg(node.part<FakeUploads>().stored.size()));
       stored.append(image);
@@ -177,6 +180,21 @@ const Steps steps([] {
     QStringList names;
     for (const QJsonObject& image : stored) names.append(image.value(QLatin1String("name")).toString());
     expect(found, QStringLiteral("the node stored [%1]").arg(names.join(QStringLiteral(", "))));
+  });
+  step(QStringLiteral("the node stores the image %1 for the draft's thread").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The draft's thread id, or once it launched, the thread the window moved to.
+    const auto draft = world.native().controller<DraftController>()->draft(world.draftId);
+    world.waitFor([&] { return !world.node.part<FakeUploads>().stored.isEmpty(); }, [] { return QStringLiteral("an image stored"); });
+    const QString threadId = draft ? draft->threadId : route(world).section(u':', 1);
+    const QList<QJsonObject> stored = world.node.part<FakeUploads>().stored;
+    const bool found = std::any_of(stored.cbegin(), stored.cend(), [&](const QJsonObject& image) {
+      return image.value(QLatin1String("name")) == c[0] && image.value(QLatin1String("threadId")) == threadId;
+    });
+    QStringList seen;
+    for (const QJsonObject& image : stored) {
+      seen.append(image.value(QLatin1String("name")).toString() + QStringLiteral(" for ") + image.value(QLatin1String("threadId")).toString());
+    }
+    expect(found && !threadId.isEmpty(), QStringLiteral("the node stored [%1], not for %2").arg(seen.join(QStringLiteral(", ")), threadId));
   });
   step(QStringLiteral("the node stores no images"), [](World& world, const Captures&, const Table&) {
     world.sync();

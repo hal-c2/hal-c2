@@ -60,6 +60,9 @@ public:
   // The draft's first turn was sent as the thread `threadKey`: the draft is
   // done and the window shows the thread instead.
   void promote(const QString& threadKey);
+  // The same for the draft `id`, whose thread may be on another environment
+  // ("Run on").
+  void promote(const QString& id, const QString& threadKey);
   void setText(const QString& id, const QString& text);
 
 signals:

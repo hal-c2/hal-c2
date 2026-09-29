@@ -124,6 +124,47 @@ void WorkspaceController::setDraftResolver(std::function<std::optional<DraftPlac
   refresh();
 }
 
+// client-runtime startThreadTurn's bootstrap, from the checkout the header
+// shows: a new worktree off the picked (else current) branch, the worktree
+// picked, or the project folder. A folder that is not a repository always
+// starts in the folder, as the web's send mode.
+WorkspaceController::Launch WorkspaceController::launch(const QString& draftId) const {
+  Launch launch;
+  const std::optional<DraftPlace> draft = m_resolveDraft ? m_resolveDraft(draftId) : std::nullopt;
+  if (!draft) {
+    launch.problem = QStringLiteral("This draft no longer points to an available project.");
+    return launch;
+  }
+  const Checkout checkout = m_checkouts.value(draftId);
+  const bool moved = !checkout.environmentId.isEmpty();
+  launch.environmentId = moved ? checkout.environmentId : draft->environmentId;
+  launch.projectId = moved ? checkout.projectId : draft->projectId;
+  // The checkout's status is known only for the draft the window shows.
+  const bool shown = m_place && m_place->draftId == draftId;
+  const bool repo = !(shown && m_git && !m_git->local.value(QLatin1String("isRepo")).toBool(true));
+  const QString current = shown ? currentBranch() : QString();
+  const std::optional<QString> branch =
+      checkout.branch ? checkout.branch : (current.isEmpty() ? std::nullopt : std::optional(current));
+  const auto withBranch = [&](QJsonObject strategy) {
+    if (branch) strategy.insert(QStringLiteral("branch"), *branch);
+    return strategy;
+  };
+  if (checkout.worktreePath) {
+    launch.strategy = withBranch({{QStringLiteral("type"), QStringLiteral("existing_worktree")},
+                                  {QStringLiteral("worktreePath"), *checkout.worktreePath}});
+  } else if (repo && checkout.envMode == QLatin1String("worktree")) {
+    if (!branch) {
+      launch.problem = QStringLiteral("Select a base branch before sending in New worktree mode.");
+      return launch;
+    }
+    launch.strategy = {{QStringLiteral("type"), QStringLiteral("worktree")}, {QStringLiteral("baseRef"), *branch}};
+    if (checkout.startFromOrigin) launch.strategy.insert(QStringLiteral("startFromOrigin"), true);
+  } else {
+    launch.strategy = withBranch({{QStringLiteral("type"), QStringLiteral("root")}});
+  }
+  return launch;
+}
+
 // --- Where the route is ---------------------------------------------------------------
 
 std::optional<WorkspaceController::Place> WorkspaceController::resolve() const {
@@ -553,7 +594,7 @@ bool WorkspaceController::handle(const QString& action, const QVariant& payload)
     createBranch(args.value(QStringLiteral("name")).toString());
   } else if (action == QLatin1String("workspace.envMode.set")) {
     setEnvMode(args.value(QStringLiteral("mode")).toString());
-    // The page still sends the first message, with the mode it was told.
+    // The page follows, for the background starts it still sends.
     return false;
   } else if (action == QLatin1String("workspace.startFromOrigin.set")) {
     if (!m_place->draftId.isEmpty()) {
@@ -789,7 +830,7 @@ void WorkspaceController::setThreadBranch(const std::optional<QString>& branch,
     checkout.worktreePath = worktreePath;
     checkout.envMode = mode;
   });
-  // The page sends the draft's first message from its own draft for now.
+  // The page follows, for the background starts it still sends.
   const Checkout checkout = m_checkouts.value(m_place->draftId);
   m_bridge->sendToPage(QStringLiteral("workspace.checkout.follow"),
                        QVariantMap{

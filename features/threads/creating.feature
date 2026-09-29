@@ -4,6 +4,7 @@
 #   apps/web/src/components/threadActionMenu.logic.ts (New thread on <branch>)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (New thread, draft rows)
 #   apps/desktop-qt/src/native/DraftController.cpp (the desktop's drafts)
+#   apps/desktop-qt/src/native/ComposerController.cpp, WorkspaceController.cpp (a draft's first send)
 #   apps/tui/src/newThread.logic.ts
 #   apps/tui/src/commands.ts (New thread)
 #   packages/contracts/src/orchestrationV2.ts (thread.create, thread.created)
@@ -71,14 +72,14 @@ Feature: Creating threads
     When the user starts a new thread in the project root on "fix/login"
     Then the project checkout switches to "fix/login"
 
-  @tui
+  @desktop @tui
   Scenario: A new worktree needs a base branch
     Given the user chose a new worktree without a base branch
     When the user tries to start the thread
     Then the thread is not started
     And the user is told to pick a base branch
 
-  @tui
+  @desktop @tui
   Scenario: A thread cannot start from an empty task
     When the user tries to start a thread with an empty first message
     Then the thread is not started

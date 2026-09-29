@@ -111,7 +111,7 @@ Feature: Drafting and sending a message
     Then the user sees why the send failed
     And the draft reads "do the thing" again
 
-  @tui
+  @desktop @tui
   Scenario: The first message of a new thread creates the thread and starts its turn
     Given the user is starting a new thread in the project
     When the user sends "Set up the linter"
