@@ -1,36 +1,38 @@
 # Sources:
-#   apps/desktop-qt/src/native/ThreadStore.cpp (reload, revert)
+#   apps/desktop-qt/src/native/ThreadStore.cpp (reload)
+#   apps/desktop-qt/src/native/ThreadDiff.cpp (requestRevert, confirmRevert: the one revert)
+#   apps/desktop-qt/qml/HalC2/Bricks/RevertDialog.qml (Keep files, Revert files too)
 #   apps/tui/src/components/ChatView.tsx (Reverted to turn N.)
 #   apps/desktop-qt/src/native/TimelineModel.cpp (checkpointOf, copy)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
-#   apps/desktop-qt/src/native/ThreadDiff.cpp (the diff panel's revert, whose toasts these match)
-#   Shared domain: timeline/*.feature owns what the thread shows; this file owns the Qt shell's
-#   rewind and retry paths. centre-view.feature owns what the centre brick shows.
+#   Shared domain: timeline/*.feature owns what the thread shows and checkpoints.feature the
+#   revert itself; this file owns the Qt shell's two ways into it and the retry path.
+#   centre-view.feature owns what the centre brick shows.
 
 Feature: The desktop shell rewinds and retries a thread
-  The shell's thread store rewinds a thread to a reply's checkpoint through its node and
-  follows a thread again after its node stopped sending it.
+  A reply's Revert and the diff panel's ask the same question and rewind the same way, and
+  the shell follows a thread again after its node stopped sending it.
 
   Background:
     Given a connected environment with the project "shop"
 
-  Rule: A reply's turn can be reverted to
+  Rule: A reply and the diff panel revert the same way
 
     @desktop
-    Scenario: Reverting can keep the files as they are
-      Given a thread in "shop" whose three turns each left a checkpoint
-      When the user rewinds the conversation to turn 1 and keeps the files
-      Then the replies of turns 2 and 3 are gone
-      And the node is asked to leave the files as they are
+    Scenario Outline: Either way in asks first, then keeps or restores the files
+      Given a thread in "shop" with three finished turns
+      When the user asks to revert to turn 1 from <where>
+      And the user confirms with "<answer>"
+      Then turns 2 and 3 are removed from the conversation
+      And <files>
       And the user is told "Reverted to turn 1."
 
-    @desktop
-    Scenario: A revert the node refuses says why and keeps the turns
-      Given a thread in "shop" whose three turns each left a checkpoint
-      And the node refuses rewinds with "Interrupt the current turn before rewinding."
-      When the user reverts to turn 1 from its reply
-      Then the user sees an "error" toast "Could not revert to turn 1" saying "Interrupt the current turn before rewinding."
-      And the conversation still has its three turns
+      Examples:
+        | where          | answer           | files                                            |
+        | its reply      | Keep files       | the node is asked to leave the files as they are |
+        | its reply      | Revert files too | the workspace files match the end of turn 1      |
+        | the diff panel | Keep files       | the node is asked to leave the files as they are |
+        | the diff panel | Revert files too | the workspace files match the end of turn 1      |
 
     @desktop
     Scenario: A reply whose turn left no checkpoint cannot be reverted to

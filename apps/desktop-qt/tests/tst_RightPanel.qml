@@ -152,24 +152,30 @@ Item {
             compare(lines.flickableDirection, Flickable.VerticalFlick);
         }
 
-        function test_revertAsksFirstAndCanBeCancelled() {
+        function test_revertAsksFirstAndCanKeepOrRestoreTheFiles() {
             const source = createTemporaryObject(fakeDiff, root);
             const diff = createTemporaryObject(diffComponent, root, { source: source });
-            const dialog = findChild(diff, "diffRevertDialog");
+            const dialog = findChild(diff, "revertDialog");
             verify(dialog);
             mouseClick(findChild(diff, "diffRevert"));
             compare(source.revertTurn, 3);
             tryVerify(() => dialog.opened);
             compare(source.confirmed.length, 0, "nothing is reverted before the user confirms");
-            mouseClick(findChild(dialog.contentItem, "diffRevertCancel"));
+            mouseClick(findChild(dialog.contentItem, "revertCancel"));
             tryVerify(() => !dialog.visible);
             compare(source.cancelled, 1);
             compare(source.confirmed.length, 0);
 
-            source.requestRevert(2);
+            mouseClick(findChild(diff, "diffRevert"));
             tryVerify(() => dialog.opened);
-            mouseClick(findChild(dialog.contentItem, "diffRevertConfirm"));
-            compare(source.confirmed, [true]);
+            mouseClick(findChild(dialog.contentItem, "revertKeepFiles"));
+            compare(source.confirmed, [false]);
+            tryVerify(() => !dialog.visible);
+
+            mouseClick(findChild(diff, "diffRevert"));
+            tryVerify(() => dialog.opened);
+            mouseClick(findChild(dialog.contentItem, "revertFiles"));
+            compare(source.confirmed, [false, true]);
             tryVerify(() => !dialog.visible);
         }
     }

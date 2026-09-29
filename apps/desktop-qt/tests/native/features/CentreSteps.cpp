@@ -1,17 +1,18 @@
 // The thread in the window's centre, past its rows: copying a message
-// (TimelineModel::copy), rewinding the thread to a turn's checkpoint
-// (ThreadStore::revert, `checkpoint.rollback`) and following it again after
-// its node stopped sending it (ThreadStore::reload)
-// (timeline/streaming.feature, timeline/checkpoints.feature,
+// (TimelineModel::copy), the two ways into a revert, a reply's and the diff
+// panel's, which both ask Panel.diff (ThreadDiff) and so the same question,
+// and following a thread again after its node stopped sending it
+// (ThreadStore::reload) (timeline/streaming.feature,
 // features/desktop/native-centre.feature).
 
 #include <QClipboard>
 #include <QGuiApplication>
-#include <QJsonArray>
 #include <QJsonObject>
 
 #include "Harness.h"
+#include "RightPanelController.h"
 #include "Stream.h"
+#include "ThreadDiff.h"
 #include "ThreadStore.h"
 #include "TimelineModel.h"
 #include "World.h"
@@ -20,11 +21,9 @@ namespace {
 
 using namespace stream;
 
-// What the steps' thread has: each finished turn's run, reply and checkpoint.
+// The agent replies the steps' thread has, in order.
 struct FakeTurns {
-  QStringList runs;
   QStringList replies;
-  QStringList checkpoints;
 };
 
 QString threadKey(World& world) {
@@ -32,42 +31,16 @@ QString threadKey(World& world) {
   return fake.environment + QLatin1Char(':') + fake.thread;
 }
 
-// A finished turn: the user's message, the agent's reply, and the checkpoint
-// it left (ready unless `checkpoint` is false).
-void finishTurn(World& world, int n, bool checkpoint = true) {
-  const QString run = startRun(world, 60);
-  const QString reply = addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("Turn %1 is done.").arg(n)}});
-  settleRun(world, QStringLiteral("completed"), 30);
-  FakeTurns& turns = world.node.part<FakeTurns>();
-  turns.runs.append(run);
-  turns.replies.append(reply);
-  const QString id = QStringLiteral("checkpoint-%1").arg(n);
-  turns.checkpoints.append(checkpoint ? id : QString());
-  if (!checkpoint) return;
-  set(world, QStringLiteral("checkpoint"), id,
-      {{QStringLiteral("id"), id}, {QStringLiteral("scopeId"), QStringLiteral("scope-1")}, {QStringLiteral("runId"), run},
-       {QStringLiteral("status"), QStringLiteral("ready")}});
+ThreadDiff& diff(World& world) {
+  return *world.native().controller<RightPanelController>()->diff();
 }
 
-// Rewinds as the node does: the later runs become rolled_back.
-void rollBackOnCommand(World& world) {
-  World* w = &world;
-  world.node.effects.append([w](const QJsonObject& command) {
-    if (command.value(QLatin1String("type")) != QLatin1String("checkpoint.rollback")) return;
-    FakeTurns& turns = w->node.part<FakeTurns>();
-    const int target = int(turns.checkpoints.indexOf(command.value(QLatin1String("checkpointId")).toString()));
-    // The effect runs inside the node's answer, so it sends without waiting on a round trip.
-    FakeStreams& fake = w->node.part<FakeStreams>();
-    for (int i = target + 1; i < turns.runs.size(); ++i) {
-      const QJsonObject patch{{QStringLiteral("s"), QJsonObject{{QStringLiteral("status"), QStringLiteral("rolled_back")}}}};
-      change(*w, QStringLiteral("run"), turns.runs.at(i), patch, true);
-      for (const int follower : followers(*w, fake.thread)) {
-        w->node.send({{QStringLiteral("t"), QStringLiteral("events")}, {QStringLiteral("id"), follower}, {QStringLiteral("offset"), fake.seq},
-                      {QStringLiteral("events"),
-                       QJsonArray{QJsonValue(QJsonArray{fake.seq, QStringLiteral("run"), turns.runs.at(i), patch, iso(now())})}}});
-      }
-    }
-  });
+// The row of the reply reading `text`, or empty.
+QString rowReading(TimelineModel& model, const QString& text) {
+  for (int row = 0; row < model.rowCount(); ++row) {
+    if (role(model, row, TimelineModel::TextRole).toString() == text) return role(model, row, TimelineModel::IdRole).toString();
+  }
+  return {};
 }
 
 QList<QJsonObject> rollbacks(World& world) {
@@ -78,34 +51,15 @@ QList<QJsonObject> rollbacks(World& world) {
   return found;
 }
 
-QJsonObject lastRollback(World& world) {
-  world.waitFor([&] { return !rollbacks(world).isEmpty(); }, [] { return QStringLiteral("a rewind; the node got none"); });
-  return rollbacks(world).constLast();
-}
-
-bool shows(TimelineModel& model, const QString& text) {
-  for (int row = 0; row < model.rowCount(); ++row) {
-    if (role(model, row, TimelineModel::TextRole).toString() == text) return true;
-  }
-  return false;
-}
-
-bool revert(World& world, int turn, bool restoreFiles) {
-  const QString reply = world.node.part<FakeTurns>().replies.value(turn - 1);
-  return store(world)->revert(threadKey(world), reply, restoreFiles);
-}
-
 const Steps steps([] {
   const QString q = kQuoted;
 
-  step(QStringLiteral("a thread in %1 whose three turns each left a checkpoint").arg(q), [](World& world, const Captures& c, const Table&) {
-    lookAtThread(world, c[0]);
-    for (int n = 1; n <= 3; ++n) finishTurn(world, n);
-    rollBackOnCommand(world);
-  });
   step(QStringLiteral("a thread in %1 whose first turn left no checkpoint").arg(q), [](World& world, const Captures& c, const Table&) {
     lookAtThread(world, c[0]);
-    finishTurn(world, 1, false);
+    startRun(world, 60);
+    world.node.part<FakeTurns>().replies.append(
+        addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("Turn 1 is done.")}}));
+    settleRun(world, QStringLiteral("completed"), 30);
   });
 
   // Copying.
@@ -125,40 +79,44 @@ const Steps steps([] {
     expect(copied == QLatin1String("The cart adds **tax** now."), QStringLiteral("the clipboard holds \"%1\"").arg(copied));
   });
 
-  // Rewinding.
-  step(QStringLiteral("the user reverts to turn (\\d+) from its reply"), [](World& world, const Captures& c, const Table&) {
-    expect(revert(world, c[0].toInt(), true), QStringLiteral("turn %1 offers no checkpoint; %2").arg(c[0], describe(timeline(world))));
+  // Reverting: the reply's Revert and the diff panel's, as their QML asks
+  // (ThreadView.askRevert, DiffPanel), answered as RevertDialog does. The
+  // thread is PanelSteps' "a thread in … with three finished turns".
+  step(QStringLiteral("the user asks to revert to turn (\\d+) from (its reply|the diff panel)"), [](World& world, const Captures& c, const Table&) {
+    const int turn = c[0].toInt();
+    if (c[1] == QLatin1String("its reply")) {
+      TimelineModel& model = timeline(world);
+      const QString reply = rowReading(model, QStringLiteral("Answer %1").arg(turn));
+      const QVariantMap checkpoint = model.checkpointOf(reply);
+      expect(checkpoint.value(QStringLiteral("turn")).toInt() == turn,
+             QStringLiteral("the reply offers %1; %2").arg(show(checkpoint), describe(model)));
+      diff(world).requestRevert(turn);
+    } else {
+      world.bridge().dispatch(QStringLiteral("panel.open"), QVariantMap{{QStringLiteral("tab"), QStringLiteral("diff")}, {QStringLiteral("turn"), turn}});
+      world.waitFor([&] { return diff(world).shownTurn() == turn; }, [&] { return QStringLiteral("the diff to show turn %1").arg(turn); });
+      diff(world).requestRevert(0);
+    }
+    expect(diff(world).revertTurn() == turn, QStringLiteral("the user is asked about turn %1").arg(diff(world).revertTurn()));
+    expect(rollbacks(world).isEmpty(), QStringLiteral("a rollback was sent before the user confirmed"));
   });
-  step(QStringLiteral("the user rewinds the conversation to turn (\\d+) and keeps the files"), [](World& world, const Captures& c, const Table&) {
-    expect(revert(world, c[0].toInt(), false), QStringLiteral("turn %1 offers no checkpoint; %2").arg(c[0], describe(timeline(world))));
-  });
-  step(QStringLiteral("the replies of turns 2 and 3 are gone"), [](World& world, const Captures&, const Table&) {
-    TimelineModel& model = timeline(world);
-    world.waitFor([&] { return !shows(model, QStringLiteral("Turn 2 is done.")) && !shows(model, QStringLiteral("Turn 3 is done.")); },
-                  [&] { return describe(model); });
-    expect(shows(model, QStringLiteral("Turn 1 is done.")), QStringLiteral("turn 1 is gone too; %1").arg(describe(model)));
+  step(QStringLiteral("the user confirms with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QStringList answers{QStringLiteral("Keep files"), QStringLiteral("Revert files too")};
+    expect(answers.contains(c[0]), QStringLiteral("the dialog offers %1").arg(answers.join(QStringLiteral(", "))));
+    diff(world).confirmRevert(c[0] == answers.at(1));
+    world.waitFor([&] { return !diff(world).reverting(); }, QStringLiteral("the revert to finish"));
+    world.sync();
   });
   step(QStringLiteral("the node is asked to leave the files as they are"), [](World& world, const Captures&, const Table&) {
-    const QJsonObject command = lastRollback(world);
+    world.waitFor([&] { return !rollbacks(world).isEmpty(); }, [] { return QStringLiteral("a rewind; the node got none"); });
+    const QJsonObject command = rollbacks(world).constLast();
     expect(command.value(QLatin1String("restoreFiles")) == QJsonValue(false), QStringLiteral("the node was asked %1").arg(show(command.toVariantMap())));
-  });
-  step(QStringLiteral("the node refuses rewinds with %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.node.refusals.insert(QStringLiteral("checkpoint.rollback"), c[0]);
-  });
-  step(QStringLiteral("the conversation still has its three turns"), [](World& world, const Captures&, const Table&) {
-    world.sync();
-    TimelineModel& model = timeline(world);
-    for (int n = 1; n <= 3; ++n) {
-      expect(shows(model, QStringLiteral("Turn %1 is done.").arg(n)), QStringLiteral("turn %1 is gone; %2").arg(n).arg(describe(model)));
-    }
   });
   step(QStringLiteral("the first turn's reply offers no rewind"), [](World& world, const Captures&, const Table&) {
     TimelineModel& model = timeline(world);
     const QString reply = world.node.part<FakeTurns>().replies.value(0);
     expect(model.checkpointOf(reply).isEmpty(), QStringLiteral("the reply offers %1").arg(show(model.checkpointOf(reply))));
-    expect(!store(world)->revert(threadKey(world), reply), QStringLiteral("the thread was rewound"));
-    world.sync();
-    expect(rollbacks(world).isEmpty(), QStringLiteral("the node was asked to rewind"));
+    diff(world).requestRevert(1);
+    expect(!diff(world).canRevert() && diff(world).revertTurn() == 0, QStringLiteral("the user is asked to revert"));
   });
 
   // Following again.

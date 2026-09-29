@@ -6,7 +6,7 @@ import HalC2.Shell
 // The right panel's Diff tab: what a thread's turns changed, from a
 // ThreadDiff (Panel.diff). A picker chooses the latest turn, all changes or
 // one turn; the patch is a DiffModel drawn one row per line, so a large diff
-// only makes the rows in view. Reverting to the turn shown asks first.
+// only makes the rows in view. Reverting to the turn shown asks first (RevertDialog).
 //
 //   DiffPanel { anchors.fill: parent; source: Panel.diff }
 Rectangle {
@@ -105,7 +105,7 @@ Rectangle {
                 Accessible.name: qsTr("Revert to this turn")
                 ToolTip.visible: hovered
                 ToolTip.text: root.source?.reverting ? qsTr("Reverting...") : qsTr("Revert to this turn")
-                onClicked: root.source.requestRevert(0)
+                onClicked: confirm.ask(0)
             }
 
             ShellButton {
@@ -423,66 +423,8 @@ Rectangle {
         }
     }
 
-    Dialog {
+    RevertDialog {
         id: confirm
-
-        readonly property int turn: root.source?.revertTurn ?? 0
-
-        objectName: "diffRevertDialog"
-        parent: Overlay.overlay
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(460, (parent?.width ?? 492) - 32)
-        padding: 20
-        closePolicy: Popup.CloseOnEscape
-        title: qsTr("Revert to turn %1?").arg(turn)
-        onTurnChanged: turn > 0 ? open() : close()
-        onRejected: root.source.cancelRevert()
-
-        background: Rectangle {
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: root.border
-            radius: Math.min(Theme.radius, 16)
-        }
-        header: Label {
-            text: confirm.title
-            padding: 20
-            bottomPadding: 4
-            font.pixelSize: 17
-            font.weight: Font.DemiBold
-            color: root.foreground
-        }
-        contentItem: ColumnLayout {
-            spacing: 12
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("The conversation after turn %1 is discarded. Reverting the files too puts the workspace back as it was after that turn. This cannot be undone.").arg(confirm.turn)
-                color: root.foreground
-                font.pixelSize: 13
-                wrapMode: Text.Wrap
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: 8
-                spacing: 8
-                Item { Layout.fillWidth: true }
-                ShellButton {
-                    objectName: "diffRevertCancel"
-                    text: qsTr("Cancel")
-                    onClicked: confirm.reject()
-                }
-                ShellButton {
-                    objectName: "diffRevertKeepFiles"
-                    text: qsTr("Keep files")
-                    onClicked: root.source.confirmRevert(false)
-                }
-                ShellButton {
-                    objectName: "diffRevertConfirm"
-                    text: qsTr("Revert files too")
-                    tint: root.removed
-                    onClicked: root.source.confirmRevert(true)
-                }
-            }
-        }
+        source: root.source
     }
 }

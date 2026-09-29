@@ -65,6 +65,7 @@ qt_add_qml_module(hal_c2_bricks
     ThreadView.qml
     js/centreViews.js
     js/panelTabs.js
+    RevertDialog.qml
   RESOURCES
     qmldir
     js/shell-connect.js

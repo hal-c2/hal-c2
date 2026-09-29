@@ -1037,10 +1037,13 @@ timeline, a quiet loading line, the draft's opening line with its project and
 checkout, and Retry (`Threads.reload`) for a thread whose node stopped sending
 it. Links in a reply open in the browser or, for a path, in the right panel
 (`panel.open {tab: "files", path, line?}`); a reply's changed file opens the
-diff on its turn. A reply's Revert asks first, then
-`Threads.revert` sends `checkpoint.rollback` with the checkpoint
-`TimelineModel::checkpointOf` found for its run; the node marks the later runs
-`rolled_back` and the fold drops them. Jump to latest is also the
+diff on its turn. There is one revert, `Panel.diff` (`ThreadDiff`), which
+follows the route's thread whether or not the panel is open: a reply's Revert
+(on the turn `TimelineModel::checkpointOf` finds for its run) and the Diff
+tab's both go through `requestRevert`, and `RevertDialog` asks before
+`confirmRevert` sends `checkpoint.rollback`, keeping or restoring the files.
+The node marks the later runs `rolled_back` and the fold drops them. Jump to
+latest is also the
 `timeline.jumpToLatest` command.
 
 What the shell still lacks next to web and mobile is tracked as Gherkin, not

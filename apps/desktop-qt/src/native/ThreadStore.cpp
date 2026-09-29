@@ -6,7 +6,6 @@
 #include "NavigationController.h"
 #include "NodeClient.h"
 #include "ShellStore.h"
-#include "ToastController.h"
 
 namespace {
 const NativeControllerRegistrar<ThreadStore> registrar(QStringLiteral("threads"), {}, "Threads");
@@ -88,40 +87,6 @@ void ThreadStore::reload(const QString& threadKey) {
   it->waitOnline = false;
   it->model->setStatus(QStringLiteral("loading"));
   follow(threadKey);
-}
-
-bool ThreadStore::revert(const QString& threadKey, const QString& rowId, bool restoreFiles) {
-  TimelineModel* model = timeline(threadKey);
-  const QVariantMap checkpoint = model ? model->checkpointOf(rowId) : QVariantMap();
-  if (checkpoint.isEmpty()) return false;
-  if (m_reverting.contains(threadKey)) return true;
-  auto* toasts = NativeShell::of(this)->controller<ToastController>();
-  const auto thread = m_store->thread(threadKey);
-  const int turn = checkpoint.value(QStringLiteral("turn")).toInt();
-  // Titled as the diff panel's revert (ThreadDiff) is.
-  const QString failed = QStringLiteral("Could not revert to turn %1").arg(turn);
-  if (!thread || !m_client->isReady() || !m_store->threadOnline(threadKey)) {
-    toasts->error(failed, QStringLiteral("The thread's node cannot be reached."));
-    return true;
-  }
-  m_reverting.insert(threadKey);
-  m_client->dispatchCommand(thread->environmentId,
-                            {
-                                {QStringLiteral("type"), QStringLiteral("checkpoint.rollback")},
-                                {QStringLiteral("threadId"), thread->id},
-                                {QStringLiteral("checkpointId"), checkpoint.value(QStringLiteral("checkpointId")).toString()},
-                                {QStringLiteral("scopeId"), checkpoint.value(QStringLiteral("scopeId")).toString()},
-                                {QStringLiteral("restoreFiles"), restoreFiles},
-                            },
-                            [this, threadKey, turn, failed, toasts](const QJsonValue&, const std::optional<QString>& error) {
-                              m_reverting.remove(threadKey);
-                              if (error) {
-                                toasts->error(failed, *error);
-                              } else {
-                                toasts->show(QStringLiteral("success"), QStringLiteral("Reverted to turn %1.").arg(turn));
-                              }
-                            });
-  return true;
 }
 
 void ThreadStore::evict() {

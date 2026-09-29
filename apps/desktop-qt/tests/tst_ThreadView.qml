@@ -46,6 +46,17 @@ Item {
         }
     }
 
+    // Panel.diff (ThreadDiff) as far as reverting goes.
+    QtObject {
+        id: diff
+        property int revertTurn: 0
+        property var confirmed: []
+        property int cancelled: 0
+        function requestRevert(turn) { revertTurn = turn; }
+        function confirmRevert(restoreFiles) { confirmed = confirmed.concat([restoreFiles]); revertTurn = 0; }
+        function cancelRevert() { cancelled += 1; revertTurn = 0; }
+    }
+
     Component {
         id: viewComponent
         ThreadView {
@@ -65,6 +76,10 @@ Item {
             rows.status = "live";
             rows.problem = "";
             rows.copies = [];
+            diff.revertTurn = 0;
+            diff.confirmed = [];
+            diff.cancelled = 0;
+            Panel.diff = diff;
         }
 
         function route(kind) {
@@ -289,29 +304,39 @@ Item {
             compare(rows.copies, ["reply:1"]);
         }
 
-        function test_revertingAsksFirst() {
-            const view = answeredThread();
+        function askRevert(view) {
             mouseClick(findNamed(hoverReply(view), "revertToTurn"));
             const dialog = findChild(view, "revertDialog");
             tryVerify(() => dialog.opened);
+            return dialog;
+        }
+
+        function test_revertingAsksFirst() {
+            const view = answeredThread();
+            const dialog = askRevert(view);
+            compare(diff.revertTurn, 1, "the reply's turn is the one asked about");
             compare(dialog.title, "Revert to turn 1?");
-            compare(Threads.reverts.length, 0, "nothing is reverted before the user answers");
+            compare(diff.confirmed.length, 0, "nothing is reverted before the user answers");
             mouseClick(findNamed(dialog.contentItem, "revertFiles"));
-            compare(Threads.reverts.length, 1);
-            compare(Threads.reverts[0].threadKey, "env-1:thread-1");
-            compare(Threads.reverts[0].rowId, "reply:1");
-            compare(Threads.reverts[0].restoreFiles, true);
+            compare(diff.confirmed, [true]);
+            tryVerify(() => !dialog.visible);
+        }
+
+        function test_revertingCanKeepTheFiles() {
+            const view = answeredThread();
+            const dialog = askRevert(view);
+            mouseClick(findNamed(dialog.contentItem, "revertKeepFiles"));
+            compare(diff.confirmed, [false]);
             tryVerify(() => !dialog.visible);
         }
 
         function test_theUserCancelsARevert() {
             const view = answeredThread();
-            mouseClick(findNamed(hoverReply(view), "revertToTurn"));
-            const dialog = findChild(view, "revertDialog");
-            tryVerify(() => dialog.opened);
+            const dialog = askRevert(view);
             mouseClick(findNamed(dialog.contentItem, "revertCancel"));
             tryVerify(() => !dialog.visible);
-            compare(Threads.reverts.length, 0, "the thread is not reverted");
+            compare(diff.cancelled, 1);
+            compare(diff.confirmed.length, 0, "the thread is not reverted");
         }
 
         function test_aReplyWithoutACheckpointOffersNoRevert() {

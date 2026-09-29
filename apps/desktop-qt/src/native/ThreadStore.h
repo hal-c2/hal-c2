@@ -4,7 +4,6 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QPointer>
-#include <QSet>
 #include <QStringList>
 
 #include <functional>
@@ -59,11 +58,6 @@ public:
   // Follows an unreachable thread again now, rather than when its node is
   // back; `loading` until the snapshot lands.
   Q_INVOKABLE void reload(const QString& threadKey);
-  // Rewinds the thread to the checkpoint an agent reply's turn left
-  // (TimelineModel::checkpointOf), putting the files back unless
-  // `restoreFiles` is false; says how it went in a toast. False when the row
-  // has no checkpoint.
-  Q_INVOKABLE bool revert(const QString& threadKey, const QString& rowId, bool restoreFiles = true);
 
   void setClock(std::function<QDateTime()> now);
 
@@ -89,8 +83,6 @@ private:
 
   NodeClient* m_client;
   ShellStore* m_store;
-  // Threads with a rewind in flight.
-  QSet<QString> m_reverting;
   QHash<QString, Followed> m_threads;
   QStringList m_recent;
   QString m_active;

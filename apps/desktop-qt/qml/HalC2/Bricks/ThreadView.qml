@@ -10,7 +10,7 @@ import HalC2.Shell
 //
 // Web links open in the system browser; file links and files the agent
 // changed open in the right panel (`panel.open`, RightPanelController). A reply's Revert asks
-// first, then rewinds through Threads.revert. "Jump to latest" is also the
+// first (RevertDialog), then rewinds as the diff panel does (ThreadDiff). "Jump to latest" is also the
 // `timeline.jumpToLatest` command.
 Item {
     id: view
@@ -66,18 +66,11 @@ Item {
         Shell.dispatch("panel.open", options);
     }
 
+    // The same revert as the diff panel's (Panel.diff), on this reply's turn.
     function askRevert(rowId) {
         const checkpoint = view.model ? view.model.checkpointOf(rowId) : ({});
-        if (checkpoint.turn === undefined)
-            return;
-        revertDialog.rowId = rowId;
-        revertDialog.turn = checkpoint.turn;
-        revertDialog.open();
-    }
-
-    function revert(restoreFiles) {
-        Threads.revert(Threads.activeThread, revertDialog.rowId, restoreFiles);
-        revertDialog.close();
+        if (checkpoint.turn !== undefined)
+            revertDialog.ask(checkpoint.turn);
     }
 
     Component.onCompleted: {
@@ -187,67 +180,8 @@ Item {
         }
     }
 
-    Dialog {
+    RevertDialog {
         id: revertDialog
-        objectName: "revertDialog"
-
-        property string rowId: ""
-        property int turn: 0
-
-        parent: Overlay.overlay
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(480, (parent?.width ?? 512) - 32)
-        padding: 20
-        closePolicy: Popup.CloseOnEscape
-        title: qsTr("Revert to turn %1?").arg(turn)
-
-        background: Rectangle {
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-            radius: Math.min(Theme.radius, 16)
-        }
-        header: Label {
-            text: revertDialog.title
-            padding: 20
-            bottomPadding: 4
-            font.pixelSize: 17
-            font.weight: Font.DemiBold
-            color: view.textColor
-        }
-        contentItem: ColumnLayout {
-            spacing: 12
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("The later turns are removed from the conversation. This cannot be undone.")
-                color: view.textColor
-                font.pixelSize: 13
-                wrapMode: Text.Wrap
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: 8
-                spacing: 8
-                Item {
-                    Layout.fillWidth: true
-                }
-                ShellButton {
-                    objectName: "revertCancel"
-                    text: qsTr("Cancel")
-                    onClicked: revertDialog.close()
-                }
-                ShellButton {
-                    objectName: "revertKeepFiles"
-                    text: qsTr("Revert and keep changes")
-                    onClicked: view.revert(false)
-                }
-                ShellButton {
-                    objectName: "revertFiles"
-                    text: qsTr("Revert files too")
-                    tint: Theme.palette.color("error", "#ef4444")
-                    onClicked: view.revert(true)
-                }
-            }
-        }
+        source: Panel.diff
     }
 }
