@@ -100,6 +100,9 @@ signals:
   // After a snapshot, or events that touched runs, requests, plans or the
   // request and user message items: what entities() gives the composer.
   void turnChanged();
+  // After a snapshot, or events that touched checkpoints: what
+  // entities("checkpoint") gives the diff panel.
+  void checkpointsChanged();
 
 private:
   struct Row {
@@ -145,5 +148,6 @@ private:
   QSet<QString> m_expandedGroups;  // row ids
   QDateTime m_workingSince;
   bool m_turnTouched = false;
+  bool m_checkpointsTouched = false;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
 };

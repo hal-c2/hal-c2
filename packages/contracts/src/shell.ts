@@ -810,6 +810,13 @@ export const ShellAction = Schema.Union([
     type: Schema.Literal("rightPanel.add"),
     kind: Schema.Literals(["diff", "files", "terminal", "pull-request"]),
   }),
+  /** The shell's panel state for the thread: open only while a page tab shows. */
+  Schema.Struct({
+    type: Schema.Literal("rightPanel.follow"),
+    threadKey: Schema.String,
+    open: Schema.Boolean,
+    activeSurfaceId: Schema.NullOr(Schema.String),
+  }),
   Schema.Struct({ type: Schema.Literal("workspace.newThread") }),
   Schema.Struct({
     type: Schema.Literal("workspace.openInEditor"),

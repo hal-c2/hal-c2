@@ -2,17 +2,23 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
+import "js/panelTabs.js" as PanelTabs
 
-// The right panel: native tabs over an HTML body. The body is the app's
-// embed route for the current thread, loaded in a second web surface that
-// shares the primary surface's session; the tab model comes from
-// Shell.state.rightPanel and every tab action goes back to the page.
+// The right panel beside a thread: tabs from Shell.state.panel (the Panel
+// controller's), a native body for the kinds js/panelTabs.js lists, and for
+// every other tab the app's embed route in a second web surface that shares
+// the primary surface's session. Tab actions go to the controller, which
+// tells the page what to show.
 Rectangle {
     id: panel
 
-    readonly property var model: Shell.state.rightPanel ?? null
+    readonly property var model: Shell.state.panel ?? null
     readonly property bool available: model !== null
     readonly property bool open: available && model.isOpen
+    readonly property string activeId: open ? model.activeId : ""
+    readonly property var activeTab: open ? (model.tabs.find(tab => tab.id === activeId) ?? null) : null
+    // The page draws the active tab: its embed shows.
+    readonly property bool pageShown: activeTab !== null && !activeTab.native
     readonly property int openWidth: 520
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
@@ -20,7 +26,7 @@ Rectangle {
         if (!available) {
             return "";
         }
-        const page = Shell.pageUrl.toString();
+        const page = (Shell.pageUrl ?? "").toString();
         const origin = page.match(/^(https?:\/\/[^/]+)/);
         return origin ? origin[1] + model.embedPath : "";
     }
@@ -80,7 +86,7 @@ Rectangle {
                 spacing: 2
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
-                model: panel.open ? panel.model.surfaces : []
+                model: panel.open ? panel.model.tabs : []
 
                 delegate: AbstractButton {
                     id: tab
@@ -88,7 +94,8 @@ Rectangle {
                     required property var modelData
                     objectName: "panelTab-" + modelData.id
 
-                    readonly property bool active: panel.model.activeSurfaceId === modelData.id
+                    readonly property bool active: panel.activeId === modelData.id
+                    readonly property string iconName: PanelTabs.tabs[modelData.kind]?.icon ?? ""
 
                     width: tabRow.implicitWidth + 16
                     height: 36
@@ -108,6 +115,14 @@ Rectangle {
 
                         anchors.centerIn: parent
                         spacing: 6
+
+                        ShellIcon {
+                            visible: tab.iconName.length > 0
+                            name: tab.iconName
+                            size: 13
+                            color: tab.active ? panel.foreground : panel.muted
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
 
                         Text {
                             text: tab.modelData.title
@@ -194,31 +209,65 @@ Rectangle {
             }
         }
 
-        Loader {
-            id: body
-
-            // Once up, the document stays up: closing the panel or leaving the
-            // thread route (settings) hides it instead of destroying the
-            // terminals and scroll state it holds.
-            readonly property bool wanted: panel.open && panel.embedUrl.toString().length > 0
-
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            active: false
             visible: panel.open
-            onWantedChanged: if (wanted)
-                active = true
-            Component.onCompleted: if (wanted)
-                active = true
 
-            // The document follows thread changes itself (halC2Shell.onState), so
-            // the URL is only the starting point; rebinding it would reload.
-            sourceComponent: WebSurface {
-                surfaceId: "rightPanel"
-                sleepsWhenHidden: true
-                // The panel's own radius rounds the document's corners too.
-                radius: panel.radius
-                Component.onCompleted: url = panel.embedUrl
+            // A native tab's body is made the first time it shows and kept,
+            // hidden, while another tab shows, so it keeps its scroll and what
+            // it loaded.
+            Repeater {
+                model: Object.keys(PanelTabs.tabs)
+
+                delegate: Loader {
+                    id: nativeBody
+
+                    required property string modelData
+                    readonly property var tab: PanelTabs.tabs[modelData]
+                    readonly property bool shown: panel.activeId === modelData
+
+                    objectName: "panelBody-" + modelData
+                    anchors.fill: parent
+                    active: false
+                    visible: shown
+                    onShownChanged: if (shown)
+                        active = true
+                    Component.onCompleted: {
+                        setSource(Qt.resolvedUrl(tab.brick + ".qml"), {
+                            source: Qt.binding(() => Panel[nativeBody.tab.source])
+                        });
+                        active = shown;
+                    }
+                }
+            }
+
+            Loader {
+                id: body
+
+                // Once up, the document stays up: closing the panel, showing a
+                // native tab or leaving the thread route (settings) hides it
+                // instead of destroying the terminals and scroll state it holds.
+                readonly property bool wanted: panel.pageShown && panel.embedUrl.toString().length > 0
+
+                objectName: "panelPage"
+                anchors.fill: parent
+                active: false
+                visible: panel.pageShown
+                onWantedChanged: if (wanted)
+                    active = true
+                Component.onCompleted: if (wanted)
+                    active = true
+
+                // The document follows thread changes itself (halC2Shell.onState), so
+                // the URL is only the starting point; rebinding it would reload.
+                sourceComponent: WebSurface {
+                    surfaceId: "rightPanel"
+                    sleepsWhenHidden: true
+                    // The panel's own radius rounds the document's corners too.
+                    radius: panel.radius
+                    Component.onCompleted: url = panel.embedUrl
+                }
             }
         }
     }
