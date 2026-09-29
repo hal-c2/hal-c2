@@ -17,9 +17,11 @@ class ShellStore;
 // The right panel beside a thread, as the `Panel` QML singleton: whether it
 // is open and which tab shows, per thread (in memory; a thread seen for the
 // first time starts closed). The Diff, Files and Agents tabs are native
-// (`diff`, `files`, `agents`); every other tab (terminal, pull request, preview, device) is still
-// the page's, taken from the `rightPanel` state the page publishes and shown
-// in the page's embed.
+// (`diff`, `files`, `agents`), and so are terminal tabs, one per terminal
+// group TerminalController keeps for the panel (`terminal:<group>`; closing
+// the tab closes its terminals). Every other tab (pull request, preview,
+// device) is still the page's, taken from the `rightPanel` state the page
+// publishes and shown in the page's embed.
 //
 // Publishes `panel` for the RightPanel brick, null away from a thread:
 //   {threadKey, isOpen, activeId, tabs: [{id, kind, title, native}],
@@ -46,7 +48,10 @@ class RightPanelController : public QObject, public NativeController {
 
 public:
   // The tab kinds drawn natively; each has a brick in js/panelTabs.js.
-  static inline const QStringList nativeKinds{QStringLiteral("diff"), QStringLiteral("files"), QStringLiteral("agents")};
+  static inline const QStringList nativeKinds{QStringLiteral("diff"), QStringLiteral("files"), QStringLiteral("agents"),
+                                              QStringLiteral("terminal")};
+  // A tab's kind: its id, or `terminal` for `terminal:<group>`.
+  static QString kindOf(const QString& id);
 
   RightPanelController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 
@@ -91,7 +96,9 @@ private:
 
   Panel& panel() { return m_panels[m_thread]; }
   Panel current() const { return m_panels.value(m_thread); }
-  bool isPageTab(const QString& id) const { return !id.isEmpty() && !nativeKinds.contains(id); }
+  bool isPageTab(const QString& id) const { return !id.isEmpty() && !nativeKinds.contains(kindOf(id)); }
+  // The shown thread's terminal groups in the panel.
+  QStringList terminalGroups() const;
   // The page's tabs of the shown thread that it still draws.
   QVariantList pageTabs() const;
   bool hasPageTab(const QString& id) const;

@@ -625,13 +625,15 @@ on the thread's own environment. The Agents tab (`AgentsPanel` over
 `AgentsModel`) needs no RPC: it reads the `subagent` entities and running
 `command_execution` items the thread's stream already carries, and its
 elapsed times tick only while it shows (the web dropped this tab when lineage
-moved to the title bar; the desktop keeps it). Moving another tab to QML is a
-line in `js/panelTabs.js` plus its kind in `RightPanelController::nativeKinds`.
+moved to the title bar; the desktop keeps it). A terminal tab is
+`terminal:<group>`: one of `TerminalController`'s panel groups (below), made
+by `rightPanel.add {kind: "terminal"}` and closed, terminals and all, with its
+tab; `TerminalPanel` draws it. Moving another tab to QML is a line in
+`js/panelTabs.js` plus its kind in `RightPanelController::nativeKinds`.
 
-Every other tab (terminal, pull request) is still the page's content in the
-shell's placement: `RightPanel` loads the app's embed route
-(`/embed/$environmentId/$threadId`) in a second `WebSurface` only while one
-of those tabs shows. Both surfaces share the shell's profile (see Web
+The pull request tab is still the page's content in the shell's placement:
+`RightPanel` loads the app's embed route (`/embed/$environmentId/$threadId`)
+in a second `WebSurface` only while it shows. Both surfaces share the shell's profile (see Web
 engine), so the embed document authenticates with the primary's cookie; it
 opens its own WebSocket and sleeps while hidden. The embed route renders
 `ChatView` with `presentation="rightPanel"`, and `shell/shellDocumentSync.ts`
@@ -711,6 +713,14 @@ Environments outside the cluster are paired natively, as node links (see
 - **Hidden is not detached.** Once opened, the drawer stays attached while
   hidden, like the page's drawer did, so output keeps arriving and switching
   back costs nothing.
+- **Groups.** Terminals are laid out in groups, as the web's terminal grid: a
+  terminal never split is a group of its own, `terminal.split` (side by side)
+  and `terminal.splitVertical` (stacked) add one after the focused terminal,
+  at most four to a group. A panel group is a right panel tab and never shows
+  in the drawer. Each `tabs` row carries its group and place in it, and
+  `TerminalSplits` makes a `Terminal` only in the place (drawer or panel) the
+  row belongs to, so no session has two views fighting over its size. Groups
+  live in memory: a restart or another client sees ungrouped drawer terminals.
 
 ### `settings`, `cluster` and `connections`
 
@@ -899,10 +909,12 @@ are also what a native command palette lists.
 `ShellWindow` instantiates one window `Shortcut` per bound sequence and calls
 `Keybindings.press`. Who takes a key follows focus:
 
-- A focused `WebSurface` or drawer terminal keeps every key except the
-  sequences that resolve, in that focus, to a native command or a project
-  script. Those `Shortcut`s stay enabled, so a native command runs once and
-  a terminal still gets Ctrl+K or Ctrl+D.
+- A focused `WebSurface` or terminal keeps every key except the sequences
+  that resolve, in that focus, to a native command or a project script.
+  Those `Shortcut`s stay enabled, so a native command runs once and a
+  terminal still gets Ctrl+K. The web's defaults bind `mod+d` to
+  `terminal.split` in a terminal, so off macOS a terminal loses Ctrl+D (EOF)
+  unless the user rebinds it.
 - From native chrome, a native command or script runs in the shell, and any
   other bound key goes to the page as `keybinding.press {key, ctrlKey,
 metaKey, shiftKey, altKey}`. The page replays it on `document.body`, so the
@@ -1035,9 +1047,9 @@ on this machine.
 The embedded page is legacy and leaves the shell piece by piece. Every piece
 of the original chrome has a brick (`Sidebar`, `Composer`, `RightPanel`,
 `TerminalDrawer`, `Workspace`, `SettingsNav`), but several still get their
-state from the page. The right panel's terminal and pull request tabs and most
-settings pages are still HTML because they have not moved yet, not by design
-(its Diff and Files tabs are native).
+state from the page. The right panel's pull request tab and most settings
+pages are still HTML because they have not moved yet, not by design (its
+Diff, Files, Agents and terminal tabs are native).
 
 A piece has moved when a native controller (`src/native/`, registered with
 `NativeControllerRegistrar`) builds its state from the shell's own node client

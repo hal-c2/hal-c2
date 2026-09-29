@@ -6,6 +6,9 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml
 #   apps/desktop-qt/src/native/RightPanelController.cpp (tabs, open, canAdd)
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
+#   apps/desktop-qt/tests/native/features/TerminalSteps.cpp (terminal drawer, right panel terminal tabs)
+#   apps/desktop-qt/qml/HalC2/Bricks/TerminalPanel.qml
+#   apps/desktop-qt/src/native/TerminalController.cpp (terminal.toggle, panel groups)
 #   apps/desktop-qt/tests/tst_Workspace.qml
 #   apps/web/src/components/AppSidebarLayout.tsx (sidebar width)
 #   apps/web/src/components/threadSidebarWidth.ts
@@ -188,7 +191,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user looks at what can be added to the right panel
       Then pull request cannot be added
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Right panel contents survive closing the panel
       Given a terminal tab in the right panel has output
       When the user closes the right panel and opens it again
@@ -227,15 +230,13 @@ Feature: Layout: sidebar, header, right panel and drawer
 
   Rule: Terminal drawer
 
-    # Delivered natively (Workspace, Terminals); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Showing the terminal from the header
       Given the terminal is hidden
       When the user shows the terminal
       Then the terminal drawer opens under the thread
 
-    # Delivered natively (Workspace, Terminals); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Hiding the terminal
       Given the terminal is shown
       When the user hides the terminal

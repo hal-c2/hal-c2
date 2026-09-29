@@ -4,10 +4,13 @@
 // brick (<brick>.qml in this module, given the controller's body object as
 // `source`); every other kind is still the page's, shown in its embed. Moving
 // a tab to QML is a line here plus the kind in RightPanelController::nativeKinds.
+// A kind can have many tabs (terminal: one per `terminal:<group>`); its body
+// shows for any of them.
 var tabs = {
     diff: { label: "Diff", icon: "file-diff", brick: "DiffPanel", source: "diff" },
     files: { label: "Files", icon: "files", brick: "FilesPanel", source: "files" },
-    agents: { label: "Agents", icon: "bot", brick: "AgentsPanel", source: "agents" }
+    agents: { label: "Agents", icon: "bot", brick: "AgentsPanel", source: "agents" },
+    terminal: { label: "Terminal", icon: "terminal", brick: "TerminalPanel", source: "" }
 };
 
 function brickOf(kind) {

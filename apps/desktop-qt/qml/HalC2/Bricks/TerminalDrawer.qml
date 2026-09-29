@@ -1,14 +1,13 @@
 import QtQuick
 import QtQuick.Layouts
-import Ghostty
 import HalC2.Shell
 
-// The thread's terminal drawer, drawn by qml-ghostty's Terminal: a tab per
-// terminal and one Terminal item per tab, fed by the `Terminals` controller's
-// sessions on the node. Open flag, height, tabs and the active one are the
-// controller's; dragging the top edge hands the height back with
-// terminal.resize. Not animated: every frame of it would relayout the thread
-// above (see RightPanel).
+// The thread's terminal drawer: a tab per split group and the shown group's
+// terminals side by side or stacked (TerminalSplits), fed by the `Terminals`
+// controller's sessions on the node. Open flag, height, groups and the active
+// one are the controller's; dragging the top edge hands the height back with
+// terminal.resize. The right panel's terminal tabs are not the drawer's. Not
+// animated: every frame of it would relayout the thread above (see RightPanel).
 Item {
     id: drawer
 
@@ -42,16 +41,14 @@ Item {
         else Shell.dispatch("terminal.toggle");
     }
 
+    readonly property int groupSize: Terminals.groupSizes[Terminals.activeGroup] ?? 1
+
     function activeTerminal() {
-        for (let i = 0; i < terminals.count; ++i) {
-            const item = terminals.itemAt(i);
-            if (item !== null && item.terminalId === Terminals.activeTerminalId) return item;
-        }
-        return null;
+        return stack.terminalOf(Terminals.activeTerminalId);
     }
 
-    function applyFocus() {
-        const terminal = drawer.activeTerminal();
+    function applyFocus(terminalId) {
+        const terminal = terminalId ? stack.terminalOf(terminalId) : drawer.activeTerminal();
         if (!drawer.open || terminal === null) return;
         const previous = drawer.Window.activeFocusItem;
         if (previous !== null && !drawer.isInside(previous)) drawer.focusBefore = previous;
@@ -67,9 +64,10 @@ Item {
 
     Connections {
         target: Terminals
-        // Opened, a terminal added, selected or closed: the keyboard follows.
-        function onFocusRequested() {
-            Qt.callLater(drawer.applyFocus);
+        // Opened, a terminal added, split, selected or closed: the keyboard
+        // follows, when the terminal is the drawer's.
+        function onFocusRequested(terminalId) {
+            Qt.callLater(drawer.applyFocus, terminalId);
         }
     }
 
@@ -125,20 +123,26 @@ Item {
         Repeater {
             model: Terminals.tabs
 
+            // One tab per group of the drawer's, on its first terminal.
             delegate: ShellButton {
                 id: tab
 
                 required property string terminalId
                 required property string label
                 required property bool busy
+                required property string group
+                required property bool panel
+                required property int slot
+                required property int span
 
                 objectName: "terminalTab"
+                visible: !tab.panel && tab.slot === 0
                 subtle: true
-                checked: tab.terminalId === Terminals.activeTerminalId
+                checked: tab.group === Terminals.activeGroup
                 implicitHeight: 24
                 iconName: "terminal"
                 iconSize: 13
-                text: tab.label
+                text: tab.span > 1 ? qsTr("%1 +%2").arg(tab.label).arg(tab.span - 1) : tab.label
                 font.pixelSize: 12
                 tint: tab.checked ? drawer.foreground : drawer.muted
                 focusPolicy: Qt.NoFocus
@@ -150,6 +154,34 @@ Item {
 
         Item {
             Layout.fillWidth: true
+        }
+
+        ShellButton {
+            objectName: "terminalSplit"
+            subtle: true
+            implicitWidth: 24
+            implicitHeight: 24
+            iconName: "square-split-horizontal"
+            iconSize: 13
+            iconTint: drawer.muted
+            focusPolicy: Qt.NoFocus
+            enabled: drawer.groupSize < 4
+            Accessible.name: enabled ? qsTr("Split Terminal Horizontally") : qsTr("Split Terminal Horizontally (max 4 per group)")
+            onClicked: Shell.dispatch("terminal.split", { terminalId: Terminals.activeTerminalId })
+        }
+
+        ShellButton {
+            objectName: "terminalSplitVertical"
+            subtle: true
+            implicitWidth: 24
+            implicitHeight: 24
+            iconName: "square-split-vertical"
+            iconSize: 13
+            iconTint: drawer.muted
+            focusPolicy: Qt.NoFocus
+            enabled: drawer.groupSize < 4
+            Accessible.name: enabled ? qsTr("Split Terminal Vertically") : qsTr("Split Terminal Vertically (max 4 per group)")
+            onClicked: Shell.dispatch("terminal.splitVertical", { terminalId: Terminals.activeTerminalId })
         }
 
         ShellButton {
@@ -174,11 +206,11 @@ Item {
             iconTint: drawer.muted
             focusPolicy: Qt.NoFocus
             Accessible.name: qsTr("Close terminal")
-            onClicked: Shell.dispatch("terminal.close")
+            onClicked: Shell.dispatch("terminal.close", { terminalId: Terminals.activeTerminalId })
         }
     }
 
-    FocusScope {
+    TerminalSplits {
         id: stack
 
         anchors.top: strip.bottom
@@ -189,56 +221,10 @@ Item {
         anchors.leftMargin: drawer.inset
         anchors.rightMargin: drawer.inset
         anchors.bottomMargin: drawer.inset
-
-        // One Terminal per tab, kept while its tab lives so switching tabs
-        // keeps each screen and its scrollback.
-        Repeater {
-            id: terminals
-
-            model: Terminals.tabs
-
-            delegate: Terminal {
-                id: terminal
-
-                required property string terminalId
-                required property QtObject session
-
-                objectName: "HalC2Terminal"
-                anchors.fill: parent
-                visible: terminal.terminalId === Terminals.activeTerminalId
-                focus: visible
-                padding: 6
-                font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-                font.pixelSize: 12
-                backgroundColor: drawer.background
-                foregroundColor: drawer.foreground
-                cursorColor: drawer.foreground
-                selectionColor: Qt.alpha(Theme.palette.color("accent", "#2563eb"), 0.35)
-
-                onInput: data => terminal.session.write(data)
-                // Only a laid-out Terminal knows its grid; the first pass is 1x1.
-                onResized: (columns, rows) => {
-                    if (terminal.width > 0 && terminal.height > 0)
-                        terminal.session.resize(columns, rows);
-                }
-                Component.onCompleted: {
-                    terminal.restore(terminal.session.transcript());
-                    if (terminal.width > 0 && terminal.height > 0)
-                        terminal.session.resize(terminal.columns, terminal.rows);
-                }
-
-                Connections {
-                    target: terminal.session
-                    function onOutput(data) {
-                        terminal.write(data);
-                    }
-                    function onReplaced(history) {
-                        terminal.reset();
-                        terminal.restore(history);
-                    }
-                }
-            }
-        }
+        panel: false
+        group: Terminals.activeGroup
+        background: drawer.background
+        foreground: drawer.foreground
     }
 
     // While a terminal has the keyboard; the window's own shortcuts stand
