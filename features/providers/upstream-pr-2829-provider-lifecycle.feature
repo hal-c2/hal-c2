@@ -4,6 +4,8 @@
 #     1e844a3d0, 3cb31a1bc, 13aec8a2c, 52db643b9, 4812e1299,
 #     6107b6632, 1d1b3bc5a, 541b6b997, cbe13c403, 86e34874f,
 #     1d6bc0e73, 7bc65c08d, 430dfd159, d861582f2
+#   Not carried: 1e844a3d0 (agy CLI is no longer mistaken for the Antigravity IDE; an editor
+#     detection change with no node behavior)
 #   apps/server/src/orchestration-v2/Adapters/
 #   apps/server-ex/lib/hal_c2/{acp,codex,claude}/
 Feature: Provider lifecycle and capability boundaries
@@ -146,3 +148,17 @@ Feature: Provider lifecycle and capability boundaries
     Given a provider executable is configured as "~/bin/provider"
     When the provider starts
     Then the process uses the expanded absolute path
+
+  @node @backlog @plugin-cursor
+  Scenario: A Cursor shell spawn failure does not stop the run
+    Given Cursor fails to spawn a shell command during a turn
+    When the failure is reported
+    Then the run keeps going
+    And the failed command is recorded as failed
+
+  @node @backlog
+  Scenario: A provider session open is retried before the run fails
+    Given opening the provider session fails transiently
+    When the node starts the run
+    Then it retries opening the session
+    And the run fails only after the retries are exhausted

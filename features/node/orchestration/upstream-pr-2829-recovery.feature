@@ -35,7 +35,14 @@ Feature: Recovering provider work without losing orchestration state
     And the continuation names the lost background work
 
   @node @backlog
-  Scenario: A parent is woken once for a delegated completion
+  Scenario: A parent is woken again for each later delegated completion
+    Given parent thread "parent" was woken for the completion of delegated task "one"
+    When child threads finish delegated tasks "two" and "three" afterwards
+    Then "parent" is woken again for the later completions
+    And completions that finish together may share one wake turn
+
+  @node @backlog
+  Scenario: A repeated delegated completion does not wake the parent twice
     Given parent thread "parent" is waiting for child thread "child"
     When "child" finishes a delegated task
     And the same completion is delivered again after a reconnect
