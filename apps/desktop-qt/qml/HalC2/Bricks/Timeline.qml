@@ -118,8 +118,6 @@ Item {
             cursorShape: Qt.PointingHandCursor
         }
         TapHandler {
-            // Takes the press, so a row's own tap does not fire as well.
-            gesturePolicy: TapHandler.ReleaseWithinBounds
             onTapped: action.clicked()
         }
     }
@@ -409,6 +407,7 @@ Item {
                                         width: Math.min(implicitWidth, call.width - 140)
                                     }
                                     ActionLink {
+                                        id: openLink
                                         objectName: "openFile"
                                         visible: (call.modelData.path ?? "").length > 0
                                         text: qsTr("Open")
@@ -424,7 +423,10 @@ Item {
                                 }
                                 TapHandler {
                                     enabled: call.hasDetails
-                                    onTapped: {
+                                    onTapped: eventPoint => {
+                                        // Open takes its own tap.
+                                        if (openLink.visible && openLink.contains(openLink.mapFromItem(parent, eventPoint.position)))
+                                            return;
                                         const next = Object.assign({}, row.openCalls);
                                         next[call.modelData.id] = !call.open;
                                         row.openCalls = next;
