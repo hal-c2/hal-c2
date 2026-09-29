@@ -126,8 +126,8 @@ node `mise run node` runs.
   registration for the ones it owns; a rice can read any of them, but a new
   key must be declared before a binding will follow it.
 - **Permissions and downloads.** Pages get the async clipboard; other browser
-  permissions are denied. Opt-in QML extensions can use the native notification
-  presenter described below. Downloads go to the user's download folder.
+  permissions are denied, notifications included: the shell raises its own
+  (below). Downloads go to the user's download folder.
 - **No width animation on the surfaces' neighbours.** Animating the sidebar
   or panel width resizes the web view every frame, which is a Chromium
   relayout and a new GPU surface each time; both snap instead.
@@ -390,23 +390,22 @@ before any window is created, allowing launch-profile-specific window rules.
 
 ### Notification delivery
 
-The primary page publishes live `desktopNotifications` batches independently
-of sidebar filtering. Each event contains an ID, scoped thread key, kind,
-thread title, and runtime mode. Initial observations baseline existing threads
-without replaying their old completions or approvals. A QML policy should
-consume `Shell.stateEntryChanged`, not replay the retained batch on startup.
+`AlertController` decides when a thread alerts, from the shell's own rows
+(cluster and linked environments alike), as the web's
+`ThreadNotificationCoordinator` does; the page's coordinator is not mounted in
+the shell, so nothing alerts twice. It compares each thread with what it saw
+last, so the snapshot after connecting, or reconnecting, is a baseline rather
+than a burst of old completions. This device's `notificationMode` and
+`inAppNotificationsEnabled` pick a toast while the window has focus, or a
+system notification while it has not; regaining focus clears them.
 
-`NativeNotifications` is a creatable `HalC2.Shell` type, disabled by default.
-QML chooses event filters, foreground behavior, titles, message text, sound,
-and timeout, then calls `show(key, title, body, silent, timeoutMs)`. Its
-`activated(key)` signal identifies the originating thread. QML decides whether
-to raise a window and dispatch `thread.open`. Disabling delivery closes its
-outstanding notifications.
-
-Delivery currently uses Linux's desktop notification D-Bus service.
-`supported` is false without that service and on macOS or Windows. The desktop
-may ignore requested sound or timeout behavior. No durable missed-event inbox
-is maintained.
+The platform side is the controller's `Presenter`, which `main.cpp` wires to
+`NativeNotifications` (Linux's desktop notification D-Bus service; `supported`
+is false without it and on macOS or Windows) and tests fake. Its click reports
+the thread key it was shown for, even after newer notifications replaced
+others, and turning notifications off makes late clicks open nothing. There is
+no audio module: sound goes through the desktop sound theme's
+`canberra-gtk-play` when it is installed, and is silent otherwise.
 
 ### Local dictation helpers
 

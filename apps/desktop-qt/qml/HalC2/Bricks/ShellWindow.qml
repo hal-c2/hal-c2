@@ -121,6 +121,11 @@ Window {
             case "move":
                 root.startSystemMove();
                 break;
+            case "raise":
+                if (root.visibility === Window.Minimized) root.showNormal();
+                root.raise();
+                root.requestActivate();
+                break;
             }
         }
     }
