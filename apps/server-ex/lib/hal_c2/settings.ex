@@ -18,8 +18,9 @@ defmodule HalC2.Settings do
   service reads settings, and a server slow to answer (a machine deep in swap) would
   otherwise time them all out at once and exhaust the node's restart budget.
 
-  Hub management keys never stay in the document: `HalC2.UsageLimitSources.seal_keys/2`
-  moves them to the secret store on every write, so nothing a client reads carries one.
+  Hub management keys and sensitive provider variables never stay in the document:
+  `HalC2.UsageLimitSources.seal_keys/2` and `HalC2.ProviderSecrets.seal/2` move them to
+  the secret store on every write, so nothing a client reads carries one.
   """
 
   use GenServer
@@ -76,11 +77,7 @@ defmodule HalC2.Settings do
   @doc "The variables set on provider instance `instance` in settings, as a map."
   def instance_env(instance) do
     entry = (settings()["providerInstances"] || %{})[instance] || %{}
-
-    for %{"name" => name, "value" => value} <- entry["environment"] || [],
-        is_binary(name) and is_binary(value),
-        into: %{},
-        do: {name, value}
+    Map.new(HalC2.ProviderSecrets.environment(instance, entry))
   end
 
   @doc "`{settings, version}`."
@@ -156,7 +153,8 @@ defmodule HalC2.Settings do
 
     # A key written in plain text (by hand, or before keys were sealed) moves out now.
     {settings, changed} = HalC2.UsageLimitSources.seal_keys(settings, %{})
-    if changed, do: write!(path, settings)
+    {settings, secrets_changed} = HalC2.ProviderSecrets.seal(settings, settings)
+    if changed or secrets_changed, do: write!(path, settings)
     schedule_check()
 
     :ets.new(__MODULE__, [:named_table, :protected, read_concurrency: true])
@@ -266,7 +264,8 @@ defmodule HalC2.Settings do
 
   defp save(state, settings, write?) do
     {settings, keys_changed} = HalC2.UsageLimitSources.seal_keys(settings, state.settings)
-    if write? or keys_changed, do: write!(state.path, settings)
+    {settings, secrets_changed} = HalC2.ProviderSecrets.seal(settings, state.settings)
+    if write? or keys_changed or secrets_changed, do: write!(state.path, settings)
 
     if keys_changed or settings["usageLimitSources"] != state.settings["usageLimitSources"],
       do: HalC2.UsageLimitSources.refresh_async()

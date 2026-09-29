@@ -1,6 +1,7 @@
 # Sources:
 #   docs/internals/providers.md (route by instance, unknown drivers keep their configuration)
 #   apps/server-ex/lib/hal_c2/settings.ex (providerInstances, provider_enabled?)
+#   apps/server-ex/lib/hal_c2/provider_secrets.ex (sensitive variables in the secret store)
 #   apps/server-ex/lib/hal_c2/acp.ex (instance environment, built-ins off until enabled, binary/3 binaryPath)
 #   apps/server-ex/lib/hal_c2/background_policy.ex (providerHealthRefreshInterval)
 #   apps/server-ex/lib/hal_c2/environment.ex (providers, refresh_providers)
@@ -104,7 +105,6 @@ Feature: Provider instances
     Then "acme_work" is listed as unavailable with its configuration preserved
     And sending a message on "acme_work" is refused with a clear error
 
-  @backlog
   Scenario: Sensitive environment variables are stored separately and never sent back
     When the user adds the sensitive variable "ANTHROPIC_AUTH_TOKEN" to a Claude instance
     Then the value is stored in the node's secrets

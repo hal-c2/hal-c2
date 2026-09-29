@@ -80,6 +80,41 @@ defmodule HalC2.Steps.Providers.ProviderInstances do
     ctx
   end
 
+  step "the user adds the sensitive variable {string} to a Claude instance",
+       %{args: [name]} = context do
+    ctx =
+      context
+      |> Acp.ready()
+      |> Acp.write_settings(fn settings ->
+        Map.put_new(settings, "providerInstances", %{})
+        |> put_in(["providerInstances", "claude_work"], %{
+          "driver" => "claudeAgent",
+          "enabled" => true,
+          "environment" => [%{"name" => name, "value" => "secret-#{name}", "sensitive" => true}]
+        })
+      end)
+
+    ctx |> Map.put(:variable, name) |> Map.put(:instance, "claude_work")
+  end
+
+  step "the value is stored in the node's secrets", context do
+    assert HalC2.ProviderSecrets.value(context.instance, context.variable) ==
+             "secret-#{context.variable}"
+
+    context
+  end
+
+  step "clients only see that a value is set", context do
+    {%{"settings" => settings}, ctx} = Node.World.call!(context, "hal-c2.readSettings", %{})
+
+    assert [variable] = get_in(settings, ["providerInstances", ctx.instance, "environment"])
+    assert variable["name"] == ctx.variable
+    assert variable["valueRedacted"] == true
+    assert variable["value"] == ""
+    refute inspect(settings) =~ "secret-#{ctx.variable}"
+    ctx
+  end
+
   # --- text generation fallback ----------------------------------------------------
 
   step "Grok is picked for thread titles", context do
