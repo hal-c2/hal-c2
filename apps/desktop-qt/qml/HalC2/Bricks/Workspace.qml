@@ -53,6 +53,7 @@ Rectangle {
     }
 
     TapHandler {
+        objectName: "titleTap"
         enabled: strip.framelessChrome
         onDoubleTapped: strip.window.visibility === Window.Maximized ? strip.window.showNormal() : strip.window.showMaximized()
     }
@@ -369,6 +370,7 @@ Rectangle {
         }
 
         WindowControls {
+            objectName: "windowControls"
             visible: strip.framelessChrome && Qt.platform.os !== "osx"
             window: strip.window
             buttonWidth: 32

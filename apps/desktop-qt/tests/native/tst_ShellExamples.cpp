@@ -644,6 +644,43 @@ private slots:
     QVERIFY(!error->isVisible());
   }
 
+  // Scenario: A theme can ask for the system window frame, and Scenario: A
+  // theme can make the window translucent (features/navigation/windows.feature).
+  void themeSetsTheWindowFrameAndOpacity() {
+    QFile::remove(directory.filePath("shell.qml"));
+    QFile file(directory.filePath("theme.json"));
+    const bool hadTheme = file.exists();
+    QByteArray previous;
+    if (hadTheme) {
+      QVERIFY(file.open(QIODevice::ReadOnly));
+      previous = file.readAll();
+      file.close();
+    }
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write(R"({"window": {"frameless": false, "opacity": 0.9}})");
+    file.close();
+    theme->reload();
+    runtime->reload();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    QVERIFY(engine);
+    auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
+    QVERIFY(window);
+    QVERIFY(!window->flags().testFlag(Qt::FramelessWindowHint));
+    QCOMPARE(window->opacity(), 0.9);
+
+    // Back to the default: HAL-C2 draws its own frame, opaque.
+    if (hadTheme) {
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      file.write(previous);
+      file.close();
+    } else {
+      QVERIFY(QFile::remove(directory.filePath("theme.json")));
+    }
+    theme->reload();
+    QTRY_VERIFY(window->flags().testFlag(Qt::FramelessWindowHint) == theme->frameless());
+  }
+
   void cleanupTestCase() {
     runtime.reset();
     profile.reset();

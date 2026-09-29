@@ -149,8 +149,7 @@ Feature: Keyboard focus and keyboard-only use
       When the user focuses the "Files" tab and presses Enter
       Then the "Files" tab is active
 
-    # Delivered natively (WindowControls' accessible names); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario Outline: Window controls are announced by name
       Then the window control "<name>" is available to assistive technology
 

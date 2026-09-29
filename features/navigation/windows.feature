@@ -11,6 +11,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/AppWindow.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/AppView.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (frameless drag and maximize)
+#   apps/desktop-qt/src/ThemeStore.cpp (the theme's window frame and opacity)
 
 Feature: Windows, zoom and quitting
   The desktop app draws its own window frame, can open more than one window, zooms its
@@ -18,8 +19,7 @@ Feature: Windows, zoom and quitting
 
   Rule: Window controls
 
-    # Delivered natively (WindowControls); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario Outline: The window controls act on the window
       When the user chooses <control> in the window controls
       Then the window <result>
@@ -30,15 +30,13 @@ Feature: Windows, zoom and quitting
         | Maximize | is maximized                           |
         | Close    | closes                                 |
 
-    # Delivered natively (WindowControls); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Maximize restores a maximized window
       Given the window is maximized
       When the user chooses Maximize in the window controls
       Then the window returns to its previous size
 
-    # Delivered natively (WindowControls); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario Outline: Window controls follow the platform's order and side
       Given the user is on <platform>
       Then the window controls are on the <side> in the order <order>
@@ -49,42 +47,37 @@ Feature: Windows, zoom and quitting
         | Linux    | right | minimize, maximize, close |
         | Windows  | right | minimize, maximize, close |
 
-    # Delivered natively (WindowControls); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: macOS controls show their symbols only on hover
       Given the user is on macOS
       When the pointer is over the window controls
       Then the controls show their symbols
 
-    # Delivered natively (WindowControls); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: macOS controls turn grey in an inactive window
       Given the user is on macOS
       When another app's window is active
       Then the window controls are grey
 
-    # Delivered natively (TitleBar, Workspace); no desktop test yet.
+    # Delivered natively (TitleBar, Workspace); the system move has no offscreen test.
     @desktop @backlog-desktop
     Scenario: Dragging the header moves the window
       When the user drags an empty part of the header
       Then the window moves with the pointer
 
-    # Delivered natively (TitleBar, Workspace); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Double-clicking the header toggles maximize
       Given the window is not maximized
       When the user double-clicks an empty part of the header
       Then the window is maximized
 
-    # Delivered natively (ShellWindow, Theme); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A theme can ask for the system window frame
       Given the shell theme turns off the frameless window
       When the app starts
       Then the window has the system's own frame
 
-    # Delivered natively (ShellWindow, Theme); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A theme can make the window translucent
       Given the shell theme sets the window opacity to 0.9
       Then the window is drawn at that opacity
