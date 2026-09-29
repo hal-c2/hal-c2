@@ -211,6 +211,146 @@ Rectangle {
                 }
             }
 
+            // Or an agent from the ACP Registry, installed as it is chosen.
+            ColumnLayout {
+                id: registryPane
+
+                readonly property var registry: wizardCard.wizard.registry
+
+                function send(action, payload) {
+                    Shell.dispatch("providerSettings.registry" + action, payload || {});
+                }
+
+                objectName: "registry"
+                Layout.fillWidth: true
+                visible: wizardCard.wizard.step === 0
+                spacing: 6
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("Or choose from ACP Registry")
+                        color: page.foreground
+                        font.pixelSize: 12
+                        font.weight: Font.Medium
+                    }
+
+                    ShellButton {
+                        objectName: "registryManual"
+                        primary: registryPane.registry.manual
+                        subtle: !primary
+                        enabled: !registryPane.registry.busy
+                        text: qsTr("Enter manually")
+                        onClicked: registryPane.send("Manual", { manual: !registryPane.registry.manual })
+                    }
+                }
+
+                ShellTextField {
+                    id: registryQuery
+
+                    objectName: "registryQuery"
+                    Layout.fillWidth: true
+                    visible: !registryPane.registry.manual
+                    placeholderText: qsTr("Search ACP agents")
+                    Accessible.name: qsTr("Search the ACP Registry")
+                    onTextEdited: registryDebounce.restart()
+                    onAccepted: {
+                        registryDebounce.stop();
+                        registryPane.send("Search", { query: text });
+                    }
+                }
+
+                Timer {
+                    id: registryDebounce
+
+                    interval: 300
+                    onTriggered: registryPane.send("Search", { query: registryQuery.text })
+                }
+
+                Note {
+                    visible: !registryPane.registry.manual && registryPane.registry.agents === null && registryPane.registry.searching
+                    text: qsTr("Searching…")
+                }
+
+                ColumnLayout {
+                    objectName: "registryEmpty"
+                    visible: !registryPane.registry.manual && registryPane.registry.agents !== null && registryPane.registry.agents.length === 0
+                    spacing: 2
+
+                    Label {
+                        text: qsTr("No compatible agents found")
+                        color: page.foreground
+                        font.pixelSize: 12
+                    }
+
+                    Note {
+                        text: qsTr("Try a broader search.")
+                    }
+                }
+
+                Repeater {
+                    model: registryPane.registry.manual ? [] : (registryPane.registry.agents ?? [])
+
+                    delegate: RowLayout {
+                        id: agentRow
+
+                        required property var modelData
+                        objectName: "registryAgent_" + modelData.id
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Image {
+                            Layout.preferredWidth: 20
+                            Layout.preferredHeight: 20
+                            visible: agentRow.modelData.iconUrl.length > 0
+                            source: agentRow.modelData.iconUrl
+                            sourceSize: Qt.size(20, 20)
+                            fillMode: Image.PreserveAspectFit
+                            asynchronous: true
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: agentRow.modelData.name
+                                color: page.foreground
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                            }
+
+                            Note {
+                                visible: text.length > 0
+                                text: agentRow.modelData.description
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        ShellButton {
+                            objectName: "registryAdd"
+                            primary: !agentRow.modelData.added
+                            subtle: agentRow.modelData.added
+                            enabled: !agentRow.modelData.added && !registryPane.registry.busy
+                            text: agentRow.modelData.added ? qsTr("Added") : agentRow.modelData.preparing ? agentRow.modelData.progress + "…" : qsTr("Add")
+                            onClicked: registryPane.send("Add", { agentId: agentRow.modelData.id })
+                        }
+                    }
+                }
+
+                Note {
+                    objectName: "registryError"
+                    visible: text.length > 0
+                    text: registryPane.registry.error.length > 0 ? registryPane.registry.error : registryPane.registry.selectionError
+                    color: page.danger
+                }
+            }
+
             ColumnLayout {
                 Layout.fillWidth: true
                 visible: wizardCard.wizard.step === 1

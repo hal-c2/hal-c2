@@ -90,6 +90,11 @@ private:
   void configuration(QVariantMap& result, const QString& instanceId, const QString& driver) const;
   QVariantList pendingEntries() const;
   QVariant wizard() const;
+  // ProviderSettingsRegistry.cpp: the wizard's ACP Registry search.
+  bool handleRegistry(const QString& action, const QVariantMap& input);
+  void searchRegistry(const QString& query);
+  QString registrySelectionError() const;
+  QVariantMap registry() const;
   QVariant health() const;
   void call(const QString& instanceId, const QString& method, const QJsonObject& payload, const QString& failure);
   void sendTerminal(const QString& instanceId);
@@ -122,7 +127,10 @@ private:
   // The add-provider wizard while it shows: the chosen driver, what was
   // entered for each driver (label, accentColor, instanceId when typed) and
   // its config, the step (Provider, Identity, Config), whether moving on was
-  // tried (which shows the id's error), and whether it is saving.
+  // tried (which shows the id's error), and whether it is saving. Its ACP
+  // Registry search: the query, the agents found (none before the first
+  // answer), the search in flight, why it failed, the agent being prepared,
+  // the one chosen ({id, name, version}), and whether one is entered by hand.
   struct Wizard {
     QString driver = QStringLiteral("codex");
     QHash<QString, QJsonObject> identity;
@@ -130,6 +138,14 @@ private:
     int step = 0;
     bool attempted = false;
     bool saving = false;
+    QString query;
+    std::optional<QJsonArray> agents;
+    int generation = 0;
+    bool searching = false;
+    QString registryError;
+    QString preparing;
+    QJsonObject selected;
+    bool manual = false;
   };
   std::optional<Wizard> m_wizard;
   // Variable rows being edited that cannot be saved yet (a blank or invalid

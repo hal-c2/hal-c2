@@ -109,8 +109,29 @@ Item {
                 step: 1, steps: ["Provider", "Identity", "Config"],
                 drivers: [{ id: "codex", label: "Codex", badge: "" }, { id: "claudeAgent", label: "Claude", badge: "" }],
                 driver: "claudeAgent", driverLabel: "Claude", label: "Claude", accentColor: "", instanceId: "claudeAgent_2",
-                instanceIdError: "", fields: [], saving: false
+                instanceIdError: "", fields: [], saving: false,
+                registry: { query: "", searching: false, error: "", agents: [], busy: false, manual: false, selected: null, selectionError: "" }
             }, overrides);
+        }
+
+        // The ACP Registry: an agent already added is not offered, another is,
+        // and an empty answer suggests a broader search.
+        function test_the_wizard_offers_registry_agents() {
+            const agent = (id, added) => ({ id: id, name: id, description: "", iconUrl: "", website: "", added: added, preparing: false, progress: "Preparing" });
+            const registry = { query: "gem", searching: false, error: "", agents: [agent("gemini-cli", true), agent("goose", false)], busy: false, manual: false, selected: null, selectionError: "" };
+            Shell.state = { providerSettings: root.settings({ wizard: wizard({ step: 0, registry: registry }) }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "wizard");
+            tryVerify(() => !!card && card.visible);
+            const added = findChild(findChild(card, "registryAgent_gemini-cli"), "registryAdd");
+            compare(added.text, "Added");
+            verify(!added.enabled);
+            verify(!findChild(card, "registryEmpty").visible);
+            mouseClick(findChild(findChild(card, "registryAgent_goose"), "registryAdd"));
+            compare(Shell.dispatchedActions[0].action, "providerSettings.registryAdd");
+            compare(Shell.dispatchedActions[0].payload.agentId, "goose");
+            Shell.state = { providerSettings: root.settings({ wizard: wizard({ step: 0, registry: Object.assign({}, registry, { agents: [] }) }) }) };
+            tryVerify(() => findChild(card, "registryEmpty").visible);
         }
 
         // Adding an instance: the wizard's own actions, and a taken id said.

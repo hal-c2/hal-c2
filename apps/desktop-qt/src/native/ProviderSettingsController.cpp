@@ -280,7 +280,7 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
     save([seconds](QJsonObject settings, const QString&) { return withHealthSeconds(settings, seconds); });
   } else if (action == QLatin1String("providerSettings.resetHealthInterval")) {
     save([](QJsonObject settings, const QString&) { return withHealthSeconds(settings, std::nullopt); });
-  } else if (handleInstance(action, input)) {
+  } else if (handleInstance(action, input) || handleRegistry(action, input)) {
     return true;
   } else if (action == QLatin1String("providerSettings.enable")) {
     // Also an instance the environment has yet to list.

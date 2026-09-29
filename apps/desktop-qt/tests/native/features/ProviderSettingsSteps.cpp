@@ -33,7 +33,23 @@ struct FakeProviders {
   QStringList uninstalls;  // agents whose managed binary was cleaned up
   QString uninstallRefusal;
   qsizetype writesBefore = 0;  // the settings writes made before a custom model's save
+  QStringList searches, prepares;  // ACP Registry queries and agents prepared
 };
+
+// The ACP Registry's compatible agents, as server.searchAcpRegistry lists them.
+QJsonArray registryAgents() {
+  const auto agent = [](const QString& id, const QString& name, const QString& description) {
+    return QJsonObject{{QStringLiteral("id"), id},
+                       {QStringLiteral("name"), name},
+                       {QStringLiteral("version"), QStringLiteral("1.2.3")},
+                       {QStringLiteral("description"), description},
+                       {QStringLiteral("distribution"), QStringLiteral("npx")},
+                       {QStringLiteral("icon"), QStringLiteral("https://cdn.agentclientprotocol.com/%1.svg").arg(id)}};
+  };
+  return {agent(QStringLiteral("gemini-cli"), QStringLiteral("Gemini CLI"), QStringLiteral("Google's Gemini agent")),
+          agent(QStringLiteral("gemini-lite"), QStringLiteral("Gemini Lite"), QStringLiteral("A smaller Gemini")),
+          agent(QStringLiteral("goose"), QStringLiteral("Goose"), QStringLiteral("An open agent"))};
+}
 
 FakeProviders& fake(World& world) {
   return world.node.part<FakeProviders>();
@@ -107,6 +123,23 @@ const FakeNode::Extension extension([](FakeNode& node) {
     fake.uninstalls.append(rpc.payload.value(QLatin1String("agentId")).toString());
     if (fake.uninstallRefusal.isEmpty()) node.reply(rpc, QJsonObject{});
     else node.refuse(rpc, fake.uninstallRefusal);
+  });
+  node.onRpc(QStringLiteral("server.searchAcpRegistry"), [&node](const FakeNode::Rpc& rpc) {
+    const QString query = rpc.payload.value(QLatin1String("query")).toString();
+    node.part<FakeProviders>().searches.append(query);
+    QJsonArray agents;
+    for (const QJsonValue& agent : registryAgents()) {
+      if (agent.toObject().value(QLatin1String("id")).toString().contains(query, Qt::CaseInsensitive)) agents.append(agent);
+    }
+    node.reply(rpc, QJsonObject{{QStringLiteral("agents"), agents}});
+  });
+  node.onRpc(QStringLiteral("server.prepareAcpRegistryAgent"), [&node](const FakeNode::Rpc& rpc) {
+    const QString agentId = rpc.payload.value(QLatin1String("agentId")).toString();
+    node.part<FakeProviders>().prepares.append(agentId);
+    node.reply(rpc, QJsonObject{{QStringLiteral("agentId"), agentId},
+                                {QStringLiteral("version"), QStringLiteral("1.2.3")},
+                                {QStringLiteral("distribution"), QStringLiteral("npx")},
+                                {QStringLiteral("prepared"), true}});
   });
   node.onRpc(QStringLiteral("server.updateProvider"), [&node](const FakeNode::Rpc& rpc) {
     FakeProviders& fake = node.part<FakeProviders>();
@@ -1093,6 +1126,90 @@ QStringList reasoningChoices(World& world) {
   }
   return result;
 }
+
+QVariantMap registry(World& world) {
+  return wizard(world).value(QStringLiteral("registry")).toMap();
+}
+
+// Searches the registry in the wizard and waits for this query's answer.
+void searchRegistry(World& world, const QString& query) {
+  openWizard(world);
+  act(world, QStringLiteral("registrySearch"), {{QStringLiteral("query"), query}});
+  world.waitFor([&] {
+    return registry(world).value(QStringLiteral("query")) == query && !registry(world).value(QStringLiteral("searching")).toBool() &&
+           registry(world).value(QStringLiteral("agents")).isValid() && !registry(world).value(QStringLiteral("agents")).isNull();
+  }, [&] { return QStringLiteral("the registry's answer to \"%1\"; the wizard is %2").arg(query, show(wizard(world))); });
+}
+
+QVariantMap registryAgent(World& world, const QString& agentId) {
+  for (const QVariant& agent : registry(world).value(QStringLiteral("agents")).toList()) {
+    if (agent.toMap().value(QStringLiteral("id")) == agentId) return agent.toMap();
+  }
+  return {};
+}
+
+const Steps registrySteps([] {
+  const QString q = kQuoted;
+
+  step(QStringLiteral("the user searches the ACP Registry for %1").arg(q),
+       [](World& world, const Captures& c, const Table&) { searchRegistry(world, c[0]); });
+  step(QStringLiteral("the user is told no compatible agents were found and to try a broader search"),
+       [](World& world, const Captures&, const Table&) {
+    // The pane shows "No compatible agents found" / "Try a broader search." for an empty answer.
+    expect(registry(world).value(QStringLiteral("agents")).toList().isEmpty() && registry(world).value(QStringLiteral("error")).toString().isEmpty(),
+           QStringLiteral("an empty answer; the registry is %1").arg(show(registry(world))));
+  });
+  step(QStringLiteral("%1 is already configured").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonObject config{{QStringLiteral("agentId"), c[0]}};
+    seedInstance(world, QStringLiteral("acpRegistry_gemini"),
+                 QJsonObject{{QStringLiteral("driver"), QStringLiteral("acpRegistry")},
+                             {QStringLiteral("displayName"), QStringLiteral("Gemini")},
+                             {QStringLiteral("config"), config}},
+                 provider(QStringLiteral("acpRegistry_gemini"), QStringLiteral("acpRegistry"), QStringLiteral("Gemini")));
+  });
+  step(QStringLiteral("%1 is marked as already added").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap agent = registryAgent(world, c[0]);
+    const QVariantMap other = registryAgent(world, QStringLiteral("gemini-lite"));
+    expect(agent.value(QStringLiteral("added")).toBool() && !other.isEmpty() && !other.value(QStringLiteral("added")).toBool(),
+           QStringLiteral("%1 alone to be marked added; the registry is %2").arg(c[0], show(registry(world))));
+    // Adding it again does nothing.
+    act(world, QStringLiteral("registryAdd"), {{QStringLiteral("agentId"), c[0]}});
+    expect(fake(world).prepares.isEmpty(), QStringLiteral("no agent to be prepared again"));
+  });
+  step(QStringLiteral("the user moves on without choosing an agent"), [](World& world, const Captures&, const Table&) {
+    searchRegistry(world, QString());
+    act(world, QStringLiteral("registryManual"), {{QStringLiteral("manual"), true}});
+    act(world, QStringLiteral("registryManual"), {{QStringLiteral("manual"), false}});
+    act(world, QStringLiteral("wizardStep"), {{QStringLiteral("step"), 1}});
+  });
+  step(QStringLiteral("the user is asked to select an ACP or configure one manually"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      return wizard(world).value(QStringLiteral("step")) == 0 &&
+             registry(world).value(QStringLiteral("selectionError")) == QLatin1String("Select an ACP or configure one manually.");
+    }, [&] { return QStringLiteral("the selection to be asked for; the wizard is %1").arg(show(wizard(world))); });
+  });
+  step(QStringLiteral("the user chooses %1 from the ACP Registry").arg(q), [](World& world, const Captures& c, const Table&) {
+    searchRegistry(world, QString());
+    act(world, QStringLiteral("registryAdd"), {{QStringLiteral("agentId"), c[0]}});
+    world.waitFor([&] { return wizard(world).value(QStringLiteral("step")) == 1; },
+                  [&] { return QStringLiteral("the identity step; the wizard is %1").arg(show(wizard(world))); });
+    expect(fake(world).prepares == QStringList{c[0]}, QStringLiteral("%1 to be prepared; prepared %2").arg(c[0], fake(world).prepares.join(QStringLiteral(", "))));
+    fake(world).suggestedId = wizard(world).value(QStringLiteral("instanceId")).toString();
+    act(world, QStringLiteral("wizardSubmit"));
+  });
+  step(QStringLiteral("the new instance is named %1 and runs %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = fake(world).suggestedId;
+    world.waitFor([&] { return !savedInstance(world, id).isEmpty(); },
+                  [&] { return QStringLiteral("%1 to be saved; the wizard is %2").arg(id, show(wizard(world))); });
+    const QJsonObject saved = savedInstance(world, id);
+    const QJsonObject config = saved.value(QLatin1String("config")).toObject();
+    expect(saved.value(QLatin1String("driver")) == QLatin1String("acpRegistry") && saved.value(QLatin1String("displayName")) == c[0] &&
+               config.value(QLatin1String("agentId")) == c[1] && config.value(QLatin1String("distribution")) == QLatin1String("auto") &&
+               config.value(QLatin1String("registryIconUrl")) == QStringLiteral("https://cdn.agentclientprotocol.com/%1.svg").arg(c[1]),
+           QStringLiteral("%1 running %2; saved %3").arg(c[0], c[1], show(saved.toVariantMap())));
+    world.waitFor([&] { return wizard(world).isEmpty(); }, [&] { return QStringLiteral("the wizard to close; it is %1").arg(show(wizard(world))); });
+  });
+});
 
 const Steps customModelSteps([] {
   const QString q = kQuoted;

@@ -34,7 +34,7 @@
 //
 // `wizard`: {step, steps, drivers [{id, label, badge}], driver, driverLabel,
 // label, accentColor, instanceId, instanceIdError ("" until moving on was
-// tried), fields, saving}.
+// tried), fields, saving, registry (ProviderSettingsRegistry.cpp)}.
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -52,6 +52,8 @@ namespace {
 
 const QString kRegistry = QStringLiteral("acpRegistry");
 const QStringList kSteps{QStringLiteral("Provider"), QStringLiteral("Identity"), QStringLiteral("Config")};
+// An agent chosen from the registry is set up by it; it signs in from its card.
+const QStringList kRegistrySteps{QStringLiteral("Provider"), QStringLiteral("Identity")};
 
 QString configText(const QJsonValue& value) {
   if (value.isString()) return value.toString();
@@ -195,14 +197,21 @@ bool ProviderSettingsController::handleInstance(const QString& action, const QVa
   };
   if (action.startsWith(QLatin1String("providerSettings.wizard"))) {
     if (action == QLatin1String("providerSettings.wizardOpen")) {
-      if (!m_followed.isEmpty()) m_wizard = Wizard{};
+      if (m_followed.isEmpty()) return true;
+      m_wizard = Wizard{};
+      // An empty query lists the registry's compatible agents.
+      searchRegistry(QString());
     } else if (!m_wizard || m_wizard->saving) {
       return true;
     } else if (action == QLatin1String("providerSettings.wizardClose")) {
       m_wizard.reset();
     } else if (action == QLatin1String("providerSettings.wizardDriver")) {
       const QString driver = input.value(QStringLiteral("driver")).toString();
-      if (ProviderDrivers::find(driver) && driver != kRegistry) m_wizard->driver = driver;
+      if (ProviderDrivers::find(driver) && driver != kRegistry) {
+        m_wizard->driver = driver;
+        m_wizard->manual = false;
+        m_wizard->attempted = false;
+      }
     } else if (action == QLatin1String("providerSettings.wizardLabel")) {
       m_wizard->identity[m_wizard->driver].insert(QStringLiteral("label"), input.value(QStringLiteral("label")).toString());
     } else if (action == QLatin1String("providerSettings.wizardAccent")) {
@@ -226,9 +235,18 @@ bool ProviderSettingsController::handleInstance(const QString& action, const QVa
       const QString id = identity.contains(QLatin1String("instanceId")) ? identity.value(QLatin1String("instanceId")).toString()
                                                                         : ProviderDrivers::deriveId(driver, label, ids);
       const bool valid = ProviderDrivers::validateId(id, ids).isEmpty();
+      // resolveAcpRegistryWizardNavigation: moving on from Provider needs an agent.
+      const bool chosen = registrySelectionError().isEmpty();
+      if (!chosen && (action == QLatin1String("providerSettings.wizardSubmit") || input.value(QStringLiteral("step")).toInt() > 0)) {
+        m_wizard->attempted = true;
+        m_wizard->step = 0;
+        publish();
+        return true;
+      }
       if (action == QLatin1String("providerSettings.wizardStep")) {
         // resolveWizardNavigation: moving on past Identity needs a valid id.
-        const int target = std::clamp(input.value(QStringLiteral("step")).toInt(), 0, int(kSteps.size()) - 1);
+        const QStringList& steps = driver == kRegistry && !m_wizard->manual ? kRegistrySteps : kSteps;
+        const int target = std::clamp(input.value(QStringLiteral("step")).toInt(), 0, int(steps.size()) - 1);
         if (m_wizard->step <= 1 && target > 1 && !valid) {
           m_wizard->attempted = true;
           m_wizard->step = 1;
@@ -560,7 +578,8 @@ QVariant ProviderSettingsController::wizard() const {
                                                                     : ProviderDrivers::deriveId(driver.id, label, taken);
   return QVariantMap{
       {QStringLiteral("step"), m_wizard->step},
-      {QStringLiteral("steps"), kSteps},
+      {QStringLiteral("steps"), driver.id == kRegistry && !m_wizard->manual ? kRegistrySteps : kSteps},
+      {QStringLiteral("registry"), registry()},
       {QStringLiteral("drivers"), drivers},
       {QStringLiteral("driver"), driver.id},
       {QStringLiteral("driverLabel"), driver.label},

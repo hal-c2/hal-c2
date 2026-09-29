@@ -132,7 +132,7 @@ Feature: Providers settings panel
       When the user searches the ACP Registry for "gemini"
       Then the compatible agents matching "gemini" are listed best first
 
-    @backlog @desktop
+    @desktop
     Scenario: A search with no compatible agent suggests a broader search
       When the user searches the ACP Registry for "zzzz"
       Then the user is told no compatible agents were found and to try a broader search
@@ -142,11 +142,21 @@ Feature: Providers settings panel
       When the user adds the registry agent "gemini-cli"
       Then the node prepares the agent's current version for this machine
 
-    @backlog @desktop
+    @desktop
     Scenario: An agent already added is marked instead of offered again
       Given "gemini-cli" is already configured
       When the user searches the ACP Registry for "gemini"
       Then "gemini-cli" is marked as already added
+
+    @desktop
+    Scenario: Choosing a registry agent names the new instance after it
+      When the user chooses "gemini-cli" from the ACP Registry
+      Then the new instance is named "Gemini CLI" and runs "gemini-cli"
+
+    @desktop
+    Scenario: The registry step needs an agent or a manual setup
+      When the user moves on without choosing an agent
+      Then the user is asked to select an ACP or configure one manually
 
     @node
     Scenario: A registry agent still in use cannot be uninstalled
