@@ -249,6 +249,14 @@ Feature: Providers settings panel
       And the secret stored for "API_KEY" is forgotten
 
     @desktop
+    Scenario: A provider's own API key can be cleared for browser sign-in
+      Given a Cursor instance keeps its own "CURSOR_API_KEY"
+      Then Cursor says its API key is used instead of browser sign-in
+      When the user clears "CURSOR_API_KEY"
+      Then the secret stored for "CURSOR_API_KEY" is forgotten
+      And Cursor can be signed in from the browser again
+
+    @desktop
     Scenario: Removing an environment variable
       Given the instance has the environment variable "API_KEY"
       When the user removes "API_KEY"

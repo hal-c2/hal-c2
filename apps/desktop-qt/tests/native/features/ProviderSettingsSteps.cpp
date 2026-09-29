@@ -820,6 +820,41 @@ const Steps steps([] {
     world.waitFor([&] { return !fakeConfig(world.node).secrets.contains(fake(world).instanceId + QLatin1Char('/') + c[0]); },
                   [&] { return QStringLiteral("the secret of %1 to be deleted").arg(c[0]); });
   });
+  // A Cursor instance that signs in from the browser, keeping `CURSOR_API_KEY` as a stored secret.
+  step(QStringLiteral("a Cursor instance keeps its own %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeConfig(world.node).secrets.insert(QStringLiteral("cursor_work/") + c[0], QStringLiteral("crsr-secret"));
+    seedInstance(world, QStringLiteral("cursor_work"),
+                 {{QStringLiteral("driver"), QStringLiteral("cursor")}, {QStringLiteral("displayName"), QStringLiteral("Cursor Work")},
+                  {QStringLiteral("enabled"), true},
+                  {QStringLiteral("environment"), QJsonArray{QJsonObject{{QStringLiteral("name"), c[0]}, {QStringLiteral("value"), QString()},
+                                                                         {QStringLiteral("sensitive"), true}, {QStringLiteral("valueRedacted"), true}}}}},
+                 provider(QStringLiteral("cursor_work"), QStringLiteral("cursor"), QStringLiteral("Cursor Work"),
+                          {{QStringLiteral("setup"), QJsonObject{{QStringLiteral("canAuthenticate"), true}}}}));
+  });
+  step(QStringLiteral("Cursor says its API key is used instead of browser sign-in"), [](World& world, const Captures&, const Table&) {
+    waitForEntry(world, QStringLiteral("Cursor Work"), [](const QVariantMap& found) {
+      return at(found, QStringLiteral("account.description")) ==
+                 QLatin1String("Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in.") &&
+             !at(found, QStringLiteral("account.canSignIn")).toBool();
+    }, QStringLiteral("to say the API key replaces browser sign-in"));
+  });
+  step(QStringLiteral("the user clears %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForEntry(world, QStringLiteral("Cursor Work"), [&](const QVariantMap& found) {
+      for (const QVariant& secret : found.value(QStringLiteral("secrets")).toList()) {
+        if (at(secret, QStringLiteral("name")) == c[0]) return at(secret, QStringLiteral("stored")).toBool();
+      }
+      return false;
+    }, QStringLiteral("to show a stored ") + c[0]);
+    act(world, QStringLiteral("secret"), {{QStringLiteral("instanceId"), fake(world).instanceId}, {QStringLiteral("name"), c[0]}, {QStringLiteral("value"), QString()}});
+  });
+  step(QStringLiteral("Cursor can be signed in from the browser again"), [](World& world, const Captures&, const Table&) {
+    waitForEntry(world, QStringLiteral("Cursor Work"), [&](const QVariantMap& found) {
+      const QVariantList secrets = found.value(QStringLiteral("secrets")).toList();
+      return at(found, QStringLiteral("account.canSignIn")).toBool() && !secrets.isEmpty() &&
+             !at(secrets.first(), QStringLiteral("stored")).toBool() &&
+             !savedInstance(world, fake(world).instanceId).contains(QLatin1String("environment"));
+    }, QStringLiteral("to offer browser sign-in without a stored key"));
+  });
   step(QStringLiteral("the user removes %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QVariantList rows = variables(world, QStringLiteral("Claude Work"));
     for (qsizetype i = 0; i < rows.size(); ++i) {

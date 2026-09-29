@@ -725,9 +725,17 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
                              ((setup.contains(QLatin1String("canAuthenticate")) && !setup.value(QLatin1String("canAuthenticate")).toBool()) ||
                               (registry && state.value(QLatin1String("methods")).isArray() &&
                                state.value(QLatin1String("methods")).toArray().isEmpty()));
+  // The node refuses a browser sign-in while Cursor carries its own API key.
+  const QVariantList secrets = result.value(QStringLiteral("secrets")).toList();
+  const bool apiKey = driver == QLatin1String("cursor") && std::any_of(secrets.cbegin(), secrets.cend(), [](const QVariant& secret) {
+    return secret.toMap().value(QStringLiteral("name")) == QLatin1String("CURSOR_API_KEY") &&
+           secret.toMap().value(QStringLiteral("stored")).toBool();
+  });
   QString description;
   if (!served) {
     description = QStringLiteral("Sign in from a client paired with %1.").arg(label(m_followed));
+  } else if (apiKey && !active) {
+    description = QStringLiteral("Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in.");
   } else if (active) {
     description = phase == QLatin1String("starting")    ? QStringLiteral("Starting sign-in…")
                   : phase == QLatin1String("verifying") ? QStringLiteral("Checking your account…")
@@ -780,7 +788,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   result.insert(QStringLiteral("account"),
                 QVariantMap{
                     {QStringLiteral("description"), description},
-                    {QStringLiteral("canSignIn"), served && known && !busy && !active && !discovering && !externalSetup &&
+                    {QStringLiteral("canSignIn"), served && known && !busy && !active && !discovering && !externalSetup && !apiKey &&
                                                       setup.value(QLatin1String("canAuthenticate")).toBool(true) &&
                                                       provider.value(QLatin1String("enabled")).toBool() &&
                                                       provider.value(QLatin1String("installed")).toBool()},

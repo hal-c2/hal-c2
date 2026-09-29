@@ -280,6 +280,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("settings/providers-panel.feature:Leaving the Providers settings*"),
     QStringLiteral("settings/providers-panel.feature:Turning an instance off and on"),
     QStringLiteral("settings/providers-panel.feature:A change that cannot be saved*"),
+    QStringLiteral("settings/providers-panel.feature:A provider's own API key can be cleared*"),
     QStringLiteral("settings/providers-panel.feature:Signing in finishes*"),
     QStringLiteral("settings/providers-panel.feature:A sign-in in progress*"),
     QStringLiteral("settings/providers-panel.feature:Choosing how to sign in"),

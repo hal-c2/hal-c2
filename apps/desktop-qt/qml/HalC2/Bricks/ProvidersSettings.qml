@@ -888,14 +888,28 @@ Rectangle {
                             font.weight: Font.Medium
                         }
 
-                        ShellTextField {
+                        RowLayout {
                             Layout.fillWidth: true
-                            echoMode: TextInput.Password
-                            placeholderText: modelData.stored ? qsTr("Stored secret, enter a new value to replace") : modelData.placeholder
-                            Accessible.name: modelData.label
-                            onEditingFinished: if (text.length > 0) {
-                                page.act("secret", card.provider, { name: modelData.name, value: text });
-                                text = "";
+                            spacing: 6
+
+                            ShellTextField {
+                                Layout.fillWidth: true
+                                echoMode: TextInput.Password
+                                placeholderText: modelData.stored ? qsTr("Stored secret, enter a new value to replace") : modelData.placeholder
+                                Accessible.name: modelData.label
+                                onEditingFinished: if (text.length > 0) {
+                                    page.act("secret", card.provider, { name: modelData.name, value: text });
+                                    text = "";
+                                }
+                            }
+
+                            // An empty value forgets the stored secret.
+                            ShellButton {
+                                objectName: "clearSecret"
+                                visible: modelData.stored
+                                text: qsTr("Clear")
+                                Accessible.name: qsTr("Clear %1").arg(modelData.label)
+                                onClicked: page.act("secret", card.provider, { name: modelData.name, value: "" })
                             }
                         }
 
