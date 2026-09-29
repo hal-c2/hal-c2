@@ -213,6 +213,39 @@ void setProviders(World& world, const QJsonArray& providers) {
   fakeConfig(world.node).config.insert(QStringLiteral("providers"), providers);
 }
 
+// One hub (a usage-limit source) on this node, as HalC2.UsageLimitSources publishes it.
+void setHub(World& world, const QString& label, const QJsonArray& accounts, const QString& error = {}) {
+  QJsonObject hub{{QStringLiteral("id"), QStringLiteral("team-hub")},
+                  {QStringLiteral("kind"), QStringLiteral("cliproxy")},
+                  {QStringLiteral("label"), label},
+                  {QStringLiteral("checkedAt"), world.now().toUTC().toString(Qt::ISODateWithMs)},
+                  {QStringLiteral("accounts"), accounts}};
+  if (!error.isEmpty()) hub.insert(QStringLiteral("error"), error);
+  fakeConfig(world.node).sources.insert(world.node.environmentId, QJsonArray{hub});
+}
+
+QJsonObject hubAccount(World& world, const QString& email, bool credit) {
+  QJsonObject limits{{QStringLiteral("checkedAt"), world.now().toUTC().toString(Qt::ISODateWithMs)},
+                     {QStringLiteral("windows"), QJsonArray{limitsWindow(QStringLiteral("5-hour"), 50, world.now().addSecs(2 * 3600))}}};
+  if (credit) {
+    limits.insert(QStringLiteral("resetCredits"), QJsonObject{{QStringLiteral("availableCount"), 1},
+                                                              {QStringLiteral("nextCreditId"), QStringLiteral("credit-1")}});
+  }
+  QJsonObject account{{QStringLiteral("id"), QStringLiteral("codex-ops.json")},
+                      {QStringLiteral("driver"), QStringLiteral("codex")},
+                      {QStringLiteral("usageLimits"), limits}};
+  if (!email.isEmpty()) account.insert(QStringLiteral("email"), email);
+  return account;
+}
+
+QVariantList codexAccounts(World& world) {
+  for (const QVariant& pool : at(usage(world), QStringLiteral("limits.pools")).toList()) {
+    if (pool.toMap().value(QStringLiteral("driver")) != QLatin1String("codex")) continue;
+    return pool.toMap().value(QStringLiteral("windows")).toList().value(0).toMap().value(QStringLiteral("accounts")).toList();
+  }
+  return {};
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
 
@@ -457,6 +490,48 @@ const Steps steps([] {
     world.waitFor([&] { return credit(world).value(QStringLiteral("available")).toInt() == 1; },
                   [&] { return QStringLiteral("one credit banked; the credits are %1").arg(show(credit(world))); });
     expect(fake(world).redeemed.isEmpty(), QStringLiteral("no credit to be spent"));
+  });
+
+  // Usage-limit sources (hubs).
+  step(QStringLiteral("a node the user administers"), [](World& world, const Captures&, const Table&) {
+    ensureConnected(world);
+  });
+  step(QStringLiteral("the hub %1 reports a Codex account").arg(q), [](World& world, const Captures& c, const Table&) {
+    setHub(world, c[0], {hubAccount(world, {}, false)});
+  });
+  step(QStringLiteral("the hub %1 reports the Codex account %1( with a banked reset credit)?").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         setHub(world, c[0], {hubAccount(world, c[1], c.size() > 2 && !c[2].isEmpty())});
+       });
+  step(QStringLiteral("the hub %1 cannot be read: %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    setHub(world, c[0], {}, c[1]);
+  });
+  step(QStringLiteral("Codex is signed in here as %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    setProviders(world, {codex(QStringLiteral("codex"), QStringLiteral("Codex"), c[0],
+                               {{QStringLiteral("checkedAt"), world.now().addSecs(-60).toUTC().toString(Qt::ISODateWithMs)},
+                                {QStringLiteral("windows"), QJsonArray{limitsWindow(QStringLiteral("5-hour"), 40, world.now().addSecs(3600))}}})});
+  });
+  step(QStringLiteral("Codex limits include the account %1 of the hub").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      for (const QVariant& account : codexAccounts(world)) {
+        if (account.toMap().value(QStringLiteral("name")) == c[0]) return true;
+      }
+      return false;
+    }, [&] { return QStringLiteral("the hub's %1 in Codex limits; the page is %2").arg(c[0], show(usage(world))); });
+  });
+  step(QStringLiteral("Codex limits count one account"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !codexAccounts(world).isEmpty(); },
+                  [&] { return QStringLiteral("Codex limits; the page is %1").arg(show(usage(world))); });
+    world.sync();
+    expect(codexAccounts(world).size() == 1, QStringLiteral("one Codex account; they are %1").arg(show(codexAccounts(world))));
+  });
+  step(QStringLiteral("the credit is spent through the hub"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !fake(world).redeemed.isEmpty(); }, QStringLiteral("a credit to be spent"));
+    const QJsonObject input = fake(world).redeemed.first();
+    expect(input.value(QLatin1String("sourceId")) == QLatin1String("team-hub") &&
+               input.value(QLatin1String("accountId")) == QLatin1String("codex-ops.json") &&
+               input.value(QLatin1String("creditId")) == QLatin1String("credit-1"),
+           QStringLiteral("the hub's credit to be spent; the node was asked %1").arg(QString::fromUtf8(QJsonDocument(input).toJson(QJsonDocument::Compact))));
   });
 });
 

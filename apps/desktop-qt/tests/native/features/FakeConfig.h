@@ -17,6 +17,7 @@ struct FakeConfig {
   int version = 0;
   QJsonObject config;  // ServerConfig, less settings
   QHash<QString, QJsonArray> themes;  // by environment
+  QHash<QString, QJsonArray> sources;  // usage-limit source snapshots, by environment
   QHash<QString, QJsonObject> elsewhere;  // other environments' ServerConfig, by environment
   // Other environments' settings documents, by environment: read, written and
   // published as this node's own is.

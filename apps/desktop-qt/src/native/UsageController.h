@@ -30,7 +30,8 @@ class ShellStore;
 // Limits: no call of their own. While limits show, each chosen environment's
 // `config` shape brings its providers' `usageLimits`, and `server.refreshProviders`
 // asks for them afresh: on showing, at most every five minutes per environment,
-// or whenever the user refreshes. Accounts of one driver pool per window.
+// or whenever the user refreshes. The same shape's `config.usageLimitSources`
+// brings the accounts of its hubs. Accounts of one driver pool per window.
 //
 // Publishes `usage`: {open, metric: cost | tokens | limits, windowDays: 1 | 7 |
 // 30 | 90, windowLabel, environmentId ("" for all), environments [{id, label,
@@ -100,6 +101,8 @@ private:
   // Each followed environment's `config` shape, and its providers.
   QHash<QString, int> m_configs;
   QHash<QString, QJsonArray> m_providers;
+  // And its usage-limit sources (hubs): `config.usageLimitSources`.
+  QHash<QString, QJsonArray> m_sources;
   // When each environment's limits were last asked for, and those in flight.
   QHash<QString, QDateTime> m_limitsAsked;
   QSet<QString> m_limitsInFlight;

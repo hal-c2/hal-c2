@@ -92,6 +92,11 @@ const FakeNode::Extension extension([](FakeNode& node) {
     node.send({{QStringLiteral("t"), QStringLiteral("config.themes")},
                {QStringLiteral("id"), id},
                {QStringLiteral("themes"), fake.themes.value(environment)}});
+    if (fake.sources.contains(environment)) {
+      node.send({{QStringLiteral("t"), QStringLiteral("config.usageLimitSources")},
+                 {QStringLiteral("id"), id},
+                 {QStringLiteral("sources"), fake.sources.value(environment)}});
+    }
   });
   node.onRpc(QStringLiteral("hal-c2.readSettings"), [&node](const FakeNode::Rpc& rpc) {
     FakeConfig& fake = fakeConfig(node);

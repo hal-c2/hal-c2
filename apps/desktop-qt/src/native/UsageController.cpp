@@ -334,6 +334,7 @@ void UsageController::follow() {
     }
     m_client->unsubscribe(it.value());
     m_providers.remove(it.key());
+    m_sources.remove(it.key());
     it = m_configs.erase(it);
   }
   for (const QString& environmentId : environments) {
@@ -345,6 +346,8 @@ void UsageController::follow() {
         m_providers.insert(environmentId, frame.value(QLatin1String("config")).toObject().value(QLatin1String("providers")).toArray());
       } else if (type == QLatin1String("config.providers")) {
         m_providers.insert(environmentId, frame.value(QLatin1String("providers")).toArray());
+      } else if (type == QLatin1String("config.usageLimitSources")) {
+        m_sources.insert(environmentId, frame.value(QLatin1String("sources")).toArray());
       } else {
         return;
       }
@@ -357,6 +360,7 @@ void UsageController::unfollow() {
   for (const int id : std::as_const(m_configs)) m_client->unsubscribe(id);
   m_configs.clear();
   m_providers.clear();
+  m_sources.clear();
 }
 
 // The chosen environments' summaries merged (usageMerge.ts), or an empty map
@@ -531,11 +535,18 @@ QVariantMap UsageController::limits() {
     QString creditsAt;
     QJsonObject credits;
     Redeem redeem;
+    // Redeeming through a hub also clears the cooldown it holds for the
+    // account, so the freshest hub target wins the redemption outright.
+    QString hubAt;
+    Redeem hubRedeem;
   };
   QList<QString> order;
   QHash<QString, Account> accounts;
   QStringList notices;
   QStringList ids = m_providers.keys();
+  for (const QString& environmentId : m_sources.keys()) {
+    if (!ids.contains(environmentId)) ids.append(environmentId);
+  }
   std::sort(ids.begin(), ids.end());
   const bool several = m_store->environments().size() > 1;
   auto later = [](const QString& a, const QString& b) {
@@ -557,6 +568,10 @@ QVariantMap UsageController::limits() {
       known.credits = next.credits;
       known.creditsAt = next.creditsAt;
       known.redeem = next.redeem;
+    }
+    if (!next.hubRedeem.environmentId.isEmpty() && (known.hubAt.isEmpty() || later(next.hubAt, known.hubAt))) {
+      known.hubAt = next.hubAt;
+      known.hubRedeem = next.hubRedeem;
     }
   };
   for (const QString& environmentId : ids) {
@@ -588,7 +603,44 @@ QVariantMap UsageController::limits() {
                           (email.isEmpty() ? environmentId + QLatin1Char(':') + text(provider, "instanceId") : email);
       const QString checkedAt = text(limits, "checkedAt");
       merge(key, {driver, name, checkedAt, windows, checkedAt, limits.value(QLatin1String("resetCredits")).toObject(),
-                  {environmentId, QJsonObject{{QStringLiteral("instanceId"), text(provider, "instanceId")}}}});
+                  {environmentId, QJsonObject{{QStringLiteral("instanceId"), text(provider, "instanceId")}}}, {}, {}});
+    }
+  }
+  // Every hub account, those an environment also signs in to included: the
+  // hub may hold the fresher read of the same subscription.
+  for (const QString& environmentId : ids) {
+    const QString prefix = several ? label(environmentId) + QStringLiteral(" · ") : QString();
+    for (const QJsonValue& value : m_sources.value(environmentId)) {
+      const QJsonObject source = value.toObject();
+      const QString sourceLabel = prefix + text(source, "label");
+      const QJsonArray sourceAccounts = source.value(QLatin1String("accounts")).toArray();
+      if (!text(source, "error").isEmpty()) {
+        notices.append(QStringLiteral("%1: %2").arg(sourceLabel, text(source, "error")));
+      } else if (sourceAccounts.isEmpty()) {
+        notices.append(QStringLiteral("%1: No accounts reported.").arg(sourceLabel));
+      }
+      for (const QJsonValue& entry : sourceAccounts) {
+        const QJsonObject account = entry.toObject();
+        const QJsonObject limits = account.value(QLatin1String("usageLimits")).toObject();
+        const QJsonArray windows = limits.value(QLatin1String("windows")).toArray();
+        if (limits.contains(QLatin1String("unavailable")) || windows.isEmpty()) continue;
+        const QString driver = text(account, "driver");
+        const QString email = text(account, "email").trimmed().toLower();
+        const QString id = text(account, "id");
+        const QString key = driver + QLatin1Char(':') + (email.isEmpty() ? text(source, "id") + QLatin1Char(':') + id : email);
+        // A hub only names the account by its file when it has no address.
+        QString name = id;
+        if (name.endsWith(QLatin1String(".json"), Qt::CaseInsensitive)) name.chop(5);
+        if (!email.isEmpty()) name = sourceLabel;
+        const QString checkedAt = text(limits, "checkedAt");
+        const QJsonObject credits = limits.value(QLatin1String("resetCredits")).toObject();
+        const QString creditId = text(credits, "nextCreditId");
+        const Redeem redeem = creditId.isEmpty() ? Redeem{}
+                                                 : Redeem{environmentId, QJsonObject{{QStringLiteral("sourceId"), text(source, "id")},
+                                                                                     {QStringLiteral("accountId"), id},
+                                                                                     {QStringLiteral("creditId"), creditId}}};
+        merge(key, {driver, name, checkedAt, windows, checkedAt, credits, redeem, checkedAt, redeem});
+      }
     }
   }
 
@@ -643,7 +695,8 @@ QVariantMap UsageController::limits() {
       const int available = account.credits.value(QLatin1String("availableCount")).toInt();
       const QString status = m_redeemStatus.value(key);
       if (available == 0 && status.isEmpty() && !m_redeeming.contains(key)) continue;
-      if (!account.redeem.environmentId.isEmpty()) m_redeems.insert(key, account.redeem);
+      const Redeem& target = account.hubRedeem.environmentId.isEmpty() ? account.redeem : account.hubRedeem;
+      if (!target.environmentId.isEmpty()) m_redeems.insert(key, target);
       credits.append(QVariantMap{{QStringLiteral("key"), key},
                                  {QStringLiteral("name"), account.name},
                                  {QStringLiteral("available"), available},
