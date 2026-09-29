@@ -19,6 +19,8 @@
 #include "ThemeStore.h"
 #include "WorkspaceController.h"
 
+class Brick;
+
 struct PageAction {
   QString type;
   QVariantMap payload;
@@ -29,6 +31,7 @@ struct PageAction {
 class World {
 public:
   World();
+  ~World();
 
   FakeNode node;
   QList<PageAction> pageActions;
@@ -47,6 +50,9 @@ public:
   QString clipboard;
   bool clipboardFails = false;
   QList<QUrl> openedUrls;
+  // A brick the scenario keeps on screen (DeviceSteps' DevicePanel): it goes
+  // before the shell it draws, on restart too.
+  std::unique_ptr<Brick> brick;
 
   ShellBridge& bridge() { return *m_bridge; }
   NativeShell& native() { return *m_native; }

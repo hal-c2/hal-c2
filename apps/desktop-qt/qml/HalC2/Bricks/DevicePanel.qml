@@ -183,6 +183,7 @@ Rectangle {
             }
 
             ShellButton {
+                objectName: "deviceDismissError"
                 anchors.right: parent.right
                 anchors.rightMargin: 6
                 y: 2

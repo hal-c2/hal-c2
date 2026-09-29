@@ -71,6 +71,24 @@ Feature: Device panel
       Then the tab "iPhone 17" shows the device's screen
 
     @desktop
+    Scenario: Video that arrives in pieces still shows the screen
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the device sends no picture yet
+      When the user shows the "iPhone 17" tab
+      And the device sends its video in pieces
+      Then the tab "iPhone 17" shows the device's screen
+
+    @desktop
+    Scenario: A tab turned to another device never shows the last one's picture
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the thread has the Android Emulator "Pixel 9" open
+      And the user is watching the "iPhone 17" tab
+      And the device sends no picture yet
+      When the user shows the "Pixel 9" tab
+      Then the tab says it is connecting to the device
+      And the tab shows no picture
+
+    @desktop
     Scenario: A device that sends nothing is an error the user can retry
       Given the thread has the iOS Simulator "iPhone 17" open
       And the device sends no picture yet
@@ -146,6 +164,13 @@ Feature: Device panel
       Then the emulator receives the "back" button
       When the user presses the device's Recents button
       Then the emulator receives the "recents" button
+
+    @desktop
+    Scenario: A touch taken away mid-drag ends where it was
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the user drags from the middle of the screen to its left middle and the touch is taken away
+      Then the device receives a touch that ends at the left middle
 
     @desktop
     Scenario: Rotating a simulator turns its screen

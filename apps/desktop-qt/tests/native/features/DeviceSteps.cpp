@@ -3,11 +3,18 @@
 // `device.open` and `device.close`, and a fake device hub behind the node's
 // `/api/device-hub/` proxy speaking serve-sim (AVCC video, `[tag][json]`
 // input) and serve-emu (SEMU-framed Annex-B and JSON gestures on one socket).
-// The pictures are the committed fixture, a solid red 72x160 H.264 clip, so
-// a step checks the decoder really drew it. features/preview/devices.feature.
+// The pictures are the committed fixture, a solid red 72x160 H.264 clip.
+//
+// The tab is the desktop's own DevicePanel (qml/HalC2/Bricks), loaded over
+// the scenario's ThreadDevices once the user looks at the thread: the user's
+// clicks, drags and keys are QTest events on its window, and a step reads the
+// picture back from the window as DeviceScreen drew it. Choosing which tab
+// shows is the right panel's (PanelSteps), so those steps dispatch.
+// features/preview/devices.feature.
 
 #include <QFile>
 #include <QImage>
+#include <QTest>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -19,6 +26,7 @@
 
 #include <memory>
 
+#include "Brick.h"
 #include "DeviceStream.h"
 #include "Harness.h"
 #include "RightPanelController.h"
@@ -359,6 +367,15 @@ void addDevice(World& world, const QString& platform, const QString& name, bool 
                                                         {QStringLiteral("physical"), false}});
 }
 
+// The Device tab as the desktop draws it, over the scenario's ThreadDevices.
+Brick& devicePanel(World& world) {
+  if (!world.brick) {
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nDevicePanel {}\n", QSize(420, 900));
+    world.brick->root()->setProperty("source", QVariant::fromValue<QObject*>(&devices(world)));
+  }
+  return *world.brick;
+}
+
 // The user looks at thread-1, whose environment's devices the shell follows.
 void look(World& world) {
   FakeHub& hub = fakeHub(world);
@@ -370,6 +387,7 @@ void look(World& world) {
   world.sync();
   lookAtThread(world, kProject);
   deviceStream(world).setTimeouts(kFirstFrameMs, kRetryMs);
+  devicePanel(world);
   world.waitFor([&] { return view(world).value(QStringLiteral("loaded")).toBool(); }, [&] { return describe(world); });
 }
 
@@ -409,8 +427,10 @@ QVariantMap rowOf(World& world, const QString& name, const QString& group = {}) 
 
 void openFromPicker(World& world, const QString& name) {
   world.waitFor([&] { return !rowOf(world, name).isEmpty(); }, [&] { return describe(world); });
-  const QVariantMap row = rowOf(world, name);
-  devices(world).open(row.value(QStringLiteral("hostId")).toString(), row.value(QStringLiteral("id")).toString());
+  const QString row = QStringLiteral("deviceRow-") + rowOf(world, name).value(QStringLiteral("id")).toString();
+  Brick& panel = devicePanel(world);
+  world.waitFor([&] { return panel.item(row)->isVisible() && panel.item(row)->isEnabled(); }, [&] { return describe(world); });
+  panel.click(row);
   world.sync();
 }
 
@@ -429,20 +449,41 @@ void showDeviceTab(World& world, const QString& name) {
   world.waitFor([&] { return activeTab(world) == tab; }, [&] { return describe(world); });
 }
 
-// The decoder drew the fixture's red screen.
-bool showsScreen(World& world) {
-  DeviceStream& stream = deviceStream(world);
-  if (stream.status() != QLatin1String("streaming")) return false;
-  const QImage frame = stream.decoder()->frame();
-  if (frame.size() != QSize(72, 160)) return false;
-  const QColor colour = frame.pixelColor(36, 80);
+QQuickItem* screenItem(World& world) {
+  return devicePanel(world).item(QStringLiteral("deviceScreen"));
+}
+
+bool red(const QColor& colour) {
   return colour.red() > 160 && colour.green() < 90 && colour.blue() < 90;
 }
 
+// The colour the window shows at the middle of the device's screen.
+QColor drawnAtScreen(World& world) {
+  QQuickItem* screen = screenItem(world);
+  const QImage drawn = devicePanel(world).grab();
+  const QPointF middle = screen->mapToScene(QPointF(screen->width() / 2, screen->height() / 2)) * drawn.devicePixelRatio();
+  return drawn.pixelColor(middle.toPoint());
+}
+
+QString describeScreen(World& world) {
+  QQuickItem* screen = screenItem(world);
+  return QStringLiteral("%1; the screen item has a picture: %2, shown %3, colour %4")
+      .arg(describe(world))
+      .arg(screen->property("hasFrame").toBool())
+      .arg(screen->isVisible())
+      .arg(drawnAtScreen(world).name());
+}
+
+// The tab drew the fixture's red screen: DeviceScreen took the picture the
+// decoder announced (frameReady) and the window shows it.
 void waitForScreen(World& world, const QString& name) {
   const QString tab = tabOf(world, name);
-  world.waitFor([&] { return activeTab(world) == tab && tabTitles(world).contains(name) && showsScreen(world); },
-                [&] { return describe(world); });
+  QQuickItem* screen = screenItem(world);
+  world.waitFor([&] {
+    return activeTab(world) == tab && tabTitles(world).contains(name) && deviceStream(world).status() == QLatin1String("streaming") &&
+           screen->property("hasFrame").toBool() && screen->isVisible();
+  }, [&] { return describeScreen(world); });
+  expect(red(drawnAtScreen(world)), describeScreen(world));
 }
 
 void watch(World& world, const QString& name) {
@@ -487,18 +528,23 @@ qsizetype videoRequests(World& world) {
   return count;
 }
 
-void tap(World& world, double x, double y) {
-  deviceStream(world).touch(QStringLiteral("begin"), x, y);
-  deviceStream(world).touch(QStringLiteral("end"), x, y);
+// A click on the screen at (fx, fy) of it as shown.
+void tap(World& world, double fx, double fy) {
+  Brick& panel = devicePanel(world);
+  QTest::mouseClick(&panel.window(), Qt::LeftButton, Qt::NoModifier, panel.at(panel.item(QStringLiteral("deviceTouch")), fx, fy));
 }
 
-void press(World& world, int key, const QString& text) {
-  deviceStream(world).key(key, text, false, true);
-  deviceStream(world).key(key, text, false, false);
+// A key typed on the screen, which has the keyboard once the user tapped it.
+void press(World& world, Qt::Key key, char text = 0) {
+  Brick& panel = devicePanel(world);
+  expect(panel.item(QStringLiteral("deviceStage"))->hasActiveFocus(), QStringLiteral("the device's screen does not have the keyboard"));
+  if (text) QTest::keyClick(&panel.window(), text);
+  else QTest::keyClick(&panel.window(), key);
 }
 
+// Within a pixel of the screen as shown: clicks land on whole pixels.
 bool near(double value, double wanted) {
-  return std::abs(value - wanted) < 1e-6;
+  return std::abs(value - wanted) < 0.01;
 }
 
 const Steps steps([] {
@@ -541,6 +587,34 @@ const Steps steps([] {
     hub.silent = false;
     sendVideo(hub);
   });
+  step(QStringLiteral("the device sends its video in pieces"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    const auto open = [&]() -> QTcpSocket* {
+      for (const QPointer<QTcpSocket>& video : std::as_const(hub.videos)) {
+        if (video && video->state() == QAbstractSocket::ConnectedState) return video;
+      }
+      return nullptr;
+    };
+    world.waitFor([&] { return open() != nullptr; }, [&] { return describe(world); });
+    QTcpSocket* video = open();
+    // Every envelope in three pieces: half its length, then the rest of its
+    // header and half its payload, then the rest. A round trip through the
+    // node between pieces lets the desktop read each one on its own.
+    const QByteArray body = iosVideo();
+    QList<qsizetype> cuts;
+    for (qsizetype at = 0; at < body.size(); at += 4 + qsizetype(qFromBigEndian<quint32>(body.constData() + at))) {
+      const auto length = qsizetype(qFromBigEndian<quint32>(body.constData() + at));
+      cuts << at + 2 << at + 4 + length / 2;
+    }
+    cuts << body.size();
+    qsizetype from = 0;
+    for (const qsizetype cut : std::as_const(cuts)) {
+      video->write(body.mid(from, cut - from));
+      video->flush();
+      world.sync();
+      from = cut;
+    }
+  });
   step(QStringLiteral("the user is looking at the thread"), [](World& world, const Captures&, const Table&) { look(world); });
 
   // Choosing.
@@ -568,7 +642,9 @@ const Steps steps([] {
              (stream.status() == QLatin1String("error") && stream.detail() == c[0]);
     }, [&] { return describe(world); });
   });
-  step(QStringLiteral("the user dismisses the error"), [](World& world, const Captures&, const Table&) { devices(world).dismissError(); });
+  step(QStringLiteral("the user dismisses the error"), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).click(QStringLiteral("deviceDismissError"));
+  });
   step(QStringLiteral("the tab shows no error"), [](World& world, const Captures&, const Table&) {
     expect(view(world).value(QStringLiteral("error")).toString().isEmpty(), describe(world));
   });
@@ -592,7 +668,14 @@ const Steps steps([] {
   });
   step(QStringLiteral("the tab says it is connecting to the device"), [](World& world, const Captures&, const Table&) {
     world.sync();
-    expect(deviceStream(world).status() == QLatin1String("connecting") && view(world).value(QStringLiteral("screen")).isValid(), describe(world));
+    expect(deviceStream(world).status() == QLatin1String("connecting") && view(world).value(QStringLiteral("screen")).isValid() &&
+               devicePanel(world).item(QStringLiteral("deviceStatus"))->isVisible(),
+           describe(world));
+  });
+  step(QStringLiteral("the tab shows no picture"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    QQuickItem* screen = screenItem(world);
+    expect(!screen->property("hasFrame").toBool() && !screen->isVisible() && !red(drawnAtScreen(world)), describeScreen(world));
   });
   step(QStringLiteral("no picture comes in time"), [](World& world, const Captures&, const Table&) {
     DeviceStream& stream = deviceStream(world);
@@ -600,7 +683,9 @@ const Steps steps([] {
     world.waitFor([&] { return stream.status() == QLatin1String("error"); }, [&] { return describe(world); });
     stream.setTimeouts(kFirstFrameMs, kRetryMs);
   });
-  step(QStringLiteral("the user reconnects"), [](World& world, const Captures&, const Table&) { deviceStream(world).reconnect(); });
+  step(QStringLiteral("the user reconnects"), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).click(QStringLiteral("deviceReconnect"));
+  });
   step(QStringLiteral("the device's stream ends"), [](World& world, const Captures&, const Table&) {
     FakeHub& hub = fakeHub(world);
     hub.requests.append(QStringLiteral("-- ended --"));
@@ -646,13 +731,30 @@ const Steps steps([] {
     tap(world, 0.25, 0.5);
   });
   step(QStringLiteral("the user types %1 on the device").arg(q), [](World& world, const Captures& c, const Table&) {
-    press(world, Qt::Key_A + (c[0].at(0).toUpper().unicode() - 'A'), c[0]);
+    press(world, Qt::Key_unknown, c[0].at(0).toLatin1());
   });
   step(QStringLiteral("the user presses the device's (Home|Recents) button"), [](World& world, const Captures& c, const Table&) {
-    deviceStream(world).pressButton(c[0].toLower());
+    devicePanel(world).click(QStringLiteral("device") + c[0]);
   });
-  step(QStringLiteral("the user presses Escape on the device"), [](World& world, const Captures&, const Table&) {
-    press(world, Qt::Key_Escape, QStringLiteral("\x1b"));
+  step(QStringLiteral("the user presses Escape on the device"), [](World& world, const Captures&, const Table&) { press(world, Qt::Key_Escape); });
+  step(QStringLiteral("the user drags from the middle of the screen to its left middle and the touch is taken away"),
+       [](World& world, const Captures&, const Table&) {
+         fakeHub(world).binary.clear();
+         Brick& panel = devicePanel(world);
+         QQuickItem* touch = panel.item(QStringLiteral("deviceTouch"));
+         QTest::mousePress(&panel.window(), Qt::LeftButton, Qt::NoModifier, panel.at(touch, 0.5, 0.5));
+         QTest::mouseMove(&panel.window(), panel.at(touch, 0.25, 0.5));
+         // What a popup or another item taking the mouse mid-drag does.
+         touch->ungrabMouse();
+         QTest::mouseRelease(&panel.window(), Qt::LeftButton, Qt::NoModifier, panel.at(touch, 0.25, 0.5));
+       });
+  step(QStringLiteral("the device receives a touch that ends at the left middle"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      const QList<QJsonObject> touches = iosInput(world, 0x03);
+      const auto ends = std::count_if(touches.cbegin(), touches.cend(), [](const QJsonObject& t) { return t.value(QLatin1String("type")) == QLatin1String("end"); });
+      return !touches.isEmpty() && ends == 1 && touches.last().value(QLatin1String("type")) == QLatin1String("end") &&
+             near(touches.last().value(QLatin1String("x")).toDouble(), 0.25) && near(touches.last().value(QLatin1String("y")).toDouble(), 0.5);
+    }, [&] { return describeInput(world); });
   });
   step(QStringLiteral("the device receives a touch that begins and ends at the middle"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] {
@@ -675,12 +777,19 @@ const Steps steps([] {
                   [&] { return describeInput(world); });
   });
   step(QStringLiteral("the emulator receives a touch down and up at the middle"), [](World& world, const Captures&, const Table&) {
-    const auto touch = [](const QString& action) {
-      return QJsonObject{{QStringLiteral("type"), QStringLiteral("touch")}, {QStringLiteral("action"), action}, {QStringLiteral("x"), 0.5}, {QStringLiteral("y"), 0.5}};
+    const auto touchAt = [](const QList<QJsonObject>& received, const QString& action) {
+      for (qsizetype n = 0; n < received.size(); ++n) {
+        const QJsonObject& message = received[n];
+        if (message.value(QLatin1String("type")) == QLatin1String("touch") && message.value(QLatin1String("action")) == action &&
+            near(message.value(QLatin1String("x")).toDouble(), 0.5) && near(message.value(QLatin1String("y")).toDouble(), 0.5))
+          return n;
+      }
+      return qsizetype(-1);
     };
     world.waitFor([&] {
       const QList<QJsonObject> received = fakeHub(world).text;
-      return received.contains(touch(QStringLiteral("down"))) && received.indexOf(touch(QStringLiteral("up"))) > received.indexOf(touch(QStringLiteral("down")));
+      const qsizetype down = touchAt(received, QStringLiteral("down"));
+      return down >= 0 && touchAt(received, QStringLiteral("up")) > down;
     }, [&] { return describeInput(world); });
   });
   step(QStringLiteral("the emulator receives the text %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -692,7 +801,9 @@ const Steps steps([] {
     world.waitFor([&] { return fakeHub(world).text.contains(QJsonObject{{QStringLiteral("type"), c[0]}}); },
                   [&] { return describeInput(world); });
   });
-  step(QStringLiteral("the user rotates the device"), [](World& world, const Captures&, const Table&) { deviceStream(world).rotate(); });
+  step(QStringLiteral("the user rotates the device"), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).click(QStringLiteral("deviceRotate"));
+  });
   step(QStringLiteral("the device is asked to turn to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return iosInput(world, 0x07) == QList<QJsonObject>{{{QStringLiteral("orientation"), c[0]}}}; },
                   [&] { return describeInput(world); });
@@ -707,9 +818,16 @@ const Steps steps([] {
     }
   });
   step(QStringLiteral("the screen is shown sideways and wider than tall"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return deviceStream(world).rotation() == 90 && deviceStream(world).aspect() > 1; }, [&] {
-      return QStringLiteral("the stream is %1, rotated %2 at %3").arg(deviceStream(world).orientation()).arg(deviceStream(world).rotation()).arg(deviceStream(world).aspect());
+    QQuickItem* screen = screenItem(world);
+    const auto shown = [&] { return screen->mapRectToScene(screen->boundingRect()); };
+    world.waitFor([&] { return screen->rotation() == 90 && shown().width() > shown().height(); }, [&] {
+      return QStringLiteral("the stream is %1; the screen is turned %2 and drawn %3x%4")
+          .arg(deviceStream(world).orientation())
+          .arg(screen->rotation())
+          .arg(shown().width())
+          .arg(shown().height());
     });
+    expect(red(drawnAtScreen(world)), describeScreen(world));
   });
   step(QStringLiteral("the device receives the touch where it lands on its own portrait screen"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] {
@@ -723,7 +841,9 @@ const Steps steps([] {
     FakeHub& hub = fakeHub(world);
     expect(hub.closes.isEmpty() && sessionOf(hub, deviceNamed(hub, c[0]).value(QLatin1String("id")).toString()) >= 0, describe(world));
   });
-  step(QStringLiteral("the user powers the device off"), [](World& world, const Captures&, const Table&) { devices(world).powerOff(); });
+  step(QStringLiteral("the user powers the device off"), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).click(QStringLiteral("devicePowerOff"));
+  });
   step(QStringLiteral("the node is asked to close %1 and shut it down").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString id = deviceNamed(fakeHub(world), c[0]).value(QLatin1String("id")).toString();
     world.waitFor([&] {
