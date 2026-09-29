@@ -181,7 +181,7 @@ Feature: Windows, zoom and quitting
       When the user chooses Quit from the application menu
       Then the app quits
 
-    @backlog @desktop
+    @desktop
     Scenario: The settings shortcut opens settings
       When the user presses mod+,
       Then settings open

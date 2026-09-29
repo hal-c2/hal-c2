@@ -189,6 +189,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/windows.feature:Closing a second window leaves the first alone"),
     QStringLiteral("navigation/windows.feature:Windows share the sign-in but not the navigation"),
     QStringLiteral("navigation/windows.feature:A window restores its drafts and panels after a restart"),
+    QStringLiteral("navigation/windows.feature:The settings shortcut opens settings"),
     QStringLiteral("navigation/focus.feature:Leaving settings goes back to the thread"),
     QStringLiteral("navigation/focus.feature:The palette keeps focus while it is open"),
     QStringLiteral("navigation/command-palette.feature"),
