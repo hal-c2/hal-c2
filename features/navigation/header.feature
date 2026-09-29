@@ -3,21 +3,18 @@
 #   apps/desktop-qt/src/native/ShellStore.cpp (the thread and project rows it reads)
 #   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (the header: title, rename, editor, actions)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (the context strip: checkout, machine, branch)
-#   apps/web/src/hooks/useThreadBranchSelection.ts (the switch and create flow this ports)
 #   apps/web/src/hooks/useRenameThread.ts
 #   apps/web/src/components/BranchToolbar.logic.ts (mode, branch and machine rules)
-#   apps/web/src/shell/shellRenameRequest.ts (rename from the page's thread menu)
 #   apps/desktop-qt/src/ShellBridge.cpp (openExternal: the system browser)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
-#   Shared domain: threads/titles.feature, source-control/refs-and-branches.feature,
-#   source-control/worktrees-and-setup-scripts.feature and files/project-scripts-and-actions.feature
-#   own what these do; this file owns that the Qt shell does them against its node.
+#   navigation/layout.feature owns the header's place in the window; threads/titles.feature,
+#   source-control/refs-and-branches.feature and files/project-scripts-and-actions.feature own
+#   what its controls do.
 
-Feature: The desktop shell runs the workspace header against its node
+Feature: The thread's header on the desktop
   The header over a thread and the strip under its composer come from the node: the thread and
   its project are the node's rows, the branch its checkout's status, the editors its machine's.
-  The shell renames, switches and creates branches, opens editors, runs actions, starts new
-  threads and opens the checkout's pull request itself.
+  A thread on a linked environment has its header too.
 
   Background:
     Given a connected environment with a thread in the git project "shop" on the branch "feature/tax"
@@ -29,34 +26,15 @@ Feature: The desktop shell runs the workspace header against its node
     Then the browser opens "https://github.com/acme/shop/pull/7"
 
   @desktop
-  Scenario: The header shows the route's thread from the node
-    Then the header shows the thread "Tax line" in "shop" on "feature/tax"
-
-  @desktop
   Scenario: Leaving the thread clears the header
     When the user leaves the thread
     Then the header shows no thread
-
-  @desktop
-  Scenario: Opening the thread in an editor the user picks
-    Given the environment has the editors "VS Code" and "Zed"
-    When the user opens the thread in "Zed"
-    Then "Zed" opens "/work/shop"
-    And "Zed" is the editor offered first
 
   @desktop
   Scenario: Opening the thread without picking uses the first editor the machine has
     Given the environment has the editors "VS Code" and "Zed"
     When the user opens the thread in their editor
     Then "VS Code" opens "/work/shop"
-
-  @desktop
-  Scenario: A switch that fails keeps the branch and says why
-    Given the node cannot switch the checkout: "Your local changes would be overwritten"
-    When the user switches the thread to "main"
-    Then the user sees an "error" toast "Failed to switch ref." saying "Your local changes would be overwritten"
-    And the checkout is on "feature/tax"
-    And the thread's branch reads "feature/tax"
 
   @desktop
   Scenario: Renaming from the thread list starts editing the title in the header

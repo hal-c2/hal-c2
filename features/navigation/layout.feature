@@ -70,12 +70,11 @@ Feature: Layout: sidebar, header, right panel and drawer
 
   Rule: Header
 
-    # Delivered natively (Workspace); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The header names the project and thread
       Then the header shows the project name and the thread title
 
-    # The desktop hides the header while no thread is open instead (desktop/native-workspace.feature: Leaving the thread clears the header).
+    # The desktop hides the header while no thread is open instead (navigation/header.feature: Leaving the thread clears the header).
     @desktop @backlog-desktop
     Scenario: The header says when there is no thread
       Given no thread is open
@@ -128,8 +127,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user opens the thread's workspace from the header
       Then "VS Code" opens the thread's workspace folder
 
-    # Delivered natively (Workspace, workspace.openInEditor); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The header opens the thread's workspace in another editor
       Given the environment has the editors "VS Code" and "Zed"
       When the user opens the thread's workspace in "Zed" from the header

@@ -97,6 +97,14 @@ Feature: Picking, switching and creating branches
     And the changes in "src/cart.ts" are kept
 
   @desktop
+  Scenario: A switch that fails keeps the branch and says why
+    Given the node cannot switch the checkout: "Your local changes would be overwritten"
+    When the user switches the thread to "main"
+    Then the user sees an "error" toast "Failed to switch ref." saying "Your local changes would be overwritten"
+    And the checkout is on "feature/tax"
+    And the thread's branch reads "feature/tax"
+
+  @desktop
   Scenario: The thread list shows each thread's branch
     When the user looks at the thread list
     Then the thread in "shop" shows the branch "feature/tax"

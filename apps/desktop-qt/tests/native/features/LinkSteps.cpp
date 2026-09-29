@@ -1,7 +1,7 @@
 // Threads on environments the node is linked to, in the shell: listed beside
 // the cluster's, changed row by row, offline while the link is down, and gone
 // with the link (the desktop scenarios of connections/links.feature, the
-// linked ones of desktop/native-workspace.feature and
+// linked ones of navigation/header.feature and
 // desktop/native-keybindings.feature, and threads/sidebar-list.feature).
 
 #include <QJsonObject>
@@ -163,7 +163,7 @@ const Steps steps([] {
     }
   });
 
-  // desktop/native-workspace.feature.
+  // navigation/header.feature and the linked git scenarios of source-control/.
   step(QStringLiteral("%1 has the thread %1 titled %1 in %1 on the branch %1").arg(q), [](World& world, const Captures& c, const Table&) {
     LinkedThread& linked = world.node.part<LinkedThread>();
     linked.environment = c[0];

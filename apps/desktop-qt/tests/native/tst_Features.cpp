@@ -316,6 +316,9 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/layout.feature:Adding a tab to the right panel*"),
     QStringLiteral("navigation/layout.feature:A tab kind that the thread cannot show*"),
     QStringLiteral("navigation/layout.feature:Choosing the project in the header*"),
+    QStringLiteral("navigation/layout.feature:The header names the project and thread"),
+    QStringLiteral("navigation/layout.feature:The header opens the thread's workspace in another editor"),
+    QStringLiteral("navigation/header.feature"),
 };
 
 QRegularExpression wildcard(const QString& glob) {
