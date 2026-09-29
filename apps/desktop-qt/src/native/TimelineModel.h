@@ -108,6 +108,9 @@ signals:
   // After a snapshot, or events that touched checkpoints: what
   // entities("checkpoint") gives the diff panel.
   void checkpointsChanged();
+  // After a snapshot, or events that touched subagents, runs or commands
+  // starting and settling: what the Agents tab lists.
+  void agentsChanged();
 
 private:
   struct Row {
@@ -154,5 +157,6 @@ private:
   QDateTime m_workingSince;
   bool m_turnTouched = false;
   bool m_checkpointsTouched = false;
+  bool m_agentsTouched = false;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
 };

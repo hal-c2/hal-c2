@@ -50,4 +50,5 @@ CentreHost 1.0 CentreHost.qml
 ThreadView 1.0 ThreadView.qml
 DiffPanel 1.0 DiffPanel.qml
 FilesPanel 1.0 FilesPanel.qml
+AgentsPanel 1.0 AgentsPanel.qml
 RevertDialog 1.0 RevertDialog.qml

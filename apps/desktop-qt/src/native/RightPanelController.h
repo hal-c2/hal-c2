@@ -5,6 +5,7 @@
 #include <QStringList>
 #include <QVariant>
 
+#include "AgentsModel.h"
 #include "NativeController.h"
 #include "ThreadDiff.h"
 #include "WorkspaceFiles.h"
@@ -15,17 +16,18 @@ class ShellStore;
 
 // The right panel beside a thread, as the `Panel` QML singleton: whether it
 // is open and which tab shows, per thread (in memory; a thread seen for the
-// first time starts closed). The Diff and Files tabs are native (`diff`,
-// `files`); every other tab (terminal, pull request, preview, device) is still
+// first time starts closed). The Diff, Files and Agents tabs are native
+// (`diff`, `files`, `agents`); every other tab (terminal, pull request, preview, device) is still
 // the page's, taken from the `rightPanel` state the page publishes and shown
 // in the page's embed.
 //
 // Publishes `panel` for the RightPanel brick, null away from a thread:
 //   {threadKey, isOpen, activeId, tabs: [{id, kind, title, native}],
-//    canAdd: {diff, files, terminal, pullRequest}, embedPath}
+//    canAdd: {diff, files, agents, terminal, pullRequest}, embedPath}
 //
 // Actions: `rightPanel.toggle`, `rightPanel.activate {id}`,
-// `rightPanel.close {id}`, `rightPanel.add {kind}` (the brick's), and
+// `rightPanel.close {id}`, `rightPanel.add {kind}`, `rightPanel.openThread
+// {threadKey}` (an Agents row's; the brick's), and
 // `panel.open {tab: "diff"|"files", path?, line?, turn?, turnId?}` (the
 // timeline's "view diff" and file links): opens the panel on that tab, the
 // diff on a turn (its number, or the run it finished) scrolled to `path`, or
@@ -40,10 +42,11 @@ class RightPanelController : public QObject, public NativeController {
   Q_OBJECT
   Q_PROPERTY(ThreadDiff* diff READ diff CONSTANT)
   Q_PROPERTY(WorkspaceFiles* files READ files CONSTANT)
+  Q_PROPERTY(AgentsModel* agents READ agents CONSTANT)
 
 public:
   // The tab kinds drawn natively; each has a brick in js/panelTabs.js.
-  static inline const QStringList nativeKinds{QStringLiteral("diff"), QStringLiteral("files")};
+  static inline const QStringList nativeKinds{QStringLiteral("diff"), QStringLiteral("files"), QStringLiteral("agents")};
 
   RightPanelController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 
@@ -52,6 +55,7 @@ public:
 
   ThreadDiff* diff() { return &m_diff; }
   WorkspaceFiles* files() { return &m_files; }
+  AgentsModel* agents() { return &m_agents; }
 
   bool isOpen() const;
   QString activeTab() const;
@@ -71,6 +75,8 @@ public:
   Q_INVOKABLE void addTab(const QString& kind);
   // Shows the Diff tab, or closes the panel when it is showing (mod+d).
   Q_INVOKABLE void toggleDiff();
+  // Opens a subagent's thread (an Agents row's childThreadKey).
+  Q_INVOKABLE void openThread(const QString& threadKey);
 
 signals:
   void changed();
@@ -100,6 +106,7 @@ private:
   ShellStore* m_store;
   ThreadDiff m_diff;
   WorkspaceFiles m_files;
+  AgentsModel m_agents;
   bool m_active = false;
   // The thread the panel shows; kept while the route is elsewhere (settings)
   // so coming back finds the tabs as they were.

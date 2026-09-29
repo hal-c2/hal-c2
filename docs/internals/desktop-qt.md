@@ -621,8 +621,12 @@ the right panel: open or closed and which tab shows, per thread, published as
 `panel`. The Diff and Files tabs are native bricks (`DiffPanel`, `FilesPanel`)
 over the controller's `ThreadDiff` and `WorkspaceFiles`, which call the
 node's `orchestration.getTurnDiff`, `getFullThreadDiff` and `projects.*` RPCs
-on the thread's own environment. Moving another tab to QML is a line in
-`js/panelTabs.js` plus its kind in `RightPanelController::nativeKinds`.
+on the thread's own environment. The Agents tab (`AgentsPanel` over
+`AgentsModel`) needs no RPC: it reads the `subagent` entities and running
+`command_execution` items the thread's stream already carries, and its
+elapsed times tick only while it shows (the web dropped this tab when lineage
+moved to the title bar; the desktop keeps it). Moving another tab to QML is a
+line in `js/panelTabs.js` plus its kind in `RightPanelController::nativeKinds`.
 
 Every other tab (terminal, pull request) is still the page's content in the
 shell's placement: `RightPanel` loads the app's embed route

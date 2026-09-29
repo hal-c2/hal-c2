@@ -21,7 +21,9 @@ const NativeControllerRegistrar<RightPanelController> registrar(QStringLiteral("
 const QString kRightPanel = QStringLiteral("rightPanel");
 
 QString titleOf(const QString& kind) {
-  return kind == QLatin1String("diff") ? QStringLiteral("Diff") : QStringLiteral("Files");
+  if (kind == QLatin1String("diff")) return QStringLiteral("Diff");
+  if (kind == QLatin1String("agents")) return QStringLiteral("Agents");
+  return QStringLiteral("Files");
 }
 
 }  // namespace
@@ -36,7 +38,8 @@ RightPanelController::RightPanelController(ShellBridge* bridge, NodeClient* clie
                if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) toasts->show(type, title, description);
              },
              this),
-      m_files(client, this) {
+      m_files(client, this),
+      m_agents(this) {
   connect(bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key, const QVariant& value) {
     if (key == kRightPanel) onPage(value);
   });
@@ -74,6 +77,8 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
     closeTab(map.value(QStringLiteral("id")).toString());
   } else if (action == QLatin1String("rightPanel.add")) {
     addTab(map.value(QStringLiteral("kind")).toString());
+  } else if (action == QLatin1String("rightPanel.openThread")) {
+    openThread(map.value(QStringLiteral("threadKey")).toString());
   } else if (action == QLatin1String("panel.open")) {
     open(map.value(QStringLiteral("tab")).toString(), map);
   } else {
@@ -103,7 +108,9 @@ void RightPanelController::retarget() {
                  .value(QLatin1String("workspaceRoot"))
                  .toString();
     }
-    m_diff.setThread(environmentId, threadId, shell->controller<ThreadStore>()->timeline(threadKey));
+    TimelineModel* timeline = shell->controller<ThreadStore>()->timeline(threadKey);
+    m_diff.setThread(environmentId, threadId, timeline);
+    m_agents.setThread(environmentId, timeline);
     m_files.setTarget(environmentId, root);
   }
   update();
@@ -283,6 +290,11 @@ void RightPanelController::toggleDiff() {
   }
 }
 
+void RightPanelController::openThread(const QString& threadKey) {
+  if (threadKey.isEmpty()) return;
+  NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::thread(threadKey));
+}
+
 // --- Out -----------------------------------------------------------------------------
 
 void RightPanelController::update() {
@@ -299,6 +311,7 @@ void RightPanelController::update() {
   const bool open = isOpen();
   m_diff.setActive(open && activeTab() == QLatin1String("diff"));
   m_files.setActive(open && activeTab() == QLatin1String("files"));
+  m_agents.setActive(open && activeTab() == QLatin1String("agents"));
   follow();
   publish();
   emit changed();
@@ -345,6 +358,7 @@ void RightPanelController::publish() {
                         {QStringLiteral("canAdd"),
                          QVariantMap{{QStringLiteral("diff"), true},
                                      {QStringLiteral("files"), !m_files.root().isEmpty()},
+                                     {QStringLiteral("agents"), true},
                                      {QStringLiteral("terminal"), canAdd.value(QStringLiteral("terminal")).toBool()},
                                      {QStringLiteral("pullRequest"), canAdd.value(QStringLiteral("pullRequest")).toBool()}}},
                         {QStringLiteral("embedPath"),

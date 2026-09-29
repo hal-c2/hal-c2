@@ -189,6 +189,15 @@ Rectangle {
                     }
 
                     ShellMenuItem {
+                        text: qsTr("Agents")
+                        iconName: "bot"
+                        enabled: panel.open && panel.model.canAdd.agents === true
+                        onTriggered: Shell.dispatch("rightPanel.add", {
+                            kind: "agents"
+                        })
+                    }
+
+                    ShellMenuItem {
                         text: qsTr("Terminal")
                         iconName: "terminal"
                         enabled: panel.open && panel.model.canAdd.terminal

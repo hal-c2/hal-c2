@@ -57,6 +57,7 @@ qt_add_qml_module(hal_c2_bricks
     ConfirmDialog.qml
     DiffPanel.qml
     FilesPanel.qml
+    AgentsPanel.qml
     js/lucide.js
     js/modelPicker.js
     js/providerIcons.js

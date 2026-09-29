@@ -178,6 +178,7 @@ Feature: Layout: sidebar, header, right panel and drawer
         | kind         |
         | diff         |
         | files        |
+        | agents       |
         | terminal     |
         | pull request |
 

@@ -332,6 +332,7 @@ void pagePublishes(World& world, bool open, const QString& active, const QVarian
 
 const QHash<QString, QString> kKinds{{QStringLiteral("diff"), QStringLiteral("diff")},
                                      {QStringLiteral("files"), QStringLiteral("files")},
+                                     {QStringLiteral("agents"), QStringLiteral("agents")},
                                      {QStringLiteral("terminal"), QStringLiteral("terminal")},
                                      {QStringLiteral("pull request"), QStringLiteral("pull-request")}};
 
@@ -709,13 +710,13 @@ const Steps steps([] {
     expect(tabTitles(world) == QStringList{c[0]} && at(world.state(QStringLiteral("panel")), QStringLiteral("activeId")) == tabIdTitled(world, c[0]),
            describePanel(world));
   });
-  step(QStringLiteral("the thread can show (diff|files|terminal|pull request)"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the thread can show (diff|files|agents|terminal|pull request)"), [](World& world, const Captures&, const Table&) {
     pagePublishes(world, false, {}, {}, {{QStringLiteral("diff"), true}, {QStringLiteral("files"), true}, {QStringLiteral("terminal"), true}, {QStringLiteral("pullRequest"), true}});
   });
   step(QStringLiteral("the thread has no pull request"), [](World& world, const Captures&, const Table&) {
     pagePublishes(world, false, {}, {}, {{QStringLiteral("diff"), true}, {QStringLiteral("files"), true}, {QStringLiteral("terminal"), true}, {QStringLiteral("pullRequest"), false}});
   });
-  step(QStringLiteral("the user adds a (diff|files|terminal|pull request) tab to the right panel"), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the user adds a (diff|files|agents|terminal|pull request) tab to the right panel"), [](World& world, const Captures& c, const Table&) {
     const QString kind = kKinds.value(c[0]);
     expect(at(world.state(QStringLiteral("panel")), QStringLiteral("canAdd.") + (kind == QLatin1String("pull-request") ? QStringLiteral("pullRequest") : kind)).toBool(),
            describePanel(world));
@@ -729,7 +730,7 @@ const Steps steps([] {
                     {{QStringLiteral("diff"), true}, {QStringLiteral("files"), true}, {QStringLiteral("terminal"), true}, {QStringLiteral("pullRequest"), true}});
     }
   });
-  step(QStringLiteral("an? (diff|files|terminal|pull request) tab opens in the right panel"), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("an? (diff|files|agents|terminal|pull request) tab opens in the right panel"), [](World& world, const Captures& c, const Table&) {
     const QString kind = kKinds.value(c[0]);
     const QVariant state = world.state(QStringLiteral("panel"));
     const QString active = at(state, QStringLiteral("activeId")).toString();
