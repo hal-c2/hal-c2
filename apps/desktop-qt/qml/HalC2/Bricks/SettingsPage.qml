@@ -6,6 +6,8 @@ import "js/settingsRows.js" as Rows
 
 // A native settings page: its title, anything the page puts first (its
 // children), then `rows` (js/settingsRows.js) under their section headings.
+// A settings search result it holds (route.target, an objectName on the page)
+// is scrolled into view when opened.
 Rectangle {
     id: page
 
@@ -15,10 +17,35 @@ Rectangle {
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color line: Theme.palette.color("border", "#27272a")
 
+    readonly property var route: Shell.state.route ?? null
+    readonly property int targetSeq: route !== null && route.targetSeq !== undefined ? route.targetSeq : 0
+
+    function descendant(item, name) {
+        for (let i = 0; i < item.children.length; ++i) {
+            const child = item.children[i];
+            if (child.objectName === name) return child;
+            const found = descendant(child, name);
+            if (found !== null) return found;
+        }
+        return null;
+    }
+
+    // Scrolls the route's target to the top of the page, when it is here.
+    function reveal() {
+        if (route === null || !route.target) return;
+        const target = descendant(column, route.target);
+        if (target === null) return;
+        const y = target.mapToItem(column, 0, 0).y + column.y - 12;
+        flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
+    }
+
+    onTargetSeqChanged: Qt.callLater(reveal)
+    Component.onCompleted: Qt.callLater(reveal)
     color: Theme.palette.color("canvas", "#0b0b0d")
 
     Flickable {
         id: flick
+        objectName: "scroll"
 
         anchors.fill: parent
         contentHeight: column.implicitHeight + 48

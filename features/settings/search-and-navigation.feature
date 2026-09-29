@@ -12,6 +12,9 @@
 #   docs/user/appearance.md (Settings → Appearance, Settings → Keybindings)
 #   apps/desktop-qt/qml/HalC2/Bricks/SettingsNav.qml
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/js/settingsPages.js (the native search)
+#   apps/desktop-qt/qml/HalC2/Bricks/SettingsPage.qml (bringing a result into view)
+#   apps/desktop-qt/tests/tst_SettingsPages.qml
 #   apps/desktop-qt/src/native/NavigationController.cpp (settings sections and back)
 #   apps/tui/src/components/SettingsView.tsx
 #   apps/tui/src/keymap.ts
@@ -25,14 +28,13 @@ Feature: Settings search and navigation
 
   Rule: Moving between sections
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Choosing a section opens it
       When the user chooses the "Providers" section
       Then the Providers settings are shown
       And "Providers" is marked as the current section
 
-    # Delivered natively (SettingsNav over the native pages); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The keyboard moves through sections
       Given the "General" section has keyboard focus
       When the user moves down and confirms
@@ -103,24 +105,25 @@ Feature: Settings search and navigation
 
   Rule: Searching settings
 
+    # The desktop finds the settings of its native pages; Network access is not one yet.
     @desktop @backlog-desktop
     Scenario: Search results show each setting with its section
       When the user searches settings for "network"
       Then "Network access" is listed under "Connections"
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Opening a search result goes to that setting
       Given the user has searched settings for "theme"
       When the user opens the first result
       Then the section holding that setting opens
       And the page brings the setting into view
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Nothing matches the search
       When the user searches settings for "zzzz"
       Then the user is told no settings match
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Escape clears the search
       Given the user has searched settings for "model"
       When the user presses escape in the search
@@ -167,6 +170,7 @@ Feature: Settings search and navigation
       Then the "Load balancing" group is open
       And the page brings the setting into view
 
+    # The desktop scrolls back to a result opened again (tst_SettingsPages), but has no Default model setting yet.
     @backlog @desktop
     Scenario: Opening the same result again scrolls back to it
       Given the user opened the search result "Default model" and scrolled away

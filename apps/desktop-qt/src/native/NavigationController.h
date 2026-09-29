@@ -15,9 +15,12 @@ class ShellStore;
 
 // Where the window is: the shell's route, its back stack, and the last route
 // kept across restarts (setStorePath). Publishes `route`: {kind, threadKey,
-// draftId, projectKey, section, title, canGoBack}, where kind is one of home,
-// thread, draft, newThread, settings (section: the settings path), pullRequests,
-// usage.
+// draftId, projectKey, section, title, canGoBack, target, targetSeq}, where
+// kind is one of home, thread, draft, newThread, settings (section: the
+// settings path), pullRequests, usage. `target` is the setting a settings
+// search result opened (its objectName on the native page) until the route
+// moves on; `targetSeq` counts the openings, so opening it again reveals it
+// again.
 //
 // The page still renders some settings sections, so it follows: every route
 // that is not one of the shell's own pages (isNative) and the page does not
@@ -90,6 +93,8 @@ private:
   // On one of the shell's own settings pages.
   void follow();
   void publish();
+  // Brings a setting of the settings page showing into view (route.target).
+  void reveal(const QString& target);
   void save() const;
 
   ShellBridge* m_bridge;
@@ -101,6 +106,9 @@ private:
   std::optional<Route> m_pageRoute;
   QString m_storePath;
   bool m_active = false;
+  // The setting the last search result opened, until the route moves on.
+  QString m_target;
+  int m_targetSeq = 0;
   // The route came from the last run and the page has not been anywhere since.
   bool m_restored = false;
 };

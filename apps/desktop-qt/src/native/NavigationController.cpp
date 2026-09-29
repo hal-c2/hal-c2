@@ -159,14 +159,19 @@ bool NavigationController::handle(const QString& action, const QVariant& payload
     // The page moves between its own sections (and scrolls to a result); the
     // route only learns where it went.
     const QString to = map.value(QStringLiteral("to")).toString();
+    const QString target = action == QLatin1String("settings.openResult")
+                               ? map.value(QStringLiteral("targetId")).toString()
+                               : QString();
     // A link to one of the shell's own pages opens it instead.
     if (isNative(Route::settings(to))) {
       open(Route::settings(to));
+      reveal(target);
       return true;
     }
     if (m_route.kind == QLatin1String("settings") && to.startsWith(QLatin1String("/settings/"))) {
       m_pageRoute = Route::settings(to);
       go(Route::settings(to), true, false);
+      reveal(target);
     }
     return false;
   } else {
@@ -185,6 +190,7 @@ void NavigationController::back() {
 
 void NavigationController::go(const Route& route, bool replace, bool followPage) {
   if (route != m_route) {
+    m_target.clear();
     const bool settingsToSettings =
         route.kind == QLatin1String("settings") && m_route.kind == QLatin1String("settings");
     if (!replace && !settingsToSettings && !passesThrough(m_route)) {
@@ -240,7 +246,16 @@ void NavigationController::publish() {
   QVariantMap state = m_route.toVariant();
   state.insert(QStringLiteral("title"), title);
   state.insert(QStringLiteral("canGoBack"), !m_backStack.isEmpty());
+  state.insert(QStringLiteral("target"), m_target);
+  state.insert(QStringLiteral("targetSeq"), m_targetSeq);
   m_bridge->publish(QStringLiteral("route"), state);
+}
+
+void NavigationController::reveal(const QString& target) {
+  if (target.isEmpty()) return;
+  m_target = target;
+  ++m_targetSeq;
+  publish();
 }
 
 void NavigationController::save() const {

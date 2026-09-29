@@ -61,7 +61,10 @@ Item {
         }
 
         function test_searchFindsNativeSectionsAndDropsThePagesResultsInThem() {
-            compare(Pages.searchRows("theme", {}).map(section => section.label), ["Appearance"]);
+            compare(Pages.searchRows("theme", {}).map(section => section.label), ["Theme", "Appearance"]);
+            compare(Pages.searchRows("theme", {})[0].targetId, "themes");
+            compare(Pages.searchRows("delete confirmation", {})[0].targetId, "settingsRow:confirmThreadDelete");
+            compare(Pages.searchRows("smoothing", {}).some(result => result.targetId === "settingsRow:fontSmoothing"), Qt.platform.os === "osx", "a macOS row is found only there");
             compare(Pages.searchRows("invite", { cluster: {} })[0].label, "Cluster");
             compare(Pages.searchRows("pairing", {}).length, 0, "Connections waits for its state");
             compare(Pages.searchRows("pairing", { connections: {} })[0].label, "Connections");
@@ -90,6 +93,50 @@ Item {
             compare(Rows.clamp(row, "30", 16), 20);
             compare(Rows.clamp(row, "3", 16), 12);
             compare(Rows.clamp(row, "abc", 16), 16);
+        }
+
+        // features/settings/search-and-navigation.feature: opening a search
+        // result brings the setting into view.
+        function test_theOpenedSearchResultIsScrolledIntoView() {
+            Themes.available = [{ id: "grove", label: "Grove", appearance: "light", appearances: ["light", "dark"], source: "builtIn" }];
+            Shell.state = { route: { kind: "settings", section: "/settings/appearance", target: "", targetSeq: 0 } };
+            const page = createTemporaryObject(appearanceComponent, root, { height: 300 });
+            const target = findChild(page, "settingsRow:panelAnimationDurationMs");
+            const inView = () => {
+                const y = target.mapToItem(page, 0, 0).y;
+                return y >= 0 && y + target.height <= page.height;
+            };
+            verify(!inView(), "the last row starts out of view");
+            Shell.state = { route: { kind: "settings", section: "/settings/appearance", target: "settingsRow:panelAnimationDurationMs", targetSeq: 1 } };
+            tryVerify(inView);
+        }
+
+        function test_openingTheSameResultAgainScrollsBackToIt() {
+            Shell.state = { route: { kind: "settings", section: "/settings/appearance", target: "settingsRow:panelAnimationDurationMs", targetSeq: 1 } };
+            const page = createTemporaryObject(appearanceComponent, root, { height: 300 });
+            const target = findChild(page, "settingsRow:panelAnimationDurationMs");
+            const inView = () => target.mapToItem(page, 0, 0).y >= 0 && target.mapToItem(page, 0, 0).y + target.height <= page.height;
+            tryVerify(inView);
+            findChild(page, "scroll").contentY = 0;
+            verify(!inView(), "the user scrolled away");
+            Shell.state = { route: { kind: "settings", section: "/settings/appearance", target: "settingsRow:panelAnimationDurationMs", targetSeq: 2 } };
+            tryVerify(inView);
+        }
+
+        // A result in another section opens its page at the setting.
+        function test_aPageOpenedForASearchResultStartsAtIt() {
+            Shell.state = { route: { kind: "settings", section: "/settings/appearance", target: "settingsRow:panelAnimationDurationMs", targetSeq: 1 } };
+            const page = createTemporaryObject(appearanceComponent, root, { height: 300 });
+            const target = findChild(page, "settingsRow:panelAnimationDurationMs");
+            tryVerify(() => target.mapToItem(page, 0, 0).y >= 0 && target.mapToItem(page, 0, 0).y + target.height <= page.height);
+        }
+
+        function test_choosingProvidersLoadsItsBrick() {
+            Shell.state = { providerSettings: { open: true, environmentId: "", environments: [], status: "loading", title: "Loading provider settings",
+                                                description: "", refreshing: false, providers: [] } };
+            const host = createTemporaryObject(hostComponent, root, { section: "/settings/providers" });
+            tryCompare(host, "status", Loader.Ready);
+            compare(host.item.objectName, "providersSettings");
         }
 
         function test_hostLoadsTheSectionsBrick() {
