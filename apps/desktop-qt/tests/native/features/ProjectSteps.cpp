@@ -208,11 +208,11 @@ const Steps steps([] {
           {QStringLiteral("t"), QStringLiteral("shell.rows")},
           {QStringLiteral("id"), world.node.subscribers(QStringLiteral("shell")).value(0)},
           {QStringLiteral("node"), node},
-          {QStringLiteral("rows"), QJsonArray{QJsonArray{
+          {QStringLiteral("rows"), QJsonArray{QJsonValue(QJsonArray{
                                        c[2], QStringLiteral("project"),
                                        QJsonObject{{QStringLiteral("id"), c[2]}, {QStringLiteral("title"), c[2]},
                                                    {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + c[2]},
-                                                   {QStringLiteral("createdAt"), kAt}, {QStringLiteral("updatedAt"), kAt}}}}},
+                                                   {QStringLiteral("createdAt"), kAt}, {QStringLiteral("updatedAt"), kAt}}})}},
       });
     }
     world.sync();

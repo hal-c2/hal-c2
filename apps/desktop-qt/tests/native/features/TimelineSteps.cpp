@@ -264,9 +264,9 @@ const Steps steps([] {
                      {QStringLiteral("node"), kPeer}, {QStringLiteral("online"), true}});
     world.node.send({{QStringLiteral("t"), QStringLiteral("shell.rows")}, {QStringLiteral("id"), world.node.subscribers(QStringLiteral("shell")).value(0)},
                      {QStringLiteral("node"), kPeer},
-                     {QStringLiteral("rows"), QJsonArray{QJsonArray{kPeerThread, QStringLiteral("thread"),
+                     {QStringLiteral("rows"), QJsonArray{QJsonValue(QJsonArray{kPeerThread, QStringLiteral("thread"),
                                                                     QJsonObject{{QStringLiteral("id"), kPeerThread}, {QStringLiteral("title"), QStringLiteral("Remote")}, {QStringLiteral("projectId"), kProject},
-                                                                                {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}}}}}});
+                                                                                {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}}})}}});
     world.sync();
     FakeStreams& fake = world.node.part<FakeStreams>();
     fake.thread = kPeerThread;
