@@ -53,7 +53,14 @@ void SidebarController::refresh() {
   readSettings();
   const QList<sidebar::Thread> threads = m_store->threads();
   const QString ownEnvironment = m_store->environmentOf(m_client->node());
+  const auto shape = [this] {
+    QStringList keys;
+    for (const sidebar::ProjectGroup& group : m_groups) keys.append(group.key + QLatin1Char('=') + group.memberKeys.join(QLatin1Char(',')));
+    return keys;
+  };
+  const QStringList before = shape();
   m_groups = sidebar::groupProjects(m_store->projects(), m_grouping, ownEnvironment, threads);
+  const bool regrouped = shape() != before;
   // A scope whose project went away (removed, regrouped) shows everything again.
   if (m_scope && group(*m_scope) == nullptr) m_scope.reset();
   const QDateTime now = m_now();
@@ -86,6 +93,7 @@ void SidebarController::refresh() {
   m_bridge->publish(QStringLiteral("sidebar"), m_view.state);
   const QTime time = now.time();
   m_minute.start(std::max(1000, 60000 - time.second() * 1000 - time.msec()));
+  if (regrouped) emit grouped();
 }
 
 bool SidebarController::handle(const QString& action, const QVariant& payload) {

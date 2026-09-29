@@ -61,6 +61,11 @@ public:
   static QString snoozeLabel(const sidebar::SnoozePreset& preset);
   void snooze(const QString& key, const QString& snoozedUntil);
 
+signals:
+  // The logical projects were grouped differently: one came, went, or took
+  // other folders (a checkout, or a change of grouping).
+  void grouped();
+
 private:
   void command(const QString& environmentId, QJsonObject command, const QString& failureTitle,
                std::function<void()> onSuccess = {});

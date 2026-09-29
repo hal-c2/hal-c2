@@ -25,8 +25,10 @@ ProjectController::ProjectController(ShellBridge* bridge, NodeClient* client, Sh
     : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {
   // A removal asked about a project that went away meanwhile has nothing to ask.
   connect(store, &ShellStore::changed, this, [this] {
-    if (m_removal && !m_store->project(*m_removal)) {
-      m_removal.reset();
+    if (m_removal) {
+      m_removal->keys.removeIf([this](const QString& key) { return !m_store->project(key); });
+      if (m_removal->keys.isEmpty()) m_removal.reset();
+      // Its threads may have changed too.
       publish();
     }
     if (m_created && m_store->project(m_created->first + QLatin1Char(':') + m_created->second)) {
@@ -139,16 +141,31 @@ void ProjectController::askToRemove(const QString& projectKey) {
     key = group->summary.value(QStringLiteral("environmentId")).toString() + QLatin1Char(':') +
           group->summary.value(QStringLiteral("projectId")).toString();
   }
-  m_removal = key;
+  const auto project = m_store->project(key);
+  if (!project) return;
+  askToRemove({key}, QStringLiteral("project"), project->title);
+}
+
+void ProjectController::askToRemove(const QStringList& keys, const QString& kind, const QString& title) {
+  if (keys.isEmpty()) return;
+  m_removal = Removal{keys, kind, title};
   publish();
 }
 
 void ProjectController::confirmRemoval() {
   if (!m_removal) return;
-  const auto project = m_store->project(*m_removal);
-  m_removal.reset();
+  const Removal removal = *std::exchange(m_removal, std::nullopt);
   publish();
-  if (!project) return;
+  remove(removal.keys, removal.title);
+}
+
+void ProjectController::remove(QStringList keys, const QString& title) {
+  if (keys.isEmpty()) return;
+  const auto project = m_store->project(keys.takeFirst());
+  if (!project) {
+    remove(keys, title);
+    return;
+  }
   const QJsonObject command{
       {QStringLiteral("type"), QStringLiteral("project.delete")},
       {QStringLiteral("projectId"), project->id},
@@ -168,7 +185,7 @@ void ProjectController::confirmRemoval() {
     showing = draft && draft->environmentId == project->environmentId && draft->projectId == project->id;
   }
   m_client->call(project->environmentId, QStringLiteral("projects.mutate"), command,
-                 [this, showing](const QJsonValue&, const std::optional<QString>& error) {
+                 [this, showing, keys, title](const QJsonValue&, const std::optional<QString>& error) {
                    auto* shell = NativeShell::of(this);
                    if (error) {
                      shell->controller<ToastController>()->error(QStringLiteral("Failed to remove project"), *error);
@@ -176,26 +193,33 @@ void ProjectController::confirmRemoval() {
                    }
                    // Its drafts go as its row does (DraftController).
                    if (showing) shell->controller<NavigationController>()->replace(NavigationController::Route());
+                   remove(keys, title);
                  });
 }
 
 void ProjectController::publish() {
   if (!m_active) return;
-  const auto project = m_removal ? m_store->project(*m_removal) : std::nullopt;
+  const auto project = m_removal ? m_store->project(m_removal->keys.first()) : std::nullopt;
   if (!project) {
     m_bridge->publish(QStringLiteral("projectRemoval"), QVariant::fromValue(nullptr));
     return;
   }
   int threadCount = 0;
   for (const sidebar::Thread& thread : m_store->threads()) {
-    if (thread.environmentId == project->environmentId && thread.projectId == project->id && !thread.archivedAt) {
+    if (m_removal->keys.contains(thread.environmentId + QLatin1Char(':') + thread.projectId) && !thread.archivedAt) {
       ++threadCount;
     }
   }
-  m_bridge->publish(QStringLiteral("projectRemoval"), QVariantMap{
-                                                          {QStringLiteral("projectKey"), project->key()},
-                                                          {QStringLiteral("title"), project->title},
-                                                          {QStringLiteral("workspaceRoot"), project->workspaceRoot},
-                                                          {QStringLiteral("threadCount"), threadCount},
-                                                      });
+  const bool one = m_removal->keys.size() == 1;
+  m_bridge->publish(QStringLiteral("projectRemoval"),
+                    QVariantMap{
+                        {QStringLiteral("projectKey"), project->key()},
+                        {QStringLiteral("title"), m_removal->title},
+                        {QStringLiteral("kind"), m_removal->kind},
+                        {QStringLiteral("count"), m_removal->keys.size()},
+                        {QStringLiteral("workspaceRoot"), one ? project->workspaceRoot : QString()},
+                        {QStringLiteral("environment"),
+                         one ? m_store->environment(project->environmentId).value(QLatin1String("label")).toString() : QString()},
+                        {QStringLiteral("threadCount"), threadCount},
+                    });
 }

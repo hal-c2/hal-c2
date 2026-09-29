@@ -820,7 +820,7 @@ Home, the pull requests page and usage are routes of their own, drawn by
 `HomePage`, `PullRequestsPage` and `UsagePage` over `PullRequestListController`
 and `UsageController`; they too follow node shapes only while open.
 
-Storage, Scheduled Tasks, Source Control and Integrations edit settings scoped to one or
+Storage, Scheduled Tasks, Source Control, Integrations and Project edit settings scoped to one or
 several environments or a project through `SettingsScopeController`
 (`settingsScope`): it follows the targets' documents only while one of those
 sections shows, reads a value across them as mixed or not, and writes a
@@ -830,9 +830,13 @@ so its rows are read-only at a project scope. Discovery of source control
 tools scans only the scope's first connected environment, as the web did,
 and so does Integrations' device status. Integrations is only the device hub:
 the desktop embeds no browser, so the web's browser defaults have no native
-counterpart.
+counterpart. A picked project follows its folders when the sidebar regroups
+(`SidebarController::grouped`), as the web's settings project groups do. The
+Project section also carries how new threads start (model, permissions,
+workspace, submodules), which the web splits between it and General, since the
+native General page holds only this device's settings.
 
-Project and SnapShots are still HTML. The
+SnapShots is still HTML: the desktop has no capture helper. The
 root route mounts `ShellSettingsBridge` when hosted, which publishes
 `ShellSettingsState` on every route change: `active` (on `/settings*`), the
 sections in sidebar order, the active one, and search results for the query

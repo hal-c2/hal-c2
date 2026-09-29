@@ -109,7 +109,7 @@ private slots:
     QTRY_COMPARE(placeholder->property("text").toString(), QString("What should we build in Example project?"));
     QVERIFY(placeholder->isVisible());
     QVERIFY(!page->isVisible());
-    bridge.publish("route", QVariantMap{{"kind", "settings"}, {"section", "/settings/projects"}});
+    bridge.publish("route", QVariantMap{{"kind", "settings"}, {"section", "/settings/snap-shot"}});
     QTRY_VERIFY(page->isVisible());
     bridge.publish("route", QVariant());
     QTRY_VERIFY(page->isVisible());

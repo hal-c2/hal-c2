@@ -53,6 +53,10 @@ public:
   bool handle(const QString& action, const QVariant& payload) override;
 
   bool projectScope() const { return !m_projectKey.isEmpty(); }
+  // The logical project picked ("" for all projects), and the environment
+  // picked ("" for all environments).
+  QString projectKey() const { return m_projectKey; }
+  QString environmentFilter() const { return m_environmentId; }
   // The connected environments a change is written to, in reading order.
   QStringList targets() const { return m_documents->targets(); }
   QString label(const QString& environmentId) const;
@@ -109,6 +113,9 @@ private:
   bool m_open = false;
   QString m_projectKey;
   QString m_environmentId;
+  // The picked project's folders when it was last found, so a regrouping
+  // that renames its key keeps it picked.
+  QStringList m_followed;
   QHash<QString, QString> m_members;
   QHash<QString, QJsonObject> m_capabilities;
   QHash<QString, QJsonArray> m_providers;

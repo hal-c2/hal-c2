@@ -56,6 +56,8 @@ void SettingsScopeController::activate() {
     update();
   };
   connect(navigation, &NavigationController::changed, this, follow);
+  connect(NativeShell::of(this)->sidebar(), &SidebarController::grouped, this, &SettingsScopeController::update);
+  connect(m_client, &NodeClient::readyChanged, this, &SettingsScopeController::update);
   // Projects and environments that come and go change what the scope covers.
   connect(m_store, &ShellStore::changed, this, [this] {
     // After the sidebar has grouped the projects anew.
@@ -69,6 +71,7 @@ bool SettingsScopeController::handle(const QString& action, const QVariant& payl
   const QVariantMap input = payload.toMap();
   if (action == QLatin1String("settingsScope.project")) {
     m_projectKey = input.value(QStringLiteral("key")).toString();
+    m_followed.clear();
   } else if (action == QLatin1String("settingsScope.environment")) {
     m_environmentId = input.value(QStringLiteral("id")).toString();
   } else {
@@ -129,12 +132,29 @@ SettingsScopeController::Resolved SettingsScopeController::resolve() const {
 
 void SettingsScopeController::update() {
   if (!m_active) return;
+  // The picked project follows its folders when grouping gives it a new key
+  // (useSettingsProjectGroups); one removed everywhere stays unavailable.
+  const SidebarController* sidebar = NativeShell::of(this)->sidebar();
+  if (!m_projectKey.isEmpty()) {
+    if (const sidebar::ProjectGroup* group = sidebar->group(m_projectKey)) {
+      m_followed = group->memberKeys;
+    } else {
+      for (const sidebar::ProjectGroup& group : sidebar->groups()) {
+        const bool successor = std::any_of(group.memberKeys.cbegin(), group.memberKeys.cend(),
+                                           [this](const QString& key) { return m_followed.contains(key); });
+        if (!successor) continue;
+        m_projectKey = group.key;
+        m_followed = group.memberKeys;
+        break;
+      }
+    }
+  }
   const Resolved resolved = resolve();
   m_members = resolved.members;
   QStringList targets;
   if (m_open) {
     for (const QString& environmentId : resolved.environments) {
-      if (m_store->environmentOnline(environmentId)) targets.append(environmentId);
+      if (online(environmentId)) targets.append(environmentId);
     }
   }
   // setTargets announces a change of targets itself.
@@ -168,7 +188,9 @@ bool SettingsScopeController::covers(const QString& environmentId, const QString
 }
 
 bool SettingsScopeController::online(const QString& environmentId) const {
-  return m_store->environmentOnline(environmentId);
+  // The store keeps its last word on each environment while the shell's own
+  // connection is down; none is reachable then.
+  return m_client->isReady() && m_store->environmentOnline(environmentId);
 }
 
 bool SettingsScopeController::editable() const {
@@ -245,7 +267,7 @@ void SettingsScopeController::publish() {
   QVariantList environments;
   for (const QString& id : listed()) {
     environments.append(QVariantMap{
-        {QStringLiteral("id"), id}, {QStringLiteral("label"), label(id)}, {QStringLiteral("online"), m_store->environmentOnline(id)}});
+        {QStringLiteral("id"), id}, {QStringLiteral("label"), label(id)}, {QStringLiteral("online"), online(id)}});
   }
   QVariantList projects;
   QString projectLabel = QStringLiteral("All projects");

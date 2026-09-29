@@ -6,6 +6,8 @@
 #   apps/web/src/components/settings/SnapShotSetupDialog.tsx
 #   apps/web/src/components/settings/SnapShotSetupDialog.logic.ts
 #   apps/web/src/components/settings/useSnapShotShortcutRecorder.tsx
+# The Qt desktop has no capture helper yet (the web panel drives Electron's
+# desktopBridge), so the panel is still the embedded page there.
 
 @backlog @desktop
 Feature: Snap Shot settings

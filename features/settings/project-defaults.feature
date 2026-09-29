@@ -53,27 +53,27 @@ Feature: Project defaults settings
       | the pull request merge method  | squash          |
       | agent browser access           | off             |
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: No default model means the model is picked automatically
     Given neither "shop" nor "laptop" sets a default model
     When the user looks at the project defaults of "shop"
     Then the default model shows as automatic
 
   # See "A model missing on one environment cannot be applied to all of them" in settings/scopes-and-inheritance.feature.
-  @backlog @desktop
+  @desktop
   Scenario: A model unavailable on an environment is not saved
     Given "Opus" is not available on "laptop"
     When the user sets the default model of "shop" to "Opus"
     Then the user is told the default model was not saved because it is unavailable on "laptop"
 
-  @backlog @desktop
+  @desktop
   Scenario: Without providers the model cannot be chosen
     Given "laptop" has no providers
     When the user looks at the project defaults of "shop"
     Then the user is told no providers are available
 
   # See "A value that differs between environments shows as mixed" in settings/scopes-and-inheritance.feature.
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Environments that disagree show the value as mixed
     Given the user applies settings to "laptop" and "server"
     And their default workspaces differ
@@ -82,7 +82,7 @@ Feature: Project defaults settings
     When the user picks "local"
     Then both environments use "local"
 
-  @backlog @desktop
+  @desktop
   Scenario: Defaults are unavailable when no environment is connected
     Given no environment is connected
     When the user looks at the project defaults
