@@ -107,6 +107,12 @@ private:
                const std::function<void(const QJsonObject&)>& done);
   void listAcpProviders(const QString& instanceId, const QString& projectId);
   QVariant acp(const QJsonObject& provider) const;
+  // ProviderSettingsRuntime.cpp: the runtime the node installs itself (Antigravity).
+  void followRuntime();
+  void unfollowRuntime();
+  bool handleRuntime(const QString& action, const QVariantMap& input);
+  void runtimeCall(const QString& instanceId, const QString& method, const QJsonObject& payload);
+  QVariant runtime(const QJsonObject& provider) const;
   QVariant health() const;
   QVariant hubs() const;
   void call(const QString& instanceId, const QString& method, const QJsonObject& payload, const QString& failure);
@@ -133,6 +139,11 @@ private:
   // Each signing-in provider's `providerAuth` shape and its last state.
   QHash<QString, int> m_auth;
   QHash<QString, QJsonObject> m_authState;
+  // Each managed runtime's `providerInstall` shape, its last state, and why
+  // the last call about it failed.
+  QHash<QString, int> m_install;
+  QHash<QString, QJsonObject> m_installState;
+  QHash<QString, QString> m_installError;
   // Why the last sign-in call failed, by instance.
   QHash<QString, QString> m_authError;
   QSet<QString> m_busy;

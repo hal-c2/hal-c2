@@ -50,6 +50,22 @@ Item {
             Shell.reset();
         }
 
+        // The managed runtime shows the node's download and the actions it allows.
+        function test_the_managed_runtime_shows_its_download_and_cancels() {
+            const runtime = { status: "Downloading 25.0 MB of 100.0 MB.", message: "", progress: 0.25, installLabel: "",
+                              canCancel: true, canRemove: false, busy: false, error: "" };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ instanceId: "antigravity", driver: "antigravity",
+                                                                                          name: "Antigravity", runtime: runtime })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_antigravity");
+            compare(findChild(card, "runtimeStatus").text, "Downloading 25.0 MB of 100.0 MB.");
+            verify(!findChild(card, "runtimeInstall").visible);
+            verify(!findChild(card, "runtimeRemove").visible);
+            mouseClick(findChild(card, "runtimeCancel"));
+            compare(Shell.dispatchedActions[0].action, "providerSettings.runtimeCancel");
+            compare(Shell.dispatchedActions[0].payload.instanceId, "antigravity");
+        }
+
         // The header says when the environment last checked its providers.
         function test_the_header_says_when_providers_were_checked() {
             const fiveMinutesAgo = new Date(Date.now() - 5 * 60000 - 1000).toISOString();

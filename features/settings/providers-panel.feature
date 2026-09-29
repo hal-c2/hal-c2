@@ -10,6 +10,8 @@
 #   apps/web/src/components/settings/CustomModelEditor.tsx
 #   apps/web/src/components/settings/customModelEditor.logic.ts
 #   apps/web/src/components/settings/RedactedSensitiveText.tsx
+#   apps/web/src/components/settings/ProviderSetupSection.tsx (the managed Antigravity runtime)
+#   apps/server-ex/lib/hal_c2/acp/antigravity/installation.ex (provider.install.start, provider.install.cancel, provider.install.remove)
 #   apps/server-ex/lib/hal_c2/acp/url_auth.ex (Continue authentication, server.acceptAcpRegistryUrlAuth)
 #   apps/web/src/components/settings/providerStatus.ts (version advisory titles, Update now, Install <version>)
 #   apps/server-ex/lib/hal_c2/provider_updates.ex (versionAdvisory, updateCommand, canUpdate)
@@ -287,6 +289,30 @@ Feature: Providers settings panel
       Then "ada@example.com" is shown
       When the user hides it again
       Then it is scrambled again
+
+  # Antigravity is the one provider whose runtime the node installs itself; the
+  # node's side is in providers/provider-setup.feature.
+  Rule: The managed Antigravity runtime
+
+    @desktop @plugin-antigravity
+    Scenario: Installing the managed runtime shows its download
+      Given the Antigravity runtime is not installed on the environment
+      When the user installs the Antigravity runtime
+      Then the download's progress is shown as the environment reports it
+
+    @desktop @plugin-antigravity
+    Scenario: A runtime download can be cancelled from the card
+      Given the Antigravity runtime is downloading on the environment
+      When the user cancels the installation
+      Then the environment cancels that download
+      And the card says the previous runtime is unchanged and offers to retry
+
+    @desktop @plugin-antigravity
+    Scenario: A downloaded runtime is removed after asking
+      Given the Antigravity runtime is installed on the environment
+      When the user removes the downloaded runtime and confirms
+      Then the environment removes it
+      And the card offers installing Antigravity again
 
   # Sign-in is node-addressed (provider.auth.*), so only environments a cluster node serves
   # sign in from the panel. Signing out is in providers/provider-setup.feature.

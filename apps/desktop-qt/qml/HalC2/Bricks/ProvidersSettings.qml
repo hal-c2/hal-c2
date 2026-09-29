@@ -682,6 +682,77 @@ Rectangle {
                 }
             }
 
+            // The runtime the environment installs itself (Antigravity).
+            ColumnLayout {
+                id: runtimeSection
+                objectName: "runtime"
+                readonly property var runtime: card.provider.runtime ?? null
+                readonly property bool busy: !!(runtime && runtime.busy)
+                Layout.fillWidth: true
+                visible: runtime !== null
+                spacing: 4
+
+                Note {
+                    objectName: "runtimeStatus"
+                    text: runtimeSection.runtime ? runtimeSection.runtime.status : ""
+                }
+
+                // Download progress: a static bar, redrawn only as the node reports.
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 4
+                    visible: !!(runtimeSection.runtime && runtimeSection.runtime.progress >= 0)
+                    radius: 2
+                    color: Theme.palette.color("border", "#27272a")
+
+                    Rectangle {
+                        width: parent.width * (runtimeSection.runtime ? Math.max(0, runtimeSection.runtime.progress) : 0)
+                        height: parent.height
+                        radius: 2
+                        color: page.foreground
+                    }
+                }
+
+                Note {
+                    visible: text.length > 0
+                    text: runtimeSection.runtime ? runtimeSection.runtime.message : ""
+                }
+
+                Note {
+                    visible: text.length > 0
+                    color: page.danger
+                    text: runtimeSection.runtime ? runtimeSection.runtime.error : ""
+                }
+
+                RowLayout {
+                    spacing: 6
+
+                    ShellButton {
+                        objectName: "runtimeInstall"
+                        visible: !!(runtimeSection.runtime && runtimeSection.runtime.installLabel)
+                        enabled: !page.readOnly && !runtimeSection.busy
+                        text: runtimeSection.runtime ? runtimeSection.runtime.installLabel : ""
+                        onClicked: page.act("runtimeInstall", card.provider)
+                    }
+
+                    ShellButton {
+                        objectName: "runtimeCancel"
+                        visible: !!(runtimeSection.runtime && runtimeSection.runtime.canCancel)
+                        enabled: !page.readOnly && !runtimeSection.busy
+                        text: qsTr("Cancel installation")
+                        onClicked: page.act("runtimeCancel", card.provider)
+                    }
+
+                    ShellButton {
+                        objectName: "runtimeRemove"
+                        visible: !!(runtimeSection.runtime && runtimeSection.runtime.canRemove)
+                        enabled: !page.readOnly && !runtimeSection.busy
+                        text: qsTr("Remove downloaded runtime")
+                        onClicked: page.act("runtimeRemove", card.provider)
+                    }
+                }
+            }
+
             // A sign-in page the agent is waiting on, outside a sign-in.
             ColumnLayout {
                 objectName: "urlAuth"

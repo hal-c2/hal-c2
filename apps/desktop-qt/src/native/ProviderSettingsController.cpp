@@ -229,6 +229,7 @@ ProviderSettingsController::ProviderSettingsController(ShellBridge* bridge, Node
       return;
     }
     followAuth();
+    followRuntime();
     publish();
   });
   connect(m_scope, &EnvironmentSettings::changed, this, &ProviderSettingsController::publish);
@@ -317,7 +318,7 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
       settings.insert(QStringLiteral("usageLimitSources"), hubs);
       return settings;
     });
-  } else if (handleInstance(action, input) || handleRegistry(action, input) || handleAcp(action, input)) {
+  } else if (handleInstance(action, input) || handleRegistry(action, input) || handleAcp(action, input) || handleRuntime(action, input)) {
     return true;
   } else if (action == QLatin1String("providerSettings.enable")) {
     // Also an instance the environment has yet to list.
@@ -536,6 +537,7 @@ void ProviderSettingsController::update() {
 void ProviderSettingsController::follow(const QString& environmentId) {
   if (m_followed == environmentId) {
     followAuth();
+    followRuntime();
     return;
   }
   unfollow();
@@ -550,6 +552,7 @@ void ProviderSettingsController::unfollow() {
   m_providers.reset();
   for (const int id : std::as_const(m_auth)) m_client->unsubscribe(id);
   m_auth.clear();
+  unfollowRuntime();
   m_authState.clear();
   m_authError.clear();
   m_busy.clear();
@@ -728,6 +731,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   };
   configuration(result, instanceId, driver);
   result.insert(QStringLiteral("acp"), acp(provider));
+  result.insert(QStringLiteral("runtime"), runtime(provider));
   // A sign-in page the agent is waiting on (server.acceptAcpRegistryUrlAuth).
   const QJsonObject urlAuth = auth.value(QLatin1String("action")).toObject();
   result.insert(QStringLiteral("urlAuth"), urlAuth.value(QLatin1String("elicitationId")).toString().isEmpty()

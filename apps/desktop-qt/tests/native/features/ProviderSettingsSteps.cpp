@@ -46,6 +46,10 @@ struct FakeProviders {
   // whether the environment still waited on them.
   QStringList urlAuthAccepts;
   bool urlAuthExpired = false;
+  // The managed runtime's ProviderInstallState, and the provider.install.*
+  // calls made ("start", "cancel <operationId>", "remove").
+  QJsonObject install;
+  QStringList installCalls;
   // Calls the scenario answers itself, one at a time, while held.
   bool holdPrepares = false, holdStarts = false;
   QList<FakeNode::Rpc> heldPrepares, heldStarts;
@@ -92,6 +96,15 @@ void sendAuth(FakeNode& node, const QString& instanceId, const QJsonObject& fiel
   }
 }
 
+// The managed runtime changes as `patch` says, and every client following it hears.
+void sendInstall(FakeNode& node, const QJsonObject& patch) {
+  QJsonObject& state = node.part<FakeProviders>().install;
+  for (auto it = patch.begin(); it != patch.end(); ++it) state.insert(it.key(), it.value());
+  for (const int id : node.subscribers(QStringLiteral("providerInstall"))) {
+    node.send({{QStringLiteral("t"), QStringLiteral("providerInstall")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), state}});
+  }
+}
+
 const FakeNode::Extension extension([](FakeNode& node) {
   node.onShape(QStringLiteral("providerAuth"), [&node](int id, const QJsonObject& shape) {
     const QString instanceId = shape.value(QLatin1String("instanceId")).toString();
@@ -114,6 +127,29 @@ const FakeNode::Extension extension([](FakeNode& node) {
                                                           {QStringLiteral("type"), QStringLiteral("browser")},
                                                           {QStringLiteral("url"), kSignInUrl},
                                                           {QStringLiteral("requiresConsent"), false}}}});
+  });
+  node.onShape(QStringLiteral("providerInstall"), [&node](int id, const QJsonObject&) {
+    node.send({{QStringLiteral("t"), QStringLiteral("providerInstall")}, {QStringLiteral("id"), id},
+               {QStringLiteral("state"), node.part<FakeProviders>().install}});
+  });
+  node.onRpc(QStringLiteral("provider.install.start"), [&node](const FakeNode::Rpc& rpc) {
+    node.part<FakeProviders>().installCalls.append(QStringLiteral("start"));
+    sendInstall(node, {{QStringLiteral("operationId"), QStringLiteral("op-1")}, {QStringLiteral("phase"), QStringLiteral("downloading")},
+                       {QStringLiteral("downloadedBytes"), 0}, {QStringLiteral("message"), QStringLiteral("Downloading Google's official Antigravity runtime.")}});
+    node.reply(rpc, node.part<FakeProviders>().install);
+  });
+  node.onRpc(QStringLiteral("provider.install.cancel"), [&node](const FakeNode::Rpc& rpc) {
+    node.part<FakeProviders>().installCalls.append(QStringLiteral("cancel ") + rpc.payload.value(QLatin1String("operationId")).toString());
+    sendInstall(node, {{QStringLiteral("phase"), QStringLiteral("cancelled")},
+                       {QStringLiteral("message"), QStringLiteral("Installation cancelled. The previous runtime is unchanged.")}});
+    node.reply(rpc, node.part<FakeProviders>().install);
+  });
+  node.onRpc(QStringLiteral("provider.install.remove"), [&node](const FakeNode::Rpc& rpc) {
+    node.part<FakeProviders>().installCalls.append(QStringLiteral("remove"));
+    sendInstall(node, {{QStringLiteral("operationId"), QJsonValue::Null}, {QStringLiteral("phase"), QStringLiteral("idle")},
+                       {QStringLiteral("downloadedBytes"), 0}, {QStringLiteral("installedVersion"), QJsonValue::Null},
+                       {QStringLiteral("canRemove"), false}, {QStringLiteral("message"), QJsonValue::Null}});
+    node.reply(rpc, node.part<FakeProviders>().install);
   });
   node.onRpc(QStringLiteral("server.acceptAcpRegistryUrlAuth"), [&node](const FakeNode::Rpc& rpc) {
     FakeProviders& fake = node.part<FakeProviders>();
@@ -847,6 +883,81 @@ const Steps steps([] {
     world.waitFor([&] {
       return QDateTime::fromString(panel(world).value(QStringLiteral("checkedAt")).toString(), Qt::ISODateWithMs) == fake(world).checkedAt;
     }, [&] { return QStringLiteral("the panel to say %1; it is %2").arg(fake(world).checkedAt.toString(Qt::ISODateWithMs), show(panel(world))); });
+  });
+  // The managed Antigravity runtime (HalC2.Acp.Antigravity.Installation).
+  step(QStringLiteral("the Antigravity runtime (is not installed|is downloading|is installed) on the environment"),
+       [](World& world, const Captures& c, const Table&) {
+    const bool installed = c[0] == QLatin1String("is installed");
+    const bool downloading = c[0] == QLatin1String("is downloading");
+    fake(world).install = {{QStringLiteral("driver"), QStringLiteral("antigravity")},
+                           {QStringLiteral("operationId"), downloading ? QJsonValue(QStringLiteral("op-1")) : QJsonValue()},
+                           {QStringLiteral("phase"), downloading ? QStringLiteral("downloading") : QStringLiteral("idle")},
+                           {QStringLiteral("downloadedBytes"), downloading ? 40'000'000 : 0},
+                           {QStringLiteral("totalBytes"), 100'000'000},
+                           {QStringLiteral("version"), QStringLiteral("1.2.0")},
+                           {QStringLiteral("installedVersion"), installed ? QJsonValue(QStringLiteral("1.2.0")) : QJsonValue()},
+                           {QStringLiteral("canRemove"), installed},
+                           {QStringLiteral("message"), QJsonValue()}};
+    openPanel(world);
+    offer(world, provider(QStringLiteral("antigravity"), QStringLiteral("antigravity"), QStringLiteral("Antigravity"),
+                          {{QStringLiteral("installed"), installed},
+                           {QStringLiteral("setup"), QJsonObject{{QStringLiteral("canAuthenticate"), true}, {QStringLiteral("canInstall"), true}}}}));
+    waitForEntry(world, QStringLiteral("Antigravity"), [](const QVariantMap& found) { return !at(found, QStringLiteral("runtime")).isNull(); },
+                 QStringLiteral("to show its runtime"));
+  });
+  step(QStringLiteral("the user installs the Antigravity runtime"), [](World& world, const Captures&, const Table&) {
+    waitForEntry(world, QStringLiteral("Antigravity"), [](const QVariantMap& found) {
+      return at(found, QStringLiteral("runtime.installLabel")) == QLatin1String("Install Antigravity") &&
+             at(found, QStringLiteral("runtime.status")) == QLatin1String("100 MB download.");
+    }, QStringLiteral("to offer installing its 100 MB runtime"));
+    dispatch(world, QStringLiteral("runtimeInstall"), QStringLiteral("Antigravity"));
+  });
+  step(QStringLiteral("the download's progress is shown as the environment reports it"), [](World& world, const Captures&, const Table&) {
+    waitForEntry(world, QStringLiteral("Antigravity"), [](const QVariantMap& found) {
+      return at(found, QStringLiteral("runtime.status")) == QLatin1String("Downloading 0.0 MB of 100.0 MB.") &&
+             at(found, QStringLiteral("runtime.canCancel")).toBool() && at(found, QStringLiteral("runtime.installLabel")).toString().isEmpty();
+    }, QStringLiteral("to show the download starting"));
+    expect(fake(world).installCalls == QStringList{QStringLiteral("start")},
+           QStringLiteral("one install to start; the calls are %1").arg(fake(world).installCalls.join(QStringLiteral(", "))));
+    sendInstall(world.node, {{QStringLiteral("downloadedBytes"), 25'000'000}});
+    waitForEntry(world, QStringLiteral("Antigravity"), [](const QVariantMap& found) {
+      return at(found, QStringLiteral("runtime.status")) == QLatin1String("Downloading 25.0 MB of 100.0 MB.") &&
+             qAbs(at(found, QStringLiteral("runtime.progress")).toDouble() - 0.25) < 1e-9;
+    }, QStringLiteral("to show a quarter downloaded"));
+  });
+  step(QStringLiteral("the user cancels the installation"), [](World& world, const Captures&, const Table&) {
+    dispatch(world, QStringLiteral("runtimeCancel"), QStringLiteral("Antigravity"));
+  });
+  step(QStringLiteral("the environment cancels that download"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return fake(world).installCalls == QStringList{QStringLiteral("cancel op-1")}; },
+                  [&] { return QStringLiteral("op-1 to be cancelled; the calls are %1").arg(fake(world).installCalls.join(QStringLiteral(", "))); });
+  });
+  step(QStringLiteral("the card says the previous runtime is unchanged and offers to retry"), [](World& world, const Captures&, const Table&) {
+    waitForEntry(world, QStringLiteral("Antigravity"), [](const QVariantMap& found) {
+      return at(found, QStringLiteral("runtime.message")) == QLatin1String("Installation cancelled. The previous runtime is unchanged.") &&
+             at(found, QStringLiteral("runtime.installLabel")) == QLatin1String("Retry installation") &&
+             !at(found, QStringLiteral("runtime.canCancel")).toBool();
+    }, QStringLiteral("to say the download was cancelled"));
+  });
+  step(QStringLiteral("the user removes the downloaded runtime and confirms"), [](World& world, const Captures&, const Table&) {
+    waitForEntry(world, QStringLiteral("Antigravity"), [](const QVariantMap& found) {
+      return at(found, QStringLiteral("runtime.canRemove")).toBool() && at(found, QStringLiteral("runtime.status")) == QLatin1String("Installed.");
+    }, QStringLiteral("to offer removing its installed runtime"));
+    dispatch(world, QStringLiteral("runtimeRemove"), QStringLiteral("Antigravity"));
+    answer(world, true);
+  });
+  step(QStringLiteral("the environment removes it"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return fake(world).installCalls == QStringList{QStringLiteral("remove")}; },
+                  [&] { return QStringLiteral("the runtime to be removed; the calls are %1").arg(fake(world).installCalls.join(QStringLiteral(", "))); });
+  });
+  step(QStringLiteral("the card offers installing Antigravity again"), [](World& world, const Captures&, const Table&) {
+    offer(world, provider(QStringLiteral("antigravity"), QStringLiteral("antigravity"), QStringLiteral("Antigravity"),
+                          {{QStringLiteral("installed"), false},
+                           {QStringLiteral("setup"), QJsonObject{{QStringLiteral("canAuthenticate"), true}, {QStringLiteral("canInstall"), true}}}}));
+    waitForEntry(world, QStringLiteral("Antigravity"), [](const QVariantMap& found) {
+      return at(found, QStringLiteral("runtime.installLabel")) == QLatin1String("Install Antigravity") &&
+             !at(found, QStringLiteral("runtime.canRemove")).toBool() && at(found, QStringLiteral("runtime.status")) == QLatin1String("100 MB download.");
+    }, QStringLiteral("to offer installing it again"));
   });
   // A Cursor instance that signs in from the browser, keeping `CURSOR_API_KEY` as a stored secret.
   step(QStringLiteral("a Cursor instance keeps its own %1").arg(q), [](World& world, const Captures& c, const Table&) {
