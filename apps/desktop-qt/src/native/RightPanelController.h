@@ -10,6 +10,7 @@
 #include "PullRequestReview.h"
 #include "ThreadDiff.h"
 #include "ThreadPreviews.h"
+#include "ThreadDevices.h"
 #include "ThreadPullRequests.h"
 #include "WorkspaceFiles.h"
 
@@ -22,7 +23,9 @@ class ShellStore;
 // details column beside it. Every tab is native: Diff, Files, Agents, Pull
 // requests and Previews (`diff`, `files`, `agents`, `pull-requests`,
 // `previews`), a Pull request review tab per linked pull request reviewed
-// (`pull-request:<host>/<repository>#<number>`), and a terminal tab per
+// (`pull-request:<host>/<repository>#<number>`), the Device picker (`device`)
+// and a tab per device streamed (`device:<host>:<device>`, ThreadDevices; an
+// agent's device opens its tab unless the user closed it), and a terminal tab per
 // terminal group TerminalController keeps for the panel (`terminal:<group>`;
 // closing the tab closes its terminals).
 //
@@ -35,7 +38,7 @@ class ShellStore;
 //   {threadKey, isOpen, activeId, tabs: [{id, kind, title}], width,
 //    maximized, detailsOpen, details,
 //    canAdd: {diff, files, agents, terminal, pullRequests, pullRequest,
-//             previews}}
+//             previews, device}}
 // (`pullRequests` and `pullRequest`, the review: the thread has linked ones.)
 // `details`, while the thread details column shows, else null:
 //   {environment, online, project, folder, checkout ("Local"|"Worktree"),
@@ -64,14 +67,16 @@ class RightPanelController : public QObject, public NativeController {
   Q_PROPERTY(ThreadPullRequests* pullRequests READ pullRequests CONSTANT)
   Q_PROPERTY(ThreadPreviews* previews READ previews CONSTANT)
   Q_PROPERTY(PullRequestReview* review READ review CONSTANT)
+  Q_PROPERTY(ThreadDevices* device READ device CONSTANT)
 
 public:
   // The tab kinds; each has a brick in js/panelTabs.js.
   static inline const QStringList nativeKinds{QStringLiteral("diff"), QStringLiteral("files"), QStringLiteral("agents"),
                                               QStringLiteral("terminal"), QStringLiteral("pull-requests"),
-                                              QStringLiteral("previews"), QStringLiteral("pull-request")};
-  // A tab's kind: its id, `terminal` for `terminal:<group>`, or `pull-request`
-  // for `pull-request:<key>`.
+                                              QStringLiteral("previews"), QStringLiteral("pull-request"),
+                                              QStringLiteral("device")};
+  // A tab's kind: its id, `terminal` for `terminal:<group>`, `pull-request`
+  // for `pull-request:<key>`, or `device` for `device:<host>:<device>`.
   static QString kindOf(const QString& id);
   // The panel's width when nothing was chosen, and the least it can be.
   static constexpr int defaultWidth = 540;
@@ -91,6 +96,7 @@ public:
   ThreadPullRequests* pullRequests() { return &m_pullRequests; }
   ThreadPreviews* previews() { return &m_previews; }
   PullRequestReview* review() { return &m_review; }
+  ThreadDevices* device() { return &m_devices; }
 
   bool isOpen() const;
   QString activeTab() const;
@@ -109,8 +115,9 @@ public:
   Q_INVOKABLE void showTab(const QString& id);
   // Closes a tab (empty: the active one); the last one closes the panel.
   Q_INVOKABLE void closeTab(const QString& id = {});
-  // diff, files, agents, terminal, pull-requests, previews, or pull-request
-  // (the review of the thread's first open linked pull request).
+  // diff, files, agents, terminal, pull-requests, previews, device (the
+  // picker), or pull-request (the review of the thread's first open linked
+  // pull request).
   Q_INVOKABLE void addTab(const QString& kind);
   // The review tab of a linked pull request ("host/repository#number").
   Q_INVOKABLE void reviewPullRequest(const QString& key);
@@ -142,6 +149,9 @@ private:
     QString active;
     bool maximized = false;
     bool details = false;
+    // Device tabs the user closed: an agent opening the device again does not
+    // bring them back.
+    QStringList dismissed;
   };
 
   Panel& panel() { return m_panels[m_thread]; }
@@ -155,6 +165,8 @@ private:
   void publish();
   QVariantMap threadDetails() const;
   void save();
+  // A device's tab, in place of the picker (ThreadDevices::opened).
+  void openDevice(const QString& id, bool automatic);
 
   ShellBridge* m_bridge;
   NodeClient* m_client;
@@ -165,6 +177,7 @@ private:
   ThreadPullRequests m_pullRequests;
   ThreadPreviews m_previews;
   PullRequestReview m_review;
+  ThreadDevices m_devices;
   bool m_active = false;
   // The thread the panel shows; kept while the route is elsewhere (settings)
   // so coming back finds the tabs as they were.

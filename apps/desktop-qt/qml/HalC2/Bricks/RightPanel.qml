@@ -247,6 +247,15 @@ Rectangle {
                             kind: "previews"
                         })
                     }
+
+                    ShellMenuItem {
+                        text: qsTr("Device")
+                        iconName: "smartphone"
+                        enabled: panel.open && panel.model.canAdd.device === true
+                        onTriggered: Shell.dispatch("rightPanel.add", {
+                            kind: "device"
+                        })
+                    }
                 }
             }
         }

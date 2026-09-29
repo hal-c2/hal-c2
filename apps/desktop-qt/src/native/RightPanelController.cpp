@@ -29,6 +29,7 @@ const NativeControllerRegistrar<RightPanelController> registrar(QStringLiteral("
 
 const QString kTerminalTab = QStringLiteral("terminal:");
 const QString kReviewTab = QStringLiteral("pull-request:");
+const QString kDeviceTab = QStringLiteral("device:");
 
 // A review tab's pull request: host, repository and number of "host/repository#number".
 struct Reviewed {
@@ -43,8 +44,9 @@ Reviewed reviewedOf(const QString& key) {
   return {key.left(slash), key.mid(slash + 1, hash - slash - 1), key.mid(hash + 1).toInt()};
 }
 
-QString titleOf(const QString& id) {
+QString titleOf(const QString& id, const ThreadDevices& devices) {
   const QString kind = RightPanelController::kindOf(id);
+  if (kind == QLatin1String("device")) return id.startsWith(kDeviceTab) ? devices.titleOf(id) : QStringLiteral("Device");
   if (kind == QLatin1String("pull-request")) return QStringLiteral("PR #%1").arg(reviewedOf(id.mid(kReviewTab.size())).number);
   if (kind == QLatin1String("diff")) return QStringLiteral("Diff");
   if (kind == QLatin1String("agents")) return QStringLiteral("Agents");
@@ -84,7 +86,11 @@ RightPanelController::RightPanelController(ShellBridge* bridge, NodeClient* clie
           [bridge](const QUrl& url) { bridge->openExternal(url); }, this),
       m_review(
           client, [this](const QString& type, const QString& title, const QString& description) { toast(this, type, title, description); },
-          [bridge](const QString& url) { bridge->openExternal(QUrl(url)); }, this) {
+          [bridge](const QString& url) { bridge->openExternal(QUrl(url)); }, this),
+      m_devices(client, this) {
+  connect(&m_devices, &ThreadDevices::opened, this, &RightPanelController::openDevice);
+  connect(&m_devices, &ThreadDevices::closed, this, [this](const QString& id) { closeTab(id); });
+  connect(&m_devices, &ThreadDevices::namesChanged, this, &RightPanelController::publish);
   // The add menu offers Pull requests only while the thread has some.
   connect(&m_pullRequests, &ThreadPullRequests::countChanged, this, &RightPanelController::publish);
   connect(&m_pullRequests, &ThreadPullRequests::countChanged, this, &RightPanelController::presentCommands);
@@ -192,6 +198,7 @@ void RightPanelController::retarget() {
     m_files.setTarget(environmentId, root);
     m_pullRequests.setThread(threadKey);
     m_previews.setThread(environmentId, threadId, m_store->nodeServing(environmentId));
+    m_devices.setThread(environmentId, threadId, m_store->nodeServing(environmentId));
   }
   presentCommands();
   update();
@@ -217,6 +224,7 @@ void RightPanelController::presentCommands() {
 QString RightPanelController::kindOf(const QString& id) {
   if (id.startsWith(kTerminalTab)) return QStringLiteral("terminal");
   if (id.startsWith(kReviewTab)) return QStringLiteral("pull-request");
+  if (id.startsWith(kDeviceTab)) return QStringLiteral("device");
   return id;
 }
 
@@ -296,6 +304,9 @@ void RightPanelController::showTab(const QString& id) {
   } else if (kindOf(id) == QLatin1String("pull-request")) {
     if (reviewedOf(id.mid(kReviewTab.size())).number <= 0) return;
     if (!state.tabs.contains(id)) state.tabs.append(id);
+  } else if (id.startsWith(kDeviceTab)) {
+    if (ThreadDevices::targetOf(id).first.isEmpty()) return;
+    if (!state.tabs.contains(id)) state.tabs.append(id);
   } else if (nativeKinds.contains(id)) {
     if (!state.tabs.contains(id)) state.tabs.append(id);
   } else {
@@ -313,6 +324,7 @@ void RightPanelController::closeTab(const QString& id) {
   if (closing.isEmpty()) return;
   const QStringList before = tabIds();
   if (!state.tabs.removeOne(closing)) return;
+  if (closing.startsWith(kDeviceTab) && !state.dismissed.contains(closing)) state.dismissed.append(closing);
   if (state.active == closing) {
     const QStringList after = tabIds();
     const qsizetype at = before.indexOf(closing);
@@ -351,6 +363,22 @@ void RightPanelController::addTab(const QString& kind) {
     return;
   }
   if (nativeKinds.contains(kind)) showTab(kind);
+}
+
+void RightPanelController::openDevice(const QString& id, bool automatic) {
+  if (!m_onThread) return;
+  Panel& state = panel();
+  if (automatic && (state.dismissed.contains(id) || state.tabs.contains(id))) return;
+  state.dismissed.removeOne(id);
+  // The device takes the picker's place.
+  if (!state.tabs.contains(id)) {
+    const qsizetype picker = state.tabs.indexOf(QStringLiteral("device"));
+    if (picker >= 0) state.tabs[picker] = id;
+  } else {
+    state.tabs.removeOne(QStringLiteral("device"));
+  }
+  if (state.active == QLatin1String("device")) state.active = id;
+  showTab(id);
 }
 
 void RightPanelController::reviewPullRequest(const QString& key) {
@@ -435,6 +463,7 @@ void RightPanelController::update() {
   m_files.setActive(open && activeTab() == QLatin1String("files"));
   m_agents.setActive(open && activeTab() == QLatin1String("agents"));
   m_previews.setActive(open && activeTab() == QLatin1String("previews"));
+  m_devices.setTab(open && kindOf(activeTab()) == QLatin1String("device") ? activeTab() : QString());
   // The review shows the active review tab's pull request, or the last one shown.
   if (m_onThread && kindOf(activeTab()) == QLatin1String("pull-request")) {
     const Reviewed reviewed = reviewedOf(activeTab().mid(kReviewTab.size()));
@@ -457,7 +486,7 @@ void RightPanelController::publish() {
   const Panel state = current();
   QVariantList tabs;
   for (const QString& id : state.tabs) {
-    tabs.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), kindOf(id)}, {QStringLiteral("title"), titleOf(id)}});
+    tabs.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), kindOf(id)}, {QStringLiteral("title"), titleOf(id, m_devices)}});
   }
   // Terminals need the thread's place on an environment the node reaches.
   auto* terminals = NativeShell::of(this)->controller<TerminalController>();
@@ -479,7 +508,8 @@ void RightPanelController::publish() {
                                      {QStringLiteral("terminal"), canTerminal},
                                      {QStringLiteral("pullRequests"), m_pullRequests.count() > 0},
                                      {QStringLiteral("pullRequest"), m_pullRequests.count() > 0},
-                                     {QStringLiteral("previews"), true}}},
+                                     {QStringLiteral("previews"), true},
+                                     {QStringLiteral("device"), true}}},
                     });
 }
 
@@ -529,7 +559,8 @@ QVariantMap RightPanelController::threadDetails() const {
 
 // --- Kept ----------------------------------------------------------------------------
 
-// The store: {width, threads: [{threadKey, open, tabs, active, details}]},
+// The store: {width, threads: [{threadKey, open, tabs, active, details,
+// dismissed (device tabs the user closed)}]},
 // the thread shown latest last.
 
 void RightPanelController::setStorePath(const QString& path) {
@@ -548,6 +579,7 @@ void RightPanelController::setStorePath(const QString& path) {
       const QString tab = id.toString();
       const QString kind = kindOf(tab);
       const bool known = kind == QLatin1String("pull-request") ? reviewedOf(tab.mid(kReviewTab.size())).number > 0
+                         : tab.startsWith(kDeviceTab)          ? !ThreadDevices::targetOf(tab).first.isEmpty()
                                                                 : kind != QLatin1String("terminal") && nativeKinds.contains(kind);
       if (known && !state.tabs.contains(tab)) state.tabs.append(tab);
     }
@@ -555,6 +587,7 @@ void RightPanelController::setStorePath(const QString& path) {
     if (!state.tabs.contains(state.active)) state.active = state.tabs.value(0);
     state.open = thread.value(QLatin1String("open")).toBool() && !state.tabs.isEmpty();
     state.details = thread.value(QLatin1String("details")).toBool();
+    for (const QJsonValue& id : thread.value(QLatin1String("dismissed")).toArray()) state.dismissed.append(id.toString());
     m_panels.insert(threadKey, state);
     m_recent.removeOne(threadKey);
     m_recent.append(threadKey);
@@ -578,7 +611,8 @@ void RightPanelController::save() {
                                 {QStringLiteral("open"), state.open},
                                 {QStringLiteral("tabs"), tabs},
                                 {QStringLiteral("active"), terminalShown ? QJsonValue() : QJsonValue(state.active)},
-                                {QStringLiteral("details"), state.details}});
+                                {QStringLiteral("details"), state.details},
+                                {QStringLiteral("dismissed"), QJsonArray::fromStringList(state.dismissed)}});
   }
   const QByteArray json = QJsonDocument(QJsonObject{{QStringLiteral("width"), m_width}, {QStringLiteral("threads"), threads}})
                               .toJson(QJsonDocument::Compact);

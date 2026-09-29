@@ -8,3 +8,4 @@ singleton Themes 1.0 Themes.qml
 singleton Threads 1.0 Threads.qml
 singleton Panel 1.0 Panel.qml
 singleton PaletteModel 1.0 PaletteModel.qml
+DeviceScreen 1.0 DeviceScreen.qml
