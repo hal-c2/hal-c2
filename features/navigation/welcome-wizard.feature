@@ -3,6 +3,10 @@
 #   apps/web/src/components/onboarding/WelcomeWizard.tsx
 #   apps/web/src/components/onboarding/FirstRunGate.tsx
 #   apps/server/src/project/AgentSessionScanner.ts
+#   apps/desktop-qt/src/native/OnboardingController.cpp (the desktop's gate and wizard)
+#   apps/desktop-qt/qml/HalC2/Bricks/WelcomeWizard.qml
+#   apps/desktop-qt/tests/native/features/OnboardingSteps.cpp (the @desktop steps)
+#   apps/server-ex/lib/hal_c2/terminal.ex (the setup terminal as the provider instance)
 
 Feature: Welcome wizard
   A new installation, or a first visit to the hosted app, walks the user through connecting
@@ -10,19 +14,19 @@ Feature: Welcome wizard
 
   Rule: When the wizard appears
 
-    @backlog @desktop
+    @desktop
     Scenario: A new installation starts with the wizard
       Given a fresh installation with no workspace
       When the user opens HAL-C2
       Then the user sees "Set up HAL-C2"
 
-    @backlog @desktop
+    @desktop
     Scenario: An existing workspace skips the wizard
       Given a workspace that already has projects
       When the user opens HAL-C2
       Then the app opens without the wizard
 
-    @backlog @desktop
+    @desktop
     Scenario: A workspace that cannot be confirmed yet says it is still connecting
       Given the app cannot confirm the workspace during startup
       When the user opens HAL-C2
@@ -30,7 +34,7 @@ Feature: Welcome wizard
       When the user reloads
       Then the app tries again
 
-    @backlog @desktop
+    @desktop
     Scenario: Unreadable settings are never replaced with defaults
       Given the saved settings cannot be read
       When the user opens HAL-C2
@@ -39,7 +43,7 @@ Feature: Welcome wizard
       When storage becomes available and the user retries
       Then the app continues with the saved settings
 
-    @backlog @desktop
+    @desktop
     Scenario: Finishing setup can fail
       Given the settings cannot be saved
       When the user finishes the wizard
@@ -47,34 +51,34 @@ Feature: Welcome wizard
 
   Rule: Connect your computers
 
-    @backlog @desktop
+    @desktop
     Scenario: The serving computer is already selected
       Given the user opened HAL-C2 from a desktop app named "studio"
       Then "studio" is connected and selected
 
-    @backlog @desktop
+    @desktop
     Scenario: Saved and discovered computers are selected by default
       Given a saved computer and a computer discovered through HAL-C2 Connect
       Then both computers are selected
 
-    @backlog @desktop
+    @desktop
     Scenario: Unchecking a computer does not disconnect it
       Given a selected, connected computer "laptop"
       When the user unchecks "laptop"
       Then "laptop" is not set up by the wizard
       But "laptop" stays connected
 
-    @backlog @desktop
+    @desktop
     Scenario: Adding a computer with a pairing link
       When the user adds a computer by pasting a pairing link
       Then the computer connects and is selected
 
-    @backlog @desktop
+    @desktop
     Scenario: A bad pairing link is reported
       When the user adds a computer with a pairing link that fails
       Then the user is told "Pairing failed."
 
-    @backlog @desktop
+    @desktop
     Scenario: Continuing waits for the selected computers
       Given a selected computer is still connecting
       Then the user cannot continue yet
@@ -83,7 +87,7 @@ Feature: Welcome wizard
 
   Rule: Check your agents
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Each selected computer is checked for an agent
       Given the computer "studio" has <agent> <state>
       When the wizard checks agents
@@ -96,21 +100,21 @@ Feature: Welcome wizard
         | Codex       | not installed                | Install          |
         | Codex       | installed and signed in      | nothing to do    |
 
-    @backlog @desktop
+    @desktop
     Scenario: Installing an agent opens a terminal with the command ready
       Given Codex is not installed on "studio"
       When the user chooses to install Codex
       Then a terminal opens on "studio" with the vendor's installer command ready
       And the user is asked to review the command and press Enter to run it
 
-    @backlog @desktop
+    @desktop
     Scenario: The setup terminal uses the provider's own home and environment
       Given the Codex instance on "studio" has its own home directory and a secret variable
       When the user chooses to sign in to Codex
       Then the terminal runs with that home and variable
       And the secret stays redacted where the user can see it
 
-    @backlog @desktop
+    @desktop
     Scenario: The setup terminal cannot open
       Given terminals cannot start on "studio"
       When the user chooses to install Codex
@@ -138,7 +142,7 @@ Feature: Welcome wizard
       When the wizard lists projects
       Then only the first repository is selected
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Selecting all or none
       When the user chooses "<choice>"
       Then <outcome>
@@ -197,7 +201,7 @@ Feature: Welcome wizard
       Then the rest are imported
       And conversations already imported are not imported again
 
-    @backlog @desktop
+    @desktop
     Scenario: A failed history import is reported
       Given reading thread history will fail
       When the user imports a project
@@ -205,18 +209,18 @@ Feature: Welcome wizard
 
   Rule: Moving through the wizard
 
-    @backlog @desktop
+    @desktop
     Scenario: The user can skip configuring agents and importing projects
       When the user continues without importing projects
       Then the app opens
 
-    @backlog @desktop
+    @desktop
     Scenario: The progress bar returns to an earlier step
       Given the user is on the import step
       When the user returns to the connect step from the progress bar
       Then the connect step is shown with the earlier choices
 
-    @backlog @desktop
+    @desktop
     Scenario: Navigation pauses while an import runs
       Given an import is running
       Then the user cannot move to another step until it finishes

@@ -12,6 +12,7 @@
 #include "FakeConfig.h"
 #include "CommandPaletteController.h"
 #include "Harness.h"
+#include "Onboarding.h"
 #include "SettingsController.h"
 #include "ThemeController.h"
 #include "World.h"
@@ -368,6 +369,8 @@ const Steps steps([] {
     ensureTheme(world, c[0], {QStringLiteral("dark")});
   });
   step(QStringLiteral("the user chooses %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The welcome wizard's Select all / Select none.
+    if (onboardingChooses(world, c[0])) return;
     // From an open command palette (its Change theme submenu among them): its
     // entry of that title.
     if (auto* palette = world.native().controller<CommandPaletteController>(); palette && palette->isOpen()) {
