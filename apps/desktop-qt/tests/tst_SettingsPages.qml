@@ -48,14 +48,15 @@ Item {
             compare(Pages.brickFor("/settings/appearance"), "AppearanceSettings");
             compare(Pages.brickFor("/settings/cluster"), "ClusterSettings");
             compare(Pages.brickFor("/settings/connections"), "ConnectionsSettings");
+            compare(Pages.brickFor("/settings/keybindings"), "KeybindingsSettings");
             compare(Pages.brickFor("/settings/providers"), "", "the page still renders Providers");
             compare(Pages.brickFor("/settings/nowhere"), "");
         }
 
         function test_navListsNativePagesAlwaysAndThePagesWhileListed() {
             const labels = rows => rows.map(section => section.label);
-            compare(labels(Pages.navRows([], {})), ["General", "Appearance"]);
-            compare(labels(Pages.navRows([{ to: "/settings/providers" }], { cluster: {} })), ["General", "Appearance", "Providers", "Cluster"]);
+            compare(labels(Pages.navRows([], {})), ["General", "Appearance", "Keybindings"]);
+            compare(labels(Pages.navRows([{ to: "/settings/providers" }], { cluster: {} })), ["General", "Appearance", "Keybindings", "Providers", "Cluster"]);
         }
 
         function test_searchFindsNativeSectionsAndDropsThePagesResultsInThem() {

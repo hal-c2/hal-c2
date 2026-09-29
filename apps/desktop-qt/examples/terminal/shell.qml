@@ -238,6 +238,7 @@ ShellWindow {
                         visible: root.nativeSettingsOpen
                     }
 
+
                     WebSurface {
                         visible: !root.nativeSettingsOpen
                         Layout.fillWidth: true
