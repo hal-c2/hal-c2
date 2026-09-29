@@ -40,7 +40,7 @@ void DeviceDecoder::reset(const QByteArray& avcc) {
   m_notified = false;
 }
 
-bool DeviceDecoder::push(const QByteArray& unit, bool keyframe) {
+bool DeviceDecoder::push(const QByteArray& unit, bool keyframe, qsizetype offset) {
   QMutexLocker lock(&m_mutex);
   if (m_awaitingKeyframe) {
     if (!keyframe) return true;
@@ -53,7 +53,7 @@ bool DeviceDecoder::push(const QByteArray& unit, bool keyframe) {
     if (!keyframe) return false;
     m_awaitingKeyframe = false;
   }
-  m_queue.push_back({unit, keyframe, false, m_epoch});
+  m_queue.push_back({unit, keyframe, false, m_epoch, offset});
   if (!m_draining) {
     m_draining = true;
     QMetaObject::invokeMethod(&m_worker, [this] { drain(); }, Qt::QueuedConnection);
@@ -132,11 +132,12 @@ void DeviceDecoder::drain() {
       }
       m_openEpoch = epoch;
       av_packet_unref(m_packet);
-      if (av_new_packet(m_packet, int(unit.data.size())) < 0) {
+      const qsizetype size = unit.data.size() - unit.offset;
+      if (av_new_packet(m_packet, int(size)) < 0) {
         failed = true;
         break;
       }
-      std::memcpy(m_packet->data, unit.data.constData(), size_t(unit.data.size()));
+      std::memcpy(m_packet->data, unit.data.constData() + unit.offset, size_t(size));
       if (unit.keyframe) m_packet->flags |= AV_PKT_FLAG_KEY;
       if (avcodec_send_packet(m_context, m_packet) < 0) {
         failed = true;

@@ -37,8 +37,10 @@ public:
   // Annex-B. Drops what is queued and the newest picture, and decodes
   // nothing before a keyframe.
   void reset(const QByteArray& avcc = {});
-  // Queues one access unit; false when the backlog was dropped instead.
-  bool push(const QByteArray& unit, bool keyframe);
+  // Queues one access unit, the bytes of `unit` from `offset` on (a
+  // message's header skipped without copying it); false when the backlog was
+  // dropped instead.
+  bool push(const QByteArray& unit, bool keyframe, qsizetype offset = 0);
   // A still picture (serve-sim's JPEG seed), shown until video arrives.
   void pushJpeg(const QByteArray& jpeg);
   // The largest picture worth converting to (the view's size in pixels);
@@ -63,6 +65,8 @@ private:
     bool jpeg = false;
     // reset() generation it belongs to.
     int epoch = 0;
+    // Where the unit starts in `data`.
+    qsizetype offset = 0;
   };
 
   // On the worker thread.

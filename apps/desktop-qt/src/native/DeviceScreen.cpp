@@ -4,7 +4,61 @@
 #include <QQuickWindow>
 #include <QSGImageNode>
 #include <QSGTexture>
+#include <QtEndian>
 #include <QtQml/qqml.h>
+#include <rhi/qrhi.h>
+
+namespace {
+
+// One GPU texture a screen's pictures are uploaded into, re-created only
+// when the picture's size changes (a rotation, a resized panel): a new
+// texture per frame would allocate and free GPU memory 60 times a second.
+// The scene graph uploads the newest picture when it next renders.
+class FrameTexture : public QSGTexture {
+public:
+  ~FrameTexture() override {
+    if (m_texture) m_texture->deleteLater();
+  }
+
+  void setImage(const QImage& image) {
+    m_image = image;
+    m_size = image.size();
+  }
+
+  qint64 comparisonKey() const override { return qint64(quintptr(this)); }
+  QRhiTexture* rhiTexture() const override { return m_texture; }
+  QSize textureSize() const override { return m_size; }
+  bool hasAlphaChannel() const override { return false; }
+  bool hasMipmaps() const override { return false; }
+
+  void commitTextureOperations(QRhi* rhi, QRhiResourceUpdateBatch* updates) override {
+    if (m_image.isNull()) return;
+    // The decoder's RGB32 is BGRA in memory on little-endian machines.
+    const bool bgra = QSysInfo::ByteOrder == QSysInfo::LittleEndian && rhi->isTextureFormatSupported(QRhiTexture::BGRA8);
+    const QRhiTexture::Format format = bgra ? QRhiTexture::BGRA8 : QRhiTexture::RGBA8;
+    if (m_texture && (m_texture->pixelSize() != m_size || m_texture->format() != format)) {
+      m_texture->deleteLater();
+      m_texture = nullptr;
+    }
+    if (!m_texture) {
+      m_texture = rhi->newTexture(format, m_size);
+      if (!m_texture->create()) {
+        delete m_texture;
+        m_texture = nullptr;
+        return;
+      }
+    }
+    updates->uploadTexture(m_texture, bgra ? m_image : m_image.convertToFormat(QImage::Format_RGBX8888));
+    m_image = {};
+  }
+
+private:
+  QImage m_image;
+  QSize m_size;
+  QRhiTexture* m_texture = nullptr;
+};
+
+}  // namespace
 
 DeviceScreen::DeviceScreen(QQuickItem* parent) : QQuickItem(parent) {
   setFlag(ItemHasContents, true);
@@ -83,14 +137,22 @@ QSGNode* DeviceScreen::updatePaintNode(QSGNode* old, UpdatePaintNodeData*) {
     delete node;
     return nullptr;
   }
+  // The software scene graph has no QRhi: it takes a texture per picture.
+  const bool rhi = window()->rhi();
   if (!node) {
     node = window()->createImageNode();
     node->setOwnsTexture(true);
+    if (rhi) node->setTexture(new FrameTexture);
     node->setFiltering(QSGTexture::Linear);
     m_fresh = true;
   }
   if (m_fresh) {
-    node->setTexture(window()->createTextureFromImage(m_frame));
+    if (rhi) {
+      static_cast<FrameTexture*>(node->texture())->setImage(m_frame);
+      node->markDirty(QSGNode::DirtyMaterial);
+    } else {
+      node->setTexture(window()->createTextureFromImage(m_frame));
+    }
     m_fresh = false;
   }
   node->setRect(boundingRect());

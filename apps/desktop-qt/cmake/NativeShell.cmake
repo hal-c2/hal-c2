@@ -25,7 +25,7 @@ function(hal_c2_add_native_library webchannel_script_url)
   target_compile_definitions(hal_c2_native PRIVATE HAL_C2_WEBCHANNEL_SCRIPT_URL="${webchannel_script_url}")
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(HAL_C2_FFMPEG REQUIRED IMPORTED_TARGET libavcodec libavutil libswscale)
-  target_link_libraries(hal_c2_native PUBLIC Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network Qt6::WebSockets
+  target_link_libraries(hal_c2_native PUBLIC Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Qml Qt6::Quick Qt6::Network Qt6::WebSockets
                                              PkgConfig::HAL_C2_FFMPEG)
   # The built-in palettes (scripts/gen-themes.mjs), as :/hal-c2/themes.json.
   qt_add_resources(hal_c2_native hal_c2_native_themes PREFIX "/hal-c2" BASE "${_hal_c2_src}/native"

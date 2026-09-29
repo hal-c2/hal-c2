@@ -499,13 +499,9 @@ void DeviceStream::connectAndroid() {
 }
 
 void DeviceStream::onAndroidMessage(const QByteArray& message) {
-  QByteArray unit = message;
-  int key = -1;
-  if (message.size() > kSemuHeader && qFromBigEndian<quint32>(message.constData()) == kSemuMagic && message.at(4) == 1) {
-    key = (message.at(5) & 1) ? 1 : 0;
-    unit = message.mid(kSemuHeader);
-  }
-  const bool keyframe = key < 0 ? hasKeyframe(unit) : key == 1;
+  // A SEMU header says whether the unit behind it is a keyframe.
+  const bool semu = message.size() > kSemuHeader && qFromBigEndian<quint32>(message.constData()) == kSemuMagic && message.at(4) == 1;
+  const bool keyframe = semu ? (message.at(5) & 1) != 0 : hasKeyframe(message);
   if (m_awaitingKeyframe) {
     if (!keyframe) {
       requestKeyframe();
@@ -513,7 +509,7 @@ void DeviceStream::onAndroidMessage(const QByteArray& message) {
     }
     m_awaitingKeyframe = false;
   }
-  if (!m_decoder.push(unit, keyframe)) recover();
+  if (!m_decoder.push(message, keyframe, semu ? kSemuHeader : 0)) recover();
 }
 
 void DeviceStream::requestKeyframe() {
