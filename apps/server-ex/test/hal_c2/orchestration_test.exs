@@ -821,6 +821,123 @@ defmodule HalC2.OrchestrationTest do
       assert [%{"status" => "interrupted"}] =
                StreamState.list(await_run(thread_id, "interrupted"), "run-attempt")
     end
+
+    test "Claude's background subagent and command keep its process until their tasks end" do
+      Application.put_env(:hal_c2, :idle_session_check_ms, nil)
+      Application.put_env(:hal_c2, :session_idle_ms, 0)
+
+      on_exit(fn ->
+        Application.delete_env(:hal_c2, :idle_session_check_ms)
+        Application.delete_env(:hal_c2, :session_idle_ms)
+      end)
+
+      start_supervised!(HalC2.Orchestration.IdleSessions)
+      :ok = HalC2.Shell.subscribe(self())
+      thread_id = launch("work in the background", "claudeAgent")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+
+      assert %{
+               "turn-item:subagent:node:subagent:claudeAgent:agent-1" => %{
+                 "type" => "subagent",
+                 "status" => "running",
+                 "title" => "Survey the repo",
+                 "prompt" => "List what is in the repo"
+               }
+             } = StreamState.get(current(thread_id), "turn-item")
+
+      assert [%{"status" => "running", "output" => "Command running in background" <> _}] =
+               current(thread_id)
+               |> StreamState.list("turn-item")
+               |> Enum.filter(&(&1["type"] == "command_execution"))
+
+      # The idle timeout passed, but the process runs the work: it stays.
+      assert HalC2.Orchestration.IdleSessions.check() == []
+      assert [_] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+
+      claude_says(thread_id, %{
+        "type" => "system",
+        "subtype" => "task_progress",
+        "task_id" => "task-agent-1",
+        "tool_use_id" => "agent-1",
+        "description" => "Survey the repo",
+        "summary" => "Reading the README"
+      })
+
+      claude_says(thread_id, notification("task-agent-1", "agent-1", "completed", "3 files"))
+      claude_says(thread_id, notification("task-bash-1", "bash-1", "stopped", "Stopped"))
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+
+      state = current(thread_id)
+
+      assert %{"status" => "completed", "result" => "3 files", "progress" => "Reading the README"} =
+               StreamState.get(state, "turn-item")[
+                 "turn-item:subagent:node:subagent:claudeAgent:agent-1"
+               ]
+
+      assert %{"status" => "completed", "origin" => "provider_native"} =
+               StreamState.get(state, "subagent")["node:subagent:claudeAgent:agent-1"]
+
+      assert [%{"status" => "cancelled", "output" => "Stopped"}] =
+               state
+               |> StreamState.list("turn-item")
+               |> Enum.filter(&(&1["type"] == "command_execution"))
+
+      assert HalC2.Orchestration.IdleSessions.check() == [thread_id]
+    end
+
+    test "stopping a Claude thread between turns ends its background work" do
+      :ok = HalC2.Shell.subscribe(self())
+      thread_id = launch("work in the background", "claudeAgent")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+
+      assert {:ok, _} =
+               Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+
+      assert ["interrupted", "interrupted"] =
+               current(thread_id)
+               |> StreamState.list("turn-item")
+               |> Enum.filter(&(&1["type"] in ["subagent", "command_execution"]))
+               |> Enum.map(& &1["status"])
+
+      # With nothing left to stop, a second stop is refused as before.
+      assert {:error, _} =
+               Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+    end
+
+    test "releasing a Claude process ends the background work it ran" do
+      :ok = HalC2.Shell.subscribe(self())
+      thread_id = launch("work in the background", "claudeAgent")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+
+      assert :ok = Orchestration.release_session(thread_id)
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+
+      assert %{"status" => "interrupted"} =
+               StreamState.get(current(thread_id), "subagent")[
+                 "node:subagent:claudeAgent:agent-1"
+               ]
+    end
+
+    defp claude_says(thread_id, message) do
+      [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+      send(pid, {:claude, :sys.get_state(pid).session, {:message, message}})
+    end
+
+    defp notification(task_id, tool_id, status, summary),
+      do: %{
+        "type" => "system",
+        "subtype" => "task_notification",
+        "task_id" => task_id,
+        "tool_use_id" => tool_id,
+        "status" => status,
+        "output_file" => "/tmp/#{task_id}.output",
+        "summary" => summary
+      }
   end
 
   describe "approvals" do
@@ -1240,6 +1357,27 @@ defmodule HalC2.OrchestrationTest do
                StreamState.list(state, "message"),
                &(&1["text"] == "resumed at uuid-1 fork False history False")
              )
+    end
+
+    test "rolling back ends the background work Claude was running", %{work: work} do
+      :ok = HalC2.Shell.subscribe(self())
+      thread_id = launch_in(work, "hello", "claudeAgent")
+      await_statuses(thread_id, ["completed"])
+      {:ok, _} = send_message(thread_id, "msg-user-2", "work in the background")
+      await_statuses(thread_id, ["completed", "completed"])
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+
+      assert {:ok, _} = rollback(thread_id, 1, %{"restoreFiles" => false})
+
+      assert %{"status" => "interrupted"} =
+               StreamState.get(current(thread_id), "subagent")[
+                 "node:subagent:claudeAgent:agent-2"
+               ]
+
+      assert [%{"status" => "interrupted"}] =
+               current(thread_id)
+               |> StreamState.list("turn-item")
+               |> Enum.filter(&(&1["input"] == "npm run build"))
     end
   end
 
