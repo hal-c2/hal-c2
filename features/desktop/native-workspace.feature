@@ -69,8 +69,20 @@ Feature: The desktop shell runs the workspace header against its node
     When the user runs the new thread on "env-a"
     Then the new thread will start on "env-a" in "/work/shop"
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A thread on an environment the node is linked to has its header
     Given the node is linked to "env-c"
+    And "env-c" has the thread "t7" titled "Deploy" in "ops" on the branch "main"
     When the user goes to "env-c:t7"
     Then the header shows the thread "Deploy" in "ops" on "main"
+
+  @desktop
+  Scenario: A linked thread's header says so while its environment is unreachable
+    Given the node is linked to "env-c"
+    And "env-c" has the thread "t7" titled "Deploy" in "ops" on the branch "main"
+    And the user goes to "env-c:t7"
+    When "env-c" becomes unreachable
+    Then the header says the thread is offline
+    And the header shows the thread "Deploy" in "ops" on "main"
+    When "env-c" is reachable again
+    Then the header no longer says the thread is offline

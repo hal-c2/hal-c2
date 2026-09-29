@@ -41,13 +41,19 @@ Item {
     readonly property bool draft: section === "draft"
     readonly property bool woke: item.wokeAt !== null && item.wokeAt !== undefined
     readonly property bool parked: section === "snoozed" || section === "settled"
+    // The thread's environment is unreachable: the row stays, says so, and
+    // recedes until the environment comes back.
+    readonly property bool offline: item.offline === true
     readonly property bool canSettle: !draft && !parked && item.canSettle === true
     readonly property bool canSnooze: !draft && !parked && item.canSnooze === true
-    readonly property bool hasActions: parked || canSettle || canSnooze
+    readonly property bool hasActions: !offline && (parked || canSettle || canSnooze)
     readonly property bool showActions: hasActions && (hover.hovered || focused)
     // The status word the page's sidebar uses for each state; empty when the
     // row is at rest, then the slot shows the age (or the wake time).
     readonly property string statusWord: {
+        if (row.offline) {
+            return qsTr("Offline");
+        }
         switch (item.status) {
         case "working":
             return qsTr("Working");
@@ -71,6 +77,9 @@ Item {
         return "";
     }
     readonly property string statusIcon: {
+        if (row.offline) {
+            return "";
+        }
         switch (item.status) {
         case "working":
             return "circle-dashed";
@@ -87,6 +96,9 @@ Item {
         return "";
     }
     readonly property color statusColor: {
+        if (row.offline) {
+            return row.secondaryColor;
+        }
         switch (item.status) {
         case "approval":
             return Theme.palette.color("warning", "#f59e0b");
@@ -112,7 +124,7 @@ Item {
     readonly property bool showStatus: statusWord.length > 0
     // In-flight and read-ready rows recede: prominence is for rows that need
     // a human (done, failed, woke) and the one that is open.
-    readonly property bool recedes: !active && !woke && item.unread !== true && item.status !== "failed" && item.status !== "limited"
+    readonly property bool recedes: offline || !active && !woke && item.unread !== true && item.status !== "failed" && item.status !== "limited"
     // Titles keep the prompt's line breaks; the row shows them on one line,
     // as the page does, so a multi-line title never overflows the card.
     readonly property string oneLineTitle: (item.title ?? "").replace(/\s+/g, " ").trim()

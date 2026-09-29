@@ -2,7 +2,7 @@
 #   docs/user/thread-sidebar.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml
 #   apps/desktop-qt/tests/tst_Sidebar.qml
-#   apps/desktop-qt/src/native/SidebarModel.cpp (the desktop's port of the grouping and order)
+#   apps/desktop-qt/src/native/SidebarModel.cpp (the desktop's port of the grouping and order, offline rows)
 #   apps/web/src/components/Sidebar.tsx
 #   apps/web/src/components/Sidebar.logic.ts
 #   apps/web/src/hooks/useSidebarProjectGroups.ts
@@ -170,7 +170,7 @@ Feature: The thread list
     When the client reconnects
     Then both threads are listed without reloading the whole list
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Threads on an offline environment are still listed
     Given the environment "work" is offline
     When the user looks at the thread list

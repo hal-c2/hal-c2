@@ -3,6 +3,7 @@
 #   apps/server-ex/lib/hal_c2/links/rows.ex (linked rows in the shell)
 #   apps/server-ex/lib/mix/tasks/hal_c2.link.ex
 #   apps/desktop-qt/src/native/ConnectionsController.cpp (linking from the desktop's Connections settings)
+#   apps/desktop-qt/src/native/ShellStore.cpp (the desktop's shell with its links' rows)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (rpc and shapes by environment, shell links)
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (stream and terminal shapes by environment, shell.links)
 #   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.linkEnvironment, hal-c2.unlinkEnvironment, hal-c2.environmentLinks)
@@ -140,7 +141,7 @@ Feature: Linking a node to environments outside its cluster
   # environment's nodes and rows under its link, since a linked environment's node names can
   # collide with the cluster's; nothing is merged into the cluster's own rows. The node
   # follows a linked environment's shell only while some client asks for it.
-  @node @desktop @backlog-desktop
+  @node @desktop
   Scenario: A client sees a linked environment's threads in its node's shell
     Given the node is linked to "beast"
     And a thread that lives on "beast"
@@ -149,7 +150,7 @@ Feature: Linking a node to environments outside its cluster
     And the node of "beast" is listed online under its link
     And none of the rows of "beast" are among the cluster's own
 
-  @node @desktop @backlog-desktop
+  @node @desktop
   Scenario: A change to a linked thread reaches the client as that row alone
     Given the node is linked to "beast"
     And a thread that lives on "beast"
@@ -157,7 +158,7 @@ Feature: Linking a node to environments outside its cluster
     When the thread on "beast" is renamed to "Renamed on beast"
     Then the client receives only that thread's new row under the link to "beast"
 
-  @node @desktop @backlog-desktop
+  @node @desktop
   Scenario: A linked environment's threads stay listed as offline while it is unreachable
     Given the node is linked to "beast"
     And a thread that lives on "beast"
@@ -166,7 +167,7 @@ Feature: Linking a node to environments outside its cluster
     Then the client is told the node of "beast" is offline under its link
     And a client of the node that asks for the shell with its links' rows sees the thread under the link to "beast", offline
 
-  @node @desktop @backlog-desktop
+  @node @desktop
   Scenario: Removing a link takes its threads out of the shell
     Given the node is linked to "beast"
     And a thread that lives on "beast"
