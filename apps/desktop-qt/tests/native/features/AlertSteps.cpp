@@ -191,6 +191,22 @@ void completesInBackground(World& world, const QString& title) {
   change(world, thread, QStringLiteral("completes"));
 }
 
+// Mutes or unmutes `title` from its thread menu, which offers `id`.
+void muteFromMenu(World& world, const QString& title, const QString& id) {
+  const QString key = keyOf(world, tracked(world, title));
+  world.bridge().dispatch(QStringLiteral("thread.menu"),
+                          QVariantMap{{QStringLiteral("key"), key}, {QStringLiteral("x"), 40}, {QStringLiteral("y"), 120}});
+  const QVariantMap menu = world.state(QStringLiteral("menu")).toMap();
+  const QVariantList items = menu.value(QStringLiteral("items")).toList();
+  expect(std::any_of(items.begin(), items.end(), [&id](const QVariant& item) { return item.toMap().value(QStringLiteral("id")) == id; }),
+         QStringLiteral("the thread menu offers no \"%1\": %2").arg(id, show(items)));
+  world.bridge().dispatch(QStringLiteral("menu.select"),
+                          QVariantMap{{QStringLiteral("requestId"), menu.value(QStringLiteral("requestId"))}, {QStringLiteral("id"), id}});
+  world.sync();
+  const bool muted = alerts(world).isMuted(key);
+  expect(muted == (id == QLatin1String("mute-alerts")), QStringLiteral("%1 is %2").arg(title, muted ? QStringLiteral("muted") : QStringLiteral("not muted")));
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
 
@@ -303,6 +319,34 @@ const Steps steps([] {
     const FakeAlerts& state = fake(world);
     expect(!toastFor(world, c[0]) && state.delivered.isEmpty() && state.sounds.isEmpty(),
            QStringLiteral("an alert was raised: %1").arg(describe(world)));
+  });
+  step(QStringLiteral("an alert for %1 is raised").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    const FakeAlerts& state = fake(world);
+    const bool system = state.shown.contains(keyOf(world, state.threads.value(c[0])));
+    expect(toastFor(world, c[0]) || system, QStringLiteral("no alert was raised: %1").arg(describe(world)));
+  });
+
+  // Muting one thread.
+  step(QStringLiteral("the user mutes alerts for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    muteFromMenu(world, c[0], QStringLiteral("mute-alerts"));
+  });
+  step(QStringLiteral("the user unmutes %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    muteFromMenu(world, c[0], QStringLiteral("unmute-alerts"));
+  });
+  step(QStringLiteral("alerts for %1 are muted").arg(q), [](World& world, const Captures& c, const Table&) {
+    working(world, c[0]);
+    muteFromMenu(world, c[0], QStringLiteral("mute-alerts"));
+  });
+  step(QStringLiteral("%1 finishes its turn").arg(q), [](World& world, const Captures& c, const Table&) {
+    change(world, tracked(world, c[0]), QStringLiteral("completes"));
+  });
+  step(QStringLiteral("alerts for other threads in %1 still arrive").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(world.node.projects.first().value(QLatin1String("title")).toString() == c[0],
+           QStringLiteral("the threads are not in \"%1\"").arg(c[0]));
+    Tracked& other = working(world, QStringLiteral("Docs pass"));
+    change(world, other, QStringLiteral("completes"));
+    expect(toastFor(world, QStringLiteral("Docs pass")).has_value(), QStringLiteral("no alert for another thread: %1").arg(describe(world)));
   });
   step(QStringLiteral("no in-app alert is shown for %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();

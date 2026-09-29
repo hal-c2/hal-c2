@@ -7,6 +7,7 @@
 #include <QUuid>
 
 #include "../ShellBridge.h"
+#include "AlertController.h"
 #include "DraftController.h"
 #include "KeybindingController.h"
 #include "Keybindings.h"
@@ -141,6 +142,11 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
     add(regenerate);
   }
   add({QStringLiteral("mark-unread"), QStringLiteral("Mark unread"), QStringLiteral("mail-open")});
+  if (const auto* alerts = shell->controller<AlertController>()) {
+    add(alerts->isMuted(key) ? Item{QStringLiteral("unmute-alerts"), QStringLiteral("Unmute alerts"), QStringLiteral("bell")}
+                             : Item{QStringLiteral("mute-alerts"), QStringLiteral("Mute alerts"), QStringLiteral("bell-off")},
+        false);
+  }
   const std::optional<QString> projectKey = sidebar->logicalProjectKey(thread->environmentId, thread->projectId);
   if (!header && projectKey) {
     const bool scoped = sidebar->scope() == projectKey;
@@ -213,6 +219,8 @@ void ThreadMenuController::choose(const QString& key, const QString& id, double 
              {QStringLiteral("threadId"), thread->id},
              {QStringLiteral("regenerateTitle"), true}},
             QStringLiteral("Failed to regenerate thread title"));
+  } else if (id == QLatin1String("mute-alerts") || id == QLatin1String("unmute-alerts")) {
+    if (auto* alerts = shell->controller<AlertController>()) alerts->setMuted(key, id == QLatin1String("mute-alerts"));
   } else if (id == QLatin1String("mark-unread")) {
     m_bridge->dispatch(QStringLiteral("thread.markUnread"), keyed);
   } else if (id == QLatin1String("filter-by-project")) {

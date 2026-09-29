@@ -255,6 +255,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("timeline/notifications.feature:A newer alert*"),
     QStringLiteral("timeline/notifications.feature:Turning system notifications off*"),
     QStringLiteral("timeline/notifications.feature:A system notification is not shown*"),
+    QStringLiteral("timeline/notifications.feature:The user mutes alerts for one thread"),
+    QStringLiteral("timeline/notifications.feature:The user unmutes a thread"),
     QStringLiteral("timeline/notifications.feature:Coming back to the window*"),
     QStringLiteral("settings/connections.feature"),
     QStringLiteral("connections/links.feature"),
