@@ -32,12 +32,45 @@ SettingsPage {
             Layout.fillWidth: true
             spacing: 2
 
-            Label {
+            RowLayout {
                 Layout.fillWidth: true
-                text: task.modelData.title
-                color: tasks.foreground
-                font.pixelSize: 13
-                font.weight: Font.Medium
+                spacing: 8
+
+                Label {
+                    Layout.fillWidth: true
+                    text: task.modelData.title
+                    color: tasks.foreground
+                    font.pixelSize: 13
+                    font.weight: Font.Medium
+                    elide: Text.ElideRight
+                }
+
+                Label {
+                    objectName: "lastRun"
+                    visible: text.length > 0
+                    text: task.modelData.lastRun ?? ""
+                    color: task.modelData.lastRunStatus === "failed" ? tasks.danger : tasks.muted
+                    font.pixelSize: 11
+                    leftPadding: 6
+                    rightPadding: 6
+                    topPadding: 1
+                    bottomPadding: 1
+                    background: Rectangle {
+                        radius: Math.min(Theme.radius, 6)
+                        color: "transparent"
+                        border.color: Theme.palette.color("border", "#27272a")
+                    }
+                }
+            }
+
+            Label {
+                objectName: "promptPreview"
+                Layout.fillWidth: true
+                text: task.modelData.prompt
+                color: tasks.muted
+                font.pixelSize: 12
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
                 elide: Text.ElideRight
             }
 

@@ -7,6 +7,10 @@
 #   packages/contracts/src/rpc.ts (scheduledTasks.list, scheduledTasks.upsert, scheduledTasks.delete, scheduledTasks.setEnabled, scheduledTasks.runNow, scheduledTasks.subscribe)
 #   apps/web/src/components/settings/ScheduledTasksSettings.tsx
 #   apps/web/src/components/settings/scheduledTasksSettings.logic.ts
+#   apps/web/src/components/WorktreeBaseBranchPicker.tsx
+#   apps/desktop-qt/src/native/ScheduledTasksController.cpp
+#   apps/desktop-qt/qml/HalC2/Bricks/ScheduledTaskEditor.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/js/scheduledTasks.js
 
 Feature: Scheduled tasks
   A scheduled task sends a saved prompt to a project on a timer, either at
@@ -165,6 +169,40 @@ Feature: Scheduled tasks
       When the user opens scheduled tasks
       Then the paused task says it is paused
       And the failed task shows its last error
+      And the failed task is badged "Failed"
+      And each task shows its prompt
+
+    # The web said "No environments available" with none paired. A QML client shows settings only
+    # once its node has synced, so its own environment is always there.
+    @dropped @shared
+    Scenario: With no environment there are no tasks to manage
+      When the user opens scheduled tasks with no environment
+      Then the user is told no environments are available
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: The base branch is picked from the project's branches
+      Given the project "api" has the branches "main, release/2.0, feature/login"
+      When the user starts a new task and types "rel" as its base branch
+      Then the base branches offered are "release/2.0"
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: The last weekday of a task cannot be turned off
+      Given a new task that runs only on Wednesday
+      When the user turns Wednesday off and saves it
+      Then the task still runs on Wednesday
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: Editing a task with a sub-minute interval says saving raises it
+      Given a task saved by an older version that runs every 10 seconds
+      When the user edits it
+      Then the editor says saving raises the interval to a minute
+      And saving it runs every minute
+
+    @shared @backlog-mobile @backlog-tui
+    Scenario: An open editor says when its task was deleted elsewhere
+      Given a task "Check Sentry"
+      When the user edits the task and another client deletes it
+      Then the editor says the task no longer exists
 
     @shared @backlog-mobile @backlog-tui
     Scenario: A slow save does not close a task opened after it

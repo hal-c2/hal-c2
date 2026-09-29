@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
+import "js/scheduledTasks.js" as Tasks
 
 // Creates or edits a scheduled task (`scheduledTasks.editor`). The draft is
 // the dialog's own until saved; the controller checks it and says what is
@@ -24,11 +25,12 @@ Dialog {
     }
 
     function toggleDay(day) {
-        const days = (draft.weekdays ?? []).slice();
-        const at = days.indexOf(day);
-        if (at >= 0) days.splice(at, 1);
-        else days.push(day);
-        set("weekdays", days);
+        set("weekdays", Tasks.toggleDay(draft.weekdays, day));
+    }
+
+    // The project's branches matching what is typed as the base branch.
+    function listBranches() {
+        Shell.dispatch("scheduledTasks.branches", { projectId: draft.projectId ?? "", query: draft.baseRef ?? "" });
     }
 
     objectName: "scheduledTaskEditor"
@@ -92,6 +94,17 @@ Dialog {
                 visible: dialog.editor !== null && !dialog.editor.connected
                 text: qsTr("Reconnect this environment before saving.")
                 color: Theme.palette.color("warning", "#fbbf24")
+                font.pixelSize: 12
+                wrapMode: Text.Wrap
+            }
+
+            Label {
+                objectName: "missing"
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: dialog.editor?.error ? dialog.editor.error
+                    : dialog.editor?.missing ? qsTr("This scheduled task no longer exists.") : ""
+                color: Theme.palette.color("error", "#ef4444")
                 font.pixelSize: 12
                 wrapMode: Text.Wrap
             }
@@ -195,6 +208,14 @@ Dialog {
                 }
             }
 
+            Caption {
+                objectName: "legacyInterval"
+                Layout.fillWidth: true
+                visible: (dialog.editor?.legacyInterval ?? false) && dialog.draft.scheduleMode === "interval"
+                text: qsTr("This task uses a legacy interval below one minute. Saving updates it to at least one minute.")
+                wrapMode: Text.Wrap
+            }
+
             Flow {
                 Layout.fillWidth: true
                 visible: dialog.draft.scheduleMode !== "interval"
@@ -230,11 +251,67 @@ Dialog {
                 spacing: 8
 
                 ShellTextField {
+                    id: baseRef
+
                     objectName: "baseRef"
                     Layout.fillWidth: true
                     text: dialog.draft.baseRef ?? "main"
                     placeholderText: qsTr("Base branch")
-                    onTextEdited: dialog.set("baseRef", text)
+                    onTextEdited: {
+                        dialog.set("baseRef", text);
+                        branchQuery.restart();
+                        branches.open();
+                    }
+                    onActiveFocusChanged: if (activeFocus) {
+                        dialog.listBranches();
+                        branches.open();
+                    }
+
+                    // Typing asks once it pauses, not per keystroke.
+                    Timer {
+                        id: branchQuery
+                        interval: 150
+                        onTriggered: dialog.listBranches()
+                    }
+
+                    Popup {
+                        id: branches
+
+                        objectName: "branches"
+                        y: baseRef.height + 4
+                        width: baseRef.width
+                        height: Math.min(implicitHeight, 240)
+                        padding: 4
+                        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+                        background: Rectangle {
+                            radius: Math.min(Theme.radius, 8)
+                            color: Theme.palette.color("surfaceOverlay", "#18181b")
+                            border.color: Theme.palette.color("border", "#27272a")
+                        }
+                        contentItem: ListView {
+                            implicitHeight: Math.max(contentHeight, 28)
+                            clip: true
+                            model: dialog.editor?.branches ?? []
+                            boundsBehavior: Flickable.StopAtBounds
+                            delegate: ShellButton {
+                                required property var modelData
+                                width: ListView.view.width
+                                subtle: true
+                                text: modelData.name + (modelData.isDefault ? qsTr("  default") : modelData.current ? qsTr("  current") : "")
+                                onClicked: {
+                                    dialog.set("baseRef", modelData.name);
+                                    branches.close();
+                                }
+                            }
+                            footer: Caption {
+                                visible: (dialog.editor?.branches ?? []).length === 0
+                                height: visible ? implicitHeight + 8 : 0
+                                leftPadding: 8
+                                topPadding: 4
+                                text: dialog.editor?.branchesLoading ? qsTr("Loading branches…") : qsTr("No matching branches")
+                            }
+                        }
+                    }
                 }
 
                 CheckBox {

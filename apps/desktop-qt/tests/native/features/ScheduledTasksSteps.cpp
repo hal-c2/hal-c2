@@ -3,6 +3,8 @@
 // keeps each environment's tasks as the node's HalC2.ScheduledTasks does,
 // answering scheduledTasks.* and the `scheduledTasks` shape.
 
+#include <QFile>
+#include <QJSEngine>
 #include <QJsonArray>
 #include <QJsonObject>
 
@@ -12,6 +14,9 @@
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "World.h"
+
+// WorkspaceSteps.cpp: the project's checkout with these branches.
+void seedBranches(World& world, const QString& project, const QStringList& branches, const QString& current);
 
 namespace {
 
@@ -432,6 +437,102 @@ const Steps steps([] {
     expect(!editor(world).isEmpty() && editor(world).value(QStringLiteral("seq")) == opened.value(QStringLiteral("seq")) &&
                !editor(world).value(QStringLiteral("editing")).toBool() && !editor(world).value(QStringLiteral("saving")).toBool(),
            QStringLiteral("the new task's editor to stay open; the section is %1").arg(show(section(world))));
+  });
+
+  step(QStringLiteral("the project %1 has the branches %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QStringList branches;
+    for (const QString& name : c[1].split(QLatin1Char(','))) branches.append(name.trimmed());
+    seedBranches(world, c[0], branches, branches.first());
+  });
+  step(QStringLiteral("the user starts a new task and types %1 as its base branch").arg(q), [](World& world, const Captures& c, const Table&) {
+    providersHere(world);
+    const QVariantMap draft = newDraft(world);
+    world.bridge().dispatch(QStringLiteral("scheduledTasks.branches"),
+                            QVariantMap{{QStringLiteral("projectId"), draft.value(QStringLiteral("projectId"))}, {QStringLiteral("query"), c[0]}});
+  });
+  step(QStringLiteral("the base branches offered are %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QStringList wanted;
+    for (const QString& name : c[0].split(QLatin1Char(','))) wanted.append(name.trimmed());
+    world.waitFor([&] {
+      QStringList names;
+      for (const QVariant& ref : editor(world).value(QStringLiteral("branches")).toList()) names.append(ref.toMap().value(QStringLiteral("name")).toString());
+      return names == wanted && !editor(world).value(QStringLiteral("branchesLoading")).toBool();
+    }, [&] { return QStringLiteral("%1 to be offered; the editor is %2").arg(wanted.join(QStringLiteral(", ")), show(editor(world))); });
+  });
+
+  step(QStringLiteral("a new task that runs only on Wednesday"), [](World& world, const Captures&, const Table&) {
+    providersHere(world);
+    world.node.part<FakeTasks>().draft = newDraft(world, {{QStringLiteral("weekdays"), QVariantList{3}}});
+  });
+  step(QStringLiteral("the user turns Wednesday off and saves it"), [](World& world, const Captures&, const Table&) {
+    // What the weekday buttons do (js/scheduledTasks.js toggleDay), run as they run it.
+    QFile file(QStringLiteral(HAL_C2_QML_DIR "/HalC2/Bricks/js/scheduledTasks.js"));
+    expect(file.open(QIODevice::ReadOnly), QStringLiteral("js/scheduledTasks.js to be readable"));
+    QString source = QString::fromUtf8(file.readAll());
+    source.remove(QStringLiteral(".pragma library"));
+    QJSEngine engine;
+    const QJSValue loaded = engine.evaluate(source);
+    expect(!loaded.isError(), loaded.toString());
+    QVariantMap& draft = world.node.part<FakeTasks>().draft;
+    const QJSValue toggled = engine.globalObject().property(QStringLiteral("toggleDay")).call(
+        {engine.toScriptValue(draft.value(QStringLiteral("weekdays"))), 3});
+    expect(!toggled.isError(), toggled.toString());
+    draft.insert(QStringLiteral("weekdays"), toggled.toVariant(QJSValue::ConvertJSObjects).toList());
+    save(world, draft);
+  });
+  step(QStringLiteral("the task still runs on Wednesday"), [](World& world, const Captures&, const Table&) {
+    const QJsonObject schedule = savedTask(world).value(QLatin1String("schedule")).toObject();
+    expect(schedule.value(QLatin1String("weekdays")).toArray() == QJsonArray{3}, QStringLiteral("the schedule is %1").arg(show(schedule.toVariantMap())));
+  });
+
+  step(QStringLiteral("a task saved by an older version that runs every 10 seconds"), [](World& world, const Captures&, const Table&) {
+    providersHere(world);
+    seed(world, task(QStringLiteral("task-legacy"), QStringLiteral("Poll"), QStringLiteral("api"),
+                     {{QStringLiteral("schedule"), QJsonObject{{QStringLiteral("type"), QStringLiteral("interval")}, {QStringLiteral("everyMs"), 10000}}}}));
+  });
+  step(QStringLiteral("the user edits it"), [](World& world, const Captures&, const Table&) {
+    openTasks(world);
+    world.waitFor([&] { return !row(world, QStringLiteral("Poll")).isEmpty(); }, [&] { return QStringLiteral("the task to be listed; it is %1").arg(show(section(world))); });
+    world.bridge().dispatch(QStringLiteral("scheduledTasks.edit"),
+                            QVariantMap{{QStringLiteral("environmentId"), world.node.environmentId}, {QStringLiteral("id"), QStringLiteral("task-legacy")}});
+    world.waitFor([&] { return editor(world).value(QStringLiteral("editing")).toBool(); },
+                  [&] { return QStringLiteral("the editor to open; the section is %1").arg(show(section(world))); });
+  });
+  step(QStringLiteral("the editor says saving raises the interval to a minute"), [](World& world, const Captures&, const Table&) {
+    expect(editor(world).value(QStringLiteral("legacyInterval")).toBool(), QStringLiteral("the editor is %1").arg(show(editor(world))));
+  });
+  step(QStringLiteral("saving it runs every minute"), [](World& world, const Captures&, const Table&) {
+    save(world, editor(world).value(QStringLiteral("draft")).toMap());
+    world.waitFor([&] { return editor(world).isEmpty(); }, [&] { return QStringLiteral("the save to finish; the editor is %1").arg(show(editor(world))); });
+    const QJsonObject schedule = stored(world).last().toObject().value(QLatin1String("schedule")).toObject();
+    expect(schedule.value(QLatin1String("everyMs")).toDouble() == 60000.0, QStringLiteral("the schedule is %1").arg(show(schedule.toVariantMap())));
+  });
+
+  step(QStringLiteral("the user edits the task and another client deletes it"), [](World& world, const Captures&, const Table&) {
+    openTasks(world);
+    world.waitFor([&] { return !ready(world).value(QStringLiteral("tasks")).toList().isEmpty(); },
+                  [&] { return QStringLiteral("the task to be listed; the section is %1").arg(show(section(world))); });
+    world.bridge().dispatch(QStringLiteral("scheduledTasks.edit"),
+                            QVariantMap{{QStringLiteral("environmentId"), world.node.environmentId}, {QStringLiteral("id"), QStringLiteral("task-sentry")}});
+    world.waitFor([&] { return editor(world).value(QStringLiteral("editing")).toBool(); },
+                  [&] { return QStringLiteral("the editor to open; the section is %1").arg(show(section(world))); });
+    world.node.part<FakeTasks>().tasks[world.node.environmentId] = QJsonArray();
+    broadcast(world.node);
+  });
+  step(QStringLiteral("the editor says the task no longer exists"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return editor(world).value(QStringLiteral("missing")).toBool(); },
+                  [&] { return QStringLiteral("the editor to say the task is gone; it is %1").arg(show(editor(world))); });
+  });
+
+  step(QStringLiteral("the failed task is badged %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap failed = row(world, QStringLiteral("Check Sentry"));
+    expect(failed.value(QStringLiteral("lastRun")) == c[0], QStringLiteral("the failed task is %1").arg(show(failed)));
+  });
+  step(QStringLiteral("each task shows its prompt"), [](World& world, const Captures&, const Table&) {
+    for (const QString& title : {QStringLiteral("Nightly build"), QStringLiteral("Check Sentry")}) {
+      const QVariantMap shown = row(world, title);
+      expect(shown.value(QStringLiteral("prompt")) == QStringLiteral("Look at ") + title, QStringLiteral("the task is %1").arg(show(shown)));
+    }
   });
 });
 

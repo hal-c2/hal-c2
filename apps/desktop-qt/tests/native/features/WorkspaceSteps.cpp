@@ -606,3 +606,9 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+// The project's checkout with these branches, `current` checked out and the
+// default, for other step files (ScheduledTasksSteps.cpp).
+void seedBranches(World& world, const QString& project, const QStringList& branches, const QString& current) {
+  gitRepo(world, project, branches, current, current);
+}

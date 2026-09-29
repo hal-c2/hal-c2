@@ -8,10 +8,14 @@
 // disconnected | loading | error | ready, message, linkMissing, tasks [{id,
 // title, prompt, schedule ("Weekdays at 09:00"), when ("Next run in 5m",
 // "Paused"), enabled, lastRunStatus (never | running | succeeded | failed),
+// lastRun ("Succeeded", "Failed", "Running", empty before the first run),
 // lastRunError, busy}]}], editor: null | {environmentId, environments [{id,
 // label}], seq (a new one with each editor opened), editing, connected,
-// saving, draft (below), projects [{id, title}],
-// models [{key, label}]}}.
+// saving, missing (the task edited is gone), error (the list could not
+// load), legacyInterval (the task runs more often than once a minute),
+// draft (below), projects [{id, title}], models [{key, label}], branches
+// [{name, current, isDefault, isRemote}] with branchesTotal and
+// branchesLoading}}.
 //
 // A draft is {title, prompt, enabled, scheduleMode: fixed | interval,
 // intervalMinutes, timeOfDay, weekdays [0-6, Sunday first], projectId,
@@ -19,7 +23,8 @@
 // startFromOrigin, checkoutPath, modelKey ("instance:model")}.
 //
 // Actions: `scheduledTasks.new`, `.edit {environmentId, id}`, `.editorEnvironment
-// {id}` (a new task only), `.close`, `.save {draft}`, `.enable {environmentId, id,
+// {id}` (a new task only), `.close`, `.save {draft}`, `.branches {projectId,
+// query}` (the editor's base branch choices, from vcs.listRefs), `.enable {environmentId, id,
 // enabled}`, `.run {environmentId, id}`, `.delete {environmentId, id}`, and
 // `.open {environmentId, taskId}` (a link to a task: its editor, or "Task
 // unavailable").
@@ -122,6 +127,14 @@ bool offers(const QJsonArray& entries, const QJsonObject& selection) {
   return false;
 }
 
+// The badge for a task's last run; none before its first.
+QString lastRunLabel(const QString& status) {
+  if (status == QLatin1String("succeeded")) return QStringLiteral("Succeeded");
+  if (status == QLatin1String("failed")) return QStringLiteral("Failed");
+  if (status == QLatin1String("running")) return QStringLiteral("Running");
+  return {};
+}
+
 QString keyOf(const QJsonObject& selection) {
   return selection.isEmpty() ? QString() : at(selection, "instanceId") + QLatin1Char(':') + at(selection, "model");
 }
@@ -172,6 +185,8 @@ public:
       if (m_editor.open && m_editor.task.isEmpty()) openEditor(input.value(QStringLiteral("id")).toString(), {});
     } else if (action == QLatin1String("scheduledTasks.close")) {
       if (!m_editor.saving) m_editor = {};
+    } else if (action == QLatin1String("scheduledTasks.branches")) {
+      branches(input.value(QStringLiteral("projectId")).toString(), input.value(QStringLiteral("query")).toString());
     } else if (action == QLatin1String("scheduledTasks.save")) {
       save(input.value(QStringLiteral("draft")).toMap());
     } else if (action == QLatin1String("scheduledTasks.enable")) {
@@ -203,6 +218,9 @@ private:
     QJsonObject task;  // the task edited, empty for a new one
     QVariantMap draft;
     bool saving = false;
+    QJsonArray branches;  // the project's refs matching the base branch typed
+    int branchesTotal = 0;
+    bool branchesLoading = false;
   };
   struct Link {
     QString environmentId, taskId;
@@ -503,6 +521,34 @@ private:
                    });
   }
 
+  // The branches of the editor's project a new worktree can start from, as
+  // the header's branch picker lists them.
+  void branches(const QString& projectId, const QString& query) {
+    if (!m_editor.open) return;
+    const QString environmentId = m_editor.environmentId;
+    const QString cwd = at(m_store->projectRow(environmentId, projectId), "workspaceRoot");
+    const int seq = m_editorSeq;
+    const int request = ++m_branchesRequest;
+    if (cwd.isEmpty()) {
+      m_editor.branches = {};
+      m_editor.branchesTotal = 0;
+      return;
+    }
+    m_editor.branchesLoading = true;
+    QJsonObject input{{QStringLiteral("cwd"), cwd}, {QStringLiteral("limit"), 20}};
+    if (!query.trimmed().isEmpty()) input.insert(QStringLiteral("query"), query.trimmed());
+    const QPointer<ScheduledTasksController> self(this);
+    m_client->call(environmentId, QStringLiteral("vcs.listRefs"), input,
+                   [self, seq, request](const QJsonValue& result, const std::optional<QString>&) {
+                     if (!self || self->m_editorSeq != seq || self->m_branchesRequest != request || !self->m_editor.open) return;
+                     const QJsonObject list = result.toObject();
+                     self->m_editor.branchesLoading = false;
+                     self->m_editor.branches = list.value(QLatin1String("refs")).toArray();
+                     self->m_editor.branchesTotal = list.value(QLatin1String("totalCount")).toInt(int(self->m_editor.branches.size()));
+                     self->publish();
+                   });
+  }
+
   void act(const QString& environmentId, const QString& id, const QString& method, const QJsonObject& payload) {
     const QString busy = environmentId + QLatin1Char('\n') + id;
     if (m_busy.contains(busy) || find(environmentId, id).isEmpty()) return;
@@ -557,6 +603,7 @@ private:
                                                         : QStringLiteral("Next run %1").arg(relativeLabel(next, now))},
               {QStringLiteral("enabled"), enabled},
               {QStringLiteral("lastRunStatus"), task.value(QLatin1String("lastRunStatus")).toString(QStringLiteral("never"))},
+              {QStringLiteral("lastRun"), lastRunLabel(task.value(QLatin1String("lastRunStatus")).toString())},
               {QStringLiteral("lastRunError"), at(task, "lastRunError")},
               {QStringLiteral("busy"), m_busy.contains(environmentId + QLatin1Char('\n') + id)},
           });
@@ -580,6 +627,17 @@ private:
         choices.append(QVariantMap{{QStringLiteral("id"), environmentId}, {QStringLiteral("label"), label(environmentId)}});
       }
       const QString environmentId = m_editor.environmentId;
+      const Listing listing = m_listings.value(environmentId);
+      const QString taskId = at(m_editor.task, "id");
+      const QJsonObject schedule = m_editor.task.value(QLatin1String("schedule")).toObject();
+      QVariantList refs;
+      for (const QJsonValue& ref : m_editor.branches) {
+        const QJsonObject entry = ref.toObject();
+        refs.append(QVariantMap{{QStringLiteral("name"), at(entry, "name")},
+                                {QStringLiteral("current"), entry.value(QLatin1String("current")).toBool()},
+                                {QStringLiteral("isDefault"), entry.value(QLatin1String("isDefault")).toBool()},
+                                {QStringLiteral("isRemote"), entry.value(QLatin1String("isRemote")).toBool()}});
+      }
       editor = QVariantMap{
           {QStringLiteral("seq"), m_editorSeq},
           {QStringLiteral("environmentId"), environmentId},
@@ -588,6 +646,15 @@ private:
           {QStringLiteral("editing"), !m_editor.task.isEmpty()},
           {QStringLiteral("connected"), scope->online(environmentId) && m_listings.value(environmentId).listed},
           {QStringLiteral("saving"), m_editor.saving},
+          {QStringLiteral("missing"), !taskId.isEmpty() && listing.listed && std::none_of(listing.tasks.cbegin(), listing.tasks.cend(), [&](const QJsonValue& task) {
+                                        return at(task.toObject(), "id") == taskId;
+                                      })},
+          {QStringLiteral("error"), listing.error},
+          {QStringLiteral("legacyInterval"), at(schedule, "type") == QLatin1String("interval") &&
+                                                 schedule.value(QLatin1String("everyMs")).toDouble() < 60000.0},
+          {QStringLiteral("branches"), refs},
+          {QStringLiteral("branchesTotal"), m_editor.branchesTotal},
+          {QStringLiteral("branchesLoading"), m_editor.branchesLoading},
           {QStringLiteral("draft"), m_editor.draft},
           {QStringLiteral("projects"), projects(environmentId)},
           {QStringLiteral("models"), models(environmentId, m_editor.draft.value(QStringLiteral("modelKey")).toString())},
@@ -611,6 +678,7 @@ private:
   Editor m_editor;
   Link m_link;
   int m_editorSeq = 0;  // which editor the dialog's draft belongs to
+  int m_branchesRequest = 0;  // the latest branch listing asked for
   QTimer m_tick;
 };
 

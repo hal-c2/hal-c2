@@ -83,5 +83,71 @@ Item {
             compare(saved.payload.draft.title, "a");
             compare(saved.payload.draft.workspaceMode, "worktree");
         }
+
+        function editorState(overrides, draftOverrides) {
+            return { open: true, canCreate: true, environments: [],
+                     editor: Object.assign({ seq: 1, environmentId: "env-a", environments: [{ id: "env-a", label: "This machine" }],
+                                             editing: true, connected: true, saving: false, missing: false, error: "",
+                                             legacyInterval: false, branches: [], branchesTotal: 0, branchesLoading: false,
+                                             draft: Object.assign(root.draft(), draftOverrides ?? {}),
+                                             projects: [{ id: "api", title: "api" }],
+                                             models: [{ key: "codex:gpt", label: "Codex · gpt" }] }, overrides) };
+        }
+
+        function test_a_row_previews_its_prompt_and_badges_its_last_run() {
+            Shell.state = { scheduledTasks: { open: true, canCreate: true, editor: null, environments: [
+                { id: "env-a", label: "This machine", heading: false, status: "ready", tasks: [
+                    root.task({ prompt: "one\ntwo\nthree\nfour", lastRun: "Succeeded" })] }] } };
+            const page = createTemporaryObject(tasksComponent, root);
+            const row = findChild(page, "scheduledTask:t1");
+            const preview = findChild(row, "promptPreview");
+            compare(preview.lineCount, 2);
+            verify(preview.truncated);
+            const badge = findChild(row, "lastRun");
+            verify(badge.visible);
+            compare(badge.text, "Succeeded");
+        }
+
+        function test_the_last_weekday_stays_chosen() {
+            Shell.state = { scheduledTasks: editorState({}, { weekdays: [3] }) };
+            const page = createTemporaryObject(tasksComponent, root);
+            const editor = findChild(page, "scheduledTaskEditor");
+            tryVerify(() => editor.opened);
+            mouseClick(findChild(editor.contentItem, "weekday3"));
+            compare(editor.draft.weekdays, [3]);
+            mouseClick(findChild(editor.contentItem, "weekday1"));
+            mouseClick(findChild(editor.contentItem, "weekday3"));
+            compare(editor.draft.weekdays, [1]);
+        }
+
+        function test_the_editor_says_when_its_task_is_gone_or_uses_a_legacy_interval() {
+            Shell.state = { scheduledTasks: editorState({ missing: true, legacyInterval: true }, { scheduleMode: "interval", intervalMinutes: "1" }) };
+            const page = createTemporaryObject(tasksComponent, root);
+            const editor = findChild(page, "scheduledTaskEditor");
+            tryVerify(() => editor.opened);
+            const missing = findChild(editor, "missing");
+            verify(missing.visible);
+            compare(missing.text, "This scheduled task no longer exists.");
+            verify(findChild(editor, "legacyInterval").visible);
+        }
+
+        function test_the_base_branch_is_picked_from_the_projects_branches() {
+            Shell.state = { scheduledTasks: editorState({ editing: false, branches: [
+                { name: "main", current: false, isDefault: true, isRemote: false },
+                { name: "release", current: false, isDefault: false, isRemote: false }], branchesTotal: 2 }) };
+            const page = createTemporaryObject(tasksComponent, root);
+            const editor = findChild(page, "scheduledTaskEditor");
+            tryVerify(() => editor.opened);
+            findChild(editor, "baseRef").forceActiveFocus();
+            const asked = Shell.dispatchedActions.find(entry => entry.action === "scheduledTasks.branches");
+            compare(asked.payload.projectId, "api");
+            const branches = findChild(editor, "branches");
+            tryVerify(() => branches.opened);
+            const list = branches.contentItem;
+            tryVerify(() => list.count === 2);
+            list.currentIndex = 1;
+            mouseClick(list.currentItem);
+            compare(editor.draft.baseRef, "release");
+        }
     }
 }
