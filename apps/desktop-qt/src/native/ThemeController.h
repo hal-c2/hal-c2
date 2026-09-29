@@ -44,7 +44,8 @@ class ThemeController : public QObject, public NativeController {
 public:
   ThemeController(ShellBridge* bridge, NodeClient* client, QObject* parent = nullptr);
 
-  void activate() override {}
+  // Registers the appearance shortcut's command.
+  void activate() override;
   // The page forwards its own theme commands here (`appearance.cycle`,
   // `theme.mode {mode}`, `theme.choose {id}`, `theme.chooseHalf {appearance,
   // id}`), so its shortcut and palette change the desktop's theme.

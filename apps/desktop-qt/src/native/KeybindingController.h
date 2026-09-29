@@ -47,9 +47,7 @@ class KeybindingController : public QObject, public NativeController {
   Q_PROPERTY(bool saving READ saving NOTIFY savingChanged)
 
 public:
-  // The appearance toggle's command. Its owner (the native appearance
-  // setting) registers it, `Keybindings.commands.add(kAppearanceCycle, ...)`;
-  // until then mod+alt+shift+a is still the page's.
+  // The appearance toggle's command, which ThemeController registers.
   static inline const QString kAppearanceCycle = QStringLiteral("appearance.cycle");
 
   KeybindingController(ShellBridge* bridge, NodeClient* client, QObject* parent = nullptr);

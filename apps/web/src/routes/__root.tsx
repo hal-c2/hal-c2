@@ -250,7 +250,8 @@ function RootRouteView() {
           <ConnectOnboardingDialog />
           <SshPasswordPromptDialog />
           <SnapShotCoordinator />
-          <ThreadNotificationCoordinator />
+          {/* The desktop shell raises its own alerts (AlertController). */}
+          {isHalC2Shell ? null : <ThreadNotificationCoordinator />}
           <ConfirmDialogHost />
           <CustomSnoozeDialogHost />
           <SlowRpcRequestToastCoordinator />

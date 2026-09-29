@@ -79,6 +79,17 @@ Item {
             tryCompare(row, "showActions", true);
         }
 
+        function test_searchOpensTheCommandPalette() {
+            PaletteModel.open = false;
+            let sidebar = createTemporaryObject(sidebarComponent, root, { showScope: true });
+            verify(!!sidebar, "Component exists");
+            let search = findChild(sidebar, "search");
+            verify(!!search, "Object exists");
+            mouseClick(search);
+            compare(PaletteModel.open, true);
+            PaletteModel.open = false;
+        }
+
         function test_customModelFiltersRowsAndKeepsNavigation() {
             let sidebar = createTemporaryObject(sidebarComponent, root);
             verify(!!sidebar, "Component exists");

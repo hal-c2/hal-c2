@@ -10,6 +10,8 @@
 #include <cmath>
 #include <optional>
 
+#include "KeybindingController.h"
+#include "Keybindings.h"
 #include "NativeShell.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
@@ -280,6 +282,12 @@ QStringList ThemeController::roles() const {
   QStringList result;
   for (const QJsonValue& role : builtIns().roles) result.append(role.toString());
   return result;
+}
+
+void ThemeController::activate() {
+  const QString command = KeybindingController::kAppearanceCycle;
+  auto* commands = NativeShell::of(this)->controller<KeybindingController>()->commands();
+  if (!commands->contains(command)) commands->add(command, keybindings::commandLabel(command), [this] { cycleAppearance(); });
 }
 
 bool ThemeController::handle(const QString& action, const QVariant& payload) {

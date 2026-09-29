@@ -155,7 +155,7 @@ Feature: Keybindings
         | command               | key         | status  | note                                      |
         | chat.new              | mod+n       | aligned | the shell starts a new thread             |
         | chat.newLocal         | mod+shift+n | aligned | forwarded as a keybinding press           |
-        | commandPalette.toggle | mod+k       | aligned | forwarded as a keybinding press           |
+        | commandPalette.toggle | mod+k       | aligned | the shell opens the command palette       |
         | terminal.toggle       | mod+j       | aligned | the shell toggles the terminal drawer     |
         | sidebar.toggle        | mod+b       | aligned | the shell toggles the sidebar             |
         | rightPanel.toggle     | mod+alt+b   | aligned | the shell toggles the right panel         |
@@ -201,7 +201,7 @@ Feature: Keybindings
     @desktop
     Scenario: Window shortcuts stand down while the page has focus
       Given the page has keyboard focus
-      When the user presses mod+k
+      When the user presses mod+p
       Then the page handles the key itself
       And the desktop shell does not forward it a second time
 

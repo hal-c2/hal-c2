@@ -6,8 +6,10 @@
 #include <QDBusMessage>
 #endif
 
-// Opt-in OS delivery. Linux uses notification IDs so an older toast always
-// opens its own thread, even after newer notifications have been delivered.
+// The desktop's notification service (org.freedesktop.Notifications), where
+// AlertController's system notifications go; off until enabled. One
+// notification per key: a newer one replaces it, and clicking an older one
+// still reports its own key, even after newer ones were delivered.
 class NativeNotifications : public QObject {
   Q_OBJECT
   Q_PROPERTY(bool enabled READ enabled WRITE setEnabled NOTIFY enabledChanged)
@@ -23,6 +25,8 @@ public:
   QString lastError() const { return m_lastError; }
   Q_INVOKABLE bool show(const QString& key, const QString& title, const QString& body,
                         bool silent = false, int timeoutMs = -1);
+  // Closes every notification shown.
+  Q_INVOKABLE void closeAll();
 
 signals:
   void enabledChanged();
@@ -38,7 +42,6 @@ private slots:
   void refreshSupport();
 
 private:
-  void closeAll();
   void setError(const QString& error);
   bool m_enabled = false;
   bool m_supported = false;
