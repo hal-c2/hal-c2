@@ -31,6 +31,11 @@ Feature: Provider setup, updates and sign-in
     When the user updates Codex
     Then Codex is updated through Homebrew
 
+  Scenario: Only npm installs can install a chosen version
+    Given Codex was installed with Homebrew and is outdated
+    When the user installs Codex "0.1.5"
+    Then the user is told this installation cannot install "v0.1.5"
+
   # Neither server invents a command for an installation it cannot prove it owns
   # (provider_updates.ex update_command/2, providerMaintenance.ts manual-only);
   # settings/updates.feature covers the refusal when the user updates anyway.

@@ -195,6 +195,15 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     context
   end
 
+  step "the user is told this installation cannot install {string}",
+       %{args: [version]} = context do
+    assert {:error, message, _} = context.reply
+    assert message == "This installation cannot install #{version}."
+    assert brew_log(context) == []
+    refute Acp.provider("codex")["versionAdvisory"]["canInstallVersion"]
+    context
+  end
+
   step "a Claude update is running", context do
     ctx = homebrew_codex(context)
     home = context.node.home
