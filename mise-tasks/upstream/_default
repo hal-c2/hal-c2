@@ -14,7 +14,9 @@ cursor_file=features/UPSTREAM
 limit="" brief="" range=""
 while (($#)); do
   case $1 in
-    --limit) limit=${2:?--limit needs a number}; shift 2 ;;
+    --limit)
+      [[ ${2:-} =~ ^[0-9]+$ ]] && ((10#$2 > 0)) || { echo "upstream: --limit needs a positive number" >&2; exit 2; }
+      limit=$((10#$2)); shift 2 ;;
     --brief) brief=1; shift ;;
     -*) echo "upstream: unknown flag $1" >&2; exit 2 ;;
     *) range=$1; shift ;;
@@ -61,6 +63,7 @@ for entry in "${commits[@]}"; do
   echo
   if [[ -z $pr ]]; then
     echo "## ${sha:0:9} $subject (no pull request)"
+    echo "https://github.com/$repo/commit/$sha"
     echo
     git log -1 --format=%b "$sha"
     git show --stat --format= "$sha" | tail -n 1

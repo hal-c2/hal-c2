@@ -61,7 +61,8 @@ These are the mistakes the first upstream batch (hal-c2/hal-c2#10) made and revi
   them. Provider-specific behaviour carries its plugin tag; do not invent a family tag.
 - **Declarative.** What the user does and observes, never widgets or layout, per the README.
 - **Cite the pull request**, `https://github.com/pingdotgg/t3code/pull/<n>`, in the file's
-  `# Sources:` block, not commit hashes.
+  `# Sources:` block. A commit without a pull request is cited by the full commit URL the
+  digest prints, never a bare hash.
 - **No review register.** Nothing under `docs/`. The PR description is the record.
 
 ## Finish
