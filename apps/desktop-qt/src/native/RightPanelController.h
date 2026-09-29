@@ -33,10 +33,14 @@ class ShellStore;
 //
 // Publishes `panel` for the RightPanel brick, null away from a thread:
 //   {threadKey, isOpen, activeId, tabs: [{id, kind, title}], width,
-//    maximized, detailsOpen,
+//    maximized, detailsOpen, details,
 //    canAdd: {diff, files, agents, terminal, pullRequests, pullRequest,
 //             previews}}
 // (`pullRequests` and `pullRequest`, the review: the thread has linked ones.)
+// `details`, while the thread details column shows, else null:
+//   {environment, online, project, folder, checkout ("Local"|"Worktree"),
+//    branch, relations: [{threadKey, title, relation}]}
+// (its parent, and the forks and subagents it started).
 //
 // Actions: `rightPanel.toggle`, `rightPanel.activate {id}`,
 // `rightPanel.close {id}`, `rightPanel.add {kind}`, `rightPanel.resize
@@ -147,6 +151,7 @@ private:
   void retarget();
   void update();
   void publish();
+  QVariantMap threadDetails() const;
   void save();
 
   ShellBridge* m_bridge;

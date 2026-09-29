@@ -61,6 +61,10 @@ void toast(QObject* owner, const QString& type, const QString& title, const QStr
   if (auto* toasts = NativeShell::of(owner)->controller<ToastController>()) toasts->show(type, title, description);
 }
 
+QString text(const QJsonObject& row, QLatin1StringView field) {
+  return row.value(field).toString();
+}
+
 }  // namespace
 
 RightPanelController::RightPanelController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent)
@@ -442,6 +446,7 @@ void RightPanelController::publish() {
                         {QStringLiteral("width"), m_width},
                         {QStringLiteral("maximized"), state.open && state.maximized},
                         {QStringLiteral("detailsOpen"), state.details},
+                        {QStringLiteral("details"), state.details ? QVariant(threadDetails()) : QVariant()},
                         {QStringLiteral("canAdd"),
                          QVariantMap{{QStringLiteral("diff"), true},
                                      {QStringLiteral("files"), !m_files.root().isEmpty()},
@@ -451,6 +456,50 @@ void RightPanelController::publish() {
                                      {QStringLiteral("pullRequest"), m_pullRequests.count() > 0},
                                      {QStringLiteral("previews"), true}}},
                     });
+}
+
+// What the thread details column shows of the thread, from the rows the
+// store holds: where it runs, its checkout, and the threads it came from or
+// started (its lineage's parent, and every thread whose parent it is).
+QVariantMap RightPanelController::threadDetails() const {
+  const qsizetype colon = m_thread.indexOf(QLatin1Char(':'));
+  const QString environmentId = m_thread.left(colon);
+  const QString threadId = m_thread.mid(colon + 1);
+  const QJsonObject row = m_store->threadRow(m_thread);
+  const QJsonObject project = m_store->projectRow(environmentId, text(row, QLatin1String("projectId")));
+  const QJsonObject environment = m_store->environment(environmentId);
+  const QString worktree = text(row, QLatin1String("worktreePath"));
+  const auto titleOf = [this, &environmentId](const QString& id) {
+    const QString title = text(m_store->threadRow(environmentId + QLatin1Char(':') + id), QLatin1String("title"));
+    return title.isEmpty() ? QStringLiteral("Unavailable thread") : title;
+  };
+  QVariantList relations;
+  const QJsonObject lineage = row.value(QLatin1String("lineage")).toObject();
+  const QString parent = text(lineage, QLatin1String("parentThreadId"));
+  if (!parent.isEmpty()) {
+    relations.append(QVariantMap{{QStringLiteral("threadKey"), environmentId + QLatin1Char(':') + parent},
+                                 {QStringLiteral("title"), titleOf(parent)},
+                                 {QStringLiteral("relation"), text(lineage, QLatin1String("relationshipToParent")) == QLatin1String("subagent")
+                                                                  ? QStringLiteral("Started as a subagent of")
+                                                                  : QStringLiteral("Forked from")}});
+  }
+  for (const sidebar::Thread& thread : m_store->threads()) {
+    if (thread.environmentId != environmentId || thread.archivedAt) continue;
+    const QJsonObject childLineage = m_store->threadRow(thread.key()).value(QLatin1String("lineage")).toObject();
+    if (text(childLineage, QLatin1String("parentThreadId")) != threadId) continue;
+    relations.append(QVariantMap{{QStringLiteral("threadKey"), thread.key()},
+                                 {QStringLiteral("title"), thread.title},
+                                 {QStringLiteral("relation"), thread.subagent ? QStringLiteral("Subagent") : QStringLiteral("Fork")}});
+  }
+  return {
+      {QStringLiteral("environment"), text(environment, QLatin1String("label")).isEmpty() ? environmentId : text(environment, QLatin1String("label"))},
+      {QStringLiteral("online"), m_store->threadOnline(m_thread)},
+      {QStringLiteral("project"), text(project, QLatin1String("title"))},
+      {QStringLiteral("folder"), worktree.isEmpty() ? text(project, QLatin1String("workspaceRoot")) : worktree},
+      {QStringLiteral("checkout"), worktree.isEmpty() ? QStringLiteral("Local") : QStringLiteral("Worktree")},
+      {QStringLiteral("branch"), text(row, QLatin1String("branch"))},
+      {QStringLiteral("relations"), relations},
+  };
 }
 
 // --- Kept ----------------------------------------------------------------------------

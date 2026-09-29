@@ -761,6 +761,54 @@ const Steps steps([] {
     const QVariant state = world.state(QStringLiteral("panel"));
     expect(at(state, QStringLiteral("isOpen")).toBool() && !at(state, QStringLiteral("maximized")).toBool(), describePanel(world));
   });
+  // The thread details column (threadPanel.toggle, the header's info button).
+  step(QStringLiteral("the user toggles the thread details panel"), [](World& world, const Captures&, const Table&) {
+    // The keybinding's command, as the header's button dispatches it.
+    expect(world.native().controller<KeybindingController>()->commands()->run(QStringLiteral("threadPanel.toggle")), describePanel(world));
+    world.sync();
+  });
+  step(QStringLiteral("the thread details panel is shown"), [](World& world, const Captures&, const Table&) {
+    if (!world.checking && !panel(world)->detailsOpen()) world.bridge().dispatch(QStringLiteral("threadPanel.toggle"), QVariantMap());
+    world.sync();
+    const QVariant state = world.state(QStringLiteral("panel"));
+    const QVariant details = at(state, QStringLiteral("details"));
+    expect(at(state, QStringLiteral("detailsOpen")).toBool() && at(details, QStringLiteral("project")) == kProject &&
+               at(details, QStringLiteral("checkout")) == QLatin1String("Local") && at(details, QStringLiteral("online")).toBool(),
+           describePanel(world));
+  });
+  step(QStringLiteral("the thread details panel is hidden"), [](World& world, const Captures&, const Table&) {
+    const QVariant state = world.state(QStringLiteral("panel"));
+    expect(!at(state, QStringLiteral("detailsOpen")).toBool() && !at(state, QStringLiteral("details")).isValid(), describePanel(world));
+  });
+  step(QStringLiteral("the thread was forked from %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString parent = QStringLiteral("thread-parent");
+    world.node.threads.insert(parent, {{QStringLiteral("id"), parent}, {QStringLiteral("title"), c[0]}, {QStringLiteral("projectId"), kProject},
+                                       {QStringLiteral("createdAt"), QStringLiteral("2026-09-22T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-22T09:00:00Z")}});
+    world.node.sendRow(parent, world.node.threads.value(parent));
+    QJsonObject row = world.node.threads.value(kThread);
+    row.insert(QStringLiteral("lineage"), QJsonObject{{QStringLiteral("parentThreadId"), parent}, {QStringLiteral("relationshipToParent"), QStringLiteral("fork")}});
+    world.node.threads.insert(kThread, row);
+    world.node.sendRow(kThread, row);
+    world.sync();
+  });
+  step(QStringLiteral("the thread details panel names %1 as the thread it was forked from").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantList relations = at(at(world.state(QStringLiteral("panel")), QStringLiteral("details")), QStringLiteral("relations")).toList();
+    expect(relations.size() == 1 && at(relations.first(), QStringLiteral("title")) == c[0] &&
+               at(relations.first(), QStringLiteral("relation")) == QLatin1String("Forked from"),
+           describePanel(world));
+  });
+  step(QStringLiteral("the user opens the related thread %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    for (const QVariant& relation : at(at(world.state(QStringLiteral("panel")), QStringLiteral("details")), QStringLiteral("relations")).toList()) {
+      if (at(relation, QStringLiteral("title")) == c[0]) {
+        world.bridge().dispatch(QStringLiteral("rightPanel.openThread"), QVariantMap{{QStringLiteral("threadKey"), at(relation, QStringLiteral("threadKey"))}});
+      }
+    }
+    world.sync();
+  });
+  step(QStringLiteral("the thread %1 is open").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString key = world.node.environmentId + QStringLiteral(":thread-parent");
+    world.waitFor([&] { return store(world)->activeThread() == key; }, [&] { return QStringLiteral("%1 to open").arg(c[0]); });
+  });
   step(QStringLiteral("the user looks at what can be added to the right panel"), [](World& world, const Captures&, const Table&) { world.sync(); });
   step(QStringLiteral("pull request cannot be added"), [](World& world, const Captures&, const Table&) {
     expect(!at(world.state(QStringLiteral("panel")), QStringLiteral("canAdd.pullRequests")).toBool() &&

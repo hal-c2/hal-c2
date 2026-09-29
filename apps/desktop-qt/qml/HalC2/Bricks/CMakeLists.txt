@@ -73,6 +73,7 @@ qt_add_qml_module(hal_c2_bricks
     PullRequestsPanel.qml
     PullRequestReviewPanel.qml
     PreviewsPanel.qml
+    ThreadDetailsPanel.qml
   RESOURCES
     qmldir
     js/shell-connect.js

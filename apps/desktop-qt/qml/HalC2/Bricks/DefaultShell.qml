@@ -85,6 +85,7 @@ ShellWindow {
                     visible: ready
                     sidebarToggle: root.sidebarCollapsed
                     panelToggle: panelView.available ? panelView.open : null
+                    detailsToggle: Shell.state.panel ? Shell.state.panel.detailsOpen === true : null
                     window: root
                 }
 
@@ -141,6 +142,14 @@ ShellWindow {
 
                     Layout.fillWidth: true
                 }
+            }
+
+            // The thread details column (threadPanel.toggle), beside the thread.
+            ThreadDetailsPanel {
+                Layout.fillHeight: true
+                Layout.preferredWidth: implicitWidth
+                details: Shell.state.panel?.details ?? null
+                visible: details !== null && !panelView.maximized
             }
 
             RightPanel {

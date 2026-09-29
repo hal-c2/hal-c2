@@ -4,6 +4,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (header strip: run action, open in editor, git actions)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (workspace.runScript, workspace.openInEditor)
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/ThreadDetailsPanel.qml (threadPanel.toggle)
 #   apps/desktop-qt/src/native/RightPanelController.cpp (tabs, open, canAdd; the Pull requests and Previews tabs)
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 #   apps/desktop-qt/tests/native/features/TerminalSteps.cpp (terminal drawer, right panel terminal tabs)
@@ -234,10 +235,24 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the "Files" tab is active
       And the right panel takes the new width
 
-    @backlog @desktop
+    @desktop
     Scenario: Toggling the thread details panel
       When the user toggles the thread details panel
       Then the thread details panel is shown
+
+    @desktop
+    Scenario: Hiding the thread details panel
+      Given the thread details panel is shown
+      When the user toggles the thread details panel
+      Then the thread details panel is hidden
+
+    @desktop
+    Scenario: The thread details panel leads to the thread it was forked from
+      Given the thread was forked from "Planning"
+      And the thread details panel is shown
+      Then the thread details panel names "Planning" as the thread it was forked from
+      When the user opens the related thread "Planning"
+      Then the thread "Planning" is open
 
   Rule: Terminal drawer
 

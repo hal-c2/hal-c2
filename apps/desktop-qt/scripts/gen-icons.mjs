@@ -76,6 +76,7 @@ const ICONS = [
   "plus",
   "refresh-cw",
   "search",
+  "server",
   "settings",
   "sparkles",
   "square",
