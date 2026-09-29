@@ -13,6 +13,16 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   OpenCode also serves its HTTP API (`HalC2.Acp.OpenCode`): each turn records the
   OpenCode message it began with, where a rewind or a fork cuts the session.
+
+  Grok's background work outlives its turn: subagents it spawns in the background,
+  and shells and monitors it starts as tasks (`BackgroundTaskStarted` and `Monitor`
+  tool results, or a running tool `x.ai/task_backgrounded` names). They stay running,
+  so the thread lists them as background work and the idle reaper keeps the process
+  that runs them, until Grok reports them ended (`x.ai/task_completed`, a
+  `kill_command_or_subagent` result, or its "Background subagent ... completed"
+  notice). Stopping the thread, an interrupted or failed turn, or a rewind ends them
+  and the agent process with them, since only that stops them; its exit or release
+  ends them too. The other ACP agents finish their tools and subagents inside the turn.
   """
 
   use GenServer, restart: :temporary
@@ -27,8 +37,12 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Antigravity.Session, as: Antigravity
   alias HalC2.Acp.OpenCode
 
-  @state_version 7
+  @state_version 8
   @registry HalC2.Acp.Registry
+
+  # Grok's background task notifications.
+  @xai_backgrounded ["x.ai/task_backgrounded", "_x.ai/task_backgrounded"]
+  @xai_completed ["x.ai/task_completed", "_x.ai/task_completed"]
 
   # Grok's own requests (`x.ai/...`), bare or wrapped in `{method, params}`.
   @xai_questions ["x.ai/ask_user_question", "_x.ai/ask_user_question"]
@@ -148,9 +162,13 @@ defmodule HalC2.Acp.ThreadRuntime do
        # ACP has no system prompt: a session given HAL-C2's tools hears about them in
        # its first prompt.
        announce: false,
-       # Subagents the agent started this turn (Grok's `task` tool): tool call id ->
-       # %{sub: NativeSubagent handle, session: child session id}.
+       # Subagents the agent started this turn, or in the background before it (Grok's
+       # `task` tool): tool call id -> %{sub: NativeSubagent handle, session: child
+       # session id, done: bool, background: bool}.
        subagents: %{},
+       # Grok's background tasks: task id -> the tool call's id while its turn runs,
+       # then its turn item (`%{id, node}`).
+       tasks: %{},
        # Child-session updates that arrived before their subagent named its session.
        orphans: %{},
        # The session's config options (`configId` -> current value).
@@ -167,7 +185,17 @@ defmodule HalC2.Acp.ThreadRuntime do
     driver = turn.ids.driver
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:#{driver}:#{turn.ids.run}")
     turn = %{turn | ids: ids}
-    state = %{state | turn: turn, items: %{}, interrupted: false, subagents: %{}, orphans: %{}}
+    # Subagents still working in the background carry over; the rest were this turn's.
+    subagents = Map.filter(state.subagents, fn {_, e} -> background?(e) and not e.done end)
+
+    state = %{
+      state
+      | turn: turn,
+        items: %{},
+        interrupted: false,
+        subagents: subagents,
+        orphans: %{}
+    }
 
     with :ok <- Antigravity.check_turn(turn),
          {:ok, state} <- ensure_session(state, turn),
@@ -215,7 +243,12 @@ defmodule HalC2.Acp.ThreadRuntime do
     {:reply, :ok, %{state | interrupted: true}}
   end
 
-  def handle_call(:interrupt, _from, state), do: {:reply, {:error, "no running turn"}, state}
+  # Between turns, stopping the thread stops its background work.
+  def handle_call(:interrupt, _from, state) do
+    if work?(state),
+      do: {:reply, :ok, stop_work(state, "interrupted")},
+      else: {:reply, {:error, "no running turn"}, state}
+  end
 
   def handle_call({:steer, run_id, message}, _from, %{agent: "opencode", prompt: ref} = state)
       when ref != nil and not state.interrupted and state.turn.ids.run == run_id do
@@ -234,12 +267,13 @@ defmodule HalC2.Acp.ThreadRuntime do
   # ends, and the thread's next message starts the agent again.
   def handle_call(:close, _from, state) do
     state = if state.turn, do: end_turn(%{state | prompt: nil}, "interrupted", nil), else: state
+    state = end_work(state, "interrupted")
     if state.conn, do: Connection.stop(state.conn)
     {:reply, :ok, released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})}
   end
 
   def handle_call(:rollback, _from, %{turn: nil} = state),
-    do: {:reply, :ok, %{state | session_id: nil}}
+    do: {:reply, :ok, %{stop_work(state, "interrupted") | session_id: nil}}
 
   def handle_call(:rollback, _from, state),
     do: {:reply, {:error, "Interrupt the current turn before rewinding."}, state}
@@ -305,10 +339,30 @@ defmodule HalC2.Acp.ThreadRuntime do
         state
       ) do
     cond do
-      state.replaying or state.turn == nil -> {:noreply, state}
+      state.replaying -> {:noreply, state}
       child_session?(params["sessionId"], state) -> {:noreply, child_update(params, state)}
+      subagent_ended?(update) -> {:noreply, subagent_ended(state, update)}
+      state.turn == nil -> {:noreply, state}
       true -> {:noreply, update(update, state)}
     end
+  end
+
+  # Grok's background tasks: one it moved to the background, one that ended.
+  def handle_info({:json_rpc, _conn, {:notification, method, params}}, state)
+      when method in @xai_backgrounded do
+    update = xai_params(params)["update"] || %{}
+    tool = update["tool_call_id"]
+
+    if is_binary(update["task_id"]) and is_map_key(state.items, tool),
+      do: {:noreply, %{state | tasks: Map.put(state.tasks, update["task_id"], tool)}},
+      else: {:noreply, state}
+  end
+
+  def handle_info({:json_rpc, _conn, {:notification, method, params}}, state)
+      when method in @xai_completed do
+    update = xai_params(params)["update"] || %{}
+    task = get_in(update, ["task_snapshot", "task_id"]) || update["task_id"]
+    {:noreply, if(is_binary(task), do: end_task(state, task, "completed"), else: state)}
   end
 
   def handle_info({:json_rpc, conn, {:request, id, "session/request_permission", params}}, state) do
@@ -384,7 +438,9 @@ defmodule HalC2.Acp.ThreadRuntime do
       end
 
     state = record_turn(%{state | prompt: nil})
-    {:noreply, end_turn(state, status, failure)}
+    state = end_turn(state, status, failure)
+    # A turn that did not complete takes its background work, and earlier turns', down.
+    {:noreply, if(status == "completed", do: state, else: stop_work(state, status))}
   end
 
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
@@ -392,6 +448,8 @@ defmodule HalC2.Acp.ThreadRuntime do
       if state.turn,
         do: end_turn(state, "failed", "#{HalC2.Acp.label(state.agent)} exited unexpectedly"),
         else: state
+
+    state = end_work(state, "failed")
 
     {:noreply, released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})}
   end
@@ -402,6 +460,9 @@ defmodule HalC2.Acp.ThreadRuntime do
   # The runtime or its provider plugin's supervisor crashed (not a stop): the turn
   # it was running ends, with what was buffered, so the thread shows the session is gone.
   # The agent's subagents ran in its process and end with it.
+  # Background work stops with the agent process either way (released when idle, or
+  # stopped with its thread); when the node itself stops, its next boot ends what is
+  # left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(reason, %{turn: turn} = state) when turn != nil do
     unless reason in [:normal, :shutdown] or match?({:shutdown, _}, reason) do
@@ -414,7 +475,12 @@ defmodule HalC2.Acp.ThreadRuntime do
     :ok
   end
 
-  def terminate(_reason, _state), do: :ok
+  def terminate(_reason, state) do
+    end_work(state, "interrupted")
+    :ok
+  catch
+    _, _ -> :ok
+  end
 
   @impl true
   def code_change(_old, state, _extra), do: {:ok, migrate(state)}
@@ -443,7 +509,10 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   # An agent started before v7 runs no OpenCode server; its turns go unrecorded.
   defp migrate(%{v: 6} = state),
-    do: state |> Map.merge(%{server: nil, leaf: :unknown}) |> Map.put(:v, 7)
+    do: state |> Map.merge(%{server: nil, leaf: :unknown}) |> Map.put(:v, 7) |> migrate()
+
+  defp migrate(%{v: 7} = state),
+    do: state |> Map.put_new(:tasks, %{}) |> Map.put(:v, 8)
 
   # --- session -------------------------------------------------------------------
 
@@ -852,8 +921,18 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp tool(state, id, call) do
     {kind, fields} = tool_shape(call)
-    state = state |> flush() |> ensure_item(id, kind, fields)
-    if call["status"] in ["completed", "failed"], do: finish_tool(state, id, call), else: state
+    state = state |> flush() |> ensure_item(id, kind, fields) |> note_kill(id, call)
+
+    cond do
+      task = started_task(call) ->
+        start_task(state, id, task, call)
+
+      call["status"] in ["completed", "failed"] ->
+        state |> killed(id, call) |> finish_tool(id, call)
+
+      true ->
+        state
+    end
   end
 
   defp tool_update(state, id, call) do
@@ -865,9 +944,22 @@ defmodule HalC2.Acp.ThreadRuntime do
             tool_shape(call)
           )
 
-    if call["status"] in ["completed", "failed"],
-      do: finish_tool(state, id, call),
-      else: running_command(state, id, call)
+    state = note_kill(state, id, call)
+
+    cond do
+      task = started_task(call) ->
+        start_task(state, id, task, call)
+
+      # A background task's tool call ends with its task, not its acknowledgement.
+      id in Map.values(state.tasks) ->
+        running_command(state, id, call)
+
+      call["status"] in ["completed", "failed"] ->
+        state |> killed(id, call) |> finish_tool(id, call)
+
+      true ->
+        running_command(state, id, call)
+    end
   end
 
   # OpenCode names a command only once it runs (`rawInput` on an in-progress update)
@@ -974,10 +1066,172 @@ defmodule HalC2.Acp.ThreadRuntime do
     entry = state.subagents[id]
 
     # A background spawn's acknowledgement ends the tool call, not the subagent.
-    if call["status"] in ["completed", "failed"] and not entry.done and not spawn_ack?(output) do
-      status = if call["status"] == "failed", do: "failed", else: "completed"
-      sub = NativeSubagent.finish(entry.sub, status, subagent_result(output))
-      %{state | subagents: Map.put(state.subagents, id, %{entry | sub: sub, done: true})}
+    cond do
+      call["status"] in ["completed", "failed"] and spawn_ack?(output) ->
+        %{state | subagents: Map.put(state.subagents, id, Map.put(entry, :background, true))}
+
+      call["status"] in ["completed", "failed"] and not entry.done ->
+        status = if call["status"] == "failed", do: "failed", else: "completed"
+        sub = NativeSubagent.finish(entry.sub, status, subagent_result(output))
+        %{state | subagents: Map.put(state.subagents, id, %{entry | sub: sub, done: true})}
+
+      true ->
+        state
+    end
+  end
+
+  defp background?(entry), do: Map.get(entry, :background, false)
+
+  # --- Grok's background work -------------------------------------------------------
+
+  # The task a tool result started in the background: a shell, or a monitor.
+  defp started_task(%{"rawOutput" => %{"type" => type} = output})
+       when type in ["BackgroundTaskStarted", "Monitor"] do
+    case output["task_id"] || output["taskId"] do
+      task when is_binary(task) and task != "" -> task
+      _ -> nil
+    end
+  end
+
+  defp started_task(_call), do: nil
+
+  # The task's tool call stays running with what it said so far; a persistent
+  # monitor, which never ends, says so on its input (`HalC2.Projection.BackgroundWork`).
+  defp start_task(state, id, task, call) do
+    state = %{state | tasks: Map.put(state.tasks, task, id)}
+    %{id: item_id} = state.items[id]
+    output = content_text(call["content"])
+    persistent = call["rawOutput"]["persistent"] == true
+
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(stream, "turn-item", item_id, fn item ->
+          item
+          |> then(&if(output, do: Map.put(&1, "output", output), else: &1))
+          |> then(
+            &if(persistent and is_map(&1["input"]),
+              do: put_in(&1, ["input", "persistent"], true),
+              else: &1
+            )
+          )
+        end)
+      ]
+    end)
+
+    state
+  end
+
+  # `kill_command_or_subagent` is the only end Grok reports for what it killed. Its
+  # targets are on the tool call, which its updates need not repeat, so they are kept
+  # on the item until it completes.
+  defp note_kill(state, id, call) do
+    title = String.downcase(call["title"] || "")
+    input = call["rawInput"] || %{}
+
+    with true <- String.contains?(title, "kill_command_or_subagent") or input["variant"] == "kill",
+         ids = List.wrap(input["task_ids"]) ++ [input["task_id"], input["taskId"]],
+         [_ | _] = ids <- Enum.filter(ids, &is_binary/1),
+         %{} = item <- state.items[id] do
+      %{state | items: Map.put(state.items, id, Map.put(item, :kills, ids))}
+    else
+      _ -> state
+    end
+  end
+
+  defp killed(state, id, %{"status" => "completed"}) do
+    ids = get_in(state.items, [id, :kills]) || []
+    Enum.reduce(ids, state, &end_task(&2, &1, "cancelled"))
+  end
+
+  defp killed(state, _id, _call), do: state
+
+  # Grok's reminder in the root session that a background subagent ended.
+  defp subagent_ended?(%{"sessionUpdate" => "user_message_chunk", "content" => %{"text" => text}})
+       when is_binary(text),
+       do: text =~ ~r/Background subagent\s+["']?#{@uuid}/i
+
+  defp subagent_ended?(_update), do: false
+
+  defp subagent_ended(state, %{"content" => %{"text" => text}}) do
+    [_, session, rest] = Regex.run(~r/Background subagent\s+["']?(#{@uuid})["']?(.*)/is, text)
+    status = if rest =~ ~r/\bfail/i, do: "failed", else: "completed"
+    end_task(state, session, status)
+  end
+
+  # Ends the background task or subagent Grok knows as `task`: a subagent by its
+  # tool call or its session id.
+  defp end_task(state, task, status) do
+    subagent =
+      Enum.find(state.subagents, fn {id, e} ->
+        not e.done and (id == task or e.session == task)
+      end)
+
+    cond do
+      Map.has_key?(state.tasks, task) -> end_tool_task(state, task, status)
+      subagent -> end_subagent(state, elem(subagent, 0), status)
+      true -> state
+    end
+  end
+
+  defp end_subagent(state, id, status) do
+    entry = state.subagents[id]
+    sub = NativeSubagent.finish(entry.sub, status, nil)
+    %{state | subagents: Map.put(state.subagents, id, %{entry | sub: sub, done: true})}
+  end
+
+  # While its turn runs the tool call is one of the turn's items; after, its own.
+  defp end_tool_task(state, task, status) do
+    {ref, tasks} = Map.pop(state.tasks, task)
+    state = %{state | tasks: tasks}
+
+    case ref do
+      id when is_binary(id) and is_map_key(state.items, id) ->
+        finish_item(state, id, status, & &1)
+
+      %{id: item_id, node: node_id} ->
+        at = Entities.now()
+        done = %{"status" => status, "completedAt" => at}
+
+        commit(state, fn stream ->
+          [
+            Orchestration.upsert(
+              stream,
+              "turn-item",
+              item_id,
+              &Map.merge(&1, Map.put(done, "updatedAt", at))
+            ),
+            Orchestration.upsert(stream, "node", node_id, &Map.merge(&1, done))
+          ]
+        end)
+
+        state
+
+      _ ->
+        state
+    end
+  end
+
+  defp work?(state),
+    do:
+      state.tasks != %{} or
+        Enum.any?(state.subagents, fn {_, e} -> background?(e) and not e.done end)
+
+  # Ends all background work, running subagents with it, as `status`.
+  defp end_work(state, status) do
+    state = Enum.reduce(Map.keys(state.tasks), state, &end_tool_task(&2, &1, status))
+
+    Enum.reduce(state.subagents, state, fn {id, e}, state ->
+      if e.done, do: state, else: end_subagent(state, id, status)
+    end)
+  end
+
+  # Grok keeps background work through a cancel; only stopping its process ends it.
+  # The next turn starts it again on the same session.
+  defp stop_work(state, status) do
+    if work?(state) do
+      state = end_work(state, status)
+      if state.conn, do: Connection.stop(state.conn)
+      released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})
     else
       state
     end
@@ -1291,7 +1545,26 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp end_turn(state, status, failure) do
-    state = state |> flush() |> close_open_items(status) |> cancel_requests()
+    state = flush(state)
+
+    # A completed turn's background tasks go on without it.
+    state =
+      if status == "completed" do
+        {tasks, items} =
+          Enum.reduce(state.tasks, {state.tasks, state.items}, fn
+            {task, id}, {tasks, items} when is_binary(id) and is_map_key(items, id) ->
+              {Map.put(tasks, task, Map.take(items[id], [:id, :node])), Map.delete(items, id)}
+
+            _, acc ->
+              acc
+          end)
+
+        %{state | tasks: tasks, items: items}
+      else
+        state
+      end
+
+    state = state |> close_open_items(status) |> cancel_requests()
     finish(state, status, failure)
     %{state | turn: nil, items: %{}}
   end

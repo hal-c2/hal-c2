@@ -7,6 +7,10 @@
 #   apps/server-ex/lib/hal_c2/orchestration/idle_sessions.ex
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (background subagents and commands, also between turns)
 #   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts (task_started, task_notification, pendingBackgroundTasks)
+#   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (commands left running in background terminals)
+#   apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts (settledTurns, terminalizeRunningCommandItems,
+#     thread/backgroundTerminals/terminate, background command continuation)
+#   apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/codex_transcript.ndjson
 #   apps/server-ex/lib/hal_c2/orchestration/limit_recovery.ex
 #   apps/server-ex/lib/hal_c2/orchestration/turn_watch.ex
 #   apps/server/src/orchestration-v2/ (startup recovery, idle session reaper)
@@ -154,6 +158,59 @@ Feature: Recovering from restarts and releasing idle sessions
       | starts                                    |
       | launches a subagent in the background     |
       | reports progress on a subagent it resumed |
+
+  @node @plugin-codex
+  Scenario: A Codex background command keeps its session past the idle timeout
+    Given thread "t1" left a Codex command running in the background
+    And "t1" has had no activity for 30 minutes
+    When the node checks for idle sessions
+    Then the provider process of "t1" keeps running
+    And "t1" lists the command "npm run dev" as background work
+
+  @node @plugin-codex
+  Scenario: A Codex session is released once its background command ends
+    Given thread "t1" left a Codex command running in the background
+    When Codex reports the command exited with "bye"
+    And "t1" has had no activity for 30 minutes
+    And the node checks for idle sessions
+    Then the provider process of "t1" stops
+    And the command of "t1" is completed with "bye"
+    And "t1" lists no background work
+
+  @node @plugin-codex
+  Scenario Outline: Stopping or rewinding a Codex thread stops its background command
+    Given thread "t1" left a Codex command running in the background
+    When the user <action>
+    Then the command of "t1" is interrupted
+    And Codex is asked to terminate the command's terminal
+    And "t1" lists no background work
+
+    Examples:
+      | action                        |
+      | stops "t1"                    |
+      | rewinds "t1" to its first run |
+
+  # Codex leaves a unified exec process running when it interrupts a turn.
+  @node @plugin-codex
+  Scenario: Stopping a Codex turn stops the command it started in a terminal
+    Given thread "t1" has a Codex turn running a command in a terminal
+    When the user stops "t1"
+    Then the command of "t1" is interrupted
+    And Codex is asked to terminate the command's terminal
+
+  @node @plugin-codex
+  Scenario: A Codex background command fails when Codex exits
+    Given thread "t1" left a Codex command running in the background
+    When the Codex process of "t1" exits
+    Then the command of "t1" is failed
+    And "t1" lists no background work
+
+  # Upstream offers Codex a continuation turn saying the command finished.
+  @node @backlog @plugin-codex
+  Scenario: A finished Codex background command wakes the thread
+    Given thread "t1" left a Codex command running in the background
+    When Codex reports the command exited with "bye"
+    Then "t1" runs a turn telling Codex the background command finished
 
   @node
   Scenario: Background work a stopped node left running is ended at boot

@@ -463,6 +463,100 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  # The fake Codex leaves "npm run dev" (cmd-bg, process 4275) running on "in the
+  # background" (`test/support/fake_codex.py`); its exit is sent to the thread's runtime
+  # as if the app-server reported it.
+  step "thread {string} left a Codex command running in the background",
+       %{args: [thread]} = context do
+    context = idle_turn(context, thread)
+    context = World.dispatch_message(context, thread, "Start the dev server in the background")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_run(context, thread, &(&1["ordinal"] == 2 and &1["status"] == "completed"))
+    await_background(context)
+  end
+
+  step "thread {string} has a Codex turn running a command in a terminal",
+       %{args: [thread]} = context do
+    context =
+      context |> World.providers() |> World.named_thread(thread) |> Map.put(:thread, thread)
+
+    context =
+      World.dispatch_message(context, thread, "Start the dev server in the background and wait")
+
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+
+    World.await_state(context, thread, fn state ->
+      Enum.any?(
+        Map.values(state.entities["turn-item"] || %{}),
+        &(&1["type"] == "command_execution")
+      )
+    end)
+
+    context
+  end
+
+  step "{string} lists the command {string} as background work",
+       %{args: [thread, command]} = context do
+    assert [%{"taskType" => "command_execution", "description" => ^command}] =
+             World.row(context, thread)["pendingBackgroundTasks"]
+
+    context
+  end
+
+  step "Codex reports the command exited with {string}", %{args: [output]} = context do
+    World.codex_notify(context, context.thread, "item/completed", %{
+      "threadId" => "native-thread-1",
+      "turnId" => "native-turn-2",
+      "item" => %{
+        "type" => "commandExecution",
+        "id" => "cmd-bg",
+        "command" => "npm run dev",
+        "status" => "completed",
+        "aggregatedOutput" => output,
+        "exitCode" => 0
+      }
+    })
+
+    World.await_row(
+      World.thread_id(context, context.thread),
+      &(&1["pendingBackgroundTasks"] == [])
+    )
+
+    context
+  end
+
+  step "the Codex process of {string} exits", %{args: [thread]} = context do
+    {_pid, state} = World.codex_runtime(context, thread)
+    Process.exit(state.conn, :kill)
+    context
+  end
+
+  step ~r/^the command of "(?<thread>[^"]+)" is (?<status>completed with "[^"]+"|interrupted|failed)$/,
+       %{args: [thread, status]} = context do
+    {status, output} =
+      case Regex.run(~r/^completed with "(.+)"$/, status) do
+        [_, output] -> {"completed", output}
+        nil -> {status, nil}
+      end
+
+    World.await_state(context, thread, fn state ->
+      Enum.any?(
+        Map.values(state.entities["turn-item"] || %{}),
+        &(&1["nativeItemRef"]["nativeId"] == "cmd-bg" and &1["status"] == status and
+            (output == nil or &1["output"] == output))
+      )
+    end)
+
+    context
+  end
+
+  step "Codex is asked to terminate the command's terminal", context do
+    assert [%{"processId" => "4275"}] =
+             World.codex_requests(context, "thread/backgroundTerminals/terminate")
+
+    context
+  end
+
   step "{string} has an active run", %{args: [thread]} = context do
     at = World.iso_from_now(-120 * 60_000)
 

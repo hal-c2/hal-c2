@@ -224,6 +224,24 @@ defmodule HalC2.Steps.Common do
     end
   end
 
+  # An agent with no background work: a command still running when its turn ends is
+  # closed with the turn, and nothing outlives it.
+  step "the command it left running ends with the turn", context do
+    id = World.thread_id(context, context.thread)
+    :ok = HalC2.Shell.subscribe(self())
+
+    World.await_stream(id, fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "turn-item"),
+        &(&1["type"] == "command_execution" and &1["input"] == "npm run dev" and
+            &1["status"] == "completed")
+      )
+    end)
+
+    World.await_row(id, &(&1["pendingBackgroundTasks"] == [] and &1["activeRunId"] == nil))
+    context
+  end
+
   step "the user stops the turn", context do
     {:ok, _} =
       HalC2.Orchestration.dispatch(%{
