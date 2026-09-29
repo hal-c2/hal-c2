@@ -7,6 +7,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/ThreadDetailsPanel.qml (threadPanel.toggle)
 #   apps/desktop-qt/src/native/RightPanelController.cpp (tabs, open, canAdd; the Pull requests and Previews tabs)
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
+#   apps/desktop-qt/tests/native/features/HeaderSteps.cpp (the header brick laid out offscreen)
 #   apps/desktop-qt/tests/native/features/TerminalSteps.cpp (terminal drawer, right panel terminal tabs)
 #   apps/desktop-qt/qml/HalC2/Bricks/TerminalPanel.qml
 #   apps/desktop-qt/src/native/TerminalController.cpp (terminal.toggle, panel groups)

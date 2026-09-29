@@ -365,6 +365,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/layout.feature:Hiding the terminal"),
     QStringLiteral("navigation/layout.feature:Choosing the project in the header*"),
     QStringLiteral("navigation/layout.feature:The header names the project and thread"),
+    QStringLiteral("navigation/layout.feature:The thread title uses the room it has"),
     QStringLiteral("navigation/layout.feature:The header opens the thread's workspace in another editor"),
     QStringLiteral("navigation/header.feature"),
 };
