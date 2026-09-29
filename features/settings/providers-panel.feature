@@ -7,6 +7,8 @@
 #   apps/web/src/components/settings/AddProviderInstanceWizardSteps.tsx
 #   apps/web/src/components/settings/AcpRegistrySearchStep.tsx
 #   apps/web/src/components/settings/AcpSessionManagementSection.tsx
+#   apps/web/src/components/settings/ProviderModelsSection.tsx (capability labels, filter, count)
+#   apps/web/src/components/settings/ProviderWizardAuthenticationStep.tsx (the wizard's sign-in step)
 #   apps/web/src/components/settings/CustomModelEditor.tsx
 #   apps/web/src/components/settings/customModelEditor.logic.ts
 #   apps/web/src/components/settings/RedactedSensitiveText.tsx
@@ -169,6 +171,19 @@ Feature: Providers settings panel
       And the agent finishes preparing
       Then the new wizard still asks which agent to add
 
+    @desktop @backlog-desktop
+    Scenario: A registry agent in the results shows its details
+      When the user searches the ACP Registry for "gemini"
+      Then each agent shows its icon and description
+      And an agent with a website or repository links to it as "About <agent>"
+
+    @desktop @backlog-desktop
+    Scenario: A registry agent that signs in is signed in before the wizard closes
+      Given the user added a registry agent that signs in from HAL-C2
+      When the wizard saves it
+      Then the wizard moves on to signing in to that agent
+      And the user can finish the wizard once signed in or skip it
+
     @desktop
     Scenario: The registry step needs an agent or a manual setup
       When the user moves on without choosing an agent
@@ -281,6 +296,7 @@ Feature: Providers settings panel
       When the user deletes the instance
       Then the user is told the provider was deleted but managed files remain
 
+    # The scramble is the page's own; tests/tst_ProvidersSettings.qml drives it.
     @desktop
     Scenario: The signed-in account email stays hidden until asked
       Given "Claude Work" is signed in as "ada@example.com"
@@ -482,6 +498,22 @@ Feature: Providers settings panel
       And "1.14.19" is the recommended version
       When the user installs the recommended version of "OpenCode"
       Then the environment installs "1.14.19" of "OpenCode"
+
+  Rule: The models list
+
+    @desktop @backlog-desktop
+    Scenario: A model lists what it can do
+      Given Claude reports a model with fast mode, thinking and reasoning options
+      When the user opens Claude's models
+      Then that model is labelled "Fast mode", "Thinking" and "Reasoning"
+
+    @desktop @backlog-desktop
+    Scenario: A long models list can be filtered and counted
+      Given Codex reports twelve models, two of them favourites and one hidden
+      When the user opens Codex's models
+      Then the list says "12 models · 2 favorites · 1 hidden"
+      When the user filters the models by "mini"
+      Then only models whose name or id has "mini" are listed
 
   Rule: Custom models
 
