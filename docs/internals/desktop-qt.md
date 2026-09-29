@@ -169,7 +169,7 @@ opaque parent `ShellCard`; wallpaper layouts must account for both.
 Under them sit the primitives a rice composes its own
 chrome from, all styled from `Theme`: `ShellWindow` (the root every rice
 starts from: theme-driven colour, opacity and frame, `sidebarCollapsed`,
-`settingsActive`, `clusterOpen`, `connectionsOpen` and `nativeSettingsOpen`, the shell's context menus, the error
+`settingsActive`, `settingsSection` and `nativeSettingsOpen`, the shell's context menus, the error
 overlay and the page's window commands), `ShellCard` (a rounded, hairlined
 panel), `ShellButton` (outline, `subtle` ghost, `primary`), `ShellComboBox`
 (ghost, `outline: true` for a field), `ShellSplitButton` (the header's action
@@ -692,19 +692,35 @@ Environments outside the cluster are paired natively, as node links (see
 The settings nav is the shell's (`SettingsNav`); the pages behind it are
 either the shell's own or still HTML.
 
-The shell's own pages work with no page loaded. `ClusterController` publishes
-`cluster` (`busy`, `status`, `error`, `invite`, `notice`) and calls the
-node's `cluster.*` RPCs; `ClusterSettings` renders it. Whether it shows is
-the route's: `cluster.open` and `cluster.close` move `route` to and from the
-settings section `/settings/cluster`, which the page is never told to follow.
-Layouts show the brick where the page would be while `ShellWindow.clusterOpen`.
-Actions: `cluster.refresh`, `cluster.invite {tailscale?}` (copies the link),
-`cluster.invite.copy`, `cluster.join {link}`, `cluster.remove {id}`.
+The shell's own pages work with no page loaded. `js/settingsPages.js` lists
+them in one place: a route section, the brick that draws it, the action that
+opens it and the words search finds it by. Registering a page is one line
+there. `SettingsHost` loads the brick for `ShellWindow.settingsSection`, and
+layouts put it where the page would be while `ShellWindow.nativeSettingsOpen`.
+`SettingsNav` lists the page's sections, then the shell's own, and search
+drops the page's results inside a native section in favour of the native row.
+`NavigationController` keeps `settings.navigate` to cluster and connections
+native; General and Appearance still `route.follow` the (hidden) page.
+
+General and Appearance are rows over `Settings` (`js/settingsRows.js`: a key,
+a kind and the web's wording). Each key's store and default are
+`SettingsController`'s row table: `setting`, `defaultOf`, `isDefault`,
+`onDevice`, `set` and `reset` read and write it wherever it lives. The node
+leaves defaults out of its document, and a null `sidebarAutoSettleAfterDays`
+means off. Rows the page still draws with are device preferences, and the
+shell sends them to the page as `clientSettings.follow {settings}` whenever
+they change. Appearance also draws the theme choice and this device's own
+themes (`ThemeEditor`); errors are the shell's toasts.
+
+`ClusterController` publishes `cluster` (`busy`, `status`, `error`, `invite`,
+`notice`) and calls the node's `cluster.*` RPCs; `ClusterSettings` renders it
+at `/settings/cluster`. Actions: `cluster.open`/`close`, `cluster.refresh`,
+`cluster.invite {tailscale?}` (copies the link), `cluster.invite.copy`,
+`cluster.join {link}`, `cluster.remove {id}`.
 
 `ConnectionsController` publishes `connections` and `ConnectionsSettings`
-renders it at `/settings/connections` (`connections.open`/`close`,
-`ShellWindow.connectionsOpen`); `SettingsNav` lists it in place of the page's
-own Connections section. Other environments are the node's links from the
+renders it at `/settings/connections` (`connections.open`/`close`). Other
+environments are the node's links from the
 `shell` shape, each with its `status`; adding one is `hal-c2.linkEnvironment`
 with a pairing link, or a host and code (a host without a scheme tries HTTPS,
 then HTTP when HTTPS cannot connect), and removing is
@@ -720,8 +736,7 @@ The rest are HTML pages until they move. The root route mounts
 `ShellSettingsBridge` when hosted, which publishes `ShellSettingsState` on
 every route change: `active` (on `/settings*`), the sections in sidebar
 order, the active one, and search results for the query the shell last sent.
-`SettingsNav` lists those sections, then the shell's own pages, and marks
-the route's section current; picking one of the page's replaces the shell's
+`SettingsNav` marks the route's section current; picking one of the page's replaces the shell's
 page in the route. Actions: `settings.navigate {to}`,
 `settings.openResult {to, targetId}` (scrolls when already on the page),
 `settings.search {query}`, and `settings.back`, which is the route's back
@@ -735,7 +750,7 @@ When hosted, `AppSidebarLayout` renders no sidebar on any route.
 canGoBack}` with `kind` one of `home`, `thread`, `draft`, `newThread`,
 `settings`, `pullRequests`, `usage` (the `ShellRoute` contract plus
 `title` and `canGoBack`). `ShellWindow` titles the window from `title` and derives
-`settingsActive` and `clusterOpen` from it; the sidebar's active row and the
+`settingsActive` and `settingsSection` from it; the sidebar's active row and the
 composer's target thread come from it too. It keeps a back stack (home and a
 new thread are passed through, and moving between settings sections is one
 step) and writes the last route to `shell-route.json` in the shell's state
@@ -775,7 +790,8 @@ page state.
   versions start over.
 - This device's preferences, in `<config>/preferences.json` next to
   `theme.json`: anything that belongs to this desktop and no other client
-  (appearance, theme choice, saved custom themes). They are available before
+  (appearance, theme choice, saved custom themes, the client settings rows).
+  They are available before
   the node is. A save that fails sets `deviceError` and leaves them as they
   were. Nothing migrates from the page's storage; they start empty.
 
@@ -805,8 +821,13 @@ method do not create that dependency. `Theme.radius`, `Theme.fontUi` and
 theme.json win). The themed controls (`ShellButton` etc.) take radius, surfaces,
 borders and fonts from `Theme`.
 
-The page's theme picker and appearance shortcut no longer reach the desktop.
-Choosing a theme waits for the native settings pages.
+Settings → Appearance chooses and edits themes through `Themes` (`setMode`,
+`choose`, `chooseHalf`, `draft`, `saveCustom`, `duplicate`, `removeCustom`).
+The page's own picker and appearance shortcut reach the shell as `theme.mode
+{mode}`, `theme.choose {id}`, `theme.chooseHalf {appearance, id}` and
+`appearance.cycle`, which is `Themes.cycleAppearance()` (System → Light → Dark,
+with one toast however fast it is pressed). Themes made in the page's own
+editor live in the page's storage and are unknown to the shell.
 
 ### `layout`
 
