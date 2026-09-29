@@ -207,7 +207,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/windows.feature:A single quick press does not quit"),
     QStringLiteral("navigation/windows.feature:Double press mode asks for a second press"),
     QStringLiteral("navigation/windows.feature:Direct mode quits on one press"),
-    QStringLiteral("navigation/windows.feature:Quit from the application menu is immediate"),
+    QStringLiteral("navigation/windows.feature:Quit from the command palette is immediate"),
     QStringLiteral("navigation/focus.feature:Leaving settings goes back to the thread"),
     QStringLiteral("navigation/focus.feature:The palette keeps focus while it is open"),
     QStringLiteral("navigation/command-palette.feature"),

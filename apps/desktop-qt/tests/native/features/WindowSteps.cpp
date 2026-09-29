@@ -488,10 +488,9 @@ const Steps steps([] {
   step(QStringLiteral("the user presses mod\\+Q once"), [](World& world, const Captures&, const Table&) {
     pressQuit(world, 80);
   });
-  step(QStringLiteral("the user chooses Quit from the application menu"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the user chooses Quit from the command palette"), [](World& world, const Captures&, const Table&) {
     ensureConnected(world);
     quitting(world);
-    // The desktop's menu of commands is the palette; macOS's own Quit is Qt's.
     expect(world.native().controller<KeybindingController>()->commands()->run(QuitController::kQuit),
            QStringLiteral("there is no Quit command"));
   });

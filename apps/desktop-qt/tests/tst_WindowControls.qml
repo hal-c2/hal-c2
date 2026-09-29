@@ -213,7 +213,7 @@ Item {
             compare(close.light, Qt.color("#ff5f57"));
         }
 
-        // Scenario: Dragging the header moves the window (features/navigation/windows.feature)
+        // Scenario: Dragging the header asks the window system to move the window (features/navigation/windows.feature)
         function test_dragHeaderMovesWindow() {
             Theme.frameless = true;
             const window = createTemporaryObject(movingHeaderComponent, null);
