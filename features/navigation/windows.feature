@@ -104,6 +104,22 @@ Feature: Windows, zoom and quitting
       Then every window shows the app and the failure
 
     @desktop
+    Scenario: Every window's page follows this device's settings
+      Given a second window is open
+      When the user changes a device setting
+      Then every window's page follows the change
+      When the second window's page reloads
+      Then only the second window's page is told this device's settings
+
+    @desktop
+    Scenario: A setting that fails to save says so in the window that changed it
+      Given a second window is open
+      And the node refuses to save settings
+      When the user changes a node setting in the second window and goes back to the first
+      Then the second window says "Setting not saved"
+      And the first window shows no toast
+
+    @desktop
     Scenario: Closing a second window leaves the first alone
       Given a second window is open
       When the user closes the second window

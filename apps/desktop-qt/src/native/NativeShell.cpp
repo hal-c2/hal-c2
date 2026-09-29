@@ -141,7 +141,7 @@ bool NativeWindow::handle(const QString& action, const QVariant& payload) {
       announce();
       // A page that just asked knows nothing of the route yet.
       if (auto* navigation = controller<NavigationController>()) navigation->pageReady();
-      if (auto* settings = controller<SettingsController>()) settings->pageReady();
+      if (auto* settings = controller<SettingsController>()) settings->pageReady(m_bridge);
     }
     return true;
   }

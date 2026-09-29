@@ -12,6 +12,7 @@
 
 #include "NativeController.h"
 
+class NativeWindow;
 class NodeClient;
 class ShellBridge;
 
@@ -67,7 +68,7 @@ public:
   void activate() override;
   bool handle(const QString&, const QVariant&) override { return false; }
   // A (re)loaded page gets this device's rows.
-  void pageReady();
+  void pageReady(ShellBridge* page);
 
   bool ready() const { return m_ready; }
   QJsonObject settings() const { return m_settings; }
@@ -124,8 +125,11 @@ private:
   void attempt(Edit edit, Done done, int retries);
   void onConfig(const QJsonObject& frame);
   void fail(const QString& error);
-  void toast(const QString& title, const QString& reason);
-  void follow(bool force = false);
+  // In `window` (the one that made the change), else the one in use.
+  void toast(const QString& title, const QString& reason, NativeWindow* window = nullptr);
+  // This device's rows, which every window's page follows.
+  QJsonObject clientSettings() const;
+  void follow();
   QVariantMap documentVariant() const { return m_settings.toVariantMap(); }
   QVariantMap configVariant() const { return m_config.toVariantMap(); }
   QVariantList themesVariant() const { return m_themes.toVariantList(); }

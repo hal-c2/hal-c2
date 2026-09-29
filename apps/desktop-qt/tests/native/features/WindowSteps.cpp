@@ -11,12 +11,14 @@
 #include <QUrl>
 
 #include "ComposerController.h"
+#include "FakeConfig.h"
 #include "Harness.h"
 #include "Keymap.h"
 #include "KeybindingController.h"
 #include "LayoutController.h"
 #include "QuitController.h"
 #include "SettingsController.h"
+#include "ShellBridge.h"
 #include "NavigationController.h"
 #include "Stream.h"
 #include "World.h"
@@ -75,6 +77,18 @@ struct SecondWindowWork {
   // Its id, once the first window closed.
   QString id;
 };
+
+// The clientSettings.follow each window's page was sent, by window id.
+struct WindowSettingsWork {
+  QHash<QString, QList<QVariantMap>> follows;
+};
+
+QStringList toastTitles(NativeWindow* window) {
+  QStringList titles;
+  const QVariantList items = window->bridge()->state()->value(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList();
+  for (const QVariant& item : items) titles.append(item.toMap().value(QStringLiteral("title")).toString());
+  return titles;
+}
 
 NativeWindow* openSecond(World& world, const QVariantMap& payload = {}) {
   world.node.part<SecondWindowWork>().firstSub = world.node.subscriptions.size();
@@ -233,6 +247,56 @@ const Steps steps([] {
       const QString error = bridge->state()->value(QStringLiteral("backendError")).toString();
       expect(error == QLatin1String("the node exited"), QStringLiteral("window %1 shows the error \"%2\"").arg(window->id(), error));
     }
+  });
+
+  // Settings reach every window's page, and a failure the window that asked.
+  step(QStringLiteral("the user changes a device setting"), [](World& world, const Captures&, const Table&) {
+    auto& follows = world.node.part<WindowSettingsWork>().follows;
+    for (const auto& window : world.native().windows()) {
+      QObject::connect(window->bridge(), &ShellBridge::actionRequested, window.get(),
+                       [&follows, id = window->id()](const QString& action, const QVariant& payload) {
+                         if (action == QLatin1String("clientSettings.follow")) follows[id].append(payload.toMap());
+                       });
+    }
+    world.native().controller<SettingsController>()->set(QStringLiteral("timestampFormat"), QStringLiteral("24-hour"));
+  });
+  step(QStringLiteral("every window's page follows the change"), [](World& world, const Captures&, const Table&) {
+    const auto& follows = world.node.part<WindowSettingsWork>().follows;
+    for (const auto& window : world.native().windows()) {
+      const QVariantMap last = follows.value(window->id()).value(follows.value(window->id()).size() - 1);
+      expect(at(last, QStringLiteral("settings")).toMap().value(QStringLiteral("timestampFormat")) == QLatin1String("24-hour"),
+             QStringLiteral("window %1's page follows %2").arg(window->id(), show(last)));
+    }
+  });
+  step(QStringLiteral("the second window's page reloads"), [](World& world, const Captures&, const Table&) {
+    world.node.part<WindowSettingsWork>().follows.clear();
+    second(world)->bridge()->dispatch(QStringLiteral("shell.native.query"), QVariant());
+  });
+  step(QStringLiteral("only the second window's page is told this device's settings"), [](World& world, const Captures&, const Table&) {
+    const auto& follows = world.node.part<WindowSettingsWork>().follows;
+    const QList<QVariantMap> told = follows.value(second(world)->id());
+    expect(told.size() == 1 && at(told.first(), QStringLiteral("settings")).toMap().value(QStringLiteral("timestampFormat")) == QLatin1String("24-hour"),
+           QStringLiteral("the second window's page was told %1 times").arg(told.size()));
+    expect(follows.value(world.native().main()->id()).isEmpty(), QStringLiteral("the first window's page was told too"));
+  });
+  step(QStringLiteral("the node refuses to save settings"), [](World& world, const Captures&, const Table&) {
+    auto* settings = world.native().controller<SettingsController>();
+    world.waitFor([settings] { return settings->ready(); }, QStringLiteral("the shell to read the node's settings"));
+    fakeConfig(world.node).refuseWrites = QStringLiteral("The settings file is read-only.");
+  });
+  step(QStringLiteral("the user changes a node setting in the second window and goes back to the first"), [](World& world, const Captures&, const Table&) {
+    world.native().setActiveWindow(second(world));
+    world.native().controller<SettingsController>()->set(QStringLiteral("autoResumeLimitedThreads"), true);
+    world.native().setActiveWindow(world.native().main());
+  });
+  step(QStringLiteral("the second window says \"Setting not saved\""), [](World& world, const Captures&, const Table&) {
+    NativeWindow* window = second(world);
+    world.waitFor([&] { return toastTitles(window).contains(QStringLiteral("Setting not saved")); },
+                  [&] { return QStringLiteral("the second window's toasts are %1").arg(toastTitles(window).join(QStringLiteral(", "))); });
+  });
+  step(QStringLiteral("the first window shows no toast"), [](World& world, const Captures&, const Table&) {
+    const QStringList titles = toastTitles(world.native().main());
+    expect(titles.isEmpty(), QStringLiteral("the first window's toasts are %1").arg(titles.join(QStringLiteral(", "))));
   });
 
   // Node work in flight when a window closes (NodeClient's contexts).

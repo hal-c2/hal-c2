@@ -383,8 +383,10 @@ one store (`NativeShell::common`), so a window that closes loses no drafts. The
 tagged with a bridge (`halC2Bridge`) gets that window's controllers, so a
 controller must never be registered with `qmlRegisterSingletonInstance`, which
 binds it to one engine. A shared controller reaches "its" window through
-`NativeShell::of`, which answers the window the user last acted in, and meets
-each window in `attach()`.
+`NativeShell::of`, which answers the window the user last acted in, so an
+answer that arrives later (a failed save's toast) must capture that window when
+asked; what every page needs (`clientSettings.follow`) goes to every window's
+bridge. A shared controller meets each window in `attach()`.
 
 The drafts and composer text live in `<data>`. The window with the id `main`
 keeps its route and panels directly in `<state>`; another keeps them under
