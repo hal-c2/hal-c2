@@ -226,11 +226,11 @@ Standalone: run the binary with no `--url`; the host serves the built web app
 and starts the node for the shell's home.
 
 CLI: `--url`, `--home-dir`, `--config-dir`, `--qml-dir`, `--host-entry`, `--node`, `--screenshot <png>`
-(grab the window after the page loads, or with the error when the start fails, then quit with
+(grab the window once the node's first snapshot is in, or with the error when the start fails, then quit with
 0, or 2 on a failure; PR evidence without a screen-recording permission, and with
 `QT_QPA_PLATFORM=offscreen` without a window at all), `--action name[=json]` (repeatable; dispatch shell
-actions after the page loads, e.g. `--action rightPanel.toggle`), `--key <chord>`
-(repeatable; press a key chord after the page loads, e.g. `--key Ctrl+1`, portable
+actions after that snapshot, e.g. `--action rightPanel.toggle`), `--key <chord>`
+(repeatable; press a key chord after it, e.g. `--key Ctrl+1`, portable
 `QKeySequence` names — `--action` and `--key` run in command-line order, 1.5 s
 apart, so a key test can open a thread first); env `HAL_C2_HOME`,
 `HAL_C2_QML_DIR`, `HAL_C2_NODE_BIN`, and for the host `HAL_C2_NODE_RELEASE`

@@ -165,6 +165,9 @@ signals:
   // The user closed the one window left, which stays open here: the app
   // quits, or on macOS waits to show it again.
   void lastWindowClosed();
+  // The node's first snapshot arrived and every controller took over: the
+  // windows show the user's projects and threads. Once per run.
+  void ready();
 
 private:
   friend class NativeWindow;

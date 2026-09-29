@@ -6,9 +6,14 @@
 #include <QVariantList>
 
 #include "Harness.h"
+#include "NativeShell.h"
 #include "World.h"
 
 namespace {
+
+struct ScriptedRun {
+  int started = 0;
+};
 
 const Steps steps([] {
   const QString q = kQuoted;
@@ -38,6 +43,22 @@ const Steps steps([] {
     world.connect();
     world.waitFor([&world] { return world.state(QStringLiteral("native")).isValid(); },
                   QStringLiteral("the shell to take over"));
+  });
+  // A scripted run (main.cpp --action, --key, --screenshot) starts on
+  // NativeShell::ready.
+  step(QStringLiteral("a scripted run is waiting for the desktop app"), [](World& world, const Captures&, const Table&) {
+    int& started = world.node.part<ScriptedRun>().started;
+    QObject::connect(&world.native(), &NativeShell::ready, &world.native(), [&started] { ++started; });
+  });
+  step(QStringLiteral("the scripted run has not started"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(world.node.part<ScriptedRun>().started == 0, QStringLiteral("it started"));
+  });
+  step(QStringLiteral("the scripted run starts once"), [](World& world, const Captures&, const Table&) {
+    const int& started = world.node.part<ScriptedRun>().started;
+    world.waitFor([&] { return started > 0; }, QStringLiteral("the scripted run to start"));
+    world.sync();
+    expect(started == 1, QStringLiteral("it started %1 times").arg(started));
   });
   step(QStringLiteral("the node holds back its snapshot"), [](World& world, const Captures&, const Table&) {
     world.node.holdSnapshot = true;

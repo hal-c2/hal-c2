@@ -335,6 +335,7 @@ void NativeShell::update() {
   m_active = true;
   for (const NativeControllerEntry& entry : m_shared) entry.native->activate();
   for (const auto& window : m_windows) activate(window.get());
+  emit ready();
 }
 
 void NativeShell::activate(NativeWindow* window) { window->activate(); }
