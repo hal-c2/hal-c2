@@ -161,7 +161,9 @@ strip), `Composer`, `RightPanel`, `SettingsNav`, `ClusterSettings`,
 `ConnectionsSettings`, `GitActions`, `Notifications`, `ContextMenuHost`, plus `WebSurface`,
 `DefaultShell` and `ShellErrorOverlay`. `TerminalDrawer` reads the native
 `Terminals` controller instead (see the terminal drawer below), and `Timeline`
-renders a native `Threads` timeline (see the thread store below). A rice that
+renders a native `Threads` timeline (see the thread store below). `RightPanel`'s
+native tabs, `DiffPanel` and `FilesPanel`, take their `Panel` object as
+`source` (see `rightPanel` and `panel` below). A rice that
 cards a surface passes the card's inner radius as `WebSurface.radius`
 (`RightPanel` forwards its own; `TerminalDrawer` insets its terminal from its
 own `radius`): the page clips itself to the curve and drops its own backdrop
@@ -576,8 +578,10 @@ above the `Composer`; its answers are `composer.approval.respond`,
 `composer.question.answer`, `composer.question.dismiss`,
 `composer.plan.implement`, `composer.queue.remove` and `composer.queue.steer`.
 A draft route's turn only carries the draft's text, which `DraftController`
-keeps. Slash commands, and a draft's first send (it needs `thread.create` and
-workspace setup), still reach the page.
+keeps. A shell-kept draft's first send launches the thread itself
+(`orchestration.launchThread` with the draft's checkout, model and modes) and
+the window replaces the draft with the thread. Slash commands, background
+starts and drafts only the page has still reach the page.
 
 Actions: `composer.text.set {target, text, cursor?, edit?}` (debounced from the QML
 editor), `composer.submit {text?, intent?, edit?}` (text rides along so the send is
@@ -610,34 +614,39 @@ edit; `ChatComposer` collapses it, re-detects the trigger and publishes
 item id back and the page applies the same replacement the HTML menu would,
 then publishes the new `text` and `cursor` for the editor to adopt.
 
-### `rightPanel`
+### `rightPanel` and `panel`
 
-The right panel is the first brick whose _content_ stays HTML but whose
-_placement_ is the shell's: `RightPanel` renders the tab strip natively and
-loads the app's embed route (`/embed/$environmentId/$threadId`) in a second
-`WebSurface`. Both surfaces share the shell's profile (see Web engine), so
-the embed document has the primary's session cookie and authenticates without
-a pairing token; it opens its own WebSocket, and sleeps while the panel is
-closed.
+The native `Panel` controller (`src/native/RightPanelController.cpp`) owns
+the right panel: open or closed and which tab shows, per thread, published as
+`panel`. The Diff and Files tabs are native bricks (`DiffPanel`, `FilesPanel`)
+over the controller's `ThreadDiff` and `WorkspaceFiles`, which call the
+node's `orchestration.getTurnDiff`, `getFullThreadDiff` and `projects.*` RPCs
+on the thread's own environment. Moving another tab to QML is a line in
+`js/panelTabs.js` plus its kind in `RightPanelController::nativeKinds`.
 
-The embed route renders `ChatView` with `presentation="rightPanel"`, which
-returns only the panel's content — every hook, handler and per-surface
-component stays in one place. The two documents converge on the tab model
-through localStorage: `shell/shellDocumentSync.ts` rehydrates the right
-panel, terminal and diff stores whenever another document wrote them.
-Composer drafts are deliberately not synced (both documents write them).
+Every other tab (terminal, pull request) is still the page's content in the
+shell's placement: `RightPanel` loads the app's embed route
+(`/embed/$environmentId/$threadId`) in a second `WebSurface` only while one
+of those tabs shows. Both surfaces share the shell's profile (see Web
+engine), so the embed document authenticates with the primary's cookie; it
+opens its own WebSocket and sleeps while hidden. The embed route renders
+`ChatView` with `presentation="rightPanel"`, and `shell/shellDocumentSync.ts`
+rehydrates the terminal store the two documents share.
 
-`ShellRightPanelBridge` (mounted by `ChatView` when hosted) publishes
-`ShellRightPanelState`: open flag, surfaces with titles, the active surface,
-what can be added, and `embedPath`. `ChatView` hides its inline panel, sheet
-and layout toggles when hosted. Actions: `rightPanel.toggle`,
-`rightPanel.activate {id}`, `rightPanel.close {id}`, `rightPanel.add {kind}`
-(`diff | files | terminal | pull-request | agents`). The embed document
-follows the primary one through `ShellEmbedRouteBridge`, which navigates in
-place when `rightPanel.threadKey` changes.
+The page still publishes `rightPanel` (`ShellRightPanelBridge`: its tabs,
+what can be added, `embedPath`); the controller takes its non-native tabs
+and `canAdd` from it, and a change the page makes on its own (its keybinding,
+a tab it added) is taken as the user's. The page follows the shell, not the
+other way round: `rightPanel.follow {threadKey, open, activeSurfaceId}` is
+sent only when the page shows something other than a page tab the shell
+wants, so it does no work behind a native tab. `panel.open {tab, path?,
+line?, turn?, turnId?}` opens a native tab on a turn's diff or a file at a
+line, for the timeline's links.
 
-Known gap: the browser/preview surface needs the Electron preview host and
-is unavailable under the shell.
+Known gaps: the browser/preview surface needs the Electron preview host and
+is unavailable under the shell; the native tabs are not persisted across
+restarts, and the working-tree review and the diff's file tree stay on the
+page.
 
 ### `workspace`
 
@@ -647,9 +656,8 @@ the git summary the node's `vcs` shape for the checkout, the refs
 `vcs.listRefs`, the editors each environment's `config`. It keeps
 `useThreadBranchSelection`'s rules (optimistic branch, `switchRef` /
 `createRef`, then `thread.metadata.update` with the new branch and worktree),
-and renames through `thread.metadata.update`. `ChatHeader` keeps only the git
-control (`shellHosted`), since commit/push/PR flows carry dialogs and progress
-UI that live with that control; the branch toolbar under the composer is not
+and renames through `thread.metadata.update`. The git pill is the `GitActions`
+brick's (`git`, below); the branch toolbar under the composer is not
 rendered. The `Workspace` brick renders the breadcrumb and the run / open
 pills; the branch toolbar's contents (environment, checkout mode, branch
 picker, PR badge) are the context strip under the `Composer` brick.
@@ -657,7 +665,7 @@ picker, PR badge) are the context strip under the `Composer` brick.
 `workspace.newThread` starts a draft in the header's project (`thread.new`),
 `workspace.openPullRequest` opens the checkout's pull request in the system
 browser, and `workspace.titleMenu {x, y}` opens the thread menu (below). A
-draft's first message is still the page's, so a draft's checkout (mode, start from
+draft's checkout (mode, start from
 origin, branch, worktree, the machine it runs on) is kept natively by draft
 id and the page is told each change: `workspace.envMode.set`,
 `.startFromOrigin.set` and `.environment.set` go on to it after they land, and
@@ -1018,9 +1026,9 @@ on this machine.
 The embedded page is legacy and leaves the shell piece by piece. Every piece
 of the original chrome has a brick (`Sidebar`, `Composer`, `RightPanel`,
 `TerminalDrawer`, `Workspace`, `SettingsNav`), but several still get their
-state from the page. The right panel's terminal tab and most settings pages
-are still HTML because they have not moved yet, not by design. The timeline
-has a native store and brick but the layouts still show the page's.
+state from the page. The right panel's terminal and pull request tabs and most
+settings pages are still HTML because they have not moved yet, not by design
+(its Diff and Files tabs are native).
 
 A piece has moved when a native controller (`src/native/`, registered with
 `NativeControllerRegistrar`) builds its state from the shell's own node client
@@ -1048,6 +1056,23 @@ entities but not the rows: row ids are stable, streamed text only emits
 `dataChanged` for its row, and structural changes are applied as inserts,
 moves and removes, so the `Timeline` brick keeps its scroll position. The
 active thread is the navigation route's.
+
+Which routes the shell draws in the window's centre is one list,
+`Bricks/js/centreViews.js`; `ShellWindow.nativeCentreOpen` and `pageOpen`
+follow it, and every layout puts a `CentreHost` beside the `WebSurface` the way
+it does `SettingsHost`. Thread and draft routes load `ThreadView`: the route's
+timeline, a quiet loading line, the draft's opening line with its project and
+checkout, and Retry (`Threads.reload`) for a thread whose node stopped sending
+it. Links in a reply open in the browser or, for a path, in the right panel
+(`panel.open {tab: "files", path, line?}`); a reply's changed file opens the
+diff on its turn. There is one revert, `Panel.diff` (`ThreadDiff`), which
+follows the route's thread whether or not the panel is open: a reply's Revert
+(on the turn `TimelineModel::checkpointOf` finds for its run) and the Diff
+tab's both go through `requestRevert`, and `RevertDialog` asks before
+`confirmRevert` sends `checkpoint.rollback`, keeping or restoring the files.
+The node marks the later runs `rolled_back` and the fold drops them. Jump to
+latest is also the
+`timeline.jumpToLatest` command.
 
 What the shell still lacks next to web and mobile is tracked as Gherkin, not
 prose. The repository's `features/` tree tags every scenario with the surface it

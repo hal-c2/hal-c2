@@ -28,8 +28,12 @@ class TimelineModel;
 // by the brick's own actions: `composer.text.set`, `composer.model.select`,
 // `composer.option.set` and the mode actions are recorded and still reach the
 // page, which follows. A send reads only the draft and the thread's shell row.
-// New-thread drafts are DraftController's (the text is kept there); slash commands (a prompt starting
-// with "/") still go to the page.
+// A new thread's draft (DraftController's, which keeps its text) is kept the
+// same way by draft id, and its first send launches the thread
+// (`orchestration.launchThread`) in the checkout WorkspaceController picked;
+// the window then moves to the thread in the draft's place. Slash commands (a
+// prompt starting with "/"), background sends of a draft, and drafts the shell
+// does not keep still go to the page.
 //
 // `turn` publishes the route thread's state for the request bricks:
 //   {threadKey, kind: "thread", running, draft,
@@ -44,8 +48,9 @@ class TimelineModel;
 // `problem` says why a request cannot be answered, when it cannot.
 // `draft` is the thread's text as it was when the window opened the thread.
 // On a new thread's draft route the turn is {threadKey: draftId, kind:
-// "draft", draft} with nothing pending: its text is kept with the draft
-// (DraftController::setText), and its images and send stay with the page.
+// "draft", draft, attachments, sending} with nothing pending; `sending` while
+// its first send is on the way. A draft the shell does not keep has an empty
+// threadKey (the page's composer has it).
 //
 // Actions: composer.submit {text, intent, edit}, composer.interrupt,
 // composer.attach {files}, composer.attachment.remove {id},
@@ -97,6 +102,12 @@ private:
 
   bool interrupt();
   bool submit(const QVariantMap& payload);
+  // A new thread's first send: its images, then the thread with its message.
+  bool submitDraft(const QString& draftId, const QVariantMap& payload);
+  void launch(const QString& draftId, const QString& environmentId, const QJsonObject& input);
+  void launched(const QString& draftId, const QString& threadKey, const std::optional<QString>& error);
+  // The model a thread (its own) or a draft (the project's default) starts from.
+  QJsonObject baseSelection(const QString& key) const;
   // The message and the mode changes before it; empty `text` implements the plan.
   bool sendTurn(const QString& target, const QString& text, const QString& mode, bool planFollowUp,
                 const QVariant& edit);
@@ -110,6 +121,8 @@ private:
   QString openThread() const;
   // The new-thread draft the window shows (DraftController's), or empty.
   QString openDraft() const;
+  // The same, when the shell keeps it; empty for one only the page has.
+  QString nativeDraft() const;
   bool running(const QString& target) const;
   void toast(const QString& title, const QString& description);
   void follow();
@@ -134,6 +147,9 @@ private:
   // Requests answered and waiting for the node, and ones it said are gone.
   QSet<QString> m_responding;
   QSet<QString> m_closed;
+  // Drafts whose first send is on the way.
+  QSet<QString> m_launching;
+  QHash<QString, QVariant> m_launchEdits;
   QVariantMap m_published;
   int m_nextAttachment = 1;
 };

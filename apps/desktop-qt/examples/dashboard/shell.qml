@@ -527,7 +527,7 @@ ShellWindow {
 
                     WebSurface {
                         anchors.fill: parent
-                        visible: !root.nativeSettingsOpen
+                        visible: root.pageOpen
                         url: Shell.pageUrl
                         radius: surfaceCard.radius - surfaceCard.border.width
                     }
@@ -538,6 +538,15 @@ ShellWindow {
                         radius: surfaceCard.radius - surfaceCard.border.width
                         section: root.settingsSection
                         visible: root.nativeSettingsOpen
+                    }
+
+                    // The route's thread or draft, drawn by the shell.
+                    CentreHost {
+                        anchors.fill: parent
+                        anchors.margins: surfaceCard.border.width
+                        radius: surfaceCard.radius - surfaceCard.border.width
+                        kind: root.nativeCentreOpen ? root.route.kind : ""
+                        visible: root.nativeCentreOpen
                     }
 
 

@@ -11,6 +11,9 @@
 #   apps/mobile/src/features/files/useFileTreeEntries.ts
 #   packages/contracts/src/filesystem.ts (ProjectListEntriesInput, ProjectEntry)
 #   packages/contracts/src/rpc.ts (projects.listEntries)
+#   apps/desktop-qt/src/native/WorkspaceFiles.cpp, FileTreeModel.cpp
+#   apps/desktop-qt/qml/HalC2/Bricks/FilesPanel.qml
+#   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 
 Feature: Exploring project files
   The user can walk a project's files from any client without leaving the thread.
@@ -79,7 +82,7 @@ Feature: Exploring project files
     When the user browses files
     Then the user is told the files could not be listed
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Expanding a folder loads its children on demand
     When the user expands "src"
     Then "app.ts" and "lib" are shown under "src"
@@ -91,14 +94,14 @@ Feature: Exploring project files
     When the user collapses every folder
     Then only the top level is visible
 
-  @backlog @desktop
+  @desktop
   Scenario: Filtering the tree can hide entries that do not match
     When the user filters the tree by "cart" and hides non-matches
     Then only "src/lib/cart.ts" and its folders are shown
     When the user stops filtering
     Then the full tree is shown again
 
-  @backlog @desktop
+  @desktop
   Scenario: The tree follows the file open in the viewer
     When the user opens "src/lib/cart.ts" from a message
     Then the tree reveals and selects "src/lib/cart.ts"
@@ -131,10 +134,19 @@ Feature: Exploring project files
       | open with the editor       | the file opens in the user's editor              |
       | copy a mention of          | a mention of "src/app.ts" is on the clipboard    |
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A folder that fails to load can be retried
     Given listing "src" fails once
     When the user expands "src"
     Then the user is told the folder could not be loaded
     When the user retries
     Then "app.ts" is shown under "src"
+
+  @desktop
+  Scenario: A project the desktop cannot list can be retried
+    Given the environment cannot list "shop"
+    When the user opens the Files tab
+    Then the user is told the files could not be listed
+    When the environment can list "shop" again
+    And the user retries
+    Then the top of "shop" is shown

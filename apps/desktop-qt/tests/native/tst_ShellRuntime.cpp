@@ -371,6 +371,8 @@ Window {
                              "HalC2.Shell", 1, 0, "Terminals");
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Keybindings.qml")),
                              "HalC2.Shell", 1, 0, "Keybindings");
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Panel.qml")),
+                             "HalC2.Shell", 1, 0, "Panel");
     ShellRuntime runtime({config, sources}, &bridge, &theme);
     const auto window = []() -> QQuickWindow* {
       QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);

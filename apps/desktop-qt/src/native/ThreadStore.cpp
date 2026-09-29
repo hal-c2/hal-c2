@@ -80,6 +80,15 @@ void ThreadStore::close(const QString& threadKey) {
   if (model) model->deleteLater();
 }
 
+void ThreadStore::reload(const QString& threadKey) {
+  const auto it = m_threads.find(threadKey);
+  if (it == m_threads.end() || !it->model) return;
+  unfollow(*it);
+  it->waitOnline = false;
+  it->model->setStatus(QStringLiteral("loading"));
+  follow(threadKey);
+}
+
 void ThreadStore::evict() {
   while (m_recent.size() > warmThreads + 1) close(m_recent.last());
 }

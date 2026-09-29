@@ -10,16 +10,19 @@ defmodule HalC2.Web.Protocol do
     * `{"type": "shell", "links": true}`: the same, with each link also carrying its
       environment's nodes and rows (`HalC2.Links.Rows`), then their changes
     * `{"type": "stream", "node": n, "stream": id}`: one project or thread
-    * `{"type": "config", "node": n}` or `{"type": "config", "environment": id}`:
-      that node's `ServerConfig` and name, then its settings and providers as they change;
+    * `{"type": "config", "node": n}`: that node's `ServerConfig` and name, then its settings and providers as they change;
       with `"usageLimitsCommand": true` (a client that answers `/usage-limits` itself),
       every provider with limits to show offers that command
     * `{"type": "terminal", "node": n, "input": TerminalAttachInput}`: one terminal,
       opened if needed; a snapshot, then its events
     * `{"type": "terminals", "node": n}`: that node's terminal summaries, then changes
-    * the stream and terminal shapes with `"environment": id` instead of `"node"`: on
-      the cluster member serving that environment, or through this node's link to it
-      (a linked stream resumes from `offset` and resyncs as a local one does)
+    * the shapes in `routed/0` with `"environment": id` instead of `"node"`: on this
+      node or the cluster member serving that environment, else through this node's
+      link to it or to its cluster (`HalC2.Links.route/1`), whose token's scopes apply
+      there (a linked stream resumes from `offset` and resyncs as a local one does).
+      While that link is down the subscription fails at once with an error whose
+      `detail` is `{"_tag": "EnvironmentUnreachableError", "environmentId", "reason"}`,
+      `reason` being `"unreachable"` or `"refused"` (pair it again)
     * `{"type": "vcs", "node": n, "cwd": dir}`: a checkout's git status, then changes
     * `{"type": "worktreeSetup", "node": n, "threadId": id}`: a new thread's worktree
       setup (`WorktreeSetupStreamEvent`: null, or a snapshot), then changes
@@ -62,8 +65,9 @@ defmodule HalC2.Web.Protocol do
       {"t": "unsub", "id": 1}
       {"t": "ping"}
       {"t": "rpc", "id": 1, "environment": id, "method": m, "payload": ...}
-        (a client RPC such as orchestration.dispatchCommand, run on that
-        environment's node; answered by rpc.result or rpc.error)
+        (a client RPC such as orchestration.dispatchCommand, run where that
+        environment is served, as shapes are routed; answered by rpc.result or
+        rpc.error, with EnvironmentUnreachableError while its link is down)
 
   Server to client:
 
@@ -86,7 +90,7 @@ defmodule HalC2.Web.Protocol do
       {"t": "events", "id", "offset", "events": [[seq, kind, id, patch, at]]}
       {"t": "live", "id", "offset"}     (caught up; later events are live)
       {"t": "resync", "id", "offset"}   (fell behind: resubscribe from offset)
-      {"t": "error", "id", "reason"}
+      {"t": "error", "id", "reason", "detail"?}
       {"t": "config", "id", "node", "config"}
       {"t": "config.settings", "id", "settings"}   (the node's ServerSettings changed)
       {"t": "config.providers", "id", "providers"} (its ServerConfig.providers changed)
@@ -137,10 +141,30 @@ defmodule HalC2.Web.Protocol do
            :shell
            | {:stream, node, String.t()}
            | {:config, node}
-           | {:config, node, :usage_limits_command}, non_neg_integer | nil}
+           | {:config, node, :usage_limits_command}
+           | {:environment, String.t(), map}, non_neg_integer | nil}
           | {:unsub, integer}
           | {:rpc, integer, String.t(), String.t(), term}
           | :ping
+
+  # The shapes a client may name by environment. The rest are about the node a client
+  # talks to (shell, authAccess) or administer one node's host (serverUpdate,
+  # relayClientInstall, resourceTelemetry, localServers, devices, preview,
+  # previewAutomation, projectClones, scheduledTasks, backgroundPolicy, providerInstall),
+  # and are asked of that node by name.
+  @routed ~w(stream terminal terminals config vcs gitAction worktreeSetup providerAuth
+             pullRequestRefreshes)
+
+  @doc "The shape types a client may name by environment rather than node."
+  def routed, do: @routed
+
+  @doc """
+  An environment-named shape as `node` serves it: its node form, decoded. Where the
+  shape goes is `HalC2.Links.route/1`'s answer.
+  """
+  @spec at_node(map, node) :: {:ok, term} | {:error, String.t()}
+  def at_node(shape, node),
+    do: shape |> Map.delete("environment") |> Map.put("node", Atom.to_string(node)) |> decode_shape([node])
 
   @spec decode(binary, [node]) :: {:ok, request} | {:error, String.t()}
   def decode(frame, known_nodes) do
@@ -166,6 +190,13 @@ defmodule HalC2.Web.Protocol do
     _ -> {:error, "invalid json"}
   end
 
+  # By environment instead of node: routed where that environment is served
+  # (`HalC2.Links.route/1`). The rest of the shape must be valid in its node form.
+  defp decode_shape(%{"type" => type, "environment" => env} = shape, _nodes)
+       when type in @routed and is_binary(env) do
+    with {:ok, _} <- at_node(shape, node()), do: {:ok, {:environment, env, shape}}
+  end
+
   defp decode_shape(%{"type" => "shell", "links" => true}, _nodes), do: {:ok, {:shell, :links}}
   defp decode_shape(%{"type" => "shell"}, _nodes), do: {:ok, :shell}
 
@@ -183,28 +214,12 @@ defmodule HalC2.Web.Protocol do
          do: {:ok, Tuple.insert_at(config, 2, :usage_limits_command)}
   end
 
-  defp decode_shape(%{"type" => "config", "environment" => environment_id}, _nodes)
-       when is_binary(environment_id),
-       do: {:ok, {:config_for, environment_id}}
-
   defp decode_shape(%{"type" => "config", "node" => node}, nodes) do
     case Enum.find(nodes, &(Atom.to_string(&1) == node)) do
       nil -> {:error, "unknown node"}
       node -> {:ok, {:config, node}}
     end
   end
-
-  # By environment: a cluster member's, or one this node links to (`HalC2.Links`).
-  defp decode_shape(%{"type" => "stream", "environment" => env, "stream" => id}, _)
-       when is_binary(env) and is_binary(id),
-       do: {:ok, {:environment, env, %{"type" => "stream", "stream" => id}}}
-
-  defp decode_shape(%{"type" => "terminal", "environment" => env, "input" => %{} = input}, _)
-       when is_binary(env),
-       do: {:ok, {:environment, env, %{"type" => "terminal", "input" => input}}}
-
-  defp decode_shape(%{"type" => "terminals", "environment" => env}, _) when is_binary(env),
-    do: {:ok, {:environment, env, %{"type" => "terminals"}}}
 
   defp decode_shape(%{"type" => "terminal", "node" => node, "input" => %{} = input}, nodes) do
     with {:ok, node} <- known_node(node, nodes), do: {:ok, {:terminal, node, input}}

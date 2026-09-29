@@ -162,8 +162,12 @@ void DraftController::remove(const QString& id) {
 void DraftController::promote(const QString& threadKey) {
   const auto found = std::find_if(m_drafts.cbegin(), m_drafts.cend(),
                                   [&threadKey](const Draft& draft) { return draft.threadKey() == threadKey; });
+  if (found != m_drafts.cend()) promote(found->id, threadKey);
+}
+
+void DraftController::promote(const QString& id, const QString& threadKey) {
+  const auto found = std::find_if(m_drafts.cbegin(), m_drafts.cend(), [&id](const Draft& draft) { return draft.id == id; });
   if (found == m_drafts.cend()) return;
-  const QString id = found->id;
   m_drafts.erase(found);
   save();
   emit changed();

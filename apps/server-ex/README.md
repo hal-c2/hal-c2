@@ -116,8 +116,10 @@ mix hal_c2.link --remove ENVIRONMENT_ID
 ```
 
 A link keeps the other node's access token, and this node forwards its clients'
-RPCs and stream and terminal shapes for that environment over one socket
-(`HalC2.Links`). A client that asks for the shell with `"links": true` also gets each
+RPCs and the shapes named by environment (`HalC2.Web.Protocol.routed/0`) over one
+socket (`HalC2.Links`), for that environment and the other nodes of its cluster. The
+other node checks the link's scopes as it would any client's. While a link is down,
+requests through it fail at once with an `EnvironmentUnreachableError`. A client that asks for the shell with `"links": true` also gets each
 linked environment's nodes and rows under its link, followed only while some client
 asks. The desktop shell reaches its terminals that way, since it only talks to its own
 node, and pairs environments as links from its Connections settings

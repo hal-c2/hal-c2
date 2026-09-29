@@ -41,7 +41,7 @@ Feature: Worktrees and setup scripts
     When the user starts a thread in a new worktree of "shop"
     Then the thread starts in a worktree of its own
 
-  @backlog @desktop @mobile
+  @desktop @backlog-mobile
   Scenario: Picking the base ref for a new worktree
     When the user starts a thread in a new worktree based on "release/2"
     Then the worktree starts from "release/2"

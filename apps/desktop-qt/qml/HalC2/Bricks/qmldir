@@ -46,3 +46,8 @@ ThemeEditor 1.0 ThemeEditor.qml
 TurnRequests 1.0 TurnRequests.qml
 ProjectRemovalDialog 1.0 ProjectRemovalDialog.qml
 ConfirmDialog 1.0 ConfirmDialog.qml
+CentreHost 1.0 CentreHost.qml
+ThreadView 1.0 ThreadView.qml
+DiffPanel 1.0 DiffPanel.qml
+FilesPanel 1.0 FilesPanel.qml
+RevertDialog 1.0 RevertDialog.qml

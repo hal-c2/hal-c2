@@ -55,6 +55,9 @@ public:
   // was not yet. Empty leaves no thread active; the warm ones stay.
   Q_INVOKABLE void open(const QString& threadKey);
   Q_INVOKABLE void close(const QString& threadKey);
+  // Follows an unreachable thread again now, rather than when its node is
+  // back; `loading` until the snapshot lands.
+  Q_INVOKABLE void reload(const QString& threadKey);
 
   void setClock(std::function<QDateTime()> now);
 

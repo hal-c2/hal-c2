@@ -20,6 +20,7 @@
 #include "ThreadStore.h"
 #include "TimelineModel.h"
 #include "ToastController.h"
+#include "WorkspaceController.h"
 
 namespace {
 const NativeControllerRegistrar<ComposerController> registrar(QStringLiteral("composer"), {QStringLiteral("turn")});
@@ -82,6 +83,17 @@ QList<QJsonObject> itemsOf(const QHash<QString, QJsonObject>& items, const QStri
   return found;
 }
 
+// apps/web's new-thread title: the prompt, else the first image, cut to 50.
+QString launchTitle(const QString& text, const QString& firstImage) {
+  QString seed = text.trimmed();
+  if (seed.isEmpty()) seed = firstImage.isEmpty() ? QStringLiteral("New thread") : QStringLiteral("Image: ") + firstImage;
+  return seed.size() > 50 ? seed.left(50) + QStringLiteral("...") : seed;
+}
+
+QString newId() {
+  return QUuid::createUuid().toString(QUuid::WithoutBraces);
+}
+
 }  // namespace
 
 ComposerController::ComposerController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
@@ -94,6 +106,8 @@ void ComposerController::activate() {
   NativeShell* shell = NativeShell::of(this);
   connect(shell->controller<NavigationController>(), &NavigationController::changed, this, &ComposerController::follow);
   connect(shell->controller<ThreadStore>(), &ThreadStore::activeThreadChanged, this, &ComposerController::follow);
+  // A draft the page opened becomes the shell's once DraftController adopts it.
+  connect(shell->controller<DraftController>(), &DraftController::changed, this, &ComposerController::publish);
   // The row says whether a turn runs, which decides follow-ups and the plan.
   connect(m_store, &ShellStore::changed, this, &ComposerController::publish);
   follow();
@@ -102,22 +116,26 @@ void ComposerController::activate() {
 bool ComposerController::handle(const QString& action, const QVariant& payload) {
   if (!m_active) return false;
   const QVariantMap map = payload.toMap();
-  const QString target = openThread();
+  // The draft the brick changes: the route thread's, or the new thread's.
+  const QString draftId = nativeDraft();
+  const QString target = draftId.isEmpty() ? openThread() : draftId;
+  const bool known = !draftId.isEmpty() || m_store->thread(target).has_value();
   // What the brick changes on the thread's draft; the page follows along.
   if (action == QLatin1String("composer.text.set")) {
     const QString text = map.value(QStringLiteral("text")).toString();
-    if (!target.isEmpty() && map.value(QStringLiteral("target")).toString() == target) {
+    if (map.value(QStringLiteral("target")).toString() != target || target.isEmpty()) return false;
+    if (draftId.isEmpty()) {
       m_drafts[target].text = text;
-    } else if (const QString draftId = openDraft(); !draftId.isEmpty() && map.value(QStringLiteral("target")).toString() == draftId) {
+    } else {
       // A new thread's text is kept with its draft.
       NativeShell::of(this)->controller<DraftController>()->setText(draftId, text);
     }
     return false;
   }
   if (action == QLatin1String("composer.model.select")) {
-    if (const auto thread = m_store->thread(target)) {
+    if (known) {
       Draft& draft = m_drafts[target];
-      const QJsonObject current = draft.modelSelection.value_or(thread->modelSelection);
+      const QJsonObject current = draft.modelSelection.value_or(baseSelection(target));
       QJsonObject next{{QStringLiteral("instanceId"), map.value(QStringLiteral("instanceId")).toString()},
                        {QStringLiteral("model"), map.value(QStringLiteral("model")).toString()}};
       // Options belong to the provider they were set on.
@@ -130,9 +148,9 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     return false;
   }
   if (action == QLatin1String("composer.option.set")) {
-    if (const auto thread = m_store->thread(target)) {
+    if (known) {
       Draft& draft = m_drafts[target];
-      QJsonObject selection = draft.modelSelection.value_or(thread->modelSelection);
+      QJsonObject selection = draft.modelSelection.value_or(baseSelection(target));
       QJsonArray options = selection.value(QLatin1String("options")).toArray();
       const QString id = map.value(QStringLiteral("id")).toString();
       const QJsonObject option{{QStringLiteral("id"), id},
@@ -150,7 +168,7 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     return false;
   }
   if (action == QLatin1String("composer.runtimeMode.set") || action == QLatin1String("composer.interactionMode.set")) {
-    if (!target.isEmpty()) {
+    if (known) {
       const QString mode = map.value(QStringLiteral("mode")).toString();
       if (action == QLatin1String("composer.runtimeMode.set")) {
         m_drafts[target].runtimeMode = mode;
@@ -165,7 +183,7 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
   if (action == QLatin1String("composer.submit")) return submit(map);
   if (action == QLatin1String("composer.attach")) return attach(map.value(QStringLiteral("files")).toList());
   if (action == QLatin1String("composer.attachment.remove")) {
-    if (target.isEmpty()) return false;
+    if (!known) return false;
     QList<Attachment>& attachments = m_drafts[target].attachments;
     const QString id = map.value(QStringLiteral("id")).toString();
     const qsizetype removed = attachments.removeIf([&](const Attachment& attachment) { return attachment.id == id; });
@@ -230,6 +248,7 @@ bool ComposerController::interrupt() {
 // refines the plan (or implements it, with no text), as the web's
 // resolvePlanFollowUpSubmission.
 bool ComposerController::submit(const QVariantMap& payload) {
+  if (const QString draftId = nativeDraft(); !draftId.isEmpty()) return submitDraft(draftId, payload);
   const QString target = openThread();
   if (!m_store->thread(target)) return false;
   const QString text = payload.contains(QStringLiteral("text")) ? payload.value(QStringLiteral("text")).toString()
@@ -347,6 +366,120 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   return true;
 }
 
+// A new thread's first send, as the web's: its images are stored, then the
+// thread is launched with the message in the draft's checkout. The draft (its
+// text and images) stays until the node confirms; the window then shows the
+// thread in its place.
+bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& payload) {
+  NativeShell* shell = NativeShell::of(this);
+  auto* drafts = shell->controller<DraftController>();
+  const auto kept = drafts->draft(draftId);
+  if (!kept) return false;
+  const QString text = payload.contains(QStringLiteral("text")) ? payload.value(QStringLiteral("text")).toString() : kept->text;
+  // Slash commands and sends that leave the window on the draft are the page's.
+  if (text.trimmed().startsWith(QLatin1Char('/')) ||
+      payload.value(QStringLiteral("intent")).toString() == QLatin1String("background")) {
+    return false;
+  }
+  if (text != kept->text) drafts->setText(draftId, text);
+  const QList<Attachment> attachments = m_drafts.value(draftId).attachments;
+  if (text.trimmed().isEmpty() && attachments.isEmpty()) return true;
+  if (m_launching.contains(draftId)) return true;
+
+  const WorkspaceController::Launch where = shell->controller<WorkspaceController>()->launch(draftId);
+  if (!where.problem.isEmpty()) {
+    toast(QStringLiteral("Could not create thread"), where.problem);
+    return true;
+  }
+  if (!m_client->isReady() || !m_store->environmentOnline(where.environmentId)) {
+    shell->controller<ToastController>()->show(QStringLiteral("warning"), QStringLiteral("Not connected: message not sent"),
+                                               QStringLiteral("Reconnecting to the environment. Try again once it is connected."));
+    return true;
+  }
+
+  const Draft& draft = m_drafts[draftId];
+  const QString trimmed = text.trimmed();
+  QJsonObject input{
+      {QStringLiteral("commandId"), newId()},
+      {QStringLiteral("creationSource"), QStringLiteral("web")},
+      {QStringLiteral("threadId"), kept->threadId},
+      {QStringLiteral("projectId"), where.projectId},
+      {QStringLiteral("title"), launchTitle(trimmed, attachments.isEmpty() ? QString() : attachments.constFirst().name)},
+      {QStringLiteral("generateTitle"), true},
+      {QStringLiteral("runtimeMode"), draft.runtimeMode.isEmpty() ? QStringLiteral("full-access") : draft.runtimeMode},
+      {QStringLiteral("interactionMode"), draft.interactionMode.isEmpty() ? QStringLiteral("default") : draft.interactionMode},
+      {QStringLiteral("workspaceStrategy"), where.strategy},
+      {QStringLiteral("initialMessage"), QJsonObject{{QStringLiteral("messageId"), newId()},
+                                                     {QStringLiteral("text"), trimmed},
+                                                     {QStringLiteral("attachments"), QJsonArray()}}},
+  };
+  const QJsonObject modelSelection = draft.modelSelection.value_or(baseSelection(draftId));
+  if (!modelSelection.isEmpty()) input.insert(QStringLiteral("modelSelection"), modelSelection);
+
+  m_launching.insert(draftId);
+  publish();
+  // The brick's own edit, so it takes the cleared text as the answer to its submit.
+  const QVariant edit = payload.value(QStringLiteral("edit"));
+  m_launchEdits.insert(draftId, edit);
+  if (attachments.isEmpty()) {
+    launch(draftId, where.environmentId, input);
+    return true;
+  }
+  QJsonArray images;
+  for (const Attachment& attachment : attachments) {
+    images.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("image")},
+                              {QStringLiteral("name"), attachment.name},
+                              {QStringLiteral("mimeType"), attachment.mimeType},
+                              {QStringLiteral("sizeBytes"), attachment.sizeBytes},
+                              {QStringLiteral("dataUrl"), attachment.dataUrl}});
+  }
+  QJsonObject message = input.value(QLatin1String("initialMessage")).toObject();
+  const QString environmentId = where.environmentId;
+  m_client->call(environmentId, QStringLiteral("assets.persistChatAttachments"),
+                 QJsonObject{{QStringLiteral("threadId"), kept->threadId},
+                             {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
+                             {QStringLiteral("attachments"), images}},
+                 [this, draftId, environmentId, input, message](const QJsonValue& result,
+                                                               const std::optional<QString>& error) mutable {
+                   if (error) {
+                     launched(draftId, QString(), error);
+                     return;
+                   }
+                   message.insert(QStringLiteral("attachments"), result.toObject().value(QLatin1String("attachments")));
+                   input.insert(QStringLiteral("initialMessage"), message);
+                   launch(draftId, environmentId, input);
+                 });
+  return true;
+}
+
+void ComposerController::launch(const QString& draftId, const QString& environmentId, const QJsonObject& input) {
+  m_client->call(environmentId, QStringLiteral("orchestration.launchThread"), input,
+                 [this, draftId, environmentId, input](const QJsonValue& result, const std::optional<QString>& error) {
+                   QString threadId = result.toObject().value(QLatin1String("threadId")).toString();
+                   if (threadId.isEmpty()) threadId = str(input, QLatin1String("threadId"));
+                   launched(draftId, environmentId + QLatin1Char(':') + threadId, error);
+                 });
+}
+
+// The launch's answer: the draft becomes the thread, or stays with a toast.
+void ComposerController::launched(const QString& draftId, const QString& threadKey, const std::optional<QString>& error) {
+  m_launching.remove(draftId);
+  const QVariant edit = m_launchEdits.take(draftId);
+  if (error) {
+    toast(QStringLiteral("Could not create thread"), *error);
+    publish();
+    return;
+  }
+  QVariantMap request{{QStringLiteral("target"), draftId}, {QStringLiteral("text"), QString()}, {QStringLiteral("cursor"), 0}};
+  if (edit.isValid()) request.insert(QStringLiteral("edit"), edit);
+  m_bridge->sendToPage(QStringLiteral("composer.text.set"), request);
+  m_drafts.remove(draftId);
+  NativeShell* shell = NativeShell::of(this);
+  shell->controller<WorkspaceController>()->forgetDraft(draftId);
+  shell->controller<DraftController>()->promote(draftId, threadKey);
+  publish();
+}
+
 // Uploads the thread's oldest send's images, dispatches it command by
 // command, then the next send.
 void ComposerController::sendNext(const QString& target) {
@@ -434,8 +567,9 @@ void ComposerController::dispatchAll(const Send& send, qsizetype index,
 // Images the brick read from disk ({name, mimeType, base64}) join the route
 // thread's draft.
 bool ComposerController::attach(const QVariantList& files) {
-  const QString target = openThread();
-  if (!m_store->thread(target)) return false;
+  const QString draftId = nativeDraft();
+  const QString target = draftId.isEmpty() ? openThread() : draftId;
+  if (draftId.isEmpty() && !m_store->thread(target)) return false;
   QList<Attachment>& attachments = m_drafts[target].attachments;
   for (const QVariant& value : files) {
     const QVariantMap file = value.toMap();
@@ -505,6 +639,31 @@ QString ComposerController::openDraft() const {
   return route.kind == QLatin1String("draft") ? route.draftId : QString();
 }
 
+QString ComposerController::nativeDraft() const {
+  const QString id = openDraft();
+  return !id.isEmpty() && NativeShell::of(this)->controller<DraftController>()->draft(id) ? id : QString();
+}
+
+// A thread's own model; for a draft the project's default, as the web's
+// deriveComposerModelSelection: this device's project override, the
+// project's, then the default for new threads. Empty lets the node choose.
+QJsonObject ComposerController::baseSelection(const QString& key) const {
+  if (const auto thread = m_store->thread(key)) return thread->modelSelection;
+  NativeShell* shell = NativeShell::of(this);
+  const auto kept = shell->controller<DraftController>()->draft(key);
+  if (!kept) return {};
+  const auto* settings = shell->controller<SettingsController>();
+  const auto setting = [settings](const QString& path) {
+    return settings ? QJsonValue::fromVariant(settings->value(path)).toObject() : QJsonObject();
+  };
+  QJsonObject selection = setting(QStringLiteral("projectSettingsOverrides.%1.defaultModelSelection").arg(kept->projectId));
+  if (selection.isEmpty()) {
+    selection = m_store->projectRow(kept->environmentId, kept->projectId).value(QLatin1String("defaultModelSelection")).toObject();
+  }
+  if (selection.isEmpty()) selection = setting(QStringLiteral("defaultModelSelection"));
+  return selection;
+}
+
 bool ComposerController::running(const QString& target) const {
   const auto thread = m_store->thread(target);
   return thread && thread->activeRunId.has_value();
@@ -556,13 +715,15 @@ QVariantMap ComposerController::turnState() const {
                                    {QStringLiteral("sizeBytes"), attachment.sizeBytes}});
   }
   const bool isRunning = thread && thread->activeRunId.has_value();
-  // A new thread's draft: only its text is the shell's so far.
+  // A new thread's draft; one only the page has is left to it.
   if (!m_draftId.isEmpty()) {
-    return {{QStringLiteral("threadKey"), m_draftId},
+    const bool kept = NativeShell::of(this)->controller<DraftController>()->draft(m_draftId).has_value();
+    return {{QStringLiteral("threadKey"), kept ? m_draftId : QString()},
             {QStringLiteral("kind"), QStringLiteral("draft")},
             {QStringLiteral("running"), false},
+            {QStringLiteral("sending"), m_launching.contains(m_draftId)},
             {QStringLiteral("draft"), m_openedDraft},
-            {QStringLiteral("attachments"), QVariantList()},
+            {QStringLiteral("attachments"), attachments},
             {QStringLiteral("approvals"), QVariantList()},
             {QStringLiteral("questions"), QVariantList()},
             {QStringLiteral("plan"), QVariant()},

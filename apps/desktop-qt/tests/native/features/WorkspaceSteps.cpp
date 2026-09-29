@@ -402,6 +402,27 @@ const Steps steps([] {
   step(QStringLiteral("the user is writing the first message of a new thread in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     openDraft(world, c[0]);
   });
+  step(QStringLiteral("the user starts a thread in a new worktree based on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString project = world.node.projects.firstKey();
+    QStringList& branches = world.node.part<FakeGit>().repos[root(project)].branches;
+    if (!branches.contains(c[0])) branches.append(c[0]);
+    openDraft(world, project);
+    dispatch(world, QStringLiteral("workspace.envMode.set"), {{QStringLiteral("mode"), QStringLiteral("worktree")}});
+    dispatch(world, QStringLiteral("workspace.branch.search"), {{QStringLiteral("query"), QString()}});
+    dispatch(world, QStringLiteral("workspace.branch.select"), {{QStringLiteral("name"), c[0]}});
+    world.draftId = kDraft;
+    dispatch(world, QStringLiteral("composer.submit"), {{QStringLiteral("text"), QStringLiteral("Ship the fix")}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+  });
+  step(QStringLiteral("the user chose a new worktree without a base branch"), [](World& world, const Captures&, const Table&) {
+    // A checkout on no branch (a detached head) offers no base to start from.
+    const QString project = world.node.projects.firstKey();
+    gitRepo(world, project, {QStringLiteral("main")}, QString(), QStringLiteral("main"));
+    sendStatus(world.node, root(project));
+    world.startNewThread(QVariantMap());
+    world.waitFor([&] { return workspace(world).value(QStringLiteral("isDraft")).toBool(); },
+                  [&] { return QStringLiteral("the header to show the draft; it shows %1").arg(show(workspace(world))); });
+    dispatch(world, QStringLiteral("workspace.envMode.set"), {{QStringLiteral("mode"), QStringLiteral("worktree")}});
+  });
   step(QStringLiteral("the user picks the new worktree checkout mode"), [](World& world, const Captures&, const Table&) {
     dispatch(world, QStringLiteral("workspace.envMode.set"), {{QStringLiteral("mode"), QStringLiteral("worktree")}});
   });
@@ -418,7 +439,7 @@ const Steps steps([] {
     expect(state.value(QStringLiteral("envMode")) == mode && state.value(QStringLiteral("envModeLabel")) == label &&
                world.native().controller<WorkspaceController>()->checkout(kDraft).envMode == mode,
            QStringLiteral("the header shows %1").arg(show(state)));
-    // The page still sends the first message, in the mode it was told.
+    // The page follows, for the background starts it still sends.
     expect(!told.isEmpty() && told.last().payload.value(QStringLiteral("mode")) == mode, QStringLiteral("the page got %1").arg(world.describePage()));
   };
   step(QStringLiteral("the thread will start in a worktree of its own instead of the project folder"), [startsIn](World& world, const Captures&, const Table&) {

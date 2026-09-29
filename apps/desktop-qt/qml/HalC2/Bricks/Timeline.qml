@@ -11,7 +11,10 @@ import HalC2.Shell
 //
 // The view follows new output while it is at the end. Scrolling away stops
 // that and offers a way back to the latest output. Folds and tool call
-// groups open and close through the model's toggle(rowId).
+// groups open and close through the model's toggle(rowId). A message offers
+// Copy on hover, and an agent reply whose turn left a checkpoint offers
+// Revert (revertRequested); files a reply changed or a tool call touched ask
+// to be opened (fileActivated). What those do is the host's (ThreadView).
 Item {
     id: root
 
@@ -21,10 +24,30 @@ Item {
     property bool working: root.model !== null && root.model.working === true
     // Whether the view keeps the latest output in view.
     readonly property alias following: view.following
+    // Whether the list says it is loading or its node cannot be reached;
+    // hosts that say so themselves turn it off.
+    property bool showStatus: true
+    // Whether a reply's row can revert the thread to its turn's checkpoint.
+    property var revertable: rowId => root.model !== null && typeof root.model.checkpointOf === "function" && Object.keys(root.model.checkpointOf(rowId)).length > 0
 
     signal linkActivated(string link)
     // A fold or tool call group was opened or closed.
     signal toggled(string rowId)
+    // A file to open in the right panel: "diff" for a reply's changed files,
+    // "files" for a file a tool call changed; `rowId` is the row it is on.
+    signal fileActivated(string path, string tab, string rowId)
+    // The user asked to revert the thread to this reply's turn.
+    signal revertRequested(string rowId)
+    // A message went to the clipboard.
+    signal copied(string rowId)
+
+    // Whether the model can put a message on the clipboard (copy(rowId)).
+    readonly property bool canCopy: root.model !== null && typeof root.model.copy === "function"
+
+    function copy(rowId) {
+        root.model.copy(rowId);
+        root.copied(rowId);
+    }
 
     function toggle(rowId) {
         if (root.model && typeof root.model.toggle === "function")
@@ -80,6 +103,22 @@ Item {
         onLinkActivated: link => root.linkActivated(link)
         HoverHandler {
             cursorShape: parent.hoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
+        }
+    }
+
+    // A small text button under a message.
+    component ActionLink: Text {
+        id: action
+        signal clicked
+        color: actionHover.hovered ? root.textColor : root.mutedColor
+        font.family: root.uiFamily
+        font.pixelSize: 12
+        HoverHandler {
+            id: actionHover
+            cursorShape: Qt.PointingHandCursor
+        }
+        TapHandler {
+            onTapped: action.clicked()
         }
     }
 
@@ -180,6 +219,13 @@ Item {
             required property var files
             // The tool calls whose details are open, by id.
             property var openCalls: ({})
+            // A message's actions show while the pointer is over it; their
+            // line is always there, so hovering moves nothing.
+            readonly property bool showActions: rowHover.hovered && row.streaming !== true
+
+            HoverHandler {
+                id: rowHover
+            }
 
             width: ListView.view.width
             height: body.item ? body.item.implicitHeight : 0
@@ -234,6 +280,19 @@ Item {
                             text: row.text ?? ""
                         }
                     }
+                    Row {
+                        anchors.right: parent.right
+                        height: 16
+                        spacing: 12
+                        opacity: row.showActions ? 1 : 0
+                        ActionLink {
+                            objectName: "copyMessage"
+                            text: qsTr("Copy")
+                            visible: root.canCopy
+                            enabled: row.showActions
+                            onClicked: root.copy(row.rowId)
+                        }
+                    }
                 }
             }
 
@@ -260,10 +319,19 @@ Item {
                                 required property var modelData
                                 spacing: 8
                                 RowText {
+                                    objectName: "changedFile"
                                     text: modelData.path
                                     font.family: root.monoFamily
                                     font.pixelSize: 12
                                     wrapMode: Text.NoWrap
+                                    font.underline: changedFileHover.hovered
+                                    HoverHandler {
+                                        id: changedFileHover
+                                        cursorShape: Qt.PointingHandCursor
+                                    }
+                                    TapHandler {
+                                        onTapped: root.fileActivated(modelData.path, "diff", row.rowId)
+                                    }
                                 }
                                 RowText {
                                     text: "+" + modelData.additions
@@ -276,6 +344,25 @@ Item {
                                     font.pixelSize: 12
                                 }
                             }
+                        }
+                    }
+                    Row {
+                        height: 16
+                        spacing: 12
+                        opacity: row.showActions ? 1 : 0
+                        ActionLink {
+                            objectName: "copyMessage"
+                            text: qsTr("Copy")
+                            visible: root.canCopy
+                            enabled: row.showActions
+                            onClicked: root.copy(row.rowId)
+                        }
+                        ActionLink {
+                            objectName: "revertToTurn"
+                            text: qsTr("Revert to here")
+                            // Asked again each time the pointer comes over the reply.
+                            visible: row.showActions && root.revertable(row.rowId)
+                            onClicked: root.revertRequested(row.rowId)
                         }
                     }
                 }
@@ -319,6 +406,13 @@ Item {
                                         elide: Text.ElideRight
                                         width: Math.min(implicitWidth, call.width - 140)
                                     }
+                                    ActionLink {
+                                        id: openLink
+                                        objectName: "openFile"
+                                        visible: (call.modelData.path ?? "").length > 0
+                                        text: qsTr("Open")
+                                        onClicked: root.fileActivated(call.modelData.path, "files", row.rowId)
+                                    }
                                     RowText {
                                         visible: text.length > 0
                                         text: call.modelData.statusLabel ?? ""
@@ -329,7 +423,10 @@ Item {
                                 }
                                 TapHandler {
                                     enabled: call.hasDetails
-                                    onTapped: {
+                                    onTapped: eventPoint => {
+                                        // Open takes its own tap.
+                                        if (openLink.visible && openLink.contains(openLink.mapFromItem(parent, eventPoint.position)))
+                                            return;
                                         const next = Object.assign({}, row.openCalls);
                                         next[call.modelData.id] = !call.open;
                                         row.openCalls = next;
@@ -474,7 +571,7 @@ Item {
 
         header: RowText {
             width: ListView.view ? ListView.view.width : 0
-            visible: root.model !== null && (root.model.status === "unreachable" || (root.model.status === "loading" && view.count === 0))
+            visible: root.showStatus && root.model !== null && (root.model.status === "unreachable" || (root.model.status === "loading" && view.count === 0))
             height: visible ? implicitHeight + 12 : 0
             horizontalAlignment: Text.AlignHCenter
             color: root.model && root.model.status === "unreachable" ? root.warningColor : root.mutedColor

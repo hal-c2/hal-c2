@@ -1,6 +1,7 @@
 import QtQuick
 import HalC2.Shell
 import "js/settingsPages.js" as Pages
+import "js/centreViews.js" as Centre
 
 // The window every rice starts from: theme-driven colour, opacity and frame,
 // the shell's own context menus, questions and error overlay, and the page's window
@@ -24,6 +25,11 @@ Window {
     // and hide the page and composer.
     readonly property string settingsSection: !settingsActive ? "" : Pages.resolve(route !== null ? route.section : Shell.state.settings.activeSection)
     readonly property bool nativeSettingsOpen: settingsActive && Pages.brickFor(settingsSection).length > 0
+    // Whether the shell draws the route's centre itself (js/centreViews.js):
+    // layouts put CentreHost where the page would be.
+    readonly property bool nativeCentreOpen: route !== null && !settingsActive && Centre.brickFor(route.kind).length > 0
+    // Whether the embedded page is what the centre shows.
+    readonly property bool pageOpen: !nativeSettingsOpen && !nativeCentreOpen
     readonly property bool webFocused: isWebItem(root.activeFocusItem)
     readonly property bool terminalFocused: hasAncestor(root.activeFocusItem, "HalC2Terminal")
     // A text field has the keyboard (the web's editableFocus).

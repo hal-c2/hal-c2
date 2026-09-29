@@ -7,8 +7,8 @@
 #   packages/client-runtime/src/v3/session.ts (methods a protocol 3 environment does not serve yet)
 #   packages/client-runtime/src/connection/compatibility.ts (SHAPE_PROTOCOL_VERSION, negotiation)
 #   packages/contracts/src/rpc.ts (the subscription methods each shape replaces)
-#   Counts: 4 client frames, 21 shape types (24 rows: config and stream have a node and an environment form,
-#   shell a form with its links' rows), 42 server frame types, 8 refusal reasons; all aligned, 1 dropped. The legacy client adapter
+#   Counts: 4 client frames, 21 shape types (31 rows: the 9 routed shapes have a node and an
+#   environment form, shell a form with its links' rows), 42 server frame types, 8 refusal reasons; all aligned, 1 dropped. The legacy client adapter
 #   carries neither providerInstall nor relayClientInstall.
 #   Behaviour of a single subscription (resume, merge, resync timing) lives in
 #   node/platform/websocket-protocol.feature. This file is the frame-by-frame ledger.
@@ -46,9 +46,18 @@ Feature: Protocol 3 wire parity
     And later changes arrive as <later frames>
     And the shape stands in for <replaces>
 
+    # Routed by environment (HalC2.Web.Protocol.routed/0): stream, terminal, terminals, config,
+    # vcs, gitAction, worktreeSetup, providerAuth and pullRequestRefreshes, which a client
+    # needs for a thread on any machine; the environment form goes to this node, the cluster
+    # member, or through a link (connections/links.feature). Every rpc is routed the same way,
+    # but the paired-clients methods, which answer for the caller's own session. Not routed:
+    # shell and authAccess are about the node the client talks to; scheduledTasks,
+    # projectClones, preview, previewAutomation, resourceTelemetry, localServers, devices,
+    # serverUpdate, providerInstall and relayClientInstall administer one node's host, which
+    # a client reaches by pairing with it.
     # previewAutomation: the node's broker and the TypeScript PreviewAutomationBroker both
     # send the host a connected event as it subscribes, before any agent request.
-    Examples: 24 shape forms
+    Examples: 31 shape forms
       | shape                | fields             | first frame                                           | later frames                                                                              | replaces                                            |
       | shell                | none               | a shell frame with every node and every row           | shell.rows, shell.environment, shell.node and shell.links frames                          | orchestration.subscribeShell                        |
       | shell                | links              | a shell frame whose links carry their nodes and rows  | shell.linkRows, shell.linkEnvironment and shell.linkNode frames                           | orchestration.subscribeShell                        |
@@ -57,10 +66,15 @@ Feature: Protocol 3 wire parity
       | config               | node               | a config frame, then config.themes and config.usageLimitSources | config.settings, config.providers, config.keybindings, config.themes, config.usageLimitSources and config.ready frames | server.getConfig, subscribeServerConfig, subscribeServerLifecycle |
       | config               | environment        | the same frames as the node form for the environment's node | the same frames as the node form                                                     | server.getConfig, subscribeServerConfig, subscribeServerLifecycle |
       | terminal             | node, input        | a terminal frame with the terminal's snapshot         | terminal frames                                                                           | terminal.attach                                     |
+      | terminal             | environment, input | the same frames as the node form for the environment's node | the same frames as the node form                                                     | terminal.attach                                     |
       | terminals            | node               | a terminals frame                                     | terminals frames                                                                          | subscribeTerminalMetadata                           |
+      | terminals            | environment        | the same frames as the node form for the environment's node | the same frames as the node form                                                     | subscribeTerminalMetadata                           |
       | vcs                  | node, cwd          | a vcs frame with the checkout's status                | vcs frames                                                                                | subscribeVcsStatus                                  |
+      | vcs                  | environment, cwd   | the same frames as the node form for the environment's node | the same frames as the node form                                                     | subscribeVcsStatus                                  |
       | providerAuth         | node, instanceId   | a providerAuth frame with the sign-in state           | providerAuth frames                                                                       | provider.auth.subscribe                             |
+      | providerAuth         | environment, instanceId | the same frames as the node form for the environment's node | the same frames as the node form                                                     | provider.auth.subscribe                             |
       | worktreeSetup        | node, threadId     | a worktreeSetup frame, null or a snapshot             | worktreeSetup frames                                                                      | subscribeWorktreeSetup                              |
+      | worktreeSetup        | environment, threadId | the same frames as the node form for the environment's node | the same frames as the node form                                                     | subscribeWorktreeSetup                              |
       | scheduledTasks       | node               | a scheduledTasks frame with every task                | scheduledTasks frames with the whole list                                                 | scheduledTasks.subscribe                            |
       | authAccess           | none               | an authAccess frame with links and paired clients     | authAccess frames                                                                         | subscribeAuthAccess                                 |
       | projectClones        | node               | a projectClones frame with every clone in progress    | projectClones frames with the whole list                                                  | subscribeProjectClones                              |
@@ -70,7 +84,9 @@ Feature: Protocol 3 wire parity
       | devices              | node               | a devices frame with the whole device state           | devices frames with the whole state                                                       | subscribeDeviceState                                |
       | previewAutomation    | node, host         | a previewAutomation frame saying it is connected      | previewAutomation frames                                                                  | previewAutomation.connect                           |
       | pullRequestRefreshes | node               | a pullRequestRefreshes frame with the revision        | pullRequestRefreshes frames with each new revision                                        | pullRequests.subscribeRefreshes                     |
+      | pullRequestRefreshes | environment        | the same frames as the node form for the environment's node | the same frames as the node form                                                     | pullRequests.subscribeRefreshes                     |
       | gitAction            | node, input        | a gitAction frame as the action starts                | gitAction progress frames                                                                 | git.runStackedAction                                |
+      | gitAction            | environment, input | the same frames as the node form for the environment's node | the same frames as the node form                                                     | git.runStackedAction                                |
       | serverUpdate         | node, input        | a serverUpdate frame as the update starts             | serverUpdate progress frames                                                              | server.updateServerWithProgress                     |
       | providerInstall      | node, instanceId   | a providerInstall frame with the install state        | providerInstall frames                                                                    | provider.install.subscribe                          |
       | relayClientInstall   | node               | a relayClientInstall frame as the install checks      | relayClientInstall frames, then an end frame                                              | cloud.installRelayClient                            |

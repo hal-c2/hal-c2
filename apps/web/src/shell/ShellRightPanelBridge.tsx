@@ -36,6 +36,10 @@ export interface ShellRightPanelBridgeProps {
  * panel's tab model and routes tab actions to ChatView's handlers; the
  * content itself is rendered by the embed route in the shell's second web
  * view, which converges on the same tab model through localStorage.
+ *
+ * The shell draws some tabs natively and owns which tab shows:
+ * `rightPanel.follow` keeps this panel open only while one of its own tabs
+ * is the one showing.
  */
 export function ShellRightPanelBridge(props: ShellRightPanelBridgeProps) {
   const state = useMemo(
@@ -69,6 +73,18 @@ export function ShellRightPanelBridge(props: ShellRightPanelBridgeProps) {
       case "rightPanel.close": {
         const surface = props.surfaces.find((item) => item.id === action.id);
         if (surface) props.onClose(surface);
+        return;
+      }
+      case "rightPanel.follow": {
+        if (action.threadKey !== state.threadKey) return;
+        if (!action.open) {
+          if (props.isOpen) props.onToggle();
+          return;
+        }
+        const surface = props.surfaces.find((item) => item.id === action.activeSurfaceId);
+        if (surface && (!props.isOpen || props.activeSurfaceId !== surface.id)) {
+          props.onActivate(surface);
+        }
         return;
       }
       case "rightPanel.add":

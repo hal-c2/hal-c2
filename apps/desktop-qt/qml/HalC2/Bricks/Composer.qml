@@ -18,8 +18,7 @@ Rectangle {
     // (ComposerController): its draft and images live there, not on the page.
     readonly property var turn: Shell.state.turn ?? null
     readonly property bool nativeTurn: ready && turn !== null && turn.threadKey === model.target
-    // A new thread's draft keeps only its text there; its images are the page's.
-    readonly property var attachments: nativeTurn && turn.kind !== "draft" ? turn.attachments : ready ? model.attachments : []
+    readonly property var attachments: nativeTurn ? turn.attachments : ready ? model.attachments : []
     readonly property bool ready: model !== null && model.target !== null
     readonly property string publishedTarget: ready ? model.target : ""
     readonly property string publishedText: ready ? model.text : ""

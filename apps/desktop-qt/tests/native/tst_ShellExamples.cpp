@@ -56,6 +56,11 @@ private slots:
                              "HalC2.Shell", 1, 0, "Settings");
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Themes.qml")),
                              "HalC2.Shell", 1, 0, "Themes");
+    // A thread route shows the native centre, which reads this.
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Threads.qml")),
+                             "HalC2.Shell", 1, 0, "Threads");
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Panel.qml")),
+                             "HalC2.Shell", 1, 0, "Panel");
     runtime = std::make_unique<ShellRuntime>(
         ShellRuntime::Options{directory.path(), QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/qml")},
         &bridge, theme.get());
@@ -81,6 +86,31 @@ private slots:
     })").toVariant().toMap();
     for (auto it = state.cbegin(); it != state.cend(); ++it) bridge.publish(it.key(), it.value());
     initialState = state;
+  }
+
+  // A thread or draft route shows the shell's own centre in the page's
+  // place (js/centreViews.js); any other route shows the page again.
+  void threadRoutesDrawTheCentre(QQuickWindow* window) {
+    auto* page = findVisualItem(window->contentItem(), "HalC2WebSurface");
+    QVERIFY(page);
+    QVERIFY(page->isVisible());
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
+    QTRY_VERIFY(findVisualItem(window->contentItem(), "threadTimeline"));
+    auto* timeline = findVisualItem(window->contentItem(), "threadTimeline");
+    QTRY_VERIFY(timeline->isVisible());
+    QVERIFY(!page->isVisible());
+    QTRY_VERIFY(timeline->width() >= 300 && timeline->height() > 0);
+    QVERIFY(timeline->mapToScene(QPointF(timeline->width(), 0)).x() <= window->width());
+    bridge.publish("route", QVariantMap{{"kind", "draft"}, {"draftId", "draft-1"}});
+    auto* placeholder = findVisualItem(window->contentItem(), "threadPlaceholder");
+    QVERIFY(placeholder);
+    QTRY_COMPARE(placeholder->property("text").toString(), QString("What should we build in Example project?"));
+    QVERIFY(placeholder->isVisible());
+    QVERIFY(!page->isVisible());
+    bridge.publish("route", QVariantMap{{"kind", "settings"}, {"section", "/settings/projects"}});
+    QTRY_VERIFY(page->isVisible());
+    bridge.publish("route", QVariant());
+    QTRY_VERIFY(page->isVisible());
   }
 
   void layoutsFit_data() {
@@ -122,6 +152,7 @@ private slots:
     QVERIFY(title);
     if (width == 1400) QTRY_VERIFY(!title->property("truncated").toBool());
     QTRY_VERIFY(title->mapToScene(QPointF(title->width(), 0)).x() <= window->width());
+    if (width == 1000) threadRoutesDrawTheCentre(window);
 
     if (example == "glass-macos") {
       // The page's breakpoints: the sidebar goes off-canvas under 768, the
@@ -164,10 +195,10 @@ private slots:
       content->forceActiveFocus();
       QTRY_VERIFY(content->hasActiveFocus());
       auto panel = QJsonDocument::fromJson(R"({
-        "isOpen":true,"surfaces":[],"activeSurfaceId":null,"embedPath":"",
+        "isOpen":true,"tabs":[],"activeId":"","embedPath":"",
         "canAdd":{"diff":true,"files":true,"terminal":true,"pullRequest":false}
       })").toVariant().toMap();
-      bridge.publish("rightPanel", panel);
+      bridge.publish("panel", panel);
       QTRY_VERIFY(inspector->isVisible());
       QTRY_VERIFY(inspector->width() > 0);
       QTRY_COMPARE(inspector->mapToScene(QPointF(inspector->width(), 0)).x(), qreal(window->width()));
@@ -192,13 +223,13 @@ private slots:
       }
       QTRY_VERIFY(content->width() >= 300);
       panel["isOpen"] = false;
-      bridge.publish("rightPanel", panel);
+      bridge.publish("panel", panel);
       QTRY_VERIFY(!inspector->isVisible());
       QTRY_VERIFY(content->isEnabled());
       QTRY_VERIFY(content->hasActiveFocus());
       QTRY_COMPARE(content->width(), beforeInspector);
       if (!sidebarOverlay) QVERIFY(navigation->isVisible());
-      bridge.publish("rightPanel", QVariant());
+      bridge.publish("panel", QVariant());
       bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}});
       if (sidebarOverlay) {
         QTRY_VERIFY(navigation->isVisible());
@@ -299,9 +330,10 @@ private slots:
     QVERIFY(source.open(QIODevice::WriteOnly | QIODevice::Truncate));
     source.write("import QtQuick\nimport HalC2.Bricks\nShellWindow { width: 600; height: 400; RightPanel { anchors.fill: parent } }");
     source.close();
-    bridge.publish("rightPanel", QJsonDocument::fromJson(R"({
-      "isOpen": true, "activeSurfaceId": "diff", "embedPath": "/test",
-      "surfaces": [{"id": "diff", "title": "Diff"}, {"id": "files", "title": "Files"}],
+    bridge.publish("panel", QJsonDocument::fromJson(R"({
+      "isOpen": true, "activeId": "diff", "embedPath": "/test",
+      "tabs": [{"id": "diff", "kind": "diff", "title": "Diff", "native": true},
+               {"id": "files", "kind": "files", "title": "Files", "native": true}],
       "canAdd": {"diff": true, "files": true, "terminal": true, "pullRequest": false}
     })").toVariant());
     runtime->reload();
@@ -328,7 +360,7 @@ private slots:
     QCOMPARE(actions.size(), 2);
     QCOMPARE(actions.last().at(0).toString(), QString("rightPanel.close"));
     QCOMPARE(actions.last().at(1).toMap().value("id").toString(), QString("files"));
-    bridge.publish("rightPanel", QVariant());
+    bridge.publish("panel", QVariant());
   }
 
   void terminalDrawerTakesAndReturnsTheKeyboard() {

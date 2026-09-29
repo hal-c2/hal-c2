@@ -29,10 +29,10 @@ class ShellStore;
 // ThreadMenuController's, which sees it first.
 //
 // A draft's checkout (mode, start from origin, branch, worktree, the machine
-// it runs on) lives here, keyed by draft id. While the page still sends a
-// draft's first message it is told each change: the checkout actions go on to
-// it after they land here, and a branch picked for a draft as
-// `workspace.checkout.follow`.
+// it runs on) lives here, keyed by draft id, and launch() turns it into the
+// thread ComposerController launches. The page, which still starts a thread in
+// the background, is told each change: the checkout actions go on to it after
+// they land here, and a branch picked for a draft as `workspace.checkout.follow`.
 class WorkspaceController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -91,6 +91,17 @@ public:
   Checkout checkout(const QString& draftId) const { return m_checkouts.value(draftId); }
   // Sets a draft's checkout (a new thread on another thread's branch).
   void setCheckout(const QString& draftId, const Checkout& checkout);
+  // Where a draft's first message starts its thread: the environment and
+  // project it runs in, and the node's `workspaceStrategy` for
+  // `orchestration.launchThread` ({type: "root" | "existing_worktree" |
+  // "worktree", ...}), or `problem` when it cannot start yet.
+  struct Launch {
+    QString environmentId;
+    QString projectId;
+    QJsonObject strategy;
+    QString problem;
+  };
+  Launch launch(const QString& draftId) const;
   // The draft is gone (sent or discarded).
   void forgetDraft(const QString& draftId) { m_checkouts.remove(draftId); }
   // Resolves the route again (a draft moved, say).
