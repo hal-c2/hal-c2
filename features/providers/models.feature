@@ -94,6 +94,11 @@ Feature: Models
     Then "my-model" is offered in the model picker for Claude
     And it is saved on the environment
 
+  # The desktop saves an instance's settings in its providerInstances entry, Claude's own too.
+  Scenario: A custom model saved on Claude's own instance is offered
+    When the user adds the custom model "my-model" to Claude's own instance
+    Then "my-model" is offered in the model picker for Claude
+
   @backlog
   Scenario Outline: Custom model ids are checked
     When the user adds the custom model "<slug>" to Claude

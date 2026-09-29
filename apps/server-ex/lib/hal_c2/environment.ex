@@ -196,11 +196,16 @@ defmodule HalC2.Environment do
 
   # The model ids the user added in settings (`customModels`: bare slugs or
   # `{slug, name, capabilities}`) follow the provider's own models; one it already
-  # lists is skipped.
+  # lists is skipped. Codex's and Claude's are their instance's `config`, else the
+  # driver's `providers` entry, as for an ACP agent.
   defp with_custom_models(%{"instanceId" => id, "driver" => driver} = entry) do
+    settings = HalC2.Settings.settings()
+
     custom =
       if driver in ["codex", "claudeAgent"],
-        do: get_in(HalC2.Settings.settings(), ["providers", driver, "customModels"]),
+        do:
+          get_in(settings, ["providerInstances", id, "config", "customModels"]) ||
+            get_in(settings, ["providers", driver, "customModels"]),
         else: HalC2.Acp.setting(id, "customModels")
 
     models = entry["models"] || []

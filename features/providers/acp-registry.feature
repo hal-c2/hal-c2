@@ -213,6 +213,11 @@ Feature: ACP registry agents
     When the user adds the custom model "acme-large"
     Then "acme-large" is offered in the model picker
 
+  Scenario: A registry agent's custom model keeps its own options
+    Given "acme" reports no models
+    When the user adds the custom model "acme-large" with a reasoning choice of low or high
+    Then "acme-large" is offered with low and high reasoning
+
   Scenario: Models and options that change during a session update the picker
     When "acme" reports a new model while a session runs
     Then the model picker offers it without a provider refresh

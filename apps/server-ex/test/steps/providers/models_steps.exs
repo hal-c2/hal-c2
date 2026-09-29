@@ -200,6 +200,26 @@ defmodule HalC2.Steps.Providers.Models do
     add_custom_model(World.fake_providers(context), slug)
   end
 
+  step "the user adds the custom model {string} to Claude's own instance",
+       %{args: [slug]} = context do
+    context = World.fake_providers(context)
+
+    {{:ok, %{"settings" => settings, "version" => version}}, context} =
+      World.call(context, "hal-c2.readSettings")
+
+    settings =
+      put_in(
+        settings,
+        [Access.key("providerInstances", %{}), Access.key("claudeAgent", %{})],
+        %{"driver" => "claudeAgent", "config" => %{"customModels" => [slug]}}
+      )
+
+    {{:ok, _}, context} =
+      World.call(context, "hal-c2.writeSettings", %{"settings" => settings, "version" => version})
+
+    Map.put(context, :custom_model, slug)
+  end
+
   step "{string} is offered in the model picker for Claude", %{args: [slug]} = context do
     assert %{"isCustom" => true, "name" => ^slug} = claude_model(context, slug)
     context

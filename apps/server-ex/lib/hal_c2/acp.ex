@@ -1037,14 +1037,14 @@ defmodule HalC2.Acp do
     :ok
   end
 
-  # Model ids the user added (`config.customModels`, slugs or `%{"slug", "name"}`) follow
-  # the agent's own, skipping any the agent already offers.
+  # Model ids the user added (`config.customModels`, slugs or `%{"slug", "name",
+  # "capabilities"}`) follow the agent's own, skipping any the agent already offers.
   defp custom_models(models, instance) do
     known = MapSet.new(models, & &1["slug"])
 
     custom =
       for entry <- get_in(instance, ["config", "customModels"]) || [],
-          {slug, name} = custom_model(entry),
+          {slug, name, capabilities} = custom_model(entry),
           is_binary(slug) and slug != "" and not MapSet.member?(known, slug),
           uniq: true,
           do: %{
@@ -1052,18 +1052,20 @@ defmodule HalC2.Acp do
             "name" => name,
             "isCustom" => true,
             "isDefault" => false,
-            "capabilities" => nil
+            "capabilities" => capabilities
           }
 
     models ++ custom
   end
 
-  defp custom_model(slug) when is_binary(slug), do: {String.trim(slug), String.trim(slug)}
+  defp custom_model(slug) when is_binary(slug), do: {String.trim(slug), String.trim(slug), nil}
 
-  defp custom_model(%{"slug" => slug} = model) when is_binary(slug),
-    do: {String.trim(slug), model["name"] || String.trim(slug)}
+  defp custom_model(%{"slug" => slug} = model) when is_binary(slug) do
+    capabilities = if is_map(model["capabilities"]), do: model["capabilities"]
+    {String.trim(slug), model["name"] || String.trim(slug), capabilities}
+  end
 
-  defp custom_model(_), do: {nil, nil}
+  defp custom_model(_), do: {nil, nil, nil}
 
   @doc "The models a session's `model` config option lists, as provider models."
   def session_models(session), do: models(session)
