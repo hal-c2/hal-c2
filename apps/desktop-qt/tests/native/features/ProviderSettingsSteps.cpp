@@ -42,6 +42,10 @@ struct FakeProviders {
   QStringList acpDeletes, acpDisables, acpLogouts;
   // The latest provider check a scenario seeded.
   QDateTime checkedAt;
+  // Sign-in pages the user continued (server.acceptAcpRegistryUrlAuth), and
+  // whether the environment still waited on them.
+  QStringList urlAuthAccepts;
+  bool urlAuthExpired = false;
   // Calls the scenario answers itself, one at a time, while held.
   bool holdPrepares = false, holdStarts = false;
   QList<FakeNode::Rpc> heldPrepares, heldStarts;
@@ -68,6 +72,7 @@ FakeProviders& fake(World& world) {
 }
 
 const QString kSignInUrl = QStringLiteral("https://auth.example/gemini");
+const QString kUrlAuthPage = QStringLiteral("https://auth.example/gemini/workspace");
 const QString kUpdateCommand = QStringLiteral("npm install -g @openai/codex@latest");
 
 QJsonObject authState(const QString& instanceId, const QJsonObject& fields = {}) {
@@ -109,6 +114,12 @@ const FakeNode::Extension extension([](FakeNode& node) {
                                                           {QStringLiteral("type"), QStringLiteral("browser")},
                                                           {QStringLiteral("url"), kSignInUrl},
                                                           {QStringLiteral("requiresConsent"), false}}}});
+  });
+  node.onRpc(QStringLiteral("server.acceptAcpRegistryUrlAuth"), [&node](const FakeNode::Rpc& rpc) {
+    FakeProviders& fake = node.part<FakeProviders>();
+    fake.urlAuthAccepts.append(rpc.payload.value(QLatin1String("instanceId")).toString() + QLatin1Char('/') +
+                               rpc.payload.value(QLatin1String("elicitationId")).toString());
+    node.reply(rpc, QJsonObject{{QStringLiteral("accepted"), !fake.urlAuthExpired}});
   });
   node.onRpc(QStringLiteral("provider.auth.cancel"), [&node](const FakeNode::Rpc& rpc) {
     const QString instanceId = rpc.payload.value(QLatin1String("instanceId")).toString();
@@ -969,6 +980,37 @@ const Steps steps([] {
   step(QStringLiteral("the provider's sign-in page opens in the browser"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return world.openedUrls.contains(QUrl(kSignInUrl)); },
                   [&] { return QStringLiteral("%1 to open; opened %2").arg(kSignInUrl, QUrl::toStringList(world.openedUrls).join(QStringLiteral(", "))); });
+  });
+  step(QStringLiteral("%1 is waiting for the user to open a sign-in page").arg(q), [](World& world, const Captures& c, const Table&) {
+    openPanel(world);
+    offer(world, gemini(QStringLiteral("authenticated")));
+    QJsonObject waiting = gemini(QStringLiteral("authenticated"));
+    QJsonObject auth = waiting.value(QLatin1String("auth")).toObject();
+    auth.insert(QStringLiteral("action"), QJsonObject{{QStringLiteral("elicitationId"), QStringLiteral("elicit-1")},
+                                                      {QStringLiteral("url"), kUrlAuthPage},
+                                                      {QStringLiteral("message"), QStringLiteral("Authorize Gemini to reach your workspace.")}});
+    waiting.insert(QStringLiteral("auth"), auth);
+    offer(world, waiting);
+    waitForEntry(world, c[0], [](const QVariantMap& found) { return at(found, QStringLiteral("urlAuth.url")) == kUrlAuthPage; },
+                 QStringLiteral("to offer continuing its sign-in page"));
+  });
+  step(QStringLiteral("the request has expired on the environment"), [](World& world, const Captures&, const Table&) {
+    fake(world).urlAuthExpired = true;
+  });
+  step(QStringLiteral("the user continues the authentication"), [](World& world, const Captures&, const Table&) {
+    dispatch(world, QStringLiteral("continueUrlAuth"), QStringLiteral("Gemini"));
+  });
+  step(QStringLiteral("the agent's sign-in page opens in the browser"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return world.openedUrls.contains(QUrl(kUrlAuthPage)); },
+                  [&] { return QStringLiteral("%1 to open; opened %2").arg(kUrlAuthPage, QUrl::toStringList(world.openedUrls).join(QStringLiteral(", "))); });
+  });
+  step(QStringLiteral("the environment tells %1 the page was opened").arg(q), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return fake(world).urlAuthAccepts == QStringList{QStringLiteral("gemini/elicit-1")}; },
+                  [&] { return QStringLiteral("the page to be accepted once; accepted %1").arg(fake(world).urlAuthAccepts.join(QStringLiteral(", "))); });
+  });
+  step(QStringLiteral("the user is told the authentication request expired"), [](World& world, const Captures&, const Table&) {
+    expectToast(world, QStringLiteral("Authentication request expired"),
+                QStringLiteral("Refresh the provider and start the authentication flow again."));
   });
   step(QStringLiteral("the user cancels the sign-in"), [](World& world, const Captures&, const Table&) {
     waitForEntry(world, QStringLiteral("Gemini"), [](const QVariantMap& found) { return at(found, QStringLiteral("account.canCancel")).toBool(); },

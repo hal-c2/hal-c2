@@ -682,6 +682,33 @@ Rectangle {
                 }
             }
 
+            // A sign-in page the agent is waiting on, outside a sign-in.
+            ColumnLayout {
+                objectName: "urlAuth"
+                Layout.fillWidth: true
+                visible: !!card.provider.urlAuth
+                spacing: 4
+
+                Note {
+                    visible: text.length > 0
+                    text: card.provider.urlAuth ? card.provider.urlAuth.message : ""
+                }
+
+                Note {
+                    text: card.provider.urlAuth ? card.provider.urlAuth.url : ""
+                    font.family: "monospace"
+                    font.pixelSize: 11
+                    wrapMode: Text.WrapAnywhere
+                }
+
+                ShellButton {
+                    objectName: "continueUrlAuth"
+                    enabled: !page.readOnly
+                    text: qsTr("Continue authentication")
+                    onClicked: page.act("continueUrlAuth", card.provider)
+                }
+            }
+
             // Signing in from HAL-C2, for providers that can.
             ColumnLayout {
                 objectName: "account"

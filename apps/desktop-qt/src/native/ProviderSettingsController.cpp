@@ -438,6 +438,27 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
     } else {
       m_bridge->openExternal(QUrl(url));
     }
+  } else if (action == QLatin1String("providerSettings.continueUrlAuth")) {
+    // A sign-in page the agent asked for outside a sign-in: it opens here and
+    // the environment tells the agent it was opened.
+    const QJsonObject pending = entry.value(QLatin1String("auth")).toObject().value(QLatin1String("action")).toObject();
+    const QString url = pending.value(QLatin1String("url")).toString();
+    const QString elicitationId = pending.value(QLatin1String("elicitationId")).toString();
+    if (elicitationId.isEmpty() || !(url.startsWith(QLatin1String("https://")) || url.startsWith(QLatin1String("http://")))) return true;
+    m_bridge->openExternal(QUrl(url));
+    m_client->call(m_followed, QStringLiteral("server.acceptAcpRegistryUrlAuth"),
+                   QJsonObject{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("elicitationId"), elicitationId}},
+                   [this](const QJsonValue& result, const std::optional<QString>& error) {
+                     auto* toasts = NativeShell::of(this)->controller<ToastController>();
+                     if (!toasts) return;
+                     if (error) {
+                       toasts->error(QStringLiteral("Could not continue authentication"),
+                                     error->isEmpty() ? QStringLiteral("The authentication request expired.") : *error);
+                     } else if (!result.toObject().value(QLatin1String("accepted")).toBool()) {
+                       toasts->show(QStringLiteral("warning"), QStringLiteral("Authentication request expired"),
+                                    QStringLiteral("Refresh the provider and start the authentication flow again."));
+                     }
+                   });
   } else if (action == QLatin1String("providerSettings.signOut")) {
     auto* menu = NativeShell::of(this)->controller<MenuController>();
     if (!menu) return true;
@@ -707,6 +728,12 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
   };
   configuration(result, instanceId, driver);
   result.insert(QStringLiteral("acp"), acp(provider));
+  // A sign-in page the agent is waiting on (server.acceptAcpRegistryUrlAuth).
+  const QJsonObject urlAuth = auth.value(QLatin1String("action")).toObject();
+  result.insert(QStringLiteral("urlAuth"), urlAuth.value(QLatin1String("elicitationId")).toString().isEmpty()
+                                               ? null()
+                                               : QVariant(QVariantMap{{QStringLiteral("message"), urlAuth.value(QLatin1String("message")).toString()},
+                                                                      {QStringLiteral("url"), urlAuth.value(QLatin1String("url")).toString()}}));
   if (!signsIn(provider)) return result;
   // ProviderAuthenticationSection.
   const bool served = !m_store->nodeServing(m_followed).isEmpty();

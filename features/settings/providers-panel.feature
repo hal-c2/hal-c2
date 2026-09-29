@@ -10,6 +10,7 @@
 #   apps/web/src/components/settings/CustomModelEditor.tsx
 #   apps/web/src/components/settings/customModelEditor.logic.ts
 #   apps/web/src/components/settings/RedactedSensitiveText.tsx
+#   apps/server-ex/lib/hal_c2/acp/url_auth.ex (Continue authentication, server.acceptAcpRegistryUrlAuth)
 #   apps/web/src/components/settings/providerStatus.ts (version advisory titles, Update now, Install <version>)
 #   apps/server-ex/lib/hal_c2/provider_updates.ex (versionAdvisory, updateCommand, canUpdate)
 #   apps/server-ex/lib/hal_c2/rpc.ex (server.refreshProviders, server.updateProvider, server.searchAcpRegistry,
@@ -298,6 +299,21 @@ Feature: Providers settings panel
       Then the user is asked to finish signing in in the browser
       When the user opens the sign-in page
       Then the provider's sign-in page opens in the browser
+
+    # An agent can ask for a sign-in page outside a sign-in (HalC2.Acp.UrlAuth).
+    @desktop
+    Scenario: A sign-in page an agent waits on is continued from the panel
+      Given "Gemini" is waiting for the user to open a sign-in page
+      When the user continues the authentication
+      Then the agent's sign-in page opens in the browser
+      And the environment tells "Gemini" the page was opened
+
+    @desktop
+    Scenario: Continuing a sign-in page the agent stopped waiting on says so
+      Given "Gemini" is waiting for the user to open a sign-in page
+      And the request has expired on the environment
+      When the user continues the authentication
+      Then the user is told the authentication request expired
 
     @desktop
     Scenario: A sign-in in progress can be cancelled and tried again
