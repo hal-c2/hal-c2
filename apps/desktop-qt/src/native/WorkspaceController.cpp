@@ -108,7 +108,7 @@ void WorkspaceController::activate() {
   if (m_active) return;
   m_active = true;
   m_bridge->claimKey(QStringLiteral("workspace"));
-  NativeShell* shell = NativeShell::of(this);
+  auto* shell = NativeShell::of(this);
   connect(m_store, &ShellStore::changed, this, &WorkspaceController::refresh);
   if (auto* navigation = shell->controller<NavigationController>()) {
     connect(navigation, &NavigationController::changed, this, &WorkspaceController::refresh);

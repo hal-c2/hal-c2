@@ -56,6 +56,10 @@ public:
 
 signals:
   void generationChanged();
+  // The user closed the window (not a reload replacing it).
+  void closed();
+  // The window became the active one.
+  void activated();
 
 private:
   bool loadGeneration(const QUrl& rootUrl, QString* errorOut);

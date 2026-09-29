@@ -30,15 +30,35 @@ bool isWatchedSource(const QFileInfo& info) {
 
 ShellRuntime::ShellRuntime(Options options, ShellBridge* bridge, ThemeStore* theme, QObject* parent)
     : QObject(parent), m_options(std::move(options)), m_bridge(bridge), m_theme(theme) {
-  // These instances, including WebProfile registered by main, belong to one
-  // engine for its entire lifetime. Reload replaces only the root objects.
-  qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Shell", m_bridge);
-  qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Theme", m_theme);
-  qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "Runtime", this);
+  // One runtime per window, each with its own engine; an engine's singletons
+  // are its runtime's (the engine's parent) for its entire lifetime. Reload
+  // replaces only the root objects.
+  static const bool registered = [] {
+    const auto runtimeOf = [](QQmlEngine* engine) { return qobject_cast<ShellRuntime*>(engine->parent()); };
+    const auto owned = [](QObject* object) {
+      if (object) QQmlEngine::setObjectOwnership(object, QQmlEngine::CppOwnership);
+      return object;
+    };
+    qmlRegisterSingletonType<ShellBridge>("HalC2.Shell", 1, 0, "Shell", [=](QQmlEngine* engine, QJSEngine*) {
+      auto* runtime = runtimeOf(engine);
+      return static_cast<ShellBridge*>(owned(runtime ? runtime->m_bridge : nullptr));
+    });
+    qmlRegisterSingletonType<ThemeStore>("HalC2.Shell", 1, 0, "Theme", [=](QQmlEngine* engine, QJSEngine*) {
+      auto* runtime = runtimeOf(engine);
+      return static_cast<ThemeStore*>(owned(runtime ? runtime->m_theme : nullptr));
+    });
+    qmlRegisterSingletonType<ShellRuntime>("HalC2.Shell", 1, 0, "Runtime", [=](QQmlEngine* engine, QJSEngine*) {
+      return static_cast<ShellRuntime*>(owned(runtimeOf(engine)));
+    });
+    return true;
+  }();
+  Q_UNUSED(registered);
 
   applyApplicationAppearance(m_theme->windowLiquidGlass() && !m_theme->followsSystemAppearance(),
                              m_theme->appearance() != QStringLiteral("light"));
   m_engine = new QQmlApplicationEngine(this);
+  // Which window's controllers its HalC2.Shell singletons are (NativeShell).
+  m_engine->setProperty("halC2Bridge", QVariant::fromValue(static_cast<QObject*>(m_bridge)));
   connect(m_engine, &QQmlEngine::warnings, this, [](const QList<QQmlError>& warnings) {
     for (const auto& warning : warnings) {
       qWarning().noquote() << "[qml]" << warning.toString();
@@ -131,6 +151,12 @@ void ShellRuntime::reload() {
   // "last window closed" mid-reload.
   for (QObject* root : previous) {
     root->deleteLater();
+  }
+  if (QQuickWindow* window = rootWindow()) {
+    connect(window, &QQuickWindow::closing, this, &ShellRuntime::closed, Qt::UniqueConnection);
+    connect(window, &QWindow::activeChanged, this, [this, window] {
+      if (window->isActive()) emit activated();
+    });
   }
   applyWindowTheme();
   m_fingerprint = sourceFingerprint();

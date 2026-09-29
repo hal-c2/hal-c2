@@ -13,7 +13,8 @@
 
 namespace {
 
-const NativeControllerRegistrar<SettingsController> registrar(QStringLiteral("settings"), {}, "Settings");
+const NativeControllerRegistrar<SettingsController> registrar(QStringLiteral("settings"), {}, "Settings",
+                                                         NativeControllerScope::Shared);
 
 // Saves over a stale copy before giving up: each retry is another editor
 // saving in between, which is rare, and never endless.

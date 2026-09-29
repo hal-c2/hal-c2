@@ -53,6 +53,7 @@ public:
   AlertController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 
   void activate() override;
+  void attach(NativeWindow* window) override;
   bool handle(const QString&, const QVariant&) override { return false; }
 
   void setPresenter(Presenter presenter);
@@ -80,8 +81,9 @@ public:
 private:
   void readSettings();
   void evaluate();
-  // Keeps kToggleMute's title to the route thread.
+  // Keeps kToggleMute's title to the route thread, in every window or one.
   void present();
+  void present(NativeWindow* window);
 
   struct Seen {
     // "runId:status" while the thread waits on the user or stopped.

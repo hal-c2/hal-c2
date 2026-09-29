@@ -370,22 +370,33 @@ workaround for renaming or moving a registered project root.
 
 ### Independent views and windows
 
-Use `AppView` for another complete web client and `AppWindow` for an independent
-window. They share `WebProfile` authentication but have no primary shell bridge,
-so navigation and actions cannot overwrite the primary native chrome.
-Composer, right-panel, terminal, and diff snapshots use a per-view storage
-namespace. Ordinary web, Electron, and coordinated primary/embed clients retain
-their existing storage keys.
+`window.new` (the palette's "New window", or `Shell.dispatch("window.new",
+{id})` from a layout) opens another native window: its own QML engine
+(`ShellRuntime`) on its own `ShellBridge`, loading the same `shell.qml`. The
+node connection, the shell store and the shared controllers
+(`NativeControllerScope::Shared`: device settings and alerts) are one per
+process in `NativeShell`; everything a window shows (route, drafts, composer,
+panels, terminals, palette, toasts, sidebar) is a `NativeWindow`'s. The
+`HalC2.Shell` singletons are registered as per-engine factories, and an engine
+tagged with a bridge (`halC2Bridge`) gets that window's controllers, so a
+controller must never be registered with `qmlRegisterSingletonInstance`, which
+binds it to one engine. A shared controller reaches "its" window through
+`NativeShell::of`, which answers the window the user last acted in, and meets
+each window in `attach()`.
 
-Assign a unique, stable `storageId` before creating a view to restore its drafts
-and panels after restart. The generated default lasts for that view's lifetime.
-Do not give two simultaneous views the same ID. Passing a thread URL opens the
-same conversation, not a copy of another view's unsent draft. Window geometry,
-open-window lists, and route restoration belong to the QML layout.
-`AppWindow` explicitly clears its transient parent so an owned extra window
-is a normal top-level window, not a dialog. Layouts must close owned extras
-when their primary window closes. `--app-id` sets the native desktop identity
-before any window is created, allowing launch-profile-specific window rules.
+The first window keeps its files where it always did; another keeps its route
+and panels under `<state>/shell-windows/<id>/` and its drafts under
+`<data>/shell-windows/<id>/`, and `<state>/shell-windows.json` lists the ids
+open when the app quit, so they reopen with it. Closing a window forgets it and
+its files; closing the first quits. Pass a stable `id` to reopen a known
+window rather than opening another.
+
+`AppView` and `AppWindow` are the web client's equivalent: another complete
+page sharing `WebProfile` authentication, with a per-view `storageId`
+namespace for the page's own drafts and panels and no primary shell bridge.
+`AppWindow` clears its transient parent so it is a normal top-level window.
+`--app-id` sets the native desktop identity before any window is created,
+allowing launch-profile-specific window rules.
 
 ### Notification delivery
 

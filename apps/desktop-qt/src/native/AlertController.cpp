@@ -12,7 +12,8 @@
 
 namespace {
 
-const NativeControllerRegistrar<AlertController> registrar(QStringLiteral("alerts"));
+const NativeControllerRegistrar<AlertController> registrar(QStringLiteral("alerts"), {}, nullptr,
+                                                      NativeControllerScope::Shared);
 
 }  // namespace
 
@@ -34,27 +35,35 @@ void AlertController::activate() {
   if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
     connect(settings, &SettingsController::deviceChanged, this, &AlertController::readSettings, Qt::UniqueConnection);
   }
-  auto* shell = NativeShell::of(this);
-  if (auto* keys = shell->controller<KeybindingController>()) {
-    keys->commands()->add(kToggleMute, tr("Mute alerts for this thread"), [this] {
-      const auto* navigation = NativeShell::of(this)->controller<NavigationController>();
+  readSettings();
+  evaluate();
+}
+
+void AlertController::attach(NativeWindow* window) {
+  if (auto* keys = window->controller<KeybindingController>()) {
+    keys->commands()->add(kToggleMute, tr("Mute alerts for this thread"), [this, window] {
+      const auto* navigation = window->controller<NavigationController>();
       const QString key = navigation ? navigation->threadKey() : QString();
       if (!key.isEmpty()) setMuted(key, !isMuted(key));
     });
     keys->commands()->setTerms(kToggleMute, {QStringLiteral("mute"), QStringLiteral("unmute"),
                                              QStringLiteral("notifications"), QStringLiteral("alerts")});
   }
-  if (auto* navigation = shell->controller<NavigationController>()) {
-    connect(navigation, &NavigationController::changed, this, &AlertController::present, Qt::UniqueConnection);
+  if (auto* navigation = window->controller<NavigationController>()) {
+    connect(navigation, &NavigationController::changed, this, [this, window] { present(window); });
   }
-  readSettings();
-  evaluate();
+  present(window);
 }
 
 void AlertController::present() {
-  auto* shell = NativeShell::of(this);
-  auto* keys = shell->controller<KeybindingController>();
-  auto* navigation = shell->controller<NavigationController>();
+  auto* shell = qobject_cast<NativeShell*>(parent());
+  if (!shell) return;
+  for (const auto& window : shell->windows()) present(window.get());
+}
+
+void AlertController::present(NativeWindow* window) {
+  auto* keys = window->controller<KeybindingController>();
+  auto* navigation = window->controller<NavigationController>();
   if (!keys || !navigation) return;
   const QString key = navigation->threadKey();
   keys->commands()->setTitle(kToggleMute, isMuted(key) ? tr("Unmute alerts for this thread")

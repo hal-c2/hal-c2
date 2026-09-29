@@ -10,6 +10,8 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/AppWindow.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/AppView.qml
+#   apps/desktop-qt/src/native/NativeShell.cpp (window.new, per-window state)
+#   apps/desktop-qt/tests/tst_ShellWindow.qml (a window's title and minimum size)
 #   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (frameless drag and maximize)
 #   apps/desktop-qt/src/ThemeStore.cpp (the theme's window frame and opacity)
 
@@ -84,31 +86,31 @@ Feature: Windows, zoom and quitting
 
   Rule: More than one window
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A second window works on its own
       Given the user's shell layout opens a second window
       When the user opens a thread in the second window
       Then the first window still shows its own thread
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Closing a second window leaves the first alone
       Given a second window is open
       When the user closes the second window
       Then the first window stays open on the same thread
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Windows share the sign-in but not the navigation
       Given a second window is open
       Then the second window is signed in to the same environments
       And navigating in one window does not navigate the other
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A window restores its drafts and panels after a restart
       Given a second window with a stable identity has a draft and an open panel
       When the user restarts the app
       Then that window has the same draft and panel
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A window has a sensible title and size
       Given a second window has no page title yet
       Then its title is "HAL-C2"

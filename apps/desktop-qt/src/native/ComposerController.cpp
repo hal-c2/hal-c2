@@ -110,7 +110,7 @@ ComposerController::ComposerController(ShellBridge* bridge, NodeClient* client, 
 void ComposerController::activate() {
   if (m_active) return;
   m_active = true;
-  NativeShell* shell = NativeShell::of(this);
+  auto* shell = NativeShell::of(this);
   connect(shell->controller<NavigationController>(), &NavigationController::changed, this, &ComposerController::follow);
   connect(shell->controller<ThreadStore>(), &ThreadStore::activeThreadChanged, this, &ComposerController::follow);
   // A draft the page opened becomes the shell's once DraftController adopts it.
@@ -395,7 +395,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
 // thread in its place. A background send (mod+alt+Enter) leaves the window on
 // the draft, emptied for another prompt.
 bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& payload) {
-  NativeShell* shell = NativeShell::of(this);
+  auto* shell = NativeShell::of(this);
   auto* drafts = shell->controller<DraftController>();
   const auto kept = drafts->draft(draftId);
   if (!kept) return true;
@@ -510,7 +510,7 @@ void ComposerController::launched(const QString& draftId, const QString& threadK
   }
   m_drafts.remove(draftId);
   save();
-  NativeShell* shell = NativeShell::of(this);
+  auto* shell = NativeShell::of(this);
   shell->controller<WorkspaceController>()->forgetDraft(draftId);
   shell->controller<DraftController>()->promote(draftId, threadKey);
   publish();
@@ -523,7 +523,7 @@ void ComposerController::launchedInBackground(const QString& draftId, const QStr
                                               const QList<Attachment>& attachments,
                                               const QList<TerminalContext>& contexts, const QString& threadKey,
                                               const std::optional<QString>& error) {
-  NativeShell* shell = NativeShell::of(this);
+  auto* shell = NativeShell::of(this);
   auto* toasts = shell->controller<ToastController>();
   if (!error) {
     auto* navigation = shell->controller<NavigationController>();
@@ -865,7 +865,7 @@ QString ComposerController::openDraft() const {
 // project's, then the default for new threads. Empty lets the node choose.
 QJsonObject ComposerController::baseSelection(const QString& key) const {
   if (const auto thread = m_store->thread(key)) return thread->modelSelection;
-  NativeShell* shell = NativeShell::of(this);
+  auto* shell = NativeShell::of(this);
   const auto kept = shell->controller<DraftController>()->draft(key);
   if (!kept) return {};
   const auto* settings = shell->controller<SettingsController>();

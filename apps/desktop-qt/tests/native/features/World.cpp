@@ -31,10 +31,7 @@ void World::start() {
   m_native = std::make_unique<NativeShell>(m_bridge.get());
   m_native->client()->setRetryDelays({20});
   m_native->sidebar()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
-  m_native->controller<NavigationController>()->setStorePath(m_home.filePath(QStringLiteral("state/shell-route.json")));
-  m_native->controller<DraftController>()->setStorePath(m_home.filePath(QStringLiteral("data/shell-drafts.json")));
-  m_native->controller<ComposerController>()->setStorePath(m_home.filePath(QStringLiteral("data/shell-composer.json")));
-  m_native->controller<RightPanelController>()->setStorePath(m_home.filePath(QStringLiteral("state/shell-panel.json")));
+  m_native->setStoreDirs(m_home.filePath(QStringLiteral("state")), m_home.filePath(QStringLiteral("data")));
   // The shell runs its own local node, so local folders are its to open.
   m_bridge->setLocalFolderImportEnabled(true);
   m_native->controller<SettingsController>()->setDevicePath(QDir(configDir()).filePath(QStringLiteral("preferences.json")));
@@ -55,6 +52,7 @@ void World::start() {
   setTime(m_now);
   QObject::connect(m_bridge.get(), &ShellBridge::actionRequested, m_bridge.get(),
                    [this](const QString& type, const QVariant& payload) { onPageAction(type, payload.toMap()); });
+  m_native->restoreWindows();
 }
 
 void World::restart() {

@@ -11,6 +11,8 @@ QtObject {
     property var colors: ({})
     // The frameless window (the header strip is its title bar).
     property bool frameless: false
+    property real windowOpacity: 1
+    property bool windowTransparent: false
 
     function color(role, fallback) {
         return colors[role] ?? fallback;

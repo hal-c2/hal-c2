@@ -14,14 +14,10 @@
 
 #include "AlertController.h"
 #include "BackendProcess.h"
-#include "ComposerController.h"
-#include "DraftController.h"
 #include "LocalFolderModel.h"
 #include "LocalTranscriber.h"
 #include "NativeNotifications.h"
 #include "NativeShell.h"
-#include "NavigationController.h"
-#include "RightPanelController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
@@ -165,7 +161,11 @@ int main(int argc, char* argv[]) {
 
   // Configured before any engine exists so the first page already lands on it.
   WebProfile webProfile(QDir(storage.cache).filePath(QStringLiteral("shell-web")));
-  qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", webProfile.profile());
+  // Every window's engine shares the one profile (and its cookies).
+  qmlRegisterSingletonType<QQuickWebEngineProfile>("HalC2.Shell", 1, 0, "WebProfile", [&webProfile](QQmlEngine*, QJSEngine*) {
+    QQmlEngine::setObjectOwnership(webProfile.profile(), QQmlEngine::CppOwnership);
+    return webProfile.profile();
+  });
 
   ShellBridge bridge;
   bridge.setLocalFolderImportEnabled(!parser.isSet(urlOption) || parser.isSet(localFolderImportOption));
@@ -173,14 +173,10 @@ int main(int argc, char* argv[]) {
   qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
   NativeShell native(&bridge);
   native.registerQmlSingletons();
-  // The window reopens where the user left it.
-  native.controller<NavigationController>()->setStorePath(QDir(storage.state).filePath(QStringLiteral("shell-route.json")));
+  // Each window reopens where the user left it: its route and panels are
+  // state, its drafts the user's unsent work (data).
+  native.setStoreDirs(storage.state, storage.data);
   native.controller<SettingsController>()->setDevicePath(QDir(configDir).filePath(QStringLiteral("preferences.json")));
-  // Drafts are the user's unsent work: data, not state.
-  native.controller<DraftController>()->setStorePath(QDir(storage.data).filePath(QStringLiteral("shell-drafts.json")));
-  native.controller<ComposerController>()->setStorePath(QDir(storage.data).filePath(QStringLiteral("shell-composer.json")));
-  // The right panel reopens as each thread left it.
-  native.controller<RightPanelController>()->setStorePath(QDir(storage.state).filePath(QStringLiteral("shell-panel.json")));
   ThemeStore theme(configDir);
   // ThemeController's resolved theme is the palette under theme.json.
   theme.applyBaseTheme(bridge.state()->value(QStringLiteral("theme")));
@@ -191,6 +187,24 @@ int main(int argc, char* argv[]) {
                      }
                    });
   ShellRuntime runtime({configDir, qmlSourceDir}, &bridge, &theme);
+  QObject::connect(&runtime, &ShellRuntime::closed, &app, &QCoreApplication::quit);
+  QObject::connect(&runtime, &ShellRuntime::activated, &native, [&native] { native.setActiveWindow(native.main()); });
+  // Every other window (window.new) is its own engine on its window's bridge.
+  QHash<NativeWindow*, ShellRuntime*> windowRuntimes;
+  QObject::connect(&native, &NativeShell::windowOpened, &runtime,
+                   [&native, &theme, &windowRuntimes, configDir, qmlSourceDir](NativeWindow* window) {
+                     auto* shown = new ShellRuntime({configDir, qmlSourceDir}, window->bridge(), &theme);
+                     windowRuntimes.insert(window, shown);
+                     const QString id = window->id();
+                     QObject::connect(shown, &ShellRuntime::closed, &native, [&native, id] { native.closeWindow(id); },
+                                      Qt::QueuedConnection);
+                     QObject::connect(shown, &ShellRuntime::activated, &native,
+                                      [&native, window] { native.setActiveWindow(window); });
+                     shown->start();
+                   });
+  QObject::connect(&native, &NativeShell::windowClosing, &runtime, [&windowRuntimes](NativeWindow* window) {
+    if (ShellRuntime* shown = windowRuntimes.take(window)) shown->deleteLater();
+  });
 
   // Alerts reach the desktop's notification service; a click shows its thread.
   NativeNotifications notifications;
@@ -318,5 +332,8 @@ int main(int argc, char* argv[]) {
   }
 
   runtime.start();
-  return app.exec();
+  native.restoreWindows();
+  const int code = app.exec();
+  qDeleteAll(windowRuntimes);
+  return code;
 }
