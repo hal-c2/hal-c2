@@ -4,7 +4,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (header strip: run action, open in editor, git actions)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (workspace.runScript, workspace.openInEditor)
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml
-#   apps/desktop-qt/src/native/RightPanelController.cpp (tabs, open, canAdd)
+#   apps/desktop-qt/src/native/RightPanelController.cpp (tabs, open, canAdd; the Pull requests and Previews tabs)
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 #   apps/desktop-qt/tests/native/features/TerminalSteps.cpp (terminal drawer, right panel terminal tabs)
 #   apps/desktop-qt/qml/HalC2/Bricks/TerminalPanel.qml
@@ -184,6 +184,7 @@ Feature: Layout: sidebar, header, right panel and drawer
         | agents       |
         | terminal     |
         | pull request |
+        | previews     |
 
     @desktop
     Scenario: A tab kind that the thread cannot show is not offered

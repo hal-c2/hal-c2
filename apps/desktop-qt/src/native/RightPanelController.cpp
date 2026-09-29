@@ -28,7 +28,13 @@ QString titleOf(const QString& kind) {
   if (kind == QLatin1String("diff")) return QStringLiteral("Diff");
   if (kind == QLatin1String("agents")) return QStringLiteral("Agents");
   if (kind == QLatin1String("terminal")) return QStringLiteral("Terminal");
+  if (kind == QLatin1String("pull-requests")) return QStringLiteral("Pull requests");
+  if (kind == QLatin1String("previews")) return QStringLiteral("Previews");
   return QStringLiteral("Files");
+}
+
+void toast(QObject* owner, const QString& type, const QString& title, const QString& description) {
+  if (auto* toasts = NativeShell::of(owner)->controller<ToastController>()) toasts->show(type, title, description);
 }
 
 }  // namespace
@@ -38,13 +44,18 @@ RightPanelController::RightPanelController(ShellBridge* bridge, NodeClient* clie
       m_bridge(bridge),
       m_client(client),
       m_store(store),
-      m_diff(client,
-             [this](const QString& type, const QString& title, const QString& description) {
-               if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) toasts->show(type, title, description);
-             },
+      m_diff(client, [this](const QString& type, const QString& title, const QString& description) { toast(this, type, title, description); },
              this),
       m_files(client, this),
-      m_agents(this) {
+      m_agents(this),
+      m_pullRequests(
+          client, store, [this](const QString& type, const QString& title, const QString& description) { toast(this, type, title, description); },
+          [bridge](const QUrl& url) { bridge->openExternal(url); }, this),
+      m_previews(
+          client, [this](const QString& type, const QString& title, const QString& description) { toast(this, type, title, description); },
+          [bridge](const QUrl& url) { bridge->openExternal(url); }, this) {
+  // The add menu offers Pull requests only while the thread has some.
+  connect(&m_pullRequests, &ThreadPullRequests::countChanged, this, &RightPanelController::publish);
   connect(bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key, const QVariant& value) {
     if (key == kRightPanel) onPage(value);
   });
@@ -70,6 +81,12 @@ void RightPanelController::activate() {
     add(QStringLiteral("rightPanel.toggle"), [this] { toggle(); });
     add(QStringLiteral("rightPanel.close"), [this] { closeTab(); });
     add(QStringLiteral("diff.toggle"), [this] { toggleDiff(); });
+    add(QStringLiteral("preview.toggle"), [this] { togglePreviews(); });
+    keys->commands()->add(QStringLiteral("thread.showPullRequests"), QStringLiteral("Show linked pull requests"), [this] {
+      if (m_pullRequests.count() > 0) showTab(QStringLiteral("pull-requests"));
+    });
+    keys->commands()->add(QStringLiteral("thread.linkPullRequest"), QStringLiteral("Link pull request to thread"),
+                          [this] { linkPullRequest(); });
   }
   m_page = m_bridge->state()->value(kRightPanel).toMap();
   retarget();
@@ -121,6 +138,8 @@ void RightPanelController::retarget() {
     m_diff.setThread(environmentId, threadId, timeline);
     m_agents.setThread(environmentId, timeline);
     m_files.setTarget(environmentId, root);
+    m_pullRequests.setThread(threadKey);
+    m_previews.setThread(environmentId, threadId, m_store->nodeServing(environmentId));
   }
   update();
 }
@@ -142,8 +161,9 @@ QVariantList RightPanelController::pageTabs() const {
   for (const QVariant& value : m_page.value(QStringLiteral("surfaces")).toList()) {
     const QVariantMap surface = value.toMap();
     const QString kind = surface.value(QStringLiteral("kind")).toString();
-    // The page's diff, files, file and terminal tabs are drawn natively instead.
-    if (nativeKinds.contains(kind) || kind == QLatin1String("file")) continue;
+    // The page's diff, files, file, terminal and pull request list tabs are
+    // drawn natively instead; its browser tabs are listed under Previews.
+    if (nativeKinds.contains(kind) || kind == QLatin1String("file") || kind == QLatin1String("preview")) continue;
     tabs.append(QVariantMap{{QStringLiteral("id"), surface.value(QStringLiteral("id"))},
                             {QStringLiteral("kind"), kind},
                             {QStringLiteral("title"), surface.value(QStringLiteral("title"))},
@@ -182,8 +202,12 @@ void RightPanelController::onPage(const QVariant& value) {
       showTab(QStringLiteral("diff"));
       return;
     }
-    if (pageOpen && pageActive == QLatin1String("files")) {
-      showTab(QStringLiteral("files"));
+    if (pageOpen && (pageActive == QLatin1String("files") || pageActive == QLatin1String("pull-requests"))) {
+      showTab(pageActive);
+      return;
+    }
+    if (pageOpen && pageActive.startsWith(QLatin1String("browser:"))) {
+      showTab(QStringLiteral("previews"));
       return;
     }
     if (pageOpen && pageActive.startsWith(QLatin1String("file:"))) {
@@ -310,8 +334,7 @@ void RightPanelController::addTab(const QString& kind) {
     return;
   }
   // The page adds its own and makes it active; onPage shows it.
-  const QString pageKind = kind == QLatin1String("pullRequest") ? QStringLiteral("pull-request") : kind;
-  m_bridge->sendToPage(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), pageKind}});
+  m_bridge->sendToPage(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), kind}});
 }
 
 void RightPanelController::toggleDiff() {
@@ -320,6 +343,20 @@ void RightPanelController::toggleDiff() {
   } else {
     showTab(QStringLiteral("diff"));
   }
+}
+
+void RightPanelController::togglePreviews() {
+  if (isOpen() && activeTab() == QLatin1String("previews")) {
+    setOpen(false);
+  } else {
+    showTab(QStringLiteral("previews"));
+  }
+}
+
+void RightPanelController::linkPullRequest() {
+  if (!m_onThread) return;
+  showTab(QStringLiteral("pull-requests"));
+  m_pullRequests.setLinkOpen(true);
 }
 
 void RightPanelController::openThread(const QString& threadKey) {
@@ -357,6 +394,7 @@ void RightPanelController::update() {
   m_diff.setActive(open && activeTab() == QLatin1String("diff"));
   m_files.setActive(open && activeTab() == QLatin1String("files"));
   m_agents.setActive(open && activeTab() == QLatin1String("agents"));
+  m_previews.setActive(open && activeTab() == QLatin1String("previews"));
   follow();
   publish();
   emit changed();
@@ -408,6 +446,8 @@ void RightPanelController::publish() {
                                      {QStringLiteral("files"), !m_files.root().isEmpty()},
                                      {QStringLiteral("agents"), true},
                                      {QStringLiteral("terminal"), canTerminal},
+                                     {QStringLiteral("pullRequests"), m_pullRequests.count() > 0},
+                                     {QStringLiteral("previews"), true},
                                      {QStringLiteral("pullRequest"), canAdd.value(QStringLiteral("pullRequest")).toBool()}}},
                         {QStringLiteral("embedPath"),
                          pageKnown ? m_page.value(QStringLiteral("embedPath")).toString()

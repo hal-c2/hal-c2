@@ -207,7 +207,25 @@ Rectangle {
                     }
 
                     ShellMenuItem {
-                        text: qsTr("Pull request")
+                        text: qsTr("Pull requests")
+                        iconName: "git-pull-request"
+                        enabled: panel.open && panel.model.canAdd.pullRequests === true
+                        onTriggered: Shell.dispatch("rightPanel.add", {
+                            kind: "pull-requests"
+                        })
+                    }
+
+                    ShellMenuItem {
+                        text: qsTr("Previews")
+                        iconName: "monitor"
+                        enabled: panel.open && panel.model.canAdd.previews === true
+                        onTriggered: Shell.dispatch("rightPanel.add", {
+                            kind: "previews"
+                        })
+                    }
+
+                    ShellMenuItem {
+                        text: qsTr("Pull request review")
                         iconName: "git-pull-request"
                         enabled: panel.open && panel.model.canAdd.pullRequest
                         onTriggered: Shell.dispatch("rightPanel.add", {

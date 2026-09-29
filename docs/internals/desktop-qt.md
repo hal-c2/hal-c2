@@ -634,31 +634,46 @@ elapsed times tick only while it shows (the web dropped this tab when lineage
 moved to the title bar; the desktop keeps it). A terminal tab is
 `terminal:<group>`: one of `TerminalController`'s panel groups (below), made
 by `rightPanel.add {kind: "terminal"}` and closed, terminals and all, with its
-tab; `TerminalPanel` draws it. Moving another tab to QML is a line in
-`js/panelTabs.js` plus its kind in `RightPanelController::nativeKinds`.
+tab; `TerminalPanel` draws it. The Pull requests tab (`PullRequestsPanel`
+over `ThreadPullRequests`) reads the links the thread row already carries,
+links and unlinks with the `thread.pull-request.link`/`.unlink` commands, and
+refreshes with `pullRequests.invalidate`; linking accepts any repository on a
+host a project reads, as the web dialog does. Offline its rows stay as last
+synced and nothing is sent. The Previews tab (`PreviewsPanel` over
+`ThreadPreviews`) lists the thread's browser tabs from `preview.list` and the
+`preview` shape, subscribed only while it shows, and opens each in the user's
+browser. Moving another tab to QML is a line in `js/panelTabs.js` plus its kind
+in `RightPanelController::nativeKinds`.
 
-The pull request tab is still the page's content in the shell's placement:
-`RightPanel` loads the app's embed route (`/embed/$environmentId/$threadId`)
-in a second `WebSurface` only while it shows. Both surfaces share the shell's profile (see Web
-engine), so the embed document authenticates with the primary's cookie; it
-opens its own WebSocket and sleeps while hidden. The embed route renders
-`ChatView` with `presentation="rightPanel"`, and `shell/shellDocumentSync.ts`
-rehydrates the terminal store the two documents share.
+The desktop embeds no browser. QtWebEngine is the dependency being removed,
+and QtWebView is WebEngine underneath on Linux with no input injection, zoom
+or popup control, so neither can host the agent's preview tabs (that host was
+only ever Electron's `desktopBridge`). The embedding scenarios in
+`features/preview/surfaces.feature` are `@backlog-desktop` for that reason.
+
+What is left on the page shows in the page's embed: the pull request review
+(`pull-request:<ref>`) and the device tab. `RightPanel` loads the app's embed
+route (`/embed/$environmentId/$threadId`) in a second `WebSurface` only while
+one of those shows. Both surfaces share the shell's profile (see Web engine),
+so the embed document authenticates with the primary's cookie; it opens its
+own WebSocket and sleeps while hidden. The embed route renders `ChatView` with
+`presentation="rightPanel"`, and `shell/shellDocumentSync.ts` rehydrates the
+terminal store the two documents share.
 
 The page still publishes `rightPanel` (`ShellRightPanelBridge`: its tabs,
 what can be added, `embedPath`); the controller takes its non-native tabs
-and `canAdd` from it, and a change the page makes on its own (its keybinding,
-a tab it added) is taken as the user's. The page follows the shell, not the
-other way round: `rightPanel.follow {threadKey, open, activeSurfaceId}` is
-sent only when the page shows something other than a page tab the shell
-wants, so it does no work behind a native tab. `panel.open {tab, path?,
-line?, turn?, turnId?}` opens a native tab on a turn's diff or a file at a
-line, for the timeline's links.
+from it (its browser tabs are dropped: the Previews tab lists them), and a
+change the page makes on its own (its keybinding, a tab it added) is taken as
+the user's. The page follows the shell, not the other way round:
+`rightPanel.follow {threadKey, open, activeSurfaceId}` is sent only when the
+page shows something other than a page tab the shell wants, so it does no
+work behind a native tab. `panel.open {tab, path?, line?, turn?, turnId?}`
+opens a native tab on a turn's diff or a file at a line, for the timeline's
+links.
 
-Known gaps: the browser/preview surface needs the Electron preview host and
-is unavailable under the shell; the native tabs are not persisted across
-restarts, and the working-tree review and the diff's file tree stay on the
-page.
+Known gaps: the native tabs are not persisted across restarts; the panel's
+resize and maximize, the working-tree review and the diff's file tree stay on
+the page.
 
 ### `workspace`
 
@@ -1063,7 +1078,8 @@ of the original chrome has a brick (`Sidebar`, `Composer`, `RightPanel`,
 `TerminalDrawer`, `Workspace`, `SettingsNav`), but several still get their
 state from the page. The right panel's pull request tab and most settings
 pages are still HTML because they have not moved yet, not by design (its
-Diff, Files, Agents and terminal tabs are native).
+Diff, Files, Agents, terminal, Pull requests and Previews tabs are native;
+the pull request review and the device tab are not).
 
 A piece has moved when a native controller (`src/native/`, registered with
 `NativeControllerRegistrar`) builds its state from the shell's own node client
@@ -1075,7 +1091,8 @@ the page entirely: a controller, a brick the layouts place, and `@desktop`
 scenarios run by `tst_Features`. They are never hosted in or over
 `WebSurface`, and never gated on state the page publishes. The embed route
 behind `RightPanel` (a second `WebEngineView` on its own connection) is a
-stopgap for HTML that must sit where QML decides, not a pattern for new work.
+stopgap for HTML that must sit where QML decides, not a pattern for new work;
+web content the desktop cannot draw opens in the user's browser instead.
 
 ### Thread store and timeline
 
