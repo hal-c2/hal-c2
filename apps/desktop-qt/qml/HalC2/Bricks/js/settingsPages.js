@@ -31,7 +31,8 @@ var sections = [
     { to: "/settings/connections", label: "Connections", brick: "ConnectionsSettings", action: "connections.open",
       requires: "connections", detail: "Environments, pairing links and clients",
       keywords: "connections environments pairing link code clients revoke access remote" },
-    { to: "/settings/archived", label: "Archive" },
+    { to: "/settings/archived", label: "Archive", brick: "ArchivedThreads", requires: "archivedThreads",
+      detail: "Archived threads, unarchived or deleted", keywords: "archive archived threads unarchive restore delete" },
     { to: "/settings/cluster", label: "Cluster", brick: "ClusterSettings", action: "cluster.open", requires: "cluster",
       detail: "Machines, invites and joining", keywords: "cluster machines invite join remove tailscale" },
 ];
