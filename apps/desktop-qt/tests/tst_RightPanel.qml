@@ -116,6 +116,61 @@ Item {
         }
     }
 
+    Component {
+        id: pullRequestsComponent
+        PullRequestsPanel {
+            width: 400
+            height: 600
+        }
+    }
+
+    Component {
+        id: previewsComponent
+        PreviewsPanel {
+            width: 400
+            height: 600
+        }
+    }
+
+    // A ThreadPullRequests with one open pull request.
+    Component {
+        id: fakePullRequests
+        ListModel {
+            property bool online: true
+            property bool linkOpen: false
+            property bool linking: false
+            property bool refreshing: false
+            property string problem: ""
+            property int openCount: 1
+            property var calls: []
+            function link(text) { calls.push("link " + text); }
+            function open(key) { calls.push("open " + key); }
+            function refresh() { calls.push("refresh"); }
+            function unlink(key) { calls.push("unlink " + key); }
+            function copyLink(key) { calls.push("copy " + key); }
+            ListElement {
+                linkKey: "github.com/acme/shop#42"; repository: "acme/shop"; number: 42; title: "Tax line fix"
+                state: "open"; stateLabel: "Open"; checks: "passing"; checksLabel: "Checks passing"
+                review: "review-required"; reviewLabel: "Review required"; conflicting: false
+                branches: "tax-fix → main"; sourceLabel: "Linked by you"; unlinkLabel: "Unlink"
+            }
+        }
+    }
+
+    // A ThreadPreviews with one loaded tab.
+    Component {
+        id: fakePreviews
+        ListModel {
+            property string status: "ready"
+            property string message: ""
+            property var calls: []
+            function open(tabId) { calls.push("open " + tabId); }
+            function close(tabId) { calls.push("close " + tabId); }
+            function reload() { calls.push("reload"); }
+            ListElement { tabId: "tab-1"; url: "http://localhost:5173"; title: "Vite"; status: "loaded"; problem: "" }
+        }
+    }
+
     function panelState(activeId) {
         return {
             threadKey: "env-a:thread-1",
@@ -225,6 +280,49 @@ Item {
             mouseClick(findChild(dialog.contentItem, "revertFiles"));
             compare(source.confirmed, [false, true]);
             tryVerify(() => !dialog.visible);
+        }
+
+        function test_pullRequestsOpenInTheBrowserAndLinkFromTheField() {
+            const source = createTemporaryObject(fakePullRequests, root);
+            const panel = createTemporaryObject(pullRequestsComponent, root, { source: source });
+            const row = findChild(panel, "pullRequestRow-42");
+            tryVerify(() => row !== null && row.visible);
+            verify(!findChild(panel, "pullRequestsEmpty").visible);
+            mouseClick(row);
+            compare(source.calls, ["open github.com/acme/shop#42"]);
+
+            mouseClick(findChild(panel, "pullRequestsLink"));
+            verify(source.linkOpen);
+            const field = findChild(panel, "pullRequestsLinkField");
+            tryVerify(() => field.visible && field.activeFocus);
+            keySequence("#");
+            keySequence("7");
+            keyClick(Qt.Key_Return);
+            compare(source.calls[1], "link #7");
+            keyClick(Qt.Key_Escape);
+            verify(!source.linkOpen, "Escape closes the field");
+        }
+
+        function test_pullRequestsOfAnUnreachableEnvironmentStayButOfferNothing() {
+            const source = createTemporaryObject(fakePullRequests, root, { online: false });
+            const panel = createTemporaryObject(pullRequestsComponent, root, { source: source });
+            tryVerify(() => findChild(panel, "pullRequestRow-42") !== null);
+            verify(findChild(panel, "pullRequestsOffline").visible);
+            verify(!findChild(panel, "pullRequestsLink").enabled);
+            verify(!findChild(panel, "pullRequestsRefresh").enabled);
+        }
+
+        function test_previewsOpenInTheBrowserAndCloseFromTheRow() {
+            const source = createTemporaryObject(fakePreviews, root);
+            const panel = createTemporaryObject(previewsComponent, root, { source: source });
+            const row = findChild(panel, "previewRow-tab-1");
+            tryVerify(() => row !== null && row.visible);
+            mouseClick(row);
+            compare(source.calls, ["open tab-1"]);
+            mouseClick(findChild(row, "previewClose"));
+            compare(source.calls, ["open tab-1", "close tab-1"], "closing does not open the page");
+            source.clear();
+            tryVerify(() => findChild(panel, "previewsEmpty").visible);
         }
     }
 }

@@ -10,7 +10,9 @@ var tabs = {
     diff: { label: "Diff", icon: "file-diff", brick: "DiffPanel", source: "diff" },
     files: { label: "Files", icon: "files", brick: "FilesPanel", source: "files" },
     agents: { label: "Agents", icon: "bot", brick: "AgentsPanel", source: "agents" },
-    terminal: { label: "Terminal", icon: "terminal", brick: "TerminalPanel", source: "" }
+    terminal: { label: "Terminal", icon: "terminal", brick: "TerminalPanel", source: "" },
+    "pull-requests": { label: "Pull requests", icon: "git-pull-request", brick: "PullRequestsPanel", source: "pullRequests" },
+    previews: { label: "Previews", icon: "monitor", brick: "PreviewsPanel", source: "previews" }
 };
 
 function brickOf(kind) {
