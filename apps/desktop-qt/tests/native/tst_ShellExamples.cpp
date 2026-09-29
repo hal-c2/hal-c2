@@ -611,6 +611,39 @@ private slots:
     QVERIFY(!settingsNav->isVisible());
   }
 
+  // Scenario: A broken shell layout falls back to the default
+  // (features/navigation/layout.feature): the built-in shell shows, and says
+  // why, until the file is fixed.
+  void brokenShellFallsBackAndSaysWhy() {
+    QFile source(directory.filePath("shell.qml"));
+    QVERIFY(source.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    source.write("import QtQuick\nimport HalC2.Bricks\nShellWindow { Nonsense {} }");
+    source.close();
+    runtime->reload();
+    QVERIFY(!runtime->usingUserShell());
+    QVERIFY(runtime->lastError().contains("Nonsense"));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    QVERIFY(engine);
+    auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
+    QVERIFY(window);
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    QVERIFY(findVisualItem(window->contentItem(), "threadSidebar"));
+    auto* error = findVisualItem(window->contentItem(), "shellError");
+    QVERIFY(error);
+    QTRY_VERIFY(error->isVisible());
+
+    QVERIFY(QFile::remove(directory.filePath("shell.qml")));
+    runtime->reload();
+    QVERIFY(runtime->lastError().isEmpty());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
+    QVERIFY(window);
+    error = findVisualItem(window->contentItem(), "shellError");
+    QVERIFY(error);
+    QVERIFY(!error->isVisible());
+  }
+
   void cleanupTestCase() {
     runtime.reset();
     profile.reset();

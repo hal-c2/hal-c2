@@ -556,6 +556,37 @@ const Steps steps([] {
   step(QStringLiteral("the browser opens %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(world.openedUrls == QList<QUrl>{QUrl(c[0])}, QStringLiteral("the browser opened %1").arg(world.openedUrls.size()));
   });
+
+  // The header's editor button opens the preferred editor; it is there only
+  // when the environment has editors.
+  const auto setEditors = [](World& world, const QJsonArray& editors) {
+    FakeConfig& fake = fakeConfig(world.node);
+    fake.config.insert(QStringLiteral("availableEditors"), editors);
+    QJsonObject config = fake.config;
+    config.insert(QStringLiteral("settings"), fake.settings);
+    for (const int id : world.node.subscribers(QStringLiteral("config"))) {
+      if (world.node.shapeOf(id).value(QLatin1String("environment")) != world.node.environmentId) continue;
+      world.node.send({{QStringLiteral("t"), QStringLiteral("config")}, {QStringLiteral("id"), id}, {QStringLiteral("config"), config}});
+    }
+    world.sync();
+  };
+  step(QStringLiteral("the user has picked %1 as their preferred editor").arg(q), [setEditors](World& world, const Captures& c, const Table&) {
+    setEditors(world, QJsonArray{editorId(QStringLiteral("Zed")), editorId(c[0])});
+    dispatch(world, QStringLiteral("workspace.openInEditor"), {{QStringLiteral("editorId"), editorId(c[0])}});
+    world.sync();
+    expect(workspace(world).value(QStringLiteral("preferredEditorId")) == editorId(c[0]), QStringLiteral("the header shows %1").arg(show(workspace(world))));
+    world.node.part<FakeGit>().editorCalls.clear();
+  });
+  step(QStringLiteral("the user opens the thread's workspace from the header"), [](World& world, const Captures&, const Table&) {
+    dispatch(world, QStringLiteral("workspace.openInEditor"));
+  });
+  step(QStringLiteral("the environment has no editors"), [setEditors](World& world, const Captures&, const Table&) {
+    setEditors(world, QJsonArray());
+  });
+  step(QStringLiteral("the header does not offer to open the workspace in an editor"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(!workspace(world).isEmpty() && workspace(world).value(QStringLiteral("editors")).toList().isEmpty(), QStringLiteral("the header shows %1").arg(show(workspace(world))));
+  });
 });
 
 }  // namespace

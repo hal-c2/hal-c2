@@ -266,6 +266,7 @@ Rectangle {
 
         ShellSplitButton {
             id: scriptsPill
+            objectName: "runActionButton"
 
             visible: strip.ready && strip.model.scripts.length > 0
             compact: strip.compact
@@ -303,6 +304,7 @@ Rectangle {
         }
 
         ShellSplitButton {
+            objectName: "openEditorButton"
             visible: strip.ready && strip.model.editors.length > 0
             compact: strip.compact
             iconName: "external-link"
