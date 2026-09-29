@@ -1,5 +1,5 @@
 // The native terminal drawer, and the node's terminals behind it
-// (features/desktop/native-terminal.feature).
+// (features/terminal/drawer.feature).
 
 #include <QJsonArray>
 #include <QJsonDocument>

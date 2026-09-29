@@ -18,7 +18,7 @@ const Steps steps([] {
   });
   // A thread of another environment: a cluster member's rows carry it, or
   // the rows of a link to it.
-  step(QStringLiteral("the page shows %1 with its project at %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("(?:the page shows|the user is viewing) %1 with its project at %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const qsizetype colon = c[0].indexOf(QLatin1Char(':'));
     const QString environment = c[0].left(colon);
     const QString peer = world.node.peers.value(environment);
@@ -39,7 +39,7 @@ const Steps steps([] {
     }
     world.pageOpens({{QStringLiteral("kind"), QStringLiteral("thread")}, {QStringLiteral("threadKey"), c[0]}});
   });
-  step(QStringLiteral("the page shows the draft %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("(?:the page shows|the user is viewing) the draft %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     // The page reports the draft it opened, which the shell adopts.
     world.pageOpens({{QStringLiteral("kind"), QStringLiteral("draft")}, {QStringLiteral("draftId"), c[0]},
                      {QStringLiteral("environmentId"), world.node.environmentId}, {QStringLiteral("projectId"), c[1]},

@@ -4,7 +4,7 @@
 #   apps/web/src/components/settings/SettingsPanels.tsx (AppearanceSettingsPanel: interface, motion, fonts)
 #   apps/web/src/components/CommandPalette.logic.ts (appearance.cycle, change theme)
 #   packages/shared/src/keybindings.ts (theme.select, appearance.cycle)
-#   apps/desktop-qt/src/native/ThemeController.cpp (the desktop's appearance, following the system)
+#   apps/desktop-qt/src/native/ThemeController.cpp (the desktop's appearance, following the system, clearing a choice)
 #   Settings panel: Settings → Appearance
 
 Feature: Appearance
@@ -91,6 +91,20 @@ Feature: Appearance
       Given the theme choice cannot be saved
       When the user chooses a theme
       Then the user is told "Couldn't save theme selection"
+
+    @desktop
+    Scenario: Clearing the theme choice returns to the standard theme
+      Given the theme choice is "grove"
+      When the theme choice is cleared
+      Then the app uses the standard theme
+
+    @desktop
+    Scenario: Clearing one appearance's theme returns it to the theme choice
+      Given the theme choice is "iris"
+      And the theme choice is "ocean" for dark
+      When the dark theme choice is cleared
+      And the appearance choice becomes Dark
+      Then the app uses "iris"
 
   Rule: Interface
 

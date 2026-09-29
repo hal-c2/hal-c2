@@ -1,6 +1,6 @@
-// The shell's drafts (DraftController): starting a new thread, the draft in
+// The desktop's drafts (DraftController): starting a new thread, the draft in
 // the sidebar and the window, its menu, and the thread it becomes
-// (features/desktop/native-drafts.feature, threads/creating.feature,
+// (features/threads/drafts.feature, threads/creating.feature,
 // navigation/layout.feature).
 
 #include <QJsonObject>
@@ -177,9 +177,9 @@ const Steps steps([] {
     world.sync();
     expect(sidebarDraftIds(world).isEmpty(), QStringLiteral("the sidebar lists the drafts %1").arg(sidebarDraftIds(world).join(u", ")));
   });
-  step(QStringLiteral("the shell keeps (\\d+) drafts?"), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the desktop keeps (\\d+) drafts?"), [](World& world, const Captures& c, const Table&) {
     world.sync();
-    expect(drafts(world)->drafts().size() == c[0].toInt(), QStringLiteral("the shell keeps %1 drafts").arg(drafts(world)->drafts().size()));
+    expect(drafts(world)->drafts().size() == c[0].toInt(), QStringLiteral("the desktop keeps %1 drafts").arg(drafts(world)->drafts().size()));
   });
 });
 

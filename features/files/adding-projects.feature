@@ -66,7 +66,7 @@ Feature: Adding projects
       And the environment refuses to change projects with "Disk is read-only"
       When the user adds the local folder "/home/sam/shop"
       Then the user sees an "error" toast "Could not open folder" saying "Disk is read-only"
-      And the shell keeps 0 drafts
+      And the desktop keeps 0 drafts
 
     @node
     Scenario: A new project is titled after its folder

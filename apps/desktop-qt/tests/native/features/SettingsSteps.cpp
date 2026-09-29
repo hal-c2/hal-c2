@@ -1,5 +1,5 @@
-// The node's settings document and this device's preferences, as the shell's
-// settings store keeps them (features/desktop/native-settings.feature).
+// The node's settings document and this device's preferences, as the desktop's
+// settings store keeps them (features/settings/saving-settings.feature).
 
 #include <QDir>
 #include <QFile>
@@ -130,7 +130,7 @@ const Steps steps([] {
   step(QStringLiteral("the node holds back its settings"), [](World& world, const Captures&, const Table&) {
     fakeConfig(world.node).holdReads = true;
   });
-  step(QStringLiteral("another client saved %1 on without the shell hearing of it").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("another client saved %1 on without the desktop hearing of it").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&world] { return settings(world)->ready(); }, QStringLiteral("the shell to read the settings"));
     saveElsewhere(world.node, c[0], true, true);
   });
@@ -138,7 +138,7 @@ const Steps steps([] {
     world.waitFor([&world] { return settings(world)->ready(); }, QStringLiteral("the shell to read the settings"));
     saveElsewhere(world.node, c[0], true);
   });
-  step(QStringLiteral("another client saves the settings each time the shell reads them"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("another client saves the settings each time the desktop reads them"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&world] { return settings(world)->ready(); }, QStringLiteral("the shell to read the settings"));
     fakeConfig(world.node).editOnRead = true;
     saveElsewhere(world.node, QStringLiteral("otherEdits"), 1, true);
@@ -164,10 +164,10 @@ const Steps steps([] {
   });
 
   // The shell's side.
-  step(QStringLiteral("the shell (?:turns|turned) %1 (on|off)").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the desktop (?:turns|turned) %1 (on|off)").arg(q), [](World& world, const Captures& c, const Table&) {
     turn(world, c[0], isOn(c[1]));
   });
-  step(QStringLiteral("the shell holds the node's settings at version (\\d+)"), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the desktop holds the node's settings at version (\\d+)"), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return settings(world)->ready() && settings(world)->version() == c[0].toInt(); }, [&] {
       return QStringLiteral("version %1; the shell holds version %2 (%3)")
           .arg(c[0])
@@ -175,17 +175,17 @@ const Steps steps([] {
           .arg(settings(world)->ready() ? QStringLiteral("read") : QStringLiteral("not read"));
     });
   });
-  step(QStringLiteral("the shell holds %1 (on|off)").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the desktop holds %1 (on|off)").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return settings(world)->ready() && settings(world)->value(c[0]) == QVariant(isOn(c[1])); }, [&] {
       return QStringLiteral("%1 %2; the shell holds %3").arg(c[0], c[1], show(settings(world)->settings().toVariantMap()));
     });
   });
-  step(QStringLiteral("the shell reports %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the desktop reports %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const Outcome& outcome = world.node.part<Outcome>();
     expect(outcome.error == c[0], QStringLiteral("the change ended with %1").arg(outcome.error.value_or(QStringLiteral("no error"))));
     expect(settings(world)->error() == c[0], QStringLiteral("the store reports \"%1\"").arg(settings(world)->error()));
   });
-  step(QStringLiteral("the shell's configuration lists the provider %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the desktop's configuration lists the provider %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {
       return at(settings(world)->config().toVariantMap(), QStringLiteral("providers")).toList().value(0).toMap().value(QStringLiteral("provider")) == c[0];
     }, [&] { return QStringLiteral("the provider %1 in %2").arg(c[0], show(settings(world)->config().toVariantMap())); });
@@ -206,7 +206,7 @@ const Steps steps([] {
     expect(fakeConfig(world.node).settings.value(c[0]) != QJsonValue(false),
            QStringLiteral("the node holds %1").arg(show(fakeConfig(world.node).settings.toVariantMap())));
   });
-  step(QStringLiteral("the node refused the shell's first save as stale"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the node refused the desktop's first save as stale"), [](World& world, const Captures&, const Table&) {
     const FakeConfig& fake = fakeConfig(world.node);
     QStringList answers;
     for (const bool saved : fake.saved) answers.append(saved ? QStringLiteral("saved") : QStringLiteral("refused"));
@@ -242,7 +242,7 @@ const Steps steps([] {
     world.connect();
     world.waitFor([&world] { return world.state(QStringLiteral("native")).isValid(); }, QStringLiteral("the shell to take over"));
   });
-  step(QStringLiteral("the shell saves the device preference %1 as %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the desktop saves the device preference %1 as %1").arg(q), [](World& world, const Captures& c, const Table&) {
     settings(world)->writeDevice(c[0], c[1]);
   });
   step(QStringLiteral("this device's preferences file holds %1 as %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -251,7 +251,7 @@ const Steps steps([] {
     const QJsonObject saved = QJsonDocument::fromJson(file.readAll()).object();
     expect(saved.value(c[0]) == c[1], QStringLiteral("the file holds %1").arg(show(saved.toVariantMap())));
   });
-  step(QStringLiteral("the shell reports this device's preferences could not be saved"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the desktop reports this device's preferences could not be saved"), [](World& world, const Captures&, const Table&) {
     expect(settings(world)->deviceError().startsWith(QLatin1String("Cannot save")),
            QStringLiteral("the store reports \"%1\"").arg(settings(world)->deviceError()));
   });

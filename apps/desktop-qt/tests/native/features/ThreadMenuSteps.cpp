@@ -1,5 +1,5 @@
 // The thread menu (ThreadMenuController) and the node's side of its actions:
-// features/desktop/native-thread-menu.feature, and the thread menu's
+// features/threads/menu-actions.feature, and the thread menu's
 // scenarios in threads/menu-and-selection.feature, threads/archive-delete.feature,
 // threads/pinning-and-order.feature, threads/titles.feature and
 // threads/creating.feature.

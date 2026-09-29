@@ -70,7 +70,7 @@ const Steps steps([] {
       return count >= wanted;
     }, QStringLiteral("%1 subscription(s) to %2").arg(wanted).arg(c[0]));
   });
-  step(QStringLiteral("the shell reconnects to the node"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the (?:shell|desktop) reconnects to the node"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&world] { return world.node.connections.size() >= 2 && world.native().client()->isReady(); },
                   QStringLiteral("a second connection"));
   });

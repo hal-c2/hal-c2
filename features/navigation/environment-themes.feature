@@ -91,6 +91,13 @@ Feature: Environment themes and the desktop shell theme
       Then the app uses the standard theme
 
     @desktop
+    Scenario: A published theme stays chosen across a reconnect
+      Given the user selected the published theme "nightfall"
+      When the node drops the connection
+      And the desktop reconnects to the node
+      Then the app uses the published "nightfall"
+
+    @desktop
     Scenario: Extra connections do not impose their themes
       Given the user connected a second environment that publishes "sunrise"
       Then "sunrise" is not offered

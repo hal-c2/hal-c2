@@ -9,7 +9,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (terminal toggle)
 #   apps/desktop-qt/src/TerminalController.cpp (launch context, availability)
 #   apps/desktop-qt/tests/tst_Scenarios.qml (terminal toggle)
-#   features/desktop/native-terminal.feature (the desktop's launch-context scenarios, run natively)
+#   features/terminal/drawer.feature (the desktop's launch-context scenarios, run natively)
 #   apps/tui/src/components/ChatView.tsx (toggleTerminal, initialTabs)
 #   apps/tui/src/components/ThreadTerminalDrawer.tsx
 #   apps/web/src/components/ThreadTerminalDrawer.tsx
