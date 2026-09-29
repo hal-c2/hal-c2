@@ -8,7 +8,7 @@ Item {
     width: 900
     height: 700
 
-    // The page's keybindings arrive as window shortcuts (ShellWindow), mod+Enter
+    // The keymap arrives as window shortcuts (ShellWindow), mod+Enter
     // and mod+alt+Enter among them.
     property int stolenChords: 0
     Shortcut {

@@ -24,17 +24,10 @@ Window {
     // and hide the page and composer.
     readonly property string settingsSection: !settingsActive ? "" : Pages.resolve(route !== null ? route.section : Shell.state.settings.activeSection)
     readonly property bool nativeSettingsOpen: settingsActive && Pages.brickFor(settingsSection).length > 0
-    // The page's keybindings (the configurable ones from Settings), as Qt
-    // sequences. They fire only while the chrome owns the keyboard: a
-    // focused page sees its own keydowns and handles them itself.
-    readonly property var keybindings: Shell.state.keybindings ?? []
     readonly property bool webFocused: isWebItem(root.activeFocusItem)
-    // A focused terminal takes its keys too, as the page's terminal does;
-    // the drawer's own shortcuts are the ones that apply there.
     readonly property bool terminalFocused: hasAncestor(root.activeFocusItem, "HalC2Terminal")
-    // The terminal drawer is native, so its toggle is the shell's own; the
-    // page's entry for the same chord stands down so the two never collide.
-    readonly property string terminalToggleSequence: "Ctrl+J"
+    // A text field has the keyboard (the web's editableFocus).
+    readonly property bool editableFocused: root.activeFocusItem !== null && root.activeFocusItem.cursorPosition !== undefined
 
     function isWebItem(item) {
         return hasAncestor(item, "HalC2WebSurface");
@@ -75,31 +68,27 @@ Window {
         anchors.fill: parent
     }
 
+    // One window shortcut per sequence the keymap (Keybindings) binds. A
+    // command the shell runs natively fires whatever has focus, a focused page
+    // included, so the page never sees the key too. A page command stands
+    // down while the page is focused (it handles its own keydown) and reaches
+    // it through Keybindings.press otherwise. A focused terminal keeps every
+    // key except the shell's own terminal-context commands (Ctrl+J and co).
     Instantiator {
-        model: root.keybindings
+        model: Keybindings.shortcuts
 
         delegate: Shortcut {
             required property var modelData
 
             sequence: modelData.sequence
             context: Qt.WindowShortcut
-            enabled: !root.webFocused && !root.terminalFocused && modelData.sequence !== root.terminalToggleSequence
-            onActivated: Shell.dispatch("keybinding.press", {
-                key: modelData.key,
-                ctrlKey: modelData.ctrlKey,
-                metaKey: modelData.metaKey,
-                shiftKey: modelData.shiftKey,
-                altKey: modelData.altKey
+            enabled: root.terminalFocused ? modelData.terminal : root.webFocused ? modelData.page : true
+            onActivated: Keybindings.press(modelData.sequence, {
+                page: root.webFocused,
+                terminal: root.terminalFocused,
+                editable: root.editableFocused
             })
         }
-    }
-
-    // Fires over a focused page too: its web view only claims editing keys.
-    Shortcut {
-        sequence: root.terminalToggleSequence
-        context: Qt.WindowShortcut
-        enabled: Terminals.available
-        onActivated: Shell.dispatch("terminal.toggle")
     }
 
     Connections {

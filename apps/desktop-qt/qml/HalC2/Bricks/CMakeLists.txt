@@ -39,6 +39,7 @@ qt_add_qml_module(hal_c2_bricks
     Sidebar.qml
     SidebarThreadRow.qml
     HalC2Wordmark.qml
+    KeybindingsSettings.qml
     TerminalDrawer.qml
     TitleBar.qml
     WebSurface.qml

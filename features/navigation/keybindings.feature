@@ -3,7 +3,9 @@
 #   packages/contracts/src/keybindings.ts (every static command id and script.<id>.run)
 #   packages/shared/src/keybindings.ts (DEFAULT_KEYBINDINGS)
 #   apps/desktop-qt/parity/web-parity.test.ts (all 35 keymap rows)
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts forwarded as keybinding.press)
+#   apps/desktop-qt/src/native/KeybindingController.cpp (the desktop's keymap: native commands, keybinding.press for the page's)
+#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts, standing down for a focused page or terminal)
+#   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the @desktop scenarios against a fake node)
 #   apps/desktop-qt/qml/HalC2/Bricks/ModelPicker.qml (modelPicker.previousProvider, nextProvider and jump.1-9 while the picker is open)
 #   Keybinding ids: sidebar.toggle, navigation.back, navigation.forward, terminal.toggle,
 #   terminal.split, terminal.splitVertical, terminal.new, terminal.close, rightPanel.toggle,
@@ -31,14 +33,13 @@ Feature: Keybindings
       When the user presses <key>
       Then the command "<command>" runs
 
-      Examples: Forwarded by the desktop shell today
+      Examples: Run by the desktop shell or handed to the page
         | command                      | key                 | context                    | status  |
         | sidebar.toggle               | mod+b               | anywhere                   | aligned |
         | navigation.back              | mod+[               | outside a terminal         | aligned |
         | navigation.forward           | mod+]               | outside a terminal         | aligned |
         | terminal.toggle              | mod+j               | anywhere                   | aligned |
         | rightPanel.toggle            | mod+alt+b           | anywhere                   | aligned |
-        | terminal.split               | mod+d               | in a terminal              | aligned |
         | diff.toggle                  | mod+d               | outside a terminal         | aligned |
         | commandPalette.toggle        | mod+k               | outside a terminal         | aligned |
         | filePicker.toggle            | mod+p               | outside a terminal         | aligned |
@@ -64,15 +65,35 @@ Feature: Keybindings
         | modelPicker.jump.7           | mod+7               | with the model picker open | aligned |
         | modelPicker.jump.8           | mod+8               | with the model picker open | aligned |
         | modelPicker.jump.9           | mod+9               | with the model picker open | aligned |
+        | terminal.new                 | mod+n               | in a terminal              | aligned |
+        | terminal.close               | mod+w               | in a terminal              | aligned |
+        | rightPanel.close             | mod+w               | outside a terminal         | aligned |
+        | pullRequest.copyNumber       | mod+shift+k         | outside a terminal         | aligned |
+        | appearance.cycle             | mod+alt+shift+a     | outside a terminal         | aligned |
+        | themeEditor.toggle           | mod+alt+shift+t     | anywhere                   | aligned |
+        | composer.stash               | mod+s               | outside a terminal         | aligned |
+        | thread.steerQueuedMessage    | mod+shift+enter     | outside a terminal         | aligned |
+        | chat.new                     | mod+shift+o         | outside a terminal         | aligned |
+        | composer.host                | mod+shift+h         | outside a terminal         | aligned |
+        | composer.effort              | mod+shift+e         | outside a terminal         | aligned |
+        | composer.mode                | mod+shift+a         | outside a terminal         | aligned |
+        | composer.workspace           | mod+shift+x         | outside a terminal         | aligned |
+        | composer.branch              | mod+shift+g         | outside a terminal         | aligned |
+        | thread.jump.1                | mod+1               | anywhere                   | aligned |
+        | thread.jump.2                | mod+2               | anywhere                   | aligned |
+        | thread.jump.3                | mod+3               | anywhere                   | aligned |
+        | thread.jump.4                | mod+4               | anywhere                   | aligned |
+        | thread.jump.5                | mod+5               | anywhere                   | aligned |
+        | thread.jump.6                | mod+6               | anywhere                   | aligned |
+        | thread.jump.7                | mod+7               | anywhere                   | aligned |
+        | thread.jump.8                | mod+8               | anywhere                   | aligned |
+        | thread.jump.9                | mod+9               | anywhere                   | aligned |
 
       @backlog
       Examples: Not yet honoured by the native client
         | command                   | key             | context                           | status  |
+        | terminal.split            | mod+d           | in a terminal                     | backlog |
         | terminal.splitVertical    | mod+shift+d     | in a terminal                     | backlog |
-        | terminal.new              | mod+n           | in a terminal                     | backlog |
-        | terminal.close            | mod+w           | in a terminal                     | backlog |
-        | rightPanel.close          | mod+w           | outside a terminal                | backlog |
-        | pullRequest.copyNumber    | mod+shift+k     | outside a terminal                | backlog |
         | preview.toggle            | mod+shift+j     | anywhere                          | backlog |
         | preview.refresh           | mod+r           | in the preview                    | backlog |
         | preview.focusUrl          | mod+l           | in the preview                    | backlog |
@@ -80,32 +101,13 @@ Feature: Keybindings
         | preview.zoomIn            | mod++           | in the preview                    | backlog |
         | preview.zoomOut           | mod+-           | in the preview                    | backlog |
         | preview.resetZoom         | mod+0           | in the preview                    | backlog |
-        | appearance.cycle          | mod+alt+shift+a | outside a terminal                | backlog |
-        | themeEditor.toggle        | mod+alt+shift+t | anywhere                          | backlog |
-        | composer.stash            | mod+s           | outside a terminal                | backlog |
-        | thread.steerQueuedMessage | mod+shift+enter | outside a terminal                | backlog |
         | thread.editQueuedMessage  | alt+arrowup     | in the composer                   | backlog |
         | composer.sendAlternate    | mod+enter       | in the composer while a turn runs | backlog |
         | composer.sendBackground   | mod+alt+enter   | in the composer of a new thread   | backlog |
-        | chat.new                  | mod+shift+o     | outside a terminal                | backlog |
-        | composer.host             | mod+shift+h     | outside a terminal                | backlog |
-        | composer.effort           | mod+shift+e     | outside a terminal                | backlog |
-        | composer.mode             | mod+shift+a     | outside a terminal                | backlog |
-        | composer.workspace        | mod+shift+x     | outside a terminal                | backlog |
-        | composer.branch           | mod+shift+g     | outside a terminal                | backlog |
         | composer.previousWorktree | mod+shift+l     | outside a terminal                | backlog |
         | thread.undo               | mod+z           | outside text fields and terminals | backlog |
-        | thread.jump.1             | mod+1           | anywhere                          | backlog |
-        | thread.jump.2             | mod+2           | anywhere                          | backlog |
-        | thread.jump.3             | mod+3           | anywhere                          | backlog |
-        | thread.jump.4             | mod+4           | anywhere                          | backlog |
-        | thread.jump.5             | mod+5           | anywhere                          | backlog |
-        | thread.jump.6             | mod+6           | anywhere                          | backlog |
-        | thread.jump.7             | mod+7           | anywhere                          | backlog |
-        | thread.jump.8             | mod+8           | anywhere                          | backlog |
-        | thread.jump.9             | mod+9           | anywhere                          | backlog |
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A command with no default binding can still be bound
       Given no custom keybindings
       Then "<command>" has no shortcut
@@ -120,7 +122,7 @@ Feature: Keybindings
         | rightPanel.toggleMaximized | mod+alt+m   |
         | script.test.run            | mod+alt+r   |
 
-    @backlog @desktop
+    @desktop
     Scenario: A binding outside its context does nothing
       Given the user is in a terminal
       When the user presses mod+k
@@ -136,9 +138,10 @@ Feature: Keybindings
 
   Rule: The desktop shell honours the web keymap
 
-    The native desktop chrome registers each page shortcut as a window shortcut while the
-    page does not have focus, and hands the key to the page. Each row states whether that
-    works today.
+    The desktop shell registers every bound key as a window shortcut. It runs the native
+    commands itself and hands the rest to the page as a keybinding press; while the page
+    or a terminal has focus, only the native commands are taken from it. Each row states
+    whether that works today.
 
     @desktop
     Scenario Outline: A web shortcut works from the native chrome
@@ -148,42 +151,43 @@ Feature: Keybindings
 
       Examples: aligned
         | command               | key         | status  | note                                      |
-        | chat.new              | mod+n       | aligned | forwarded as a keybinding press           |
+        | chat.new              | mod+n       | aligned | the shell starts a new thread             |
         | chat.newLocal         | mod+shift+n | aligned | forwarded as a keybinding press           |
         | commandPalette.toggle | mod+k       | aligned | forwarded as a keybinding press           |
-        | terminal.toggle       | mod+j       | aligned | also the header terminal toggle           |
-        | sidebar.toggle        | mod+b       | aligned | also the native sidebar toggles           |
+        | terminal.toggle       | mod+j       | aligned | the shell toggles the terminal drawer     |
+        | sidebar.toggle        | mod+b       | aligned | the shell toggles the sidebar             |
         | rightPanel.toggle     | mod+alt+b   | aligned | forwarded as a keybinding press           |
         | diff.toggle           | mod+d       | aligned | forwarded as a keybinding press           |
-        | terminal.split        | mod+d       | aligned | handled by the terminal drawer's own page |
-        | navigation.back       | mod+[       | aligned | forwarded as a keybinding press           |
+        | navigation.back       | mod+[       | aligned | the shell goes back                       |
         | navigation.forward    | mod+]       | aligned | forwarded as a keybinding press           |
-        | thread.previous       | mod+shift+[ | aligned | forwarded as a keybinding press           |
-        | thread.next           | mod+shift+] | aligned | forwarded as a keybinding press           |
+        | thread.previous       | mod+shift+[ | aligned | the shell opens the sidebar's previous    |
+        | thread.next           | mod+shift+] | aligned | the shell opens the sidebar's next        |
         | filePicker.toggle     | mod+p       | aligned | forwarded as a keybinding press           |
         | projectSearch.toggle  | mod+shift+f | aligned | forwarded as a keybinding press           |
         | theme.select          | mod+alt+a   | aligned | forwarded as a keybinding press           |
-        | modelPicker.toggle    | mod+shift+m | aligned | the page toggles the native model picker  |
+        | modelPicker.toggle    | mod+shift+m | aligned | the shell toggles the composer's picker   |
         | editor.openFavorite   | mod+o       | aligned | forwarded as a keybinding press           |
         | thread.copyReference  | mod+shift+c | aligned | forwarded as a keybinding press           |
         | thread.settle         | mod+shift+s | aligned | forwarded as a keybinding press           |
         | thread.pin            | mod+shift+p | aligned | forwarded as a keybinding press           |
+        | thread.jump.1         | mod+1       | aligned | the shell opens the sidebar's first       |
+        | thread.jump.9         | mod+9       | aligned | the shell opens the sidebar's ninth       |
+        | composer.effort       | mod+shift+e | aligned | the composer opens its effort picker      |
+        | composer.mode         | mod+shift+a | aligned | the composer opens its mode picker        |
+        | composer.host         | mod+shift+h | aligned | the composer opens its host picker        |
+        | composer.workspace    | mod+shift+x | aligned | the composer opens its workspace picker   |
+        | composer.branch       | mod+shift+g | aligned | the composer opens its branch picker      |
 
       @backlog
       Examples: backlog
         | command                   | key           | status  | note                                                  |
-        | thread.jump.1-9           | mod+1..9      | backlog | only bound when running in Electron                   |
+        | terminal.split            | mod+d         | backlog | the native terminal drawer has no splits              |
         | plan and build toggle     | shift+tab     | backlog | the native composer does not handle it                |
         | prompt history            | arrowup       | backlog | the native composer does not recall prompts           |
         | composer.sendAlternate    | mod+enter     | backlog | the window shortcut takes it and loses composer focus |
         | composer.sendBackground   | mod+alt+enter | backlog | the window shortcut takes it and loses composer focus |
         | thread.editQueuedMessage  | alt+arrowup   | backlog | only applies with composer focus                      |
-        | composer.effort           | mod+shift+e   | backlog | the page opens a toolbar it does not render           |
-        | composer.mode             | mod+shift+a   | backlog | the page opens a toolbar it does not render           |
-        | composer.host             | mod+shift+h   | backlog | the page opens a toolbar it does not render           |
-        | composer.workspace        | mod+shift+x   | backlog | the page opens a toolbar it does not render           |
-        | composer.branch           | mod+shift+g   | backlog | the page opens a toolbar it does not render           |
-        | composer.previousWorktree | mod+shift+l   | backlog | the page opens a toolbar it does not render           |
+        | composer.previousWorktree | mod+shift+l   | backlog | the native composer has no worktree history           |
         | preview.toggle            | mod+shift+j   | backlog | needs the in-app preview                              |
 
       @dropped
@@ -207,7 +211,7 @@ Feature: Keybindings
 
   Rule: Platform modifiers
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: mod means the platform's primary modifier
       Given the user is on <platform>
       When the user presses <physical> and K
@@ -219,7 +223,7 @@ Feature: Keybindings
         | Linux    | Ctrl     |
         | Windows  | Ctrl     |
 
-    @backlog @desktop
+    @desktop
     Scenario: Ctrl stays Ctrl on macOS
       Given the user is on macOS
       And "chat.new" is bound to ctrl+n
@@ -293,7 +297,7 @@ Feature: Keybindings
       Then the first queued message is sent as a steer
       And the second stays queued
 
-    @backlog @desktop
+    @desktop
     Scenario: The terminal shortcut shows and hides the thread's terminal
       Given the thread's terminal is hidden
       When the user presses mod+j
@@ -313,7 +317,7 @@ Feature: Keybindings
         | terminal.split         | a second terminal side by side  |
         | terminal.splitVertical | a second terminal stacked below |
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Terminal shortcuts act on the focused terminal
       Given a terminal in the thread has keyboard focus
       When the user presses <key>
@@ -321,10 +325,14 @@ Feature: Keybindings
 
       Examples:
         | key         | result                                       |
-        | mod+d       | a second terminal opens side by side         |
-        | mod+shift+d | a second terminal opens stacked below        |
         | mod+n       | a new terminal opens instead of a new thread |
         | mod+w       | the focused terminal closes                  |
+
+      @backlog
+      Examples: The native drawer has no splits
+        | key         | result                                       |
+        | mod+d       | a second terminal opens side by side         |
+        | mod+shift+d | a second terminal opens stacked below        |
 
     @backlog @desktop
     Scenario: The preview shortcut shows and hides the preview

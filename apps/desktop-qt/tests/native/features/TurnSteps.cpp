@@ -10,6 +10,7 @@
 
 #include "ComposerController.h"
 #include "Harness.h"
+#include "Keymap.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
@@ -297,7 +298,7 @@ const Steps steps([] {
       for (const QVariant& item : toasts(world)) {
         if (item.toMap().value(QStringLiteral("title")) == c[0]) return true;
       }
-      return false;
+      return conditionProblem(world) == c[0];
     };
     world.waitFor(told, [&] {
       return QStringLiteral("\"%1\"; the turn is %2, the toasts are %3")

@@ -222,6 +222,23 @@ const QStringList kDefaultGlobs{
     QStringLiteral("source-control/refs-and-branches.feature"),
     QStringLiteral("source-control/worktrees-and-setup-scripts.feature"),
     QStringLiteral("files/project-scripts-and-actions.feature"),
+    QStringLiteral("navigation/keybindings.feature"),
+    QStringLiteral("navigation/keybinding-customisation.feature"),
+    // The rest of this file is what the page shows (tst_KeybindingsSettings.qml).
+    QStringLiteral("navigation/keybinding-settings.feature:Every command is listed*"),
+    QStringLiteral("navigation/keybinding-settings.feature:Searching filters bindings*"),
+    QStringLiteral("navigation/keybinding-settings.feature:Commands have readable names*"),
+    QStringLiteral("navigation/keybinding-settings.feature:Recording a new shortcut*"),
+    QStringLiteral("navigation/keybinding-settings.feature:A shortcut needs a modifier"),
+    QStringLiteral("navigation/keybinding-settings.feature:Recorded modifiers follow the platform*"),
+    QStringLiteral("navigation/keybinding-settings.feature:A malformed condition*"),
+    QStringLiteral("navigation/keybinding-settings.feature:An unknown condition variable*"),
+    QStringLiteral("navigation/keybinding-settings.feature:Conflicting bindings*"),
+    QStringLiteral("navigation/keybinding-settings.feature:Resetting a custom binding*"),
+    QStringLiteral("navigation/keybinding-settings.feature:Default bindings cannot be removed*"),
+    QStringLiteral("navigation/keybinding-settings.feature:Removing a custom binding"),
+    QStringLiteral("navigation/keybinding-settings.feature:Adding a binding for a command"),
+    QStringLiteral("navigation/keybinding-settings.feature:Save failures are reported*"),
 };
 
 QRegularExpression wildcard(const QString& glob) {
