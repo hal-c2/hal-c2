@@ -958,6 +958,15 @@ brand band when `showBrand` is on. The right panel's toggle follows the same
 pattern: `Workspace.panelToggle` puts it in the header strip and `RightPanel
 { ownToggle: false }` then takes no width while closed; a rice that leaves
 `ownToggle` on gets the 36 px rail with the toggle instead.
+
+It also owns the app's zoom, a device preference (`zoomLevel`, Chromium's
+steps: factor 1.2^level in half steps) that every window follows, published
+as `layout.zoom`. `view.zoomIn`, `view.zoomOut` and `view.resetZoom` change it.
+`ShellWindow` scales its `body` rather than the fonts, so a rice needs no zoom
+awareness; the menu hosts stay unscaled in window coordinates, so anything
+that places a popup at a pointer maps through the scaled item
+(`mapToItem(parent, ...)`, never `null`). Qt Quick Controls popups in the
+overlay are not scaled, and the embedded page is scaled as a texture.
 `DefaultShell` snaps the sidebar (one relayout, no animated width); examples
 that ease `Layout.preferredWidth` to 0 hide it once it is gone
 (`visible: !sidebarCollapsed || width > 0` — guard on the collapsed flag, not
@@ -1009,6 +1018,11 @@ keystroke or an answer changes, never resetting the list. Dismissing it sends
 `composer.focus` to the composer. The singleton is not `Palette`, which
 QtQuick already names.
 
+The application menu's accelerators (`menuKeys()`: mod+, for settings,
+mod+=, mod++, mod+- and mod+0 for zoom) are not keymap rules and not rows in
+Settings → Keybindings; they resolve only after every rule, so a user's rule
+for the same chord wins, as it does over Electron's menu.
+
 `ShellWindow` instantiates one window `Shortcut` per bound sequence and calls
 `Keybindings.press`. Who takes a key follows focus:
 
@@ -1029,6 +1043,17 @@ Secondary documents (the right panel) forward a keydown they did not consume
 as `keybinding.press` when the chord resolves to the same command with and
 without the embed's focus (`shellKeybindingPressToForward`). The controller
 intercepts that dispatch and runs the command if it is native.
+
+Mod+Q is not a shortcut. `QuitController` (shared, one per process) filters
+the application's key events before any window or page sees them and ports
+`apps/desktop/src/window/QuitHold.ts`: `confirmQuit` "hold" (the default)
+quits after 1.2 seconds held, "double-click" after two presses within half a
+second, "direct" at once, and two quick presses always quit. "Still held" is
+proven by auto-repeat, as in Electron. The hint is the shared `quitHint`
+({message} or null) that `ShellWindow` shows; `app.quit` in the palette quits
+at once. The controller only emits `quitRequested` and `concealRequested`;
+`main.cpp` quits and hides the windows, and tests swap its clock with
+`setClock`.
 
 Settings → Keybindings (`KeybindingsSettings`, route
 `/settings/keybindings`) lists the merged rows, records chords with
