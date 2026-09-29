@@ -5,6 +5,8 @@
 #   packages/contracts/src/settings.ts (continueThreadsAfterServerUpdate)
 #   apps/server-ex/lib/hal_c2/orchestration/recovery.ex
 #   apps/server-ex/lib/hal_c2/orchestration/idle_sessions.ex
+#   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (background subagents and commands)
+#   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts (task_started, task_notification, pendingBackgroundTasks)
 #   apps/server-ex/lib/hal_c2/orchestration/limit_recovery.ex
 #   apps/server-ex/lib/hal_c2/orchestration/turn_watch.ex
 #   apps/server/src/orchestration-v2/ (startup recovery, idle session reaper)
@@ -106,6 +108,43 @@ Feature: Recovering from restarts and releasing idle sessions
     When the node checks for idle sessions
     Then the provider process of "t1" keeps running
     And it is released once 4 hours pass without activity
+
+  @node
+  Scenario: A Claude background subagent keeps its session past the idle timeout
+    Given thread "t1" left a Claude subagent and a command running in the background
+    And "t1" has had no activity for 30 minutes
+    When the node checks for idle sessions
+    Then the provider process of "t1" keeps running
+    And "t1" lists the subagent and the command as background work
+
+  @node
+  Scenario: A Claude session is released once its background work is done
+    Given thread "t1" left a Claude subagent and a command running in the background
+    When Claude reports the subagent completed with "3 files" and the command stopped
+    And "t1" has had no activity for 30 minutes
+    And the node checks for idle sessions
+    Then the provider process of "t1" stops
+    And the subagent of "t1" is completed with "3 files"
+    And "t1" lists no background work
+
+  @node
+  Scenario Outline: Stopping or rewinding a Claude thread ends its background work
+    Given thread "t1" left a Claude subagent and a command running in the background
+    When the user <action>
+    Then the subagent and the command of "t1" are interrupted
+    And "t1" lists no background work
+
+    Examples:
+      | action                        |
+      | stops "t1"                    |
+      | rewinds "t1" to its first run |
+
+  @node
+  Scenario: Background work a stopped node left running is ended at boot
+    Given thread "t1" had a Claude subagent and a command running in the background when the node stopped
+    When the node restarts and a client connects
+    Then the subagent and the command of "t1" are interrupted
+    And "t1" lists no background work
 
   @node
   Scenario Outline: A session that is still in use is never released
