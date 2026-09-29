@@ -64,7 +64,14 @@ void connectWithThreads(World& world) {
 }
 
 // What the user's layout (or the palette's "New window") asks for.
+// The node's subscriptions from the second window on: its own, while the
+// first window stays where it is.
+struct SecondWindowWork {
+  qsizetype firstSub = 0;
+};
+
 NativeWindow* openSecond(World& world, const QVariantMap& payload = {}) {
+  world.node.part<SecondWindowWork>().firstSub = world.node.subscriptions.size();
   world.bridge().dispatch(QStringLiteral("window.new"), payload);
   NativeWindow* window = second(world);
   expect(window != nullptr, QStringLiteral("no second window opened"));
@@ -172,6 +179,36 @@ const Steps steps([] {
     world.waitFor([&] { return stream::followers(world, kSecond).isEmpty(); },
                   QStringLiteral("the closed window's thread to be let go"));
     expect(!stream::followers(world, kFirst).isEmpty(), QStringLiteral("the first window stopped following its thread"));
+  });
+
+  // Node work in flight when a window closes (NodeClient's contexts).
+  step(QStringLiteral("the second window is waiting on the node"), [](World& world, const Captures&, const Table&) {
+    openIn(world, second(world), kSecond);
+    // A refusal would toast in the window that asked.
+    world.node.refusals.insert(QStringLiteral("thread.unsettle"), QStringLiteral("Not now"));
+    world.node.hold(QStringLiteral("answers"));
+    const qsizetype sent = world.node.commands.size();
+    second(world)->bridge()->dispatch(QStringLiteral("thread.unsettle"), QVariantMap{{QStringLiteral("key"), keyOf(world, kSecond)}});
+    world.waitFor([&] { return world.node.commands.size() > sent; }, QStringLiteral("the second window's command to reach the node"));
+  });
+  step(QStringLiteral("the node answers what the closed window asked"), [](World& world, const Captures&, const Table&) {
+    world.node.answerHeld();
+    // And a frame already on its way to each of the window's subscriptions.
+    const QList<QJsonObject>& subs = world.node.subscriptions;
+    for (qsizetype i = world.node.part<SecondWindowWork>().firstSub; i < subs.size(); ++i) {
+      world.node.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), subs.at(i).value(QLatin1String("id"))}});
+    }
+    world.sync();
+  });
+  step(QStringLiteral("the node no longer sends the closed window anything"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QList<QJsonObject>& subs = world.node.subscriptions;
+    QStringList live;
+    for (qsizetype i = world.node.part<SecondWindowWork>().firstSub; i < subs.size(); ++i) {
+      const int id = subs.at(i).value(QLatin1String("id")).toInt();
+      if (!world.node.shapeOf(id).isEmpty()) live << show(world.node.shapeOf(id).toVariantMap());
+    }
+    expect(live.isEmpty(), QStringLiteral("the closed window still follows %1").arg(live.join(u", ")));
   });
 
   step(QStringLiteral("the second window is signed in to the same environments"), [](World& world, const Captures&, const Table&) {

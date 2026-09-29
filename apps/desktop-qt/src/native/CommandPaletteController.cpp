@@ -940,7 +940,7 @@ void CommandPaletteController::searchFiles(int generation) {
                             {QStringLiteral("query"), m_query.trimmed()},
                             {QStringLiteral("limit"), kFileLimit},
                             {QStringLiteral("kind"), QStringLiteral("file")}};
-  m_client->call(m_target.environmentId, QStringLiteral("projects.searchEntries"), payload,
+  m_client->call(this, m_target.environmentId, QStringLiteral("projects.searchEntries"), payload,
                  [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
                    if (generation != m_generation || m_mode != Mode::Files) return;
                    m_pending = 0;
@@ -976,7 +976,7 @@ void CommandPaletteController::searchContent(int generation) {
                             {QStringLiteral("caseSensitive"), m_caseSensitive},
                             {QStringLiteral("wholeWord"), m_wholeWord},
                             {QStringLiteral("useRegex"), m_useRegex}};
-  m_client->call(m_target.environmentId, QStringLiteral("projects.searchContents"), payload,
+  m_client->call(this, m_target.environmentId, QStringLiteral("projects.searchContents"), payload,
                  [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
                    if (generation != m_generation || m_mode != Mode::Content) return;
                    m_pending = 0;
@@ -1027,7 +1027,7 @@ void CommandPaletteController::searchMessages(int generation) {
   m_pending = static_cast<int>(online.size());
   const QString raw = m_query.trimmed().left(200);
   for (const QString& environmentId : std::as_const(online)) {
-    m_client->call(environmentId, QStringLiteral("orchestration.searchThreads"),
+    m_client->call(this, environmentId, QStringLiteral("orchestration.searchThreads"),
                    QJsonObject{{QStringLiteral("query"), raw}, {QStringLiteral("limit"), kMessageLimit}},
                    [this, generation, environmentId](const QJsonValue& result, const std::optional<QString>& error) {
                      if (generation != m_generation || m_mode != Mode::Command) return;
@@ -1063,7 +1063,7 @@ void CommandPaletteController::searchFolders(int generation) {
     return;
   }
   ++m_pending;
-  m_client->call(m_browseEnvironment, QStringLiteral("filesystem.browse"),
+  m_client->call(this, m_browseEnvironment, QStringLiteral("filesystem.browse"),
                  QJsonObject{{QStringLiteral("partialPath"), query}},
                  [this, generation, query](const QJsonValue& result, const std::optional<QString>& error) {
                    if (generation != m_generation || m_mode != Mode::Browse) return;

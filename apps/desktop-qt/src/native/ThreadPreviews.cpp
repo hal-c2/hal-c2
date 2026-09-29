@@ -58,7 +58,7 @@ void ThreadPreviews::setActive(bool active) {
 
 void ThreadPreviews::follow() {
   if (m_subscription >= 0 || m_node.isEmpty()) return;
-  m_subscription = m_client->subscribe({{QStringLiteral("type"), QStringLiteral("preview")}, {QStringLiteral("node"), m_node}},
+  m_subscription = m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("preview")}, {QStringLiteral("node"), m_node}},
                                        [this](const QJsonObject& frame) {
                                          onEvent(frame.value(QLatin1String("event")).toObject());
                                        });
@@ -74,7 +74,7 @@ void ThreadPreviews::reload() {
   if (m_thread.isEmpty()) return;
   const int generation = ++m_generation;
   if (m_rows.isEmpty()) setStatus(QStringLiteral("loading"));
-  m_client->call(m_environment, QStringLiteral("preview.list"), QJsonObject{{QStringLiteral("threadId"), m_thread}},
+  m_client->call(this, m_environment, QStringLiteral("preview.list"), QJsonObject{{QStringLiteral("threadId"), m_thread}},
                  [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
                    if (generation != m_generation) return;
                    if (error) {
@@ -148,7 +148,7 @@ void ThreadPreviews::close(const QString& tabId) {
   m_closing.insert(tabId);
   remove(tabId);
   const int generation = m_generation;
-  m_client->call(m_environment, QStringLiteral("preview.close"),
+  m_client->call(this, m_environment, QStringLiteral("preview.close"),
                  QJsonObject{{QStringLiteral("threadId"), m_thread}, {QStringLiteral("tabId"), tabId}},
                  [this, generation, row, snapshot, tabId](const QJsonValue&, const std::optional<QString>& error) {
                    if (!m_closing.remove(tabId) || generation != m_generation) return;

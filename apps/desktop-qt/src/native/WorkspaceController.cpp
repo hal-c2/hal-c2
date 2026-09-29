@@ -271,7 +271,7 @@ void WorkspaceController::follow(const QString& cwd) {
   ++m_refsGeneration;
   m_refsLoading = false;
   if (key.isEmpty()) return;
-  m_vcs = m_client->subscribe(
+  m_vcs = m_client->subscribe(this, 
       {
           {QStringLiteral("type"), QStringLiteral("vcs")},
           {QStringLiteral("environment"), environment},
@@ -318,7 +318,7 @@ void WorkspaceController::watchConfig(const QString& environmentId) {
   m_configElsewhere = {};
   emit configChanged();
   if (environmentId.isEmpty()) return;
-  m_config = m_client->subscribe(
+  m_config = m_client->subscribe(this, 
       {
           {QStringLiteral("type"), QStringLiteral("config")},
           {QStringLiteral("environment"), environmentId},
@@ -356,7 +356,7 @@ void WorkspaceController::loadRefs() {
   QJsonObject input{{QStringLiteral("cwd"), cwd}, {QStringLiteral("limit"), 100}};
   const QString query = refName(m_query);
   if (!query.isEmpty()) input.insert(QStringLiteral("query"), query);
-  m_client->call(environmentId, QStringLiteral("vcs.listRefs"), input,
+  m_client->call(this, environmentId, QStringLiteral("vcs.listRefs"), input,
                  [this, generation](const QJsonValue& result, const std::optional<QString>&) {
                    if (generation != m_refsGeneration) return;
                    m_refsLoading = false;
@@ -669,7 +669,7 @@ void WorkspaceController::rename(const QString& title) {
     return;
   }
   if (trimmed == text(threadRow(), "title")) return;
-  m_client->dispatchCommand(m_place->environmentId,
+  m_client->dispatchCommand(this, m_place->environmentId,
                             {
                                 {QStringLiteral("type"), QStringLiteral("thread.metadata.update")},
                                 {QStringLiteral("threadId"), m_place->threadId},
@@ -692,7 +692,7 @@ void WorkspaceController::openInEditor(const QString& editorId) {
     settings->writeDevice(kLastEditor, editor);
   }
   auto* toasts = NativeShell::of(this)->controller<ToastController>();
-  m_client->call(m_place->environmentId, QStringLiteral("shell.openInEditor"),
+  m_client->call(this, m_place->environmentId, QStringLiteral("shell.openInEditor"),
                  QJsonObject{{QStringLiteral("cwd"), cwd}, {QStringLiteral("editor"), editor}},
                  [toasts](const QJsonValue&, const std::optional<QString>& error) {
                    if (error) toasts->error(QStringLiteral("Failed to open in editor."), *error);
@@ -775,7 +775,7 @@ void WorkspaceController::selectBranch(const QString& name) {
   m_switching = true;
   publish();
   const QString threadKey = m_place->threadKey();
-  m_client->call(m_place->environmentId, QStringLiteral("vcs.switchRef"),
+  m_client->call(this, m_place->environmentId, QStringLiteral("vcs.switchRef"),
                  QJsonObject{{QStringLiteral("cwd"), checkoutCwd}, {QStringLiteral("refName"), name}},
                  [this, threadKey, previous, remote, local, nextWorktree](const QJsonValue& result,
                                                                          const std::optional<QString>& error) {
@@ -808,7 +808,7 @@ void WorkspaceController::createBranch(const QString& raw) {
   m_switching = true;
   publish();
   const QString threadKey = m_place->threadKey();
-  m_client->call(m_place->environmentId, QStringLiteral("vcs.createRef"),
+  m_client->call(this, m_place->environmentId, QStringLiteral("vcs.createRef"),
                  QJsonObject{{QStringLiteral("cwd"), cwd},
                              {QStringLiteral("refName"), name},
                              {QStringLiteral("switchRef"), true}},
@@ -841,7 +841,7 @@ void WorkspaceController::setThreadBranch(const std::optional<QString>& branch,
     const QJsonObject row = threadRow();
     const QJsonValue session = row.value(QLatin1String("activeProviderThreadId"));
     if (session.isString() && !session.toString().isEmpty() && worktreePath != activeWorktree) {
-      m_client->dispatchCommand(m_place->environmentId,
+      m_client->dispatchCommand(this, m_place->environmentId,
                                 {
                                     {QStringLiteral("type"), QStringLiteral("provider-session.detach")},
                                     {QStringLiteral("threadId"), m_place->threadId},
@@ -849,7 +849,7 @@ void WorkspaceController::setThreadBranch(const std::optional<QString>& branch,
                                 },
                                 [](const QJsonValue&, const std::optional<QString>&) {});
     }
-    m_client->dispatchCommand(m_place->environmentId,
+    m_client->dispatchCommand(this, m_place->environmentId,
                               {
                                   {QStringLiteral("type"), QStringLiteral("thread.metadata.update")},
                                   {QStringLiteral("threadId"), m_place->threadId},
@@ -897,7 +897,7 @@ void WorkspaceController::followCheckout(const QString& draftId) {
 
 void WorkspaceController::refreshGit() {
   if (!m_place || m_vcsKey.isEmpty()) return;
-  m_client->call(m_place->environmentId, QStringLiteral("vcs.refreshStatus"),
+  m_client->call(this, m_place->environmentId, QStringLiteral("vcs.refreshStatus"),
                  QJsonObject{{QStringLiteral("cwd"), m_place->cwd()}},
                  [](const QJsonValue&, const std::optional<QString>&) {});
 }

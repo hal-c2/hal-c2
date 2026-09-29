@@ -272,7 +272,7 @@ void UsageController::read(bool rescan) {
         publish();
         return;
       }
-      m_client->call(environmentId, QStringLiteral("server.getUsageSummary"), input,
+      m_client->call(this, environmentId, QStringLiteral("server.getUsageSummary"), input,
                      [this, generation, environmentId, rescan](const QJsonValue& result, const std::optional<QString>& error) {
                        if (rescan) --m_refreshing;
                        if (generation != m_generation || !m_answers.contains(environmentId)) {
@@ -290,7 +290,7 @@ void UsageController::read(bool rescan) {
     }
     ++m_refreshing;
     // New prices or not, the history is read again.
-    m_client->call(environmentId, QStringLiteral("server.refreshUsageRates"), QJsonObject(),
+    m_client->call(this, environmentId, QStringLiteral("server.refreshUsageRates"), QJsonObject(),
                    [summarize](const QJsonValue&, const std::optional<QString>&) { summarize(); });
   }
   publish();
@@ -307,7 +307,7 @@ void UsageController::refreshLimits(bool manual) {
     m_limitsAsked.insert(environmentId, now);
     m_limitsInFlight.insert(environmentId);
     ++m_refreshing;
-    m_client->call(environmentId, QStringLiteral("server.refreshProviders"), QJsonObject(),
+    m_client->call(this, environmentId, QStringLiteral("server.refreshProviders"), QJsonObject(),
                    [this, environmentId](const QJsonValue& result, const std::optional<QString>& error) {
                      m_limitsInFlight.remove(environmentId);
                      --m_refreshing;
@@ -340,7 +340,7 @@ void UsageController::follow() {
   for (const QString& environmentId : environments) {
     if (m_configs.contains(environmentId)) continue;
     const QJsonObject shape{{QStringLiteral("type"), QStringLiteral("config")}, {QStringLiteral("environment"), environmentId}};
-    m_configs.insert(environmentId, m_client->subscribe(shape, [this, environmentId](const QJsonObject& frame) {
+    m_configs.insert(environmentId, m_client->subscribe(this, shape, [this, environmentId](const QJsonObject& frame) {
       const QString type = frame.value(QLatin1String("t")).toString();
       if (type == QLatin1String("config")) {
         m_providers.insert(environmentId, frame.value(QLatin1String("config")).toObject().value(QLatin1String("providers")).toArray());
@@ -745,7 +745,7 @@ void UsageController::redeem(const QString& key) {
   m_redeeming.insert(key);
   m_redeemStatus.remove(key);
   const quint64 session = m_openings;
-  m_client->call(target.environmentId, QStringLiteral("provider.consumeResetCredit"), target.input,
+  m_client->call(this, target.environmentId, QStringLiteral("provider.consumeResetCredit"), target.input,
                  [this, key, session](const QJsonValue& result, const std::optional<QString>& error) {
                    m_redeeming.remove(key);
                    if (session != m_openings) return;

@@ -451,7 +451,7 @@ void KeybindingController::call(const QString& method, const QJsonObject& input,
                                 const QString& failure) {
   ++m_saving;
   emit savingChanged();
-  m_client->call(m_client->environment(), method, input,
+  m_client->call(this, m_client->environment(), method, input,
                  // The new rules come back as the config's `config.keybindings`.
                  [this, failureTitle, failure](const QJsonValue&, const std::optional<QString>& error) {
                    --m_saving;

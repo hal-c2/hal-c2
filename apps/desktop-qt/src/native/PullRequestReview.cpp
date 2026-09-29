@@ -140,7 +140,7 @@ void PullRequestReview::load() {
 void PullRequestReview::readDetail() {
   const quint64 generation = m_generation;
   if (m_status != QLatin1String("ready")) setStatus(QStringLiteral("loading"));
-  m_client->call(m_environment, QStringLiteral("pullRequests.detail"), reference(),
+  m_client->call(this, m_environment, QStringLiteral("pullRequests.detail"), reference(),
                  [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
                    if (generation != m_generation) return;
                    if (error) {
@@ -151,7 +151,7 @@ void PullRequestReview::readDetail() {
                    setStatus(QStringLiteral("ready"));
                    emit detailChanged();
                  });
-  m_client->call(m_environment, QStringLiteral("pullRequests.activity"), reference(),
+  m_client->call(this, m_environment, QStringLiteral("pullRequests.activity"), reference(),
                  [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
                    if (generation != m_generation || error) return;
                    const QJsonObject activity = result.toObject();
@@ -185,7 +185,7 @@ void PullRequestReview::readDetail() {
                    m_threads = threads;
                    emit detailChanged();
                  });
-  m_client->call(m_environment, QStringLiteral("pullRequests.filesViewed"), reference(),
+  m_client->call(this, m_environment, QStringLiteral("pullRequests.filesViewed"), reference(),
                  [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
                    if (generation != m_generation || error) return;
                    QSet<QString> viewed;
@@ -204,7 +204,7 @@ void PullRequestReview::readCode(const QString& cursor, const QString& patch) {
   const quint64 generation = m_generation;
   QJsonObject input = reference();
   if (!cursor.isEmpty()) input.insert(QStringLiteral("cursor"), cursor);
-  m_client->post(QStringLiteral("/api/pull-requests/diff"), input,
+  m_client->post(this, QStringLiteral("/api/pull-requests/diff"), input,
                  [this, generation, patch](const QJsonValue& result, const std::optional<QString>& error) {
                    if (generation != m_generation) return;
                    if (error) {
@@ -257,7 +257,7 @@ void PullRequestReview::setViewed(const QString& path, bool viewed) {
   QJsonObject input = reference();
   input.insert(QStringLiteral("files"), QJsonArray{QJsonObject{{QStringLiteral("path"), path}, {QStringLiteral("viewed"), viewed}}});
   const quint64 generation = m_generation;
-  m_client->call(m_environment, QStringLiteral("pullRequests.setFilesViewed"), input,
+  m_client->call(this, m_environment, QStringLiteral("pullRequests.setFilesViewed"), input,
                  [this, generation, path, viewed](const QJsonValue&, const std::optional<QString>& error) {
                    if (!error || generation != m_generation) return;
                    if (viewed) {
@@ -319,7 +319,7 @@ bool PullRequestReview::change(const QString& method, const QJsonObject& input, 
   ++m_busy;
   emit stateChanged();
   const quint64 generation = m_generation;
-  m_client->call(m_environment, method, input,
+  m_client->call(this, m_environment, method, input,
                  [this, generation, failure, done = std::move(done)](const QJsonValue&, const std::optional<QString>& error) {
                    --m_busy;
                    emit stateChanged();

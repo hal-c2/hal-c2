@@ -80,7 +80,7 @@ TerminalSession::TerminalSession(NodeClient* client, const TerminalPlace& place,
     input.insert(QStringLiteral("cols"), size.width());
     input.insert(QStringLiteral("rows"), size.height());
   }
-  m_subscription = client->subscribe(
+  m_subscription = client->subscribe(this, 
       {
           {QStringLiteral("type"), QStringLiteral("terminal")},
           {QStringLiteral("environment"), place.environmentId},
@@ -168,7 +168,7 @@ void TerminalSession::flushWrites() {
   const QString chunk = m_pendingWrite.left(length);
   m_pendingWrite.remove(0, length);
   m_writing = true;
-  m_client->call(m_environmentId, QStringLiteral("terminal.write"),
+  m_client->call(this, m_environmentId, QStringLiteral("terminal.write"),
                  QJsonObject{
                      {QStringLiteral("threadId"), m_threadId},
                      {QStringLiteral("terminalId"), m_terminalId},
@@ -197,7 +197,7 @@ void TerminalSession::flushResize() {
   if (m_resizing || !m_attached || !m_wanted.isValid() || m_wanted == m_sent) return;
   m_sent = m_wanted;
   m_resizing = true;
-  m_client->call(m_environmentId, QStringLiteral("terminal.resize"),
+  m_client->call(this, m_environmentId, QStringLiteral("terminal.resize"),
                  QJsonObject{
                      {QStringLiteral("threadId"), m_threadId},
                      {QStringLiteral("terminalId"), m_terminalId},
@@ -544,7 +544,7 @@ void TerminalController::watch(const QString& environmentId) {
   if (m_watched.contains(environmentId)) return;
   const QJsonObject shape{{QStringLiteral("type"), QStringLiteral("terminals")},
                           {QStringLiteral("environment"), environmentId}};
-  m_watched.insert(environmentId, m_client->subscribe(shape, [this, environmentId](const QJsonObject& frame) {
+  m_watched.insert(environmentId, m_client->subscribe(this, shape, [this, environmentId](const QJsonObject& frame) {
     if (frame.value(QLatin1String("t")) != QLatin1String("terminals")) return;
     onTerminals(environmentId, frame.value(QLatin1String("event")).toObject());
   }));
@@ -701,7 +701,7 @@ void TerminalController::closeTerminal(const QString& terminalId) {
     ui.active.clear();
   }
   if (drawerIds(ui, terminalIds()).isEmpty()) ui.open = false;
-  m_client->call(m_place->environmentId, QStringLiteral("terminal.close"),
+  m_client->call(this, m_place->environmentId, QStringLiteral("terminal.close"),
                  QJsonObject{
                      {QStringLiteral("threadId"), m_place->threadId},
                      {QStringLiteral("terminalId"), terminalId},
@@ -756,7 +756,7 @@ bool TerminalController::runScript(const QString& scriptId) {
   const QString command = script.value(QLatin1String("command")).toString() + QLatin1Char('\r');
   const QString threadKey = m_threadKey;
   const TerminalPlace place = *m_place;
-  m_client->call(place.environmentId, QStringLiteral("terminal.open"), input,
+  m_client->call(this, place.environmentId, QStringLiteral("terminal.open"), input,
                  [this, threadKey, place, terminalId, command, name](const QJsonValue&,
                                                                       const std::optional<QString>& error) {
                    const QString failed = QStringLiteral("Failed to run script \"%1\".").arg(name);
@@ -769,7 +769,7 @@ bool TerminalController::runScript(const QString& scriptId) {
                      return;
                    }
                    // The user moved on; the script still runs.
-                   m_client->call(place.environmentId, QStringLiteral("terminal.write"),
+                   m_client->call(this, place.environmentId, QStringLiteral("terminal.write"),
                                   QJsonObject{
                                       {QStringLiteral("threadId"), place.threadId},
                                       {QStringLiteral("terminalId"), terminalId},

@@ -274,7 +274,7 @@ private:
     discovery.scanning = true;
     const int seq = ++discovery.seq;
     const QPointer<SourceControlSettingsController> self(this);
-    m_client->call(environmentId, QStringLiteral("server.discoverSourceControl"), QJsonObject{},
+    m_client->call(this, environmentId, QStringLiteral("server.discoverSourceControl"), QJsonObject{},
                    [self, environmentId, seq](const QJsonValue& result, const std::optional<QString>& error) {
                      if (!self) return;
                      Discovery& discovery = self->m_discovery[environmentId];

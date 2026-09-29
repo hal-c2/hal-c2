@@ -262,7 +262,7 @@ void ThreadMenuController::command(const QString& key, QJsonObject command, cons
                                    std::function<void()> onSuccess) {
   const auto thread = m_store->thread(key);
   if (!thread) return;
-  m_client->dispatchCommand(thread->environmentId, std::move(command),
+  m_client->dispatchCommand(this, thread->environmentId, std::move(command),
                             [this, failureTitle, onSuccess = std::move(onSuccess)](const QJsonValue&,
                                                                                    const std::optional<QString>& error) {
                               if (error) {
@@ -289,7 +289,7 @@ void ThreadMenuController::archive(const QString& key) {
                      QJsonObject unarchive = target;
                      unarchive.insert(QStringLiteral("type"), QStringLiteral("thread.unarchive"));
                      const QString environmentId = key.left(key.indexOf(QLatin1Char(':')));
-                     m_client->dispatchCommand(environmentId, unarchive,
+                     m_client->dispatchCommand(this, environmentId, unarchive,
                                                [this, key, viewing](const QJsonValue&, const std::optional<QString>& error) {
                                                  if (error) {
                                                    toasts()->error(QStringLiteral("Failed to undo archive"), *error);
@@ -473,7 +473,7 @@ void ThreadMenuController::fork(const QString& key) {
 void ThreadMenuController::chooseDestination(const QString& key, double x, double y) {
   const auto thread = m_store->thread(key);
   if (!thread) return;
-  m_client->call(
+  m_client->call(this, 
       thread->environmentId, QStringLiteral("hal-c2.moveDestinations"), QJsonObject{{QStringLiteral("threadId"), thread->id}},
       [this, key, x, y](const QJsonValue& result, const std::optional<QString>& error) {
         if (error) {
@@ -512,7 +512,7 @@ void ThreadMenuController::move(const QString& key, const QString& machine, cons
   const QString progress = toasts()->show(QStringLiteral("loading"),
                                           QStringLiteral("Moving \"%1\" to %2…").arg(thread->title, machine), QString(), {}, 0);
   const bool viewing = NativeShell::of(this)->controller<NavigationController>()->threadKey() == key;
-  m_client->call(
+  m_client->call(this, 
       thread->environmentId, QStringLiteral("hal-c2.moveThread"), input,
       [this, key, machine, projectId, confirmed, x, y, progress, viewing, title = thread->title](
           const QJsonValue& result, const std::optional<QString>& error) {

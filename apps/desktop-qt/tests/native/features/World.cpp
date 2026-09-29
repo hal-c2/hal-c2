@@ -131,7 +131,7 @@ void World::waitFor(const std::function<bool()>& condition, const QString& what)
 
 void World::sync() {
   bool done = false;
-  m_native->client()->call(node.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
+  m_native->client()->call(m_native.get(), node.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
                           [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
   waitFor([&done] { return done; }, QStringLiteral("a round trip through the node"));
 }

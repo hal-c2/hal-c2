@@ -258,7 +258,7 @@ bool ComposerController::interrupt() {
     runId = thread->latestRunId;
   }
   if (!runId) return true;
-  m_client->dispatchCommand(thread->environmentId,
+  m_client->dispatchCommand(this, thread->environmentId,
                             {
                                 {QStringLiteral("type"), QStringLiteral("run.interrupt")},
                                 {QStringLiteral("threadId"), thread->id},
@@ -453,7 +453,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   publish();
   const QString environmentId = where.environmentId;
   const auto start = [this, draftId, environmentId, background, text, attachments, contexts](const QJsonObject& input) {
-    m_client->call(environmentId, QStringLiteral("orchestration.launchThread"), input,
+    m_client->call(this, environmentId, QStringLiteral("orchestration.launchThread"), input,
                    [this, draftId, environmentId, input, background, text, attachments, contexts](
                        const QJsonValue& result, const std::optional<QString>& error) {
                      QString threadId = result.toObject().value(QLatin1String("threadId")).toString();
@@ -479,7 +479,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                               {QStringLiteral("dataUrl"), attachment.dataUrl}});
   }
   QJsonObject message = input.value(QLatin1String("initialMessage")).toObject();
-  m_client->call(environmentId, QStringLiteral("assets.persistChatAttachments"),
+  m_client->call(this, environmentId, QStringLiteral("assets.persistChatAttachments"),
                  QJsonObject{{QStringLiteral("threadId"), kept->threadId},
                              {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
                              {QStringLiteral("attachments"), images}},
@@ -613,7 +613,7 @@ void ComposerController::sendNext(const QString& target) {
                               {QStringLiteral("dataUrl"), attachment.dataUrl}});
   }
   QJsonObject message = send.commands.constLast();
-  m_client->call(send.environmentId, QStringLiteral("assets.persistChatAttachments"),
+  m_client->call(this, send.environmentId, QStringLiteral("assets.persistChatAttachments"),
                  QJsonObject{{QStringLiteral("threadId"), send.threadId},
                              {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
                              {QStringLiteral("attachments"), images}},
@@ -631,7 +631,7 @@ void ComposerController::sendNext(const QString& target) {
 
 void ComposerController::dispatchAll(const Send& send, qsizetype index,
                                      std::function<void(const std::optional<QString>&)> done) {
-  m_client->dispatchCommand(send.environmentId, send.commands.at(index),
+  m_client->dispatchCommand(this, send.environmentId, send.commands.at(index),
                             [this, send, index, done](const QJsonValue&, const std::optional<QString>& error) {
                               if (!error && index + 1 < send.commands.size()) {
                                 dispatchAll(send, index + 1, done);
@@ -746,7 +746,7 @@ bool ComposerController::respond(const QString& requestId, const QJsonObject& fi
   for (auto it = fields.begin(); it != fields.end(); ++it) command.insert(it.key(), it.value());
   m_responding.insert(requestId);
   publish();
-  m_client->dispatchCommand(thread->environmentId, command,
+  m_client->dispatchCommand(this, thread->environmentId, command,
                             [this, requestId, failure](const QJsonValue&, const std::optional<QString>& error) {
                               m_responding.remove(requestId);
                               if (error && staleRequest(*error)) {
@@ -773,7 +773,7 @@ bool ComposerController::queueCommand(const QString& type, const QString& runId)
   }
   const QString failure = type == QLatin1String("queued-run.cancel") ? QStringLiteral("Failed to remove the queued message.")
                                                                       : QStringLiteral("Failed to steer with the queued message.");
-  m_client->dispatchCommand(thread->environmentId, command,
+  m_client->dispatchCommand(this, thread->environmentId, command,
                             [this, failure](const QJsonValue&, const std::optional<QString>& error) {
                               if (error) toast(failure, *error);
                             });
@@ -809,7 +809,7 @@ bool ComposerController::saveQueuedEdit(const QString& target, const QString& te
                             {QStringLiteral("threadId"), thread->id},
                             {QStringLiteral("runId"), runId},
                             {QStringLiteral("text"), text.trimmed()}};
-  m_client->dispatchCommand(thread->environmentId, command,
+  m_client->dispatchCommand(this, thread->environmentId, command,
                             [this, runId](const QJsonValue&, const std::optional<QString>& error) {
                               if (!m_queuedEdit || m_queuedEdit->runId != runId) return;
                               m_queuedEdit->saving = false;
@@ -1200,7 +1200,7 @@ void ComposerController::searchPaths(const QString& target) {
   if (!place || place->cwd().isEmpty() || !m_store->environmentOnline(place->environmentId)) return;
   m_paths = {target, trigger->query, false, {}, m_paths.request + 1};
   const int request = m_paths.request;
-  WorkspaceFiles::searchEntries(m_client, place->environmentId, place->cwd(), trigger->query, 80,
+  WorkspaceFiles::searchEntries(m_client, this, place->environmentId, place->cwd(), trigger->query, 80,
                                 [this, request](const QList<FileTreeModel::Entry>& entries, bool,
                                                 const std::optional<QString>&) {
                                   if (request != m_paths.request) return;

@@ -184,7 +184,7 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
 
 void SidebarController::command(const QString& environmentId, QJsonObject command, const QString& failureTitle,
                                 std::function<void()> onSuccess) {
-  m_client->dispatchCommand(
+  m_client->dispatchCommand(this, 
       environmentId, std::move(command),
       [this, failureTitle, onSuccess = std::move(onSuccess)](const QJsonValue&, const std::optional<QString>& error) {
         if (!error) {
@@ -231,7 +231,7 @@ void SidebarController::park(const QString& key, QJsonObject parkCommand, const 
     }
   }
 
-  m_client->dispatchCommand(
+  m_client->dispatchCommand(this, 
       thread->environmentId, std::move(parkCommand),
       [this, key, failureTitle, navigate = std::move(navigate), onSuccess = std::move(onSuccess)](
           const QJsonValue&, const std::optional<QString>& error) {

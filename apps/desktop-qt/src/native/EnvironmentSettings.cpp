@@ -39,7 +39,7 @@ void EnvironmentSettings::setTargets(const QStringList& environmentIds) {
   for (const QString& environmentId : std::as_const(m_targets)) {
     if (m_followed.contains(environmentId)) continue;
     m_followed.insert(environmentId, Target{});
-    const int id = m_client->subscribe(
+    const int id = m_client->subscribe(this, 
         {{QStringLiteral("type"), QStringLiteral("config")}, {QStringLiteral("environment"), environmentId}},
         [this, environmentId](const QJsonObject& message) {
           auto found = m_followed.find(environmentId);
@@ -145,7 +145,7 @@ void EnvironmentSettings::change(const Edit& edit, const Done& done) {
 void EnvironmentSettings::attempt(const QString& environmentId, const Edit& edit, int retries,
                                   std::function<void(std::optional<QString>)> done) {
   const QPointer<EnvironmentSettings> self(this);
-  m_client->call(environmentId, QStringLiteral("hal-c2.readSettings"), QJsonObject{},
+  m_client->call(this, environmentId, QStringLiteral("hal-c2.readSettings"), QJsonObject{},
                  [self, environmentId, edit, retries, done](const QJsonValue& result, const std::optional<QString>& error) {
                    if (!self) return;
                    if (error) {
@@ -159,7 +159,7 @@ void EnvironmentSettings::attempt(const QString& environmentId, const Edit& edit
                      done(std::nullopt);
                      return;
                    }
-                   self->m_client->call(
+                   self->m_client->call(self, 
                        environmentId, QStringLiteral("hal-c2.writeSettings"),
                        QJsonObject{{QStringLiteral("settings"), next}, {QStringLiteral("version"), read.value(QLatin1String("version"))}},
                        [self, environmentId, edit, retries, done](const QJsonValue& answer, const std::optional<QString>& error) {

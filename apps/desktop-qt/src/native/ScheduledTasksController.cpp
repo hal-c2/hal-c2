@@ -247,7 +247,7 @@ private:
       m_listings.insert(environmentId, Listing{});
       const QString node = m_store->nodeServing(environmentId);
       if (!node.isEmpty()) {
-        m_listings[environmentId].subscription = m_client->subscribe(
+        m_listings[environmentId].subscription = m_client->subscribe(this, 
             {{QStringLiteral("type"), QStringLiteral("scheduledTasks")}, {QStringLiteral("node"), node}},
             [this, environmentId](const QJsonObject& frame) {
               auto found = m_listings.find(environmentId);
@@ -275,7 +275,7 @@ private:
 
   void list(const QString& environmentId) {
     const QPointer<ScheduledTasksController> self(this);
-    m_client->call(environmentId, QStringLiteral("scheduledTasks.list"), QJsonObject{},
+    m_client->call(this, environmentId, QStringLiteral("scheduledTasks.list"), QJsonObject{},
                    [self, environmentId](const QJsonValue& result, const std::optional<QString>& error) {
                      if (!self) return;
                      auto found = self->m_listings.find(environmentId);
@@ -506,7 +506,7 @@ private:
     const QPointer<ScheduledTasksController> self(this);
     // The reply belongs to this editor; one opened since keeps its draft.
     const int seq = m_editorSeq;
-    m_client->call(environmentId, QStringLiteral("scheduledTasks.upsert"), input,
+    m_client->call(this, environmentId, QStringLiteral("scheduledTasks.upsert"), input,
                    [self, environmentId, seq](const QJsonValue&, const std::optional<QString>& error) {
                      if (!self) return;
                      const bool current = self->m_editor.open && self->m_editorSeq == seq;
@@ -538,7 +538,7 @@ private:
     QJsonObject input{{QStringLiteral("cwd"), cwd}, {QStringLiteral("limit"), 20}};
     if (!query.trimmed().isEmpty()) input.insert(QStringLiteral("query"), query.trimmed());
     const QPointer<ScheduledTasksController> self(this);
-    m_client->call(environmentId, QStringLiteral("vcs.listRefs"), input,
+    m_client->call(this, environmentId, QStringLiteral("vcs.listRefs"), input,
                    [self, seq, request](const QJsonValue& result, const std::optional<QString>&) {
                      if (!self || self->m_editorSeq != seq || self->m_branchesRequest != request || !self->m_editor.open) return;
                      const QJsonObject list = result.toObject();
@@ -554,7 +554,7 @@ private:
     if (m_busy.contains(busy) || find(environmentId, id).isEmpty()) return;
     m_busy.insert(busy);
     const QPointer<ScheduledTasksController> self(this);
-    m_client->call(environmentId, method, payload, [self, environmentId, busy](const QJsonValue&, const std::optional<QString>& error) {
+    m_client->call(this, environmentId, method, payload, [self, environmentId, busy](const QJsonValue&, const std::optional<QString>& error) {
       if (!self) return;
       self->m_busy.remove(busy);
       if (error) self->fail(QStringLiteral("Could not update scheduled task"), *error);

@@ -441,7 +441,7 @@ void GitController::run(const QString& action, const QString& message, const std
   }
   m_stage = QStringLiteral("Starting source control action...");
   m_progressToast = toasts()->show(QStringLiteral("loading"), m_stage, {}, {}, 0);
-  m_action = m_client->subscribe(
+  m_action = m_client->subscribe(this, 
       {
           {QStringLiteral("type"), QStringLiteral("gitAction")},
           {QStringLiteral("environment"), place.environmentId},
@@ -512,7 +512,7 @@ void GitController::syncBranch(const QJsonObject& result) {
     workspace()->setCheckout(place->draftId, checkout);
     return;
   }
-  m_client->dispatchCommand(place->environmentId,
+  m_client->dispatchCommand(this, place->environmentId,
                             {
                                 {QStringLiteral("type"), QStringLiteral("thread.metadata.update")},
                                 {QStringLiteral("threadId"), place->threadId},
@@ -527,7 +527,7 @@ void GitController::pull() {
   const QString toast = toasts()->show(QStringLiteral("loading"), QStringLiteral("Pulling latest changes..."), {}, {}, 0);
   publish();
   const auto& place = workspace()->place();
-  m_client->call(place->environmentId, QStringLiteral("vcs.pull"), QJsonObject{{QStringLiteral("cwd"), place->cwd()}},
+  m_client->call(this, place->environmentId, QStringLiteral("vcs.pull"), QJsonObject{{QStringLiteral("cwd"), place->cwd()}},
                  [this, toast](const QJsonValue& result, const std::optional<QString>& error) {
                    m_pulling = false;
                    toasts()->dismiss(toast);
@@ -557,7 +557,7 @@ void GitController::init() {
   m_initPending = true;
   publish();
   const auto& place = workspace()->place();
-  m_client->call(place->environmentId, QStringLiteral("vcs.init"), QJsonObject{{QStringLiteral("cwd"), place->cwd()}},
+  m_client->call(this, place->environmentId, QStringLiteral("vcs.init"), QJsonObject{{QStringLiteral("cwd"), place->cwd()}},
                  [this](const QJsonValue&, const std::optional<QString>& error) {
                    m_initPending = false;
                    if (error) toasts()->error(QStringLiteral("Git initialization failed"), *error);
@@ -581,7 +581,7 @@ void GitController::submitPublish(const QVariantMap& args) {
   m_publishing = Publishing{true, {}};
   publish();
   const auto& place = workspace()->place();
-  m_client->call(place->environmentId, QStringLiteral("sourceControl.publishRepository"),
+  m_client->call(this, place->environmentId, QStringLiteral("sourceControl.publishRepository"),
                  QJsonObject{
                      {QStringLiteral("cwd"), place->cwd()},
                      {QStringLiteral("provider"), args.value(QStringLiteral("provider"), QStringLiteral("github")).toString()},

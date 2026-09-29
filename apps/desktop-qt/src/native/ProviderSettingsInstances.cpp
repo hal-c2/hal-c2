@@ -397,7 +397,7 @@ bool ProviderSettingsController::handleInstance(const QString& action, const QVa
            if (!saved || driver != kRegistry || agentId.isEmpty()) return;
            // The environment decides from its own settings whether another
            // instance still runs the agent.
-           m_client->call(environmentId, QStringLiteral("server.uninstallAcpRegistryManagedBinary"),
+           m_client->call(this, environmentId, QStringLiteral("server.uninstallAcpRegistryManagedBinary"),
                           QJsonObject{{QStringLiteral("agentId"), agentId}},
                           [this](const QJsonValue&, const std::optional<QString>& error) {
                             if (!error) return;

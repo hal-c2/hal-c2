@@ -118,7 +118,7 @@ SettingsController::SettingsController(ShellBridge* bridge, NodeClient* client, 
 void SettingsController::activate() {
   if (m_active) return;
   m_active = true;
-  m_client->subscribe({{QStringLiteral("type"), QStringLiteral("config")},
+  m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("config")},
                        {QStringLiteral("environment"), m_client->environment()}},
                       [this](const QJsonObject& frame) { onConfig(frame); });
 }
@@ -157,7 +157,7 @@ void SettingsController::setThemes(const QJsonArray& themes) {
 
 void SettingsController::read(std::function<void()> then) {
   const quint64 generation = ++m_generation;
-  m_client->call(m_client->environment(), QStringLiteral("hal-c2.readSettings"), QJsonObject{},
+  m_client->call(this, m_client->environment(), QStringLiteral("hal-c2.readSettings"), QJsonObject{},
                  [this, generation, then = std::move(then)](const QJsonValue& result, const std::optional<QString>& error) {
                    // Answers land out of order: a read asked before a save may arrive
                    // after it. What waits on it goes on with what is newer.
@@ -204,7 +204,7 @@ void SettingsController::attempt(Edit edit, Done done, int retries) {
   }
   const quint64 generation = ++m_generation;
   const QJsonObject payload{{QStringLiteral("settings"), next}, {QStringLiteral("version"), m_version}};
-  m_client->call(m_client->environment(), QStringLiteral("hal-c2.writeSettings"), payload,
+  m_client->call(this, m_client->environment(), QStringLiteral("hal-c2.writeSettings"), payload,
                  [this, edit, done, retries, next, generation, finish](const QJsonValue& result,
                                                                        const std::optional<QString>& error) {
                    if (error) {

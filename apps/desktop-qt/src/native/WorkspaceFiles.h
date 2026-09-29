@@ -88,7 +88,7 @@ public:
   // search, and the composer's @ menu.
   using SearchDone =
       std::function<void(const QList<FileTreeModel::Entry>& entries, bool truncated, const std::optional<QString>& error)>;
-  static void searchEntries(NodeClient* client, const QString& environmentId, const QString& cwd, const QString& query,
+  static void searchEntries(NodeClient* client, QObject* context, const QString& environmentId, const QString& cwd, const QString& query,
                             int limit, SearchDone done);
 
   FileTreeModel* tree() { return &m_tree; }

@@ -101,6 +101,15 @@ Feature: Windows, zoom and quitting
       Then the first window stays open on the same thread
 
     @desktop
+    Scenario: Closing a window while it waits on the node
+      Given a second window is open
+      And the second window is waiting on the node
+      When the user closes the second window
+      And the node answers what the closed window asked
+      Then the first window stays open on the same thread
+      And the node no longer sends the closed window anything
+
+    @desktop
     Scenario: Windows share the sign-in but not the navigation
       Given a second window is open
       Then the second window is signed in to the same environments
