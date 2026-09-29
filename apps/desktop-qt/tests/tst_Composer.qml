@@ -125,6 +125,23 @@ Item {
             compare(root.stolenChords, 0);
         }
 
+        function test_terminalExcerptChipNamesItsLinesAndRemovesIt() {
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, {
+                    terminalContexts: [{ id: "tc-1", label: "Terminal 1", lineStart: 3, lineEnd: 5 }, { id: "tc-2", label: "Terminal 2", lineStart: 7, lineEnd: 7 }]
+                })
+            });
+            const composer = createTemporaryObject(composerComponent, root);
+            const range = findChild(composer, "terminalContext-tc-1");
+            verify(!!range);
+            compare(range.text, "Terminal 1 lines 3-5");
+            compare(findChild(composer, "terminalContext-tc-2").text, "Terminal 2 line 7");
+            mouseClick(range);
+            const sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(sent.action, "composer.terminalContext.remove");
+            compare(sent.payload.id, "tc-1");
+        }
+
         function test_textDispatchIncludesTarget() {
             let composer = createTemporaryObject(composerComponent, root);
             verify(!!composer, "Component exists");

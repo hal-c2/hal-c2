@@ -602,9 +602,18 @@ disk; a send saves the edit with `queued-run.edit` (text only, so its images
 stay as they were) and gives the draft back. The web keeps the edit under its
 own draft target instead; the swap keeps every composer path on one target.
 
-Prompt history (`composer.history.step`) and terminal contexts are not the
-controller's yet: it drops the step, publishes no terminal contexts, and a
-terminal selection's `composer.terminalContext.add` goes nowhere.
+Terminal excerpts (`composer.terminalContext.add`, from a terminal's
+right-click Add to chat or the web's terminal document) are chips on the
+draft, not inline links as in the web's editor: the Qt editor is plain text.
+A send appends one inline context link per excerpt to the message text and
+carries the excerpts as `context` records, because the node only hands the
+provider records whose link is in the text (`HalC2.ComposerContext`). The
+Ghostty `Terminal` does not say where its selection is, so the brick counts
+the lines at the selection's last occurrence in the terminal's text. Excerpts
+live in memory like images.
+
+Prompt history (`composer.history.step`) is not the controller's yet: it
+drops the step.
 
 The page's `modelPicker.toggle` command dispatches
 `composer.modelPicker.toggle` page → shell, and the toolbar commands

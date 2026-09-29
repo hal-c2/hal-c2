@@ -3,6 +3,7 @@
 #   docs/internals/composer-context-references.md
 #   apps/server-ex/lib/hal_c2/composer_context.ex (provider envelope, attachment remapping)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (@file, $skill and /command suggestions)
+#   apps/desktop-qt/src/native/ComposerController.cpp (terminal excerpts as context records on send)
 #   apps/desktop-qt/tests/tst_ComposerKeyboard.qml (suggestion keys)
 #   apps/web/src/composer-logic.ts (trigger kinds, built-in slash commands)
 #   apps/web/src/components/chat/composerSlashCommandSearch.ts
@@ -106,6 +107,37 @@ Feature: Referencing files, skills, commands and context
     When the user cites that paragraph in the composer
     Then the draft carries the quoted paragraph
     And the user can add a comment to it
+
+  @desktop
+  Scenario: A terminal excerpt is sent as a reference with its text
+    Given the draft holds an excerpt from "Terminal 1" lines 3 to 5
+    When the user sends "Why does this fail?"
+    Then the message references the excerpt "Terminal 1 lines 3-5"
+    And the message starts with "Why does this fail?"
+    And the message carries the excerpt's text
+    And the draft no longer holds it
+
+  @desktop
+  Scenario: A terminal excerpt can be sent on its own
+    Given the user adds line 7 of "Terminal 2" to the chat
+    When the user sends ""
+    Then the message references the excerpt "Terminal 2 line 7"
+
+  @desktop
+  Scenario: A removed terminal excerpt is not sent
+    Given the draft holds an excerpt from "Terminal 1" lines 3 to 5
+    When the user removes that excerpt
+    And the user sends "Never mind the output"
+    Then the message starts with "Never mind the output"
+    And the message carries no excerpt
+
+  @desktop
+  Scenario: A send the node rejects gives its terminal excerpt back
+    Given the node refuses "message.dispatch" with "Provider unavailable"
+    And the draft holds an excerpt from "Terminal 1" lines 3 to 5
+    When the user sends "Why does this fail?"
+    Then the user sees an "error" toast "Failed to send message" saying "Provider unavailable"
+    And the composer shows that excerpt with its terminal and lines
 
   @backlog @desktop
   Scenario: Copied references survive being pasted into another draft

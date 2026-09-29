@@ -49,6 +49,7 @@ FocusScope {
             id: cell
 
             required property string terminalId
+            required property string label
             required property QtObject session
             required property string group
             required property bool panel
@@ -106,6 +107,57 @@ FocusScope {
                     function onReplaced(history) {
                         terminal.reset();
                         terminal.restore(history);
+                    }
+                }
+
+                // The selection as the composer's terminal context
+                // (composer.terminalContext.add): its lines are counted in the
+                // terminal's text, scrollback and screen, at the selection's
+                // last occurrence, since the Terminal does not say where it is.
+                function selectionContext() {
+                    const selected = terminal.selectedText().replace(/\r\n/g, "\n");
+                    const all = terminal.text().replace(/\r\n/g, "\n");
+                    const at = all.lastIndexOf(selected);
+                    const leading = selected.length - selected.replace(/^\n+/, "").length;
+                    const lineStart = (at < 0 ? 1 : all.slice(0, at).split("\n").length) + leading;
+                    const body = selected.replace(/^\n+|\n+$/g, "");
+                    return {
+                        terminalId: cell.terminalId,
+                        terminalLabel: cell.label,
+                        lineStart: lineStart,
+                        lineEnd: lineStart + body.split("\n").length - 1,
+                        text: selected
+                    };
+                }
+
+                // Right-click: the web's terminal menu's selection actions. Adding to chat needs a
+                // composer to add to.
+                // A handler, not a MouseArea, so wheel and left-button
+                // selection still reach the Terminal.
+                TapHandler {
+                    acceptedButtons: Qt.RightButton
+                    onTapped: eventPoint => menu.popup(eventPoint.position.x, eventPoint.position.y)
+                }
+
+                ShellMenu {
+                    id: menu
+
+                    ShellMenuItem {
+                        objectName: "terminalAddToChat"
+                        text: qsTr("Add to chat")
+                        visible: (Shell.state.composer?.target ?? null) !== null
+                        height: visible ? implicitHeight : 0
+                        enabled: terminal.hasSelection
+                        onTriggered: {
+                            Shell.dispatch("composer.terminalContext.add", terminal.selectionContext());
+                            terminal.clearSelection();
+                            terminal.forceActiveFocus();
+                        }
+                    }
+                    ShellMenuItem {
+                        text: qsTr("Copy")
+                        enabled: terminal.hasSelection
+                        onTriggered: terminal.copy()
                     }
                 }
 

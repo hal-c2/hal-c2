@@ -597,3 +597,7 @@ const Steps steps([] {
 void pickAnswer(World& world, const QString& label) {
   answer(world, label);
 }
+
+void openTurnThread(World& world) {
+  openThread(world);
+}

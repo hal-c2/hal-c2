@@ -454,11 +454,12 @@ Rectangle {
                         delegate: ShellButton {
                             required property var modelData
 
+                            objectName: "terminalContext-" + modelData.id
                             implicitHeight: 24
                             iconName: "terminal"
-                            text: modelData.label + " " + modelData.lineStart + "–" + modelData.lineEnd
+                            text: modelData.lineStart === modelData.lineEnd ? qsTr("%1 line %2").arg(modelData.label).arg(modelData.lineStart) : qsTr("%1 lines %2-%3").arg(modelData.label).arg(modelData.lineStart).arg(modelData.lineEnd)
                             font.pixelSize: 12
-                            Accessible.name: qsTr("Remove terminal selection %1").arg(modelData.label)
+                            Accessible.name: qsTr("Remove terminal selection %1").arg(text)
                             onClicked: Shell.dispatch("composer.terminalContext.remove", {
                                 id: modelData.id
                             })

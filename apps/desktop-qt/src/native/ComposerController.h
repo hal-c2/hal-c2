@@ -25,7 +25,7 @@ class TimelineModel;
 
 // The composer on the thread or new-thread draft the window shows (the
 // route), against the node: the draft itself (text, caret, model, options,
-// modes, images), what the picker offers, the @ $ / suggestions, sending,
+// modes, images, terminal excerpts), what the picker offers, the @ $ / suggestions, sending,
 // follow-ups while a turn runs, stop, the thread's pending approvals and
 // questions, and its proposed plan.
 //
@@ -65,12 +65,19 @@ class TimelineModel;
 // composer.option.set {id, value}, composer.runtimeMode.set {mode},
 // composer.interactionMode.set {mode}, composer.submit {text, intent, edit},
 // composer.interrupt, composer.attach {files}, composer.attachment.remove {id},
+// composer.terminalContext.add {terminalId, terminalLabel, lineStart, lineEnd,
+// text}, composer.terminalContext.remove {id},
 // composer.approval.respond {requestId, decision},
 // composer.question.answer {requestId, answers}, composer.question.dismiss
 // {requestId}, composer.plan.implement, composer.queue.remove {runId},
 // composer.queue.steer {runId?} (the first queued without one),
 // composer.queue.edit {runId?} (the last queued without one),
 // composer.queue.edit.cancel.
+//
+// A terminal excerpt is a chip on the draft (`composer.terminalContexts`), as
+// the web's terminal context; a send appends an inline context link for each
+// to the text and carries the excerpts as the message's `context` records,
+// which the node hands the provider (HalC2.ComposerContext).
 //
 // Editing a queued message puts its text in the thread's composer
 // (`composer.editingQueuedRunId`) and sets the thread's own draft aside; a
@@ -94,6 +101,9 @@ public:
   void setStorePath(const QString& path);
   // The thread's (or new thread's) draft text, as the composer last left it.
   QString draft(const QString& target) const;
+  // The draft's terminal excerpts, with their text: {id, terminalId,
+  // terminalLabel, lineStart, lineEnd, text}.
+  QVariantList terminalContexts(const QString& target) const;
 
 private:
   struct Attachment {
@@ -102,6 +112,15 @@ private:
     QString mimeType;
     qint64 sizeBytes = 0;
     QString dataUrl;
+  };
+  // A terminal selection on the draft (apps/web/src/lib/terminalContext.ts).
+  struct TerminalContext {
+    QString id;
+    QString terminalId;
+    QString terminalLabel;
+    int lineStart = 1;
+    int lineEnd = 1;
+    QString text;
   };
   struct Draft {
     QString text;  // a new thread's is DraftController's
@@ -115,6 +134,7 @@ private:
     QString runtimeMode;
     QString interactionMode;
     QList<Attachment> attachments;
+    QList<TerminalContext> terminalContexts;
   };
   struct Send {
     QString target;
@@ -123,6 +143,8 @@ private:
     QList<QJsonObject> commands;
     // Uploaded first; the message carries what the node stored.
     QList<Attachment> attachments;
+    // Given back with the text if the send fails.
+    QList<TerminalContext> terminalContexts;
     // The text to give back if the send fails; empty for none.
     QString prompt;
   };
@@ -135,7 +157,8 @@ private:
   // A background send's answer: a toast that opens the thread, or one that
   // gives the prompt back.
   void launchedInBackground(const QString& draftId, const QString& text, const QList<Attachment>& attachments,
-                            const QString& threadKey, const std::optional<QString>& error);
+                            const QList<TerminalContext>& contexts, const QString& threadKey,
+                            const std::optional<QString>& error);
   // The model a thread (its own) or a draft (the project's default) starts from.
   QJsonObject baseSelection(const QString& key) const;
   // The message and the mode changes before it; empty `text` implements the plan.
@@ -143,6 +166,11 @@ private:
   void sendNext(const QString& target);
   void dispatchAll(const Send& send, qsizetype index, std::function<void(const std::optional<QString>&)> done);
   bool attach(const QVariantList& files);
+  // A terminal selection joins the route's draft; blank ones are dropped.
+  bool addTerminalContext(const QVariantMap& selection);
+  // The message text with a context link per excerpt, and their records as
+  // its `context`.
+  static void withTerminalContexts(QJsonObject& message, const QList<TerminalContext>& contexts);
   bool respond(const QString& requestId, const QJsonObject& fields, const QString& failure);
   bool queueCommand(const QString& type, const QString& runId);
   bool editQueued(const QString& target, QString runId);
