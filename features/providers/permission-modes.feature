@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/2829 (Codex interaction mode after resume, Grok permission mode)
 #   docs/user/permission-modes.md
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (runtime mode map, approval decisions, plan capture)
 #   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (approval policy and sandbox map, acceptAlways -> acceptForSession, collaborationMode)

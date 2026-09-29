@@ -1,6 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/2829
-#   upstream commits b882b109f, 2c388dae9, d2269c385, 0481b76be,
+#   upstream commits b882b109f, 2c388dae9, d2269c385,
 #     2b6f2afdc, f6924fd18, 402205e2c, b22246417, 613a1b236
 #   packages/contracts/src/orchestrationV2.ts
 #   apps/server-ex/lib/hal_c2/orchestration/

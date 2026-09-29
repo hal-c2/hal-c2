@@ -79,12 +79,6 @@ Feature: Provider lifecycle and capability boundaries
     When a Codex session starts
     Then the process receives those arguments
 
-  @node @backlog @plugin-codex
-  Scenario: Codex receives the current interaction mode after resume
-    Given a Codex thread previously ran in plan mode
-    When the next run requests default mode
-    Then Codex receives default mode explicitly
-
   @node @backlog @plugin-claude
   Scenario: Claude resumes after compaction
     Given a Claude session reports a compaction boundary
@@ -113,32 +107,26 @@ Feature: Provider lifecycle and capability boundaries
     And a new session asks for the same action
     Then the new session asks again
 
-  @node @backlog @plugin-acp
+  @node @backlog @plugin-grok @plugin-cursor @plugin-opencode @plugin-antigravity @plugin-acp-registry
   Scenario: ACP provider capabilities are opt-in per provider flavor
     Given an ACP provider flavor does not advertise terminals
     When the agent requests a terminal
     Then the request is rejected as unsupported
     And the provider is not given an unadvertised capability
 
-  @node @backlog @plugin-acp
+  @node @backlog @plugin-grok @plugin-cursor @plugin-opencode @plugin-antigravity @plugin-acp-registry
   Scenario: ACP child messages and summaries remain in the child
     Given an ACP provider creates a native child session
     When the child sends messages and a final summary
     Then those items appear in the child thread
     And the parent receives only the child result
 
-  @node @backlog @plugin-acp
+  @node @backlog @plugin-grok @plugin-cursor @plugin-opencode @plugin-antigravity @plugin-acp-registry
   Scenario: ACP authentication is enforced before activation
     Given an ACP provider requires authentication
     When a thread tries to activate it without credentials
     Then activation fails with an authentication error
     And no provider session is created
-
-  @node @backlog @plugin-grok
-  Scenario: Grok runs with the thread's permission mode
-    Given a Grok thread is in supervised mode
-    When the thread starts
-    Then Grok starts in supervised mode
 
   @node @backlog @plugin-grok
   Scenario: Grok does not finish while a monitor is still in the foreground run

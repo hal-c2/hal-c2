@@ -3,7 +3,8 @@
 #   upstream commits 069058c83, 75afe6831, c38c60fcb, f969b217f,
 #     175e2bd57, 70629cddd, 6c39f90e9, a4cd40310, 690c57f62,
 #     b64278cca, d3179b607, 01dba73a6, 48b51111f, 77acaf553,
-#     c48e8a9ce, 77acaf553, 70629cddd (orchestrator runtime recovery and background work)
+#     c48e8a9ce, cb64162de (orchestrator runtime recovery and background work)
+#   Reviewed through upstream head cb64162de.
 #   apps/server/src/orchestration-v2/
 #   apps/server-ex/lib/hal_c2/orchestration/
 Feature: Runtime state remains honest across provider work
@@ -187,3 +188,10 @@ Feature: Runtime state remains honest across provider work
     When the retry is projected
     Then the work log records a provider retry
     And it does not create a second user turn
+
+  @node @backlog @shared @plugin-claude
+  Scenario: A Claude monitor is not shown as a command
+    Given Claude starts a monitor in thread "t1"
+    When the node projects the monitor's activity
+    Then the monitor appears as background work
+    And it is not classified as a command

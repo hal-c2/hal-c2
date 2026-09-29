@@ -17,7 +17,7 @@ Feature: Provider-specific workflow contracts
     Then the thread waits for the user's approval
     And the command is not silently approved as full access
 
-  @node @backlog @plugin-acp
+  @node @backlog @plugin-grok @plugin-cursor @plugin-opencode @plugin-antigravity @plugin-acp-registry
   Scenario: An ACP allow-once approval does not become an allow-always grant
     Given an ACP provider asks to run a command
     When the user allows it once
@@ -56,14 +56,14 @@ Feature: Provider-specific workflow contracts
       | search        | file search   |
       | fetch         | web search    |
 
-  @node @backlog @plugin-acp
+  @node @backlog @plugin-grok @plugin-cursor @plugin-opencode @plugin-antigravity @plugin-acp-registry
   Scenario: An ACP edit with old and new text produces a useful diff
     Given an ACP provider edits a file by sending old text and new text
     When the node projects the file change
     Then the change includes the replaced lines
     And the diff does not appear empty merely because no patch was supplied
 
-  @node @backlog @plugin-acp
+  @node @backlog @plugin-grok @plugin-cursor @plugin-opencode @plugin-antigravity @plugin-acp-registry
   Scenario: An ACP agent can read a file while write approval is pending
     Given an ACP provider is waiting for approval to write
     When it requests a read of a workspace file
