@@ -34,7 +34,8 @@ class ShellStore;
 // listed), refreshing, providers [{instanceId, driver, name, version,
 // enabled, installed, status, headline, detail, email, models [{slug, name}],
 // advisory {title, detail, updateCommand, targetVersion, strong} | null,
-// canUpdate, updating, account: null | {description, canSignIn, signInLabel,
+// canUpdate, installLabel ("Install v1.2.3" when the recommended version can
+// be installed, else empty), updating, account: null | {description, canSignIn, signInLabel,
 // canCancel, canSignOut, url, userCode, error, methods [{id, name}] (a
 // choice), terminal: null | {key, output, offset} (the agent's login
 // terminal), credentials [{name, label, secret}], acceptsCallback (a pasted

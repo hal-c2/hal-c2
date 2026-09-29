@@ -183,6 +183,18 @@ bool updatable(const QJsonObject& provider) {
          version.value(QLatin1String("canUpdate")).toBool() && version.value(QLatin1String("updateCommand")).isString();
 }
 
+// The recommended version the environment can install in place of the one
+// it has (ProviderSettingsPanel onInstallRecommended), or empty.
+QString installable(const QJsonObject& provider) {
+  const QJsonObject compatibility = provider.value(QLatin1String("compatibilityAdvisory")).toObject();
+  const QString target = text(compatibility.value(QLatin1String("recommendedVersion")));
+  if (target.isEmpty() || text(compatibility.value(QLatin1String("message"))).isEmpty() ||
+      !provider.value(QLatin1String("versionAdvisory")).toObject().value(QLatin1String("canInstallVersion")).toBool()) {
+    return {};
+  }
+  return advisory(provider).toMap().value(QStringLiteral("targetVersion")).toString() == target ? target : QString();
+}
+
 // Whether the web offers the provider's Account section.
 bool signsIn(const QJsonObject& provider) {
   return provider.value(QLatin1String("setup")).toObject().value(QLatin1String("canAuthenticate")).toBool() ||
@@ -396,13 +408,18 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
                     call(instanceId, QStringLiteral("provider.auth.logout"), {{QStringLiteral("instanceId"), instanceId}},
                          QStringLiteral("Could not sign out."));
                   });
-  } else if (action == QLatin1String("providerSettings.update")) {
-    if (m_updating.contains(instanceId) || !updatable(entry)) return true;
+  } else if (action == QLatin1String("providerSettings.update") || action == QLatin1String("providerSettings.install")) {
+    // `.install` puts the recommended version in place of the latest.
+    const bool install = action == QLatin1String("providerSettings.install");
+    const QString target = install ? installable(entry) : QString();
+    if (m_updating.contains(instanceId) || (install ? target.isEmpty() : !updatable(entry))) return true;
     const QString driver = entry.value(QLatin1String("driver")).toString();
     const QString name = text(entry.value(QLatin1String("displayName"))).isEmpty() ? driver : text(entry.value(QLatin1String("displayName")));
+    QJsonObject request{{QStringLiteral("provider"), driver}, {QStringLiteral("instanceId"), instanceId}};
+    if (install) request.insert(QStringLiteral("targetVersion"), target);
     m_updating.insert(instanceId);
     publish();
-    m_client->call(m_followed, QStringLiteral("server.updateProvider"), QJsonObject{{QStringLiteral("provider"), driver}, {QStringLiteral("instanceId"), instanceId}},
+    m_client->call(m_followed, QStringLiteral("server.updateProvider"), request,
                    [this, instanceId, name](const QJsonValue&, const std::optional<QString>& error) {
                      m_updating.remove(instanceId);
                      if (error) {
@@ -634,6 +651,7 @@ QVariantMap ProviderSettingsController::entry(const QJsonObject& provider) const
       {QStringLiteral("models"), models},
       {QStringLiteral("advisory"), advice},
       {QStringLiteral("canUpdate"), updatable(provider)},
+      {QStringLiteral("installLabel"), installable(provider).isEmpty() ? QString() : QStringLiteral("Install ") + versionLabel(installable(provider))},
       {QStringLiteral("updating"), updating},
       {QStringLiteral("account"), null()},
   };

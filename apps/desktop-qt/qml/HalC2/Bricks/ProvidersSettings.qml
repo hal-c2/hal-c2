@@ -458,10 +458,11 @@ Rectangle {
 
                     ShellButton {
                         objectName: "update"
-                        visible: card.provider.canUpdate || card.provider.updating
+                        readonly property bool install: (card.provider.installLabel ?? "").length > 0
+                        visible: card.provider.canUpdate || install || card.provider.updating
                         enabled: !card.provider.updating
-                        text: card.provider.updating ? qsTr("Updating…") : qsTr("Update now")
-                        onClicked: page.act("update", card.provider)
+                        text: card.provider.updating ? qsTr("Updating…") : install ? card.provider.installLabel : qsTr("Update now")
+                        onClicked: page.act(install ? "install" : "update", card.provider)
                     }
 
                     Label {

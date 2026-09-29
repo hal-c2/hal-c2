@@ -838,7 +838,7 @@ const Steps steps([] {
     waitForEntry(world, c[0], [](const QVariantMap& found) { return !found.value(QStringLiteral("canUpdate")).toBool(); },
                  QStringLiteral("to not update itself"));
   });
-  step(QStringLiteral("the installed %1 is (of limited support|unsupported|known to be broken) for this HAL-C2 release").arg(q),
+  step(QStringLiteral("the installed %1 is (of limited support|unsupported|known to be broken)(?: for this HAL-C2 release)?").arg(q),
        [](World& world, const Captures& c, const Table&) {
          const QString status = c[1] == QLatin1String("of limited support") ? QStringLiteral("graceful")
                                 : c[1] == QLatin1String("unsupported")      ? QStringLiteral("unsupported")
@@ -867,6 +867,39 @@ const Steps steps([] {
     const QVariantMap advisory = entry(world, QStringLiteral("OpenCode")).value(QStringLiteral("advisory")).toMap();
     expect(advisory.value(QStringLiteral("title")) == c[0] && advisory.value(QStringLiteral("detail")) == QLatin1String("Use v1.14.19 for full support."),
            QStringLiteral("the advisory is %1").arg(show(advisory)));
+  });
+  step(QStringLiteral("%1 is the recommended version").arg(q), [](World& world, const Captures& c, const Table&) {
+    offer(world, provider(QStringLiteral("opencode"), QStringLiteral("opencode"), QStringLiteral("OpenCode"),
+                          {{QStringLiteral("version"), QStringLiteral("1.15.0")},
+                           {QStringLiteral("versionAdvisory"), QJsonObject{{QStringLiteral("status"), QStringLiteral("behind_latest")},
+                                                                           {QStringLiteral("latestVersion"), QStringLiteral("1.16.0")},
+                                                                           {QStringLiteral("updateCommand"), QStringLiteral("npm install -g opencode-ai@latest")},
+                                                                           {QStringLiteral("canUpdate"), true},
+                                                                           {QStringLiteral("canInstallVersion"), true}}},
+                           {QStringLiteral("compatibilityAdvisory"),
+                            QJsonObject{{QStringLiteral("status"), QStringLiteral("broken")},
+                                        {QStringLiteral("message"), QStringLiteral("OpenCode 1.15.0 is known to break sessions.")},
+                                        {QStringLiteral("recommendedVersion"), c[0]}}}}));
+  });
+  step(QStringLiteral("the user is offered to install %1 rather than update to the latest").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap found = waitForEntry(world, QStringLiteral("OpenCode"), [&](const QVariantMap& found) {
+      return found.value(QStringLiteral("installLabel")) == QStringLiteral("Install ") + c[0];
+    }, QStringLiteral("to offer installing ") + c[0]);
+    expect(at(found, QStringLiteral("advisory.updateCommand")).isNull(),
+           QStringLiteral("no update to the latest to be offered; OpenCode is %1").arg(show(found)));
+  });
+  step(QStringLiteral("the user installs the recommended version of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForEntry(world, c[0], [](const QVariantMap& found) { return !found.value(QStringLiteral("installLabel")).toString().isEmpty(); },
+                 QStringLiteral("to offer the recommended version"));
+    dispatch(world, QStringLiteral("install"), c[0]);
+  });
+  step(QStringLiteral("the environment installs %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      return fake(world).updates.size() == 1 && fake(world).updates.first().payload.value(QLatin1String("targetVersion")) == c[0] &&
+             fake(world).updates.first().payload.value(QLatin1String("provider")) == c[1].toLower();
+    }, [&] { return QStringLiteral("%1 %2 to be installed; %3 updates ran").arg(c[1], c[0]).arg(fake(world).updates.size()); });
+    waitForEntry(world, c[1], [](const QVariantMap& found) { return found.value(QStringLiteral("updating")).toBool(); },
+                 QStringLiteral("to be shown updating"));
   });
   step(QStringLiteral("the user copies the update command"), [](World& world, const Captures&, const Table&) {
     dispatch(world, QStringLiteral("copyUpdateCommand"), QStringLiteral("Codex"));

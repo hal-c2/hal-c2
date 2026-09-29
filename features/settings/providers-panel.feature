@@ -381,12 +381,19 @@ Feature: Providers settings panel
         | unsupported         | Unsupported version  |
         | known to be broken  | Known broken version |
 
-    @backlog @desktop
+    @desktop
     Scenario: A recommended version is installed instead of the latest
       Given the installed "OpenCode" is known to be broken
       And "1.14.19" is the recommended version
       When the user opens the version details of "OpenCode"
       Then the user is offered to install "v1.14.19" rather than update to the latest
+
+    @desktop
+    Scenario: Installing the recommended version
+      Given the installed "OpenCode" is known to be broken
+      And "1.14.19" is the recommended version
+      When the user installs the recommended version of "OpenCode"
+      Then the environment installs "1.14.19" of "OpenCode"
 
   Rule: Custom models
 
