@@ -4,8 +4,10 @@
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
 #   apps/web/src/shell/HalC2ShellBridge.tsx (follows `route.follow`, reports `route.open`)
 #   apps/web/src/shell/shellRoute.ts (the page's paths as routes)
-#   Shared domain: navigation/focus.feature owns what leaving settings means; this file owns
-#   that the Qt shell decides where the window is and the page follows.
+#   Shared domain: settings/search-and-navigation.feature owns leaving settings and moving
+#   between sections, navigation/windows.feature the window title, and
+#   composer/sending-turns.feature that the composer acts on the thread the window shows.
+#   This file owns that the Qt shell decides where the window is and the page follows.
 
 Feature: The desktop shell decides where the window is
   Once connected, the Qt shell owns the route: the thread, draft, new thread, settings section,
@@ -71,16 +73,10 @@ Feature: The desktop shell decides where the window is
       And the page is asked to open usage
       And the window is titled "Usage"
 
-    @desktop
-    Scenario: The window title follows the thread's title
-      Given the user opens "env-a:t1" from the sidebar
-      When the node updates the thread "t1" with the title "Renamed"
-      Then the window is titled "Renamed"
-
   Rule: Back returns to where the user was
 
     @desktop
-    Scenario: Leaving settings goes back to the thread
+    Scenario: Leaving settings tells the page to go back to the thread
       Given the user opens "env-a:t1" from the sidebar
       When the user opens settings
       Then the window shows settings
@@ -89,22 +85,6 @@ Feature: The desktop shell decides where the window is
       When the user goes back from settings
       Then the window shows "env-a:t1"
       And the page is last asked to open "env-a:t1"
-
-    @desktop
-    Scenario: Moving between settings sections is one step
-      Given the user opens "env-a:t1" from the sidebar
-      And the user opens settings
-      When the user picks the settings section "/settings/providers"
-      Then the window shows the settings section "/settings/providers"
-      When the user goes back from settings
-      Then the window shows "env-a:t1"
-
-    @desktop
-    Scenario: Back with nowhere to return to goes home
-      Given the user opens settings
-      And the user can not go back
-      When the user goes back from settings
-      Then the window shows home
 
   Rule: Where the page's own links take it, the shell adopts
 
@@ -159,22 +139,3 @@ Feature: The desktop shell decides where the window is
       And the desktop shell is connected to its node
       Then the window shows "env-a:t1"
       And the page is not told where to go
-
-  Rule: The composer acts on the thread the window shows
-
-    @desktop
-    Scenario: Stop interrupts the thread the window shows
-      Given the node updates the thread "t2" with:
-        | activeRunId | run-2 |
-      And the composer shows "env-a:t1"
-      When the user opens "env-a:t2" from the sidebar
-      And the user stops the turn
-      Then the node receives a "run.interrupt" command for "t2"
-
-    @desktop
-    Scenario: A send goes to the thread the window shows
-      Given the composer shows "env-a:t1"
-      When the user opens "env-a:t2" from the sidebar
-      And the user sends "hello"
-      Then the node receives a "message.dispatch" command for "t2"
-      And the node receives no other commands

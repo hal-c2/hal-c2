@@ -49,6 +49,15 @@ Feature: Sending a thread's turns to its node
       When the user stops the turn
       Then the user sees an "error" toast "Failed to interrupt the current turn." saying "Run already finished"
 
+    @desktop
+    Scenario: Stop interrupts the thread the window shows
+      Given the node updates the thread "t2" with:
+        | activeRunId | run-2 |
+      And the composer shows "env-a:t1"
+      When the user opens "env-a:t2" from the sidebar
+      And the user stops the turn
+      Then the node receives a "run.interrupt" command for "t2"
+
   Rule: A send goes to the node
 
     @desktop
@@ -94,6 +103,14 @@ Feature: Sending a thread's turns to its node
       And the user sends "Second"
       Then the node receives a "message.dispatch" command for "t1"
       And the node receives a "message.dispatch" command for "t2"
+
+    @desktop
+    Scenario: A send goes to the thread the window shows
+      Given the composer shows "env-a:t1"
+      When the user opens "env-a:t2" from the sidebar
+      And the user sends "hello"
+      Then the node receives a "message.dispatch" command for "t2"
+      And the node receives no other commands
 
   Rule: Each thread keeps its own draft
 

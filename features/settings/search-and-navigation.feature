@@ -12,6 +12,7 @@
 #   docs/user/appearance.md (Settings → Appearance, Settings → Keybindings)
 #   apps/desktop-qt/qml/HalC2/Bricks/SettingsNav.qml
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
+#   apps/desktop-qt/src/native/NavigationController.cpp (settings sections and back)
 #   apps/tui/src/components/SettingsView.tsx
 #   apps/tui/src/keymap.ts
 
@@ -37,12 +38,25 @@ Feature: Settings search and navigation
       When the user moves down and confirms
       Then the next section opens
 
-    # Delivered natively (NavigationController); desktop/native-navigation.feature runs it in its own words, not these steps.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Leaving settings returns to where the user was
       Given the user opened settings from a thread
       When the user goes back
       Then the thread is shown again
+
+    @desktop
+    Scenario: Moving between sections is one step back
+      Given the user opened settings from a thread
+      When the user picks the settings section "/settings/providers"
+      Then the window shows the settings section "/settings/providers"
+      When the user goes back from settings
+      Then that thread is shown
+
+    @desktop
+    Scenario: Back with nowhere to return to goes home
+      Given the user can not go back
+      When the user goes back from settings
+      Then the window shows home
 
     @backlog @desktop
     Scenario Outline: The page names where the user is

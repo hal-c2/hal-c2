@@ -55,6 +55,12 @@ Feature: Removing and updating projects
     And the user cancels
     Then "shop" is still listed for "laptop"
 
+  @desktop
+  Scenario: A confirmation for a project that goes away closes
+    Given the user asks to remove "shop"
+    When the node removes the project "shop"
+    Then the removal confirmation is closed
+
   @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: A removal the environment refuses keeps the project and says why
     Given the environment refuses to change projects with "Project shop is busy."

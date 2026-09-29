@@ -1,8 +1,11 @@
 // The shell's route (NavigationController): where the user goes from the
 // shell, where the page reports its own links took it, and the window title
-// (features/desktop/native-navigation.feature).
+// (features/desktop/native-navigation.feature), and settings left for the
+// thread it was opened from (settings/search-and-navigation.feature,
+// navigation/focus.feature).
 
 #include "Harness.h"
+#include "Stream.h"
 #include "World.h"
 
 namespace {
@@ -32,6 +35,20 @@ const Steps steps([] {
     world.startNewThread(QVariantMap{{QStringLiteral("projectKey"), world.projectKey(c[0])}});
   });
   step(QStringLiteral("the user opens settings"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("settings.open"), {});
+  });
+  // Settings reached from a thread of "shop" (settings/search-and-navigation.feature, navigation/focus.feature).
+  step(QStringLiteral("the user (?:has opened|is in) settings"), [](World& world, const Captures&, const Table&) {
+    if (!world.node.projects.contains(stream::kProject)) {
+      world.node.projects.insert(stream::kProject, {{QStringLiteral("id"), stream::kProject}, {QStringLiteral("title"), stream::kProject},
+                                                    {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")}, {QStringLiteral("scripts"), QJsonArray()}});
+      world.connect();
+      world.sync();
+    }
+    world.bridge().dispatch(QStringLiteral("settings.open"), {});
+  });
+  step(QStringLiteral("the user opened settings from a thread"), [](World& world, const Captures&, const Table&) {
+    stream::lookAtThread(world, stream::kProject);
     world.bridge().dispatch(QStringLiteral("settings.open"), {});
   });
   step(QStringLiteral("the user opens pull requests"), [](World& world, const Captures&, const Table&) {
@@ -81,6 +98,9 @@ const Steps steps([] {
   });
   step(QStringLiteral("the window shows usage"), [](World& world, const Captures&, const Table&) {
     expectRoute(world, QStringLiteral("usage"));
+  });
+  step(QStringLiteral("(?:the|that) thread is shown(?: again)?"), [](World& world, const Captures&, const Table&) {
+    expectRoute(world, QStringLiteral("thread"), QStringLiteral("threadKey"), world.node.environmentId + QLatin1Char(':') + stream::kThread);
   });
   step(QStringLiteral("the window shows home"), [](World& world, const Captures&, const Table&) {
     expectRoute(world, QStringLiteral("home"));

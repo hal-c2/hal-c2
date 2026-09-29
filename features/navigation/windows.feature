@@ -4,7 +4,8 @@
 #   apps/desktop/src/window/QuitHold.ts
 #   apps/desktop/src/window/DesktopApplicationMenu.ts (Settings..., View zoom items)
 #   apps/desktop/src/window/DesktopWindow.ts (zoomMain)
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window commands)
+#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window commands, title from `route`)
+#   apps/desktop-qt/src/native/NavigationController.cpp (the route's title)
 #   apps/desktop-qt/qml/HalC2/Bricks/TitleBar.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/AppWindow.qml
@@ -189,3 +190,21 @@ Feature: Windows, zoom and quitting
     Scenario: The settings shortcut opens settings
       When the user presses mod+,
       Then settings open
+
+  Rule: The window is titled after what it shows
+
+    Background:
+      Given the time is "2026-09-23T10:00:00Z"
+      And the desktop's node "node-a" serves the environment "env-a"
+      And the node has these threads:
+        | id | project | title  | createdAt            |
+        | t1 | p1      | First  | 2026-09-23T09:50:00Z |
+        | t2 | p1      | Second | 2026-09-23T09:40:00Z |
+      And the node has the project "p1" titled "proj-1"
+      And the desktop shell is connected to its node
+
+    @desktop
+    Scenario: The window title follows the thread's title
+      Given the user opens "env-a:t1" from the sidebar
+      When the node updates the thread "t1" with the title "Renamed"
+      Then the window is titled "Renamed"

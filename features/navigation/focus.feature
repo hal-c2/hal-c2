@@ -8,6 +8,7 @@
 #   apps/desktop-qt/tests/native/tst_ShellExamples.cpp (terminalDrawerTakesAndReturnsTheKeyboard,
 #     panelTabsSupportKeyboardActivationAndClose)
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
+#   apps/desktop-qt/src/native/NavigationController.cpp (leaving settings)
 #   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml (accessible names)
 
 Feature: Keyboard focus and keyboard-only use
@@ -138,8 +139,7 @@ Feature: Keyboard focus and keyboard-only use
       When the app sets the settings search to "font"
       Then the settings search shows "font"
 
-    # Delivered natively (NavigationController); desktop/native-navigation.feature runs it in its own words, not these steps.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Leaving settings goes back to the thread
       Given the user opened settings from a thread
       When the user goes back from settings
