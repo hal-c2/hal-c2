@@ -1,6 +1,7 @@
 # Sources:
 #   apps/desktop-qt/qml/HalC2/Bricks/DefaultShell.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (sidebarCollapsed, settingsActive)
+#   apps/desktop-qt/src/native/LayoutController.cpp (sidebar.toggle, remembered on the device)
 #   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (header strip: run action, open in editor, git actions)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (workspace.runScript, workspace.openInEditor)
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml
@@ -10,6 +11,9 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/TerminalPanel.qml
 #   apps/desktop-qt/src/native/TerminalController.cpp (terminal.toggle, panel groups)
 #   apps/desktop-qt/tests/tst_Workspace.qml
+#   apps/desktop-qt/tests/tst_RightPanel.qml (native bodies kept while hidden)
+#   apps/desktop-qt/tests/native/tst_ShellExamples.cpp, tst_ShellRuntime.cpp (DefaultShell, user shells)
+#   apps/desktop-qt/tests/native/features/LayoutSteps.cpp
 #   apps/web/src/components/AppSidebarLayout.tsx (sidebar width)
 #   apps/web/src/components/threadSidebarWidth.ts
 #   apps/web/src/components/preview/RightPanelResizeHandle.tsx
@@ -28,26 +32,39 @@ Feature: Layout: sidebar, header, right panel and drawer
 
   Rule: Sidebar
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Hiding the sidebar
       Given the sidebar is shown
       When the user toggles the sidebar
       Then the sidebar is hidden
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Showing the sidebar again from the header
       Given the sidebar is hidden
       When the user asks to show the sidebar
       Then the sidebar is shown
 
-    # Delivered natively (DefaultShell swaps Sidebar for SettingsNav); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
+    Scenario: The sidebar shortcut hides and shows the sidebar
+      Given the sidebar is shown
+      When the user presses the sidebar shortcut
+      Then the sidebar is hidden
+      When the user presses the sidebar shortcut
+      Then the sidebar is shown
+
+    @desktop
+    Scenario: A hidden sidebar stays hidden after a restart
+      Given the sidebar is hidden
+      When the desktop quits and starts again
+      Then the sidebar is hidden
+
+    @desktop
     Scenario: Settings replace the thread list with the settings sections
       When the user opens settings
       Then the thread list is hidden
       And the settings sections are shown in its place
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The sidebar snaps rather than animating its width
       When the user toggles the sidebar
       Then the thread view is resized once, not on every frame
@@ -96,35 +113,30 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the header is narrow
       Then the title is shortened with an ellipsis
 
-    # Delivered natively (Workspace); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A narrow header drops action labels
       When the window is narrower than 720 pixels
       Then the header actions show without their labels
 
-    # Delivered natively (Workspace, workspace.runScript); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The header runs the project's action the user ran last
       Given the thread's project has the actions "Dev" and "Test"
       And the user last ran "Test"
       When the user runs the action offered in the header
       Then "Test" runs for the thread's workspace
 
-    # Delivered natively (Workspace, workspace.runScript); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The header runs any of the project's actions
       Given the thread's project has the actions "Dev" and "Test"
       When the user picks "Dev" from the header's actions
       Then "Dev" runs for the thread's workspace
 
-    # Delivered natively (Workspace, workspace.runScript); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The header offers no action to run when the project has none
       Given the thread's project has no actions
       Then the header offers no action to run
 
-    # Delivered natively (Workspace, workspace.openInEditor); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The header opens the thread's workspace in the preferred editor
       Given the user has picked "VS Code" as their preferred editor
       When the user opens the thread's workspace from the header
@@ -137,14 +149,12 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then "Zed" opens the thread's workspace folder
       And "Zed" becomes the preferred editor
 
-    # Delivered natively (Workspace, workspace.openInEditor); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The header offers no editor when the environment has none
       Given the environment has no editors
       Then the header does not offer to open the workspace in an editor
 
-    # Delivered natively (Workspace places GitActions; GitController); source-control/ runs the actions, no test of this wording yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The thread's git actions are in the header
       When the user opens the git actions from the header
       Then the thread's git actions are offered
@@ -198,14 +208,13 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user closes the right panel and opens it again
       Then the terminal tab still has its output
 
-    # Delivered natively (PanelController keeps its tabs across routes); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Right panel contents survive a visit to settings
       Given the right panel shows a scrolled diff
       When the user opens settings and comes back
       Then the diff is at the same scroll position
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A hidden right panel does no work
       When the user closes the right panel
       Then the right panel stops updating until it is opened again
@@ -246,23 +255,20 @@ Feature: Layout: sidebar, header, right panel and drawer
 
   Rule: Rearranging the shell
 
-    # Delivered natively (ShellRuntime); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A user's own shell layout replaces the default
       Given the user wrote their own shell layout in the HAL-C2 home
       When the app starts
       Then the app uses the user's layout
 
-    # Delivered natively (ShellRuntime); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A broken shell layout falls back to the default
       Given the user's own shell layout has an error
       When the app starts
       Then the default layout is used
       And the error is shown to the user
 
-    # Delivered natively (ShellRuntime); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A shell layout change applies without restarting
       Given the app is using the user's own shell layout
       When the user saves a change to it

@@ -653,7 +653,8 @@ const Steps steps([] {
     fake.files.insert(c[0], linesOf(200));
     fake.truncated.insert(c[0], 3 * 1024 * 1024);
   });
-  step(QStringLiteral("the user opens %1").arg(q), [](World& world, const Captures& c, const Table&) { openFile(world, c[0]); });
+  // A path has a dot or a slash; a bare name is a thread (ThreadListSteps).
+  step(QStringLiteral("the user opens \"([^\"]*[./][^\"]*)\""), [](World& world, const Captures& c, const Table&) { openFile(world, c[0]); });
   step(QStringLiteral("the user opens %1 at line (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
     openFile(world, c[0], c[1].toInt());
   });
@@ -764,6 +765,51 @@ const Steps steps([] {
     expect(!at(world.state(QStringLiteral("panel")), QStringLiteral("canAdd.pullRequests")).toBool() &&
                at(world.state(QStringLiteral("panel")), QStringLiteral("canAdd.diff")).toBool(),
            describePanel(world));
+  });
+  // A visit to settings: the panel steps aside and comes back as it was, its
+  // diff not asked for again, so the kept body (RightPanel's native tabs,
+  // tst_RightPanel) keeps its scroll.
+  struct Visit {
+    QVariant panel;
+    qsizetype asked = 0;
+  };
+  step(QStringLiteral("the right panel shows a scrolled diff"), [](World& world, const Captures&, const Table&) {
+    finishTurns(world, 3);
+    openDiff(world, -1);
+    world.sync();
+    world.node.part<Visit>() = {world.state(QStringLiteral("panel")), world.node.part<FakeDiffs>().asked.size()};
+  });
+  step(QStringLiteral("the user opens settings and comes back"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("settings.open"), {});
+    world.sync();
+    expect(!world.state(QStringLiteral("panel")).isValid(), QStringLiteral("settings show the panel %1").arg(show(world.state(QStringLiteral("panel")))));
+    world.bridge().dispatch(QStringLiteral("settings.back"), {});
+    world.sync();
+  });
+  // A closed panel's diff does not follow the thread's turns; opening it
+  // catches up at once.
+  step(QStringLiteral("the user closes the right panel"), [](World& world, const Captures&, const Table&) {
+    finishTurns(world, 3);
+    openDiff(world, -1);
+    world.bridge().dispatch(QStringLiteral("rightPanel.toggle"), QVariantMap());
+    world.sync();
+    expect(!panel(world)->isOpen(), describePanel(world));
+  });
+  step(QStringLiteral("the right panel stops updating until it is opened again"), [](World& world, const Captures&, const Table&) {
+    const qsizetype asked = world.node.part<FakeDiffs>().asked.size();
+    finishTurn(world, 4, patchAdding(QStringLiteral("src/turn4.ts"), {QStringLiteral("export const turn = 4;")}));
+    world.sync();
+    expect(world.node.part<FakeDiffs>().asked.size() == asked, QStringLiteral("the closed panel asked for a diff: %1").arg(describeDiff(world)));
+    world.bridge().dispatch(QStringLiteral("rightPanel.toggle"), QVariantMap());
+    expectDiffOf(world, {QStringLiteral("src/turn4.ts")});
+    expect(world.node.part<FakeDiffs>().asked.size() == asked + 1, QStringLiteral("opening asked %1 times").arg(world.node.part<FakeDiffs>().asked.size() - asked));
+  });
+  step(QStringLiteral("the diff is at the same scroll position"), [](World& world, const Captures&, const Table&) {
+    const Visit& visit = world.node.part<Visit>();
+    world.waitFor([&] { return world.state(QStringLiteral("panel")) == visit.panel; },
+                  [&] { return QStringLiteral("the panel as it was, %1; it is %2").arg(show(visit.panel), show(world.state(QStringLiteral("panel")))); });
+    expect(diff(world).status() == QLatin1String("ready") && world.node.part<FakeDiffs>().asked.size() == visit.asked,
+           QStringLiteral("the diff was asked for again: %1").arg(describeDiff(world)));
   });
 });
 

@@ -64,6 +64,7 @@ ShellWindow {
             }
 
             SettingsNav {
+                objectName: "settingsNav"
                 Layout.fillHeight: true
                 Layout.preferredWidth: 256
                 visible: root.settingsActive
@@ -76,6 +77,7 @@ ShellWindow {
 
                 Workspace {
                     id: workspaceView
+                    objectName: "workspace"
 
                     Layout.fillWidth: true
                     visible: ready

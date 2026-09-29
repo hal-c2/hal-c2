@@ -567,6 +567,122 @@ private slots:
     QTRY_COMPARE(webView->mapToScene(QPointF()).y(), workspace->mapToScene(QPointF(0, workspace->height())).y());
   }
 
+  // Scenario: The sidebar snaps rather than animating its width, Settings
+  // replace the thread list with the settings sections
+  // (features/navigation/layout.feature): the built-in layout hides the thread
+  // list in one step, and shows the settings sections in its place.
+  void defaultShellHidesTheThreadListAtOnce() {
+    QFile::remove(directory.filePath("shell.qml"));
+    runtime->reload();
+    QVERIFY(!runtime->usingUserShell());
+    QVERIFY2(runtime->lastError().isEmpty(), qPrintable(runtime->lastError()));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    QVERIFY(engine);
+    auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
+    QVERIFY(window);
+    window->resize(1200, 800);
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    auto* sidebar = findVisualItem(window->contentItem(), "threadSidebar");
+    auto* settingsNav = findVisualItem(window->contentItem(), "settingsNav");
+    auto* workspace = findVisualItem(window->contentItem(), "workspace");
+    QVERIFY(sidebar);
+    QVERIFY(settingsNav);
+    QVERIFY(workspace);
+    QTRY_VERIFY(sidebar->isVisible());
+    QTRY_COMPARE(workspace->width(), window->width() - 256.0);
+
+    QSignalSpy resized(workspace, &QQuickItem::widthChanged);
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", true}});
+    QTRY_VERIFY(!sidebar->isVisible());
+    QTRY_COMPARE(workspace->width(), qreal(window->width()));
+    QCOMPARE(resized.count(), 1);
+
+    resized.clear();
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}});
+    QTRY_VERIFY(sidebar->isVisible());
+    QTRY_COMPARE(workspace->width(), window->width() - 256.0);
+    QCOMPARE(resized.count(), 1);
+
+    bridge.publish("route", QVariantMap{{"kind", "settings"}, {"section", "/settings/general"}});
+    QTRY_VERIFY(settingsNav->isVisible());
+    QVERIFY(!sidebar->isVisible());
+    QCOMPARE(settingsNav->x(), 0.0);
+    bridge.publish("route", QVariant());
+    QTRY_VERIFY(sidebar->isVisible());
+    QVERIFY(!settingsNav->isVisible());
+  }
+
+  // Scenario: A broken shell layout falls back to the default
+  // (features/navigation/layout.feature): the built-in shell shows, and says
+  // why, until the file is fixed.
+  void brokenShellFallsBackAndSaysWhy() {
+    QFile source(directory.filePath("shell.qml"));
+    QVERIFY(source.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    source.write("import QtQuick\nimport HalC2.Bricks\nShellWindow { Nonsense {} }");
+    source.close();
+    runtime->reload();
+    QVERIFY(!runtime->usingUserShell());
+    QVERIFY(runtime->lastError().contains("Nonsense"));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    QVERIFY(engine);
+    auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
+    QVERIFY(window);
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    QVERIFY(findVisualItem(window->contentItem(), "threadSidebar"));
+    auto* error = findVisualItem(window->contentItem(), "shellError");
+    QVERIFY(error);
+    QTRY_VERIFY(error->isVisible());
+
+    QVERIFY(QFile::remove(directory.filePath("shell.qml")));
+    runtime->reload();
+    QVERIFY(runtime->lastError().isEmpty());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
+    QVERIFY(window);
+    error = findVisualItem(window->contentItem(), "shellError");
+    QVERIFY(error);
+    QVERIFY(!error->isVisible());
+  }
+
+  // Scenario: A theme can ask for the system window frame, and Scenario: A
+  // theme can make the window translucent (features/navigation/windows.feature).
+  void themeSetsTheWindowFrameAndOpacity() {
+    QFile::remove(directory.filePath("shell.qml"));
+    QFile file(directory.filePath("theme.json"));
+    const bool hadTheme = file.exists();
+    QByteArray previous;
+    if (hadTheme) {
+      QVERIFY(file.open(QIODevice::ReadOnly));
+      previous = file.readAll();
+      file.close();
+    }
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write(R"({"window": {"frameless": false, "opacity": 0.9}})");
+    file.close();
+    theme->reload();
+    runtime->reload();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    QVERIFY(engine);
+    auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
+    QVERIFY(window);
+    QVERIFY(!window->flags().testFlag(Qt::FramelessWindowHint));
+    QCOMPARE(window->opacity(), 0.9);
+
+    // Back to the default: HAL-C2 draws its own frame, opaque.
+    if (hadTheme) {
+      QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+      file.write(previous);
+      file.close();
+    } else {
+      QVERIFY(QFile::remove(directory.filePath("theme.json")));
+    }
+    theme->reload();
+    QTRY_VERIFY(window->flags().testFlag(Qt::FramelessWindowHint) == theme->frameless());
+  }
+
   void cleanupTestCase() {
     runtime.reset();
     profile.reset();

@@ -53,6 +53,7 @@ Rectangle {
     }
 
     TapHandler {
+        objectName: "titleTap"
         enabled: strip.framelessChrome
         onDoubleTapped: strip.window.visibility === Window.Maximized ? strip.window.showNormal() : strip.window.showMaximized()
     }
@@ -266,6 +267,7 @@ Rectangle {
 
         ShellSplitButton {
             id: scriptsPill
+            objectName: "runActionButton"
 
             visible: strip.ready && strip.model.scripts.length > 0
             compact: strip.compact
@@ -303,6 +305,7 @@ Rectangle {
         }
 
         ShellSplitButton {
+            objectName: "openEditorButton"
             visible: strip.ready && strip.model.editors.length > 0
             compact: strip.compact
             iconName: "external-link"
@@ -367,6 +370,7 @@ Rectangle {
         }
 
         WindowControls {
+            objectName: "windowControls"
             visible: strip.framelessChrome && Qt.platform.os !== "osx"
             window: strip.window
             buttonWidth: 32

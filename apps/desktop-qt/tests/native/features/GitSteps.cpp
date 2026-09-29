@@ -758,6 +758,15 @@ const Steps steps([] {
     world.waitFor([&] { return git(world).value(QStringLiteral("unavailableReason")) == c[0] && !git(world).value(QStringLiteral("available")).toBool(); },
                   [&] { return QStringLiteral("the git actions are %1").arg(show(git(world))); });
   });
+
+  // navigation/layout.feature: the header's git pill (GitActions) over the git state.
+  step(QStringLiteral("the user opens the git actions from the header"), [](World& world, const Captures&, const Table&) {
+    dispatch(world, QStringLiteral("git.refresh"));
+  });
+  step(QStringLiteral("the thread's git actions are offered"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return git(world).value(QStringLiteral("available")).toBool() && !git(world).value(QStringLiteral("menu")).toList().isEmpty(); },
+                  [&] { return QStringLiteral("the header's git actions; the git state is %1").arg(show(git(world))); });
+  });
 });
 
 }  // namespace

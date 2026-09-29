@@ -20,8 +20,7 @@ Feature: Threads stopped by a usage limit
     Then "Port tests" is marked as limited
     And its reset time is 14:00
 
-  # Delivered natively (SidebarThreadRow); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A limited thread says so in the thread list
     Given "Port tests" stopped on a usage limit
     When the user looks at the thread list

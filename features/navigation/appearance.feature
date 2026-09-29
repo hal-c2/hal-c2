@@ -5,6 +5,7 @@
 #   apps/web/src/components/CommandPalette.logic.ts (appearance.cycle, change theme)
 #   packages/shared/src/keybindings.ts (theme.select, appearance.cycle)
 #   apps/desktop-qt/src/native/ThemeController.cpp (the desktop's appearance, following the system, clearing a choice)
+#   apps/desktop-qt/src/native/LayoutController.cpp (panels snap)
 #   Settings panel: Settings → Appearance
 
 Feature: Appearance
@@ -171,7 +172,7 @@ Feature: Appearance
 
   Rule: Motion
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Panels open and close immediately by default
       When the user toggles the sidebar
       Then the sidebar appears without animation

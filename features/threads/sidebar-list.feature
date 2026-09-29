@@ -3,6 +3,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml
 #   apps/desktop-qt/tests/tst_Sidebar.qml
 #   apps/desktop-qt/src/native/SidebarModel.cpp (the desktop's port of the grouping and order, offline rows)
+#   apps/desktop-qt/src/native/LayoutController.cpp (hiding the thread list)
 #   apps/web/src/components/Sidebar.tsx
 #   apps/web/src/components/Sidebar.logic.ts
 #   apps/web/src/hooks/useSidebarProjectGroups.ts
@@ -19,28 +20,25 @@ Feature: The thread list
   Background:
     Given a connected environment with the projects "shop" and "docs"
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Threads are grouped into sections
     Given "shop" has a draft, a pinned thread, two active threads, a snoozed thread and a settled thread
     When the user looks at the thread list
     Then the sections read drafts, pinned, active, snoozed, settled in that order
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @tui @backlog-desktop
+  @desktop @tui
   Scenario: Active threads are listed newest first
     Given "Alpha" was created before "Beta"
     When the user looks at the thread list
     Then "Beta" is listed above "Alpha"
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Settled threads are listed by when they settled
     Given "Alpha" settled after "Beta"
     When the user looks at the settled section
     Then "Alpha" is listed above "Beta"
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @tui @backlog-desktop
+  @desktop @tui
   Scenario: Collapsing and expanding a shelf
     Given the settled section is expanded
     When the user collapses the settled section
@@ -68,16 +66,14 @@ Feature: The thread list
     Then the first 10 settled threads are shown
     And the user can show more
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Very long settled shelves point to the rest
     Given there are 70 settled threads
     When the user looks at the settled section
     Then 50 settled threads are shown
     And the section says "20 more settled in the app"
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario Outline: Moving through the list with the keyboard
     Given the thread list has keyboard focus on "Beta"
     When the user presses <key>
@@ -92,55 +88,49 @@ Feature: The thread list
       | Enter     | "Beta" opens                |
       | Shift+F10 | the menu for "Beta" opens   |
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Enter on a shelf header folds the shelf
     Given the thread list has keyboard focus on the settled section header
     When the user presses Enter
     Then the settled section collapses
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A thread row keeps its place while the list updates
     Given the user is pointing at "Beta"
     When the list is republished with a new thread above "Beta"
     Then "Beta" is still the row under the pointer
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Opening a thread from the list
     When the user opens "Beta"
     Then "Beta" is shown in the main view
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Opening a draft from the list
     Given "shop" has an unsent draft
     When the user opens the draft
     Then the draft composer is shown with its unsent text
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @tui @backlog-desktop
+  @desktop @tui
   Scenario: Scoping the list to one project
     When the user scopes the thread list to "docs"
     Then only threads from "docs" are listed
     When the user scopes the thread list to all projects
     Then threads from "shop" and "docs" are listed
 
-  # Delivered natively (Sidebar's folder dialog, project.add); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Adding a project from the thread list
     When the user adds a project from the thread list
     Then the user can choose a project to add
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Hiding and showing the thread list
     When the user hides the thread list
     Then the main view takes the full width
     When the user shows the thread list
     Then the thread list is back
 
-  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
-  @desktop @backlog-desktop
+  @desktop
   Scenario Outline: Empty thread lists explain themselves
     Given <state>
     When the user looks at the thread list

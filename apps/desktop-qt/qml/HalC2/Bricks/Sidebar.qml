@@ -307,6 +307,7 @@ Rectangle {
                     iconName: "folder-plus"
                     iconSize: 16
                     iconTint: sidebar.iconColor
+                    objectName: "addProject"
                     Accessible.name: qsTr("Add project")
                     // A local folder is picked here; without local folders the page's palette asks.
                     onClicked: Shell.localFolderImportEnabled && (sidebar.model?.localEnvironmentId ?? null) !== null ? addProjectDialog.open() : Shell.dispatch("project.add")
@@ -314,6 +315,7 @@ Rectangle {
 
                 FolderDialog {
                     id: addProjectDialog
+                    objectName: "addProjectDialog"
                     title: qsTr("Add a project folder")
                     onAccepted: {
                         const path = Shell.localDirectoryPath(selectedFolder);
@@ -476,6 +478,7 @@ Rectangle {
 
                 // Collapsible section header with a hairline (settled) or tint (snoozed).
                 Item {
+                    objectName: entry.kind === "header" ? "header:" + entry.modelData.key : ""
                     anchors.fill: parent
                     visible: entry.kind === "header"
 
@@ -527,6 +530,7 @@ Rectangle {
                         }
 
                         Text {
+                            objectName: "headerCount"
                             visible: entry.kind === "header" && !entry.modelData.open
                             text: entry.kind === "header" ? entry.modelData.count : ""
                             color: Qt.alpha(sidebar.muted, 0.5)
@@ -641,6 +645,7 @@ Rectangle {
             }
 
             Text {
+                objectName: "emptyText"
                 anchors.horizontalCenter: parent.horizontalCenter
                 y: 24
                 visible: list.count === 0
