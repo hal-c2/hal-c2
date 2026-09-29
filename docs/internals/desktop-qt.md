@@ -797,9 +797,12 @@ and moving one to QML is giving its line a brick, the state key it
 `requires` before it is listed, and the words and rows search finds it by.
 `SettingsHost` loads the brick for `ShellWindow.settingsSection`, and layouts
 put it where the page would be while `ShellWindow.nativeSettingsOpen`.
-`NavigationController::isNative` lists the routes the page is never told
-about; General and Appearance are native bricks but still `route.follow` the
-(hidden) page, which draws with some of their preferences.
+`NavigationController::isNative`, the routes the page is never told about,
+reads the same file (compiled in as `:/hal-c2/settings/settingsPages.js`), so
+a section with a brick is native to both, except those marked `page` (General
+and Appearance), which still `route.follow` the hidden page because it draws
+with some of their preferences; `settings.navigate` opens any section from
+anywhere.
 
 Search is the shell's too. `settingsPages.searchRows` matches sections by
 label and keywords, and a section's settings (its `settingsRows.js` rows and

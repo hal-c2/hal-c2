@@ -61,6 +61,7 @@ Rectangle {
         }
 
         ShellButton {
+            objectName: "deviceOpenSettings"
             anchors.horizontalCenter: parent.horizontalCenter
             text: qsTr("Open Integrations settings")
             onClicked: Shell.dispatch("settings.navigate", {

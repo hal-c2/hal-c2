@@ -59,6 +59,13 @@ Feature: Device panel
       When the user adds a Device tab
       Then the tab points to the Integrations settings
 
+    @desktop
+    Scenario: Following the pointer opens the Integrations settings
+      Given device support is off on the thread's environment
+      When the user adds a Device tab
+      And the user follows the tab to its settings
+      Then the window shows the settings section "/settings/integrations"
+
   Rule: Watching a device
 
     @desktop

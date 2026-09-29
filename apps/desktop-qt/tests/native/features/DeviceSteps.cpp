@@ -675,6 +675,11 @@ const Steps steps([] {
   step(QStringLiteral("the tab points to the Integrations settings"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return view(world).value(QStringLiteral("setup")).toBool(); }, [&] { return describe(world); });
   });
+  step(QStringLiteral("the user follows the tab to its settings"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return view(world).value(QStringLiteral("setup")).toBool(); }, [&] { return describe(world); });
+    devicePanel(world).click(QStringLiteral("deviceOpenSettings"));
+    world.sync();
+  });
 
   // Watching.
   step(QStringLiteral("the user shows the %1 tab").arg(q), [](World& world, const Captures& c, const Table&) { showDeviceTab(world, c[0]); });

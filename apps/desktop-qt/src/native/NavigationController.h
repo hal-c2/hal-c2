@@ -59,15 +59,12 @@ public:
   static inline const QString kConnectionsSection = QStringLiteral("/settings/connections");
   static inline const QString kProvidersSection = QStringLiteral("/settings/providers");
   static inline const QString kArchivedSection = QStringLiteral("/settings/archived");
-  // The shell's own pages: those settings sections and pull requests.
-  // The page is not told about them and stays where it was.
-  static bool isNative(const Route& route) {
-    return route == Route::settings(kClusterSection) || route == Route::settings(kConnectionsSection) ||
-           route == Route::settings(kKeybindingsSection) ||
-           route == Route::settings(kProvidersSection) ||
-           route == Route::settings(kArchivedSection) || route.kind == QLatin1String("pullRequests") ||
-           route.kind == QLatin1String("usage");
-  }
+  // The shell's own pages: pull requests, usage, and the settings sections
+  // with a native brick in js/settingsPages.js, less those the page still
+  // follows. The page is not told about them and stays where it was.
+  static bool isNative(const Route& route);
+  // Those settings sections' paths, read once from js/settingsPages.js.
+  static const QStringList& nativeSettingsSections();
 
   // Its commands in Keybindings.commands.
   static inline const QString kOpenSettings = QStringLiteral("settings.open");
