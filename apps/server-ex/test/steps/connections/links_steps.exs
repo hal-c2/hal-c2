@@ -524,6 +524,7 @@ defmodule HalC2.Steps.Connections.Links do
     payload =
       case method do
         "projects.readFile" -> %{"cwd" => root, "relativePath" => "README.md"}
+        "projects.searchEntries" -> %{"cwd" => root, "query" => "READ"}
         _ -> %{"cwd" => root}
       end
 
@@ -544,6 +545,60 @@ defmodule HalC2.Steps.Connections.Links do
 
   step "it receives the checkout's files from {string}", context do
     assert Enum.any?(context.called["entries"], &(&1["path"] == "README.md"))
+    context
+  end
+
+  step "it receives the files matching a query from {string}", context do
+    assert Enum.any?(context.called["entries"], &(&1["path"] == "README.md"))
+    context
+  end
+
+  step "a client of the node creates a thread on {string} and renames it",
+       %{args: [label]} = context do
+    thread = "th-routed-#{System.unique_integer([:positive])}"
+
+    create = %{
+      "type" => "thread.create",
+      "commandId" => "c-" <> thread,
+      "threadId" => thread,
+      "title" => "Routed"
+    }
+
+    rename = %{
+      "type" => "thread.metadata.update",
+      "commandId" => "r-" <> thread,
+      "threadId" => thread,
+      "title" => "Renamed through the link"
+    }
+
+    {reply, context} = call(context, label, "orchestration.dispatchCommand", create)
+    assert {:ok, _} = reply, inspect(reply)
+    {reply, context} = call(context, label, "orchestration.dispatchCommand", rename)
+    assert {:ok, _} = reply, inspect(reply)
+    Map.put(context, :routed_thread, thread)
+  end
+
+  step "the thread on {string} has the new title", %{args: [label]} = context do
+    thread = context.routed_thread
+    server = Machines.on(context, label, HalC2.Streams, :ensure, [thread])
+    state = Machines.on(context, label, HalC2.Streams.Server, :state, [server])
+
+    assert %{^thread => %{"title" => "Renamed through the link"}} =
+             HalC2.StreamState.get(state, "thread")
+
+    context
+  end
+
+  step "the client reads the thread's diff from {string}", %{args: [label]} = context do
+    thread = context.routed_thread
+    payload = %{"threadId" => thread, "toTurnCount" => 0}
+    {reply, context} = call(context, label, "orchestration.getFullThreadDiff", payload)
+    assert {:ok, %{"threadId" => ^thread, "diff" => ""}} = reply
+    context
+  end
+
+  step "none of it ran on the node", context do
+    assert Registry.lookup(HalC2.Streams.Registry, context.routed_thread) == []
     context
   end
 

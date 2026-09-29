@@ -102,6 +102,16 @@ Feature: Linking a node to environments outside its cluster
       | vcs.listRefs         | the checkout's branches   |
       | projects.listEntries | the checkout's files      |
       | projects.readFile    | the file's contents       |
+      | projects.searchEntries | the files matching a query |
+
+  # The desktop's right panel and thread menus reach a linked thread this way.
+  @node
+  Scenario: A client changes and reads a thread on a linked environment through its node
+    Given the node is linked to "beast"
+    When a client of the node creates a thread on "beast" and renames it
+    Then the thread on "beast" has the new title
+    And the client reads the thread's diff from "beast"
+    And none of it ran on the node
 
   # "beast-2" stands for a member of the cluster of "beast" that this test cannot run: it
   # is listed on "beast" and never answers, so "beast" saying that its node is
