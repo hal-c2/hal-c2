@@ -378,7 +378,7 @@ private:
                {QStringLiteral("scheduleMode"), QStringLiteral("fixed")},
                {QStringLiteral("intervalMinutes"), QStringLiteral("15")},
                {QStringLiteral("timeOfDay"), QStringLiteral("09:00")},
-               {QStringLiteral("weekdays"), QVariantList{0, 1, 2, 3, 4, 5, 6}},
+               {QStringLiteral("weekdays"), QVariantList{1, 2, 3, 4, 5}},
                {QStringLiteral("projectId"), projectId},
                {QStringLiteral("threadId"), QString()},
                {QStringLiteral("workspaceMode"), QStringLiteral("worktree")},

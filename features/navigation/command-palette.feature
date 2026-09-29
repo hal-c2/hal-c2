@@ -185,10 +185,20 @@ Feature: Command palette
       When the user types "qqqqqq"
       Then the palette says "No matching commands, projects, or threads."
 
+    # As the web's filterCommandPaletteGroups: the groups keep their order, actions,
+    # projects, settings, then threads, however well each entry matches.
+    @desktop
+    Scenario: Settings are listed after actions and projects and before threads
+      Given a thread titled "Appearance"
+      When the user searches the palette for "appearance"
+      Then "Change appearance" is listed before the "Appearance" setting
+      And the "Appearance" setting is listed before the thread "Appearance"
+
+    # The web's settings search lists each keybinding command as a secondary entry.
     @backlog @desktop
-    Scenario: Settings results sort after primary matches
-      When the user searches the palette for "font"
-      Then settings results are listed after actions and threads that match equally well
+    Scenario: Shortcut entries sort after the settings they mirror
+      When the user searches the palette for "model"
+      Then the "Default model" setting is listed before the "Model Picker" shortcut
 
     @backlog @tui
     Scenario: The terminal palette ranks title prefix, then substring, then keyword, then subsequence
@@ -235,7 +245,6 @@ Feature: Command palette
         | entry                            | title                       | outcome                                                        |
         | action:usage                     | Open usage                  | the usage page opens                                           |
         | action:settings                  | Open settings               | settings open                                                  |
-
         | action:new-thread                | New thread in hal-c2        | a new thread starts in "hal-c2"                                |
         | action:new-thread-in             | New thread in...            | the palette lists projects with the current project first      |
         | action:copy-thread-reference     | Copy thread ID              | the thread id is on the clipboard                              |

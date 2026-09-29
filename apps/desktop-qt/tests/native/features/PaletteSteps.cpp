@@ -298,6 +298,7 @@ const Steps steps([] {
            addThread(world, c[0], {}, {}, stream::kPeer);
          }
        });
+  step(QStringLiteral("a thread titled %1").arg(q), [](World& world, const Captures& c, const Table&) { addThread(world, c[0]); });
   step(QStringLiteral("threads titled %1, %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
     for (const QString& title : c) addThread(world, title);
   });
@@ -415,6 +416,17 @@ const Steps steps([] {
   step(QStringLiteral("%1 is listed before %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const int first = indexOf(world, c[0]);
     const int second = indexOf(world, c[1]);
+    expect(first >= 0 && second >= 0 && first < second, describe(world));
+  });
+  // Entries by kind, where a setting and a thread share a title.
+  step(QStringLiteral("the %1 setting is listed before the thread %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const int first = indexOf(world, c[0], QStringLiteral("setting"));
+    const int second = indexOf(world, c[1], QStringLiteral("thread"));
+    expect(first >= 0 && second >= 0 && first < second, describe(world));
+  });
+  step(QStringLiteral("%1 is listed before the %1 setting").arg(q), [](World& world, const Captures& c, const Table&) {
+    const int first = indexOf(world, c[0]);
+    const int second = indexOf(world, c[1], QStringLiteral("setting"));
     expect(first >= 0 && second >= 0 && first < second, describe(world));
   });
   step(QStringLiteral("the more recently updated thread is listed first"), [](World& world, const Captures&, const Table&) {
