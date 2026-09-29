@@ -13,73 +13,73 @@ Feature: Source Control settings
   Background:
     Given the user is connected to an environment and opens Settings, Source Control
 
-  @backlog @desktop @mobile
+  @desktop @backlog-mobile
   Scenario: The panel lists each tool with its state
     When the panel loads
     Then each version control and hosting tool is listed as available, missing or status unknown
     And each available tool shows its version
 
-  @backlog @desktop @mobile
+  @desktop @backlog-mobile
   Scenario: Revealing a signed-in account
     Given the GitHub CLI is signed in as "octocat"
     And GitHub reads "Authenticated" without the account name
     When the user reveals the account
     Then the account "octocat" is shown
 
-  @backlog @desktop @mobile
+  @desktop @backlog-mobile
   Scenario: Hiding a revealed account again
     Given the user revealed the GitHub account
     When the user hides it
     Then the account name is hidden again
 
-  @backlog @desktop @mobile
+  @desktop @backlog-mobile
   Scenario: A tool that is not signed in says so
     Given the GitHub CLI is installed but not signed in
     When the panel loads
     Then GitHub reads "Not authenticated" with how to sign in
 
-  @backlog @desktop @mobile
+  @desktop @backlog-mobile
   Scenario: A missing tool shows how to install it
     Given the GitLab CLI is not installed
     When the panel loads
     Then GitLab is shown as missing with its install instructions
 
-  @backlog @desktop @mobile
+  @desktop @backlog-mobile
   Scenario: Rescanning after installing a tool
     Given the GitHub CLI was missing when the panel loaded
     And the user has since installed and signed in to it
     When the user rescans Git and hosting integrations
     Then GitHub reads "Authenticated"
 
-  @backlog @desktop @mobile
+  @desktop @backlog-mobile
   Scenario: Nothing detected yet
     Given the environment has no version control or hosting tools
     When the panel loads
     Then the user is told nothing was detected yet and to install Git on the server and rescan
 
-  @backlog @desktop @mobile
+  @desktop @backlog-mobile
   Scenario: The environment could not be scanned
     Given the scan fails
     When the panel loads
     Then the user is told "Could not scan the server environment"
 
-  @backlog @desktop @mobile
+  @desktop @backlog-mobile
   Scenario: A host that is not supported yet is marked coming soon
     When the panel loads
     Then hosts HAL-C2 cannot use yet are marked "Coming Soon"
 
-  @backlog @desktop @mobile
+  @desktop @backlog-mobile
   Scenario: Changing the automatic fetch interval
     When the user sets the automatic Git fetch interval to 60 seconds
     Then Git fetches every 60 seconds while a thread is on screen
 
-  @backlog @desktop @mobile
+  @desktop @backlog-mobile
   Scenario: Resetting the fetch interval to the background profile
     Given the user set the automatic Git fetch interval to 60 seconds
     When the user resets the fetch interval
     Then the interval follows the background activity profile again
 
-  @backlog @desktop @mobile
+  @desktop @backlog-mobile
   Scenario: A fetch interval of zero turns background fetching off
     When the user sets the automatic Git fetch interval to 0 seconds
     Then Git never fetches in the background

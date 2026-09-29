@@ -187,25 +187,28 @@ QString SettingsScopeController::disabledReason() const {
   return {};
 }
 
-void SettingsScopeController::write(const Edit& edit) {
+void SettingsScopeController::write(const Edit& edit, const QString& failureTitle) {
   const QString reason = disabledReason();
   auto* toasts = NativeShell::of(this)->controller<ToastController>();
   if (!reason.isEmpty()) {
-    if (toasts) toasts->show(QStringLiteral("warning"), QStringLiteral("Setting not saved"), reason);
+    if (toasts) toasts->show(QStringLiteral("warning"), failureTitle.isEmpty() ? QStringLiteral("Setting not saved") : failureTitle, reason);
     return;
   }
   const QHash<QString, QString> members = m_members;
   const QPointer<SettingsScopeController> self(this);
   m_documents->change(
       [edit, members](QJsonObject settings, const QString& environmentId) { return edit(settings, members.value(environmentId)); },
-      [self](const QHash<QString, QString>& failed, int saved) {
+      [self, failureTitle](const QHash<QString, QString>& failed, int saved) {
         if (!self || failed.isEmpty()) return;
         QStringList labels;
         for (const QString& environmentId : self->targets()) {
           if (failed.contains(environmentId)) labels.append(self->label(environmentId));
         }
         if (auto* toasts = NativeShell::of(self)->controller<ToastController>()) {
-          toasts->error(saved > 0 ? QStringLiteral("Setting saved on some environments") : QStringLiteral("Setting not saved"),
+          const QString title = !failureTitle.isEmpty() ? failureTitle
+                                : saved > 0              ? QStringLiteral("Setting saved on some environments")
+                                                         : QStringLiteral("Setting not saved");
+          toasts->error(title,
                         QStringLiteral("Could not update %1.%2")
                             .arg(labels.join(QStringLiteral(", ")),
                                  saved > 0 ? QStringLiteral(" The other selected environments saved the change.") : QString()));

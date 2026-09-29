@@ -61,8 +61,9 @@ public:
   QStringList lacking(const QString& capability) const;
   EnvironmentSettings::Reading read(const Pick& pick) const;
   // Changes every target; a failure is toasted with the environments that
-  // could not save. Nothing is written while the scope is not editable.
-  void write(const Edit& edit);
+  // could not save, titled `failureTitle` when given. Nothing is written
+  // while the scope is not editable.
+  void write(const Edit& edit, const QString& failureTitle = {});
   bool editable() const;
   QString disabledReason() const;
   // The scope's environments, connected or not ("unavailable" has none), and

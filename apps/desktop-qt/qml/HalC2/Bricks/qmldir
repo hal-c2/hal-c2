@@ -69,5 +69,6 @@ ProviderCustomModels 1.0 ProviderCustomModels.qml
 ProviderAcpSessions 1.0 ProviderAcpSessions.qml
 ScheduledTaskEditor 1.0 ScheduledTaskEditor.qml
 ScheduledTasksSettings 1.0 ScheduledTasksSettings.qml
+SourceControlSettings 1.0 SourceControlSettings.qml
 SettingsScopeSentence 1.0 SettingsScopeSentence.qml
 StorageSettings 1.0 StorageSettings.qml

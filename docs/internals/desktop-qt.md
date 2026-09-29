@@ -820,9 +820,16 @@ Home, the pull requests page and usage are routes of their own, drawn by
 `HomePage`, `PullRequestsPage` and `UsagePage` over `PullRequestListController`
 and `UsageController`; they too follow node shapes only while open.
 
-Project, SnapShots, Integrations, Scheduled Tasks, Source Control and Storage
-are still HTML. Most of them edit settings scoped to one or several
-environments or a project, which the shell has no native model for yet. The
+Storage, Scheduled Tasks and Source Control edit settings scoped to one or
+several environments or a project through `SettingsScopeController`
+(`settingsScope`): it follows the targets' documents only while one of those
+sections shows, reads a value across them as mixed or not, and writes a
+change to every connected target, a project's as its
+`projectSettingsOverrides` entry. Background activity is not project-scoped,
+so its rows are read-only at a project scope. Discovery of source control
+tools scans only the scope's first connected environment, as the web did.
+
+Project, SnapShots and Integrations are still HTML. The
 root route mounts `ShellSettingsBridge` when hosted, which publishes
 `ShellSettingsState` on every route change: `active` (on `/settings*`), the
 sections in sidebar order, the active one, and search results for the query

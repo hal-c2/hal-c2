@@ -288,8 +288,9 @@ const Steps steps([] {
     const QVariantMap shown = first(world, QStringLiteral("approvals"));
     expect(!shown.value(QStringLiteral("canRespond")).toBool(), QStringLiteral("the approval is %1").arg(show(shown)));
   });
-  // Shared with WorkspaceSteps' renames: the message is either why the
-  // pending approval cannot be answered or a toast's title.
+  // Shared with WorkspaceSteps' renames: the message is why the pending
+  // approval cannot be answered, a toast, or what Source Control settings
+  // shows instead of the tools it found.
   step(QStringLiteral("the user is told %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const auto told = [&] {
       for (const QVariant& item : listed(world, QStringLiteral("approvals"))) {
@@ -301,6 +302,8 @@ const Steps steps([] {
         const QString description = item.toMap().value(QStringLiteral("description")).toString();
         if (title == c[0] || description == c[0] || title + QStringLiteral(" — ") + description == c[0]) return true;
       }
+      const QVariantMap discovery = world.state(QStringLiteral("sourceControlSettings")).toMap().value(QStringLiteral("discovery")).toMap();
+      if (discovery.value(QStringLiteral("title")) == c[0]) return true;
       return conditionProblem(world) == c[0];
     };
     world.waitFor(told, [&] {
