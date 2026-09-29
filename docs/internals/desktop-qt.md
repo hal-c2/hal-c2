@@ -370,22 +370,47 @@ workaround for renaming or moving a registered project root.
 
 ### Independent views and windows
 
-Use `AppView` for another complete web client and `AppWindow` for an independent
-window. They share `WebProfile` authentication but have no primary shell bridge,
-so navigation and actions cannot overwrite the primary native chrome.
-Composer, right-panel, terminal, and diff snapshots use a per-view storage
-namespace. Ordinary web, Electron, and coordinated primary/embed clients retain
-their existing storage keys.
+`window.new` (the palette's "New window", or `Shell.dispatch("window.new",
+{id})` from a layout) opens another native window: its own QML engine
+(`ShellRuntime`) on its own `ShellBridge`, loading the same `shell.qml`. The
+node connection, the shell store and the shared controllers
+(`NativeControllerScope::Shared`: settings, alerts and quitting) are one per
+process in `NativeShell`; everything a window shows (route, composer,
+panels, terminals, palette, toasts, sidebar) is a `NativeWindow`'s. Unsent
+work is not: every window's `DraftController` and `ComposerController` keep
+one store (`NativeShell::common`), so a window that closes loses no drafts. The
+`HalC2.Shell` singletons are registered as per-engine factories, and an engine
+tagged with a bridge (`halC2Bridge`) gets that window's controllers, so a
+controller must never be registered with `qmlRegisterSingletonInstance`, which
+binds it to one engine. A shared controller reaches "its" window through
+`NativeShell::of`, which answers the window the user last acted in, so an
+answer that arrives later (a failed save's toast) must capture that window when
+asked; what every page needs (`clientSettings.follow`) goes to every window's
+bridge. A shared controller meets each window in `attach()`.
 
-Assign a unique, stable `storageId` before creating a view to restore its drafts
-and panels after restart. The generated default lasts for that view's lifetime.
-Do not give two simultaneous views the same ID. Passing a thread URL opens the
-same conversation, not a copy of another view's unsent draft. Window geometry,
-open-window lists, and route restoration belong to the QML layout.
-`AppWindow` explicitly clears its transient parent so an owned extra window
-is a normal top-level window, not a dialog. Layouts must close owned extras
-when their primary window closes. `--app-id` sets the native desktop identity
-before any window is created, allowing launch-profile-specific window rules.
+The drafts and composer text live in `<data>`. The window with the id `main`
+keeps its route and panels directly in `<state>`; another keeps them under
+`<state>/shell-windows/<id>/`, and `<state>/shell-windows.json` lists the ids
+open, in order, so the same set reopens with the app. Closing a window
+(`ShellWindows`: the window's `closing`, then a queued
+`NativeShell::closeWindow`, never inside the close itself) forgets it and its
+route and panels and nothing else. The oldest open window is `main()`: the
+shared controllers still publish on the first window's bridge, which outlives
+that window, and every other window mirrors the shared state from it. The
+last window is never forgotten; the shell emits `lastWindowClosed` and
+`main.cpp` quits, except on macOS, where the app stays running and activating
+it shows the window again (as Electron's `DesktopLifecycle` did). Qt's own
+quit-on-last-window is off, since a hot reload or a closed popup must not
+quit. Pass a stable `id` to reopen a known window rather than opening another;
+ids name folders, so the shell accepts only `[A-Za-z0-9_-]{1,32}` and
+generates one otherwise.
+
+`AppView` and `AppWindow` are the web client's equivalent: another complete
+page sharing `WebProfile` authentication, with a per-view `storageId`
+namespace for the page's own drafts and panels and no primary shell bridge.
+`AppWindow` clears its transient parent so it is a normal top-level window.
+`--app-id` sets the native desktop identity before any window is created,
+allowing launch-profile-specific window rules.
 
 ### Notification delivery
 
@@ -432,7 +457,7 @@ capture or speech model is included in the Qt binary.
 `ShellRuntime` watches the config dir and, in non-release builds, the in-repo
 `qml/` directory. A change to any `.qml`/`.js`/`qmldir` file clears the component
 cache and loads new root objects in the same engine. The new window loads before
-the old roots are dropped, so the app never hits "last window closed". If both
+the old roots are dropped, and a replaced root is not a closed window. If both
 the user shell and default shell fail, the previous roots stay alive. Generations
 share C++ singleton state, never QML-created objects with generation-specific
 types. The web view is recreated with the window
@@ -949,6 +974,19 @@ brand band when `showBrand` is on. The right panel's toggle follows the same
 pattern: `Workspace.panelToggle` puts it in the header strip and `RightPanel
 { ownToggle: false }` then takes no width while closed; a rice that leaves
 `ownToggle` on gets the 36 px rail with the toggle instead.
+
+It also owns the app's zoom, a device preference (`zoomLevel`, Chromium's
+steps: factor 1.2^level in half steps) that every window follows, published
+as `layout.zoom`. `view.zoomIn`, `view.zoomOut` and `view.resetZoom` change it.
+`ShellWindow` scales its `body` rather than the fonts, so a rice needs no zoom
+awareness; the menu hosts stay unscaled in window coordinates, so anything
+that places a popup at a pointer maps through the scaled item
+(`mapToItem(parent, ...)`, never `null`). Other popups and dialogs live in
+the unscaled overlay, so each sets `scale` to `layout.zoom` about
+`Item.TopLeft` (the origin the popup positioner assumes, centring included)
+and divides any size it takes from the window by it; context menus and tool
+tips stay unscaled, as native ones do. The embedded page is scaled as a
+texture.
 `DefaultShell` snaps the sidebar (one relayout, no animated width); examples
 that ease `Layout.preferredWidth` to 0 hide it once it is gone
 (`visible: !sidebarCollapsed || width > 0` — guard on the collapsed flag, not
@@ -1000,6 +1038,11 @@ keystroke or an answer changes, never resetting the list. Dismissing it sends
 `composer.focus` to the composer. The singleton is not `Palette`, which
 QtQuick already names.
 
+The application menu's accelerators (`menuKeys()`: mod+, for settings,
+mod+=, mod++, mod+- and mod+0 for zoom) are not keymap rules and not rows in
+Settings → Keybindings; they resolve only after every rule, so a user's rule
+for the same chord wins, as it does over Electron's menu.
+
 `ShellWindow` instantiates one window `Shortcut` per bound sequence and calls
 `Keybindings.press`. Who takes a key follows focus:
 
@@ -1020,6 +1063,17 @@ Secondary documents (the right panel) forward a keydown they did not consume
 as `keybinding.press` when the chord resolves to the same command with and
 without the embed's focus (`shellKeybindingPressToForward`). The controller
 intercepts that dispatch and runs the command if it is native.
+
+Mod+Q is not a shortcut. `QuitController` (shared, one per process) filters
+the application's key events before any window or page sees them and ports
+`apps/desktop/src/window/QuitHold.ts`: `confirmQuit` "hold" (the default)
+quits after 1.2 seconds held, "double-click" after two presses within half a
+second, "direct" at once, and two quick presses always quit. "Still held" is
+proven by auto-repeat, as in Electron. The hint is the shared `quitHint`
+({message} or null) that `ShellWindow` shows; `app.quit` in the palette quits
+at once. The controller only emits `quitRequested` and `concealRequested`;
+`main.cpp` quits and hides the windows, and tests swap its clock with
+`setClock`.
 
 Settings → Keybindings (`KeybindingsSettings`, route
 `/settings/keybindings`) lists the merged rows, records chords with

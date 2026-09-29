@@ -99,7 +99,7 @@ void ThreadStore::follow(const QString& threadKey) {
   if (!m_store->thread(threadKey)) return;  // not in the sidebar yet: ShellStore::changed retries
   followed.waitOnline = false;
   const qsizetype colon = threadKey.indexOf(QLatin1Char(':'));
-  followed.subscription = m_client->subscribe(streamShape(threadKey.left(colon), threadKey.mid(colon + 1)),
+  followed.subscription = m_client->subscribe(this, streamShape(threadKey.left(colon), threadKey.mid(colon + 1)),
                                               [this, threadKey](const QJsonObject& frame) { onFrame(threadKey, frame); });
 }
 

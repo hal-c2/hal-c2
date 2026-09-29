@@ -1,7 +1,6 @@
 #include "ThreadDevices.h"
 
 #include <QJsonArray>
-#include <QPointer>
 #include <QUrl>
 
 #include <algorithm>
@@ -77,11 +76,10 @@ void ThreadDevices::setTab(const QString& tabId) {
 
 void ThreadDevices::follow() {
   if (m_subscription >= 0 || m_node.isEmpty() || m_environment.isEmpty()) return;
-  const QPointer<ThreadDevices> self(this);
-  m_subscription = m_client->subscribe({{QStringLiteral("type"), QStringLiteral("devices")}, {QStringLiteral("node"), m_node}},
-                                       [self](const QJsonObject& frame) {
-                                         if (self && frame.value(QLatin1String("t")) == QLatin1String("devices"))
-                                           self->take(frame.value(QLatin1String("state")).toObject());
+  m_subscription = m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("devices")}, {QStringLiteral("node"), m_node}},
+                                       [this](const QJsonObject& frame) {
+                                         if (frame.value(QLatin1String("t")) == QLatin1String("devices"))
+                                           take(frame.value(QLatin1String("state")).toObject());
                                        });
 }
 
@@ -93,12 +91,11 @@ void ThreadDevices::unfollow() {
 
 void ThreadDevices::list(const QJsonObject& input) {
   if (m_environment.isEmpty()) return;
-  const QPointer<ThreadDevices> self(this);
   const int generation = m_generation;
-  m_client->call(m_environment, QStringLiteral("device.list"), input,
-                 [self, generation](const QJsonValue& result, const std::optional<QString>& error) {
-                   if (!self || self->m_generation != generation || error) return;
-                   self->take(result.toObject());
+  m_client->call(this, m_environment, QStringLiteral("device.list"), input,
+                 [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (m_generation != generation || error) return;
+                   take(result.toObject());
                  });
 }
 
@@ -189,29 +186,28 @@ void ThreadDevices::open(const QString& hostId, const QString& deviceId) {
   m_pending = keyOf(hostId, deviceId);
   m_error.clear();
   publish();
-  const QPointer<ThreadDevices> self(this);
   const int generation = m_generation;
   const QString thread = m_thread;
-  m_client->call(m_environment, QStringLiteral("device.open"),
+  m_client->call(this, m_environment, QStringLiteral("device.open"),
                  QJsonObject{{QStringLiteral("threadId"), thread},
                              {QStringLiteral("hostId"), hostId},
                              {QStringLiteral("deviceId"), deviceId},
                              {QStringLiteral("platform"), device.value(QLatin1String("platform"))}},
-                 [self, generation, thread, hostId, deviceId](const QJsonValue& result, const std::optional<QString>& error) {
-                   if (!self || self->m_generation != generation || self->m_thread != thread) return;
-                   self->m_pending.clear();
+                 [this, generation, thread, hostId, deviceId](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (m_generation != generation || m_thread != thread) return;
+                   m_pending.clear();
                    if (error) {
-                     self->m_error = *error;
-                     self->publish();
+                     m_error = *error;
+                     publish();
                      return;
                    }
                    // The session is the node's; seeing it later is not an agent's open.
-                   const QJsonObject opened = result.toObject();
-                   const QString host = opened.value(QLatin1String("hostId")).toString(hostId);
-                   const QString id = opened.value(QLatin1String("deviceId")).toString(deviceId);
-                   self->m_sessionsSeen[self->m_environment + QLatin1Char(':') + thread].insert(keyOf(host, id));
-                   self->publish();
-                   emit self->opened(tabIdOf(host, id), false);
+                   const QJsonObject session = result.toObject();
+                   const QString host = session.value(QLatin1String("hostId")).toString(hostId);
+                   const QString id = session.value(QLatin1String("deviceId")).toString(deviceId);
+                   m_sessionsSeen[m_environment + QLatin1Char(':') + thread].insert(keyOf(host, id));
+                   publish();
+                   emit opened(tabIdOf(host, id), false);
                  });
 }
 
@@ -221,25 +217,23 @@ void ThreadDevices::powerOff() {
   if (!hasSession(hostId, deviceId)) return;
   m_error.clear();
   publish();
-  const QPointer<ThreadDevices> self(this);
   const QString environment = m_environment, thread = m_thread;
-  m_client->call(environment, QStringLiteral("device.close"),
+  m_client->call(this, environment, QStringLiteral("device.close"),
                  QJsonObject{{QStringLiteral("threadId"), thread},
                              {QStringLiteral("hostId"), hostId},
                              {QStringLiteral("deviceId"), deviceId},
                              {QStringLiteral("shutdown"), true}},
-                 [self, environment, thread, tab](const QJsonValue&, const std::optional<QString>& error) {
-                   if (!self) return;
-                   const bool here = self->m_environment == environment && self->m_thread == thread;
+                 [this, environment, thread, tab](const QJsonValue&, const std::optional<QString>& error) {
+                   const bool here = m_environment == environment && m_thread == thread;
                    if (error) {
                      // Only the thread that asked shows why.
                      if (!here) return;
-                     self->m_error = *error;
-                     self->publish();
+                     m_error = *error;
+                     publish();
                      return;
                    }
                    // The tab closes in the thread it was powered off from, shown or not.
-                   emit self->closed(environment + QLatin1Char(':') + thread, tab);
+                   emit closed(environment + QLatin1Char(':') + thread, tab);
                  });
 }
 

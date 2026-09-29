@@ -29,8 +29,9 @@ class TimelineModel;
 // follow-ups while a turn runs, stop, the thread's pending approvals and
 // questions, and its proposed plan.
 //
-// Each thread keeps its draft here, saved on this machine (setStorePath); a
-// new thread's text is DraftController's. The catalogue is the `providers` of
+// Each thread keeps its draft here, saved on this machine (setStorePath) and
+// the same in every window (NativeShell::common); a new thread's text is
+// DraftController's. The catalogue is the `providers` of
 // the route environment's config (WorkspaceController::environmentConfig), so
 // a linked thread lists its own machine's models. A new thread's first send
 // launches it (`orchestration.launchThread`) in the checkout WorkspaceController
@@ -217,6 +218,8 @@ private:
   QString interactionModeOf(const QString& target) const;
   QVariant setting(const QString& key) const;
   void save() const;
+  // The other windows' composers show what this one changed in the drafts.
+  void spread() const;
   bool running(const QString& target) const;
   void toast(const QString& title, const QString& description);
   void follow();
@@ -230,7 +233,13 @@ private:
   ShellStore* m_store;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
   bool m_active = false;
-  QHash<QString, Draft> m_drafts;
+  // What every window's composer keeps.
+  struct Kept {
+    QHash<QString, Draft> drafts;
+    QString path;
+  };
+  Kept& m_kept;
+  QHash<QString, Draft>& m_drafts;
   // Each thread's sends, the one in flight first: a thread sends one at a
   // time, in the order the user sent them.
   QHash<QString, QList<Send>> m_queues;
@@ -247,7 +256,6 @@ private:
   QVariantMap m_published;
   QVariant m_publishedComposer;
   QVariantMap m_publishedPicker;
-  QString m_storePath;
   QList<composer::Instance> m_catalogue;
   // The @ search the menu shows: its target and query, and what came back.
   struct PathSearch {

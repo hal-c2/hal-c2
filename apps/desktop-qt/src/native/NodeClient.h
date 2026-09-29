@@ -44,20 +44,22 @@ public:
   // cluster); empty until the first hello.
   QString environment() const { return m_environment; }
 
-  int subscribe(const QJsonObject& shape, FrameHandler onFrame);
+  // `context` owns the callback, as with a Qt connection: once it is destroyed
+  // no reply or frame reaches it, and its subscriptions are ended.
+  int subscribe(QObject* context, const QJsonObject& shape, FrameHandler onFrame);
   void unsubscribe(int id);
-  void call(const QString& environment, const QString& method, const QJsonValue& payload, Reply reply);
+  void call(QObject* context, const QString& environment, const QString& method, const QJsonValue& payload, Reply reply);
   // POSTs `body` to `path` of the node's origin (its HTTP API, for answers too
   // large for the socket, as `/api/pull-requests/diff`), with the access token.
   // A refusal's `error` is the body's `message`, `detail` or `_tag`, else the
   // HTTP status; `result` is then the body.
-  void post(const QString& path, const QJsonObject& body, Reply reply);
+  void post(QObject* context, const QString& path, const QJsonObject& body, Reply reply);
   // A request for `path` (and `query`), both percent-encoded, on the node's
   // origin carrying the access token, for streams the socket does not carry (a device's screen
   // through /api/device-hub). `socket`: its ws(s) twin, for a QWebSocket.
   QNetworkRequest request(const QString& path, const QString& query = {}, bool socket = false) const;
   // `orchestration.dispatchCommand` with a fresh commandId.
-  void dispatchCommand(const QString& environment, QJsonObject command, Reply reply);
+  void dispatchCommand(QObject* context, const QString& environment, QJsonObject command, Reply reply);
 
   void setRetryDelays(const QList<int>& delaysMs) { m_retryDelaysMs = delaysMs; }
   void setPingInterval(int ms) { m_pingTimer.setInterval(ms); }
@@ -75,7 +77,14 @@ private:
   struct Subscription {
     QJsonObject shape;
     FrameHandler onFrame;
+    // Ends the subscription when its context goes.
+    QMetaObject::Connection contextGone;
   };
+  struct Call {
+    QPointer<QObject> context;
+    Reply reply;
+  };
+  void endSubscription(int id);
 
   QUrl m_origin;
   QUrl m_url;
@@ -83,7 +92,7 @@ private:
   QNetworkAccessManager* m_http = nullptr;
   QPointer<QWebSocket> m_socket;
   QHash<int, Subscription> m_subscriptions;
-  QHash<int, Reply> m_calls;
+  QHash<int, Call> m_calls;
   QList<int> m_retryDelaysMs{500, 1000, 2000, 4000, 8000};
   QTimer m_retryTimer;
   QTimer m_pingTimer;

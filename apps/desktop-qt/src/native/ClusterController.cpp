@@ -146,7 +146,7 @@ void ClusterController::change(const QString& method, const QJsonObject& payload
 
 void ClusterController::call(const QString& method, const QJsonObject& payload,
                              std::function<void(const QJsonValue&, const std::optional<QString>&)> reply) {
-  m_client->call(m_client->environment(), method, payload, std::move(reply));
+  m_client->call(this, m_client->environment(), method, payload, std::move(reply));
 }
 
 void ClusterController::setNotice(const QString& kind, const QString& text) {

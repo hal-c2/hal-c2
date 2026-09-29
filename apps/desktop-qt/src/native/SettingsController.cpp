@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QPointer>
 #include <QSaveFile>
 
 #include "NativeShell.h"
@@ -13,7 +14,8 @@
 
 namespace {
 
-const NativeControllerRegistrar<SettingsController> registrar(QStringLiteral("settings"), {}, "Settings");
+const NativeControllerRegistrar<SettingsController> registrar(QStringLiteral("settings"), {}, "Settings",
+                                                         NativeControllerScope::Shared);
 
 // Saves over a stale copy before giving up: each retry is another editor
 // saving in between, which is rare, and never endless.
@@ -117,7 +119,7 @@ SettingsController::SettingsController(ShellBridge* bridge, NodeClient* client, 
 void SettingsController::activate() {
   if (m_active) return;
   m_active = true;
-  m_client->subscribe({{QStringLiteral("type"), QStringLiteral("config")},
+  m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("config")},
                        {QStringLiteral("environment"), m_client->environment()}},
                       [this](const QJsonObject& frame) { onConfig(frame); });
 }
@@ -156,7 +158,7 @@ void SettingsController::setThemes(const QJsonArray& themes) {
 
 void SettingsController::read(std::function<void()> then) {
   const quint64 generation = ++m_generation;
-  m_client->call(m_client->environment(), QStringLiteral("hal-c2.readSettings"), QJsonObject{},
+  m_client->call(this, m_client->environment(), QStringLiteral("hal-c2.readSettings"), QJsonObject{},
                  [this, generation, then = std::move(then)](const QJsonValue& result, const std::optional<QString>& error) {
                    // Answers land out of order: a read asked before a save may arrive
                    // after it. What waits on it goes on with what is newer.
@@ -203,7 +205,7 @@ void SettingsController::attempt(Edit edit, Done done, int retries) {
   }
   const quint64 generation = ++m_generation;
   const QJsonObject payload{{QStringLiteral("settings"), next}, {QStringLiteral("version"), m_version}};
-  m_client->call(m_client->environment(), QStringLiteral("hal-c2.writeSettings"), payload,
+  m_client->call(this, m_client->environment(), QStringLiteral("hal-c2.writeSettings"), payload,
                  [this, edit, done, retries, next, generation, finish](const QJsonValue& result,
                                                                        const std::optional<QString>& error) {
                    if (error) {
@@ -245,8 +247,8 @@ void SettingsController::write(const QString& path, const QVariant& value) {
   if (keys.isEmpty()) return;
   const QJsonValue json = QJsonValue::fromVariant(value);
   change([keys, json](const QJsonObject& settings) { return withPath(settings, keys, json); },
-         [this](const std::optional<QString>& error) {
-           if (error) toast(QStringLiteral("Setting not saved"), *error);
+         [this, window = QPointer<NativeWindow>(NativeShell::of(this))](const std::optional<QString>& error) {
+           if (error) toast(QStringLiteral("Setting not saved"), *error, window);
          });
 }
 
@@ -294,8 +296,8 @@ void SettingsController::set(const QString& key, const QVariant& value) {
         else settings.insert(key, json);
         return settings;
       },
-      [this](const std::optional<QString>& error) {
-        if (error) toast(QStringLiteral("Setting not saved"), *error);
+      [this, window = QPointer<NativeWindow>(NativeShell::of(this))](const std::optional<QString>& error) {
+        if (error) toast(QStringLiteral("Setting not saved"), *error, window);
       });
 }
 
@@ -319,31 +321,41 @@ void SettingsController::resetAll(const QStringList& keys) {
         for (const QString& key : node) settings.remove(key);
         return settings;
       },
-      [this](const std::optional<QString>& error) {
-        if (error) toast(QStringLiteral("Settings not restored"), *error);
+      [this, window = QPointer<NativeWindow>(NativeShell::of(this))](const std::optional<QString>& error) {
+        if (error) toast(QStringLiteral("Settings not restored"), *error, window);
       });
 }
 
-void SettingsController::toast(const QString& title, const QString& reason) {
-  // Toasts are built after this controller: looked up when needed.
-  if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) toasts->error(title, reason);
+void SettingsController::toast(const QString& title, const QString& reason, NativeWindow* window) {
+  // The window that asked, if it is still open, else the one in use. Toasts
+  // are built after this controller: looked up when needed.
+  if (!window) window = NativeShell::of(this);
+  if (!window) return;
+  if (auto* toasts = window->controller<ToastController>()) toasts->error(title, reason);
 }
 
-void SettingsController::pageReady() {
-  follow(true);
-}
-
-void SettingsController::follow(bool force) {
+QJsonObject SettingsController::clientSettings() const {
   QJsonObject settings;
   for (const Row& row : rows()) {
     if (!row.device) continue;
     const QString key = QLatin1String(row.key);
     settings.insert(key, m_device.contains(key) ? m_device.value(key) : row.fallback);
   }
-  if (!force && settings == m_followed) return;
+  return settings;
+}
+
+void SettingsController::pageReady(ShellBridge* page) {
+  page->sendToPage(QStringLiteral("clientSettings.follow"),
+                   QVariantMap{{QStringLiteral("settings"), clientSettings().toVariantMap()}});
+}
+
+void SettingsController::follow() {
+  const QJsonObject settings = clientSettings();
+  if (settings == m_followed) return;
   m_followed = settings;
-  m_bridge->sendToPage(QStringLiteral("clientSettings.follow"),
-                       QVariantMap{{QStringLiteral("settings"), settings.toVariantMap()}});
+  const NativeWindow* here = NativeShell::of(this);
+  if (!here) return;
+  for (const auto& window : here->shell()->windows()) pageReady(window->bridge());
 }
 
 void SettingsController::setDevicePath(const QString& path) {

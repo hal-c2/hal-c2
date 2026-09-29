@@ -18,10 +18,12 @@ Popup {
     parent: Overlay.overlay
     // Not modal, so the window's shortcuts (mod+k among them) still reach it.
     modal: false
-    x: Math.round(((parent?.width ?? width) - width) / 2)
+    scale: Shell.state.layout?.zoom ?? 1
+    transformOrigin: Item.TopLeft
+    x: Math.round(((parent?.width ?? width) - width * scale) / 2)
     y: Math.round((parent?.height ?? 0) * 0.12)
-    width: Math.min(640, (parent?.width ?? 672) - 32)
-    height: Math.min(480, (parent?.height ?? 512) - y - 16)
+    width: Math.min(640, (parent?.width ?? 672) / scale - 32)
+    height: Math.min(480, ((parent?.height ?? 512) - y) / scale - 16)
     padding: 8
     closePolicy: Popup.CloseOnPressOutside
 

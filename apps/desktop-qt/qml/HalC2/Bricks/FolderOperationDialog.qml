@@ -15,7 +15,9 @@ Dialog {
     objectName: "folderOperationDialog"
     modal: true
     anchors.centerIn: parent
-    width: Math.min(480, parent.width - 32)
+    scale: Shell.state.layout?.zoom ?? 1
+    transformOrigin: Item.TopLeft
+    width: Math.min(480, parent.width / scale - 32)
     padding: 20
     closePolicy: Popup.CloseOnEscape
     title: operation === "create" ? qsTr("New folder") : operation === "rename" ? qsTr("Rename folder") : operation === "move" ? qsTr("Move folder") : qsTr("Move folder to Trash?")

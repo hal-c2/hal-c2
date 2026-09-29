@@ -163,7 +163,7 @@ ThemeController::ThemeController(ShellBridge* bridge, NodeClient*, QObject* pare
     : QObject(parent),
       m_bridge(bridge),
       // Built before this one: controllers are built in name order.
-      m_settings(qobject_cast<NativeShell*>(parent)->controller<SettingsController>()) {
+      m_settings(NativeShell::of(this)->controller<SettingsController>()) {
   Q_ASSERT(m_settings);
   // The page's theme follows this one from the start, node or no node.
   m_bridge->claimKey(QStringLiteral("theme"));

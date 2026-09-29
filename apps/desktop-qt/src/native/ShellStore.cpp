@@ -23,7 +23,7 @@ bool removed(const QJsonObject& row) {
 }  // namespace
 
 ShellStore::ShellStore(NodeClient* client, QObject* parent) : QObject(parent) {
-  client->subscribe({{QStringLiteral("type"), QStringLiteral("shell")}, {QStringLiteral("links"), true}},
+  client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("shell")}, {QStringLiteral("links"), true}},
                     [this](const QJsonObject& frame) { onFrame(frame); });
 }
 

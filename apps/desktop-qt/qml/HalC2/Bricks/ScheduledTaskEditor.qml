@@ -37,8 +37,10 @@ Dialog {
     parent: Overlay.overlay
     modal: true
     anchors.centerIn: parent
-    width: Math.min(560, (parent?.width ?? 592) - 32)
-    height: Math.min(implicitHeight, (parent?.height ?? 700) - 32)
+    scale: Shell.state.layout?.zoom ?? 1
+    transformOrigin: Item.TopLeft
+    width: Math.min(560, (parent?.width ?? 592) / scale - 32)
+    height: Math.min(implicitHeight, (parent?.height ?? 700) / scale - 32)
     padding: 20
     closePolicy: Popup.CloseOnEscape
     title: editor?.editing ? qsTr("Edit scheduled task") : qsTr("New scheduled task")
@@ -278,6 +280,8 @@ Dialog {
                         id: branches
 
                         objectName: "branches"
+                        scale: dialog.scale
+                        transformOrigin: Item.TopLeft
                         y: baseRef.height + 4
                         width: baseRef.width
                         height: Math.min(implicitHeight, 240)

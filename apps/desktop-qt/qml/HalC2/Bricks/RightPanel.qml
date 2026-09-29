@@ -311,12 +311,12 @@ Rectangle {
         cursorShape: Qt.SplitHCursor
         preventStealing: true
         onPressed: mouse => {
-            pressX = mapToItem(null, mouse.x, 0).x;
+            pressX = mapToItem(panel.parent, mouse.x, 0).x;
             pressWidth = panel.openWidth;
         }
         onPositionChanged: mouse => {
             if (pressed)
-                panel.dragWidth = Math.round(pressWidth + pressX - mapToItem(null, mouse.x, 0).x);
+                panel.dragWidth = Math.round(pressWidth + pressX - mapToItem(panel.parent, mouse.x, 0).x);
         }
         onReleased: {
             const width = panel.openWidth;

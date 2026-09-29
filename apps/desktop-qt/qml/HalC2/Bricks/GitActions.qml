@@ -163,8 +163,10 @@ RowLayout {
         }
 
         parent: Overlay.overlay
-        x: Math.round((parent.width - width) / 2)
-        y: Math.round((parent.height - height) / 2)
+        scale: Shell.state.layout?.zoom ?? 1
+        transformOrigin: Item.TopLeft
+        x: Math.round((parent.width - width * scale) / 2)
+        y: Math.round((parent.height - height * scale) / 2)
         width: 520
         modal: true
         padding: 16
@@ -315,8 +317,10 @@ RowLayout {
         readonly property var pending: git.ready ? git.model.pendingDefaultBranch : null
 
         parent: Overlay.overlay
-        x: Math.round((parent.width - width) / 2)
-        y: Math.round((parent.height - height) / 2)
+        scale: Shell.state.layout?.zoom ?? 1
+        transformOrigin: Item.TopLeft
+        x: Math.round((parent.width - width * scale) / 2)
+        y: Math.round((parent.height - height * scale) / 2)
         width: 460
         modal: true
         padding: 16
@@ -399,8 +403,10 @@ RowLayout {
         }
 
         parent: Overlay.overlay
-        x: Math.round((parent.width - width) / 2)
-        y: Math.round((parent.height - height) / 2)
+        scale: Shell.state.layout?.zoom ?? 1
+        transformOrigin: Item.TopLeft
+        x: Math.round((parent.width - width * scale) / 2)
+        y: Math.round((parent.height - height * scale) / 2)
         width: 460
         modal: true
         padding: 16
@@ -444,6 +450,8 @@ RowLayout {
                 ComboBox {
                     id: provider
 
+                    popup.scale: publishDialog.scale
+                    popup.transformOrigin: Item.TopLeft
                     textRole: "label"
                     valueRole: "value"
                     model: [
@@ -461,6 +469,8 @@ RowLayout {
                 ComboBox {
                     id: visibility
 
+                    popup.scale: publishDialog.scale
+                    popup.transformOrigin: Item.TopLeft
                     textRole: "label"
                     valueRole: "value"
                     model: [

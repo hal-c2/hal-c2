@@ -27,7 +27,7 @@ struct Title {
 };
 
 Title layOutTitle(World& world) {
-  Brick header(world, "import QtQuick\nimport HalC2.Bricks\nWorkspace {}\n", QSize(headerWidth, 52));
+  Brick header(world, "import QtQuick\nimport HalC2.Bricks\nWorkspace { height: 52 }\n", QSize(headerWidth, 52));
   QQuickItem* label = header.item(QStringLiteral("threadLabel"));
   // Layouts settle on the window's polish, before its next frame.
   world.waitFor([&] { return label->width() > 0 && label->property("text").toString() != QLatin1String("No thread"); },
@@ -38,6 +38,9 @@ Title layOutTitle(World& world) {
 }
 
 const Steps steps([] {
+  // Before any ShellRuntime (World::showWindows) registers its own: the first
+  // registration of a singleton is the one QML uses.
+  Brick::registerSingletons();
   step(QStringLiteral("a long thread title"), [](World& world, const Captures&, const Table&) {
     // The thread the background looks at, renamed.
     QJsonObject row = world.node.threads.value(kThread);

@@ -166,7 +166,7 @@ private:
         if (node.isEmpty()) {
           list({}, {});
         } else {
-          m_subscription = m_client->subscribe(
+          m_subscription = m_client->subscribe(this, 
               {{QStringLiteral("type"), QStringLiteral("devices")}, {QStringLiteral("node"), node}}, [this](const QJsonObject& frame) {
                 if (frame.value(QLatin1String("t")) == QLatin1String("devices")) take(frame.value(QLatin1String("state")).toObject());
               });
@@ -189,7 +189,7 @@ private:
     const QPointer<DeviceSettingsController> self(this);
     const int generation = m_generation;
     const int request = ++m_request;
-    m_client->call(m_environmentId, QStringLiteral("device.list"), input,
+    m_client->call(this, m_environmentId, QStringLiteral("device.list"), input,
                    [self, generation, request, failed](const QJsonValue& result, const std::optional<QString>& error) {
                      if (!self || self->m_generation != generation || self->m_request != request) return;
                      self->m_pending.clear();
@@ -239,7 +239,7 @@ private:
         done(environmentId, false);
         continue;
       }
-      m_client->call(environmentId, QStringLiteral("device.configure"), change,
+      m_client->call(this, environmentId, QStringLiteral("device.configure"), change,
                      [self, done, environmentId, generation](const QJsonValue& result, const std::optional<QString>& error) {
                        if (self && !error && environmentId == self->m_environmentId && generation == self->m_generation) {
                          self->m_state = result.toObject();

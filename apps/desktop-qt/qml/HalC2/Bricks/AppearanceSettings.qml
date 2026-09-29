@@ -224,6 +224,8 @@ SettingsPage {
 
         parent: Overlay.overlay
         anchors.centerIn: parent
+        scale: Shell.state.layout?.zoom ?? 1
+        transformOrigin: Item.TopLeft
         modal: true
         title: theme ? qsTr("Remove “%1”?").arg(theme.label) : ""
         onAccepted: Themes.removeCustom(theme.id)

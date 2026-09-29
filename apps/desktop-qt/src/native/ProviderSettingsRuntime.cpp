@@ -54,7 +54,7 @@ void ProviderSettingsController::followRuntime() {
   }
   for (const QString& instanceId : std::as_const(wanted)) {
     if (m_install.contains(instanceId)) continue;
-    m_install.insert(instanceId, m_client->subscribe({{QStringLiteral("type"), QStringLiteral("providerInstall")},
+    m_install.insert(instanceId, m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("providerInstall")},
                                                       {QStringLiteral("node"), node},
                                                       {QStringLiteral("instanceId"), instanceId}},
                                                      [this, instanceId](const QJsonObject& frame) {
@@ -109,7 +109,7 @@ void ProviderSettingsController::runtimeCall(const QString& instanceId, const QS
   m_installError.remove(instanceId);
   publish();
   const quint64 following = m_following;
-  m_client->call(m_followed, method, payload, [this, instanceId, following](const QJsonValue&, const std::optional<QString>& error) {
+  m_client->call(this, m_followed, method, payload, [this, instanceId, following](const QJsonValue&, const std::optional<QString>& error) {
     if (m_following != following) return;
     m_busy.remove(instanceId);
     if (error) m_installError.insert(instanceId, error->isEmpty() ? QStringLiteral("Provider setup failed. Try again.") : *error);

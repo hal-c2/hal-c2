@@ -199,7 +199,7 @@ void PullRequestListController::load() {
   m_answers = answers;
   for (const QString& environmentId : answers.keys()) {
     if (answers.value(environmentId).status != QLatin1String("loading")) continue;
-    m_client->call(environmentId, QStringLiteral("pullRequests.list"), input(environmentId),
+    m_client->call(this, environmentId, QStringLiteral("pullRequests.list"), input(environmentId),
                    [this, generation, environmentId](const QJsonValue& result, const std::optional<QString>& error) {
                      if (generation != m_generation || !m_answers.contains(environmentId)) return;
                      Answer& answer = m_answers[environmentId];
@@ -231,7 +231,7 @@ void PullRequestListController::refresh() {
     if (!m_store->environmentOnline(environmentId)) continue;
     // Forgetting cached answers bumps the refresh revision too; the read
     // after every environment has forgotten is the one that counts.
-    m_client->call(environmentId, QStringLiteral("pullRequests.invalidate"), QJsonObject(),
+    m_client->call(this, environmentId, QStringLiteral("pullRequests.invalidate"), QJsonObject(),
                    [this, remaining](const QJsonValue&, const std::optional<QString>&) {
                      if (--*remaining == 0) load();
                    });
@@ -254,7 +254,7 @@ void PullRequestListController::subscribe() {
     if (m_subscriptions.contains(environmentId) || !m_store->environmentOnline(environmentId)) continue;
     const QJsonObject shape{{QStringLiteral("type"), QStringLiteral("pullRequestRefreshes")},
                             {QStringLiteral("environment"), environmentId}};
-    m_subscriptions.insert(environmentId, m_client->subscribe(shape, [this, environmentId](const QJsonObject& frame) {
+    m_subscriptions.insert(environmentId, m_client->subscribe(this, shape, [this, environmentId](const QJsonObject& frame) {
       if (frame.value(QLatin1String("t")).toString() != QLatin1String("pullRequestRefreshes")) return;
       const int revision = frame.value(QLatin1String("revision")).toInt();
       // The first frame is where the node is now; only a later one is news.
@@ -301,7 +301,7 @@ void PullRequestListController::open(const QString& key) {
   const QString number = QStringLiteral("#%1").arg(entry.value(QStringLiteral("number")).toInt());
   m_notice.clear();
   publish();
-  m_client->call(environmentId, QStringLiteral("pullRequests.linkedThreads"), reference,
+  m_client->call(this, environmentId, QStringLiteral("pullRequests.linkedThreads"), reference,
                  [this, key, environmentId, number](const QJsonValue& result, const std::optional<QString>& error) {
                    if (!m_open) return;
                    if (error) {

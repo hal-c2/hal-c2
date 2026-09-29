@@ -14,6 +14,10 @@ Window {
 
     // Whether the thread list is hidden (LayoutController, sidebar.toggle).
     readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
+    // The app's zoom (LayoutController, mod+= / mod+- / mod+0): the body
+    // scales, and the menu hosts and overlays stay in window coordinates, so
+    // a menu opened at a pointer's scenePosition lands under it.
+    readonly property real zoom: Shell.state.layout ? (Shell.state.layout.zoom ?? 1) : 1
     // Where the window is (NavigationController).
     readonly property var route: Shell.state.route ?? null
     readonly property bool settingsActive: route !== null && route.kind === "settings"
@@ -58,7 +62,11 @@ Window {
     Item {
         id: body
 
-        anchors.fill: parent
+        objectName: "shellBody"
+        width: root.width / root.zoom
+        height: root.height / root.zoom
+        scale: root.zoom
+        transformOrigin: Item.TopLeft
     }
 
     ContextMenuHost {
@@ -66,6 +74,7 @@ Window {
     }
 
     ContextMenuHost {
+        objectName: "shellMenuHost"
         surfaceId: "shell"
         stateKey: "menu"
         selectAction: "menu.select"
@@ -93,6 +102,30 @@ Window {
                     themeEditor.close();
                 }
             }
+        }
+    }
+
+    // The quit shortcut's hint (QuitController): hold, or press again.
+    Rectangle {
+        readonly property var hint: Shell.state.quitHint ?? null
+
+        objectName: "quitHint"
+        visible: hint !== null
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: Math.round(root.height * 0.22)
+        width: quitHintText.implicitWidth + 64
+        height: quitHintText.implicitHeight + 32
+        radius: height / 2
+        color: Qt.rgba(0.25, 0.25, 0.25, 0.95)
+
+        Text {
+            id: quitHintText
+
+            anchors.centerIn: parent
+            text: parent.hint ? parent.hint.message : ""
+            color: "white"
+            font.pixelSize: 24
+            font.bold: true
         }
     }
 

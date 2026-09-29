@@ -1,7 +1,9 @@
 #include "World.h"
 
 #include <QDateTime>
+#include <QCoreApplication>
 #include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocale>
@@ -36,10 +38,7 @@ void World::start() {
   m_native = std::make_unique<NativeShell>(m_bridge.get());
   m_native->client()->setRetryDelays({20});
   m_native->sidebar()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
-  m_native->controller<NavigationController>()->setStorePath(m_home.filePath(QStringLiteral("state/shell-route.json")));
-  m_native->controller<DraftController>()->setStorePath(m_home.filePath(QStringLiteral("data/shell-drafts.json")));
-  m_native->controller<ComposerController>()->setStorePath(m_home.filePath(QStringLiteral("data/shell-composer.json")));
-  m_native->controller<RightPanelController>()->setStorePath(m_home.filePath(QStringLiteral("state/shell-panel.json")));
+  m_native->setStoreDirs(m_home.filePath(QStringLiteral("state")), m_home.filePath(QStringLiteral("data")));
   // The shell runs its own local node, so local folders are its to open.
   m_bridge->setLocalFolderImportEnabled(true);
   m_native->controller<SettingsController>()->setDevicePath(QDir(configDir()).filePath(QStringLiteral("preferences.json")));
@@ -60,10 +59,35 @@ void World::start() {
   setTime(m_now);
   QObject::connect(m_bridge.get(), &ShellBridge::actionRequested, m_bridge.get(),
                    [this](const QString& type, const QVariant& payload) { onPageAction(type, payload.toMap()); });
+  QObject::connect(m_native.get(), &NativeShell::lastWindowClosed, m_native.get(), [this] { ++lastWindowClosed; });
+  m_native->restoreWindows();
+}
+
+ShellWindows& World::showWindows() {
+  if (!m_windows) {
+    const QString dir = m_home.filePath(QStringLiteral("windows"));
+    QDir().mkpath(dir);
+    QFile shell(QDir(dir).filePath(QStringLiteral("shell.qml")));
+    if (!shell.exists() && shell.open(QIODevice::WriteOnly)) shell.write("import QtQuick\nWindow { visible: true }\n");
+    shell.close();
+    m_windows = std::make_unique<ShellWindows>(m_native.get(), ShellRuntime::Options{dir, {}}, m_theme.get());
+    m_windows->start();
+  }
+  return *m_windows;
+}
+
+void World::closeWindow(NativeWindow* window) {
+  ShellRuntime* runtime = showWindows().runtime(window);
+  expect(runtime && runtime->window(), QStringLiteral("the window %1 is not on screen").arg(window->id()));
+  runtime->window()->close();
+  // The shell closes it once the window's own close is over.
+  QCoreApplication::sendPostedEvents();
+  QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 }
 
 void World::restart() {
   brick.reset();
+  m_windows.reset();
   m_theme.reset();
   m_native.reset();
   m_bridge.reset();
@@ -139,7 +163,7 @@ void World::waitFor(const std::function<bool()>& condition, const QString& what)
 
 void World::sync() {
   bool done = false;
-  m_native->client()->call(node.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
+  m_native->client()->call(m_native.get(), node.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
                           [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
   waitFor([&done] { return done; }, QStringLiteral("a round trip through the node"));
 }

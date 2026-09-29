@@ -248,7 +248,7 @@ private:
     command.insert(QStringLiteral("type"), QStringLiteral("project.update"));
     command.insert(QStringLiteral("projectId"), member.id);
     const QPointer<ProjectSettingsController> self(this);
-    m_client->call(member.environmentId, QStringLiteral("projects.mutate"), command,
+    m_client->call(this, member.environmentId, QStringLiteral("projects.mutate"), command,
                    [self, rest, fields, failureTitle, several, member](const QJsonValue&, const std::optional<QString>& error) {
                      if (!self) return;
                      if (error) {

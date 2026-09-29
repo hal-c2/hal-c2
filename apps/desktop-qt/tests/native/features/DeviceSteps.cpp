@@ -554,6 +554,7 @@ bool near(double value, double wanted) {
 }
 
 const Steps steps([] {
+  Brick::registerSingletons();
   const QString q = kQuoted;
 
   // The environment's devices.

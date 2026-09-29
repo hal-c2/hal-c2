@@ -279,7 +279,7 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
     if (m_followed.isEmpty()) return true;
     ++m_refreshing;
     publish();
-    m_client->call(m_followed, QStringLiteral("server.refreshProviders"), QJsonObject{{QStringLiteral("refreshModels"), true}},
+    m_client->call(this, m_followed, QStringLiteral("server.refreshProviders"), QJsonObject{{QStringLiteral("refreshModels"), true}},
                    [this](const QJsonValue&, const std::optional<QString>& error) {
                      --m_refreshing;
                      if (error) {
@@ -422,7 +422,7 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
       const quint64 following = m_following;
       m_busy.insert(instanceId);
       publish();
-      m_client->call(environmentId, QStringLiteral("provider.auth.respond"),
+      m_client->call(this, environmentId, QStringLiteral("provider.auth.respond"),
                      QJsonObject{{QStringLiteral("instanceId"), instanceId},
                                  {QStringLiteral("flowId"), auth.value(QLatin1String("flowId"))},
                                  {QStringLiteral("interactionId"), interaction.value(QLatin1String("id"))},
@@ -447,7 +447,7 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
     const QString elicitationId = pending.value(QLatin1String("elicitationId")).toString();
     if (elicitationId.isEmpty() || !(url.startsWith(QLatin1String("https://")) || url.startsWith(QLatin1String("http://")))) return true;
     m_bridge->openExternal(QUrl(url));
-    m_client->call(m_followed, QStringLiteral("server.acceptAcpRegistryUrlAuth"),
+    m_client->call(this, m_followed, QStringLiteral("server.acceptAcpRegistryUrlAuth"),
                    QJsonObject{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("elicitationId"), elicitationId}},
                    [this](const QJsonValue& result, const std::optional<QString>& error) {
                      auto* toasts = NativeShell::of(this)->controller<ToastController>();
@@ -486,7 +486,7 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
     if (install) request.insert(QStringLiteral("targetVersion"), target);
     m_updating.insert(instanceId);
     publish();
-    m_client->call(m_followed, QStringLiteral("server.updateProvider"), request,
+    m_client->call(this, m_followed, QStringLiteral("server.updateProvider"), request,
                    [this, instanceId, name](const QJsonValue&, const std::optional<QString>& error) {
                      m_updating.remove(instanceId);
                      if (error) {
@@ -585,7 +585,7 @@ void ProviderSettingsController::followAuth() {
   }
   for (const QString& instanceId : std::as_const(wanted)) {
     if (m_auth.contains(instanceId)) continue;
-    m_auth.insert(instanceId, m_client->subscribe({{QStringLiteral("type"), QStringLiteral("providerAuth")},
+    m_auth.insert(instanceId, m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("providerAuth")},
                                                    {QStringLiteral("node"), node},
                                                    {QStringLiteral("instanceId"), instanceId}},
                                                   [this, instanceId](const QJsonObject& frame) {
@@ -666,7 +666,7 @@ void ProviderSettingsController::call(const QString& instanceId, const QString& 
   publish();
   const QString environmentId = m_followed;
   const quint64 following = m_following;
-  m_client->call(environmentId, method, payload,
+  m_client->call(this, environmentId, method, payload,
                  [this, instanceId, following, failure](const QJsonValue&, const std::optional<QString>& error) {
                    if (m_following != following) return;
                    m_busy.remove(instanceId);
@@ -681,7 +681,7 @@ void ProviderSettingsController::sendTerminal(const QString& instanceId) {
   if (queue.isEmpty()) return;
   m_terminalSending.insert(instanceId);
   const QString environmentId = m_followed;
-  m_client->call(environmentId, QStringLiteral("provider.auth.respond"), queue.takeFirst(),
+  m_client->call(this, environmentId, QStringLiteral("provider.auth.respond"), queue.takeFirst(),
                  [this, instanceId, environmentId](const QJsonValue&, const std::optional<QString>& error) {
                    m_terminalSending.remove(instanceId);
                    if (m_followed != environmentId) return;

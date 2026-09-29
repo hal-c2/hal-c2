@@ -90,6 +90,10 @@ ComboBox {
     }
 
     popup: Popup {
+        // Placed through the zoomed body: scaled about that corner, it draws
+        // as the combo's child would.
+        scale: Shell.state.layout?.zoom ?? 1
+        transformOrigin: Item.TopLeft
         y: control.height + 4
         width: Math.max(control.width, 160)
         implicitHeight: Math.min(contentItem.implicitHeight + 8, 320)

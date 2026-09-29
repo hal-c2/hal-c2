@@ -70,7 +70,7 @@ void ProviderSettingsController::acpCall(const QString& instanceId, const QStrin
   publish();
   const QString environmentId = m_followed;
   const quint64 following = m_following;
-  m_client->call(environmentId, method, payload,
+  m_client->call(this, environmentId, method, payload,
                  [this, instanceId, following, failure, done](const QJsonValue& result, const std::optional<QString>& error) {
                    // The answer may come after the user moved on, and back.
                    if (m_following != following) return;

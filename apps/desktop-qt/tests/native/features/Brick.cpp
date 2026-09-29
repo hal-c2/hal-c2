@@ -19,7 +19,9 @@ QObject* owned(QJSEngine* engine, QObject* object) {
   return object;
 }
 
-void registerSingletons() {
+}  // namespace
+
+void Brick::registerSingletons() {
   static const bool registered = [] {
     qmlRegisterSingletonType<QObject>("HalC2.Shell", 1, 0, "Shell", [](QQmlEngine*, QJSEngine* engine) { return owned(engine, &current->bridge()); });
     qmlRegisterSingletonType<QObject>("HalC2.Shell", 1, 0, "Theme", [](QQmlEngine*, QJSEngine* engine) { return owned(engine, &current->theme()); });
@@ -30,6 +32,8 @@ void registerSingletons() {
   }();
   Q_UNUSED(registered);
 }
+
+namespace {
 
 // Repeater's delegates are only the item tree's children, not QObject children.
 QQuickItem* findItem(QQuickItem* item, const QString& objectName) {

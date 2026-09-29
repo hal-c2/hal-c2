@@ -12,7 +12,11 @@
 // (forwarded as `keybinding.press`, or focused and handling its own keydown)
 // and the page's keymap resolves it to that command.
 
+#include <QCoreApplication>
 #include <QJsonArray>
+#include <QKeyEvent>
+#include <QKeySequence>
+#include <QWindow>
 #include <QJsonObject>
 #include <QRegularExpression>
 
@@ -166,6 +170,20 @@ QString focusName(const QVariantMap& focus) {
   return QStringLiteral("window");
 }
 
+// The window key events go to; it notes the ones that reach it.
+class KeyWindow : public QWindow {
+public:
+  bool reached = false;
+
+protected:
+  void keyPressEvent(QKeyEvent*) override { reached = true; }
+  void keyReleaseEvent(QKeyEvent*) override { reached = true; }
+};
+
+struct KeyTarget {
+  std::unique_ptr<KeyWindow> window = std::make_unique<KeyWindow>();
+};
+
 void pressSequence(World& world, const QString& sequence) {
   ensureShell(world);
   KeyState& state = keys(world);
@@ -178,6 +196,14 @@ void pressSequence(World& world, const QString& sequence) {
   KeybindingController* controller = keymap(world);
   if (sequence.isEmpty()) {
     state.delivered = focusName(state.focus);
+    return;
+  }
+  // The application sees the key before any shortcut does.
+  const QKeyCombination combination = QKeySequence(sequence)[0];
+  const bool reached = sendKey(world, QEvent::KeyPress, combination.key(), combination.keyboardModifiers());
+  sendKey(world, QEvent::KeyRelease, combination.key(), combination.keyboardModifiers());
+  if (!reached) {
+    state.delivered = QStringLiteral("application");
     return;
   }
   if (state.pickerOpen) {
@@ -212,6 +238,18 @@ void pressSequence(World& world, const QString& sequence) {
   if (controller->press(sequence, state.focus) && command.startsWith(QLatin1String("script."))) state.ran.append(command);
   world.sync();
 }
+
+}  // namespace
+
+bool sendKey(World& world, QEvent::Type type, int key, Qt::KeyboardModifiers modifiers, bool autoRepeat) {
+  KeyWindow* window = world.node.part<KeyTarget>().window.get();
+  window->reached = false;
+  QKeyEvent event(type, key, modifiers, QString(), autoRepeat);
+  QCoreApplication::sendEvent(window, &event);
+  return window->reached;
+}
+
+namespace {
 
 void press(World& world, const QString& key) {
   // An open command palette's search field takes mod+1..9 (CommandPalette.qml).

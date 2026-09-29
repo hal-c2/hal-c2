@@ -41,13 +41,16 @@ add_test(NAME BackendProcess COMMAND tst_BackendProcess)
 # The native scenarios of features/, against a fake node: the harness, the fake
 # node, and one steps file per domain (features/*.cpp, picked up on the next build).
 file(GLOB _feature_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/features/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/features/*.h")
-add_executable(tst_Features tst_Features.cpp ${_feature_sources} ../../src/ThemeStore.cpp)
+# Windows are closed as the user closes them, through their ShellRuntime.
+add_executable(tst_Features tst_Features.cpp ${_feature_sources} ../../src/ThemeStore.cpp ../../src/ShellRuntime.cpp ../../src/ShellWindows.cpp)
 target_compile_definitions(tst_Features PRIVATE
+  HAL_C2_APP_VERSION="test"
   HAL_C2_FEATURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../../features"
   HAL_C2_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../qml"
   HAL_C2_DEVICE_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/features/fixtures/device-72x160.h264"
 )
-target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::Quick Qt6::Test)
+target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::GuiPrivate Qt6::Quick Qt6::Test)
+hal_c2_target_platform_window(tst_Features)
 add_test(NAME Features COMMAND tst_Features)
 set_tests_properties(Features PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 add_executable(tst_LocalTranscriber tst_LocalTranscriber.cpp ../../src/LocalTranscriber.cpp)
