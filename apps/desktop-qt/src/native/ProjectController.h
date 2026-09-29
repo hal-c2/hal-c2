@@ -23,7 +23,8 @@ class ShellStore;
 // new one is created and opens a draft. A pathless `project.add` runs the
 // palette's Add project menu (registered here as `project.add`): the online
 // environment to add on when there are several, then its sources (Local
-// folder browses its folders, CommandPaletteController::browse).
+// folder browses its folders, CommandPaletteController::browse; Git URL and
+// the hosting providers clone, ProjectCloneController).
 //
 // `project.remove {projectKey}` (`<environmentId>:<projectId>`, or a logical
 // project's key for its representative) asks first: it publishes

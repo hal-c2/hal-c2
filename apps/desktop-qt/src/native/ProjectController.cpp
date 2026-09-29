@@ -10,6 +10,7 @@
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "NodeClient.h"
+#include "ProjectCloneController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "SidebarController.h"
@@ -45,7 +46,7 @@ void ProjectController::activate() {
   m_active = true;
   auto* commands = NativeShell::of(this)->controller<KeybindingController>()->commands();
   // The web's Add project: an environment first when there is a choice, then
-  // how to add (only a local folder so far; cloning is not native yet).
+  // how to add: a local folder, or a clone (ProjectCloneController).
   const auto sources = [this](const QString& environmentId) {
     CommandRegistry::Choice folder{QStringLiteral("local-folder"), tr("Local folder"), tr("Browse a folder on disk")};
     folder.terms = {QStringLiteral("folder"), QStringLiteral("directory"), QStringLiteral("browse")};
@@ -54,7 +55,8 @@ void ProjectController::activate() {
       NativeShell::of(this)->controller<CommandPaletteController>()->browse(
           environmentId, [this, environmentId](const QString& path) { addFolder(environmentId, path); });
     };
-    return QList<CommandRegistry::Choice>{folder};
+    return QList<CommandRegistry::Choice>{folder} +
+           NativeShell::of(this)->controller<ProjectCloneController>()->sources(environmentId);
   };
   commands->addMenu(kAdd, tr("Add project"), [this, sources] {
     QStringList online;

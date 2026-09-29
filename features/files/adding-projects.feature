@@ -13,6 +13,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/HomePage.qml
 #   apps/desktop-qt/src/ShellBridge.cpp (project.folder.open, localDirectoryPath)
 #   apps/desktop-qt/src/native/ProjectController.cpp (opens a local folder through projects.mutate)
+#   apps/desktop-qt/src/native/ProjectCloneController.cpp (clone toasts: progress, cancel, retry, open, remove)
 #   apps/tui/src/components/AddProjectOverlay.tsx
 #   apps/tui/src/components/ChatView.tsx (add project flow)
 #   apps/mobile/src/features/projects/AddProjectScreen.tsx
@@ -206,7 +207,7 @@ Feature: Adding projects
         | Resolving deltas: 100% (3/3), done.   | resolving | 100     |
         | Updating files:  80% (8/10)           | checkout  | 80      |
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: Clone progress is shown while the user keeps working
       Given a clone of "acme/shop" is receiving objects at 45 percent
       When the user looks at the app
@@ -220,7 +221,7 @@ Feature: Adding projects
       Then the clone is no longer reported
       And the project "shop" stays with its files
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: A finished clone offers to open its project
       Given a clone of "acme/shop" finished
       When the user looks at the app
@@ -259,7 +260,7 @@ Feature: Adding projects
       When the user retries the clone
       Then the clone is reported as running
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: A failed or cancelled clone offers to remove the project it created
       Given a clone of "acme/shop" failed
       When the user removes the project from the clone's failure notice
