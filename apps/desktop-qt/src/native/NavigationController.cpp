@@ -24,18 +24,18 @@ const NativeControllerRegistrar<NavigationController> registrar(QStringLiteral("
 constexpr qsizetype kBackStackLimit = 50;
 
 const QStringList kKinds{
-    QStringLiteral("home"),     QStringLiteral("thread"),       QStringLiteral("draft"), QStringLiteral("newThread"),
-    QStringLiteral("settings"), QStringLiteral("pullRequests"), QStringLiteral("usage"),
+    QStringLiteral("home"),         QStringLiteral("thread"), QStringLiteral("draft"), QStringLiteral("settings"),
+    QStringLiteral("pullRequests"), QStringLiteral("usage"),
 };
 
 QVariant nullable(const QString& value) {
   return value.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(value);
 }
 
-// Home and a new thread are on the way somewhere: the page lands in a draft
-// from either, and back should not return to the landing.
+// Home is on the way somewhere: the window lands in a draft from it, and back
+// should not return to the landing.
 bool passesThrough(const NavigationController::Route& route) {
-  return route.kind == QLatin1String("home") || route.kind == QLatin1String("newThread");
+  return route.kind == QLatin1String("home");
 }
 
 }  // namespace
@@ -52,7 +52,6 @@ std::optional<NavigationController::Route> NavigationController::Route::fromVari
   Route clean = of(route.kind);
   if (route.kind == QLatin1String("thread")) clean.threadKey = route.threadKey;
   if (route.kind == QLatin1String("draft")) clean.draftId = route.draftId;
-  if (route.kind == QLatin1String("newThread")) clean.projectKey = route.projectKey;
   if (route.kind == QLatin1String("settings")) clean.section = route.section;
   return clean;
 }
@@ -275,7 +274,7 @@ void NavigationController::publish() {
   QString title;
   if (m_route.kind == QLatin1String("thread")) {
     if (const auto thread = m_store->thread(m_route.threadKey)) title = thread->title;
-  } else if (m_route.kind == QLatin1String("draft") || m_route.kind == QLatin1String("newThread")) {
+  } else if (m_route.kind == QLatin1String("draft")) {
     title = QStringLiteral("New thread");
   } else if (m_route.kind == QLatin1String("settings")) {
     title = QStringLiteral("Settings");
@@ -300,8 +299,7 @@ void NavigationController::reveal(const QString& target) {
 }
 
 void NavigationController::save() const {
-  // A new thread is on its way to a draft; the draft is what to come back to.
-  if (m_storePath.isEmpty() || m_route.kind == QLatin1String("newThread")) return;
+  if (m_storePath.isEmpty()) return;
   QDir().mkpath(QFileInfo(m_storePath).absolutePath());
   QSaveFile file(m_storePath);
   if (!file.open(QIODevice::WriteOnly)) return;

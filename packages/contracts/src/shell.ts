@@ -118,15 +118,7 @@ export type ShellNativeState = typeof ShellNativeState.Type;
  * a settings path; the shell's own settings pages have paths the page lacks.
  */
 export const ShellRoute = Schema.Struct({
-  kind: Schema.Literals([
-    "home",
-    "thread",
-    "draft",
-    "newThread",
-    "settings",
-    "pullRequests",
-    "usage",
-  ]),
+  kind: Schema.Literals(["home", "thread", "draft", "settings", "pullRequests", "usage"]),
   threadKey: Schema.NullOr(Schema.String),
   draftId: Schema.NullOr(Schema.String),
   projectKey: Schema.NullOr(Schema.String),

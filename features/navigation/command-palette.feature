@@ -217,6 +217,20 @@ Feature: Command palette
       And the command palette is closed
 
     @desktop
+    Scenario: Choosing a project opens its latest thread
+      Given the project "docs-site" has the threads "Write intro" and "Fix links"
+      When the user searches the palette for "docs-site"
+      And the user moves the highlight to "docs-site" and presses Enter
+      Then the thread "Fix links" opens
+
+    @desktop
+    Scenario: Choosing a project with no threads starts a new thread in it
+      When the user searches the palette for "theme-lab"
+      And the user moves the highlight to "theme-lab" and presses Enter
+      Then a new thread starts in "theme-lab"
+      And the command palette is closed
+
+    @desktop
     Scenario: A number shortcut runs the Nth entry
       Given the command palette is open
       When the user presses mod+3

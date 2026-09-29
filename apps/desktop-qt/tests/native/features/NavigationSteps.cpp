@@ -84,9 +84,6 @@ const Steps steps([] {
   step(QStringLiteral("the window shows the draft %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expectRoute(world, QStringLiteral("draft"), QStringLiteral("draftId"), c[0]);
   });
-  step(QStringLiteral("the window shows a new thread in %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    expectRoute(world, QStringLiteral("newThread"), QStringLiteral("projectKey"), c[0]);
-  });
   step(QStringLiteral("the window shows settings"), [](World& world, const Captures&, const Table&) {
     expectRoute(world, QStringLiteral("settings"));
   });

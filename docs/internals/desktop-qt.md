@@ -889,13 +889,12 @@ route. When hosted, `AppSidebarLayout` renders no sidebar on any route.
 
 `NavigationController` owns where the window is once the shell has its node:
 `route` is `{kind, threadKey, draftId, projectKey, section, title,
-canGoBack, target, targetSeq}` with `kind` one of `home`, `thread`, `draft`, `newThread`,
-`settings`, `pullRequests`, `usage` (the `ShellRoute` contract plus
+canGoBack, target, targetSeq}` with `kind` one of `home`, `thread`, `draft`, `settings`,
+`pullRequests`, `usage` (the `ShellRoute` contract plus
 `title`, `canGoBack` and the settings search's target). `ShellWindow` titles the window from `title` and derives
 `settingsActive` and `settingsSection` from it; the sidebar's active row and the
-composer's target thread come from it too. It keeps a back stack (home and a
-new thread are passed through, and moving between settings sections is one
-step) and writes the last route to `shell-route.json` in the shell's state
+composer's target thread come from it too. It keeps a back stack (home is
+passed through, and moving between settings sections is one step) and writes the last route to `shell-route.json` in the shell's state
 directory; the next launch reopens it unless the thread was deleted or the
 user clicked somewhere in the page before the node answered.
 

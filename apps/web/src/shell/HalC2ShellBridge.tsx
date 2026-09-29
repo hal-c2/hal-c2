@@ -283,9 +283,6 @@ export function HalC2ShellBridge() {
         void router.navigate({ to: "/draft/$draftId", params: { draftId } });
         return;
       }
-      case "newThread":
-        newThreadIn(route.projectKey ?? undefined);
-        return;
       case "settings":
         void router.navigate({
           to: route.section !== null && isSettingsPath(route.section) ? route.section : "/settings",

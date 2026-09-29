@@ -265,6 +265,10 @@ const Steps steps([] {
          world.sync();
          for (const QString& title : {c[0], c[1]}) addThread(world, title, {{QStringLiteral("projectId"), c[2]}});
        });
+  // Threads in one of the background's other projects, oldest first.
+  step(QStringLiteral("the project %1 has the threads %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    for (const QString& title : {c[1], c[2]}) addThread(world, title, {{QStringLiteral("projectId"), c[0]}});
+  });
   // The sidebar's Search button (tst_Sidebar.qml).
   step(QStringLiteral("the user starts a search from the thread list"), [](World& world, const Captures&, const Table&) {
     palette(world).show();

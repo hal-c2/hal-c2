@@ -69,6 +69,8 @@ public:
   // Opens the project's draft, creating it the first time; returns its id, or
   // nothing when a new draft could not be kept (its store is not writable).
   QString start(const QString& environmentId, const QString& projectId);
+  // Opens the draft of the logical project `group` (see startIn below).
+  void startIn(const sidebar::ProjectGroup& group);
   // On `home`, opens the most recent project's draft (see above).
   void land();
   // Deletes the draft; every window that shows it leaves it.
@@ -93,7 +95,6 @@ private:
   std::optional<std::pair<QString, QString>> shownProject() const;
   // The logical project a new thread starts in without being told.
   const sidebar::ProjectGroup* defaultGroup() const;
-  void startIn(const sidebar::ProjectGroup& group);
   void present();
   void openMenu(const QString& id, double x, double y);
   // Drops drafts whose thread now exists or whose project is gone.

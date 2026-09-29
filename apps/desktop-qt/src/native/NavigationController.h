@@ -16,8 +16,8 @@ class ShellStore;
 // Where the window is: the shell's route, its back stack, and the last route
 // kept across restarts (setStorePath). Publishes `route`: {kind, threadKey,
 // draftId, projectKey, section, title, canGoBack, target, targetSeq}, where
-// kind is one of home, thread, draft, newThread, settings (section: the
-// settings path), pullRequests, usage. `target` is the setting a settings
+// kind is one of home, thread, draft, settings (section: the settings path),
+// pullRequests, usage. `target` is the setting a settings
 // search result opened (its objectName on the native page) until the route
 // moves on; `targetSeq` counts the openings, so opening it again reveals it
 // again.
@@ -46,7 +46,6 @@ public:
 
     static Route thread(const QString& key) { return {QStringLiteral("thread"), key, {}, {}, {}}; }
     static Route draft(const QString& id) { return {QStringLiteral("draft"), {}, id, {}, {}}; }
-    static Route newThread(const QString& projectKey = {}) { return {QStringLiteral("newThread"), {}, {}, projectKey, {}}; }
     static Route settings(const QString& section = {}) { return {QStringLiteral("settings"), {}, {}, {}, section}; }
     static Route of(const QString& kind) { return {kind, {}, {}, {}, {}}; }
     static std::optional<Route> fromVariant(const QVariant& value);
