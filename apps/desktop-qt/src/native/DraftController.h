@@ -26,8 +26,8 @@ class ShellStore;
 // projectId and threadId, and reports a draft it opened itself the same way
 // (`route.open`), which adopts it.
 //
-// The draft's text still lives in the page's composer; `text` is where it
-// goes once the composer keeps it natively.
+// The draft's text is `text`: ComposerController saves the composer's edits
+// on a draft route here, and reopens the draft with it.
 class DraftController : public QObject, public NativeController {
   Q_OBJECT
 

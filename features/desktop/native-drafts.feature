@@ -12,7 +12,7 @@ Feature: The desktop shell keeps its own drafts
   A new thread is a draft until its first message is sent. The Qt shell keeps its drafts on
   this machine, one per project folder, lists them at the top of the sidebar and opens them
   itself; the page draws the draft's composer for the thread id the draft will become. The
-  draft's text still lives in the page's composer.
+  draft's text is kept with the draft.
 
   Background:
     Given the time is "2026-09-23T10:00:00Z"

@@ -160,7 +160,6 @@ void World::onPageAction(const QString& type, const QVariantMap& payload) {
   if (type == QLatin1String("composer.text.set") &&
       payload.value(QStringLiteral("target")) == composer.value(QStringLiteral("target"))) {
     composer.insert(QStringLiteral("text"), payload.value(QStringLiteral("text")));
-    composer.insert(QStringLiteral("nativeSend"), QVariant::fromValue(nullptr));
     publishComposer();
   }
 }
