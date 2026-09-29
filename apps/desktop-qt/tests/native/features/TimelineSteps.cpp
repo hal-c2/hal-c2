@@ -39,9 +39,9 @@ void sendSnapshot(FakeNode& node, int id, const QString& thread) {
 const FakeNode::Extension streams([](FakeNode& node) {
   node.onShape(QStringLiteral("stream"), [&node](int id, const QJsonObject& shape) {
     FakeStreams& fake = node.part<FakeStreams>();
-    const QString target = shape.value(QLatin1String("node")).toString();
+    const QString target = shape.value(QLatin1String("environment")).toString();
     if (fake.offline.contains(target)) {
-      node.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("unknown node")}});
+      node.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("unknown environment")}});
       node.forget(id);
       return;
     }
@@ -270,7 +270,7 @@ const Steps steps([] {
     world.sync();
     FakeStreams& fake = world.node.part<FakeStreams>();
     fake.thread = kPeerThread;
-    fake.node = kPeer;
+    fake.environment = kPeerEnvironment;
     look(world, kPeerEnvironment + QLatin1Char(':') + kPeerThread);
   });
   step(QStringLiteral("the agent has answered %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -281,20 +281,50 @@ const Steps steps([] {
   const auto setPeer = [](World& world, bool online) {
     FakeStreams& fake = world.node.part<FakeStreams>();
     if (online) {
-      fake.offline.remove(fake.node);
+      fake.offline.remove(fake.environment);
     } else {
-      fake.offline.insert(fake.node);
+      fake.offline.insert(fake.environment);
       for (const int id : followers(world, fake.thread)) {
         world.node.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("unknown node")}});
         world.node.forget(id);
       }
     }
     world.node.send({{QStringLiteral("t"), QStringLiteral("shell.node")}, {QStringLiteral("id"), world.node.subscribers(QStringLiteral("shell")).value(0)},
-                     {QStringLiteral("node"), fake.node}, {QStringLiteral("online"), online}});
+                     {QStringLiteral("node"), kPeer}, {QStringLiteral("online"), online}});
     world.sync();
   };
   step(QStringLiteral("that node leaves the cluster"), [setPeer](World& world, const Captures&, const Table&) { setPeer(world, false); });
   step(QStringLiteral("that node rejoins the cluster"), [setPeer](World& world, const Captures&, const Table&) { setPeer(world, true); });
+  // A thread on an environment the node is linked to, reached through it.
+  step(QStringLiteral("the user is looking at a thread on an environment the node is linked to"), [](World& world, const Captures&, const Table&) {
+    const QString environment = QStringLiteral("env-c");
+    const QString thread = QStringLiteral("thread-linked");
+    world.node.sendLinkRow(environment, thread,
+                           {{QStringLiteral("id"), thread}, {QStringLiteral("title"), QStringLiteral("Linked")}, {QStringLiteral("projectId"), kProject},
+                            {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
+    world.node.link(environment);
+    world.sync();
+    FakeStreams& fake = world.node.part<FakeStreams>();
+    fake.thread = thread;
+    fake.environment = environment;
+    look(world, environment + QLatin1Char(':') + thread);
+  });
+  const auto setLink = [](World& world, bool online) {
+    FakeStreams& fake = world.node.part<FakeStreams>();
+    if (online) {
+      fake.offline.remove(fake.environment);
+    } else {
+      fake.offline.insert(fake.environment);
+      for (const int id : followers(world, fake.thread)) {
+        world.node.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("unreachable")}});
+        world.node.forget(id);
+      }
+    }
+    world.node.setLinkProblem(fake.environment, online ? QString() : QStringLiteral("unreachable"));
+    world.sync();
+  };
+  step(QStringLiteral("that environment becomes unreachable"), [setLink](World& world, const Captures&, const Table&) { setLink(world, false); });
+  step(QStringLiteral("that environment is reachable again"), [setLink](World& world, const Captures&, const Table&) { setLink(world, true); });
   step(QStringLiteral("the thread says its node cannot be reached"), [](World& world, const Captures&, const Table&) {
     TimelineModel& model = timeline(world);
     world.waitFor([&] { return model.status() == QLatin1String("unreachable"); }, [&] { return describe(model); });

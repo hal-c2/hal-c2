@@ -23,7 +23,7 @@ bool removed(const QJsonObject& row) {
 }  // namespace
 
 ShellStore::ShellStore(NodeClient* client, QObject* parent) : QObject(parent) {
-  client->subscribe({{QStringLiteral("type"), QStringLiteral("shell")}},
+  client->subscribe({{QStringLiteral("type"), QStringLiteral("shell")}, {QStringLiteral("links"), true}},
                     [this](const QJsonObject& frame) { onFrame(frame); });
 }
 
@@ -65,7 +65,7 @@ std::optional<sidebar::Project> ShellStore::project(const QString& key) const {
 
 bool ShellStore::servesEnvironment(const QString& environmentId) const {
   for (const Node& node : m_nodes) {
-    if (node.environmentId == environmentId) return true;
+    if (node.link.isEmpty() && node.environmentId == environmentId) return true;
   }
   return false;
 }
@@ -74,12 +74,49 @@ bool ShellStore::reaches(const QString& environmentId) const {
   return m_linked.contains(environmentId) || servesEnvironment(environmentId);
 }
 
+// The whole list of links: a link that left takes its nodes and rows with it.
+// A snapshot's links carry their nodes and rows; `shell.links` does not, and
+// leaves the rows of the links it keeps as they are.
 void ShellStore::setLinks(const QJsonArray& links) {
   m_links = links;
   m_linked.clear();
-  for (const QJsonValue& link : links) {
-    m_linked.insert(
-        link.toObject().value(QLatin1String("environment")).toObject().value(QLatin1String("environmentId")).toString());
+  for (const QJsonValue& value : links) {
+    const QJsonObject link = value.toObject();
+    const QString id = link.value(QLatin1String("environment")).toObject().value(QLatin1String("environmentId")).toString();
+    m_linked.insert(id);
+    for (const QJsonValue& entry : link.value(QLatin1String("nodes")).toArray()) {
+      const QJsonObject node = entry.toObject();
+      const QString key = linkedKey(id, node.value(QLatin1String("node")).toString());
+      setEnvironment(key, node.value(QLatin1String("environment")).toObject());
+      m_nodes[key].link = id;
+      m_nodes[key].online = node.value(QLatin1String("online")).toBool();
+    }
+    for (const QJsonValue& entry : link.value(QLatin1String("rows")).toArray()) {
+      const QJsonArray row = entry.toArray();
+      const QString key = linkedKey(id, row.at(0).toString());
+      m_nodes[key].link = id;
+      putRow(key, row.at(1).toString(), row.at(2).toString(), row.at(3).toObject());
+    }
+  }
+  m_nodes.removeIf(
+      [this](QHash<QString, Node>::iterator node) { return !node->link.isEmpty() && !m_linked.contains(node->link); });
+}
+
+// Rows as `shell.rows` carries them: each [id, kind, fields].
+void ShellStore::putRows(const QString& node, const QJsonArray& rows) {
+  for (const QJsonValue& value : rows) {
+    const QJsonArray row = value.toArray();
+    putRow(node, row.at(0).toString(), row.at(1).toString(), row.at(2).toObject());
+  }
+}
+
+void ShellStore::putRow(const QString& node, const QString& id, const QString& kind, const QJsonObject& fields) {
+  auto* kept = rowsOf(m_nodes[node], kind);
+  if (!kept) return;
+  if (removed(fields)) {
+    kept->remove(id);
+  } else {
+    kept->insert(id, fields);
   }
 }
 
@@ -137,20 +174,27 @@ QJsonObject ShellStore::environment(const QString& environmentId) const {
 
 QString ShellStore::nodeServing(const QString& environmentId) const {
   for (auto it = m_nodes.cbegin(); it != m_nodes.cend(); ++it) {
-    if (it->environmentId == environmentId) return it.key();
+    if (it->link.isEmpty() && it->environmentId == environmentId) return it.key();
   }
   return {};
 }
 
-QString ShellStore::nodeOf(const QString& threadKey) const {
+bool ShellStore::threadOnline(const QString& threadKey) const {
   const qsizetype colon = threadKey.indexOf(QLatin1Char(':'));
-  if (colon <= 0) return {};
+  if (colon <= 0) return false;
   const QString environmentId = threadKey.left(colon);
   const QString threadId = threadKey.mid(colon + 1);
-  for (auto it = m_nodes.cbegin(); it != m_nodes.cend(); ++it) {
-    if (it->environmentId == environmentId && it->threads.contains(threadId)) return it.key();
+  for (const Node& node : m_nodes) {
+    if (node.environmentId == environmentId && node.threads.contains(threadId)) return node.online;
   }
-  return {};
+  return false;
+}
+
+bool ShellStore::environmentOnline(const QString& environmentId) const {
+  for (const Node& node : m_nodes) {
+    if (node.environmentId == environmentId) return node.online;
+  }
+  return false;
 }
 
 sidebar::Capabilities ShellStore::capabilities(const QString& environmentId) const {
@@ -172,8 +216,12 @@ void ShellStore::setEnvironment(const QString& node, const QJsonObject& environm
 
 void ShellStore::onFrame(const QJsonObject& frame) {
   const QString type = frame.value(QLatin1String("t")).toString();
+  // A linked environment's change names its node as that environment does.
+  const auto linked = [&frame] {
+    return linkedKey(frame.value(QLatin1String("link")).toString(), frame.value(QLatin1String("node")).toString());
+  };
   if (type == QLatin1String("shell")) {
-    // The whole cluster, sent on every (re)subscription.
+    // The whole cluster and its links, sent on every (re)subscription.
     m_nodes.clear();
     for (const QJsonValue& value : frame.value(QLatin1String("nodes")).toArray()) {
       const QJsonObject node = value.toObject();
@@ -183,9 +231,7 @@ void ShellStore::onFrame(const QJsonObject& frame) {
     }
     for (const QJsonValue& value : frame.value(QLatin1String("rows")).toArray()) {
       const QJsonArray row = value.toArray();
-      const QJsonObject fields = row.at(3).toObject();
-      auto* rows = rowsOf(m_nodes[row.at(0).toString()], row.at(2).toString());
-      if (rows && !removed(fields)) rows->insert(row.at(1).toString(), fields);
+      putRow(row.at(0).toString(), row.at(1).toString(), row.at(2).toString(), row.at(3).toObject());
     }
     setLinks(frame.value(QLatin1String("links")).toArray());
     m_synchronized = true;
@@ -198,18 +244,20 @@ void ShellStore::onFrame(const QJsonObject& frame) {
   } else if (type == QLatin1String("shell.links")) {
     setLinks(frame.value(QLatin1String("links")).toArray());
   } else if (type == QLatin1String("shell.rows")) {
-    Node& node = m_nodes[frame.value(QLatin1String("node")).toString()];
-    for (const QJsonValue& value : frame.value(QLatin1String("rows")).toArray()) {
-      const QJsonArray row = value.toArray();
-      auto* rows = rowsOf(node, row.at(1).toString());
-      if (!rows) continue;
-      const QJsonObject fields = row.at(2).toObject();
-      if (removed(fields)) {
-        rows->remove(row.at(0).toString());
-      } else {
-        rows->insert(row.at(0).toString(), fields);
-      }
-    }
+    putRows(frame.value(QLatin1String("node")).toString(), frame.value(QLatin1String("rows")).toArray());
+  } else if (type == QLatin1String("shell.linkEnvironment")) {
+    // A node that appears is offline until shell.linkNode says otherwise.
+    const QString key = linked();
+    setEnvironment(key, frame.value(QLatin1String("environment")).toObject());
+    m_nodes[key].link = frame.value(QLatin1String("link")).toString();
+  } else if (type == QLatin1String("shell.linkNode")) {
+    Node& node = m_nodes[linked()];
+    node.link = frame.value(QLatin1String("link")).toString();
+    node.online = frame.value(QLatin1String("online")).toBool();
+  } else if (type == QLatin1String("shell.linkRows")) {
+    const QString key = linked();
+    m_nodes[key].link = frame.value(QLatin1String("link")).toString();
+    putRows(key, frame.value(QLatin1String("rows")).toArray());
   } else {
     return;
   }
