@@ -742,7 +742,8 @@ defmodule HalC2.Claude.ThreadRuntime do
                "modelSelection" => latest["modelSelection"],
                "dispatchMode" => %{"type" => "queue_after_active"},
                "createdBy" => "agent",
-               "creationSource" => "provider"
+               "creationSource" => "provider",
+               "providerWake" => true
              }) do
         Logger.warning("claude wake in #{thread_id} has no run: #{inspect(reason)}")
         send(runtime, :wake_refused)
