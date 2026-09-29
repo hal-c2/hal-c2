@@ -29,8 +29,9 @@ defmodule HalC2.Claude.ThreadRuntime do
   alias HalC2.Claude.Session
   alias HalC2.Orchestration
   alias HalC2.Orchestration.{Entities, NativeSubagent}
+  alias HalC2.StreamState
 
-  @state_version 6
+  @state_version 7
 
   @signed_out "Claude could not authenticate. For subscription login, run `claude auth login` " <>
                 "on this environment's machine, then start a new thread. For API-key " <>
@@ -158,8 +159,11 @@ defmodule HalC2.Claude.ThreadRuntime do
        # Subagents and background commands still running, by tool use id:
        # `%{sub: NativeSubagent handle | nil, item: command item | nil, background: bool}`.
        work: %{},
-       # Claude's task ids -> the tool use id of their work.
-       tasks: %{}
+       # Claude's task ids -> the tool use id of their work, or nil for a task that is
+       # not work (ambient, a foreground command) or has ended.
+       tasks: %{},
+       # The latest turn's ids, which work Claude starts between turns joins.
+       last_ids: nil
      }}
   end
 
@@ -168,7 +172,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:claudeAgent:#{turn.ids.run}")
     launch = Provider.launch(turn.model, Map.get(turn, :options, %{}))
     turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
-    state = %{state | turn: turn, items: %{}, blocks: %{}, interrupted: false}
+    state = %{state | turn: turn, items: %{}, blocks: %{}, interrupted: false, last_ids: ids}
 
     case open_session(state, turn) do
       {:ok, state, turn} ->
@@ -341,6 +345,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        state
        |> Map.put_new(:work, %{})
        |> Map.put_new(:tasks, %{})
+       |> Map.put_new(:last_ids, nil)
        |> Map.put_new(:permission_mode, nil)
        |> Map.put_new(:steered, false)
        |> Map.put_new(:launch, nil)
@@ -631,7 +636,12 @@ defmodule HalC2.Claude.ThreadRuntime do
     %{state | tasks: Map.delete(state.tasks, task["task_id"])}
   end
 
+  # A task Claude started without telling this runtime (between turns, or before it
+  # was upgraded to record them) is recorded on its first progress.
   defp message(%{"type" => "system", "subtype" => "task_progress"} = task, state) do
+    state =
+      if is_map_key(state.tasks, task["task_id"]), do: state, else: task_started(state, task)
+
     text = non_empty(task["summary"], non_empty(task["description"], ""))
 
     case state.work[state.tasks[task["task_id"]]] do
@@ -657,10 +667,45 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
-  defp message(_message, %{turn: nil} = state), do: state
-
+  # Claude starts tasks between turns too: in the turn a task notification wakes it
+  # for, or resuming a subagent (SendMessage).
   defp message(%{"type" => "system", "subtype" => "task_started"} = task, state),
     do: task_started(state, task)
+
+  # Between turns only the work Claude starts is recorded: its subagents and background
+  # commands, and their launches' results.
+  defp message(
+         %{"type" => "assistant", "message" => %{"content" => content}},
+         %{turn: nil} = state
+       )
+       when is_list(content) do
+    case with_ids(state) do
+      %{last_ids: nil} = state ->
+        state
+
+      state ->
+        state = %{state | turn: %{ids: state.last_ids}}
+
+        content
+        |> Enum.filter(&background_launch?/1)
+        |> Enum.reduce(state, &assistant_block(&1, nil, nil, &2))
+        |> Map.put(:turn, nil)
+    end
+  end
+
+  defp message(%{"type" => "user", "message" => %{"content" => content}}, %{turn: nil} = state)
+       when is_list(content) do
+    Enum.reduce(content, state, fn
+      %{"type" => "tool_result", "tool_use_id" => tool_id} = result, state
+      when is_map_key(state.work, tool_id) ->
+        tool_result(state, tool_id, result)
+
+      _, state ->
+        state
+    end)
+  end
+
+  defp message(_message, %{turn: nil} = state), do: state
 
   defp message(%{"type" => "system", "subtype" => "init", "session_id" => session_id}, state) do
     ids = state.turn.ids
@@ -886,7 +931,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     state = flush(state)
 
     sub =
-      NativeSubagent.start(state.turn.ids, tool_id, %{
+      NativeSubagent.start(work_ids(state), tool_id, %{
         "prompt" => input["prompt"],
         "title" => input["description"],
         "model" => input["model"]
@@ -943,11 +988,28 @@ defmodule HalC2.Claude.ThreadRuntime do
         item_result(state, tool_id, result)
 
       work ->
-        if work.background and result["is_error"] != true,
-          do: launched(state, tool_id, work, result),
-          else: work_result(state, tool_id, work, result)
+        cond do
+          result["is_error"] == true or not work.background ->
+            work_result(state, tool_id, work, result)
+
+          # A background subagent runs on; the call that started it (SendMessage's, say)
+          # is done.
+          work.sub ->
+            item_result(state, tool_id, result)
+
+          true ->
+            launched(state, tool_id, work, result)
+        end
     end
   end
+
+  defp background_launch?(%{"type" => "tool_use", "name" => name}) when name in @agent_tools,
+    do: true
+
+  defp background_launch?(%{"type" => "tool_use", "name" => "Bash", "input" => input}),
+    do: input["run_in_background"] == true
+
+  defp background_launch?(_block), do: false
 
   # A background launch's acknowledgement: a command's item leaves the turn's items, so
   # the turn's end does not close it, and keeps running with the acknowledgement as its
@@ -1044,7 +1106,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     cond do
       task["ambient"] == true or task["skip_transcript"] == true ->
-        state
+        %{state | tasks: Map.put(state.tasks, task_id, nil)}
 
       work = state.work[tool] ->
         work = %{work | background: work.background or background?}
@@ -1065,25 +1127,32 @@ defmodule HalC2.Claude.ThreadRuntime do
         }
 
       task["task_type"] == "local_bash" ->
-        state
+        %{state | tasks: Map.put(state.tasks, task_id, nil)}
 
       true ->
-        state = flush(state)
-
-        sub =
-          NativeSubagent.start(state.turn.ids, tool, %{
-            "prompt" => task["prompt"] || task["description"],
-            "title" => task["description"]
-          })
-
-        work = %{sub: sub, item: nil, background: task["is_backgrounded"] != false}
-
-        %{
-          state
-          | work: Map.put(state.work, tool, work),
-            tasks: Map.put(state.tasks, task_id, tool)
-        }
+        subagent_task(with_ids(state), tool, task)
     end
+  end
+
+  # No run to join: nothing is recorded.
+  defp subagent_task(%{turn: nil, last_ids: nil} = state, _tool, _task), do: state
+
+  defp subagent_task(state, tool, %{"task_id" => task_id} = task) do
+    state = flush(state)
+
+    sub =
+      NativeSubagent.start(work_ids(state), tool, %{
+        "prompt" => task["prompt"] || task["description"],
+        "title" => task["description"]
+      })
+
+    work = %{sub: sub, item: nil, background: task["is_backgrounded"] != false}
+
+    %{
+      state
+      | work: Map.put(state.work, tool, work),
+        tasks: Map.put(state.tasks, task_id, tool)
+    }
   end
 
   # Ends the work `which` picks (all of it by default) with `status`.
@@ -1123,9 +1192,41 @@ defmodule HalC2.Claude.ThreadRuntime do
     %{
       state
       | work: Map.delete(state.work, tool),
-        tasks: Map.reject(state.tasks, fn {_task, t} -> t == tool end)
+        tasks: Map.new(state.tasks, fn {task, t} -> {task, if(t != tool, do: t)} end)
     }
   end
+
+  # The ids work joins: the running turn's, or between turns the latest one's.
+  defp work_ids(%{turn: %{ids: ids}}), do: ids
+  defp work_ids(state), do: state.last_ids
+
+  # Fills in the latest turn's ids from the thread when this runtime has not run one
+  # (it started, or was upgraded, after that turn).
+  defp with_ids(%{turn: nil, last_ids: nil} = state) do
+    stream = HalC2.Streams.Server.state(HalC2.Streams.ensure(state.thread_id))
+
+    case stream
+         |> StreamState.list("run")
+         |> Enum.max_by(& &1["ordinal"], fn -> nil end) do
+      nil ->
+        state
+
+      run ->
+        ids = %{
+          driver: driver(),
+          instance: run["providerInstanceId"] || driver(),
+          thread: state.thread_id,
+          run: run["id"],
+          attempt: run["activeAttemptId"],
+          root_node: run["rootNodeId"],
+          provider_thread: run["providerThreadId"]
+        }
+
+        %{state | last_ids: ids}
+    end
+  end
+
+  defp with_ids(state), do: state
 
   defp result_text(content) when is_binary(content), do: content
 

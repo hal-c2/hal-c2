@@ -5,7 +5,7 @@
 #   packages/contracts/src/settings.ts (continueThreadsAfterServerUpdate)
 #   apps/server-ex/lib/hal_c2/orchestration/recovery.ex
 #   apps/server-ex/lib/hal_c2/orchestration/idle_sessions.ex
-#   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (background subagents and commands)
+#   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (background subagents and commands, also between turns)
 #   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts (task_started, task_notification, pendingBackgroundTasks)
 #   apps/server-ex/lib/hal_c2/orchestration/limit_recovery.ex
 #   apps/server-ex/lib/hal_c2/orchestration/turn_watch.ex
@@ -138,6 +138,22 @@ Feature: Recovering from restarts and releasing idle sessions
       | action                        |
       | stops "t1"                    |
       | rewinds "t1" to its first run |
+
+  @node
+  Scenario Outline: A Claude subagent the node first hears of between turns keeps its session
+    Given thread "t1" finished a Claude turn
+    When Claude <starts> between turns
+    And "t1" has had no activity for 30 minutes
+    And the node checks for idle sessions
+    Then the provider process of "t1" keeps running
+    And "t1" lists the subagent "Check the tests" as background work
+    When Claude reports that subagent completed
+    Then "t1" lists no background work
+
+    Examples:
+      | starts                                    |
+      | launches a subagent in the background     |
+      | reports progress on a subagent it resumed |
 
   @node
   Scenario: Background work a stopped node left running is ended at boot
