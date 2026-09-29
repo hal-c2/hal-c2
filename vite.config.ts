@@ -100,6 +100,7 @@ export default defineConfig({
       "apps/desktop-qt/qml/HalC2/Bricks/js/lucide.js",
       // QML-dialect JS (`.pragma library`) the formatter cannot parse.
       "apps/desktop-qt/qml/HalC2/Bricks/js/modelPicker.js",
+      "apps/desktop-qt/qml/HalC2/Bricks/js/panelTabs.js",
       "apps/desktop-qt/qml/HalC2/Bricks/js/providerIcons.js",
       "apps/desktop-qt/qml/HalC2/Bricks/js/settingsPages.js",
       "apps/desktop-qt/qml/HalC2/Bricks/js/settingsRows.js",

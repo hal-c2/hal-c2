@@ -54,11 +54,14 @@ qt_add_qml_module(hal_c2_bricks
     ThemeEditor.qml
     TurnRequests.qml
     ProjectRemovalDialog.qml
+    DiffPanel.qml
+    FilesPanel.qml
     js/lucide.js
     js/modelPicker.js
     js/providerIcons.js
     js/settingsPages.js
     js/settingsRows.js
+    js/panelTabs.js
   RESOURCES
     qmldir
     js/shell-connect.js

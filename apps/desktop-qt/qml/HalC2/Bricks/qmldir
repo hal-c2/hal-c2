@@ -45,3 +45,5 @@ AppearanceSettings 1.0 AppearanceSettings.qml
 ThemeEditor 1.0 ThemeEditor.qml
 TurnRequests 1.0 TurnRequests.qml
 ProjectRemovalDialog 1.0 ProjectRemovalDialog.qml
+DiffPanel 1.0 DiffPanel.qml
+FilesPanel 1.0 FilesPanel.qml
