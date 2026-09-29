@@ -56,13 +56,13 @@ Item {
             compare(Pages.brickFor("/settings/nowhere"), "");
         }
 
-        function test_navListsNativePagesAlwaysAndThePagesWhileListed() {
+        function test_navListsSectionsOnceTheirStateIsThere() {
             const labels = rows => rows.map(section => section.label);
-            compare(labels(Pages.navRows([], {})), ["General", "Appearance", "Keybindings"]);
-            compare(labels(Pages.navRows([{ to: "/settings/snap-shot" }], { cluster: {}, providerSettings: {} })), ["General", "Appearance", "Keybindings", "SnapShots", "Providers", "Cluster"]);
+            compare(labels(Pages.navRows({})), ["General", "Appearance", "Keybindings", "SnapShots"]);
+            compare(labels(Pages.navRows({ cluster: {}, providerSettings: {} })), ["General", "Appearance", "Keybindings", "SnapShots", "Providers", "Cluster"]);
         }
 
-        function test_searchFindsNativeSectionsAndDropsThePagesResultsInThem() {
+        function test_searchFindsSectionsAndTheirSettings() {
             compare(Pages.searchRows("theme", {}).map(section => section.label), ["Theme", "Appearance"]);
             compare(Pages.searchRows("theme", {})[0].targetId, "themes");
             compare(Pages.searchRows("delete confirmation", {})[0].targetId, "settingsRow:confirmThreadDelete");
@@ -71,8 +71,6 @@ Item {
             compare(Pages.searchRows("pairing", {}).length, 0, "Connections waits for its state");
             compare(Pages.searchRows("pairing", { connections: {} })[0].label, "Connections");
             compare(Pages.searchRows("sign out", { providerSettings: {} })[0].label, "Providers");
-            const kept = Pages.pageResults([{ to: "/settings/appearance" }, { to: "/settings/snap-shot" }, { to: "/settings/providers" }]);
-            compare(kept.map(result => result.to), ["/settings/snap-shot"]);
         }
 
         function test_projectGroupingRestoresTheModeUsedBefore() {

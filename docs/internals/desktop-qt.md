@@ -836,16 +836,10 @@ Project section also carries how new threads start (model, permissions,
 workspace, submodules), which the web splits between it and General, since the
 native General page holds only this device's settings.
 
-SnapShots is still HTML: the desktop has no capture helper. The
-root route mounts `ShellSettingsBridge` when hosted, which publishes
-`ShellSettingsState` on every route change: `active` (on `/settings*`), the
-sections in sidebar order, the active one, and search results for the query
-the shell last sent. Picking one of the page's sections replaces the shell's
-section in the route. Actions: `settings.navigate {to}`,
-`settings.openResult {to, targetId}`, `settings.search {query}`, and
-`settings.back`, which is the route's back once the shell has its node and
-history back (else `/`) in the page before. When hosted, `AppSidebarLayout`
-renders no sidebar on any route.
+SnapShots is still HTML: the desktop has no capture helper. The shell's
+settings navigation and search are its own (`js/settingsPages.js`); picking
+SnapShots sets the route and the page follows it there like any other page
+route. When hosted, `AppSidebarLayout` renders no sidebar on any route.
 
 ### `route`
 

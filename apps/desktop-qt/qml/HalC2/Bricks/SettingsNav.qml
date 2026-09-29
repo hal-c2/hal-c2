@@ -5,34 +5,28 @@ import HalC2.Shell
 import "js/settingsPages.js" as Pages
 
 // Settings navigation: sections, search, and a way back. The sections are
-// js/settingsPages.js: the shell's own pages (General, Appearance, Cluster,
-// Connections, ...) are listed once their state is there, the ones the
-// embedded page still renders while it lists them. Picking a native section
-// with an `action` dispatches it; any other navigates the route, which the
-// page follows.
+// js/settingsPages.js, each listed once the state it needs is there. Picking
+// a section with an `action` dispatches it; any other navigates the route.
 Rectangle {
     id: nav
 
-    readonly property var model: Shell.state.settings ?? null
-    readonly property bool active: model !== null && model.active
-    // The section showing: the shell's route once it has one, else the page's.
+    // The section showing, from the shell's route.
     readonly property var route: Shell.state.route ?? null
-    readonly property string currentSection: Pages.resolve(route !== null && route.kind === "settings" ? route.section : model !== null ? model.activeSection : "")
+    readonly property string currentSection: Pages.resolve(route !== null && route.kind === "settings" ? route.section : "")
     readonly property string query: search.text.trim().toLowerCase()
     // Every row says whether it is a search result, so a row never reads the
     // other shape while the query and the rows change together.
     readonly property var rows: {
         const state = Shell.state;
         if (query.length === 0) {
-            return Pages.navRows(model === null ? [] : model.sections, state).map(section => ({
+            return Pages.navRows(state).map(section => ({
                         result: false,
                         to: section.to,
                         label: section.label,
                         action: section.action
                     }));
         }
-        const pageResults = Pages.pageResults(model === null ? [] : model.searchResults);
-        const own = Pages.searchRows(query, state).map(section => ({
+        return Pages.searchRows(query, state).map(section => ({
                     result: true,
                     to: section.to,
                     title: section.label,
@@ -40,9 +34,6 @@ Rectangle {
                     action: section.action,
                     targetId: section.targetId
                 }));
-        return pageResults.map(row => Object.assign({
-                    result: true
-                }, row)).concat(own);
     }
     readonly property color foreground: Theme.palette.color("sidebarForeground", "#e4e4e7")
     readonly property color muted: Theme.palette.color("sidebarMutedForeground", "#8b8b93")
@@ -89,18 +80,7 @@ Rectangle {
             Layout.rightMargin: 10
             Layout.bottomMargin: 6
             placeholderText: qsTr("Search settings")
-            text: nav.model ? nav.model.searchQuery : ""
-            onTextEdited: Shell.dispatch("settings.search", {
-                query: text
-            })
-            // Clears here, and the page's query while it keeps one: the
-            // binding follows the page again, or empties without it.
-            Keys.onEscapePressed: {
-                Shell.dispatch("settings.search", {
-                    query: ""
-                });
-                text = Qt.binding(() => nav.model ? nav.model.searchQuery : "");
-            }
+            Keys.onEscapePressed: text = ""
         }
 
         ListView {

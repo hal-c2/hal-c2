@@ -175,12 +175,11 @@ private slots:
       bridge.publish("layout", QVariantMap{{"sidebarCollapsed", true}});
       QTRY_VERIFY(!navigation->isVisible());
       QTRY_COMPARE(content->width(), width);
-      bridge.publish("settings", QVariantMap{{"active", true}, {"sections", QVariantList{}},
-                                             {"searchQuery", ""}, {"searchResults", QVariantList{}}});
+      bridge.publish("route", QVariantMap{{"kind", "settings"}, {"section", "/settings/general"}});
       QTRY_VERIFY(navigation->isVisible());
       QTRY_COMPARE(navigation->width(), 256);
       QTRY_COMPARE(content->width(), width - 256);
-      bridge.publish("settings", QVariant());
+      bridge.publish("route", QVariant());
       QTRY_VERIFY(!navigation->isVisible());
       bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}});
       QTRY_VERIFY(navigation->isVisible());

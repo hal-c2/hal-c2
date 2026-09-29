@@ -66,23 +66,11 @@ function brickFor(section) {
     return found !== null && found.brick ? found.brick : "";
 }
 
-// The navigation rows: native sections always (once their state is there),
-// the page's only while the page lists them. `pageSections` is the page's
-// `settings.sections`, `state` the shell's state.
-function navRows(pageSections, state) {
-    var listed = {};
-    for (var i = 0; i < pageSections.length; ++i) listed[pageSections[i].to] = true;
+// The navigation rows: every section, the ones that need shell state once it
+// is there. `state` is the shell's state.
+function navRows(state) {
     return sections.filter(function (section) {
-        if (section.requires) return state[section.requires] !== undefined && state[section.requires] !== null;
-        return section.brick ? true : listed[section.to] === true;
-    });
-}
-
-// The page's search results in the sections it still renders: a result in a
-// native section would open that section at nothing.
-function pageResults(results) {
-    return results.filter(function (result) {
-        return brickFor(result.to) === "";
+        return !section.requires || (state[section.requires] !== undefined && state[section.requires] !== null);
     });
 }
 
@@ -100,7 +88,7 @@ function searchRows(query, state) {
     var add = function (row, title) {
         (matches(title.toLowerCase()) ? titled : others).push(row);
     };
-    navRows([], state).forEach(function (section) {
+    navRows(state).forEach(function (section) {
         var text = (section.label + " " + (section.keywords || "")).toLowerCase();
         if (matches(text)) add(section, section.label);
         // Rows this platform does not show are not found.

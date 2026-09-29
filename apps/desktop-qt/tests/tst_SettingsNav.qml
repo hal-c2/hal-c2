@@ -11,14 +11,7 @@ Item {
     TestCase {
         name: "SettingsNavTests"
         when: windowShown
-        function publish(query) {
-            Shell.state = { settings: {
-                active: true, activeSection: "/settings/general", searchQuery: query,
-                sections: [{ to: "/settings/general", label: "General" }, { to: "/settings/snap-shot", label: "SnapShots" }],
-                searchResults: [{ to: "/settings/snap-shot", title: "Theme", sectionLabel: "SnapShots", targetId: "theme" }]
-            } };
-        }
-        function init() { Shell.reset(); publish(""); }
+        function init() { Shell.reset(); Shell.state = { route: { kind: "settings", section: "/settings/general" } }; }
         function cleanup() { Shell.reset(); }
         function test_keyboardNavigation() {
             let nav = createTemporaryObject(component, root);
@@ -39,27 +32,12 @@ Item {
             keyClick(Qt.Key_Space);
             compare(Shell.dispatchedActions[1].payload.to, "/settings/general");
         }
-        function test_escapeKeepsExternalSearchBinding() {
-            publish("theme");
-            let nav = createTemporaryObject(component, root);
-            verify(!!nav, "Component exists");
-            let search = findChild(nav, "search");
-            verify(!!search, "Object exists");
-            search.focus = true;
-            search.forceActiveFocus();
-            keyClick(Qt.Key_Escape);
-            compare(Shell.dispatchedActions[0].payload.query, "");
-            publish("");
-            compare(search.text, "");
-            publish("model 123 & provider");
-            compare(search.text, "model 123 & provider");
-        }
-        function test_clusterRowWithoutThePage() {
+        function test_clusterRowOpensCluster() {
             Shell.state = { cluster: {} };
             let nav = createTemporaryObject(component, root);
             verify(!!nav, "Component exists");
-            tryVerify(() => findChild(nav, "settingsRow3") !== null, 1000, "General, Appearance, Keybindings and Cluster are listed");
-            let row = findChild(nav, "settingsRow3");
+            tryVerify(() => findChild(nav, "settingsRow4") !== null, 1000, "General, Appearance, Keybindings, SnapShots and Cluster are listed");
+            let row = findChild(nav, "settingsRow4");
             compare(row.Accessible.name, "Cluster");
             row.forceActiveFocus();
             keyClick(Qt.Key_Return);
@@ -69,16 +47,16 @@ Item {
             Shell.state = Object.assign({}, Shell.state, { cluster: {}, route: { kind: "settings", section: "/settings/cluster" } });
             let nav = createTemporaryObject(component, root);
             verify(!!nav, "Component exists");
-            tryVerify(() => findChild(nav, "settingsRow4") !== null, 1000, "Cluster follows the page's sections");
-            verify(!findChild(nav, "settingsRow0").current, "the page's section is not current");
+            tryVerify(() => findChild(nav, "settingsRow4") !== null, 1000, "Cluster follows the other sections");
+            verify(!findChild(nav, "settingsRow0").current, "General is not current");
             verify(findChild(nav, "settingsRow4").current, "Cluster is current");
         }
         function test_routeSectionIsCurrent() {
             Shell.state = Object.assign({}, Shell.state, { route: { kind: "settings", section: "/settings/snap-shot" } });
             let nav = createTemporaryObject(component, root);
             verify(!!nav, "Component exists");
-            tryVerify(() => findChild(nav, "settingsRow3") !== null, 1000, "the page's sections are listed");
-            verify(!findChild(nav, "settingsRow0").current, "the page's last section is not current");
+            tryVerify(() => findChild(nav, "settingsRow3") !== null, 1000, "the sections are listed");
+            verify(!findChild(nav, "settingsRow0").current, "General is not current");
             verify(findChild(nav, "settingsRow3").current, "the route's section is current");
         }
         function test_searchFindsCluster() {
@@ -105,14 +83,12 @@ Item {
             compare(Shell.dispatchedActions[0].payload.to, "/settings/appearance");
             verify(findChild(nav, "settingsRow0").current, "a bare settings route shows General");
         }
-        function test_connectionsRowTakesThePageSectionsPlace() {
-            let settings = Shell.state.settings;
-            settings.sections = settings.sections.concat([{ to: "/settings/connections", label: "Connections" }]);
-            Shell.state = { settings: settings, connections: {}, route: { kind: "settings", section: "/settings/connections" } };
+        function test_connectionsRowOpensConnections() {
+            Shell.state = { connections: {}, route: { kind: "settings", section: "/settings/connections" } };
             let nav = createTemporaryObject(component, root);
             verify(!!nav, "Component exists");
             tryVerify(() => findChild(nav, "settingsRow4") !== null, 1000, "Connections is listed");
-            verify(!findChild(nav, "settingsRow5"), "the page's own Connections section is not");
+            verify(!findChild(nav, "settingsRow5"), "Connections is listed once");
             let row = findChild(nav, "settingsRow4");
             compare(row.Accessible.name, "Connections");
             verify(row.current, "Connections is current");
@@ -120,14 +96,12 @@ Item {
             keyClick(Qt.Key_Return);
             compare(Shell.dispatchedActions[0].action, "connections.open");
         }
-        function test_keybindingsRowTakesThePageSectionsPlace() {
-            let settings = Shell.state.settings;
-            settings.sections = settings.sections.concat([{ to: "/settings/keybindings", label: "Keybindings" }]);
-            Shell.state = { settings: settings, route: { kind: "settings", section: "/settings/keybindings" } };
+        function test_keybindingsRowOpensKeybindings() {
+            Shell.state = { route: { kind: "settings", section: "/settings/keybindings" } };
             let nav = createTemporaryObject(component, root);
             verify(!!nav, "Component exists");
-            tryVerify(() => findChild(nav, "settingsRow3") !== null, 1000, "General, Appearance, Keybindings and Integrations are listed");
-            verify(!findChild(nav, "settingsRow4"), "the page's own Keybindings section is not");
+            tryVerify(() => findChild(nav, "settingsRow3") !== null, 1000, "General, Appearance, Keybindings and SnapShots are listed");
+            verify(!findChild(nav, "settingsRow4"), "Keybindings is listed once");
             let row = findChild(nav, "settingsRow2");
             compare(row.Accessible.name, "Keybindings");
             verify(row.current, "Keybindings is current");
@@ -136,16 +110,13 @@ Item {
             compare(Shell.dispatchedActions[0].action, "keybindings.open");
         }
         function test_keyboardSearchResult() {
-            publish("theme");
             let nav = createTemporaryObject(component, root);
-            verify(!!nav, "Component exists");
-            let row = findChild(nav, "settingsRow0");
-            verify(!!row, "Object exists");
-            row.focus = true;
-            row.forceActiveFocus();
+            type(nav, "theme");
+            tryVerify(() => row(nav, 0) !== null && row(nav, 0).isResult);
+            row(nav, 0).forceActiveFocus();
             keyClick(Qt.Key_Space);
             compare(Shell.dispatchedActions[0].action, "settings.openResult");
-            compare(Shell.dispatchedActions[0].payload.targetId, "theme");
+            compare(Shell.dispatchedActions[0].payload.targetId, "themes");
         }
 
         // features/settings/search-and-navigation.feature, without the page.
@@ -161,12 +132,12 @@ Item {
         function test_choosingASectionOpensIt() {
             Shell.state = { providerSettings: {}, route: { kind: "settings", section: "/settings/general" } };
             const nav = createTemporaryObject(component, root);
-            tryVerify(() => row(nav, 3) !== null && row(nav, 3).Accessible.name === "Providers");
-            mouseClick(row(nav, 3));
+            tryVerify(() => row(nav, 4) !== null && row(nav, 4).Accessible.name === "Providers");
+            mouseClick(row(nav, 4));
             compare(Shell.dispatchedActions[0].action, "settings.navigate");
             compare(Shell.dispatchedActions[0].payload.to, "/settings/providers");
             Shell.state = { providerSettings: {}, route: { kind: "settings", section: "/settings/providers" } };
-            verify(row(nav, 3).current, "Providers is the current section");
+            verify(row(nav, 4).current, "Providers is the current section");
             verify(!row(nav, 0).current);
         }
         function test_theKeyboardMovesThroughSections() {

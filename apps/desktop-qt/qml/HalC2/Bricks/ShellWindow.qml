@@ -14,15 +14,13 @@ Window {
 
     // Whether the thread list is hidden (LayoutController, sidebar.toggle).
     readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
-    // Where the window is (NavigationController); the page's own settings
-    // state until the shell has its node.
+    // Where the window is (NavigationController).
     readonly property var route: Shell.state.route ?? null
-    // Settings show, from the page's sections or the shell's own pages.
-    readonly property bool settingsActive: route !== null ? route.kind === "settings" : (Shell.state.settings ? Shell.state.settings.active : false)
+    readonly property bool settingsActive: route !== null && route.kind === "settings"
     // The settings section showing, and whether the shell renders it itself
     // (js/settingsPages.js): layouts put SettingsHost where the page would be
     // and hide the page and composer.
-    readonly property string settingsSection: !settingsActive ? "" : Pages.resolve(route !== null ? route.section : Shell.state.settings.activeSection)
+    readonly property string settingsSection: !settingsActive ? "" : Pages.resolve(route.section)
     readonly property bool nativeSettingsOpen: settingsActive && Pages.brickFor(settingsSection).length > 0
     // Whether the shell draws the route's centre itself (js/centreViews.js):
     // layouts put CentreHost where the page would be.
