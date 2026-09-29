@@ -37,11 +37,11 @@ Feature: Source control writing settings
     When the user writes custom instructions
     Then both environments use those instructions
 
+  # Writing to the template is the node's (node/orchestration/text-generation.feature).
   @desktop @backlog-mobile
-  Scenario: Following the repository's pull request template
-    Given following change request templates is on
-    When a pull request is created in a repository with a template
-    Then its description follows the template
+  Scenario: Pull request templates are followed until turned off
+    Then following change request templates is shown on
+    And the environment's settings leave templates followed
 
   @desktop @backlog-mobile
   Scenario: Ignoring the repository's pull request template

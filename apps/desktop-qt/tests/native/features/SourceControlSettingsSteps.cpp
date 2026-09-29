@@ -381,13 +381,12 @@ const Steps steps([] {
           .arg(show(saved(world).toVariantMap()), show(documentOf(world.node, QStringLiteral("server")).settings.toVariantMap()));
     });
   });
-  step(QStringLiteral("following change request templates is on"), [](World& world, const Captures&, const Table&) {
-    expect(part(world, QStringLiteral("templates")).value(QStringLiteral("value")).toBool(), QStringLiteral("templates to be followed by default"));
+  step(QStringLiteral("following change request templates is shown on"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return part(world, QStringLiteral("templates")).value(QStringLiteral("value")).toBool(); },
+                  [&] { return QStringLiteral("templates to be shown followed; the row is %1").arg(show(part(world, QStringLiteral("templates")))); });
   });
-  step(QStringLiteral("a pull request is created in a repository with a template"), [](World&, const Captures&, const Table&) {
-    // The node writes it (source-control/commit-and-generated-messages.feature).
-  });
-  step(QStringLiteral("its description follows the template"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the environment's settings leave templates followed"), [](World& world, const Captures&, const Table&) {
+    // Absent means followed: the node writes to a repository's template unless told not to.
     expect(style(saved(world)).value(QLatin1String("followChangeRequestTemplates")).toBool(true),
            QStringLiteral("the environment to follow templates; its settings are %1").arg(show(saved(world).toVariantMap())));
   });
