@@ -108,12 +108,18 @@ public:
   void forgetDraft(const QString& draftId) { m_checkouts.remove(draftId); }
   // Resolves the route again (a draft moved, say).
   void refresh();
+  // The ServerConfig of the route's environment: the shell's own
+  // (SettingsController::config()), or the one watched on the linked
+  // environment the route is on (empty until it arrives).
+  QJsonObject environmentConfig() const;
 
 signals:
   // The route's thread, its root or worktree changed.
   void placeChanged();
   // git() changed.
   void gitChanged();
+  // environmentConfig() may have changed.
+  void configChanged();
 
 private:
   std::optional<Place> resolve() const;
@@ -168,7 +174,7 @@ private:
   // node's own come with SettingsController.
   int m_config = 0;
   QString m_configEnvironment;
-  QJsonArray m_configEditors;
+  QJsonObject m_configElsewhere;
 
   // The ref list: loaded when the picker opens or its search changes.
   QString m_query;

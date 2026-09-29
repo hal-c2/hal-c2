@@ -31,3 +31,5 @@ void publishThemes(FakeNode& node, const QString& environment, const QJsonArray&
 // Another client's save: the document moves on, announced as `config.settings`
 // unless `quietly`.
 void saveElsewhere(FakeNode& node, const QString& key, const QJsonValue& value, bool quietly = false);
+// The node's providers become `providers`, announced as `config.providers`.
+void publishProviders(FakeNode& node, const QJsonArray& providers);

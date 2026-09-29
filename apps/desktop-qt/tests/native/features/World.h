@@ -25,8 +25,7 @@ struct PageAction {
 };
 
 // The shell as main.cpp builds it, the page as a recorder of what the shell
-// asks of it (plus the composer echo the real page makes), and the node. One
-// per scenario.
+// asks of it, and the node. One per scenario.
 class World {
 public:
   World();
@@ -37,7 +36,6 @@ public:
   QList<QVariantMap> follows;  // every `route.follow` the page was sent
   // The draft the last new thread opened.
   QString draftId;
-  QVariantMap composer;
   std::optional<qsizetype> command;  // the command the last "receives" step found
   QSet<qsizetype> checkedCommands;
   int nextEdit = 1;
@@ -68,7 +66,6 @@ public:
   void startNewThread(const QVariantMap& payload);
   // The key of the sidebar's project named `name`; `name` itself when none is.
   QString projectKey(const QString& name) const;
-  void publishComposer() { m_bridge->publish(QStringLiteral("composer"), composer); }
   // The page reports that its own navigation took it to `route` (`route.open`).
   void pageOpens(const QVariantMap& route, bool replace = false);
 

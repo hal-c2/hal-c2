@@ -31,6 +31,7 @@ void World::start() {
   m_native->sidebar()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
   m_native->controller<NavigationController>()->setStorePath(m_home.filePath(QStringLiteral("state/shell-route.json")));
   m_native->controller<DraftController>()->setStorePath(m_home.filePath(QStringLiteral("data/shell-drafts.json")));
+  m_native->controller<ComposerController>()->setStorePath(m_home.filePath(QStringLiteral("data/shell-composer.json")));
   // The shell runs its own local node, so local folders are its to open.
   m_bridge->setLocalFolderImportEnabled(true);
   m_native->controller<SettingsController>()->setDevicePath(QDir(configDir()).filePath(QStringLiteral("preferences.json")));
@@ -165,10 +166,4 @@ void World::onPageAction(const QString& type, const QVariantMap& payload) {
     return;
   }
   pageActions.append({type, payload});
-  // The page applies a text change to its draft and publishes it back.
-  if (type == QLatin1String("composer.text.set") &&
-      payload.value(QStringLiteral("target")) == composer.value(QStringLiteral("target"))) {
-    composer.insert(QStringLiteral("text"), payload.value(QStringLiteral("text")));
-    publishComposer();
-  }
 }

@@ -118,7 +118,7 @@ Feature: Drafting and sending a message
     Then a thread titled from "Set up the linter" is created
     And its first turn starts with that message
 
-  @backlog @desktop
+  @desktop
   Scenario: A background prompt starts a thread without leaving the composer
     Given the user is writing the first message of a new thread
     When the user sends it in the background
@@ -126,7 +126,7 @@ Feature: Drafting and sending a message
     And the user is told it started in the background with a way to open it
     And the composer is ready for another prompt
 
-  @backlog @desktop
+  @desktop
   Scenario: A background prompt that fails can be restored
     Given the user sent "refactor utils" in the background
     When the background thread fails to start

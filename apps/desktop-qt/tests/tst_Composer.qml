@@ -125,6 +125,23 @@ Item {
             compare(root.stolenChords, 0);
         }
 
+        function test_terminalExcerptChipNamesItsLinesAndRemovesIt() {
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, {
+                    terminalContexts: [{ id: "tc-1", label: "Terminal 1", lineStart: 3, lineEnd: 5 }, { id: "tc-2", label: "Terminal 2", lineStart: 7, lineEnd: 7 }]
+                })
+            });
+            const composer = createTemporaryObject(composerComponent, root);
+            const range = findChild(composer, "terminalContext-tc-1");
+            verify(!!range);
+            compare(range.text, "Terminal 1 lines 3-5");
+            compare(findChild(composer, "terminalContext-tc-2").text, "Terminal 2 line 7");
+            mouseClick(range);
+            const sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(sent.action, "composer.terminalContext.remove");
+            compare(sent.payload.id, "tc-1");
+        }
+
         function test_textDispatchIncludesTarget() {
             let composer = createTemporaryObject(composerComponent, root);
             verify(!!composer, "Component exists");
@@ -290,6 +307,34 @@ Item {
             compare(input.text, qsTr("First edit + 123"));
             Shell.publishComposerText("", 0, Shell.dispatchedActions[2].payload.edit);
             compare(input.text, "");
+        }
+
+        // The edit-queued key reaches the queue from the start of the draft
+        // and moves the caret there from anywhere else.
+        function test_editQueuedKeyFromTheStartOfTheDraft() {
+            let composer = createTemporaryObject(composerComponent, root);
+            let input = findChild(composer, "input");
+            input.forceActiveFocus();
+            input.text = "draft";
+            input.cursorPosition = 3;
+            Shell.actionRequested("composer.queue.editLast", undefined);
+            compare(input.cursorPosition, 0);
+            verify(!Shell.dispatchedActions.some(entry => entry.action === "composer.queue.edit"));
+            Shell.actionRequested("composer.queue.editLast", undefined);
+            compare(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].action, "composer.queue.edit");
+        }
+
+        function test_editingAQueuedMessageCanBeCancelled() {
+            let composer = createTemporaryObject(composerComponent, root);
+            let cancel = findChild(composer, "queuedEditCancel");
+            verify(!cancel.visible);
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, { editingQueuedRunId: "run-2" })
+            });
+            waitForRendering(composer);
+            verify(cancel.visible);
+            mouseClick(cancel);
+            compare(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].action, "composer.queue.edit.cancel");
         }
     }
 }

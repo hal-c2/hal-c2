@@ -65,6 +65,8 @@ public:
   QVariantList bindings() const { return m_rows; }
   bool saving() const { return m_saving > 0; }
   const QList<keybindings::Binding>& resolved() const { return m_bindings; }
+  // Whether chords read as macOS ones (mod is Command).
+  bool mac() const { return m_mac; }
 
   // A window shortcut fired. `focus` says where the keyboard is: {page,
   // terminal, composer, editable}. True when the key ran a command here or

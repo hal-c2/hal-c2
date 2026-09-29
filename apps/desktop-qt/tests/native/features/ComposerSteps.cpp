@@ -1,6 +1,6 @@
 // The composer's turn against the node: the route the composer shows, what the
 // user types, picks, attaches and sends (as the brick dispatches it), the
-// images the node stores, and the text the page is asked to restore
+// images the node stores, and the text the shell's composer holds
 // (features/composer/sending-turns.feature, desktop/native-composer.feature).
 
 #include <QJsonArray>
@@ -8,6 +8,7 @@
 
 #include "ComposerController.h"
 #include "DraftController.h"
+#include "FakeConfig.h"
 #include "Harness.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -42,20 +43,23 @@ const FakeNode::Extension uploads([](FakeNode& node) {
   });
 });
 
+// The window shows the route, as the page's own navigation took it there.
 void composerOn(World& world, const QString& target, const QString& routeKind) {
-  world.composer = {
-      {QStringLiteral("target"), target},
-      {QStringLiteral("routeKind"), routeKind},
-      {QStringLiteral("text"), QString()},
-      {QStringLiteral("cursor"), 0},
-  };
-  world.publishComposer();
-  // The page's composer is the one for the route it shows.
   if (routeKind == QLatin1String("draft")) {
     world.pageOpens({{QStringLiteral("kind"), QStringLiteral("draft")}, {QStringLiteral("draftId"), target}});
   } else {
     world.pageOpens({{QStringLiteral("kind"), QStringLiteral("thread")}, {QStringLiteral("threadKey"), target}});
   }
+}
+
+// The text the shell's composer keeps for the thread or draft.
+QString textOf(World& world, const QString& target) {
+  return world.native().controller<ComposerController>()->draft(target);
+}
+
+// What the composer brick is shown.
+QVariantMap shown(World& world) {
+  return world.state(QStringLiteral("composer")).toMap();
 }
 
 QString route(World& world) {
@@ -67,7 +71,7 @@ QVariantMap edit(World& world) {
 }
 
 QVariantList attachments(World& world) {
-  return world.state(QStringLiteral("turn")).toMap().value(QStringLiteral("attachments")).toList();
+  return world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("attachments")).toList();
 }
 
 QStringList attachmentNames(World& world) {
@@ -112,6 +116,21 @@ const Steps steps([] {
                                                                  });
   });
   step(QStringLiteral("the user picks the model %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The picker offers what the node's providers list.
+    const QJsonArray providers = fakeConfig(world.node).config.value(QLatin1String("providers")).toArray();
+    const bool offered = std::any_of(providers.begin(), providers.end(), [&](const QJsonValue& entry) {
+      return entry.toObject().value(QLatin1String("instanceId")) == c[1];
+    });
+    if (!offered) {
+      publishProviders(world.node, QJsonArray{QJsonObject{
+                                       {QStringLiteral("instanceId"), c[1]},
+                                       {QStringLiteral("driver"), c[1]},
+                                       {QStringLiteral("enabled"), true},
+                                       {QStringLiteral("status"), QStringLiteral("ready")},
+                                       {QStringLiteral("models"), QJsonArray{QJsonObject{{QStringLiteral("slug"), c[0]}}}},
+                                   }});
+      world.sync();
+    }
     world.bridge().dispatch(QStringLiteral("composer.model.select"),
                             QVariantMap{{QStringLiteral("instanceId"), c[1]}, {QStringLiteral("model"), c[0]}});
   });
@@ -120,9 +139,14 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("composer.interactionMode.set"), QVariantMap{{QStringLiteral("mode"), c[1]}});
   });
   step(QStringLiteral("the composer offers the draft %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QVariantMap turn = world.state(QStringLiteral("turn")).toMap();
-    expect(turn.value(QStringLiteral("threadKey")) == route(world) && turn.value(QStringLiteral("draft")) == c[0],
-           QStringLiteral("the composer's turn is %1").arg(show(turn)));
+    const QVariantMap composer = shown(world);
+    expect(composer.value(QStringLiteral("target")) == route(world) && composer.value(QStringLiteral("text")) == c[0],
+           QStringLiteral("the composer shows %1").arg(show(composer)));
+  });
+
+  step(QStringLiteral("the composer is in %1 mode").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return shown(world).value(QStringLiteral("interactionMode")) == c[0]; },
+                  [&] { return QStringLiteral("the mode; the composer shows %1").arg(show(shown(world))); });
   });
 
   // A new thread's draft (DraftSteps names it).
@@ -139,9 +163,9 @@ const Steps steps([] {
   });
   step(QStringLiteral("the composer offers the new thread's text %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {
-      const QVariantMap turn = world.state(QStringLiteral("turn")).toMap();
-      return turn.value(QStringLiteral("threadKey")) == world.draftId && turn.value(QStringLiteral("draft")) == c[0];
-    }, [&] { return QStringLiteral("the draft's text; the composer's turn is %1").arg(show(world.state(QStringLiteral("turn")))); });
+      const QVariantMap composer = shown(world);
+      return composer.value(QStringLiteral("target")) == world.draftId && composer.value(QStringLiteral("text")) == c[0];
+    }, [&] { return QStringLiteral("the draft's text; the composer shows %1").arg(show(shown(world))); });
   });
 
   // Images.
@@ -210,32 +234,18 @@ const Steps steps([] {
     expect(found, QStringLiteral("the message carries %1").arg(show(images.toVariantList())));
   });
 
-  // What the page is asked to show.
-  const auto textSet = [](World& world, const QString& target, const QString& text) {
-    for (const PageAction& action : world.actionsOf(QStringLiteral("composer.text.set"))) {
-      if (action.payload.value(QStringLiteral("target")) == target && action.payload.value(QStringLiteral("text")) == text) {
-        return true;
-      }
-    }
-    return false;
-  };
-  step(QStringLiteral("the page is asked to set the composer text for %1 to %1").arg(q), [textSet](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] { return textSet(world, c[0], c[1]); },
-                  [&] { return QStringLiteral("the composer text; the page got %1").arg(world.describePage()); });
+  // The text the composer keeps.
+  step(QStringLiteral("the composer's text for %1 is %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return textOf(world, c[0]) == c[1]; },
+                  [&] { return QStringLiteral("the composer's text; it is %1").arg(show(textOf(world, c[0]))); });
   });
-  step(QStringLiteral("the page is asked to set the composer text for %1 to the prompts:").arg(q),
-       [textSet](World& world, const Captures& c, const Table& table) {
-         QStringList prompts;
-         for (qsizetype row = 1; row < table.size(); ++row) prompts.append(table.at(row).value(0));
-         const QString text = prompts.join(QStringLiteral("\n\n"));
-         world.waitFor([&] { return textSet(world, c[0], text); },
-                       [&] { return QStringLiteral("the composer text; the page got %1").arg(world.describePage()); });
-       });
-  step(QStringLiteral("the page is not asked to set the composer text for %1 to %1").arg(q),
-       [textSet](World& world, const Captures& c, const Table&) {
-         world.sync();
-         expect(!textSet(world, c[0], c[1]), QStringLiteral("the page got %1").arg(world.describePage()));
-       });
+  step(QStringLiteral("the composer's text for %1 is the prompts:").arg(q), [](World& world, const Captures& c, const Table& table) {
+    QStringList prompts;
+    for (qsizetype row = 1; row < table.size(); ++row) prompts.append(table.at(row).value(0));
+    const QString text = prompts.join(QStringLiteral("\n\n"));
+    world.waitFor([&] { return textOf(world, c[0]) == text; },
+                  [&] { return QStringLiteral("the composer's text; it is %1").arg(show(textOf(world, c[0]))); });
+  });
 });
 
 }  // namespace

@@ -5,6 +5,8 @@
 #include <QString>
 #include <QTimer>
 
+#include <functional>
+#include <optional>
 #include <vector>
 
 #include "FileTreeModel.h"
@@ -81,6 +83,13 @@ public:
   static constexpr int searchLimit = 200;
 
   explicit WorkspaceFiles(NodeClient* client, QObject* parent = nullptr);
+
+  // One `projects.searchEntries` for `query` under `cwd`: the Files tab's
+  // search, and the composer's @ menu.
+  using SearchDone =
+      std::function<void(const QList<FileTreeModel::Entry>& entries, bool truncated, const std::optional<QString>& error)>;
+  static void searchEntries(NodeClient* client, const QString& environmentId, const QString& cwd, const QString& query,
+                            int limit, SearchDone done);
 
   FileTreeModel* tree() { return &m_tree; }
   TextLinesModel* lines() { return &m_lines; }

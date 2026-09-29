@@ -430,6 +430,8 @@ const Steps steps([] {
     world.native().controller<SettingsController>()->writeDevice(QStringLiteral("followUpBehavior"), c[0]);
   });
   step(QStringLiteral("%1 is queued").arg(q), [](World& world, const Captures& c, const Table&) {
+    // As a precondition it is waiting in the thread's queue.
+    if (!world.checking) return queueMessage(world, c[0]);
     const QJsonObject message = lastMessage(world);
     expect(message.value(QLatin1String("text")) == c[0] &&
                message.value(QLatin1String("dispatchMode")).toObject().value(QLatin1String("type")) == QLatin1String("queue_after_active") &&
@@ -487,6 +489,40 @@ const Steps steps([] {
            QStringLiteral("the node was told %1").arg(show(command.toVariantMap())));
   });
 
+  // Editing a queued message.
+  step(QStringLiteral("the user starts editing the last queued message from the start of the composer"), [](World& world, const Captures&, const Table&) {
+    // The brick sends this for its edit key with the caret at the start.
+    world.bridge().dispatch(QStringLiteral("composer.queue.edit"), QVariantMap());
+    world.sync();
+  });
+  step(QStringLiteral("the user changes the edit to %1").arg(q), [](World& world, const Captures& c, const Table&) { typeInto(world, c[0]); });
+  step(QStringLiteral("the user sends %1 from the composer").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), c[0]}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    world.sync();
+  });
+  step(QStringLiteral("the user cancels the edit"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("composer.queue.edit.cancel"));
+  });
+  step(QStringLiteral("the composer holds %1(?: again)?").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto shown = [&world] { return world.state(QStringLiteral("composer")).toMap(); };
+    world.waitFor([&] { return shown().value(QStringLiteral("text")) == c[0]; },
+                  [&] { return QStringLiteral("the composer shows %1").arg(show(shown())); });
+  });
+  step(QStringLiteral("the queued run of %1 starts").arg(q), [](World& world, const Captures& c, const Table&) {
+    set(world, QStringLiteral("run"), QStringLiteral("run-queued-") + c[0], {{QStringLiteral("status"), QStringLiteral("running")}});
+  });
+  step(QStringLiteral("the node is asked to change the queued run of %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonObject command = lastCommand(world, QStringLiteral("queued-run.edit"));
+    expect(command.value(QLatin1String("runId")) == QStringLiteral("run-queued-") + c[0] && command.value(QLatin1String("text")) == c[1],
+           QStringLiteral("the node was told %1").arg(show(command.toVariantMap())));
+  });
+  step(QStringLiteral("the queued message still reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QStringList texts;
+    for (const QVariant& queued : listed(world, QStringLiteral("queue"))) texts.append(queued.toMap().value(QStringLiteral("text")).toString());
+    expect(texts.contains(c[0]) && commandsOf(world, QStringLiteral("queued-run.edit")).isEmpty(),
+           QStringLiteral("the queue is [%1] and the node has %2").arg(texts.join(QStringLiteral(", ")), world.describeCommands()));
+  });
+
   // Answers in flight.
   step(QStringLiteral("the user approves it"), [](World& world, const Captures&, const Table&) { respond(world, QStringLiteral("accept")); });
   step(QStringLiteral("the approval shows it is being answered"), [](World& world, const Captures&, const Table&) {
@@ -515,9 +551,9 @@ const Steps steps([] {
     look(world, threadKey(world));
   });
   step(QStringLiteral("thread A's draft reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QVariantMap shown = turn(world);
-    expect(shown.value(QStringLiteral("threadKey")) == threadKey(world) && shown.value(QStringLiteral("draft")) == c[0],
-           QStringLiteral("the composer offers %1").arg(show(shown)));
+    const QVariantMap shown = world.state(QStringLiteral("composer")).toMap();
+    expect(shown.value(QStringLiteral("target")) == threadKey(world) && shown.value(QStringLiteral("text")) == c[0],
+           QStringLiteral("the composer shows %1").arg(show(shown)));
   });
   step(QStringLiteral("thread B's draft is empty"), [threadB](World& world, const Captures&, const Table&) {
     expect(draftOf(world, threadB(world)).isEmpty(), QStringLiteral("thread B's draft reads \"%1\"").arg(draftOf(world, threadB(world))));
@@ -560,4 +596,8 @@ const Steps steps([] {
 
 void pickAnswer(World& world, const QString& label) {
   answer(world, label);
+}
+
+void openTurnThread(World& world) {
+  openThread(world);
 }

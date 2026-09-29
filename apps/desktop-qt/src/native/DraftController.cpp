@@ -185,6 +185,18 @@ void DraftController::setText(const QString& id, const QString& text) {
   }
 }
 
+// A background send took the draft's thread id: the draft stays for the next
+// prompt under a fresh one, so the launched thread's row does not end it.
+void DraftController::renew(const QString& id) {
+  for (Draft& draft : m_drafts) {
+    if (draft.id != id) continue;
+    draft.threadId = newId();
+    draft.text.clear();
+    save();
+    emit changed();
+  }
+}
+
 void DraftController::openMenu(const QString& id, double x, double y) {
   if (!draft(id)) return;
   MenuController::Item remove{QStringLiteral("delete"), QStringLiteral("Delete draft"), QStringLiteral("trash")};

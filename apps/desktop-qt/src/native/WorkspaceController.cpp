@@ -115,6 +115,7 @@ void WorkspaceController::activate() {
   }
   if (auto* settings = shell->controller<SettingsController>()) {
     connect(settings, &SettingsController::configChanged, this, &WorkspaceController::publish);
+    connect(settings, &SettingsController::configChanged, this, &WorkspaceController::configChanged);
     connect(settings, &SettingsController::deviceChanged, this, &WorkspaceController::publish);
   }
   refresh();
@@ -308,13 +309,14 @@ void WorkspaceController::follow(const QString& cwd) {
   if (hadRefs) loadRefs();
 }
 
-// Editors of a thread on another machine are that machine's.
+// A thread on another machine has that machine's editors and providers.
 void WorkspaceController::watchConfig(const QString& environmentId) {
   if (environmentId == m_configEnvironment) return;
   if (m_config) m_client->unsubscribe(m_config);
   m_config = 0;
   m_configEnvironment = environmentId;
-  m_configEditors = {};
+  m_configElsewhere = {};
+  emit configChanged();
   if (environmentId.isEmpty()) return;
   m_config = m_client->subscribe(
       {
@@ -322,11 +324,26 @@ void WorkspaceController::watchConfig(const QString& environmentId) {
           {QStringLiteral("environment"), environmentId},
       },
       [this](const QJsonObject& frame) {
-        if (frame.value(QLatin1String("t")).toString() != QLatin1String("config")) return;
-        m_configEditors =
-            frame.value(QLatin1String("config")).toObject().value(QLatin1String("availableEditors")).toArray();
+        const QString type = frame.value(QLatin1String("t")).toString();
+        if (type == QLatin1String("config")) {
+          m_configElsewhere = frame.value(QLatin1String("config")).toObject();
+        } else if (type == QLatin1String("config.providers")) {
+          m_configElsewhere.insert(QStringLiteral("providers"), frame.value(QLatin1String("providers")));
+        } else {
+          return;
+        }
+        emit configChanged();
         publish();
       });
+}
+
+QJsonObject WorkspaceController::environmentConfig() const {
+  // A linked environment that is down has none until it is back.
+  if (m_place && m_place->environmentId != m_client->environment()) {
+    return m_place->environmentId == m_configEnvironment ? m_configElsewhere : QJsonObject();
+  }
+  auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  return settings ? settings->config() : QJsonObject();
 }
 
 void WorkspaceController::loadRefs() {
@@ -389,12 +406,7 @@ QString WorkspaceController::currentBranch() const {
 }
 
 QJsonArray WorkspaceController::editors() const {
-  QJsonArray available = m_configEditors;
-  if (m_place && m_place->environmentId == m_client->environment()) {
-    if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
-      available = settings->config().value(QLatin1String("availableEditors")).toArray();
-    }
-  }
+  const QJsonArray available = environmentConfig().value(QLatin1String("availableEditors")).toArray();
   QJsonArray result;
   for (const auto& [id, label] : editorLabels()) {
     if (available.contains(id)) result.append(QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("label"), label}});

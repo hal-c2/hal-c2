@@ -1,5 +1,4 @@
 import * as Schema from "effect/Schema";
-import { ModelSelection } from "./modelSelection.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 import { TimestampFormat } from "./settings.ts";
 
@@ -301,22 +300,6 @@ const ShellComposerEdit = Schema.Struct({
 
 export const ShellComposerSubmitIntent = Schema.Literals(["foreground", "background", "alternate"]);
 
-/**
- * A send the shell may make itself: the page checked the prompt is plain
- * (text only, one model, nothing attached, nothing pending) and did the
- * formatting its own send would.
- */
-export const ShellComposerNativeSend = Schema.Struct({
-  /** The raw prompt this was computed for; a submit with other text goes to the page. */
-  prompt: Schema.String,
-  text: Schema.String,
-  titleSeed: Schema.String,
-  modelSelection: ModelSelection,
-  runtimeMode: RuntimeMode,
-  interactionMode: Schema.Literals(["default", "plan"]),
-});
-export type ShellComposerNativeSend = typeof ShellComposerNativeSend.Type;
-
 /** Published under the `composer` key while a thread or draft route is open. */
 export const ShellComposerState = Schema.Struct({
   /** `<environmentId>:<threadId>` or a draft id; null between routes. */
@@ -368,8 +351,8 @@ export const ShellComposerState = Schema.Struct({
   runtimeModes: Schema.Array(ShellComposerRuntimeMode),
   interactionMode: Schema.Literals(["default", "plan"]),
   showInteractionModeToggle: Schema.Boolean,
-  /** Null whenever the prompt needs the page's send pipeline. */
-  nativeSend: Schema.optional(Schema.NullOr(ShellComposerNativeSend)),
+  /** The queued run whose message the composer is editing; sending saves it. */
+  editingQueuedRunId: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type ShellComposerState = typeof ShellComposerState.Type;
 

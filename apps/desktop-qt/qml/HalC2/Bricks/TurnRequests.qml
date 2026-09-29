@@ -400,6 +400,18 @@ Item {
                         maximumLineCount: 1
                     }
 
+                    // Editing puts the message in the composer; sending saves it.
+                    ShellButton {
+                        objectName: "queueEdit-" + modelData.runId
+                        implicitHeight: 24
+                        subtle: true
+                        text: requests.composerModel?.editingQueuedRunId === modelData.runId ? qsTr("Editing") : qsTr("Edit")
+                        enabled: requests.composerModel?.editingQueuedRunId !== modelData.runId
+                        onClicked: Shell.dispatch("composer.queue.edit", {
+                            runId: modelData.runId
+                        })
+                    }
+
                     ShellButton {
                         objectName: "queueSteer-" + modelData.runId
                         implicitHeight: 24
