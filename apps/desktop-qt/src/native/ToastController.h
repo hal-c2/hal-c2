@@ -41,6 +41,9 @@ public:
   // An error toast, with the page's "An error occurred." for an empty reason.
   QString error(const QString& title, const QString& description = {});
   void dismiss(const QString& id);
+  // Runs the action of the newest toast offering `label` (the undo shortcut's
+  // "Undo"), as clicking it would; false when none does.
+  bool runAction(const QString& label);
   // Drops the toasts whose time is up; the timer calls it at the next deadline.
   void expire();
 

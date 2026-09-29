@@ -12,6 +12,7 @@
 #include "Harness.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
+#include "ThreadMenuController.h"
 #include "ThreadStore.h"
 #include "ToastController.h"
 
@@ -38,6 +39,11 @@ void World::start() {
     if (key == QLatin1String("theme")) m_theme->applyBaseTheme(value);
   });
   m_bridge->setUrlOpener([this](const QUrl& url) { openedUrls.append(url); });
+  m_native->controller<ThreadMenuController>()->setClipboardWriter([this](const QString& text) {
+    if (clipboardFails) return false;
+    clipboard = text;
+    return true;
+  });
   setTime(m_now);
   QObject::connect(m_bridge.get(), &ShellBridge::actionRequested, m_bridge.get(),
                    [this](const QString& type, const QVariant& payload) { onPageAction(type, payload.toMap()); });

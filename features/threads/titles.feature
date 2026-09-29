@@ -79,13 +79,13 @@ Feature: Thread titles
     Then the thread keeps its title
     And the thread is no longer marked as regenerating
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The title cannot be regenerated twice at once
     Given a new title is already being generated for "Fix login"
     When the user opens the thread menu
     Then regenerating the title is unavailable and shows it is in progress
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The title cannot be regenerated on an environment that needs an update
     Given the environment does not support title regeneration
     When the user opens the thread menu

@@ -124,8 +124,28 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
   };
 
   if (action == QLatin1String("thread.settle")) {
+    // Settling drops the pin; undoing puts it back where it was.
+    const sidebar::Nullable pinOrderKey = thread->pinnedAt ? thread->pinOrderKey : sidebar::Nullable();
+    const bool pinned = thread->pinnedAt.has_value();
     park(key, with({{QStringLiteral("type"), QStringLiteral("thread.settle")}}),
-         QStringLiteral("Failed to settle thread"));
+         QStringLiteral("Failed to settle thread"), [this, key, target, pinned, pinOrderKey] {
+           toasts()->show(QStringLiteral("success"), QStringLiteral("Settled"), QString(),
+                          ToastController::Action{QStringLiteral("Undo"), [this, key, target, pinned, pinOrderKey] {
+                            const auto thread = m_store->thread(key);
+                            if (!thread) return;
+                            QJsonObject unsettle = target;
+                            unsettle.insert(QStringLiteral("type"), QStringLiteral("thread.unsettle"));
+                            unsettle.insert(QStringLiteral("reason"), QStringLiteral("user"));
+                            command(thread->environmentId, unsettle, QStringLiteral("Failed to un-settle thread"),
+                                    [this, environmentId = thread->environmentId, target, pinned, pinOrderKey] {
+                                      if (!pinned) return;
+                                      QJsonObject pin = target;
+                                      pin.insert(QStringLiteral("type"), QStringLiteral("thread.pin"));
+                                      if (pinOrderKey) pin.insert(QStringLiteral("orderKey"), *pinOrderKey);
+                                      command(environmentId, pin, QStringLiteral("Failed to pin thread"));
+                                    });
+                          }});
+         });
   } else if (action == QLatin1String("thread.unsettle")) {
     command(thread->environmentId,
             with({{QStringLiteral("type"), QStringLiteral("thread.unsettle")},

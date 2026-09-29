@@ -106,6 +106,8 @@ public:
       {QStringLiteral("threadSettlement"), true},
       {QStringLiteral("threadSnooze"), true},
       {QStringLiteral("threadVisitedTracking"), true},
+      {QStringLiteral("threadPinning"), true},
+      {QStringLiteral("threadTitleRegeneration"), true},
   };
   bool holdSnapshot = false;
   // Environments outside the cluster the node is linked to (HalC2.Links), and

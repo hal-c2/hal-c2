@@ -58,6 +58,7 @@ const Steps steps([] {
   };
   step(QStringLiteral("the user picks %1").arg(q), [choose](World& world, const Captures& c, const Table&) {
     // With no menu open, the pick is an answer to the agent's question.
+    world.sync();  // a menu can open on the node's answer
     if (world.state(QStringLiteral("menu")).typeId() != QMetaType::QVariantMap) return pickAnswer(world, c[0]);
     choose(world, c[0]);
   });
@@ -87,6 +88,7 @@ const Steps steps([] {
     expect(scope.isNull(), QStringLiteral("the sidebar is scoped to %1").arg(scope.toString()));
   });
   step(QStringLiteral("the shell shows a menu at (\\d+), (\\d+) with:"), [](World& world, const Captures& c, const Table& table) {
+    world.sync();
     const QVariant menu = world.state(QStringLiteral("menu"));
     expect(at(menu, QStringLiteral("x")).toInt() == c[0].toInt() && at(menu, QStringLiteral("y")).toInt() == c[1].toInt(),
            QStringLiteral("the menu is %1").arg(show(menu)));

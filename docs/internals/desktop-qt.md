@@ -654,9 +654,10 @@ rendered. The `Workspace` brick renders the breadcrumb and the run / open
 pills; the branch toolbar's contents (environment, checkout mode, branch
 picker, PR badge) are the context strip under the `Composer` brick.
 
-Three actions still open page UI and go on to it: `workspace.newThread`,
-`workspace.titleMenu {x, y}` and `workspace.openPullRequest`. A draft's first
-message is still the page's too, so a draft's checkout (mode, start from
+`workspace.newThread` starts a draft in the header's project (`thread.new`),
+`workspace.openPullRequest` opens the checkout's pull request in the system
+browser, and `workspace.titleMenu {x, y}` opens the thread menu (below). A
+draft's first message is still the page's, so a draft's checkout (mode, start from
 origin, branch, worktree, the machine it runs on) is kept natively by draft
 id and the page is told each change: `workspace.envMode.set`,
 `.startFromOrigin.set` and `.environment.set` go on to it after they land, and
@@ -931,6 +932,20 @@ published as `menu` and `confirmation`; the window-level `ContextMenuHost`
 `menu.select {requestId, id|null}` and `confirmation.answer {requestId,
 accepted}`. Only an enabled item that was offered can be picked, and a newer
 menu replaces the open one.
+
+The thread menu is `ThreadMenuController`'s, from a row (`thread.menu {key,
+x, y}`) and from the header's title (`workspace.titleMenu`, which leaves out
+the project filter; a draft's title opens the draft menu). It follows
+`threadActionMenu.logic.ts`'s order and adds Fork and "Move to another
+machine…" (`hal-c2.moveDestinations`, then `hal-c2.moveThread`, which may
+answer with a question, a project to pick, or the moved thread's new key,
+which the route follows). Items the environment does not support are left
+out; on an offline thread only what needs no environment (copying, the new
+thread on its branch, the project filter) can be chosen. Every command
+reports a refusal as an error toast. Archive, unpin and settle offer Undo on
+their toast for its five seconds, and `thread.undo` (mod+z outside text)
+runs the newest Undo on offer. Delete, archive and unpin ask first when the
+device's `confirmThread*` settings say so (delete's is on by default).
 
 The page's own menus still go through `contextMenu`:
 `localApi.contextMenu.show` publishes the items with the surface they belong
