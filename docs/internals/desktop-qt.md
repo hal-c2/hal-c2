@@ -805,8 +805,11 @@ documents the shape and actions:
   That shape is node-addressed, so signing in works only on environments a
   cluster node serves. Turning a provider off is a settings edit on that
   environment, read back and retried on `StaleSettings` like the shell's own
-  settings. Adding, renaming and deleting instances, custom models and the ACP
-  registry are not native yet, so the desktop cannot do them.
+  settings. Instances, custom models and a registry agent's sessions and model
+  providers are edited through the same model; the ACP Registry search and a
+  registry agent's sessions, model providers and logout are node RPCs asked
+  from the followed environment, and their answers are held only while the
+  section shows.
 - **Archive** (`ArchivedThreadsController`, `archivedThreads`) is fetched,
   not streamed (`features/parity/rpc.feature`): opening it, refreshing, an
   action landing, or the online environments changing asks each one for
