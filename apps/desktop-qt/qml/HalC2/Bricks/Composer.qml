@@ -6,19 +6,14 @@ import HalC2.Shell
 
 // The prompt: text input, model/effort/mode pickers, send/stop, with the
 // checkout context strip welded under it. Rendered from Shell.state.composer
-// and Shell.state.workspace (see packages/contracts/src/shell.ts); every
-// change is dispatched back and the web app remains the owner of drafts and
-// sending.
+// and Shell.state.workspace; every change is dispatched back to
+// ComposerController, which keeps the drafts and sends over the node.
 Rectangle {
     id: composer
 
     readonly property var model: Shell.state.composer ?? null
     readonly property var workspace: Shell.state.workspace ?? null
-    // The shell's own turn for the thread this composer shows
-    // (ComposerController): its draft and images live there, not on the page.
-    readonly property var turn: Shell.state.turn ?? null
-    readonly property bool nativeTurn: ready && turn !== null && turn.threadKey === model.target
-    readonly property var attachments: nativeTurn ? turn.attachments : ready ? model.attachments : []
+    readonly property var attachments: ready ? model.attachments : []
     readonly property bool ready: model !== null && model.target !== null
     readonly property string publishedTarget: ready ? model.target : ""
     readonly property string publishedText: ready ? model.text : ""
@@ -65,20 +60,18 @@ Rectangle {
         return true;
     }
 
-    // The last text this brick sent; an echo of it from the page is not an edit.
+    // The last text this brick sent; an echo of it from the controller is not an edit.
     property string lastSentText: ""
     property int lastSentCursor: -1
     property string editingTarget: ""
     readonly property string editClientId: Date.now().toString(36) + Math.random().toString(36).slice(2)
     property int nextEditRevision: 0
     property int lastSentRevision: 0
-    // The target whose kept draft this brick has offered to the editor.
-    property string adoptedTarget: ""
 
     implicitHeight: stack.implicitHeight + gutter
     color: canvas
 
-    // The page's model-picker and toolbar keybindings land here while this
+    // The model-picker and toolbar keybindings land here while this
     // brick hosts those controls.
     Connections {
         target: Shell
@@ -122,8 +115,8 @@ Rectangle {
     }
 
     // Up on the editor's first line recalls the thread's earlier prompts and
-    // Down on its last steps back; the page keeps the history and answers with
-    // the recalled text, or ignores a draft the user typed.
+    // Down on its last steps back. ComposerController keeps no prompt history
+    // yet and drops the step (features/composer/context-references.feature).
     function stepPromptHistory(direction) {
         const caret = input.positionToRectangle(input.cursorPosition).y;
         const edge = input.positionToRectangle(direction === "backward" ? 0 : input.length).y;
@@ -189,11 +182,11 @@ Rectangle {
         });
     }
 
-    // What Enter with these modifiers sends, as the page resolves it from the
+    // What Enter with these modifiers sends, as the controller resolves it from the
     // send shortcut setting and the keybindings (composer.enterIntents); ""
     // leaves the key to the editor as a newline.
     function enterIntent(modifiers) {
-        // Qt calls the Command key Control on macOS, where the page calls it meta.
+        // Qt calls the Command key Control on macOS, where the keybindings call it meta.
         const mac = Qt.platform.os === "osx";
         const held = [];
         if (modifiers & (mac ? Qt.MetaModifier : Qt.ControlModifier)) held.push("ctrl");
@@ -201,7 +194,7 @@ Rectangle {
         if (modifiers & Qt.AltModifier) held.push("alt");
         if (modifiers & Qt.ShiftModifier) held.push("shift");
         const mod = mac ? "meta" : "ctrl";
-        // A page from before enterIntents: Enter sends, mod+Enter the alternative.
+        // Without enterIntents: Enter sends, mod+Enter the alternative.
         const table = composer.model.enterIntents ?? {
             singleLine: { "": "foreground", [mod]: composer.model.isRunning ? "alternate" : "background" }
         };
@@ -213,15 +206,15 @@ Rectangle {
         if (!composer.ready) {
             return;
         }
-        // canSend reflects the text the page has seen, which lags this input by
-        // the debounce; with local text, let the page validate the send (it
-        // echoes the prompt back if it declines).
+        // canSend reflects the text the controller has seen, which lags this
+        // input by the debounce; with local text, let the controller validate
+        // the send (it echoes the prompt back if it declines).
         if (!composer.model.canSend && input.text.trim().length === 0 && composer.attachments.length === 0) {
             return;
         }
         textDebounce.stop();
         const text = input.text;
-        // The page clears its published prompt only after accepting the send.
+        // The controller clears its published prompt only after accepting the send.
         // Until then this remains the user's recoverable draft.
         composer.lastSentText = text;
         composer.lastSentCursor = input.cursorPosition;
@@ -244,14 +237,13 @@ Rectangle {
             lastSentCursor = cursor;
             input.text = text;
             input.cursorPosition = cursor;
-            adoptDraft();
             return;
         }
         // Compare the publication's edit revision, not its text: returning to
         // an earlier value and coalesced publications must still acknowledge
         // the right edit. Older echoes cannot move the local text or caret.
         const edit = model?.edit;
-        // An absent field means an older page without revision support.
+        // An absent field means a publisher without revision support.
         if (edit !== undefined && lastSentRevision > 0 && (!edit || edit.clientId !== editClientId || edit.revision < lastSentRevision)) {
             return;
         }
@@ -261,21 +253,6 @@ Rectangle {
             input.cursorPosition = cursor;
             lastSentCursor = cursor;
         }
-    }
-
-    onTurnChanged: adoptDraft()
-
-    // A thread the shell kept a draft for opens with it when the page has none.
-    function adoptDraft() {
-        // Read the state itself: this runs before the bindings above catch up.
-        const kept = Shell.state.turn ?? null;
-        const target = Shell.state.composer?.target ?? null;
-        if (kept === null || target === null || kept.threadKey !== target || adoptedTarget === target) return;
-        adoptedTarget = target;
-        if (input.text.length > 0 || !kept.draft) return;
-        input.text = kept.draft;
-        input.cursorPosition = kept.draft.length;
-        flushText();
     }
 
     onSuggestionsChanged: suggestionList.currentIndex = suggestions.length > 0 ? 0 : -1
@@ -295,7 +272,7 @@ Rectangle {
         width: Math.min(parent.width - composer.gutter * 2, composer.maximumCardWidth)
         spacing: 0
 
-        // @file, $skill and /command suggestions, computed by the page for the
+        // @file, $skill and /command suggestions, computed by the controller for the
         // caret it was last told about; they sit on the card's top edge.
         Rectangle {
             Layout.fillWidth: true
@@ -483,7 +460,7 @@ Rectangle {
                                 textDebounce.restart();
                             }
                         }
-                        // The page's keybindings are window shortcuts too (ShellWindow);
+                        // Keybindings are window shortcuts too (ShellWindow);
                         // an Enter chord that sends is the composer's, not theirs.
                         Keys.onShortcutOverride: event => {
                             event.accepted = (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
@@ -639,21 +616,7 @@ Rectangle {
                         Layout.fillWidth: true
                     }
 
-                    Text {
-                        // TurnRequests answers the shell's own turn above the composer.
-                        visible: composer.ready && !composer.nativeTurn && composer.model.pendingApprovalCount > 0
-                        text: composer.ready ? qsTr("%1 approval(s) waiting in the timeline").arg(composer.model.pendingApprovalCount) : ""
-                        color: Theme.palette.color("warning", "#e0af68")
-                        font.pixelSize: 12
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
-                    }
-
-                    ShellButton {
-                        visible: composer.ready && !composer.nativeTurn && composer.model.showPlanFollowUpPrompt && input.text.trim().length === 0 && !primaryAction.stopMode
-                        implicitHeight: 28
-                        text: qsTr("Implement")
-                        onClicked: composer.submit("foreground")
-                    }
+                    // Approvals and the plan's Implement live in TurnRequests above.
 
                     // Round send / stop.
                     AbstractButton {

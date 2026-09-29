@@ -87,8 +87,6 @@ QtObject {
             turn: Object.assign({
                 threadKey: state.composer.target,
                 running: false,
-                draft: "",
-                attachments: [],
                 approvals: [],
                 questions: [],
                 plan: null,

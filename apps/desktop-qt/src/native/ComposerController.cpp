@@ -744,22 +744,14 @@ void ComposerController::publish() {
 
 QVariantMap ComposerController::turnState() const {
   const auto thread = m_store->thread(m_thread);
-  QVariantList attachments;
-  for (const Attachment& attachment : m_drafts.value(m_thread).attachments) {
-    attachments.append(QVariantMap{{QStringLiteral("id"), attachment.id},
-                                   {QStringLiteral("name"), attachment.name},
-                                   {QStringLiteral("mimeType"), attachment.mimeType},
-                                   {QStringLiteral("sizeBytes"), attachment.sizeBytes}});
-  }
   const bool isRunning = thread && thread->activeRunId.has_value();
-  // A new thread's draft; one only the page has is left to it.
+  // A new thread's draft.
   if (!m_draftId.isEmpty()) {
     const bool kept = NativeShell::of(this)->controller<DraftController>()->draft(m_draftId).has_value();
     return {{QStringLiteral("threadKey"), kept ? m_draftId : QString()},
             {QStringLiteral("kind"), QStringLiteral("draft")},
             {QStringLiteral("running"), false},
             {QStringLiteral("sending"), m_launching.contains(m_draftId)},
-            {QStringLiteral("attachments"), attachments},
             {QStringLiteral("approvals"), QVariantList()},
             {QStringLiteral("questions"), QVariantList()},
             {QStringLiteral("plan"), QVariant()},
@@ -768,7 +760,6 @@ QVariantMap ComposerController::turnState() const {
   QVariantMap state{{QStringLiteral("threadKey"), thread ? m_thread : QString()},
                     {QStringLiteral("kind"), QStringLiteral("thread")},
                     {QStringLiteral("running"), isRunning},
-                            {QStringLiteral("attachments"), attachments},
                     {QStringLiteral("approvals"), QVariantList()},
                     {QStringLiteral("questions"), QVariantList()},
                     {QStringLiteral("plan"), QVariant()},

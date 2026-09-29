@@ -192,33 +192,14 @@ Item {
             compare(lastAction().payload.runId, "run-2");
         }
 
-        function test_composerOpensWithTheKeptDraft() {
-            const composer = createTemporaryObject(composerComponent, root);
-            const input = findChild(composer, "input");
-            Shell.publishComposerTarget("thread-b", "", 0);
-            Shell.publishTurn({ threadKey: "thread-b", draft: "draft for B" });
-            waitForRendering(root);
-            compare(input.text, "draft for B");
-            const set = Shell.dispatchedActions.find(entry => entry.action === "composer.text.set");
-            compare(set.payload.target, "thread-b");
-            compare(set.payload.text, "draft for B");
-        }
-
-        function test_composerKeepsThePagesTextOverTheKeptDraft() {
-            const composer = createTemporaryObject(composerComponent, root);
-            const input = findChild(composer, "input");
-            Shell.publishComposerTarget("thread-b", "page text", 9);
-            Shell.publishTurn({ threadKey: "thread-b", draft: "draft for B" });
-            waitForRendering(root);
-            compare(input.text, "page text");
-        }
-
         function test_composerSendsImagesWithoutText() {
             const composer = createTemporaryObject(composerComponent, root);
             Shell.state = Object.assign({}, Shell.state, {
-                composer: Object.assign({}, Shell.state.composer, { canSend: false })
+                composer: Object.assign({}, Shell.state.composer, {
+                    canSend: false,
+                    attachments: [{ id: "attachment-1", name: "cart.png" }]
+                })
             });
-            Shell.publishTurn({ attachments: [{ id: "attachment-1", name: "cart.png", mimeType: "image/png", sizeBytes: 8 }] });
             waitForRendering(root);
             const send = findChild(composer, "primaryAction");
             verify(send.enabled);

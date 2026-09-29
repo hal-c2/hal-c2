@@ -71,7 +71,7 @@ QVariantMap edit(World& world) {
 }
 
 QVariantList attachments(World& world) {
-  return world.state(QStringLiteral("turn")).toMap().value(QStringLiteral("attachments")).toList();
+  return world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("attachments")).toList();
 }
 
 QStringList attachmentNames(World& world) {
