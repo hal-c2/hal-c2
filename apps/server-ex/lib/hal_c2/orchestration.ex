@@ -1375,7 +1375,7 @@ defmodule HalC2.Orchestration do
   defp with_message_fields(message, command) do
     message
     |> with_context(command)
-    |> Map.merge(Map.take(command, ["senderThreadId", "delegatedCompletion"]))
+    |> Map.merge(Map.take(command, ["senderThreadId", "delegatedCompletion", "providerWake"]))
   end
 
   # Uploads claimed into the thread, with the context records that name them.
@@ -2529,6 +2529,9 @@ defmodule HalC2.Orchestration do
         HalC2.Settings.for_project(thread["projectId"])["responseStreamingMode"] || "paragraph",
       interaction_mode: thread["interactionMode"] || "default",
       attachments: provider_attachments(command["attachments"]),
+      # A turn the provider started by itself, whose output its runtime already has
+      # (a Claude wake, `HalC2.Claude.ThreadRuntime`): the message is not sent to it.
+      wake: command["providerWake"] == true,
       native_thread_id: get_in(provider_thread || %{}, ["nativeThreadRef", "nativeId"]),
       head: get_in(provider_thread || %{}, ["nativeConversationHeadRef", "nativeId"])
     }

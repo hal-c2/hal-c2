@@ -17,6 +17,11 @@ defmodule HalC2.Claude.ThreadRuntime do
   the turn when it is interrupted or fails, or with the process. While they run, the
   thread lists them as background work (`HalC2.Projection.BackgroundWork`), which
   keeps the idle reaper from stopping the process.
+
+  When background work ends between the node's turns, Claude answers its notification
+  with a turn of its own (a "wake"). Its messages wait for a run of their own, which
+  the runtime asks the thread for (`wake/2`); that run replays them and follows the
+  rest to Claude's `result`.
   """
 
   use GenServer, restart: :temporary
@@ -31,7 +36,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   alias HalC2.Orchestration.{Entities, NativeSubagent}
   alias HalC2.StreamState
 
-  @state_version 7
+  @state_version 8
 
   @signed_out "Claude could not authenticate. For subscription login, run `claude auth login` " <>
                 "on this environment's machine, then start a new thread. For API-key " <>
@@ -163,22 +168,70 @@ defmodule HalC2.Claude.ThreadRuntime do
        # not work (ambient, a foreground command) or has ended.
        tasks: %{},
        # The latest turn's ids, which work Claude starts between turns joins.
-       last_ids: nil
+       last_ids: nil,
+       # A turn Claude runs by itself (`wake/2`) that no run follows yet:
+       # `%{open: bool, buffer: [message] | nil}`, `open` until its `result`, `buffer` its
+       # messages newest first, nil once the thread refused it a run.
+       wake: nil
      }}
   end
 
+  # The run of a wake: nothing is sent to Claude. What it said so far is replayed into
+  # the run, which then follows it to its `result`.
   @impl true
+  def handle_call({:start_turn, %{wake: true} = turn}, _from, state) do
+    ids = Map.put(turn.ids, :provider_turn, "provider-turn:claudeAgent:#{turn.ids.run}")
+    launch = state.launch || Provider.launch(turn.model, Map.get(turn, :options, %{}))
+    turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
+    wake = state.wake || %{open: false, buffer: nil}
+    buffer = Enum.reverse(wake.buffer || [])
+
+    state = %{
+      state
+      | turn: turn,
+        items: %{},
+        blocks: %{},
+        interrupted: false,
+        last_ids: ids,
+        wake: nil
+    }
+
+    started(state)
+    state = Enum.reduce(buffer, state, &receive_message/2)
+
+    # Replayed to its end, or Claude is still at it; a wake a user's turn took over
+    # (`take_wake/2`) leaves its run nothing to show.
+    state =
+      cond do
+        state.turn == nil ->
+          state
+
+        state.session == nil and (wake.open or buffer != []) ->
+          end_turn(state, "failed", "Claude exited")
+
+        wake.open ->
+          state
+
+        true ->
+          end_turn(state, "completed", nil)
+      end
+
+    {:reply, :ok, state}
+  end
+
   def handle_call({:start_turn, turn}, _from, state) do
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:claudeAgent:#{turn.ids.run}")
     launch = Provider.launch(turn.model, Map.get(turn, :options, %{}))
     turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
     state = %{state | turn: turn, items: %{}, blocks: %{}, interrupted: false, last_ids: ids}
+    session = state.session
 
     case open_session(state, turn) do
       {:ok, state, turn} ->
         state = %{state | turn: turn}
-        Session.send_message(state.session, claude_content(turn))
         started(state)
+        {state, opts} = take_wake(state, session)
+        Session.send_message(state.session, claude_content(turn), opts)
 
         {:reply, :ok, state}
 
@@ -217,7 +270,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   def handle_call(:rollback, _from, %{turn: nil} = state) do
     state = end_work(state, "interrupted")
     if state.session, do: GenServer.stop(state.session)
-    {:reply, :ok, %{state | session: nil, session_id: nil, permission_mode: nil}}
+    {:reply, :ok, %{state | session: nil, session_id: nil, permission_mode: nil, wake: nil}}
   end
 
   def handle_call(:rollback, _from, state),
@@ -267,7 +320,15 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   @impl true
   def handle_info({:claude, _session, {:message, message}}, state),
-    do: {:noreply, message(message, state)}
+    do: {:noreply, receive_message(message, state)}
+
+  # The thread would not run the wake (`wake/2`): its messages go on as between turns.
+  def handle_info(:wake_refused, %{turn: nil, wake: %{buffer: [_ | _] = buffer} = wake} = state) do
+    state = %{state | wake: if(wake.open, do: %{wake | buffer: nil})}
+    {:noreply, buffer |> Enum.reverse() |> Enum.reduce(state, &message/2)}
+  end
+
+  def handle_info(:wake_refused, state), do: {:noreply, state}
 
   def handle_info(
         {:claude, session, {:permission, id, _tool, _input, _context}},
@@ -321,7 +382,9 @@ defmodule HalC2.Claude.ThreadRuntime do
         do: end_turn(state, "failed", "Claude exited"),
         else: end_work(state, "failed")
 
-    {:noreply, %{state | session: nil}}
+    # A wake waiting for its run ends there, cut short.
+    wake = if match?(%{buffer: [_ | _]}, state.wake), do: %{state.wake | open: false}
+    {:noreply, %{state | session: nil, wake: wake}}
   end
 
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
@@ -346,6 +409,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:work, %{})
        |> Map.put_new(:tasks, %{})
        |> Map.put_new(:last_ids, nil)
+       |> Map.put_new(:wake, nil)
        |> Map.put_new(:permission_mode, nil)
        |> Map.put_new(:steered, false)
        |> Map.put_new(:launch, nil)
@@ -623,6 +687,91 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   # --- messages ------------------------------------------------------------------
 
+  # Claude runs one turn at a time and ends each with one `result`, so which turn a
+  # result ends follows from the order: a wake Claude is running when a user's turn
+  # starts ends first (`take_wake/2`), and between the node's turns every result is a
+  # wake's.
+  defp receive_message(message, %{turn: nil, wake: %{buffer: buffer} = wake} = state)
+       when is_list(buffer) do
+    open = if result?(message), do: false, else: wake.open or wake?(message)
+    %{state | wake: %{open: open, buffer: [message | buffer]}}
+  end
+
+  defp receive_message(message, %{turn: nil, wake: %{buffer: nil}} = state) do
+    state = message(message, state)
+    if result?(message), do: %{state | wake: nil}, else: state
+  end
+
+  defp receive_message(message, %{turn: nil, wake: nil} = state) do
+    if wake?(message), do: wake(state, message), else: message(message, state)
+  end
+
+  # The result of the wake a user's turn took over; the user's own follows it. An
+  # interrupt ends the user's turn with the first.
+  defp receive_message(%{"type" => "result"}, %{wake: %{open: true}} = state)
+       when not state.interrupted,
+       do: %{state | wake: nil}
+
+  defp receive_message(message, state), do: message(message, state)
+
+  defp result?(message), do: match?(%{"type" => "result"}, message)
+
+  defp wake?(%{"type" => type}) when type in ~w(assistant user stream_event), do: true
+  defp wake?(_message), do: false
+
+  # Claude started a turn by itself: the thread gets a message for it, from the agent,
+  # whose run (`handle_call({:start_turn, %{wake: true}})`) queues behind any other.
+  # Off this process, since starting the run calls back into it.
+  defp wake(state, message) do
+    runtime = self()
+    thread_id = state.thread_id
+
+    Task.start(fn ->
+      stream = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+      latest = stream |> StreamState.list("run") |> Enum.max_by(& &1["ordinal"], fn -> %{} end)
+      message_id = Entities.new_id("message")
+
+      with {:error, reason} <-
+             Orchestration.dispatch(%{
+               "type" => "message.dispatch",
+               "commandId" => "command:claude-wake:#{message_id}",
+               "threadId" => thread_id,
+               "messageId" => message_id,
+               "text" => "Background task completed.",
+               "attachments" => [],
+               "modelSelection" => latest["modelSelection"],
+               "dispatchMode" => %{"type" => "queue_after_active"},
+               "createdBy" => "agent",
+               "creationSource" => "provider",
+               "providerWake" => true
+             }) do
+        Logger.warning("claude wake in #{thread_id} has no run: #{inspect(reason)}")
+        send(runtime, :wake_refused)
+      end
+    end)
+
+    %{state | wake: %{open: not result?(message), buffer: [message]}}
+  end
+
+  # A user's turn that starts while Claude runs a wake takes it over: what the wake said
+  # so far joins the turn, and the message steers it, so the wake's `result` comes
+  # before the turn's own instead of the two being one (`receive_message/2`). A new
+  # process (`session` was another) ended the wake. A wake that already ended keeps
+  # its messages for its own run.
+  defp take_wake(%{wake: %{open: true} = wake} = state, session) do
+    state =
+      (wake.buffer || [])
+      |> Enum.reverse()
+      |> Enum.reject(&result?/1)
+      |> Enum.reduce(%{state | wake: nil}, &message/2)
+
+    if state.session == session,
+      do: {%{state | wake: %{open: true, buffer: []}}, [priority: "now"]},
+      else: {state, []}
+  end
+
+  defp take_wake(state, _session), do: {state, []}
+
   defp message(%{"type" => "rate_limit_event", "rate_limit_info" => %{} = info}, state) do
     HalC2.ProviderUsageLimits.claude_event(info)
     rate_limit(info, state)
@@ -672,8 +821,8 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp message(%{"type" => "system", "subtype" => "task_started"} = task, state),
     do: task_started(state, task)
 
-  # Between turns only the work Claude starts is recorded: its subagents and background
-  # commands, and their launches' results.
+  # Between turns, a wake the thread would not run (`wake/2`) records only the work
+  # Claude starts: its subagents and background commands, and their launches' results.
   defp message(
          %{"type" => "assistant", "message" => %{"content" => content}},
          %{turn: nil} = state
@@ -1092,7 +1241,9 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
 
     finish(state, status, failure)
-    %{state | turn: nil, items: %{}, blocks: %{}, requests: %{}}
+    # Only a wake waiting for its own run outlives the turn.
+    wake = if match?(%{buffer: [_ | _]}, state.wake), do: state.wake
+    %{state | turn: nil, items: %{}, blocks: %{}, requests: %{}, wake: wake}
   end
 
   defp block_key(message_id, index), do: "#{message_id}:#{index}"

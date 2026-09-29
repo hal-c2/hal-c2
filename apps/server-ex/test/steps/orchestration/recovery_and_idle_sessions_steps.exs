@@ -334,6 +334,8 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
       "is_backgrounded" => true
     })
 
+    # The launch was a turn of Claude's own; it ends with its result.
+    claude_says(context, context.thread, %{"type" => "result", "subtype" => "success"})
     await_background(context)
   end
 
