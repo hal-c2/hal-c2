@@ -71,15 +71,24 @@ always-loaded prompt or skill: it costs nothing in threads that never open a
 device and cannot drift from the pinned CLI version. The always-on prompt block
 is a few lines that point at the tools and forbid raw `simctl` and `adb`.
 
-## The viewer decodes both vendored protocols
+## The viewers decode both vendored protocols
 
 The hub vendors two streaming servers with different wire formats. iOS video is
-an HTTP body of AVCC envelopes decoded with WebCodecs, with input on a separate
-binary WebSocket; Android multiplexes SEMU-framed H.264 and JSON gestures over
-one WebSocket. [`deviceStream.ts`](../../apps/web/src/components/device/deviceStream.ts)
-speaks both so one panel covers both platforms.
+an HTTP body of AVCC envelopes, with input on a separate binary WebSocket;
+Android multiplexes SEMU-framed H.264 and JSON gestures over one WebSocket.
+Each viewer speaks both so one panel covers both platforms.
 
-Simulators encode H.264 High 5.1. Hardware decoders on some machines and all
-headless browsers reject that profile, and WebCodecs is secure-context only, so
-the viewer probes `isConfigSupported` and falls back to the MJPEG endpoint on
-iOS. Android has no MJPEG; there the panel reports that it cannot decode.
+The web's [`deviceStream.ts`](../../apps/web/src/components/device/deviceStream.ts)
+decodes with WebCodecs. Simulators encode H.264 High 5.1. Hardware decoders on
+some machines and all headless browsers reject that profile, and WebCodecs is
+secure-context only, so it probes `isConfigSupported` and falls back to the
+MJPEG endpoint on iOS. Android has no MJPEG; there the panel reports that it
+cannot decode.
+
+The Qt desktop's [`DeviceStream`](../../apps/desktop-qt/src/native/DeviceStream.cpp)
+decodes in software with libavcodec on its own thread
+([`DeviceDecoder`](../../apps/desktop-qt/src/native/DeviceDecoder.cpp)), so
+every profile decodes and MJPEG only seeds the first picture. QtMultimedia was
+not used: its player paces by timestamp and buffers, and cannot drop frames or
+ask for keyframes. A decoder that falls behind drops its backlog and waits for
+the next keyframe instead of showing old pictures late.
