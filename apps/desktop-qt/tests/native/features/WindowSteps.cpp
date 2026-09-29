@@ -8,6 +8,7 @@
 #include <QJsonDocument>
 #include <QEvent>
 #include <QJsonArray>
+#include <QUrl>
 
 #include "ComposerController.h"
 #include "Harness.h"
@@ -213,6 +214,25 @@ const Steps steps([] {
     world.waitFor([&] { return stream::followers(world, kSecond).isEmpty(); },
                   QStringLiteral("the closed window's thread to be let go"));
     expect(!stream::followers(world, kFirst).isEmpty(), QStringLiteral("the first window stopped following its thread"));
+  });
+
+  // What main.cpp sets on the first window's bridge as the backend starts.
+  step(QStringLiteral("the backend serves the app and then fails"), [](World& world, const Captures&, const Table&) {
+    world.bridge().setPageUrl(QUrl(QStringLiteral("http://127.0.0.1:3773/")));
+    world.bridge().publish(QStringLiteral("backendError"), QStringLiteral("the node exited"));
+  });
+  step(QStringLiteral("the user opens a third window"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("window.new"), QVariantMap{});
+    expect(world.native().windows().size() == 3, QStringLiteral("%1 windows are open").arg(world.native().windows().size()));
+  });
+  step(QStringLiteral("every window shows the app and the failure"), [](World& world, const Captures&, const Table&) {
+    for (const auto& window : world.native().windows()) {
+      ShellBridge* bridge = window->bridge();
+      expect(bridge->pageUrl() == QUrl(QStringLiteral("http://127.0.0.1:3773/")),
+             QStringLiteral("window %1 loads %2").arg(window->id(), bridge->pageUrl().toString()));
+      const QString error = bridge->state()->value(QStringLiteral("backendError")).toString();
+      expect(error == QLatin1String("the node exited"), QStringLiteral("window %1 shows the error \"%2\"").arg(window->id(), error));
+    }
   });
 
   // Node work in flight when a window closes (NodeClient's contexts).

@@ -153,7 +153,8 @@ public:
   void registerQmlSingletons();
   NativeWindow* windowFor(QQmlEngine* engine) const;
 
-  // Every registration, in name order, and the keys the shared ones publish.
+  // Every registration, in name order, and the keys the shared bridge
+  // publishes (the shared controllers' and `backendError`).
   const QList<NativeControllerRegistration>& registrations() const { return m_registrations; }
   const QStringList& sharedKeys() const { return m_sharedKeys; }
 

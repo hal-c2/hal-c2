@@ -78,6 +78,9 @@ NativeWindow::NativeWindow(NativeShell* shell, const QString& id, ShellBridge* b
     connect(shared, &ShellBridge::stateEntryChanged, this, [this](const QString& key, const QVariant& value) {
       if (m_shell->sharedKeys().contains(key)) m_bridge->publish(key, value);
     });
+    // The page the backend serves, which main.cpp sets on the shared bridge.
+    bridge->setPageUrl(shared->pageUrl());
+    connect(shared, &ShellBridge::pageUrlChanged, this, [this, shared] { m_bridge->setPageUrl(shared->pageUrl()); });
   }
   // The shared bridge outlives the first window, and keeps its interceptor.
   bridge->addInterceptor([window = QPointer<NativeWindow>(this)](const QString& action, const QVariant& payload) {
@@ -180,6 +183,8 @@ NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)
   std::sort(m_registrations.begin(), m_registrations.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
   // The shared ones first, so every window finds them; they publish on the
   // first window's bridge and every other mirrors it.
+  // main.cpp's own: the backend's failure, which every window shows.
+  m_sharedKeys += QStringLiteral("backendError");
   for (const NativeControllerRegistration& registration : m_registrations) {
     if (registration.scope != NativeControllerScope::Shared) continue;
     m_sharedKeys += registration.stateKeys;

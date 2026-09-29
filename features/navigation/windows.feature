@@ -97,6 +97,13 @@ Feature: Windows, zoom and quitting
       Then the first window still shows its own thread
 
     @desktop
+    Scenario: Every window shows the app and a backend failure
+      Given a second window is open
+      When the backend serves the app and then fails
+      And the user opens a third window
+      Then every window shows the app and the failure
+
+    @desktop
     Scenario: Closing a second window leaves the first alone
       Given a second window is open
       When the user closes the second window

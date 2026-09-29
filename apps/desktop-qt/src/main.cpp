@@ -249,6 +249,7 @@ int main(int argc, char* argv[]) {
   BackendProcess backend(backendOptions);
   // Announced before `ready`, so the shell's own connection starts with the page.
   QObject::connect(&backend, &BackendProcess::nodeAvailable, &native, &NativeShell::open);
+  // On the first window's bridge, which every other window mirrors (NativeWindow).
   QObject::connect(&backend, &BackendProcess::ready, &bridge, &ShellBridge::setPageUrl);
   QObject::connect(&backend, &BackendProcess::failed, &bridge, [&bridge](const QString& message) {
     qCritical().noquote() << "[shell]" << message;
