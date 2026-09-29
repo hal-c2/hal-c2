@@ -48,6 +48,8 @@ const FakeNode::Extension extension([](FakeNode& node) {
                  {QStringLiteral("id"), id},
                  {QStringLiteral("node"), node.name},
                  {QStringLiteral("config"), config}});
+    } else if (fake.elsewhere.contains(environment)) {
+      node.send({{QStringLiteral("t"), QStringLiteral("config")}, {QStringLiteral("id"), id}, {QStringLiteral("config"), fake.elsewhere.value(environment)}});
     }
     node.send({{QStringLiteral("t"), QStringLiteral("config.themes")},
                {QStringLiteral("id"), id},

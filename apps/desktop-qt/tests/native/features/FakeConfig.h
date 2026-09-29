@@ -17,6 +17,7 @@ struct FakeConfig {
   int version = 0;
   QJsonObject config;  // ServerConfig, less settings
   QHash<QString, QJsonArray> themes;  // by environment
+  QHash<QString, QJsonObject> elsewhere;  // other environments' ServerConfig, by environment
   QList<QJsonObject> writes;  // every writeSettings payload, in order
   QList<bool> saved;  // whether each write was saved
   bool holdReads = false;

@@ -223,8 +223,9 @@ void WorkspaceController::refresh() {
     ++m_renameRequestId;
   }
   follow(m_place ? m_place->cwd() : QString());
-  // The node serves `config` for its cluster's environments only.
-  if (m_place && m_place->environmentId != m_client->environment() && m_store->servesEnvironment(m_place->environmentId)) {
+  // Another machine's editors, through its cluster member or its link; a link
+  // that is down ends the watch at once, so it waits for the machine to be back.
+  if (m_place && m_place->environmentId != m_client->environment() && m_store->environmentOnline(m_place->environmentId)) {
     watchConfig(m_place->environmentId);
   } else {
     watchConfig({});

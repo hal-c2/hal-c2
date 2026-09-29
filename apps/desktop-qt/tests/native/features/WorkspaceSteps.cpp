@@ -487,6 +487,16 @@ const Steps steps([] {
     }
     world.sync();
   });
+  step(QStringLiteral("%1 has the editors %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeConfig(world.node).elsewhere.insert(c[0], {{QStringLiteral("availableEditors"), QJsonArray{editorId(c[1]), editorId(c[2])}}});
+  });
+  step(QStringLiteral("the header lists the editors %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      QStringList labels;
+      for (const QVariant& editor : workspace(world).value(QStringLiteral("editors")).toList()) labels.append(editor.toMap().value(QStringLiteral("label")).toString());
+      return labels == QStringList{c[0], c[1]};
+    }, [&] { return QStringLiteral("the header to list %1 and %2; it shows %3").arg(c[0], c[1], show(workspace(world))); });
+  });
   step(QStringLiteral("the user opens the thread in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     dispatch(world, QStringLiteral("workspace.openInEditor"), {{QStringLiteral("editorId"), editorId(c[0])}});
   });
