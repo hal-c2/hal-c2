@@ -532,20 +532,14 @@ ShellWindow {
                         radius: surfaceCard.radius - surfaceCard.border.width
                     }
 
-                    ClusterSettings {
+                    SettingsHost {
                         anchors.fill: parent
                         anchors.margins: surfaceCard.border.width
                         radius: surfaceCard.radius - surfaceCard.border.width
-                        visible: root.clusterOpen
+                        section: root.settingsSection
+                        visible: root.nativeSettingsOpen
                     }
-                    ConnectionsSettings { anchors.fill: parent; anchors.margins: surfaceCard.border.width; radius: surfaceCard.radius - surfaceCard.border.width; visible: root.connectionsOpen }
 
-                    KeybindingsSettings {
-                        anchors.fill: parent
-                        anchors.margins: surfaceCard.border.width
-                        radius: surfaceCard.radius - surfaceCard.border.width
-                        visible: root.keybindingsOpen
-                    }
 
                     // The page dims under the drawer; clicking it closes the drawer.
                     Rectangle {

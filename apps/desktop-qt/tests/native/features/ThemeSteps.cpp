@@ -1,6 +1,8 @@
 // The theme the shell resolves and draws, the themes the node publishes, and
 // the shell theme file over them (features/desktop/native-settings.feature,
-// navigation/environment-themes.feature, navigation/appearance.feature).
+// navigation/environment-themes.feature, navigation/appearance.feature); this
+// device's own themes as Settings → Appearance edits them
+// (navigation/theme-editor.feature).
 
 #include <QColor>
 #include <QDir>
@@ -115,6 +117,51 @@ void shellRunning(World& world) {
   world.waitFor([&world] { return world.state(QStringLiteral("native")).isValid(); }, QStringLiteral("the shell to take over"));
 }
 
+// A theme of this device's by that name (its id), with a palette for each
+// appearance named; the ones the scenarios name are made up here.
+void ensureTheme(World& world, const QString& name, const QStringList& appearances = {QStringLiteral("dark"), QStringLiteral("light")}) {
+  for (const QVariant& theme : themes(world)->available()) {
+    if (theme.toMap().value(QStringLiteral("id")) == name) return;
+  }
+  const QJsonObject dark{{QStringLiteral("canvas"), QStringLiteral("#2e3440")}, {QStringLiteral("accent"), QStringLiteral("#88c0d0")}};
+  const QJsonObject light{{QStringLiteral("canvas"), QStringLiteral("#eceff4")}, {QStringLiteral("accent"), QStringLiteral("#5e81ac")}};
+  const QString first = appearances.first();
+  QJsonObject theme{{QStringLiteral("id"), name},
+                    {QStringLiteral("label"), name},
+                    {QStringLiteral("appearance"), first},
+                    {QStringLiteral("colors"), first == QLatin1String("dark") ? dark : light}};
+  if (appearances.size() > 1) theme.insert(QStringLiteral("variants"), QJsonObject{{QStringLiteral("light"), light}});
+  saveCustom(world, theme);
+}
+
+// This device's preferences, as they are, in a directory that cannot be
+// written: every later save fails. Writable again when the shell goes, so the
+// scenario's home can be removed.
+void blockDevice(World& world) {
+  const QString locked = QDir(world.configDir()).filePath(QStringLiteral("locked"));
+  const QString path = QDir(locked).filePath(QStringLiteral("preferences.json"));
+  QDir().mkpath(locked);
+  QFile file(path);
+  if (!file.open(QIODevice::WriteOnly)) fail(QStringLiteral("cannot write %1").arg(path));
+  file.write(QJsonDocument(settings(world)->deviceSettings()).toJson());
+  file.close();
+  settings(world)->setDevicePath(path);
+  const auto readOnly = QFileDevice::ReadOwner | QFileDevice::ExeOwner;
+  QFile::setPermissions(path, QFileDevice::ReadOwner);
+  QFile::setPermissions(locked, readOnly);
+  QObject::connect(settings(world), &QObject::destroyed, [locked, path, readOnly] {
+    QFile::setPermissions(locked, readOnly | QFileDevice::WriteOwner);
+    QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+  });
+}
+
+std::optional<QVariantMap> offered(World& world, const QString& label) {
+  for (const QVariant& theme : themes(world)->available()) {
+    if (theme.toMap().value(QStringLiteral("label")) == label) return theme.toMap();
+  }
+  return std::nullopt;
+}
+
 const QColor kShellCanvas(QStringLiteral("#123456"));
 
 const Steps steps([] {
@@ -140,7 +187,12 @@ const Steps steps([] {
   step(QStringLiteral("the user chose the System appearance"), [](World& world, const Captures&, const Table&) {
     expect(themes(world)->setMode(QStringLiteral("system")), settings(world)->deviceError());
   });
-  step(QStringLiteral("the appearance is (Light|Dark)"), [](World& world, const Captures& c, const Table&) {
+  // Sets the appearance, or checks it as an outcome.
+  step(QStringLiteral("the appearance is (Light|Dark|System)"), [](World& world, const Captures& c, const Table&) {
+    if (world.checking) {
+      expect(themes(world)->mode() == appearanceWord(c[0]), QStringLiteral("the appearance is %1").arg(themes(world)->mode()));
+      return;
+    }
     expect(themes(world)->setMode(appearanceWord(c[0])), settings(world)->deviceError());
   });
   step(QStringLiteral("the operating system (?:is|switches to) (dark|light)"), [](World& world, const Captures& c, const Table&) {
@@ -283,6 +335,100 @@ const Steps steps([] {
     expect(!QFile::exists(QDir(world.configDir()).filePath(QStringLiteral("preferences.json"))) &&
                settings(world)->deviceSettings().isEmpty() && fakeConfig(world.node).writes.isEmpty(),
            QStringLiteral("this device holds %1").arg(show(settings(world)->deviceSettings().toVariantMap())));
+  });
+  // Settings → Appearance and the appearance shortcut.
+  step(QStringLiteral("the user chooses the (System|Light|Dark) appearance"), [](World& world, const Captures& c, const Table&) {
+    expect(themes(world)->setMode(appearanceWord(c[0])), settings(world)->deviceError());
+  });
+  step(QStringLiteral("the appearance becomes (Light|Dark|System)"), [](World& world, const Captures& c, const Table&) {
+    expect(themes(world)->setMode(appearanceWord(c[0])), settings(world)->deviceError());
+  });
+  step(QStringLiteral("the app is drawn in the operating system's appearance"), [](World& world, const Captures&, const Table&) {
+    for (const bool dark : {true, false}) {
+      themes(world)->setSystemDark(dark);
+      drawn(world, dark ? QStringLiteral("dark") : QStringLiteral("light"));
+    }
+  });
+  step(QStringLiteral("the user presses the appearance shortcut"), [](World& world, const Captures&, const Table&) {
+    // The keybinding and the page's command palette both send this.
+    world.bridge().dispatch(QStringLiteral("appearance.cycle"), {});
+  });
+  step(QStringLiteral("the user chooses the %1 theme in Settings → Appearance").arg(q), [](World& world, const Captures& c, const Table&) {
+    ensureTheme(world, c[0]);
+    choose(world, c[0]);
+  });
+  step(QStringLiteral("the user picks %1 for light and %1 for dark").arg(q), [](World& world, const Captures& c, const Table&) {
+    ensureTheme(world, c[0]);
+    ensureTheme(world, c[1]);
+    expect(themes(world)->chooseHalf(QStringLiteral("light"), c[0]) && themes(world)->chooseHalf(QStringLiteral("dark"), c[1]),
+           settings(world)->deviceError());
+  });
+  step(QStringLiteral("%1 only has a dark palette").arg(q), [](World& world, const Captures& c, const Table&) {
+    ensureTheme(world, c[0], {QStringLiteral("dark")});
+  });
+  step(QStringLiteral("the user chooses %1").arg(q), [](World& world, const Captures& c, const Table&) { choose(world, c[0]); });
+  step(QStringLiteral("the light theme is unchanged"), [](World& world, const Captures&, const Table&) {
+    expect(!themes(world)->halves().contains(QStringLiteral("light")) && themes(world)->themeId().isEmpty(),
+           QStringLiteral("the theme is %1, the halves %2").arg(themes(world)->themeId(), show(themes(world)->halves())));
+  });
+  step(QStringLiteral("the theme choice cannot be saved"), [](World& world, const Captures&, const Table&) { blockDevice(world); });
+  step(QStringLiteral("the user chooses a theme"), [](World& world, const Captures&, const Table&) {
+    expect(!themes(world)->choose(QStringLiteral("grove")), QStringLiteral("the choice was saved"));
+  });
+
+  // This device's own themes (the theme editor).
+  step(QStringLiteral("the active theme is %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    ensureTheme(world, c[0]);
+    choose(world, c[0]);
+    usesTheme(world, c[0]);
+  });
+  step(QStringLiteral("the user creates a theme"), [](World& world, const Captures&, const Table&) {
+    // As the page's "New theme" does: the active theme's colors, as a new theme.
+    world.themeDraft = themes(world)->draft();
+    world.themeDraft.insert(QStringLiteral("id"), QString());
+  });
+  step(QStringLiteral("the theme editor opens with (\\w+)'s colors"), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap& draft = world.themeDraft;
+    expect(draft.value(QStringLiteral("label")) == c[0] && QColor(at(draft, QStringLiteral("colors.canvas")).toString()) == drawnCanvas(world),
+           QStringLiteral("the editor holds %1; %2").arg(show(draft), describe(world)));
+  });
+  step(QStringLiteral("the user changed colors in the theme editor"), [](World& world, const Captures&, const Table&) {
+    world.themeDraft = themes(world)->draft();
+    QVariantMap colors = world.themeDraft.value(QStringLiteral("colors")).toMap();
+    colors.insert(QStringLiteral("canvas"), QStringLiteral("#203040"));
+    world.themeDraft.insert(QStringLiteral("colors"), colors);
+    world.themeDraft.insert(QStringLiteral("label"), QStringLiteral("Edited"));
+  });
+  step(QStringLiteral("the user saves the changes"), [](World& world, const Captures&, const Table&) {
+    const QString id = themes(world)->saveCustom(world.themeDraft);
+    expect(!id.isEmpty(), settings(world)->deviceError());
+    world.themeDraft.insert(QStringLiteral("id"), id);
+  });
+  step(QStringLiteral("the app uses the edited theme"), [](World& world, const Captures&, const Table&) {
+    usesTheme(world, world.themeDraft.value(QStringLiteral("id")).toString());
+    expect(drawnCanvas(world) == QColor(QStringLiteral("#203040")), describe(world));
+  });
+  step(QStringLiteral("the user duplicates %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    ensureTheme(world, c[0]);
+    expect(!themes(world)->duplicate(c[0]).isEmpty(), settings(world)->deviceError());
+  });
+  step(QStringLiteral("an editable copy of %1 is added").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto copy = offered(world, c[0] + QStringLiteral(" copy"));
+    expect(copy && copy->value(QStringLiteral("source")) == QLatin1String("custom"),
+           QStringLiteral("the themes offered are %1").arg(show(themes(world)->available())));
+    const QVariantMap original = themes(world)->draft(c[0]);
+    const QVariantMap duplicate = themes(world)->draft(copy->value(QStringLiteral("id")).toString());
+    expect(duplicate.value(QStringLiteral("colors")) == original.value(QStringLiteral("colors")),
+           QStringLiteral("the copy draws %1, the original %2").arg(show(duplicate), show(original)));
+  });
+  step(QStringLiteral("the theme cannot be removed"), [](World& world, const Captures&, const Table&) {
+    ensureTheme(world, QStringLiteral("My Theme"));
+    world.themeDraft = themes(world)->draft(QStringLiteral("My Theme"));
+    blockDevice(world);
+  });
+  step(QStringLiteral("the user removes it"), [](World& world, const Captures&, const Table&) {
+    expect(!themes(world)->removeCustom(world.themeDraft.value(QStringLiteral("id")).toString()), QStringLiteral("the theme was removed"));
+    expect(offered(world, QStringLiteral("My Theme")).has_value(), QStringLiteral("the theme is no longer offered"));
   });
 });
 

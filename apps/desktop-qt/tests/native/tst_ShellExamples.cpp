@@ -51,6 +51,11 @@ private slots:
                              "HalC2.Shell", 1, 0, "Terminals");
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Keybindings.qml")),
                              "HalC2.Shell", 1, 0, "Keybindings");
+    // Settings opens the native General page, which reads these.
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Settings.qml")),
+                             "HalC2.Shell", 1, 0, "Settings");
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Themes.qml")),
+                             "HalC2.Shell", 1, 0, "Themes");
     runtime = std::make_unique<ShellRuntime>(
         ShellRuntime::Options{directory.path(), QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/qml")},
         &bridge, theme.get());

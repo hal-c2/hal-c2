@@ -53,18 +53,13 @@ ShellWindow {
                     panelToggle: rightPanel.available ? rightPanel.open : null
                 }
 
-                ClusterSettings {
+                SettingsHost {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    visible: root.clusterOpen
+                    section: root.settingsSection
+                    visible: root.nativeSettingsOpen
                 }
-                ConnectionsSettings { Layout.fillWidth: true; Layout.fillHeight: true; visible: root.connectionsOpen }
 
-                KeybindingsSettings {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    visible: root.keybindingsOpen
-                }
 
                 WebSurface {
                     visible: !root.nativeSettingsOpen

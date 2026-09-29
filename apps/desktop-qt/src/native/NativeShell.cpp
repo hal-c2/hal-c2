@@ -40,6 +40,7 @@ NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)
         announce();
         // A page that just asked knows nothing of the route yet.
         if (auto* navigation = controller<NavigationController>()) navigation->pageReady();
+        if (auto* settings = controller<SettingsController>()) settings->pageReady();
       }
       return true;
     }

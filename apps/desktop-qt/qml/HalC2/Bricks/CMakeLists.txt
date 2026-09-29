@@ -46,11 +46,19 @@ qt_add_qml_module(hal_c2_bricks
     WindowControls.qml
     Workspace.qml
     Timeline.qml
+    SettingsHost.qml
+    SettingsPage.qml
+    SettingsRow.qml
+    GeneralSettings.qml
+    AppearanceSettings.qml
+    ThemeEditor.qml
     TurnRequests.qml
     ProjectRemovalDialog.qml
     js/lucide.js
     js/modelPicker.js
     js/providerIcons.js
+    js/settingsPages.js
+    js/settingsRows.js
   RESOURCES
     qmldir
     js/shell-connect.js
