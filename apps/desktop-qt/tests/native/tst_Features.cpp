@@ -283,6 +283,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("threads/sidebar-list.feature:Very long settled*"),
     QStringLiteral("threads/sidebar-list.feature:Opening a *from the list"),
     QStringLiteral("threads/sidebar-list.feature:Scoping the list*"),
+    QStringLiteral("threads/sidebar-list.feature:Hiding and showing the thread list"),
     QStringLiteral("threads/snooze.feature:Snoozed threads are shelved*"),
     QStringLiteral("threads/snooze.feature:Waking a snoozed*"),
     QStringLiteral("threads/snooze.feature:A snoozable thread offers*"),
@@ -372,6 +373,13 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/layout.feature:Choosing the project in the header*"),
     QStringLiteral("navigation/layout.feature:The header names the project and thread"),
     QStringLiteral("navigation/layout.feature:The header opens the thread's workspace in another editor"),
+    QStringLiteral("navigation/layout.feature:Hiding the sidebar"),
+    QStringLiteral("navigation/layout.feature:Showing the sidebar again from the header"),
+    QStringLiteral("navigation/layout.feature:The sidebar shortcut hides and shows the sidebar"),
+    QStringLiteral("navigation/layout.feature:A hidden sidebar stays hidden after a restart"),
+    QStringLiteral("navigation/layout.feature:Settings replace the thread list*"),
+    QStringLiteral("navigation/layout.feature:The sidebar snaps*"),
+    QStringLiteral("navigation/appearance.feature:Panels open and close immediately by default"),
     QStringLiteral("navigation/header.feature"),
 };
 

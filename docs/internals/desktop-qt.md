@@ -873,20 +873,19 @@ editor live in the page's storage and are unknown to the shell.
 
 ### `layout`
 
-The page keeps owning the main sidebar's open state (the shell runs the
-`sidebar.toggle` keybinding, Mod+B by default, as that action — see
-`keybindings`) and publishes it as
-`layout {sidebarCollapsed}` from `ShellLayoutBridge`, mounted inside the
-sidebar provider. `sidebar.toggle` flips it from native chrome — the
-`Workspace` brick shows a toggle when its `sidebarToggle` property is bound
-(it takes the sidebar's place at the strip's left edge, as on the page), and
-`Sidebar` shows the matching collapse toggle in its brand band when
-`showBrand` is on. The right panel's toggle follows the same pattern:
-`Workspace.panelToggle` puts it in the header strip and `RightPanel
+The shell owns whether the thread list is hidden: `LayoutController` claims
+`layout {sidebarCollapsed}` from the page, remembers it in the device's
+`preferences.json`, and publishes it before the node's first snapshot so a
+restart does not flash the list. `sidebar.toggle` (action and keybinding
+command, Mod+B by default) flips it. The `Workspace` brick shows a toggle when
+its `sidebarToggle` property is bound (it takes the sidebar's place at the
+strip's left edge), and `Sidebar` shows the matching collapse toggle in its
+brand band when `showBrand` is on. The right panel's toggle follows the same
+pattern: `Workspace.panelToggle` puts it in the header strip and `RightPanel
 { ownToggle: false }` then takes no width while closed; a rice that leaves
 `ownToggle` on gets the 36 px rail with the toggle instead.
-The shell only animates the result: `DefaultShell` and the examples ease the
-sidebar's `Layout.preferredWidth` to 0 and hide it once it is gone
+`DefaultShell` snaps the sidebar (one relayout, no animated width); examples
+that ease `Layout.preferredWidth` to 0 hide it once it is gone
 (`visible: !sidebarCollapsed || width > 0` — guard on the collapsed flag, not
 on width alone, or a layout-managed item never regains a size).
 

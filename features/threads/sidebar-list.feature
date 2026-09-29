@@ -3,6 +3,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml
 #   apps/desktop-qt/tests/tst_Sidebar.qml
 #   apps/desktop-qt/src/native/SidebarModel.cpp (the desktop's port of the grouping and order, offline rows)
+#   apps/desktop-qt/src/native/LayoutController.cpp (hiding the thread list)
 #   apps/web/src/components/Sidebar.tsx
 #   apps/web/src/components/Sidebar.logic.ts
 #   apps/web/src/hooks/useSidebarProjectGroups.ts
@@ -122,7 +123,7 @@ Feature: The thread list
     When the user adds a project from the thread list
     Then the user can choose a project to add
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Hiding and showing the thread list
     When the user hides the thread list
     Then the main view takes the full width

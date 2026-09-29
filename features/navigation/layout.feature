@@ -1,6 +1,7 @@
 # Sources:
 #   apps/desktop-qt/qml/HalC2/Bricks/DefaultShell.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (sidebarCollapsed, settingsActive)
+#   apps/desktop-qt/src/native/LayoutController.cpp (sidebar.toggle, remembered on the device)
 #   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (header strip: run action, open in editor, git actions)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (workspace.runScript, workspace.openInEditor)
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml
@@ -28,26 +29,39 @@ Feature: Layout: sidebar, header, right panel and drawer
 
   Rule: Sidebar
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Hiding the sidebar
       Given the sidebar is shown
       When the user toggles the sidebar
       Then the sidebar is hidden
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Showing the sidebar again from the header
       Given the sidebar is hidden
       When the user asks to show the sidebar
       Then the sidebar is shown
 
-    # Delivered natively (DefaultShell swaps Sidebar for SettingsNav); no desktop test yet.
-    @desktop @backlog-desktop
+    @desktop
+    Scenario: The sidebar shortcut hides and shows the sidebar
+      Given the sidebar is shown
+      When the user presses the sidebar shortcut
+      Then the sidebar is hidden
+      When the user presses the sidebar shortcut
+      Then the sidebar is shown
+
+    @desktop
+    Scenario: A hidden sidebar stays hidden after a restart
+      Given the sidebar is hidden
+      When the desktop quits and starts again
+      Then the sidebar is hidden
+
+    @desktop
     Scenario: Settings replace the thread list with the settings sections
       When the user opens settings
       Then the thread list is hidden
       And the settings sections are shown in its place
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The sidebar snaps rather than animating its width
       When the user toggles the sidebar
       Then the thread view is resized once, not on every frame

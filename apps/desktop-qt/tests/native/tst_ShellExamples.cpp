@@ -565,6 +565,52 @@ private slots:
     QTRY_COMPARE(webView->mapToScene(QPointF()).y(), workspace->mapToScene(QPointF(0, workspace->height())).y());
   }
 
+  // Scenario: The sidebar snaps rather than animating its width, Settings
+  // replace the thread list with the settings sections
+  // (features/navigation/layout.feature): the built-in layout hides the thread
+  // list in one step, and shows the settings sections in its place.
+  void defaultShellHidesTheThreadListAtOnce() {
+    QFile::remove(directory.filePath("shell.qml"));
+    runtime->reload();
+    QVERIFY(!runtime->usingUserShell());
+    QVERIFY2(runtime->lastError().isEmpty(), qPrintable(runtime->lastError()));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    QVERIFY(engine);
+    auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
+    QVERIFY(window);
+    window->resize(1200, 800);
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    auto* sidebar = findVisualItem(window->contentItem(), "threadSidebar");
+    auto* settingsNav = findVisualItem(window->contentItem(), "settingsNav");
+    auto* workspace = findVisualItem(window->contentItem(), "workspace");
+    QVERIFY(sidebar);
+    QVERIFY(settingsNav);
+    QVERIFY(workspace);
+    QTRY_VERIFY(sidebar->isVisible());
+    QTRY_COMPARE(workspace->width(), window->width() - 256.0);
+
+    QSignalSpy resized(workspace, &QQuickItem::widthChanged);
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", true}});
+    QTRY_VERIFY(!sidebar->isVisible());
+    QTRY_COMPARE(workspace->width(), qreal(window->width()));
+    QCOMPARE(resized.count(), 1);
+
+    resized.clear();
+    bridge.publish("layout", QVariantMap{{"sidebarCollapsed", false}});
+    QTRY_VERIFY(sidebar->isVisible());
+    QTRY_COMPARE(workspace->width(), window->width() - 256.0);
+    QCOMPARE(resized.count(), 1);
+
+    bridge.publish("route", QVariantMap{{"kind", "settings"}, {"section", "/settings/general"}});
+    QTRY_VERIFY(settingsNav->isVisible());
+    QVERIFY(!sidebar->isVisible());
+    QCOMPARE(settingsNav->x(), 0.0);
+    bridge.publish("route", QVariant());
+    QTRY_VERIFY(sidebar->isVisible());
+    QVERIFY(!settingsNav->isVisible());
+  }
+
   void cleanupTestCase() {
     runtime.reset();
     profile.reset();

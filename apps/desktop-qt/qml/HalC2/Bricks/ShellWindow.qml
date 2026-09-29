@@ -12,8 +12,7 @@ Window {
 
     default property alias content: body.data
 
-    // The page still owns collapsing (Mod+B) and its own settings sections;
-    // the shell animates and re-arranges around them.
+    // Whether the thread list is hidden (LayoutController, sidebar.toggle).
     readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
     // Where the window is (NavigationController); the page's own settings
     // state until the shell has its node.
