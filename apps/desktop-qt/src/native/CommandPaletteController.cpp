@@ -211,9 +211,16 @@ QString CommandPaletteController::mode() const {
       return QStringLiteral("content");
     case Mode::Browse:
       return QStringLiteral("browse");
+    case Mode::Ask:
+      return QStringLiteral("ask");
     default:
       return QStringLiteral("command");
   }
+}
+
+QString CommandPaletteController::submenu() const {
+  if (m_mode == Mode::Ask) return m_askTitle;
+  return m_views.isEmpty() ? QString() : m_views.constLast().title;
 }
 
 QString CommandPaletteController::placeholder() const {
@@ -228,6 +235,8 @@ QString CommandPaletteController::placeholder() const {
     }
     case Mode::Browse:
       return tr("Enter project path (e.g. ~/projects/my-app)");
+    case Mode::Ask:
+      return m_askPlaceholder;
     default:
       return m_views.isEmpty() ? tr("Search commands, projects, and threads...") : tr("Search...");
   }
@@ -251,7 +260,10 @@ QString CommandPaletteController::emptyText() const {
                                                            : tr("Type to search across your project.");
     case Mode::Browse:
       if (!m_error.isEmpty()) return m_error;
+      if (!m_browseOptions.emptyText.isEmpty()) return m_browseOptions.emptyText;
       return hasQuery && !searching() ? tr("Press Enter to create this folder and add it as a project.") : QString();
+    case Mode::Ask:
+      return m_askEmpty;
     default:
       if (searching()) return tr("Searching thread messages…");
       return m_query.startsWith(QLatin1Char('>')) ? tr("No matching actions.")
@@ -337,14 +349,33 @@ void CommandPaletteController::showMenu(const QString& command) {
     const QModelIndex at = commands->index(row);
     if (at.data(CommandRegistry::CommandRole).toString() == command) title = at.data(CommandRegistry::TitleRole).toString();
   }
-  pushView(title, commands->choices(command));
+  pushView(title, [commands, command] { return commands->choices(command); });
 }
 
-void CommandPaletteController::browse(const QString& environmentId, std::function<void(const QString&)> add) {
+void CommandPaletteController::browse(const QString& environmentId, std::function<void(const QString&)> add,
+                                      const BrowseOptions& options) {
   if (!m_active) return;
   m_browseEnvironment = environmentId;
   m_add = std::move(add);
+  m_browseOptions = options;
   open(Mode::Browse);
+}
+
+void CommandPaletteController::ask(const QString& title, const QString& placeholder, const QString& emptyText,
+                                   std::function<void(const QString&)> submit) {
+  if (!m_active) return;
+  m_askTitle = title;
+  m_askPlaceholder = placeholder;
+  m_askEmpty = emptyText;
+  m_submit = std::move(submit);
+  open(Mode::Ask);
+}
+
+void CommandPaletteController::refreshMenu() {
+  if (!m_open || m_mode != Mode::Command || m_views.isEmpty() || !m_views.constLast().source) return;
+  m_views.last().choices = m_views.constLast().source();
+  // The highlight stays on its entry (refilter).
+  rebuildChoices();
 }
 
 void CommandPaletteController::open(Mode mode) {
@@ -364,7 +395,7 @@ void CommandPaletteController::open(Mode mode) {
   m_pending = 0;
   m_debounce.stop();
   setMode(mode);
-  const QString query = mode == Mode::Browse ? QStringLiteral("~/") : QString();
+  const QString query = mode == Mode::Browse ? m_browseOptions.query : QString();
   if (m_query != query) {
     m_query = query;
     emit queryChanged();
@@ -374,7 +405,7 @@ void CommandPaletteController::open(Mode mode) {
   // A browsed path is added with Enter unless a folder is highlighted.
   m_highlighted = mode == Mode::Browse ? -1 : 0;
   emit highlightedChanged();
-  if (mode != Mode::Command) scheduleSearch();
+  if (mode != Mode::Command && mode != Mode::Ask) scheduleSearch();
   if (!wasOpen) emit openChanged();
 }
 
@@ -384,7 +415,7 @@ void CommandPaletteController::dismiss() {
 
 void CommandPaletteController::back() {
   if (!m_open) return;
-  if (m_mode == Mode::Files || m_mode == Mode::Content || m_mode == Mode::Browse) {
+  if (m_mode != Mode::Command) {
     open(Mode::Command);
   } else if (!m_views.isEmpty()) {
     m_views.clear();
@@ -426,8 +457,8 @@ void CommandPaletteController::setMode(Mode mode) {
   emit modeChanged();
 }
 
-void CommandPaletteController::pushView(const QString& title, QList<CommandRegistry::Choice> choices) {
-  m_views.append({title, std::move(choices)});
+void CommandPaletteController::pushView(const QString& title, CommandRegistry::Choices source) {
+  m_views.append({title, source ? source() : QList<CommandRegistry::Choice>{}, source});
   emit modeChanged();
   if (!m_query.isEmpty()) {
     m_query.clear();
@@ -460,7 +491,7 @@ void CommandPaletteController::setQuery(const QString& query) {
       emit resultsChanged();
     }
     setHighlighted(0);
-  } else {
+  } else if (m_mode != Mode::Ask) {
     scheduleSearch();
     emit resultsChanged();
     if (m_mode == Mode::Browse) setHighlighted(-1);
@@ -507,6 +538,14 @@ void CommandPaletteController::move(int delta) {
 }
 
 bool CommandPaletteController::runHighlighted() {
+  if (m_open && m_mode == Mode::Ask) {
+    const QString text = m_query.trimmed();
+    if (text.isEmpty() || !m_submit) return false;
+    // A copy: what it does may ask again.
+    const auto submit = m_submit;
+    submit(text);
+    return true;
+  }
   if (m_mode == Mode::Browse && (m_highlighted < 0 || m_highlighted >= count())) return addBrowsedFolder();
   return run(m_highlighted);
 }
@@ -515,6 +554,12 @@ bool CommandPaletteController::addBrowsedFolder() {
   if (!m_open || m_mode != Mode::Browse || !m_add) return false;
   const QString path = browsedPath();
   if (path.isEmpty()) return false;
+  if (m_browseOptions.keepOpen) {
+    // A copy: it stays for another try until the chooser closes the palette.
+    const auto add = m_add;
+    add(path);
+    return true;
+  }
   const auto add = std::exchange(m_add, nullptr);
   close(false);
   add(path);
@@ -530,26 +575,32 @@ bool CommandPaletteController::run(int row) {
   switch (entry.kind) {
     case Kind::Action:
       if (commands->isMenu(entry.id)) {
-        pushView(entry.title, commands->choices(entry.id));
+        pushView(entry.title, [commands, command = entry.id] { return commands->choices(command); });
         return true;
       }
       break;
     case Kind::Choice: {
       const CommandRegistry::Choice choice = m_views.constLast().choices.value(m_rows.at(row).entry);
       if (choice.submenu) {
-        pushView(choice.title, choice.submenu());
+        pushView(choice.title, choice.submenu);
         return true;
       }
       if (!choice.keepOpen) close(false);
       if (choice.run) choice.run();
       return true;
     }
-    case Kind::Folder:
-      setQuery(m_query.left(m_query.lastIndexOf(QLatin1Char('/')) + 1) + entry.title + QLatin1Char('/'));
+    case Kind::Folder: {
+      const QString chosen = m_query.left(m_query.lastIndexOf(QLatin1Char('/')) + 1) + entry.title;
+      // A pinned name follows the folder in, unless the folder is it.
+      const QString& pinned = m_browseOptions.pinned;
+      setQuery(pinned.isEmpty() ? chosen + QLatin1Char('/')
+               : entry.title == pinned ? chosen
+                                       : chosen + QLatin1Char('/') + pinned);
       setHighlighted(-1);
       return true;
+    }
     case Kind::Up:
-      setQuery(entry.id);
+      setQuery(entry.id + m_browseOptions.pinned);
       setHighlighted(-1);
       return true;
     default:
@@ -629,8 +680,9 @@ void CommandPaletteController::setSettingsSections(const QVariantList& sections)
 void CommandPaletteController::rebuild() {
   if (!m_open) return;
   if (m_mode != Mode::Command) {
-    // Found entries come from the node; only the empty text may change.
-    emit resultsChanged();
+    // Found entries come from the node (none yet when it just opened); the
+    // rows follow them, and the empty text may change.
+    refilter(true);
     return;
   }
   if (m_views.isEmpty()) {
@@ -1062,10 +1114,17 @@ void CommandPaletteController::searchFolders(int generation) {
     refilter(true);
     return;
   }
+  // With a pinned name the whole folder is listed and filtered here, as the
+  // web does: a leaf that is the pinned name hides nothing.
+  const QString& pinned = m_browseOptions.pinned;
+  const qsizetype slash = query.lastIndexOf(QLatin1Char('/'));
+  const QString asked = pinned.isEmpty() || slash < 0 ? query : query.left(slash + 1);
+  const QString leaf = asked == query ? QString() : query.mid(slash + 1);
+  const QString filter = leaf == pinned ? QString() : leaf;
   ++m_pending;
   m_client->call(this, m_browseEnvironment, QStringLiteral("filesystem.browse"),
-                 QJsonObject{{QStringLiteral("partialPath"), query}},
-                 [this, generation, query](const QJsonValue& result, const std::optional<QString>& error) {
+                 QJsonObject{{QStringLiteral("partialPath"), asked}},
+                 [this, generation, query, asked, filter](const QJsonValue& result, const std::optional<QString>& error) {
                    if (generation != m_generation || m_mode != Mode::Browse) return;
                    m_pending = 0;
                    const QJsonObject answer = result.toObject();
@@ -1076,7 +1135,7 @@ void CommandPaletteController::searchFolders(int generation) {
                    QList<Entry> entries;
                    const QString directories = tr("Directories");
                    // Up from a whole folder, to its parent.
-                   if (query.endsWith(QLatin1Char('/')) && !m_browseParent.isEmpty() &&
+                   if (asked.endsWith(QLatin1Char('/')) && !m_browseParent.isEmpty() &&
                        m_browseParent != QLatin1String("/")) {
                      QString up = QFileInfo(m_browseParent).path();
                      if (!up.endsWith(QLatin1Char('/'))) up += QLatin1Char('/');
@@ -1086,8 +1145,12 @@ void CommandPaletteController::searchFolders(int generation) {
                    }
                    for (const QJsonValue& value : std::as_const(m_browseEntries)) {
                      const QJsonObject folder = value.toObject();
-                     Entry entry{Kind::Folder, folder.value(QLatin1String("fullPath")).toString(),
-                                 folder.value(QLatin1String("name")).toString(), {}, {}, {}};
+                     const QString name = folder.value(QLatin1String("name")).toString();
+                     if (asked != query && (!name.startsWith(filter, Qt::CaseInsensitive) ||
+                                            (name.startsWith(QLatin1Char('.')) && !filter.startsWith(QLatin1Char('.'))))) {
+                       continue;
+                     }
+                     Entry entry{Kind::Folder, folder.value(QLatin1String("fullPath")).toString(), name, {}, {}, {}};
                      entry.group = directories;
                      entries.append(entry);
                    }
