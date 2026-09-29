@@ -44,6 +44,13 @@ public:
   QString colorScheme() const { return m_colorScheme; }
   bool localFolderImportEnabled() const { return m_localFolderImportEnabled; }
   void setLocalFolderImportEnabled(bool enabled) { m_localFolderImportEnabled = enabled; }
+  // The node the shell is connected to; local folders are its only when it
+  // runs on this machine (a loopback origin).
+  QUrl nodeOrigin() const { return m_nodeOrigin; }
+  void setNodeOrigin(const QUrl& origin) { m_nodeOrigin = origin; }
+  // Whether this machine's folders are the node's: import is allowed and the
+  // node runs here.
+  bool localFolders() const;
 
   // A key bindings can follow before anything publishes it; see kStateKeys.
   void declareKey(const QString& key);
@@ -96,6 +103,7 @@ private:
   std::function<void(const QUrl&)> m_openUrl;
   QSet<QString> m_claimedKeys;
   QUrl m_pageUrl;
+  QUrl m_nodeOrigin;
   QString m_colorScheme = QStringLiteral("system");
   bool m_localFolderImportEnabled = false;
 };
