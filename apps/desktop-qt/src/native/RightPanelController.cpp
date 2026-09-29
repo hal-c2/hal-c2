@@ -312,7 +312,12 @@ void RightPanelController::follow() {
                          {QStringLiteral("open"), pageOpen},
                          {QStringLiteral("activeSurfaceId"), pageOpen ? QVariant(state.active) : QVariant()}};
   if (told == m_told) return;
+  // Only a page that has published this thread's panel, and shows something
+  // else, is told; a page already showing what the shell wants hears nothing.
+  if (m_page.value(QStringLiteral("threadKey")).toString() != m_thread) return;
   m_told = told;
+  const bool shown = m_page.value(QStringLiteral("isOpen")).toBool();
+  if (shown == pageOpen && (!pageOpen || m_page.value(QStringLiteral("activeSurfaceId")).toString() == state.active)) return;
   m_bridge->sendToPage(QStringLiteral("rightPanel.follow"), told);
 }
 

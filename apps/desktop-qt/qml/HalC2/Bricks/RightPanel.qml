@@ -26,7 +26,7 @@ Rectangle {
         if (!available) {
             return "";
         }
-        const page = Shell.pageUrl.toString();
+        const page = (Shell.pageUrl ?? "").toString();
         const origin = page.match(/^(https?:\/\/[^/]+)/);
         return origin ? origin[1] + model.embedPath : "";
     }
@@ -250,6 +250,7 @@ Rectangle {
                 // instead of destroying the terminals and scroll state it holds.
                 readonly property bool wanted: panel.pageShown && panel.embedUrl.toString().length > 0
 
+                objectName: "panelPage"
                 anchors.fill: parent
                 active: false
                 visible: panel.pageShown
