@@ -78,6 +78,8 @@ Window {
 
     ConfirmDialog {}
 
+    CommandPalette {}
+
     ShellErrorOverlay {
         anchors.fill: parent
     }

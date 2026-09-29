@@ -514,7 +514,7 @@ hover, keyboard focus and scroll position while thread state changes.
 
 Actions (`Shell.dispatch(name, payload)` in QML → `ShellAction` on the page):
 `sidebar.scope {projectKey|null}`, `project.add {path?}`, `project.remove
-{projectKey}`, `draft.menu {draftId, x, y}`, `palette.open`, and the
+{projectKey}`, `draft.menu {draftId, x, y}`, and the
 navigation ones `route` takes once the shell has its node (`thread.open {key}`,
 `draft.open {draftId}`, `thread.new {projectKey?}`, `settings.open`,
 `pullRequests.open`, `usage.open`). The active row is the route's. Row actions run the
@@ -909,9 +909,19 @@ through `thread.new`, back, the sidebar, the terminal drawer, next, previous
 and numbered threads in the sidebar's order, the composer's pickers and stop,
 and steering with or editing a queued message.
 A brick adds its own with `Keybindings.commands.add(command, title, callback,
-owner)`; `KeybindingController::kAppearanceCycle` names the one a native
-appearance setting should register. Its rows (`{command, title, shortcut}`)
-are also what a native command palette lists.
+owner)`, and a controller from its `activate()` (`ThemeController` the
+appearance cycle, `NavigationController` "Open settings" and "Open usage").
+
+The command palette (`CommandPaletteController`, the `PaletteModel` singleton,
+drawn by `CommandPalette`) lists those rows as its actions, so an action
+reaches the palette by being registered there, never by the palette naming
+it. It adds the shell's threads by key (linked environments and cluster
+threads alike), the sidebar's projects and the settings sections
+`js/settingsPages.js` hands it. It is its own list model and filters in C++,
+moving only the rows a keystroke changes. It owns `commandPalette.toggle`;
+the sidebar's Search opens it too, and dismissing it sends `composer.focus`
+to the composer. The singleton is not `Palette`, which QtQuick already
+names.
 
 `ShellWindow` instantiates one window `Shortcut` per bound sequence and calls
 `Keybindings.press`. Who takes a key follows focus:

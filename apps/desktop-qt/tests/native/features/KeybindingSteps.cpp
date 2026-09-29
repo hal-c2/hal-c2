@@ -14,9 +14,11 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QRegularExpression>
 
 #include <algorithm>
 
+#include "CommandPaletteController.h"
 #include "FakeConfig.h"
 #include "Harness.h"
 #include "Keymap.h"
@@ -212,6 +214,14 @@ void pressSequence(World& world, const QString& sequence) {
 }
 
 void press(World& world, const QString& key) {
+  // An open command palette's search field takes mod+1..9 (CommandPalette.qml).
+  static const QRegularExpression nth(QStringLiteral("^mod\\+([1-9])$"));
+  auto* palette = world.native().controller<CommandPaletteController>();
+  if (const auto match = nth.match(key.toLower()); match.hasMatch() && palette && palette->isOpen()) {
+    palette->run(match.captured(1).toInt() - 1);
+    world.sync();
+    return;
+  }
   const auto shortcut = keybindings::parseShortcut(key.toLower());
   if (!shortcut) fail(QStringLiteral("%1 is not a key").arg(key));
   pressSequence(world, keybindings::sequence(*shortcut, keys(world).mac));
@@ -348,6 +358,11 @@ const Steps steps([] {
     setFocus(world, {{QStringLiteral("page"), true}});
   });
   step(QStringLiteral("the composer has (?:keyboard )?focus"), [](World& world, const Captures&, const Table&) {
+    // As an outcome: the shell handed the composer the keyboard.
+    if (world.checking) {
+      expect(!world.actionsOf(QStringLiteral("composer.focus")).isEmpty(), world.describePage());
+      return;
+    }
     setFocus(world, kComposer);
   });
   step(QStringLiteral("a terminal in the thread has keyboard focus"), [](World& world, const Captures&, const Table&) {
