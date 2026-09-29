@@ -2529,6 +2529,9 @@ defmodule HalC2.Orchestration do
         HalC2.Settings.for_project(thread["projectId"])["responseStreamingMode"] || "paragraph",
       interaction_mode: thread["interactionMode"] || "default",
       attachments: provider_attachments(command["attachments"]),
+      # A turn the provider started by itself, whose output its runtime already has
+      # (a Claude wake, `HalC2.Claude.ThreadRuntime`): the message is not sent to it.
+      wake: command["creationSource"] == "provider",
       native_thread_id: get_in(provider_thread || %{}, ["nativeThreadRef", "nativeId"]),
       head: get_in(provider_thread || %{}, ["nativeConversationHeadRef", "nativeId"])
     }

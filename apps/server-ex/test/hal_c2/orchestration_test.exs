@@ -923,10 +923,10 @@ defmodule HalC2.OrchestrationTest do
                ]
     end
 
-    test "work Claude starts between turns is recorded on the latest run until its task ends" do
+    test "work Claude starts in a wake is recorded on the wake's run until its task ends" do
       :ok = HalC2.Shell.subscribe(self())
       thread_id = launch("hello", "claudeAgent")
-      [%{"id" => run_id}] = StreamState.list(await_run(thread_id, "completed"), "run")
+      _ = await_run(thread_id, "completed")
 
       # The turn a task notification wakes Claude for launches a subagent and a command.
       claude_says(thread_id, %{
@@ -964,6 +964,8 @@ defmodule HalC2.OrchestrationTest do
         }
       })
 
+      claude_says(thread_id, %{"type" => "result", "subtype" => "success", "is_error" => false})
+      [_, %{"id" => run_id}] = runs(await_statuses(thread_id, ["completed", "completed"]))
       await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
 
       assert %{"runId" => ^run_id, "status" => "running", "title" => "Check the tests"} =
@@ -1094,6 +1096,96 @@ defmodule HalC2.OrchestrationTest do
       assert %{work: work} = :sys.get_state(pid)
       assert work == %{}
       assert StreamState.get(current(thread_id), "subagent") in [nil, %{}]
+    end
+
+    test "a turn Claude runs by itself is a run of its own until its result" do
+      thread_id = launch("hello", "claudeAgent")
+      _ = await_run(thread_id, "completed")
+
+      # A background task ended; Claude answers its notification.
+      claude_says(thread_id, notification("task-gone", "bash-gone", "completed", "Build passed"))
+      claude_says(thread_id, wake_text("m-wake-1", "The build passed"))
+
+      state = await_statuses(thread_id, ["completed", "running"])
+      [_, %{"id" => wake_run, "userMessageId" => wake_message}] = runs(state)
+
+      assert %{"role" => "user", "createdBy" => "agent", "creationSource" => "provider"} =
+               StreamState.get(state, "message")[wake_message]
+
+      claude_says(thread_id, wake_text("m-wake-2", "Nothing else to do"))
+      claude_says(thread_id, %{"type" => "result", "subtype" => "success", "is_error" => false})
+      state = await_statuses(thread_id, ["completed", "completed"])
+
+      assert ["The build passed", "Nothing else to do"] =
+               for(
+                 %{"role" => "assistant", "runId" => ^wake_run} = m <-
+                   StreamState.list(state, "message"),
+                 do: m["text"]
+               )
+
+      # The next message is a turn of its own again.
+      {:ok, _} = send_message(thread_id, "msg-user-2", "hello again")
+      _ = await_statuses(thread_id, ["completed", "completed", "completed"])
+    end
+
+    test "a message sent while Claude runs a wake keeps its turn past the wake's result" do
+      thread_id = launch("hello", "claudeAgent")
+      _ = await_run(thread_id, "completed")
+      [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+      session = :sys.get_state(pid).session
+
+      # The user's run starts before the wake's: the runtime hears of the wake, then of
+      # the user's turn, before asking for the wake's run.
+      :ok = :sys.suspend(pid)
+      send(pid, {:claude, session, {:message, wake_text("m-wake", "Checking the build")}})
+      user = Task.async(fn -> send_message(thread_id, "msg-user-2", "and now?") end)
+      await_mailbox(pid, 2)
+      :ok = :sys.resume(pid)
+      assert {:ok, _} = Task.await(user)
+
+      # The fake answers the steer with the wake's aborted result, then the user's.
+      state = await_statuses(thread_id, ["completed", "completed", "completed"])
+      [_, %{"id" => user_run}, %{"userMessageId" => wake_message}] = runs(state)
+      assert StreamState.get(state, "message")[wake_message]["creationSource"] == "provider"
+
+      assert ["Checking the build", "steered: and now?"] =
+               for(
+                 %{"role" => "assistant", "runId" => ^user_run} = m <-
+                   StreamState.list(state, "message"),
+                 do: m["text"]
+               )
+    end
+
+    test "a hot upgrade keeps the runtime going and takes the next wake" do
+      thread_id = launch("hello", "claudeAgent")
+      _ = await_run(thread_id, "completed")
+
+      [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+      :sys.replace_state(pid, &Map.drop(&1, [:wake]))
+      :ok = :sys.suspend(pid)
+      :ok = :sys.change_code(pid, HalC2.Claude.ThreadRuntime, 7, nil)
+      :ok = :sys.resume(pid)
+
+      claude_says(thread_id, wake_text("m-wake", "Woke up"))
+      claude_says(thread_id, %{"type" => "result", "subtype" => "success", "is_error" => false})
+      _ = await_statuses(thread_id, ["completed", "completed"])
+    end
+
+    defp wake_text(id, text),
+      do: %{
+        "type" => "assistant",
+        "message" => %{"id" => id, "content" => [%{"type" => "text", "text" => text}]}
+      }
+
+    defp await_mailbox(pid, count) do
+      if Process.info(pid, :message_queue_len) |> elem(1) >= count do
+        :ok
+      else
+        receive do
+        after
+          5 -> await_mailbox(pid, count)
+        end
+      end
     end
 
     defp task_started(task_id, tool_id, type),
