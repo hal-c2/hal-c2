@@ -67,7 +67,7 @@ Feature: The desktop shell runs the terminal drawer against its node
       When the user toggles the terminal drawer
       Then "env-b" attaches "term-1" of "t9" in "/work/p9"
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A thread on an environment the node is linked to has its terminal there
       Given the node is linked to "env-c"
       And the page shows "env-c:t7" with its project at "/work/p7"

@@ -70,9 +70,13 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   it announces this as `native` and a `shell.native` action, and a page that
   loads later asks with `shell.native.query`. Nothing it builds reads
   page-published state. Environments outside the node's cluster are reached
-  through the node's links (`ConnectionsController`); their rows are not asked
-  for yet (the node sends them to a `{"type":"shell","links":true}`
-  subscription), so the sidebar lists the cluster's environments only. The hello frame names the environment the node
+  through the node's links (`ConnectionsController`). The shell subscribes
+  with `{"type":"shell","links":true}`, and `ShellStore` keeps each linked
+  node's rows beside the cluster's under a key of link and node (a linked
+  environment's node names can collide with the cluster's), so everything
+  that reads rows lists linked threads without special casing. A link that
+  leaves `shell.links` takes its rows; one that drops keeps them, its nodes
+  offline, and the sidebar rows and header say `offline`. The hello frame names the environment the node
   serves, which is where the shell sends calls about the node itself (its
   cluster). Pieces that never existed on the page, such as the cluster
   settings (`ClusterController`), have no page counterpart at all. The
@@ -469,7 +473,7 @@ current scope, the drafts, and the thread list already bucketed
 (`pinned`/`active`/`snoozed`/`settled`), sorted, and annotated with status,
 status label, unread, branch, the snooze wake label, the woke timestamp and
 whether settle/snooze apply (`wakeLabel`, `wokeAt`, `canSettle`,
-`canSnooze`). `settled` is capped at 50 rows with `settledTotal` carrying the
+`canSnooze`; neither while the thread's environment is `offline`). `settled` is capped at 50 rows with `settledTotal` carrying the
 real count. Projects are grouped and ordered by this device's preferences
 (`sidebarProjectGroupingMode`, `sidebarProjectGroupingOverrides`,
 `sidebarProjectSortOrder`, `timestampFormat`, read through
@@ -658,8 +662,9 @@ id and the page is told each change: `workspace.envMode.set`,
 `.startFromOrigin.set` and `.environment.set` go on to it after they land, and
 a branch picked for a draft as `workspace.checkout.follow {draftId, branch,
 worktreePath, envMode}`. Which thread a draft is, `NativeShell` asks
-`DraftController` (`setDraftResolver`). Environments reached only through a link have no
-shell rows, so their threads have no header yet.
+`DraftController` (`setDraftResolver`). A linked thread's header is its rows:
+the node serves `vcs` and `config` for its cluster only, so its branch is the
+thread row's and it has no editors or git status.
 
 The terminal drawer is native: `TerminalDrawer` draws each of the thread's
 terminals with [qml-ghostty](https://github.com/hal-c2/qml-ghostty)'s
@@ -671,8 +676,8 @@ the header's run pill (`workspace.runScript`, handled by the workspace) types
 into a drawer terminal it launched itself. Its shapes name the
 environment, not a node, so the node routes them to the cluster member that serves
 it or through a link (`HalC2.Links`) to an environment outside the cluster; the
-drawer is available wherever the header is, which today means environments the
-`shell` snapshot has rows for (`features/desktop/native-terminal.feature`).
+drawer is available wherever the header is, cluster and linked environments
+alike (`features/desktop/native-terminal.feature`).
 Environments outside the cluster are paired natively, as node links (see
 `connections` below); the page's saved environments are not lent to the node.
 
@@ -1015,9 +1020,9 @@ shape, folded into a `TimelineModel` per thread: the active one plus a few
 recently active ones stay subscribed. The fold is
 `packages/client-runtime/src/v3/threadShape.ts` in C++; the rows follow the
 TUI's timeline (folds of settled turns, tool call groups, markers). A thread is
-addressed by the cluster node whose shell row lists it, in
-`ThreadStore::streamShape` alone, so addressing by environment later is a
-one-line change. A part-0 snapshot after a reconnect or `resync` replaces the
+addressed by its environment (`ThreadStore::streamShape`), which the node
+routes to a cluster member or through a link; a stream that errors waits for
+the shell to list the thread's node online again. A part-0 snapshot after a reconnect or `resync` replaces the
 entities but not the rows: row ids are stable, streamed text only emits
 `dataChanged` for its row, and structural changes are applied as inserts,
 moves and removes, so the `Timeline` brick keeps its scroll position. The

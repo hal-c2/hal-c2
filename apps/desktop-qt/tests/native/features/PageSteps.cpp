@@ -16,20 +16,25 @@ const Steps steps([] {
   step(QStringLiteral("the page shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.pageOpens({{QStringLiteral("kind"), QStringLiteral("thread")}, {QStringLiteral("threadKey"), c[0]}});
   });
-  // A thread of another environment: a cluster member's rows carry it; the
-  // shell has no rows for any other.
+  // A thread of another environment: a cluster member's rows carry it, or
+  // the rows of a link to it.
   step(QStringLiteral("the page shows %1 with its project at %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const qsizetype colon = c[0].indexOf(QLatin1Char(':'));
-    const QString peer = world.node.peers.value(c[0].left(colon));
+    const QString environment = c[0].left(colon);
+    const QString peer = world.node.peers.value(environment);
+    const QString thread = c[0].mid(colon + 1);
+    const QString project = QStringLiteral("project-") + thread;
+    const QJsonObject projectRow{{QStringLiteral("id"), project}, {QStringLiteral("workspaceRoot"), c[1]}, {QStringLiteral("scripts"), QJsonArray()}};
+    const QJsonObject threadRow{{QStringLiteral("id"), thread}, {QStringLiteral("projectId"), project}, {QStringLiteral("title"), thread}};
     if (!peer.isEmpty()) {
-      const QString thread = c[0].mid(colon + 1);
-      const QString project = QStringLiteral("project-") + thread;
       QJsonArray rows;
-      rows.append(QJsonArray{project, QStringLiteral("project"),
-                             QJsonObject{{QStringLiteral("id"), project}, {QStringLiteral("workspaceRoot"), c[1]}, {QStringLiteral("scripts"), QJsonArray()}}});
-      rows.append(QJsonArray{thread, QStringLiteral("thread"),
-                             QJsonObject{{QStringLiteral("id"), thread}, {QStringLiteral("projectId"), project}, {QStringLiteral("title"), thread}}});
+      rows.append(QJsonArray{project, QStringLiteral("project"), projectRow});
+      rows.append(QJsonArray{thread, QStringLiteral("thread"), threadRow});
       world.node.sendRows(peer, rows);
+      world.sync();
+    } else if (world.node.linked.contains(environment)) {
+      world.node.sendLinkRow(environment, project, projectRow, QStringLiteral("project"));
+      world.node.sendLinkRow(environment, thread, threadRow);
       world.sync();
     }
     world.pageOpens({{QStringLiteral("kind"), QStringLiteral("thread")}, {QStringLiteral("threadKey"), c[0]}});

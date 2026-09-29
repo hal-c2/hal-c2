@@ -26,11 +26,12 @@ namespace stream {
 // change the entities, so the next snapshot carries them.
 struct FakeStreams {
   QHash<QString, QMap<QString, QJsonObject>> threads;
-  // Nodes of the cluster that are down: a stream on one is refused.
+  // Environments that are down (a cluster member that left, a link that
+  // dropped): a stream on one is refused.
   QSet<QString> offline;
-  // The thread the steps write to, and its node.
+  // The thread the steps write to, and its environment.
   QString thread;
-  QString node;
+  QString environment;
   int ordinal = 0;
   int seq = 0;
   QString run;
@@ -181,7 +182,7 @@ inline void lookAtThread(World& world, const QString& project) {
   world.sync();
   FakeStreams& fake = world.node.part<FakeStreams>();
   fake.thread = kThread;
-  fake.node = world.node.name;
+  fake.environment = world.node.environmentId;
   look(world, world.node.environmentId + QLatin1Char(':') + kThread);
 }
 
