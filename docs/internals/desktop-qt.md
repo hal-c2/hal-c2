@@ -1093,18 +1093,16 @@ from the node's push, not from the reply.
 
 ### `notifications`
 
-`ToastProvider` accepts a `shellMirror` rendered inside it; the mirrored
-toasts still get a hidden `Toast.Root` in the HTML viewport, because Base UI
-only drops a closed toast once its root has finished leaving. `ShellToastBridge`
-mirrors the page's stacked toasts (title, description, buttons, update key)
-as `notifications` and runs a toast's button or dismissal on
-`notification.action {id, actionId}` / `notification.dismiss {id}` — the
-same `onClick`/`onClose` the HTML buttons call. Toasts with React-element
-bodies or anchored positioning stay in the page. The `Notifications` brick
-renders the rest, below the shell's own `toasts`: `ToastController` is what
-native controllers call (`show`, `error`), with its own timing and actions,
-and its ids start with `native:` so dismiss and action clicks stop there
-instead of reaching the page.
+The `Notifications` brick renders only the shell's own `toasts`.
+`ToastController` is what native controllers call (`show`, `error`,
+`showActions` with up to two buttons, `replace` to update one in place), with
+its own timing; its ids start with `native:`. The page's `ShellToastBridge`
+still publishes its toasts as `notifications`, but nothing shows them: every
+toast the desktop needs has a native producer with the web's text, such as
+`KeybindingController`'s "Keybindings updated" on a `config.keybindings` push
+and `ProviderUpdateNotice`'s launch offer of provider updates
+(`ProviderUpdatePrimaryNotification`), whose dismissed version sets are this
+device's `dismissedProviderUpdateNotificationKeys`.
 
 ### `menu`, `confirmation` and `contextMenu`
 

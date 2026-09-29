@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDateTime>
 #include <QJsonArray>
 #include <QObject>
 #include <QStringList>
@@ -136,4 +137,7 @@ private:
   QVariantList m_shortcuts;
   QVariantList m_rows;
   int m_saving = 0;
+  // When "Keybindings updated" last showed; pushes closer than the cooldown
+  // stay quiet, as the web's do.
+  QDateTime m_reloadToastAt;
 };

@@ -600,12 +600,12 @@ Item {
         }
 
         // Scenario: A notification's action runs it (features/timeline/notifications.feature)
-        function test_given_a_toast_with_an_action_when_the_action_is_clicked_then_the_page_runs_that_action() {
+        function test_given_a_toast_with_an_action_when_the_action_is_clicked_then_its_action_runs() {
             Shell.state = {
-                notifications: {
+                toasts: {
                     items: [
                         {
-                            id: "update",
+                            id: "native:1",
                             type: "info",
                             title: qsTr("Update ready"),
                             description: null,
@@ -622,23 +622,23 @@ Item {
             };
             const host = createTemporaryObject(notificationsComponent, root);
             verify(!!host, "Component exists");
-            tryVerify(() => findChild(host, "notificationAction-update-restart") !== null);
-            const action = findChild(host, "notificationAction-update-restart");
+            tryVerify(() => findChild(host, "notificationAction-native:1-restart") !== null);
+            const action = findChild(host, "notificationAction-native:1-restart");
             tryCompare(action, "visible", true);
             mouseClick(action);
             tryCompare(Shell, "dispatchCount", 1);
             compare(lastDispatch().action, "notification.action");
-            compare(lastDispatch().payload.id, "update");
+            compare(lastDispatch().payload.id, "native:1");
             compare(lastDispatch().payload.actionId, "restart");
         }
 
         // Scenario: Dismissing the last notification hides the notifications (features/timeline/notifications.feature)
-        function test_given_a_toast_when_dismiss_is_clicked_then_the_page_dismisses_it() {
+        function test_given_a_toast_when_dismiss_is_clicked_then_it_is_dismissed() {
             Shell.state = {
-                notifications: {
+                toasts: {
                     items: [
                         {
-                            id: "copied",
+                            id: "native:2",
                             type: "success",
                             title: qsTr("Copied"),
                             description: null,
@@ -649,13 +649,13 @@ Item {
             };
             const host = createTemporaryObject(notificationsComponent, root);
             verify(!!host, "Component exists");
-            tryVerify(() => findChild(host, "notificationDismiss-copied") !== null);
-            mouseClick(findChild(host, "notificationDismiss-copied"));
+            tryVerify(() => findChild(host, "notificationDismiss-native:2") !== null);
+            mouseClick(findChild(host, "notificationDismiss-native:2"));
             tryCompare(Shell, "dispatchCount", 1);
             compare(lastDispatch().action, "notification.dismiss");
-            compare(lastDispatch().payload.id, "copied");
+            compare(lastDispatch().payload.id, "native:2");
             Shell.state = {
-                notifications: {
+                toasts: {
                     items: []
                 }
             };

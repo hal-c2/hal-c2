@@ -1422,6 +1422,19 @@ const Steps steps([] {
       return false;
     }, [&] { return QStringLiteral("a toast to run it in a terminal; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
   });
+  step(QStringLiteral("the node reports %1 updated").arg(q), [](World& world, const Captures& c, const Table&) {
+    offer(world, provider(QStringLiteral("codex"), QStringLiteral("codex"), c[0],
+                          {{QStringLiteral("version"), QStringLiteral("0.51.0")},
+                           {QStringLiteral("versionAdvisory"), QJsonObject{{QStringLiteral("status"), QStringLiteral("current")},
+                                                                           {QStringLiteral("currentVersion"), QStringLiteral("0.51.0")},
+                                                                           {QStringLiteral("latestVersion"), QStringLiteral("0.51.0")}}},
+                           {QStringLiteral("updateState"), QJsonObject{{QStringLiteral("status"), QStringLiteral("succeeded")}}}}));
+  });
+  step(QStringLiteral("the Providers settings open"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return world.native().controller<NavigationController>()->route() ==
+                               NavigationController::Route::settings(NavigationController::kProvidersSection); },
+                  [&] { return QStringLiteral("the Providers settings to open; the window shows %1").arg(show(world.state(QStringLiteral("route")))); });
+  });
   step(QStringLiteral("updating %1 fails with %1").arg(q), [](World& world, const Captures& c, const Table&) {
     fake(world).updateRefusal = c[1];
   });
@@ -1437,6 +1450,7 @@ const Steps steps([] {
     }, QStringLiteral("to be updating"));
   });
   step(QStringLiteral("the update finishes"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !fake(world).updates.isEmpty(); }, [] { return QStringLiteral("an update to have been asked for"); });
     world.node.reply(fake(world).updates.first(), QJsonObject{});
   });
   step(QStringLiteral("%1 is no longer shown updating").arg(q), [](World& world, const Captures& c, const Table&) {

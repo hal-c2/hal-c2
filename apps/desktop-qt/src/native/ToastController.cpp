@@ -2,6 +2,8 @@
 
 #include "ShellBridge.h"
 
+#include <algorithm>
+
 namespace {
 
 const NativeControllerRegistrar<ToastController> registrar(QStringLiteral("toasts"), {QStringLiteral("toasts")});
@@ -28,22 +30,31 @@ bool ToastController::handle(const QString& action, const QVariant& payload) {
   const QString id = payload.toMap().value(QStringLiteral("id")).toString();
   if (!id.startsWith(QLatin1String("native:"))) return false;
   if (action == QLatin1String("notification.action")) {
+    const int index = payload.toMap().value(QStringLiteral("actionId")).toString() == QLatin1String("secondary") ? 1 : 0;
     for (const Toast& toast : m_toasts) {
-      if (toast.id != id || !toast.action) continue;
+      if (toast.id != id || index >= toast.actions.size()) continue;
       // Dismissed first: the action may show a toast of its own.
-      const std::function<void()> run = toast.action->run;
-      dismiss(id);
-      if (run) run();
+      const Action chosen = toast.actions.at(index);
+      if (!chosen.keepsToast) dismiss(id);
+      if (chosen.run) chosen.run();
       return true;
     }
   }
+  const bool closed = action == QLatin1String("notification.dismiss") &&
+                      std::any_of(m_toasts.cbegin(), m_toasts.cend(), [&id](const Toast& toast) { return toast.id == id; });
   dismiss(id);
+  if (closed) emit closedByUser(id);
   return true;
 }
 
 QString ToastController::show(const QString& type, const QString& title, const QString& description,
                               std::optional<Action> action, int timeoutMs) {
-  Toast toast{QStringLiteral("native:%1").arg(m_nextId++), type, title, description, std::move(action), {}};
+  return showActions(type, title, description, action ? QList<Action>{std::move(*action)} : QList<Action>{}, timeoutMs);
+}
+
+QString ToastController::showActions(const QString& type, const QString& title, const QString& description,
+                                     QList<Action> actions, int timeoutMs) {
+  Toast toast{QStringLiteral("native:%1").arg(m_nextId++), type, title, description, std::move(actions), {}};
   if (timeoutMs > 0) toast.deadline = m_now().addMSecs(timeoutMs);
   m_toasts.prepend(std::move(toast));
   while (m_toasts.size() > kMaxToasts) m_toasts.removeLast();
@@ -60,9 +71,13 @@ QString ToastController::error(const QString& title, const QString& description)
 bool ToastController::runAction(const QString& label) {
   // Newest first.
   for (const Toast& toast : std::as_const(m_toasts)) {
-    if (!toast.action || toast.action->label != label) continue;
-    handle(QStringLiteral("notification.action"), QVariantMap{{QStringLiteral("id"), toast.id}});
-    return true;
+    for (qsizetype index = 0; index < toast.actions.size(); ++index) {
+      if (toast.actions.at(index).label != label) continue;
+      handle(QStringLiteral("notification.action"),
+             QVariantMap{{QStringLiteral("id"), toast.id},
+                         {QStringLiteral("actionId"), index == 0 ? QStringLiteral("primary") : QStringLiteral("secondary")}});
+      return true;
+    }
   }
   return false;
 }
@@ -82,6 +97,23 @@ bool ToastController::update(const QString& id, const QString& title, const QStr
     toast.description = description;
     ++toast.revision;
     publish();
+    return true;
+  }
+  return false;
+}
+
+bool ToastController::replace(const QString& id, const QString& type, const QString& title,
+                              const QString& description, QList<Action> actions, int timeoutMs) {
+  for (Toast& toast : m_toasts) {
+    if (toast.id != id) continue;
+    toast.type = type;
+    toast.title = title;
+    toast.description = description;
+    toast.actions = std::move(actions);
+    toast.deadline = timeoutMs > 0 ? std::optional(m_now().addMSecs(timeoutMs)) : std::nullopt;
+    ++toast.revision;
+    publish();
+    schedule();
     return true;
   }
   return false;
@@ -110,12 +142,13 @@ void ToastController::schedule() {
 void ToastController::publish() {
   QVariantList items;
   for (const Toast& toast : m_toasts) {
+    // The lesser action sits before the primary one.
     QVariantList actions;
-    if (toast.action) {
+    for (qsizetype index = std::min<qsizetype>(toast.actions.size(), 2) - 1; index >= 0; --index) {
       actions.append(QVariantMap{
-          {QStringLiteral("id"), QStringLiteral("primary")},
-          {QStringLiteral("label"), toast.action->label},
-          {QStringLiteral("primary"), true},
+          {QStringLiteral("id"), index == 0 ? QStringLiteral("primary") : QStringLiteral("secondary")},
+          {QStringLiteral("label"), toast.actions.at(index).label},
+          {QStringLiteral("primary"), index == 0},
       });
     }
     items.append(QVariantMap{

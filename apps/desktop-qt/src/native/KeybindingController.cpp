@@ -74,6 +74,17 @@ void KeybindingController::activate() {
     setRules(settings->config().value(QLatin1String("keybindingRules")).toArray());
   };
   connect(settings, &SettingsController::configChanged, this, followRules);
+  // The web's EventRouter: a reload of keybindings.json is confirmed, at most
+  // once every two seconds.
+  connect(settings, &SettingsController::keybindingsPushed, this, [this] {
+    auto* toasts = NativeShell::of(this)->controller<ToastController>();
+    if (!toasts) return;
+    const QDateTime now = toasts->now();
+    if (m_reloadToastAt.isValid() && m_reloadToastAt.msecsTo(now) < 2000) return;
+    m_reloadToastAt = now;
+    toasts->show(QStringLiteral("success"), QStringLiteral("Keybindings updated"),
+                 QStringLiteral("Keybindings configuration reloaded successfully."));
+  });
   auto* terminals = shell->controller<TerminalController>();
   connect(terminals, &TerminalController::changed, this, [this, terminals] {
     if (terminals->isOpen() == m_terminalOpen) return;

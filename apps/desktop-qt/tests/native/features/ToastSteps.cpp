@@ -45,6 +45,24 @@ const Steps steps([] {
                actions.first().toMap().value(QStringLiteral("label")) == c[2],
            QStringLiteral("the toast is %1").arg(show(toast)));
   });
+  step(QStringLiteral("the toast %1 offers %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap toast = waitForToast(world, c[0]);
+    QStringList labels;
+    for (const QVariant& action : toast.value(QStringLiteral("actions")).toList()) {
+      labels.append(action.toMap().value(QStringLiteral("label")).toString());
+    }
+    labels.sort();
+    QStringList wanted{c[1], c[2]};
+    wanted.sort();
+    expect(labels == wanted, QStringLiteral("the toast is %1").arg(show(toast)));
+  });
+  step(QStringLiteral("the user sees the toast %1 once").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForToast(world, c[0]);
+    world.sync();
+    qsizetype count = 0;
+    for (const QVariant& item : toasts(world)) count += item.toMap().value(QStringLiteral("title")).toString() == c[0];
+    expect(count == 1, QStringLiteral("the shell shows %1").arg(show(toasts(world))));
+  });
   step(QStringLiteral("the toast %1 is gone").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
     expect(!toastTitled(world, c[0]), QStringLiteral("the shell shows %1").arg(show(toasts(world))));
@@ -68,9 +86,6 @@ const Steps steps([] {
     const QVariantMap toast = waitForToast(world, c[0]);
     world.bridge().dispatch(QStringLiteral("notification.dismiss"),
                             QVariantMap{{QStringLiteral("id"), toast.value(QStringLiteral("id"))}});
-  });
-  step(QStringLiteral("the user dismisses the page's toast %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.bridge().dispatch(QStringLiteral("notification.dismiss"), QVariantMap{{QStringLiteral("id"), c[0]}});
   });
   step(QStringLiteral("(\\d+) seconds? pass(?:es)?"), [](World& world, const Captures& c, const Table&) {
     world.setTime(world.now().addSecs(c[0].toInt()));
