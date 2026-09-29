@@ -12,7 +12,7 @@ Item {
         name: "SettingsNavTests"
         when: windowShown
         function init() { Shell.reset(); Shell.state = { route: { kind: "settings", section: "/settings/general" } }; }
-        function cleanup() { Shell.reset(); }
+        function cleanup() { Shell.reset(); Keybindings.bindings = []; }
         function test_keyboardNavigation() {
             let nav = createTemporaryObject(component, root);
             verify(!!nav, "Component exists");
@@ -164,9 +164,40 @@ Item {
             Shell.state = {};
             const nav = createTemporaryObject(component, root);
             type(nav, "prompt font");
-            tryVerify(() => row(nav, 0) !== null && row(nav, 0).Accessible.name === "Prompt font size");
-            compare(row(nav, 1).Accessible.name, "Prompt font");
+            tryVerify(() => row(nav, 0) !== null && row(nav, 0).Accessible.name === "Prompt font");
+            compare(row(nav, 1).Accessible.name, "Prompt font size");
             verify(!row(nav, 2), "the other fonts do not match");
+        }
+        // Results are ranked by how well the title matches.
+        function test_theBestMatchingTitleComesFirst() {
+            Keybindings.bindings = [
+                { command: "model.picker", label: "Model picker: Open", key: "mod+shift+m", defaultKey: "mod+shift+m" },
+                { command: "sidebar.toggle", label: "Sidebar: Toggle", key: "mod+b", defaultKey: "mod+b" }
+            ];
+            Shell.state = { projectSettings: {} };
+            const nav = createTemporaryObject(component, root);
+            const search = type(nav, "model");
+            tryVerify(() => row(nav, 0) !== null && row(nav, 0).Accessible.name === "Default model");
+            compare(row(nav, 0).modelData.sectionLabel, "Project");
+            let last = null;
+            for (let index = 0; row(nav, index) !== null; ++index) last = row(nav, index);
+            compare(last.Accessible.name, "Model picker: Open", "commands come after every setting");
+            search.text = "mod+b";
+            tryVerify(() => row(nav, 0) !== null && row(nav, 0).Accessible.name === "Sidebar: Toggle");
+            mouseClick(row(nav, 0));
+            compare(Shell.dispatchedActions[0].action, "settings.navigate");
+            compare(Shell.dispatchedActions[0].payload.to, "/settings/keybindings");
+        }
+        function test_slashStartsASearch() {
+            Shell.state = {};
+            const nav = createTemporaryObject(component, root);
+            tryVerify(() => row(nav, 0) !== null);
+            row(nav, 0).forceActiveFocus();
+            keyClick(Qt.Key_Slash);
+            verify(findChild(nav, "search").activeFocus, "the search has the keyboard");
+            compare(findChild(nav, "search").text, "", "the slash is not typed");
+            keyClick(Qt.Key_Slash);
+            compare(findChild(nav, "search").text, "/", "in the search a slash is typed");
         }
         function test_nothingMatchesTheSearch() {
             Shell.state = {};

@@ -26,7 +26,7 @@ Rectangle {
                         action: section.action
                     }));
         }
-        return Pages.searchRows(query, state).map(section => ({
+        return Pages.searchRows(query, state, Keybindings.bindings).map(section => ({
                     result: true,
                     to: section.to,
                     title: section.label,
@@ -40,6 +40,13 @@ Rectangle {
 
     implicitWidth: 260
     color: Theme.palette.color("sidebar", "#0a0a0a")
+
+    // "/" starts a search while the keyboard is not in a text field.
+    Shortcut {
+        sequence: "/"
+        enabled: nav.visible && !(nav.Window.activeFocusItem && nav.Window.activeFocusItem.cursorPosition !== undefined)
+        onActivated: search.forceActiveFocus()
+    }
 
     function focusRow(index) {
         list.currentIndex = Math.max(0, Math.min(index, list.count - 1));

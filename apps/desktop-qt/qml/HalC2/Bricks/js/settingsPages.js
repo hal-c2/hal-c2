@@ -19,6 +19,7 @@ var sections = [
       keywords: "appearance theme themes light dark system color scheme contrast glass opacity environment identification diff colors composer context panel animations font size family smoothing word wrap custom editor" },
     { to: "/settings/projects", label: "Project", brick: "ProjectSettings", requires: "projectSettings",
       detail: "Name, icon, checkouts and how new threads start",
+      settings: [{ title: "Default model", targetId: "model", keywords: "model provider new threads automatic" }],
       keywords: "project projects name rename title icon emoji favicon checkout checkouts remove delete default model permissions runtime mode workspace worktree submodules new threads" },
     { to: "/settings/keybindings", label: "Keybindings", brick: "KeybindingsSettings", action: "keybindings.open",
       detail: "Shortcuts and when they apply", keywords: "keybindings shortcuts keys hotkeys conditions when recorder" },
@@ -74,32 +75,59 @@ function navRows(state) {
     });
 }
 
+// How well a title matches `query`, as the web ranks settings: the whole
+// title, its start, anywhere in it, every word in it, the phrase in its other
+// words, or only the words scattered.
+function rank(title, query, words, others) {
+    if (title === query) return 5;
+    if (title.indexOf(query) === 0) return 4;
+    if (title.indexOf(query) >= 0) return 3;
+    if (words.every(function (word) { return title.indexOf(word) >= 0; })) return 2;
+    return others.indexOf(query) >= 0 ? 1 : 0;
+}
+
 // What the native search finds for `query` (lower case): sections by label or
-// keywords, and the settings on their pages, each {label, detail (its
-// section), to, action, targetId (the setting's objectName on the page)}.
-// Every word must match; titles that match come first.
-function searchRows(query, state) {
-    var words = query.split(/\s+/).filter(function (word) { return word.length > 0; });
-    var matches = function (text) {
-        return words.every(function (word) { return text.indexOf(word) >= 0; });
-    };
-    var titled = [];
-    var others = [];
-    var add = function (row, title) {
-        (matches(title.toLowerCase()) ? titled : others).push(row);
+// keywords, the settings on their pages, and the commands in `bindings`
+// (Keybindings.bindings), each {label, detail (its section), to, action,
+// targetId (the setting's objectName on the page)}. Every word must match;
+// the best matching titles come first, commands after every setting.
+function searchRows(query, state, bindings) {
+    query = query.trim().replace(/\s+/g, " ");
+    var words = query.split(" ").filter(function (word) { return word.length > 0; });
+    var found = [];
+    var add = function (row, title, others, secondary) {
+        title = title.toLowerCase();
+        others = others.toLowerCase();
+        var text = title + "\n" + others;
+        if (!words.every(function (word) { return text.indexOf(word) >= 0; })) return;
+        found.push({ row: row, rank: rank(title, query, words, others), secondary: secondary, index: found.length });
     };
     navRows(state).forEach(function (section) {
-        var text = (section.label + " " + (section.keywords || "")).toLowerCase();
-        if (matches(text)) add(section, section.label);
+        add(section, section.label, section.keywords || "", false);
         // Rows this platform does not show are not found.
         var settings = Rows.visible(section.rows || [], Qt.platform.os).filter(function (row) { return row.key !== undefined; }).map(function (row) {
             return { title: row.title, targetId: "settingsRow:" + row.key, keywords: row.description || "" };
         }).concat(section.settings || []);
         settings.forEach(function (setting) {
-            var haystack = (setting.title + " " + setting.keywords).toLowerCase();
-            if (!matches(haystack)) return;
-            add({ label: setting.title, detail: section.label, to: section.to, targetId: setting.targetId }, setting.title);
+            add({ label: setting.title, detail: section.label, to: section.to, targetId: setting.targetId }, setting.title, setting.keywords, false);
         });
     });
-    return titled.concat(others);
+    // One result per command, found by its id and keys too, as the web's.
+    var commands = {};
+    (bindings || []).forEach(function (binding) {
+        var command = commands[binding.command];
+        if (command === undefined) {
+            command = commands[binding.command] = { label: binding.label, terms: [binding.command] };
+        }
+        command.terms.push(binding.key);
+        if (binding.defaultKey) command.terms.push(binding.defaultKey);
+    });
+    Object.keys(commands).sort(function (left, right) {
+        return commands[left].label.localeCompare(commands[right].label);
+    }).forEach(function (id) {
+        add({ label: commands[id].label, detail: "Keybindings", to: "/settings/keybindings" }, commands[id].label, commands[id].terms.join(" "), true);
+    });
+    return found.sort(function (left, right) {
+        return (left.secondary - right.secondary) || (right.rank - left.rank) || (left.index - right.index);
+    }).map(function (entry) { return entry.row; });
 }

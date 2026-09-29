@@ -15,6 +15,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/js/settingsPages.js (the native search)
 #   apps/desktop-qt/qml/HalC2/Bricks/SettingsPage.qml (bringing a result into view)
 #   apps/desktop-qt/tests/tst_SettingsPages.qml
+#   apps/desktop-qt/tests/tst_ProjectSettings.qml (the Default model result)
 #   apps/desktop-qt/src/native/NavigationController.cpp (settings sections and back)
 #   apps/tui/src/components/SettingsView.tsx
 #   apps/tui/src/keymap.ts
@@ -130,13 +131,13 @@ Feature: Settings search and navigation
       Then the search is empty
       And the list of sections is shown again
 
-    @backlog @desktop
+    @desktop
     Scenario: The slash key starts a settings search
       Given the keyboard is not in a text field
       When the user presses "/"
       Then the settings search has keyboard focus
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Results are ranked by how well the title matches
       When the user searches settings for "<query>"
       Then the first result is "<first>"
@@ -146,6 +147,7 @@ Feature: Settings search and navigation
         | model  | Default model  |
         | mod+b  | Sidebar: Toggle |
 
+    # Tailscale HTTPS is not a native Connections setting yet.
     @backlog @desktop
     Scenario: Every word of the search must match
       When the user searches settings for "tailscale https"
@@ -163,6 +165,7 @@ Feature: Settings search and navigation
         | the machine is not running Windows         | wsl         | WSL backend       |
         | the user is editing all projects           | project     | Project overview  |
 
+    # Load balancing is not on the native Connections page yet (settings/load-balancing.feature).
     @backlog @desktop
     Scenario: A search result inside a folded section opens the fold
       Given the "Load balancing" group on the Connections page is folded
@@ -170,8 +173,7 @@ Feature: Settings search and navigation
       Then the "Load balancing" group is open
       And the page brings the setting into view
 
-    # The desktop scrolls back to a result opened again (tst_SettingsPages), but has no Default model setting yet.
-    @backlog @desktop
+    @desktop
     Scenario: Opening the same result again scrolls back to it
       Given the user opened the search result "Default model" and scrolled away
       When the user opens the search result "Default model" again

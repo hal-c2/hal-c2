@@ -38,6 +38,14 @@ Item {
                                submodules: root.choice("recursive", ["recursive", "none"]) }, overrides);
     }
 
+    Component {
+        id: shortPage
+        ProjectSettings {
+            width: 880
+            height: 240
+        }
+    }
+
     TestCase {
         name: "ProjectSettingsTests"
         when: windowShown
@@ -89,6 +97,20 @@ Item {
             compare(Shell.dispatchedActions[0].payload.key, "claude:opus");
             control.activated(0);
             compare(Shell.dispatchedActions[1].payload.key, "");
+        }
+
+        // settings/search-and-navigation.feature: the Default model result
+        // brings the setting into view again after the user scrolled away.
+        function test_the_default_model_result_is_brought_into_view_again() {
+            const route = seq => ({ kind: "settings", section: "/settings/projects", target: "model", targetSeq: seq });
+            Shell.state = { settingsScope: { editable: true, kind: "project" }, projectSettings: root.state({}), route: route(1) };
+            const page = createTemporaryObject(shortPage, root);
+            const scroll = findChild(page, "scroll");
+            tryVerify(() => scroll.contentY > 0, 1000, "the model row is scrolled to");
+            const revealed = scroll.contentY;
+            scroll.contentY = 0;
+            Shell.state = Object.assign({}, Shell.state, { route: route(2) });
+            tryCompare(scroll, "contentY", revealed);
         }
     }
 }
