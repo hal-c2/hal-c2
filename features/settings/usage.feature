@@ -11,7 +11,7 @@
 #   apps/web/src/components/usage/UsagePage.tsx
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (usage.open entry)
 #   apps/desktop-qt/src/native/UsageController.cpp, apps/desktop-qt/qml/HalC2/Bricks/UsagePage.qml
-#   apps/desktop-qt/tests/tst_UsagePage.qml (backing out of a reset credit)
+#   apps/desktop-qt/tests/tst_UsagePage.qml (backing out of a reset credit, not yet a scenario)
 #   apps/web/src/components/usage/UsageLimits.tsx (reset credits)
 #   packages/shared/src/usageMerge.ts, packages/shared/src/usageLimits.ts
 
@@ -261,7 +261,9 @@ Feature: Usage and limits
       And the credit is spent on the Codex instance
       And limits show 0 reset credits banked for Codex
 
-    @shared @backlog-mobile @backlog-tui
+    # The confirmation is UsagePage.qml's own dialog (tst_UsagePage.qml); no feature runner
+    # drives it yet.
+    @backlog @shared
     Scenario: The user backs out of spending a reset credit
       Given Codex has a reset credit banked
       When the user starts to use the reset credit but cancels

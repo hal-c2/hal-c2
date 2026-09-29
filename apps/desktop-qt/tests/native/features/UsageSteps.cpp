@@ -482,10 +482,6 @@ const Steps steps([] {
     expect(redeemed.size() == 1 && redeemed[0].value(QLatin1String("instanceId")) == QLatin1String("codex"),
            QStringLiteral("one redemption on the codex instance; the node was asked %1 times").arg(redeemed.size()));
   });
-  // The confirm is the page's (tst_UsagePage); backing out of it asks nothing.
-  step(QStringLiteral("the user starts to use the reset credit but cancels"), [](World& world, const Captures&, const Table&) {
-    showUsage(world, QStringLiteral("limits"));
-  });
   step(QStringLiteral("the credit is still banked"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return credit(world).value(QStringLiteral("available")).toInt() == 1; },
                   [&] { return QStringLiteral("one credit banked; the credits are %1").arg(show(credit(world))); });
