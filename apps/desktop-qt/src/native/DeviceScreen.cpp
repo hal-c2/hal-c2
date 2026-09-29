@@ -12,21 +12,36 @@ DeviceScreen::DeviceScreen(QQuickItem* parent) : QQuickItem(parent) {
 
 void DeviceScreen::setStream(DeviceStream* stream) {
   if (stream == m_stream) return;
-  if (m_stream) m_stream->decoder()->disconnect(this);
+  if (m_stream) {
+    m_stream->decoder()->disconnect(this);
+    m_stream->disconnect(this);
+  }
   m_stream = stream;
+  drop();
+  if (stream) {
+    connect(stream->decoder(), &DeviceDecoder::frameReady, this, &DeviceScreen::take);
+    connect(stream, &DeviceStream::targetChanged, this, &DeviceScreen::drop);
+    // Waiting for a picture again (a reconnect, a restarted encoder) or not
+    // streaming at all: the last picture no longer shows the device.
+    connect(stream, &DeviceStream::statusChanged, this, [this] {
+      const QString status = m_stream->status();
+      if (status == QLatin1String("connecting") || status == QLatin1String("idle")) drop();
+    });
+    limit();
+    take();
+  }
+  emit streamChanged();
+}
+
+void DeviceScreen::drop() {
+  const bool had = !m_frame.isNull();
   m_frame = {};
   m_fresh = true;
   if (m_hasFrame) {
     m_hasFrame = false;
     emit hasFrameChanged();
   }
-  if (stream) {
-    connect(stream->decoder(), &DeviceDecoder::frameReady, this, &DeviceScreen::take);
-    limit();
-    take();
-  }
-  update();
-  emit streamChanged();
+  if (had) update();
 }
 
 void DeviceScreen::take() {

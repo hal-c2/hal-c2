@@ -88,6 +88,8 @@ signals:
   void statusChanged();
   void inputChanged();
   void screenChanged();
+  // A different device (or none) is streamed.
+  void targetChanged();
 
 private:
   bool ios() const { return m_platform == QLatin1String("ios"); }

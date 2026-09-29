@@ -34,6 +34,10 @@ void DeviceDecoder::reset(const QByteArray& avcc) {
   m_avcc = avcc;
   m_queue.clear();
   m_awaitingKeyframe = true;
+  // The last stream's picture is not this one's.
+  m_frame = {};
+  m_sourceSize = {};
+  m_notified = false;
 }
 
 bool DeviceDecoder::push(const QByteArray& unit, bool keyframe) {

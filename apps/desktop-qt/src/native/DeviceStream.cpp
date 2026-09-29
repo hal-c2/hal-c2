@@ -181,6 +181,7 @@ void DeviceStream::setTarget(const QString& hubBase, const QString& platform, co
   m_deviceId = deviceId;
   m_width = m_height = 0;
   m_orientation = QStringLiteral("portrait");
+  emit targetChanged();
   emit screenChanged();
   start();
 }

@@ -34,7 +34,8 @@ public:
   ~DeviceDecoder() override;
 
   // A new stream: `avcc` is its avcC record (AVCC units follow), or empty for
-  // Annex-B. Drops what is queued and decodes nothing before a keyframe.
+  // Annex-B. Drops what is queued and the newest picture, and decodes
+  // nothing before a keyframe.
   void reset(const QByteArray& avcc = {});
   // Queues one access unit; false when the backlog was dropped instead.
   bool push(const QByteArray& unit, bool keyframe);

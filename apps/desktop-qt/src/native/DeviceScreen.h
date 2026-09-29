@@ -13,7 +13,8 @@
 class DeviceScreen : public QQuickItem {
   Q_OBJECT
   Q_PROPERTY(DeviceStream* stream READ stream WRITE setStream NOTIFY streamChanged)
-  // Whether a picture has arrived since the stream was set.
+  // Whether a picture is shown: one arrived since the stream was set, its
+  // target changed or it last went back to connecting or idle.
   Q_PROPERTY(bool hasFrame READ hasFrame NOTIFY hasFrameChanged)
 
 public:
@@ -34,6 +35,7 @@ protected:
 
 private:
   void take();
+  void drop();
   void limit();
 
   QPointer<DeviceStream> m_stream;
