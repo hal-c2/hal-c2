@@ -229,6 +229,18 @@ QVariant TerminalTabs::data(const QModelIndex& index, int role) const {
       return row.busy;
     case SessionRole:
       return QVariant::fromValue<QObject*>(row.session);
+    case GroupRole:
+      return row.group;
+    case PanelRole:
+      return row.panel;
+    case SlotRole:
+      return row.slot;
+    case SpanRole:
+      return row.span;
+    case VerticalRole:
+      return row.vertical;
+    case CurrentRole:
+      return row.current;
     default:
       return {};
   }
@@ -240,6 +252,12 @@ QHash<int, QByteArray> TerminalTabs::roleNames() const {
       {LabelRole, "label"},
       {BusyRole, "busy"},
       {SessionRole, "session"},
+      {GroupRole, "group"},
+      {PanelRole, "panel"},
+      {SlotRole, "slot"},
+      {SpanRole, "span"},
+      {VerticalRole, "vertical"},
+      {CurrentRole, "current"},
   };
 }
 
@@ -266,13 +284,19 @@ void TerminalTabs::remove(int index) {
   emit countChanged();
 }
 
-void TerminalTabs::update(int index, const QString& label, bool busy) {
+bool TerminalTabs::Row::sameLayout(const Row& other) const {
+  return label == other.label && busy == other.busy && group == other.group && panel == other.panel &&
+         slot == other.slot && span == other.span && vertical == other.vertical && current == other.current;
+}
+
+void TerminalTabs::update(int index, const Row& next) {
   Row& row = m_rows[index];
-  if (row.label == label && row.busy == busy) return;
-  row.label = label;
-  row.busy = busy;
+  if (row.sameLayout(next)) return;
+  TerminalSession* session = row.session;
+  row = next;
+  row.session = session;
   const QModelIndex changed = this->index(index);
-  emit dataChanged(changed, changed, {LabelRole, BusyRole});
+  emit dataChanged(changed, changed);
 }
 
 void TerminalTabs::clear() {
@@ -312,11 +336,57 @@ QString TerminalController::activeTerminalId() const {
   return m_place ? m_ui.value(m_threadKey).active : QString();
 }
 
+QString TerminalController::activeGroup() const {
+  if (!m_place) return {};
+  const ThreadUi ui = m_ui.value(m_threadKey);
+  if (ui.active.isEmpty()) return {};
+  const Group* group = groupOf(ui, ui.active);
+  return group ? group->id : ui.active;
+}
+
+QVariantMap TerminalController::groupSizes() const {
+  QVariantMap sizes;
+  if (!m_place) return sizes;
+  for (const Group& group : m_ui.value(m_threadKey).groups) sizes.insert(group.id, group.terminals.size());
+  return sizes;
+}
+
+TerminalController::Group* TerminalController::groupOf(ThreadUi& ui, const QString& terminalId) {
+  for (Group& group : ui.groups) {
+    if (group.terminals.contains(terminalId)) return &group;
+  }
+  return nullptr;
+}
+
+const TerminalController::Group* TerminalController::groupOf(const ThreadUi& ui, const QString& terminalId) {
+  for (const Group& group : ui.groups) {
+    if (group.terminals.contains(terminalId)) return &group;
+  }
+  return nullptr;
+}
+
+QStringList TerminalController::drawerIds(const ThreadUi& ui, const QStringList& ids) const {
+  QStringList drawer;
+  for (const QString& id : ids) {
+    const Group* group = groupOf(ui, id);
+    if (!group || !group->panel) drawer.append(id);
+  }
+  return drawer;
+}
+
+QStringList TerminalController::panelGroups(const QString& threadKey) const {
+  QStringList groups;
+  for (const Group& group : m_ui.value(threadKey).groups) {
+    if (group.panel) groups.append(group.id);
+  }
+  return groups;
+}
+
 bool TerminalController::handle(const QString& action, const QVariant& payload) {
   if (!m_active) return false;
   const QVariantMap args = payload.toMap();
   if (action == QLatin1String("terminal.toggle")) {
-    if (m_place && setOpen(!isOpen()) && isOpen()) emit focusRequested();
+    if (m_place && setOpen(!isOpen()) && isOpen()) emit focusRequested(activeTerminalId());
     return true;
   }
   if (action == QLatin1String("terminal.resize")) {
@@ -336,6 +406,10 @@ bool TerminalController::handle(const QString& action, const QVariant& payload) 
     openTerminal(nextTerminalId());
     return true;
   }
+  if (action == QLatin1String("terminal.split") || action == QLatin1String("terminal.splitVertical")) {
+    split(args.value(QStringLiteral("terminalId")).toString(), action == QLatin1String("terminal.splitVertical"));
+    return true;
+  }
   if (action == QLatin1String("terminal.select")) {
     const QString terminalId = args.value(QStringLiteral("terminalId")).toString();
     if (m_place && terminalIds().contains(terminalId)) openTerminal(terminalId);
@@ -343,8 +417,11 @@ bool TerminalController::handle(const QString& action, const QVariant& payload) 
   }
   if (action == QLatin1String("terminal.close")) {
     if (!m_place) return true;
-    const QString terminalId = args.value(QStringLiteral("terminalId"), activeTerminalId()).toString();
-    if (terminalIds().contains(terminalId)) closeTerminal(terminalId);
+    // A keybinding's is the focused terminal's, the drawer's or a panel tab's.
+    const QStringList ids = terminalIds();
+    const QString fallback = ids.contains(m_focused) ? m_focused : activeTerminalId();
+    const QString terminalId = args.value(QStringLiteral("terminalId"), fallback).toString();
+    if (ids.contains(terminalId)) closeTerminal(terminalId);
     return true;
   }
   return false;
@@ -385,6 +462,7 @@ void TerminalController::refresh() {
   if (moved) {
     m_tabs.clear();
     m_attached = false;
+    m_focused.clear();
   }
   m_threadKey = threadKey;
   m_place = std::move(place);
@@ -408,10 +486,18 @@ void TerminalController::syncTabs() {
   if (!m_place) return;
   ThreadUi& ui = m_ui[m_threadKey];
   const QStringList ids = terminalIds();
+  // A group loses the terminals that ended, and goes with the last one.
+  for (auto it = ui.groups.begin(); it != ui.groups.end();) {
+    it->terminals.removeIf([&ids](const QString& id) { return !ids.contains(id); });
+    if (!it->terminals.contains(it->active)) it->active = it->terminals.isEmpty() ? QString() : it->terminals.constLast();
+    it = it->terminals.isEmpty() ? ui.groups.erase(it) : std::next(it);
+  }
+  const QStringList drawer = drawerIds(ui, ids);
   // The node closed the last one (here or elsewhere): the drawer hides.
-  if (ui.open && m_attached && ids.isEmpty()) ui.open = false;
-  if (!ids.contains(ui.active)) ui.active = ids.isEmpty() ? QString() : ids.constLast();
-  if (!ui.open && !m_attached) return;
+  if (ui.open && m_attached && drawer.isEmpty()) ui.open = false;
+  if (!drawer.contains(ui.active)) ui.active = drawer.isEmpty() ? QString() : drawer.constLast();
+  const bool panel = drawer.size() < ids.size();
+  if (!ui.open && !m_attached && !panel) return;
   m_attached = true;
   const auto known = m_known.value(m_threadKey);
   for (int i = int(m_tabs.rows().size()) - 1; i >= 0; --i) {
@@ -421,9 +507,20 @@ void TerminalController::syncTabs() {
     const QString& id = ids.at(i);
     const Summary summary = known.value(id);
     const QString label = terminalLabel(id, summary.label);
+    TerminalTabs::Row row{id, label, summary.busy, nullptr, id};
+    if (const Group* group = groupOf(ui, id)) {
+      row.group = group->id;
+      row.panel = group->panel;
+      row.slot = int(group->terminals.indexOf(id));
+      row.span = int(group->terminals.size());
+      row.vertical = group->vertical;
+      row.current = group->panel ? group->active == id : ui.active == id;
+    } else {
+      row.current = ui.active == id;
+    }
     const int index = m_tabs.indexOf(id);
     if (index >= 0) {
-      m_tabs.update(index, label, summary.busy);
+      m_tabs.update(index, row);
       continue;
     }
     auto* session = new TerminalSession(m_client, *m_place, id, m_size, this);
@@ -437,7 +534,8 @@ void TerminalController::syncTabs() {
         emit changed();
       }
     });
-    m_tabs.insert(i, {id, label, summary.busy, session});
+    row.session = session;
+    m_tabs.insert(i, row);
   }
 }
 
@@ -486,22 +584,101 @@ bool TerminalController::setOpen(bool open) {
   ThreadUi& ui = m_ui[m_threadKey];
   if (ui.open == open) return false;
   ui.open = open;
-  // A thread with no terminal yet gets its first one.
-  if (open && terminalIds().isEmpty()) ui.local.insert(nextTerminalId());
+  // A drawer with no terminal yet gets its first one.
+  if (open && drawerIds(ui, terminalIds()).isEmpty()) ui.local.insert(nextTerminalId());
   syncTabs();
   emit changed();
   return true;
 }
 
 // Shows the terminal (opening it here if it is new) and gives it the keyboard.
+// A terminal of a panel tab becomes the tab's active one instead.
 void TerminalController::openTerminal(const QString& terminalId) {
   ThreadUi& ui = m_ui[m_threadKey];
   if (!terminalIds().contains(terminalId)) ui.local.insert(terminalId);
-  ui.active = terminalId;
-  ui.open = true;
+  if (Group* group = groupOf(ui, terminalId); group && group->panel) {
+    group->active = terminalId;
+  } else {
+    ui.active = terminalId;
+    ui.open = true;
+  }
   syncTabs();
   emit changed();
-  emit focusRequested();
+  emit focusRequested(terminalId);
+}
+
+void TerminalController::focusTerminal(const QString& terminalId) {
+  if (!m_place || !terminalIds().contains(terminalId)) return;
+  m_focused = terminalId;
+  ThreadUi& ui = m_ui[m_threadKey];
+  Group* group = groupOf(ui, terminalId);
+  QString& active = group && group->panel ? group->active : ui.active;
+  if (active == terminalId) return;
+  active = terminalId;
+  syncTabs();
+  emit changed();
+}
+
+// A terminal beside (or under) `terminalId` in its group, as the web's
+// splitTerminal: the group takes the new direction.
+void TerminalController::split(const QString& terminalId, bool vertical) {
+  if (!m_place) return;
+  ThreadUi& ui = m_ui[m_threadKey];
+  const QStringList ids = terminalIds();
+  const QString target = ids.contains(terminalId) ? terminalId : ids.contains(m_focused) ? m_focused : ui.active;
+  if (target.isEmpty()) return;
+  Group* group = groupOf(ui, target);
+  if (group && group->terminals.size() >= maxPerGroup) {
+    toast(QStringLiteral("At most %1 terminals per group.").arg(maxPerGroup), QString());
+    return;
+  }
+  if (ids.size() >= maxTerminals) {
+    toast(QStringLiteral("At most %1 terminals per thread.").arg(maxTerminals), QString());
+    return;
+  }
+  const QString id = nextTerminalId();
+  if (!group) {
+    ui.groups.append({QStringLiteral("group-%1").arg(++m_groupCount), {target}, vertical, false, target});
+    group = &ui.groups.last();
+  }
+  ui.local.insert(id);
+  group->terminals.insert(group->terminals.indexOf(target) + 1, id);
+  group->vertical = vertical;
+  group->active = id;
+  if (!group->panel) {
+    ui.active = id;
+    ui.open = true;
+  }
+  syncTabs();
+  emit changed();
+  emit focusRequested(id);
+}
+
+QString TerminalController::addPanelGroup() {
+  if (!m_active || !m_place) return {};
+  if (terminalIds().size() >= maxTerminals) {
+    toast(QStringLiteral("At most %1 terminals per thread.").arg(maxTerminals), QString());
+    return {};
+  }
+  ThreadUi& ui = m_ui[m_threadKey];
+  const QString id = nextTerminalId();
+  const QString group = QStringLiteral("group-%1").arg(++m_groupCount);
+  ui.local.insert(id);
+  ui.groups.append({group, {id}, false, true, id});
+  syncTabs();
+  emit changed();
+  emit focusRequested(id);
+  return group;
+}
+
+void TerminalController::closeGroup(const QString& group) {
+  if (!m_place) return;
+  for (const Group& each : std::as_const(m_ui[m_threadKey].groups)) {
+    if (each.id != group) continue;
+    const QStringList terminals = each.terminals;
+    for (const QString& id : terminals) closeTerminal(id);
+    return;
+  }
 }
 
 void TerminalController::closeTerminal(const QString& terminalId) {
@@ -509,9 +686,21 @@ void TerminalController::closeTerminal(const QString& terminalId) {
   ThreadUi& ui = m_ui[threadKey];
   ui.local.remove(terminalId);
   ui.closing.insert(terminalId);
-  // Closing the active one activates the last one left.
-  if (ui.active == terminalId) ui.active.clear();
-  if (terminalIds().isEmpty()) ui.open = false;
+  // Closing the active one activates the last one left in its group, else
+  // the drawer's last one.
+  QString next;
+  bool panel = false;
+  if (Group* group = groupOf(ui, terminalId)) {
+    group->terminals.removeOne(terminalId);
+    if (group->active == terminalId) group->active = group->terminals.isEmpty() ? QString() : group->terminals.constLast();
+    next = group->active;
+    panel = group->panel;
+    if (!panel && ui.active == terminalId) ui.active = next;
+    // syncTabs drops it once empty.
+  } else if (ui.active == terminalId) {
+    ui.active.clear();
+  }
+  if (drawerIds(ui, terminalIds()).isEmpty()) ui.open = false;
   m_client->call(m_place->environmentId, QStringLiteral("terminal.close"),
                  QJsonObject{
                      {QStringLiteral("threadId"), m_place->threadId},
@@ -532,7 +721,11 @@ void TerminalController::closeTerminal(const QString& terminalId) {
                  });
   syncTabs();
   emit changed();
-  if (ui.open) emit focusRequested();
+  if (panel && !next.isEmpty()) {
+    emit focusRequested(next);
+  } else if (!panel && m_ui[threadKey].open) {
+    emit focusRequested(activeTerminalId());
+  }
 }
 
 bool TerminalController::runScript(const QString& scriptId) {

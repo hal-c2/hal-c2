@@ -89,9 +89,11 @@ void KeybindingController::registerCommands() {
       if (shell->sidebar()->isActive() && index < keys.size()) jumpTo(keys.at(index));
     });
   }
-  // The native drawer's, through the bridge like its header button.
+  // The native terminals', through the bridge like the drawer's buttons; split
+  // and close act on the focused terminal.
   for (const QString& action : {QStringLiteral("terminal.toggle"), QStringLiteral("terminal.new"),
-                                QStringLiteral("terminal.close")}) {
+                                QStringLiteral("terminal.close"), QStringLiteral("terminal.split"),
+                                QStringLiteral("terminal.splitVertical")}) {
     add(action, [this, action] { m_bridge->dispatch(action); });
   }
   // The page still owns collapsing; this is the native toggle's action.

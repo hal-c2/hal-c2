@@ -29,6 +29,8 @@ struct FakeTerminals {
   QList<QJsonObject> calls;
   // Why terminal.open fails, when it does.
   QString refuseOpen;
+  // The terminal the steps' right panel tab runs.
+  QString panelTerminal;
 };
 
 QString terminalKey(const QJsonObject& input) {
@@ -282,6 +284,54 @@ QString ensureThread(World& world) {
   return shownThread(world);
 }
 
+// The drawer's (or the right panel's) terminals, in order.
+QList<TerminalTabs::Row> rowsIn(World& world, bool panel) {
+  QList<TerminalTabs::Row> rows;
+  for (const TerminalTabs::Row& row : world.native().controller<TerminalController>()->tabs()->rows()) {
+    if (row.panel == panel) rows.append(row);
+  }
+  return rows;
+}
+
+QString describeRows(World& world) {
+  QStringList lines;
+  for (const TerminalTabs::Row& row : world.native().controller<TerminalController>()->tabs()->rows()) {
+    lines.append(QStringLiteral("%1 in %2%3 at %4/%5%6%7")
+                     .arg(row.terminalId, row.panel ? QStringLiteral("panel ") : QString(), row.group)
+                     .arg(row.slot)
+                     .arg(row.span)
+                     .arg(row.vertical ? QStringLiteral(" stacked") : QString(), row.current ? QStringLiteral(" current") : QString()));
+  }
+  return QStringLiteral("the terminals are ") + (lines.isEmpty() ? QStringLiteral("none") : lines.join(QStringLiteral("; ")));
+}
+
+// Whether `rows` are one group of `count` laid out side by side or stacked, in order.
+bool oneGroup(const QList<TerminalTabs::Row>& rows, int count, bool vertical) {
+  if (rows.size() != count) return false;
+  for (int slot = 0; slot < count; ++slot) {
+    const TerminalTabs::Row& row = rows.at(slot);
+    if (row.group != rows.first().group || row.slot != slot || row.span != count || row.vertical != vertical) return false;
+  }
+  return true;
+}
+
+bool toastShown(World& world, const QString& title) {
+  for (const QVariant& item : at(world.state(QStringLiteral("toasts")), QStringLiteral("items")).toList()) {
+    if (item.toMap().value(QStringLiteral("title")) == title) return true;
+  }
+  return false;
+}
+
+// The node's project "p1" at /work/p1, connected, unless a Background set one up.
+void ensureProject(World& world) {
+  if (world.node.projects.isEmpty()) {
+    world.node.projects.insert(QStringLiteral("p1"), {{QStringLiteral("id"), QStringLiteral("p1")}, {QStringLiteral("title"), QStringLiteral("p1")},
+                                                      {QStringLiteral("workspaceRoot"), QStringLiteral("/work/p1")}, {QStringLiteral("scripts"), QJsonArray()}});
+  }
+  if (world.shellSubscriptions() == 0) world.connect();
+  world.sync();
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
 
@@ -469,6 +519,163 @@ const Steps steps([] {
   step(QStringLiteral("%1 shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString transcript = terminalSession(world, c[0])->transcript();
     expect(transcript.contains(unescaped(c[1])), QStringLiteral("%1 shows \"%2\"").arg(c[0], transcript));
+  });
+  // Split groups (terminal/tabs.feature).
+  step(QStringLiteral("the thread's terminal is open with one terminal"), [terminals](World& world, const Captures&, const Table&) {
+    ensureProject(world);
+    ensureThread(world);
+    world.bridge().dispatch(QStringLiteral("terminal.toggle"));
+    world.waitFor([&] { return terminals(world)->isOpen() && rowsIn(world, false).size() == 1; }, [&] { return describeRows(world); });
+  });
+  step(QStringLiteral("the user splits the terminal (horizontally|vertically)"), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(c[0] == QLatin1String("vertically") ? QStringLiteral("terminal.splitVertical") : QStringLiteral("terminal.split"));
+    world.sync();
+  });
+  step(QStringLiteral("a second terminal runs next to the first (side by side|stacked)"), [terminals](World& world, const Captures& c, const Table&) {
+    const bool stacked = c[0] == QLatin1String("stacked");
+    const QString threadId = shownThread(world);
+    world.waitFor([&] {
+      const QList<TerminalTabs::Row> rows = rowsIn(world, false);
+      return oneGroup(rows, 2, stacked) && rows.at(1).current && terminals(world)->activeTerminalId() == rows.at(1).terminalId &&
+             terminalAttach(world, threadId, rows.at(1).terminalId).has_value();
+    }, [&] { return describeRows(world); });
+  });
+  step(QStringLiteral("a split group with four terminals"), [terminals](World& world, const Captures&, const Table&) {
+    ensureProject(world);
+    ensureThread(world);
+    world.bridge().dispatch(QStringLiteral("terminal.toggle"));
+    world.waitFor([&] { return rowsIn(world, false).size() == 1; }, [&] { return describeRows(world); });
+    for (int count = 2; count <= 4; ++count) {
+      world.bridge().dispatch(QStringLiteral("terminal.split"));
+      world.waitFor([&] { return rowsIn(world, false).size() == count; }, [&] { return describeRows(world); });
+    }
+    expect(oneGroup(rowsIn(world, false), 4, false) && terminals(world)->groupSizes().value(terminals(world)->activeGroup()) == 4, describeRows(world));
+  });
+  step(QStringLiteral("the user cannot split that group again"), [terminals](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("terminal.split"));
+    world.bridge().dispatch(QStringLiteral("terminal.splitVertical"));
+    world.sync();
+    expect(oneGroup(rowsIn(world, false), 4, false) && terminals(world)->groupSizes().value(terminals(world)->activeGroup()) == 4, describeRows(world));
+  });
+  step(QStringLiteral("the user is told the limit is 4 per group"), [](World& world, const Captures&, const Table&) {
+    const QString title = QStringLiteral("At most 4 terminals per group.");
+    world.waitFor([&] { return toastShown(world, title); },
+                  [&] { return QStringLiteral("the toast %1; the shell shows %2").arg(title, show(world.state(QStringLiteral("toasts")))); });
+  });
+
+  // The header's terminal button (navigation/layout.feature), Workspace.qml's terminal.toggle.
+  step(QStringLiteral("the terminal is (hidden|shown)"), [terminals](World& world, const Captures& c, const Table&) {
+    ensureThread(world);
+    if (c[0] == QLatin1String("shown")) world.bridge().dispatch(QStringLiteral("terminal.toggle"));
+    world.waitFor([&] { return terminals(world)->available() && terminals(world)->isOpen() == (c[0] == QLatin1String("shown")) &&
+                               (c[0] == QLatin1String("hidden") || rowsIn(world, false).size() == 1); },
+                  [&] { return describeRows(world); });
+  });
+  step(QStringLiteral("the user (?:shows|hides) the terminal"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("terminal.toggle"));
+    world.sync();
+  });
+  step(QStringLiteral("the terminal drawer opens under the thread"), [terminals](World& world, const Captures&, const Table&) {
+    const QString threadId = shownThread(world);
+    world.waitFor([&] { return terminals(world)->isOpen() && terminals(world)->threadKey().endsWith(QLatin1Char(':') + threadId) &&
+                               terminalAttach(world, threadId, QStringLiteral("term-1")).has_value(); },
+                  [&] { return describeRows(world); });
+  });
+  step(QStringLiteral("the terminal drawer closes"), [terminals](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !terminals(world)->isOpen(); }, QStringLiteral("the terminal drawer to close"));
+  });
+  step(QStringLiteral("its terminals keep running"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QString threadId = shownThread(world);
+    expect(!terminalCall(world, QStringLiteral("terminal.close"), threadId, QStringLiteral("term-1")) &&
+               attached(world.node).contains(threadId + QStringLiteral("/term-1")) && rowsIn(world, false).size() == 1,
+           describeRows(world) + QStringLiteral("; the node got ") + describeTerminalCalls(world));
+  });
+
+  // Right panel terminal tabs (terminal/tabs.feature, navigation/layout.feature).
+  const auto addPanelTab = [](World& world) {
+    world.bridge().dispatch(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), QStringLiteral("terminal")}});
+    world.waitFor([&] { return rowsIn(world, true).size() == 1; }, [&] { return describeRows(world); });
+    world.node.part<FakeTerminals>().panelTerminal = rowsIn(world, true).first().terminalId;
+  };
+  step(QStringLiteral("the terminal tab runs a terminal of its own"), [](World& world, const Captures&, const Table&) {
+    const QString threadId = shownThread(world);
+    world.waitFor([&] {
+      const QList<TerminalTabs::Row> rows = rowsIn(world, true);
+      return rows.size() == 1 && at(world.state(QStringLiteral("panel")), QStringLiteral("activeId")) == QStringLiteral("terminal:") + rows.first().group &&
+             terminalAttach(world, threadId, rows.first().terminalId).has_value();
+    }, [&] { return describeRows(world) + QStringLiteral("; the panel shows ") + show(world.state(QStringLiteral("panel"))); });
+    world.node.part<FakeTerminals>().panelTerminal = rowsIn(world, true).first().terminalId;
+  });
+  step(QStringLiteral("the terminal drawer still shows only its first terminal"), [terminals](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QList<TerminalTabs::Row> rows = rowsIn(world, false);
+    expect(terminals(world)->isOpen() && rows.size() == 1 && rows.first().terminalId == QStringLiteral("term-1") &&
+               terminals(world)->activeTerminalId() == QStringLiteral("term-1"),
+           describeRows(world));
+  });
+  step(QStringLiteral("the thread has a terminal tab in the right panel"), [addPanelTab](World& world, const Captures&, const Table&) {
+    ensureProject(world);
+    ensureThread(world);
+    addPanelTab(world);
+  });
+  step(QStringLiteral("the user closes the terminal tab"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("rightPanel.close"), QVariantMap{{QStringLiteral("id"), at(world.state(QStringLiteral("panel")), QStringLiteral("activeId"))}});
+    world.sync();
+  });
+  step(QStringLiteral("the tab's terminal stops and its history is deleted"), [](World& world, const Captures&, const Table&) {
+    const QString terminalId = world.node.part<FakeTerminals>().panelTerminal;
+    world.waitFor([&] {
+      const auto payload = terminalCall(world, QStringLiteral("terminal.close"), shownThread(world), terminalId);
+      return payload && payload->value(QLatin1String("deleteHistory")).toBool() && rowsIn(world, true).isEmpty();
+    }, [&] { return describeRows(world) + QStringLiteral("; the node got ") + describeTerminalCalls(world); });
+    for (const QVariant& tab : at(world.state(QStringLiteral("panel")), QStringLiteral("tabs")).toList()) {
+      expect(at(tab, QStringLiteral("kind")) != QStringLiteral("terminal"), show(world.state(QStringLiteral("panel"))));
+    }
+  });
+  step(QStringLiteral("the user splits the terminal tab (horizontally|vertically)"), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(c[0] == QLatin1String("vertically") ? QStringLiteral("terminal.splitVertical") : QStringLiteral("terminal.split"),
+                            QVariantMap{{QStringLiteral("terminalId"), world.node.part<FakeTerminals>().panelTerminal}});
+    world.sync();
+  });
+  step(QStringLiteral("the terminal tab shows two terminals (side by side|stacked)"), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return oneGroup(rowsIn(world, true), 2, c[0] == QLatin1String("stacked")); }, [&] { return describeRows(world); });
+    expect(at(world.state(QStringLiteral("panel")), QStringLiteral("activeId")) == QStringLiteral("terminal:") + rowsIn(world, true).first().group,
+           show(world.state(QStringLiteral("panel"))));
+  });
+  step(QStringLiteral("the terminal drawer shows none of the tab's terminals"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QList<TerminalTabs::Row> panel = rowsIn(world, true);
+    for (const TerminalTabs::Row& row : rowsIn(world, false)) {
+      for (const TerminalTabs::Row& other : panel) expect(row.terminalId != other.terminalId && row.group != other.group, describeRows(world));
+    }
+  });
+  step(QStringLiteral("a terminal tab in the right panel has output"), [addPanelTab](World& world, const Captures&, const Table&) {
+    addPanelTab(world);
+    const QString threadId = shownThread(world);
+    const QString terminalId = world.node.part<FakeTerminals>().panelTerminal;
+    world.waitFor([&] { return attached(world.node).contains(threadId + QLatin1Char('/') + terminalId); }, [&] { return describeRows(world); });
+    print(world.node, threadId, terminalId, QStringLiteral("built in 3s\r\n"));
+    world.waitFor([&] { return terminalSession(world, terminalId)->transcript().contains(QStringLiteral("built in 3s")); },
+                  [&] { return QStringLiteral("%1 shows \"%2\"").arg(terminalId, terminalSession(world, terminalId)->transcript()); });
+  });
+  step(QStringLiteral("the user closes the right panel and opens it again"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("rightPanel.toggle"));
+    world.sync();
+    expect(!at(world.state(QStringLiteral("panel")), QStringLiteral("isOpen")).toBool(), show(world.state(QStringLiteral("panel"))));
+    world.bridge().dispatch(QStringLiteral("rightPanel.toggle"));
+    world.sync();
+  });
+  step(QStringLiteral("the terminal tab still has its output"), [](World& world, const Captures&, const Table&) {
+    const QString threadId = shownThread(world);
+    const QString terminalId = world.node.part<FakeTerminals>().panelTerminal;
+    const QList<TerminalTabs::Row> rows = rowsIn(world, true);
+    expect(rows.size() == 1 && rows.first().terminalId == terminalId && at(world.state(QStringLiteral("panel")), QStringLiteral("isOpen")).toBool() &&
+               at(world.state(QStringLiteral("panel")), QStringLiteral("activeId")) == QStringLiteral("terminal:") + rows.first().group,
+           describeRows(world) + QStringLiteral("; the panel shows ") + show(world.state(QStringLiteral("panel"))));
+    expect(!terminalCall(world, QStringLiteral("terminal.close"), threadId, terminalId) && attached(world.node).contains(threadId + QLatin1Char('/') + terminalId) &&
+               terminalSession(world, terminalId)->transcript().contains(QStringLiteral("built in 3s")),
+           QStringLiteral("the node got %1").arg(describeTerminalCalls(world)));
   });
 });
 

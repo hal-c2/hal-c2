@@ -11,6 +11,13 @@
 #   apps/web/src/components/useThreadTerminalActions.ts
 #   apps/web/src/lib/terminalCloseConfirm.ts
 #   packages/shared/src/terminalLabels.ts
+#   apps/web/src/rightPanelStore.ts (terminal surfaces: a right panel tab per terminal group)
+#   apps/desktop-qt/src/native/TerminalController.cpp (split groups, panel groups)
+#   apps/desktop-qt/src/native/RightPanelController.cpp (terminal:<group> tabs)
+#   apps/desktop-qt/qml/HalC2/Bricks/TerminalSplits.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/TerminalPanel.qml
+#   apps/desktop-qt/tests/native/features/TerminalSteps.cpp
 #   Cross-domain: navigation/ and tui/keymap.feature own the terminal key chords.
 
 Feature: Terminal tabs and splits
@@ -102,7 +109,7 @@ Feature: Terminal tabs and splits
 
   Rule: The web terminal groups terminals into splits
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The user splits the terminal
       Given the thread's terminal is open with one terminal
       When the user splits the terminal <direction>
@@ -113,7 +120,7 @@ Feature: Terminal tabs and splits
         | horizontally | side by side |
         | vertically   | stacked      |
 
-    @backlog @desktop
+    @desktop
     Scenario: A split group holds at most four terminals
       Given a split group with four terminals
       Then the user cannot split that group again
@@ -149,3 +156,31 @@ Feature: Terminal tabs and splits
       Given a thread with two terminals
       When the user picks the second terminal on the phone
       Then the phone shows the second terminal's output
+
+  Rule: The right panel holds terminal tabs of their own
+
+    @desktop
+    Scenario: A terminal tab runs its own terminal beside the drawer's
+      Given the thread's terminal is open with one terminal
+      When the user adds a terminal tab to the right panel
+      Then the terminal tab runs a terminal of its own
+      And the terminal drawer still shows only its first terminal
+
+    @desktop
+    Scenario: Closing a terminal tab stops its terminals
+      Given the thread has a terminal tab in the right panel
+      When the user closes the terminal tab
+      Then the tab's terminal stops and its history is deleted
+
+    @desktop
+    Scenario Outline: The user splits a terminal tab
+      Given the thread's terminal is open with one terminal
+      And the thread has a terminal tab in the right panel
+      When the user splits the terminal tab <direction>
+      Then the terminal tab shows two terminals <placement>
+      And the terminal drawer shows none of the tab's terminals
+
+      Examples:
+        | direction    | placement    |
+        | horizontally | side by side |
+        | vertically   | stacked      |
