@@ -56,6 +56,9 @@ private slots:
                              "HalC2.Shell", 1, 0, "Settings");
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Themes.qml")),
                              "HalC2.Shell", 1, 0, "Themes");
+    // A thread route shows the native centre, which reads this.
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Threads.qml")),
+                             "HalC2.Shell", 1, 0, "Threads");
     runtime = std::make_unique<ShellRuntime>(
         ShellRuntime::Options{directory.path(), QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/qml")},
         &bridge, theme.get());
@@ -81,6 +84,31 @@ private slots:
     })").toVariant().toMap();
     for (auto it = state.cbegin(); it != state.cend(); ++it) bridge.publish(it.key(), it.value());
     initialState = state;
+  }
+
+  // A thread or draft route shows the shell's own centre in the page's
+  // place (js/centreViews.js); any other route shows the page again.
+  void threadRoutesDrawTheCentre(QQuickWindow* window) {
+    auto* page = findVisualItem(window->contentItem(), "HalC2WebSurface");
+    QVERIFY(page);
+    QVERIFY(page->isVisible());
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
+    QTRY_VERIFY(findVisualItem(window->contentItem(), "threadTimeline"));
+    auto* timeline = findVisualItem(window->contentItem(), "threadTimeline");
+    QTRY_VERIFY(timeline->isVisible());
+    QVERIFY(!page->isVisible());
+    QTRY_VERIFY(timeline->width() >= 300 && timeline->height() > 0);
+    QVERIFY(timeline->mapToScene(QPointF(timeline->width(), 0)).x() <= window->width());
+    bridge.publish("route", QVariantMap{{"kind", "draft"}, {"draftId", "draft-1"}});
+    auto* placeholder = findVisualItem(window->contentItem(), "threadPlaceholder");
+    QVERIFY(placeholder);
+    QTRY_COMPARE(placeholder->property("text").toString(), QString("What should we build in Example project?"));
+    QVERIFY(placeholder->isVisible());
+    QVERIFY(!page->isVisible());
+    bridge.publish("route", QVariantMap{{"kind", "settings"}, {"section", "/settings/projects"}});
+    QTRY_VERIFY(page->isVisible());
+    bridge.publish("route", QVariant());
+    QTRY_VERIFY(page->isVisible());
   }
 
   void layoutsFit_data() {
@@ -122,6 +150,7 @@ private slots:
     QVERIFY(title);
     if (width == 1400) QTRY_VERIFY(!title->property("truncated").toBool());
     QTRY_VERIFY(title->mapToScene(QPointF(title->width(), 0)).x() <= window->width());
+    if (width == 1000) threadRoutesDrawTheCentre(window);
 
     if (example == "glass-macos") {
       // The page's breakpoints: the sidebar goes off-canvas under 768, the

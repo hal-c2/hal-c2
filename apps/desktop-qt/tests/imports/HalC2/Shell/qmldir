@@ -5,3 +5,4 @@ singleton Terminals 1.0 Terminals.qml
 singleton Keybindings 1.0 Keybindings.qml
 singleton Settings 1.0 Settings.qml
 singleton Themes 1.0 Themes.qml
+singleton Threads 1.0 Threads.qml

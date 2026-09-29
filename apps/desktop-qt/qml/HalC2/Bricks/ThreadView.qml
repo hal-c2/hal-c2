@@ -1,0 +1,237 @@
+import QtQuick
+import QtQuick.Controls.Basic
+import QtQuick.Layouts
+import HalC2.Shell
+
+// The centre for a thread or draft route (js/centreViews.js): the route's
+// thread from Threads (ThreadStore), or a draft's opening line with where it
+// will run. Loading says so without moving; a thread whose node stopped
+// sending it says why and offers Retry.
+//
+// Web links open in the system browser; file links and files the agent
+// changed open in the right panel (`panel.open`). A reply's Revert asks
+// first, then rewinds through Threads.revert. "Jump to latest" is also the
+// `timeline.jumpToLatest` command.
+Item {
+    id: view
+
+    // The corner radius of layouts that round the centre.
+    property real radius: 0
+    readonly property var route: Shell.state.route ?? null
+    readonly property bool draft: route !== null && route.kind === "draft"
+    readonly property var model: draft ? null : Threads.timeline
+    readonly property var workspace: Shell.state.workspace ?? null
+    readonly property string status: model ? model.status : "loading"
+    readonly property bool unreachable: !draft && status === "unreachable"
+    readonly property bool loading: !draft && (model === null || (status === "loading" && model.count === 0))
+    readonly property bool empty: !draft && status === "live" && model !== null && model.count === 0
+
+    readonly property color textColor: Theme.palette.color("text", "#e4e4e7")
+    readonly property color mutedColor: Theme.palette.color("textMuted", "#8b8b93")
+    readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+
+    // Web addresses leave the app; anything else is a path in the project.
+    function openLink(link) {
+        if (/^(https?|mailto):/i.test(link)) {
+            Qt.openUrlExternally(link);
+            return;
+        }
+        let path = link.replace(/^file:\/\//i, "");
+        // "src/cart.ts#L12" and "src/cart.ts:12:3" name the file.
+        path = decodeURIComponent(path.replace(/#.*$/, "").replace(/(:\d+)+$/, ""));
+        if (path.length > 0)
+            openFile(path, "files");
+    }
+
+    function openFile(path, tab) {
+        Shell.dispatch("panel.open", {
+            tab: tab,
+            path: path
+        });
+    }
+
+    function askRevert(rowId) {
+        const checkpoint = view.model ? view.model.checkpointOf(rowId) : ({});
+        if (checkpoint.turn === undefined)
+            return;
+        revertDialog.rowId = rowId;
+        revertDialog.turn = checkpoint.turn;
+        revertDialog.open();
+    }
+
+    function revert(restoreFiles) {
+        Threads.revert(Threads.activeThread, revertDialog.rowId, restoreFiles);
+        revertDialog.close();
+    }
+
+    Component.onCompleted: {
+        if (Keybindings.commands)
+            Keybindings.commands.add("timeline.jumpToLatest", qsTr("Jump to latest"), () => timeline.scrollToEnd(), view);
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        radius: view.radius
+        color: Theme.palette.color("canvas", "#0b0b0d")
+    }
+
+    Timeline {
+        id: timeline
+        objectName: "threadTimeline"
+
+        anchors.top: problemBar.visible ? problemBar.bottom : parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        visible: !view.draft
+        model: view.model
+        showStatus: false
+        onLinkActivated: link => view.openLink(link)
+        onFileActivated: (path, tab) => view.openFile(path, tab)
+        onRevertRequested: rowId => view.askRevert(rowId)
+    }
+
+    // Why the thread stopped following its node, with a way to try again.
+    Rectangle {
+        id: problemBar
+        objectName: "threadProblem"
+
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: visible ? problemRow.implicitHeight + 16 : 0
+        visible: view.unreachable
+        color: Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.1)
+
+        RowLayout {
+            id: problemRow
+            anchors.fill: parent
+            anchors.leftMargin: 16
+            anchors.rightMargin: 16
+            spacing: 12
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("This thread's node cannot be reached: %1").arg(view.model ? view.model.problem : "")
+                color: Theme.palette.color("warning", "#f59e0b")
+                font.family: view.uiFamily
+                font.pixelSize: 13
+                wrapMode: Text.Wrap
+            }
+            ShellButton {
+                objectName: "threadRetry"
+                text: qsTr("Retry")
+                onClicked: Threads.reload(Threads.activeThread)
+            }
+        }
+    }
+
+    // Loading, an empty thread, or a draft's opening line. Static: nothing
+    // here repaints while it waits.
+    ColumnLayout {
+        anchors.centerIn: parent
+        width: Math.min(parent.width - 48, 640)
+        spacing: 8
+        visible: view.draft || view.loading || view.empty
+
+        Label {
+            objectName: "threadPlaceholder"
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            color: view.draft ? view.textColor : view.mutedColor
+            font.family: view.uiFamily
+            font.pixelSize: view.draft ? 24 : 13
+            text: {
+                if (view.draft) {
+                    const project = view.workspace ? view.workspace.projectTitle : "";
+                    return project ? qsTr("What should we build in %1?").arg(project) : qsTr("Add a project to start");
+                }
+                return view.loading ? qsTr("Loading…") : qsTr("Send a message to start the conversation.");
+            }
+        }
+        Label {
+            objectName: "draftContext"
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+            visible: view.draft && text.length > 0
+            color: view.mutedColor
+            font.family: view.uiFamily
+            font.pixelSize: 13
+            elide: Text.ElideMiddle
+            text: {
+                if (!view.workspace)
+                    return "";
+                const parts = [];
+                if (view.workspace.envModeLabel)
+                    parts.push(view.workspace.envModeLabel);
+                if (view.workspace.branch)
+                    parts.push(view.workspace.branch);
+                return parts.join(" · ");
+            }
+        }
+    }
+
+    Dialog {
+        id: revertDialog
+        objectName: "revertDialog"
+
+        property string rowId: ""
+        property int turn: 0
+
+        parent: Overlay.overlay
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(480, (parent?.width ?? 512) - 32)
+        padding: 20
+        closePolicy: Popup.CloseOnEscape
+        title: qsTr("Revert to turn %1?").arg(turn)
+
+        background: Rectangle {
+            color: Theme.palette.color("surfaceOverlay", "#18181b")
+            border.color: Theme.palette.color("border", "#27272a")
+            radius: Math.min(Theme.radius, 16)
+        }
+        header: Label {
+            text: revertDialog.title
+            padding: 20
+            bottomPadding: 4
+            font.pixelSize: 17
+            font.weight: Font.DemiBold
+            color: view.textColor
+        }
+        contentItem: ColumnLayout {
+            spacing: 12
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("The later turns are removed from the conversation. This cannot be undone.")
+                color: view.textColor
+                font.pixelSize: 13
+                wrapMode: Text.Wrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 8
+                spacing: 8
+                Item {
+                    Layout.fillWidth: true
+                }
+                ShellButton {
+                    objectName: "revertCancel"
+                    text: qsTr("Cancel")
+                    onClicked: revertDialog.close()
+                }
+                ShellButton {
+                    objectName: "revertKeepFiles"
+                    text: qsTr("Revert and keep changes")
+                    onClicked: view.revert(false)
+                }
+                ShellButton {
+                    objectName: "revertFiles"
+                    text: qsTr("Revert files too")
+                    tint: Theme.palette.color("error", "#ef4444")
+                    onClicked: view.revert(true)
+                }
+            }
+        }
+    }
+}

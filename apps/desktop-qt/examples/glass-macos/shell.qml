@@ -176,9 +176,17 @@ ShellWindow {
                     visible: root.nativeSettingsOpen
                 }
 
+                // The route's thread or draft, drawn by the shell.
+                CentreHost {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    kind: root.nativeCentreOpen ? root.route.kind : ""
+                    visible: root.nativeCentreOpen
+                }
+
 
                 WebSurface {
-                    visible: !root.nativeSettingsOpen
+                    visible: root.pageOpen
                     Layout.fillHeight: true
                     Layout.fillWidth: true
                     backgroundColor: root.canvas

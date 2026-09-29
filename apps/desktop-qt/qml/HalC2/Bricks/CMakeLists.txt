@@ -59,6 +59,9 @@ qt_add_qml_module(hal_c2_bricks
     js/providerIcons.js
     js/settingsPages.js
     js/settingsRows.js
+    CentreHost.qml
+    ThreadView.qml
+    js/centreViews.js
   RESOURCES
     qmldir
     js/shell-connect.js

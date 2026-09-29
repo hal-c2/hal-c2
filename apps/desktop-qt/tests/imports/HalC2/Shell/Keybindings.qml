@@ -10,6 +10,29 @@ QtObject {
     property bool saving: false
     property var pressed: []
     property var saved: []
+    // The commands the shell runs (CommandRegistry): add and run by id.
+    property QtObject commands: QtObject {
+        property var entries: ({})
+        function add(command, title, callback, owner) {
+            const next = Object.assign({}, entries);
+            next[command] = { title: title, run: callback };
+            entries = next;
+        }
+        function remove(command) {
+            const next = Object.assign({}, entries);
+            delete next[command];
+            entries = next;
+        }
+        function contains(command) {
+            return entries[command] !== undefined;
+        }
+        function run(command) {
+            if (!contains(command))
+                return false;
+            entries[command].run();
+            return true;
+        }
+    }
 
     function press(sequence, focus) {
         pressed.push(sequence);
