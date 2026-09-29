@@ -749,20 +749,30 @@ Environments outside the cluster are paired natively, as node links (see
   row belongs to, so no session has two views fighting over its size. Groups
   live in memory: a restart or another client sees ungrouped drawer terminals.
 
-### `settings`, `cluster` and `connections`
+### Settings sections and the shell's own pages
 
-The settings nav is the shell's (`SettingsNav`); the pages behind it are
+The settings nav is the shell's (`SettingsNav`); the sections behind it are
 either the shell's own or still HTML.
 
-The shell's own pages work with no page loaded. `js/settingsPages.js` lists
-them in one place: a route section, the brick that draws it, the action that
-opens it and the words search finds it by. Registering a page is one line
-there. `SettingsHost` loads the brick for `ShellWindow.settingsSection`, and
-layouts put it where the page would be while `ShellWindow.nativeSettingsOpen`.
-`SettingsNav` lists the page's sections, then the shell's own, and search
-drops the page's results inside a native section in favour of the native row.
-`NavigationController` keeps `settings.navigate` to cluster and connections
-native; General and Appearance still `route.follow` the (hidden) page.
+The shell's own sections work with no page loaded. `js/settingsPages.js`
+lists every section in the page's order: a section with a `brick` is native,
+and moving one to QML is giving its line a brick, the state key it
+`requires` before it is listed, and the words and rows search finds it by.
+`SettingsHost` loads the brick for `ShellWindow.settingsSection`, and layouts
+put it where the page would be while `ShellWindow.nativeSettingsOpen`.
+`NavigationController::isNative` lists the routes the page is never told
+about; General and Appearance are native bricks but still `route.follow` the
+(hidden) page, which draws with some of their preferences.
+
+Search is the shell's too. `settingsPages.searchRows` matches sections by
+label and keywords, and a section's settings (its `settingsRows.js` rows and
+any `settings` entries) by title and description; every word of the query
+must match, and a result names the setting's `targetId`. Opening one is
+`settings.openResult {to, targetId}`: `NavigationController` opens the
+section and bumps `route.targetSeq` with `route.target` set, and
+`SettingsPage` scrolls the brick's child of that objectName to the top on
+each bump, so opening the same result twice scrolls back to it. Sections
+still on the page get the page's results, and the page scrolls those itself.
 
 General and Appearance are rows over `Settings` (`js/settingsRows.js`: a key,
 a kind and the web's wording). Each key's store and default are
@@ -774,44 +784,59 @@ shell sends them to the page as `clientSettings.follow {settings}` whenever
 they change. Appearance also draws the theme choice and this device's own
 themes (`ThemeEditor`); errors are the shell's toasts.
 
-`ClusterController` publishes `cluster` (`busy`, `status`, `error`, `invite`,
-`notice`) and calls the node's `cluster.*` RPCs; `ClusterSettings` renders it
-at `/settings/cluster`. Actions: `cluster.open`/`close`, `cluster.refresh`,
-`cluster.invite {tailscale?}` (copies the link), `cluster.invite.copy`,
-`cluster.join {link}`, `cluster.remove {id}`.
+Each other native section is a controller publishing one key, whose header
+documents the shape and actions:
 
-`ConnectionsController` publishes `connections` and `ConnectionsSettings`
-renders it at `/settings/connections` (`connections.open`/`close`). Other
-environments are the node's links from the
-`shell` shape, each with its `status`; adding one is `hal-c2.linkEnvironment`
-with a pairing link, or a host and code (a host without a scheme tries HTTPS,
-then HTTP when HTTPS cannot connect), and removing is
-`hal-c2.unlinkEnvironment`. The node has no rename for a link. While open the
-page follows the `authAccess` shape (pairing links, client sessions) and calls
-the `hal-c2.*` access RPCs; a created link's secret lives only in `created`
-until the page closes. Those calls need `access:read`/`access:write`, so a
-session paired with standard scopes sees one explanation in place of the list.
-A link needs a direct origin and a bearer token: an environment reached only
-through the relay (DPoP) cannot be linked yet.
+- **Cluster** (`ClusterController`, `cluster`) calls the node's `cluster.*`
+  RPCs.
+- **Connections** (`ConnectionsController`, `connections`). Other
+  environments are the node's links from the `shell` shape; adding one is
+  `hal-c2.linkEnvironment` with a pairing link, or a host and code (a host
+  without a scheme tries HTTPS, then HTTP), and the node has no rename for a
+  link. While open it follows the `authAccess` shape and calls the `hal-c2.*`
+  access RPCs, which need `access:read`/`access:write`, so a session paired
+  with standard scopes sees one explanation in place of the list. A created
+  link's secret lives only in `created` until the section closes. A link
+  needs a direct origin and a bearer token: an environment reached only
+  through the relay (DPoP) cannot be linked yet.
+- **Providers** (`ProviderSettingsController`, `providerSettings`) shows one
+  environment at a time: its `config` shape brings the providers, and each
+  provider that signs in from HAL-C2 has its `providerAuth` shape followed.
+  That shape is node-addressed, so signing in works only on environments a
+  cluster node serves. Turning a provider off is a settings edit on that
+  environment, read back and retried on `StaleSettings` like the shell's own
+  settings. Adding, renaming and deleting instances, custom models and the ACP
+  registry are not native yet, so the desktop cannot do them.
+- **Archive** (`ArchivedThreadsController`, `archivedThreads`) is fetched,
+  not streamed (`features/parity/rpc.feature`): opening it, refreshing, an
+  action landing, or the online environments changing asks each one for
+  `orchestration.getArchivedShellSnapshot`, which covers only the rows of the
+  node that answers.
 
-The rest are HTML pages until they move. The root route mounts
-`ShellSettingsBridge` when hosted, which publishes `ShellSettingsState` on
-every route change: `active` (on `/settings*`), the sections in sidebar
-order, the active one, and search results for the query the shell last sent.
-`SettingsNav` marks the route's section current; picking one of the page's replaces the shell's
-page in the route. Actions: `settings.navigate {to}`,
-`settings.openResult {to, targetId}` (scrolls when already on the page),
-`settings.search {query}`, and `settings.back`, which is the route's back
-once the shell has its node and history back (else `/`) in the page before.
-When hosted, `AppSidebarLayout` renders no sidebar on any route.
+Home, the pull requests page and usage are routes of their own, drawn by
+`HomePage`, `PullRequestsPage` and `UsagePage` over `PullRequestListController`
+and `UsageController`; they too follow node shapes only while open.
+
+Project, SnapShots, Integrations, Scheduled Tasks, Source Control and Storage
+are still HTML. Most of them edit settings scoped to one or several
+environments or a project, which the shell has no native model for yet. The
+root route mounts `ShellSettingsBridge` when hosted, which publishes
+`ShellSettingsState` on every route change: `active` (on `/settings*`), the
+sections in sidebar order, the active one, and search results for the query
+the shell last sent. Picking one of the page's sections replaces the shell's
+section in the route. Actions: `settings.navigate {to}`,
+`settings.openResult {to, targetId}`, `settings.search {query}`, and
+`settings.back`, which is the route's back once the shell has its node and
+history back (else `/`) in the page before. When hosted, `AppSidebarLayout`
+renders no sidebar on any route.
 
 ### `route`
 
 `NavigationController` owns where the window is once the shell has its node:
 `route` is `{kind, threadKey, draftId, projectKey, section, title,
-canGoBack}` with `kind` one of `home`, `thread`, `draft`, `newThread`,
+canGoBack, target, targetSeq}` with `kind` one of `home`, `thread`, `draft`, `newThread`,
 `settings`, `pullRequests`, `usage` (the `ShellRoute` contract plus
-`title` and `canGoBack`). `ShellWindow` titles the window from `title` and derives
+`title`, `canGoBack` and the settings search's target). `ShellWindow` titles the window from `title` and derives
 `settingsActive` and `settingsSection` from it; the sidebar's active row and the
 composer's target thread come from it too. It keeps a back stack (home and a
 new thread are passed through, and moving between settings sections is one
@@ -930,7 +955,8 @@ and numbered threads in the sidebar's order, the composer's pickers and stop,
 and steering with or editing a queued message.
 A brick adds its own with `Keybindings.commands.add(command, title, callback,
 owner)`, and a controller from its `activate()` (`ThemeController` the
-appearance cycle, `NavigationController` "Open settings" and "Open usage").
+appearance cycle, `NavigationController` "Open settings" and "Open usage",
+the Providers and Archive sections their own "Open …").
 
 The command palette (`CommandPaletteController`, the `PaletteModel` singleton,
 drawn by `CommandPalette`) lists those rows as its actions, so an action
@@ -1081,10 +1107,10 @@ on this machine.
 The embedded page is legacy and leaves the shell piece by piece. Every piece
 of the original chrome has a brick (`Sidebar`, `Composer`, `RightPanel`,
 `TerminalDrawer`, `Workspace`, `SettingsNav`), but several still get their
-state from the page. The right panel's pull request tab and most settings
-pages are still HTML because they have not moved yet, not by design (its
-Diff, Files, Agents, terminal, Pull requests and Previews tabs are native;
-the pull request review and the device tab are not).
+state from the page. Some settings sections are still HTML because they have
+not moved yet, not by design (see
+[Settings sections](#settings-sections-and-the-shells-own-pages)); the right
+panel's tabs are native except the device tab.
 
 A piece has moved when a native controller (`src/native/`, registered with
 `NativeControllerRegistrar`) builds its state from the shell's own node client
