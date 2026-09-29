@@ -1130,12 +1130,13 @@ their toast for its five seconds, and `thread.undo` (mod+z outside text)
 runs the newest Undo on offer. Delete, archive and unpin ask first when the
 device's `confirmThread*` settings say so (delete's is on by default).
 
-The page's own menus still go through `contextMenu`:
-`localApi.contextMenu.show` publishes the items with the surface they belong
-to (every web surface tags its document with `window.halC2Shell.surfaceId`)
-and the choice returns as `contextMenu.select {requestId, id}`.
-`ContextMenuHost` lives in each `WebSurface` and once at the window level for
-it. `workspace.rename {title}` / `renameRequestId` drive an inline rename in
+Every window menu is a native controller's (`thread.menu`,
+`workspace.titleMenu`, `draft.menu`, `thread.snoozeMenu`, `git.menu`), so the
+window has one `ContextMenuHost`, for `menu`. The page's own menus still
+publish `contextMenu` (`localApi.contextMenu.show`, answered by
+`contextMenu.select {requestId, id}`), but only a visible `WebSurface`'s
+inner host renders them; the hidden main page's are never shown.
+`workspace.rename {title}` / `renameRequestId` drive an inline rename in
 the header; the thread menu's "Rename" asks for it with
 `workspace.rename.begin {threadKey}`.
 

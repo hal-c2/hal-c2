@@ -70,14 +70,8 @@ Window {
     }
 
     ContextMenuHost {
-        surfaceId: "shell"
-    }
-
-    ContextMenuHost {
         objectName: "shellMenuHost"
         surfaceId: "shell"
-        stateKey: "menu"
-        selectAction: "menu.select"
     }
 
     ProjectRemovalDialog {}
