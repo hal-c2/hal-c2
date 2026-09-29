@@ -96,6 +96,11 @@ public:
   // One preference; null removes it.
   Q_INVOKABLE bool writeDevice(const QString& key, const QVariant& value);
   QString deviceError() const { return m_deviceError; }
+  // The preferences file exists but is not a JSON object. Saving is refused
+  // until it reads again, so defaults never replace what the user saved.
+  bool deviceUnreadable() const { return m_deviceUnreadable; }
+  // Reads the preferences file again.
+  Q_INVOKABLE void reloadDevice() { setDevicePath(m_devicePath); }
 
   // A row's value (its default when unset), whether it is at its default, and
   // changing or resetting it in the store it belongs to. Unknown keys are
@@ -149,6 +154,7 @@ private:
   QString m_devicePath;
   QJsonObject m_device;
   QString m_deviceError;
+  bool m_deviceUnreadable = false;
   ShellBridge* m_bridge;
   // What the page was last told of this device's rows.
   QJsonObject m_followed;
