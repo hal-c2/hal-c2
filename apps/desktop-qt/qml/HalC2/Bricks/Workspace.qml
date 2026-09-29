@@ -28,6 +28,8 @@ Rectangle {
     // Same for the right panel: null hides the toggle, otherwise whether the
     // panel is open. The page's header keeps this button next to the pills.
     property var panelToggle: null
+    // Whether the thread details column shows, or null away from a thread.
+    property var detailsToggle: null
     // The window, for a frameless shell: the strip is its drag handle and
     // carries the window buttons.
     property Window window: null
@@ -53,6 +55,7 @@ Rectangle {
     }
 
     TapHandler {
+        objectName: "titleTap"
         enabled: strip.framelessChrome
         onDoubleTapped: strip.window.visibility === Window.Maximized ? strip.window.showNormal() : strip.window.showMaximized()
     }
@@ -266,6 +269,7 @@ Rectangle {
 
         ShellSplitButton {
             id: scriptsPill
+            objectName: "runActionButton"
 
             visible: strip.ready && strip.model.scripts.length > 0
             compact: strip.compact
@@ -303,6 +307,7 @@ Rectangle {
         }
 
         ShellSplitButton {
+            objectName: "openEditorButton"
             visible: strip.ready && strip.model.editors.length > 0
             compact: strip.compact
             iconName: "external-link"
@@ -355,6 +360,19 @@ Rectangle {
         }
 
         ShellButton {
+            objectName: "threadDetailsToggle"
+            visible: strip.detailsToggle !== null
+            subtle: true
+            implicitHeight: 28
+            iconName: "info"
+            iconSize: 16
+            iconTint: strip.detailsToggle === true ? strip.foreground : strip.iconMuted
+            Layout.leftMargin: 4
+            Accessible.name: strip.detailsToggle === true ? qsTr("Hide thread details") : qsTr("Show thread details")
+            onClicked: Shell.dispatch("threadPanel.toggle")
+        }
+
+        ShellButton {
             visible: strip.panelToggle !== null
             subtle: true
             implicitHeight: 28
@@ -367,6 +385,7 @@ Rectangle {
         }
 
         WindowControls {
+            objectName: "windowControls"
             visible: strip.framelessChrome && Qt.platform.os !== "osx"
             window: strip.window
             buttonWidth: 32

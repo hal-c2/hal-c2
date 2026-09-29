@@ -110,11 +110,10 @@ node `mise run node` runs.
   share a profile directory between processes: a second shell on the same
   home finds the lock file taken and stays off-the-record for its run.
 - **One renderer per surface.** Chromium gives each top-level view its own
-  renderer process (roughly the app bundle's footprint each), which is the
-  price of the right panel being a separate document. It sets
-  `sleepsWhenHidden`, so its page is frozen (no timers, no painting) while
-  closed and resumes where it was; discarding it would also drop the
-  terminals it holds. The primary surface never sleeps.
+  renderer process (roughly the app bundle's footprint each), so the shell
+  keeps one: the right panel is native and embeds no second document. A
+  surface that may hide sets `sleepsWhenHidden`, which freezes its page (no
+  timers, no painting) until it shows again. The primary surface never sleeps.
 - **The channel carries no properties.** QWebChannel re-sends a changed
   property to every connected page, so `Shell.state` is not on it: pages talk
   to `ShellChannel` (`publish`, `dispatch`, `snapshot`, `actionRequested`,
@@ -658,29 +657,36 @@ or popup control, so neither can host the agent's preview tabs (that host was
 only ever Electron's `desktopBridge`). The embedding scenarios in
 `features/preview/surfaces.feature` are `@backlog-desktop` for that reason.
 
-What is left on the page shows in the page's embed: the pull request review
-(`pull-request:<ref>`) and the device tab. `RightPanel` loads the app's embed
-route (`/embed/$environmentId/$threadId`) in a second `WebSurface` only while
-one of those shows. Both surfaces share the shell's profile (see Web engine),
-so the embed document authenticates with the primary's cookie; it opens its
-own WebSocket and sleeps while hidden. The embed route renders `ChatView` with
-`presentation="rightPanel"`, and `shell/shellDocumentSync.ts` rehydrates the
-terminal store the two documents share.
+The Pull request review tab (`pull-request:<host>/<repository>#<number>`,
+titled "PR #n") is `PullRequestReviewPanel` over the controller's
+`PullRequestReview` (`Panel.review`). It opens from the add menu or a Pull
+requests row's menu (`rightPanel.review {key}`) and reads the pull request
+through the thread's environment: `pullRequests.detail` and `.activity` over
+the socket, and the code over HTTP (`POST /api/pull-requests/diff`, one
+`nextCursor` slice at a time, with `NodeClient::post`), which lands in a
+`DiffModel` that `DiffPanel` draws. Comments, reviews, thread resolutions and
+viewed marks go back through the same environment, and the pull request is
+read again once each lands. A viewed mark the host refuses is taken back.
+Offline, what was read stays and nothing is sent.
 
-The page still publishes `rightPanel` (`ShellRightPanelBridge`: its tabs,
-what can be added, `embedPath`); the controller takes its non-native tabs
-from it (its browser tabs are dropped: the Previews tab lists them), and a
-change the page makes on its own (its keybinding, a tab it added) is taken as
-the user's. The page follows the shell, not the other way round:
-`rightPanel.follow {threadKey, open, activeSurfaceId}` is sent only when the
-page shows something other than a page tab the shell wants, so it does no
-work behind a native tab. `panel.open {tab, path?, line?, turn?, turnId?}`
-opens a native tab on a turn's diff or a file at a line, for the timeline's
-links.
+The thread details column (`ThreadDetailsPanel`, `threadPanel.toggle` from
+the header's info button or the keybinding) is not a tab. It sits beside the
+right panel and reads `panel.details`, which the controller builds from store
+rows: the environment and whether it is reachable, the project, the checkout
+and branch, and the lineage parent and children. Changing the checkout stays
+with the composer's strip.
 
-Known gaps: the native tabs are not persisted across restarts; the panel's
-resize and maximize, the working-tree review and the diff's file tree stay on
-the page.
+The device tab is not native: the hub's streams are H.264 (iOS AVCC with an
+MJPEG fallback, Android SEMU-framed over a WebSocket), which Qt cannot decode
+without QtMultimedia or FFmpeg. Its scenarios stay `@backlog`.
+
+The panel never asks the page for anything. Per thread, the controller keeps
+whether it is open, its tabs, the active one and the details column, plus one
+width for all threads, in `shell-panel.json` in the state directory, so they
+survive a restart (maximizing does not). `rightPanel.resize {width}` and `rightPanel.toggleMaximized`
+come from the brick's edge and the keybinding. `panel.open {tab, path?,
+line?, turn?, turnId?}` opens a native tab on a turn's diff or a file at a
+line, for the timeline's links.
 
 ### `workspace`
 
@@ -750,20 +756,30 @@ Environments outside the cluster are paired natively, as node links (see
   row belongs to, so no session has two views fighting over its size. Groups
   live in memory: a restart or another client sees ungrouped drawer terminals.
 
-### `settings`, `cluster` and `connections`
+### Settings sections and the shell's own pages
 
-The settings nav is the shell's (`SettingsNav`); the pages behind it are
+The settings nav is the shell's (`SettingsNav`); the sections behind it are
 either the shell's own or still HTML.
 
-The shell's own pages work with no page loaded. `js/settingsPages.js` lists
-them in one place: a route section, the brick that draws it, the action that
-opens it and the words search finds it by. Registering a page is one line
-there. `SettingsHost` loads the brick for `ShellWindow.settingsSection`, and
-layouts put it where the page would be while `ShellWindow.nativeSettingsOpen`.
-`SettingsNav` lists the page's sections, then the shell's own, and search
-drops the page's results inside a native section in favour of the native row.
-`NavigationController` keeps `settings.navigate` to cluster and connections
-native; General and Appearance still `route.follow` the (hidden) page.
+The shell's own sections work with no page loaded. `js/settingsPages.js`
+lists every section in the page's order: a section with a `brick` is native,
+and moving one to QML is giving its line a brick, the state key it
+`requires` before it is listed, and the words and rows search finds it by.
+`SettingsHost` loads the brick for `ShellWindow.settingsSection`, and layouts
+put it where the page would be while `ShellWindow.nativeSettingsOpen`.
+`NavigationController::isNative` lists the routes the page is never told
+about; General and Appearance are native bricks but still `route.follow` the
+(hidden) page, which draws with some of their preferences.
+
+Search is the shell's too. `settingsPages.searchRows` matches sections by
+label and keywords, and a section's settings (its `settingsRows.js` rows and
+any `settings` entries) by title and description; every word of the query
+must match, and a result names the setting's `targetId`. Opening one is
+`settings.openResult {to, targetId}`: `NavigationController` opens the
+section and bumps `route.targetSeq` with `route.target` set, and
+`SettingsPage` scrolls the brick's child of that objectName to the top on
+each bump, so opening the same result twice scrolls back to it. Sections
+still on the page get the page's results, and the page scrolls those itself.
 
 General and Appearance are rows over `Settings` (`js/settingsRows.js`: a key,
 a kind and the web's wording). Each key's store and default are
@@ -775,44 +791,59 @@ shell sends them to the page as `clientSettings.follow {settings}` whenever
 they change. Appearance also draws the theme choice and this device's own
 themes (`ThemeEditor`); errors are the shell's toasts.
 
-`ClusterController` publishes `cluster` (`busy`, `status`, `error`, `invite`,
-`notice`) and calls the node's `cluster.*` RPCs; `ClusterSettings` renders it
-at `/settings/cluster`. Actions: `cluster.open`/`close`, `cluster.refresh`,
-`cluster.invite {tailscale?}` (copies the link), `cluster.invite.copy`,
-`cluster.join {link}`, `cluster.remove {id}`.
+Each other native section is a controller publishing one key, whose header
+documents the shape and actions:
 
-`ConnectionsController` publishes `connections` and `ConnectionsSettings`
-renders it at `/settings/connections` (`connections.open`/`close`). Other
-environments are the node's links from the
-`shell` shape, each with its `status`; adding one is `hal-c2.linkEnvironment`
-with a pairing link, or a host and code (a host without a scheme tries HTTPS,
-then HTTP when HTTPS cannot connect), and removing is
-`hal-c2.unlinkEnvironment`. The node has no rename for a link. While open the
-page follows the `authAccess` shape (pairing links, client sessions) and calls
-the `hal-c2.*` access RPCs; a created link's secret lives only in `created`
-until the page closes. Those calls need `access:read`/`access:write`, so a
-session paired with standard scopes sees one explanation in place of the list.
-A link needs a direct origin and a bearer token: an environment reached only
-through the relay (DPoP) cannot be linked yet.
+- **Cluster** (`ClusterController`, `cluster`) calls the node's `cluster.*`
+  RPCs.
+- **Connections** (`ConnectionsController`, `connections`). Other
+  environments are the node's links from the `shell` shape; adding one is
+  `hal-c2.linkEnvironment` with a pairing link, or a host and code (a host
+  without a scheme tries HTTPS, then HTTP), and the node has no rename for a
+  link. While open it follows the `authAccess` shape and calls the `hal-c2.*`
+  access RPCs, which need `access:read`/`access:write`, so a session paired
+  with standard scopes sees one explanation in place of the list. A created
+  link's secret lives only in `created` until the section closes. A link
+  needs a direct origin and a bearer token: an environment reached only
+  through the relay (DPoP) cannot be linked yet.
+- **Providers** (`ProviderSettingsController`, `providerSettings`) shows one
+  environment at a time: its `config` shape brings the providers, and each
+  provider that signs in from HAL-C2 has its `providerAuth` shape followed.
+  That shape is node-addressed, so signing in works only on environments a
+  cluster node serves. Turning a provider off is a settings edit on that
+  environment, read back and retried on `StaleSettings` like the shell's own
+  settings. Adding, renaming and deleting instances, custom models and the ACP
+  registry are not native yet, so the desktop cannot do them.
+- **Archive** (`ArchivedThreadsController`, `archivedThreads`) is fetched,
+  not streamed (`features/parity/rpc.feature`): opening it, refreshing, an
+  action landing, or the online environments changing asks each one for
+  `orchestration.getArchivedShellSnapshot`, which covers only the rows of the
+  node that answers.
 
-The rest are HTML pages until they move. The root route mounts
-`ShellSettingsBridge` when hosted, which publishes `ShellSettingsState` on
-every route change: `active` (on `/settings*`), the sections in sidebar
-order, the active one, and search results for the query the shell last sent.
-`SettingsNav` marks the route's section current; picking one of the page's replaces the shell's
-page in the route. Actions: `settings.navigate {to}`,
-`settings.openResult {to, targetId}` (scrolls when already on the page),
-`settings.search {query}`, and `settings.back`, which is the route's back
-once the shell has its node and history back (else `/`) in the page before.
-When hosted, `AppSidebarLayout` renders no sidebar on any route.
+Home, the pull requests page and usage are routes of their own, drawn by
+`HomePage`, `PullRequestsPage` and `UsagePage` over `PullRequestListController`
+and `UsageController`; they too follow node shapes only while open.
+
+Project, SnapShots, Integrations, Scheduled Tasks, Source Control and Storage
+are still HTML. Most of them edit settings scoped to one or several
+environments or a project, which the shell has no native model for yet. The
+root route mounts `ShellSettingsBridge` when hosted, which publishes
+`ShellSettingsState` on every route change: `active` (on `/settings*`), the
+sections in sidebar order, the active one, and search results for the query
+the shell last sent. Picking one of the page's sections replaces the shell's
+section in the route. Actions: `settings.navigate {to}`,
+`settings.openResult {to, targetId}`, `settings.search {query}`, and
+`settings.back`, which is the route's back once the shell has its node and
+history back (else `/`) in the page before. When hosted, `AppSidebarLayout`
+renders no sidebar on any route.
 
 ### `route`
 
 `NavigationController` owns where the window is once the shell has its node:
 `route` is `{kind, threadKey, draftId, projectKey, section, title,
-canGoBack}` with `kind` one of `home`, `thread`, `draft`, `newThread`,
+canGoBack, target, targetSeq}` with `kind` one of `home`, `thread`, `draft`, `newThread`,
 `settings`, `pullRequests`, `usage` (the `ShellRoute` contract plus
-`title` and `canGoBack`). `ShellWindow` titles the window from `title` and derives
+`title`, `canGoBack` and the settings search's target). `ShellWindow` titles the window from `title` and derives
 `settingsActive` and `settingsSection` from it; the sidebar's active row and the
 composer's target thread come from it too. It keeps a back stack (home and a
 new thread are passed through, and moving between settings sections is one
@@ -894,20 +925,19 @@ editor live in the page's storage and are unknown to the shell.
 
 ### `layout`
 
-The page keeps owning the main sidebar's open state (the shell runs the
-`sidebar.toggle` keybinding, Mod+B by default, as that action — see
-`keybindings`) and publishes it as
-`layout {sidebarCollapsed}` from `ShellLayoutBridge`, mounted inside the
-sidebar provider. `sidebar.toggle` flips it from native chrome — the
-`Workspace` brick shows a toggle when its `sidebarToggle` property is bound
-(it takes the sidebar's place at the strip's left edge, as on the page), and
-`Sidebar` shows the matching collapse toggle in its brand band when
-`showBrand` is on. The right panel's toggle follows the same pattern:
-`Workspace.panelToggle` puts it in the header strip and `RightPanel
+The shell owns whether the thread list is hidden: `LayoutController` claims
+`layout {sidebarCollapsed}` from the page, remembers it in the device's
+`preferences.json`, and publishes it before the node's first snapshot so a
+restart does not flash the list. `sidebar.toggle` (action and keybinding
+command, Mod+B by default) flips it. The `Workspace` brick shows a toggle when
+its `sidebarToggle` property is bound (it takes the sidebar's place at the
+strip's left edge), and `Sidebar` shows the matching collapse toggle in its
+brand band when `showBrand` is on. The right panel's toggle follows the same
+pattern: `Workspace.panelToggle` puts it in the header strip and `RightPanel
 { ownToggle: false }` then takes no width while closed; a rice that leaves
 `ownToggle` on gets the 36 px rail with the toggle instead.
-The shell only animates the result: `DefaultShell` and the examples ease the
-sidebar's `Layout.preferredWidth` to 0 and hide it once it is gone
+`DefaultShell` snaps the sidebar (one relayout, no animated width); examples
+that ease `Layout.preferredWidth` to 0 hide it once it is gone
 (`visible: !sidebarCollapsed || width > 0` — guard on the collapsed flag, not
 on width alone, or a layout-managed item never regains a size).
 
@@ -1095,10 +1125,10 @@ on this machine.
 The embedded page is legacy and leaves the shell piece by piece. Every piece
 of the original chrome has a brick (`Sidebar`, `Composer`, `RightPanel`,
 `TerminalDrawer`, `Workspace`, `SettingsNav`), but several still get their
-state from the page. The right panel's pull request tab and most settings
-pages are still HTML because they have not moved yet, not by design (its
-Diff, Files, Agents, terminal, Pull requests and Previews tabs are native;
-the pull request review and the device tab are not).
+state from the page. Some settings sections are still HTML because they have
+not moved yet, not by design (see
+[Settings sections](#settings-sections-and-the-shells-own-pages)); the right
+panel's tabs are native except the device tab.
 
 A piece has moved when a native controller (`src/native/`, registered with
 `NativeControllerRegistrar`) builds its state from the shell's own node client

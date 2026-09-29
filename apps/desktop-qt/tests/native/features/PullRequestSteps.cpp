@@ -6,8 +6,11 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QSet>
 
 #include "Harness.h"
+#include "KeybindingController.h"
+#include "PullRequestReview.h"
 #include "RightPanelController.h"
 #include "Stream.h"
 #include "ThreadPullRequests.h"
@@ -88,6 +91,8 @@ const FakeNode::Extension pullRequests([](FakeNode& node) {
     syncLinks(node, threadId);
   });
   node.onRpc(QStringLiteral("pullRequests.invalidate"), [&node](const FakeNode::Rpc& rpc) {
+    // The pull requests page's refresh names no reference (PullRequestListSteps).
+    if (!rpc.payload.contains(QLatin1String("reference"))) return node.passOn(rpc);
     node.part<FakePullRequests>().invalidated.append(rpc.payload.value(QLatin1String("reference")).toObject());
     syncLinks(node, node.part<FakePullRequests>().thread);
     node.reply(rpc, QJsonValue::Null);
@@ -315,6 +320,321 @@ const Steps steps([] {
     waitForRow(world, 42, false);
     link(world, QStringLiteral("42"));
     waitForRow(world, 42, true);
+  });
+});
+
+
+// The Pull request review tab (PullRequestReview): what GitHub holds of pull
+// request 42 as the node reads it (apps/server-ex pull_requests.ex detail,
+// activity, files_viewed, comment, submit_review, set_thread_resolution) and
+// its code over HTTP in two slices (router.ex POST /api/pull-requests/diff).
+// features/source-control/pull-request-review.feature.
+struct FakeReview {
+  QString author;
+  QJsonArray comments;
+  QJsonArray threads;
+  QSet<QString> viewed;
+  bool refuseViewed = false;
+  // Every change asked of the host, by method.
+  QStringList sent;
+  int slices = 0;
+};
+
+const QString kCartPatch = QStringLiteral(
+    "diff --git a/src/cart.ts b/src/cart.ts\n--- a/src/cart.ts\n+++ b/src/cart.ts\n@@ -1,2 +1,2 @@\n const total = 0;\n-const tax = 1;\n+const tax = 2;\n");
+const QString kTaxPatch = QStringLiteral(
+    "diff --git a/src/tax.ts b/src/tax.ts\n--- a/src/tax.ts\n+++ b/src/tax.ts\n@@ -1 +1,2 @@\n export const rate = 0.2;\n+export const reduced = 0.1;\n");
+
+QJsonObject actor(const QString& login) {
+  return {{QStringLiteral("login"), login}, {QStringLiteral("name"), QJsonValue()}, {QStringLiteral("avatarUrl"), QJsonValue()}};
+}
+
+// Answers the review's reads and changes the way the node does.
+void serveReview(FakeNode& node) {
+  node.onRpc(QStringLiteral("pullRequests.detail"), [&node](const FakeNode::Rpc& rpc) {
+    const FakeReview& fake = node.part<FakeReview>();
+    node.reply(rpc, QJsonObject{
+                        {QStringLiteral("repository"), QStringLiteral("acme/shop")},
+                        {QStringLiteral("number"), rpc.payload.value(QLatin1String("number"))},
+                        {QStringLiteral("title"), QStringLiteral("Tax line fix")},
+                        {QStringLiteral("body"), QStringLiteral("Rounds the tax line.")},
+                        {QStringLiteral("url"), QStringLiteral("https://github.com/acme/shop/pull/42")},
+                        {QStringLiteral("author"), actor(fake.author)},
+                        {QStringLiteral("state"), QStringLiteral("open")},
+                        {QStringLiteral("isDraft"), false},
+                        {QStringLiteral("mergeability"), QStringLiteral("mergeable")},
+                        {QStringLiteral("headBranch"), QStringLiteral("feature/tax")},
+                        {QStringLiteral("baseBranch"), QStringLiteral("main")},
+                        {QStringLiteral("behindBy"), 2},
+                        {QStringLiteral("reviewers"), QJsonArray{actor(QStringLiteral("ada"))}},
+                        {QStringLiteral("labels"), QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("tax")}}}},
+                        {QStringLiteral("checks"),
+                         QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("test")}, {QStringLiteral("status"), QStringLiteral("success")},
+                                                {QStringLiteral("description"), QJsonValue()}, {QStringLiteral("url"), QJsonValue()}}}},
+                    });
+  });
+  node.onRpc(QStringLiteral("pullRequests.activity"), [&node](const FakeNode::Rpc& rpc) {
+    const FakeReview& fake = node.part<FakeReview>();
+    node.reply(rpc, QJsonObject{{QStringLiteral("comments"), fake.comments},
+                                {QStringLiteral("commentCount"), fake.comments.size()},
+                                {QStringLiteral("commentsTruncated"), false},
+                                {QStringLiteral("reviewThreads"), fake.threads},
+                                {QStringLiteral("commits"), QJsonArray()}});
+  });
+  node.onRpc(QStringLiteral("pullRequests.filesViewed"), [&node](const FakeNode::Rpc& rpc) {
+    QJsonArray files;
+    for (const QString& path : std::as_const(node.part<FakeReview>().viewed)) {
+      files.append(QJsonObject{{QStringLiteral("path"), path}, {QStringLiteral("state"), QStringLiteral("viewed")}});
+    }
+    node.reply(rpc, QJsonObject{{QStringLiteral("files"), files}, {QStringLiteral("truncated"), false}});
+  });
+  node.onRpc(QStringLiteral("pullRequests.setFilesViewed"), [&node](const FakeNode::Rpc& rpc) {
+    FakeReview& fake = node.part<FakeReview>();
+    fake.sent.append(rpc.method);
+    if (fake.refuseViewed) {
+      node.refuse(rpc, QStringLiteral("GitHub did not accept the viewed mark."));
+      return;
+    }
+    for (const QJsonValue& value : rpc.payload.value(QLatin1String("files")).toArray()) {
+      const QString path = value.toObject().value(QLatin1String("path")).toString();
+      if (value.toObject().value(QLatin1String("viewed")).toBool()) {
+        fake.viewed.insert(path);
+      } else {
+        fake.viewed.remove(path);
+      }
+    }
+    node.reply(rpc, QJsonValue::Null);
+  });
+  node.onRpc(QStringLiteral("pullRequests.comment"), [&node](const FakeNode::Rpc& rpc) {
+    FakeReview& fake = node.part<FakeReview>();
+    fake.sent.append(rpc.method);
+    fake.comments.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("c%1").arg(fake.comments.size() + 1)},
+                                     {QStringLiteral("kind"), QStringLiteral("comment")},
+                                     {QStringLiteral("author"), actor(QStringLiteral("me"))},
+                                     {QStringLiteral("body"), rpc.payload.value(QLatin1String("body"))},
+                                     {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")},
+                                     {QStringLiteral("reviewState"), QJsonValue()}});
+    node.reply(rpc, QJsonValue::Null);
+  });
+  node.onRpc(QStringLiteral("pullRequests.submitReview"), [&node](const FakeNode::Rpc& rpc) {
+    FakeReview& fake = node.part<FakeReview>();
+    fake.sent.append(rpc.method);
+    const QString verdict = rpc.payload.value(QLatin1String("verdict")).toString();
+    fake.comments.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("r%1").arg(fake.comments.size() + 1)},
+                                     {QStringLiteral("kind"), QStringLiteral("review")},
+                                     {QStringLiteral("author"), actor(QStringLiteral("me"))},
+                                     {QStringLiteral("body"), rpc.payload.value(QLatin1String("body"))},
+                                     {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:01:00Z")},
+                                     {QStringLiteral("reviewState"), verdict == QLatin1String("approve") ? QStringLiteral("APPROVED")
+                                                                     : verdict == QLatin1String("request-changes") ? QStringLiteral("CHANGES_REQUESTED")
+                                                                                                                   : QStringLiteral("COMMENTED")}});
+    node.reply(rpc, QJsonValue::Null);
+  });
+  node.onRpc(QStringLiteral("pullRequests.setThreadResolution"), [&node](const FakeNode::Rpc& rpc) {
+    FakeReview& fake = node.part<FakeReview>();
+    fake.sent.append(rpc.method);
+    QJsonArray threads;
+    for (const QJsonValue& value : std::as_const(fake.threads)) {
+      QJsonObject thread = value.toObject();
+      if (thread.value(QLatin1String("id")) == rpc.payload.value(QLatin1String("threadId"))) {
+        thread.insert(QStringLiteral("isResolved"), rpc.payload.value(QLatin1String("resolved")));
+      }
+      threads.append(thread);
+    }
+    fake.threads = threads;
+    node.reply(rpc, QJsonValue::Null);
+  });
+  node.onHttp(QStringLiteral("/api/pull-requests/diff"), [&node](const QJsonObject& body, const auto& respond) {
+    FakeReview& fake = node.part<FakeReview>();
+    ++fake.slices;
+    const bool first = !body.contains(QLatin1String("cursor"));
+    respond(200, QJsonObject{{QStringLiteral("patch"), first ? kCartPatch : kTaxPatch},
+                             {QStringLiteral("truncated"), false},
+                             {QStringLiteral("nextCursor"), first ? QJsonValue(QStringLiteral("2")) : QJsonValue()}});
+  });
+}
+
+PullRequestReview& review(World& world) {
+  return *world.native().controller<RightPanelController>()->review();
+}
+
+QString describeReview(World& world) {
+  PullRequestReview& pr = review(world);
+  DiffModel& code = *pr.model();
+  QStringList files;
+  for (int file = 0; file < code.fileCount(); ++file) {
+    files.append(code.path(file) + (code.expanded(file) ? QString() : QStringLiteral(" (collapsed)")));
+  }
+  return QStringLiteral("the review of %1 is %2 \"%3\" (%4), \"%5\", %6 remarks, %7 threads, code %8 [%9], %10 viewed, problem \"%11\"")
+      .arg(pr.key(), pr.status(), pr.message(), pr.online() ? QStringLiteral("online") : QStringLiteral("offline"),
+           pr.detail().value(QStringLiteral("title")).toString())
+      .arg(pr.conversation().size())
+      .arg(pr.reviewThreads().size())
+      .arg(pr.codeStatus(), files.join(QStringLiteral(", ")))
+      .arg(pr.viewedCount())
+      .arg(pr.problem());
+}
+
+bool expanded(World& world, const QString& path) {
+  DiffModel& code = *review(world).model();
+  return code.expanded(code.fileOf(path));
+}
+
+void openReview(World& world, int number) {
+  world.bridge().dispatch(QStringLiteral("rightPanel.review"), QVariantMap{{QStringLiteral("key"), keyOf(world, number)}});
+  world.sync();
+  expect(at(world.state(QStringLiteral("panel")), QStringLiteral("activeId")) == QStringLiteral("pull-request:") + keyOf(world, number),
+         show(world.state(QStringLiteral("panel"))));
+  world.waitFor([&] { return review(world).status() == QLatin1String("ready") && review(world).codeStatus() == QLatin1String("ready"); },
+                [&] { return describeReview(world); });
+}
+
+QVariantMap reviewThread(World& world) {
+  const QVariantList threads = review(world).reviewThreads();
+  if (threads.isEmpty()) fail(describeReview(world));
+  return threads.first().toMap();
+}
+
+const Steps reviewSteps([] {
+  const QString q = kQuoted;
+
+  step(QStringLiteral("the open pull request (\\d+) by %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.node.part<FakeReview>().author = c[1];
+    world.node.part<FakeReview>().comments = QJsonArray{
+        QJsonObject{{QStringLiteral("id"), QStringLiteral("c1")}, {QStringLiteral("kind"), QStringLiteral("comment")},
+                    {QStringLiteral("author"), actor(QStringLiteral("ada"))}, {QStringLiteral("body"), QStringLiteral("Why round up?")},
+                    {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:30:00Z")}, {QStringLiteral("reviewState"), QJsonValue()}}};
+    serveReview(world.node);
+    lookAt(world, QStringLiteral("Tax work"));
+    QJsonObject row = world.node.threads.value(kThread);
+    row.insert(QStringLiteral("pullRequests"),
+               QJsonArray{QJsonObject{{QStringLiteral("host"), QStringLiteral("github.com")}, {QStringLiteral("repository"), QStringLiteral("acme/shop")},
+                                      {QStringLiteral("number"), c[0].toInt()},
+                                      {QStringLiteral("url"), QStringLiteral("https://github.com/acme/shop/pull/") + c[0]},
+                                      {QStringLiteral("source"), QStringLiteral("manual")}, {QStringLiteral("linkedAt"), QStringLiteral("2026-09-23T09:05:00Z")},
+                                      {QStringLiteral("snapshot"), QJsonValue()}, {QStringLiteral("stack"), QJsonValue()}}});
+    world.node.threads.insert(kThread, row);
+    syncLinks(world.node, kThread);
+    world.sync();
+    waitForRow(world, c[0].toInt(), true);
+  });
+  step(QStringLiteral("%1 is marked viewed in pull request (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.node.part<FakeReview>().viewed.insert(c[0]);
+  });
+  step(QStringLiteral("GitHub refuses viewed marks on pull request (\\d+)"), [](World& world, const Captures&, const Table&) {
+    world.node.part<FakeReview>().refuseViewed = true;
+  });
+  step(QStringLiteral("an unresolved review thread on pull request (\\d+)"), [](World& world, const Captures&, const Table&) {
+    world.node.part<FakeReview>().threads = QJsonArray{QJsonObject{
+        {QStringLiteral("id"), QStringLiteral("th1")}, {QStringLiteral("path"), QStringLiteral("src/cart.ts")}, {QStringLiteral("line"), 2},
+        {QStringLiteral("isResolved"), false}, {QStringLiteral("isOutdated"), false},
+        {QStringLiteral("comments"), QJsonArray{QJsonObject{{QStringLiteral("author"), actor(QStringLiteral("ada"))},
+                                                            {QStringLiteral("body"), QStringLiteral("Round down here.")}}}}}};
+  });
+  step(QStringLiteral("the user opens pull request (\\d+)"), [](World& world, const Captures& c, const Table&) { openReview(world, c[0].toInt()); });
+  step(QStringLiteral("the user opened pull request (\\d+)"), [](World& world, const Captures& c, const Table&) { openReview(world, c[0].toInt()); });
+  step(QStringLiteral("the user marks %1 (viewed|not viewed) on the review page").arg(q), [](World& world, const Captures& c, const Table&) {
+    review(world).setViewed(c[0], c[1] == QLatin1String("viewed"));
+    world.sync();
+  });
+  step(QStringLiteral("the user comments %1 on the review page").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(review(world).comment(c[0]), describeReview(world));
+    world.sync();
+  });
+  step(QStringLiteral("the user comments with only spaces on the review page"), [](World& world, const Captures&, const Table&) {
+    expect(!review(world).comment(QStringLiteral("   ")), describeReview(world));
+  });
+  step(QStringLiteral("the user approves pull request (\\d+) on the review page"), [](World& world, const Captures&, const Table&) {
+    expect(review(world).submitReview(QStringLiteral("approve"), {}), describeReview(world));
+    world.sync();
+  });
+  step(QStringLiteral("the user requests changes on the review page with no summary"), [](World& world, const Captures&, const Table&) {
+    expect(!review(world).submitReview(QStringLiteral("request-changes"), QStringLiteral(" ")), describeReview(world));
+  });
+  step(QStringLiteral("the user (resolves|unresolves) the thread on the review page"), [](World& world, const Captures& c, const Table&) {
+    review(world).setThreadResolved(reviewThread(world).value(QStringLiteral("id")).toString(), c[0] == QLatin1String("resolves"));
+    world.sync();
+  });
+  step(QStringLiteral("the user copies the pull request number"), [](World& world, const Captures&, const Table&) {
+    expect(world.native().controller<KeybindingController>()->commands()->run(QStringLiteral("pullRequest.copyNumber")),
+           show(world.state(QStringLiteral("panel"))));
+  });
+
+  // Outcomes.
+  step(QStringLiteral("the description, conversation, checks and code are shown on its review page"), [](World& world, const Captures&, const Table&) {
+    PullRequestReview& pr = review(world);
+    const QVariantMap detail = pr.detail();
+    world.waitFor([&] { return pr.conversation().size() == 1; }, [&] { return describeReview(world); });
+    const QVariantList checks = detail.value(QStringLiteral("checks")).toList();
+    expect(detail.value(QStringLiteral("title")) == QLatin1String("Tax line fix") &&
+               detail.value(QStringLiteral("body")) == QLatin1String("Rounds the tax line.") &&
+               detail.value(QStringLiteral("author")) == QLatin1String("octocat") &&
+               detail.value(QStringLiteral("branches")) == QStringLiteral("feature/tax → main") &&
+               detail.value(QStringLiteral("stateLabel")) == QLatin1String("Open") && detail.value(QStringLiteral("behindBy")) == 2 &&
+               checks.size() == 1 && checks.first().toMap().value(QStringLiteral("status")) == QLatin1String("success"),
+           show(detail));
+    expect(pr.model()->paths() == QStringList{QStringLiteral("src/cart.ts"), QStringLiteral("src/tax.ts")} &&
+               world.node.part<FakeReview>().slices == 2,
+           describeReview(world));
+    expect(at(world.state(QStringLiteral("panel")), QStringLiteral("tabs")).toList().last().toMap().value(QStringLiteral("title")) ==
+               QLatin1String("PR #42"),
+           show(world.state(QStringLiteral("panel"))));
+  });
+  step(QStringLiteral("a viewed file collapses and the viewed count goes up"), [](World& world, const Captures&, const Table&) {
+    expect(expanded(world, QStringLiteral("src/cart.ts")) && review(world).viewedCount() == 0, describeReview(world));
+    review(world).setViewed(QStringLiteral("src/cart.ts"), true);
+    expect(!expanded(world, QStringLiteral("src/cart.ts")) && review(world).viewedCount() == 1, describeReview(world));
+    world.sync();
+    world.waitFor([&] { return world.node.part<FakeReview>().viewed.contains(QStringLiteral("src/cart.ts")); }, [&] { return describeReview(world); });
+  });
+  step(QStringLiteral("%1 expands and the viewed count goes down").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(expanded(world, c[0]) && review(world).viewedCount() == 0, describeReview(world));
+    world.waitFor([&] { return !world.node.part<FakeReview>().viewed.contains(c[0]); }, [&] { return describeReview(world); });
+  });
+  step(QStringLiteral("%1 is not marked viewed on the review page").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return !review(world).isViewed(c[0]) && expanded(world, c[0]) && review(world).viewedCount() == 0; },
+                  [&] { return describeReview(world); });
+    expect(world.node.part<FakeReview>().sent == QStringList{QStringLiteral("pullRequests.setFilesViewed")}, describeReview(world));
+  });
+  step(QStringLiteral("%1 appears in the review page's conversation").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor(
+        [&] {
+          const QVariantList conversation = review(world).conversation();
+          return !conversation.isEmpty() && conversation.last().toMap().value(QStringLiteral("body")) == c[0];
+        },
+        [&] { return describeReview(world); });
+    expect(!review(world).busy() && review(world).problem().isEmpty(), describeReview(world));
+  });
+  step(QStringLiteral("the review page says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(review(world).problem() == c[0], describeReview(world));
+  });
+  step(QStringLiteral("nothing was sent to pull request (\\d+)"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(world.node.part<FakeReview>().sent.isEmpty(), world.node.part<FakeReview>().sent.join(QStringLiteral(", ")));
+  });
+  step(QStringLiteral("the review page shows the thread (resolved|open)"), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return reviewThread(world).value(QStringLiteral("resolved")).toBool() == (c[0] == QLatin1String("resolved")); },
+                  [&] { return describeReview(world); });
+  });
+  step(QStringLiteral("the review page still shows pull request (\\d+) and sends nothing"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !review(world).online(); }, [&] { return describeReview(world); });
+    PullRequestReview& pr = review(world);
+    expect(pr.detail().value(QStringLiteral("title")) == QLatin1String("Tax line fix") && pr.model()->fileCount() == 2, describeReview(world));
+    expect(!pr.comment(QStringLiteral("Looks good")) && pr.problem() == QLatin1String("The environment is offline."), describeReview(world));
+    pr.setViewed(QStringLiteral("src/cart.ts"), true);
+    world.sync();
+    expect(world.node.part<FakeReview>().sent.isEmpty() && pr.viewedCount() == 0, describeReview(world));
+  });
+  step(QStringLiteral("the user can comment on the review page again"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return review(world).online(); }, [&] { return describeReview(world); });
+    expect(review(world).comment(QStringLiteral("Back again")), describeReview(world));
+    world.sync();
+    world.waitFor(
+        [&] {
+          const QVariantList conversation = review(world).conversation();
+          return conversation.last().toMap().value(QStringLiteral("body")) == QLatin1String("Back again");
+        },
+        [&] { return describeReview(world); });
   });
 });
 

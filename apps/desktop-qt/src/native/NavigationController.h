@@ -15,13 +15,16 @@ class ShellStore;
 
 // Where the window is: the shell's route, its back stack, and the last route
 // kept across restarts (setStorePath). Publishes `route`: {kind, threadKey,
-// draftId, projectKey, section, title, canGoBack}, where kind is one of home,
-// thread, draft, newThread, settings (section: the settings path, or one of
-// the shell's own pages, "/settings/cluster" and "/settings/connections"),
-// pullRequests, usage.
+// draftId, projectKey, section, title, canGoBack, target, targetSeq}, where
+// kind is one of home, thread, draft, newThread, settings (section: the
+// settings path), pullRequests, usage. `target` is the setting a settings
+// search result opened (its objectName on the native page) until the route
+// moves on; `targetSeq` counts the openings, so opening it again reveals it
+// again.
 //
-// The page still renders the centre, so it follows: every route the page does
-// not already show goes to it as `route.follow {kind, threadKey, draftId,
+// The page still renders some settings sections, so it follows: every route
+// that is not one of the shell's own pages (isNative) and the page does not
+// already show goes to it as `route.follow {kind, threadKey, draftId,
 // projectKey, section}` (a draft adds its environmentId, projectId and
 // threadId, from DraftController), and the page reports where its own links and
 // redirects took it as `route.open {..., replace}`. The page is not the source
@@ -51,9 +54,16 @@ public:
   static inline const QString kClusterSection = QStringLiteral("/settings/cluster");
   static inline const QString kKeybindingsSection = QStringLiteral("/settings/keybindings");
   static inline const QString kConnectionsSection = QStringLiteral("/settings/connections");
-  static bool isNativeSection(const Route& route) {
+  static inline const QString kProvidersSection = QStringLiteral("/settings/providers");
+  static inline const QString kArchivedSection = QStringLiteral("/settings/archived");
+  // The shell's own pages: those settings sections and pull requests.
+  // The page is not told about them and stays where it was.
+  static bool isNative(const Route& route) {
     return route == Route::settings(kClusterSection) || route == Route::settings(kConnectionsSection) ||
-           route == Route::settings(kKeybindingsSection);
+           route == Route::settings(kKeybindingsSection) ||
+           route == Route::settings(kProvidersSection) ||
+           route == Route::settings(kArchivedSection) || route.kind == QLatin1String("pullRequests") ||
+           route.kind == QLatin1String("usage");
   }
 
   // Its commands in Keybindings.commands.
@@ -90,6 +100,8 @@ private:
   // On one of the shell's own settings pages.
   void follow();
   void publish();
+  // Brings a setting of the settings page showing into view (route.target).
+  void reveal(const QString& target);
   void save() const;
 
   ShellBridge* m_bridge;
@@ -101,6 +113,9 @@ private:
   std::optional<Route> m_pageRoute;
   QString m_storePath;
   bool m_active = false;
+  // The setting the last search result opened, until the route moves on.
+  QString m_target;
+  int m_targetSeq = 0;
   // The route came from the last run and the page has not been anywhere since.
   bool m_restored = false;
 };

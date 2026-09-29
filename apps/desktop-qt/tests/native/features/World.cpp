@@ -11,11 +11,13 @@
 #include "DraftController.h"
 #include "Harness.h"
 #include "NavigationController.h"
+#include "ProviderSettingsController.h"
 #include "SettingsController.h"
 #include "ThreadMenuController.h"
 #include "RightPanelController.h"
 #include "ThreadStore.h"
 #include "ToastController.h"
+#include "UsageController.h"
 
 World::World() {
   m_now = QDateTime::fromString(QStringLiteral("2026-09-23T10:00:00Z"), Qt::ISODate);
@@ -32,6 +34,7 @@ void World::start() {
   m_native->controller<NavigationController>()->setStorePath(m_home.filePath(QStringLiteral("state/shell-route.json")));
   m_native->controller<DraftController>()->setStorePath(m_home.filePath(QStringLiteral("data/shell-drafts.json")));
   m_native->controller<ComposerController>()->setStorePath(m_home.filePath(QStringLiteral("data/shell-composer.json")));
+  m_native->controller<RightPanelController>()->setStorePath(m_home.filePath(QStringLiteral("state/shell-panel.json")));
   // The shell runs its own local node, so local folders are its to open.
   m_bridge->setLocalFolderImportEnabled(true);
   m_native->controller<SettingsController>()->setDevicePath(QDir(configDir()).filePath(QStringLiteral("preferences.json")));
@@ -41,11 +44,14 @@ void World::start() {
     if (key == QLatin1String("theme")) m_theme->applyBaseTheme(value);
   });
   m_bridge->setUrlOpener([this](const QUrl& url) { openedUrls.append(url); });
-  m_native->controller<ThreadMenuController>()->setClipboardWriter([this](const QString& text) {
+  const auto writeClipboard = [this](const QString& text) {
     if (clipboardFails) return false;
     clipboard = text;
     return true;
-  });
+  };
+  m_native->controller<ThreadMenuController>()->setClipboardWriter(writeClipboard);
+  m_native->controller<ProviderSettingsController>()->setClipboardWriter(writeClipboard);
+  m_native->controller<RightPanelController>()->review()->setClipboardWriter(writeClipboard);
   setTime(m_now);
   QObject::connect(m_bridge.get(), &ShellBridge::actionRequested, m_bridge.get(),
                    [this](const QString& type, const QVariant& payload) { onPageAction(type, payload.toMap()); });
@@ -100,6 +106,7 @@ void World::setTime(const QDateTime& time) {
   m_native->controller<ToastController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ThreadStore>()->setClock([now] { return now.toUTC(); });
   m_native->controller<RightPanelController>()->agents()->setClock([now] { return now.toUTC(); });
+  m_native->controller<UsageController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ToastController>()->expire();
 }
 

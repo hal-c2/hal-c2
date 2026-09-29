@@ -8,6 +8,7 @@
 #   packages/contracts/src/rpc.ts (getArchivedShellSnapshot, subscribeArchivedShell)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (archive, unarchive, delete, getArchivedShellSnapshot)
 #   apps/web/src/components/settings/SettingsPanels.tsx (ArchivedThreadsPanel: loading, empty, error, per-project groups)
+#   apps/desktop-qt/src/native/ArchivedThreadsController.cpp (the desktop's Archive section)
 
 Feature: Archiving and deleting threads
   Archiving hides a thread and can be undone. Deleting clears its history for good, and
@@ -29,7 +30,7 @@ Feature: Archiving and deleting threads
     Then "Old spike" is back in the thread list
     And the status line reads "Unarchived."
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Archiving and unarchiving from the desktop and phone
     When the user archives "Old spike"
     And the user restores "Old spike" from the archived threads
@@ -164,7 +165,7 @@ Feature: Archiving and deleting threads
     Then "Old spike" is kept
     And the user is told the delete failed
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The archived threads list says where it stands
     Given <situation>
     When the user opens the archived threads
@@ -176,19 +177,27 @@ Feature: Archiving and deleting threads
       | no thread has been archived              | No archived threads             |
       | the archived threads cannot be loaded    | Could not load archived threads |
 
-  @backlog @desktop
+  @desktop
   Scenario: Archived threads are grouped by project
     Given "Old spike" in "shop" and "Try vite" in "docs" are archived
     When the user opens the archived threads
     Then "Old spike" is listed under "shop" and "Try vite" under "docs"
 
+  @desktop
+  Scenario: Deleting an archived thread takes it out of the archive
+    Given "Old spike" is archived
+    When the user deletes "Old spike" from the archived threads
+    Then "Old spike" is no longer in the archived threads
+
+  # The desktop's project settings are still the page's; the native Archive section
+  # lists every project's archived threads.
   @backlog @desktop
   Scenario: Archived threads for one project show only that project's threads
     Given "Old spike" in "shop" and "Try vite" in "docs" are archived
     When the user opens the archived threads from the settings of "shop"
     Then only "Old spike" is listed
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: An archived thread action that fails says why
     Given "Old spike" is archived
     When the user tries to <action> "Old spike" and the environment refuses

@@ -94,8 +94,6 @@ void KeybindingController::registerCommands() {
                                 QStringLiteral("terminal.splitVertical")}) {
     add(action, [this, action] { m_bridge->dispatch(action); });
   }
-  // The page still owns collapsing; this is the native toggle's action.
-  add(QStringLiteral("sidebar.toggle"), [this] { m_bridge->dispatch(QStringLiteral("sidebar.toggle")); });
   // The route thread's running turn stops, as the composer's stop button does.
   add(QStringLiteral("thread.stop"), [this] { m_bridge->dispatch(QStringLiteral("composer.interrupt")); });
   // The route thread's first queued message steers the running turn.

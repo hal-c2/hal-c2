@@ -16,6 +16,7 @@
 #include "FakeFiles.h"
 #include "FileTreeModel.h"
 #include "Harness.h"
+#include "KeybindingController.h"
 #include "RightPanelController.h"
 #include "Stream.h"
 #include "ThreadDiff.h"
@@ -244,17 +245,8 @@ QString tabIdTitled(World& world, const QString& title) {
   fail(describePanel(world));
 }
 
-// The page's own right panel for the thread, as ShellRightPanelBridge publishes it.
-void pagePublishes(World& world, bool open, const QString& active, const QVariantList& surfaces, const QVariantMap& canAdd) {
-  const QString threadKey = world.node.environmentId + QLatin1Char(':') + kThread;
-  world.bridge().publish(QStringLiteral("rightPanel"),
-                         QVariantMap{{QStringLiteral("threadKey"), threadKey},
-                                     {QStringLiteral("isOpen"), open},
-                                     {QStringLiteral("activeSurfaceId"), active.isEmpty() ? QVariant() : QVariant(active)},
-                                     {QStringLiteral("surfaces"), surfaces},
-                                     {QStringLiteral("canAdd"), canAdd},
-                                     {QStringLiteral("embedPath"), QStringLiteral("/embed/env-a/thread-1")}});
-}
+// Where the edge is dragged to.
+constexpr int kDraggedWidth = 720;
 
 const QHash<QString, QString> kKinds{{QStringLiteral("diff"), QStringLiteral("diff")},
                                      {QStringLiteral("files"), QStringLiteral("files")},
@@ -579,7 +571,8 @@ const Steps steps([] {
     fake.files.insert(c[0], linesOf(200));
     fake.truncated.insert(c[0], 3 * 1024 * 1024);
   });
-  step(QStringLiteral("the user opens %1").arg(q), [](World& world, const Captures& c, const Table&) { openFile(world, c[0]); });
+  // A path has a dot or a slash; a bare name is a thread (ThreadListSteps).
+  step(QStringLiteral("the user opens \"([^\"]*[./][^\"]*)\""), [](World& world, const Captures& c, const Table&) { openFile(world, c[0]); });
   step(QStringLiteral("the user opens %1 at line (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
     openFile(world, c[0], c[1].toInt());
   });
@@ -654,26 +647,15 @@ const Steps steps([] {
   });
   // A pull request to show is one linked to the thread (its row's).
   step(QStringLiteral("the thread can show (diff|files|agents|terminal|pull request|previews)"), [](World& world, const Captures& c, const Table&) {
-    pagePublishes(world, false, {}, {}, {{QStringLiteral("diff"), true}, {QStringLiteral("files"), true}, {QStringLiteral("terminal"), true}, {QStringLiteral("pullRequest"), true}});
     if (c[0] == QLatin1String("pull request")) linkPullRequests(world, 1);
   });
-  step(QStringLiteral("the thread has no pull request"), [](World& world, const Captures&, const Table&) {
-    pagePublishes(world, false, {}, {}, {{QStringLiteral("diff"), true}, {QStringLiteral("files"), true}, {QStringLiteral("terminal"), true}, {QStringLiteral("pullRequest"), false}});
-    linkPullRequests(world, 0);
-  });
+  step(QStringLiteral("the thread has no pull request"), [](World& world, const Captures&, const Table&) { linkPullRequests(world, 0); });
   step(QStringLiteral("the user adds an? (diff|files|agents|terminal|pull request|previews) tab to the right panel"), [](World& world, const Captures& c, const Table&) {
     const QString kind = kKinds.value(c[0]);
     expect(at(world.state(QStringLiteral("panel")), QStringLiteral("canAdd.") + (kind == QLatin1String("pull-requests") ? QStringLiteral("pullRequests") : kind)).toBool(),
            describePanel(world));
     world.bridge().dispatch(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), kind}});
     world.sync();
-    // The page adds its own tabs and shows the one it added, as ChatView does.
-    for (const PageAction& action : world.actionsOf(QStringLiteral("rightPanel.add"))) {
-      const QString added = action.payload.value(QStringLiteral("kind")).toString();
-      const QString id = added == QLatin1String("terminal") ? QStringLiteral("terminal:default") : added;
-      pagePublishes(world, true, id, {QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), added}, {QStringLiteral("title"), added == QLatin1String("terminal") ? QStringLiteral("Terminal") : QStringLiteral("Pull request")}}},
-                    {{QStringLiteral("diff"), true}, {QStringLiteral("files"), true}, {QStringLiteral("terminal"), true}, {QStringLiteral("pullRequest"), true}});
-    }
   });
   step(QStringLiteral("an? (diff|files|agents|terminal|pull request|previews) tab opens in the right panel"), [](World& world, const Captures& c, const Table&) {
     const QString kind = kKinds.value(c[0]);
@@ -685,11 +667,125 @@ const Steps steps([] {
     }
     expect(at(state, QStringLiteral("isOpen")).toBool() && shown, describePanel(world));
   });
+  // Its size (the brick's edge drags to a width and dispatches it).
+  step(QStringLiteral("the user drags the right panel's edge"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("rightPanel.resize"), QVariantMap{{QStringLiteral("width"), kDraggedWidth}});
+  });
+  step(QStringLiteral("the right panel takes the new width"), [](World& world, const Captures&, const Table&) {
+    expect(at(world.state(QStringLiteral("panel")), QStringLiteral("width")) == kDraggedWidth, describePanel(world));
+  });
+  step(QStringLiteral("the user toggles the right panel to fill the window"), [](World& world, const Captures&, const Table&) {
+    // The keybinding's command (mod+alt+m, bound by the user).
+    expect(world.native().controller<KeybindingController>()->commands()->run(QStringLiteral("rightPanel.toggleMaximized")), describePanel(world));
+  });
+  step(QStringLiteral("the user toggles it again"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("rightPanel.toggleMaximized"), QVariantMap());
+  });
+  step(QStringLiteral("the right panel covers the thread"), [](World& world, const Captures&, const Table&) {
+    expect(at(world.state(QStringLiteral("panel")), QStringLiteral("maximized")).toBool(), describePanel(world));
+  });
+  step(QStringLiteral("the thread is shown beside the right panel"), [](World& world, const Captures&, const Table&) {
+    const QVariant state = world.state(QStringLiteral("panel"));
+    expect(at(state, QStringLiteral("isOpen")).toBool() && !at(state, QStringLiteral("maximized")).toBool(), describePanel(world));
+  });
+  // The thread details column (threadPanel.toggle, the header's info button).
+  step(QStringLiteral("the user toggles the thread details panel"), [](World& world, const Captures&, const Table&) {
+    // The keybinding's command, as the header's button dispatches it.
+    expect(world.native().controller<KeybindingController>()->commands()->run(QStringLiteral("threadPanel.toggle")), describePanel(world));
+    world.sync();
+  });
+  step(QStringLiteral("the thread details panel is shown"), [](World& world, const Captures&, const Table&) {
+    if (!world.checking && !panel(world)->detailsOpen()) world.bridge().dispatch(QStringLiteral("threadPanel.toggle"), QVariantMap());
+    world.sync();
+    const QVariant state = world.state(QStringLiteral("panel"));
+    const QVariant details = at(state, QStringLiteral("details"));
+    expect(at(state, QStringLiteral("detailsOpen")).toBool() && at(details, QStringLiteral("project")) == kProject &&
+               at(details, QStringLiteral("checkout")) == QLatin1String("Local") && at(details, QStringLiteral("online")).toBool(),
+           describePanel(world));
+  });
+  step(QStringLiteral("the thread details panel is hidden"), [](World& world, const Captures&, const Table&) {
+    const QVariant state = world.state(QStringLiteral("panel"));
+    expect(!at(state, QStringLiteral("detailsOpen")).toBool() && !at(state, QStringLiteral("details")).isValid(), describePanel(world));
+  });
+  step(QStringLiteral("the thread was forked from %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString parent = QStringLiteral("thread-parent");
+    world.node.threads.insert(parent, {{QStringLiteral("id"), parent}, {QStringLiteral("title"), c[0]}, {QStringLiteral("projectId"), kProject},
+                                       {QStringLiteral("createdAt"), QStringLiteral("2026-09-22T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-22T09:00:00Z")}});
+    world.node.sendRow(parent, world.node.threads.value(parent));
+    QJsonObject row = world.node.threads.value(kThread);
+    row.insert(QStringLiteral("lineage"), QJsonObject{{QStringLiteral("parentThreadId"), parent}, {QStringLiteral("relationshipToParent"), QStringLiteral("fork")}});
+    world.node.threads.insert(kThread, row);
+    world.node.sendRow(kThread, row);
+    world.sync();
+  });
+  step(QStringLiteral("the thread details panel names %1 as the thread it was forked from").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantList relations = at(at(world.state(QStringLiteral("panel")), QStringLiteral("details")), QStringLiteral("relations")).toList();
+    expect(relations.size() == 1 && at(relations.first(), QStringLiteral("title")) == c[0] &&
+               at(relations.first(), QStringLiteral("relation")) == QLatin1String("Forked from"),
+           describePanel(world));
+  });
+  step(QStringLiteral("the user opens the related thread %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    for (const QVariant& relation : at(at(world.state(QStringLiteral("panel")), QStringLiteral("details")), QStringLiteral("relations")).toList()) {
+      if (at(relation, QStringLiteral("title")) == c[0]) {
+        world.bridge().dispatch(QStringLiteral("rightPanel.openThread"), QVariantMap{{QStringLiteral("threadKey"), at(relation, QStringLiteral("threadKey"))}});
+      }
+    }
+    world.sync();
+  });
+  step(QStringLiteral("the thread %1 is open").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString key = world.node.environmentId + QStringLiteral(":thread-parent");
+    world.waitFor([&] { return store(world)->activeThread() == key; }, [&] { return QStringLiteral("%1 to open").arg(c[0]); });
+  });
   step(QStringLiteral("the user looks at what can be added to the right panel"), [](World& world, const Captures&, const Table&) { world.sync(); });
   step(QStringLiteral("pull request cannot be added"), [](World& world, const Captures&, const Table&) {
     expect(!at(world.state(QStringLiteral("panel")), QStringLiteral("canAdd.pullRequests")).toBool() &&
                at(world.state(QStringLiteral("panel")), QStringLiteral("canAdd.diff")).toBool(),
            describePanel(world));
+  });
+  // A visit to settings: the panel steps aside and comes back as it was, its
+  // diff not asked for again, so the kept body (RightPanel's native tabs,
+  // tst_RightPanel) keeps its scroll.
+  struct Visit {
+    QVariant panel;
+    qsizetype asked = 0;
+  };
+  step(QStringLiteral("the right panel shows a scrolled diff"), [](World& world, const Captures&, const Table&) {
+    finishTurns(world, 3);
+    openDiff(world, -1);
+    world.sync();
+    world.node.part<Visit>() = {world.state(QStringLiteral("panel")), world.node.part<FakeDiffs>().asked.size()};
+  });
+  step(QStringLiteral("the user opens settings and comes back"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("settings.open"), {});
+    world.sync();
+    expect(!world.state(QStringLiteral("panel")).isValid(), QStringLiteral("settings show the panel %1").arg(show(world.state(QStringLiteral("panel")))));
+    world.bridge().dispatch(QStringLiteral("settings.back"), {});
+    world.sync();
+  });
+  // A closed panel's diff does not follow the thread's turns; opening it
+  // catches up at once.
+  step(QStringLiteral("the user closes the right panel"), [](World& world, const Captures&, const Table&) {
+    finishTurns(world, 3);
+    openDiff(world, -1);
+    world.bridge().dispatch(QStringLiteral("rightPanel.toggle"), QVariantMap());
+    world.sync();
+    expect(!panel(world)->isOpen(), describePanel(world));
+  });
+  step(QStringLiteral("the right panel stops updating until it is opened again"), [](World& world, const Captures&, const Table&) {
+    const qsizetype asked = world.node.part<FakeDiffs>().asked.size();
+    finishTurn(world, 4, patchAdding(QStringLiteral("src/turn4.ts"), {QStringLiteral("export const turn = 4;")}));
+    world.sync();
+    expect(world.node.part<FakeDiffs>().asked.size() == asked, QStringLiteral("the closed panel asked for a diff: %1").arg(describeDiff(world)));
+    world.bridge().dispatch(QStringLiteral("rightPanel.toggle"), QVariantMap());
+    expectDiffOf(world, {QStringLiteral("src/turn4.ts")});
+    expect(world.node.part<FakeDiffs>().asked.size() == asked + 1, QStringLiteral("opening asked %1 times").arg(world.node.part<FakeDiffs>().asked.size() - asked));
+  });
+  step(QStringLiteral("the diff is at the same scroll position"), [](World& world, const Captures&, const Table&) {
+    const Visit& visit = world.node.part<Visit>();
+    world.waitFor([&] { return world.state(QStringLiteral("panel")) == visit.panel; },
+                  [&] { return QStringLiteral("the panel as it was, %1; it is %2").arg(show(visit.panel), show(world.state(QStringLiteral("panel")))); });
+    expect(diff(world).status() == QLatin1String("ready") && world.node.part<FakeDiffs>().asked.size() == visit.asked,
+           QStringLiteral("the diff was asked for again: %1").arg(describeDiff(world)));
   });
 });
 

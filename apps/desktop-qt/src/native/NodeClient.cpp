@@ -1,6 +1,9 @@
 #include "NodeClient.h"
 
 #include <QJsonDocument>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QUrlQuery>
 #include <QUuid>
 #include <QWebSocket>
@@ -25,6 +28,7 @@ void NodeClient::open(const QUrl& origin, const QString& token) {
   url.setQuery(query);
   m_origin = origin;
   m_url = url;
+  m_token = token;
   m_closed = false;
   m_attempt = 0;
   connectSocket();
@@ -77,6 +81,36 @@ void NodeClient::call(const QString& environment, const QString& method, const Q
       {QStringLiteral("environment"), environment},
       {QStringLiteral("method"), method},
       {QStringLiteral("payload"), payload},
+  });
+}
+
+void NodeClient::post(const QString& path, const QJsonObject& body, Reply reply) {
+  if (m_closed || !m_origin.isValid()) {
+    QTimer::singleShot(0, this, [reply = std::move(reply)] { reply(QJsonValue(), QStringLiteral("not connected")); });
+    return;
+  }
+  if (!m_http) m_http = new QNetworkAccessManager(this);
+  QUrl url = m_origin;
+  url.setPath(path);
+  QNetworkRequest request(url);
+  request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+  request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
+  QNetworkReply* answer = m_http->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+  connect(answer, &QNetworkReply::finished, this, [answer, reply = std::move(reply)] {
+    answer->deleteLater();
+    const int status = answer->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QJsonDocument document = QJsonDocument::fromJson(answer->readAll());
+    const QJsonValue result = document.isObject() ? QJsonValue(document.object()) : QJsonValue();
+    if (status >= 200 && status < 300) {
+      reply(result, std::nullopt);
+      return;
+    }
+    const QJsonObject refusal = document.object();
+    QString error = refusal.value(QLatin1String("message")).toString();
+    if (error.isEmpty()) error = refusal.value(QLatin1String("detail")).toString();
+    if (error.isEmpty()) error = refusal.value(QLatin1String("_tag")).toString();
+    if (error.isEmpty()) error = status > 0 ? QStringLiteral("HTTP %1").arg(status) : answer->errorString();
+    reply(result, error);
   });
 }
 

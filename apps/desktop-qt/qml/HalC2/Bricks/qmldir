@@ -55,5 +55,12 @@ RevertDialog 1.0 RevertDialog.qml
 TerminalSplits 1.0 TerminalSplits.qml
 TerminalPanel 1.0 TerminalPanel.qml
 PullRequestsPanel 1.0 PullRequestsPanel.qml
+PullRequestReviewPanel 1.0 PullRequestReviewPanel.qml
 PreviewsPanel 1.0 PreviewsPanel.qml
+ThreadDetailsPanel 1.0 ThreadDetailsPanel.qml
 CommandPalette 1.0 CommandPalette.qml
+PullRequestsPage 1.0 PullRequestsPage.qml
+HomePage 1.0 HomePage.qml
+UsagePage 1.0 UsagePage.qml
+ProvidersSettings 1.0 ProvidersSettings.qml
+ArchivedThreads 1.0 ArchivedThreads.qml

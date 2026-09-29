@@ -5,6 +5,7 @@
 
 #include "CommandPaletteController.h"
 #include "Harness.h"
+#include "ThreadList.h"
 #include "Turn.h"
 #include "World.h"
 
@@ -25,9 +26,11 @@ QString sectionTitles(World& world, const QString& section) {
 const Steps steps([] {
   const QString q = kQuoted;
 
-  // The user in the shell.
+  // The user in the shell, naming a thread by key or title.
   const auto dispatch = [](const QString& type) {
-    return [type](World& world, const Captures& c, const Table&) { world.bridge().dispatch(type, keyed(c[0])); };
+    return [type](World& world, const Captures& c, const Table&) {
+      world.bridge().dispatch(type, keyed(threadKeyOf(world, c[0])));
+    };
   };
   step(QStringLiteral("the user settles %1").arg(q), dispatch(QStringLiteral("thread.settle")));
   step(QStringLiteral("the user un-settles %1").arg(q), dispatch(QStringLiteral("thread.unsettle")));

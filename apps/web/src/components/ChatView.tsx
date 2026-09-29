@@ -216,7 +216,7 @@ import {
   type RightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
-import { ShellRightPanelBridge, ShellWorkspaceBridge } from "../shell/lazy";
+import { ShellWorkspaceBridge } from "../shell/lazy";
 import {
   isPreviewSupportedInRuntime,
   setActivePreviewTab,
@@ -749,8 +749,6 @@ type ChatViewProps =
       forceExpandedMobileComposer?: boolean;
       routeKind: "server";
       draftId?: never;
-      /** `rightPanel` renders only the thread's right panel for the shell's embed route. */
-      presentation?: "full" | "rightPanel";
     }
   | {
       environmentId: EnvironmentId;
@@ -760,7 +758,6 @@ type ChatViewProps =
       forceExpandedMobileComposer?: boolean;
       routeKind: "draft";
       draftId: DraftId;
-      presentation?: "full" | "rightPanel";
     };
 
 function useLocalDispatchState(input: {
@@ -865,10 +862,8 @@ function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | n
 }
 
 export default function ChatView(props: ChatViewProps) {
-  const presentation = props.presentation ?? "full";
-  // Hosted by the Qt shell, the right panel's chrome is a native brick and its
-  // content is this same view rendered by the embed route.
-  const shellHostsChrome = isHalC2Shell && presentation === "full";
+  // Hosted by the Qt shell, the chrome around the thread is native.
+  const shellHostsChrome = isHalC2Shell;
   const [shellTitleMenuRequest, setShellTitleMenuRequest] = useState<{
     x: number;
     y: number;
@@ -3718,14 +3713,9 @@ export default function ChatView(props: ChatViewProps) {
   ]);
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
-      // The embed documents have no composer; the primary's bridge adds it.
-      if (presentation === "rightPanel" && window.halC2Shell) {
-        void window.halC2Shell.dispatch("composer.terminalContext.add", selection);
-        return;
-      }
       composerRef.current?.addTerminalContext(selection);
     },
-    [composerRef, presentation],
+    [composerRef],
   );
   const {
     setTerminalOpen,
@@ -9130,14 +9120,6 @@ export default function ChatView(props: ChatViewProps) {
     />
   );
 
-  if (presentation === "rightPanel") {
-    return (
-      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-        {rightPanelContent}
-      </div>
-    );
-  }
-
   return (
     <div
       ref={workspaceLayoutRef}
@@ -9223,29 +9205,6 @@ export default function ChatView(props: ChatViewProps) {
             canCheckoutPullRequestIntoThread ? openPullRequestDialog : undefined
           }
           onEnvironmentChange={onEnvironmentChange}
-        />
-      ) : null}
-      {shellHostsChrome && activeThreadRef ? (
-        <ShellRightPanelBridge
-          threadRef={activeThreadRef}
-          isOpen={rightPanelOpen}
-          activeSurfaceId={activeRightPanelSurface?.id ?? null}
-          surfaces={rightPanelState.surfaces}
-          terminalLabelsById={activeTerminalLabelsById}
-          previewSessions={activePreviewState.sessions}
-          canAdd={{
-            diff: isServerThread && isGitRepo,
-            files: activeProject !== null,
-            terminal: activeProject !== null,
-            pullRequest: pullRequestSurfaceAvailable,
-          }}
-          onToggle={toggleRightPanel}
-          onActivate={activateRightPanelSurface}
-          onClose={closeRightPanelSurface}
-          onAddDiff={addDiffSurface}
-          onAddFiles={addFilesSurface}
-          onAddTerminal={addTerminalSurface}
-          onAddPullRequest={addPullRequestSurface}
         />
       ) : null}
       {environments.map((environment) => (

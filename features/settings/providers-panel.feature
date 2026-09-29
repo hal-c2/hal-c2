@@ -21,6 +21,8 @@
 #   apps/server-ex/lib/hal_c2/environment.ex (refresh_providers)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (config.providers)
 #   apps/tui/src/features.backlog.test.ts (editable-settings, provider maintenance)
+#   apps/web/src/components/settings/ProviderAuthenticationSection.tsx
+#   apps/desktop-qt/src/native/ProviderSettingsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ProvidersSettings.qml
 
 Feature: Providers settings panel
   The Providers page lists the agent providers configured on one environment. The user adds
@@ -32,7 +34,7 @@ Feature: Providers settings panel
 
   Rule: Choosing the environment and refreshing
 
-    @backlog @desktop
+    @desktop
     Scenario: This machine is listed first among environments
       Given the user has environments "Laptop", "Build box" and this machine
       When the user chooses which environment's providers to show
@@ -45,11 +47,24 @@ Feature: Providers settings panel
       Then the providers are shown read-only
       And the user is told this session can view the providers but not change their settings
 
-    @backlog @desktop
+    @desktop
     Scenario: A disconnected environment cannot be configured
       Given "Build box" is disconnected
       When the user shows the providers of "Build box"
       Then the user is told to reconnect the device to set up its provider
+
+    @desktop
+    Scenario: An environment that reconnects can be configured again
+      Given "Build box" is disconnected
+      And the user shows the providers of "Build box"
+      When "Build box" reconnects
+      Then the providers of "Build box" are listed
+
+    @desktop
+    Scenario: Leaving the Providers settings stops following providers
+      Given "Gemini" can sign in from HAL-C2 and is signed out
+      When the user leaves the Providers settings
+      Then no provider or sign-in is followed for the panel
 
     @node
     Scenario: Refreshing providers reads their status and models again
@@ -182,12 +197,19 @@ Feature: Providers settings panel
 
   Rule: Editing an instance
 
-    @backlog @desktop
+    @desktop
     Scenario: Turning an instance off and on
       When the user turns off the "Claude Work" instance
       Then its models are not offered in new threads
       When the user turns it back on
       Then its models are offered again
+
+    @desktop
+    Scenario: A change that cannot be saved is reported
+      Given saving settings on "Laptop" fails
+      When the user turns off the "Claude Work" instance
+      Then the user is told the provider settings could not be saved
+      And "Claude Work" stays on
 
     @backlog @desktop
     Scenario: Renaming an instance changes how it is shown
@@ -217,7 +239,7 @@ Feature: Providers settings panel
       When the user deletes the instance
       Then the user is told the provider was deleted but managed files remain
 
-    @backlog @desktop
+    @desktop
     Scenario: The signed-in account email stays hidden until asked
       Given "Claude Work" is signed in as "ada@example.com"
       Then the account email is shown scrambled
@@ -225,6 +247,46 @@ Feature: Providers settings panel
       Then "ada@example.com" is shown
       When the user hides it again
       Then it is scrambled again
+
+  # Sign-in is node-addressed (provider.auth.*), so only environments a cluster node serves
+  # sign in from the panel. Signing out is in providers/provider-setup.feature.
+  Rule: Signing in
+
+    @desktop
+    Scenario: Signing in finishes in the browser
+      Given "Gemini" can sign in from HAL-C2 and is signed out
+      When the user signs in to "Gemini"
+      Then the user is asked to finish signing in in the browser
+      When the user opens the sign-in page
+      Then the provider's sign-in page opens in the browser
+
+    @desktop
+    Scenario: A sign-in in progress can be cancelled and tried again
+      Given "Gemini" can sign in from HAL-C2 and is signed out
+      And the user signs in to "Gemini"
+      When the user cancels the sign-in
+      Then the sign-in is cancelled on the environment
+      And the user can retry signing in to "Gemini"
+
+    @desktop
+    Scenario: A sign-in that fails says why
+      Given "Gemini" can sign in from HAL-C2 and is signed out
+      And the user signs in to "Gemini"
+      When the sign-in fails with "The browser was closed."
+      Then the user is told why the sign-in failed: "The browser was closed."
+      And the user can retry signing in to "Gemini"
+
+    @desktop
+    Scenario: Declining to sign out keeps the account signed in
+      Given "Gemini" is signed in from HAL-C2
+      When the user signs out of "Gemini" and declines
+      Then "Gemini" is still signed in
+
+    @desktop
+    Scenario: An environment outside the cluster is signed in from its own clients
+      Given "Build box" is linked and its "Gemini" can sign in from HAL-C2
+      When the user shows the providers of "Build box"
+      Then the user is told to sign in from a client paired with "Build box"
 
   # Node behaviour of provider updates and version advisories is owned by settings/updates.feature
   # and providers/provider-setup.feature; this rule holds what the panel adds.
@@ -237,21 +299,36 @@ Feature: Providers settings panel
       Then the node runs the Codex updater
       And the provider list is reported again
 
-    @backlog @desktop
+    @desktop
     Scenario: An update that cannot run offers the command to copy
       Given the update command for "Codex" cannot be started here
       When the user copies the update command
       Then the command is on the clipboard
       And the user is told to run it in a terminal when ready
 
-    @backlog @desktop
+    @desktop
     Scenario: A provider behind its latest release offers to update now
       Given "Codex" is behind its latest release
       When the user opens the version details of "Codex"
       Then the user is told an update is available with the latest version
       And the user can update now or copy the update command
 
-    @backlog @desktop
+    @desktop
+    Scenario: A provider update shows as running until it finishes
+      Given "Codex" is behind its latest release
+      When the user updates "Codex"
+      Then "Codex" is shown updating
+      When the update finishes
+      Then "Codex" is no longer shown updating
+
+    @desktop
+    Scenario: An update that fails is reported
+      Given "Codex" is behind its latest release
+      And updating "Codex" fails with "npm exited with status 1"
+      When the user updates "Codex"
+      Then the user is told "Codex" could not be updated
+
+    @desktop
     Scenario Outline: A provider version outside the supported range is flagged in the panel
       Given the installed "OpenCode" is <status> for this HAL-C2 release
       When the user opens the version details of "OpenCode"

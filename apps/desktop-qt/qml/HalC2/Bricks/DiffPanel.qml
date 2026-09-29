@@ -8,6 +8,10 @@ import HalC2.Shell
 // one turn; the patch is a DiffModel drawn one row per line, so a large diff
 // only makes the rows in view. Reverting to the turn shown asks first (RevertDialog).
 //
+// A source without turns (`hasTurns: false`, a pull request's code) shows no
+// picker or whitespace option; one with setViewed(path, viewed) and
+// `viewedPaths` gives each file a Viewed box.
+//
 //   DiffPanel { anchors.fill: parent; source: Panel.diff }
 Rectangle {
     id: root
@@ -56,6 +60,7 @@ Rectangle {
 
                 objectName: "diffTurnPicker"
                 Layout.preferredWidth: 150
+                visible: root.source?.hasTurns ?? true
                 outline: true
                 model: root.source?.choices ?? []
                 textRole: "label"
@@ -136,6 +141,8 @@ Rectangle {
                     }
                     ShellMenuItem {
                         objectName: "diffWhitespace"
+                        visible: root.source?.ignoreWhitespace !== undefined
+                        height: visible ? implicitHeight : 0
                         text: root.source?.ignoreWhitespace ? qsTr("Show whitespace changes") : qsTr("Hide whitespace changes")
                         onTriggered: root.source.ignoreWhitespace = !root.source.ignoreWhitespace
                     }
@@ -280,6 +287,22 @@ Rectangle {
                     font.pixelSize: 12
                     font.strikeout: header.row.change === "deleted"
                     elide: Text.ElideMiddle
+                }
+                ShellButton {
+                    readonly property bool viewed: (root.source?.viewedPaths ?? []).indexOf(header.row.path) >= 0
+
+                    objectName: "diffViewed"
+                    visible: typeof root.source?.setViewed === "function"
+                    subtle: true
+                    iconName: viewed ? "square-check" : "square"
+                    iconSize: 13
+                    iconTint: viewed ? root.added : root.muted
+                    implicitWidth: 24
+                    implicitHeight: 24
+                    Accessible.name: viewed ? qsTr("Mark %1 not viewed").arg(header.row.path) : qsTr("Mark %1 viewed").arg(header.row.path)
+                    ToolTip.visible: hovered
+                    ToolTip.text: viewed ? qsTr("Viewed") : qsTr("Mark viewed")
+                    onClicked: root.source.setViewed(header.row.path, !viewed)
                 }
                 Text {
                     visible: header.row.binary
