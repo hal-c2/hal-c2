@@ -164,5 +164,16 @@ Item {
             compare(Shell.dispatchedActions[0].action, "providerSettings.signInCredentials");
             compare(Shell.dispatchedActions[0].payload.values.GEMINI_API_KEY, "sk");
         }
+    
+        function test_an_environment_only_viewed_takes_no_changes() {
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider()], readOnly: true,
+                                                               readOnlyDescription: "This session can view Build box's providers but can't change their settings." }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            verify(findChild(page, "readOnly").visible);
+            verify(!findChild(page, "provider_claudeAgent_work").enabled);
+            verify(!findChild(page, "addInstance").enabled);
+            mouseClick(findChild(findChild(page, "provider_claudeAgent_work"), "enabled"));
+            compare(Shell.dispatchedActions.length, 0);
+        }
     }
 }

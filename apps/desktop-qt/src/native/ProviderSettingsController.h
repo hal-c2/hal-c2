@@ -31,7 +31,9 @@ class ShellStore;
 // Publishes `providerSettings`: {open, environmentId, environments [{id,
 // label, local, online}] (this machine first, the others by name), status:
 // ready | loading | offline | none, title, description (why nothing is
-// listed), refreshing, providers [{instanceId, driver, name, version,
+// listed), refreshing, readOnly and readOnlyDescription (the session may
+// only view that environment: its link lacks orchestration:operate, and every
+// change is ignored), providers [{instanceId, driver, name, version,
 // enabled, installed, status, headline, detail, email, models [{slug, name}],
 // advisory {title, detail, updateCommand, targetVersion, strong} | null,
 // canUpdate, installLabel ("Install v1.2.3" when the recommended version can

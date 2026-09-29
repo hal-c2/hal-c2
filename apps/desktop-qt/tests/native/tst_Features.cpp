@@ -263,6 +263,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("source-control/pull-request-list.feature"),
     QStringLiteral("settings/usage.feature"),
     QStringLiteral("settings/providers-panel.feature:This machine is listed first*"),
+    QStringLiteral("settings/providers-panel.feature:A session that may only view providers*"),
     QStringLiteral("settings/providers-panel.feature:A disconnected environment cannot*"),
     QStringLiteral("settings/providers-panel.feature:An environment that reconnects*"),
     QStringLiteral("settings/providers-panel.feature:Leaving the Providers settings*"),

@@ -253,6 +253,11 @@ bool ProviderSettingsController::handle(const QString& action, const QVariant& p
   const QString instanceId = input.value(QStringLiteral("instanceId")).toString();
   const QJsonObject entry = provider(instanceId);
   const QJsonObject auth = m_authState.value(instanceId);
+  // An environment this session may only view takes no changes, only a
+  // different environment, docs and copying its update command.
+  static const QSet<QString> viewing{QStringLiteral("providerSettings.environment"), QStringLiteral("providerSettings.openDocs"),
+                                     QStringLiteral("providerSettings.copyUpdateCommand")};
+  if (!viewing.contains(action) && !m_followed.isEmpty() && !m_store->mayOperate(m_followed)) return true;
   if (action == QLatin1String("providerSettings.environment")) {
     m_environment = input.value(QStringLiteral("id")).toString();
     update();
@@ -806,6 +811,7 @@ void ProviderSettingsController::publish() {
     title = QStringLiteral("No providers");
     description = QStringLiteral("%1 reports no providers.").arg(label(environmentId));
   }
+  const bool readOnly = !environmentId.isEmpty() && !m_store->mayOperate(environmentId);
   QVariantList providers;
   if (m_open && m_providers && status == QLatin1String("ready")) {
     for (const QJsonValue& value : *m_providers) providers.append(entry(value.toObject()));
@@ -819,6 +825,11 @@ void ProviderSettingsController::publish() {
                               {QStringLiteral("title"), title},
                               {QStringLiteral("description"), description},
                               {QStringLiteral("refreshing"), m_refreshing > 0},
+                              {QStringLiteral("readOnly"), readOnly},
+                              {QStringLiteral("readOnlyDescription"),
+                               readOnly ? QStringLiteral("This session can view %1's providers but can't change their settings.")
+                                              .arg(label(environmentId))
+                                        : QString()},
                               {QStringLiteral("providers"), providers},
                               {QStringLiteral("health"), health()},
                               {QStringLiteral("wizard"), wizard()},

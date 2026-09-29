@@ -15,6 +15,8 @@ Rectangle {
     readonly property var model: Shell.state.providerSettings ?? null
     readonly property var environments: model ? model.environments : []
     readonly property var providers: model ? model.providers : []
+    // The session may only view this environment: nothing on it can be changed.
+    readonly property bool readOnly: !!(model && model.readOnly)
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color warning: Theme.palette.color("warning", "#f59e0b")
@@ -871,7 +873,7 @@ Rectangle {
 
                 ShellButton {
                     objectName: "addInstance"
-                    enabled: page.model !== null && page.model.status === "ready" && !page.model.wizard
+                    enabled: page.model !== null && page.model.status === "ready" && !page.model.wizard && !page.readOnly
                     iconName: "plus"
                     text: qsTr("Add provider")
                     onClicked: Shell.dispatch("providerSettings.wizardOpen")
@@ -879,7 +881,7 @@ Rectangle {
 
                 ShellButton {
                     objectName: "refresh"
-                    enabled: page.model !== null && page.model.status === "ready" && !page.model.refreshing
+                    enabled: page.model !== null && page.model.status === "ready" && !page.model.refreshing && !page.readOnly
                     text: page.model && page.model.refreshing ? qsTr("Refreshing…") : qsTr("Refresh")
                     onClicked: Shell.dispatch("providerSettings.refresh")
                 }
@@ -928,6 +930,26 @@ Rectangle {
                 }
             }
 
+            ColumnLayout {
+                objectName: "readOnly"
+                Layout.fillWidth: true
+                Layout.topMargin: 12
+                visible: page.readOnly
+                spacing: 4
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("Limited permissions")
+                    color: page.foreground
+                    font.pixelSize: 14
+                    font.weight: Font.DemiBold
+                }
+
+                Note {
+                    text: page.model ? (page.model.readOnlyDescription ?? "") : ""
+                }
+            }
+
             Loader {
                 Layout.fillWidth: true
                 active: !!(page.model && page.model.wizard)
@@ -941,7 +963,9 @@ Rectangle {
             Repeater {
                 model: page.providers
 
-                delegate: ProviderCard {}
+                delegate: ProviderCard {
+                    enabled: !page.readOnly
+                }
             }
 
             // How often the environment checks its providers in the background.
@@ -953,6 +977,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.topMargin: 12
                 visible: health !== null
+                enabled: !page.readOnly
                 spacing: 12
 
                 ColumnLayout {

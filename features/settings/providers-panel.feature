@@ -40,7 +40,7 @@ Feature: Providers settings panel
       When the user chooses which environment's providers to show
       Then this machine is listed first and the others follow by name
 
-    @backlog @desktop
+    @desktop
     Scenario: A session that may only view providers cannot change them
       Given the user's session may view but not operate "Build box"
       When the user shows the providers of "Build box"

@@ -128,6 +128,8 @@ public:
   // why a link is down ("unreachable", "refused"; absent while it is online).
   QStringList linked;
   QHash<QString, QString> linkProblems;
+  // What each link's pairing granted, listed as its `scopes`; none listed when unset.
+  QHash<QString, QStringList> linkScopes;
   // Each linked environment's label, when it is not its id.
   QHash<QString, QString> linkLabels;
 

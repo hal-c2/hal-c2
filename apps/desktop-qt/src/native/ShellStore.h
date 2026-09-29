@@ -56,8 +56,12 @@ public:
   // Whether a node serving `environmentId` is online.
   bool environmentOnline(const QString& environmentId) const;
   bool synchronized() const { return m_synchronized; }
+  // Whether this node's clients may change `environmentId`: false only when it
+  // is reached through a link whose pairing did not grant orchestration:operate
+  // (the node checks its own clients; the linked environment checks the link).
+  bool mayOperate(const QString& environmentId) const;
   // The node's links as `shell.links` carries them: {environment, origin,
-  // online, problem?}, where problem is "unreachable" or "refused".
+  // online, scopes?, problem?}, where problem is "unreachable" or "refused".
   const QJsonArray& links() const { return m_links; }
 
 signals:

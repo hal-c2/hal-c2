@@ -351,6 +351,28 @@ const Steps steps([] {
     linkEnvironment(world, c[0], {provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"))});
     world.node.setLinkProblem(c[0], QStringLiteral("unreachable"));
   });
+  step(QStringLiteral("the user's session may view but not operate %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.node.linkScopes.insert(c[0], {QStringLiteral("orchestration:read")});
+    linkEnvironment(world, c[0], {provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"))});
+  });
+  step(QStringLiteral("the providers are shown read-only"), [](World& world, const Captures&, const Table&) {
+    waitForEntry(world, QStringLiteral("Codex"), [&](const QVariantMap&) { return panel(world).value(QStringLiteral("readOnly")).toBool(); },
+                 QStringLiteral("to be listed read-only"));
+    // Nothing on it takes a change.
+    const qsizetype writes = fakeConfig(world.node).writes.size();
+    act(world, QStringLiteral("wizardOpen"));
+    act(world, QStringLiteral("enable"), {{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("enabled"), false}});
+    act(world, QStringLiteral("healthInterval"), {{QStringLiteral("seconds"), 60}});
+    expect(panel(world).value(QStringLiteral("wizard")).isNull() && fakeConfig(world.node).writes.size() == writes &&
+               !entry(world, QStringLiteral("Codex")).value(QStringLiteral("busy")).toBool(),
+           QStringLiteral("no change to be made; the panel is %1").arg(show(panel(world))));
+  });
+  step(QStringLiteral("the user is told this session can view the providers but not change their settings"),
+       [](World& world, const Captures&, const Table&) {
+    const QString said = panel(world).value(QStringLiteral("readOnlyDescription")).toString();
+    expect(said == QLatin1String("This session can view Build box's providers but can't change their settings."),
+           QStringLiteral("the read-only note; it says \"%1\"").arg(said));
+  });
   step(QStringLiteral("%1 reconnects").arg(q), [](World& world, const Captures& c, const Table&) {
     world.node.setLinkProblem(c[0], QString());
   });

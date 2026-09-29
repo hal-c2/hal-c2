@@ -207,6 +207,7 @@ QJsonArray FakeNode::links() const {
     });
     QJsonObject link = result.last().toObject();
     if (linkProblems.contains(environment)) link.insert(QStringLiteral("problem"), linkProblems.value(environment));
+    if (linkScopes.contains(environment)) link.insert(QStringLiteral("scopes"), QJsonArray::fromStringList(linkScopes.value(environment)));
     result.replace(result.size() - 1, link);
   }
   return result;
