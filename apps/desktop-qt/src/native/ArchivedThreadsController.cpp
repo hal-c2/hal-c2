@@ -12,6 +12,7 @@
 #include "NavigationController.h"
 #include "NodeClient.h"
 #include "SettingsController.h"
+#include "SettingsScopeController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ToastController.h"
@@ -61,6 +62,12 @@ void ArchivedThreadsController::activate() {
   connect(m_store, &ShellStore::changed, this, [this] {
     if (m_open && online() != m_asked) load();
   });
+  // The settings scope narrows the list to its environments and project.
+  if (auto* scope = NativeShell::of(this)->controller<SettingsScopeController>()) {
+    connect(scope, &SettingsScopeController::changed, this, [this] {
+      if (m_open) publish();
+    });
+  }
   setOpen(navigation->route() == section);
   publish();
 }
@@ -173,8 +180,13 @@ void ArchivedThreadsController::act(const QString& environmentId, const QString&
 void ArchivedThreadsController::publish() {
   if (!m_active) return;
   QVariantList groups;
+  // As the web's ArchivedThreadsPanel: a picked environment or project lists
+  // only its threads.
+  const auto* scope = NativeShell::of(this)->controller<SettingsScopeController>();
+  const bool scoped = scope && (scope->projectScope() || !scope->environmentFilter().isEmpty());
   if (m_open) {
     for (const QString& environmentId : std::as_const(m_asked)) {
+      if (scoped && !scope->environments().contains(environmentId)) continue;
       QList<QJsonObject> threads;
       for (const QJsonValue& value : m_threads.value(environmentId)) threads.append(value.toObject());
       // Newest archived first.
@@ -197,6 +209,7 @@ void ArchivedThreadsController::publish() {
       QHash<QString, QVariantList> rows;
       for (const QJsonObject& thread : std::as_const(threads)) {
         const QString projectId = thread.value(QLatin1String("projectId")).toString();
+        if (scoped && !scope->covers(environmentId, projectId)) continue;
         if (!order.contains(projectId)) order.append(projectId);
         const QString threadId = thread.value(QLatin1String("id")).toString();
         const QString key = environmentId + QLatin1Char(':') + threadId;

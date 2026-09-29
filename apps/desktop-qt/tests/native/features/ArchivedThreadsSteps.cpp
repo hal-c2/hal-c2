@@ -164,6 +164,18 @@ const Steps steps([] {
   step(QStringLiteral("the user opens the archived threads"), [](World& world, const Captures&, const Table&) {
     open(world);
   });
+  // The settings scope's project picker, then the Archive section.
+  step(QStringLiteral("the user opens the archived threads from the settings of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    open(world);
+    QString key;
+    world.waitFor([&] {
+      for (const QVariant& row : at(world.state(QStringLiteral("settingsScope")), QStringLiteral("projects")).toList()) {
+        if (row.toMap().value(QStringLiteral("title")) == c[0]) key = row.toMap().value(QStringLiteral("key")).toString();
+      }
+      return !key.isEmpty();
+    }, [&] { return QStringLiteral("%1 to be offered; the scope is %2").arg(c[0], show(world.state(QStringLiteral("settingsScope")))); });
+    world.bridge().dispatch(QStringLiteral("settingsScope.project"), QVariantMap{{QStringLiteral("key"), key}});
+  });
   step(QStringLiteral("the user (restores|deletes) %1 from the archived threads").arg(q), [](World& world, const Captures& c, const Table&) {
     open(world);
     act(world, c[0] == QLatin1String("restores") ? QStringLiteral("unarchive") : QStringLiteral("delete"), c[1]);
@@ -213,3 +225,11 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+// Whether the archive lists only `title` (WorkspaceSteps' "only %1 is
+// listed" asks this while the Archive section is open).
+bool archiveListsOnly(World& world, const QString& title) {
+  const QVariantList listedGroups = groups(world);
+  return listedGroups.size() == 1 && listedGroups[0].toMap().value(QStringLiteral("threads")).toList().size() == 1 &&
+         listed(world, title);
+}

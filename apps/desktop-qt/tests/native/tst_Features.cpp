@@ -341,6 +341,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("threads/archive-delete.feature:Archiving and unarchiving from the desktop*"),
     QStringLiteral("threads/archive-delete.feature:The archived threads list says*"),
     QStringLiteral("threads/archive-delete.feature:Archived threads are grouped*"),
+    QStringLiteral("threads/archive-delete.feature:Archived threads for one project*"),
     QStringLiteral("threads/archive-delete.feature:An archived thread action that fails*"),
     QStringLiteral("threads/archive-delete.feature:Deleting an archived thread*"),
     QStringLiteral("threads/pinning-and-order.feature:Pinned threads are listed above*"),

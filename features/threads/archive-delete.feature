@@ -189,9 +189,7 @@ Feature: Archiving and deleting threads
     When the user deletes "Old spike" from the archived threads
     Then "Old spike" is no longer in the archived threads
 
-  # The desktop's project settings are still the page's; the native Archive section
-  # lists every project's archived threads.
-  @backlog @desktop
+  @desktop
   Scenario: Archived threads for one project show only that project's threads
     Given "Old spike" in "shop" and "Try vite" in "docs" are archived
     When the user opens the archived threads from the settings of "shop"

@@ -16,6 +16,9 @@
 // ProviderSettingsSteps.cpp
 void renameProviderInstance(World& world, const QString& from, const QString& to);
 
+// ArchivedThreadsSteps.cpp
+bool archiveListsOnly(World& world, const QString& title);
+
 namespace {
 
 const QString kThread = QStringLiteral("t1");
@@ -345,6 +348,11 @@ const Steps steps([] {
   step(QStringLiteral("the user searches the branch list for %1").arg(q), search);
   step(QStringLiteral("the user searched the branch list for %1").arg(q), search);
   step(QStringLiteral("only %1 is listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (at(world.state(QStringLiteral("archivedThreads")), QStringLiteral("open")).toBool()) {
+      world.waitFor([&] { return archiveListsOnly(world, c[0]); },
+                    [&] { return QStringLiteral("only %1 archived; the archive is %2").arg(c[0], show(world.state(QStringLiteral("archivedThreads")))); });
+      return;
+    }
     expect(branchNames(world) == QStringList{c[0]}, QStringLiteral("the list is %1").arg(branchNames(world).join(QStringLiteral(", "))));
   });
   step(QStringLiteral("no ref matches"), [](World& world, const Captures&, const Table&) {
