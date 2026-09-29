@@ -45,7 +45,7 @@ Feature: Answering the agent's questions from the composer
     When the user reopens the pending question
     Then "Which database?" is shown again with its options
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A question can be dismissed without an answer
     When the user dismisses the question without answering
     Then the agent is told the question was dismissed

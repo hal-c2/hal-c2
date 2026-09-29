@@ -37,4 +37,5 @@ WindowControls 1.0 WindowControls.qml
 Workspace 1.0 Workspace.qml
 Timeline 1.0 Timeline.qml
 KeybindingsSettings 1.0 KeybindingsSettings.qml
+TurnRequests 1.0 TurnRequests.qml
 ProjectRemovalDialog 1.0 ProjectRemovalDialog.qml

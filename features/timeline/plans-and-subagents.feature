@@ -30,14 +30,14 @@ Feature: Plans and subagents
     And a plan without a heading is titled "Proposed plan"
 
   # TUI: implemented in apps/tui/src/components/ChatView.tsx
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: The user implements the proposed plan
     Given the agent has proposed a plan
     When the user implements the plan with no feedback
     Then the agent starts implementing it in this thread
     And the plan card is no longer offered
 
-  @shared @backlog
+  @shared @backlog-mobile @backlog-tui
   Scenario: The user refines the plan with feedback
     Given the agent has proposed a plan
     When the user sends "split the migration into its own step" as feedback

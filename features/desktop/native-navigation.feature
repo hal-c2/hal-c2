@@ -172,9 +172,9 @@ Feature: The desktop shell decides where the window is
       Then the node receives a "run.interrupt" command for "t2"
 
     @desktop
-    Scenario: A send the page's composer has not caught up with goes through the page
-      Given the composer shows "env-a:t1" with the plain prompt "hello"
+    Scenario: A send goes to the thread the window shows
+      Given the composer shows "env-a:t1"
       When the user opens "env-a:t2" from the sidebar
       And the user sends "hello"
-      Then the node receives no commands
-      And the action "composer.submit" reaches the page
+      Then the node receives a "message.dispatch" command for "t2"
+      And the node receives no other commands

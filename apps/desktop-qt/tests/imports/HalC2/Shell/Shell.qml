@@ -7,7 +7,8 @@ QtObject {
     property var state: ({
             composer: defaultComposer(),
             modelPicker: defaultModelPicker(),
-            workspace: null
+            workspace: null,
+            turn: null
         })
     property var dispatchedActions: []
     property int dispatchCount: 0
@@ -65,7 +66,8 @@ QtObject {
         state = {
             composer: defaultComposer(),
             modelPicker: defaultModelPicker(),
-            workspace: null
+            workspace: null,
+            turn: null
         };
     }
 
@@ -76,6 +78,22 @@ QtObject {
                 edit: edit,
                 cursor: cursor
             })
+        });
+    }
+
+    // The shell's own turn for the composer's target (ComposerController).
+    function publishTurn(fields) {
+        state = Object.assign({}, state, {
+            turn: Object.assign({
+                threadKey: state.composer.target,
+                running: false,
+                draft: "",
+                attachments: [],
+                approvals: [],
+                questions: [],
+                plan: null,
+                queue: []
+            }, fields)
         });
     }
 

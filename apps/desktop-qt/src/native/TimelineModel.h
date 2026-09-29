@@ -81,6 +81,10 @@ public:
   // An `events` frame: [[seq, kind, id, patch, at]].
   void events(const QJsonArray& events);
 
+  // The thread's entities of one stream kind (run, runtime-request, plan,
+  // turn-item, ...) by id, for the composer's turn state.
+  QHash<QString, QJsonObject> entities(const QString& kind) const { return m_entities.value(kind); }
+
   // Opens or closes a fold ("fold:<runId>") or a work group ("work:<itemId>").
   Q_INVOKABLE void toggle(const QString& rowId);
   Q_INVOKABLE int indexOf(const QString& rowId) const;
@@ -93,6 +97,9 @@ signals:
   void countChanged();
   void statusChanged();
   void workingChanged();
+  // After a snapshot, or events that touched runs, requests, plans or the
+  // request and user message items: what entities() gives the composer.
+  void turnChanged();
 
 private:
   struct Row {
@@ -137,5 +144,6 @@ private:
   QSet<QString> m_expandedFolds;   // run ids
   QSet<QString> m_expandedGroups;  // row ids
   QDateTime m_workingSince;
+  bool m_turnTouched = false;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
 };
