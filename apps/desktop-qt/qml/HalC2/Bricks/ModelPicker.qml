@@ -253,6 +253,8 @@ AbstractButton {
         // flipped below it when the window has no room above.
         property bool below: false
 
+        scale: Shell.state.layout?.zoom ?? 1
+        transformOrigin: Item.TopLeft
         x: 0
         y: below ? control.height + 4 : -height - 4
         width: 360
@@ -266,7 +268,7 @@ AbstractButton {
         // Pressing the trigger closes it through onClicked.
         closePolicy: Popup.CloseOnPressOutsideParent
         onAboutToShow: {
-            below = control.mapToItem(null, 0, 0).y < height + 4 + margins;
+            below = control.mapToItem(null, 0, 0).y < (height + 4) * scale + margins;
             control.query = "";
             control.expandedLegacy = control.activeModel && control.activeModel.isLegacy ? {
                 [control.selectedInstanceId]: true

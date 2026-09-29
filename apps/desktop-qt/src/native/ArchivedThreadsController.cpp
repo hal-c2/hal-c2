@@ -141,7 +141,7 @@ void ArchivedThreadsController::load() {
   m_pending = QSet<QString>(m_asked.cbegin(), m_asked.cend());
   m_error.clear();
   for (const QString& environmentId : std::as_const(m_asked)) {
-    m_client->call(environmentId, QStringLiteral("orchestration.getArchivedShellSnapshot"), QJsonObject{},
+    m_client->call(this, environmentId, QStringLiteral("orchestration.getArchivedShellSnapshot"), QJsonObject{},
                    [this, generation, environmentId](const QJsonValue& result, const std::optional<QString>& error) {
                      if (generation != m_generation) return;
                      m_pending.remove(environmentId);
@@ -163,7 +163,7 @@ void ArchivedThreadsController::act(const QString& environmentId, const QString&
   if (m_busy.contains(key)) return;
   m_busy.insert(key);
   publish();
-  m_client->dispatchCommand(environmentId, {{QStringLiteral("type"), type}, {QStringLiteral("threadId"), threadId}},
+  m_client->dispatchCommand(this, environmentId, {{QStringLiteral("type"), type}, {QStringLiteral("threadId"), threadId}},
                             [this, key, failure](const QJsonValue&, const std::optional<QString>& error) {
                               m_busy.remove(key);
                               if (error) {

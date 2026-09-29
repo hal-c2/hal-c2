@@ -216,7 +216,7 @@ void ThreadPullRequests::link(const QString& input) {
   m_problem.clear();
   emit stateChanged();
   const QString thread = m_thread;
-  m_client->dispatchCommand(environmentId(),
+  m_client->dispatchCommand(this, environmentId(),
                             {{QStringLiteral("type"), QStringLiteral("thread.pull-request.link")},
                              {QStringLiteral("threadId"), threadId()},
                              {QStringLiteral("host"), target.host},
@@ -240,7 +240,7 @@ void ThreadPullRequests::unlink(const QString& key) {
   const QJsonObject* link = find(key);
   if (!link || !m_online) return;
   const int number = link->value(QLatin1String("number")).toInt();
-  m_client->dispatchCommand(environmentId(),
+  m_client->dispatchCommand(this, environmentId(),
                             {{QStringLiteral("type"), QStringLiteral("thread.pull-request.unlink")},
                              {QStringLiteral("threadId"), threadId()},
                              {QStringLiteral("host"), link->value(QLatin1String("host"))},
@@ -262,7 +262,7 @@ void ThreadPullRequests::refresh() {
     const QJsonObject reference{{QStringLiteral("host"), link.value(QLatin1String("host"))},
                                 {QStringLiteral("repository"), link.value(QLatin1String("repository"))},
                                 {QStringLiteral("number"), link.value(QLatin1String("number"))}};
-    m_client->call(environmentId(), QStringLiteral("pullRequests.invalidate"), QJsonObject{{QStringLiteral("reference"), reference}},
+    m_client->call(this, environmentId(), QStringLiteral("pullRequests.invalidate"), QJsonObject{{QStringLiteral("reference"), reference}},
                    [this, thread, failed](const QJsonValue&, const std::optional<QString>& error) {
                      if (error && !*failed) {
                        *failed = true;

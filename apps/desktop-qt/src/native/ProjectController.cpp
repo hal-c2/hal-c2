@@ -138,7 +138,7 @@ void ProjectController::addFolder(const QString& environmentId, const QString& r
       {QStringLiteral("projectId"), projectId},
       {QStringLiteral("workspaceRoot"), root},
   };
-  m_client->call(environmentId, QStringLiteral("projects.mutate"), command,
+  m_client->call(this, environmentId, QStringLiteral("projects.mutate"), command,
                  [this, environmentId, projectId](const QJsonValue&, const std::optional<QString>& error) {
                    if (error) {
                      NativeShell::of(this)->controller<ToastController>()->error(QStringLiteral("Could not open folder"),
@@ -225,7 +225,7 @@ void ProjectController::remove(QStringList keys, const QString& title) {
     const auto draft = shell->controller<DraftController>()->draft(route.draftId);
     showing = draft && draft->environmentId == project->environmentId && draft->projectId == project->id;
   }
-  m_client->call(project->environmentId, QStringLiteral("projects.mutate"), command,
+  m_client->call(this, project->environmentId, QStringLiteral("projects.mutate"), command,
                  [this, showing, keys, title](const QJsonValue&, const std::optional<QString>& error) {
                    auto* shell = NativeShell::of(this);
                    if (error) {

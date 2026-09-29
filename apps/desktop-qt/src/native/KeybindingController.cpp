@@ -23,6 +23,21 @@ bool isScriptRun(const QString& command) {
   return command.startsWith(QLatin1String("script.")) && command.endsWith(QLatin1String(".run"));
 }
 
+// The desktop application menu's accelerators (DesktopApplicationMenu.ts).
+// They are not keymap bindings: Settings → Keybindings neither lists nor
+// rebinds them, and a keymap binding on the same key wins (the preview's
+// zoom while it has focus).
+const QList<std::pair<QString, QString>>& menuKeys() {
+  static const QList<std::pair<QString, QString>> keys{
+      {QStringLiteral("mod+,"), QStringLiteral("settings.open")},
+      {QStringLiteral("mod+0"), QStringLiteral("view.resetZoom")},
+      {QStringLiteral("mod+="), QStringLiteral("view.zoomIn")},
+      {QStringLiteral("mod++"), QStringLiteral("view.zoomIn")},
+      {QStringLiteral("mod+-"), QStringLiteral("view.zoomOut")},
+  };
+  return keys;
+}
+
 bool flag(const QVariantMap& focus, const char* key) {
   return focus.value(QLatin1String(key)).toBool();
 }
@@ -158,6 +173,10 @@ void KeybindingController::setRules(const QJsonArray& rules) {
   for (const keybindings::Binding& binding : std::as_const(m_bindings)) {
     m_sequences.append(keybindings::sequence(binding.shortcut, m_mac));
   }
+  m_menuSequences.clear();
+  for (const auto& [key, command] : menuKeys()) {
+    m_menuSequences.append(keybindings::sequence(*keybindings::parseShortcut(key), m_mac));
+  }
   m_commands.setShortcuts([this](const QString& command) { return shortcutLabel(command); });
   refreshShortcuts();
   refreshRows();
@@ -188,6 +207,7 @@ QString KeybindingController::resolve(const QString& sequence, const QVariantMap
       return m_bindings.at(index).command;
     }
   }
+  if (const qsizetype menu = m_menuSequences.indexOf(sequence); menu >= 0) return menuKeys().at(menu).second;
   return {};
 }
 
@@ -241,7 +261,7 @@ void KeybindingController::refreshShortcuts() {
   const auto native = [this](const QString& command) { return m_commands.contains(command) || isScriptRun(command); };
   QVariantList shortcuts;
   QSet<QString> seen;
-  for (const QString& sequence : std::as_const(m_sequences)) {
+  for (const QString& sequence : m_sequences + m_menuSequences) {
     if (sequence.isEmpty() || seen.contains(sequence)) continue;
     seen.insert(sequence);
     shortcuts.append(QVariantMap{
@@ -267,6 +287,10 @@ QString KeybindingController::shortcutLabel(const QString& command) const {
     if (claimed.contains(label)) continue;
     claimed.insert(label);
     if (binding.command == command) return label;
+  }
+  for (const auto& [key, menuCommand] : menuKeys()) {
+    const QString label = keybindings::label(*keybindings::parseShortcut(key), m_mac);
+    if (menuCommand == command && !claimed.contains(label)) return label;
   }
   return {};
 }
@@ -427,7 +451,7 @@ void KeybindingController::call(const QString& method, const QJsonObject& input,
                                 const QString& failure) {
   ++m_saving;
   emit savingChanged();
-  m_client->call(m_client->environment(), method, input,
+  m_client->call(this, m_client->environment(), method, input,
                  // The new rules come back as the config's `config.keybindings`.
                  [this, failureTitle, failure](const QJsonValue&, const std::optional<QString>& error) {
                    --m_saving;

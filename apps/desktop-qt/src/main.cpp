@@ -9,22 +9,21 @@
 #include <QQuickWebEngineProfile>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QWindow>
 #include <QtLogging>
 #include <QtWebEngineQuick/qtwebenginequickglobal.h>
 
 #include "AlertController.h"
 #include "BackendProcess.h"
-#include "ComposerController.h"
-#include "DraftController.h"
 #include "LocalFolderModel.h"
 #include "LocalTranscriber.h"
 #include "NativeNotifications.h"
 #include "NativeShell.h"
-#include "NavigationController.h"
-#include "RightPanelController.h"
+#include "QuitController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
+#include "ShellWindows.h"
 #include "StoragePaths.h"
 #include "ThemeStore.h"
 #include "WebProfile.h"
@@ -92,6 +91,8 @@ int main(int argc, char* argv[]) {
   }
   QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
+  // Closing a window closes only it; the last one quits (NativeShell::lastWindowClosed).
+  QGuiApplication::setQuitOnLastWindowClosed(false);
   QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/hal-c2/app-icon.png")));
   useSoftwareRenderingWithoutDisplay();
 
@@ -165,7 +166,11 @@ int main(int argc, char* argv[]) {
 
   // Configured before any engine exists so the first page already lands on it.
   WebProfile webProfile(QDir(storage.cache).filePath(QStringLiteral("shell-web")));
-  qmlRegisterSingletonInstance("HalC2.Shell", 1, 0, "WebProfile", webProfile.profile());
+  // Every window's engine shares the one profile (and its cookies).
+  qmlRegisterSingletonType<QQuickWebEngineProfile>("HalC2.Shell", 1, 0, "WebProfile", [&webProfile](QQmlEngine*, QJSEngine*) {
+    QQmlEngine::setObjectOwnership(webProfile.profile(), QQmlEngine::CppOwnership);
+    return webProfile.profile();
+  });
 
   ShellBridge bridge;
   bridge.setLocalFolderImportEnabled(!parser.isSet(urlOption) || parser.isSet(localFolderImportOption));
@@ -173,24 +178,30 @@ int main(int argc, char* argv[]) {
   qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
   NativeShell native(&bridge);
   native.registerQmlSingletons();
-  // The window reopens where the user left it.
-  native.controller<NavigationController>()->setStorePath(QDir(storage.state).filePath(QStringLiteral("shell-route.json")));
+  // Each window reopens where the user left it (its route and panels are
+  // state); the drafts are every window's unsent work (data).
+  native.setStoreDirs(storage.state, storage.data);
   native.controller<SettingsController>()->setDevicePath(QDir(configDir).filePath(QStringLiteral("preferences.json")));
-  // Drafts are the user's unsent work: data, not state.
-  native.controller<DraftController>()->setStorePath(QDir(storage.data).filePath(QStringLiteral("shell-drafts.json")));
-  native.controller<ComposerController>()->setStorePath(QDir(storage.data).filePath(QStringLiteral("shell-composer.json")));
-  // The right panel reopens as each thread left it.
-  native.controller<RightPanelController>()->setStorePath(QDir(storage.state).filePath(QStringLiteral("shell-panel.json")));
   ThemeStore theme(configDir);
   // ThemeController's resolved theme is the palette under theme.json.
   theme.applyBaseTheme(bridge.state()->value(QStringLiteral("theme")));
-  QObject::connect(&bridge, &ShellBridge::stateEntryChanged, &theme,
-                   [&theme](const QString& key, const QVariant& value) {
-                     if (key == QStringLiteral("theme")) {
-                       theme.applyBaseTheme(value);
-                     }
-                   });
-  ShellRuntime runtime({configDir, qmlSourceDir}, &bridge, &theme);
+  // Every window (the first, window.new's, restored ones) is its own engine on
+  // its window's bridge.
+  ShellWindows windows(&native, {configDir, qmlSourceDir}, &theme);
+  ShellRuntime& runtime = *windows.runtime(native.main());
+  // Closing the last window quits, except on macOS, where the app stays in the
+  // dock and coming back to it shows the window again.
+#ifdef Q_OS_MACOS
+  QObject::connect(&app, &QGuiApplication::applicationStateChanged, &windows, [&windows](Qt::ApplicationState state) {
+    if (state != Qt::ApplicationActive) return;
+    for (QWindow* window : QGuiApplication::topLevelWindows()) {
+      if (window->isVisible()) return;
+    }
+    windows.reopen();
+  });
+#else
+  QObject::connect(&native, &NativeShell::lastWindowClosed, &app, &QCoreApplication::quit, Qt::QueuedConnection);
+#endif
 
   // Alerts reach the desktop's notification service; a click shows its thread.
   NativeNotifications notifications;
@@ -209,8 +220,14 @@ int main(int argc, char* argv[]) {
         QProcess::startDetached(player, {QStringLiteral("-i"), event});
       },
   });
-  QObject::connect(&notifications, &NativeNotifications::activated, alerts, [alerts, &bridge](const QString& key) {
-    if (alerts->openThread(key)) bridge.windowCommand(QStringLiteral("raise"));
+  QObject::connect(&notifications, &NativeNotifications::activated, alerts, &AlertController::openThread);
+
+  // mod+Q, guarded as `confirmQuit` says; a finished hold hides the windows
+  // while the key is let go.
+  auto* quitting = native.controller<QuitController>();
+  QObject::connect(quitting, &QuitController::quitRequested, &app, &QCoreApplication::quit, Qt::QueuedConnection);
+  QObject::connect(quitting, &QuitController::concealRequested, &app, [] {
+    for (QWindow* window : QGuiApplication::topLevelWindows()) window->hide();
   });
 
   BackendProcess::Options backendOptions;
@@ -230,6 +247,7 @@ int main(int argc, char* argv[]) {
   BackendProcess backend(backendOptions);
   // Announced before `ready`, so the shell's own connection starts with the page.
   QObject::connect(&backend, &BackendProcess::nodeAvailable, &native, &NativeShell::open);
+  // On the first window's bridge, which every other window mirrors (NativeWindow).
   QObject::connect(&backend, &BackendProcess::ready, &bridge, &ShellBridge::setPageUrl);
   QObject::connect(&backend, &BackendProcess::failed, &bridge, [&bridge](const QString& message) {
     qCritical().noquote() << "[shell]" << message;
@@ -317,6 +335,7 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  runtime.start();
+  windows.start();
+  native.restoreWindows();
   return app.exec();
 }

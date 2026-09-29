@@ -165,7 +165,7 @@ void ConnectionsController::watchAccess() {
   if (m_accessSubscription >= 0) m_client->unsubscribe(m_accessSubscription);
   m_state.insert(QStringLiteral("accessError"), null());
   publish();
-  m_accessSubscription = m_client->subscribe({{QStringLiteral("type"), QStringLiteral("authAccess")}},
+  m_accessSubscription = m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("authAccess")}},
                                              [this](const QJsonObject& frame) { onAccess(frame); });
 }
 
@@ -251,7 +251,7 @@ void ConnectionsController::updateLinks() {
 // `fallbackUrl` when the first cannot be reached.
 void ConnectionsController::link(const QString& pairingUrl, const QString& fallbackUrl) {
   set(QStringLiteral("busy"), true);
-  m_client->call(m_client->environment(), QStringLiteral("hal-c2.linkEnvironment"),
+  m_client->call(this, m_client->environment(), QStringLiteral("hal-c2.linkEnvironment"),
                  QJsonObject{{QStringLiteral("pairingUrl"), pairingUrl}},
                  [this, fallbackUrl](const QJsonValue& result, const std::optional<QString>& error) {
                    if (error && !fallbackUrl.isEmpty() && error->startsWith(QLatin1String("cannot reach"))) {
@@ -305,7 +305,7 @@ void ConnectionsController::createPairingLink(const QVariantMap& input) {
 void ConnectionsController::change(const QString& method, const QJsonObject& payload,
                                    std::function<void(const QJsonObject& result)> done, const QString& failure) {
   set(QStringLiteral("busy"), true);
-  m_client->call(m_client->environment(), method, payload,
+  m_client->call(this, m_client->environment(), method, payload,
                  [this, done = std::move(done), failure](const QJsonValue& result, const std::optional<QString>& error) {
                    m_state.insert(QStringLiteral("busy"), false);
                    if (error) {

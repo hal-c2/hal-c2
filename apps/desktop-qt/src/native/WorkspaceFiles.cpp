@@ -115,7 +115,7 @@ void WorkspaceFiles::reload() {
 
 void WorkspaceFiles::list(const QString& folder) {
   const int generation = m_generation;
-  m_client->call(m_environment, QStringLiteral("projects.listEntries"),
+  m_client->call(this, m_environment, QStringLiteral("projects.listEntries"),
                  QJsonObject{{QStringLiteral("cwd"), m_root}, {QStringLiteral("directoryPath"), folder}},
                  [this, generation, folder](const QJsonValue& result, const std::optional<QString>& error) {
                    if (generation != m_generation) return;
@@ -146,9 +146,9 @@ void WorkspaceFiles::setQuery(const QString& query) {
   m_searchDelay.start();
 }
 
-void WorkspaceFiles::searchEntries(NodeClient* client, const QString& environmentId, const QString& cwd,
+void WorkspaceFiles::searchEntries(NodeClient* client, QObject* context, const QString& environmentId, const QString& cwd,
                                    const QString& query, int limit, SearchDone done) {
-  client->call(environmentId, QStringLiteral("projects.searchEntries"),
+  client->call(context, environmentId, QStringLiteral("projects.searchEntries"),
                QJsonObject{{QStringLiteral("cwd"), cwd}, {QStringLiteral("query"), query}, {QStringLiteral("limit"), limit}},
                [done = std::move(done)](const QJsonValue& result, const std::optional<QString>& error) {
                  if (error) {
@@ -162,7 +162,7 @@ void WorkspaceFiles::searchEntries(NodeClient* client, const QString& environmen
 void WorkspaceFiles::search() {
   if (m_root.isEmpty()) return;
   const int request = ++m_searchRequest;
-  searchEntries(m_client, m_environment, m_root, m_query.trimmed(), searchLimit,
+  searchEntries(m_client, this, m_environment, m_root, m_query.trimmed(), searchLimit,
                 [this, request](const QList<FileTreeModel::Entry>& entries, bool truncated, const std::optional<QString>& error) {
                   if (request != m_searchRequest) return;
                   m_searching = false;
@@ -194,7 +194,7 @@ void WorkspaceFiles::reloadFile() {
   m_fileProblem.clear();
   m_truncatedNotice.clear();
   emit fileChanged();
-  m_client->call(m_environment, QStringLiteral("projects.readFile"),
+  m_client->call(this, m_environment, QStringLiteral("projects.readFile"),
                  QJsonObject{{QStringLiteral("cwd"), m_root}, {QStringLiteral("relativePath"), m_openPath}},
                  [this, request](const QJsonValue& result, const std::optional<QString>& error) {
                    if (request != m_fileRequest) return;

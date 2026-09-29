@@ -897,6 +897,8 @@ Rectangle {
                         id: branchPicker
                         objectName: "branchPicker"
 
+                        scale: Shell.state.layout?.zoom ?? 1
+                        transformOrigin: Item.TopLeft
                         x: parent.width - width
                         y: -height - 4
                         width: 320

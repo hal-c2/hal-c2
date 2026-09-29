@@ -16,6 +16,11 @@ QtObject {
     property bool localFolderImportEnabled: false
 
     signal actionRequested(string action, var payload)
+    signal windowCommandRequested(string command)
+
+    function windowCommand(command) {
+        windowCommandRequested(command);
+    }
 
     function defaultComposer() {
         return {

@@ -46,6 +46,31 @@ Item {
         }
     }
 
+    // A window that counts the system moves it is asked for: a real one
+    // hands the pointer to the window manager, which an offscreen test lacks.
+    Component {
+        id: movingHeaderComponent
+        Window {
+            id: window
+            property alias header: header
+            property int moves: 0
+            function startSystemMove() {
+                moves += 1;
+                return true;
+            }
+            width: 900
+            height: 320
+            visible: true
+            flags: Qt.Window | Qt.FramelessWindowHint
+            Workspace {
+                id: header
+                width: parent.width
+                height: 52
+                window: window
+            }
+        }
+    }
+
     TestCase {
         name: "WindowControlsTests"
         when: windowShown
@@ -186,6 +211,20 @@ Item {
             window.requestActivate();
             tryVerify(() => window.active);
             compare(close.light, Qt.color("#ff5f57"));
+        }
+
+        // Scenario: Dragging the header asks the window system to move the window (features/navigation/windows.feature)
+        function test_dragHeaderMovesWindow() {
+            Theme.frameless = true;
+            const window = createTemporaryObject(movingHeaderComponent, null);
+            verify(waitForRendering(window.contentItem));
+            // An empty part of the strip hands the drag to the system.
+            mouseDrag(window.header, window.header.width / 2, 4, 60, 20);
+            tryCompare(window, "moves", 1);
+            // A framed window leaves it to the system's title bar.
+            Theme.frameless = false;
+            mouseDrag(window.header, window.header.width / 2, 4, 60, 20);
+            compare(window.moves, 1);
         }
 
         // Scenario: Double-clicking the header toggles maximize (features/navigation/windows.feature)

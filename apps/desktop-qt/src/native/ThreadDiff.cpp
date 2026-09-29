@@ -164,7 +164,7 @@ void ThreadDiff::load() {
     payload.insert(QStringLiteral("toTurnCount"), turn);
   }
   setStatus(QStringLiteral("loading"), QStringLiteral("Loading checkpoint diff..."));
-  m_client->call(m_environment, method, payload, [this, request](const QJsonValue& result, const std::optional<QString>& error) {
+  m_client->call(this, m_environment, method, payload, [this, request](const QJsonValue& result, const std::optional<QString>& error) {
     if (request != m_request) return;
     if (error) {
       // Asking again (reload, another turn) tries once more.
@@ -222,7 +222,7 @@ void ThreadDiff::confirmRevert(bool restoreFiles) {
   m_reverting = true;
   emit revertChanged();
   const QString threadId = m_threadId;
-  m_client->dispatchCommand(m_environment,
+  m_client->dispatchCommand(this, m_environment,
                             {{QStringLiteral("type"), QStringLiteral("checkpoint.rollback")},
                              {QStringLiteral("threadId"), threadId},
                              {QStringLiteral("checkpointId"), checkpoint.value(QLatin1String("id"))},

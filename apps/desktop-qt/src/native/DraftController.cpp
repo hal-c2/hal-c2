@@ -31,12 +31,16 @@ QString newId() {
 }  // namespace
 
 DraftController::DraftController(ShellBridge* bridge, NodeClient*, ShellStore* store, QObject* parent)
-    : QObject(parent), m_bridge(bridge), m_store(store) {
+    : QObject(parent),
+      m_bridge(bridge),
+      m_store(store),
+      m_kept(NativeShell::of(this)->shell()->common<Kept>()),
+      m_drafts(m_kept.drafts) {
   connect(store, &ShellStore::changed, this, &DraftController::reconcile);
 }
 
 void DraftController::setStorePath(const QString& path) {
-  m_storePath = path;
+  m_kept.path = path;
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) return;
   m_drafts.clear();
@@ -139,7 +143,7 @@ bool DraftController::handle(const QString& action, const QVariant& payload) {
         !m_store->thread(environmentId + QLatin1Char(':') + threadId)) {
       m_drafts.append({id, environmentId, projectId, threadId, sidebar::formatIso(QDateTime::currentDateTimeUtc()), {}});
       save();
-      emit changed();
+      changedEverywhere();
     }
     return false;
   }
@@ -207,7 +211,7 @@ QString DraftController::start(const QString& environmentId, const QString& proj
     id = newId();
     m_drafts.append({id, environmentId, projectId, newId(), sidebar::formatIso(QDateTime::currentDateTimeUtc()), {}});
     save();
-    emit changed();
+    changedEverywhere();
   }
   NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::draft(id));
   return id;
@@ -217,9 +221,11 @@ void DraftController::remove(const QString& id) {
   const qsizetype removed = m_drafts.removeIf([&id](const Draft& draft) { return draft.id == id; });
   if (removed == 0) return;
   save();
-  emit changed();
-  auto* navigation = NativeShell::of(this)->controller<NavigationController>();
-  if (navigation->route() == NavigationController::Route::draft(id)) navigation->replace(NavigationController::Route());
+  changedEverywhere();
+  for (DraftController* drafts : everyWindow()) {
+    auto* navigation = NativeShell::of(drafts)->controller<NavigationController>();
+    if (navigation->route() == NavigationController::Route::draft(id)) navigation->replace(NavigationController::Route());
+  }
 }
 
 void DraftController::promote(const QString& threadKey) {
@@ -233,10 +239,12 @@ void DraftController::promote(const QString& id, const QString& threadKey) {
   if (found == m_drafts.cend()) return;
   m_drafts.erase(found);
   save();
-  emit changed();
-  auto* navigation = NativeShell::of(this)->controller<NavigationController>();
-  if (navigation->route() == NavigationController::Route::draft(id)) {
-    navigation->replace(NavigationController::Route::thread(threadKey));
+  changedEverywhere();
+  for (DraftController* drafts : everyWindow()) {
+    auto* navigation = NativeShell::of(drafts)->controller<NavigationController>();
+    if (navigation->route() == NavigationController::Route::draft(id)) {
+      navigation->replace(NavigationController::Route::thread(threadKey));
+    }
   }
 }
 
@@ -256,7 +264,7 @@ void DraftController::renew(const QString& id) {
     draft.threadId = newId();
     draft.text.clear();
     save();
-    emit changed();
+    changedEverywhere();
   }
 }
 
@@ -284,8 +292,20 @@ void DraftController::reconcile() {
   for (const QString& id : std::as_const(orphaned)) remove(id);
 }
 
+QList<DraftController*> DraftController::everyWindow() const {
+  QList<DraftController*> all;
+  for (const auto& window : NativeShell::of(this)->shell()->windows()) {
+    if (auto* drafts = window->controller<DraftController>()) all.append(drafts);
+  }
+  return all;
+}
+
+void DraftController::changedEverywhere() {
+  for (DraftController* drafts : everyWindow()) emit drafts->changed();
+}
+
 void DraftController::save() const {
-  if (m_storePath.isEmpty()) return;
+  if (m_kept.path.isEmpty()) return;
   QJsonArray entries;
   for (const Draft& draft : m_drafts) {
     QJsonObject entry{
@@ -298,8 +318,8 @@ void DraftController::save() const {
     if (!draft.text.isEmpty()) entry.insert(QStringLiteral("text"), draft.text);
     entries.append(entry);
   }
-  QDir().mkpath(QFileInfo(m_storePath).absolutePath());
-  QSaveFile file(m_storePath);
+  QDir().mkpath(QFileInfo(m_kept.path).absolutePath());
+  QSaveFile file(m_kept.path);
   if (!file.open(QIODevice::WriteOnly)) return;
   file.write(QJsonDocument(entries).toJson(QJsonDocument::Compact));
   file.commit();

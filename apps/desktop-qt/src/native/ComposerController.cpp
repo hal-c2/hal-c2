@@ -105,12 +105,17 @@ QString newId() {
 
 ComposerController::ComposerController(ShellBridge* bridge, NodeClient* client, ShellStore* store,
                                        QObject* parent)
-    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {}
+    : QObject(parent),
+      m_bridge(bridge),
+      m_client(client),
+      m_store(store),
+      m_kept(NativeShell::of(this)->shell()->common<Kept>()),
+      m_drafts(m_kept.drafts) {}
 
 void ComposerController::activate() {
   if (m_active) return;
   m_active = true;
-  NativeShell* shell = NativeShell::of(this);
+  auto* shell = NativeShell::of(this);
   connect(shell->controller<NavigationController>(), &NavigationController::changed, this, &ComposerController::follow);
   connect(shell->controller<ThreadStore>(), &ThreadStore::activeThreadChanged, this, &ComposerController::follow);
   // A draft the page opened becomes the shell's once DraftController adopts it.
@@ -258,7 +263,7 @@ bool ComposerController::interrupt() {
     runId = thread->latestRunId;
   }
   if (!runId) return true;
-  m_client->dispatchCommand(thread->environmentId,
+  m_client->dispatchCommand(this, thread->environmentId,
                             {
                                 {QStringLiteral("type"), QStringLiteral("run.interrupt")},
                                 {QStringLiteral("threadId"), thread->id},
@@ -395,7 +400,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
 // thread in its place. A background send (mod+alt+Enter) leaves the window on
 // the draft, emptied for another prompt.
 bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& payload) {
-  NativeShell* shell = NativeShell::of(this);
+  auto* shell = NativeShell::of(this);
   auto* drafts = shell->controller<DraftController>();
   const auto kept = drafts->draft(draftId);
   if (!kept) return true;
@@ -453,7 +458,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   publish();
   const QString environmentId = where.environmentId;
   const auto start = [this, draftId, environmentId, background, text, attachments, contexts](const QJsonObject& input) {
-    m_client->call(environmentId, QStringLiteral("orchestration.launchThread"), input,
+    m_client->call(this, environmentId, QStringLiteral("orchestration.launchThread"), input,
                    [this, draftId, environmentId, input, background, text, attachments, contexts](
                        const QJsonValue& result, const std::optional<QString>& error) {
                      QString threadId = result.toObject().value(QLatin1String("threadId")).toString();
@@ -479,7 +484,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                               {QStringLiteral("dataUrl"), attachment.dataUrl}});
   }
   QJsonObject message = input.value(QLatin1String("initialMessage")).toObject();
-  m_client->call(environmentId, QStringLiteral("assets.persistChatAttachments"),
+  m_client->call(this, environmentId, QStringLiteral("assets.persistChatAttachments"),
                  QJsonObject{{QStringLiteral("threadId"), kept->threadId},
                              {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
                              {QStringLiteral("attachments"), images}},
@@ -510,7 +515,7 @@ void ComposerController::launched(const QString& draftId, const QString& threadK
   }
   m_drafts.remove(draftId);
   save();
-  NativeShell* shell = NativeShell::of(this);
+  auto* shell = NativeShell::of(this);
   shell->controller<WorkspaceController>()->forgetDraft(draftId);
   shell->controller<DraftController>()->promote(draftId, threadKey);
   publish();
@@ -523,7 +528,7 @@ void ComposerController::launchedInBackground(const QString& draftId, const QStr
                                               const QList<Attachment>& attachments,
                                               const QList<TerminalContext>& contexts, const QString& threadKey,
                                               const std::optional<QString>& error) {
-  NativeShell* shell = NativeShell::of(this);
+  auto* shell = NativeShell::of(this);
   auto* toasts = shell->controller<ToastController>();
   if (!error) {
     auto* navigation = shell->controller<NavigationController>();
@@ -613,7 +618,7 @@ void ComposerController::sendNext(const QString& target) {
                               {QStringLiteral("dataUrl"), attachment.dataUrl}});
   }
   QJsonObject message = send.commands.constLast();
-  m_client->call(send.environmentId, QStringLiteral("assets.persistChatAttachments"),
+  m_client->call(this, send.environmentId, QStringLiteral("assets.persistChatAttachments"),
                  QJsonObject{{QStringLiteral("threadId"), send.threadId},
                              {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
                              {QStringLiteral("attachments"), images}},
@@ -631,7 +636,7 @@ void ComposerController::sendNext(const QString& target) {
 
 void ComposerController::dispatchAll(const Send& send, qsizetype index,
                                      std::function<void(const std::optional<QString>&)> done) {
-  m_client->dispatchCommand(send.environmentId, send.commands.at(index),
+  m_client->dispatchCommand(this, send.environmentId, send.commands.at(index),
                             [this, send, index, done](const QJsonValue&, const std::optional<QString>& error) {
                               if (!error && index + 1 < send.commands.size()) {
                                 dispatchAll(send, index + 1, done);
@@ -746,7 +751,7 @@ bool ComposerController::respond(const QString& requestId, const QJsonObject& fi
   for (auto it = fields.begin(); it != fields.end(); ++it) command.insert(it.key(), it.value());
   m_responding.insert(requestId);
   publish();
-  m_client->dispatchCommand(thread->environmentId, command,
+  m_client->dispatchCommand(this, thread->environmentId, command,
                             [this, requestId, failure](const QJsonValue&, const std::optional<QString>& error) {
                               m_responding.remove(requestId);
                               if (error && staleRequest(*error)) {
@@ -773,7 +778,7 @@ bool ComposerController::queueCommand(const QString& type, const QString& runId)
   }
   const QString failure = type == QLatin1String("queued-run.cancel") ? QStringLiteral("Failed to remove the queued message.")
                                                                       : QStringLiteral("Failed to steer with the queued message.");
-  m_client->dispatchCommand(thread->environmentId, command,
+  m_client->dispatchCommand(this, thread->environmentId, command,
                             [this, failure](const QJsonValue&, const std::optional<QString>& error) {
                               if (error) toast(failure, *error);
                             });
@@ -809,7 +814,7 @@ bool ComposerController::saveQueuedEdit(const QString& target, const QString& te
                             {QStringLiteral("threadId"), thread->id},
                             {QStringLiteral("runId"), runId},
                             {QStringLiteral("text"), text.trimmed()}};
-  m_client->dispatchCommand(thread->environmentId, command,
+  m_client->dispatchCommand(this, thread->environmentId, command,
                             [this, runId](const QJsonValue&, const std::optional<QString>& error) {
                               if (!m_queuedEdit || m_queuedEdit->runId != runId) return;
                               m_queuedEdit->saving = false;
@@ -865,7 +870,7 @@ QString ComposerController::openDraft() const {
 // project's, then the default for new threads. Empty lets the node choose.
 QJsonObject ComposerController::baseSelection(const QString& key) const {
   if (const auto thread = m_store->thread(key)) return thread->modelSelection;
-  NativeShell* shell = NativeShell::of(this);
+  auto* shell = NativeShell::of(this);
   const auto kept = shell->controller<DraftController>()->draft(key);
   if (!kept) return {};
   const auto* settings = shell->controller<SettingsController>();
@@ -1076,6 +1081,7 @@ void ComposerController::setText(const QString& target, const QString& text, int
     if (NativeShell::of(this)->controller<DraftController>()->draft(target)) {
       // A new thread's text is kept with its draft.
       NativeShell::of(this)->controller<DraftController>()->setText(target, text);
+      spread();
     } else {
       kept.text = text;
       save();
@@ -1200,7 +1206,7 @@ void ComposerController::searchPaths(const QString& target) {
   if (!place || place->cwd().isEmpty() || !m_store->environmentOnline(place->environmentId)) return;
   m_paths = {target, trigger->query, false, {}, m_paths.request + 1};
   const int request = m_paths.request;
-  WorkspaceFiles::searchEntries(m_client, place->environmentId, place->cwd(), trigger->query, 80,
+  WorkspaceFiles::searchEntries(m_client, this, place->environmentId, place->cwd(), trigger->query, 80,
                                 [this, request](const QList<FileTreeModel::Entry>& entries, bool,
                                                 const std::optional<QString>&) {
                                   if (request != m_paths.request) return;
@@ -1434,7 +1440,7 @@ QVariantMap ComposerController::pickerState() const {
 // Each target's text and choices, as {targets: {<target>: {text, modelSelection,
 // runtimeMode, interactionMode}}}; images are not kept.
 void ComposerController::setStorePath(const QString& path) {
-  m_storePath = path;
+  m_kept.path = path;
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) return;
   const QJsonObject targets = QJsonDocument::fromJson(file.readAll()).object().value(QLatin1String("targets")).toObject();
@@ -1452,8 +1458,16 @@ void ComposerController::setStorePath(const QString& path) {
   publish();
 }
 
+void ComposerController::spread() const {
+  for (const auto& window : NativeShell::of(this)->shell()->windows()) {
+    auto* composer = window->controller<ComposerController>();
+    if (composer && composer != this) QMetaObject::invokeMethod(composer, &ComposerController::publish, Qt::QueuedConnection);
+  }
+}
+
 void ComposerController::save() const {
-  if (m_storePath.isEmpty()) return;
+  spread();
+  if (m_kept.path.isEmpty()) return;
   QJsonObject targets;
   for (auto it = m_drafts.cbegin(); it != m_drafts.cend(); ++it) {
     const Draft& kept = it.value();
@@ -1466,7 +1480,7 @@ void ComposerController::save() const {
     if (!kept.interactionMode.isEmpty()) entry.insert(QStringLiteral("interactionMode"), kept.interactionMode);
     if (!entry.isEmpty()) targets.insert(it.key(), entry);
   }
-  QFile file(m_storePath);
+  QFile file(m_kept.path);
   if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
   file.write(QJsonDocument(QJsonObject{{QStringLiteral("targets"), targets}}).toJson(QJsonDocument::Compact));
 }

@@ -51,30 +51,35 @@ void NodeClient::close() {
   }
 }
 
-int NodeClient::subscribe(const QJsonObject& shape, FrameHandler onFrame) {
+int NodeClient::subscribe(QObject* context, const QJsonObject& shape, FrameHandler onFrame) {
   const int id = m_nextId++;
-  m_subscriptions.insert(id, {shape, std::move(onFrame)});
+  const auto gone = connect(context, &QObject::destroyed, this, [this, id] { unsubscribe(id); });
+  m_subscriptions.insert(id, {shape, std::move(onFrame), gone});
   sendSub(id);
   return id;
 }
 
 void NodeClient::unsubscribe(int id) {
-  if (m_subscriptions.remove(id) > 0) {
-    send({{QStringLiteral("t"), QStringLiteral("unsub")}, {QStringLiteral("id"), id}});
-  }
+  if (!m_subscriptions.contains(id)) return;
+  endSubscription(id);
+  send({{QStringLiteral("t"), QStringLiteral("unsub")}, {QStringLiteral("id"), id}});
 }
 
-void NodeClient::call(const QString& environment, const QString& method, const QJsonValue& payload,
+void NodeClient::endSubscription(int id) {
+  disconnect(m_subscriptions.take(id).contextGone);
+}
+
+void NodeClient::call(QObject* context, const QString& environment, const QString& method, const QJsonValue& payload,
                       Reply reply) {
   if (!m_ready) {
     // Replies are never synchronous, so callers see one order either way.
-    QTimer::singleShot(0, this, [reply = std::move(reply)] {
+    QTimer::singleShot(0, context, [reply = std::move(reply)] {
       reply(QJsonValue(), QStringLiteral("not connected"));
     });
     return;
   }
   const int id = m_nextId++;
-  m_calls.insert(id, std::move(reply));
+  m_calls.insert(id, {context, std::move(reply)});
   send({
       {QStringLiteral("t"), QStringLiteral("rpc")},
       {QStringLiteral("id"), id},
@@ -84,9 +89,9 @@ void NodeClient::call(const QString& environment, const QString& method, const Q
   });
 }
 
-void NodeClient::post(const QString& path, const QJsonObject& body, Reply reply) {
+void NodeClient::post(QObject* context, const QString& path, const QJsonObject& body, Reply reply) {
   if (m_closed || !m_origin.isValid()) {
-    QTimer::singleShot(0, this, [reply = std::move(reply)] { reply(QJsonValue(), QStringLiteral("not connected")); });
+    QTimer::singleShot(0, context, [reply = std::move(reply)] { reply(QJsonValue(), QStringLiteral("not connected")); });
     return;
   }
   if (!m_http) m_http = new QNetworkAccessManager(this);
@@ -96,8 +101,9 @@ void NodeClient::post(const QString& path, const QJsonObject& body, Reply reply)
   request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
   request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
   QNetworkReply* answer = m_http->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-  connect(answer, &QNetworkReply::finished, this, [answer, reply = std::move(reply)] {
+  connect(answer, &QNetworkReply::finished, this, [answer, context = QPointer<QObject>(context), reply = std::move(reply)] {
     answer->deleteLater();
+    if (!context) return;
     const int status = answer->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     const QJsonDocument document = QJsonDocument::fromJson(answer->readAll());
     const QJsonValue result = document.isObject() ? QJsonValue(document.object()) : QJsonValue();
@@ -114,9 +120,9 @@ void NodeClient::post(const QString& path, const QJsonObject& body, Reply reply)
   });
 }
 
-void NodeClient::dispatchCommand(const QString& environment, QJsonObject command, Reply reply) {
+void NodeClient::dispatchCommand(QObject* context, const QString& environment, QJsonObject command, Reply reply) {
   command.insert(QStringLiteral("commandId"), QUuid::createUuid().toString(QUuid::WithoutBraces));
-  call(environment, QStringLiteral("orchestration.dispatchCommand"), command, std::move(reply));
+  call(context, environment, QStringLiteral("orchestration.dispatchCommand"), command, std::move(reply));
 }
 
 void NodeClient::connectSocket() {
@@ -147,8 +153,10 @@ void NodeClient::onMessage(const QString& text) {
   if (!idValue.isDouble()) return;
   const int id = idValue.toInt();
   if (type == QLatin1String("rpc.result") || type == QLatin1String("rpc.error")) {
-    const Reply reply = m_calls.take(id);
-    if (!reply) return;
+    const Call call = m_calls.take(id);
+    // Its context is gone, and whatever the reply would have touched with it.
+    if (!call.context || !call.reply) return;
+    const Reply& reply = call.reply;
     if (type == QLatin1String("rpc.result")) {
       reply(frame.value(QLatin1String("result")), std::nullopt);
     } else {
@@ -164,7 +172,7 @@ void NodeClient::onMessage(const QString& text) {
   }
   const FrameHandler handler = subscription->onFrame;
   // The node ended the shape and already forgot it.
-  if (type == QLatin1String("end")) m_subscriptions.remove(id);
+  if (type == QLatin1String("end")) endSubscription(id);
   handler(frame);
 }
 
@@ -177,7 +185,9 @@ void NodeClient::onClosed(QWebSocket* socket) {
   m_ready = false;
   m_pingTimer.stop();
   const auto calls = std::exchange(m_calls, {});
-  for (const Reply& reply : calls) reply(QJsonValue(), QStringLiteral("disconnected"));
+  for (const Call& call : calls) {
+    if (call.context && call.reply) call.reply(QJsonValue(), QStringLiteral("disconnected"));
+  }
   if (wasReady) emit readyChanged(false);
   if (m_closed) return;
   const int delay = m_retryDelaysMs.isEmpty()

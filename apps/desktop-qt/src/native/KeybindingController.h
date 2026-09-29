@@ -30,6 +30,8 @@ class ShellBridge;
 //     default, as the web's); every other chord, Ctrl+K included, reaches the
 //     terminal. Where mod is Ctrl, the web's split takes Ctrl+D from the shell.
 //   - Unmodified keys are never registered.
+//   - The application menu's accelerators (mod+, for settings, the app zoom)
+//     come after every keymap binding, and are not rows in Settings.
 //
 // Settings → Keybindings edits the rules through the node (`bindings`,
 // save/remove/reset); the node pushes the new rules back to every client.
@@ -128,6 +130,8 @@ private:
   QList<keybindings::Binding> m_bindings = keybindings::defaultBindings();
   // Each binding's sequence, as m_bindings.
   QStringList m_sequences;
+  // Each application menu accelerator's, as menuKeys().
+  QStringList m_menuSequences;
   CommandRegistry m_commands;
   QVariantList m_shortcuts;
   QVariantList m_rows;
