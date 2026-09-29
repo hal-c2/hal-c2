@@ -1,6 +1,7 @@
 # Sources:
 #   apps/web/src/components/settings/SettingsPanels.tsx (GeneralSettingsPanel, LegacyFeaturesSection, AboutVersionTitle, update track)
 #   apps/web/src/components/settings/ScopedSwitch.tsx
+#   apps/desktop-qt/src/native/ProjectController.cpp (addProjectBaseDirectory: where Add project browses from)
 #   apps/web/src/components/settings/SettingInheritance.tsx (reset buttons)
 #   packages/contracts/src/settings.ts (sidebarProjectGroupingMode, autoResumeLimitedThreads, snoozeLimitedThreads, sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays, timestampFormat, responseStreamingMode, diffIgnoreWhitespace, diffFilesCollapsed, diffLayout, proactivePanelsEnabled, sendShortcut, followUpBehavior, continueThreadsAfterServerUpdate, newWorktreesStartFromOrigin, addProjectBaseDirectory, confirmThreadUnpin, confirmThreadArchive, confirmThreadDelete, confirmQuit, textGenerationModelSelection)
 #   apps/server-ex/lib/hal_c2/settings.ex
@@ -246,13 +247,13 @@ Feature: General settings
       When an agent creates a worktree for a thread without choosing a base
       Then the worktree starts from the local branch
 
-    @backlog @desktop
+    @desktop
     Scenario: The add project browser opens in the chosen base directory
       Given the add project base directory is "~/code"
       When the user starts adding a project
       Then the folder browser opens in "~/code"
 
-    @backlog @desktop
+    @desktop
     Scenario: An empty base directory opens the add project browser at home
       Given the add project base directory is empty
       When the user starts adding a project

@@ -25,13 +25,15 @@ class ShellStore;
 // opens the Source Control settings instead. Choosing a ready source asks for
 // the repository in the palette (a provider's is looked up,
 // `sourceControl.lookupRepository`), then browses for where it goes with the
-// repository's folder name pinned to the path. Enter there starts the clone
+// repository's folder name pinned to the path, in the folder Add project
+// browses from (ProjectController::browseStart). Enter there starts the clone
 // (`projectClone.start`): the node adds the project at once and clones in the
 // background, and the new project's draft opens.
 //
-// Every clone the node reports (the `projectClones` shape of each cluster
-// node) has one toast, changed in place as git moves on: running (Cancel),
-// done (Open project), failed or cancelled (Retry, Remove project).
+// Every clone the node reports (the `projectClones` shape of each online
+// environment, in the cluster or linked) has one toast, changed in place as
+// git moves on: running (Cancel), done (Open project), failed or cancelled
+// (Retry, Remove project).
 class ProjectCloneController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -98,7 +100,7 @@ private:
   // A project whose clone started and whose row has not reached the shell
   // yet; its draft opens when the row does.
   std::optional<std::pair<QString, QString>> m_started;
-  // The `projectClones` subscription of each environment a cluster node serves.
+  // The `projectClones` subscription of each online environment.
   QHash<QString, int> m_subscriptions;
   // Toasts by environment, then project id.
   QHash<QString, QHash<QString, Tracked>> m_toasts;

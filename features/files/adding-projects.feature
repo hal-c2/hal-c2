@@ -214,6 +214,13 @@ Feature: Adding projects
       Then the user sees "Cloning acme/shop" with "Receiving objects · 45%"
       And the user can cancel the clone
 
+    @desktop @mobile @backlog-mobile
+    Scenario: A clone on a linked environment shows its progress too
+      Given a clone of "acme/shop" is receiving objects at 45 percent on a linked environment
+      When the user looks at the app
+      Then the user sees "Cloning acme/shop" with "Receiving objects · 45%"
+      And the user can cancel the clone
+
     @node
     Scenario: A finished clone is forgotten after a short while
       Given a clone of "acme/shop" finished

@@ -14,6 +14,7 @@
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "NodeClient.h"
+#include "ProjectController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ToastController.h"
@@ -249,7 +250,8 @@ void ProjectCloneController::submitRepository(const QString& environmentId, cons
 
 void ProjectCloneController::askDestination(const Chosen& chosen) {
   CommandPaletteController::BrowseOptions options;
-  options.query = cloneDestinationPath(QStringLiteral("~/"), chosen.directoryName);
+  options.query = cloneDestinationPath(NativeShell::of(this)->controller<ProjectController>()->browseStart(chosen.environmentId),
+                                       chosen.directoryName);
   options.pinned = chosen.directoryName;
   options.emptyText = tr("Choose a destination path and press Enter to clone.");
   options.keepOpen = true;
@@ -335,14 +337,12 @@ void ProjectCloneController::openProject(const QString& environmentId, const QSt
 // --- Clone toasts ----------------------------------------------------------------------
 
 void ProjectCloneController::follow() {
-  QStringList served;
+  QStringList online;
   for (const QString& environmentId : m_store->environments()) {
-    if (m_store->environmentOnline(environmentId) && !m_store->nodeServing(environmentId).isEmpty()) {
-      served.append(environmentId);
-    }
+    if (m_store->environmentOnline(environmentId)) online.append(environmentId);
   }
   for (auto it = m_subscriptions.begin(); it != m_subscriptions.end();) {
-    if (served.contains(it.key())) {
+    if (online.contains(it.key())) {
       ++it;
       continue;
     }
@@ -350,10 +350,11 @@ void ProjectCloneController::follow() {
     // What it last reported stands until it is back.
     it = m_subscriptions.erase(it);
   }
-  for (const QString& environmentId : std::as_const(served)) {
+  for (const QString& environmentId : std::as_const(online)) {
     if (m_subscriptions.contains(environmentId)) continue;
+    // By environment, so a linked one's come through its link.
     const QJsonObject shape{{QStringLiteral("type"), QStringLiteral("projectClones")},
-                            {QStringLiteral("node"), m_store->nodeServing(environmentId)}};
+                            {QStringLiteral("environment"), environmentId}};
     m_subscriptions.insert(environmentId, m_client->subscribe(this, shape, [this, environmentId](const QJsonObject& frame) {
       if (frame.value(QLatin1String("t")) != QLatin1String("projectClones")) return;
       reconcile(environmentId, frame.value(QLatin1String("clones")).toArray());

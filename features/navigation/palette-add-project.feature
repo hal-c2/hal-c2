@@ -4,7 +4,7 @@
 #   Command palette entries: action:add-project, action:add-project:wsl-folder
 #   apps/web/src/wslPaths.ts (WSL UNC paths mapped to the WSL environment's Linux path)
 #   packages/client-runtime/src/operations/projects.ts (getCloneDirectoryName, remote source readiness)
-#   apps/desktop-qt/src/native/ProjectController.cpp (Add project, Local folder)
+#   apps/desktop-qt/src/native/ProjectController.cpp (Add project, Local folder, where browsing starts)
 #   apps/desktop-qt/src/native/ProjectCloneController.cpp (Git URL and repository sources, repository then destination)
 #   apps/desktop-qt/src/native/CommandPaletteController.cpp (browse, ask)
 
@@ -54,10 +54,16 @@ Feature: Adding a project from the command palette
     Then GitLab is marked "Setup Required"
     And choosing it opens the source control settings
 
-  @backlog @desktop
+  @desktop
   Scenario: Browsing starts in the home folder
     When the user adds a project from a local folder
     Then browsing starts at "~/"
+
+  @desktop
+  Scenario: A clone's destination starts in the add project base directory
+    Given the add project base directory is "~/code"
+    When the user adds a project from a Git URL
+    Then the destination offered is "~/code/shop"
 
   @backlog @desktop
   Scenario: A folder that does not exist yet can be created

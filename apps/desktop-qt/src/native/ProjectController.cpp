@@ -2,10 +2,12 @@
 
 #include <QFileInfo>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QUuid>
 
 #include "CommandPaletteController.h"
 #include "DraftController.h"
+#include "EnvironmentSettings.h"
 #include "KeybindingController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
@@ -22,10 +24,22 @@ namespace {
 const NativeControllerRegistrar<ProjectController> registrar(QStringLiteral("projects"),
                                                              {QStringLiteral("projectRemoval")});
 
+// The web's ensureBrowseDirectoryPath: a folder ends in its separator, a
+// backslash for a Windows path.
+QString asFolder(const QString& path) {
+  const QString trimmed = path.trimmed();
+  if (trimmed.isEmpty() || trimmed.endsWith(QLatin1Char('/'))) return trimmed;
+  static const QRegularExpression windowsPath(QStringLiteral(R"(^(?:[A-Za-z]:[\\/]|\\\\))"));
+  const bool posix = trimmed.startsWith(QLatin1Char('/')) || trimmed.startsWith(QLatin1Char('~'));
+  const bool windows = windowsPath.match(trimmed).hasMatch() || (!posix && trimmed.contains(QLatin1Char('\\')));
+  if (windows && trimmed.endsWith(QLatin1Char('\\'))) return trimmed;
+  return trimmed + (windows ? QLatin1Char('\\') : QLatin1Char('/'));
+}
+
 }  // namespace
 
 ProjectController::ProjectController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent)
-    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store) {
+    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_settings(new EnvironmentSettings(client, this)) {
   // A removal asked about a project that went away meanwhile has nothing to ask.
   connect(store, &ShellStore::changed, this, [this] {
     if (m_removal) {
@@ -48,12 +62,16 @@ void ProjectController::activate() {
   // The web's Add project: an environment first when there is a choice, then
   // how to add: a local folder, or a clone (ProjectCloneController).
   const auto sources = [this](const QString& environmentId) {
+    // Its settings say where browsing starts, by the time a source is chosen.
+    m_settings->setTargets({environmentId});
     CommandRegistry::Choice folder{QStringLiteral("local-folder"), tr("Local folder"), tr("Browse a folder on disk")};
     folder.terms = {QStringLiteral("folder"), QStringLiteral("directory"), QStringLiteral("browse")};
     folder.keepOpen = true;
     folder.run = [this, environmentId] {
+      CommandPaletteController::BrowseOptions options;
+      options.query = browseStart(environmentId);
       NativeShell::of(this)->controller<CommandPaletteController>()->browse(
-          environmentId, [this, environmentId](const QString& path) { addFolder(environmentId, path); });
+          environmentId, [this, environmentId](const QString& path) { addFolder(environmentId, path); }, options);
     };
     return QList<CommandRegistry::Choice>{folder} +
            NativeShell::of(this)->controller<ProjectCloneController>()->sources(environmentId);
@@ -81,6 +99,12 @@ void ProjectController::activate() {
   commands->setTerms(kAdd, {QStringLiteral("add project"), QStringLiteral("folder"), QStringLiteral("directory"),
                             QStringLiteral("browse"), QStringLiteral("environment")});
   publish();
+}
+
+QString ProjectController::browseStart(const QString& environmentId) const {
+  const std::optional<QJsonObject> settings = m_settings->settings(environmentId);
+  const QString base = settings ? asFolder(settings->value(QLatin1String("addProjectBaseDirectory")).toString()) : QString();
+  return base.isEmpty() ? QStringLiteral("~/") : base;
 }
 
 bool ProjectController::handle(const QString& action, const QVariant& payload) {

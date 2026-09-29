@@ -10,6 +10,7 @@
 
 #include "NativeController.h"
 
+class EnvironmentSettings;
 class NodeClient;
 class ShellBridge;
 class ShellStore;
@@ -24,7 +25,8 @@ class ShellStore;
 // palette's Add project menu (registered here as `project.add`): the online
 // environment to add on when there are several, then its sources (Local
 // folder browses its folders, CommandPaletteController::browse; Git URL and
-// the hosting providers clone, ProjectCloneController).
+// the hosting providers clone, ProjectCloneController). Both browse from the
+// environment's `addProjectBaseDirectory` setting, else the home folder.
 //
 // `project.remove {projectKey}` (`<environmentId>:<projectId>`, or a logical
 // project's key for its representative) asks first: it publishes
@@ -50,6 +52,9 @@ public:
   // Adds the folder at `path` on `environmentId` as a project, or opens the
   // project already there.
   void addFolder(const QString& environmentId, const QString& path);
+  // Where Add project browses on `environmentId` from, as a folder ("~/"
+  // unless its settings name another, once they have arrived).
+  QString browseStart(const QString& environmentId) const;
 
 private:
   struct Removal {
@@ -70,6 +75,8 @@ private:
   ShellBridge* m_bridge;
   NodeClient* m_client;
   ShellStore* m_store;
+  // The settings of the environment whose sources Add project last showed.
+  EnvironmentSettings* m_settings;
   bool m_active = false;
   // The projects waiting for the user's answer.
   std::optional<Removal> m_removal;

@@ -3,8 +3,10 @@
 // palette-add-project.feature) and each clone's toast
 // (features/files/adding-projects.feature). The fake node looks repositories
 // up, starts clones (adding their project at once, as the node does) and
-// reports them on the `projectClones` shape; what git does is the node's own
-// scenarios'.
+// reports them on each environment's `projectClones` shape; what git does is
+// the node's own scenarios'. Where Add project browses from is the
+// environment's `addProjectBaseDirectory` setting (features/settings/
+// general.feature).
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -12,6 +14,7 @@
 
 #include "CommandPaletteController.h"
 #include "DraftController.h"
+#include "FakeConfig.h"
 #include "FakeFiles.h"
 #include "FakeSourceControl.h"
 #include "Harness.h"
@@ -24,7 +27,8 @@ namespace {
 const QString kCloneProject = QStringLiteral("p-shop");
 
 struct FakeClones {
-  QList<QJsonObject> clones;
+  // By environment.
+  QHash<QString, QList<QJsonObject>> clones;
   // Every projectClone.* and sourceControl.lookupRepository call, as {method, payload}.
   QList<QPair<QString, QJsonObject>> calls;
   QString refuseStart;
@@ -35,16 +39,22 @@ struct FakeClones {
   QStringList asked;
 };
 
-QJsonArray reported(const FakeClones& fake) {
+QJsonArray reported(const FakeClones& fake, const QString& environment) {
   QJsonArray clones;
-  for (const QJsonObject& clone : fake.clones) clones.append(clone);
+  for (const QJsonObject& clone : fake.clones.value(environment)) clones.append(clone);
   return clones;
 }
 
-void publish(FakeNode& node) {
+// The environment a shape or call is for; the node's own when it names none.
+QString environmentOf(FakeNode& node, const QString& named) {
+  return named.isEmpty() ? node.environmentId : named;
+}
+
+void publish(FakeNode& node, const QString& environment) {
   for (const int id : node.subscribers(QStringLiteral("projectClones"))) {
+    if (environmentOf(node, node.shapeOf(id).value(QLatin1String("environment")).toString()) != environment) continue;
     node.send({{QStringLiteral("t"), QStringLiteral("projectClones")}, {QStringLiteral("id"), id},
-               {QStringLiteral("clones"), reported(node.part<FakeClones>())}});
+               {QStringLiteral("clones"), reported(node.part<FakeClones>(), environment)}});
   }
 }
 
@@ -64,9 +74,10 @@ void addProjectRow(FakeNode& node, const QString& id, const QString& title, cons
 }
 
 const FakeNode::Extension clones([](FakeNode& node) {
-  node.onShape(QStringLiteral("projectClones"), [&node](int id, const QJsonObject&) {
+  node.onShape(QStringLiteral("projectClones"), [&node](int id, const QJsonObject& shape) {
+    const QString environment = environmentOf(node, shape.value(QLatin1String("environment")).toString());
     node.send({{QStringLiteral("t"), QStringLiteral("projectClones")}, {QStringLiteral("id"), id},
-               {QStringLiteral("clones"), reported(node.part<FakeClones>())}});
+               {QStringLiteral("clones"), reported(node.part<FakeClones>(), environment)}});
   });
   node.onRpc(QStringLiteral("sourceControl.lookupRepository"), [&node](const FakeNode::Rpc& rpc) {
     FakeClones& fake = node.part<FakeClones>();
@@ -89,7 +100,8 @@ const FakeNode::Extension clones([](FakeNode& node) {
     const QString destination = expandHome(node, rpc.payload.value(QLatin1String("destinationPath")).toString());
     node.reply(rpc, QJsonObject());
     addProjectRow(node, id, rpc.payload.value(QLatin1String("title")).toString(), destination);
-    fake.clones.append({{QStringLiteral("projectId"), id},
+    const QString environment = environmentOf(node, rpc.environment);
+    fake.clones[environment].append({{QStringLiteral("projectId"), id},
                         {QStringLiteral("remoteUrl"), rpc.payload.value(QLatin1String("remoteUrl"))},
                         {QStringLiteral("destinationPath"), destination},
                         {QStringLiteral("repository"), QJsonValue::Null},
@@ -98,7 +110,7 @@ const FakeNode::Extension clones([](FakeNode& node) {
                         {QStringLiteral("percent"), QJsonValue::Null},
                         {QStringLiteral("detail"), QJsonValue::Null},
                         {QStringLiteral("error"), QJsonValue::Null}});
-    publish(node);
+    publish(node, environment);
   });
 });
 
@@ -179,6 +191,7 @@ void addFrom(World& world, const QString& source) {
     FakeFiles& files = fakeFiles(world.node);
     files.folders << files.home + QStringLiteral("/code") << files.home + QStringLiteral("/code/shop");
     runRow(world, QStringLiteral("Local folder"));
+    remember(world);
     palette(world).setQuery(QStringLiteral("~/code/shop"));
     rowOf(world, {});
     expect(palette(world).addBrowsedFolder(), describe(world));
@@ -214,9 +227,14 @@ QJsonObject started(World& world) {
 
 // --- Clones the node reports ---------------------------------------------------------------
 
-void reportClone(World& world, const QString& repository, QJsonObject fields) {
+// A linked environment the scenario's clones run on.
+const QString kLinked = QStringLiteral("beast");
+
+void reportClone(World& world, const QString& repository, QJsonObject fields, const QString& environment = {}) {
+  const QString on = environmentOf(world.node, environment);
   const QString destination = fakeFiles(world.node).home + QStringLiteral("/shop");
-  if (!world.node.projects.contains(kCloneProject)) addProjectRow(world.node, kCloneProject, QStringLiteral("shop"), destination);
+  const bool own = on == world.node.environmentId;
+  if (own && !world.node.projects.contains(kCloneProject)) addProjectRow(world.node, kCloneProject, QStringLiteral("shop"), destination);
   QJsonObject clone{{QStringLiteral("projectId"), kCloneProject},
                     {QStringLiteral("remoteUrl"), QStringLiteral("https://github.com/%1.git").arg(repository)},
                     {QStringLiteral("destinationPath"), destination},
@@ -226,8 +244,8 @@ void reportClone(World& world, const QString& repository, QJsonObject fields) {
                     {QStringLiteral("detail"), QJsonValue::Null},
                     {QStringLiteral("error"), QJsonValue::Null}};
   for (auto it = fields.begin(); it != fields.end(); ++it) clone.insert(it.key(), it.value());
-  fake(world).clones = {clone};
-  publish(world.node);
+  fake(world).clones[on] = {clone};
+  publish(world.node, on);
   world.sync();
 }
 
@@ -325,6 +343,31 @@ const Steps steps([] {
            fake(world).asked.join(u"; "));
   });
 
+  // Where browsing starts.
+  step(QStringLiteral("the add project base directory is %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    saveElsewhere(world.node, QStringLiteral("addProjectBaseDirectory"), c[0]);
+  });
+  step(QStringLiteral("the add project base directory is empty"), [](World& world, const Captures&, const Table&) {
+    saveElsewhere(world.node, QStringLiteral("addProjectBaseDirectory"), QString());
+  });
+  step(QStringLiteral("the user starts adding a project"), [](World& world, const Captures&, const Table&) {
+    openSources(world);
+    runRow(world, QStringLiteral("Local folder"));
+    remember(world);
+  });
+  step(QStringLiteral("(?:the folder browser opens in|browsing starts at) (%1|the home folder)").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         // A folder, as the palette browses one: with its separator.
+         QString folder = c[0] == u"the home folder" ? QStringLiteral("~") : c[0].mid(1, c[0].size() - 2);
+         if (!folder.endsWith(QLatin1Char('/'))) folder += QLatin1Char('/');
+         expect(fake(world).asked.contains(QStringLiteral("browse: ") + folder), fake(world).asked.join(u"; "));
+       });
+  step(QStringLiteral("the destination offered is %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(fake(world).asked.value(1) == QStringLiteral("browse: ") + c[0] &&
+               started(world).value(QLatin1String("destinationPath")).toString() == c[0],
+           fake(world).asked.join(u"; "));
+  });
+
   // Failures.
   step(QStringLiteral("adding a project will fail at (the clone|the repository lookup)"), [](World& world, const Captures& c, const Table&) {
     if (c[0] == u"the clone") {
@@ -352,6 +395,20 @@ const Steps steps([] {
                               {QStringLiteral("stage"), QStringLiteral("receiving")},
                               {QStringLiteral("percent"), c[1].toInt()}});
   });
+  step(QStringLiteral("a clone of %1 is receiving objects at (\\d+) percent on a linked environment").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         world.node.link(kLinked);
+         world.waitFor([&] {
+           for (const int id : world.node.subscribers(QStringLiteral("projectClones"))) {
+             if (world.node.shapeOf(id).value(QLatin1String("environment")) == kLinked) return true;
+           }
+           return false;
+         }, QStringLiteral("the clones of the linked environment to be followed"));
+         reportClone(world, c[0], {{QStringLiteral("phase"), QStringLiteral("running")},
+                                   {QStringLiteral("stage"), QStringLiteral("receiving")},
+                                   {QStringLiteral("percent"), c[1].toInt()}},
+                     kLinked);
+       });
   step(QStringLiteral("a clone of %1 finished").arg(q), [](World& world, const Captures& c, const Table&) {
     reportClone(world, c[0], {{QStringLiteral("phase"), QStringLiteral("done")},
                               {QStringLiteral("stage"), QStringLiteral("checkout")},
