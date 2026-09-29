@@ -91,6 +91,13 @@ Each of these must be named in at least one `# Sources:` block:
 - every keybinding id in `packages/contracts/src/keybindings.ts` (see `navigation/keybindings.feature`)
 - every command palette entry
 
+## Upstream
+
+T3 Code keeps shipping, and its behaviour is ledgered here even though its code is not carried.
+`features/UPSTREAM` is the upstream commit the ledger has been reviewed through, and
+`mise run upstream` digests the pull requests merged after it. The
+[upstream-ledger skill](../.agents/skills/upstream-ledger/SKILL.md) turns them into scenarios.
+
 ## Running
 
 The mise tasks in `mise-tasks/` are the way to run them (`mise tasks ls`); globs are relative to
