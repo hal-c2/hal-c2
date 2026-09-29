@@ -75,13 +75,13 @@ Feature: Layout: sidebar, header, right panel and drawer
     Scenario: The header names the project and thread
       Then the header shows the project name and the thread title
 
-    # Delivered natively (Workspace); no desktop test yet.
+    # The desktop hides the header while no thread is open instead (desktop/native-workspace.feature: Leaving the thread clears the header).
     @desktop @backlog-desktop
     Scenario: The header says when there is no thread
       Given no thread is open
       Then the header says "No thread"
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Choosing the project in the header starts a new thread there
       When the user chooses the project name in the header
       Then a new thread starts in that project
@@ -142,6 +142,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       Given the environment has no editors
       Then the header does not offer to open the workspace in an editor
 
+    # Delivered natively (Workspace places GitActions; GitController); source-control/ runs the actions, no test of this wording yet.
     @desktop @backlog-desktop
     Scenario: The thread's git actions are in the header
       When the user opens the git actions from the header

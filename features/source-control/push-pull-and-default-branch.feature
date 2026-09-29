@@ -79,6 +79,8 @@ Feature: Pushing, pulling and guarding the default branch
       | is on a detached HEAD     | Cannot pull from detached HEAD.                                        |
       | has no upstream           | Current branch has no upstream configured. Push with upstream first.   |
 
+  # The desktop runs the first three rows. On the default branch it never offers "Commit, push & PR"
+  # (GitController decides as gitActions.logic.ts does), so that row has no desktop test.
   @desktop
   Scenario Outline: Actions that would land on the default branch ask first
     Given the checkout is on the default branch "main"

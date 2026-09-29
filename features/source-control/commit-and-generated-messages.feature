@@ -50,17 +50,17 @@ Feature: Committing with written or generated messages
     Then the commit holds only "src/cart.ts"
     And "src/tax.ts" is still changed in the working tree
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Leaving every file out disables committing
     When the user leaves every file out of the commit
     Then neither committing nor committing on a new branch is possible
 
-  @desktop @tui @backlog-desktop
+  @desktop @tui
   Scenario: Cancelling the commit leaves everything as it was
     When the user starts a commit and then cancels it
     Then nothing is committed and both files are still changed
 
-  @desktop @backlog-desktop
+  @desktop
   Scenario: Committing on the default branch carries a warning
     Given the checkout is on the default branch "main"
     When the user starts a commit

@@ -531,9 +531,6 @@ const Steps steps([] {
   step(QStringLiteral("the browser opens %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(world.openedUrls == QList<QUrl>{QUrl(c[0])}, QStringLiteral("the browser opened %1").arg(world.openedUrls.size()));
   });
-  step(QStringLiteral("the user starts a new thread from the header"), [](World& world, const Captures&, const Table&) {
-    dispatch(world, QStringLiteral("workspace.newThread"));
-  });
 });
 
 }  // namespace

@@ -32,6 +32,7 @@ Feature: Repository status and working tree changes
     Then the status says the branch has an upstream
     And it reports 2 commits ahead and 1 behind
 
+  # Delivered natively (WorkspaceController follows the checkout's vcs status); no desktop test yet.
   @node @desktop @tui @backlog-desktop
   Scenario: Status follows the checkout while the thread is open
     Given the user is looking at a thread in "shop"
@@ -95,6 +96,7 @@ Feature: Repository status and working tree changes
     When status is read for "notes"
     Then the status says it is not a repository
 
+  # Delivered natively (GitController, vcs.init); source-control/git-actions.feature runs it in its own words, not these steps.
   @node @desktop @backlog-desktop
   Scenario: Initializing a repository in a plain folder
     Given the project "notes" is not in a git repository

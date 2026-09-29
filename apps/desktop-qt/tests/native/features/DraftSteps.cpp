@@ -1,6 +1,7 @@
 // The shell's drafts (DraftController): starting a new thread, the draft in
 // the sidebar and the window, its menu, and the thread it becomes
-// (features/desktop/native-drafts.feature, threads/creating.feature).
+// (features/desktop/native-drafts.feature, threads/creating.feature,
+// navigation/layout.feature).
 
 #include <QJsonObject>
 
@@ -36,6 +37,12 @@ QStringList sidebarDraftIds(World& world) {
 }
 
 // The window shows a draft in the project named `name`; it becomes the draft the steps talk about.
+// The project the header named when the user chose it.
+QString& headerProject() {
+  static QString name;
+  return name;
+}
+
 void expectNewDraft(World& world, const QString& name) {
   world.sync();
   const QVariant route = world.state(QStringLiteral("route"));
@@ -110,6 +117,17 @@ const Steps steps([] {
     world.node.threads.insert(draft->threadId, row);
     world.node.sendRow(draft->threadId, row);
     world.sync();
+  });
+
+  // The header's project label (navigation/layout.feature).
+  step(QStringLiteral("the user chooses the project name in the header"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    headerProject() = at(world.state(QStringLiteral("workspace")), QStringLiteral("projectTitle")).toString();
+    expect(!headerProject().isEmpty(), QStringLiteral("the header names no project"));
+    world.bridge().dispatch(QStringLiteral("workspace.newThread"), QVariantMap{});
+  });
+  step(QStringLiteral("a new thread starts in that project"), [](World& world, const Captures&, const Table&) {
+    expectNewDraft(world, headerProject());
   });
 
   // What the shell shows.

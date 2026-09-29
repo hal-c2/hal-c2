@@ -23,11 +23,6 @@ Feature: The desktop shell runs the workspace header against its node
     Given a connected environment with a thread in the git project "shop" on the branch "feature/tax"
 
   @desktop
-  Scenario: The header's new thread button opens a draft in the thread's project
-    When the user starts a new thread from the header
-    Then the window shows a new draft in "shop"
-
-  @desktop
   Scenario: The header opens the checkout's pull request in the browser
     Given the checkout's pull request is "https://github.com/acme/shop/pull/7"
     When the user opens the pull request from the header
