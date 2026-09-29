@@ -7,8 +7,10 @@ defmodule HalC2.ProviderSecrets do
 
   On every write `seal/2` moves a sensitive value out and leaves
   `%{"value" => "", "valueRedacted" => true}` in its place; a client that sends a
-  redacted entry back means "keep what is stored". A variable made plain, emptied or
-  dropped forgets its secret. `value/2` reads one back for the agent's environment.
+  redacted entry back means "keep what is stored". A redacted entry whose name has
+  nothing stored (a renamed variable) is saved empty and unredacted, never as a secret
+  that is not there. A variable made plain, emptied or dropped forgets its secret.
+  `value/2` reads one back for the agent's environment.
   """
 
   @doc """
@@ -95,8 +97,10 @@ defmodule HalC2.ProviderSecrets do
             write(id, name, inline)
             {redacted(variable), {true, kept}}
 
+          # Nothing is stored under this name (a renamed row, say): no secret to keep,
+          # so the entry says so rather than claiming one.
           _ ->
-            {Map.put(variable, "value", ""), {changed, kept}}
+            {unset(variable), {remove(id, name) or changed, kept}}
         end
 
       value != "" ->
@@ -104,7 +108,7 @@ defmodule HalC2.ProviderSecrets do
         {redacted(variable), {true, kept}}
 
       true ->
-        {Map.delete(variable, "valueRedacted"), {remove(id, name) or changed, kept}}
+        {unset(variable), {remove(id, name) or changed, kept}}
     end
   end
 
@@ -114,6 +118,8 @@ defmodule HalC2.ProviderSecrets do
   end
 
   defp seal_variable(_id, variable, _previous, changed, kept), do: {variable, {changed, kept}}
+
+  defp unset(variable), do: variable |> Map.put("value", "") |> Map.delete("valueRedacted")
 
   defp redacted(variable), do: variable |> Map.put("value", "") |> Map.put("valueRedacted", true)
 

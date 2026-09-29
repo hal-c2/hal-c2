@@ -112,6 +112,30 @@ defmodule HalC2.SettingsTest do
       assert Settings.instance_env("claudeAgent_work") == %{}
     end
 
+    test "a redacted variable with nothing stored under its name is saved as unset", %{
+      tmp_dir: dir
+    } do
+      token = %{"name" => "API_KEY", "value" => "sk-1", "sensitive" => true}
+      assert {:ok, 1} = Settings.put(instance([token]), 0)
+
+      # A client renamed the stored row without a new value.
+      renamed = %{
+        "name" => "OPENAI_KEY",
+        "value" => "",
+        "sensitive" => true,
+        "valueRedacted" => true
+      }
+
+      assert {:ok, 2} = Settings.put(instance([renamed]), 1)
+
+      assert [%{"name" => "OPENAI_KEY", "value" => "", "sensitive" => true} = variable] =
+               variables()
+
+      refute Map.has_key?(variable, "valueRedacted")
+      assert [] = Path.wildcard(Path.join(dir, "**/secrets/provider-env-*.bin"))
+      assert Settings.instance_env("claudeAgent_work") == %{"OPENAI_KEY" => ""}
+    end
+
     test "a plain-text secret already on disk is sealed at start", %{path: path} do
       :ok = stop_supervised(Settings)
       token = %{"name" => "TOKEN", "value" => "sk-1", "sensitive" => true}

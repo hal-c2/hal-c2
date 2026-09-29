@@ -110,6 +110,12 @@ Feature: Provider instances
     Then the value is stored in the node's secrets
     And clients only see that a value is set
 
+  Scenario: A secret variable renamed without a new value has no value
+    Given the Claude instance keeps "API_KEY" as a stored secret
+    When a client saves it renamed to "OPENAI_KEY" without a new value
+    Then clients see "OPENAI_KEY" with no value set
+    And the secret of "API_KEY" is forgotten
+
   @backlog
   Scenario: A variable with an invalid name is not saved
     When the user adds the variable "1BAD" to an instance
