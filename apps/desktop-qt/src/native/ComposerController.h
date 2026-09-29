@@ -41,7 +41,6 @@ class TimelineModel;
 // null with no thread or draft open), `modelPicker` (ShellModelPickerState)
 // and `turn`, the route thread's requests for the request bricks:
 //   {threadKey, kind: "thread", running,
-//    attachments: [{id, name, mimeType, sizeBytes}],
 //    approvals: [{requestId, title, appName, detail, options: [{decision, label,
 //      warning}], canRespond, responding, problem}],
 //    questions: [{requestId, questions: [{id, header, question, options:
@@ -51,7 +50,7 @@ class TimelineModel;
 //    queue: [{runId, text}]}
 // `problem` says why a request cannot be answered, when it cannot. On a new
 // thread's draft route the turn is {threadKey: draftId, kind: "draft",
-// attachments, sending} with nothing pending; `sending` while its first send
+// sending} with nothing pending; `sending` while its first send
 // is on the way.
 //
 // `composer.edit` is the brick's last edit ({clientId, revision}) the shell

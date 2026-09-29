@@ -66,7 +66,7 @@ start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   row deltas (`ShellStore`, projects and threads). On the first snapshot it
   builds `sidebar` itself from those rows, its own drafts and its own `route`,
   claims the key so anything the page still publishes to it is dropped, and
-  intercepts the row, project and draft actions and the composer's plain sends;
+  intercepts the row, project, draft and composer actions;
   it announces this as `native` and a `shell.native` action, and a page that
   loads later asks with `shell.native.query`. Nothing it builds reads
   page-published state. Environments outside the node's cluster are reached
@@ -549,70 +549,61 @@ buttons are not Tab stops; the thread menu carries the same actions.
 
 ### `composer`
 
-`apps/web/src/shell/ShellComposerBridge.tsx` is mounted _inside_
-`ChatComposer` when hosted. It publishes `ShellComposerState` — draft text,
-placeholder, whether sending is possible and why not, running/connecting
-flags, the selected model, the provider option descriptors (reasoning effort
-etc.), runtime modes and the plan/build toggle — and still carries mentions,
-suggestions and terminal contexts. `ChatComposer` hides its editor and footer
-when hosted.
-
-The model catalogue is its own key, `modelPicker`, because `composer`
-republishes on every keystroke and an OpenCode catalogue runs to dozens of
-models. It holds the enabled instances in rail order, their models already
-filtered, ordered and marked (favourite, legacy, disabled reason), plus the
-picker's chords resolved from the user's keybindings. The `ModelPicker`
-brick copies the web picker's rail, ranking, rows and keys from that
-(`js/modelPicker.js` names the web files it mirrors), so search stays in QML
-and only a choice or a star crosses back. Its popup does not close on
-Escape by `closePolicy`: a popup that does blocks every window shortcut,
-including the `modelPicker.toggle` binding that must close it again.
-
-Once native, `ComposerController` owns the turn of the thread the route
-shows: it keeps each thread's draft (text, model, options, modes, images)
-from the brick's own actions, which still reach the page so it follows, and
-sends, queues, steers, stops, answers approvals and questions and implements
-the plan with node RPCs itself. It publishes the route thread's pending state
-as `turn` (see `ComposerController.h`), which the `TurnRequests` brick stacks
-above the `Composer`; its answers are `composer.approval.respond`,
-`composer.question.answer`, `composer.question.dismiss`,
-`composer.plan.implement`, `composer.queue.remove` and `composer.queue.steer`.
-A draft route's turn only carries the draft's text, which `DraftController`
-keeps. A shell-kept draft's first send launches the thread itself
+`ComposerController` publishes `composer` (`ShellComposerState`) and owns
+the composer of the thread or new-thread draft the route shows; the page
+publishes nothing for it. Each thread keeps its draft (text, caret, model,
+options, modes, images) in the controller, saved on this machine; a new
+thread's text is `DraftController`'s. It sends, queues, steers, stops,
+answers approvals and questions and implements the plan with node RPCs, and
+publishes the route thread's pending state as `turn` (see
+`ComposerController.h`), which the `TurnRequests` brick stacks above the
+`Composer`. A new thread's first send launches it
 (`orchestration.launchThread` with the draft's checkout, model and modes) and
-the window replaces the draft with the thread. Slash commands, background
-starts and drafts only the page has still reach the page.
+the window replaces the draft with the thread; a background send leaves the
+draft for another prompt and toasts a way to open the thread, or to restore
+the prompt if the launch fails.
 
-Actions: `composer.text.set {target, text, cursor?, edit?}` (debounced from the QML
-editor), `composer.submit {text?, intent?, edit?}` (text rides along so the send is
-atomic with the last edit), `composer.interrupt`, `composer.model.select
-{instanceId, model}`, `composer.option.set {id, value}`,
-`composer.model.favorite.toggle {instanceId, model}`,
-`composer.runtimeMode.set {mode}`, `composer.interactionMode.set {mode}`,
-`composer.suggest.select {id}`, `composer.suggest.dismiss`,
-`composer.history.step {direction}` (Up/Down on the editor's edge; the page
-keeps the prompt history and answers with the recalled draft). The page's
-`modelPicker.toggle` command dispatches `composer.modelPicker.toggle` the
-other way, page → shell, since the HTML picker is hidden when hosted, and
-the toolbar commands (`composer.effort`, `.mode`, `.host`, `.workspace`,
-`.branch`) dispatch `composer.control.open {command}`; the `Composer` brick
-listens on `Shell.actionRequested` and opens its own control.
+The model catalogue is the `providers` of the route environment's config
+(`WorkspaceController::environmentConfig`), so a linked thread lists its own
+machine's models, gated on the environment being online rather than local.
+It is its own key, `modelPicker`, because `composer` republishes on every
+keystroke and an OpenCode catalogue runs to dozens of models. It holds the
+enabled instances in rail order, their models already filtered, ordered and
+marked (favourite, legacy, disabled reason), plus the picker's chords
+resolved from the user's keybindings. The `ModelPicker` brick copies the web
+picker's rail, ranking, rows and keys from that (`js/modelPicker.js` names
+the web files it mirrors), so search stays in QML and only a choice or a star
+crosses back. `composer.model.select` accepts only a ready instance's listed
+model, and once a thread has run a turn only its own provider's. Runtime and
+interaction modes are set on the thread before a send only when the user
+changed them, and plan mode appears only with the `planModeEnabled` setting
+and a provider that offers it. Its popup does not close on Escape by
+`closePolicy`: a popup that does blocks every window shortcut, including the
+`modelPicker.toggle` binding that must close it again.
 
-Text edits and submissions carry an `edit: {clientId, revision}` stamp. The
-page publishes the latest applied stamp with the draft and retains it when
-page actions change or clear the text. The brick ignores publications that
-have not applied its latest edit, preserving newer text and the caret even
-when publications are delayed, coalesced, or repeat an earlier value. Switching
-targets resets the brick's pending revision. The stamp is optional for older
-shells/pages; pages without it retain the legacy text-based synchronization.
+Text edits and submissions carry an `edit: {clientId, revision}` stamp, which
+the controller publishes back with the draft once applied. The brick ignores
+publications that have not applied its latest edit, preserving newer text and
+the caret even when publications are delayed, coalesced, or repeat an earlier
+value; the controller's own changes (a picked suggestion, a cleared send, a
+restored failure) still land. Switching targets resets the pending revision.
 
-`@file`, `$skill` and `/command` suggestions reuse `ChatComposer`'s own
-trigger detection and menu: the QML editor edits the raw prompt (mentions
-written out as `[label](path)`), so it sends an _expanded_ caret with each
-edit; `ChatComposer` collapses it, re-detects the trigger and publishes
-`triggerKind`, `suggestions` and `suggestionsEmptyText`. Selecting sends the
-item id back and the page applies the same replacement the HTML menu would,
-then publishes the new `text` and `cursor` for the editor to adopt.
+`@file`, `$skill` and `/command` suggestions are computed from the raw prompt
+and caret: `/` lists the provider's commands (and skills, with
+`showSkillsInSlashMenu`) plus `/model`, `/plan` and `/default`, which switch
+without sending; `$` the provider's skills; `@` asks the node's workspace
+search (`WorkspaceFiles`, the Files tab's) for the route's checkout. Selecting
+sends the item id back and the controller applies the replacement.
+
+Prompt history (`composer.history.step`) and terminal contexts are not the
+controller's yet: it drops the step, publishes no terminal contexts, and a
+terminal selection's `composer.terminalContext.add` goes nowhere.
+
+The page's `modelPicker.toggle` command dispatches
+`composer.modelPicker.toggle` page → shell, and the toolbar commands
+(`composer.effort`, `.mode`, `.host`, `.workspace`, `.branch`) dispatch
+`composer.control.open {command}`; the `Composer` brick listens on
+`Shell.actionRequested` and opens its own control.
 
 ### `rightPanel` and `panel`
 
@@ -787,7 +778,7 @@ replace}` (`shellRoute.ts` maps paths), and the shell adopts it; a page
 report that matches the top of the back stack pops it. The page never keeps
 state of its own about where it is beyond its URL.
 
-Bridges tied to a thread route (`workspace`, `composer`, `rightPanel`)
+Bridges tied to a thread route (`workspace`, `rightPanel`)
 publish `null` for their key on unmount, so leaving a thread clears the
 native chrome instead of freezing it on the last thread.
 
@@ -999,14 +990,11 @@ selector, the checkout-mode picker, the PR badge and the branch button
 
 ### Composer extras
 
-`composer.attach {files:[{name, mimeType, base64}]}` feeds shell-read image
-files into the composer's drop pipeline (the brick reads dropped or picked
-files through `Shell.readImageFiles`, 10 MB cap, images only).
-`composer.terminalContext.add {…selection}` adds a terminal selection; the
-embed document's terminal forwards its selections with `halC2Shell.dispatch`, so
-they land in the primary's draft. Attached images and terminal contexts are
-published as removable chips (`composer.attachment.remove`,
-`composer.terminalContext.remove`).
+`composer.attach {files:[{name, mimeType, base64}]}` adds shell-read images to
+the route's draft (the brick reads dropped or picked files through
+`Shell.readImageFiles`, 10 MB cap, images only); they are published as
+removable chips (`composer.attachment.remove`) and uploaded with
+`assets.persistChatAttachments` when the turn is sent.
 
 ## Linux and packaging
 
