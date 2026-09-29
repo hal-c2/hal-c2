@@ -84,6 +84,23 @@ const FakeNode::Extension extension([](FakeNode& node) {
     node.reply(rpc, QJsonObject{{QStringLiteral("version"), fake.version}});
     sendConfig(node, node.environmentId,
                {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), fake.settings}});
+    // As HalC2.Settings provider_enabled? reads it: an instance's own entry
+    // first, then its driver's.
+    QJsonArray providers = fake.config.value(QLatin1String("providers")).toArray();
+    bool changed = false;
+    for (qsizetype i = 0; i < providers.size(); ++i) {
+      QJsonObject entry = providers.at(i).toObject();
+      const QString id = entry.value(QLatin1String("instanceId")).toString();
+      const QJsonObject instance = fake.settings.value(QLatin1String("providerInstances")).toObject().value(id).toObject();
+      const QJsonValue enabled = instance.contains(QLatin1String("enabled"))
+                                     ? instance.value(QLatin1String("enabled"))
+                                     : fake.settings.value(QLatin1String("providers")).toObject().value(id).toObject().value(QLatin1String("enabled"));
+      if (!enabled.isBool() || enabled == entry.value(QLatin1String("enabled"))) continue;
+      entry.insert(QStringLiteral("enabled"), enabled);
+      providers.replace(i, entry);
+      changed = true;
+    }
+    if (changed) publishProviders(node, providers);
   });
 });
 

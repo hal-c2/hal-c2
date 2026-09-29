@@ -11,6 +11,7 @@
 #include "DraftController.h"
 #include "Harness.h"
 #include "NavigationController.h"
+#include "ProviderSettingsController.h"
 #include "SettingsController.h"
 #include "ThreadMenuController.h"
 #include "RightPanelController.h"
@@ -42,11 +43,13 @@ void World::start() {
     if (key == QLatin1String("theme")) m_theme->applyBaseTheme(value);
   });
   m_bridge->setUrlOpener([this](const QUrl& url) { openedUrls.append(url); });
-  m_native->controller<ThreadMenuController>()->setClipboardWriter([this](const QString& text) {
+  const auto writeClipboard = [this](const QString& text) {
     if (clipboardFails) return false;
     clipboard = text;
     return true;
-  });
+  };
+  m_native->controller<ThreadMenuController>()->setClipboardWriter(writeClipboard);
+  m_native->controller<ProviderSettingsController>()->setClipboardWriter(writeClipboard);
   setTime(m_now);
   QObject::connect(m_bridge.get(), &ShellBridge::actionRequested, m_bridge.get(),
                    [this](const QString& type, const QVariant& payload) { onPageAction(type, payload.toMap()); });

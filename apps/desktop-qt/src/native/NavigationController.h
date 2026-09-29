@@ -51,11 +51,13 @@ public:
   static inline const QString kClusterSection = QStringLiteral("/settings/cluster");
   static inline const QString kKeybindingsSection = QStringLiteral("/settings/keybindings");
   static inline const QString kConnectionsSection = QStringLiteral("/settings/connections");
+  static inline const QString kProvidersSection = QStringLiteral("/settings/providers");
   // The shell's own pages: those settings sections and pull requests.
   // The page is not told about them and stays where it was.
   static bool isNative(const Route& route) {
     return route == Route::settings(kClusterSection) || route == Route::settings(kConnectionsSection) ||
-           route == Route::settings(kKeybindingsSection) || route.kind == QLatin1String("pullRequests") ||
+           route == Route::settings(kKeybindingsSection) ||
+           route == Route::settings(kProvidersSection) || route.kind == QLatin1String("pullRequests") ||
            route.kind == QLatin1String("usage");
   }
 

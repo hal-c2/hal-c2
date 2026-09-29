@@ -49,14 +49,15 @@ Item {
             compare(Pages.brickFor("/settings/cluster"), "ClusterSettings");
             compare(Pages.brickFor("/settings/connections"), "ConnectionsSettings");
             compare(Pages.brickFor("/settings/keybindings"), "KeybindingsSettings");
-            compare(Pages.brickFor("/settings/providers"), "", "the page still renders Providers");
+            compare(Pages.brickFor("/settings/providers"), "ProvidersSettings");
+            compare(Pages.brickFor("/settings/storage"), "", "the page still renders Storage");
             compare(Pages.brickFor("/settings/nowhere"), "");
         }
 
         function test_navListsNativePagesAlwaysAndThePagesWhileListed() {
             const labels = rows => rows.map(section => section.label);
             compare(labels(Pages.navRows([], {})), ["General", "Appearance", "Keybindings"]);
-            compare(labels(Pages.navRows([{ to: "/settings/providers" }], { cluster: {} })), ["General", "Appearance", "Keybindings", "Providers", "Cluster"]);
+            compare(labels(Pages.navRows([{ to: "/settings/storage" }], { cluster: {}, providerSettings: {} })), ["General", "Appearance", "Keybindings", "Providers", "Storage", "Cluster"]);
         }
 
         function test_searchFindsNativeSectionsAndDropsThePagesResultsInThem() {
@@ -64,8 +65,9 @@ Item {
             compare(Pages.searchRows("invite", { cluster: {} })[0].label, "Cluster");
             compare(Pages.searchRows("pairing", {}).length, 0, "Connections waits for its state");
             compare(Pages.searchRows("pairing", { connections: {} })[0].label, "Connections");
-            const kept = Pages.pageResults([{ to: "/settings/appearance" }, { to: "/settings/providers" }, { to: "/settings/connections" }]);
-            compare(kept.map(result => result.to), ["/settings/providers"]);
+            compare(Pages.searchRows("sign out", { providerSettings: {} })[0].label, "Providers");
+            const kept = Pages.pageResults([{ to: "/settings/appearance" }, { to: "/settings/storage" }, { to: "/settings/providers" }]);
+            compare(kept.map(result => result.to), ["/settings/storage"]);
         }
 
         function test_projectGroupingRestoresTheModeUsedBefore() {
@@ -95,7 +97,7 @@ Item {
             verify(!!host);
             tryCompare(host, "status", Loader.Ready);
             compare(host.item.objectName, "generalSettings");
-            host.section = "/settings/providers";
+            host.section = "/settings/storage";
             verify(!host.active, "the page's section loads nothing");
         }
 

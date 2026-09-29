@@ -9,6 +9,7 @@
 #   apps/web/src/components/settings/ProviderSetupSection.tsx
 #   apps/mobile/src/features/settings/SettingsProviderAccountsRouteScreen.tsx
 #   packages/contracts/src/providerSetup.ts (ProviderAuthState, ProviderInstallState, ProviderSetupError)
+#   apps/desktop-qt/src/native/ProviderSettingsController.cpp (the desktop's sign-out and email)
 #   packages/contracts/src/rpc.ts (provider.install.start, provider.install.cancel, provider.install.remove, provider.install.subscribe, server.updateProvider)
 
 @node
@@ -131,14 +132,14 @@ Feature: Provider setup, updates and sign-in
     When the user sends a response from the mobile app
     Then the response reaches the sign-in terminal on the node
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-node
   Scenario: Signing out asks for confirmation and keeps history
     Given the user is signed in to an ACP agent
     When the user signs out and confirms
     Then running threads sharing that sign-in stop
     And thread history is kept
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile @backlog-node
   Scenario: The signed-in email is hidden until the user reveals it
     Given a provider is signed in as "me@example.com"
     When the user opens the provider
