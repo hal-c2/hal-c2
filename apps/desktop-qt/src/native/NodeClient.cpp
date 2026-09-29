@@ -114,6 +114,16 @@ void NodeClient::post(const QString& path, const QJsonObject& body, Reply reply)
   });
 }
 
+QNetworkRequest NodeClient::request(const QString& path, const QString& query, bool socket) const {
+  QUrl url = m_origin;
+  if (socket) url.setScheme(m_origin.scheme() == QLatin1String("https") ? QStringLiteral("wss") : QStringLiteral("ws"));
+  url.setPath(path);
+  url.setQuery(query);
+  QNetworkRequest request(url);
+  request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
+  return request;
+}
+
 void NodeClient::dispatchCommand(const QString& environment, QJsonObject command, Reply reply) {
   command.insert(QStringLiteral("commandId"), QUuid::createUuid().toString(QUuid::WithoutBraces));
   call(environment, QStringLiteral("orchestration.dispatchCommand"), command, std::move(reply));

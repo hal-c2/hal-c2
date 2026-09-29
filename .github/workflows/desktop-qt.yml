@@ -69,16 +69,19 @@ jobs:
           modules: qtwebengine qtwebchannel qtpositioning qtwebsockets
           cache: true
 
+      # FFmpeg's libavcodec, libavutil and libswscale decode the Device tab's
+      # H.264 screen (cmake/NativeShell.cmake); the bundlers below carry them.
       - name: Install build tools (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-dev libfuse2 \
-            libxcb-cursor0 libnss3 libxcomposite1 libxdamage1 libxrandr2 libasound2t64
+            libxcb-cursor0 libnss3 libxcomposite1 libxdamage1 libxrandr2 libasound2t64 \
+            pkg-config libavcodec-dev libavutil-dev libswscale-dev
 
       - name: Install build tools (macOS)
         if: runner.os == 'macOS'
-        run: brew install ninja
+        run: brew install ninja pkg-config ffmpeg
 
       # The first configure builds libghostty-vt (the terminal drawer's
       # emulator) with Zig from a Ghostty checkout; both are cached here, and

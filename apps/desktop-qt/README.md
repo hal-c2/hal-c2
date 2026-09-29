@@ -17,6 +17,9 @@ as the installed app does.
 
 Besides Qt Quick and WebEngine, the shell needs the Qt WebSockets module for its own node
 client: `qt6-websockets` on Arch and Fedora, `qt6-websockets-dev` on Debian and Ubuntu.
+The Device tab decodes H.264 with FFmpeg's libavcodec, libavutil and libswscale, found through
+`pkg-config`: `ffmpeg` on Arch and Homebrew, `libavcodec-dev libavutil-dev libswscale-dev` on
+Debian and Ubuntu.
 
 The terminal drawer is [qml-ghostty](https://github.com/hal-c2/qml-ghostty), fetched at the
 revision pinned in `cmake/QmlGhostty.cmake`. The first configure builds its libghostty-vt from
