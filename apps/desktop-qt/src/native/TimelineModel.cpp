@@ -10,9 +10,12 @@
 namespace {
 
 // The entity kinds the timeline reads; the stream's others (nodes, provider
-// sessions, messages, plans, checkpoints, ...) are left out.
-const QSet<QString> kKinds{QStringLiteral("turn-item"), QStringLiteral("run"), QStringLiteral("run-attempt"),
-                           QStringLiteral("runtime-request")};
+// sessions, checkpoints, ...) are left out. Plans and the user's messages are
+// kept for the composer (turnChanged) and draw no rows.
+const QSet<QString> kKinds{QStringLiteral("turn-item"),       QStringLiteral("run"),  QStringLiteral("run-attempt"),
+                           QStringLiteral("runtime-request"), QStringLiteral("plan"), QStringLiteral("message")};
+// Turn items the composer's turn state reads (requests).
+const QSet<QString> kTurnItems{QStringLiteral("approval_request"), QStringLiteral("user_input_request")};
 // Turn item fields that move, regroup or refold rows. Anything else (text,
 // output, status) only redraws the row showing the item.
 const QSet<QString> kStructural{QStringLiteral("type"),    QStringLiteral("runId"),       QStringLiteral("ordinal"),
@@ -172,22 +175,28 @@ void TimelineModel::snapshot(int part, const QJsonArray& rows, bool done) {
   for (const QJsonValue& value : rows) {
     const QJsonArray row = value.toArray();
     const QString kind = row.at(0).toString();
-    if (kKinds.contains(kind)) m_incoming[kind].insert(row.at(1).toString(), row.at(2).toObject());
+    if (!kKinds.contains(kind)) continue;
+    const QJsonObject entity = row.at(2).toObject();
+    if (kind == QLatin1String("message") && text(entity, QLatin1String("role")) != QLatin1String("user")) continue;
+    m_incoming[kind].insert(row.at(1).toString(), entity);
   }
   if (!done) return;
   // Everything may have changed: the rows keep their ids and are redrawn.
   m_entities = std::exchange(m_incoming, {});
   sortItems();
   restructure({}, true);
+  emit turnChanged();
 }
 
 void TimelineModel::events(const QJsonArray& events) {
   QSet<QString> changed;
   bool structural = false;
+  m_turnTouched = false;
   for (const QJsonValue& value : events) {
     const QJsonArray event = value.toArray();
     structural |= apply(event.at(1).toString(), event.at(2).toString(), event.at(3).toObject(), changed);
   }
+  if (m_turnTouched) emit turnChanged();
   if (structural) {
     restructure(changed, false);
     return;
@@ -206,7 +215,23 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
   const auto current = byKind.constFind(id);
   const bool existed = current != byKind.cend();
   const std::optional<QJsonObject> next = patched(existed ? *current : QJsonObject(), patch);
+  if (kind == QLatin1String("plan") || kind == QLatin1String("message")) {
+    // The agent's streamed replies are the turn items'; only the user's
+    // messages (a queued run's text) are kept.
+    if (kind == QLatin1String("message") && text(next ? *next : QJsonObject(), QLatin1String("role")) != QLatin1String("user")) {
+      byKind.remove(id);
+      return false;
+    }
+    m_turnTouched = true;
+    if (next) {
+      byKind.insert(id, *next);
+    } else {
+      byKind.remove(id);
+    }
+    return false;
+  }
   if (kind != QLatin1String("turn-item")) {
+    m_turnTouched = true;
     // Runs, attempts and requests change fold labels, visibility and the
     // working state; they change far less often than items.
     if (next) {
@@ -217,6 +242,8 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
     return true;
   }
   changed.insert(id);
+  const QString type = text(next ? *next : existed ? *current : QJsonObject(), QLatin1String("type"));
+  if (kTurnItems.contains(type)) m_turnTouched = true;
   const bool replaced = patch.value(QLatin1String("d")).toBool();
   bool structural = !existed || !next || replaced;
   QStringList fields = patch.value(QLatin1String("s")).toObject().keys();
@@ -577,7 +604,7 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
   } else if (type == QLatin1String("dynamic_tool")) {
     label = item.value(QLatin1String("toolName")).toString(QStringLiteral("Used tool"));
   } else if (type == QLatin1String("approval_request") || type == QLatin1String("user_input_request")) {
-    // Read only until the native composer answers requests.
+    // Answered in the composer (ComposerController); the row records the ask.
     const bool approval = type == QLatin1String("approval_request");
     label = approval ? QStringLiteral("Approval requested") : QStringLiteral("Input requested");
     if (approval) {

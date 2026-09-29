@@ -14,6 +14,12 @@ Rectangle {
 
     readonly property var model: Shell.state.composer ?? null
     readonly property var workspace: Shell.state.workspace ?? null
+    // The shell's own turn for the thread this composer shows
+    // (ComposerController): its draft and images live there, not on the page.
+    readonly property var turn: Shell.state.turn ?? null
+    readonly property bool nativeTurn: ready && turn !== null && turn.threadKey === model.target
+    // A new thread's draft keeps only its text there; its images are the page's.
+    readonly property var attachments: nativeTurn && turn.kind !== "draft" ? turn.attachments : ready ? model.attachments : []
     readonly property bool ready: model !== null && model.target !== null
     readonly property string publishedTarget: ready ? model.target : ""
     readonly property string publishedText: ready ? model.text : ""
@@ -67,6 +73,8 @@ Rectangle {
     readonly property string editClientId: Date.now().toString(36) + Math.random().toString(36).slice(2)
     property int nextEditRevision: 0
     property int lastSentRevision: 0
+    // The target whose kept draft this brick has offered to the editor.
+    property string adoptedTarget: ""
 
     implicitHeight: stack.implicitHeight + gutter
     color: canvas
@@ -209,7 +217,7 @@ Rectangle {
         // canSend reflects the text the page has seen, which lags this input by
         // the debounce; with local text, let the page validate the send (it
         // echoes the prompt back if it declines).
-        if (!composer.model.canSend && input.text.trim().length === 0) {
+        if (!composer.model.canSend && input.text.trim().length === 0 && composer.attachments.length === 0) {
             return;
         }
         textDebounce.stop();
@@ -237,6 +245,7 @@ Rectangle {
             lastSentCursor = cursor;
             input.text = text;
             input.cursorPosition = cursor;
+            adoptDraft();
             return;
         }
         // Compare the publication's edit revision, not its text: returning to
@@ -253,6 +262,21 @@ Rectangle {
             input.cursorPosition = cursor;
             lastSentCursor = cursor;
         }
+    }
+
+    onTurnChanged: adoptDraft()
+
+    // A thread the shell kept a draft for opens with it when the page has none.
+    function adoptDraft() {
+        // Read the state itself: this runs before the bindings above catch up.
+        const kept = Shell.state.turn ?? null;
+        const target = Shell.state.composer?.target ?? null;
+        if (kept === null || target === null || kept.threadKey !== target || adoptedTarget === target) return;
+        adoptedTarget = target;
+        if (input.text.length > 0 || !kept.draft) return;
+        input.text = kept.draft;
+        input.cursorPosition = kept.draft.length;
+        flushText();
     }
 
     onSuggestionsChanged: suggestionList.currentIndex = suggestions.length > 0 ? 0 : -1
@@ -393,11 +417,11 @@ Rectangle {
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     Layout.topMargin: 12
-                    visible: composer.ready && (composer.model.attachments.length > 0 || composer.model.terminalContexts.length > 0)
+                    visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0)
                     spacing: 6
 
                     Repeater {
-                        model: composer.ready ? composer.model.attachments : []
+                        model: composer.attachments
 
                         delegate: ShellButton {
                             required property var modelData
@@ -617,7 +641,8 @@ Rectangle {
                     }
 
                     Text {
-                        visible: composer.ready && composer.model.pendingApprovalCount > 0
+                        // TurnRequests answers the shell's own turn above the composer.
+                        visible: composer.ready && !composer.nativeTurn && composer.model.pendingApprovalCount > 0
                         text: composer.ready ? qsTr("%1 approval(s) waiting in the timeline").arg(composer.model.pendingApprovalCount) : ""
                         color: Theme.palette.color("warning", "#e0af68")
                         font.pixelSize: 12
@@ -625,7 +650,7 @@ Rectangle {
                     }
 
                     ShellButton {
-                        visible: composer.ready && composer.model.showPlanFollowUpPrompt && input.text.trim().length === 0 && !primaryAction.stopMode
+                        visible: composer.ready && !composer.nativeTurn && composer.model.showPlanFollowUpPrompt && input.text.trim().length === 0 && !primaryAction.stopMode
                         implicitHeight: 28
                         text: qsTr("Implement")
                         onClicked: composer.submit("foreground")
@@ -636,14 +661,14 @@ Rectangle {
                         id: primaryAction
                         objectName: "primaryAction"
 
-                        readonly property bool stopMode: composer.ready && composer.model.isRunning && input.text.trim().length === 0
+                        readonly property bool stopMode: composer.ready && composer.model.isRunning && input.text.trim().length === 0 && composer.attachments.length === 0
                         // A send during a turn joins it or waits behind it, per the
                         // follow-up setting; the button says which before the click.
                         readonly property string followUp: composer.model.isRunning && !stopMode ? (composer.model.followUpBehavior ?? "steer") : ""
 
                         implicitWidth: 32
                         implicitHeight: 32
-                        enabled: composer.ready && (stopMode || composer.model.canSend || input.text.trim().length > 0)
+                        enabled: composer.ready && (stopMode || composer.model.canSend || input.text.trim().length > 0 || composer.attachments.length > 0)
                         hoverEnabled: true
                         opacity: enabled ? 1 : 0.3
                         scale: down ? 0.97 : hovered ? 1.05 : 1

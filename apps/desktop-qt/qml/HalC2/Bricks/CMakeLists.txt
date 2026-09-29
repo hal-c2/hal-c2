@@ -51,6 +51,7 @@ qt_add_qml_module(hal_c2_bricks
     GeneralSettings.qml
     AppearanceSettings.qml
     ThemeEditor.qml
+    TurnRequests.qml
     ProjectRemovalDialog.qml
     js/lucide.js
     js/modelPicker.js

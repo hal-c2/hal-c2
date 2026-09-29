@@ -295,15 +295,6 @@ const Steps steps([] {
     world.sync();
     expect(titled(world, c[0]), describeTitle(world));
   });
-  step(QStringLiteral("the user is told %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const auto shown = [&] {
-      for (const QVariant& item : at(world.state(QStringLiteral("toasts")), QStringLiteral("items")).toList()) {
-        if (item.toMap().value(QStringLiteral("title")) == c[0]) return true;
-      }
-      return false;
-    };
-    world.waitFor(shown, [&] { return QStringLiteral("the toast \"%1\"; the shell shows %2").arg(c[0], show(world.state(QStringLiteral("toasts")))); });
-  });
   step(QStringLiteral("the user picks Rename for %1 in the thread list").arg(q), [](World& world, const Captures& c, const Table&) {
     world.bridge().dispatch(QStringLiteral("workspace.rename.begin"), QVariantMap{{QStringLiteral("threadKey"), c[0]}});
   });

@@ -111,6 +111,11 @@ ShellWindow {
                     url: Shell.pageUrl
                 }
 
+                TurnRequests {
+                    Layout.fillWidth: true
+                    visible: composerView.visible && implicitHeight > 0
+                }
+
                 Composer {
                     id: composerView
 

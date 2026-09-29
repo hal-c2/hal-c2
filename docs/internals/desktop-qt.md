@@ -499,8 +499,9 @@ first send promotes it (`ComposerController`); a draft whose thread row
 arrives, or whose project goes, is dropped. The page is told the draft's
 `environmentId`, `projectId` and `threadId` with `route.follow`, and draws
 the composer for that thread id; a draft the page opened itself comes back
-the same way with `route.open` and is adopted. The draft's text still lives
-in the page's composer.
+the same way with `route.open` and is adopted. The draft's text is kept with
+the draft: the composer's `composer.text.set` on a draft route saves it
+through `DraftController`, so it survives a restart.
 
 The QML sidebar reconciles publications into a keyed `ListModel`, updating
 and moving existing rows instead of replacing the list. This preserves row
@@ -543,14 +544,12 @@ buttons are not Tab stops; the thread menu carries the same actions.
 ### `composer`
 
 `apps/web/src/shell/ShellComposerBridge.tsx` is mounted _inside_
-`ChatComposer` when hosted, so approvals, user-input questions, plan
-follow-ups, attachments and mentions keep their one implementation. It
-publishes `ShellComposerState` — draft text, placeholder, whether sending is
-possible and why not, running/connecting flags, the selected model, the
-provider option descriptors (reasoning effort etc.), runtime modes and the
-plan/build toggle. `ChatComposer` hides its editor and footer when hosted;
-the editor comes back for approval and user-input flows, which type answers
-through it.
+`ChatComposer` when hosted. It publishes `ShellComposerState` — draft text,
+placeholder, whether sending is possible and why not, running/connecting
+flags, the selected model, the provider option descriptors (reasoning effort
+etc.), runtime modes and the plan/build toggle — and still carries mentions,
+suggestions and terminal contexts. `ChatComposer` hides its editor and footer
+when hosted.
 
 The model catalogue is its own key, `modelPicker`, because `composer`
 republishes on every keystroke and an OpenCode catalogue runs to dozens of
@@ -563,13 +562,18 @@ and only a choice or a star crosses back. Its popup does not close on
 Escape by `closePolicy`: a popup that does blocks every window shortcut,
 including the `modelPicker.toggle` binding that must close it again.
 
-The page also publishes `nativeSend` with the draft when sending it would be
-nothing but one `message.dispatch`: a server thread with nothing to prepare
-or answer, no attachments or contexts, not a slash command. It carries the
-text, title seed, model and modes the page's send would use. Once native,
-`ComposerController` sends a foreground `composer.submit` whose text matches
-it, and interrupts on its threads, itself; any other submit still reaches
-the page, so the pipeline's special cases keep one implementation.
+Once native, `ComposerController` owns the turn of the thread the route
+shows: it keeps each thread's draft (text, model, options, modes, images)
+from the brick's own actions, which still reach the page so it follows, and
+sends, queues, steers, stops, answers approvals and questions and implements
+the plan with node RPCs itself. It publishes the route thread's pending state
+as `turn` (see `ComposerController.h`), which the `TurnRequests` brick stacks
+above the `Composer`; its answers are `composer.approval.respond`,
+`composer.question.answer`, `composer.question.dismiss`,
+`composer.plan.implement`, `composer.queue.remove` and `composer.queue.steer`.
+A draft route's turn only carries the draft's text, which `DraftController`
+keeps. Slash commands, and a draft's first send (it needs `thread.create` and
+workspace setup), still reach the page.
 
 Actions: `composer.text.set {target, text, cursor?, edit?}` (debounced from the QML
 editor), `composer.submit {text?, intent?, edit?}` (text rides along so the send is
