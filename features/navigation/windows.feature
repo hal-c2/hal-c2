@@ -13,6 +13,7 @@
 #   apps/desktop-qt/src/native/NativeShell.cpp (window.new, per-window state)
 #   apps/desktop-qt/tests/tst_ShellWindow.qml (a window's title and minimum size)
 #   apps/desktop-qt/qml/HalC2/Bricks/Workspace.qml (frameless drag and maximize)
+#   apps/desktop-qt/tests/tst_WindowControls.qml (the header asks the system to move the window)
 #   apps/desktop-qt/src/ThemeStore.cpp (the theme's window frame and opacity)
 
 Feature: Windows, zoom and quitting
@@ -61,8 +62,7 @@ Feature: Windows, zoom and quitting
       When another app's window is active
       Then the window controls are grey
 
-    # Delivered natively (TitleBar, Workspace); the system move has no offscreen test.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Dragging the header moves the window
       When the user drags an empty part of the header
       Then the window moves with the pointer
