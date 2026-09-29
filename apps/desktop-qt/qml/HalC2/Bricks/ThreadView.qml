@@ -30,10 +30,13 @@ Item {
     readonly property color mutedColor: Theme.palette.color("textMuted", "#8b8b93")
     readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
 
+    // Where web addresses go: the system browser (tests keep them in).
+    property var openExternally: url => Qt.openUrlExternally(url)
+
     // Web addresses leave the app; anything else is a path in the project.
     function openLink(link) {
         if (/^(https?|mailto):/i.test(link)) {
-            Qt.openUrlExternally(link);
+            view.openExternally(link);
             return;
         }
         let path = link.replace(/^file:\/\//i, "");
