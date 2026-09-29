@@ -10,10 +10,12 @@
 namespace {
 
 // The entity kinds the timeline reads; the stream's others (nodes, provider
-// sessions, checkpoints, ...) are left out. Plans and the user's messages are
-// kept for the composer (turnChanged) and draw no rows.
+// sessions, ...) are left out. Plans and the user's messages are kept for the
+// composer (turnChanged), checkpoints for the diff panel (checkpointsChanged);
+// they draw no rows.
 const QSet<QString> kKinds{QStringLiteral("turn-item"),       QStringLiteral("run"),  QStringLiteral("run-attempt"),
-                           QStringLiteral("runtime-request"), QStringLiteral("plan"), QStringLiteral("message")};
+                           QStringLiteral("runtime-request"), QStringLiteral("plan"), QStringLiteral("message"),
+                           QStringLiteral("checkpoint")};
 // Turn items the composer's turn state reads (requests).
 const QSet<QString> kTurnItems{QStringLiteral("approval_request"), QStringLiteral("user_input_request")};
 // Turn item fields that move, regroup or refold rows. Anything else (text,
@@ -186,17 +188,20 @@ void TimelineModel::snapshot(int part, const QJsonArray& rows, bool done) {
   sortItems();
   restructure({}, true);
   emit turnChanged();
+  emit checkpointsChanged();
 }
 
 void TimelineModel::events(const QJsonArray& events) {
   QSet<QString> changed;
   bool structural = false;
   m_turnTouched = false;
+  m_checkpointsTouched = false;
   for (const QJsonValue& value : events) {
     const QJsonArray event = value.toArray();
     structural |= apply(event.at(1).toString(), event.at(2).toString(), event.at(3).toObject(), changed);
   }
   if (m_turnTouched) emit turnChanged();
+  if (m_checkpointsTouched) emit checkpointsChanged();
   if (structural) {
     restructure(changed, false);
     return;
@@ -215,6 +220,15 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
   const auto current = byKind.constFind(id);
   const bool existed = current != byKind.cend();
   const std::optional<QJsonObject> next = patched(existed ? *current : QJsonObject(), patch);
+  if (kind == QLatin1String("checkpoint")) {
+    m_checkpointsTouched = true;
+    if (next) {
+      byKind.insert(id, *next);
+    } else {
+      byKind.remove(id);
+    }
+    return false;
+  }
   if (kind == QLatin1String("plan") || kind == QLatin1String("message")) {
     // The agent's streamed replies are the turn items'; only the user's
     // messages (a queued run's text) are kept.
