@@ -6,6 +6,7 @@
 #   apps/web/src/shell/ShellGitBridge.tsx
 #   packages/contracts/src/shell.ts (ShellGitState, git.quick, git.menu, git.refresh, git.publish)
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml
+#   apps/desktop-qt/src/native/GitController.cpp (the desktop's recommended action and menu)
 #   apps/tui/src/gitActions.logic.ts (resolveGitQuickAction, buildGitMenuItems, buildGitPanelActions)
 #   apps/tui/src/components/RightPanel.tsx
 
@@ -107,7 +108,7 @@ Feature: Recommended git action and the git menu
     When the user opens the git menu
     Then the menu reflects the checkout as it is now
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario Outline: The actions use the host's own name for a pull request
     Given the project's primary remote is on <host>
     When the user opens the git menu

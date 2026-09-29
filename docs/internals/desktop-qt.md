@@ -958,16 +958,22 @@ the header; the thread menu's "Rename" asks for it with
 
 ### `git`
 
-`useGitActions` (extracted from `GitActionsControl`) owns the status query,
-the stacked-action runner with its progress/result toasts, the default-branch
-gate and the thread↔branch sync. When hosted the control renders
-`ShellGitBridge` — publishing the quick action, menu items with disabled
-reasons, hints, working-tree files and the pending confirmation — plus the
-publish-repository dialog (still HTML). Actions: `git.quick`, `git.menu
-{id}`, `git.commit {message, filePaths|null, featureBranch}`,
-`git.defaultBranch {choice}`, `git.init`, `git.publish`, `git.refresh`. The
-`GitActions` brick renders the split button, the commit dialog (file
-checklist + message) and the confirmation.
+`GitController` publishes `git` itself from `WorkspaceController`'s `vcs`
+status; the page's `ShellGitBridge` no longer writes the key. The recommended
+action and the menu follow `apps/tui/src/gitActions.logic.ts`, not the web's
+`GitActionsControl.logic.ts`: the ledger (`source-control/git-actions.feature`)
+is written against the TUI's labels and reasons, named for the host's change
+requests (PR, MR). Actions: `git.quick`, `git.menu {id}`, `git.commit
+{message, filePaths|null, featureBranch}`, `git.defaultBranch {choice}`,
+`git.init`, `git.publish`, `git.publish.submit`, `git.publish.cancel`,
+`git.refresh`.
+
+A stacked action is one `gitAction` subscription; its stage and last hook line
+update one loading toast in place, and the node's result toast (with its
+next-step CTA) replaces it. The subscription is dropped, not resent, when the
+connection drops, since the node would run the action twice. The node routes
+neither `vcs` nor `gitAction` through its links, so a linked thread publishes
+`available: false` with an `unavailableReason` the brick shows.
 
 ### Composer layout
 

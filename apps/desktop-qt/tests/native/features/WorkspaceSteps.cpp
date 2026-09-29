@@ -85,6 +85,12 @@ const FakeNode::Extension extension([](FakeNode& node) {
   node.effects.append([&node](const QJsonObject& command) { applyMetadata(node, command); });
   node.onShape(QStringLiteral("vcs"), [&node](int id, const QJsonObject& shape) {
     const QString cwd = shape.value(QLatin1String("cwd")).toString();
+    if (const auto checkout = node.checkouts.constFind(cwd); checkout != node.checkouts.cend()) {
+      QJsonObject snapshot = (*checkout)();
+      snapshot.insert(QStringLiteral("_tag"), QStringLiteral("snapshot"));
+      node.send({{QStringLiteral("t"), QStringLiteral("vcs")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), snapshot}});
+      return;
+    }
     const auto repo = node.part<FakeGit>().repos.constFind(cwd);
     const QJsonObject local = repo == node.part<FakeGit>().repos.cend() ? QJsonObject{{QStringLiteral("isRepo"), false}} : localStatus(*repo);
     node.send({{QStringLiteral("t"), QStringLiteral("vcs")},

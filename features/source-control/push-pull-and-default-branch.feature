@@ -8,6 +8,7 @@
 #   packages/contracts/src/settings.ts (defaultAutoPull)
 #   apps/web/src/components/GitActionsControl.logic.ts (default-branch confirmation, toasts)
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (default-branch dialog)
+#   apps/desktop-qt/src/native/GitController.cpp (runs the desktop's actions through gitAction)
 #   apps/desktop-qt/qml/HalC2/Bricks/Notifications.qml
 #   apps/tui/src/store.ts (pullGit, runGitAction)
 

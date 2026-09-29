@@ -102,6 +102,9 @@ public:
   // What an accepted command does to the node's rows (the real node's
   // projection), run before it is answered.
   QList<std::function<void(const QJsonObject& command)>> effects;
+  // Checkouts whose whole status a domain fakes, by folder: the `vcs`
+  // snapshot (`local`, `remote`) the workspace's `vcs` shape sends for them.
+  QHash<QString, std::function<QJsonObject()>> checkouts;
   QJsonObject capabilities{
       {QStringLiteral("threadSettlement"), true},
       {QStringLiteral("threadSnooze"), true},

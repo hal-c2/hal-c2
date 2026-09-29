@@ -629,6 +629,12 @@ export const ShellGitState = Schema.Struct({
       featureBranchLabel: Schema.String,
     }),
   ),
+  /** Why git is unavailable for a checkout the node cannot reach (a linked thread's). */
+  unavailableReason: Schema.optional(Schema.String),
+  /** Set while the publish-repository dialog is open. */
+  publishing: Schema.optional(
+    Schema.NullOr(Schema.Struct({ busy: Schema.Boolean, error: Schema.NullOr(Schema.String) })),
+  ),
 });
 export type ShellGitState = typeof ShellGitState.Type;
 
@@ -871,6 +877,13 @@ export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("git.init") }),
   Schema.Struct({ type: Schema.Literal("git.publish") }),
   Schema.Struct({ type: Schema.Literal("git.refresh") }),
+  Schema.Struct({
+    type: Schema.Literal("git.publish.submit"),
+    provider: Schema.Literals(["github", "gitlab"]),
+    repository: Schema.String,
+    visibility: Schema.Literals(["private", "public"]),
+  }),
+  Schema.Struct({ type: Schema.Literal("git.publish.cancel") }),
   Schema.Struct({
     type: Schema.Literal("git.commit"),
     message: Schema.String,

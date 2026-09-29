@@ -41,6 +41,9 @@ public:
   // An error toast, with the page's "An error occurred." for an empty reason.
   QString error(const QString& title, const QString& description = {});
   void dismiss(const QString& id);
+  // Changes a shown toast's text in place (a running action's stage); false
+  // once it is gone.
+  bool update(const QString& id, const QString& title, const QString& description = {});
   // Runs the action of the newest toast offering `label` (the undo shortcut's
   // "Undo"), as clicking it would; false when none does.
   bool runAction(const QString& label);
@@ -61,6 +64,7 @@ private:
     QString description;
     std::optional<Action> action;
     std::optional<QDateTime> deadline;
+    int revision = 0;
   };
 
   ShellBridge* m_bridge;

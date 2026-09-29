@@ -74,6 +74,19 @@ void ToastController::dismiss(const QString& id) {
   schedule();
 }
 
+bool ToastController::update(const QString& id, const QString& title, const QString& description) {
+  for (Toast& toast : m_toasts) {
+    if (toast.id != id) continue;
+    if (toast.title == title && toast.description == description) return true;
+    toast.title = title;
+    toast.description = description;
+    ++toast.revision;
+    publish();
+    return true;
+  }
+  return false;
+}
+
 void ToastController::expire() {
   const QDateTime now = m_now();
   const qsizetype removed =
@@ -111,7 +124,7 @@ void ToastController::publish() {
         {QStringLiteral("title"), toast.title},
         {QStringLiteral("description"),
          toast.description.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(toast.description)},
-        {QStringLiteral("updateKey"), 0},
+        {QStringLiteral("updateKey"), toast.revision},
         {QStringLiteral("actions"), actions},
     });
   }
