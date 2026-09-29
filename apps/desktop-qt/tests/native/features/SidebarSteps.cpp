@@ -3,6 +3,7 @@
 
 #include <QVariantList>
 
+#include "CommandPaletteController.h"
 #include "Harness.h"
 #include "ThreadList.h"
 #include "Turn.h"
@@ -66,8 +67,20 @@ const Steps steps([] {
       world.bridge().dispatch(QStringLiteral("projectSettings.workspace"), QVariantMap{{QStringLiteral("value"), c[0]}});
       return;
     }
-    // With no menu open, the pick is an answer to the agent's question.
     world.sync();  // a menu can open on the node's answer
+    // From an open command palette (a file found by name): its entry of that
+    // title or path.
+    if (auto* palette = world.native().controller<CommandPaletteController>(); palette && palette->isOpen()) {
+      for (int row = 0; row < palette->rowCount(); ++row) {
+        if (palette->idAt(row) == c[0] || palette->index(row).data(CommandPaletteController::TitleRole) == c[0]) {
+          palette->run(row);
+          world.sync();
+          return;
+        }
+      }
+      fail(QStringLiteral("the command palette does not list \"%1\"").arg(c[0]));
+    }
+    // With no menu open, the pick is an answer to the agent's question.
     if (world.state(QStringLiteral("menu")).typeId() != QMetaType::QVariantMap) return pickAnswer(world, c[0]);
     choose(world, c[0]);
   });

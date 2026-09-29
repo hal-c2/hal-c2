@@ -296,6 +296,81 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  step "thread {string} finished a Claude turn", %{args: [thread]} = context do
+    context = context |> World.providers() |> World.named_thread(thread)
+    claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}}
+    context = World.dispatch_message(context, thread, "Hi", claude)
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_run(context, thread, &(&1["status"] == "completed"))
+    pid = runtime(context, thread)
+    Process.monitor(pid)
+    Map.put(context, :runtime, pid)
+  end
+
+  # The turn a task notification wakes Claude for, which the node did not run.
+  step "Claude launches a subagent in the background between turns", context do
+    claude_says(context, context.thread, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-wake",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "agent-wake",
+            "name" => "Agent",
+            "input" => %{"description" => "Check the tests", "run_in_background" => true}
+          }
+        ]
+      }
+    })
+
+    claude_says(context, context.thread, %{
+      "type" => "system",
+      "subtype" => "task_started",
+      "task_id" => "task-wake",
+      "tool_use_id" => "agent-wake",
+      "description" => "Check the tests",
+      "task_type" => "local_agent",
+      "is_backgrounded" => true
+    })
+
+    # The launch was a turn of Claude's own; it ends with its result.
+    claude_says(context, context.thread, %{"type" => "result", "subtype" => "success"})
+    await_background(context)
+  end
+
+  # A subagent resumed through SendMessage, or one started before the node recorded them.
+  step "Claude reports progress on a subagent it resumed between turns", context do
+    claude_says(context, context.thread, %{
+      "type" => "system",
+      "subtype" => "task_progress",
+      "task_id" => "task-wake",
+      "tool_use_id" => "agent-wake",
+      "description" => "Check the tests",
+      "summary" => "Running mix test"
+    })
+
+    await_background(context)
+  end
+
+  step "{string} lists the subagent {string} as background work",
+       %{args: [thread, title]} = context do
+    assert [%{"taskType" => "subagent", "description" => ^title}] =
+             World.row(context, thread)["pendingBackgroundTasks"]
+
+    context
+  end
+
+  step "Claude reports that subagent completed", context do
+    claude_says(
+      context,
+      context.thread,
+      notification("task-wake", "agent-wake", "completed", "All green")
+    )
+
+    context
+  end
+
   step "{string} has had no activity for {int} minutes", %{args: [thread, minutes]} = context do
     backdate(context, thread, minutes)
   end
@@ -646,6 +721,15 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     pid = runtime(context, thread)
     Process.monitor(pid)
     Map.put(context, :runtime, pid)
+  end
+
+  defp await_background(context) do
+    World.await_row(
+      World.thread_id(context, context.thread),
+      &(length(&1["pendingBackgroundTasks"] || []) == 1)
+    )
+
+    context
   end
 
   defp claude_says(context, thread, message) do

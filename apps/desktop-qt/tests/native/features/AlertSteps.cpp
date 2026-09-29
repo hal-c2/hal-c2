@@ -8,6 +8,7 @@
 #include <QVariantList>
 
 #include "AlertController.h"
+#include "CommandPaletteController.h"
 #include "Harness.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
@@ -191,6 +192,34 @@ void completesInBackground(World& world, const QString& title) {
   change(world, thread, QStringLiteral("completes"));
 }
 
+// Mutes or unmutes `title` from the palette while it is shown, then leaves
+// it for the usage page so its alerts are not the shown thread's.
+void toggleMuteFromPalette(World& world, const QString& title, bool mute) {
+  const QString key = keyOf(world, tracked(world, title));
+  auto* navigation = world.native().controller<NavigationController>();
+  navigation->open(NavigationController::Route::thread(key));
+  world.sync();
+  auto* palette = world.native().controller<CommandPaletteController>();
+  palette->show();
+  palette->setQuery(QStringLiteral("alerts"));
+  world.waitFor([palette] { return !palette->searching(); }, QStringLiteral("the palette to settle"));
+  const QString wanted = mute ? QStringLiteral("Mute alerts for this thread") : QStringLiteral("Unmute alerts for this thread");
+  int row = -1;
+  QStringList titles;
+  for (int i = 0; i < palette->count(); ++i) {
+    const QString rowTitle = palette->data(palette->index(i), CommandPaletteController::TitleRole).toString();
+    titles.append(rowTitle);
+    if (palette->idAt(i) == AlertController::kToggleMute && rowTitle == wanted) row = i;
+  }
+  expect(row >= 0, QStringLiteral("the palette offers no \"%1\": %2").arg(wanted, titles.join(QStringLiteral(", "))));
+  palette->run(row);
+  world.sync();
+  const bool muted = alerts(world).isMuted(key);
+  expect(muted == mute, QStringLiteral("%1 is %2").arg(title, muted ? QStringLiteral("muted") : QStringLiteral("not muted")));
+  navigation->open(NavigationController::Route::of(QStringLiteral("usage")));
+  world.sync();
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
 
@@ -303,6 +332,34 @@ const Steps steps([] {
     const FakeAlerts& state = fake(world);
     expect(!toastFor(world, c[0]) && state.delivered.isEmpty() && state.sounds.isEmpty(),
            QStringLiteral("an alert was raised: %1").arg(describe(world)));
+  });
+  step(QStringLiteral("an alert for %1 is raised").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    const FakeAlerts& state = fake(world);
+    const bool system = state.shown.contains(keyOf(world, state.threads.value(c[0])));
+    expect(toastFor(world, c[0]) || system, QStringLiteral("no alert was raised: %1").arg(describe(world)));
+  });
+
+  // Muting one thread.
+  step(QStringLiteral("the user mutes alerts for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    toggleMuteFromPalette(world, c[0], true);
+  });
+  step(QStringLiteral("the user unmutes %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    toggleMuteFromPalette(world, c[0], false);
+  });
+  step(QStringLiteral("alerts for %1 are muted").arg(q), [](World& world, const Captures& c, const Table&) {
+    working(world, c[0]);
+    toggleMuteFromPalette(world, c[0], true);
+  });
+  step(QStringLiteral("%1 finishes its turn").arg(q), [](World& world, const Captures& c, const Table&) {
+    change(world, tracked(world, c[0]), QStringLiteral("completes"));
+  });
+  step(QStringLiteral("alerts for other threads in %1 still arrive").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(world.node.projects.first().value(QLatin1String("title")).toString() == c[0],
+           QStringLiteral("the threads are not in \"%1\"").arg(c[0]));
+    Tracked& other = working(world, QStringLiteral("Docs pass"));
+    change(world, other, QStringLiteral("completes"));
+    expect(toastFor(world, QStringLiteral("Docs pass")).has_value(), QStringLiteral("no alert for another thread: %1").arg(describe(world)));
   });
   step(QStringLiteral("no in-app alert is shown for %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();

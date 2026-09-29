@@ -149,6 +149,8 @@ private:
   // The shown thread's terminal groups in the panel.
   QStringList terminalGroups() const;
   void retarget();
+  // What the palette shows of the thread's pull request commands.
+  void presentCommands();
   void update();
   void publish();
   QVariantMap threadDetails() const;

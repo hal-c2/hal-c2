@@ -4,7 +4,9 @@
 #include <QJsonObject>
 #include <QUuid>
 
+#include "CommandPaletteController.h"
 #include "DraftController.h"
+#include "KeybindingController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "NodeClient.h"
@@ -41,6 +43,41 @@ ProjectController::ProjectController(ShellBridge* bridge, NodeClient* client, Sh
 void ProjectController::activate() {
   if (m_active) return;
   m_active = true;
+  auto* commands = NativeShell::of(this)->controller<KeybindingController>()->commands();
+  // The web's Add project: an environment first when there is a choice, then
+  // how to add (only a local folder so far; cloning is not native yet).
+  const auto sources = [this](const QString& environmentId) {
+    CommandRegistry::Choice folder{QStringLiteral("local-folder"), tr("Local folder"), tr("Browse a folder on disk")};
+    folder.terms = {QStringLiteral("folder"), QStringLiteral("directory"), QStringLiteral("browse")};
+    folder.keepOpen = true;
+    folder.run = [this, environmentId] {
+      NativeShell::of(this)->controller<CommandPaletteController>()->browse(
+          environmentId, [this, environmentId](const QString& path) { addFolder(environmentId, path); });
+    };
+    return QList<CommandRegistry::Choice>{folder};
+  };
+  commands->addMenu(kAdd, tr("Add project"), [this, sources] {
+    QStringList online;
+    for (const QString& environmentId : m_store->environments()) {
+      if (m_store->environmentOnline(environmentId)) online.append(environmentId);
+    }
+    if (online.size() == 1) return sources(online.constFirst());
+    const QString own = m_store->environmentOf(m_client->node());
+    QList<CommandRegistry::Choice> environments;
+    for (const QString& environmentId : m_store->environments()) {
+      const QJsonObject descriptor = m_store->environment(environmentId);
+      CommandRegistry::Choice choice{environmentId, descriptor.value(QLatin1String("label")).toString(environmentId)};
+      const bool connected = online.contains(environmentId);
+      choice.description = !connected ? tr("Not connected") : environmentId == own ? tr("This device") : environmentId;
+      choice.enabled = connected;
+      choice.terms = {environmentId, environmentId == own ? QStringLiteral("this device") : QString()};
+      choice.submenu = [sources, environmentId] { return sources(environmentId); };
+      environments.append(choice);
+    }
+    return environments;
+  });
+  commands->setTerms(kAdd, {QStringLiteral("add project"), QStringLiteral("folder"), QStringLiteral("directory"),
+                            QStringLiteral("browse"), QStringLiteral("environment")});
   publish();
 }
 
@@ -49,9 +86,10 @@ bool ProjectController::handle(const QString& action, const QVariant& payload) {
   const QVariantMap map = payload.toMap();
   if (action == QLatin1String("project.add") || action == QLatin1String("project.folder.open")) {
     const QString path = map.value(QStringLiteral("path")).toString();
-    // Without a folder, or where local folders mean nothing (a remote page),
-    // the page's own add-project flow.
-    if (path.isEmpty() || !m_bridge->localFolderImportEnabled()) return false;
+    // Without a folder, the palette's Add project.
+    if (path.isEmpty()) return NativeShell::of(this)->controller<KeybindingController>()->commands()->run(kAdd);
+    // Where local folders mean nothing (a remote page), the page's own flow.
+    if (!m_bridge->localFolderImportEnabled()) return false;
     openFolder(path);
     return true;
   }
@@ -78,16 +116,19 @@ void ProjectController::openFolder(const QString& path) {
     toasts->error(QStringLiteral("Could not open folder"), path + QStringLiteral(" is not a folder on this machine."));
     return;
   }
-  const QString root = folder.canonicalFilePath();
   const QString own = m_store->environmentOf(m_client->node());
   if (!m_client->isReady() || own.isEmpty()) {
     toasts->error(QStringLiteral("Could not open folder"), QStringLiteral("The environment is not connected."));
     return;
   }
+  addFolder(own, folder.canonicalFilePath());
+}
+
+void ProjectController::addFolder(const QString& environmentId, const QString& root) {
   const QString normalized = sidebar::normalizePath(root);
   for (const sidebar::Project& project : m_store->projects()) {
-    if (project.environmentId == own && sidebar::normalizePath(project.workspaceRoot) == normalized) {
-      openProject(own, project.id);
+    if (project.environmentId == environmentId && sidebar::normalizePath(project.workspaceRoot) == normalized) {
+      openProject(environmentId, project.id);
       return;
     }
   }
@@ -97,8 +138,8 @@ void ProjectController::openFolder(const QString& path) {
       {QStringLiteral("projectId"), projectId},
       {QStringLiteral("workspaceRoot"), root},
   };
-  m_client->call(own, QStringLiteral("projects.mutate"), command,
-                 [this, own, projectId](const QJsonValue&, const std::optional<QString>& error) {
+  m_client->call(environmentId, QStringLiteral("projects.mutate"), command,
+                 [this, environmentId, projectId](const QJsonValue&, const std::optional<QString>& error) {
                    if (error) {
                      NativeShell::of(this)->controller<ToastController>()->error(QStringLiteral("Could not open folder"),
                                                                                  *error);
@@ -106,10 +147,10 @@ void ProjectController::openFolder(const QString& path) {
                    }
                    // A draft for a project the shell has no row for would be dropped
                    // as orphaned, so it waits for the row if the answer came first.
-                   if (m_store->project(own + QLatin1Char(':') + projectId)) {
-                     NativeShell::of(this)->controller<DraftController>()->start(own, projectId);
+                   if (m_store->project(environmentId + QLatin1Char(':') + projectId)) {
+                     NativeShell::of(this)->controller<DraftController>()->start(environmentId, projectId);
                    } else {
-                     m_created = {own, projectId};
+                     m_created = {environmentId, projectId};
                    }
                  });
 }

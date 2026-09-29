@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include "CommandPaletteController.h"
 #include "Harness.h"
 #include "RightPanelController.h"
 #include "Stream.h"
@@ -158,7 +159,17 @@ const Steps steps([] {
   step(QStringLiteral("the user shows the thread's previews"), [](World& world, const Captures&, const Table&) { showPreviews(world); });
   step(QStringLiteral("the user is showing the thread's previews"), [](World& world, const Captures&, const Table&) { showPreviews(world); });
   step(QStringLiteral("%1 and %1 are listed").arg(q), [](World& world, const Captures& c, const Table&) { waitForUrls(world, {c[0], c[1]}); });
-  step(QStringLiteral("%1 is listed").arg(q), [](World& world, const Captures& c, const Table&) { waitForUrls(world, {c[0]}); });
+  step(QStringLiteral("%1 is listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    // In an open command palette: an entry of that title.
+    if (auto* palette = world.native().controller<CommandPaletteController>(); palette && palette->isOpen()) {
+      world.sync();
+      for (int row = 0; row < palette->rowCount(); ++row) {
+        if (palette->index(row).data(CommandPaletteController::TitleRole) == c[0]) return;
+      }
+      fail(QStringLiteral("the command palette does not list \"%1\"").arg(c[0]));
+    }
+    waitForUrls(world, {c[0]});
+  });
   step(QStringLiteral("no browser tabs are listed"), [](World& world, const Captures&, const Table&) { waitForUrls(world, {}); });
   step(QStringLiteral("the user opens %1 from the previews").arg(q), [](World& world, const Captures& c, const Table&) {
     model(world).open(tabIdOf(world, c[0]));

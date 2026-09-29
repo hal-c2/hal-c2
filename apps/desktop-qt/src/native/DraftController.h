@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "NativeController.h"
+#include "SidebarModel.h"
 
 class NodeClient;
 class ShellBridge;
@@ -28,6 +29,10 @@ class ShellStore;
 //
 // The draft's text is `text`: ComposerController saves the composer's edits
 // on a draft route here, and reopens the draft with it.
+//
+// It registers the palette's two ways to start a thread: chat.new ("New
+// thread in <project>", listed while the window shows a project) and the
+// thread.newIn menu ("New thread in...", the window's project first).
 class DraftController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -73,6 +78,12 @@ signals:
 
 private:
   bool startNew(const QVariantMap& payload);
+  // The thread or draft the window shows: its environment and project.
+  std::optional<std::pair<QString, QString>> shownProject() const;
+  // The logical project a new thread starts in without being told.
+  const sidebar::ProjectGroup* defaultGroup() const;
+  void startIn(const sidebar::ProjectGroup& group);
+  void present();
   void openMenu(const QString& id, double x, double y);
   // Drops drafts whose thread now exists or whose project is gone.
   void reconcile();

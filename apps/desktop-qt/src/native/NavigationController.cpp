@@ -1,5 +1,7 @@
 #include "NavigationController.h"
 
+#include <algorithm>
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -105,6 +107,24 @@ void NavigationController::activate() {
   auto* commands = NativeShell::of(this)->controller<KeybindingController>()->commands();
   commands->add(kOpenSettings, tr("Open settings"), [this] { open(Route::settings()); });
   commands->add(kOpenUsage, tr("Open usage"), [this] { open(Route::of(QStringLiteral("usage"))); });
+  commands->add(kOpenPullRequests, tr("Open pull requests"), [this] { open(Route::of(QStringLiteral("pullRequests"))); });
+  commands->setTerms(kOpenSettings, {QStringLiteral("settings"), QStringLiteral("preferences"),
+                                     QStringLiteral("configuration"), QStringLiteral("keybindings")});
+  commands->setTerms(kOpenUsage, {QStringLiteral("usage"), QStringLiteral("use"), QStringLiteral("tokens"),
+                                  QStringLiteral("cost"), QStringLiteral("spend"), QStringLiteral("limits"),
+                                  QStringLiteral("stats"), QStringLiteral("analytics")});
+  commands->setTerms(kOpenPullRequests, {QStringLiteral("pull requests"), QStringLiteral("prs"), QStringLiteral("pr"),
+                                         QStringLiteral("github"), QStringLiteral("review"), QStringLiteral("merge"),
+                                         QStringLiteral("branch")});
+  // Offered while some environment has a source control provider for them.
+  const auto present = [this, commands] {
+    const QStringList environments = m_store->environments();
+    commands->setListed(kOpenPullRequests, std::any_of(environments.cbegin(), environments.cend(), [this](const QString& id) {
+                          return m_store->supports(id, QStringLiteral("pullRequests"));
+                        }));
+  };
+  connect(m_store, &ShellStore::changed, this, present);
+  present();
 }
 
 void NavigationController::pageReady() {

@@ -44,6 +44,9 @@ public:
   // when none does (a linked environment's nodes are not the cluster's).
   QString nodeServing(const QString& environmentId) const;
   sidebar::Capabilities capabilities(const QString& environmentId) const;
+  // Whether the environment's descriptor turns `capability` on (pullRequests,
+  // threadPullRequests, threadPullRequestLinking, ...).
+  bool supports(const QString& environmentId, const QString& capability) const;
   // Whether a node of the cluster serves this environment.
   bool servesEnvironment(const QString& environmentId) const;
   // Whether the node reaches this environment: served by the cluster or linked.

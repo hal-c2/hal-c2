@@ -43,7 +43,7 @@ Feature: Command palette
       When the user dismisses the command palette
       Then the composer has keyboard focus
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The palette opens in each mode from its own shortcut
       When the user presses the <mode> shortcut
       Then the command palette is open in <mode> mode
@@ -55,7 +55,7 @@ Feature: Command palette
         | go to file     |
         | project search |
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Pressing a mode's shortcut again closes that mode
       Given the command palette is open in <mode> mode
       When the user presses the <mode> shortcut
@@ -66,7 +66,7 @@ Feature: Command palette
         | go to file     |
         | project search |
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Escape in a secondary mode returns to command mode
       Given the command palette is open in <mode> mode
       When the user presses Escape
@@ -113,7 +113,7 @@ Feature: Command palette
 
   Rule: Searching
 
-    @backlog @desktop
+    @desktop
     Scenario: Typing a query adds projects, settings and threads and hides recent threads
       Given the command palette is open
       When the user types "theme"
@@ -146,10 +146,6 @@ Feature: Command palette
         | project name        |
         | branch              |
         | id                  |
-
-      @backlog
-      Examples:
-        | field               |
         | message content     |
 
     @desktop
@@ -165,7 +161,7 @@ Feature: Command palette
         | a linked environment        |
         | another node of the cluster |
 
-    @backlog @desktop
+    @desktop
     Scenario: Message content search reports while it runs
       Given the command palette is open
       When the user searches for text that only appears inside messages
@@ -216,14 +212,14 @@ Feature: Command palette
       When the user presses mod+3
       Then the third listed entry runs
 
-    @backlog @desktop
+    @desktop
     Scenario: Backspace on an empty query leaves a submenu
       Given the palette shows the "Change theme" submenu
       And the search field is empty
       When the user presses Backspace
       Then the palette shows the root list again
 
-    @backlog @desktop
+    @desktop
     Scenario: A command that fails says so
       Given an action that will fail
       When the user runs it from the palette
@@ -240,49 +236,50 @@ Feature: Command palette
         | action:usage                     | Open usage                  | the usage page opens                                           |
         | action:settings                  | Open settings               | settings open                                                  |
 
-      @backlog
-      Examples:
-        | entry                            | title                       | outcome                                                        |
         | action:new-thread                | New thread in hal-c2        | a new thread starts in "hal-c2"                                |
         | action:new-thread-in             | New thread in...            | the palette lists projects with the current project first      |
         | action:copy-thread-reference     | Copy thread ID              | the thread id is on the clipboard                              |
         | action:link-pull-request         | Link pull request to thread | the user is asked which pull request to link to the thread     |
-        | action:open-thread-pull-requests | Show linked pull requests   | the palette lists the thread's linked pull requests            |
         | action:open-file-picker          | Go to file                  | the palette is in go to file mode                              |
         | action:search-project-contents   | Search project contents     | the palette is in project search mode                          |
         | action:add-project               | Add project                 | the palette asks where the project comes from                  |
-        | action:add-project:wsl-folder    | Open WSL folder             | the palette asks for a folder inside WSL                       |
         | action:change-theme              | Change theme                | the palette lists themes with the current one marked "Current" |
         | action:change-appearance         | Change appearance           | the palette offers System, Light and Dark                      |
         | action:theme-editor              | Toggle theme editor         | the theme editor opens                                         |
         | action:pull-requests             | Open pull requests          | the pull request list opens                                    |
         | action:project-settings          | Project settings            | the current project's settings open                            |
 
-    @backlog @desktop
+      @backlog
+      Examples:
+        | entry                            | title                       | outcome                                                        |
+        | action:open-thread-pull-requests | Show linked pull requests   | the palette lists the thread's linked pull requests            |
+        | action:add-project:wsl-folder    | Open WSL folder             | the palette asks for a folder inside WSL                       |
+
+    @desktop
     Scenario: A thread with a linked pull request copies the link instead of the id
       Given the thread has a linked pull request
       When the user runs "Copy PR link" from the palette
       Then the pull request URL is on the clipboard
 
-    @backlog @desktop
+    @desktop
     Scenario: Linked pull requests are unavailable when the thread has none
       Given the thread has no linked pull request
       When the user opens the command palette
       Then "Show linked pull requests" cannot be run
 
-    @backlog @desktop
+    @desktop
     Scenario: Pull requests are only offered where the environment supports them
       Given the environment has no source control provider for pull requests
       When the user opens the command palette
       Then "Open pull requests" is not listed
 
-    @backlog @desktop
+    @desktop
     Scenario: Linking a pull request to the thread from the palette
       When the user runs "Link pull request to thread" from the palette
       And the user gives pull request 42
       Then pull request 42 is linked to the thread
 
-    @backlog @desktop
+    @desktop
     Scenario: Linking is not offered where the environment cannot link pull requests
       Given the thread's environment cannot link pull requests to threads
       When the user opens the command palette
@@ -294,13 +291,13 @@ Feature: Command palette
       When the user runs "Open pull requests" from the palette
       Then the pull requests page opens filtered to the user's own open pull requests
 
-    @backlog @desktop
+    @desktop
     Scenario: Open pull requests is offered when any environment supports pull requests
       Given one connected environment supports pull requests and another does not
       When the user opens the command palette
       Then "Open pull requests" is listed
 
-    @backlog @desktop
+    @desktop
     Scenario: Add project walks the user to a new project
       When the user runs "Add project" from the palette
       And the user chooses a local folder "~/code/shop"
@@ -314,7 +311,7 @@ Feature: Command palette
       Then the archived thread is listed as "Archived thread"
       And live threads are listed as "Linked thread"
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Picking a sub-item applies it
       Given the palette shows the "<submenu>" submenu
       When the user chooses "<item>"

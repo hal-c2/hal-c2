@@ -226,6 +226,13 @@ sidebar::Capabilities ShellStore::capabilities(const QString& environmentId) con
   return {};
 }
 
+bool ShellStore::supports(const QString& environmentId, const QString& capability) const {
+  for (const Node& node : m_nodes) {
+    if (node.environmentId == environmentId) return node.capabilities.value(capability).toBool();
+  }
+  return false;
+}
+
 void ShellStore::setEnvironment(const QString& node, const QJsonObject& environment) {
   Node& entry = m_nodes[node];
   entry.environmentId = environment.value(QLatin1String("environmentId")).toString();

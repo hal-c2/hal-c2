@@ -467,7 +467,7 @@ ShellWindow {
                         Layout.alignment: Qt.AlignHCenter
                         kind: "command"
                         text: qsTr("Command palette")
-                        onClicked: Shell.dispatch("palette.open")
+                        onClicked: PaletteModel.show()
                     }
 
                     RailButton {

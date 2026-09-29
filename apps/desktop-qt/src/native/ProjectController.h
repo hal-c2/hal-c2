@@ -20,8 +20,10 @@ class ShellStore;
 // `project.add {path}` and `project.folder.open {path}` (the sidebar's folder
 // picker, a dropped folder, the folder explorer) open a local folder as a
 // project: one already registered opens its latest thread (or its draft), a
-// new one is created and opens a draft. A pathless `project.add` is left to
-// the page's add-project palette.
+// new one is created and opens a draft. A pathless `project.add` runs the
+// palette's Add project menu (registered here as `project.add`): the online
+// environment to add on when there are several, then its sources (Local
+// folder browses its folders, CommandPaletteController::browse).
 //
 // `project.remove {projectKey}` (`<environmentId>:<projectId>`, or a logical
 // project's key for its representative) asks first: it publishes
@@ -36,12 +38,17 @@ class ProjectController : public QObject, public NativeController {
 public:
   ProjectController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);
 
+  static inline const QString kAdd = QStringLiteral("project.add");
+
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
 
   // Asks before removing the projects `keys` (`<environmentId>:<projectId>`)
   // as one `kind` ("project" or "checkout") called `title`.
   void askToRemove(const QStringList& keys, const QString& kind, const QString& title);
+  // Adds the folder at `path` on `environmentId` as a project, or opens the
+  // project already there.
+  void addFolder(const QString& environmentId, const QString& path);
 
 private:
   struct Removal {
