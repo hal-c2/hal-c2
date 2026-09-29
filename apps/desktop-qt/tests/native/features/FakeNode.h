@@ -43,6 +43,8 @@ public:
     QJsonObject payload;
     // The connection it came on; an answer to a dropped one is not sent.
     QPointer<QWebSocket> socket;
+    // The environment it is for ("" for the node's own).
+    QString environment;
   };
   using RpcHandler = std::function<void(const Rpc& rpc)>;
   // `id` is the subscription's; the shape is live until unsubscribed, forgotten

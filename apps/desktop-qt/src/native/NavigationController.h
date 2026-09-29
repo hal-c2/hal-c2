@@ -16,12 +16,12 @@ class ShellStore;
 // Where the window is: the shell's route, its back stack, and the last route
 // kept across restarts (setStorePath). Publishes `route`: {kind, threadKey,
 // draftId, projectKey, section, title, canGoBack}, where kind is one of home,
-// thread, draft, newThread, settings (section: the settings path, or one of
-// the shell's own pages, "/settings/cluster" and "/settings/connections"),
-// pullRequests, usage.
+// thread, draft, newThread, settings (section: the settings path), pullRequests,
+// usage.
 //
-// The page still renders the centre, so it follows: every route the page does
-// not already show goes to it as `route.follow {kind, threadKey, draftId,
+// The page still renders some settings sections, so it follows: every route
+// that is not one of the shell's own pages (isNative) and the page does not
+// already show goes to it as `route.follow {kind, threadKey, draftId,
 // projectKey, section}` (a draft adds its environmentId, projectId and
 // threadId, from DraftController), and the page reports where its own links and
 // redirects took it as `route.open {..., replace}`. The page is not the source
@@ -51,9 +51,11 @@ public:
   static inline const QString kClusterSection = QStringLiteral("/settings/cluster");
   static inline const QString kKeybindingsSection = QStringLiteral("/settings/keybindings");
   static inline const QString kConnectionsSection = QStringLiteral("/settings/connections");
-  static bool isNativeSection(const Route& route) {
+  // The shell's own pages: those settings sections and pull requests.
+  // The page is not told about them and stays where it was.
+  static bool isNative(const Route& route) {
     return route == Route::settings(kClusterSection) || route == Route::settings(kConnectionsSection) ||
-           route == Route::settings(kKeybindingsSection);
+           route == Route::settings(kKeybindingsSection) || route.kind == QLatin1String("pullRequests");
   }
 
   NavigationController(ShellBridge* bridge, NodeClient* client, ShellStore* store, QObject* parent = nullptr);

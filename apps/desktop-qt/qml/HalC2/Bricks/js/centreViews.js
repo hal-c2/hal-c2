@@ -6,6 +6,7 @@
 var views = [
     { kind: "thread", brick: "ThreadView" },
     { kind: "draft", brick: "ThreadView" },
+    { kind: "pullRequests", brick: "PullRequestsPage" },
 ];
 
 // The brick for a route kind, or "" while the page draws it.
