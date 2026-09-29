@@ -745,6 +745,12 @@ Rectangle {
                     }
                 }
 
+                ProviderCustomModels {
+                    Layout.fillWidth: true
+                    visible: card.provider.takesModels ?? false
+                    provider: card.provider
+                }
+
                 Label {
                     text: qsTr("Environment variables")
                     color: page.foreground

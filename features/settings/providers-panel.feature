@@ -397,18 +397,18 @@ Feature: Providers settings panel
 
   Rule: Custom models
 
-    @backlog @desktop
+    @desktop
     Scenario: Adding a custom model with its own options
       When the user adds the custom model "my-model" with a reasoning option offering low and high
       Then "my-model" is offered in the model picker
       And the composer offers low and high reasoning for it
 
-    @backlog @desktop
+    @desktop
     Scenario: Copying options from a built-in model
       When the user adds a custom model and copies the options of a built-in model
       Then the custom model starts with the same options
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A custom option must be complete before saving
       When the user saves a custom option with <problem>
       Then the user is told the option <message>
@@ -420,7 +420,7 @@ Feature: Providers settings panel
         | a choice list with no choices | needs at least one choice  |
         | the same choice twice         | uses a choice twice        |
 
-    @backlog @desktop
+    @desktop
     Scenario: A custom model without options uses the provider's defaults
       When the user adds a custom model with no options
       Then the composer uses the provider's default options for it

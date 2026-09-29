@@ -78,6 +78,7 @@ qt_add_qml_module(hal_c2_bricks
     PullRequestsPage.qml HomePage.qml UsagePage.qml
     ProvidersSettings.qml
     ProviderAuthTerminal.qml
+    ProviderCustomModels.qml
     ArchivedThreads.qml
   RESOURCES
     qmldir

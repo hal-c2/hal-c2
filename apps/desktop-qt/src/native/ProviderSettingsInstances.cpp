@@ -14,7 +14,12 @@
 //   own variable, such as Cursor's API key; empty removes it), `.addVariable
 //   {instanceId}`, `.variable {instanceId, index, name | value | sensitive}`,
 //   `.removeVariable {instanceId, index}`, `.delete {instanceId}` (an added
-//   instance), `.reset {instanceId}` (a built-in's own slot).
+//   instance), `.reset {instanceId}` (a built-in's own slot);
+//   `.addModel {instanceId, slug}`, `.editModel {instanceId, slug}` (opens
+//   its draft; empty closes it), `.modelDraft {instanceId, name | options |
+//   copyFrom (a built-in model's slug)}`, `.saveModel {instanceId, slug}` (the
+//   draft) and `.removeModel {instanceId, slug}`: custom models
+//   (ProviderCustomModels.h).
 //
 // Each listed provider also carries: editable (its settings arrived), custom
 // (added, so deletable), resettable, label (its own name, "" for none),
@@ -22,7 +27,10 @@
 // control: text | password | select, options [{value, label}], value}],
 // secrets [{name, label, description, placeholder, stored}], variables
 // [{name, value, sensitive, redacted, invalid, placeholder}], pending (added
-// but not yet reported by the environment).
+// but not yet reported by the environment), takesModels, customModels [{slug,
+// name, options}], modelPresets and copyFrom [{slug, name, options}] (options
+// to start from), modelDraft (null | {slug, name, options}, the model being
+// edited) and modelError.
 //
 // `wizard`: {step, steps, drivers [{id, label, badge}], driver, driverLabel,
 // label, accentColor, instanceId, instanceIdError ("" until moving on was
@@ -34,6 +42,7 @@
 #include "EnvironmentSettings.h"
 #include "NativeShell.h"
 #include "NodeClient.h"
+#include "ProviderCustomModels.h"
 #include "ProviderDrivers.h"
 #include "ProviderInstances.h"
 #include "ProviderSettingsController.h"
@@ -365,6 +374,70 @@ bool ProviderSettingsController::handleInstance(const QString& action, const QVa
                           });
          },
          QStringLiteral("Could not delete provider instance"));
+  } else if (action == QLatin1String("providerSettings.addModel") || action == QLatin1String("providerSettings.saveModel") ||
+             action == QLatin1String("providerSettings.removeModel")) {
+    if (driver.isEmpty()) return true;
+    const QString slug = input.value(QStringLiteral("slug")).toString().trimmed();
+    const QJsonValue saved = ProviderInstances::of(shownSettings().value_or(QJsonObject{}), instanceId, driver)
+                                 .value(QLatin1String("config")).toObject().value(QLatin1String("customModels"));
+    QString refused;
+    QJsonValue stored;
+    if (action == QLatin1String("providerSettings.addModel")) {
+      refused = ProviderCustomModels::refusal(slug, provider(instanceId).value(QLatin1String("models")).toArray(), saved);
+      stored = slug;
+    } else if (action == QLatin1String("providerSettings.saveModel")) {
+      const QVariantMap draft = m_modelDraft.value(instanceId);
+      if (draft.value(QStringLiteral("slug")).toString() != slug) return true;
+      const QVariantList options = draft.value(QStringLiteral("options")).toList();
+      refused = ProviderCustomModels::problem(options);
+      stored = ProviderCustomModels::setting(slug, draft.value(QStringLiteral("name")).toString(), options);
+    }
+    if (!refused.isEmpty()) {
+      m_modelError.insert(instanceId, refused);
+      publish();
+      return true;
+    }
+    m_modelError.remove(instanceId);
+    if (action != QLatin1String("providerSettings.addModel")) m_modelDraft.remove(instanceId);
+    publish();
+    editInstance(instanceId, [action, slug, stored](QJsonObject instance) {
+      const QJsonArray current = instance.value(QLatin1String("config")).toObject().value(QLatin1String("customModels")).toArray();
+      QJsonArray next;
+      for (const QJsonValue& value : current) {
+        const QString at = value.isString() ? value.toString().trimmed() : value.toObject().value(QLatin1String("slug")).toString().trimmed();
+        if (at != slug) next.append(value);
+        else if (action == QLatin1String("providerSettings.saveModel")) next.append(stored);
+      }
+      if (action == QLatin1String("providerSettings.addModel")) next.append(stored);
+      // An emptied list stays stored: it overrides the driver's own `providers` entry.
+      QJsonObject config = instance.value(QLatin1String("config")).toObject();
+      config.insert(QStringLiteral("customModels"), next);
+      instance.insert(QStringLiteral("config"), config);
+      return instance;
+    });
+  } else if (action == QLatin1String("providerSettings.editModel")) {
+    const QString slug = input.value(QStringLiteral("slug")).toString();
+    m_modelError.remove(instanceId);
+    m_modelDraft.remove(instanceId);
+    const QJsonValue saved = ProviderInstances::of(shownSettings().value_or(QJsonObject{}), instanceId, driver)
+                                 .value(QLatin1String("config")).toObject().value(QLatin1String("customModels"));
+    for (const QVariant& model : ProviderCustomModels::read(saved)) {
+      if (model.toMap().value(QStringLiteral("slug")) == slug) m_modelDraft.insert(instanceId, model.toMap());
+    }
+    publish();
+  } else if (action == QLatin1String("providerSettings.modelDraft")) {
+    if (!m_modelDraft.contains(instanceId)) return true;
+    QVariantMap& draft = m_modelDraft[instanceId];
+    if (input.contains(QStringLiteral("name"))) draft.insert(QStringLiteral("name"), input.value(QStringLiteral("name")).toString());
+    if (input.contains(QStringLiteral("options"))) draft.insert(QStringLiteral("options"), input.value(QStringLiteral("options")).toList());
+    const QString source = input.value(QStringLiteral("copyFrom")).toString();
+    for (const QVariant& model : ProviderCustomModels::copyable(provider(instanceId).value(QLatin1String("models")).toArray(), driver)) {
+      if (!source.isEmpty() && model.toMap().value(QStringLiteral("slug")) == source) {
+        draft.insert(QStringLiteral("options"), model.toMap().value(QStringLiteral("options")));
+      }
+    }
+    m_modelError.remove(instanceId);
+    publish();
   } else if (action == QLatin1String("providerSettings.reset")) {
     const ProviderDrivers::Driver* found = ProviderDrivers::find(driver);
     if (!found || !found->builtIn || instanceId != driver) return true;
@@ -434,6 +507,16 @@ void ProviderSettingsController::configuration(QVariantMap& result, const QStrin
     });
   }
   result.insert(QStringLiteral("variables"), variables);
+  // Antigravity takes no custom models (the web's ProviderInstanceCard).
+  const bool models = driver != QLatin1String("antigravity");
+  result.insert(QStringLiteral("takesModels"), models);
+  result.insert(QStringLiteral("customModels"),
+                models ? ProviderCustomModels::read(instance.value(QLatin1String("config")).toObject().value(QLatin1String("customModels")))
+                       : QVariantList{});
+  result.insert(QStringLiteral("modelPresets"), ProviderCustomModels::presets(driver));
+  result.insert(QStringLiteral("copyFrom"), ProviderCustomModels::copyable(provider(instanceId).value(QLatin1String("models")).toArray(), driver));
+  result.insert(QStringLiteral("modelDraft"), m_modelDraft.contains(instanceId) ? QVariant(m_modelDraft.value(instanceId)) : QVariant());
+  result.insert(QStringLiteral("modelError"), m_modelError.value(instanceId));
 }
 
 // Instances added on the shown environment that it has yet to list.

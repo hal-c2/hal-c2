@@ -175,5 +175,44 @@ Item {
             mouseClick(findChild(findChild(page, "provider_claudeAgent_work"), "enabled"));
             compare(Shell.dispatchedActions.length, 0);
         }
+
+        // A custom model's options are edited in the controller's draft and
+        // saved with Save; a preset adds an option with its usual choices.
+        function test_a_custom_model_is_added_and_its_options_edited() {
+            const presets = [{ id: "effort", label: "Reasoning", type: "select",
+                               choices: [{ id: "low", label: "Low", isDefault: false }, { id: "high", label: "High", isDefault: true }] }];
+            const draft = { slug: "my-model", name: "", options: [{ id: "effort", label: "Reasoning", type: "select",
+                                                                     choices: [{ id: "low", label: "Low", isDefault: true }] }] };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({
+                takesModels: true, customModels: [{ slug: "my-model", name: "", options: draft.options }], modelPresets: presets,
+                copyFrom: [], modelDraft: draft, modelError: "Option 1 needs a label." })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            mouseClick(findChild(card, "configure"));
+            const models = findChild(card, "customModels");
+            verify(models.visible);
+            compare(findChild(models, "modelError").text, "Option 1 needs a label.");
+            const editor = findChild(models, "modelEditor");
+            verify(editor.visible);
+            // Reasoning is already an option, so it is not offered again.
+            compare(findChild(editor, "preset_effort"), null);
+
+            mouseClick(findChild(findChild(editor, "option_0"), "addChoice"));
+            compare(Shell.dispatchedActions[0].action, "providerSettings.modelDraft");
+            compare(Shell.dispatchedActions[0].payload.options[0].choices.length, 2);
+            compare(draft.options[0].choices.length, 1, "the published draft is left as it is");
+
+            mouseClick(findChild(editor, "saveModel"));
+            compare(Shell.dispatchedActions[1].action, "providerSettings.saveModel");
+            compare(Shell.dispatchedActions[1].payload.slug, "my-model");
+
+            const slug = findChild(models, "newModel");
+            slug.forceActiveFocus();
+            keyClick(Qt.Key_X);
+            mouseClick(findChild(models, "addModel"));
+            compare(Shell.dispatchedActions[2].action, "providerSettings.addModel");
+            compare(Shell.dispatchedActions[2].payload.slug, "x");
+            compare(slug.text, "");
+        }
     }
 }

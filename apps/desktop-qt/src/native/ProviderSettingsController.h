@@ -135,5 +135,9 @@ private:
   // Variable rows being edited that cannot be saved yet (a blank or invalid
   // name), by instance.
   QHash<QString, QJsonArray> m_variables;
+  // The custom model being edited ({slug, name, options}), and why the last
+  // custom model change was refused, by instance.
+  QHash<QString, QVariantMap> m_modelDraft;
+  QHash<QString, QString> m_modelError;
   int m_refreshing = 0;
 };

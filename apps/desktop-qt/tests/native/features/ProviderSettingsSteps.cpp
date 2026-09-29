@@ -10,6 +10,7 @@
 #include "Harness.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
+#include "Stream.h"
 #include "World.h"
 
 namespace {
@@ -31,6 +32,7 @@ struct FakeProviders {
   QString choices;  // what the wizard held before the user went back
   QStringList uninstalls;  // agents whose managed binary was cleaned up
   QString uninstallRefusal;
+  qsizetype writesBefore = 0;  // the settings writes made before a custom model's save
 };
 
 FakeProviders& fake(World& world) {
@@ -969,6 +971,221 @@ const Steps steps([] {
       }
       return false;
     }, [&] { return QStringLiteral("a toast that %1 was not updated; the shell shows %2").arg(c[0], show(world.state(QStringLiteral("toasts")))); });
+  });
+});
+
+
+// Custom models: Codex, whose built-in model offers reasoning, and a thread to
+// pick the custom model in.
+const QString kCustomModel = QStringLiteral("my-model");
+
+QJsonObject reasoning() {
+  QJsonArray choices;
+  for (const char* level : {"low", "medium", "high"}) {
+    choices.append(QJsonObject{{QStringLiteral("id"), QString::fromLatin1(level)},
+                               {QStringLiteral("label"), QString::fromLatin1(level)},
+                               {QStringLiteral("isDefault"), qstrcmp(level, "medium") == 0}});
+  }
+  return {{QStringLiteral("id"), QStringLiteral("reasoningEffort")},
+          {QStringLiteral("label"), QStringLiteral("Reasoning")},
+          {QStringLiteral("type"), QStringLiteral("select")},
+          {QStringLiteral("options"), choices}};
+}
+
+QJsonObject codexListing() {
+  return provider(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"),
+                  {{QStringLiteral("models"),
+                    QJsonArray{QJsonObject{{QStringLiteral("slug"), QStringLiteral("gpt-5")},
+                                           {QStringLiteral("name"), QStringLiteral("GPT-5")},
+                                           {QStringLiteral("capabilities"),
+                                            QJsonObject{{QStringLiteral("optionDescriptors"), QJsonArray{reasoning()}}}}}}}});
+}
+
+// Codex's instance's saved custom models, as its settings hold them.
+QJsonArray savedModels(World& world) {
+  return savedInstance(world, QStringLiteral("codex")).value(QLatin1String("config")).toObject().value(QLatin1String("customModels")).toArray();
+}
+
+// Codex lists its saved custom models after its own, as the node does
+// (HalC2.Environment's with_custom_models): one without options of its own
+// takes Codex's first model's.
+void listCustomModels(World& world) {
+  QJsonObject listing = codexListing();
+  QJsonArray models = listing.value(QLatin1String("models")).toArray();
+  const QJsonValue fallback = models.first().toObject().value(QLatin1String("capabilities"));
+  for (const QJsonValue& value : savedModels(world)) {
+    const QJsonObject setting = value.isString() ? QJsonObject{{QStringLiteral("slug"), value}} : value.toObject();
+    const QString slug = setting.value(QLatin1String("slug")).toString();
+    models.append(QJsonObject{{QStringLiteral("slug"), slug},
+                              {QStringLiteral("name"), setting.value(QLatin1String("name")).toString(slug)},
+                              {QStringLiteral("isCustom"), true},
+                              {QStringLiteral("capabilities"), setting.contains(QLatin1String("capabilities"))
+                                                                   ? setting.value(QLatin1String("capabilities"))
+                                                                   : fallback}});
+  }
+  listing.insert(QStringLiteral("models"), models);
+  offer(world, listing);
+}
+
+// Adds `my-model` to Codex and opens it to edit its options.
+void addCustomModel(World& world) {
+  seedInstance(world, QStringLiteral("codex"), {{QStringLiteral("driver"), QStringLiteral("codex")}, {QStringLiteral("enabled"), true}},
+               codexListing());
+  act(world, QStringLiteral("addModel"), {{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("slug"), kCustomModel}});
+  waitForEntry(world, QStringLiteral("Codex"), [](const QVariantMap& found) {
+    const QVariantList models = found.value(QStringLiteral("customModels")).toList();
+    return models.size() == 1 && models.first().toMap().value(QStringLiteral("slug")) == kCustomModel;
+  }, QStringLiteral("to list my-model among its custom models"));
+  act(world, QStringLiteral("editModel"), {{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("slug"), kCustomModel}});
+  waitForEntry(world, QStringLiteral("Codex"), [](const QVariantMap& found) {
+    return found.value(QStringLiteral("modelDraft")).toMap().value(QStringLiteral("slug")) == kCustomModel;
+  }, QStringLiteral("to edit my-model"));
+}
+
+QVariantMap editorChoice(const QString& id) {
+  return {{QStringLiteral("id"), id}, {QStringLiteral("label"), id}, {QStringLiteral("isDefault"), false}};
+}
+
+QVariantMap editorOption(const QString& id, const QString& label, const QVariantList& choices) {
+  return {{QStringLiteral("id"), id}, {QStringLiteral("label"), label}, {QStringLiteral("type"), QStringLiteral("select")},
+          {QStringLiteral("choices"), choices}};
+}
+
+void draftOptions(World& world, const QVariantList& options) {
+  act(world, QStringLiteral("modelDraft"), {{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("options"), options}});
+}
+
+void saveCustomModel(World& world) {
+  act(world, QStringLiteral("saveModel"), {{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("slug"), kCustomModel}});
+}
+
+// A thread on Codex with `my-model` chosen, once the node lists it.
+void chooseCustomModel(World& world) {
+  listCustomModels(world);
+  world.node.projects.insert(stream::kProject, {{QStringLiteral("id"), stream::kProject},
+                                                {QStringLiteral("title"), stream::kProject},
+                                                {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")},
+                                                {QStringLiteral("scripts"), QJsonArray()}});
+  stream::lookAtThread(world, stream::kProject);
+  world.waitFor([&] {
+    for (const QVariant& listed : world.state(QStringLiteral("modelPicker")).toMap().value(QStringLiteral("instances")).toList()) {
+      if (listed.toMap().value(QStringLiteral("instanceId")) != QLatin1String("codex")) continue;
+      for (const QVariant& model : listed.toMap().value(QStringLiteral("models")).toList()) {
+        if (model.toMap().value(QStringLiteral("slug")) == kCustomModel && model.toMap().value(QStringLiteral("isCustom")).toBool()) return true;
+      }
+    }
+    return false;
+  }, [&] { return QStringLiteral("the model picker to offer my-model; it is %1").arg(show(world.state(QStringLiteral("modelPicker")))); });
+  world.bridge().dispatch(QStringLiteral("composer.model.select"),
+                          QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), kCustomModel}});
+  world.waitFor([&] { return world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("selectedModel")) == kCustomModel; },
+                [&] { return QStringLiteral("the composer on my-model; it shows %1").arg(show(world.state(QStringLiteral("composer")))); });
+}
+
+// The choices the composer offers for its model's reasoning.
+QStringList reasoningChoices(World& world) {
+  QStringList result;
+  for (const QVariant& option : world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("options")).toList()) {
+    if (option.toMap().value(QStringLiteral("id")) != QLatin1String("reasoningEffort")) continue;
+    for (const QVariant& choice : option.toMap().value(QStringLiteral("choices")).toList()) {
+      result.append(choice.toMap().value(QStringLiteral("id")).toString());
+    }
+  }
+  return result;
+}
+
+const Steps customModelSteps([] {
+  const QString q = kQuoted;
+
+  step(QStringLiteral("the user adds the custom model %1 with a reasoning option offering (\\w+) and (\\w+)").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == kCustomModel, QStringLiteral("the scenario adds my-model"));
+    addCustomModel(world);
+    draftOptions(world, {editorOption(QStringLiteral("reasoningEffort"), QStringLiteral("Reasoning"), {editorChoice(c[1]), editorChoice(c[2])})});
+    saveCustomModel(world);
+    world.waitFor([&] {
+      const QJsonArray saved = savedModels(world);
+      return saved.size() == 1 && saved.first().toObject().contains(QLatin1String("capabilities"));
+    }, [&] { return QStringLiteral("my-model to be saved with its option; Codex holds %1").arg(show(savedModels(world).toVariantList())); });
+  });
+  step(QStringLiteral("%1 is offered in the model picker").arg(q), [](World& world, const Captures&, const Table&) {
+    chooseCustomModel(world);
+  });
+  step(QStringLiteral("the composer offers (\\w+) and (\\w+) reasoning for it"), [](World& world, const Captures& c, const Table&) {
+    const QStringList choices = reasoningChoices(world);
+    expect(choices == QStringList{c[0], c[1]}, QStringLiteral("the composer offers %1").arg(choices.join(QStringLiteral(", "))));
+  });
+
+  step(QStringLiteral("the user adds a custom model and copies the options of a built-in model"), [](World& world, const Captures&, const Table&) {
+    addCustomModel(world);
+    act(world, QStringLiteral("modelDraft"), {{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("copyFrom"), QStringLiteral("gpt-5")}});
+  });
+  step(QStringLiteral("the custom model starts with the same options"), [](World& world, const Captures&, const Table&) {
+    const QVariantMap copied = waitForEntry(world, QStringLiteral("Codex"), [](const QVariantMap& found) {
+      return !found.value(QStringLiteral("modelDraft")).toMap().value(QStringLiteral("options")).toList().isEmpty();
+    }, QStringLiteral("to hold GPT-5's options in the draft")).value(QStringLiteral("modelDraft")).toMap();
+    const QVariantList options = copied.value(QStringLiteral("options")).toList();
+    QStringList choices;
+    QString chosen;
+    for (const QVariant& choice : options.value(0).toMap().value(QStringLiteral("choices")).toList()) {
+      choices.append(choice.toMap().value(QStringLiteral("id")).toString());
+      if (choice.toMap().value(QStringLiteral("isDefault")).toBool()) chosen = choice.toMap().value(QStringLiteral("id")).toString();
+    }
+    expect(options.size() == 1 && options.first().toMap().value(QStringLiteral("id")) == QLatin1String("reasoningEffort") &&
+               choices == QStringList{QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high")} && chosen == QLatin1String("medium"),
+           QStringLiteral("the draft starts with %1").arg(show(copied)));
+    // Saved, it is the built-in model's option.
+    saveCustomModel(world);
+    world.waitFor([&] {
+      const QJsonArray descriptors = savedModels(world).first().toObject().value(QLatin1String("capabilities")).toObject()
+                                         .value(QLatin1String("optionDescriptors")).toArray();
+      return descriptors.size() == 1 && descriptors.first().toObject().value(QLatin1String("options")).toArray().size() == 3 &&
+             descriptors.first().toObject().value(QLatin1String("currentValue")) == QLatin1String("medium");
+    }, [&] { return QStringLiteral("my-model to be saved with GPT-5's options; Codex holds %1").arg(show(savedModels(world).toVariantList())); });
+  });
+
+  step(QStringLiteral("the user saves a custom option with (.+)"), [](World& world, const Captures& c, const Table&) {
+    addCustomModel(world);
+    const QVariantMap problems{
+        {QStringLiteral("no id"), editorOption(QString(), QStringLiteral("Reasoning"), {editorChoice(QStringLiteral("low"))})},
+        {QStringLiteral("no label"), editorOption(QStringLiteral("reasoningEffort"), QString(), {editorChoice(QStringLiteral("low"))})},
+        {QStringLiteral("a choice list with no choices"), editorOption(QStringLiteral("reasoningEffort"), QStringLiteral("Reasoning"), {})},
+        {QStringLiteral("the same choice twice"),
+         editorOption(QStringLiteral("reasoningEffort"), QStringLiteral("Reasoning"), {editorChoice(QStringLiteral("low")), editorChoice(QStringLiteral("low"))})},
+    };
+    expect(problems.contains(c[0]), QStringLiteral("a known problem, not %1").arg(c[0]));
+    fake(world).writesBefore = fakeConfig(world.node).writes.size();
+    draftOptions(world, {problems.value(c[0])});
+    saveCustomModel(world);
+  });
+  step(QStringLiteral("the user is told the option (.+)"), [](World& world, const Captures& c, const Table&) {
+    const QHash<QString, QString> messages{
+        {QStringLiteral("needs an id"), QStringLiteral("Option 1 needs an id.")},
+        {QStringLiteral("needs a label"), QStringLiteral("Option 1 needs a label.")},
+        {QStringLiteral("needs at least one choice"), QStringLiteral("Option 1 needs at least one choice.")},
+        {QStringLiteral("uses a choice twice"), QStringLiteral("Option 1: choice \"low\" is used twice.")},
+    };
+    const QVariantMap shown = waitForEntry(world, QStringLiteral("Codex"), [&](const QVariantMap& found) {
+      return found.value(QStringLiteral("modelError")) == messages.value(c[0]);
+    }, QStringLiteral("to say the option ") + c[0]);
+    // Nothing is saved, and the option stays open to fix.
+    expect(fakeConfig(world.node).writes.size() == fake(world).writesBefore &&
+               shown.value(QStringLiteral("modelDraft")).toMap().value(QStringLiteral("slug")) == kCustomModel,
+           QStringLiteral("the draft to stay unsaved; the entry is %1").arg(show(shown)));
+  });
+
+  step(QStringLiteral("the user adds a custom model with no options"), [](World& world, const Captures&, const Table&) {
+    addCustomModel(world);
+    saveCustomModel(world);
+    world.waitFor([&] { return savedModels(world) == QJsonArray{kCustomModel} &&
+                               entry(world, QStringLiteral("Codex")).value(QStringLiteral("modelDraft")).isNull(); },
+                  [&] { return QStringLiteral("my-model to be saved as its slug alone; Codex holds %1").arg(show(savedModels(world).toVariantList())); });
+  });
+  step(QStringLiteral("the composer uses the provider's default options for it"), [](World& world, const Captures&, const Table&) {
+    chooseCustomModel(world);
+    const QStringList choices = reasoningChoices(world);
+    expect(choices == QStringList{QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high")},
+           QStringLiteral("the composer offers Codex's reasoning for my-model; it offers %1").arg(choices.join(QStringLiteral(", "))));
   });
 });
 
