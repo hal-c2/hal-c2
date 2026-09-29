@@ -508,37 +508,19 @@ defmodule HalC2.Web.Socket do
 
     Task.start(fn ->
       reply =
-        case node_for(environment) do
-          # Outside the cluster: through this node's link, if it has one.
-          nil ->
-            HalC2.Links.rpc(environment, method, payload || %{}, timeout)
+        case HalC2.Links.route(environment) do
+          :unknown ->
+            {:error, "unknown environment"}
 
-          # Activity leases belong to this socket and its session.
-          node when method == "server.reportClientActivity" ->
-            args = [state.session, socket, payload || %{}]
-            :erpc.cast(node, HalC2.BackgroundPolicy, :report_client_activity, args)
-            {:ok, nil}
-
-          # The paired-clients methods answer for this socket's session, which only
-          # this node knows: on another member every session would be "other".
-          node when node != node() and method in @session_methods ->
+          # Through a link the other side knows only the link's session.
+          :link when method in @session_methods ->
             {:error, @session_elsewhere}
 
-          node ->
-            args =
-              if method in @session_methods,
-                do: [method, payload || %{}, state.session],
-                else: [method, payload || %{}]
+          :link ->
+            HalC2.Links.rpc(environment, method, payload || %{}, timeout)
 
-            try do
-              # Each call runs in its own task; some (a provider update, a
-              # scheduled task run) take minutes.
-              :erpc.call(node, HalC2.Rpc, :handle, args, timeout)
-            catch
-              :error, {:erpc, :timeout} -> {:error, "#{method} timed out"}
-              :error, {:erpc, reason} -> {:error, "node unavailable: #{reason}"}
-              kind, reason -> {:error, Exception.format(kind, reason)}
-            end
+          {:node, node} ->
+            call_node(state, socket, node, method, payload, timeout)
         end
 
       send(socket, {:rpc_reply, id, reply})
@@ -547,16 +529,34 @@ defmodule HalC2.Web.Socket do
     state
   end
 
-  # This node's own environment is always served here, even if the node became
-  # distributed (and so changed its name) after the shell recorded it.
-  defp node_for(environment_id) do
-    if environment_id == HalC2.Environment.id(), do: node(), else: remote_node_for(environment_id)
+  # Activity leases belong to this socket and its session.
+  defp call_node(state, socket, node, "server.reportClientActivity", payload, _timeout) do
+    args = [state.session, socket, payload || %{}]
+    :erpc.cast(node, HalC2.BackgroundPolicy, :report_client_activity, args)
+    {:ok, nil}
   end
 
-  defp remote_node_for(environment_id) do
-    Enum.find_value(HalC2.Shell.environments(), fn {node, descriptor} ->
-      if descriptor["environmentId"] == environment_id, do: node
-    end)
+  # The paired-clients methods answer for this socket's session, which only this node
+  # knows: on another member every session would be "other".
+  defp call_node(_state, _socket, node, method, _payload, _timeout)
+       when node != node() and method in @session_methods,
+       do: {:error, @session_elsewhere}
+
+  defp call_node(state, _socket, node, method, payload, timeout) do
+    args =
+      if method in @session_methods,
+        do: [method, payload || %{}, state.session],
+        else: [method, payload || %{}]
+
+    try do
+      # Each call runs in its own task; some (a provider update, a scheduled task run)
+      # take minutes.
+      :erpc.call(node, HalC2.Rpc, :handle, args, timeout)
+    catch
+      :error, {:erpc, :timeout} -> {:error, "#{method} timed out"}
+      :error, {:erpc, reason} -> {:error, "node unavailable: #{reason}"}
+      kind, reason -> {:error, Exception.format(kind, reason)}
+    end
   end
 
   # --- subscriptions -------------------------------------------------------------
@@ -582,23 +582,6 @@ defmodule HalC2.Web.Socket do
     frame = %{"t" => "shell", "id" => id, "nodes" => nodes, "rows" => rows, "links" => links}
 
     {:push, Protocol.encode(frame), put_in(state.subs[id], shell)}
-  end
-
-  # A node's ServerConfig, fetched once; it is small and changes with settings.
-  defp subscribe(state, id, {:config_for, environment_id}, offset),
-    do: subscribe(state, id, {:config_for, environment_id, nil}, offset)
-
-  defp subscribe(state, id, {:config_for, environment_id, command}, offset) do
-    case Enum.find(HalC2.Shell.environments(), fn {_node, d} ->
-           d["environmentId"] == environment_id
-         end) do
-      {node, _} ->
-        subscribe(state, id, {:config, node, command}, offset)
-
-      nil ->
-        {:push, Protocol.encode(%{"t" => "error", "id" => id, "reason" => "unknown environment"}),
-         state}
-    end
   end
 
   defp subscribe(state, id, {:config, node}, offset),
@@ -683,11 +666,16 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  # A shape named by environment: on the cluster member that serves it, else through
-  # this node's link to it, whose frames arrive as `{:hal_c2_link, ref, frame}`.
+  # A shape named by environment: its node form on this node or the cluster member that
+  # serves it, else through this node's link, whose frames arrive as
+  # `{:hal_c2_link, ref, frame}`.
   defp subscribe(state, id, {:environment, environment_id, shape}, offset) do
-    case {node_for(environment_id), shape} do
-      {nil, _} ->
+    case HalC2.Links.route(environment_id) do
+      {:node, node} ->
+        {:ok, local} = Protocol.at_node(shape, node)
+        subscribe(state, id, local, offset)
+
+      :link ->
         case HalC2.Links.watch(environment_id, shape, self(), offset) do
           {:ok, ref} ->
             {:ok,
@@ -701,14 +689,8 @@ defmodule HalC2.Web.Socket do
             {:push, Protocol.encode(error_frame(id, reason)), state}
         end
 
-      {node, %{"type" => "terminal", "input" => input}} ->
-        subscribe(state, id, {:terminal, node, input}, offset)
-
-      {node, %{"type" => "terminals"}} ->
-        subscribe(state, id, {:terminals, node}, offset)
-
-      {node, %{"type" => "stream", "stream" => stream_id}} ->
-        subscribe(state, id, {:stream, node, stream_id}, offset)
+      :unknown ->
+        {:push, Protocol.encode(error_frame(id, "unknown environment")), state}
     end
   end
 
@@ -728,10 +710,7 @@ defmodule HalC2.Web.Socket do
          }}
 
       {:ok, {:error, %{} = error}} ->
-        frame =
-          Map.put(error_frame(id, error["message"]), "detail", Map.delete(error, "message"))
-
-        {:push, Protocol.encode(frame), state}
+        {:push, Protocol.encode(error_frame(id, error)), state}
 
       {_, reason} ->
         {:push, Protocol.encode(error_frame(id, reason)), state}
@@ -1110,7 +1089,12 @@ defmodule HalC2.Web.Socket do
   # The scope each shape needs, as the Node server's subscribe methods declare it.
   defp shape_scope({:terminal, _, _}), do: "terminal:operate"
   defp shape_scope({:terminals, _}), do: "terminal:operate"
-  defp shape_scope({:environment, _, %{"type" => "terminal" <> _}}), do: "terminal:operate"
+  # By environment, as its node form needs, wherever it is served.
+  defp shape_scope({:environment, _, shape}) do
+    {:ok, local} = Protocol.at_node(shape, node())
+    shape_scope(local)
+  end
+
   defp shape_scope(:auth_access), do: "access:read"
 
   defp shape_scope({kind, _, _}) when kind in [:server_update, :git_action, :preview_automation],
@@ -1185,6 +1169,10 @@ defmodule HalC2.Web.Socket do
         %{state | by_terminal: Map.put(state.by_terminal, key, sources)}
     end
   end
+
+  # A contract error's fields go in `detail`, as rpc.error carries them.
+  defp error_frame(id, %{} = error),
+    do: id |> error_frame(error["message"]) |> Map.put("detail", Map.delete(error, "message"))
 
   defp error_frame(id, reason), do: %{"t" => "error", "id" => id, "reason" => to_string(reason)}
 

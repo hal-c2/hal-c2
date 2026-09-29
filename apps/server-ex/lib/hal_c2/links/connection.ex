@@ -5,9 +5,15 @@ defmodule HalC2.Links.Connection do
   RPCs and subscriptions. After a drop it reconnects with backoff and subscribes
   again, so subscribers get a fresh snapshot, as after their own reconnect; a stream
   resumes from the last offset it passed on instead. RPCs fail while it is down
-  rather than wait for it. When the environment no longer accepts the link's token
-  it stops trying: only pairing again can fix that. It tells `HalC2.Links` why it is
-  down (`"unreachable"` or `"refused"`).
+  rather than wait for it, and so do new subscriptions once it has failed to connect.
+  A socket that answers nothing between two pings counts as dropped. When the
+  environment no longer accepts the link's token it stops trying: only pairing again
+  can fix that. It tells `HalC2.Links` why it is down (`"unreachable"` or `"refused"`).
+
+  It also reaches the other members of the environment's cluster: it registers their
+  environment ids beside its own (`HalC2.Links.route/1`), from the environment's
+  descriptor as it connects and from the shells it passes on, and names them in what
+  it forwards so that the environment routes them to its members.
   """
 
   use GenServer
@@ -26,8 +32,8 @@ defmodule HalC2.Links.Connection do
   def child_spec(link),
     do: %{id: __MODULE__, start: {__MODULE__, :start_link, [link]}, restart: :transient}
 
-  def rpc(pid, method, payload, timeout) do
-    GenServer.call(pid, {:rpc, method, payload}, timeout)
+  def rpc(pid, environment, method, payload, timeout) do
+    GenServer.call(pid, {:rpc, environment, method, payload}, timeout)
   catch
     :exit, {:timeout, _} -> {:error, "#{method} timed out"}
     :exit, _ -> {:error, "unknown environment"}
@@ -67,30 +73,52 @@ defmodule HalC2.Links.Connection do
        # ref => %{pid, monitor, shape, id, offset}
        subs: %{},
        backoff: @min_backoff,
-       refused: false
+       # Why it is down since it last failed: nil while up or first connecting, else
+       # "unreachable" or "refused".
+       problem: nil,
+       # The ping loop of the socket that is up, and whether it said anything since
+       # the last ping.
+       ping: nil,
+       heard: true,
+       # The other environments of its cluster, registered beside its own.
+       members: MapSet.new()
      }}
   end
 
+  # From before members and liveness: a refused link had `refused: true`.
   @impl true
-  def handle_call({:rpc, _method, _payload}, _from, %{node: nil, refused: true} = state),
-    do: {:reply, {:error, refused(state)}, state}
+  def code_change(_old_vsn, state, _extra) do
+    {refused, state} = Map.pop(state, :refused, false)
 
-  def handle_call({:rpc, _method, _payload}, _from, %{node: nil} = state),
-    do: {:reply, {:error, unreachable(state)}, state}
+    {:ok,
+     state
+     |> Map.put_new(:problem, if(refused, do: "refused"))
+     |> Map.put_new(:ping, nil)
+     |> Map.put_new(:heard, true)
+     |> Map.put_new(:members, MapSet.new())}
+  end
 
-  def handle_call({:rpc, method, payload}, from, state) do
+  @impl true
+  def handle_call({:rpc, environment, _method, _payload}, _from, %{node: nil} = state),
+    do: {:reply, {:error, down_error(state, environment)}, state}
+
+  def handle_call({:rpc, environment, method, payload}, from, state) do
     {id, state} = next_id(state)
 
     frame = %{
       "t" => "rpc",
       "id" => id,
-      "environment" => state.environment,
+      "environment" => environment,
       "method" => method,
       "payload" => payload
     }
 
     {:noreply, state |> put_in([:pending, id], {:call, from}) |> push(frame)}
   end
+
+  def handle_call({:watch, shape, _pid, _offset}, _from, %{node: nil, problem: p} = state)
+      when p != nil,
+      do: {:reply, {:error, down_error(state, shape["environment"] || state.environment)}, state}
 
   def handle_call({:watch, shape, pid, offset}, _from, state) do
     ref = make_ref()
@@ -115,26 +143,37 @@ defmodule HalC2.Links.Connection do
   def handle_info(:connect, state) do
     case open(state.link) do
       {:ok, conn, request} ->
+        state = members(state, cluster(state.link))
         {:noreply, %{state | conn: conn, request: request, upgrade: %{responses: []}}}
 
       {:error, :refused} ->
         Logger.warning("link to #{label(state)}: its token is no longer accepted")
         problem(state, "refused")
-        {:noreply, %{state | refused: true}}
+        {:noreply, %{state | problem: "refused"}}
 
       {:error, reason} ->
         Logger.warning("link to #{label(state)}: #{reason}")
         problem(state, "unreachable")
-        {:noreply, retry(state)}
+        {:noreply, retry(%{state | problem: "unreachable"})}
     end
   end
 
-  def handle_info(:ping, %{ws: nil} = state), do: {:noreply, state}
-
-  def handle_info(:ping, state) do
-    Process.send_after(self(), :ping, @ping)
-    {:noreply, push(state, %{"t" => "ping"})}
+  def handle_info({:ping, tag}, %{ping: tag, heard: false} = state) do
+    Logger.info("link to #{label(state)} stopped answering")
+    {:noreply, down(state)}
   end
+
+  def handle_info({:ping, tag}, %{ping: tag} = state) do
+    Process.send_after(self(), {:ping, tag}, @ping)
+    {:noreply, push(%{state | heard: false}, %{"t" => "ping"})}
+  end
+
+  # A ping loop of a socket that is gone.
+  def handle_info({:ping, _tag}, state), do: {:noreply, state}
+
+  # The untagged loop from before the liveness check: the socket's loop starts afresh.
+  def handle_info(:ping, %{ws: nil} = state), do: {:noreply, state}
+  def handle_info(:ping, state), do: {:noreply, ping(state)}
 
   def handle_info({:DOWN, monitor, :process, _pid, _}, state) do
     case Enum.find(state.subs, fn {_, sub} -> sub.monitor == monitor end) do
@@ -228,7 +267,7 @@ defmodule HalC2.Links.Connection do
   defp frames(state, data) do
     case Mint.WebSocket.decode(state.ws, data) do
       {:ok, ws, frames} ->
-        Enum.reduce_while(frames, %{state | ws: ws}, fn
+        Enum.reduce_while(frames, %{state | ws: ws, heard: true}, fn
           _frame, %{ws: nil} = state -> {:halt, state}
           {:text, text}, state -> {:cont, message(state, JSON.decode!(text))}
           {:ping, data}, state -> {:cont, send_frame(state, {:pong, data})}
@@ -244,8 +283,7 @@ defmodule HalC2.Links.Connection do
 
   defp message(state, %{"t" => "hello", "node" => node}) do
     GenServer.cast(HalC2.Links, {:online, state.environment, true})
-    Process.send_after(self(), :ping, @ping)
-    state = %{state | node: node, backoff: @min_backoff}
+    state = ping(%{state | node: node, backoff: @min_backoff, problem: nil})
     Enum.reduce(Map.keys(state.subs), state, &send_sub(&2, &1))
   end
 
@@ -263,6 +301,8 @@ defmodule HalC2.Links.Connection do
   defp message(state, %{"t" => t, "id" => id} = frame) do
     case state.pending do
       %{^id => {:sub, ref}} ->
+        # A member the frame names is reachable before anyone hears of it.
+        state = learn(state, frame)
         send(state.subs[ref].pid, {:hal_c2_link, ref, frame})
 
         # The remote ended the subscription; a stream that fell behind resubscribes.
@@ -293,10 +333,16 @@ defmodule HalC2.Links.Connection do
 
   defp reply(frame), do: {:error, frame["error"]}
 
+  # A shape for the environment itself goes to its node by name; one for a member of
+  # its cluster keeps the member's environment, for the environment to route.
   defp send_sub(state, ref) do
     {id, state} = next_id(state)
     sub = state.subs[ref]
-    shape = sub.shape |> Map.delete("environment") |> Map.put("node", state.node)
+
+    shape =
+      if sub.shape["environment"] in [nil, state.environment],
+        do: sub.shape |> Map.delete("environment") |> Map.put("node", state.node),
+        else: sub.shape
 
     state
     |> put_in([:subs, ref], %{sub | id: id})
@@ -338,13 +384,15 @@ defmodule HalC2.Links.Connection do
     if state.node, do: GenServer.cast(HalC2.Links, {:online, state.environment, false})
 
     for {_id, {:call, from}} <- state.pending,
-        do: GenServer.reply(from, {:error, unreachable(state)})
+        do: GenServer.reply(from, {:error, down_error(state, state.environment)})
 
     subs = Map.new(state.subs, fn {ref, sub} -> {ref, %{sub | id: nil}} end)
 
     retry(%{
       state
-      | conn: nil,
+      | problem: "unreachable",
+        ping: nil,
+        conn: nil,
         request: nil,
         upgrade: nil,
         ws: nil,
@@ -352,6 +400,12 @@ defmodule HalC2.Links.Connection do
         pending: %{},
         subs: subs
     })
+  end
+
+  defp ping(state) do
+    tag = make_ref()
+    Process.send_after(self(), {:ping, tag}, @ping)
+    %{state | ping: tag, heard: true}
   end
 
   defp retry(state) do
@@ -364,6 +418,61 @@ defmodule HalC2.Links.Connection do
   defp problem(state, kind), do: GenServer.cast(HalC2.Links, {:problem, state.environment, kind})
 
   defp label(state), do: state.link["environment"]["label"] || state.link["origin"]
-  defp refused(state), do: "#{label(state)} no longer accepts this node's access; pair it again"
-  defp unreachable(state), do: "#{label(state)} is unreachable"
+
+  # What a request for `environment` gets while the link is down.
+  defp down_error(%{problem: "refused"} = state, environment),
+    do:
+      HalC2.Links.unreachable(
+        environment,
+        "refused",
+        "#{label(state)} no longer accepts this node's access; pair it again"
+      )
+
+  defp down_error(state, environment),
+    do: HalC2.Links.unreachable(environment, "unreachable", "#{label(state)} is unreachable")
+
+  # --- the environment's cluster ---------------------------------------------------
+
+  # Its members' environment ids, from its descriptor; nil when that cannot be read.
+  defp cluster(link) do
+    case HalC2.Links.http(:get, link["origin"] <> "/.well-known/hal-c2/environment", [], nil) do
+      {:ok, 200, %{"cluster" => cluster}} when is_list(cluster) ->
+        for %{"environmentId" => id} when is_binary(id) <- cluster, do: id
+
+      _ ->
+        nil
+    end
+  end
+
+  # Environments of its cluster that its shells name as they pass through.
+  defp learn(state, %{"t" => "shell", "nodes" => nodes}) do
+    ids = for %{"environment" => %{"environmentId" => id}} <- nodes, do: id
+    members(state, MapSet.union(state.members, MapSet.new(ids)))
+  end
+
+  defp learn(state, %{"t" => "shell.environment", "environment" => %{"environmentId" => id}}),
+    do: members(state, MapSet.put(state.members, id))
+
+  defp learn(state, _frame), do: state
+
+  # Registers `ids` (but its own environment, and ones this node reaches otherwise) as
+  # the members this link reaches, and lets go of the rest.
+  defp members(state, nil), do: state
+
+  defp members(state, ids) do
+    ids =
+      ids
+      |> MapSet.new()
+      |> MapSet.delete(state.environment)
+      |> MapSet.reject(&(HalC2.Links.route(&1) != :unknown and &1 not in state.members))
+
+    for id <- MapSet.difference(state.members, ids),
+        do: Registry.unregister(HalC2.Links.Registry, id)
+
+    # Another link may reach the same member; the first to register it keeps it.
+    for id <- MapSet.difference(ids, state.members),
+        do: Registry.register(HalC2.Links.Registry, id, :member)
+
+    %{state | members: ids}
+  end
 end
