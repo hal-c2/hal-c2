@@ -6,9 +6,9 @@
 // Actions (each on the shown environment):
 //   `providerSettings.wizardOpen`, `.wizardClose`, `.wizardDriver {driver}`,
 //   `.wizardLabel {label}`, `.wizardAccent {color}`, `.wizardInstanceId
-//   {instanceId}`, `.wizardField {key, value}`, `.wizardStep {step}` (moving
-//   on past Identity needs a valid id; going back always works),
-//   `.wizardSubmit`;
+//   {instanceId}`, `.wizardField {key, value}`, `.wizardStep {step, label?,
+//   instanceId?}` (moving on past Identity needs a valid id; going back always
+//   works), `.wizardSubmit {label?, instanceId?}`;
 //   `.rename {instanceId, name}`, `.accent {instanceId, color}`, `.field
 //   {instanceId, key, value}`, `.secret {instanceId, name, value}` (a driver's
 //   own variable, such as Cursor's API key; empty removes it), `.addVariable
@@ -229,6 +229,11 @@ bool ProviderSettingsController::handleInstance(const QString& action, const QVa
       m_wizard->config.insert(m_wizard->driver, config);
     } else if (action == QLatin1String("providerSettings.wizardStep") || action == QLatin1String("providerSettings.wizardSubmit")) {
       const QString driver = m_wizard->driver;
+      // The page keeps a label or id being typed to itself and hands it over here.
+      if (input.contains(QStringLiteral("label"))) m_wizard->identity[driver].insert(QStringLiteral("label"), input.value(QStringLiteral("label")).toString());
+      if (input.contains(QStringLiteral("instanceId"))) {
+        m_wizard->identity[driver].insert(QStringLiteral("instanceId"), input.value(QStringLiteral("instanceId")).toString().trimmed());
+      }
       const QJsonObject identity = m_wizard->identity.value(driver);
       const QString driverLabel = ProviderDrivers::find(driver)->label;
       const QString label = identity.contains(QLatin1String("label")) ? identity.value(QLatin1String("label")).toString() : driverLabel;

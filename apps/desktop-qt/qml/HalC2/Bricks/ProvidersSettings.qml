@@ -157,6 +157,15 @@ Rectangle {
             Shell.dispatch("providerSettings.wizard" + action, payload || {});
         }
 
+        // The label and id being typed stay on the page, not republished per
+        // keystroke; leaving a field or the step hands them over.
+        function typed(payload) {
+            const result = Object.assign({}, payload);
+            if (wizardLabel.text !== wizard.label) result.label = wizardLabel.text;
+            if (wizardInstanceId.text !== wizard.instanceId) result.instanceId = wizardInstanceId.text;
+            return result;
+        }
+
         ColumnLayout {
             id: wizardColumn
 
@@ -363,16 +372,22 @@ Rectangle {
                 }
 
                 ShellTextField {
+                    id: wizardLabel
+
                     objectName: "label"
                     Layout.fillWidth: true
-                    text: wizardCard.wizard.label
+                    // Set only when the node's value changes, so a republish of
+                    // anything else leaves what is being typed alone.
+                    readonly property string committed: wizardCard.wizard.label
+                    text: committed
+                    onCommittedChanged: text = committed
                     placeholderText: wizardCard.wizard.driverLabel
-                    onTextEdited: wizardCard.send("Label", { label: text })
+                    onEditingFinished: if (text !== wizardCard.wizard.label) wizardCard.send("Label", { label: text })
                 }
 
                 AccentField {
                     color: wizardCard.wizard.accentColor
-                    name: wizardCard.wizard.label
+                    name: wizardLabel.text
                     onCommit: color => wizardCard.send("Accent", { color: color })
                 }
 
@@ -383,11 +398,17 @@ Rectangle {
                 }
 
                 ShellTextField {
+                    id: wizardInstanceId
+
                     objectName: "instanceId"
                     Layout.fillWidth: true
-                    text: wizardCard.wizard.instanceId
+                    // Set only when the node's value changes, so a republish of
+                    // anything else leaves what is being typed alone.
+                    readonly property string committed: wizardCard.wizard.instanceId
+                    text: committed
+                    onCommittedChanged: text = committed
                     font.family: "monospace"
-                    onTextEdited: wizardCard.send("InstanceId", { instanceId: text })
+                    onEditingFinished: if (text !== wizardCard.wizard.instanceId) wizardCard.send("InstanceId", { instanceId: text })
                 }
 
                 Note {
@@ -439,7 +460,7 @@ Rectangle {
                     visible: wizardCard.wizard.step > 0
                     enabled: !wizardCard.wizard.saving
                     text: qsTr("Back")
-                    onClicked: wizardCard.send("Step", { step: wizardCard.wizard.step - 1 })
+                    onClicked: wizardCard.send("Step", wizardCard.typed({ step: wizardCard.wizard.step - 1 }))
                 }
 
                 ShellButton {
@@ -447,7 +468,7 @@ Rectangle {
                     visible: wizardCard.wizard.step < wizardCard.wizard.steps.length - 1
                     primary: true
                     text: qsTr("Next")
-                    onClicked: wizardCard.send("Step", { step: wizardCard.wizard.step + 1 })
+                    onClicked: wizardCard.send("Step", wizardCard.typed({ step: wizardCard.wizard.step + 1 }))
                 }
 
                 ShellButton {
@@ -455,7 +476,7 @@ Rectangle {
                     primary: true
                     enabled: !wizardCard.wizard.saving
                     text: wizardCard.wizard.saving ? qsTr("Adding…") : qsTr("Add instance")
-                    onClicked: wizardCard.send("Submit")
+                    onClicked: wizardCard.send("Submit", wizardCard.typed({}))
                 }
             }
         }

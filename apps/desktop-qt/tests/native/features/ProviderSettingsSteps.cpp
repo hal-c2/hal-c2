@@ -400,8 +400,10 @@ void startAdding(World& world, const QString& driverLabel, const std::optional<Q
   }
   expect(!driver.isEmpty(), QStringLiteral("the wizard to offer %1; it is %2").arg(driverLabel, show(wizard(world))));
   act(world, QStringLiteral("wizardDriver"), {{QStringLiteral("driver"), driver}});
-  act(world, QStringLiteral("wizardStep"), {{QStringLiteral("step"), 1}});
-  if (label) act(world, QStringLiteral("wizardLabel"), {{QStringLiteral("label"), *label}});
+  // The page hands over a label being typed with the step it moves to.
+  QVariantMap step{{QStringLiteral("step"), 1}};
+  if (label) step.insert(QStringLiteral("label"), *label);
+  act(world, QStringLiteral("wizardStep"), step);
   world.waitFor([&] { return wizard(world).value(QStringLiteral("driver")) == driver && wizard(world).value(QStringLiteral("step")) == 1 &&
                              (!label || wizard(world).value(QStringLiteral("label")) == *label); },
                 [&] { return QStringLiteral("the identity step for %1; the wizard is %2").arg(driverLabel, show(wizard(world))); });

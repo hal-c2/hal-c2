@@ -178,6 +178,29 @@ Item {
             compare(Shell.dispatchedActions[1].action, "providerSettings.wizardSubmit");
         }
 
+        // The label and id being typed stay on the page until the step moves,
+        // even when the panel is republished meanwhile.
+        function test_the_wizard_keeps_typing_until_the_step_moves() {
+            Shell.state = { providerSettings: root.settings({ wizard: wizard({}) }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "wizard");
+            tryVerify(() => !!card && card.visible);
+            const label = findChild(card, "label");
+            label.forceActiveFocus();
+            label.selectAll();
+            keySequence("w,o,r,k");
+            compare(label.text, "work");
+            compare(Shell.dispatchedActions.length, 0);
+            Shell.state = { providerSettings: root.settings({ refreshing: true, wizard: wizard({}) }) };
+            compare(label.text, "work");
+            mouseClick(findChild(card, "next"));
+            const step = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(step.action, "providerSettings.wizardStep");
+            compare(step.payload.step, 2);
+            compare(step.payload.label, "work");
+            verify(!("instanceId" in step.payload), "an id not typed is derived by the node");
+        }
+
         // A stored secret is never shown; its row offers a replacement.
         function test_a_stored_secret_row_offers_a_replacement() {
             Shell.state = { providerSettings: root.settings({}) };
