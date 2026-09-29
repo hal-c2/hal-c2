@@ -47,6 +47,7 @@ target_compile_definitions(tst_Features PRIVATE
   HAL_C2_APP_VERSION="test"
   HAL_C2_FEATURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../../features"
   HAL_C2_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../qml"
+  HAL_C2_DEVICE_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/features/fixtures/device-72x160.h264"
 )
 target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::GuiPrivate Qt6::Quick Qt6::Test)
 hal_c2_target_platform_window(tst_Features)

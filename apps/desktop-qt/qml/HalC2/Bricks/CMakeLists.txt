@@ -89,6 +89,7 @@ qt_add_qml_module(hal_c2_bricks
     SettingsScopeSentence.qml
     StorageSettings.qml
     ProjectSettings.qml
+    DevicePanel.qml
   RESOURCES
     qmldir
     js/shell-connect.js

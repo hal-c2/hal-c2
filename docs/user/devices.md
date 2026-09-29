@@ -39,6 +39,12 @@ iOS, and power off. Close the tab to stop watching; the device keeps running
 unless you power it off. Closed tabs stay closed after a reload. To watch the
 device again, choose it from **+ → Device**.
 
+The desktop app shows the screen with FFmpeg, which it does not include. If a
+Device tab says to install FFmpeg, install it on the machine running the
+desktop app, then choose **Reconnect**: `ffmpeg` on Debian, Ubuntu, Arch and
+Homebrew, or `ffmpeg-libs` from RPM Fusion on Fedora (Fedora's own
+`ffmpeg-free` may not decode H.264). The rest of the app works without it.
+
 ## Tools
 
 The toolbar's **Tools** button opens a drawer for the open device. It shows the

@@ -701,9 +701,11 @@ rows: the environment and whether it is reachable, the project, the checkout
 and branch, and the lineage parent and children. Changing the checkout stays
 with the composer's strip.
 
-The device tab is not native: the hub's streams are H.264 (iOS AVCC with an
-MJPEG fallback, Android SEMU-framed over a WebSocket), which Qt cannot decode
-without QtMultimedia or FFmpeg. Its scenarios stay `@backlog`.
+Device tabs (`ThreadDevices`, `DeviceStream`) follow the node's `devices`
+shape and stream through its device-hub proxy with the shell's bearer token,
+decoding H.264 with FFmpeg's libavcodec (headers at build time, the libraries
+loaded at run time; see [Devices](devices.md#the-viewers-decode-both-vendored-protocols)).
+A device tab streams only while it is the active tab.
 
 The panel never asks the page for anything. Per thread, the controller keeps
 whether it is open, its tabs, the active one and the details column, plus one
@@ -1193,7 +1195,7 @@ of the original chrome has a brick (`Sidebar`, `Composer`, `RightPanel`,
 state from the page. Some settings sections are still HTML because they have
 not moved yet, not by design (see
 [Settings sections](#settings-sections-and-the-shells-own-pages)); the right
-panel's tabs are native except the device tab.
+panel's tabs are all native.
 
 A piece has moved when a native controller (`src/native/`, registered with
 `NativeControllerRegistrar`) builds its state from the shell's own node client

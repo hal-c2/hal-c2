@@ -267,6 +267,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/model-and-mode.feature:Favourite models are listed first*"),
     QStringLiteral("composer/model-and-mode.feature:A thread's provider is locked*"),
     QStringLiteral("navigation/toasts.feature"),
+    QStringLiteral("preview/devices.feature"),
+    QStringLiteral("navigation/qt-shell-backlog.feature:A device tab streams a device screen"),
     // The alerts themselves; the in-app card's own clicks are tst_Scenarios.qml's.
     QStringLiteral("timeline/notifications.feature:A thread that changes state*"),
     QStringLiteral("timeline/notifications.feature:Threads *"),
