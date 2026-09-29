@@ -25,17 +25,21 @@ find . -name '*.feature' | sed 's|^\./||' | sort | xargs awk -v want="$want" -v 
   /^[[:space:]]*(Scenario|Scenario Outline|Example):/ {
     tags = feature " " rule " " pending " "; pending = ""
     name = $0; sub(/^[[:space:]]*/, "", name); at = FILENAME ":" FNR
-    scenario = tags; if (tags ~ / @backlog /) consider(tags, at, name)
-    else { outline_at = at; outline_name = name }
+    scenario = tags; outline_name = name
+    if (tags ~ / @backlog /) consider(tags, at, name)
     next
   }
-  # An outline whose own tags are not @backlog can still carry a @backlog Examples table.
+  # An outline whose own tags are not @backlog can still carry @backlog Examples tables;
+  # each one is its own piece of work.
   /^[[:space:]]*Examples:/ {
-    if (pending ~ /@backlog/ && scenario !~ / @backlog /) { consider(scenario pending " ", outline_at, outline_name); outline_at = "" }
+    if (pending ~ /@backlog/ && scenario !~ / @backlog /) {
+      name = $0; sub(/^[[:space:]]*/, "", name)
+      consider(scenario pending " ", FILENAME ":" FNR, outline_name " / " name)
+    }
     pending = ""; next
   }
   function consider(tags, at, name,   i, t, w) {
-    if (at == "" || tags ~ / @dropped /) return
+    if (tags ~ / @dropped /) return
     for (i = 1; i <= n; i++) {
       t = wanted[i]
       if (index(tags, " " t " ") == 0 && !(t ~ /^@(desktop|mobile|tui)$/ && tags ~ / @shared /)) return

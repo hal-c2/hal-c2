@@ -27,7 +27,8 @@ base. Its `features/UPSTREAM` is already advanced, so the digest continues where
 
 ## Decide each pull request
 
-Every pull request gets exactly one disposition:
+Every entry in the digest, pull request or direct commit, gets exactly one disposition
+before the cursor moves past it:
 
 - **carry**: new or changed behaviour HAL-C2 should have. Write or edit scenarios.
 - **covered**: the ledger already says it. Add the PR URL to that file's `# Sources:`. If
@@ -53,8 +54,10 @@ These are the mistakes the first upstream batch (hal-c2/hal-c2#10) made and revi
   scenario that already passes, tagged `@backlog`, makes the ledger contradict itself.
 - **One behaviour per scenario.** Do not bundle an invariant the node already passes with a
   new one; the combined scenario gets the wrong status. Split it.
-- **Status from evidence.** No status tag only when you ran it and it passes
-  (`mise run features:node <file>`). Otherwise `@backlog`.
+- **Status from evidence.** No status tag only when the runner for each of its surfaces ran
+  it and it passed: `features:node` runs only `@node`, `features:tui` only `@tui` and
+  `@shared`, and the desktop runner only its own files. A scenario no runner exercised
+  stays `@backlog`.
 - **Every surface tag that applies.** Anything a user sees needs client tags (`@shared`, or
   `@desktop` / `@mobile` / `@tui`), not only `@node`, or the client runners never select it.
 - **Existing plugin ids only.** `grep -rhoE '@plugin-[a-z0-9-]+' features | sort -u` lists
