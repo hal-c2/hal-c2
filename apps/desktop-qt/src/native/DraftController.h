@@ -64,6 +64,9 @@ public:
   // ("Run on").
   void promote(const QString& id, const QString& threadKey);
   void setText(const QString& id, const QString& text);
+  // Gives the draft a new thread id and clears its text: its old thread was
+  // started in the background and the draft stays for another prompt.
+  void renew(const QString& id);
 
 signals:
   void changed();

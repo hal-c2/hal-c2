@@ -146,19 +146,31 @@ void WorkspaceFiles::setQuery(const QString& query) {
   m_searchDelay.start();
 }
 
+void WorkspaceFiles::searchEntries(NodeClient* client, const QString& environmentId, const QString& cwd,
+                                   const QString& query, int limit, SearchDone done) {
+  client->call(environmentId, QStringLiteral("projects.searchEntries"),
+               QJsonObject{{QStringLiteral("cwd"), cwd}, {QStringLiteral("query"), query}, {QStringLiteral("limit"), limit}},
+               [done = std::move(done)](const QJsonValue& result, const std::optional<QString>& error) {
+                 if (error) {
+                   done({}, false, error);
+                   return;
+                 }
+                 done(entriesOf(result), result.toObject().value(QLatin1String("truncated")).toBool(), std::nullopt);
+               });
+}
+
 void WorkspaceFiles::search() {
   if (m_root.isEmpty()) return;
   const int request = ++m_searchRequest;
-  m_client->call(m_environment, QStringLiteral("projects.searchEntries"),
-                 QJsonObject{{QStringLiteral("cwd"), m_root}, {QStringLiteral("query"), m_query.trimmed()}, {QStringLiteral("limit"), searchLimit}},
-                 [this, request](const QJsonValue& result, const std::optional<QString>& error) {
-                   if (request != m_searchRequest) return;
-                   m_searching = false;
-                   m_searchProblem = error ? (error->isEmpty() ? QStringLiteral("Unable to search files.") : *error) : QString();
-                   m_searchTruncated = !error && result.toObject().value(QLatin1String("truncated")).toBool();
-                   m_tree.setSearch(error ? QList<FileTreeModel::Entry>() : entriesOf(result));
-                   emit searchChanged();
-                 });
+  searchEntries(m_client, m_environment, m_root, m_query.trimmed(), searchLimit,
+                [this, request](const QList<FileTreeModel::Entry>& entries, bool truncated, const std::optional<QString>& error) {
+                  if (request != m_searchRequest) return;
+                  m_searching = false;
+                  m_searchProblem = error ? (error->isEmpty() ? QStringLiteral("Unable to search files.") : *error) : QString();
+                  m_searchTruncated = truncated;
+                  m_tree.setSearch(entries);
+                  emit searchChanged();
+                });
 }
 
 void WorkspaceFiles::openFile(const QString& path, int line) {

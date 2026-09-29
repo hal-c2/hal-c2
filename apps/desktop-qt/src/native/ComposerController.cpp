@@ -116,79 +116,73 @@ void ComposerController::activate() {
 bool ComposerController::handle(const QString& action, const QVariant& payload) {
   if (!m_active) return false;
   const QVariantMap map = payload.toMap();
-  // The draft the brick changes: the route thread's, or the new thread's.
-  const QString draftId = nativeDraft();
-  const QString target = draftId.isEmpty() ? openThread() : draftId;
-  const bool known = !draftId.isEmpty() || m_store->thread(target).has_value();
-  // What the brick changes on the thread's draft; the page follows along.
+  const QString target = this->target();
+  const auto text = [&map] { return map.value(QStringLiteral("text")).toString(); };
   if (action == QLatin1String("composer.text.set")) {
-    const QString text = map.value(QStringLiteral("text")).toString();
-    if (map.value(QStringLiteral("target")).toString() != target || target.isEmpty()) return false;
-    if (draftId.isEmpty()) {
-      m_drafts[target].text = text;
-    } else {
-      // A new thread's text is kept with its draft.
-      NativeShell::of(this)->controller<DraftController>()->setText(draftId, text);
-    }
-    return false;
+    // A target the window has left: its last keystrokes are dropped.
+    if (target.isEmpty() || map.value(QStringLiteral("target")).toString() != target) return true;
+    setText(target, text(), map.value(QStringLiteral("cursor")).toInt(), map.value(QStringLiteral("edit")));
+    return true;
+  }
+  if (action == QLatin1String("composer.suggest.select")) {
+    if (!target.isEmpty()) selectSuggestion(target, map.value(QStringLiteral("id")).toString());
+    return true;
+  }
+  if (action == QLatin1String("composer.suggest.dismiss")) {
+    if (target.isEmpty()) return true;
+    m_drafts[target].dismissed = true;
+    publish();
+    return true;
+  }
+  // Prompt history and terminal selections are not the shell's yet.
+  if (action == QLatin1String("composer.history.step") || action == QLatin1String("composer.terminalContext.remove")) {
+    return true;
   }
   if (action == QLatin1String("composer.model.select")) {
-    if (known) {
-      Draft& draft = m_drafts[target];
-      const QJsonObject current = draft.modelSelection.value_or(baseSelection(target));
-      QJsonObject next{{QStringLiteral("instanceId"), map.value(QStringLiteral("instanceId")).toString()},
-                       {QStringLiteral("model"), map.value(QStringLiteral("model")).toString()}};
-      // Options belong to the provider they were set on.
-      if (current.value(QLatin1String("instanceId")) == next.value(QLatin1String("instanceId")) &&
-          current.contains(QLatin1String("options"))) {
-        next.insert(QStringLiteral("options"), current.value(QLatin1String("options")));
-      }
-      draft.modelSelection = next;
+    if (!target.isEmpty()) {
+      selectModel(target, map.value(QStringLiteral("instanceId")).toString(), map.value(QStringLiteral("model")).toString());
     }
-    return false;
+    return true;
+  }
+  if (action == QLatin1String("composer.model.favorite.toggle")) {
+    auto* settings = NativeShell::of(this)->controller<SettingsController>();
+    if (!settings) return true;
+    const QJsonArray favorites =
+        composer::toggleFavorite(QJsonValue::fromVariant(settings->deviceValue(QStringLiteral("favorites"))),
+                                 map.value(QStringLiteral("instanceId")).toString(), map.value(QStringLiteral("model")).toString());
+    settings->writeDevice(QStringLiteral("favorites"), favorites.toVariantList());
+    return true;
   }
   if (action == QLatin1String("composer.option.set")) {
-    if (known) {
-      Draft& draft = m_drafts[target];
-      QJsonObject selection = draft.modelSelection.value_or(baseSelection(target));
-      QJsonArray options = selection.value(QLatin1String("options")).toArray();
-      const QString id = map.value(QStringLiteral("id")).toString();
-      const QJsonObject option{{QStringLiteral("id"), id},
-                               {QStringLiteral("value"), QJsonValue::fromVariant(map.value(QStringLiteral("value")))}};
-      const auto at = std::find_if(options.begin(), options.end(),
-                                   [&](const QJsonValue& value) { return str(value.toObject(), QLatin1String("id")) == id; });
-      if (at != options.end()) {
-        *at = option;
-      } else {
-        options.append(option);
-      }
-      selection.insert(QStringLiteral("options"), options);
-      draft.modelSelection = selection;
-    }
-    return false;
+    if (!target.isEmpty()) setOption(target, map.value(QStringLiteral("id")).toString(), map.value(QStringLiteral("value")));
+    return true;
   }
-  if (action == QLatin1String("composer.runtimeMode.set") || action == QLatin1String("composer.interactionMode.set")) {
-    if (known) {
-      const QString mode = map.value(QStringLiteral("mode")).toString();
-      if (action == QLatin1String("composer.runtimeMode.set")) {
-        m_drafts[target].runtimeMode = mode;
-      } else {
-        m_drafts[target].interactionMode = mode;
-      }
-    }
-    return false;
+  if (action == QLatin1String("composer.runtimeMode.set")) {
+    if (target.isEmpty()) return true;
+    const QString mode = map.value(QStringLiteral("mode")).toString();
+    const QVariantList offered = composer::runtimeModes(instanceOf(selection(target)));
+    const bool known = std::any_of(offered.cbegin(), offered.cend(), [&](const QVariant& entry) {
+      return entry.toMap().value(QStringLiteral("value")).toString() == mode;
+    });
+    if (!known || mode == runtimeModeOf(target)) return true;
+    m_drafts[target].runtimeMode = mode;
+    save();
+    publish();
+    return true;
+  }
+  if (action == QLatin1String("composer.interactionMode.set")) {
+    if (!target.isEmpty()) setInteractionMode(target, map.value(QStringLiteral("mode")).toString());
+    return true;
   }
 
   if (action == QLatin1String("composer.interrupt")) return interrupt();
   if (action == QLatin1String("composer.submit")) return submit(map);
   if (action == QLatin1String("composer.attach")) return attach(map.value(QStringLiteral("files")).toList());
   if (action == QLatin1String("composer.attachment.remove")) {
-    if (!known) return false;
+    if (target.isEmpty()) return true;
     QList<Attachment>& attachments = m_drafts[target].attachments;
     const QString id = map.value(QStringLiteral("id")).toString();
-    const qsizetype removed = attachments.removeIf([&](const Attachment& attachment) { return attachment.id == id; });
-    if (removed == 0) return false;
-    publish();
+    if (attachments.removeIf([&](const Attachment& attachment) { return attachment.id == id; }) > 0) publish();
     return true;
   }
   if (action == QLatin1String("composer.approval.respond")) {
@@ -205,8 +199,8 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     return respond(map.value(QStringLiteral("requestId")).toString(), {}, QStringLiteral("Failed to dismiss the question."));
   }
   if (action == QLatin1String("composer.plan.implement")) {
-    if (!m_store->thread(target)) return false;
-    return sendTurn(target, QString(), QStringLiteral("auto"), true, {});
+    if (!m_store->thread(target)) return true;
+    return sendTurn(target, QString(), QStringLiteral("auto"), true, false);
   }
   if (action == QLatin1String("composer.queue.remove")) {
     return queueCommand(QStringLiteral("queued-run.cancel"), map.value(QStringLiteral("runId")).toString());
@@ -242,37 +236,36 @@ bool ComposerController::interrupt() {
 }
 
 // A send from the composer: the brick's text (else the draft's), with the
-// draft's images, model and modes. During a turn it follows the follow-up
-// setting (this device's `followUpBehavior`, steer by default), the
-// alternate intent the other way; with the thread idle on a proposed plan it
-// refines the plan (or implements it, with no text), as the web's
-// resolvePlanFollowUpSubmission.
+// draft's images, model and modes. A standalone "/plan" or "/default" only
+// switches the mode. During a turn it follows the follow-up setting
+// (`followUpBehavior`, steer by default), the alternate intent the other way;
+// with the thread idle on a proposed plan it refines the plan (or implements
+// it, with no text), as the web's resolvePlanFollowUpSubmission.
 bool ComposerController::submit(const QVariantMap& payload) {
-  if (const QString draftId = nativeDraft(); !draftId.isEmpty()) return submitDraft(draftId, payload);
-  const QString target = openThread();
-  if (!m_store->thread(target)) return false;
+  const QString target = this->target();
+  if (target.isEmpty()) return true;
   const QString text = payload.contains(QStringLiteral("text")) ? payload.value(QStringLiteral("text")).toString()
-                                                                : m_drafts.value(target).text;
-  // Slash commands are the page's.
-  if (text.trimmed().startsWith(QLatin1Char('/'))) return false;
-  m_drafts[target].text = text;
+                                                                : draft(target);
+  // The submit is the brick's newest edit, so it takes the cleared (or
+  // restored) text as the answer to it.
+  setText(target, text, int(text.size()), payload.value(QStringLiteral("edit")));
+  if (slashMode(target, text)) return true;
+  if (!m_draftId.isEmpty()) return submitDraft(target, payload);
   const bool hasImages = !m_drafts.value(target).attachments.isEmpty();
   const bool planFollowUp = !hasImages && turnState().value(QStringLiteral("plan")).isValid();
   if (text.trimmed().isEmpty() && !hasImages && !planFollowUp) return true;
 
   QString mode = QStringLiteral("auto");
   if (running(target)) {
-    const auto* settings = NativeShell::of(this)->controller<SettingsController>();
-    const QString setting = settings ? settings->deviceValue(QStringLiteral("followUpBehavior")).toString() : QString();
-    const bool queue = setting == QLatin1String("queue");
+    const bool queue = setting(QStringLiteral("followUpBehavior")).toString() == QLatin1String("queue");
     const bool alternate = payload.value(QStringLiteral("intent")).toString() == QLatin1String("alternate");
     mode = queue != alternate ? QStringLiteral("queue") : QStringLiteral("steer");
   }
-  return sendTurn(target, text, mode, planFollowUp, payload.value(QStringLiteral("edit")));
+  return sendTurn(target, text, mode, planFollowUp, true);
 }
 
 bool ComposerController::sendTurn(const QString& target, const QString& text, const QString& mode, bool planFollowUp,
-                                  const QVariant& edit) {
+                                  bool fromDraft) {
   const auto thread = m_store->thread(target);
   if (!thread) return false;
   // Nothing leaves while the node is out of reach: the draft stays as it is.
@@ -290,10 +283,9 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   }
   const bool implement = planFollowUp && trimmed.isEmpty();
 
-  Draft& draft = m_drafts[target];
   const QString createdAt = sidebar::formatIso(m_now());
-  const QString runtimeMode = draft.runtimeMode.isEmpty() ? thread->runtimeMode : draft.runtimeMode;
-  QString interactionMode = draft.interactionMode.isEmpty() ? thread->interactionMode : draft.interactionMode;
+  const QString runtimeMode = runtimeModeOf(target);
+  QString interactionMode = interactionModeOf(target);
   if (planFollowUp) interactionMode = implement ? QStringLiteral("default") : QStringLiteral("plan");
   QList<QJsonObject> commands;
   if (!runtimeMode.isEmpty() && runtimeMode != thread->runtimeMode) {
@@ -322,7 +314,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
       {QStringLiteral("attachments"), QJsonArray()},
       {QStringLiteral("titleSeed"), planFollowUp || trimmed.isEmpty() ? thread->title : trimmed},
   };
-  const QJsonObject modelSelection = draft.modelSelection.value_or(thread->modelSelection);
+  const QJsonObject modelSelection = selection(target);
   if (!modelSelection.isEmpty()) message.insert(QStringLiteral("modelSelection"), modelSelection);
   if (implement) {
     message.insert(QStringLiteral("sourcePlanRef"),
@@ -336,32 +328,18 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
     message.insert(QStringLiteral("dispatchMode"), QJsonObject{{QStringLiteral("type"), QStringLiteral("start_immediately")}});
   }
   commands.append(message);
+  Draft& draft = m_drafts[target];
   if (planFollowUp) draft.interactionMode = interactionMode;
 
-  // The same edit the brick sent, so it takes the cleared (or restored) text
-  // as the answer to its own submit.
-  auto setText = [this, target, edit](const QString& value) {
-    QVariantMap request{
-        {QStringLiteral("target"), target},
-        {QStringLiteral("text"), value},
-        {QStringLiteral("cursor"), value.size()},
-    };
-    if (edit.isValid()) request.insert(QStringLiteral("edit"), edit);
-    m_bridge->sendToPage(QStringLiteral("composer.text.set"), request);
-  };
   // Implementing from the plan's own button leaves the draft alone.
-  const bool fromDraft = !(implement && !edit.isValid());
   const QList<Attachment> attachments = fromDraft ? std::exchange(draft.attachments, {}) : QList<Attachment>();
-  if (fromDraft) {
-    draft.text.clear();
-    setText(QString());
-  }
+  if (fromDraft) setText(target, QString(), 0);
+  save();
   publish();
 
   // A send made while an earlier one is still in flight waits its turn.
   QList<Send>& queue = m_queues[target];
-  queue.append({target, thread->environmentId, thread->id, commands, attachments, fromDraft ? text : QString(),
-                fromDraft ? std::function<void(const QString&)>(setText) : std::function<void(const QString&)>()});
+  queue.append({target, thread->environmentId, thread->id, commands, attachments, fromDraft ? text : QString()});
   if (queue.size() == 1) sendNext(target);
   return true;
 }
@@ -369,20 +347,16 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
 // A new thread's first send, as the web's: its images are stored, then the
 // thread is launched with the message in the draft's checkout. The draft (its
 // text and images) stays until the node confirms; the window then shows the
-// thread in its place.
+// thread in its place. A background send (mod+alt+Enter) leaves the window on
+// the draft, emptied for another prompt.
 bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& payload) {
   NativeShell* shell = NativeShell::of(this);
   auto* drafts = shell->controller<DraftController>();
   const auto kept = drafts->draft(draftId);
-  if (!kept) return false;
-  const QString text = payload.contains(QStringLiteral("text")) ? payload.value(QStringLiteral("text")).toString() : kept->text;
-  // Slash commands and sends that leave the window on the draft are the page's.
-  if (text.trimmed().startsWith(QLatin1Char('/')) ||
-      payload.value(QStringLiteral("intent")).toString() == QLatin1String("background")) {
-    return false;
-  }
-  if (text != kept->text) drafts->setText(draftId, text);
-  const QList<Attachment> attachments = m_drafts.value(draftId).attachments;
+  if (!kept) return true;
+  const bool background = payload.value(QStringLiteral("intent")).toString() == QLatin1String("background");
+  const QString text = kept->text;
+  QList<Attachment> attachments = m_drafts.value(draftId).attachments;
   if (text.trimmed().isEmpty() && attachments.isEmpty()) return true;
   if (m_launching.contains(draftId)) return true;
 
@@ -397,8 +371,8 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
     return true;
   }
 
-  const Draft& draft = m_drafts[draftId];
   const QString trimmed = text.trimmed();
+  const QJsonObject modelSelection = selection(draftId);
   QJsonObject input{
       {QStringLiteral("commandId"), newId()},
       {QStringLiteral("creationSource"), QStringLiteral("web")},
@@ -406,23 +380,42 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
       {QStringLiteral("projectId"), where.projectId},
       {QStringLiteral("title"), launchTitle(trimmed, attachments.isEmpty() ? QString() : attachments.constFirst().name)},
       {QStringLiteral("generateTitle"), true},
-      {QStringLiteral("runtimeMode"), draft.runtimeMode.isEmpty() ? QStringLiteral("full-access") : draft.runtimeMode},
-      {QStringLiteral("interactionMode"), draft.interactionMode.isEmpty() ? QStringLiteral("default") : draft.interactionMode},
+      {QStringLiteral("runtimeMode"), runtimeModeOf(draftId)},
+      {QStringLiteral("interactionMode"), interactionModeOf(draftId)},
       {QStringLiteral("workspaceStrategy"), where.strategy},
       {QStringLiteral("initialMessage"), QJsonObject{{QStringLiteral("messageId"), newId()},
                                                      {QStringLiteral("text"), trimmed},
                                                      {QStringLiteral("attachments"), QJsonArray()}}},
   };
-  const QJsonObject modelSelection = draft.modelSelection.value_or(baseSelection(draftId));
   if (!modelSelection.isEmpty()) input.insert(QStringLiteral("modelSelection"), modelSelection);
 
-  m_launching.insert(draftId);
+  if (background) {
+    // The thread is on its way; the draft takes the next prompt under a new
+    // thread id, so the launched thread's row does not end it.
+    m_drafts[draftId].attachments.clear();
+    drafts->renew(draftId);
+    setText(draftId, QString(), 0);
+  } else {
+    m_launching.insert(draftId);
+  }
   publish();
-  // The brick's own edit, so it takes the cleared text as the answer to its submit.
-  const QVariant edit = payload.value(QStringLiteral("edit"));
-  m_launchEdits.insert(draftId, edit);
+  const QString environmentId = where.environmentId;
+  const auto start = [this, draftId, environmentId, background, text, attachments](const QJsonObject& input) {
+    m_client->call(environmentId, QStringLiteral("orchestration.launchThread"), input,
+                   [this, draftId, environmentId, input, background, text, attachments](
+                       const QJsonValue& result, const std::optional<QString>& error) {
+                     QString threadId = result.toObject().value(QLatin1String("threadId")).toString();
+                     if (threadId.isEmpty()) threadId = str(input, QLatin1String("threadId"));
+                     const QString threadKey = environmentId + QLatin1Char(':') + threadId;
+                     if (background) {
+                       launchedInBackground(draftId, text, attachments, threadKey, error);
+                     } else {
+                       launched(draftId, threadKey, error);
+                     }
+                   });
+  };
   if (attachments.isEmpty()) {
-    launch(draftId, where.environmentId, input);
+    start(input);
     return true;
   }
   QJsonArray images;
@@ -434,50 +427,82 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
                               {QStringLiteral("dataUrl"), attachment.dataUrl}});
   }
   QJsonObject message = input.value(QLatin1String("initialMessage")).toObject();
-  const QString environmentId = where.environmentId;
   m_client->call(environmentId, QStringLiteral("assets.persistChatAttachments"),
                  QJsonObject{{QStringLiteral("threadId"), kept->threadId},
                              {QStringLiteral("messageId"), message.value(QLatin1String("messageId"))},
                              {QStringLiteral("attachments"), images}},
-                 [this, draftId, environmentId, input, message](const QJsonValue& result,
-                                                               const std::optional<QString>& error) mutable {
+                 [this, draftId, input, message, start, background, text, attachments](
+                     const QJsonValue& result, const std::optional<QString>& error) mutable {
                    if (error) {
-                     launched(draftId, QString(), error);
+                     if (background) {
+                       launchedInBackground(draftId, text, attachments, QString(), error);
+                     } else {
+                       launched(draftId, QString(), error);
+                     }
                      return;
                    }
                    message.insert(QStringLiteral("attachments"), result.toObject().value(QLatin1String("attachments")));
                    input.insert(QStringLiteral("initialMessage"), message);
-                   launch(draftId, environmentId, input);
+                   start(input);
                  });
   return true;
-}
-
-void ComposerController::launch(const QString& draftId, const QString& environmentId, const QJsonObject& input) {
-  m_client->call(environmentId, QStringLiteral("orchestration.launchThread"), input,
-                 [this, draftId, environmentId, input](const QJsonValue& result, const std::optional<QString>& error) {
-                   QString threadId = result.toObject().value(QLatin1String("threadId")).toString();
-                   if (threadId.isEmpty()) threadId = str(input, QLatin1String("threadId"));
-                   launched(draftId, environmentId + QLatin1Char(':') + threadId, error);
-                 });
 }
 
 // The launch's answer: the draft becomes the thread, or stays with a toast.
 void ComposerController::launched(const QString& draftId, const QString& threadKey, const std::optional<QString>& error) {
   m_launching.remove(draftId);
-  const QVariant edit = m_launchEdits.take(draftId);
   if (error) {
     toast(QStringLiteral("Could not create thread"), *error);
     publish();
     return;
   }
-  QVariantMap request{{QStringLiteral("target"), draftId}, {QStringLiteral("text"), QString()}, {QStringLiteral("cursor"), 0}};
-  if (edit.isValid()) request.insert(QStringLiteral("edit"), edit);
-  m_bridge->sendToPage(QStringLiteral("composer.text.set"), request);
   m_drafts.remove(draftId);
+  save();
   NativeShell* shell = NativeShell::of(this);
   shell->controller<WorkspaceController>()->forgetDraft(draftId);
   shell->controller<DraftController>()->promote(draftId, threadKey);
   publish();
+}
+
+// A background launch's answer, as the web's: a toast that opens the new
+// thread, or the prompt back in the draft (or, when the draft has a newer
+// prompt, a toast that gives it back once the draft is empty).
+void ComposerController::launchedInBackground(const QString& draftId, const QString& text,
+                                              const QList<Attachment>& attachments, const QString& threadKey,
+                                              const std::optional<QString>& error) {
+  NativeShell* shell = NativeShell::of(this);
+  auto* toasts = shell->controller<ToastController>();
+  if (!error) {
+    auto* navigation = shell->controller<NavigationController>();
+    toasts->show(QStringLiteral("success"), QStringLiteral("Started 1 thread in background"), {},
+                 ToastController::Action{QStringLiteral("Open"), [navigation, threadKey] {
+                                           navigation->open(NavigationController::Route::thread(threadKey));
+                                         }});
+    return;
+  }
+  // Only into an empty draft: newer typing is the user's.
+  const auto restore = [this, draftId, text, attachments] {
+    if (!NativeShell::of(this)->controller<DraftController>()->draft(draftId) || !draft(draftId).isEmpty() ||
+        !m_drafts.value(draftId).attachments.isEmpty()) {
+      return false;
+    }
+    m_drafts[draftId].attachments = attachments;
+    setText(draftId, text, int(text.size()));
+    return true;
+  };
+  if (restore()) {
+    toast(QStringLiteral("A background prompt could not be sent"), *error);
+    return;
+  }
+  toasts->show(QStringLiteral("error"), QStringLiteral("A background prompt could not be sent"),
+               QStringLiteral("Your newer draft is unchanged. Restore the failed prompt when this composer is empty."),
+               ToastController::Action{QStringLiteral("Restore prompt"),
+                                       [this, restore, draftId] {
+                                         if (!restore()) return;
+                                         NativeShell::of(this)->controller<NavigationController>()->open(
+                                             NavigationController::Route::draft(draftId));
+                                       }},
+               0);
 }
 
 // Uploads the thread's oldest send's images, dispatches it command by
@@ -496,19 +521,14 @@ void ComposerController::sendNext(const QString& target) {
         if (!queued.prompt.isEmpty()) prompts.append(queued.prompt);
         attachments.append(queued.attachments);
       }
-      // Only into an untouched draft: newer typing is the user's. The last
-      // send's edit, since the brick ignores echoes older than it.
-      Draft& draft = m_drafts[target];
-      if (draft.text.isEmpty() && !prompts.isEmpty()) {
-        draft.text = prompts.join(QStringLiteral("\n\n"));
-        for (auto it = unsent.crbegin(); it != unsent.crend(); ++it) {
-          if (it->setText) {
-            it->setText(draft.text);
-            break;
-          }
-        }
+      // Only into an untouched draft: newer typing is the user's.
+      if (draft(target).isEmpty() && !prompts.isEmpty()) {
+        const QString restored = prompts.join(QStringLiteral("\n\n"));
+        setText(target, restored, int(restored.size()));
       }
+      Draft& draft = m_drafts[target];
       draft.attachments = attachments + draft.attachments;
+      save();
       publish();
       return;
     }
