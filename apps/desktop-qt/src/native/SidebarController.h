@@ -50,13 +50,21 @@ public:
   // The ShellBridge interceptor: true when the action was handled here.
   bool handle(const QString& action, const QVariant& payload);
 
+  // Runs `command`, which takes the thread `key` out of the list (settle,
+  // snooze, archive, delete); the window moves on to the next card when it
+  // showed the thread, once the command lands. Failures toast `failureTitle`.
+  void park(const QString& key, QJsonObject command, const QString& failureTitle,
+            std::function<void()> onSuccess = {});
+  // The snooze choices now, and snoozing the thread `key` until one's time,
+  // with an Undo toast.
+  QList<sidebar::SnoozePreset> snoozePresets() const;
+  static QString snoozeLabel(const sidebar::SnoozePreset& preset);
+  void snooze(const QString& key, const QString& snoozedUntil);
+
 private:
   void command(const QString& environmentId, QJsonObject command, const QString& failureTitle,
                std::function<void()> onSuccess = {});
-  void park(const QString& key, QJsonObject command, const QString& failureTitle,
-            std::function<void()> onSuccess = {});
   void openSnoozeMenu(const QString& key, double x, double y);
-  void selectSnooze(const QString& id);
   ToastController* toasts() const;
   // The client settings grouping, ordering and time labels read, from this
   // device's preferences (SettingsController), else their defaults.
@@ -77,11 +85,4 @@ private:
   sidebar::Nullable m_scope;
   sidebar::View m_view;
   QSet<QString> m_pending;
-  int m_nextMenuId = 1;
-  struct SnoozeMenu {
-    QString requestId;
-    QString key;
-    QList<sidebar::SnoozePreset> presets;
-  };
-  std::optional<SnoozeMenu> m_menu;
 };

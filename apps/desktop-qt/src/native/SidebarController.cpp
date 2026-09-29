@@ -1,6 +1,7 @@
 #include "SidebarController.h"
 
 #include "DraftController.h"
+#include "MenuController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "NodeClient.h"
@@ -13,10 +14,6 @@ namespace {
 
 QString keyOf(const QVariantMap& payload) {
   return payload.value(QStringLiteral("key")).toString();
-}
-
-QVariant nullVariant() {
-  return QVariant::fromValue(nullptr);
 }
 
 }  // namespace
@@ -100,18 +97,6 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
     m_bridge->sendToPage(action, payload);
     return true;
   }
-  if (action == QLatin1String("contextMenu.select")) {
-    const QString requestId = map.value(QStringLiteral("requestId")).toString();
-    if (!requestId.startsWith(QLatin1String("native:"))) return false;
-    if (m_menu && m_menu->requestId == requestId) {
-      m_bridge->publish(QStringLiteral("contextMenu"), nullVariant());
-      const QVariant id = map.value(QStringLiteral("id"));
-      if (id.typeId() == QMetaType::QString) selectSnooze(id.toString());
-      m_menu.reset();
-    }
-    return true;
-  }
-
   static const QStringList kRowActions{
       QStringLiteral("thread.settle"),     QStringLiteral("thread.unsettle"),
       QStringLiteral("thread.unsnooze"),   QStringLiteral("thread.snoozeMenu"),
@@ -231,46 +216,41 @@ void SidebarController::park(const QString& key, QJsonObject parkCommand, const 
 }
 
 void SidebarController::openSnoozeMenu(const QString& key, double x, double y) {
-  const QList<sidebar::SnoozePreset> presets = sidebar::snoozePresets(m_now(), m_timestampFormat, m_locale);
-  QVariantList items;
+  const QList<sidebar::SnoozePreset> presets = snoozePresets();
+  QList<MenuController::Item> items;
   for (const sidebar::SnoozePreset& preset : presets) {
-    items.append(QVariantMap{
-        {QStringLiteral("id"), QStringLiteral("snooze:") + preset.id},
-        {QStringLiteral("label"), preset.label + QStringLiteral(" (") + preset.whenLabel + QLatin1Char(')')},
-    });
+    items.append({QStringLiteral("snooze:") + preset.id, snoozeLabel(preset)});
   }
-  m_menu = SnoozeMenu{QStringLiteral("native:%1").arg(m_nextMenuId++), key, presets};
-  m_bridge->publish(QStringLiteral("contextMenu"), QVariantMap{
-                                                       {QStringLiteral("requestId"), m_menu->requestId},
-                                                       {QStringLiteral("surfaceId"), QStringLiteral("shell")},
-                                                       {QStringLiteral("x"), x},
-                                                       {QStringLiteral("y"), y},
-                                                       {QStringLiteral("items"), items},
-                                                   });
+  NativeShell::of(this)->controller<MenuController>()->open(x, y, items, [this, key, presets](const QString& id) {
+    for (const sidebar::SnoozePreset& preset : presets) {
+      if (QStringLiteral("snooze:") + preset.id == id) snooze(key, preset.snoozedUntil);
+    }
+  });
 }
 
-void SidebarController::selectSnooze(const QString& id) {
-  const SnoozeMenu menu = *m_menu;
-  for (const sidebar::SnoozePreset& preset : menu.presets) {
-    if (QStringLiteral("snooze:") + preset.id != id) continue;
-    const QString snoozedUntil = preset.snoozedUntil;
-    const QString key = menu.key;
-    const auto thread = m_store->thread(key);
-    if (!thread) return;
-    park(key,
-         {{QStringLiteral("type"), QStringLiteral("thread.snooze")},
-          {QStringLiteral("threadId"), thread->id},
-          {QStringLiteral("snoozedUntil"), snoozedUntil}},
-         QStringLiteral("Failed to snooze thread"), [this, key, snoozedUntil] {
-           const QString when = sidebar::wakeDescription(snoozedUntil, m_now(), m_timestampFormat, m_locale);
-           toasts()->show(QStringLiteral("success"), QStringLiteral("Snoozed until ") + when, QString(),
-                          ToastController::Action{QStringLiteral("Undo"), [this, key] {
-                                                    m_bridge->dispatch(QStringLiteral("thread.unsnooze"),
-                                                                       QVariantMap{{QStringLiteral("key"), key}});
-                                                  }});
-         });
-    return;
-  }
+QList<sidebar::SnoozePreset> SidebarController::snoozePresets() const {
+  return sidebar::snoozePresets(m_now(), m_timestampFormat, m_locale);
+}
+
+QString SidebarController::snoozeLabel(const sidebar::SnoozePreset& preset) {
+  return preset.label + QStringLiteral(" (") + preset.whenLabel + QLatin1Char(')');
+}
+
+void SidebarController::snooze(const QString& key, const QString& snoozedUntil) {
+  const auto thread = m_store->thread(key);
+  if (!thread) return;
+  park(key,
+       {{QStringLiteral("type"), QStringLiteral("thread.snooze")},
+        {QStringLiteral("threadId"), thread->id},
+        {QStringLiteral("snoozedUntil"), snoozedUntil}},
+       QStringLiteral("Failed to snooze thread"), [this, key, snoozedUntil] {
+         const QString when = sidebar::wakeDescription(snoozedUntil, m_now(), m_timestampFormat, m_locale);
+         toasts()->show(QStringLiteral("success"), QStringLiteral("Snoozed until ") + when, QString(),
+                        ToastController::Action{QStringLiteral("Undo"), [this, key] {
+                                                  m_bridge->dispatch(QStringLiteral("thread.unsnooze"),
+                                                                     QVariantMap{{QStringLiteral("key"), key}});
+                                                }});
+       });
 }
 
 QString SidebarController::activeThreadKey() const {

@@ -515,8 +515,8 @@ navigation ones `route` takes once the shell has its node (`thread.open {key}`,
 `pullRequests.open`, `usage.open`). The active row is the route's. Row actions run the
 handlers the HTML row's hover buttons use (`useShellThreadRowActions`):
 `thread.settle {key}`, `thread.unsettle {key}`, `thread.unsnooze {key}`,
-`thread.snoozeMenu {key, x, y}` (the snooze durations open through
-`contextMenu` at those window coordinates), `thread.wokeDismiss {key}`, and
+`thread.snoozeMenu {key, x, y}` (the snooze durations open as the shell's
+`menu` at those window coordinates), `thread.wokeDismiss {key}`, and
 `thread.menu {key, x, y}` for the thread menu. Unknown or malformed actions
 are dropped by the schema guard.
 
@@ -915,19 +915,26 @@ native controllers call (`show`, `error`), with its own timing and actions,
 and its ids start with `native:` so dismiss and action clicks stop there
 instead of reaching the page.
 
-### `contextMenu`
+### `menu`, `confirmation` and `contextMenu`
 
-`localApi.contextMenu.show` routes to the shell when hosted: the items are
-published under `contextMenu` with the surface they belong to (every web
-surface tags its document with `window.halC2Shell.surfaceId`; `"shell"` means
-window coordinates from native chrome) and the choice returns as
-`contextMenu.select {requestId, id}`. `ContextMenuHost` lives in each
-`WebSurface` and once at the window level. This makes every context menu in
-the app native; the thread title menu (`workspace.titleMenu {x, y}`) and
-sidebar rows (`thread.menu {key, x, y}`) open the thread action menu through
-it, and `workspace.rename {title}` / `renameRequestId` drive an inline rename
-in the header; the page's "Rename" asks for it with `workspace.rename.begin
-{threadKey}`.
+The shell's own menus and questions are `MenuController`'s: a controller
+opens a list of items (id, label, icon, enabled, checked, destructive,
+separator, one level of children) at window coordinates with the function the
+chosen id runs, or asks a question with the function a yes runs. They are
+published as `menu` and `confirmation`; the window-level `ContextMenuHost`
+(`stateKey: "menu"`) and `ConfirmDialog` render them and answer with
+`menu.select {requestId, id|null}` and `confirmation.answer {requestId,
+accepted}`. Only an enabled item that was offered can be picked, and a newer
+menu replaces the open one.
+
+The page's own menus still go through `contextMenu`:
+`localApi.contextMenu.show` publishes the items with the surface they belong
+to (every web surface tags its document with `window.halC2Shell.surfaceId`)
+and the choice returns as `contextMenu.select {requestId, id}`.
+`ContextMenuHost` lives in each `WebSurface` and once at the window level for
+it. `workspace.rename {title}` / `renameRequestId` drive an inline rename in
+the header; the thread menu's "Rename" asks for it with
+`workspace.rename.begin {threadKey}`.
 
 ### `git`
 

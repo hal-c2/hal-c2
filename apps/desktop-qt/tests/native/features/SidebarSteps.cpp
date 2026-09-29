@@ -51,14 +51,14 @@ const Steps steps([] {
                                                                  });
   });
   const auto choose = [](World& world, const QVariant& id) {
-    const QVariant menu = world.state(QStringLiteral("contextMenu"));
+    const QVariant menu = world.state(QStringLiteral("menu"));
     expect(menu.typeId() == QMetaType::QVariantMap, QStringLiteral("no menu is open"));
-    world.bridge().dispatch(QStringLiteral("contextMenu.select"),
+    world.bridge().dispatch(QStringLiteral("menu.select"),
                             QVariantMap{{QStringLiteral("requestId"), at(menu, QStringLiteral("requestId"))}, {QStringLiteral("id"), id}});
   };
   step(QStringLiteral("the user picks %1").arg(q), [choose](World& world, const Captures& c, const Table&) {
     // With no menu open, the pick is an answer to the agent's question.
-    if (world.state(QStringLiteral("contextMenu")).typeId() != QMetaType::QVariantMap) return pickAnswer(world, c[0]);
+    if (world.state(QStringLiteral("menu")).typeId() != QMetaType::QVariantMap) return pickAnswer(world, c[0]);
     choose(world, c[0]);
   });
   step(QStringLiteral("the user dismisses the menu"), [choose](World& world, const Captures&, const Table&) {
@@ -87,7 +87,7 @@ const Steps steps([] {
     expect(scope.isNull(), QStringLiteral("the sidebar is scoped to %1").arg(scope.toString()));
   });
   step(QStringLiteral("the shell shows a menu at (\\d+), (\\d+) with:"), [](World& world, const Captures& c, const Table& table) {
-    const QVariant menu = world.state(QStringLiteral("contextMenu"));
+    const QVariant menu = world.state(QStringLiteral("menu"));
     expect(at(menu, QStringLiteral("x")).toInt() == c[0].toInt() && at(menu, QStringLiteral("y")).toInt() == c[1].toInt(),
            QStringLiteral("the menu is %1").arg(show(menu)));
     Table actual{table.first()};
@@ -97,7 +97,7 @@ const Steps steps([] {
     expect(actual == table, QStringLiteral("the menu is %1").arg(show(menu)));
   });
   step(QStringLiteral("the menu closes"), [](World& world, const Captures&, const Table&) {
-    const QVariant menu = world.state(QStringLiteral("contextMenu"));
+    const QVariant menu = world.state(QStringLiteral("menu"));
     expect(menu.isNull(), QStringLiteral("the menu is %1").arg(show(menu)));
   });
 });
