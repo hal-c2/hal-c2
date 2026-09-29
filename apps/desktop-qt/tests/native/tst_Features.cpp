@@ -239,6 +239,15 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/keybinding-settings.feature:Removing a custom binding"),
     QStringLiteral("navigation/keybinding-settings.feature:Adding a binding for a command"),
     QStringLiteral("navigation/keybinding-settings.feature:Save failures are reported*"),
+    QStringLiteral("source-control/checkpoint-diffs.feature"),
+    QStringLiteral("timeline/checkpoints.feature"),
+    QStringLiteral("files/file-explorer.feature"),
+    QStringLiteral("files/file-viewer-and-editing.feature"),
+    QStringLiteral("navigation/layout.feature:Opening and closing the right panel"),
+    QStringLiteral("navigation/layout.feature:Switching between right panel tabs"),
+    QStringLiteral("navigation/layout.feature:Closing a right panel tab"),
+    QStringLiteral("navigation/layout.feature:Adding a tab to the right panel*"),
+    QStringLiteral("navigation/layout.feature:A tab kind that the thread cannot show*"),
 };
 
 QRegularExpression wildcard(const QString& glob) {

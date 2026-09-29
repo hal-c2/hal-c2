@@ -22,6 +22,9 @@
 #   apps/mobile/src/features/files/WorkspaceFilePreviewError.tsx
 #   packages/contracts/src/filesystem.ts (ProjectReadFileInput, ProjectWriteFileInput, ProjectFileError)
 #   packages/contracts/src/rpc.ts (projects.readFile, projects.writeFile, shell.openInEditor, assets.createUrl)
+#   apps/desktop-qt/src/native/WorkspaceFiles.cpp (openFile, truncatedNotice, revealLine, wrap)
+#   apps/desktop-qt/qml/HalC2/Bricks/FilesPanel.qml
+#   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 
 Feature: Viewing and editing files
   The user can read any text file in a project, preview media, and make small edits that
@@ -87,7 +90,7 @@ Feature: Viewing and editing files
       When the user browses files and opens "src/app.ts"
       Then the user is told the file could not be read
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: A partial preview says how much of the file is shown
       Given "logs/big.log" in "shop" is 3 MB
       When the user opens "logs/big.log"
@@ -135,7 +138,7 @@ Feature: Viewing and editing files
       When the user opens "docs/guide.md"
       Then the Markdown source is shown
 
-    @backlog @desktop
+    @desktop
     Scenario: Word wrap can be turned on and off
       When the user turns word wrap on for "src/app.ts"
       Then long lines wrap
@@ -148,11 +151,25 @@ Feature: Viewing and editing files
       When the user picks "app.ts" from the files in "src"
       Then "src/app.ts" opens
 
-    @backlog @desktop
+    @desktop
     Scenario: A requested line is revealed even when it is past the end of the file
       Given "src/app.ts" has 40 lines
       When the user opens "src/app.ts" at line 90
       Then line 40 is revealed
+
+    @desktop
+    Scenario: A file that fails to load can be retried
+      Given reading "src/app.ts" fails once
+      When the user opens "src/app.ts"
+      Then the user is told the file could not be read
+      When the user retries
+      Then the contents of "src/app.ts" are shown
+
+    @desktop
+    Scenario: Closing a file returns to the tree
+      When the user opens "src/app.ts"
+      And the user closes the file
+      Then no file is open and the tree is shown
 
     @backlog @desktop @tui
     Scenario: A file opens in the user's editor on the environment
