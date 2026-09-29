@@ -9,7 +9,10 @@ defmodule HalC2.Orchestration.Recovery do
   front of the queue instead, and `continue/0` starts it once, as the Node
   server's effect outbox replays pending provider work.
 
-  Only threads whose sidebar row shows an active run are opened.
+  Work a provider left running in the background after its turn (a subagent, a
+  background command) died with the process too, and is ended the same way.
+
+  Only threads whose sidebar row shows an active run or background work are opened.
   """
 
   require Logger
@@ -35,7 +38,7 @@ defmodule HalC2.Orchestration.Recovery do
     settled =
       for {{node, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
           node == node(),
-          row["status"] in @active_runs,
+          row["status"] in @active_runs or (row["pendingBackgroundTasks"] || []) != [],
           {count, continuable} = settle(thread_id),
           count > 0,
           do: {thread_id, continuable}
@@ -157,6 +160,10 @@ defmodule HalC2.Orchestration.Recovery do
           {"run-attempt", &if(&1["status"] in @active, do: Map.merge(&1, done))},
           {"provider-turn", &if(&1["status"] in @active, do: Map.merge(&1, done))},
           {"node", &if(&1["status"] in @active, do: Map.merge(&1, done))},
+          {"subagent",
+           &if(&1["origin"] == "provider_native" and &1["status"] in @active,
+             do: Map.merge(&1, Map.put(done, "updatedAt", at))
+           )},
           {"turn-item",
            &if(&1["status"] in @active,
              do:
