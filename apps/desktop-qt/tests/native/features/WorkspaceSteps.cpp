@@ -1,5 +1,5 @@
 // The workspace header and the composer's context strip (WorkspaceController),
-// and the node's git behind them: features/desktop/native-workspace.feature,
+// and the node's git behind them: features/navigation/header.feature, navigation/layout.feature,
 // threads/titles.feature, source-control/refs-and-branches.feature and
 // source-control/worktrees-and-setup-scripts.feature.
 
@@ -513,6 +513,31 @@ const Steps steps([] {
     expect(workspace(world).value(QStringLiteral("preferredEditorId")) == editorId(c[0]), QStringLiteral("the header shows %1").arg(show(workspace(world))));
   });
 
+  // navigation/layout.feature's header, in its words.
+  step(QStringLiteral("the header shows the project name and the thread title"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      const QVariantMap state = workspace(world);
+      const QString key = state.value(QStringLiteral("threadKey")).toString();
+      const QJsonObject thread = world.node.threads.value(key.mid(key.indexOf(QLatin1Char(':')) + 1));
+      const QJsonObject project = world.node.projects.value(thread.value(QLatin1String("projectId")).toString());
+      return !thread.isEmpty() && state.value(QStringLiteral("threadTitle")) == thread.value(QLatin1String("title")).toString() &&
+             state.value(QStringLiteral("projectTitle")) == project.value(QLatin1String("title")).toString();
+    }, [&] { return QStringLiteral("the header to name the thread and its project; it shows %1").arg(show(workspace(world))); });
+  });
+  step(QStringLiteral("the user opens the thread's workspace in %1 from the header").arg(q), [](World& world, const Captures& c, const Table&) {
+    dispatch(world, QStringLiteral("workspace.openInEditor"), {{QStringLiteral("editorId"), editorId(c[0])}});
+  });
+  step(QStringLiteral("%1 opens the thread's workspace folder").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QList<QJsonObject>& calls = world.node.part<FakeGit>().editorCalls;
+    const QString folder = workspace(world).value(QStringLiteral("projectRoot")).toString();
+    expect(!folder.isEmpty() && !calls.isEmpty() && calls.last().value(QLatin1String("editor")) == editorId(c[0]) && calls.last().value(QLatin1String("cwd")) == folder,
+           QStringLiteral("the node was asked %1").arg(calls.isEmpty() ? QStringLiteral("nothing") : QString::fromUtf8(QJsonDocument(calls.last()).toJson(QJsonDocument::Compact))));
+  });
+  step(QStringLiteral("%1 becomes the preferred editor").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(workspace(world).value(QStringLiteral("preferredEditorId")) == editorId(c[0]), QStringLiteral("the header shows %1").arg(show(workspace(world))));
+  });
+
   // The header's buttons that leave the header.
   step(QStringLiteral("the checkout's pull request is %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
@@ -530,9 +555,6 @@ const Steps steps([] {
   });
   step(QStringLiteral("the browser opens %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(world.openedUrls == QList<QUrl>{QUrl(c[0])}, QStringLiteral("the browser opened %1").arg(world.openedUrls.size()));
-  });
-  step(QStringLiteral("the user starts a new thread from the header"), [](World& world, const Captures&, const Table&) {
-    dispatch(world, QStringLiteral("workspace.newThread"));
   });
 });
 

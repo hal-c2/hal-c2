@@ -11,6 +11,7 @@
 #   apps/web/src/components/chat/agentSpawnSummary.ts
 #   apps/web/src/components/chat/MessagesTimeline.tsx (Subagent of, Open parent thread, Sent by another agent, lifecycle rows)
 #   apps/tui/src/proposedPlan.ts
+#   apps/desktop-qt/src/native/ComposerController.cpp (a plan is offered once its turn is over)
 #   apps/tui/src/orchestrationV2Adapter.ts (Proposed plan, Updated plan, subagent progress, Forked thread, Transferred context, Created thread)
 #   apps/tui/src/components/ChatView.tsx (Implement plan)
 
@@ -43,6 +44,11 @@ Feature: Plans and subagents
     When the user sends "split the migration into its own step" as feedback
     Then the agent revises the plan
     And the thread stays in plan mode
+
+  @desktop
+  Scenario: No plan is offered while the agent is still working
+    Given the agent is proposing a plan in the running turn
+    Then no plan is offered
 
   @shared @backlog
   Scenario: The user implements the plan in a new thread

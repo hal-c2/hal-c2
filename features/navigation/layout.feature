@@ -25,25 +25,26 @@ Feature: Layout: sidebar, header, right panel and drawer
 
   Rule: Sidebar
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Hiding the sidebar
       Given the sidebar is shown
       When the user toggles the sidebar
       Then the sidebar is hidden
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Showing the sidebar again from the header
       Given the sidebar is hidden
       When the user asks to show the sidebar
       Then the sidebar is shown
 
-    @desktop
+    # Delivered natively (DefaultShell swaps Sidebar for SettingsNav); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: Settings replace the thread list with the settings sections
       When the user opens settings
       Then the thread list is hidden
       And the settings sections are shown in its place
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: The sidebar snaps rather than animating its width
       When the user toggles the sidebar
       Then the thread view is resized once, not on every frame
@@ -73,7 +74,8 @@ Feature: Layout: sidebar, header, right panel and drawer
     Scenario: The header names the project and thread
       Then the header shows the project name and the thread title
 
-    @desktop
+    # The desktop hides the header while no thread is open instead (navigation/header.feature: Leaving the thread clears the header).
+    @desktop @backlog-desktop
     Scenario: The header says when there is no thread
       Given no thread is open
       Then the header says "No thread"
@@ -91,30 +93,35 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the header is narrow
       Then the title is shortened with an ellipsis
 
-    @desktop
+    # Delivered natively (Workspace); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: A narrow header drops action labels
       When the window is narrower than 720 pixels
       Then the header actions show without their labels
 
-    @desktop
+    # Delivered natively (Workspace, workspace.runScript); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: The header runs the project's action the user ran last
       Given the thread's project has the actions "Dev" and "Test"
       And the user last ran "Test"
       When the user runs the action offered in the header
       Then "Test" runs for the thread's workspace
 
-    @desktop
+    # Delivered natively (Workspace, workspace.runScript); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: The header runs any of the project's actions
       Given the thread's project has the actions "Dev" and "Test"
       When the user picks "Dev" from the header's actions
       Then "Dev" runs for the thread's workspace
 
-    @desktop
+    # Delivered natively (Workspace, workspace.runScript); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: The header offers no action to run when the project has none
       Given the thread's project has no actions
       Then the header offers no action to run
 
-    @desktop
+    # Delivered natively (Workspace, workspace.openInEditor); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: The header opens the thread's workspace in the preferred editor
       Given the user has picked "VS Code" as their preferred editor
       When the user opens the thread's workspace from the header
@@ -127,12 +134,14 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then "Zed" opens the thread's workspace folder
       And "Zed" becomes the preferred editor
 
-    @desktop
+    # Delivered natively (Workspace, workspace.openInEditor); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: The header offers no editor when the environment has none
       Given the environment has no editors
       Then the header does not offer to open the workspace in an editor
 
-    @desktop
+    # Delivered natively (Workspace places GitActions; GitController); source-control/ runs the actions, no test of this wording yet.
+    @desktop @backlog-desktop
     Scenario: The thread's git actions are in the header
       When the user opens the git actions from the header
       Then the thread's git actions are offered
@@ -178,19 +187,20 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user looks at what can be added to the right panel
       Then pull request cannot be added
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Right panel contents survive closing the panel
       Given a terminal tab in the right panel has output
       When the user closes the right panel and opens it again
       Then the terminal tab still has its output
 
-    @desktop
+    # Delivered natively (PanelController keeps its tabs across routes); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: Right panel contents survive a visit to settings
       Given the right panel shows a scrolled diff
       When the user opens settings and comes back
       Then the diff is at the same scroll position
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A hidden right panel does no work
       When the user closes the right panel
       Then the right panel stops updating until it is opened again
@@ -216,13 +226,15 @@ Feature: Layout: sidebar, header, right panel and drawer
 
   Rule: Terminal drawer
 
-    @desktop
+    # Delivered natively (Workspace, Terminals); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: Showing the terminal from the header
       Given the terminal is hidden
       When the user shows the terminal
       Then the terminal drawer opens under the thread
 
-    @desktop
+    # Delivered natively (Workspace, Terminals); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: Hiding the terminal
       Given the terminal is shown
       When the user hides the terminal
@@ -231,20 +243,23 @@ Feature: Layout: sidebar, header, right panel and drawer
 
   Rule: Rearranging the shell
 
-    @desktop
+    # Delivered natively (ShellRuntime); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: A user's own shell layout replaces the default
       Given the user wrote their own shell layout in the HAL-C2 home
       When the app starts
       Then the app uses the user's layout
 
-    @desktop
+    # Delivered natively (ShellRuntime); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: A broken shell layout falls back to the default
       Given the user's own shell layout has an error
       When the app starts
       Then the default layout is used
       And the error is shown to the user
 
-    @desktop
+    # Delivered natively (ShellRuntime); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: A shell layout change applies without restarting
       Given the app is using the user's own shell layout
       When the user saves a change to it

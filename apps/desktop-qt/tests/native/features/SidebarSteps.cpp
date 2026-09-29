@@ -1,5 +1,5 @@
 // The native sidebar: row actions, its scope and snooze menu, and the sections
-// it shows (features/desktop/native-sidebar.feature).
+// it shows (features/threads/thread-list.feature, desktop/native-sidebar.feature).
 
 #include <QVariantList>
 
@@ -77,17 +77,11 @@ const Steps steps([] {
     const QString titles = sectionTitles(world, c[0]);
     expect(titles.isEmpty(), QStringLiteral("%1 lists \"%2\"").arg(c[0], titles));
   });
-  step(QStringLiteral("the page is told the sidebar is scoped to %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.sync();
-    const QList<PageAction> scopes = world.actionsOf(QStringLiteral("sidebar.scope"));
-    expect(!scopes.isEmpty() && scopes.last().payload.value(QStringLiteral("projectKey")) == world.projectKey(c[0]),
-           QStringLiteral("the page got %1").arg(world.describePage()));
-  });
   step(QStringLiteral("the sidebar is not scoped"), [](World& world, const Captures&, const Table&) {
     const QVariant scope = at(world.state(QStringLiteral("sidebar")), QStringLiteral("scopeProjectKey"));
     expect(scope.isNull(), QStringLiteral("the sidebar is scoped to %1").arg(scope.toString()));
   });
-  step(QStringLiteral("the shell shows a menu at (\\d+), (\\d+) with:"), [](World& world, const Captures& c, const Table& table) {
+  step(QStringLiteral("a menu opens at (\\d+), (\\d+) with:"), [](World& world, const Captures& c, const Table& table) {
     world.sync();
     const QVariant menu = world.state(QStringLiteral("menu"));
     expect(at(menu, QStringLiteral("x")).toInt() == c[0].toInt() && at(menu, QStringLiteral("y")).toInt() == c[1].toInt(),

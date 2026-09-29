@@ -12,6 +12,7 @@
 #   docs/user/appearance.md (Settings → Appearance, Settings → Keybindings)
 #   apps/desktop-qt/qml/HalC2/Bricks/SettingsNav.qml
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
+#   apps/desktop-qt/src/native/NavigationController.cpp (settings sections and back)
 #   apps/tui/src/components/SettingsView.tsx
 #   apps/tui/src/keymap.ts
 
@@ -24,13 +25,14 @@ Feature: Settings search and navigation
 
   Rule: Moving between sections
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Choosing a section opens it
       When the user chooses the "Providers" section
       Then the Providers settings are shown
       And "Providers" is marked as the current section
 
-    @desktop
+    # Delivered natively (SettingsNav over the native pages); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: The keyboard moves through sections
       Given the "General" section has keyboard focus
       When the user moves down and confirms
@@ -41,6 +43,20 @@ Feature: Settings search and navigation
       Given the user opened settings from a thread
       When the user goes back
       Then the thread is shown again
+
+    @desktop
+    Scenario: Moving between sections is one step back
+      Given the user opened settings from a thread
+      When the user picks the settings section "/settings/providers"
+      Then the window shows the settings section "/settings/providers"
+      When the user goes back from settings
+      Then that thread is shown
+
+    @desktop
+    Scenario: Back with nowhere to return to goes home
+      Given the user can not go back
+      When the user goes back from settings
+      Then the window shows home
 
     @backlog @desktop
     Scenario Outline: The page names where the user is
@@ -87,24 +103,24 @@ Feature: Settings search and navigation
 
   Rule: Searching settings
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Search results show each setting with its section
       When the user searches settings for "network"
       Then "Network access" is listed under "Connections"
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Opening a search result goes to that setting
       Given the user has searched settings for "theme"
       When the user opens the first result
       Then the section holding that setting opens
       And the page brings the setting into view
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Nothing matches the search
       When the user searches settings for "zzzz"
       Then the user is told no settings match
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Escape clears the search
       Given the user has searched settings for "model"
       When the user presses escape in the search

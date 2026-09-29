@@ -8,7 +8,8 @@
 #   apps/server-ex/lib/hal_c2/text_generation.ex (pr_content)
 #   apps/web/src/components/GitActionsControl.tsx (commit dialog)
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (commit dialog)
-#   apps/desktop-qt/src/native/GitController.cpp (runs the desktop's actions through gitAction)
+#   apps/desktop-qt/src/native/GitController.cpp (runs the desktop's actions through gitAction, its toasts)
+#   apps/server-ex/lib/hal_c2/links.ex (a linked environment's requests)
 #   apps/desktop-qt/tests/tst_GitActions.qml
 #   apps/tui/src/components/ChatView.tsx (onRunGitAction, commit message prompt)
 #   apps/tui/src/store.ts (runGitAction)
@@ -164,3 +165,33 @@ Feature: Committing with written or generated messages
     Given no editor is available on this environment
     When the user opens "src/cart.ts" from the commit review
     Then the user is told "Editor opening is unavailable."
+
+  @desktop
+  Scenario: The progress toast names the stage and the hook's last line
+    Given the pre-commit hook prints "lint ok" and waits
+    When the user starts committing with the message "Add tax"
+    Then the user sees a "loading" toast "Committing..." saying "lint ok"
+    When the hook finishes
+    Then the toast "Committing..." is gone
+    And the user sees a "success" toast "Committed abc0001" saying "Add tax"
+
+  @desktop
+  Scenario: A failed action is reported
+    Given the node fails the action with "pre-commit hook failed"
+    When the user starts committing with the message "Add tax"
+    Then the user sees an "error" toast "Action failed" saying "pre-commit hook failed"
+
+  @desktop
+  Scenario: A commit offers to push it
+    When the user commits with the message "Add tax"
+    And the user chooses "Push" on the toast "Committed abc0001"
+    Then the node is asked to push
+
+  @desktop
+  Scenario: A git action on a linked environment runs through the link
+    Given the node is linked to "env-c"
+    And "env-c" has the thread "t7" titled "Deploy" in "shop" on the branch "feature/tax"
+    When the user goes to "env-c:t7"
+    And the user commits with the message "Add tax"
+    Then the action ran on "env-c"
+    And a commit "Add tax" holds both files

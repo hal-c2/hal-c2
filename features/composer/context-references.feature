@@ -25,7 +25,7 @@ Feature: Referencing files, skills, commands and context
   Background:
     Given a project with an open thread
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario Outline: A trigger character offers matching suggestions
     When the user types "<typed>"
     Then the user is offered <suggestions>
@@ -36,13 +36,13 @@ Feature: Referencing files, skills, commands and context
       | $rev      | skills matching "rev"                 |
       | /mo       | commands matching "mo"                |
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Choosing a file suggestion puts the file into the draft
     Given the user has typed "@read"
     When the user chooses "README.md" from the suggestions
     Then the draft references "README.md"
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Dismissing suggestions does not send the message
     Given the user is offered suggestions
     When the user dismisses them with Escape

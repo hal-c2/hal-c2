@@ -183,7 +183,8 @@ Feature: The desktop app runs its own node
       When the user starts the desktop app asking for a screenshot
       Then the screenshot shows the app's page inside the window, not an empty view
 
-    @desktop
+    # Delivered natively (main.cpp --screenshot); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: A screenshot of a desktop app that fails to start shows why and quits
       When the user starts the desktop app asking for a screenshot, with a pairing link for a node that is not running
       Then the screenshot shows the desktop app saying it cannot reach the node

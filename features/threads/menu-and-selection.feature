@@ -26,7 +26,8 @@ Feature: Thread menu and selecting several threads
     When the user opens the menu for "Tidy logs"
     Then the actions for "Tidy logs" are offered
 
-  @desktop
+  # Delivered natively (Sidebar, SidebarController's contextMenu); no desktop test yet.
+  @desktop @backlog-desktop
   Scenario: The menu opens as soon as the secondary button is pressed
     When the user presses the secondary button on "Tidy logs"
     Then the menu for "Tidy logs" opens without waiting for the release

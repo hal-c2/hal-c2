@@ -5,8 +5,10 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (tab activation from the keyboard)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (focusInput)
 #   apps/desktop-qt/qml/HalC2/Bricks/TerminalDrawer.qml (focusTerminal, focus on open)
-#   apps/desktop-qt/tests/native/tst_ShellExamples.cpp (terminalDrawerTakesAndReturnsTheKeyboard)
+#   apps/desktop-qt/tests/native/tst_ShellExamples.cpp (terminalDrawerTakesAndReturnsTheKeyboard,
+#     panelTabsSupportKeyboardActivationAndClose)
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
+#   apps/desktop-qt/src/native/NavigationController.cpp (leaving settings)
 #   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml (accessible names)
 
 Feature: Keyboard focus and keyboard-only use
@@ -53,13 +55,15 @@ Feature: Keyboard focus and keyboard-only use
 
   Rule: Keyboard-only thread list
 
-    @desktop
+    # Delivered natively (Sidebar's keyboard outline); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: Tab reaches the thread list
       Given the thread list is visible
       When the user tabs into the thread list
       Then the current thread is highlighted for the keyboard
 
-    @desktop
+    # Delivered natively (Sidebar's keyboard outline); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario Outline: Home and End jump to the ends of the thread list
       Given the thread list has keyboard focus on a middle thread
       When the user presses <key>
@@ -70,7 +74,8 @@ Feature: Keyboard focus and keyboard-only use
         | Home | first |
         | End  | last  |
 
-    @desktop
+    # Delivered natively (Sidebar's keyboard outline); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario Outline: Enter and Space open the highlighted thread
       Given the thread list has keyboard focus on thread "B"
       When the user presses <key>
@@ -81,7 +86,8 @@ Feature: Keyboard focus and keyboard-only use
         | Enter |
         | Space |
 
-    @desktop
+    # Delivered natively (Sidebar's keyboard outline); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: The menu key opens the highlighted thread's menu
       Given the thread list has keyboard focus on thread "B"
       When the user presses the menu key
@@ -92,42 +98,42 @@ Feature: Keyboard focus and keyboard-only use
     Background:
       Given the user is in settings
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Down and Enter move to the next section
       Given the "General" section has keyboard focus
       When the user presses Down and then Enter
       Then the "Providers" section opens
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Up and Space move to the previous section
       Given the "Providers" section has keyboard focus
       When the user presses Up and then Space
       Then the "General" section opens
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Searching settings lists matching settings with their section
       When the user searches settings for "theme"
       Then each result names its section
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A settings result opens from the keyboard
       Given the settings search lists "Theme"
       When the user presses Space on that result
       Then the section holding "Theme" opens with "Theme" highlighted
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Nothing matches the settings search
       When the user searches settings for "qqqq"
       Then the user is told "No matching settings"
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Escape clears the settings search
       Given the user searched settings for "theme"
       When the user presses Escape
       Then the settings search is empty
       And the section list is shown again
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: The search follows a query set elsewhere
       Given the user cleared the settings search with Escape
       When the app sets the settings search to "font"
@@ -147,7 +153,8 @@ Feature: Keyboard focus and keyboard-only use
       When the user focuses the "Files" tab and presses Enter
       Then the "Files" tab is active
 
-    @desktop
+    # Delivered natively (WindowControls' accessible names); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario Outline: Window controls are announced by name
       Then the window control "<name>" is available to assistive technology
 

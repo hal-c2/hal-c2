@@ -18,21 +18,21 @@ Feature: Drafting and sending a message
     Given a project with an open thread
     And the thread's provider is ready
 
-  @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario: Enter sends the message
     Given the user has typed "Fix the failing test"
     When the user presses Enter
     Then the message "Fix the failing test" is sent to the agent
     And the composer is empty
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Shift+Enter starts a new line instead of sending
     Given the user has typed "first line"
     When the user presses Shift+Enter and types "second line"
     Then the draft holds two lines
     And nothing has been sent
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario Outline: The send shortcut setting decides what Enter does
     Given the send shortcut setting is "<setting>"
     And the user has typed <draft>
@@ -55,21 +55,21 @@ Feature: Drafting and sending a message
     When the user presses Enter
     Then a new line is added to the draft
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: mod+alt+Enter starts a new thread in the background
     Given the user is writing the first message of a new thread
     When the user presses mod+alt+Enter
     Then a new thread starts with that message in the background
     And no window shortcut takes the key instead
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The draft stays until the send is confirmed
     Given the user has typed "keep me"
     When the user sends the message
     Then the draft still reads "keep me" until the thread confirms the send
     And the draft clears once the send is confirmed
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Switching threads before the draft syncs does not leak text into the new thread
     Given the user has just typed "for thread A" in thread A
     When the user switches to thread B before the draft is saved

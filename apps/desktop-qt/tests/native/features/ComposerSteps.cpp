@@ -1,7 +1,7 @@
 // The composer's turn against the node: the route the composer shows, what the
 // user types, picks, attaches and sends (as the brick dispatches it), the
 // images the node stores, and the text the page is asked to restore
-// (features/desktop/native-composer.feature).
+// (features/composer/sending-turns.feature, desktop/native-composer.feature).
 
 #include <QJsonArray>
 #include <QVariantMap>

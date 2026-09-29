@@ -62,6 +62,13 @@ Feature: Pushing, pulling and guarding the default branch
     When the user pulls
     Then the branch has the 2 new commits
 
+  @desktop
+  Scenario: A refused pull is reported
+    Given "feature/tax" is 2 commits behind its upstream and has no local commits
+    And the node refuses to pull with "Cannot fast-forward."
+    When the user pulls
+    Then the user sees an "error" toast "Pull failed" saying "Cannot fast-forward."
+
   @node
   Scenario: Pulling a diverged branch is refused
     Given "feature/tax" is 1 commit ahead and 1 behind its upstream
@@ -79,6 +86,8 @@ Feature: Pushing, pulling and guarding the default branch
       | is on a detached HEAD     | Cannot pull from detached HEAD.                                        |
       | has no upstream           | Current branch has no upstream configured. Push with upstream first.   |
 
+  # The desktop runs the first three rows. On the default branch it never offers "Commit, push & PR"
+  # (GitController decides as gitActions.logic.ts does), so that row has no desktop test.
   @desktop
   Scenario Outline: Actions that would land on the default branch ask first
     Given the checkout is on the default branch "main"

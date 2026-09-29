@@ -12,6 +12,7 @@
 #   apps/tui/src/components/WorkingIndicator.tsx
 #   apps/server-ex/lib/hal_c2/web/socket.ex (stream snapshot after a reconnect, resync, unknown node)
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (stream shape by environment, through a link)
+#   apps/desktop-qt/src/native/ThreadStore.cpp (reload, retrying a thread its node stopped sending)
 
 Feature: Streaming the agent's reply
   While a turn runs, the agent's text and reasoning arrive as they are written. When the
@@ -142,3 +143,15 @@ Feature: Streaming the agent's reply
     When that environment is reachable again
     Then the thread follows its node again
     And the answer "Deploy when green." is still shown
+
+  @desktop
+  Scenario: Retrying follows the thread again once its node sends it
+    Given the agent has answered "The cart has tax."
+    When the node stops sending the thread
+    Then the thread says its node cannot be reached
+    When the user retries the thread
+    Then the thread is still unreachable
+    When the node can send the thread again
+    And the user retries the thread
+    Then the thread follows its node again
+    And the answer "The cart has tax." is still shown

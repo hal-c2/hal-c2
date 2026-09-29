@@ -689,7 +689,7 @@ into a drawer terminal it launched itself. Its shapes name the
 environment, not a node, so the node routes them to the cluster member that serves
 it or through a link (`HalC2.Links`) to an environment outside the cluster; the
 drawer is available wherever the header is, cluster and linked environments
-alike (`features/desktop/native-terminal.feature`).
+alike (`features/terminal/drawer.feature`).
 Environments outside the cluster are paired natively, as node links (see
 `connections` below); the page's saved environments are not lent to the node.
 

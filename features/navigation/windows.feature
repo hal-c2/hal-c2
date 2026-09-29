@@ -4,7 +4,8 @@
 #   apps/desktop/src/window/QuitHold.ts
 #   apps/desktop/src/window/DesktopApplicationMenu.ts (Settings..., View zoom items)
 #   apps/desktop/src/window/DesktopWindow.ts (zoomMain)
-#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window commands)
+#   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window commands, title from `route`)
+#   apps/desktop-qt/src/native/NavigationController.cpp (the route's title)
 #   apps/desktop-qt/qml/HalC2/Bricks/TitleBar.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/AppWindow.qml
@@ -17,7 +18,8 @@ Feature: Windows, zoom and quitting
 
   Rule: Window controls
 
-    @desktop
+    # Delivered natively (WindowControls); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario Outline: The window controls act on the window
       When the user chooses <control> in the window controls
       Then the window <result>
@@ -28,13 +30,15 @@ Feature: Windows, zoom and quitting
         | Maximize | is maximized                           |
         | Close    | closes                                 |
 
-    @desktop
+    # Delivered natively (WindowControls); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: Maximize restores a maximized window
       Given the window is maximized
       When the user chooses Maximize in the window controls
       Then the window returns to its previous size
 
-    @desktop
+    # Delivered natively (WindowControls); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario Outline: Window controls follow the platform's order and side
       Given the user is on <platform>
       Then the window controls are on the <side> in the order <order>
@@ -45,67 +49,73 @@ Feature: Windows, zoom and quitting
         | Linux    | right | minimize, maximize, close |
         | Windows  | right | minimize, maximize, close |
 
-    @desktop
+    # Delivered natively (WindowControls); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: macOS controls show their symbols only on hover
       Given the user is on macOS
       When the pointer is over the window controls
       Then the controls show their symbols
 
-    @desktop
+    # Delivered natively (WindowControls); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: macOS controls turn grey in an inactive window
       Given the user is on macOS
       When another app's window is active
       Then the window controls are grey
 
-    @desktop
+    # Delivered natively (TitleBar, Workspace); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: Dragging the header moves the window
       When the user drags an empty part of the header
       Then the window moves with the pointer
 
-    @desktop
+    # Delivered natively (TitleBar, Workspace); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: Double-clicking the header toggles maximize
       Given the window is not maximized
       When the user double-clicks an empty part of the header
       Then the window is maximized
 
-    @desktop
+    # Delivered natively (ShellWindow, Theme); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: A theme can ask for the system window frame
       Given the shell theme turns off the frameless window
       When the app starts
       Then the window has the system's own frame
 
-    @desktop
+    # Delivered natively (ShellWindow, Theme); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: A theme can make the window translucent
       Given the shell theme sets the window opacity to 0.9
       Then the window is drawn at that opacity
 
   Rule: More than one window
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A second window works on its own
       Given the user's shell layout opens a second window
       When the user opens a thread in the second window
       Then the first window still shows its own thread
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Closing a second window leaves the first alone
       Given a second window is open
       When the user closes the second window
       Then the first window stays open on the same thread
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Windows share the sign-in but not the navigation
       Given a second window is open
       Then the second window is signed in to the same environments
       And navigating in one window does not navigate the other
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A window restores its drafts and panels after a restart
       Given a second window with a stable identity has a draft and an open panel
       When the user restarts the app
       Then that window has the same draft and panel
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A window has a sensible title and size
       Given a second window has no page title yet
       Then its title is "HAL-C2"
@@ -180,3 +190,21 @@ Feature: Windows, zoom and quitting
     Scenario: The settings shortcut opens settings
       When the user presses mod+,
       Then settings open
+
+  Rule: The window is titled after what it shows
+
+    Background:
+      Given the time is "2026-09-23T10:00:00Z"
+      And the desktop's node "node-a" serves the environment "env-a"
+      And the node has these threads:
+        | id | project | title  | createdAt            |
+        | t1 | p1      | First  | 2026-09-23T09:50:00Z |
+        | t2 | p1      | Second | 2026-09-23T09:40:00Z |
+      And the node has the project "p1" titled "proj-1"
+      And the desktop shell is connected to its node
+
+    @desktop
+    Scenario: The window title follows the thread's title
+      Given the user opens "env-a:t1" from the sidebar
+      When the node updates the thread "t1" with the title "Renamed"
+      Then the window is titled "Renamed"

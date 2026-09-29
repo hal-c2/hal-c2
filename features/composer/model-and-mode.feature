@@ -28,12 +28,12 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   Background:
     Given a project with an open thread on Codex
 
-  @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario: The user switches the model for the next turn
     When the user chooses the model "gpt-5-codex"
     Then the next turn runs on "gpt-5-codex"
 
-  @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario: Models from unavailable providers cannot be chosen
     Given the Cursor provider is not installed
     When the user looks through the models
@@ -46,12 +46,12 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then Codex, "Codex Work" and Claude each list only their own models
     And a provider that is turned off in settings is not listed
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The chosen model is shown with its provider
     When the user chooses the model "gpt-5-codex"
     Then the composer shows "gpt-5-codex" marked as a Codex model
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario Outline: Searching the models matches provider and model names
     Given Claude is enabled
     When the user searches the models for "<query>"
@@ -64,7 +64,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | claude | sonnet      | gpt-5-codex |
       | codex  | gpt-5-codex | opus        |
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: A model that cannot be used says why and cannot be chosen
     Given the model "gpt-5.5" cannot be used because "Start a new thread to use this model."
     When the user looks through the models
@@ -78,33 +78,33 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then Cursor is listed with the reason it is unavailable
     And Cursor's models cannot be chosen
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The user chooses a model with the keyboard
     When the user opens the model picker
     And the user moves to the next model and confirms it
     Then the next turn runs on that model
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The user moves between providers with the keyboard
     Given Claude is enabled
     When the user opens the model picker
     And the user moves to the next provider
     Then Claude's models are listed
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The user jumps to a model by its number
     When the user opens the model picker
     And the user presses the shortcut for the second model
     Then the next turn runs on the second model listed
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The model picker shortcut opens and closes the model picker
     When the user presses the model picker shortcut
     Then the model picker is open
     When the user presses the model picker shortcut again
     Then the model picker is closed
 
-  @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario Outline: The user sets the reasoning effort for the next turn
     When the user sets the effort to <effort>
     Then the next turn runs with <effort> effort
@@ -115,7 +115,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | medium |
       | high   |
 
-  @node @desktop @tui
+  @node @desktop @tui @backlog-desktop
   Scenario Outline: The user sets what the agent may do without asking
     When the user sets the permissions to <mode>
     Then the next turn runs in <mode>
@@ -168,19 +168,19 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the thread runs in Supervised
     But a project that overrides the default uses its own permissions
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The user chooses which environment runs a new thread
     Given two environments are connected
     When the user starts a new thread on the second environment
     Then the thread is created in the second environment
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The user chooses to work in the current checkout or a new worktree
     Given the project is a Git repository
     When the user chooses to work in a new worktree from branch "main"
     Then the first turn works in a new worktree based on "main"
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: A branch that does not exist is created when chosen
     Given the project has no branch "feature/cache"
     When the user searches for "feature/cache" and confirms it

@@ -38,7 +38,7 @@ ctest --test-dir apps/desktop-qt/build/tests/native --output-on-failure
 `Features` runs the `@desktop` and `@shared` scenarios in the feature files `tst_Features.cpp`
 lists (`features/desktop/native-*.feature`, cluster, links, pairing, Connections settings and more)
 against a fake node, skipping `@backlog`,
-`@backlog-desktop` and `@dropped`; `HAL_C2_FEATURES="desktop/native-sidebar.feature"` narrows it.
+`@backlog-desktop` and `@dropped`; `HAL_C2_FEATURES="threads/thread-list.feature"` narrows it.
 Its steps live in `tests/native/features/`, one self-registering file per domain, each with its
 own part of the fake node (`FakeNode::Extension`).
 `ShellRuntime` covers reload and theme ownership. `ShellExamples` loads all

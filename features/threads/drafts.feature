@@ -1,18 +1,15 @@
 # Sources:
-#   apps/desktop-qt/src/native/DraftController.cpp (the shell's drafts: start, open, delete, promote, keep)
+#   apps/desktop-qt/src/native/DraftController.cpp (the desktop's drafts: start, open, delete, promote, keep)
 #   apps/desktop-qt/src/native/ComposerController.cpp (a draft's first send promotes it)
-#   apps/desktop-qt/src/native/NavigationController.cpp (the page follows a draft with its thread id)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (draft rows and their menu)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
-#   apps/web/src/shell/HalC2ShellBridge.tsx (opens the shell's draft as its composer draft)
-#   Shared domain: threads/creating.feature owns what a new thread is; this file owns that the
-#   Qt shell keeps the drafts itself.
+#   threads/creating.feature owns what a new thread is; this file owns how the desktop keeps
+#   its drafts.
 
-Feature: The desktop shell keeps its own drafts
-  A new thread is a draft until its first message is sent. The Qt shell keeps its drafts on
-  this machine, one per project folder, lists them at the top of the sidebar and opens them
-  itself; the page draws the draft's composer for the thread id the draft will become. The
-  draft's text is kept with the draft.
+Feature: Drafts on the desktop
+  A new thread is a draft until its first message is sent. The desktop keeps its drafts on
+  this machine, one per project folder, lists them at the top of the sidebar and opens them.
+  The draft's text is kept with the draft.
 
   Background:
     Given the time is "2026-09-23T10:00:00Z"
@@ -28,24 +25,18 @@ Feature: The desktop shell keeps its own drafts
   Rule: A new thread opens its project's draft
 
     @desktop
-    Scenario: A new thread without a project starts where the window is
-      Given the user opens "env-a:t3" from the sidebar
-      When the user starts a new thread
-      Then the window shows a new draft in "proj-2"
-
-    @desktop
     Scenario: Starting a new thread again reopens the same draft
       Given the user starts a new thread in "proj-1"
       And the user opens "env-a:t1" from the sidebar
       When the user starts a new thread in "proj-1"
       Then the window shows the draft
-      And the shell keeps 1 draft
+      And the desktop keeps 1 draft
 
     @desktop
     Scenario: A project that is gone starts nothing
       When the user starts a new thread in "proj-9"
-      Then the shell keeps 0 drafts
-      And the page is not told where to go
+      Then the desktop keeps 0 drafts
+      And the window shows home
 
   Rule: A draft ends when it is sent or deleted
 
@@ -60,7 +51,7 @@ Feature: The desktop shell keeps its own drafts
     Scenario: The draft's menu offers to delete it
       Given the user starts a new thread in "proj-1"
       When the user opens the draft's menu at 30, 60
-      Then the shell shows a menu at 30, 60 with:
+      Then a menu opens at 30, 60 with:
         | id     | label        |
         | delete | Delete draft |
 

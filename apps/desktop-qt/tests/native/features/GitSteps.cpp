@@ -1,6 +1,6 @@
 // The header's git actions (GitController) against the node's source control:
 // source-control/git-actions.feature, push-pull-and-default-branch.feature,
-// commit-and-generated-messages.feature and features/desktop/native-git.feature.
+// and commit-and-generated-messages.feature.
 //
 // FakeCheckout is one checkout at /work/<project> as the node reports it
 // (`vcs` status) and changes it: `gitAction` runs commit, push and pull
@@ -661,7 +661,7 @@ const Steps steps([] {
            QStringLiteral("the commit is on %1").arg(fake(world).commits.value(0).branch));
   });
 
-  // features/desktop/native-git.feature.
+  // Progress, results, pulling, init, publishing and links.
   step(QStringLiteral("the pre-commit hook prints %1 and waits").arg(q), [](World& world, const Captures& c, const Table&) {
     fake(world).hookLine = c[0];
     fake(world).waitAfterHook = true;

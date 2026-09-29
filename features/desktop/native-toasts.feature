@@ -1,10 +1,11 @@
 # Sources:
-#   apps/desktop-qt/src/native/ToastController.cpp (the shell's toasts: timing, dismiss, actions)
+#   apps/desktop-qt/src/native/ToastController.cpp (the shell's toasts, and the page's dismissals passed on)
 #   apps/desktop-qt/qml/HalC2/Bricks/Notifications.qml (draws the shell's toasts above the page's)
 #   apps/desktop-qt/tests/tst_Notifications.qml
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
 #   apps/web/src/shell/ShellToastBridge.tsx (the page's own toasts, which stay the page's)
-#   apps/web/src/components/ui/toast.tsx (the five second timeout this keeps)
+#   Shared domain: navigation/toasts.feature owns how a toast behaves; this file owns which
+#   toasts are the shell's and which the page's.
 
 Feature: The desktop shell shows its own toasts
   What the shell does itself (a refused settle, a snooze with Undo, a failed send) it reports in
@@ -26,29 +27,6 @@ Feature: The desktop shell shows its own toasts
     When the user settles "env-a:t1"
     Then the user sees an "error" toast "Failed to settle thread" saying "No"
     And nothing reaches the page
-
-  @desktop
-  Scenario: A toast goes away on its own after five seconds
-    Given the user settles "env-a:t1"
-    And the user sees an "error" toast "Failed to settle thread" saying "No"
-    When 4 seconds pass
-    Then the user sees an "error" toast "Failed to settle thread"
-    When 1 second passes
-    Then the toast "Failed to settle thread" is gone
-
-  @desktop
-  Scenario: Dismissing a toast
-    Given the user settles "env-a:t1"
-    And the user sees an "error" toast "Failed to settle thread" saying "No"
-    When the user dismisses the toast "Failed to settle thread"
-    Then the toast "Failed to settle thread" is gone
-    And nothing reaches the page
-
-  @desktop
-  Scenario: A failure without a reason still says something went wrong
-    Given the node refuses "thread.settle" with ""
-    When the user settles "env-a:t1"
-    Then the user sees an "error" toast "Failed to settle thread" saying "An error occurred."
 
   @desktop
   Scenario: Dismissing one of the page's toasts is left to the page

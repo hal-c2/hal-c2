@@ -1,20 +1,20 @@
 # Sources:
 #   apps/desktop-qt/src/native/ThreadMenuController.cpp (the thread menu, its actions, Undo, moving)
-#   apps/desktop-qt/src/native/MenuController.cpp (the shell's one menu and question)
+#   apps/desktop-qt/src/native/MenuController.cpp (the desktop's one menu and question)
 #   apps/desktop-qt/src/native/KeybindingController.cpp (thread.pin, thread.settle, thread.copyReference, thread.undo)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (thread.menu), Workspace.qml (workspace.titleMenu)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake node)
 #   apps/web/src/components/threadActionMenu.logic.ts (the order this ports)
 #   apps/web/src/hooks/useThreadActions.ts (archive, delete, unpin and their confirmations)
 #   apps/server-ex/lib/hal_c2/mcp/tools/threads.ex (hal-c2.moveDestinations, hal-c2.moveThread answers)
-#   Shared domain: threads/menu-and-selection.feature, threads/archive-delete.feature,
-#   threads/pinning-and-order.feature and threads/moving-between-machines.feature own what these
-#   actions mean; this file owns that the Qt shell draws the menu and runs them itself.
+#   threads/menu-and-selection.feature, threads/archive-delete.feature, threads/pinning-and-order.feature
+#   (Undoing a thread change) and threads/moving-between-machines.feature own what these actions
+#   mean; this file owns how the desktop's menu runs them against the node.
 
-Feature: The desktop shell draws the thread menu and runs its actions
-  A thread's menu, from its row in the sidebar or the header's title, is the shell's own. It
-  sends each action to the node itself, reports what the node refuses, and offers the way back
-  for the actions that take a thread out of view.
+Feature: Running a thread's actions from its menu
+  A thread's menu, from its row in the sidebar or the header's title, sends each action to
+  the node, reports what the node refuses, and offers the way back for the actions that take
+  a thread out of view.
 
   Background:
     Given the time is "2026-09-23T10:00:00Z"
@@ -26,12 +26,12 @@ Feature: The desktop shell draws the thread menu and runs its actions
     And the node has the project "p1" titled "proj-1"
     And the desktop shell is connected to its node
 
-  Rule: The menu is the shell's
+  Rule: What the menu offers
 
     @desktop
     Scenario: A thread's menu lists what can be done to it
       When the user opens the thread menu for "env-a:t1" at 40, 120
-      Then the shell shows a menu at 40, 120 with:
+      Then a menu opens at 40, 120 with:
         | id                   | label                 |
         | new-thread-on-branch | New thread on feat/first |
         | pin                  | Pin thread            |
@@ -83,35 +83,8 @@ Feature: The desktop shell draws the thread menu and runs its actions
         | fork             | thread.fork            | Failed to fork thread            |
 
   Rule: What takes a thread out of view can be undone
-
-    @desktop
-    Scenario: Archiving offers Undo, which brings the thread back
-      Given the user opens the thread menu for "env-a:t2" at 40, 120
-      When the user picks "archive"
-      Then the node receives a "thread.archive" command for "t2"
-      And the user sees a "success" toast "Archived" offering "Undo"
-      When the user chooses "Undo" on the toast "Archived"
-      Then the node receives a "thread.unarchive" command for "t2"
-
-    @desktop
-    Scenario: Unpinning offers Undo, which pins the thread back in its place
-      Given the node updates the thread "t1" with:
-        | pinnedAt    | 2026-09-23T09:55:00Z |
-        | pinOrderKey | a0                   |
-      And the user opens the thread menu for "env-a:t1" at 40, 120
-      When the user picks "unpin"
-      Then the node receives a "thread.unpin" command for "t1"
-      When the user chooses "Undo" on the toast "Unpinned"
-      Then the node receives a "thread.pin" command for "t1"
-      And the command's "orderKey" is "a0"
-
-    @desktop
-    Scenario: Settling offers Undo, which un-settles the thread
-      Given the user opens the thread menu for "env-a:t1" at 40, 120
-      When the user picks "settle"
-      Then the node receives a "thread.settle" command for "t1"
-      When the user chooses "Undo" on the toast "Settled"
-      Then the node receives a "thread.unsettle" command for "t1"
+    # Undoing an archive, unpin, settle or snooze is threads/pinning-and-order.feature's
+    # "Undoing a thread change".
 
     @desktop
     Scenario: The undo shortcut runs the newest Undo on offer
@@ -176,7 +149,7 @@ Feature: The desktop shell draws the thread menu and runs its actions
       Given the node can move "t1" to "node-b" and to "node-c", which is offline
       And the user opens the thread menu for "env-a:t1" at 40, 120
       When the user picks "move"
-      Then the shell shows a menu at 40, 120 with:
+      Then a menu opens at 40, 120 with:
         | id             | label             |
         | machine:node-b | node-b            |
         | machine:node-c | node-c (offline)  |
