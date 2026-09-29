@@ -155,7 +155,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
     When the user picks GitHub to publish to
     Then the user is told GitHub is not authenticated and how to fix it
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Starting to publish from the git actions
     Given the project "notes" has commits and no remote
     When the user chooses to publish the repository

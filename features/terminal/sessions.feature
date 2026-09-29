@@ -122,7 +122,8 @@ Feature: Terminal sessions
 
   Rule: Clients open and hide the terminal without stopping it
 
-    @desktop
+    # Delivered natively (TerminalController, TerminalDrawer); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: The user shows and hides the terminal on desktop
       Given a thread whose environment can run terminals
       When the user shows the terminal
@@ -131,12 +132,14 @@ Feature: Terminal sessions
       Then the terminal is hidden
       And its shell keeps running
 
-    @desktop
+    # Delivered natively (TerminalController, TerminalDrawer); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: The terminal toggle is only offered where a terminal can run
       Given the selected thread's environment cannot run terminals
       Then the user is not offered a way to show the terminal
 
-    @desktop
+    # Delivered natively (TerminalController, TerminalDrawer); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario Outline: The desktop terminal keeps a sensible height
       Given the terminal is showing in a window 1000 pixels tall
       When the user drags the terminal to <requested> pixels tall
@@ -148,7 +151,8 @@ Feature: Terminal sessions
         | 400       | 400    |
         | 900       | 750    |
 
-    @desktop
+    # Delivered natively (TerminalController, TerminalDrawer); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: Hiding and showing the terminal keeps what it was showing
       Given the terminal shows the output of a running build
       When the user hides the terminal and shows it again
@@ -168,13 +172,15 @@ Feature: Terminal sessions
       Then focus returns to the prompt
       And the shell keeps running on the server
 
-    @desktop
+    # Delivered natively (TerminalController, TerminalDrawer); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: A new terminal opened from the drawer uses the thread's launch context
       Given a thread working in a worktree
       When the user opens another terminal from the drawer
       Then it starts in the same folder and worktree as the thread
 
-    @desktop
+    # Delivered natively (TerminalController, TerminalDrawer); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: A terminal started by a project script shares that script's launch context
       Given a project script is running in a terminal
       When the user opens another terminal next to it

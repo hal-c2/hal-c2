@@ -150,7 +150,7 @@ Feature: Threads that work on or link pull requests
     When the user links "https://github.com/other/repo/pull/1"
     Then the user is told no project in this environment can read "github.com/other/repo"
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Opening the thread's pull request from the composer
     Given pull request 42 is the branch's pull request of "Tax work"
     When the user opens the pull request from the thread

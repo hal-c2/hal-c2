@@ -42,12 +42,12 @@ Feature: Adding terminal output to a message
     Then adding to chat and copying are unavailable
     And pasting is available
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The draft lists its terminal excerpts
     Given the draft holds an excerpt from "Terminal 1" lines 3 to 5
     Then the composer shows that excerpt with its terminal and lines
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The user removes a terminal excerpt from the draft
     Given the draft holds an excerpt from "Terminal 1" lines 3 to 5
     When the user removes that excerpt

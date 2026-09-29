@@ -32,7 +32,8 @@ Feature: Adding projects
 
   Rule: Adding a local folder
 
-    @desktop @tui
+    # Delivered natively (Sidebar's empty list, ThreadView's "Add a project to start"); no desktop test yet.
+    @desktop @tui @backlog-desktop
     Scenario: A user with no projects is invited to add one
       Given "laptop" has no projects
       When the user opens the app
@@ -144,14 +145,14 @@ Feature: Adding projects
 
   Rule: Dropping a folder on the desktop app
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Dragging a single local folder over the window offers to open it as a project
       Given the desktop app is connected to its own local environment
       When the user drags the folder "/home/sam/shop" over the window
       Then the user is told the folder opens as a project
       And the user is told no files will be moved or deleted
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario Outline: Drops that are not a single local folder are refused
       Given the desktop app is connected to its own local environment
       When the user drags <items> over the window
@@ -163,7 +164,7 @@ Feature: Adding projects
         | two folders                 |
         | a link to a remote location |
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Folder drops are refused when the app shows a remote environment
       Given the desktop app shows an environment on another machine
       When the user drags a local folder over the window

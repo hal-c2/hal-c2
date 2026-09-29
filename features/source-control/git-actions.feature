@@ -16,7 +16,7 @@ Feature: Recommended git action and the git menu
   Background:
     Given a connected environment with a thread in the git project "shop"
 
-  @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario Outline: The recommended action follows the checkout
     Given the checkout <state>
     When the user looks at the thread's git actions
@@ -34,7 +34,7 @@ Feature: Recommended git action and the git menu
       | is pushed and ahead of the default branch with no pull request | Create PR         |
       | is up to date with an open pull request                        | View PR           |
 
-  @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario Outline: The recommended action is withheld with a reason
     Given the checkout <state>
     When the user looks at the thread's git actions
@@ -49,14 +49,14 @@ Feature: Recommended git action and the git menu
       | is up to date with nothing to do         | Branch is up to date. No action needed.                 |
       | has no upstream and no local commits     | No local commits to push.                               |
 
-  @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario: A detached checkout only allows committing
     Given the checkout is on a detached HEAD with changes
     When the user looks at the thread's git actions
     Then pushing and opening a pull request are unavailable
     And the user is told to create and check out a branch first
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: A repository without a remote recommends publishing it
     Given the checkout has commits and no remote
     When the user looks at the thread's git actions
@@ -76,7 +76,7 @@ Feature: Recommended git action and the git menu
     Then publishing is unavailable
     And the reason given is "Repository publishing is not available in the TUI yet."
 
-  @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario Outline: A menu entry that cannot run says why
     Given the checkout <state>
     When the user opens the git menu
@@ -89,7 +89,7 @@ Feature: Recommended git action and the git menu
       | is behind its upstream                    | Create PR | Pull or rebase before creating a PR.  |
       | has uncommitted changes                   | Create PR | Commit changes before creating a PR.  |
 
-  @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario: Opening the pull request of the branch
     Given the checkout's branch has an open pull request
     When the user chooses to view the pull request
@@ -101,7 +101,7 @@ Feature: Recommended git action and the git menu
     When the user activates "View PR" with the keyboard in the terminal client
     Then the pull request link is copied
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Opening the git menu refreshes status
     Given the checkout changed outside HAL-C2 a moment ago
     When the user opens the git menu

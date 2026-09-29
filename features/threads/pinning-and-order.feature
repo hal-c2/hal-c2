@@ -16,7 +16,8 @@ Feature: Pinning and arranging threads
   Background:
     Given a connected environment with the active threads "Alpha", "Beta" and "Gamma"
 
-  @desktop
+  # Delivered natively (Sidebar, SidebarModel); no desktop test yet.
+  @desktop @backlog-desktop
   Scenario: Pinned threads are listed above active threads
     Given "Gamma" is pinned
     When the user looks at the thread list

@@ -157,7 +157,7 @@ Feature: Appearance
 
   Rule: Motion
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Panels open and close immediately by default
       When the user toggles the sidebar
       Then the sidebar appears without animation

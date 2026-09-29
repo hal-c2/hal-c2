@@ -29,20 +29,23 @@ Feature: Snoozing threads
     When a client unsnoozes "Refactor cart"
     Then "Refactor cart" is active again
 
-  @desktop
+  # Delivered natively (SidebarController, snooze menu and thread.unsnooze); no desktop test yet.
+  @desktop @backlog-desktop
   Scenario: Snoozed threads are shelved in their own section
     Given "Refactor cart" is snoozed until tomorrow
     When the user looks at the thread list
     Then "Refactor cart" is listed in the snoozed section
     And the row says when it will wake
 
-  @desktop
+  # Delivered natively (SidebarController, snooze menu and thread.unsnooze); no desktop test yet.
+  @desktop @backlog-desktop
   Scenario: Waking a snoozed thread from the list
     Given "Refactor cart" is snoozed until tomorrow
     When the user wakes "Refactor cart"
     Then "Refactor cart" returns to the active threads
 
-  @desktop
+  # Delivered natively (SidebarController, snooze menu and thread.unsnooze); no desktop test yet.
+  @desktop @backlog-desktop
   Scenario: A snoozable thread offers snoozing from the list
     When the user points at "Refactor cart" in the thread list
     Then the user can snooze it from there
@@ -144,7 +147,8 @@ Feature: Snoozing threads
       | the agent run fails                          |
       | a run that started after the snooze finishes |
 
-  @desktop
+  # Delivered natively (SidebarController, snooze menu and thread.unsnooze); no desktop test yet.
+  @desktop @backlog-desktop
   Scenario: Dismissing the woke marker
     Given "Refactor cart" woke from a snooze
     When the user dismisses its woke marker

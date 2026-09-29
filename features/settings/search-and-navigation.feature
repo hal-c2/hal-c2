@@ -24,19 +24,21 @@ Feature: Settings search and navigation
 
   Rule: Moving between sections
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Choosing a section opens it
       When the user chooses the "Providers" section
       Then the Providers settings are shown
       And "Providers" is marked as the current section
 
-    @desktop
+    # Delivered natively (SettingsNav over the native pages); no desktop test yet.
+    @desktop @backlog-desktop
     Scenario: The keyboard moves through sections
       Given the "General" section has keyboard focus
       When the user moves down and confirms
       Then the next section opens
 
-    @desktop
+    # Delivered natively (NavigationController); desktop/native-navigation.feature runs it in its own words, not these steps.
+    @desktop @backlog-desktop
     Scenario: Leaving settings returns to where the user was
       Given the user opened settings from a thread
       When the user goes back
@@ -87,24 +89,24 @@ Feature: Settings search and navigation
 
   Rule: Searching settings
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Search results show each setting with its section
       When the user searches settings for "network"
       Then "Network access" is listed under "Connections"
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Opening a search result goes to that setting
       Given the user has searched settings for "theme"
       When the user opens the first result
       Then the section holding that setting opens
       And the page brings the setting into view
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Nothing matches the search
       When the user searches settings for "zzzz"
       Then the user is told no settings match
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Escape clears the search
       Given the user has searched settings for "model"
       When the user presses escape in the search

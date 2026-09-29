@@ -20,13 +20,13 @@ Feature: Committing with written or generated messages
     Given a connected environment with a thread in the git project "shop"
     And the user has changed "src/cart.ts" and "src/tax.ts"
 
-  @node @desktop @tui
+  @node @desktop @tui @backlog-desktop
   Scenario: Committing with a message the user wrote
     When the user commits with the message "Add tax to the cart"
     Then a commit "Add tax to the cart" holds both files
     And the user is told the commit was made with its short hash
 
-  @node @desktop
+  @node @desktop @backlog-desktop
   Scenario: A blank message is written by the writer model
     When the user commits without writing a message
     Then the writer model writes the commit message from the staged diff
@@ -43,29 +43,29 @@ Feature: Committing with written or generated messages
     Then nothing is committed
     And the status line reads "Commit needs a message."
 
-  @node @desktop
+  @node @desktop @backlog-desktop
   Scenario: Committing only the files the user picked
     When the user leaves "src/tax.ts" out of the commit and commits
     Then the commit holds only "src/cart.ts"
     And "src/tax.ts" is still changed in the working tree
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Leaving every file out disables committing
     When the user leaves every file out of the commit
     Then neither committing nor committing on a new branch is possible
 
-  @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario: Cancelling the commit leaves everything as it was
     When the user starts a commit and then cancels it
     Then nothing is committed and both files are still changed
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Committing on the default branch carries a warning
     Given the checkout is on the default branch "main"
     When the user starts a commit
     Then the user is warned that the commit lands on "main"
 
-  @node @desktop
+  @node @desktop @backlog-desktop
   Scenario: Committing on a new branch
     Given the checkout is on the default branch "main"
     When the user commits on a new branch with the message "Add tax to the cart"
