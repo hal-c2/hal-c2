@@ -8,6 +8,7 @@
 #include <QSaveFile>
 
 #include "DraftController.h"
+#include "KeybindingController.h"
 #include "NativeShell.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -100,6 +101,10 @@ void NavigationController::activate() {
   m_restored = false;
   publish();
   follow();
+  // The pages the palette offers; they have no default keys.
+  auto* commands = NativeShell::of(this)->controller<KeybindingController>()->commands();
+  commands->add(kOpenSettings, tr("Open settings"), [this] { open(Route::settings()); });
+  commands->add(kOpenUsage, tr("Open usage"), [this] { open(Route::of(QStringLiteral("usage"))); });
 }
 
 void NavigationController::pageReady() {

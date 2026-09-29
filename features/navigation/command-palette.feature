@@ -6,6 +6,9 @@
 #   packages/shared/src/keybindings.ts (commandPalette.toggle, filePicker.toggle, projectSearch.toggle)
 #   apps/tui/src/commands.ts (filterCommands)
 #   apps/tui/src/keymap.ts (^K palette)
+#   apps/desktop-qt/src/native/CommandPaletteController.cpp
+#   apps/desktop-qt/qml/HalC2/Bricks/CommandPalette.qml
+#   apps/desktop-qt/tests/tst_CommandPalette.qml
 #   Command palette entries: action:new-thread, action:new-thread-in, action:copy-thread-reference,
 #   action:link-pull-request, action:open-thread-pull-requests, action:open-file-picker,
 #   action:search-project-contents, action:add-project, action:add-project:wsl-folder,
@@ -22,19 +25,19 @@ Feature: Command palette
 
   Rule: Opening and closing
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: The palette opens from its shortcut
       When the user presses the command palette shortcut
       Then the command palette is open
       And the search field has keyboard focus
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: The palette closes from its shortcut
       Given the command palette is open
       When the user presses the command palette shortcut
       Then the command palette is closed
 
-    @backlog @desktop
+    @desktop
     Scenario: Closing the palette returns focus to the composer
       Given the command palette is open
       When the user dismisses the command palette
@@ -74,27 +77,36 @@ Feature: Command palette
         | go to file     |
         | project search |
 
+    @desktop
+    Scenario: Reopening the palette starts from the root list
+      Given the command palette is open
+      And the user types "qqqqqq"
+      When the user dismisses the command palette
+      And the user opens the command palette
+      Then the search field is empty
+      And the palette shows an "Actions" group
+
   Rule: The root list
 
-    @backlog @desktop
+    @desktop
     Scenario: With no query the palette shows actions and recent threads
       When the user opens the command palette
       Then the palette shows an "Actions" group
       And the palette shows a "Recent Threads" group of at most 12 threads
 
-    @backlog @desktop
+    @desktop
     Scenario: Archived threads are not offered
       Given the thread "Old spike" is archived
       When the user opens the command palette
       Then "Old spike" is not listed
 
-    @backlog @desktop
+    @desktop
     Scenario: A thread entry names its project and branch
       Given the thread "Fix login" is on branch "auth-fix"
       When the user opens the command palette
       Then "Fix login" is described with the project "hal-c2" and "#auth-fix"
 
-    @backlog @desktop
+    @desktop
     Scenario: The current thread is marked
       When the user opens the command palette
       Then the thread the user is looking at is described as "Current thread"
@@ -108,20 +120,20 @@ Feature: Command palette
       Then matching actions, projects, settings and threads are listed in their own groups
       And the "Recent Threads" group is hidden
 
-    @backlog @desktop
+    @desktop
     Scenario: Exact matches rank above prefix matches, and prefix above substring
       Given threads titled "Deploy", "Deploy docs" and "Fix deploy"
       When the user searches the palette for "deploy"
       Then "Deploy" is listed before "Deploy docs"
       And "Deploy docs" is listed before "Fix deploy"
 
-    @backlog @desktop
+    @desktop
     Scenario: Equal thread matches are ordered by most recent activity
       Given two threads titled "Refactor" and "Refactor" with the second updated more recently
       When the user searches the palette for "refactor"
       Then the more recently updated thread is listed first
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Threads are found by more than their title
       Given a thread whose <field> contains "zebra"
       When the user searches the palette for "zebra"
@@ -133,8 +145,25 @@ Feature: Command palette
         | linked pull request |
         | project name        |
         | branch              |
-        | message content     |
         | id                  |
+
+      @backlog
+      Examples:
+        | field               |
+        | message content     |
+
+    @desktop
+    Scenario Outline: Threads on other machines are found and opened
+      Given the thread "Remote fix" is on <where>
+      When the user searches the palette for "remote fix"
+      And the user moves the highlight to "Remote fix" and presses Enter
+      Then the thread "Remote fix" opens
+      And the command palette is closed
+
+      Examples:
+        | where                       |
+        | a linked environment        |
+        | another node of the cluster |
 
     @backlog @desktop
     Scenario: Message content search reports while it runs
@@ -142,19 +171,19 @@ Feature: Command palette
       When the user searches for text that only appears inside messages
       Then the palette says "Searching thread messages…" until the results arrive
 
-    @backlog @desktop
+    @desktop
     Scenario: A leading ">" limits the palette to actions
       Given the command palette is open
       When the user types ">new"
       Then only actions are listed
 
-    @backlog @desktop
+    @desktop
     Scenario: No matching actions
       Given the command palette is open
       When the user types ">qqqqqq"
       Then the palette says "No matching actions."
 
-    @backlog @desktop
+    @desktop
     Scenario: No matches at all
       Given the command palette is open
       When the user types "qqqqqq"
@@ -174,14 +203,14 @@ Feature: Command palette
 
   Rule: Choosing entries
 
-    @backlog @shared
+    @shared @backlog-mobile @backlog-tui
     Scenario: Enter runs the highlighted entry
       Given the command palette lists "Open settings"
       When the user moves the highlight to "Open settings" and presses Enter
       Then settings open
       And the command palette is closed
 
-    @backlog @desktop
+    @desktop
     Scenario: A number shortcut runs the Nth entry
       Given the command palette is open
       When the user presses mod+3
@@ -200,12 +229,18 @@ Feature: Command palette
       When the user runs it from the palette
       Then the user is told "Unable to run command"
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Every palette action does its job
       Given the command palette is open
       When the user runs "<title>"
       Then <outcome>
 
+      Examples:
+        | entry                            | title                       | outcome                                                        |
+        | action:usage                     | Open usage                  | the usage page opens                                           |
+        | action:settings                  | Open settings               | settings open                                                  |
+
+      @backlog
       Examples:
         | entry                            | title                       | outcome                                                        |
         | action:new-thread                | New thread in hal-c2        | a new thread starts in "hal-c2"                                |
@@ -221,8 +256,6 @@ Feature: Command palette
         | action:change-appearance         | Change appearance           | the palette offers System, Light and Dark                      |
         | action:theme-editor              | Toggle theme editor         | the theme editor opens                                         |
         | action:pull-requests             | Open pull requests          | the pull request list opens                                    |
-        | action:usage                     | Open usage                  | the usage page opens                                           |
-        | action:settings                  | Open settings               | settings open                                                  |
         | action:project-settings          | Project settings            | the current project's settings open                            |
 
     @backlog @desktop

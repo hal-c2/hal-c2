@@ -16,6 +16,7 @@
 #include <optional>
 #include <utility>
 
+#include "CommandPaletteController.h"
 #include "Harness.h"
 #include "NavigationController.h"
 #include "World.h"
@@ -543,6 +544,17 @@ const Steps steps([] {
   // The default branch.
   step(QStringLiteral("the user runs %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
+    // From an open command palette: its entry of that title.
+    if (auto* palette = world.native().controller<CommandPaletteController>(); palette && palette->isOpen()) {
+      for (int row = 0; row < palette->rowCount(); ++row) {
+        if (palette->index(row).data(CommandPaletteController::TitleRole) == c[0]) {
+          palette->run(row);
+          world.sync();
+          return;
+        }
+      }
+      fail(QStringLiteral("the command palette does not list \"%1\"").arg(c[0]));
+    }
     if (at(git(world), QStringLiteral("quickAction.label")) == c[0]) {
       dispatch(world, QStringLiteral("git.quick"));
       return;

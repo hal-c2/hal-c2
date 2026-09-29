@@ -214,9 +214,10 @@ Rectangle {
                     iconSize: 16
                     iconTint: Qt.alpha(sidebar.muted, 0.8)
                     tint: sidebar.foreground
+                    objectName: "search"
                     text: qsTr("Search")
                     font.pixelSize: 14
-                    onClicked: Shell.dispatch("palette.open")
+                    onClicked: PaletteModel.show()
 
                     background: Rectangle {
                         radius: 8

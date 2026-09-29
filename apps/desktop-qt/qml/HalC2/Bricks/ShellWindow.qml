@@ -77,6 +77,8 @@ Window {
 
     ConfirmDialog {}
 
+    CommandPalette {}
+
     ShellErrorOverlay {
         anchors.fill: parent
     }
@@ -119,6 +121,11 @@ Window {
                 break;
             case "move":
                 root.startSystemMove();
+                break;
+            case "raise":
+                if (root.visibility === Window.Minimized) root.showNormal();
+                root.raise();
+                root.requestActivate();
                 break;
             }
         }

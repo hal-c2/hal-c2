@@ -10,6 +10,7 @@
 #   apps/desktop-qt/tests/tst_SettingsNav.qml
 #   apps/desktop-qt/src/native/NavigationController.cpp (leaving settings)
 #   apps/desktop-qt/qml/HalC2/Bricks/WindowControls.qml (accessible names)
+#   apps/desktop-qt/src/native/CommandPaletteController.cpp (a background update keeps the query and highlight)
 
 Feature: Keyboard focus and keyboard-only use
   Everything a user can do with the pointer can be done from the keyboard, and focus lands
@@ -17,7 +18,7 @@ Feature: Keyboard focus and keyboard-only use
 
   Rule: Where focus goes
 
-    @backlog @desktop
+    @desktop
     Scenario: The palette keeps focus while it is open
       Given the command palette is open
       When a background update changes the thread list
