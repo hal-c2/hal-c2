@@ -37,6 +37,7 @@ void World::start() {
   QObject::connect(m_bridge.get(), &ShellBridge::stateEntryChanged, m_theme.get(), [this](const QString& key, const QVariant& value) {
     if (key == QLatin1String("theme")) m_theme->applyBaseTheme(value);
   });
+  m_bridge->setUrlOpener([this](const QUrl& url) { openedUrls.append(url); });
   setTime(m_now);
   QObject::connect(m_bridge.get(), &ShellBridge::actionRequested, m_bridge.get(),
                    [this](const QString& type, const QVariant& payload) { onPageAction(type, payload.toMap()); });

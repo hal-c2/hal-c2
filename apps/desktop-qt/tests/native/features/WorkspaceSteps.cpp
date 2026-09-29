@@ -475,6 +475,28 @@ const Steps steps([] {
     world.sync();
     expect(workspace(world).value(QStringLiteral("preferredEditorId")) == editorId(c[0]), QStringLiteral("the header shows %1").arg(show(workspace(world))));
   });
+
+  // The header's buttons that leave the header.
+  step(QStringLiteral("the checkout's pull request is %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    const QJsonObject remote{{QStringLiteral("pr"), QJsonObject{{QStringLiteral("number"), 7}, {QStringLiteral("title"), QStringLiteral("Tax line")},
+                                                                {QStringLiteral("url"), c[0]}, {QStringLiteral("state"), QStringLiteral("open")}}}};
+    for (const int id : world.node.subscribers(QStringLiteral("vcs"))) {
+      world.node.send({{QStringLiteral("t"), QStringLiteral("vcs")},
+                       {QStringLiteral("id"), id},
+                       {QStringLiteral("event"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("remoteUpdated")}, {QStringLiteral("remote"), remote}}}});
+    }
+    world.sync();
+  });
+  step(QStringLiteral("the user opens the pull request from the header"), [](World& world, const Captures&, const Table&) {
+    dispatch(world, QStringLiteral("workspace.openPullRequest"));
+  });
+  step(QStringLiteral("the browser opens %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(world.openedUrls == QList<QUrl>{QUrl(c[0])}, QStringLiteral("the browser opened %1").arg(world.openedUrls.size()));
+  });
+  step(QStringLiteral("the user starts a new thread from the header"), [](World& world, const Captures&, const Table&) {
+    dispatch(world, QStringLiteral("workspace.newThread"));
+  });
 });
 
 }  // namespace

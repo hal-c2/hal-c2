@@ -1,6 +1,7 @@
 #include "WorkspaceController.h"
 
 #include <QJsonValue>
+#include <QUrl>
 #include <QRegularExpression>
 
 #include <algorithm>
@@ -211,7 +212,10 @@ void WorkspaceController::follow(const QString& cwd) {
   if (m_vcs) m_client->unsubscribe(m_vcs);
   m_vcs = 0;
   m_vcsKey = key;
-  m_git.reset();
+  if (m_git) {
+    m_git.reset();
+    emit gitChanged();
+  }
   const bool hadRefs = !m_refsCwd.isEmpty();
   m_refs = {};
   m_refsTotal = 0;
@@ -241,6 +245,7 @@ void WorkspaceController::follow(const QString& cwd) {
           return;
         }
         m_git = git;
+        emit gitChanged();
         if (m_optimisticBranch && !m_switching && text(git.local, "refName") == *m_optimisticBranch) {
           m_optimisticBranch.reset();
         }
@@ -537,12 +542,16 @@ bool WorkspaceController::handle(const QString& action, const QVariant& payload)
     }
     return true;
   }
-  // Page UI: the thread menu, the pull request dialog and the new-thread flow.
-  if (action == QLatin1String("workspace.titleMenu") || action == QLatin1String("workspace.openPullRequest") ||
-      action == QLatin1String("workspace.newThread")) {
-    return false;
+  // The header's project: a new thread there (DraftController).
+  if (action == QLatin1String("workspace.newThread")) {
+    m_bridge->dispatch(QStringLiteral("thread.new"));
+    return true;
   }
   if (!m_place) return true;
+  if (action == QLatin1String("workspace.openPullRequest")) {
+    openPullRequest();
+    return true;
+  }
   if (action == QLatin1String("workspace.rename")) {
     rename(args.value(QStringLiteral("title")).toString());
   } else if (action == QLatin1String("workspace.openInEditor")) {
@@ -794,18 +803,41 @@ void WorkspaceController::setThreadBranch(const std::optional<QString>& branch,
     checkout.worktreePath = worktreePath;
     checkout.envMode = mode;
   });
-  // The page sends the draft's first message from its own draft for now.
-  const Checkout checkout = m_checkouts.value(m_place->draftId);
+  followCheckout(m_place->draftId);
+}
+
+void WorkspaceController::updateCheckout(const std::function<void(Checkout&)>& edit) {
+  edit(m_checkouts[m_place->draftId]);
+  refresh();
+}
+
+void WorkspaceController::setCheckout(const QString& draftId, const Checkout& checkout) {
+  m_checkouts.insert(draftId, checkout);
+  refresh();
+  followCheckout(draftId);
+}
+
+// The page sends the draft's first message from its own draft for now.
+void WorkspaceController::followCheckout(const QString& draftId) {
+  const Checkout checkout = m_checkouts.value(draftId);
   m_bridge->sendToPage(QStringLiteral("workspace.checkout.follow"),
                        QVariantMap{
-                           {QStringLiteral("draftId"), m_place->draftId},
+                           {QStringLiteral("draftId"), draftId},
                            {QStringLiteral("branch"), nullable(checkout.branch)},
                            {QStringLiteral("worktreePath"), nullable(checkout.worktreePath)},
                            {QStringLiteral("envMode"), checkout.envMode},
                        });
 }
 
-void WorkspaceController::updateCheckout(const std::function<void(Checkout&)>& edit) {
-  edit(m_checkouts[m_place->draftId]);
-  refresh();
+void WorkspaceController::refreshGit() {
+  if (!m_place || m_vcsKey.isEmpty()) return;
+  m_client->call(m_place->environmentId, QStringLiteral("vcs.refreshStatus"),
+                 QJsonObject{{QStringLiteral("cwd"), m_place->cwd()}},
+                 [](const QJsonValue&, const std::optional<QString>&) {});
+}
+
+// The checkout's pull request, in the browser.
+void WorkspaceController::openPullRequest() {
+  const QString url = m_git ? text(m_git->remote.value(QLatin1String("pr")).toObject(), "url") : QString();
+  if (!url.isEmpty()) m_bridge->openExternal(QUrl(url));
 }
