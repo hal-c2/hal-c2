@@ -61,6 +61,9 @@ Elixir node, native QML, and the TUI. Anything served by `apps/server`, `apps/we
 `@plugin-<id>` marks behaviour a plugin provides, for example `@plugin-claude`. The core must
 work with that plugin absent.
 
+`@priority-high` and `@priority-low` weight a `@backlog` scenario for `mise run features:pick`,
+which picks random backlog scenarios to work on. Low priority still comes up, just less often.
+
 ## Writing rules
 
 - Declarative, in the user's words. "When the user snoozes the thread until tomorrow", not
