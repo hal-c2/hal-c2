@@ -92,7 +92,8 @@ public:
   explicit NativeShell(ShellBridge* bridge, QObject* parent = nullptr);
   ~NativeShell() override;
 
-  void open(const QUrl& origin, const QString& token) { m_client.open(origin, token); }
+  // Connects to the node at `origin`; every window's bridge learns where it is.
+  void open(const QUrl& origin, const QString& token);
 
   NodeClient* client() { return &m_client; }
   ShellStore* store() { return &m_store; }

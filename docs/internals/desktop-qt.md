@@ -338,11 +338,13 @@ agent replies and renames. Local filtering cannot recover rows omitted by the
 page's 50-row Settled limit. `thread.markUnread {key}` uses the existing client
 unread state.
 
-`ProjectFolderDrop` imports one existing directory through the page's project
-registration flow. It does not create, rename, move, or delete directories.
-Native dispatch canonicalizes the path and requires the shell's own backend,
-or explicit `--allow-local-folder-import` for an attached loopback URL. Do not
-enable that flag for an SSH-forwarded backend with a different filesystem.
+`ProjectFolderDrop` imports one existing directory through `ProjectController`
+(`projects.mutate`). It does not create, rename, move, or delete directories.
+`ShellBridge::localFolders` decides whether this machine's folders are the
+node's: the shell's own backend, or explicit `--allow-local-folder-import` for
+an attached URL, and a node origin on loopback. Do not enable that flag for an
+SSH-forwarded backend with a different filesystem; its loopback origin looks
+local.
 
 `examples/folders` adds a native folder explorer using Qt's `TreeView` and
 asynchronous `QFileSystemModel` through `DefaultShell.navigationPanel`. The
