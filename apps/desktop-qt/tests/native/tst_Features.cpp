@@ -203,6 +203,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/drafting-and-sending.feature:Each thread keeps its own draft*"),
     QStringLiteral("composer/drafting-and-sending.feature:Sending while disconnected*"),
     QStringLiteral("composer/drafting-and-sending.feature:A send the node rejects*"),
+    QStringLiteral("composer/sending-turns.feature"),
+    QStringLiteral("navigation/toasts.feature"),
     QStringLiteral("settings/connections.feature"),
     QStringLiteral("connections/links.feature"),
     QStringLiteral("connections/pairing.feature"),

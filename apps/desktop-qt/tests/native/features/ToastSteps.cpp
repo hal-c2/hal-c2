@@ -1,5 +1,6 @@
 // The shell's own toasts (ToastController): what the user sees in `toasts`,
-// and dismissing them or choosing their action as the Notifications brick does.
+// and dismissing them or choosing their action as the Notifications brick does
+// (features/navigation/toasts.feature, desktop/native-toasts.feature).
 
 #include <QVariantList>
 

@@ -1,6 +1,7 @@
 // A new thread's first send (ComposerController::submitDraft): the thread the
 // node launches for it, what the launch carries, and the window moving to it
-// (features/desktop/native-composer.feature, composer/drafting-and-sending.feature,
+// (features/composer/sending-turns.feature, desktop/native-composer.feature,
+// composer/drafting-and-sending.feature,
 // source-control/worktrees-and-setup-scripts.feature).
 
 #include <QJsonArray>

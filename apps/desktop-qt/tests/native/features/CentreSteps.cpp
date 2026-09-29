@@ -2,7 +2,7 @@
 // (TimelineModel::copy), the two ways into a revert, a reply's and the diff
 // panel's, which both ask Panel.diff (ThreadDiff) and so the same question,
 // and following a thread again after its node stopped sending it
-// (ThreadStore::reload) (timeline/streaming.feature,
+// (ThreadStore::reload) (timeline/streaming.feature, timeline/checkpoints.feature,
 // features/desktop/native-centre.feature).
 
 #include <QClipboard>
